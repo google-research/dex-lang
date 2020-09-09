@@ -93,7 +93,8 @@ def swap (p:(a&b)) : (b&a) = (snd p, fst p)
 
 def astype (t:Type) (x:t) : t = x  -- to give hints to type inference
 
-def o (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
+def (<<<) (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
+def (>>>) (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
 
 flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
 uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
@@ -604,15 +605,17 @@ def revIso (iso: Iso a b) (x:b) : a = appIso (flipIso iso) x
 
 idIso : Iso a a = MkIso {fwd=id, bwd=id}
 
-def chainIsos (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
+def (<>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
   (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
   (MkIso {fwd=fwd2, bwd=bwd2}) = iso2
-  MkIso {fwd=(fwd2 `o` fwd1), bwd=(bwd1 `o` bwd2)}
+  MkIso {fwd=(fwd1 >>> fwd2), bwd=(bwd1 <<< bwd2)}
+
+def (<<>) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 <>> iso2
 
 -- Lens-like accessors
 -- (note: #foo is an Iso {foo: a, ...b} (a & {...b}))
-def getAt  (iso: Iso a (b & c)) : a -> b = fst `o` appIso iso
-def popAt  (iso: Iso a (b & c)) : a -> c = snd `o` appIso iso
+def getAt  (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
+def popAt  (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
 def pushAt (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
 def setAt  (iso: Iso a (b & c)) (x:b) (r:a) : a =
   pushAt iso x $ popAt iso r
@@ -628,7 +631,7 @@ swapPairIso : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
 
 -- Complement the focus of a lens-like isomorphism
-exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso `chainIsos` swapPairIso
+exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso <>> swapPairIso
 
 swapEitherIso : Iso (a | b) (b | a) =
   fwd = \x. case x of
@@ -640,7 +643,7 @@ swapEitherIso : Iso (a | b) (b | a) =
   MkIso {fwd, bwd}
 
 -- Complement the focus of a prism-like isomorphism
-exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso `chainIsos` swapEitherIso
+exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso <>> swapEitherIso
 
 -- Use a lens-like iso to split a 1d table into a 2d table
 def over (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
@@ -650,7 +653,7 @@ def over (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
 -- Convert a lens zipper isomorphism to a normal lens-like isomorphism
 startLZip : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 def lensFields (iso: Iso ({&} & a) (b & c)) : Iso a (b & c) =
-  startLZip `chainIsos` iso
+  startLZip <>> iso
 
 def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
   over (lensFields iso) tab
@@ -659,7 +662,7 @@ def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
 startPZip : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
 def prismFields (iso: Iso ({|} | a) (b | c)) : Iso a (b | c) =
-  startPZip `chainIsos` iso
+  startPZip <>> iso
 
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (buildWith $ prismFields iso) tab

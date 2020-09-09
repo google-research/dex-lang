@@ -673,7 +673,8 @@ ops =
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkArrow TabArrow,
-     InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
+     InfixL $ opWithSrc $ backquoteName >>= (return . binApp),
+     symOp "<<<", symOp ">>>", symOp "<<>", symOp "<>>"]
   , [InfixR $ mayBreak (infixSym "$") $> mkApp]
   , [symOp "+=", symOp ":=", InfixL $ pairingSymOpP "|", InfixR infixArrow]
   , [InfixR $ pairingSymOpP "&", InfixR $ pairingSymOpP ","]
@@ -848,7 +849,7 @@ doubleLit = lexeme $
 
 knownSymStrs :: [String]
 knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":=",
-                "->", "=>", "?->", "?=>", "--o", "--",
+                "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<>", "<>>",
                 "..", "<..", "..<", "..<", "<..<"]
 
 -- string must be in `knownSymStrs`
