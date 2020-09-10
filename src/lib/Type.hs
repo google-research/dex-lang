@@ -23,6 +23,7 @@ import Data.Foldable (toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 
@@ -193,34 +194,39 @@ blockEffs (Block decls result) =
   foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
 
 isPure :: Expr -> Bool
-isPure expr = case exprEffs expr of
-  NoEffects   -> True
-  SomeEffects -> False
+isPure expr = exprEffs expr == mempty
 
 exprEffs :: Expr -> EffectSummary
 exprEffs expr = case expr of
-  Atom _ -> NoEffects
+  Atom _  -> NoEffects
   App f _ -> functionEffs f
-  Op op -> case op of
-    PrimEffect _ _ -> SomeEffects
+  Op op   -> case op of
+    PrimEffect ref m -> case m of
+      MGet    -> S.singleton (State,  h)
+      MPut  _ -> S.singleton (State,  h)
+      MAsk    -> S.singleton (Reader, h)
+      MTell _ -> S.singleton (Writer, h)
+      where RefTy (Var (h:>_)) _ = getType ref
     _ -> NoEffects
   Hof hof -> case hof of
-    For _ f -> functionEffs f
+    For _ f         -> functionEffs f
+    Tile _ _ _      -> error "not implemented"
     While cond body -> functionEffs cond <> functionEffs body
-    Linearize _ -> NoEffects
-    Transpose _ -> NoEffects
-    -- These are more convservative than necessary.
-    -- TODO: make them more precise by de-duping with type checker
-    RunReader _ _ -> SomeEffects
-    RunWriter _   -> SomeEffects
-    RunState _ _  -> SomeEffects
-    Tile _ _ _ -> error "not implemented"
+    Linearize _     -> mempty  -- Body has to be a pure function
+    Transpose _     -> mempty  -- Body has to be a pure function
+    RunReader _ f   -> handleRunner Reader f
+    RunWriter   f   -> handleRunner Writer f
+    RunState  _ f   -> handleRunner State  f
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
+  where
+    handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs Nothing) _) =
+      S.delete (effName, h) $ S.fromList effs
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
-  Pi (Abs _ (arr, _)) | arrowEff arr == Pure -> NoEffects
-  _ -> SomeEffects
+  Pi (Abs _ (arr, _)) -> S.fromList effs
+    where EffectRow effs Nothing = arrowEff arr
+  _ -> error "Expected a function type"
 
 instance HasType Block where
   typeCheck (Block decls result) = do
