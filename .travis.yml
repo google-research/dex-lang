@@ -35,7 +35,6 @@ script:
   - if [ ! -d "$DIR" ]; then mkdir -p $DIR; fi
   - stack upgrade
   - hash -r
-  - rm -rf $HOME/.stack
   - stack setup
   - pip3 install --upgrade numpy
   - make tests
