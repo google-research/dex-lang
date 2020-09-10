@@ -88,7 +88,7 @@ linearizeOp op = case op of
   SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
   Select p t f           -> (Select p <$> la t   <*> la f  ) `bindLin` emitOp
   ArrayLoad _            -> emitWithZero -- XXX: This assumes that arrays are always constants
-  TabCon ty xs           -> liftA (TabCon ty) (traverse la xs) `bindLin` emitOp
+  TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
   ArrayOffset _ _ _      -> emitDiscrete
   Inject _               -> emitDiscrete
   SliceOffset _ _        -> emitDiscrete
@@ -435,40 +435,62 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
-  Fst x -> do
-    ref <- linAtomRef x
-    ref' <- emitOp $ FstRef ref
-    emitCTToRef ref' ct
-  Snd x -> do
-    ref <- linAtomRef x
-    ref' <- emitOp $ SndRef ref
-    emitCTToRef ref' ct
-  ScalarUnOp FNeg x    -> transposeAtom x =<< neg ct
-  ScalarBinOp FAdd x y -> transposeAtom x ct >> transposeAtom y ct
-  ScalarBinOp FSub x y -> transposeAtom x ct >> (transposeAtom y =<< neg ct)
-  ScalarBinOp FMul x y -> do
+  Fst x                 -> flip emitCTToRef ct =<< emitOp . FstRef =<< linAtomRef x
+  Snd x                 -> flip emitCTToRef ct =<< emitOp . SndRef =<< linAtomRef x
+  ScalarUnOp  FNeg x    -> transposeAtom x =<< neg ct
+  ScalarUnOp  _    _    -> notLinear
+  ScalarBinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct
+  ScalarBinOp FSub x y  -> transposeAtom x ct >> (transposeAtom y =<< neg ct)
+  ScalarBinOp FMul x y  -> do
     xLin <- isLin x
     if xLin
       then transposeAtom x =<< mul ct =<< substTranspose y
       else transposeAtom y =<< mul ct =<< substTranspose x
-  ScalarBinOp FDiv x y -> transposeAtom x =<< div' ct =<< substTranspose y
-  PrimEffect refArg m -> do
+  ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substTranspose y
+  ScalarBinOp _    _ _  -> notLinear
+  PrimEffect refArg m   -> do
     refArg' <- substTranspose refArg
     case m of
-      MAsk -> void $ emitOp $ PrimEffect refArg' (MTell ct)
+      MAsk    -> void $ emitOp $ PrimEffect refArg' (MTell ct)
       MTell x -> do
        ct' <- emitOp $ PrimEffect refArg' MAsk
        transposeAtom x ct'
-      _ -> error "Not implemented"
-  _ -> error $ "not implemented: transposition for: " ++ pprint op
+      MGet    -> notImplemented
+      MPut  _ -> notImplemented
+  IndexRef     _ _      -> notImplemented
+  FstRef       _        -> notImplemented
+  SndRef       _        -> notImplemented
+  Select       _ _ _    -> notImplemented
+  VectorBinOp  _ _ _    -> notImplemented
+  VectorPack   _        -> notImplemented
+  VectorIndex  _ _      -> notImplemented
+  CastOp       _ _      -> notImplemented
+  RecordCons   _ _      -> notImplemented
+  RecordSplit  _ _      -> notImplemented
+  VariantLift  _ _      -> notImplemented
+  VariantSplit _ _      -> notImplemented
+  TabCon       _ _      -> notImplemented
+  ArrayLoad    _        -> notLinear
+  ArrayOffset  _ _ _    -> notLinear
+  Inject       _        -> notLinear
+  SliceOffset  _ _      -> notLinear
+  SliceCurry   _ _      -> notLinear
+  IntAsIndex   _ _      -> notLinear
+  IndexAsInt   _        -> notLinear
+  IdxSetSize   _        -> notLinear
+  ThrowError   _        -> notLinear
+  FFICall      _ _ _    -> notLinear
+  where
+    -- Both nonlinear operations and operations on discrete types, where linearity doesn't make sense
+    notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
 linAtomRef :: Atom -> TransposeM Atom
 linAtomRef (Var x) = do
   refs <- asks linRefs
   case envLookup refs x of
     Just ref -> return ref
-    _ -> error "Not a linear var"
-linAtomRef _ = error "Not a linear var"
+    _ -> error $ "Not a linear var" ++ pprint (Var x)
+linAtomRef a = error $ "Not a linear var" ++ pprint a
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
@@ -494,15 +516,6 @@ transposeHof hof ct = case hof of
   Linearize  _ -> error "Unexpected linearization"
   Transpose  _ -> error "Unexpected transposition"
 
-transposeCon :: Con -> Atom -> TransposeM ()
-transposeCon con _ | isSingletonType (getType (Con con)) = return ()
-transposeCon con ct = case con of
-  Lit _ -> return ()
-  PairCon x y -> do
-    getFst ct >>= transposeAtom x
-    getSnd ct >>= transposeAtom y
-  _ -> error $ "not implemented: transposition for: " ++ pprint con
-
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
   Var v -> do
@@ -510,8 +523,35 @@ transposeAtom atom ct = case atom of
     case envLookup refs v of
       Just ref -> emitCTToRef ref ct
       _ -> return ()
-  Con con -> transposeCon con ct
-  _ -> error $ "Can't transpose: " ++ pprint atom
+  Con con         -> transposeCon con ct
+  TabVal _ _      -> notImplemented
+  Lam _           -> notTangent
+  DataCon _ _ _ _ -> notImplemented
+  Record  _       -> notImplemented
+  Variant _ _ _ _ -> notImplemented
+  TypeCon _ _     -> notTangent
+  LabeledRow _    -> notTangent
+  RecordTy _      -> notTangent
+  VariantTy _     -> notTangent
+  Pi _            -> notTangent
+  TC _            -> notTangent
+  Eff _           -> notTangent
+  where notTangent = error $ "Not a tangent atom: " ++ pprint atom
+
+transposeCon :: Con -> Atom -> TransposeM ()
+transposeCon con ct = case con of
+  UnitCon           -> return ()
+  PairCon x y       -> do
+    getFst ct >>= transposeAtom x
+    getSnd ct >>= transposeAtom y
+  SumAsProd _ _ _   -> notImplemented
+  Lit _             -> notTangent
+  CharCon _         -> notTangent
+  ArrayLit _ _      -> notTangent
+  AnyValue _        -> notTangent
+  Coerce _ _        -> notTangent  -- Technically this depends on the legal coercions
+  ClassDictHole _ _ -> notTangent
+  where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 freeLinVars :: HasVars a => a -> TransposeM [Var]
 freeLinVars x = do
