@@ -605,12 +605,12 @@ def revIso (iso: Iso a b) (x:b) : a = appIso (flipIso iso) x
 
 idIso : Iso a a = MkIso {fwd=id, bwd=id}
 
-def (<>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
+def (&>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
   (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
   (MkIso {fwd=fwd2, bwd=bwd2}) = iso2
   MkIso {fwd=(fwd1 >>> fwd2), bwd=(bwd1 <<< bwd2)}
 
-def (<<>) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 <>> iso2
+def (<<&) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
 
 -- Lens-like accessors
 -- (note: #foo is an Iso {foo: a & ...b} (a & {&...b}))
@@ -632,7 +632,7 @@ swapPairIso : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
 
 -- Complement the focus of a lens-like isomorphism
-exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso <>> swapPairIso
+exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso &>> swapPairIso
 
 swapEitherIso : Iso (a | b) (b | a) =
   fwd = \x. case x of
@@ -644,10 +644,10 @@ swapEitherIso : Iso (a | b) (b | a) =
   MkIso {fwd, bwd}
 
 -- Complement the focus of a prism-like isomorphism
-exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso <>> swapEitherIso
+exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEitherIso
 
 -- Use a lens-like iso to split a 1d table into a 2d table
-def over (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
+def overLens (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
   for i j. tab.(revIso iso (i, j))
 
 -- Zipper isomorphisms to easily specify many record/variant fields:
@@ -655,16 +655,16 @@ def over (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
 -- #|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
 
 -- Convert a record zipper isomorphism to a normal lens-like isomorphism
--- by using splitR <>> iso
+-- by using splitR &>> iso
 splitR : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
 def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  over (splitR <>> iso) tab
+  overLens (splitR &>> iso) tab
 
 -- Convert a variant zipper isomorphism to a normal prism-like isomorphism
--- by using splitV <>> iso
+-- by using splitV &>> iso
 splitV : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
 
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (buildWith $ splitV <>> iso) tab
+  reindex (buildWith $ splitV &>> iso) tab

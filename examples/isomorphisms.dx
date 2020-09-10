@@ -24,17 +24,17 @@ and flipped with `flipIso`
 :p appIso (flipIso cycleThree) (1, 2.0, 3)
 > (3, (1, 2.0))
 
-'They can also be composed with `<>>`:
+'They can also be composed with `&>>`:
 
-:p appIso (cycleThree <>> cycleThree) (1, 2.0, 3)
+:p appIso (cycleThree &>> cycleThree) (1, 2.0, 3)
 > (3, (1, 2.0))
 
-:p appIso (cycleThree <>> cycleThree <>> cycleThree) (1, 2.0, 3)
+:p appIso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
 > (1, (2.0, 3))
 
 'Note that we assume but do not check that the isomorphism is lawful (i.e.
 `appIso iso $ revIso iso x == x` for all `x`, or equivalently
-`iso <>> (flipIso iso) == idIso`).
+`iso &>> (flipIso iso) == idIso`).
 
 'In addition, Dex will automatically write some useful isomorphisms for you
 to extract fields from records and variants. There are four syntactic forms
@@ -150,7 +150,7 @@ another. For instance:
 >        { bwd = \({a = x:(), ...l:()}, {, ...r:()}). (,) {, ...l} {a = x, ...r}
 >        , fwd = \({, ...l:()}, {a = x:(), ...r:()}). (,) {a = x, ...l} {, ...r}})
 
-:t astype (Iso ({&} & {a:Int & b:Float & c:Unit}) _) (#&a <>> #&b)
+:t astype (Iso ({&} & {a:Int & b:Float & c:Unit}) _) (#&a &>> #&b)
 > (Iso
 >    ({ &} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32 & b: Float32} & {c: Unit}))
@@ -172,36 +172,36 @@ when using a record type as an index set:
     ordinal a * 100 + ordinal b * 10 + ordinal c
   v1 = x
   v2 = sum $ overFields (#&b) x
-  v3 = sum $ overFields (#&b <>> #&c) x
-  v4 = sum $ overFields (#&a <>> #&b <>> #&c) x
+  v3 = sum $ overFields (#&b &>> #&c) x
+  v4 = sum $ overFields (#&a &>> #&b &>> #&c) x
   (v1, v2, v3, v4)
 > ( [0, 100, 10, 110, 1, 101, 11, 111]@{a: Fin 2 & b: Fin 2 & c: Fin 2}
 > , ([10, 210, 12, 212]@{a: Fin 2 & c: Fin 2}, ([22, 422]@{a: Fin 2}, [444]@{ &})) )
 
 'Note that `overFields` is just a simple wrapper combining `splitR` and
-`over`:
+`overLens`:
 
 :t splitR
 > ((a:Type) ?-> Iso a ({ &} & a))
 
-:t over
+:t overLens
 > ((a:Type)
 >  ?-> (b:Type)
 >  ?-> (c:Type) ?-> (v:Type) ?-> (Iso a (b & c)) -> (a => v) -> b => c => v)
 
-'`over` alone can be used with any lens-like isomorphism, for instance an
+'`overLens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
     ordinal a * 100 + ordinal b * 10 + ordinal c
-  over #a x
+  overLens #a x
 > [ [0, 10, 1, 11]@{b: Fin 2 & c: Fin 2}
 > , [100, 110, 101, 111]@{b: Fin 2 & c: Fin 2} ]
 
 '`splitR` can be used if you want to process multiple fields at once:
 
-:p pushAt (splitR <>> #&a <>> #&b) {a=1, b=2.0} {c=3, d=4.0}
+:p pushAt (splitR &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
 > {a = 1, b = 2.0, c = 3, d = 4.0}
 
 '## Variant zipper isomorphisms
@@ -239,7 +239,7 @@ zipper isomorphisms:
 
 :p
   vals = [{|a = 1|}, {|b = 2|}, {|c = 3|}]:(Fin 3 => {a:_ | b:_ | c:_})
-  for i. matchWith (splitV <>> #|a <>> #|b) vals.i
+  for i. matchWith (splitV &>> #|a &>> #|b) vals.i
 > [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
 
 '`sliceFields` uses this to specific named variants from a variant-indexed
@@ -249,8 +249,8 @@ table:
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
   v1 = x
   v2 = sliceFields (#|b) x
-  v3 = sliceFields (#|a <>> #|c) x
-  v4 = sliceFields (#|a <>> #|b <>> #|c) x
+  v3 = sliceFields (#|a &>> #|c) x
+  v4 = sliceFields (#|a &>> #|b &>> #|c) x
   (v1, v2, v3, v4)
 > ( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
 > , ( [2, 3]@{b: Fin 2}
