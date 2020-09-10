@@ -48,12 +48,22 @@ linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
 linearizeBlock :: SubstEnv -> Block -> LinA Atom
 linearizeBlock env (Block decls result) = case decls of
   Empty -> linearizeExpr env result
-  Nest (Let _ b bound) rest -> LinA $ do
-    -- TODO: Handle the discrete and inactive case specially.
-    (x, boundLin) <- runLinA $ linearizeExpr env bound
-    ~x'@(Var v) <- emit $ Atom x
-    (ans, bodyLin) <- extendWrt v [] $ runLinA $ linearizeBlock (env <> b@>x') body
-    return (ans, do t <- boundLin; extendTangentEnv (v @> t) [] bodyLin)
+  Nest (Let _ b expr) rest -> LinA $ do
+    -- Don't linearize expressions with no free active variables.
+    -- Technically, we could do this and later run the code through a simplification
+    -- pass that would eliminate a bunch of multiplications with zeros, but this seems
+    -- simpler to do for now.
+    freeAtoms <- traverse (substEmbed env . Var) $ bindingsAsVars $ freeVars expr
+    varsAreActive <- traverse isActive $ bindingsAsVars $ freeVars freeAtoms
+    if any id varsAreActive
+      then do
+        (x, boundLin) <- runLinA $ linearizeExpr env expr
+        ~x'@(Var v) <- emit $ Atom x
+        (ans, bodyLin) <- extendWrt v [] $ runLinA $ linearizeBlock (env <> b@>x') body
+        return (ans, do t <- boundLin; extendTangentEnv (v @> t) [] bodyLin)
+      else do
+        x' <- emit =<< substEmbed env expr
+        runLinA $ linearizeBlock (env <> b@>x') body
     where body = Block rest result
   Nest (Unpack _ _) _ -> notImplemented
 
@@ -285,8 +295,8 @@ linearizePrimCon con = case con of
 linearizeAtom :: Atom -> LinA Atom
 linearizeAtom atom = case atom of
   Var v -> LinA $ do
-    isActive <- asks ((v `isin`) . activeVars)
-    if isActive
+    active <- isActive v
+    if active
       then return $ (atom, asks $ (!v) . tangentVals)
       else return $ withZeroTangent atom
   Con con -> linearizePrimCon con
@@ -371,6 +381,9 @@ instance Applicative LinA where
     (x1, t1) <- m1
     (x2, t2) <- m2
     return (f x1 x2, liftM2 f t1 t2)
+
+isActive :: Var -> PrimalM Bool
+isActive v = asks ((v `isin`) . activeVars)
 
 extendWrt :: Var -> [Effect] -> PrimalM a -> PrimalM a
 extendWrt v effs m = local update m
@@ -540,12 +553,12 @@ transposeAtom atom ct = case atom of
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
+  Lit _             -> return ()
   UnitCon           -> return ()
   PairCon x y       -> do
     getFst ct >>= transposeAtom x
     getSnd ct >>= transposeAtom y
   SumAsProd _ _ _   -> notImplemented
-  Lit _             -> notTangent
   CharCon _         -> notTangent
   ArrayLit _ _      -> notTangent
   AnyValue _        -> notTangent
