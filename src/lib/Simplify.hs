@@ -274,7 +274,7 @@ simplifyHof hof = case hof of
   Transpose lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     scope <- getScope
-    return $ transposeMap scope lam'
+    return $ transpose scope lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
     ~(lam', recon) <- simplifyBinaryLam lam

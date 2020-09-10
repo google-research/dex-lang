@@ -14,7 +14,7 @@ module Syntax (
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..),
-    PrimEffect (..), PrimOp (..), EffectSummary (..),
+    PrimEffect (..), PrimOp (..), EffectSummary, pattern NoEffects,
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
@@ -66,6 +66,7 @@ import qualified Data.Vector.Storable  as V
 import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Set as S
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
@@ -401,21 +402,18 @@ data EffectRow = EffectRow [Effect] (Maybe Name)
                  deriving (Show, Generic)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data EffectSummary = NoEffects | SomeEffects  deriving (Show, Eq, Ord, Generic)
+type EffectSummary = S.Set Effect
 
 pattern Pure :: EffectRow
 pattern Pure = EffectRow [] Nothing
 
+pattern NoEffects :: EffectSummary
+pattern NoEffects <- ((S.null) -> True)
+  where NoEffects = mempty
+
 instance Eq EffectRow where
   EffectRow effs t == EffectRow effs' t' =
     sort effs == sort effs' && t == t'
-
-instance Semigroup EffectSummary where
-  NoEffects <> NoEffects = NoEffects
-  _ <> _ = SomeEffects
-
-instance Monoid EffectSummary where
-  mempty = NoEffects
 
 -- === top-level constructs ===
 
