@@ -68,7 +68,7 @@ executable dex
 foreign-library Dex
   type:                native-shared
   other-modules:       API
-  build-depends:       base, dex, file-embed, bytestring, mtl
+  build-depends:       base, dex, dex-resources, mtl
   hs-source-dirs:      src/foreign
   c-sources:           src/foreign/rts.c
   ghc-options:         -Wall

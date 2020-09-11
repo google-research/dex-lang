@@ -1,6 +1,5 @@
 # https://docs.haskellstack.org/en/stable/travis_ci/
 
-dist: bionic
 language: generic
 cache:
   directories:
@@ -10,27 +9,32 @@ cache:
 
 addons:
   apt:
-    update: true
     packages:
       - libgmp-dev
       - llvm-9-tools
       - llvm-9-dev
-      - python3-numpy
       - python3-pip
+      - python3-setuptools
       - haskell-stack
-jobs:
-  include:
-    - stage: Install and build dependencies
-      script:
-        - export DIR=~/.local/bin
-        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
-        - if [ ! -d "$DIR" ]; then mkdir -p ~/.local/bin; fi
-        - stack upgrade
-        - hash -r
-        - stack setup
-        - pip install --upgrade jax jaxlib
-        - stack build --only-dependencies
-    - stage: Build and test
-      script:
-        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
-        - make tests
+  homebrew:
+    update: true
+    package:
+      - llvm@9
+      - haskell-stack
+
+os:
+  - linux
+  - osx
+
+dist: bionic
+
+script:
+  - export DIR=~/.local/bin
+  - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then export PATH=$(brew --prefix llvm@9)/bin:$PATH; fi
+  - if [ ! -d "$DIR" ]; then mkdir -p $DIR; fi
+  - stack upgrade
+  - hash -r
+  - stack setup
+  - pip3 install --upgrade numpy
+  - make tests

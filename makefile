@@ -13,13 +13,18 @@ ifeq (, $(STACK))
 else
 	STACK=stack
 
+	PLATFORM := $(shell uname -s)
+	ifeq ($(PLATFORM),Darwin)
+		STACK=stack --stack-yaml=stack-macos.yaml
+	endif
+
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
 	PROF := --profile --work-dir .stack-work-prof
 
-	dex     := stack exec         dex --
-	dexprof := stack exec $(PROF) dex --
+	dex     := $(STACK) exec         dex --
+	dexprof := $(STACK) exec $(PROF) dex --
 endif
 
 
@@ -84,16 +89,15 @@ quine-tests: $(quine-test-targets)
 
 quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
+run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: examples/%.dx build
 	misc/check-quine $< $(dex) script --allow-errors
-
-runinterp-%: examples/%.dx build
-	misc/check-quine $< $(dex) --interp script --allow-errors
 
 # Run these with profiling on while they're catching lots of crashes
 prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
 
+update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<

@@ -4,8 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE TemplateHaskell #-}
-
 module API where
 
 import Control.Monad.State.Strict
@@ -18,9 +16,8 @@ import Foreign.C.String
 
 import Data.String
 import Data.Word
-import Data.FileEmbed
-import qualified Data.ByteString.Char8 as B
 
+import Resources
 import Syntax
 import TopLevel
 import Serialize (pprintVal)
@@ -44,7 +41,6 @@ dexCreateContext = do
       Right preludeEnv -> castStablePtrToPtr <$> newStablePtr (Context evalConfig preludeEnv)
       Left  _          -> return nullPtr
   where
-    preludeSource = B.unpack $ $(embedFile "prelude.dx")
 
 evalPrelude :: EvalConfig -> FilePath -> IO (Either Err TopEnv)
 evalPrelude opts fname = flip evalStateT mempty $ do
