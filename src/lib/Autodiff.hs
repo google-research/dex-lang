@@ -424,16 +424,32 @@ notImplemented = error "Not implemented"
 
 -- -- === transposition ===
 
-data TransposeEnv = TransposeEnv { linRefs        :: Env Atom
+-- `linRefs` contains all linear variables with non-reference types. It maps
+-- them to references to their cotangent regions. As an optimization, we do not
+-- allocate the regions for trivial vector spaces and in this case the mapping
+-- points to Nothing (but the membership still implies that the name is linear).
+--
+-- `linRefSubst` contains all linear variables with reference types. It maps
+-- them to references to their cotangent regions.
+--
+-- `linRegions` contains all names of linear regions that appear in the original
+-- program.
+--
+-- `nonlinSubst` is a substitution that should be applied to any non-linear atom
+-- that is to be emitted into the transposed program. It replaces the original names
+-- of non-linear local variables with their instances in the transposed program.
+data TransposeEnv = TransposeEnv { linRefs        :: Env (Maybe Atom)
+                                 , linRefSubst    :: SubstEnv
                                  , linRegions     :: Env ()
-                                 , transposeSubst :: SubstEnv
+                                 , nonlinSubst    :: SubstEnv
                                  }
 
 instance Semigroup TransposeEnv where
-  (TransposeEnv x y z) <> (TransposeEnv x' y' z') = TransposeEnv (x <> x') (y <> y') (z <> z')
+  (TransposeEnv x y z w) <> (TransposeEnv x' y' z' w') =
+    TransposeEnv (x <> x') (y <> y') (z <> z') (w <> w')
 
 instance Monoid TransposeEnv where
-  mempty = TransposeEnv mempty mempty mempty
+  mempty = TransposeEnv mempty mempty mempty mempty
 
 type TransposeM a = ReaderT TransposeEnv Embed a
 
@@ -457,9 +473,9 @@ transposeBlock (Block decls result) ct = case decls of
             cts <- withLinVars bs $ transposeBlock body ct
             transposeExpr expr $ if isUnpack then pack (getType expr) cts else head cts
           else do
-            expr' <- substTranspose expr
+            expr' <- substNonlin expr
             xs <- if isUnpack then emitUnpack expr' else (:[]) <$> emit expr'
-            localSubst (newEnv bs xs) $ transposeBlock body ct
+            localNonlinSubst (newEnv bs xs) $ transposeBlock body ct
 
       withLinVars :: [Binder] -> TransposeM () -> TransposeM [Atom]
       withLinVars [] m     = m >> return []
@@ -475,10 +491,9 @@ transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
   App x i -> case getType x of
     TabTy _ _ -> do
-      i' <- substTranspose i
-      ref <- linAtomRef x
-      ref' <- emitOp $ IndexRef ref i'
-      emitCTToRef ref' ct
+      i' <- substNonlin i
+      ref <- traverse (\ref -> emitOp $ IndexRef ref i') =<< linAtomRef x
+      emitCTToRef ref ct
     _ -> error $ "shouldn't have non-table app left"
   Hof hof    -> transposeHof hof ct
   Op op      -> transposeOp op ct
@@ -487,8 +502,8 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
-  Fst x                 -> flip emitCTToRef ct =<< emitOp . FstRef =<< linAtomRef x
-  Snd x                 -> flip emitCTToRef ct =<< emitOp . SndRef =<< linAtomRef x
+  Fst x                 -> flip emitCTToRef ct =<< (traverse $ emitOp . FstRef) =<< linAtomRef x
+  Snd x                 -> flip emitCTToRef ct =<< (traverse $ emitOp . SndRef) =<< linAtomRef x
   ScalarUnOp  FNeg x    -> transposeAtom x =<< neg ct
   ScalarUnOp  _    _    -> notLinear
   ScalarBinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct
@@ -496,12 +511,12 @@ transposeOp op ct = case op of
   ScalarBinOp FMul x y  -> do
     xLin <- isLin x
     if xLin
-      then transposeAtom x =<< mul ct =<< substTranspose y
-      else transposeAtom y =<< mul ct =<< substTranspose x
-  ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substTranspose y
+      then transposeAtom x =<< mul ct =<< substNonlin y
+      else transposeAtom y =<< mul ct =<< substNonlin x
+  ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
   ScalarBinOp _    _ _  -> notLinear
   PrimEffect refArg m   -> do
-    refArg' <- substTranspose refArg
+    refArg' <- substTranspose linRefSubst refArg
     case m of
       MAsk    -> void $ emitOp $ PrimEffect refArg' (MTell ct)
       MTell x -> do
@@ -536,7 +551,7 @@ transposeOp op ct = case op of
     -- Both nonlinear operations and operations on discrete types, where linearity doesn't make sense
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
-linAtomRef :: Atom -> TransposeM Atom
+linAtomRef :: Atom -> TransposeM (Maybe Atom)
 linAtomRef (Var x) = do
   refs <- asks linRefs
   case envLookup refs x of
@@ -549,18 +564,18 @@ transposeHof hof ct = case hof of
   For d ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b $ \i -> do
       ct' <- tabGet ct i
-      localSubst (b@>i) $ transposeBlock body ct'
+      localNonlinSubst (b@>i) $ transposeBlock body ct'
       return UnitVal
     where flipDir dir = case dir of Fwd -> Rev; Rev -> Fwd
   RunReader r ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
     (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" (getType r) $ \ref -> do
-      localLinRegion h $ localSubst (b@>ref) $ transposeBlock body ct
+      localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ct
       return UnitVal
     transposeAtom r ctr
   RunWriter ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader "r" ctEff $ \ref -> do
-      localLinRegion h $ localSubst (b@>ref) $ transposeBlock body ctBody
+      localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
   RunState _ _ -> notImplemented
   Tile   _ _ _ -> notImplemented
@@ -574,7 +589,7 @@ transposeAtom atom ct = case atom of
     refs <- asks linRefs
     case envLookup refs v of
       Just ref -> emitCTToRef ref ct
-      _ -> return ()
+      Nothing  -> return ()
   Con con         -> transposeCon con ct
   Record  e       -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   DataCon _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
@@ -622,29 +637,37 @@ isLinEff effs = do
   return $ not $ null $ effRegions `envIntersect` regions
   where effRegions = newEnv (S.map snd effs) (repeat ())
 
-emitCTToRef :: Atom -> Atom -> TransposeM ()
-emitCTToRef ref ct = void $ emitOp $ PrimEffect ref (MTell ct)
+emitCTToRef :: Maybe Atom -> Atom -> TransposeM ()
+emitCTToRef mref ct = case mref of
+  Just ref -> void $ emitOp $ PrimEffect ref (MTell ct)
+  Nothing  -> return ()
 
-substTranspose :: Subst a => a -> TransposeM a
-substTranspose x = do
-  env <- asks transposeSubst
+substTranspose :: Subst a => (TransposeEnv -> SubstEnv) -> a -> TransposeM a
+substTranspose sel x = do
+  env <- asks sel
   scope <- getScope
   return $ subst (env, scope) x
+
+substNonlin :: Subst a => a -> TransposeM a
+substNonlin = substTranspose nonlinSubst
 
 withLinVar :: Binder -> TransposeM a -> TransposeM (a, Atom)
 withLinVar b body = case
   singletonTypeVal (binderType b) of
     Nothing -> flip evalStateT Nothing $ do
       ans <- emitRunWriter "ref" (binderType b) $ \ref -> do
-        lift (localLinRef (b@>ref) body) >>= put . Just >> return UnitVal
+        lift (localLinRef (b@>Just ref) body) >>= put . Just >> return UnitVal
       (,) <$> (fromJust <$> get) <*> (getSnd ans)
-    Just x -> (,x) <$> body  -- optimization to avoid accumulating into unit
+    Just x -> (,x) <$> (localLinRef (b@>Nothing) body)  -- optimization to avoid accumulating into unit
 
-localLinRef :: Env Atom -> TransposeM a -> TransposeM a
+localLinRef :: Env (Maybe Atom) -> TransposeM a -> TransposeM a
 localLinRef refs = local (<> mempty { linRefs = refs })
 
 localLinRegion :: Name -> TransposeM a -> TransposeM a
 localLinRegion h = local (<> mempty { linRegions = h @> () })
 
-localSubst :: SubstEnv -> TransposeM a -> TransposeM a
-localSubst s = local (<> mempty { transposeSubst = s })
+localLinRefSubst :: SubstEnv -> TransposeM a -> TransposeM a
+localLinRefSubst s = local (<> mempty { linRefSubst = s })
+
+localNonlinSubst :: SubstEnv -> TransposeM a -> TransposeM a
+localNonlinSubst s = local (<> mempty { nonlinSubst = s })

@@ -169,14 +169,8 @@ tripleit : Float --o Float = \x. x + x + x
 myOtherSquare : Float -> Float =
   \x. snd $ withAccum \w. w += x * x
 
-:p myOtherSquare 3.0
-> 9.0
-
-:p jvp myOtherSquare 3.0 1.0
-> 6.0
-
-:p transposeLinear (jvp myOtherSquare 3.0) 1.0
-> 6.0
+:p checkDeriv myOtherSquare 3.0
+> True
 
 :p
   f : Float -> Float =
@@ -185,12 +179,12 @@ myOtherSquare : Float -> Float =
   jvp f 1.0 3.0
 > 6.0
 
---:p
---  f : Float -> Float = \x.
---    x * IToF (1 + 1)
---
---  jvp f 1.0 2.0
---> 4.0
+:p
+  f : Float -> Float = \x.
+    x * IToF (1 + 1)
+
+  jvp f 1.0 2.0
+> 4.0
 
 :p
   f : (Fin 2)=>Float -> Float =
