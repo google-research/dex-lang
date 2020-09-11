@@ -162,8 +162,8 @@ linearizeUnOp op x' = LinA $ do
     Log2   -> notImplemented
     Log10  -> notImplemented
     Log1p  -> notImplemented
-    Sin    -> emitUnOp Sin x <$$> (,emitUnOp Cos =<< tx)
-    Cos    -> emitUnOp Cos x <$$> (,neg =<< emitUnOp Sin =<< tx)
+    Sin    -> emitUnOp Sin x <$$> (,bindM2 mul tx $ emitUnOp Cos x)
+    Cos    -> emitUnOp Cos x <$$> (,bindM2 mul tx $ neg =<< emitUnOp Sin x)
     Tan    -> notImplemented
     Sqrt   -> notImplemented
     Floor  -> withZeroTangent <$> emitUnOp Floor x
@@ -438,9 +438,9 @@ instance Monoid TransposeEnv where
 type TransposeM a = ReaderT TransposeEnv Embed a
 
 transpose :: Scope -> Atom -> Atom
-transpose scope ~(Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
-  buildLam (Bind $ "ct" :> getType expr) LinArrow $ \ct -> do
-    snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct)
+transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+  buildLam (Bind $ "ct" :> getType block) LinArrow $ \ct -> do
+    snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock block ct)
 
 transposeBlock :: Block -> Atom -> TransposeM ()
 transposeBlock (Block decls result) ct = case decls of

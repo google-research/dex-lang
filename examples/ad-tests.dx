@@ -83,37 +83,33 @@ f : Float -> Float = \x. snd $ withAccum \ref. ref += x
    deriv (deriv (deriv f)) 1.234
 > 24.0
 
--- TODO: handle pairs and re-enable
 :p
    f : Float --o (Float & Float) = \x. (x, 2.0 * x)
    transposeLinear f (1.0, 3.0)
 > 7.0
 
--- TODO: handle pairs and re-enable
 :p
    f : (Float & Float) --o Float = \(x,y). x + 2.0 * y
    transposeLinear f 1.0
 > (1.0, 2.0)
 
--- TODO: handle user-defined linearity rules an re-enable
+:p deriv cos 0.0
+> 0.0
 
--- :p deriv cos 0.0
--- > 0.0
+:p deriv sin 0.0
+> 1.0
 
--- :p deriv sin 0.0
--- > 1.0
+:p (sin 1.0, deriv (deriv sin) 1.0)
+> (0.84147096, -0.84147096)
 
--- :p (sin 1.0, deriv (deriv sin) 1.0)
--- > (0.84147096, -0.84147096)
+:p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
+> (0.5403023, -0.5403023)
 
--- :p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
--- > (0.5403023, -0.5403023)
+:p checkDeriv sin 1.0
+> True
 
--- :p checkDeriv sin 1.0
--- > True
-
--- :p checkDeriv cos 1.0
--- > True
+:p checkDeriv cos 1.0
+> True
 
 -- :p checkDeriv exp 2.0
 -- > True
@@ -127,11 +123,11 @@ f : Float -> Float = \x. snd $ withAccum \ref. ref += x
 -- :p checkDeriv (\x. cos (sin (exp x))) 2.0
 -- > True
 
--- :p checkDeriv (deriv sin) 1.0
--- > True
+:p checkDeriv (deriv sin) 1.0
+> True
 
--- :p checkDeriv (deriv cos) 1.0
--- > True
+:p checkDeriv (deriv cos) 1.0
+> True
 
 -- badDerivFun : Float -> Float
 -- badDerivFun x = x
@@ -146,10 +142,6 @@ f : Float -> Float = \x. snd $ withAccum \ref. ref += x
 -- https://github.com/HIPS/autograd/issues/4
 :p deriv (\x. x * deriv (\y. x * y) 2.0) 1.0
 > 2.0
-
--- sinn#lin : Float -> Float
--- sinn#lin x = x
--- > Error: variable not in scope: sinn
 
 tripleit : Float --o Float = \x. x + x + x
 
