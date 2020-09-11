@@ -853,6 +853,7 @@ checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
+  RecordTy _ -> return ()
   -- TODO: check that data constructor arguments are data-like, and so on
   TypeCon _ _ -> return ()
   TC con -> case con of
@@ -862,6 +863,7 @@ checkDataLike msg env ty = case ty of
     UnitType         -> return ()
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
+    IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg
   _   -> throw TypeErr $ pprint ty ++ msg
   where recur x = checkDataLike msg env x

@@ -461,14 +461,26 @@ def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
+data HasAllClose a:Type =
+  MkHasAllClose (a -> a -> a -> a -> Bool)
+
+data HasDefaultTolerance a:Type =
+  MkHasDefaultTolerance a a
+
+def allCloseWithTolerance (d : HasAllClose a) ?=> : a -> a -> a -> a -> Bool = case d of MkHasAllClose f -> f
+def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool =
+  case d of MkHasDefaultTolerance atol rtol -> allCloseWithTolerance atol rtol
+
+@instance allCloseF : HasAllClose Float = MkHasAllClose \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+@instance defaultToleranceF32 : HasDefaultTolerance Float32 = MkHasDefaultTolerance (FToF32 0.00001   ) (FToF32 0.0001 )
+@instance defaultToleranceF64 : HasDefaultTolerance Float64 = MkHasDefaultTolerance (FToF64 0.00000001) (FToF64 0.00001)
+
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
-  -- TODO: parse 1e-5
-  eps = 0.00005
+  eps = 0.01
   ansFwd  = deriv    f x
   ansRev  = derivRev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
-  isClose = \a b. abs (a - b) < 0.001
-  isClose ansFwd ansNumeric && isClose ansRev ansNumeric
+  ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
 
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x

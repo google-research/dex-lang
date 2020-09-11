@@ -34,6 +34,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
+import Control.Monad.State.Strict
 import Data.Foldable (toList)
 import Data.Maybe
 import GHC.Stack
@@ -403,6 +404,21 @@ instance MonadEmbed m => MonadEmbed (ReaderT r m) where
   embedScoped m = ReaderT $ \r -> embedScoped $ runReaderT m r
   embedAsk = lift embedAsk
   embedLocal v m = ReaderT $ \r -> embedLocal v $ runReaderT m r
+
+instance MonadEmbed m => MonadEmbed (StateT s m) where
+  embedLook = lift embedLook
+  embedExtend x = lift $ embedExtend x
+  embedScoped m = do
+    s <- get
+    ((x, s'), env) <- lift $ embedScoped $ runStateT m s
+    put s'
+    return (x, env)
+  embedAsk = lift embedAsk
+  embedLocal v m = do
+    s <- get
+    (x, s') <- lift $ embedLocal v $ runStateT m s
+    put s'
+    return x
 
 instance (Monoid env, MonadEmbed m) => MonadEmbed (CatT env m) where
   embedLook = undefined

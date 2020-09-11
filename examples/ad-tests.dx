@@ -263,3 +263,25 @@ vec = [1.]
   (r, lin) = linearize f 2.0
   (r, lin 1.0)
 > (65536.0, 524288.0)
+
+:p
+  f = \rec.
+    ({x=x, y=y, z=z}) = rec
+    x * y * IToF z
+  (checkDeriv (\x. f {x=x, y=4.0, z=5}) 2.0, checkDeriv (\y. f {x=2.0, y=y, z=5}) 4.0)
+> (True, True)
+
+:p
+  f = \x.
+    y = for i:(Fin 10). { x=x * (IToF $ ordinal i) }
+    z = for i.
+      ({ x=x, ... }) = y.i
+      x
+    sum' z
+  checkDeriv f 1.0
+> True
+
+:p
+  f = \x. for i:(Fin 4). { x=x * x * (IToF $ ordinal i) }
+  jvp f 2.0 1.0
+> [{x = 0.0}, {x = 4.0}, {x = 8.0}, {x = 12.0}]
