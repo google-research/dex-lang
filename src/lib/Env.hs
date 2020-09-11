@@ -31,7 +31,8 @@ newtype Env a = Env (M.Map Name a)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName | SumName
+data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName
+               | SumName | TopFunctionName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text

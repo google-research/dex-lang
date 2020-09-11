@@ -15,7 +15,8 @@
 {-# LANGUAGE DerivingVia #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpFunction, getIType, toScalarType, fromScalarType) where
+module Imp (toImpModule, getIType, impBlockType, impFunType, getMainFun,
+            toScalarType, fromScalarType, impMainFunName) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad.Reader
@@ -23,9 +24,11 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
+import Data.Functor
 import Data.Foldable (toList)
 import Data.Coerce
 import Data.Maybe (fromJust)
+import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
@@ -53,28 +56,27 @@ import Util
 --
 -- TODO: Use an ImpAtom type alias to better document the code
 
--- TODO: use `Env ()` instead of `Scope`. The problem is that we're mixing up
--- Imp and Core types in there.
-
 data ParallelismLevel = TopLevel | ThreadLevel  deriving (Show, Eq)
-data ImpCtx = ImpCtx { impBackend  :: Backend
-                      , curLevel   :: ParallelismLevel }
-type EmbedEnv = ((Env Dest, [IExpr]), (Scope, ImpProgram))
-type ImpM = ReaderT ImpCtx (Cat EmbedEnv)
+data ImpCtx = ImpCtx { impBackend :: Backend
+                     , curLevel   :: ParallelismLevel }
+data ImpCatEnv = ImpCatEnv
+  { envRefDests   :: Env Dest
+  , envPtrsToFree :: [IExpr]
+  , envScope      :: Scope
+  , envStatements :: [ImpStatement]
+  , envFunctions  :: Env ImpFunction }
 
-toImpFunction :: Backend -> ([IBinder], Block) -> (ImpFunction, Abs (Nest Binder) Atom)
-toImpFunction backend (vsIn, block) = runImpMBinders initOpts vsIn $ do
-  (atomOut, prog) <- scopedBlock $ materializeResult
-  let vsOut = envAsVars $ freeVars atomOut
-  let impFun = ImpFunction vsIn prog [IVar (v:>fromScalarType ty) | (v:>(ty, _)) <- vsOut]
-  let reconAtom = Abs (toNest $ [Bind (v:>ty) |  (v:>(ty, _)) <- vsOut]) atomOut
-  return (impFun, reconAtom)
-  where
-    materializeResult = do
-      outDest <- allocKind Unmanaged $ getType block
-      void $ translateBlock mempty (Just outDest, block)
-      destToAtom outDest
-    initOpts = ImpCtx backend TopLevel
+type ImpM = ReaderT ImpCtx (Cat ImpCatEnv)
+type AtomRecon = Abs (Nest Binder) Atom
+
+toImpModule :: Backend -> ([IBinder], Block) -> (ImpModule, AtomRecon)
+toImpModule backend (vsIn, block) = runImpMBinders initOpts vsIn $ do
+  (reconAtom, impBlock) <- scopedBlock $ translateTopLevel block
+  functions <- toList <$> looks envFunctions
+  let ty = IFunType EntryFun (map binderAnn vsIn) (impBlockType impBlock)
+  let mainFunction = ImpFunction (impMainFunName:>ty) vsIn impBlock
+  return (ImpModule (functions ++ [mainFunction]), reconAtom)
+  where initOpts = ImpCtx backend TopLevel
 
 runImpMBinders :: ImpCtx -> [IBinder] -> ImpM a -> a
 runImpMBinders opts inBinders m = runImpM opts inVarScope m
@@ -82,9 +84,19 @@ runImpMBinders opts inBinders m = runImpM opts inVarScope m
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
     inVarScope = foldMap binderAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inBinders
 
+translateTopLevel :: Block -> ImpM (AtomRecon, [IExpr])
+translateTopLevel block = do
+  outDest <- allocKind Unmanaged $ getType block
+  void $ translateBlock mempty (Just outDest, block)
+  resultAtom <- destToAtom outDest
+  let vsOut = envAsVars $ freeVars resultAtom
+  let reconAtom = Abs (toNest $ [Bind (v:>ty) | (v:>(ty, _)) <- vsOut]) resultAtom
+  let resultIExprs = [IVar (v:>fromScalarType ty) | (v:>(ty, _)) <- vsOut]
+  return (reconAtom, resultIExprs)
+
 runImpM :: ImpCtx -> Scope -> ImpM a -> a
 runImpM opts inVarScope m =
-  fst $ runCat (runReaderT m opts) (mempty, (inVarScope, mempty))
+  fst $ runCat (runReaderT m opts) $ mempty {envScope = inVarScope}
 
 translateBlock :: SubstEnv -> WithDest Block -> ImpM Atom
 translateBlock env destBlock = do
@@ -155,21 +167,30 @@ launchKernel env (maybeDest, ~hof@(For _ (LamVal b body))) = do
   idxTy <- impSubst env $ binderType b
   n     <- indexSetSize idxTy
   dest  <- allocDest maybeDest $ getType $ Hof hof
-  scope <- variableScope
   i <- freshVar (binderNameHint b:>getIType n)
-  let device = case impBackend opts of
-                 LLVMCUDA -> GPU
-                 LLVMMC   -> CPU
-                 b -> error $ "Shouldn't be launching kernels from " ++ show b
-  let newOpts = opts { curLevel = ThreadLevel }
-  let kernel = snd $ runImpM newOpts scope $ scopedBlock $ do
-        idx <- intToIndex idxTy $ IVar i
-        ithDest <- destGet dest idx
-        void $ translateBlock (env <> b @> idx) (Just ithDest, body)
-  let args = envAsVars $ freeIVars kernel `envDiff` (i @> ())
-  emitStatement $ ILaunch device n (map IVar args) $
-    ImpKernel (map Bind args) (Bind i) kernel
+  let cc = case impBackend opts of
+        LLVMCUDA -> CUDAKernelLaunch
+        LLVMMC   -> MCThreadLaunch
+        backend -> error $ "Shouldn't be launching kernels from " ++ show backend
+  kernelBody <- withLevel ThreadLevel $ scopedVoidBlock $ do
+    idx <- intToIndex idxTy $ IVar i
+    ithDest <- destGet dest idx
+    void $ translateBlock (env <> b @> idx) (Just ithDest, body)
+  let args = envAsVars $ freeIVars kernelBody `envDiff` (i @> ())
+  f <- emitFunction cc (map Bind (i:args)) kernelBody
+  emitStatement $ ILaunch f n $ map IVar args
   destToAtom dest
+
+impMainFunName :: Name
+impMainFunName = Name TopFunctionName "impMain" 0
+
+emitFunction :: CallingConvention -> [IBinder] -> ImpBlock -> ImpM IFunVar
+emitFunction cc bs body = do
+  funEnv <- looks envFunctions
+  let name = genFresh (Name TopFunctionName "kernel" 0) funEnv
+  let fvar = name :> IFunType cc (map binderAnn bs) (impBlockType body)
+  extend $ mempty {envFunctions = fvar @> ImpFunction fvar bs body}
+  return fvar
 
 impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -310,9 +331,11 @@ toImpHof env (maybeDest, hof) = do
         void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
       destToAtom dest
     While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
-      (condAtom, cond') <- scopedBlock $ translateBlock env (Nothing, cond)
-      (_, body') <- scopedBlock $ void $ translateBlock env (Nothing, body)
-      emitStatement $ IWhile (cond', [fromScalarAtom condAtom]) body'
+      cond' <- liftM snd $ scopedBlock $ do
+                 ans <- translateBlock env (Nothing, cond)
+                 return ((), [fromScalarAtom ans])
+      body' <- scopedVoidBlock $ void $ translateBlock env (Nothing, body)
+      emitStatement $ IWhile cond' body'
       return UnitVal
     RunReader r (BinaryFunVal _ ref _ body) -> do
       rDest <- alloc $ getType r
@@ -731,8 +754,8 @@ emitSwitch testIdx = rec 0
     rec curIdx (body:rest) = do
       let curTag = fromScalarAtom $ TagRepVal $ fromIntegral curIdx
       cond       <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx curTag
-      thisCase   <- liftM snd $ scopedBlock $ body
-      otherCases <- liftM snd $ scopedBlock $ rec (curIdx + 1) rest
+      thisCase   <- scopedVoidBlock $ body
+      otherCases <- scopedVoidBlock $ rec (curIdx + 1) rest
       emitStatement $ ICond cond thisCase otherCases
 
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
@@ -740,7 +763,7 @@ emitLoop hint d n body = do
   (i, loopBody) <- scopedBlock $ do
     i <- freshVar (hint:>getIType n)
     body $ IVar i
-    return i
+    return (i, [])
   emitStatement $ IFor d (Bind i) n loopBody
 
 emitInstr :: ImpInstr -> ImpM IExpr
@@ -755,43 +778,50 @@ allocKind :: AllocType -> Type -> ImpM Dest
 allocKind allocTy ty = makeAllocDest allocTy "v" ty
 
 extendAlloc :: IExpr -> ImpM ()
-extendAlloc v = extend $ asFst $ asSnd [v]
+extendAlloc v = extend $ mempty { envPtrsToFree = [v] }
 
 emitAlloc :: IVar -> IExpr -> ImpM ()
 emitAlloc v n = emitStatement $ IInstr (Just (Bind v), Alloc addr ty n)
   where PtrType (_, addr, ty) = varAnn v
 
-scopedBlock :: ImpM a -> ImpM (a, ImpProgram)
+scopedVoidBlock :: ImpM () -> ImpM ImpBlock
+scopedVoidBlock body = liftM snd $ scopedBlock $ body $> ((),[])
+
+scopedBlock :: ImpM (a, [IExpr]) -> ImpM (a, ImpBlock)
 scopedBlock body = do
-  (ans, ((_, allocs), (scope', prog))) <- scoped body
-  extend (mempty, (scope', mempty))  -- Keep the scope extension to avoid reusing variable names
-  let frees = toNest [IInstr (Nothing, Free x) | x <- allocs]
-  return (ans, prog <> frees)
+  ((aux, results), env) <- scoped body
+  extend $ mempty { envScope     = envScope     env
+                  , envFunctions = envFunctions env }  -- Keep the scope extension to avoid reusing variable names
+  let frees = [IInstr (Nothing, Free x) | x <- envPtrsToFree env]
+  return (aux, ImpBlock (toNest (envStatements env <> frees)) results)
 
 emitStatement :: ImpStatement -> ImpM ()
-emitStatement statement = extend $ asSnd $ asSnd $ toNest [statement]
+emitStatement statement = extend $ mempty { envStatements = [statement] }
 
 variableScope :: ImpM Scope
-variableScope = looks $ fst . snd
+variableScope = looks envScope
 
 freshVar :: VarP a -> ImpM (VarP a)
 freshVar (hint:>t) = do
-  scope <- looks (fst . snd)
+  scope <- looks envScope
   let v = genFresh (rawName GenName $ nameTag hint) scope
-  extend $ asSnd $ asFst (v @> (UnitTy, UnknownBinder)) -- TODO: fix!
+  extend $ mempty { envScope = v @> (UnitTy, UnknownBinder) }
   return $ v:>t
 
 withRefScope :: ImpM a -> ImpM a
 withRefScope m = do
-  (a, ((_, x), (y, z))) <- scoped $ m
-  extend ((mempty, x), (y, z))
+  (a, env) <- scoped $ m
+  extend $ env { envRefDests = mempty }
   return a
 
 getRef :: Var -> ImpM Dest
-getRef v = looks $ (! v) . fst . fst
+getRef v = looks $ (! v) . envRefDests
 
 putRef :: Var -> Dest -> ImpM ()
-putRef v d = extend ((v @> d, mempty), mempty)
+putRef v d = extend $ mempty { envRefDests = v @> d }
+
+withLevel :: ParallelismLevel -> ImpM a -> ImpM a
+withLevel level = local (\opts -> opts {curLevel = level })
 
 -- === type checking imp programs ===
 
@@ -801,22 +831,21 @@ putRef v d = extend ((v @> d, mempty), mempty)
 -- State keeps track of _all_ names used in the program, Reader keeps the type env.
 type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType) (Either Err)) a
 
+instance Checkable ImpModule where
+  -- TODO: check main function defined
+  checkValid (ImpModule fs) = mapM_ checkValid fs
+
 instance Checkable ImpFunction where
-  checkValid (ImpFunction bs prog result) = do
+  checkValid (ImpFunction _ bs block) = do
     let scope = foldMap (binderAsEnv . fmap (const ())) bs
     let env   = foldMap (binderAsEnv                  ) bs
-    void $ flip runReaderT env $ flip runStateT scope $ do
-       void $ checkProg prog
-       mapM_ checkIExpr result
+    void $ flip runReaderT env $ flip runStateT scope $ checkBlock block
 
-checkProg :: ImpProgram -> ImpCheckM ()
-checkProg prog = () <$ checkProgVal (prog, [])
-
-checkProgVal :: ImpProgramVal -> ImpCheckM [IType]
-checkProgVal (Empty, val) = traverse checkIExpr val
-checkProgVal ((Nest stmt prog), val) = do
+checkBlock :: ImpBlock -> ImpCheckM [IType]
+checkBlock (ImpBlock Empty val) = mapM checkIExpr val
+checkBlock (ImpBlock (Nest stmt rest) val) = do
   env <- checkStatement stmt
-  extendR env $ checkProgVal (prog, val)
+  extendR env $ checkBlock $ ImpBlock rest val
 
 checkStatement :: ImpStatement -> ImpCheckM (Env IType)
 checkStatement stmt = case stmt of
@@ -833,27 +862,23 @@ checkStatement stmt = case stmt of
     checkInt size
     checkBinder i
     assertEq (binderAnn i) (getIType size) $ "Mismatch between the loop iterator and upper bound type"
-    extendR (i @> getIType size) $ checkProg block
+    [] <- extendR (i @> getIType size) $ checkBlock block
     return mempty
   IWhile cond body -> do
-    [condTy] <- checkProgVal cond
+    [condTy] <- checkBlock cond
     assertEq (Scalar Int8Type) condTy $ "Not a bool: " ++ pprint cond
-    checkProg body
+    [] <- checkBlock body
     return mempty
   ICond predicate consequent alternative -> do
     predTy <- checkIExpr predicate
     assertEq (Scalar Int8Type) predTy "Type mismatch in predicate"
-    checkProg consequent
-    checkProg alternative
+    [] <- checkBlock consequent
+    [] <- checkBlock alternative
     return mempty
-  ILaunch _ n args (ImpKernel bs ib prog)-> do
-    assertEq (length args) (length bs) ""
-    argTys <- mapM checkIExpr args
+  ILaunch _ n args -> do
+    -- TODO: check args against type of function
     checkInt n
-    checkIntBaseType False $ BaseTy (binderAnn ib)
-    forM (zip argTys bs) $ \(ty, b) -> assertEq ty (binderAnn b) ""
-    -- no lexical scope
-    local (const $ foldMap binderAsEnv (ib:bs)) $ checkProg prog
+    mapM_ checkIExpr args
     return mempty
 
 instrTypeChecked :: ImpInstr -> ImpCheckM (Maybe IType)
@@ -933,6 +958,16 @@ instance HasIType IExpr where
     ILit val -> litType val
     IVar v   -> varAnn v
 
+getMainFun :: HasCallStack => ImpModule -> ImpFunction
+getMainFun (ImpModule fs) = fromJust $
+  lookup impMainFunName [(name, f) | f@(ImpFunction (name:>_) _ _) <- fs]
+
+impFunType :: ImpFunction -> IFunType
+impFunType (ImpFunction (_:>ty) _ _) = ty
+
+impBlockType :: ImpBlock -> [IType]
+impBlockType (ImpBlock _ results) = map getIType results
+
 impInstrType :: ImpInstr -> Maybe IType
 impInstrType instr = case instr of
   IPrimOp op      -> Just $ impOpType op
@@ -973,3 +1008,11 @@ impOpType pop = case pop of
 
 instance Pretty Dest where
   pretty (Dest atom) = "Dest" <+> pretty atom
+
+instance Semigroup ImpCatEnv where
+  (ImpCatEnv a b c d e) <> (ImpCatEnv a' b' c' d' e') =
+    ImpCatEnv (a<>a') (b<>b') (c<>c') (d<>d') (e<>e')
+
+instance Monoid ImpCatEnv where
+  mempty = ImpCatEnv mempty mempty mempty mempty mempty
+  mappend = (<>)

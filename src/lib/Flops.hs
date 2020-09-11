@@ -24,11 +24,11 @@ newtype Profile = Profile (M.Map String Count)
 type FlopM a = ReaderT Term (Writer Profile) a
 
 impFunctionFlops :: ImpFunction -> Profile
-impFunctionFlops (ImpFunction _ prog _) =
-  snd $ runWriter (runReaderT (flops prog) (litTerm 1))
+impFunctionFlops (ImpFunction _ _ body) =
+  snd $ runWriter (runReaderT (flops body) (litTerm 1))
 
-flops :: ImpProgram -> FlopM ()
-flops prog = void $ traverse statementFlops prog
+flops :: ImpBlock -> FlopM ()
+flops (ImpBlock statements _) = void $ traverse statementFlops statements
 
 statementFlops :: ImpStatement -> FlopM ()
 statementFlops stmt = case stmt of

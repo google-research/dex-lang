@@ -24,13 +24,14 @@ module Syntax (
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
-    ImpProgramVal, ImpProgram, ImpStatement (..),
+    Val, TopEnv, Op, Con, Hof, TC, Module (..),
+    ImpModule (..), ImpBlock (..), ImpFunction (..), ImpStatement (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
+    IFunType (..), IFunVar, CallingConvention (..),
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
-    IScope, BinderInfo (..), Bindings, ImpKernel (..), CUDAKernel (..),
+    IScope, BinderInfo (..), Bindings, CUDAKernel (..),
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -446,33 +447,34 @@ type IVal = IExpr  -- only ILit and IRef constructors
 type IBinder = BinderP IType
 type IVar = VarP IType
 type IType = BaseType
-
 type Size = IExpr
 
--- Destinations first, arguments second
-data ImpFunction = ImpFunction [IBinder] ImpProgram [IExpr]  deriving (Show)
-type ImpProgram = Nest ImpStatement
-type ImpProgramVal = (ImpProgram, [IExpr])
+type IFunVar = VarP IFunType
+data IFunType = IFunType CallingConvention [IType] [IType]  deriving (Show)
+data CallingConvention = OrdinaryFun | EntryFun
+                       | CUDAKernelLaunch | MCThreadLaunch deriving (Show)
+
+data ImpModule   = ImpModule [ImpFunction] deriving (Show)
+data ImpFunction = ImpFunction IFunVar [IBinder] ImpBlock  deriving (Show)
+data ImpBlock    = ImpBlock (Nest ImpStatement) [IExpr]    deriving (Show)
 
 data ImpStatement = IInstr (Maybe IBinder, ImpInstr)
-                  | IFor Direction IBinder Size ImpProgram
-                  | IWhile ImpProgramVal ImpProgram  -- cond block, body block
-                  | ICond IExpr ImpProgram ImpProgram
-                  | ILaunch Device Size [IExpr] ImpKernel
+                  | IFor Direction IBinder Size ImpBlock
+                  | IWhile ImpBlock ImpBlock  -- cond block, body block
+                  | ICond IExpr ImpBlock ImpBlock
+                  | ILaunch IFunVar Size [IExpr]
+         -- TODO: | ICall IFunVar [IExpr]
                     deriving (Show)
 
 data ImpInstr = Store IExpr IExpr           -- dest, val
               | Alloc AddressSpace IType Size
-              | MemCopy IExpr IExpr IExpr   -- dest, source, numel
+     -- TODO: | MemCopy IExpr IExpr IExpr   -- dest, source, numel
               | Free IExpr
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
               | IPrimOp IPrimOp
                 deriving (Show)
 
--- Parameters, linear thread index, kernel body
--- TODO: just use ImpFunction instead?
-data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram deriving (Show)
 data Backend = LLVM | LLVMCUDA | LLVMMC | Interp  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
@@ -1146,10 +1148,12 @@ instance HasIVars IExpr where
 instance HasIVars IType where
   freeIVars _ = mempty
 
-instance HasIVars ImpProgram where
-  freeIVars Empty = mempty
-  freeIVars (Nest stmt cont) = stmtFree <> (freeIVars cont `envDiff` boundIVars stmt)
+instance HasIVars ImpBlock where
+  freeIVars (ImpBlock Empty results) = foldMap freeIVars results
+  freeIVars (ImpBlock (Nest stmt cont) results) =
+    stmtFree <> (freeIVars rest `envDiff` boundIVars stmt)
     where
+      rest = ImpBlock cont results
       stmtFree = case stmt of
         IInstr (_, instr) -> freeIVars instr
         IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
@@ -1164,9 +1168,6 @@ instance BindsIVars ImpStatement where
     IWhile _ _   -> mempty
     ICond  _ _ _ -> mempty
 
-instance BindsIVars ImpProgram where
-  boundIVars prog = foldMap boundIVars prog
-
 instance HasIVars ImpInstr where
   freeIVars i = case i of
     Store d e     -> freeIVars d <> freeIVars e
@@ -1174,10 +1175,6 @@ instance HasIVars ImpInstr where
     Free x        -> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
     IThrowError   -> mempty
-
-instance HasIVars ImpProgramVal where
-  freeIVars (prog, results) =
-    freeIVars prog <> (foldMap freeIVars results `envDiff` boundIVars prog)
 
 instance Semigroup (Nest a) where
   (<>) = mappend

@@ -8,7 +8,6 @@
 
 module TopLevel (evalSourceBlock, EvalConfig (..), Backend (..)) where
 
-import Control.Concurrent.MVar
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -32,7 +31,6 @@ import PPrint
 import Parser
 import Util (highlightRegion)
 import Optimize
-import CUDA
 
 data EvalConfig = EvalConfig
   { backendName :: Backend
@@ -151,20 +149,14 @@ evalModule bindings normalized = do
   Module Evaluated Empty newBindings <- return evaluated
   return newBindings
 
-arrayVars :: Subst a => a -> [Var]
-arrayVars x = foldMap go $ envPairs (freeVars x)
-  where go :: (Name, (Type, BinderInfo)) -> [Var]
-        go (v@(GlobalArrayName _), (ty, _)) = [v :> ty]
-        go _ = []
-
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
   backend <- asks backendName
   logger  <- asks logService
-  let (impFunction, reconAtom) = toImpFunction backend ([], block)
-  checkPass ImpPass impFunction
-  let llvmFunc = impToLLVM impFunction
-  resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmFunc []
+  let (impModule, reconAtom) = toImpModule backend ([], block)
+  checkPass ImpPass impModule
+  llvmModule <- liftIO $ impToLLVM logger impModule
+  resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmModule []
   return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a

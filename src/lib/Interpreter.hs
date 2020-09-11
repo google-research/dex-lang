@@ -108,7 +108,9 @@ evalOpDefined expr = case expr of
     _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (_, a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (DerivedPtr, a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit (_, _, t) p))) -> (Con . Lit) <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> (Con . Lit) <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (_, a, _) _))) ->
+    error $ "Can't load from this address space in interpreter: " ++ pprint a
   IndexAsInt idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i

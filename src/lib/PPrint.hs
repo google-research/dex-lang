@@ -110,8 +110,8 @@ instance PrettyPrec BaseType where
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
 instance Pretty PtrOrigin where
-  pretty AllocatedPtr = "allocated"
-  pretty DerivedPtr   = "derived"
+  pretty AllocatedPtr = "a"
+  pretty DerivedPtr   = "d"
 
 instance Pretty AddressSpace where
   pretty Stack    = "stack"
@@ -350,23 +350,26 @@ instance Pretty ImpStatement where
   pretty (IInstr (Just b , instr)) = p b <+> "=" <+> p instr
   pretty (IFor d i n block)         = dirStr d <+> p i <+> "<" <+> p n <>
                                       nest 4 (hardline <> p block)
-  pretty (IWhile (cond, mcExpr) body) = "while" <+>
-                                        nest 2 condDoc <+> "do" <>
-                                        nest 4 (hardline <> p body)
-    where condDoc = case mcExpr of
-                      [cExpr] -> hardline <> p cond <> line <> p cExpr
-                      _ -> "??"
+  pretty (IWhile cond body) = "while" <+>
+                                  nest 2 (p cond) <+> "do" <>
+                                  nest 4 (hardline <> p body)
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
-  pretty (ILaunch device size args kernel) = "launch_kernel" <+> p (show device)
-    <+> p size <+> p args <> nest 2 (hardline <> p kernel)
+  pretty (ILaunch f size args) =
+    "launch_kernel" <+> p (varName f) <+> p size <+> spaced args
+
+instance Pretty IFunType where
+  pretty (IFunType cc argTys retTys) =
+    "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
+
+instance Pretty CallingConvention where
+  pretty = p . show
 
 instance Pretty ImpFunction where
-  pretty (ImpFunction vsOut body vsIn) =
-                   "in:        " <> p vsIn
-    <> hardline <> p body
-    <> hardline <> "out:       " <> p vsOut
+  pretty (ImpFunction (f:>IFunType cc _ _) bs body) =
+    "def" <+> p f <+> p cc <+> p bs
+    <> nest 2 (hardline <> p body) <> hardline
 
 instance Pretty ImpInstr where
   pretty (IPrimOp op)     = pLowest op
@@ -375,9 +378,6 @@ instance Pretty ImpInstr where
   pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty IThrowError = "throwError"
-
-instance Pretty ImpKernel where
-  pretty (ImpKernel args idxVar kernel) = parens (p idxVar <+> p args) <> nest 2 (hardline <> p kernel)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
@@ -562,8 +562,15 @@ instance PrettyPrec a => PrettyPrec [a] where
 instance Pretty a => Pretty (Nest a) where
   pretty xs = pretty $ toList xs
 
-instance {-# OVERLAPPING #-} Pretty ImpProgram where
-  pretty prog = vcat $ toList $ pretty <$> prog
+instance Pretty ImpModule where
+  pretty (ImpModule fs) = vcat (map p fs)
+
+instance Pretty ImpBlock where
+  pretty (ImpBlock statements results) =
+    (vcat $ map pretty $ toList statements) <> resultDoc
+    where resultDoc = case results of
+                       [] -> ""
+                       _  -> hardline <> "return" <+> p results
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

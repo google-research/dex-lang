@@ -9,14 +9,15 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module LLVMExec (LLVMFunction (..), LLVMKernel (..),
-                 callLLVM, compileCUDAKernel, loadLitVal) where
+module LLVMExec (LLVMModule (..), LLVMKernel (..), ptxDataLayout,
+                 callLLVM, compileCUDAKernel, ptxTargetTriple, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.AddrSpace as L
 import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.DataLayout as L
 import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.Relocation as R
 import qualified LLVM.CodeModel as CM
@@ -44,21 +45,39 @@ import Foreign.Ptr
 import Foreign.Storable hiding (alignment)
 import Control.Monad
 import Control.Exception hiding (throw)
+import Data.ByteString.Short (toShort, ShortByteString)
 import Data.ByteString.Char8 (unpack, pack)
 import Data.IORef
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 import Logging
 import Syntax
-import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
 import Resources
-
-type DexExitCode = Int
 
 foreign import ccall "dynamic"
   callFunPtr :: FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
              -> Ptr () -> Ptr () -> IO DexExitCode
+
+type DexExitCode = Int
+
+data LLVMModule = LLVMModule [BaseType] [BaseType] L.Module
+data LLVMKernel = LLVMKernel L.Module
+
+callLLVM :: Logger [Output] -> LLVMModule -> [LitVal] -> IO [LitVal]
+callLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
+  argsPtr   <- mallocBytes $ length argTypes    * cellSize
+  resultPtr <- mallocBytes $ length resultTypes * cellSize
+  storeLitVals argsPtr args
+  exitCode <- evalLLVM logger llvmModule argsPtr resultPtr
+  case exitCode of
+    0 -> do
+      results <- loadLitVals resultPtr resultTypes
+      free argsPtr
+      free resultPtr
+      return results
+    _ -> throwIO $ Err RuntimeErr Nothing ""
 
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) = do
@@ -90,21 +109,6 @@ compileCUDAKernel logger (LLVMKernel ast) = do
   where
     ptxasPath = "/usr/local/cuda/bin/ptxas"
     arch = "sm_60"
-
-
-callLLVM :: Logger [Output] -> LLVMFunction -> [LitVal] -> IO [LitVal]
-callLLVM logger (LLVMFunction argTypes resultTypes ast) args = do
-  argsPtr   <- mallocBytes $ length argTypes    * cellSize
-  resultPtr <- mallocBytes $ length resultTypes * cellSize
-  storeLitVals argsPtr args
-  exitCode <- evalLLVM logger ast argsPtr resultPtr
-  case exitCode of
-    0 -> do
-      results <- loadLitVals resultPtr resultTypes
-      free argsPtr
-      free resultPtr
-      return results
-    _ -> throwIO $ Err RuntimeErr Nothing ""
 
 evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> Ptr () -> IO DexExitCode
 evalLLVM logger ast argPtr resultPtr = do
@@ -189,7 +193,6 @@ runDefaultPasses t m = do
     defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
     extraPasses = [ P.SuperwordLevelParallelismVectorize
                   , P.FunctionInlining 0 ]
-
 
 runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
 runPasses passes mt m = do
@@ -334,3 +337,18 @@ zeroNVVMReflect =
                    }
                ]
            }
+
+ptxTargetTriple :: ShortByteString
+ptxTargetTriple = "nvptx64-nvidia-cuda"
+
+ptxDataLayout :: L.DataLayout
+ptxDataLayout = (L.defaultDataLayout L.LittleEndian)
+    { L.endianness     = L.LittleEndian
+    , L.pointerLayouts = M.fromList [(L.AddrSpace 0, (64, L.AlignmentInfo 64 64))]
+    , L.typeLayouts    = M.fromList $
+        [ ((L.IntegerAlign, 1), L.AlignmentInfo 8 8) ] ++
+        [ ((L.IntegerAlign, w), L.AlignmentInfo w w) | w <- [8, 16, 32, 64] ] ++
+        [ ((L.FloatAlign,   w), L.AlignmentInfo w w) | w <- [32, 64] ] ++
+        [ ((L.VectorAlign,  w), L.AlignmentInfo w w) | w <- [16, 32, 64, 128] ]
+    , L.nativeSizes    = Just $ S.fromList [16, 32, 64]
+    }
