@@ -19,7 +19,7 @@ meanAndStdDev :  Int -> (Key -> Float) -> Key -> (Float & Float) =
 numSamps = 1000000
 
 :p meanAndStdDev numSamps estimatePiArea (newKey 0)
-> (3.143452, 1.6408893)
+> (3.143452, 1.6408892)
 
 :p meanAndStdDev numSamps estimatePiAvgVal (newKey 0)
-> (3.1437902, 0.88649863)
+> (3.1437902, 0.88649935)
