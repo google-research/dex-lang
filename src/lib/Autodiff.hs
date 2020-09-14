@@ -347,21 +347,6 @@ linearizeAtom atom = case atom of
 withZeroTangent :: Atom -> (Atom, TangentM Atom)
 withZeroTangent x = (x, return $ zeroAt (tangentType (getType x)))
 
-zeroAt :: Type -> Atom
-zeroAt ty = case ty of
-  BaseTy bt  -> Con $ Lit $ zeroLit bt
-  TabTy i a  -> TabValA i $ zeroAt a
-  UnitTy     -> UnitVal
-  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
-  _          -> unreachable
-  where
-    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
-    zeroLit bt = case bt of
-      Scalar Float64Type -> Float64Lit 0.0
-      Scalar Float32Type -> Float32Lit 0.0
-      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
-      _                  -> unreachable
-
 tangentType :: Type -> Type
 tangentType ty = case ty of
   RecordTy (NoExt items) -> RecordTy $ NoExt $ fmap tangentType items
@@ -384,6 +369,43 @@ tangentType ty = case ty of
     _ -> unsupported
   _ -> unsupported
   where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
+
+addTangent :: MonadEmbed m => Atom -> Atom -> m Atom
+addTangent x y = case getType x of
+  RecordTy _ -> pack (getType x) <$> bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
+  TabTy b _  -> buildFor Fwd b $ \i -> bindM2 addTangent (tabGet x i) (tabGet y i)
+  TC con -> case con of
+    BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
+    BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
+    UnitType            -> return UnitVal
+    PairType _ _        -> do
+      (xa, xb) <- fromPair x
+      (ya, yb) <- fromPair y
+      PairVal <$> addTangent xa ya <*> addTangent xb yb
+    _ -> notTangent
+  _ -> notTangent
+  where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
+
+zeroAt :: Type -> Atom
+zeroAt ty = case ty of
+  BaseTy bt  -> Con $ Lit $ zeroLit bt
+  TabTy i a  -> TabValA i $ zeroAt a
+  UnitTy     -> UnitVal
+  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  _          -> unreachable
+  where
+    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
+    zeroLit bt = case bt of
+      Scalar Float64Type -> Float64Lit 0.0
+      Scalar Float32Type -> Float32Lit 0.0
+      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
+      _                  -> unreachable
+
+pack :: Type -> [Atom] -> Atom
+pack ty elems = case ty of
+  TypeCon def params     -> DataCon def params 0 elems
+  RecordTy (NoExt types) -> Record $ snd $ mapAccumL (\(h:t) _ -> (t, h)) elems types
+  _ -> error $ "Unexpected Unpack argument type: " ++ pprint ty
 
 isTrivialForAD :: Expr -> Bool
 isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
@@ -481,12 +503,6 @@ transposeBlock (Block decls result) ct = case decls of
       withLinVars [] m     = m >> return []
       withLinVars (b:bs) m = uncurry (flip (:)) <$> (withLinVar b $ withLinVars bs m)
 
-      pack :: Type -> [Atom] -> Atom
-      pack ty elems = case ty of
-        TypeCon def params     -> DataCon def params 0 elems
-        RecordTy (NoExt types) -> Record $ snd $ mapAccumL (\(h:t) _ -> (t, h)) elems types
-        _ -> error $ "Unexpected Unpack argument type: " ++ pprint ty
-
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
   App x i -> case getType x of
@@ -517,13 +533,16 @@ transposeOp op ct = case op of
   ScalarBinOp _    _ _  -> notLinear
   PrimEffect refArg m   -> do
     refArg' <- substTranspose linRefSubst refArg
+    let emitEff = emitOp . PrimEffect refArg'
     case m of
-      MAsk    -> void $ emitOp $ PrimEffect refArg' (MTell ct)
-      MTell x -> do
-       ct' <- emitOp $ PrimEffect refArg' MAsk
-       transposeAtom x ct'
-      MGet    -> notImplemented
-      MPut  _ -> notImplemented
+      MAsk    -> void $ emitEff $ MTell ct
+      MTell x -> transposeAtom x =<< emitEff MAsk
+      -- TODO: Do something more efficient for state. We should be able
+      --       to do in-place addition, just like we do for the Writer effect.
+      MGet    -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
+      MPut  x -> do
+        transposeAtom x =<< emitEff MGet
+        void $ emitEff $ MPut $ zeroAt $ getType x
   IndexRef     _ _      -> notImplemented
   FstRef       _        -> notImplemented
   SndRef       _        -> notImplemented
@@ -577,7 +596,12 @@ transposeHof hof ct = case hof of
     void $ emitRunReader "r" ctEff $ \ref -> do
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
-  RunState _ _ -> notImplemented
+  RunState s ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
+    (ctBody, ctState) <- fromPair ct
+    (_, cts) <- (fromPair =<<) $ emitRunState "s" ctState $ \ref -> do
+      localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
+      return UnitVal
+    transposeAtom s cts
   Tile   _ _ _ -> notImplemented
   While    _ _ -> notImplemented
   Linearize  _ -> error "Unexpected linearization"
