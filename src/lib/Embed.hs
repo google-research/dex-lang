@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildNestedLam, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
-              clampPositive, buildNAbs,
+              clampPositive, buildNAbs, buildNAbsAux,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
 import Control.Applicative
@@ -168,14 +168,16 @@ buildLamAux b fArr fBody = do
      return (Bind v, arr, ans, aux)
   return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
 
-buildNAbs :: MonadEmbed m
-          => Nest Binder -> ([Atom] -> m Atom) -> m (Abs (Nest Binder) Block)
-buildNAbs bs body = do
-  ((bs', ans), decls) <- scopedDecls $ do
+buildNAbs :: MonadEmbed m => Nest Binder -> ([Atom] -> m Atom) -> m Alt
+buildNAbs bs body = liftM fst $ buildNAbsAux bs $ \xs -> (,()) <$> body xs
+
+buildNAbsAux :: MonadEmbed m => Nest Binder -> ([Atom] -> m (Atom, a)) -> m (Alt, a)
+buildNAbsAux bs body = do
+  ((bs', (ans, aux)), decls) <- scopedDecls $ do
      vs <- freshNestedBinders bs
-     ans <- body $ map Var $ toList vs
-     return (fmap Bind vs, ans)
-  return $ Abs bs' $ wrapDecls decls ans
+     result <- body $ map Var $ toList vs
+     return (fmap Bind vs, result)
+  return (Abs bs' $ wrapDecls decls ans, aux)
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
@@ -557,14 +559,11 @@ traverseExpr def@(_, _, fAtom) expr = case expr of
   Atom x  -> Atom <$> fAtom x
   Op  op  -> Op   <$> traverse fAtom op
   Hof hof -> Hof  <$> traverse fAtom hof
-  Case e alts ty ->
-    Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
-
-traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
-            => TraversalDef m -> Alt -> m Alt
-traverseAlt def@(_, _, fAtom) (Abs bs body) = do
-  bs' <- mapM (mapM fAtom) bs
-  buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
+  Case e alts ty -> Case <$> fAtom e <*> mapM traverseAlt alts <*> fAtom ty
+  where
+    traverseAlt (Abs bs body) = do
+      bs' <- mapM (mapM fAtom) bs
+      buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
@@ -595,6 +594,14 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
   VariantTy (Ext items rest) -> do
     items' <- traverse fAtom items
     return $ VariantTy $ Ext items' rest
+  ACase e alts ty -> ACase <$> fAtom e <*> mapM traverseAAlt alts <*> fAtom ty
+  where
+    traverseAAlt (Abs bs a) = do
+      bs' <- mapM (mapM fAtom) bs
+      (Abs bs'' b) <- buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ fAtom a
+      case b of
+        Block Empty (Atom r) -> return $ Abs bs'' r
+        _                    -> error "ACase alternative traversal has emitted decls or exprs!"
 
 -- === partial evaluation using definitions in scope ===
 

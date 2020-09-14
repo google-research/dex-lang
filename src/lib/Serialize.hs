@@ -31,6 +31,7 @@ import Data.List (transpose)
 
 import Array
 import Interpreter
+import Simplify
 import Type hiding (indexSetConcreteSize)
 import Syntax
 import PPrint
@@ -208,6 +209,9 @@ prettyVal val = case val of
             asStr $ prettyVal $ evalBlock mempty $ snd $ applyAbs abs idx
           idxSetStr = case idxSet of FixedIntRange l _ | l == 0 -> mempty
                                      _                          -> "@" <> pretty idxSet
+  ACase e alts _ -> case simplifyCase e alts of
+    Just (env, atom) -> prettyVal $ subst (env, mempty) atom
+    Nothing          -> error $ "Failed to reduce an acase: " ++ pprint val
   Con con -> case con of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
     Coerce t i  -> pretty i <> "@" <> pretty t

@@ -21,7 +21,7 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), IStmt (..),
     IProg, IProgVal, ImpProgram, ImpStatement, ImpInstr (..), IExpr (..), IVal,
     IPrimOp, IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
+    UAlt (..), AltP, Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     MDImpFunction (..), MDImpProgram, MDImpInstr (..), MDImpStatement,
     ImpKernel (..), CUDAKernel (..), IScope,
@@ -92,6 +92,7 @@ data Atom = Var Var
           | Con Con
           | TC  TC
           | Eff EffectRow
+          | ACase Atom [AltP Atom] Type
             deriving (Show, Generic)
 
 data Expr = App Atom Atom
@@ -105,7 +106,8 @@ data Decl = Let LetAnn Binder Expr
           | Unpack (Nest Binder) Expr  deriving (Show, Generic)
 
 data Block = Block (Nest Decl) Expr    deriving (Show, Generic)
-type Alt = Abs (Nest Binder) Block
+type AltP a = Abs (Nest Binder) a
+type Alt = AltP Block
 
 type Var    = VarP Type
 type Binder = BinderP Type
@@ -1013,6 +1015,7 @@ instance HasVars Atom where
     Variant la _ _ val -> freeVars la <> freeVars val
     RecordTy row -> freeVars row
     VariantTy row -> freeVars row
+    ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
 
 instance Subst Atom where
   subst env atom = case atom of
@@ -1029,6 +1032,7 @@ instance Subst Atom where
     Variant row label i val -> Variant (subst env row) label i (subst env val)
     RecordTy row -> RecordTy $ subst env row
     VariantTy row -> VariantTy $ subst env row
+    ACase v alts rty -> ACase (subst env v) (subst env alts) (subst env rty)
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings

@@ -146,10 +146,13 @@ instance PrettyPrec Expr where
   prettyPrec (Hof (For dir (Lam lamExpr))) =
     atPrec LowestPrec $ dirStr dir <+> prettyLamHelper lamExpr (PrettyFor dir)
   prettyPrec (Hof hof) = prettyPrec hof
-  prettyPrec (Case e alts _) = atPrec LowestPrec $ "case" <+> p e <+> "of" <>
-    nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
+  prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
 
-prettyAlt :: Alt -> Doc ann
+prettyPrecCase :: Pretty b => Doc ann -> Atom -> [AltP b] -> DocPrec ann
+prettyPrecCase name e alts = atPrec LowestPrec $ name <+> p e <+> "of" <>
+  nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
+
+prettyAlt :: Pretty b => AltP b -> Doc ann
 prettyAlt (Abs bs body) =
   hsep (map prettyBinderNoAnn $ toList bs) <+> "->" <> nest 2 (p body)
 
@@ -334,6 +337,7 @@ instance PrettyPrec Atom where
             _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+    ACase e alts _ -> prettyPrecCase "acase" e alts
 
 fromInfix :: Text -> Maybe Text
 fromInfix t = do
