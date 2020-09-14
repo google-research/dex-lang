@@ -79,8 +79,8 @@ compileFunction :: Logger [Output] -> ImpFunction
 compileFunction logger fun = case cc of
   OrdinaryFun -> error "not implemented"
   EntryFun -> return $ runCompile CPU $ do
-    (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ L.ptr i64
-    (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ L.ptr i64
+    (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
+    (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     argOperands <- forM (zip [0..] argTys) $ \(i, ty) ->
       gep argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load
 
@@ -101,7 +101,7 @@ compileFunction logger fun = case cc of
     (startIdxParam, startIdx) <- freshParamOpPair [] i64
     (endIdxParam, endIdx)     <- freshParamOpPair [] i64
     -- TODO: Preserve pointer attributes??
-    (argArrayParam, argArray) <- freshParamOpPair [] $ L.ptr voidp
+    (argArrayParam, argArray) <- freshParamOpPair [] $ hostPtrTy hostVoidp
     args <- unpackArgs argArray argTypes
     let argEnv = foldMap (uncurry (@>)) $ zip argBinders args
     niter <- (`asIntWidth` idxType) =<< endIdx `sub` startIdx
@@ -144,38 +144,29 @@ compileInstr instr = case instr of
       Heap CPU -> free      ptr'
       Heap GPU -> cuMemFree ptr'
       Stack -> error "Shouldn't be freeing alloca"
+  MemCopy dest src numel -> do
+    let PtrType (_, destAddr, ty) = getIType dest
+    let PtrType (_, srcAddr , _ ) = getIType src
+    destDev <- deviceFromAddr destAddr
+    srcDev  <- deviceFromAddr srcAddr
+    dest' <- compileExpr dest >>= castVoidPtr
+    src'  <- compileExpr src  >>= castVoidPtr
+    numel' <- compileExpr numel >>= (`asIntWidth` i64)
+    numBytes <- numel' `mul` sizeof (scalarTy ty)
+    dev <- asks curDevice
+    case (destDev, srcDev) of
+      (CPU, GPU) -> cuMemcpyDToH numBytes src'  dest'
+      (GPU, CPU) -> cuMemcpyHToD numBytes dest' src'
+      _ -> error $ "Not implemented"
+    return Nothing
   Store dest val -> do
-    let PtrType (_, addr, ty) = getIType dest
-    let ty' = scalarTy ty
     dest' <- compileExpr dest
     val'  <- compileExpr val
-    curDev <- asks curDevice
-    case addr of
-      Stack -> store dest' val'
-      Heap destDev
-        | destDev == curDev -> store dest' val'
-        | otherwise -> do
-           destPtr <- castVoidPtr dest'
-           srcPtr <- alloca 1 ty'
-           store srcPtr val'
-           srcPtr' <- castVoidPtr srcPtr
-           cuMemcpy (sizeof ty') (destDev, destPtr) (curDev, srcPtr')
+    store dest' val'
     return Nothing
   IPrimOp (PtrLoad ptr) -> do
-    let PtrType (_, addr, ty) = getIType ptr
     ptr' <- compileExpr ptr
-    let ty' = scalarTy ty
-    curDev <- asks curDevice
-    Just <$> case addr of
-      Stack -> load ptr'
-      Heap srcDev
-        | srcDev == curDev -> load ptr'
-        | otherwise -> do
-           srcPtr <- castVoidPtr ptr'
-           destPtr <- alloca 1 ty'
-           destPtr' <- castVoidPtr destPtr
-           cuMemcpy (sizeof ty') (curDev, destPtr') (srcDev, srcPtr)
-           load destPtr
+    Just <$> load ptr'
   IPrimOp op     -> Just    <$> (traverse compileExpr op >>= compilePrimOp)
   ICastOp idt ix -> Just    <$> do
     x <- compileExpr ix
@@ -297,6 +288,11 @@ compileBinOp op x y = case op of
       GreaterEqual -> IP.SGE
       Equal        -> IP.EQ
 
+deviceFromAddr :: AddressSpace -> Compile Device
+deviceFromAddr addr = case addr of
+  Heap dev -> return dev
+  Stack -> asks curDevice
+
 -- === MDImp to LLVM CUDA ===
 
 ensureHasCUDAContext :: Compile ()
@@ -305,31 +301,26 @@ ensureHasCUDAContext = emitVoidExternCall spec []
 
 launchCUDAKernel :: Operand -> Operand -> Operand -> Compile()
 launchCUDAKernel ptx size args = emitVoidExternCall spec [ptx, size, args]
-  where spec = ExternFunSpec "dex_cuLaunchKernel" L.VoidType [] [] [voidp, i64, L.ptr $ voidp]
-
-cuMemcpy :: Operand -> (Device, Operand) -> (Device, Operand) -> Compile ()
-cuMemcpy bytes (destDev, destPtr) (srcDev, srcPtr) = case (destDev, srcDev) of
-  (CPU, GPU) -> cuMemcpyDToH bytes srcPtr destPtr
-  (GPU, CPU) -> cuMemcpyHToD bytes destPtr srcPtr
-  _ -> error "Not an inter-device transfer"
+  where spec = ExternFunSpec "dex_cuLaunchKernel" L.VoidType [] []
+                 [hostVoidp, i64, hostPtrTy $ hostVoidp]
 
 cuMemcpyDToH :: Operand -> Operand -> Operand -> Compile ()
 cuMemcpyDToH bytes devPtr hostPtr = emitVoidExternCall spec [bytes, devPtr, hostPtr]
-  where spec = ExternFunSpec "dex_cuMemcpyDtoH" L.VoidType [] [] [i64, voidp, voidp]
+  where spec = ExternFunSpec "dex_cuMemcpyDtoH" L.VoidType [] [] [i64, deviceVoidp, hostVoidp]
 
 cuMemcpyHToD :: Operand -> Operand -> Operand -> Compile ()
 cuMemcpyHToD bytes devPtr hostPtr = emitVoidExternCall spec [bytes, devPtr, hostPtr]
-  where spec = ExternFunSpec "dex_cuMemcpyHtoD" L.VoidType [] [] [i64, voidp, voidp]
+  where spec = ExternFunSpec "dex_cuMemcpyHtoD" L.VoidType [] [] [i64, deviceVoidp, hostVoidp]
 
 cuMemAlloc :: L.Type -> Operand -> Compile Operand
 cuMemAlloc ty bytes = castLPtr ty =<< emitExternCall spec [bytes]
-  where spec = ExternFunSpec "dex_cuMemAlloc" voidp [] [] [i64]
+  where spec = ExternFunSpec "dex_cuMemAlloc" deviceVoidp [] [] [i64]
 
 cuMemFree :: Operand -> Compile ()
 cuMemFree ptr = do
-  voidPtr <- castVoidPtr ptr
-  emitVoidExternCall spec [voidPtr]
-  where spec = ExternFunSpec "dex_cuMemFree" L.VoidType [] [] [voidp]
+  voidptr <- castVoidPtr ptr
+  emitVoidExternCall spec [voidptr]
+  where spec = ExternFunSpec "dex_cuMemFree" L.VoidType [] [] [deviceVoidp]
 
 -- === GPU Kernel compilation ===
 
@@ -447,11 +438,11 @@ compileStatement stmt = case stmt of
       MCThreadLaunch -> do
         kernelParams <- packArgs args'
         let funPtr = L.ConstantOperand $ C.BitCast
-                        (C.GlobalReference mcKernelPtrType kernelFuncName) voidp
+                        (C.GlobalReference mcKernelPtrType kernelFuncName) hostVoidp
         emitVoidExternCall runMCKernel [funPtr, size',kernelParams]
       CUDAKernelLaunch -> do
-        let ptxPtrFun = callableOperand (funTy (L.ptr i8) []) kernelFuncName
-        ptxPtr <- emitInstr (L.ptr i8) $ callInstr ptxPtrFun []
+        let ptxPtrFun = callableOperand (funTy (hostPtrTy i8) []) kernelFuncName
+        ptxPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
         kernelParams <- packArgs $ size' : args'
         launchCUDAKernel ptxPtr size' kernelParams
 
@@ -462,7 +453,7 @@ compileExpr expr = case expr of
 
 packArgs :: [Operand] -> Compile Operand
 packArgs elems = do
-  arr <- alloca (length elems) voidp
+  arr <- alloca (length elems) hostVoidp
   forM_ (zip [0..] elems) $ \(i, e) -> do
     eptr <- alloca 1 $ L.typeOf e
     store eptr e
@@ -474,14 +465,14 @@ unpackArgs :: Operand -> [L.Type] -> Compile [Operand]
 unpackArgs argArrayPtr types =
   forM (zip [0..] types) $ \(i, ty) -> do
     argVoidPtr <- gep argArrayPtr $ i64Lit i
-    argPtr <- castLPtr (L.ptr ty) argVoidPtr
+    argPtr <- castLPtr (hostPtrTy ty) argVoidPtr
     load =<< load argPtr
 
 runMCKernel :: ExternFunSpec
-runMCKernel = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [voidp, i64, L.ptr voidp]
+runMCKernel = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [hostVoidp, i64, hostPtrTy hostVoidp]
 
 mcKernelPtrType :: L.Type
-mcKernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ voidp] False
+mcKernelPtrType = hostPtrTy $ L.FunctionType L.VoidType [i64, i64, hostPtrTy $ hostVoidp] False
 
 -- === LLVM embedding ===
 
@@ -498,9 +489,9 @@ litVal lit = case lit of
       undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
       fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
       operandToConst ~(L.ConstantOperand c) = c
-  PtrLit (_, _, ty) ptr ->
-    L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
-    where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
+  PtrLit _ _ -> error "Shouldn't be compiling pointer literals"
+    -- L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
+    -- where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
 
 -- TODO: Assert that the integer can be represented in that number of bits!
 withWidth :: Int -> Word32 -> Operand
@@ -558,7 +549,7 @@ alloca :: Int -> L.Type -> Compile Operand
 alloca elems ty = do
   v <- freshName "v"
   modify $ setScalarDecls ((v L.:= instr):)
-  return $ L.LocalReference (L.ptr ty) v
+  return $ L.LocalReference (hostPtrTy ty) v
   where instr = L.Alloca ty (Just $ i32Lit elems) 0 []
 
 malloc :: L.Type -> Operand -> Compile Operand
@@ -611,6 +602,12 @@ scalarTy b = case b of
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
   PtrType (_, s, t) -> L.PointerType (scalarTy t) (lAddress s)
+
+hostPtrTy :: L.Type -> L.Type
+hostPtrTy ty = L.PointerType ty $ L.AddrSpace 0
+
+devicePtrTy :: L.Type -> L.Type
+devicePtrTy ty = L.PointerType ty $ L.AddrSpace 1
 
 lAddress :: HasCallStack => AddressSpace -> L.AddrSpace
 lAddress s = case s of
@@ -783,10 +780,10 @@ mathFlags :: L.FastMathFlags
 mathFlags = L.noFastMathFlags { L.allowContract = True }
 
 mallocFun :: ExternFunSpec
-mallocFun = ExternFunSpec "malloc_dex" (L.ptr i8) [L.NoAlias] [] [i64]
+mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
+freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]
 
 boolTy :: L.Type
 boolTy = i8
@@ -809,11 +806,14 @@ i8 = L.IntegerType 8
 i1 :: L.Type
 i1 = L.IntegerType 1
 
-voidp :: L.Type
-voidp = L.ptr i8
+hostVoidp :: L.Type
+hostVoidp = hostPtrTy i8
+
+deviceVoidp :: L.Type
+deviceVoidp = devicePtrTy i8
 
 funTy :: L.Type -> [L.Type] -> L.Type
-funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
+funTy retTy argTys = hostPtrTy $ L.FunctionType retTy argTys False
 
 -- === Module building ===
 

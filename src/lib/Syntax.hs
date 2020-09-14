@@ -36,7 +36,7 @@ module Syntax (
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, bindingsAsVars,
-    freeVars, freeUVars, Subst, HasVars, BindsVars,
+    freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), PtrOrigin (..), strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
@@ -468,7 +468,7 @@ data ImpStatement = IInstr (Maybe IBinder, ImpInstr)
 
 data ImpInstr = Store IExpr IExpr           -- dest, val
               | Alloc AddressSpace IType Size
-     -- TODO: | MemCopy IExpr IExpr IExpr   -- dest, source, numel
+              | MemCopy IExpr IExpr IExpr   -- dest, source, numel
               | Free IExpr
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
@@ -487,18 +487,18 @@ data LitVal = Int64Lit   Int64
             | Float32Lit Float
             | PtrLit PtrType (Ptr ())
             | VecLit [LitVal]  -- Only one level of nesting allowed!
-              deriving (Show, Eq, Generic)
+              deriving (Show, Eq, Ord, Generic)
 
 data ScalarBaseType = Int64Type | Int32Type | Int8Type | Float64Type | Float32Type
-                      deriving (Show, Eq, Generic)
+                      deriving (Show, Eq, Ord, Generic)
 data BaseType = Scalar  ScalarBaseType
               | Vector  ScalarBaseType
               | PtrType PtrType
-                deriving (Show, Eq, Generic)
+                deriving (Show, Eq, Ord, Generic)
 
-data Device = CPU | GPU  deriving (Show, Eq, Generic)
-data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Generic)
-data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Eq, Generic)
+data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
+data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
+data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Eq, Ord, Generic)
 type PtrType = (PtrOrigin, AddressSpace, BaseType)
 
 sizeOf :: BaseType -> Int
@@ -1172,7 +1172,9 @@ instance HasIVars ImpInstr where
   freeIVars i = case i of
     Store d e     -> freeIVars d <> freeIVars e
     Alloc _ t s   -> freeIVars t <> freeIVars s
+    MemCopy x y z -> freeIVars x <> freeIVars y <> freeIVars z
     Free x        -> freeIVars x
+    ICastOp _ x   -> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
     IThrowError   -> mempty
 

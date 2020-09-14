@@ -153,10 +153,10 @@ evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
   backend <- asks backendName
   logger  <- asks logService
-  let (impModule, reconAtom) = toImpModule backend ([], block)
+  let (impModule, args, reconAtom) = toImpModule backend block
   checkPass ImpPass impModule
   llvmModule <- liftIO $ impToLLVM logger impModule
-  resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmModule []
+  resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmModule args
   return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a

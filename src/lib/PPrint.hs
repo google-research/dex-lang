@@ -376,6 +376,7 @@ instance Pretty ImpInstr where
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
   pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty IThrowError = "throwError"
 

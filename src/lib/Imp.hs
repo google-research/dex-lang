@@ -27,6 +27,7 @@ import Data.Text.Prettyprint.Doc
 import Data.Functor
 import Data.Foldable (toList)
 import Data.Coerce
+import Data.Int
 import Data.Maybe (fromJust)
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
@@ -58,6 +59,7 @@ import Util
 
 data ParallelismLevel = TopLevel | ThreadLevel  deriving (Show, Eq)
 data ImpCtx = ImpCtx { impBackend :: Backend
+                     , curDevice  :: Device
                      , curLevel   :: ParallelismLevel }
 data ImpCatEnv = ImpCatEnv
   { envRefDests   :: Env Dest
@@ -69,14 +71,16 @@ data ImpCatEnv = ImpCatEnv
 type ImpM = ReaderT ImpCtx (Cat ImpCatEnv)
 type AtomRecon = Abs (Nest Binder) Atom
 
-toImpModule :: Backend -> ([IBinder], Block) -> (ImpModule, AtomRecon)
-toImpModule backend (vsIn, block) = runImpMBinders initOpts vsIn $ do
-  (reconAtom, impBlock) <- scopedBlock $ translateTopLevel block
+toImpModule :: Backend -> Block -> (ImpModule, [LitVal], AtomRecon)
+toImpModule backend block = runImpMBinders initOpts argBinders $ do
+  (reconAtom, impBlock) <- scopedBlock $ translateTopLevel block'
   functions <- toList <$> looks envFunctions
-  let ty = IFunType EntryFun (map binderAnn vsIn) (impBlockType impBlock)
-  let mainFunction = ImpFunction (impMainFunName:>ty) vsIn impBlock
-  return (ImpModule (functions ++ [mainFunction]), reconAtom)
-  where initOpts = ImpCtx backend TopLevel
+  let ty = IFunType EntryFun (map binderAnn argBinders) (impBlockType impBlock)
+  let mainFunction = ImpFunction (impMainFunName:>ty) argBinders impBlock
+  return (ImpModule (functions ++ [mainFunction]), argVals, reconAtom)
+  where
+    (argBinders, argVals, block') = abstractPtrLiterals block
+    initOpts = ImpCtx backend CPU TopLevel
 
 runImpMBinders :: ImpCtx -> [IBinder] -> ImpM a -> a
 runImpMBinders opts inBinders m = runImpM opts inVarScope m
@@ -168,11 +172,11 @@ launchKernel env (maybeDest, ~hof@(For _ (LamVal b body))) = do
   n     <- indexSetSize idxTy
   dest  <- allocDest maybeDest $ getType $ Hof hof
   i <- freshVar (binderNameHint b:>getIType n)
-  let cc = case impBackend opts of
-        LLVMCUDA -> CUDAKernelLaunch
-        LLVMMC   -> MCThreadLaunch
+  let (cc, dev) = case impBackend opts of
+        LLVMCUDA -> (CUDAKernelLaunch, GPU)
+        LLVMMC   -> (MCThreadLaunch  , CPU)
         backend -> error $ "Shouldn't be launching kernels from " ++ show backend
-  kernelBody <- withLevel ThreadLevel $ scopedVoidBlock $ do
+  kernelBody <- withDevice dev $ withLevel ThreadLevel $ scopedVoidBlock $ do
     idx <- intToIndex idxTy $ IVar i
     ithDest <- destGet dest idx
     void $ translateBlock (env <> b @> idx) (Just ithDest, body)
@@ -202,7 +206,7 @@ toImpOp (maybeDest, op) = case op of
   TabCon (TabTy b _) rows -> do
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
-      ithDest <- destGet dest =<< intToIndex (binderType b) (fromScalarAtom $ IdxRepVal i)
+      ithDest <- destGet dest =<< intToIndex (binderType b) (IIdxRepVal i)
       copyAtom ithDest row
     destToAtom dest
   Fst ~(PairVal x _) -> returnVal x
@@ -240,8 +244,8 @@ toImpOp (maybeDest, op) = case op of
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
       InclusiveLim a -> indexToInt t a
-      ExclusiveLim a -> indexToInt t a >>= iaddI (fromScalarAtom $ IdxRepVal 1)
-      Unlimited      -> return (fromScalarAtom $ IdxRepVal 0)
+      ExclusiveLim a -> indexToInt t a >>= iaddI (IIdxRepVal 1)
+      Unlimited      -> return (IIdxRepVal 0)
     restrictIdx <- indexToInt rt e
     idx <- iaddI restrictIdx offset
     returnVal =<< intToIndex t idx
@@ -264,13 +268,13 @@ toImpOp (maybeDest, op) = case op of
   PtrOffset arr off -> do
     buf <- impOffset (fromScalarAtom arr) (fromScalarAtom off)
     returnVal $ toScalarAtom buf
-  PtrLoad arr -> returnVal . toScalarAtom =<< load (fromScalarAtom arr)
+  PtrLoad arr -> returnVal . toScalarAtom =<< loadAnywhere (fromScalarAtom arr)
   SliceOffset ~(Con (IndexSliceVal n l tileOffset)) idx -> do
     i' <- indexToInt l idx
     i <- iaddI (fromScalarAtom tileOffset) i'
     returnVal =<< intToIndex n i
   SliceCurry ~(Con (IndexSliceVal _ (PairTy u v) tileOffset)) idx -> do
-    vz <- intToIndex v $ fromScalarAtom $ IdxRepVal 0
+    vz <- intToIndex v $ IIdxRepVal 0
     extraOffset <- indexToInt (PairTy u v) (PairVal idx vz)
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom tileOffset'
@@ -362,6 +366,40 @@ toImpHof env (maybeDest, hof) = do
   where
     localRef refVar refDest m = withRefScope $ putRef refVar refDest >> m
 
+abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
+abstractPtrLiterals block = flip evalState initState $ do
+  block' <- traverseLiterals block $ \val -> case val of
+    PtrLit ty ptr -> do
+      ptrName <- gets $ M.lookup (ty, ptr). fst
+      case ptrName of
+        Just v -> return $ Var $ v :> getType (Con $ Lit val)
+        Nothing -> do
+          (varMap, usedNames) <- get
+          let name = genFresh (Name AbstractedPtrName "ptr" 0) usedNames
+          put ( varMap    <> M.insert (ty, ptr) name varMap
+              , usedNames <> (name @> ()))
+          return $ Var $ name :> BaseTy (PtrType ty)
+    _ -> return $ Con $ Lit val
+  valsAndNames <- gets $ M.toAscList . fst
+  let impBinders = [Bind (name :> PtrType ty ) | ((ty, _), name) <- valsAndNames]
+  let vals = map (uncurry PtrLit . fst) valsAndNames
+  return (impBinders, vals, block')
+  where
+    initState :: (M.Map (PtrType, Ptr ()) Name, Env ())
+    initState = mempty
+
+traverseLiterals :: forall m . Monad m => Block -> (LitVal -> m Atom) -> m Block
+traverseLiterals block f =
+  liftM fst $ flip runSubstEmbedT  mempty $ traverseBlock def block
+  where
+    def :: TraversalDef (SubstEmbedT m)
+    def = (traverseDecl def, traverseExpr def, traverseAtomLiterals)
+
+    traverseAtomLiterals :: Atom -> SubstEmbedT m Atom
+    traverseAtomLiterals atom = case atom of
+      Con (Lit x) -> lift $ lift $ f x
+      _ -> traverseAtom def atom
+
 -- === Destination type ===
 --
 -- How is a destination different from a regular table? The fundamental distinction is
@@ -426,7 +464,7 @@ indexDest (Dest destAtom) dim f = do
 --      be modified again, because it doesn't copy the state!
 destToAtom :: Dest -> ImpM Atom
 destToAtom dest = destToAtomScalarAction loadScalarRef dest
-  where loadScalarRef ref = toScalarAtom <$> (load $ IVar ref)
+  where loadScalarRef ref = toScalarAtom <$> (loadAnywhere $ IVar ref)
 
 destToAtomScalarAction :: (IVar -> ImpM Atom) -> Dest -> ImpM Atom
 destToAtomScalarAction fScalar dest = do
@@ -550,9 +588,9 @@ makeAllocDest allocTy nameHint destType = do
         TC con    -> case con of
           BaseType b -> do
             let tabTy = mkTy $ BaseTy b
-            numel <- lift $ elemCount tabTy
-            buffer <- lift $ allocateBuffer nameHint allocTy b numel
-            fst <$> (foldM bufIndex (toScalarAtom (IVar buffer), tabTy) $ reverse idxVars)
+            numel  <- lift $ elemCount tabTy
+            buffer <- lift $ chooseAddrSpaceAndAllocate nameHint allocTy b numel
+            fst <$> (foldM bufIndex (toScalarAtom buffer, tabTy) $ reverse idxVars)
             where
               bufIndex :: MonadEmbed m => (Atom, Type) -> Atom -> m (Atom, Type)
               bufIndex (buf, tabTy@(TabTy _ eltTy)) idx = do
@@ -571,30 +609,48 @@ makeAllocDest allocTy nameHint destType = do
         rec = go mkTy idxVars
         unreachable = error $ "Can't lower type to imp: " ++ pprint destType
 
-allocateBuffer :: Name -> AllocType -> BaseType -> IExpr -> ImpM IVar
-allocateBuffer nameHint allocTy b numel = do
-  heap <- Heap <$> getDevice
+chooseAddrSpaceAndAllocate :: Name -> AllocType -> BaseType -> IExpr -> ImpM IExpr
+chooseAddrSpaceAndAllocate nameHint allocTy b numel = do
+  backend  <- asks impBackend
+  curDev   <- asks curDevice
+  mainDev  <- getMainDevice
   let (addrSpace, mustFree) = case allocTy of
-        Unmanaged -> (heap, False)
-        Managed -> case numel of
-          ILit l | n <= 256  -> (Stack  , False)
-                 | otherwise -> (heap, True)
-            where n = getIntLit l
-          IVar _ -> (heap, True )
-  buffer <- freshVar (nameHint :> PtrType (AllocatedPtr, addrSpace, b))
-  when mustFree $ extendAlloc $ IVar buffer
-  emitAlloc buffer numel
-  return buffer
-  where
+        Managed | curDev == mainDev -> if isSmall numel
+                                         then (Stack, False)
+                                         else (Heap mainDev, True)
+                | otherwise -> (Heap mainDev, False)
+        Unmanaged           -> (Heap mainDev, False)
+  allocateBuffer nameHint addrSpace mustFree b numel
 
-getDevice :: ImpM Device
-getDevice = do
+isSmall :: IExpr -> Bool
+isSmall numel = case numel of
+  ILit l | n <= 256 -> True
+    where n = getIntLit l
+  _                 -> False
+
+allocateBuffer :: Name -> AddressSpace -> Bool -> BaseType -> IExpr -> ImpM IExpr
+allocateBuffer nameHint addrSpace mustFree b numel = do
+  buffer <- freshVar (nameHint :> PtrType (AllocatedPtr, addrSpace, b))
+  emitAlloc buffer numel
+  when mustFree $ extendAlloc $ IVar buffer
+  return $ IVar buffer
+
+getMainDevice :: ImpM Device
+getMainDevice = do
   backend <- asks impBackend
   return $ case backend of
     LLVM     -> CPU
     LLVMMC   -> CPU
     LLVMCUDA -> GPU
     Interp   -> error "Shouldn't be compiling with interpreter backend"
+
+-- TODO: separate these concepts in IFunType?
+deviceFromCallingConvention :: CallingConvention -> Device
+deviceFromCallingConvention cc = case cc of
+  OrdinaryFun      -> CPU
+  EntryFun         -> CPU
+  MCThreadLaunch   -> CPU
+  CUDAKernelLaunch -> GPU
 
 -- === Atom <-> IExpr conversions ===
 
@@ -697,19 +753,44 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
                              ++ pprint dest ++ ", and " ++ pprint atom
 
 copyAtom :: Dest -> Atom -> ImpM ()
-copyAtom dest src = zipWithDest dest src store
+copyAtom dest src = zipWithDest dest src storeAnywhere
 
 addToAtom :: Dest -> Atom -> ImpM ()
 addToAtom topDest topSrc = zipWithDest topDest topSrc addToDestScalar
   where
     addToDestScalar dest src = do
-      cur     <- load dest
+      cur <- loadAnywhere dest
       let op = case getIType cur of
                  Scalar _ -> ScalarBinOp
                  Vector _ -> VectorBinOp
                  _ -> error $ "The result of load cannot be a reference"
       updated <- emitInstr $ IPrimOp $ op FAdd cur src
-      store dest updated
+      storeAnywhere dest updated
+
+loadAnywhere :: IExpr -> ImpM IExpr
+loadAnywhere ptr = do
+  curDev <- asks curDevice
+  let (PtrType (_, addrSpace, ty)) = getIType ptr
+  case addrSpace of
+    Heap ptrDev | ptrDev /= curDev -> do
+      localPtr <- allocateStackSingleton ty
+      memcopy localPtr ptr (IIdxRepVal 1)
+      load localPtr
+    _ -> load ptr
+
+storeAnywhere :: IExpr -> IExpr -> ImpM ()
+storeAnywhere ptr val = do
+  curDev <- asks curDevice
+  let (PtrType (_, addrSpace, ty)) = getIType ptr
+  case addrSpace of
+    Heap ptrDev | ptrDev /= curDev -> do
+      localPtr <- allocateStackSingleton ty
+      store localPtr val
+      memcopy ptr localPtr (IIdxRepVal 1)
+    _ -> store ptr val
+
+allocateStackSingleton :: IType -> ImpM IExpr
+allocateStackSingleton ty = allocateBuffer "tmp" Stack False ty (IIdxRepVal 1)
 
 -- === Imp embedding ===
 
@@ -737,6 +818,9 @@ cast x bt = emitInstr $ ICastOp bt x
 
 load :: IExpr -> ImpM IExpr
 load x = emitInstr $ IPrimOp $ PtrLoad x
+
+memcopy :: IExpr -> IExpr -> IExpr -> ImpM ()
+memcopy dest src numel = emitStatement $ IInstr (Nothing , MemCopy dest src numel)
 
 store :: IExpr -> IExpr -> ImpM ()
 store dest src = emitStatement $ IInstr (Nothing, Store dest src)
@@ -823,32 +907,37 @@ putRef v d = extend $ mempty { envRefDests = v @> d }
 withLevel :: ParallelismLevel -> ImpM a -> ImpM a
 withLevel level = local (\opts -> opts {curLevel = level })
 
+withDevice :: Device -> ImpM a -> ImpM a
+withDevice device = local (\opts -> opts {curDevice = device })
+
 -- === type checking imp programs ===
 
 -- TODO: track parallelism level and current device and add validity checks like
 -- "shouldn't launch a kernel from device/thread code"
 
 -- State keeps track of _all_ names used in the program, Reader keeps the type env.
-type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType) (Either Err)) a
+type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType, Device) (Either Err)) a
 
 instance Checkable ImpModule where
   -- TODO: check main function defined
   checkValid (ImpModule fs) = mapM_ checkValid fs
 
 instance Checkable ImpFunction where
-  checkValid (ImpFunction _ bs block) = do
+  checkValid f@(ImpFunction (_:> IFunType cc _ _) bs block) = addContext ctx $ do
     let scope = foldMap (binderAsEnv . fmap (const ())) bs
     let env   = foldMap (binderAsEnv                  ) bs
-    void $ flip runReaderT env $ flip runStateT scope $ checkBlock block
+    void $ flip runReaderT (env, deviceFromCallingConvention cc) $
+      flip runStateT scope $ checkBlock block
+    where ctx = "Checking:\n" ++ pprint f
 
 checkBlock :: ImpBlock -> ImpCheckM [IType]
 checkBlock (ImpBlock Empty val) = mapM checkIExpr val
 checkBlock (ImpBlock (Nest stmt rest) val) = do
   env <- checkStatement stmt
-  extendR env $ checkBlock $ ImpBlock rest val
+  withTypeEnv env $ checkBlock $ ImpBlock rest val
 
 checkStatement :: ImpStatement -> ImpCheckM (Env IType)
-checkStatement stmt = case stmt of
+checkStatement stmt = addContext ctx $ case stmt of
   IInstr (binder, instr) -> do
     ty <- instrTypeChecked instr
     case (binder, ty) of
@@ -862,7 +951,7 @@ checkStatement stmt = case stmt of
     checkInt size
     checkBinder i
     assertEq (binderAnn i) (getIType size) $ "Mismatch between the loop iterator and upper bound type"
-    [] <- extendR (i @> getIType size) $ checkBlock block
+    [] <- withTypeEnv (i @> getIType size) $ checkBlock block
     return mempty
   IWhile cond body -> do
     [condTy] <- checkBlock cond
@@ -877,9 +966,11 @@ checkStatement stmt = case stmt of
     return mempty
   ILaunch _ n args -> do
     -- TODO: check args against type of function
+    assertHost
     checkInt n
     mapM_ checkIExpr args
     return mempty
+  where ctx = "Checking:\n" ++ pprint stmt
 
 instrTypeChecked :: ImpInstr -> ImpCheckM (Maybe IType)
 instrTypeChecked instr = case instr of
@@ -892,9 +983,18 @@ instrTypeChecked instr = case instr of
       Scalar _ -> return ()
       _ -> throw CompilerErr $ "Invalid cast destination type: " ++ pprint dt
     return $ Just dt
-  Alloc a ty _ -> return $ Just $ PtrType (AllocatedPtr, a, ty)
+  Alloc a ty _ -> do
+    when (a /= Stack) assertHost
+    return $ Just $ PtrType (AllocatedPtr, a, ty)
+  MemCopy dest src numel -> do
+    PtrType (_, _, destTy) <- checkIExpr dest
+    PtrType (_, _, srcTy)  <- checkIExpr src
+    assertEq destTy srcTy "pointer type mismatch"
+    checkInt numel
+    return Nothing
   Store dest val -> do
-    PtrType (_, _, ty) <- checkIExpr dest
+    PtrType (_, addr, ty) <- checkIExpr dest
+    checkAddrAccessible addr
     valTy <- checkIExpr val
     assertEq ty valTy "Type mismatch in store"
     return Nothing
@@ -907,10 +1007,21 @@ checkBinder v = do
   when (v `isin` scope) $ error $ "shadows: " ++ pprint v
   modify (<>(v@>()))
 
+checkAddrAccessible :: AddressSpace -> ImpCheckM ()
+checkAddrAccessible Stack = return ()
+checkAddrAccessible (Heap device) = do
+  curDevice <- asks snd
+  when (device /= curDevice) $ throw CompilerErr "Address not accessible"
+
+assertHost :: ImpCheckM ()
+assertHost = do
+  curDev <- asks snd
+  when (curDev /= CPU) $ throw CompilerErr "Only allowed on host"
+
 checkIExpr :: IExpr -> ImpCheckM IType
 checkIExpr expr = case expr of
   ILit val -> return $ litType val
-  IVar v -> asks $ (! v)
+  IVar v -> asks $ (! v) . fst
 
 checkInt :: IExpr -> ImpCheckM ()
 checkInt expr = do
@@ -937,7 +1048,8 @@ checkImpOp op = do
       checkIntBaseType False $ BaseTy ibt
       return $ Scalar ty
     PtrLoad ref -> do
-      PtrType (_, _, ty) <- return ref
+      PtrType (_, addr, ty) <- return ref
+      checkAddrAccessible addr
       return ty
     PtrOffset ref _ -> do  -- TODO: check offset too
       PtrType (_, addr, ty) <- return ref
@@ -1006,6 +1118,9 @@ impOpType pop = case pop of
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ pprint pop
 
+withTypeEnv :: Env IType -> ImpCheckM a -> ImpCheckM a
+withTypeEnv env m = local (\(prev, dev) -> (prev <> env, dev)) m
+
 instance Pretty Dest where
   pretty (Dest atom) = "Dest" <+> pretty atom
 
@@ -1016,3 +1131,6 @@ instance Semigroup ImpCatEnv where
 instance Monoid ImpCatEnv where
   mempty = ImpCatEnv mempty mempty mempty mempty mempty
   mappend = (<>)
+
+pattern IIdxRepVal :: Int32 -> IExpr
+pattern IIdxRepVal x = ILit (Int32Lit x)
