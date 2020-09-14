@@ -237,18 +237,16 @@ vec = [1.]
     withReader x \xr.
       withReader x2 \x2r.
         5.0 * (ask x2r) + 4.0 * (ask xr) + 2.0
-  (r, lin) = linearize f 2.0
-  (r, lin 4.0)
-> (30.0, 96.0)
+  checkDeriv f 2.0
+> True
 
 :p
   f : Float -> Float = \x.
     snd $ withState x \xr.
-      for i:(Fin 4).
+      for i:(Fin 2).
         xr := get xr * get xr
-  (r, lin) = linearize f 2.0
-  (r, lin 1.0)
-> (65536.0, 524288.0)
+  checkDeriv f 2.0
+> True
 
 :p
   f = \rec.
