@@ -138,6 +138,7 @@ instance HasType Atom where
       ty |: TyKind
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
+    ACase e alts resultTy -> checkCase e alts resultTy
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -157,28 +158,31 @@ instance HasType Expr where
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
-    Case e alts resultTy -> do
-      checkWithEnv $ \_ -> do
-        ety <- typeCheck e
-        case ety of
-          TypeCon def params -> do
-            let cons = applyDataDefParams def params
-            checkEq  (length cons) (length alts)
-            forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
-              checkEq bs' bs
-              resultTy' <- flip (foldr withBinder) bs $ typeCheck body
-              checkEq resultTy resultTy'
-          VariantTy (NoExt types) -> do
-            checkEq (length types) (length alts)
-            forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
-              [b] <- pure $ toList bs
-              checkEq (getType b) ty
-              resultTy' <- flip (foldr withBinder) bs $ typeCheck body
-              checkEq resultTy resultTy'
-          VariantTy _ -> throw CompilerErr
-            "Can't pattern-match partially-known variants"
-          _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
-      return resultTy
+    Case e alts resultTy -> checkCase e alts resultTy
+
+checkCase :: HasType b => Atom -> [AltP b] -> Type -> TypeM Type
+checkCase e alts resultTy = do
+  checkWithEnv $ \_ -> do
+    ety <- typeCheck e
+    case ety of
+      TypeCon def params -> do
+        let cons = applyDataDefParams def params
+        checkEq  (length cons) (length alts)
+        forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
+          checkEq bs' bs
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
+      VariantTy (NoExt types) -> do
+        checkEq (length types) (length alts)
+        forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
+          [b] <- pure $ toList bs
+          checkEq (getType b) ty
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
+      VariantTy _ -> throw CompilerErr
+        "Can't pattern-match partially-known variants"
+      _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
+  return resultTy
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -322,6 +326,7 @@ instance CoreVariant Atom where
     RecordTy _ -> alwaysAllowed
     Variant _ _ _ _ -> alwaysAllowed
     VariantTy _ -> alwaysAllowed
+    ACase _ _ _ -> goneBy Simp
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
@@ -853,7 +858,8 @@ checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
-  RecordTy _ -> return ()
+  RecordTy (NoExt items)  -> void $ traverse recur items
+  VariantTy (NoExt items) -> void $ traverse recur items
   -- TODO: check that data constructor arguments are data-like, and so on
   TypeCon _ _ -> return ()
   TC con -> case con of

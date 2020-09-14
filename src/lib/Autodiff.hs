@@ -327,7 +327,6 @@ linearizeAtom atom = case atom of
     wrt <- ask
     return (atom, buildLam i TabArrow $ \i' ->
                     rematPrimal wrt $ linearizeBlock (i@>i') body)
-  Lam _ -> error "Unexpected non-table lambda"
   DataCon _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   Record elems    -> Record <$> traverse linearizeAtom elems
   Variant t l i e -> Variant t l i <$> linearizeAtom e
@@ -338,6 +337,9 @@ linearizeAtom atom = case atom of
   Pi _            -> emitWithZero
   TC _            -> emitWithZero
   Eff _           -> emitWithZero
+  -- Those should be gone after simplification
+  Lam _           -> error "Unexpected non-table lambda"
+  ACase _ _ _     -> error "Unexpected ACase"
   where
     emitWithZero = LinA $ return $ withZeroTangent atom
     rematPrimal wrt m = do
@@ -630,6 +632,7 @@ transposeAtom atom ct = case atom of
   Pi _            -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
+  ACase _ _ _     -> error "Unexpected ACase"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeCon :: Con -> Atom -> TransposeM ()

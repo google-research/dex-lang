@@ -771,3 +771,12 @@ s1 = "hello world"
 
 :p s1
 > ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd']
+
+:p
+  x = 2 + 2
+  y = 2 + 4
+  f = \z. case z == 4 of
+            True  -> (\w. w + 2)
+            False -> (\w. w)
+  (f x 4, f y 4)
+> (6, 4)
