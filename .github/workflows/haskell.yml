@@ -1,0 +1,63 @@
+name: Haskell CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-18.04, macos-latest]
+        include:
+          - os: macos-latest
+            install_deps: brew install llvm@9
+            path_extension: $(brew --prefix llvm@9)
+          - os: ubuntu-18.04
+            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev
+            path_extension: /usr/lib/llvm-9/bin
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v2
+      
+    - uses: actions/setup-haskell@v1
+      with:
+        enable-stack: true
+        stack-no-global: true
+        stack-version: 'latest'
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+        
+    - name: Install system dependencies
+      run: |
+        ${{ matrix.install_deps }}
+        echo ::set-env name=PATH::${{ matrix.path_extension }}:$PATH
+    
+
+    - name: Cache
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-cabal
+      with:
+        path: |
+          ~/.stack
+          $GITHUB_WORKSPACE/.stack-work
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}
+        restore-keys: |
+          ${{ runner.os }}-build-${{ env.cache-name }}-
+          ${{ runner.os }}-build-
+          ${{ runner.os }}-
+
+    - name: Build dependencies
+      run: stack build --only-dependencies
+    - name: Build
+      run: make
+    - name: Run tests
+      run: make tests
