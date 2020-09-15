@@ -1,4 +1,4 @@
-name: Haskell CI
+name: Continuous integration
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-      
+
     - uses: actions/setup-haskell@v1
       with:
         enable-stack: true
@@ -34,26 +34,21 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: 3.8
-        
+
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
-        echo ::set-env name=PATH::${{ matrix.path_extension }}:$PATH
-    
+        echo "Adding to PATH: ${{ matrix.path_extension }}"
+        echo "::add-path::${{ matrix.path_extension }}"
 
     - name: Cache
-      uses: actions/cache@v1
-      env:
-        cache-name: cache-cabal
+      uses: actions/cache@v2
       with:
         path: |
           ~/.stack
           $GITHUB_WORKSPACE/.stack-work
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
+        key: ${{ runner.os }}-ci-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-ci-
 
     - name: Build dependencies
       run: stack build --only-dependencies
