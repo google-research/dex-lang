@@ -24,7 +24,6 @@ addons:
 
 os:
   - linux
-  - osx
 
 dist: bionic
 
