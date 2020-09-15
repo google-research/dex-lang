@@ -50,6 +50,7 @@ jobs:
       run: |
         mkdir -p ~/.stack/setup-exe-cache
         find ~/.stack/setup-exe-cache/ | xargs file
+        find ~/.stack/setup-exe-cache/ -type f | xargs shasum
         rm -rf ~/.stack/setup-exe-cache
 
     - name: Build
@@ -59,6 +60,7 @@ jobs:
       run: |
         mkdir -p ~/.stack/setup-exe-cache
         find ~/.stack/setup-exe-cache/ | xargs file
+        find ~/.stack/setup-exe-cache/ -type f | xargs shasum
 
     - name: Run tests
       run: make tests
