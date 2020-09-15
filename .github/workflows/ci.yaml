@@ -43,17 +43,21 @@ jobs:
         path: |
           ~/.stack
           $GITHUB_WORKSPACE/.stack-work
-        key: ${{ runner.os }}-ci-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
-        restore-keys: ${{ runner.os }}-ci-
+        key: ${{ runner.os }}-test-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-test-
 
     - name: Debug
-      run: find ~/.stack/setup-exe-cache/ | xargs file
+      run: |
+        mkdir -p ~/.stack/setup-exe-cache
+        find ~/.stack/setup-exe-cache/ | xargs file
 
     - name: Build
       run: make
 
     - name: Debug
-      run: find ~/.stack/setup-exe-cache/ | xargs file
+      run: |
+        mkdir -p ~/.stack/setup-exe-cache
+        find ~/.stack/setup-exe-cache/ | xargs file
 
     - name: Run tests
       run: make tests
