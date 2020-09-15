@@ -46,9 +46,6 @@ jobs:
         key: ${{ runner.os }}-ci-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-ci-
 
-    - name: Build dependencies
-      run: stack build --only-dependencies
-
     - name: Build
       run: make
 
