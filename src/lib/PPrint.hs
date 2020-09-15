@@ -575,7 +575,7 @@ instance PrettyPrec UPat' where
     UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
-    UPatRecord pats -> prettyExtLabeledItems pats (line <> "&") ":"
+    UPatRecord pats -> prettyExtLabeledItems pats (line' <> ",") " ="
     UPatVariant labels label value -> prettyVariant labels label value
     UPatVariantLift labels value -> prettyVariantLift labels value
 

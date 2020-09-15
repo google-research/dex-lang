@@ -195,7 +195,9 @@ checkApp fTy x = do
 -- TODO: replace with something more precise (this is too cautious)
 blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
-  foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
+  foldMap declEffs decls <> exprEffs result
+  where declEffs (Let _ _ expr) = exprEffs expr
+        declEffs (Unpack _ expr) = exprEffs expr
 
 isPure :: Expr -> Bool
 isPure expr = exprEffs expr == mempty

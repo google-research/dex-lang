@@ -200,6 +200,8 @@ simplifyExpr expr = case expr of
         let rty' = snd $ applyAbs ab $ getType x'
         let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (App a x')
         dropSub $ simplifyExpr $ Case e alts' rty'
+      TypeCon def params -> return $ TypeCon def params'
+         where params' = params ++ [x']
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof

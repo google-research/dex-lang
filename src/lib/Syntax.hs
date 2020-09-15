@@ -189,6 +189,9 @@ instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
     LabeledItems $ M.unionWith (<>) items items'
 
+instance Monoid (LabeledItems a) where
+  mempty = NoLabeledItems
+
 -- Extensible version of LabeledItems, which allows an optional object in tail
 -- position. The items of the tail object will always be interpreted as a
 -- "suffix" in the sense that for any field label, the object represented by
@@ -253,10 +256,10 @@ data UPat' = UPatBinder UBinder
            | UPatVariantLift (LabeledItems ()) UPat     -- {|a|b| ...rest |}
              deriving (Show)
 
-data WithSrc a = WithSrc SrcPos a
+data WithSrc a = WithSrc SrcCtx a
                  deriving (Show, Functor, Foldable, Traversable)
 
-srcPos :: WithSrc a -> SrcPos
+srcPos :: WithSrc a -> SrcCtx
 srcPos (WithSrc pos _) = pos
 
 -- === primitive constructors and operators ===

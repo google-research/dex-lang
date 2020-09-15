@@ -62,7 +62,7 @@ checkSigma expr sTy = case sTy of
 
 inferSigma :: UExpr -> UInferM Atom
 inferSigma (WithSrc pos expr) = case expr of
-  ULam pat ImplicitArrow body -> addSrcPos pos $
+  ULam pat ImplicitArrow body -> addSrcContext' pos $
     inferULam pat ImplicitArrow body
   _ ->
     inferRho (WithSrc pos expr)
@@ -86,7 +86,7 @@ instantiateSigma f = case getType f of
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
 checkOrInferRho (WithSrc pos expr) reqTy =
- addSrcPos pos $ case expr of
+ addSrcContext' pos $ case expr of
   UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
@@ -113,7 +113,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UApp arr f x -> do
     fVal <- inferRho f
     fVal' <- zonk fVal
-    piTy <- addSrcPos (srcPos f) $ fromPiType True arr $ getType fVal'
+    piTy <- addSrcContext' (srcPos f) $ fromPiType True arr $ getType fVal'
     -- Zonking twice! Once for linearity and once for the embedding. Not ideal...
     fVal'' <- zonk fVal
     xVal <- checkSigma x (absArgType piTy)
@@ -421,7 +421,7 @@ lookupDataCon conName = do
     Nothing -> throw UnboundVarErr $ pprint conName'
 
 checkCasePat :: UPat -> Type -> UInferM (CaseAltIndex, [(UPat, Type)])
-checkCasePat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
+checkCasePat (WithSrc pos pat) scrutineeTy = addSrcContext' pos $ case pat of
   UPatCon conName ps -> do
     (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
@@ -464,7 +464,7 @@ bindPat :: UPat -> Atom -> UInferM SubstEnv
 bindPat pat val = evalCatT $ bindPat' pat val
 
 bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
-bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
+bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
   UPatBinder b -> do
     usedVars <- look
     when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint $ getName b
@@ -615,11 +615,11 @@ binderAsGlobal :: BinderP a -> BinderP a
 binderAsGlobal (Ignore ann) = Ignore ann
 binderAsGlobal (Bind (v:>ann)) = Bind $ asGlobal v :> ann
 
-addSrcPos :: SrcPos -> UInferM a -> UInferM a
-addSrcPos pos m = do
+addSrcContext' :: SrcCtx -> UInferM a -> UInferM a
+addSrcContext' pos m = do
   env <- ask
-  addSrcContext (Just pos) $ lift $
-    local (const (Just pos)) $ runReaderT m env
+  addSrcContext pos $ lift $
+    local (const pos) $ runReaderT m env
 
 getSrcCtx :: UInferM SrcCtx
 getSrcCtx = lift ask
