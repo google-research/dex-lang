@@ -22,9 +22,11 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout the repository
+      uses: actions/checkout@v2
 
-    - uses: actions/setup-haskell@v1
+    - name: Setup Haskell Stack
+      uses: actions/setup-haskell@v1
       with:
         enable-stack: true
         stack-no-global: true
@@ -33,7 +35,6 @@ jobs:
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
-        echo "Adding to PATH: ${{ matrix.path_extension }}"
         echo "::add-path::${{ matrix.path_extension }}"
 
     - name: Cache
@@ -47,7 +48,9 @@ jobs:
 
     - name: Build dependencies
       run: stack build --only-dependencies
+
     - name: Build
       run: make
+
     - name: Run tests
       run: make tests
