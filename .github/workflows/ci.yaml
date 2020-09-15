@@ -48,6 +48,8 @@ jobs:
 
     - name: Debug
       run: |
+        mkdir -p ~/.stack/setup-exe-cache
+        find ~/.stack/setup-exe-cache/ | xargs file
         rm -rf ~/.stack/setup-exe-cache
 
     - name: Build
