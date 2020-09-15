@@ -46,6 +46,9 @@ jobs:
         key: ${{ runner.os }}-ci-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-ci-
 
+    - name: Debug
+      run: file /Users/runner/.stack/setup-exe-cache/x86_64-osx/Cabal-simple_mPHDZzAJ_2.4.0.1_ghc-8.6.5
+
     - name: Build
       run: make
 
