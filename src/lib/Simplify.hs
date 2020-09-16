@@ -243,6 +243,12 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
+  Fst (ACase e alts (PairTy xt _)) -> do
+    let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (Op $ Fst a)
+    dropSub $ simplifyExpr $ Case e alts' xt
+  Snd (ACase e alts (PairTy _ yt)) -> do
+    let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (Op $ Snd a)
+    dropSub $ simplifyExpr $ Case e alts' yt
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
