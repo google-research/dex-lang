@@ -43,8 +43,8 @@ jobs:
         path: |
           ~/.stack
           $GITHUB_WORKSPACE/.stack-work
-        key: ${{ runner.os }}-ci-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
-        restore-keys: ${{ runner.os }}-ci-
+        key: ${{ runner.os }}-debug-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-debug-
 
     - name: Debug
       run: |
