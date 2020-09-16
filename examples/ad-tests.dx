@@ -269,3 +269,15 @@ vec = [1.]
   f = \x. for i:(Fin 4). { x=x * x * (IToF $ ordinal i) }
   jvp f 2.0 1.0
 > [{x = 0.0}, {x = 4.0}, {x = 8.0}, {x = 12.0}]
+
+:p
+  s : { a : Float | b : Float } = case 2 == 2 of
+    False -> {| a=2.0 |}
+    True -> {| b=5.0 |}
+  f = \x.
+    case s of
+      {| a=a |} -> 2.0 * (a + x)
+      {| b=b |} -> b * x
+  (y, df) = linearize f 2.0
+  checkDerivBase f 2.0
+> True

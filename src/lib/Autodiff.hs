@@ -82,15 +82,28 @@ linearizeBlock env (Block decls result) = case decls of
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
-  Hof  e -> linearizeHof env e
+  Hof  e        -> linearizeHof env e
+  Case e alts _ -> LinA $ do
+    e'   <- substEmbed env e
+    hasActiveScrutinee <- any id <$> (mapM isActive $ bindingsAsVars $ freeVars e')
+    case hasActiveScrutinee of
+      True  -> notImplemented
+      False -> do
+        alts' <- traverse linearizeInactiveAlt alts
+        result <- emit $ Case e' alts' $ (\((Abs _ body):_) -> getType body) alts'
+        (ans, linLam) <- fromPair result
+        return (ans, applyLinToTangents linLam)
+    where
+      linearizeInactiveAlt (Abs bs body) = do
+        buildNAbs bs $ \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
   _ -> LinA $ do
     expr' <- substEmbed env expr
     runLinA $ case expr' of
       App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x) `bindLin` emit
       Op   e     -> linearizeOp   e
       Atom e     -> linearizeAtom e
-      Case _ _ _ -> notImplemented
       App _ _    -> error "Unexpected non-table application"
+      Case _ _ _ -> error "Case should be handled above"
       Hof _      -> error "Hofs should be handled above"
 
 linearizeOp :: Op -> LinA Atom
@@ -256,41 +269,6 @@ linearizeHof env hof = case hof of
                       extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
 
-    -- Abstract the tangent action as a lambda.
-    -- TODO: curried linear functions somehow?
-    tangentFunAsLambda :: LinA Atom -> PrimalM Atom
-    tangentFunAsLambda m = do
-      (ans, tanFun) <- runLinA m
-      DerivWrt activeVars effs <- ask
-      let hs = map (Bind . (:>TyKind) . snd) effs
-      liftM (PairVal ans) $ lift $ do
-        buildNestedLam hs $ \hVals -> do
-          let hVarNames = map (\(Var (v:>_)) -> v) hVals
-          let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
-          -- want to use tangents here, not the original binders
-          let regionMap = newEnv (map ((:>()) . snd) effs) hVals
-          -- TODO: Only bind tangents for free variables?
-          let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-          buildNestedLam activeVarBinders $ \activeVarArgs ->
-            buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
-              runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
-
-    -- This doesn't work if we have references inside pairs, tables etc.
-    -- TODO: something more general and cleaner.
-    tangentRefRegion :: Env Atom -> Type -> Type
-    tangentRefRegion regEnv ty = case ty of
-      RefTy ~(Var h) a -> RefTy (regEnv ! h) $ tangentType a
-      _ -> tangentType ty
-
-    -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
-    applyLinToTangents :: Atom -> TangentM Atom
-    applyLinToTangents f = do
-      TangentEnv{..} <- ask
-      let hs' = map (Var . (:>TyKind)) activeRefs
-      let tangents = fmap snd $ envPairs $ tangentVals
-      let args = hs' ++ tangents ++ [UnitVal]
-      naryApp f args
-
     linearizeEffectFun :: EffectName -> Atom -> PrimalM (Atom, Var)
     linearizeEffectFun effName ~(BinaryFunVal h ref eff body) = do
       h' <- mapM (substEmbed env) h
@@ -413,6 +391,41 @@ isTrivialForAD :: Expr -> Bool
 isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
   where tangentTy = tangentType $ getType expr
 
+-- Abstract the tangent action as a lambda.
+-- TODO: curried linear functions somehow?
+tangentFunAsLambda :: LinA Atom -> PrimalM Atom
+tangentFunAsLambda m = do
+  (ans, tanFun) <- runLinA m
+  DerivWrt activeVars effs <- ask
+  let hs = map (Bind . (:>TyKind) . snd) effs
+  liftM (PairVal ans) $ lift $ do
+    buildNestedLam hs $ \hVals -> do
+      let hVarNames = map (\(Var (v:>_)) -> v) hVals
+      let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
+      -- want to use tangents here, not the original binders
+      let regionMap = newEnv (map ((:>()) . snd) effs) hVals
+      -- TODO: Only bind tangents for free variables?
+      let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
+      buildNestedLam activeVarBinders $ \activeVarArgs ->
+        buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
+          runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
+  where
+    -- This doesn't work if we have references inside pairs, tables etc.
+    -- TODO: something more general and cleaner.
+    tangentRefRegion :: Env Atom -> Type -> Type
+    tangentRefRegion regEnv ty = case ty of
+      RefTy ~(Var h) a -> RefTy (regEnv ! h) $ tangentType a
+      _ -> tangentType ty
+
+-- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
+applyLinToTangents :: Atom -> TangentM Atom
+applyLinToTangents f = do
+  TangentEnv{..} <- ask
+  let hs' = map (Var . (:>TyKind)) activeRefs
+  let tangents = fmap snd $ envPairs $ tangentVals
+  let args = hs' ++ tangents ++ [UnitVal]
+  naryApp f args
+
 bindLin :: LinA a -> (a -> Embed b) -> LinA b
 bindLin (LinA m) f = LinA $ do
   (e, t) <- m
@@ -513,10 +526,21 @@ transposeExpr expr ct = case expr of
       ref <- traverse (\ref -> emitOp $ IndexRef ref i') =<< linAtomRef x
       emitCTToRef ref ct
     _ -> error $ "shouldn't have non-table app left"
-  Hof hof    -> transposeHof hof ct
-  Op op      -> transposeOp op ct
-  Atom atom  -> transposeAtom atom ct
-  Case _ _ _ -> notImplemented
+  Hof hof       -> transposeHof hof ct
+  Op op         -> transposeOp op ct
+  Atom atom     -> transposeAtom atom ct
+  Case e alts _ -> do
+    linearScrutinee <- isLin e
+    case linearScrutinee of
+      True  -> notImplemented
+      False -> do
+        alts' <- traverse transposeNonlinAlt alts
+        void $ emit $ Case e alts' UnitTy
+  where
+    transposeNonlinAlt (Abs bs body) =
+      buildNAbs bs $ \xs -> do
+        localNonlinSubst (newEnv bs xs) $ transposeBlock body ct
+        return UnitVal
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
