@@ -79,12 +79,7 @@ quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: test-prep quine-tests repl-test
-
-test-prep:
-	rm -rf test-scratch/
-	mkdir -p test-scratch/
-	python3 misc/py/generate-dex-data.py
+tests: quine-tests repl-test
 
 quine-tests: $(quine-test-targets)
 

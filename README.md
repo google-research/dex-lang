@@ -1,4 +1,4 @@
-# Dex [![Test status](https://travis-ci.org/google-research/dex-lang.svg?branch=main)](https://travis-ci.org/google-research/dex-lang)
+# Dex [![Test status](https://github.com/google-research/dex-lang/workflows/Continuous%20integration/badge.svg)](https://travis-ci.org/google-research/dex-lang)
 Dex (named for "index") is a research language for typed, functional array
 processing. The goal of the project is to explore:
 
