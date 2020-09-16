@@ -58,7 +58,6 @@ jobs:
 
     - name: Debug
       run: |
-        mkdir -p ~/.stack/setup-exe-cache
         find ~/.stack/setup-exe-cache/ | xargs file
         find ~/.stack/setup-exe-cache/ -type f | xargs shasum
 
