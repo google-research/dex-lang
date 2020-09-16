@@ -41,25 +41,13 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          ~/.stack
+          ~/.stack/snapshots
           $GITHUB_WORKSPACE/.stack-work
-        key: ${{ runner.os }}-debug-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
-        restore-keys: ${{ runner.os }}-debug-
-
-    - name: Debug
-      run: |
-        mkdir -p ~/.stack/setup-exe-cache
-        find ~/.stack/setup-exe-cache/ | xargs file
-        find ~/.stack/setup-exe-cache/ -type f | xargs shasum
-        rm -rf ~/.stack/setup-exe-cache
+        key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-
 
     - name: Build
       run: make
-
-    - name: Debug
-      run: |
-        find ~/.stack/setup-exe-cache/ | xargs file
-        find ~/.stack/setup-exe-cache/ -type f | xargs shasum
 
     - name: Run tests
       run: make tests
