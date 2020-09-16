@@ -41,7 +41,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          ~/.stack/snapshots
+          ~/.stack
           $GITHUB_WORKSPACE/.stack-work
         key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-
