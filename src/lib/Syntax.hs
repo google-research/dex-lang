@@ -1275,10 +1275,10 @@ pattern IdxRepVal x = Con (Lit (Int32Lit x))
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type
-pattern TagRepTy = TC (BaseType (Scalar Int64Type))
+pattern TagRepTy = TC (BaseType (Scalar Int8Type))
 
-pattern TagRepVal :: Int64 -> Atom
-pattern TagRepVal x = Con (Lit (Int64Lit x))
+pattern TagRepVal :: Int8 -> Atom
+pattern TagRepVal x = Con (Lit (Int8Lit x))
 
 pattern ArrayVal :: Type -> Array -> Atom
 pattern ArrayVal t arr = Con (ArrayLit t arr)
