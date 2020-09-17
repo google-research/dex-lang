@@ -100,10 +100,10 @@ linearizeExpr env expr = case expr of
         alts' <- traverse linearizeInactiveAlt alts
         result <- emit $ Case e' alts' $ (\((Abs _ body):_) -> getType body) alts'
         (ans, linLam) <- fromPair result
-        return (ans, applyLinToTangents linLam)
+        return (ans, applyLinToTangents [] linLam)
     where
       linearizeInactiveAlt (Abs bs body) = do
-        buildNAbs bs $ \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
+        buildNAbs bs $ \xs -> tangentFunAsLambda [] $ linearizeBlock (env <> newEnv bs xs) body
   _ -> LinA $ do
     expr' <- substEmbed env expr
     runLinA $ case expr' of
@@ -243,9 +243,9 @@ linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For d ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
-    (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i'' ->
-       tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
-    return (ans, buildFor d i' $ app linTab >=> applyLinToTangents)
+    (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i''@(Var vi'') ->
+       tangentFunAsLambda [Bind vi''] $ linearizeBlock (env <> i@>i'') body
+    return (ans, buildFor d i' $ \i'' -> app linTab i'' >>= applyLinToTangents [i''])
   Tile _ _ _        -> notImplemented
   RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
   RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
@@ -278,7 +278,7 @@ linearizeHof env hof = case hof of
                       let RefTy _ wTy = binderType b
                       return $ emitter wTy
                   valEmitter $ \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
-                      extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
+                      extendTangentEnv (ref @> ref') [h] $ applyLinToTangents [] linBody
       return (ans, lin)
 
     linearizeEffectFun :: EffectName -> Atom -> PrimalM (Atom, Var)
@@ -290,7 +290,7 @@ linearizeHof env hof = case hof of
         ref' <- mapM (substEmbed env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') $ \ref''@(Var refVar) ->
           extendWrt [refVar] [(effName, varName hVar)] $
-            (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
+            (,refVar) <$> (tangentFunAsLambda [] $ linearizeBlock (env' <> ref@>ref'') body)
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
@@ -403,25 +403,38 @@ isTrivialForAD :: Expr -> Bool
 isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
   where tangentTy = tangentType $ getType expr
 
--- Abstract the tangent action as a lambda.
+-- Abstract the tangent action as a lambda. Also accepts binders for variables that might
+-- be used in the tangent function and abstracts over them (useful when they're easy to
+-- reconstruct at application sites).
 -- TODO: curried linear functions somehow?
-tangentFunAsLambda :: LinA Atom -> PrimalM Atom
-tangentFunAsLambda m = do
+tangentFunAsLambda :: [Binder] -> LinA Atom -> PrimalM Atom
+tangentFunAsLambda bs m = do
   (ans, tanFun) <- runLinA m
   DerivWrt activeVars effs <- ask
   let hs = map (Bind . (:>TyKind) . snd) effs
   liftM (PairVal ans) $ lift $ do
-    buildNestedLam hs $ \hVals -> do
-      let hVarNames = map (\(Var (v:>_)) -> v) hVals
-      let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
-      -- want to use tangents here, not the original binders
-      let regionMap = newEnv (map ((:>()) . snd) effs) hVals
-      -- TODO: Only bind tangents for free variables?
-      let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-      buildNestedLam activeVarBinders $ \activeVarArgs ->
-        buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
-          runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
+    tanLam <- makeLambdas bs $ do
+      buildNestedLam hs $ \hVals -> do
+        let hVarNames = map (\(Var (v:>_)) -> v) hVals
+        let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
+        -- want to use tangents here, not the original binders
+        let regionMap = newEnv (map ((:>()) . snd) effs) hVals
+        -- TODO: Only bind tangents for free variables?
+        let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
+        buildNestedLam activeVarBinders $ \activeVarArgs ->
+          buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
+            runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
+    case bs of
+      [] -> return tanLam
+      _  -> deShadow tanLam <$> getScope
   where
+    -- Like buildLam, but doesn't try to deshadow the binder.
+    makeLambda b f = do
+      block <- buildScoped $ f
+      return $ Lam $ makeAbs b (PureArrow, block)
+
+    makeLambdas b f = foldr ($) f $ fmap makeLambda b
+
     -- This doesn't work if we have references inside pairs, tables etc.
     -- TODO: something more general and cleaner.
     tangentRefRegion :: Env Atom -> Type -> Type
@@ -430,12 +443,12 @@ tangentFunAsLambda m = do
       _ -> tangentType ty
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
-applyLinToTangents :: Atom -> TangentM Atom
-applyLinToTangents f = do
+applyLinToTangents :: [Atom] -> Atom -> TangentM Atom
+applyLinToTangents extra f = do
   TangentEnv{..} <- ask
   let hs' = map (Var . (:>TyKind)) activeRefs
   let tangents = fmap snd $ envPairs $ tangentVals
-  let args = hs' ++ tangents ++ [UnitVal]
+  let args = extra ++ hs' ++ tangents ++ [UnitVal]
   naryApp f args
 
 bindLin :: LinA a -> (a -> Embed b) -> LinA b
