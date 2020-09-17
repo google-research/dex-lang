@@ -83,55 +83,51 @@ f : Float -> Float = \x. snd $ withAccum \ref. ref += x
    deriv (deriv (deriv f)) 1.234
 > 24.0
 
--- TODO: handle pairs and re-enable
 :p
    f : Float --o (Float & Float) = \x. (x, 2.0 * x)
    transposeLinear f (1.0, 3.0)
 > 7.0
 
--- TODO: handle pairs and re-enable
 :p
    f : (Float & Float) --o Float = \(x,y). x + 2.0 * y
    transposeLinear f 1.0
 > (1.0, 2.0)
 
--- TODO: handle user-defined linearity rules an re-enable
+:p deriv cos 0.0
+> 0.0
 
--- :p deriv cos 0.0
--- > 0.0
+:p deriv sin 0.0
+> 1.0
 
--- :p deriv sin 0.0
--- > 1.0
+:p (sin 1.0, deriv (deriv sin) 1.0)
+> (0.84147096, -0.84147096)
 
--- :p (sin 1.0, deriv (deriv sin) 1.0)
--- > (0.84147096, -0.84147096)
+:p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
+> (0.5403023, -0.5403023)
 
--- :p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
--- > (0.5403023, -0.5403023)
+:p checkDeriv sin 1.0
+> True
 
--- :p checkDeriv sin 1.0
--- > True
+:p checkDeriv cos 1.0
+> True
 
--- :p checkDeriv cos 1.0
--- > True
+:p checkDeriv exp 2.0
+> True
 
--- :p checkDeriv exp 2.0
--- > True
+:p checkDeriv log 2.0
+> True
 
--- :p checkDeriv log 2.0
--- > True
+:p checkDeriv (\x. exp (sin (cos x))) 2.0
+> True
 
--- :p checkDeriv sqrt 2.0
--- > True
+:p checkDeriv (deriv sin) 1.0
+> True
 
--- :p checkDeriv (\x. cos (sin (exp x))) 2.0
--- > True
+:p checkDeriv (deriv cos) 1.0
+> True
 
--- :p checkDeriv (deriv sin) 1.0
--- > True
-
--- :p checkDeriv (deriv cos) 1.0
--- > True
+:p checkDeriv sqrt 4.0
+> True
 
 -- badDerivFun : Float -> Float
 -- badDerivFun x = x
@@ -146,10 +142,6 @@ f : Float -> Float = \x. snd $ withAccum \ref. ref += x
 -- https://github.com/HIPS/autograd/issues/4
 :p deriv (\x. x * deriv (\y. x * y) 2.0) 1.0
 > 2.0
-
--- sinn#lin : Float -> Float
--- sinn#lin x = x
--- > Error: variable not in scope: sinn
 
 tripleit : Float --o Float = \x. x + x + x
 
@@ -177,14 +169,8 @@ tripleit : Float --o Float = \x. x + x + x
 myOtherSquare : Float -> Float =
   \x. snd $ withAccum \w. w += x * x
 
-:p myOtherSquare 3.0
-> 9.0
-
-:p jvp myOtherSquare 3.0 1.0
-> 6.0
-
-:p transposeLinear (jvp myOtherSquare 3.0) 1.0
-> 6.0
+:p checkDeriv myOtherSquare 3.0
+> True
 
 :p
   f : Float -> Float =
@@ -193,12 +179,12 @@ myOtherSquare : Float -> Float =
   jvp f 1.0 3.0
 > 6.0
 
---:p
---  f : Float -> Float = \x.
---    x * IToF (1 + 1)
---
---  jvp f 1.0 2.0
---> 4.0
+:p
+  f : Float -> Float = \x.
+    x * IToF (1 + 1)
+
+  jvp f 1.0 2.0
+> 4.0
 
 :p
   f : (Fin 2)=>Float -> Float =
@@ -244,3 +230,59 @@ vec = [1.]
       a += y
   grad f 1.0
 > 4.0
+
+:p
+  f : Float -> Float = \x.
+    x2 = x * x
+    withReader x \xr.
+      withReader x2 \x2r.
+        5.0 * (ask x2r) + 4.0 * (ask xr) + 2.0
+  checkDeriv f 2.0
+> True
+
+:p
+  f : Float -> Float = \x.
+    snd $ withState x \xr.
+      for i:(Fin 2).
+        xr := get xr * get xr
+  checkDeriv f 2.0
+> True
+
+:p
+  f = \rec.
+    ({x=x, y=y, z=z}) = rec
+    x * y * IToF z
+  (checkDeriv (\x. f {x=x, y=4.0, z=5}) 2.0, checkDeriv (\y. f {x=2.0, y=y, z=5}) 4.0)
+> (True, True)
+
+:p
+  f = \x.
+    y = for i:(Fin 10). { x=x * (IToF $ ordinal i) }
+    z = for i.
+      ({ x=x, ... }) = y.i
+      x
+    sum' z
+  checkDeriv f 1.0
+> True
+
+:p
+  f = \x. for i:(Fin 4). { x=x * x * (IToF $ ordinal i) }
+  jvp f 2.0 1.0
+> [{x = 0.0}, {x = 4.0}, {x = 8.0}, {x = 12.0}]
+
+:p
+  s : { a : Float | b : Float } = case 2 == 2 of
+    False -> {| a=2.0 |}
+    True -> {| b=5.0 |}
+  f = \x.
+    case s of
+      {| a=a |} -> 2.0 * (a + x)
+      {| b=b |} -> b * x
+  (y, df) = linearize f 2.0
+  checkDerivBase f 2.0
+> True
+
+:p
+  f = max 0.0
+  (checkDeriv f 1.0, checkDeriv f (-1.0))
+> (True, True)

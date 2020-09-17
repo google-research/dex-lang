@@ -16,6 +16,8 @@ import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 
 import Interpreter
+import Simplify
+import Type hiding (indexSetConcreteSize)
 import Syntax
 import PPrint
 import Interpreter (indices)

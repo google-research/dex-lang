@@ -20,7 +20,7 @@ module Syntax (
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..),
-    PrimEffect (..), PrimOp (..), EffectSummary (..),
+    PrimEffect (..), PrimOp (..), EffectSummary, pattern NoEffects,
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
@@ -29,7 +29,7 @@ module Syntax (
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..),
-    UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
+    UAlt (..), AltP (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..),
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -71,6 +71,7 @@ import qualified Data.Vector.Storable  as V
 import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Set as S
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
@@ -96,6 +97,7 @@ data Atom = Var Var
           | Con Con
           | TC  TC
           | Eff EffectRow
+          | ACase Atom [AltP Atom] Type
             deriving (Show, Generic)
 
 data Expr = App Atom Atom
@@ -109,7 +111,8 @@ data Decl = Let LetAnn Binder Expr
           | Unpack (Nest Binder) Expr  deriving (Show, Generic)
 
 data Block = Block (Nest Decl) Expr    deriving (Show, Generic)
-type Alt = Abs (Nest Binder) Block
+type AltP a = Abs (Nest Binder) a
+type Alt = AltP Block
 
 type Var    = VarP Type
 type Binder = BinderP Type
@@ -179,6 +182,9 @@ instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
     LabeledItems $ M.unionWith (<>) items items'
 
+instance Monoid (LabeledItems a) where
+  mempty = NoLabeledItems
+
 -- Extensible version of LabeledItems, which allows an optional object in tail
 -- position. The items of the tail object will always be interpreted as a
 -- "suffix" in the sense that for any field label, the object represented by
@@ -243,10 +249,10 @@ data UPat' = UPatBinder UBinder
            | UPatVariantLift (LabeledItems ()) UPat     -- {|a|b| ...rest |}
              deriving (Show)
 
-data WithSrc a = WithSrc SrcPos a
+data WithSrc a = WithSrc SrcCtx a
                  deriving (Show, Functor, Foldable, Traversable)
 
-srcPos :: WithSrc a -> SrcPos
+srcPos :: WithSrc a -> SrcCtx
 srcPos (WithSrc pos _) = pos
 
 -- === primitive constructors and operators ===
@@ -390,21 +396,18 @@ data EffectRow = EffectRow [Effect] (Maybe Name)
                  deriving (Show, Generic)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data EffectSummary = NoEffects | SomeEffects  deriving (Show, Eq, Ord, Generic)
+type EffectSummary = S.Set Effect
 
 pattern Pure :: EffectRow
 pattern Pure = EffectRow [] Nothing
 
+pattern NoEffects :: EffectSummary
+pattern NoEffects <- ((S.null) -> True)
+  where NoEffects = mempty
+
 instance Eq EffectRow where
   EffectRow effs t == EffectRow effs' t' =
     sort effs == sort effs' && t == t'
-
-instance Semigroup EffectSummary where
-  NoEffects <> NoEffects = NoEffects
-  _ <> _ = SomeEffects
-
-instance Monoid EffectSummary where
-  mempty = NoEffects
 
 -- === top-level constructs ===
 
@@ -1018,6 +1021,7 @@ instance HasVars Atom where
     Variant la _ _ val -> freeVars la <> freeVars val
     RecordTy row -> freeVars row
     VariantTy row -> freeVars row
+    ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
 
 instance Subst Atom where
   subst env atom = case atom of
@@ -1034,6 +1038,7 @@ instance Subst Atom where
     Variant row label i val -> Variant (subst env row) label i (subst env val)
     RecordTy row -> RecordTy $ subst env row
     VariantTy row -> VariantTy $ subst env row
+    ACase v alts rty -> ACase (subst env v) (subst env alts) (subst env rty)
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings

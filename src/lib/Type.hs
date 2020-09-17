@@ -23,7 +23,9 @@ import Data.Foldable (toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
+import GHC.Stack
 
 import Syntax
 import Env
@@ -40,7 +42,7 @@ type TypeM = ReaderT TypeCheckEnv Except
 class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
-getType :: HasType a => a -> Type
+getType :: (HasCallStack, HasType a) => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
 
@@ -135,6 +137,7 @@ instance HasType Atom where
       ty |: TyKind
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
+    ACase e alts resultTy -> checkCase e alts resultTy
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -154,28 +157,31 @@ instance HasType Expr where
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
-    Case e alts resultTy -> do
-      checkWithEnv $ \_ -> do
-        ety <- typeCheck e
-        case ety of
-          TypeCon def params -> do
-            let cons = applyDataDefParams def params
-            checkEq  (length cons) (length alts)
-            forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
-              checkEq bs' bs
-              resultTy' <- flip (foldr withBinder) bs $ typeCheck body
-              checkEq resultTy resultTy'
-          VariantTy (NoExt types) -> do
-            checkEq (length types) (length alts)
-            forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
-              [b] <- pure $ toList bs
-              checkEq (getType b) ty
-              resultTy' <- flip (foldr withBinder) bs $ typeCheck body
-              checkEq resultTy resultTy'
-          VariantTy _ -> throw CompilerErr
-            "Can't pattern-match partially-known variants"
-          _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
-      return resultTy
+    Case e alts resultTy -> checkCase e alts resultTy
+
+checkCase :: HasType b => Atom -> [AltP b] -> Type -> TypeM Type
+checkCase e alts resultTy = do
+  checkWithEnv $ \_ -> do
+    ety <- typeCheck e
+    case ety of
+      TypeCon def params -> do
+        let cons = applyDataDefParams def params
+        checkEq  (length cons) (length alts)
+        forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
+          checkEq bs' bs
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
+      VariantTy (NoExt types) -> do
+        checkEq (length types) (length alts)
+        forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
+          [b] <- pure $ toList bs
+          checkEq (getType b) ty
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
+      VariantTy _ -> throw CompilerErr
+        "Can't pattern-match partially-known variants"
+      _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
+  return resultTy
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -188,37 +194,44 @@ checkApp fTy x = do
 -- TODO: replace with something more precise (this is too cautious)
 blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
-  foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
+  foldMap declEffs decls <> exprEffs result
+  where declEffs (Let _ _ expr) = exprEffs expr
+        declEffs (Unpack _ expr) = exprEffs expr
 
 isPure :: Expr -> Bool
-isPure expr = case exprEffs expr of
-  NoEffects   -> True
-  SomeEffects -> False
+isPure expr = exprEffs expr == mempty
 
 exprEffs :: Expr -> EffectSummary
 exprEffs expr = case expr of
-  Atom _ -> NoEffects
+  Atom _  -> NoEffects
   App f _ -> functionEffs f
-  Op op -> case op of
-    PrimEffect _ _ -> SomeEffects
+  Op op   -> case op of
+    PrimEffect ref m -> case m of
+      MGet    -> S.singleton (State,  h)
+      MPut  _ -> S.singleton (State,  h)
+      MAsk    -> S.singleton (Reader, h)
+      MTell _ -> S.singleton (Writer, h)
+      where RefTy (Var (h:>_)) _ = getType ref
     _ -> NoEffects
   Hof hof -> case hof of
-    For _ f -> functionEffs f
+    For _ f         -> functionEffs f
+    Tile _ _ _      -> error "not implemented"
     While cond body -> functionEffs cond <> functionEffs body
-    Linearize _ -> NoEffects
-    Transpose _ -> NoEffects
-    -- These are more convservative than necessary.
-    -- TODO: make them more precise by de-duping with type checker
-    RunReader _ _ -> SomeEffects
-    RunWriter _   -> SomeEffects
-    RunState _ _  -> SomeEffects
-    Tile _ _ _ -> error "not implemented"
+    Linearize _     -> mempty  -- Body has to be a pure function
+    Transpose _     -> mempty  -- Body has to be a pure function
+    RunReader _ f   -> handleRunner Reader f
+    RunWriter   f   -> handleRunner Writer f
+    RunState  _ f   -> handleRunner State  f
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
+  where
+    handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs Nothing) _) =
+      S.delete (effName, h) $ S.fromList effs
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
-  Pi (Abs _ (arr, _)) | arrowEff arr == Pure -> NoEffects
-  _ -> SomeEffects
+  Pi (Abs _ (arr, _)) -> S.fromList effs
+    where EffectRow effs Nothing = arrowEff arr
+  _ -> error "Expected a function type"
 
 instance HasType Block where
   typeCheck (Block decls result) = do
@@ -314,6 +327,7 @@ instance CoreVariant Atom where
     RecordTy _ -> alwaysAllowed
     Variant _ _ _ _ -> alwaysAllowed
     VariantTy _ -> alwaysAllowed
+    ACase _ _ _ -> goneBy Simp
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
@@ -833,6 +847,8 @@ checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
+  RecordTy (NoExt items)  -> void $ traverse recur items
+  VariantTy (NoExt items) -> void $ traverse recur items
   -- TODO: check that data constructor arguments are data-like, and so on
   TypeCon _ _ -> return ()
   TC con -> case con of
@@ -842,6 +858,7 @@ checkDataLike msg env ty = case ty of
     UnitType         -> return ()
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
+    IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg
   _   -> throw TypeErr $ pprint ty ++ msg
   where recur x = checkDataLike msg env x

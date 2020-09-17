@@ -11,10 +11,11 @@ module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              scanM, composeN, mapMaybe, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             bindM2, foldMapM, lookupWithIdx, (...)) where
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import Data.Foldable
 import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
@@ -206,3 +207,8 @@ foldMapM f xs = foldM (\acc x -> (acc<>) <$> f x ) mempty xs
 
 lookupWithIdx :: Eq a => a -> [(a, b)] -> Maybe (Int, b)
 lookupWithIdx k vals = lookup k $ [(x, (i, y)) | (i, (x, y)) <- zip [0..] vals]
+
+-- NOTE: (toList args) has to be at least as long as (toList trav)
+zipWithT :: (Traversable t, Monad h, Foldable f) => (a -> b -> h c) -> t a -> f b -> h (t c)
+zipWithT f trav args = flip evalStateT (toList args) $ flip traverse trav $ \e -> getNext >>= lift . f e
+  where getNext = get >>= \(h:t) -> put t >> return h

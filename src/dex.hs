@@ -31,13 +31,10 @@ data EvalMode = ReplMode String
               | ScriptMode FilePath DocFmt ErrorHandling
 data CmdOpts = CmdOpts EvalMode EvalConfig
 
-type BlockCounter = Int
-type EvalState = (BlockCounter, TopEnv)
-
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
-  (n, env) <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
-  let runEnv m = evalStateT m (n, env)
+  env <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
+  let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
       runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
@@ -49,30 +46,16 @@ runMode evalMode opts = do
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalDecl :: EvalConfig -> SourceBlock -> StateT EvalState IO Result
-evalDecl opts block = do
-  (n, env) <- get
-  (env', ans) <- liftIO $ evalSourceBlock opts env $ block
-  put (n+1, env <> env')
-  return ans
-
-evalFile :: EvalConfig -> FilePath -> StateT EvalState IO [(SourceBlock, Result)]
-evalFile opts fname = do
-  source <- liftIO $ readFile fname
-  let sourceBlocks = parseProg source
-  results <- mapM (evalDecl opts) sourceBlocks
-  return $ zip sourceBlocks results
-
-evalPrelude ::EvalConfig-> FilePath -> IO EvalState
-evalPrelude opts fname = flip execStateT (0, mempty) $ do
+evalPrelude :: EvalConfig -> FilePath -> IO TopEnv
+evalPrelude opts fname = flip execStateT mempty $ do
   result <- evalFile opts fname
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalConfig -> InputT (StateT EvalState IO) ()
+replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
 replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
-  result <- lift $ (evalDecl opts) sourceBlock
+  result <- lift $ evalDecl opts sourceBlock
   case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result

@@ -91,6 +91,11 @@ def fst (p: (a & b)) : a = %fst p
 def snd (p: (a & b)) : b = %snd p
 def swap (p:(a&b)) : (b&a) = (snd p, fst p)
 
+def astype (t:Type) (x:t) : t = x  -- to give hints to type inference
+
+def (<<<) (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
+def (>>>) (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
+
 flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
 uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
 const : a -> b -> a = \x _. x
@@ -332,6 +337,8 @@ def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
   for i. xs.(fromOrdinal _ (ordinal i + start))
 
+def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
+
 def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
   swap $ withState init \s. for i.
     c = get s
@@ -461,14 +468,26 @@ def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
+data HasAllClose a:Type =
+  MkHasAllClose (a -> a -> a -> a -> Bool)
+
+data HasDefaultTolerance a:Type =
+  MkHasDefaultTolerance a a
+
+def allCloseWithTolerance (d : HasAllClose a) ?=> : a -> a -> a -> a -> Bool = case d of MkHasAllClose f -> f
+def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool =
+  case d of MkHasDefaultTolerance atol rtol -> allCloseWithTolerance atol rtol
+
+@instance allCloseF : HasAllClose Float = MkHasAllClose \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+@instance defaultToleranceF32 : HasDefaultTolerance Float32 = MkHasDefaultTolerance (FToF32 0.00001   ) (FToF32 0.0001 )
+@instance defaultToleranceF64 : HasDefaultTolerance Float64 = MkHasDefaultTolerance (FToF64 0.00000001) (FToF64 0.00001)
+
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
-  -- TODO: parse 1e-5
-  eps = 0.00005
+  eps = 0.01
   ansFwd  = deriv    f x
   ansRev  = derivRev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
-  isClose = \a b. abs (a - b) < 0.001
-  isClose ansFwd ansNumeric && isClose ansRev ansNumeric
+  ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
 
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
@@ -581,3 +600,83 @@ def (<>) (x:List a) (y:List a) : List a =
     case i' < nx of
       True  -> xs.(fromOrdinal _ i')
       False -> ys.(fromOrdinal _ (i' - nx))
+
+'Isomorphisms
+
+data Iso a:Type b:Type = MkIso { fwd: a -> b & bwd: b -> a }
+
+def appIso (iso: Iso a b) (x:a) : b =
+  (MkIso {fwd, bwd}) = iso
+  fwd x
+
+def flipIso (iso: Iso a b) : Iso b a =
+  (MkIso {fwd, bwd}) = iso
+  MkIso {fwd=bwd, bwd=fwd}
+
+def revIso (iso: Iso a b) (x:b) : a = appIso (flipIso iso) x
+
+idIso : Iso a a = MkIso {fwd=id, bwd=id}
+
+def (&>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
+  (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
+  (MkIso {fwd=fwd2, bwd=bwd2}) = iso2
+  MkIso {fwd=(fwd1 >>> fwd2), bwd=(bwd1 <<< bwd2)}
+
+def (<<&) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
+
+-- Lens-like accessors
+-- (note: #foo is an Iso {foo: a & ...b} (a & {&...b}))
+def getAt  (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
+def popAt  (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
+def pushAt (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
+def setAt  (iso: Iso a (b & c)) (x:b) (r:a) : a =
+  pushAt iso x $ popAt iso r
+
+-- Prism-like accessors
+-- (note: #?foo is an Iso {foo: a | ...b} (a | {|...b}))
+def matchWith (iso: Iso a (b | c)) (x: a) : Maybe b =
+  case appIso iso x of
+    Left x -> Just x
+    Right _ -> Nothing
+def buildWith (iso: Iso a (b | c)) (x: b) : a = revIso iso $ Left x
+
+swapPairIso : Iso (a & b) (b & a) =
+  MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
+
+-- Complement the focus of a lens-like isomorphism
+exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso &>> swapPairIso
+
+swapEitherIso : Iso (a | b) (b | a) =
+  fwd = \x. case x of
+    Left l -> Right l
+    Right r -> Left r
+  bwd = \x. case x of
+    Left r -> Right r
+    Right l -> Left l
+  MkIso {fwd, bwd}
+
+-- Complement the focus of a prism-like isomorphism
+exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEitherIso
+
+-- Use a lens-like iso to split a 1d table into a 2d table
+def overLens (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
+  for i j. tab.(revIso iso (i, j))
+
+-- Zipper isomorphisms to easily specify many record/variant fields:
+-- #&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
+-- #|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
+
+-- Convert a record zipper isomorphism to a normal lens-like isomorphism
+-- by using splitR &>> iso
+splitR : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
+
+def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
+  overLens (splitR &>> iso) tab
+
+-- Convert a variant zipper isomorphism to a normal prism-like isomorphism
+-- by using splitV &>> iso
+splitV : Iso a ({|} | a) =
+  MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
+
+def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
+  reindex (buildWith $ splitV &>> iso) tab

@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Simplify (simplifyModule, evalSimplified) where
+module Simplify (simplifyModule, simplifyCase, evalSimplified) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -107,7 +107,34 @@ simplifyAtom atom = case atom of
     substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
   VariantTy items -> VariantTy <$> substEmbedR items
   LabeledRow items -> LabeledRow <$> substEmbedR items
+  ACase e alts rty   -> do
+    e' <- substEmbedR e
+    case simplifyCase e' alts of
+      Just (env, result) -> extendR env $ simplifyAtom result
+      Nothing -> do
+        alts' <- forM alts $ \(Abs bs a) -> do
+          bs' <- mapM (mapM substEmbedR) bs
+          (Abs bs'' b) <- buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyAtom a
+          case b of
+            Block Empty (Atom r) -> return $ Abs bs'' r
+            _                    -> error $ "Nontrivial block in ACase simplification"
+        ACase e' alts' <$> (substEmbedR rty)
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
+
+simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
+simplifyCase e alts = case e of
+  DataCon _ _ con args -> do
+    let Abs bs result = alts !! con
+    Just (newEnv bs args, result)
+  Variant (NoExt types) label i value -> do
+    let LabeledItems ixtypes = enumerate types
+    let index = fst $ (ixtypes M.! label) NE.!! i
+    let Abs bs result = alts !! index
+    Just (newEnv bs [value], result)
+  Con (SumAsProd _ (TagRepVal tag) vals) -> do
+    let Abs bs result = alts !! (fromIntegral tag)
+    Just (newEnv bs (vals !! fromIntegral tag), result)
+  _ -> Nothing
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)
@@ -122,35 +149,37 @@ simplifyBinaryLam = simplifyLams 2
 simplifyLams :: Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams numArgs lam = do
   lam' <- substEmbedR lam
-  dropSub $ simplifyLams' numArgs mempty $ Block Empty $ Atom lam'
+  dropSub $ go numArgs mempty $ Block Empty $ Atom lam'
+  where
+    go 0 scope block = do
+      result <- defunBlock scope block
+      return $ case result of
+        Left  res        -> (res         , Nothing)
+        Right (f, recon) -> (mkConsList f, Just $ unpackConsList >=> recon)
+    go n scope ~(Block Empty (Atom (Lam (Abs b (arr, body))))) = do
+      b' <- mapM substEmbedR b
+      buildLamAux b' (\x -> extendR (b@>x) $ substEmbedR arr) $ \x@(Var v) -> do
+        let scope' = scope <> v @> (varType v, LamBound (void arr))
+        extendR (b@>x) $ go (n-1) scope' body
 
-simplifyLams' :: Int -> Scope -> Block
-              -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
-simplifyLams' 0 scope block = do
+defunBlock :: MonadEmbed m => Scope -> Block -> SimplifyM (Either Atom ([Atom], [Atom] -> m Atom))
+defunBlock localScope block = do
   topScope <- getScope
   if isData topScope (getType block)
-    then liftM (,Nothing) $ simplifyBlock block
+    then Left <$> simplifyBlock block
     else do
-      (block', (scope', decls)) <- embedScoped $ simplifyBlock block
+      (result, (localScope', decls)) <- embedScoped $ simplifyBlock block
       mapM_ emitDecl decls
-      let (dataVals, recon) = separateDataComponent (scope <> scope') block'
-      return (dataVals, Just recon)
-simplifyLams' n scope (Block Empty (Atom (Lam (Abs b (arr, body))))) = do
-  b' <- mapM substEmbedR b
-  buildLamAux b' (\x -> extendR (b@>x) $ substEmbedR arr) $ \x@(Var v) -> do
-    let scope' = scope <> v @> (varType v, LamBound (void arr))
-    extendR (b@>x) $ simplifyLams' (n-1) scope' body
-simplifyLams' _ _ _ = error "Expected n lambdas"
+      let (dataVals, recon) = separateDataComponent (localScope <> localScope') result
+      return $ Right (dataVals, recon)
 
-separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
-separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)
+separateDataComponent :: MonadEmbed m => Scope -> Atom -> ([Atom], [Atom] -> m Atom)
+separateDataComponent localVars atom = (map Var vs, recon)
   where
     vs = bindingsAsVars $ localVars `envIntersect` freeVars atom
-    recon :: MonadEmbed m => Atom -> m Atom
     recon xs = do
-      xs' <- unpackConsList xs
       scope <- getScope
-      return $ subst (newEnv vs xs', scope) atom
+      return $ subst (newEnv vs xs, scope) atom
 
 applyRecon :: MonadEmbed m => Maybe (Atom -> m Atom) -> Atom -> m Atom
 applyRecon Nothing x = return x
@@ -167,6 +196,12 @@ simplifyExpr expr = case expr of
       DataCon def params con xs -> return $ DataCon def params' con xs'
          where DataDef _ paramBs _ = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
+      ACase e alts ~(Pi ab) -> do
+        let rty' = snd $ applyAbs ab $ getType x'
+        let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (App a x')
+        dropSub $ simplifyExpr $ Case e alts' rty'
+      TypeCon def params -> return $ TypeCon def params'
+         where params' = params ++ [x']
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
@@ -174,24 +209,46 @@ simplifyExpr expr = case expr of
   Case e alts resultTy -> do
     e' <- simplifyAtom e
     resultTy' <- substEmbedR resultTy
-    case e' of
-      DataCon _ _ con args -> do
-        let Abs bs body = alts !! con
-        extendR (newEnv bs args) $ simplifyBlock body
-      Variant (NoExt types) label i value -> do
-        let LabeledItems ixtypes = enumerate types
-        let index = fst $ (ixtypes M.! label) NE.!! i
-        let Abs bs body = alts !! index
-        extendR (newEnv bs [value]) $ simplifyBlock body
-      _ -> do
-        alts' <- forM alts $ \(Abs bs body) -> do
-          bs' <-  mapM (mapM substEmbedR) bs
-          buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
-        emit $ Case e' alts' resultTy'
+    case simplifyCase e' alts of
+      Just (env, body) -> extendR env $ simplifyBlock body
+      Nothing -> do
+        topScope <- getScope
+        if isData topScope resultTy'
+          then do
+            alts' <- forM alts $ \(Abs bs body) -> do
+              bs' <-  mapM (mapM substEmbedR) bs
+              buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
+            emit $ Case e' alts' resultTy'
+          else do
+            altsWithRecons <- forM (enumerate alts) $ \(i, Abs bs body) -> do
+              bs' <-  mapM (mapM substEmbedR) bs
+              buildNAbsAux bs' $ \xs -> do
+                ~(Right (res, recon)) <- extendR (newEnv bs' xs) $ defunBlock (boundVars bs') body
+                return (mkConsList res, Just (\ddef -> DataCon ddef [] i res, fmap getType res, recon))
+            let altResultTypes = fmap (\(_, Just (_, t, _)) -> t) altsWithRecons
+            -- TODO: Handle dependency once separateDataComponent supports it
+            let dcons = fmap (DataConDef "Case" . toNest . fmap Ignore) altResultTypes
+            let ddef = DataDef "DefunCase" Empty dcons
+            let alts' = flip fmap altsWithRecons $
+                  \(Abs bs (Block decls _), Just (rval, _, _)) ->
+                    Abs bs $ Block decls $ Atom $ rval ddef
+            caseResult <- emit $ Case e' alts' (TypeCon ddef [])
+            aalts <- forM altsWithRecons $ \(_, Just (_, tys, rec)) -> do
+              (Abs bs' b) <- buildNAbs (toNest $ fmap Ignore tys) $ \free -> rec free
+              case b of
+                Block Empty (Atom r) -> return $ Abs bs' r
+                _ -> error $ "Reconstruction function emitted a nontrivial block: " ++ pprint b
+            return $ ACase caseResult aalts resultTy'
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
+  Fst (ACase e alts (PairTy xt _)) -> do
+    let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (Op $ Fst a)
+    dropSub $ simplifyExpr $ Case e alts' xt
+  Snd (ACase e alts (PairTy _ yt)) -> do
+    let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (Op $ Snd a)
+    dropSub $ simplifyExpr $ Case e alts' yt
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
@@ -274,7 +331,7 @@ simplifyHof hof = case hof of
   Transpose lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     scope <- getScope
-    return $ transposeMap scope lam'
+    return $ transpose scope lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
     ~(lam', recon) <- simplifyBinaryLam lam

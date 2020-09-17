@@ -26,6 +26,8 @@ import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
 
+import System.IO.Unsafe
+import System.Environment
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -775,9 +777,12 @@ binaryIntrinsic op x y = do
 
 -- === Constants ===
 
+allowContractions :: Bool
+allowContractions = unsafePerformIO $ (Just "0"/=) <$> lookupEnv "DEX_ALLOW_CONTRACTIONS"
+
 -- FP contractions should only lead to fewer rounding points, so we allow those
 mathFlags :: L.FastMathFlags
-mathFlags = L.noFastMathFlags { L.allowContract = True }
+mathFlags = L.noFastMathFlags { L.allowContract = allowContractions }
 
 mallocFun :: ExternFunSpec
 mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]

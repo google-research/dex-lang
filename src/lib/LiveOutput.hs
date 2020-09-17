@@ -33,7 +33,7 @@ import Syntax
 import Actor
 import Parser
 import Env
-import TopLevel
+import TopLevel hiding (evalSource)
 import RenderHtml
 import PPrint
 

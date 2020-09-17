@@ -13,13 +13,18 @@ ifeq (, $(STACK))
 else
 	STACK=stack
 
+	PLATFORM := $(shell uname -s)
+	ifeq ($(PLATFORM),Darwin)
+		STACK=stack --stack-yaml=stack-macos.yaml
+	endif
+
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
 	PROF := --profile --work-dir .stack-work-prof
 
-	dex     := stack exec         dex --
-	dexprof := stack exec $(PROF) dex --
+	dex     := $(STACK) exec         dex --
+	dexprof := $(STACK) exec $(PROF) dex --
 endif
 
 
@@ -50,6 +55,12 @@ build-prof: dexrt-llvm
 
 dexrt-llvm: src/lib/dexrt.bc
 
+# For some reason stack fails to detect modifications to foreign library files
+build-python: build
+	$(STACK) build $(STACK_FLAGS) --force-dirty
+	$(eval STACK_INSTALL_DIR=$(shell stack path --local-install-root))
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
+
 %.bc: %.cpp
 	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
 
@@ -61,33 +72,28 @@ example-names = uexpr-tests adt-tests type-tests eval-tests \
                 ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
-                mcmc record-variant-tests simple-include-test ctc raytrace
+                mcmc record-variant-tests simple-include-test ctc raytrace \
+                isomorphisms
 
 quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: test-prep quine-tests repl-test
-
-test-prep:
-	rm -rf test-scratch/
-	mkdir -p test-scratch/
-	python3 misc/py/generate-dex-data.py
+tests: quine-tests repl-test
 
 quine-tests: $(quine-test-targets)
 
 quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
+run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: examples/%.dx build
 	misc/check-quine $< $(dex) script --allow-errors
-
-runinterp-%: examples/%.dx build
-	misc/check-quine $< $(dex) --interp script --allow-errors
 
 # Run these with profiling on while they're catching lots of crashes
 prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
 
+update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
