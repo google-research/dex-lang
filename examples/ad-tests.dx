@@ -111,22 +111,22 @@ f : Float -> Float = \x. snd $ withAccum \ref. ref += x
 :p checkDeriv cos 1.0
 > True
 
--- :p checkDeriv exp 2.0
--- > True
+:p checkDeriv exp 2.0
+> True
 
--- :p checkDeriv log 2.0
--- > True
+:p checkDeriv log 2.0
+> True
 
--- :p checkDeriv sqrt 2.0
--- > True
-
--- :p checkDeriv (\x. cos (sin (exp x))) 2.0
--- > True
+:p checkDeriv (\x. exp (sin (cos x))) 2.0
+> True
 
 :p checkDeriv (deriv sin) 1.0
 > True
 
 :p checkDeriv (deriv cos) 1.0
+> True
+
+:p checkDeriv sqrt 4.0
 > True
 
 -- badDerivFun : Float -> Float
@@ -281,3 +281,8 @@ vec = [1.]
   (y, df) = linearize f 2.0
   checkDerivBase f 2.0
 > True
+
+:p
+  f = max 0.0
+  (checkDeriv f 1.0, checkDeriv f (-1.0))
+> (True, True)

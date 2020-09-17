@@ -24,7 +24,7 @@ import Env
 import Syntax
 import PPrint
 import Embed
-import Util (bindM2, zipWithT)
+import Util (bindM2, zipWithT, enumerate)
 import GHC.Stack
 
 -- === linearization ===
@@ -57,6 +57,7 @@ linearizeBlock env (Block decls result) = case decls of
     (Unpack bs expr) -> linearizeBinding True  (toList bs) expr
     where
       body = Block rest result
+      takeWhere l m = fmap snd $ filter fst $ zip m l
       linearizeBinding :: Bool -> [Binder] -> Expr -> LinA Atom
       linearizeBinding isUnpack bs expr = LinA $ do
         -- Don't linearize expressions with no free active variables.
@@ -70,11 +71,18 @@ linearizeBlock env (Block decls result) = case decls of
             (x, boundLin) <- runLinA $ linearizeExpr env expr
             xs <- if isUnpack then emitUnpack (Atom x) else (:[]) <$> emit (Atom x)
             let vs = fmap (\(Var v) -> v) xs
-            (ans, bodyLin) <- extendWrt vs [] $ runLinA $ linearizeBlock (env <> newEnv bs xs) body
+            -- Don't mark variables with trivial tangent types as active. This lets us avoid
+            -- pretending that we're differentiating wrt e.g. equality tests which yield discrete results.
+            let nontrivialVsMask = [not $ isSingletonType $ tangentType $ varType v | v <- vs]
+            let nontrivialVs = vs `takeWhere` nontrivialVsMask
+            (ans, bodyLin) <- extendWrt nontrivialVs [] $ runLinA $ linearizeBlock (env <> newEnv bs xs) body
             return (ans, do
-              t <- boundLin;
+              t <- boundLin
               ts <- if isUnpack then emitUnpack (Atom t) else return [t]
-              extendTangentEnv (newEnv vs ts) [] bodyLin)
+              -- Tangent environment needs to be synced between the primal and tangent
+              -- monads (tangentFunAsLambda and applyLinToTangents need that).
+              let nontrivialTs = ts `takeWhere` nontrivialVsMask
+              extendTangentEnv (newEnv nontrivialVs nontrivialTs) [] bodyLin)
           else do
             expr' <- substEmbed env expr
             xs <- if isUnpack then emitUnpack expr' else (:[]) <$> emit expr'
@@ -169,16 +177,20 @@ linearizeUnOp :: UnOp -> Atom -> LinA Atom
 linearizeUnOp op x' = LinA $ do
   (x, tx) <- runLinA $ linearizeAtom x'
   case op of
-    Exp    -> notImplemented
+    Exp    -> do
+      y <- emitUnOp Exp x
+      return (y, bindM2 mul tx (pure y))
     Exp2   -> notImplemented
-    Log    -> notImplemented
+    Log    -> emitUnOp Log x <$$> (,tx >>= (`div'` x))
     Log2   -> notImplemented
     Log10  -> notImplemented
     Log1p  -> notImplemented
     Sin    -> emitUnOp Sin x <$$> (,bindM2 mul tx $ emitUnOp Cos x)
     Cos    -> emitUnOp Cos x <$$> (,bindM2 mul tx $ neg =<< emitUnOp Sin x)
     Tan    -> notImplemented
-    Sqrt   -> notImplemented
+    Sqrt   -> do
+      y <- emitUnOp Sqrt x
+      return (y, bindM2 div' tx (mul (2 `fLitLike` y) y))
     Floor  -> withZeroTangent <$> emitUnOp Floor x
     Ceil   -> withZeroTangent <$> emitUnOp Ceil  x
     Round  -> withZeroTangent <$> emitUnOp Round x
@@ -535,7 +547,8 @@ transposeExpr expr ct = case expr of
       True  -> notImplemented
       False -> do
         alts' <- traverse transposeNonlinAlt alts
-        void $ emit $ Case e alts' UnitTy
+        e' <- substNonlin e
+        void $ emit $ Case e' alts' UnitTy
   where
     transposeNonlinAlt (Abs bs body) =
       buildNAbs bs $ \xs -> do
@@ -569,6 +582,8 @@ transposeOp op ct = case op of
       MPut  x -> do
         transposeAtom x =<< emitEff MGet
         void $ emitEff $ MPut $ zeroAt $ getType x
+  TabCon ~(TabTy b _) es -> forM_ (enumerate es) $ \(i, e) -> do
+    transposeAtom e =<< tabGet ct =<< intToIndexE (binderType b) (IdxRepVal $ fromIntegral i)
   IndexRef     _ _      -> notImplemented
   FstRef       _        -> notImplemented
   SndRef       _        -> notImplemented
@@ -581,7 +596,6 @@ transposeOp op ct = case op of
   RecordSplit  _ _      -> notImplemented
   VariantLift  _ _      -> notImplemented
   VariantSplit _ _      -> notImplemented
-  TabCon       _ _      -> notImplemented
   ArrayLoad    _        -> notLinear
   ArrayOffset  _ _ _    -> notLinear
   Inject       _        -> notLinear
@@ -644,6 +658,7 @@ transposeAtom atom ct = case atom of
   Record  e       -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   DataCon _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
+  TabVal _ e       | isSingletonType $ getType e -> return ()
   TabVal _ _      -> notTangent  -- This could technically be a tangent (its type is
                                  -- a valid tangent type), but we never produce such
                                  -- tangents for linear values. We might need to revise
