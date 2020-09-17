@@ -372,10 +372,12 @@ isSingletonType ty = case singletonTypeVal ty of
   Nothing -> False
   Just _  -> True
 
+-- TODO: TypeCon with a single case?
 singletonTypeVal :: Type -> Maybe Atom
 singletonTypeVal (TabTy v a) = TabValA v <$> singletonTypeVal a
+singletonTypeVal (RecordTy (NoExt items)) = Record <$> traverse singletonTypeVal items
 singletonTypeVal (TC con) = case con of
-  PairType a b -> liftM2 PairVal (singletonTypeVal a) (singletonTypeVal b)
+  PairType a b -> PairVal <$> singletonTypeVal a <*> singletonTypeVal b
   UnitType     -> return UnitVal
   _            -> Nothing
 singletonTypeVal _ = Nothing
