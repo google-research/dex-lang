@@ -297,9 +297,11 @@ fromPair pair = (,) <$> getFst pair <*> getSnd pair
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
 unpackConsList xs = case getType xs of
   UnitTy -> return []
-  _ -> do
+  --PairTy _ UnitTy -> (:[]) <$> getFst xs
+  PairTy _ _ -> do
     (x, rest) <- fromPair xs
     liftM (x:) $ unpackConsList rest
+  _ -> error $ "Not a cons list: " ++ pprint (getType xs)
 
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do

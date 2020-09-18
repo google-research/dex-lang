@@ -11,9 +11,10 @@ module Simplify (simplifyModule, simplifyCase, evalSimplified) where
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
-import Data.List (partition)
+import Data.List (partition, elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
@@ -90,6 +91,15 @@ simplifyAtom atom = case atom of
           LetBound _ (Atom x) -> dropSub $ simplifyAtom x
           _ -> substEmbedR atom
         _   -> substEmbedR atom
+  -- Tables that only contain data aren't necessarily getting inlined,
+  -- so this might be the last change to simplify them.
+  TabVal _ _ -> do
+    topScope <- getScope
+    case isData topScope (getType atom) of
+      True -> do
+        ~(tab', Nothing) <- simplifyLam atom
+        return tab'
+      False -> substEmbedR atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbedR atom
   Pi  _ -> substEmbedR atom
@@ -154,15 +164,22 @@ simplifyLams numArgs lam = do
     go 0 scope block = do
       result <- defunBlock scope block
       return $ case result of
-        Left  res        -> (res         , Nothing)
-        Right (f, recon) -> (mkConsList f, Just $ unpackConsList >=> recon)
+        Left  res -> (res, Nothing)
+        Right (dat, (ctx, recon), atomf) ->
+          ( mkConsList $ (toList dat) ++ (toList ctx)
+          , Just $ \vals -> do
+             (datEls', ctxEls') <- splitAt (length dat) <$> unpackConsList vals
+             let dat' = restructure datEls' dat
+             let ctx' = restructure ctxEls' ctx
+             atomf dat' <$> recon dat' ctx'
+          )
     go n scope ~(Block Empty (Atom (Lam (Abs b (arr, body))))) = do
       b' <- mapM substEmbedR b
       buildLamAux b' (\x -> extendR (b@>x) $ substEmbedR arr) $ \x@(Var v) -> do
         let scope' = scope <> v @> (varType v, LamBound (void arr))
         extendR (b@>x) $ go (n-1) scope' body
 
-defunBlock :: MonadEmbed m => Scope -> Block -> SimplifyM (Either Atom ([Atom], [Atom] -> m Atom))
+defunBlock :: Scope -> Block -> SimplifyM (Either Atom (AtomFac SimplifyM))
 defunBlock localScope block = do
   topScope <- getScope
   if isData topScope (getType block)
@@ -170,20 +187,78 @@ defunBlock localScope block = do
     else do
       (result, (localScope', decls)) <- embedScoped $ simplifyBlock block
       mapM_ emitDecl decls
-      let (dataVals, recon) = separateDataComponent (localScope <> localScope') result
-      return $ Right (dataVals, recon)
+      Right <$> separateDataComponent (localScope <> localScope') result
 
-separateDataComponent :: MonadEmbed m => Scope -> Atom -> ([Atom], [Atom] -> m Atom)
-separateDataComponent localVars atom = (map Var vs, recon)
+data RTree a = RNode [RTree a] | RLeaf a
+               deriving (Functor, Foldable, Traversable)
+
+pattern RNil :: RTree a
+pattern RNil = RNode []
+
+-- Factorization of the atom into data and non-data components
+-- TODO: Make the non-linear reconstruction take the scope instead of being monadic
+type DataA = Atom
+type NonDataA = Atom
+type CtxA = Atom
+type AtomFac m =
+  ( RTree DataA    -- data components
+  , ( RTree CtxA   -- data necessary to reconstruct non-data atoms
+    , RTree DataA -> RTree CtxA -> m (RTree NonDataA) )  -- non-data reconstruction
+  , RTree DataA -> RTree NonDataA -> Atom )              -- original atom reconstruction
+
+-- TODO: Records
+-- Guarantees that data elements are entirely type driven (e.g. won't be deduplicated based on
+-- the supplied atom). The same guarantee doesn't apply to the non-data closures.
+separateDataComponent :: forall m. MonadEmbed m => Scope -> Atom -> m (AtomFac m)
+separateDataComponent localVars v = do
+  (dat, (ctx, recon), atomf) <- rec v
+  let (ctx', ctxRec) = dedup dat ctx
+  let recon' = \dat'' ctx'' -> recon $ ctxRec dat'' (toList ctx'')
+  return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
   where
-    vs = bindingsAsVars $ localVars `envIntersect` freeVars atom
-    recon xs = do
-      scope <- getScope
-      return $ subst (newEnv vs xs, scope) atom
+    rec atom = do
+      topScope <- getScope
+      let atomTy = getType atom
+      case atomTy of
+        PairTy _ _ -> do
+          (x, y) <- fromPair atom
+          (xdat, (xctx, xrecon), xatomf) <- rec x
+          (ydat, (yctx, yrecon), yatomf) <- rec y
+          let recon = \(RNode [xctx', yctx']) -> do
+                xnondat' <- xrecon xctx'
+                ynondat' <- yrecon yctx'
+                return $ RNode [xnondat', ynondat']
+          let atomf = \(RNode [xdat', ydat']) (RNode [xnondat', ynondat']) ->
+                PairVal (xatomf xdat' xnondat') (yatomf ydat' ynondat')
+          return (RNode [xdat, ydat], (RNode [xctx, yctx], recon), atomf)
+        UnitTy                     -> return (RNil      , (RNil, nilRecon), \RNil      RNil      -> UnitVal)
+        _ | isData topScope atomTy -> return (RLeaf atom, (RNil, nilRecon), \(RLeaf a) RNil      -> a)
+        _                          -> return (RNil      , nonDataRecon    , \RNil      (RLeaf a) -> a)
+        where
+          nilRecon = \_ -> return RNil
+          nonDataRecon = (RNode $ fmap (RLeaf . Var) vs, recon)
+            where
+              recon xs = do
+                scope <- getScope
+                return $ RLeaf $ subst (newEnv vs xs, scope) atom
+          vs = bindingsAsVars $ localVars `envIntersect` freeVars atom
 
-applyRecon :: MonadEmbed m => Maybe (Atom -> m Atom) -> Atom -> m Atom
-applyRecon Nothing x = return x
-applyRecon (Just f) x = f x
+    -- TODO: This function is really slow, but I'm not sure if we can come up with
+    --       anything better that only assumes Eq. We might want to switch contexts
+    --       to Vars instead, so that we can exploit their Ord instance.
+    dedup :: (Foldable h, Functor f, Foldable f, Eq a)
+          => h a -> f a -> ([a], h a -> [a] -> f a)
+    dedup ctx ll = (result, inv)
+      where
+        nubCtx [] = []
+        nubCtx (h:t) = case h `elem` t || h `elem` (toList ctx) of
+          True  -> nubCtx t
+          False -> h : (nubCtx t)
+        result = nubCtx $ toList ll
+        inv ctx' result' = for ll $ \x -> case elemIndex x (toList ctx) of
+          Just i  -> (toList ctx') !! i
+          Nothing -> result' !! (fromJust $ elemIndex x result)
+
 
 simplifyExpr :: Expr -> SimplifyM Atom
 simplifyExpr expr = case expr of
@@ -196,9 +271,10 @@ simplifyExpr expr = case expr of
       DataCon def params con xs -> return $ DataCon def params' con xs'
          where DataDef _ paramBs _ = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
+      -- TODO: Optimize the case when all bodies are empty?
       ACase e alts ~(Pi ab) -> do
         let rty' = snd $ applyAbs ab $ getType x'
-        let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (App a x')
+        let alts' = for alts $ \(Abs bs a) -> Abs bs $ Block Empty (App a x')
         dropSub $ simplifyExpr $ Case e alts' rty'
       TypeCon def params -> return $ TypeCon def params'
          where params' = params ++ [x']
@@ -220,35 +296,58 @@ simplifyExpr expr = case expr of
               buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
             emit $ Case e' alts' resultTy'
           else do
-            altsWithRecons <- forM (enumerate alts) $ \(i, Abs bs body) -> do
+            -- Construct the blocks of new cases. The results will only get replaced
+            -- later, once we learn the closures of the non-data component of each case.
+            (alts', facs) <- liftM unzip $ forM alts $ \(Abs bs body) -> do
               bs' <-  mapM (mapM substEmbedR) bs
               buildNAbsAux bs' $ \xs -> do
-                ~(Right (res, recon)) <- extendR (newEnv bs' xs) $ defunBlock (boundVars bs') body
-                return (mkConsList res, Just (\ddef -> DataCon ddef [] i res, fmap getType res, recon))
-            let altResultTypes = fmap (\(_, Just (_, t, _)) -> t) altsWithRecons
+                ~(Right fac@(dat, (ctx, _), _)) <- extendR (newEnv bs' xs) $ defunBlock (boundVars bs') body
+                -- NB: The return value here doesn't really matter as we're going to replace it afterwards.
+                return (mkConsList $ toList dat ++ toList ctx, fac)
+            -- Now that we know the exact set of values each case needs, ctxDef is a sum type
+            -- that can encapsulate the necessary contexts.
             -- TODO: Handle dependency once separateDataComponent supports it
-            let dcons = fmap (DataConDef "Case" . toNest . fmap Ignore) altResultTypes
-            let ddef = DataDef "DefunCase" Empty dcons
-            let alts' = flip fmap altsWithRecons $
-                  \(Abs bs (Block decls _), Just (rval, _, _)) ->
-                    Abs bs $ Block decls $ Atom $ rval ddef
-            caseResult <- emit $ Case e' alts' (TypeCon ddef [])
-            aalts <- forM altsWithRecons $ \(_, Just (_, tys, rec)) -> do
-              (Abs bs' b) <- buildNAbs (toNest $ fmap Ignore tys) $ \free -> rec free
-              case b of
-                Block Empty (Atom r) -> return $ Abs bs' r
-                _ -> error $ "Reconstruction function emitted a nontrivial block: " ++ pprint b
-            return $ ACase caseResult aalts resultTy'
+            let altCtxTypes = fmap (\(_, (ctx, _), _) -> fmap getType $ toList ctx) facs
+            let ctxDef = DataDef "CaseClosure" Empty $
+                  fmap (DataConDef "Closure" . toNest . fmap Ignore) altCtxTypes
+            -- New cases return a pair of data components, and a closure for non-data atoms
+            let alts'' = for (enumerate $ zip alts' facs) $
+                  \(i, (Abs bs (Block decls _), (dat, (ctx, _), _))) ->
+                    Abs bs $ Block decls $ Atom $
+                      PairVal (mkConsList $ toList dat) (DataCon ctxDef [] i $ toList ctx)
+            -- Here, we emit the case expression and unpack the results. All the trees
+            -- should be the same, so we just pick the first one.
+            let (datType, datTree) = (\(dat, _, _) -> (getType $ mkConsList $ toList dat, dat)) $ head facs
+            caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon ctxDef [])
+            (cdat, cctx) <- fromPair caseResult
+            dat <- flip restructure datTree <$> unpackConsList cdat
+            -- At this point we have the data components `dat` ready to be applied to the
+            -- full atom reconstruction function, but we only have the sum type for the closures
+            -- and a list of potential non-data reconstruction functions. To get a list of
+            -- the non-data atoms we reconstruct the individual cases using ACase.
+            -- TODO: Consider splitting the contexts over multiple non-data values, so that we
+            --       don't have to emit a single shared ACase for them.
+            -- TODO: We're running the reconstructions multiple times, and always only selecting
+            --       a single output. This can probably be made quite a bit faster.
+            -- NB: All the non-data trees have the same structure, so we pick an arbitrary one.
+            nondatTree <- (\(_, (ctx, rec), _) -> rec dat ctx) $ head facs
+            nondat <- forM (enumerate nondatTree) $ \(i, _) -> do
+              aalts <- forM facs $ \(_, (ctx, rec), _) -> do
+                Abs bs' b <- buildNAbs (toNest $ toList $ fmap (Ignore . getType) ctx) $ \ctxVals ->
+                  ((!! i) . toList) <$> rec dat (restructure ctxVals ctx)
+                case b of
+                  Block Empty (Atom r) -> return $ Abs bs' r
+                  _ -> error $ "Reconstruction function emitted a nontrivial block: " ++ pprint b
+              return $ ACase cctx aalts $ caseType $ head aalts
+            -- We're done! Apply the full atom reconstruction function and call it a day!
+            let atomf = (\(_, _, f) -> f) $ head facs
+            return $ atomf dat nondat
+            where caseType (Abs _ block) = getType block
+
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Fst (ACase e alts (PairTy xt _)) -> do
-    let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (Op $ Fst a)
-    dropSub $ simplifyExpr $ Case e alts' xt
-  Snd (ACase e alts (PairTy _ yt)) -> do
-    let alts' = flip fmap alts $ \(Abs bs a) -> Abs bs $ Block Empty (Op $ Snd a)
-    dropSub $ simplifyExpr $ Case e alts' yt
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
@@ -347,6 +446,10 @@ simplifyHof hof = case hof of
     (ans, sOut) <- fromPair =<< (emit $ Hof $ RunState s' lam')
     ans' <- applyRecon recon ans
     return $ PairVal ans' sOut
+  where
+    applyRecon Nothing x = return x
+    applyRecon (Just f) x = f x
+
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local mempty m
