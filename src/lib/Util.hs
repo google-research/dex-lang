@@ -11,7 +11,7 @@ module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              scanM, composeN, mapMaybe, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT) where
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
@@ -212,3 +212,6 @@ lookupWithIdx k vals = lookup k $ [(x, (i, y)) | (i, (x, y)) <- zip [0..] vals]
 zipWithT :: (Traversable t, Monad h, Foldable f) => (a -> b -> h c) -> t a -> f b -> h (t c)
 zipWithT f trav args = flip evalStateT (toList args) $ flip traverse trav $ \e -> getNext >>= lift . f e
   where getNext = get >>= \(h:t) -> put t >> return h
+
+for :: Functor f => f a -> (a -> b) -> f b
+for = flip fmap

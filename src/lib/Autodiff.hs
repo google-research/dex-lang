@@ -71,6 +71,8 @@ linearizeBlock env (Block decls result) = case decls of
             (x, boundLin) <- runLinA $ linearizeExpr env expr
             xs <- if isUnpack then emitUnpack (Atom x) else (:[]) <$> emit (Atom x)
             let vs = fmap (\(Var v) -> v) xs
+            -- NB: This can still overestimate the set of active variables (e.g.
+            --     when multiple values are returned from a case statement).
             -- Don't mark variables with trivial tangent types as active. This lets us avoid
             -- pretending that we're differentiating wrt e.g. equality tests which yield discrete results.
             let nontrivialVsMask = [not $ isSingletonType $ tangentType $ varType v | v <- vs]

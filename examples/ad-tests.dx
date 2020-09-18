@@ -284,5 +284,5 @@ vec = [1.]
 
 :p
   f = max 0.0
-  (checkDeriv f 1.0, checkDeriv f (-1.0))
+  (checkDerivBase f 1.0, checkDerivBase f (-1.0))
 > (True, True)
