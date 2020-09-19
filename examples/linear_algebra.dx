@@ -1,0 +1,165 @@
+'# LU Decomposition and Matrix Inversion
+Notes:
+1. It's a bit awkward having a second syntax for every operation
+ to do with references.  E.g. unpacking tuples, swapping, etc.
+2. Solve and substitutions work on arbitrary vector spaces,
+ so I didn't have to write any code to handle solving against matrices specially.
+3. I think there's a bug to do with the type leakage check for triangular matrices.
+ When this is fixed, I'll be able to get rid of al the Ord typeclasses.
+4. I couldn't figure out how to extend HasAllClose to work on tables, which would
+ make the tests a lot nicer.
+5. Solve and invert ended up being very readable and concise.
+6. The logic for slogdet in numpy is at
+https://github.com/numpy/numpy/blob/eaa59b4f04a0c75091e332afa95a304eddcd93ab/numpy/linalg/umath_linalg.c.src
+and is spread over hundreds of lines.
+
+-- Todo: Use triangular matrix types for L and U.
+-- Todo: Once type leakage error is fixed, remove case expressions and Ords.
+-- Todo: Make nicer tests using HasAllClose typeclass and ~~
+
+def identity_matrix (_:Eq n) ?=> : n=>n=>Float =
+  for i j. select (i == j) 1.0 0.0
+
+def zero_matrix (_:VSpace v) ?=> : n=>n=>v =
+  for i j. zero
+
+def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : (n=>n & Int) =
+  -- Rearranges a matrix to make Gaussian elimination more stable.
+  -- Returns permutation and number of swaps in permutation,
+  -- for use in computing the determinant.
+  identity_permutation = for i. i
+  snd $ withState (identity_permutation, 0) \stateRef.
+    (pRef, countRef) = (fstRef stateRef, sndRef stateRef)
+    for j:n.
+      row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j)) -- Todo: Use argmax
+      row_with_largest = %inject row_with_largest
+      case (j == row_with_largest) of
+        True -> ()
+        False -> 
+          tempj = get pRef!j  -- Is there a refSwap?
+          pRef!j := get pRef!row_with_largest
+          pRef!row_with_largest := tempj
+          countRef := (get countRef) + 1
+
+def apply_permutation (permutation: n=>n) (array: n=>t) : n=>t =
+  for i. array.(permutation.i)
+
+def lu (_:Ord n) ?=> (a': n=>n=>Float) : (n=>n=>Float & n=>n=>Float & n=>n & Int) =
+  -- Computes lower, upper, and permuntation matrices from a square matrix,
+  -- such that apply_permutation permutation a == lower ** upper.
+  -- I.e. it uses partial pivoting.
+  (permutation, swapcount) = pivotize a'
+  a = apply_permutation permutation a'
+
+  init_state = (identity_matrix, zero_matrix)
+  (lower, upper) = snd $ withState init_state \stateRef.
+    (lRef, uRef) = (fstRef stateRef, sndRef stateRef)
+
+    for j:n.
+      for i:(..j).
+        i = %inject i
+        s = sum for k':(..i).
+          k = %inject k'
+          (get uRef!k!j) * (get lRef!i!k)
+        uRef!i!j := a.i.j - s
+
+      for i:n. case i > j of  --for i:(j..).  -- type leakage bug?
+          False -> ()
+          True ->
+            s = sum for k':(..j).
+              k = %inject k'
+              (get uRef!k!j) * (get lRef!i!k)
+            lRef!i!j := (a.i.j - s) / (get uRef!j!j)
+  (lower, upper, permutation, swapcount)
+
+def forward_substitute (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
+  -- Solves lower triangular linear system (inverse a) **. b
+  -- todo: use triangular matrices, and write a custom version for unit diagonals.
+  snd $ withState zero \sRef.
+    for i:n.
+      s = sum for k':(..<i).  -- use dot here?
+        k = %inject k'
+        a.i.k .* (get sRef).k 
+      sRef!i := (b.i - s) / a.i.i
+
+def backward_substitute (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
+  -- Solves upper triangular linear system y = (inverse a) **. b
+  -- todo: use triangular matrices.
+  snd $ withState zero \sRef.
+    rof i:n.
+      s = sum for k':(i..).
+        k = %inject k'
+        a.i.k .* (get sRef).k 
+      sRef!i := (b.i - s) / a.i.i
+
+def backward_substitute2 (_:Ord n) ?=> (_:VSpace v) ?=> (a:n=>(a..)=>Float) (b:n=>v) : n=>v =
+  -- for solving upper triangular linear systems ay = b
+  -- todo: use triangular matrices.
+  for i:n.
+    s = sum for k.
+          a.i.k .* b.((ordinal k@n)) 
+    (b.i - s) / a.i.(ordinal i@_)
+
+def solve (_:Ord n) ?=> (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
+  (l, u, p, _) = lu a
+  b' = apply_permutation p b
+  y = forward_substitute l b'
+  backward_substitute u y
+
+def invert (_:Ord n) ?=> (a:n=>n=>Float) : n=>n=>Float =
+  solve a identity_matrix
+
+def permutation_sign (swapcount:Int) : Float =
+  case mod swapcount 2 == 0 of
+    True -> 1.0
+    False -> -1.0
+
+def determinant (_:Ord n) ?=> (a:n=>n=>Float) : Float =
+  (l, u, p, swapcount) = lu a
+  (prod for i. u.i.i * l.i.i) * (permutation_sign swapcount)
+
+-- Move to prelude?
+def sign (x:Float) : Float =
+  case x == 0.0 of
+    True -> 0.0
+    False -> case x < 0.0 of
+      True -> 1.0
+      False -> -1.0
+
+def sign_and_log_determinant (_:Ord n) ?=> (a:n=>n=>Float) : (Float & Float) =
+  (l, u, p, swapcount) = lu a
+  diags = for i. u.i.i * l.i.i
+  sign = (permutation_sign swapcount) * prod for i. sign diags.i
+  sum_of_log_abs = sum for i. log (abs diags.i) 
+  (sign, sum_of_log_abs)
+
+mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
+
+:p lu mat
+(l, u, p) = lu mat
+
+--:p mat
+--:p (apply_permutation p mat) ~~ (l ** u)
+
+:p (invert mat) ** mat
+:p invert $ invert mat
+:p mat
+
+x = solve mat [1., 2., 3., 4.]
+:p mat **. x
+
+
+:p l
+:p forward_substitute l identity_matrix
+x2 = forward_substitute l [10., 2., 30., 4.]
+:p l **. x2
+:p (transpose l) **. x2
+x3 = backward_substitute u [12., 2., 3., 4.]
+:p u **. x3
+
+:p determinant mat
+:p sign_and_log_determinant mat
+(s, ld) = sign_and_log_determinant mat
+:p s * (exp ld) 
+:t transpose
+
