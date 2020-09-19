@@ -1,17 +1,4 @@
 '# LU Decomposition and Matrix Inversion
-Notes:
-1. It's a bit awkward having a second syntax for every operation
- to do with references.  E.g. unpacking tuples, swapping, etc.
-2. Solve and substitutions work on arbitrary vector spaces,
- so I didn't have to write any code to handle solving against matrices specially.
-3. I think there's a bug to do with the type leakage check for triangular matrices.
- When this is fixed, I'll be able to get rid of al the Ord typeclasses.
-4. I couldn't figure out how to extend HasAllClose to work on tables, which would
- make the tests a lot nicer.
-5. Solve and invert ended up being very readable and concise.
-6. The logic for slogdet in numpy is at
-https://github.com/numpy/numpy/blob/eaa59b4f04a0c75091e332afa95a304eddcd93ab/numpy/linalg/umath_linalg.c.src
-and is spread over hundreds of lines.
 
 -- Todo: Use triangular matrix types for L and U.
 -- Todo: Once type leakage error is fixed, remove case expressions and Ords.
