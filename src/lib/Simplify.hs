@@ -271,11 +271,19 @@ simplifyExpr expr = case expr of
       DataCon def params con xs -> return $ DataCon def params' con xs'
          where DataDef _ paramBs _ = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
-      -- TODO: Optimize the case when all bodies are empty?
       ACase e alts ~(Pi ab) -> do
         let rty' = snd $ applyAbs ab $ getType x'
-        let alts' = for alts $ \(Abs bs a) -> Abs bs $ Block Empty (App a x')
-        dropSub $ simplifyExpr $ Case e alts' rty'
+        case all isCurriedFun alts of
+          True -> return $ ACase e (fmap appAlt alts) rty'
+          False -> do
+            let alts' = for alts $ \(Abs bs a) -> Abs bs $ Block Empty (App a x')
+            dropSub $ simplifyExpr $ Case e alts' rty'
+        where
+          isCurriedFun alt = case alt of
+            Abs _ (LamVal _ (Block Empty (Atom (LamVal _ _)))) -> True
+            _ -> False
+          appAlt ~(Abs bs (LamVal b (Block Empty (Atom r)))) =
+            Abs bs $ subst (b @> x', mempty) r
       TypeCon def params -> return $ TypeCon def params'
          where params' = params ++ [x']
       _ -> emit $ App f' x'
