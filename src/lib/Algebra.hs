@@ -51,17 +51,16 @@ type ClampPolynomial  = PolynomialP ClampMonomial
 data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
 data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
 
-elemCount :: Type -> ClampPolynomial
-elemCount t = case t of
-  BaseTy _  -> liftC $ poly [(1, mono [])]
-  TabTy b _ -> (offsets t) `psubstSumVar` (indexSetSize $ binderType b)
-  _ -> error $ "Not a ScalarTableType: " ++ pprint t
+elemCount :: IndexStructure -> ClampPolynomial
+elemCount idxs = case idxs of
+  Empty -> liftC $ poly [(1, mono [])]
+  Nest b _ -> (offsets idxs) `psubstSumVar` (indexSetSize $ binderType b)
 
-offsets :: Type -> SumClampPolynomial
-offsets t = case t of
+offsets :: IndexStructure -> SumClampPolynomial
+offsets idxs = case idxs of
   -- TODO: not sure about `fromBind` here`
-  TabTy b body -> sumC (fromBind "_" b) $ elemCount body
-  _ -> error $ "Not a non-scalar ScalarTableType: " ++ pprint t
+  Nest b body -> sumC (fromBind "_" b) $ elemCount body
+  _ -> error $ "Not a non-empty index structure " ++ pprint idxs
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
@@ -103,6 +102,7 @@ toPolynomial atom = case atom of
   Con (Lit (Int64Lit x)) -> fromInt x
   Con (Lit (Int32Lit x)) -> fromInt x
   Con (Lit (Int8Lit  x)) -> fromInt x
+  Con (IntRangeVal _ _ i) -> toPolynomial i
   -- TODO: Coercions? Unit constructor?
   _ -> unreachable
   where
@@ -115,7 +115,8 @@ evalClampPolynomial :: MonadEmbed m => ClampPolynomial -> m Atom
 evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
 
 evalSumClampPolynomial :: MonadEmbed m => SumClampPolynomial -> Atom -> m Atom
-evalSumClampPolynomial (SumClampPolynomial cp summedVar) a = evalPolynomialP (evalClampMonomial varVal) cp
+evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
+  evalPolynomialP (evalClampMonomial varVal) cp
   where varVal v = if MVar v == sumVar summedVar then a else Var v
 
 -- We have to be extra careful here, because we're evaluating a polynomial

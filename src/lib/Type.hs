@@ -12,7 +12,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
-  checkIntBaseType, checkFloatBaseType,
+  checkIntBaseType, checkFloatBaseType, withBinder, (|:),
   indexSetConcreteSize, checkNoShadow) where
 
 import Prelude hiding (pi)
@@ -527,7 +527,6 @@ typeCheckCon con = case con of
   ClassDictHole _ ty -> ty |: TyKind >> return ty
   IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
   IndexRangeVal t l h i -> i|:IdxRepTy >> return (TC $ IndexRange t l h)
-
 
 checkIntBaseType :: MonadError Err m => Bool -> Type -> m ()
 checkIntBaseType allowVector t = case t of

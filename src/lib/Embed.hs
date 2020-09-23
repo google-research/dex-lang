@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               traverseAtom, ptrOffset, ptrLoad, evalBlockE, substTraversalDef,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               clampPositive, buildNAbs, buildNAbsAux, emitRunState, buildNestedLam, zeroAt,
-              indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
+              indexSetSizeE, indexToIntE, intToIndexE, anyValue, freshVarE) where
 
 import Control.Applicative
 import Control.Monad
@@ -88,7 +88,7 @@ emitTo name ann expr = do
   -- Deshadow type because types from DataDef may have binders that shadow local vars
   let ty    = deShadow (getType expr) scope
   let expr' = deShadow expr scope
-  v <- freshVar (LetBound ann expr') $ Bind (name:>ty)
+  v <- freshVarE (LetBound ann expr') $ Bind (name:>ty)
   embedExtend $ asSnd $ Nest (Let ann (Bind v) expr') Empty
   return $ Var v
 
@@ -116,8 +116,8 @@ emitUnpack expr = do
 emitBlock :: MonadEmbed m => Block -> m Atom
 emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
 
-freshVar :: MonadEmbed m => BinderInfo -> Binder -> m Var
-freshVar bInfo b = do
+freshVarE :: MonadEmbed m => BinderInfo -> Binder -> m Var
+freshVarE bInfo b = do
   v <- case b of
     Ignore _    -> getNameHint
     Bind (v:>_) -> return v
@@ -133,7 +133,7 @@ freshNestedBindersRec :: MonadEmbed m => Env Atom -> Nest Binder -> m (Nest Var)
 freshNestedBindersRec _ Empty = return Empty
 freshNestedBindersRec substEnv (Nest b bs) = do
   scope <- getScope
-  v  <- freshVar PatBound $ subst (substEnv, scope) b
+  v  <- freshVarE PatBound $ subst (substEnv, scope) b
   vs <- freshNestedBindersRec (substEnv <> b@>Var v) bs
   return $ Nest v vs
 
@@ -141,7 +141,7 @@ buildPi :: (MonadError Err m, MonadEmbed m)
         => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
 buildPi b f = do
   (piTy, decls) <- scopedDecls $ do
-     v <- freshVar PiBound b
+     v <- freshVarE PiBound b
      (arr, ans) <- f $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
@@ -158,7 +158,7 @@ buildLamAux :: MonadEmbed m
             => Binder -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildLamAux b fArr fBody = do
   ((b', arr, ans, aux), decls) <- scopedDecls $ do
-     v <- freshVar UnknownBinder b
+     v <- freshVarE UnknownBinder b
      let x = Var v
      arr <- fArr x
      -- overwriting the previous binder info know that we know more
@@ -663,12 +663,12 @@ indexSetSizeE (TC con) = case con of
   IntRange low high -> clampPositive =<< high `isub` low
   IndexRange n low high -> do
     low' <- case low of
-      InclusiveLim x -> indexToIntE n x
-      ExclusiveLim x -> indexToIntE n x >>= iadd (IdxRepVal 1)
+      InclusiveLim x -> indexToIntE x
+      ExclusiveLim x -> indexToIntE x >>= iadd (IdxRepVal 1)
       Unlimited      -> return $ IdxRepVal 0
     high' <- case high of
-      InclusiveLim x -> indexToIntE n x >>= iadd (IdxRepVal 1)
-      ExclusiveLim x -> indexToIntE n x
+      InclusiveLim x -> indexToIntE x >>= iadd (IdxRepVal 1)
+      ExclusiveLim x -> indexToIntE x
       Unlimited      -> indexSetSizeE n
     clampPositive =<< high' `isub` low'
   PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
@@ -691,13 +691,13 @@ clampPositive x = do
 --      IndexAsInt instruction, as for Int and IndexRanges it will
 --      generate the same instruction again, potentially leading to an
 --      infinite loop.
-indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
-indexToIntE ty idx = case ty of
+indexToIntE :: MonadEmbed m => Atom -> m Atom
+indexToIntE idx = case getType idx of
   UnitTy  -> return $ IdxRepVal 0
   PairTy lType rType -> do
     (lVal, rVal) <- fromPair idx
-    lIdx  <- indexToIntE lType lVal
-    rIdx  <- indexToIntE rType rVal
+    lIdx  <- indexToIntE lVal
+    rIdx  <- indexToIntE rVal
     rSize <- indexSetSizeE rType
     imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
@@ -707,7 +707,7 @@ indexToIntE ty idx = case ty of
     (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IdxRepVal 1)
     -- Unpack and sum the strided contributions
     subindices <- getUnpacked idx
-    subints <- traverse (uncurry indexToIntE) (zip (toList types) subindices)
+    subints <- traverse indexToIntE subindices
     scaled <- mapM (uncurry imul) $ zip (toList strides) subints
     foldM iadd (IdxRepVal 0) scaled
   VariantTy (NoExt types) -> do
@@ -716,10 +716,10 @@ indexToIntE ty idx = case ty of
     -- Build and apply a case expression
     alts <- flip mapM (zip (toList offsets) (toList types)) $
       \(offset, subty) -> buildNAbs (toNest [Ignore subty]) $ \[subix] -> do
-        i <- indexToIntE subty subix
+        i <- indexToIntE subix
         iadd offset i
     emit $ Case idx alts IdxRepTy
-  _ -> error $ "Unexpected type " ++ pprint ty
+  ty -> error $ "Unexpected type " ++ pprint ty
 
 intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
 intToIndexE (TC con) i = case con of

@@ -115,7 +115,7 @@ evalOpDefined expr = case expr of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
     Con (AnyValue t)                       -> return $ anyValue t
-    _ -> evalEmbed (indexToIntE (getType idxArg) idxArg)
+    _ -> evalEmbed (indexToIntE idxArg)
   Fst p -> return x  where (PairVal x _) = p
   Snd p -> return y  where (PairVal _ y) = p
   _ -> error $ "Not implemented: " ++ pprint expr

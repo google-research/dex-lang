@@ -23,19 +23,20 @@ module Syntax (
     PrimEffect (..), PrimOp (..), EffectSummary, pattern NoEffects,
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
+    ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
+    Scope, CmdName (..), HasIVars (..),
     Val, TopEnv, Op, Con, Hof, TC, Module (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpStatement (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..),
-    UAlt (..), AltP (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
+    UAlt (..), AltP, Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..),
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    boundUVars, PassName (..), boundVars, bindingsAsVars,
+    boundUVars, PassName (..), boundVars, renamingSubst, renameBinder, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), PtrOrigin (..), strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
@@ -43,7 +44,7 @@ module Syntax (
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
-    applyNaryAbs, applyDataDefParams, freshSkolemVar,
+    applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
@@ -377,6 +378,8 @@ data ClassName = DataClass | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Gene
 data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
 type PrimName = PrimExpr ()
+
+type IndexStructure = Nest Binder
 
 strToName :: String -> Maybe PrimName
 strToName s = M.lookup s builtinNames
@@ -878,6 +881,15 @@ instance BindsVars Binder where
           b' = Bind (v':>ty')
           ty' = subst env ty
           env' = (b@>Var (v':>ty'), b'@>(ty', UnknownBinder))
+
+-- unlike renamingSubst, this produces a non-Ignore binder
+renameBinder :: Name -> Scope -> Binder -> (Binder, ScopedSubstEnv)
+renameBinder hint scope (Ignore ty) =
+  (Bind v, (mempty, v@>(ty, UnknownBinder)))
+  where v = genFresh hint scope :> ty
+renameBinder hint scope (Bind (v:>ty)) =
+  (Bind v', (v@>Var v', v'@>(ty, UnknownBinder)))
+  where v' = genFresh v scope :> ty
 
 instance Eq Atom where
   Var v == Var v' = v == v'

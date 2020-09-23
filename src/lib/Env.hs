@@ -12,7 +12,8 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
             rawName, nameSpace, nameTag, envMaxName, genFresh,
             tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
-            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
+            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind,
+            genFreshBinder) where
 
 import Data.Store
 import Data.String
@@ -153,6 +154,10 @@ isGlobal _ = False
 
 isGlobalBinder :: BinderP ann -> Bool
 isGlobalBinder b = isGlobal $ fromBind "" b
+
+genFreshBinder :: BinderP ann -> Env a -> BinderP ann
+genFreshBinder (Ignore ann) _ = Ignore ann
+genFreshBinder (Bind (v:>ann)) env = Bind $ genFresh v env :> ann
 
 genFresh :: Name-> Env a -> Name
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
