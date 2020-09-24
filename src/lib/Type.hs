@@ -28,6 +28,7 @@ import Data.Text.Prettyprint.Doc
 import GHC.Stack
 
 import Array
+import {-# SOURCE #-} Interpreter (indices)
 import Syntax
 import Env
 import PPrint
@@ -587,11 +588,10 @@ typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
   TabCon ty xs -> do
     ty |: TyKind
-    TabTy b a <- return ty
-    -- TODO: Propagate the binder to support dependently typed dimensions?
-    mapM_ (|:a) xs
-    Just n <- return $ indexSetConcreteSize $ binderType b
-    assertEq n (length xs) "Index set size mismatch"
+    TabTyAbs a <- return ty
+    let idxs = indices $ absArgType a
+    mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
+    assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
   Snd p -> do { PairTy _ y <- typeCheck p; return y}

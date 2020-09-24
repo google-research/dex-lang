@@ -527,7 +527,7 @@ instance PrettyPrec UExpr' where
     UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
                                                          <> pLowest body
     UHole -> atPrec ArgPrec "_"
-    UTabCon xs ann -> atPrec ArgPrec $ p xs <> foldMap (prettyAnn . p) ann
+    UTabCon xs -> atPrec ArgPrec $ p xs
     UIndexRange low high -> atPrec LowestPrec $ low' <> ".." <> high'
       where
         low'  = case low of  InclusiveLim x -> pApp x
@@ -550,9 +550,6 @@ instance PrettyPrec UExpr' where
 
 instance Pretty UAlt where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body
-
-prettyAnn :: Doc ann -> Doc ann
-prettyAnn ty = ":" <+> ty
 
 instance Pretty a => Pretty (Limit a) where
   pretty Unlimited = "unlimited"

@@ -238,7 +238,7 @@ zipper isomorphisms:
 > ((a:Type) ?-> Iso a ({ |} | a))
 
 :p
-  vals = [{|a = 1|}, {|b = 2|}, {|c = 3|}]:(Fin 3 => {a:_ | b:_ | c:_})
+  vals : (Fin 3)=>{a:_ | b:_ | c:_ } = [{|a = 1|}, {|b = 2|}, {|c = 3|}]
   for i. matchWith (splitV &>> #|a &>> #|b) vals.i
 > [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
 
