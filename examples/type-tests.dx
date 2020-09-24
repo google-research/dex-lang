@@ -347,3 +347,6 @@ def getFst3 (b:Type) ?-> (n:Type) ?-> (xs:n=>b) : b =
 
 :p getFst3 [1,2,3]
 > 1
+
+def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
+  %indexRef ref i

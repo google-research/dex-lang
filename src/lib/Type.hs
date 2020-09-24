@@ -624,9 +624,9 @@ typeCheckOp op = case op of
       MAsk    ->         declareEff (Reader, h) $> s
       MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
   IndexRef ref i -> do
-    RefTy h (TabTy b a) <- typeCheck ref
-    i |: (binderType b)
-    return $ RefTy h a
+    RefTy h (TabTyAbs a) <- typeCheck ref
+    i |: (absArgType a)
+    return $ RefTy h $ snd $ applyAbs a i
   FstRef ref -> do
     RefTy h (PairTy a _) <- typeCheck ref
     return $ RefTy h a
