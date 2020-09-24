@@ -17,9 +17,9 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
               reduceScoped, select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce,
-              emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
+              emitBlock, unzipTab, buildFor, buildForAux, isSingletonType, emitDecl,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, reduceAtom,
+              embedExtend, reduceAtom, withNameHint,
               unpackConsList, emitRunWriter, emitRunReader, emitRunState, tabGet,
               buildNestedLam, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
@@ -322,12 +322,14 @@ mkBinaryEffFun newEff v ty body = do
     let arr = PlainArrow $ extendEffect (newEff, rName) eff
     buildLam (Bind (v:> RefTy r ty)) arr body
 
-buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
-buildFor d i body = do
-  -- TODO: track effects in the embedding env so we can add them here
+buildForAux :: MonadEmbed m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
+buildForAux d i body = do
   eff <- getAllowedEffects
-  lam <- buildLam i (PlainArrow eff) body
-  emit $ Hof $ For d lam
+  (lam, aux) <- buildLamAux i (const $ return $ PlainArrow eff) body
+  (,aux) <$> (emit $ Hof $ For d lam)
+
+buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
+buildFor d i body = fst <$> buildForAux d i (\x -> (,()) <$> body x)
 
 buildNestedLam :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m Atom
 buildNestedLam [] f = f []
