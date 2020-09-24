@@ -13,11 +13,13 @@ import Options.Applicative
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
 import System.Exit
+import System.Directory
 
 import Syntax
 import PPrint
 import RenderHtml
 import Serialize
+import Resources
 
 import TopLevel
 import Parser  hiding (Parser)
@@ -29,11 +31,14 @@ data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
               | ScriptMode FilePath DocFmt ErrorHandling
-data CmdOpts = CmdOpts EvalMode FilePath EvalConfig Backend
+data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig Backend
 
-runMode :: EvalMode -> FilePath -> EvalConfig -> IO ()
+runMode :: EvalMode -> (Maybe FilePath) -> EvalConfig -> IO ()
 runMode evalMode preludeFile opts = do
-  env <- memoizeFileEval "prelude.cache" (evalPrelude opts) preludeFile
+  key <- case preludeFile of
+           Nothing   -> return ""  -- memoizeFileEval already checks compiler version
+           Just path -> show <$> getModificationTime path
+  env <- cached "prelude" key $ evalPrelude opts preludeFile
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
@@ -46,9 +51,12 @@ runMode evalMode preludeFile opts = do
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalPrelude :: EvalConfig -> FilePath -> IO TopEnv
+evalPrelude :: EvalConfig -> (Maybe FilePath) -> IO TopEnv
 evalPrelude opts fname = flip execStateT mempty $ do
-  result <- evalFile opts fname
+  source <- case fname of
+              Nothing   -> return $ preludeSource
+              Just path -> liftIO $ readFile path
+  result <- evalSource opts source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
 liftErrIO :: MonadIO m => Except a -> m a
@@ -132,9 +140,8 @@ parseEvalOpts = EvalConfig
   <*> pure (error "Backend not initialized")
   <*> pure (error "Logging not initialized")
 
-parsePreludeFile :: Parser FilePath
-parsePreludeFile = (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
-                                               <> help "Prelude file" <> showDefault)
+parsePreludeFile :: Parser (Maybe FilePath)
+parsePreludeFile = optional $ strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file"
 
 parseBackend :: Parser Backend
 parseBackend =
