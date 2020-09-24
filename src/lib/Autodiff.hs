@@ -24,6 +24,7 @@ import Env
 import Syntax
 import PPrint
 import Embed
+import Cat
 import Util (bindM2, zipWithT, enumerate)
 import GHC.Stack
 
@@ -31,10 +32,10 @@ import GHC.Stack
 
 -- `DerivWrt` holds the (out-expr) variables that we're differentiating with
 -- respect to (including refs but not regions).
-data DerivWrt = DerivWrt { activeVars :: Env Type, _activeEffs :: [Effect] }
+data DerivWrt = DerivWrt { activeVars :: Env Type, _activeEffs :: [Effect], rematVars :: Env Type }
 -- `Tangents` holds the tangent values and the region variables that are
 -- arguments to the linearized function.
-data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name] }
+data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name], rematVals :: SubstEnv }
 
 type PrimalM  = ReaderT DerivWrt   Embed
 type TangentM = ReaderT TangentEnv Embed
@@ -43,9 +44,9 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 linearize :: Scope -> Atom -> Atom
 linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
   buildLam b PureArrow $ \x@(Var v) -> do
-    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@>x) block
+    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) [] mempty) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
-    fLin <- buildLam (fmap tangentType b) LinArrow $ \xt -> runReaderT yt $ TangentEnv (v @> xt) []
+    fLin <- buildLam (fmap tangentType b) LinArrow $ \xt -> runReaderT yt $ TangentEnv (v @> xt) [] mempty
     fLinChecked <- checkEmbed fLin
     return $ PairVal y fLinChecked
 
@@ -102,10 +103,10 @@ linearizeExpr env expr = case expr of
         alts' <- traverse linearizeInactiveAlt alts
         result <- emit $ Case e' alts' $ (\((Abs _ body):_) -> getType body) alts'
         (ans, linLam) <- fromPair result
-        return (ans, applyLinToTangents [] linLam)
+        return (ans, applyLinToTangents linLam)
     where
       linearizeInactiveAlt (Abs bs body) = do
-        buildNAbs bs $ \xs -> tangentFunAsLambda [] $ linearizeBlock (env <> newEnv bs xs) body
+        buildNAbs bs $ \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
   _ -> LinA $ do
     expr' <- substEmbed env expr
     runLinA $ case expr' of
@@ -245,9 +246,10 @@ linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For d ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
-    (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i''@(Var vi'') ->
-       tangentFunAsLambda [Bind vi''] $ linearizeBlock (env <> i@>i'') body
-    return (ans, buildFor d i' $ \i'' -> app linTab i'' >>= applyLinToTangents [i''])
+    (ansWithLinTab, vi'') <- buildForAux d i' $ \i''@(Var vi'') ->
+       (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
+    (ans, linTab) <- unzipTab ansWithLinTab
+    return (ans, buildFor d i' $ \i'' -> provideRemat vi'' i'' $ app linTab i'' >>= applyLinToTangents)
   Tile _ _ _        -> notImplemented
   RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
   RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
@@ -280,7 +282,7 @@ linearizeHof env hof = case hof of
                       let RefTy _ wTy = binderType b
                       return $ emitter wTy
                   valEmitter $ \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
-                      extendTangentEnv (ref @> ref') [h] $ applyLinToTangents [] linBody
+                      extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
 
     linearizeEffectFun :: EffectName -> Atom -> PrimalM (Atom, Var)
@@ -292,7 +294,7 @@ linearizeHof env hof = case hof of
         ref' <- mapM (substEmbed env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') $ \ref''@(Var refVar) ->
           extendWrt [refVar] [(effName, varName hVar)] $
-            (,refVar) <$> (tangentFunAsLambda [] $ linearizeBlock (env' <> ref@>ref'') body)
+            (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
@@ -409,13 +411,14 @@ isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
 -- be used in the tangent function and abstracts over them (useful when they're easy to
 -- reconstruct at application sites).
 -- TODO: curried linear functions somehow?
-tangentFunAsLambda :: [Binder] -> LinA Atom -> PrimalM Atom
-tangentFunAsLambda bs m = do
+tangentFunAsLambda :: LinA Atom -> PrimalM Atom
+tangentFunAsLambda m = do
   (ans, tanFun) <- runLinA m
-  DerivWrt activeVars effs <- ask
+  DerivWrt activeVars effs remats <- ask
   let hs = map (Bind . (:>TyKind) . snd) effs
+  let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
-    tanLam <- makeLambdas bs $ do
+    tanLam <- makeLambdas rematList $ \rematArgs ->
       buildNestedLam hs $ \hVals -> do
         let hVarNames = map (\(Var (v:>_)) -> v) hVals
         let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
@@ -425,17 +428,20 @@ tangentFunAsLambda bs m = do
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
         buildNestedLam activeVarBinders $ \activeVarArgs ->
           buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
-            runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
-    case bs of
+            runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames (newEnv rematList $ fmap Var rematArgs)
+    case rematList of
       [] -> return tanLam
       _  -> deShadow tanLam <$> getScope
   where
     -- Like buildLam, but doesn't try to deshadow the binder.
-    makeLambda b f = do
-      block <- buildScoped $ f
-      return $ Lam $ makeAbs b (PureArrow, block)
+    makeLambda v f = do
+      block <- buildScoped $ do
+        embedExtend $ asFst $ v @> (varType v, LamBound (void PureArrow))
+        f v
+      return $ Lam $ makeAbs (Bind v) (PureArrow, block)
 
-    makeLambdas b f = foldr ($) f $ fmap makeLambda b
+    makeLambdas [] f = f []
+    makeLambdas (v:vs) f = makeLambda v $ \x -> makeLambdas vs $ \xs -> f (x:xs)
 
     -- This doesn't work if we have references inside pairs, tables etc.
     -- TODO: something more general and cleaner.
@@ -445,12 +451,12 @@ tangentFunAsLambda bs m = do
       _ -> tangentType ty
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
-applyLinToTangents :: [Atom] -> Atom -> TangentM Atom
-applyLinToTangents extra f = do
+applyLinToTangents :: Atom -> TangentM Atom
+applyLinToTangents f = do
   TangentEnv{..} <- ask
   let hs' = map (Var . (:>TyKind)) activeRefs
   let tangents = fmap snd $ envPairs $ tangentVals
-  let args = extra ++ hs' ++ tangents ++ [UnitVal]
+  let args = (toList rematVals) ++ hs' ++ tangents ++ [UnitVal]
   naryApp f args
 
 bindLin :: LinA a -> (a -> Embed b) -> LinA b
@@ -474,11 +480,19 @@ isActive v = asks ((v `isin`) . activeVars)
 
 extendWrt :: [Var] -> [Effect] -> PrimalM a -> PrimalM a
 extendWrt active effs m = local update m
-  where update (DerivWrt active' effs') = DerivWrt (active' <> foldMap varAsEnv active) (effs' <> effs)
+  where update (DerivWrt active' effs' remats) = DerivWrt (active' <> foldMap varAsEnv active) (effs' <> effs) remats
+
+willRemat :: Var -> PrimalM a -> PrimalM a
+willRemat v = local update
+  where update wrt = wrt { rematVars = rematVars wrt <> varAsEnv v }
 
 extendTangentEnv :: SubstEnv -> [Name] -> TangentM a -> TangentM a
 extendTangentEnv tv effs m = local update m
-  where update (TangentEnv tv' effs') = TangentEnv (tv' <> tv) (effs' <> effs)
+  where update (TangentEnv tv' effs' remats) = TangentEnv (tv' <> tv) (effs' <> effs) remats
+
+provideRemat :: Var -> Atom -> TangentM a -> TangentM a
+provideRemat v a = local update
+  where update env = env { rematVals = rematVals env <> (v @> a) }
 
 (<$$>) :: Functor f => f a -> (a -> b) -> f b
 (<$$>) = flip (<$>)
