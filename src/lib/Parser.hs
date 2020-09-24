@@ -211,7 +211,7 @@ uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
   let cs = map (WithSrc (Just pos) . UCharLit) s
-  return $ WithSrc (Just pos) $ UTabCon cs Nothing
+  return $ WithSrc (Just pos) $ UTabCon cs
 
 uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
@@ -377,8 +377,7 @@ unitCon = withSrc $ symbol "()" $> (UPrimExpr $ ConExpr $ UnitCon)
 uTabCon :: Parser UExpr
 uTabCon = withSrc $ do
   xs <- brackets $ expr `sepBy` sym ","
-  ty <- optional (annot uType)
-  return $ UTabCon xs ty
+  return $ UTabCon xs
 
 type UStatement = (Either UDecl UExpr, SrcPos)
 
@@ -554,7 +553,7 @@ uIsoSugar = withSrc (char '#' *> options) where
             (ns $ UPatRecord $ Ext NoLabeledItems $ Just $ patb "l")
             (ns $ UPatRecord $ Ext (labeledSingleton field $ patb "x")
                                    $ Just $ patb "r"))
-          $ (var "(,)") 
+          $ (var "(,)")
             `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ var "x")
                                         $ Just $ var "l")
             `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ var "r")
@@ -564,7 +563,7 @@ uIsoSugar = withSrc (char '#' *> options) where
             (ns $ UPatRecord $ Ext (labeledSingleton field $ patb "x")
                                    $ Just $ patb "l")
             (ns $ UPatRecord $ Ext NoLabeledItems $ Just $ patb "r"))
-          $ (var "(,)") 
+          $ (var "(,)")
             `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ var "l")
             `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ var "x")
                                         $ Just $ var "r")
@@ -574,7 +573,7 @@ uIsoSugar = withSrc (char '#' *> options) where
       ns $ URecord $ NoExt $
         labeledSingleton "fwd" (lam (patb "v") $ ns $ UCase (var "v")
             [ UAlt (ns $ UPatCon (mkName "Left") (toNest [patb "l"]))
-                $ var "Left" `mkApp` (ns $ 
+                $ var "Left" `mkApp` (ns $
                     UVariantLift (labeledSingleton field ()) $ var "l")
             , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "w"]))
                 $ ns $ UCase (var "w")
@@ -598,7 +597,7 @@ uIsoSugar = withSrc (char '#' *> options) where
                     $ var "Left" `mkApp` var "r"
                 ]
             , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "l"]))
-                $ var "Right" `mkApp` (ns $ 
+                $ var "Right" `mkApp` (ns $
                     UVariantLift (labeledSingleton field ()) $ var "l")
             ]
         )
@@ -624,7 +623,7 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
       (l, pos) <- withPos $ fieldLabel
-      let explicitBound = symbol bindwith *> itemparser 
+      let explicitBound = symbol bindwith *> itemparser
       itemVal <- case punner of
         Just punFn -> explicitBound <|> pure (punFn pos l)
         Nothing -> explicitBound

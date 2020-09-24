@@ -225,7 +225,7 @@ myRecordTable : (Fin 2)=>{a:Int & b:Float} =
     {a=b, b=a}
 > [{a = 2.0, b = 1}, {a = 4.0, b = 3}]
 
-myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Float}
+myVariantTable : (Fin 2)=>{a:Int | b:Float} = [{| a=1 |}, {| b=2.0 |}]
 :p myVariantTable
 > [{| a = 1 |}, {| b = 2.0 |}]
 
@@ -297,12 +297,13 @@ def splitTwoFoosOrABar (rest:Fields)?->
     {| bar=z |}                 -> Left {| z=z |}
     {|foo|foo|bar| ...other |}  -> Right other
 
-myStuff = [ {| foo=1 |},
-            {| bar=2 |},
-            {| foo | foo=3 |},
-            {| baz=4 |},
-            {| foo | foo | foo=5 |}
-          ]:(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_})
+myStuff :(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_}) =
+  [ {| foo=1 |},
+    {| bar=2 |},
+    {| foo | foo=3 |},
+    {| baz=4 |},
+    {| foo | foo | foo=5 |}
+  ]
 
 :p for i. splitTwoFoosOrABar myStuff.i
 > [ (Left {| x = 1 |})

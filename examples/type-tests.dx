@@ -98,12 +98,6 @@ xr = map IToF arr
 :t [1, 2, 3]
 > ((Fin 3) => Int32)
 
-:t []
-> Type error:Empty table constructor must have type annotation
->
-> :t []
->    ^^
-
 :t [1, [2]]
 > Type error:
 > Expected: Int32
