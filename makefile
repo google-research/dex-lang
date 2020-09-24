@@ -37,6 +37,10 @@ STACK_FLAGS = --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
 endif
 
+ifneq (,$(PREFIX))
+STACK_BIN_PATH := --local-bin-path $(PREFIX)
+endif
+
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
 
@@ -49,6 +53,9 @@ tc: dexrt-llvm
 
 build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
+
+install: dexrt-llvm
+	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
 	$(STACK) build $(PROF)
