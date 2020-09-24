@@ -24,17 +24,26 @@ or these example programs:
 Please note that Dex is an experimental research project at an early stage of
 development. Contributions welcome!
 
-## Setup
+## Dependencies
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 9, e.g. `apt-get install llvm-9-dev` on Ubuntu/Debian.
-    For macOS, there's [some guidance here](https://github.com/google-research/dex-lang/issues/2#issuecomment-649896955).
+  * Install LLVM 9
+    * `apt-get install llvm-9-dev` on Ubuntu/Debian,
+    * `brew install llvm@9` on macOS.
 
 ## Building
 
- * Build Dex: `make`
- * Run tests: `make tests`
- * Set up a `dex` alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
+ * Build Dex in development mode: `make`
+ * Run tests in development mode: `make tests`
+ * Install a release version of Dex: `make install`
+
+The default installation directory is `$HOME/.local/bin` so make sure to add that
+directory to `$PATH` once you install Dex. If you'd like to install it somewhere else
+make sure to have the `PREFIX` environment variable set when you run `make install`.
+For example `PREFIX=$HOME make install` would install `dex` in `$HOME/bin`.
+
+While working in development mode, it is convenient to set up a `dex` alias
+(e.g. in .bashrc): `alias dex="stack exec dex --"`.
 
 ## Running
 
