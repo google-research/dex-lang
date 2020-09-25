@@ -1,24 +1,78 @@
-'# LU Decomposition and Matrix Inversion
+'## LU Decomposition and Matrix Inversion
 
--- Todo: Use triangular matrix types for L and U.
--- Todo: Once type leakage error is fixed, remove case expressions and Ords.
--- Todo: Make nicer tests using HasAllClose typeclass and ~~
+
+'### Generic helper functions
+
+--  Todo: Move these to prelude?
+def sign (x:Float) : Float =
+  case x == 0.0 of
+    True -> 0.0
+    False -> case x < 0.0 of
+      True -> 1.0
+      False -> -1.0
 
 def identity_matrix (_:Eq n) ?=> : n=>n=>Float =
   for i j. select (i == j) 1.0 0.0
 
-def zero_matrix (_:VSpace v) ?=> : n=>n=>v =
-  for i j. zero
+-- Todo: generalize the HasAllClose typeclass and delete these
+def allCloseVec (x:n=>Float) (y:n=>Float) : Bool =
+  all for i.
+      x.i ~~ y.i
 
-def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : (n=>n & Int) =
+def allCloseMat (x:n=>n=>Float) (y:n=>n=>Float) : Bool =
+  all for i.
+    all for j.
+      x.i.j ~~ y.i.j
+
+'### Triangular matrices
+
+def LowerTriMat (n:Type) : Type = i:n=>(..i)=>Float
+def UpperTriMat (n:Type) : Type = i:n=>(i..)=>Float
+
+-- Todo: get rid of these by writing a dependent indexing (!) operator.
+def lowerTriIndex (ref:Ref h (LowerTriMat n)) (i:n) : Ref h ((..i)=>Float) =
+  %indexRef ref i
+def upperTriIndex (ref:Ref h (UpperTriMat n)) (i:n) : Ref h ((i..)=>Float) =
+  %indexRef ref i
+
+def forward_substitute (_:VSpace v) ?=> (a:LowerTriMat n) (b:n=>v) : n=>v =
+  -- Solves lower triangular linear system (inverse a) **. b
+  snd $ withState zero \sRef.
+    for i:n.
+      s = sum for k:(..<i).  -- dot product
+        a.i.((ordinal k)@_) .* (get sRef).(%inject k)
+      sRef!i := (b.i - s) / a.i.((ordinal i)@_)
+
+def backward_substitute (_:VSpace v) ?=> (a:UpperTriMat n) (b:n=>v) : n=>v =
+  -- Solves upper triangular linear system (inverse a) **. b
+  snd $ withState zero \sRef.
+    rof i:n.
+      s = sum for k:(i..).  -- dot product
+        a.i.((ordinal k)@_) .* (get sRef).(%inject k)
+      sRef!i := (b.i - s) / a.i.((0)@_) -- 0 is the diagonal index
+
+
+'### Permutations
+
+def Permutation (n:Type) : Type = n=>n
+def apply_permutation (permutation: n=>n) (array: n=>t) : n=>t =
+  for i. array.(permutation.i)
+def identity_permutation (n:Type) ?-> : Permutation n =
+  for i. i
+
+
+'### LU decomposition functions
+
+def pivotize (_:Eq n) ?=> (a:n=>n=>Float) :
+             (Permutation n & Int) =
   -- Rearranges a matrix to make Gaussian elimination more stable.
   -- Returns permutation and number of swaps in permutation,
   -- for use in computing the determinant.
-  identity_permutation = for i. i
+  
   snd $ withState (identity_permutation, 0) \stateRef.
     (pRef, countRef) = (fstRef stateRef, sndRef stateRef)
     for j:n.
-      row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j)) -- Todo: Use argmax
+      row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j))
       row_with_largest = %inject row_with_largest
       case (j == row_with_largest) of
         True -> ()
@@ -28,125 +82,116 @@ def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : (n=>n & Int) =
           pRef!row_with_largest := tempj
           countRef := (get countRef) + 1
 
-def apply_permutation (permutation: n=>n) (array: n=>t) : n=>t =
-  for i. array.(permutation.i)
-
-def lu (_:Ord n) ?=> (a': n=>n=>Float) : (n=>n=>Float & n=>n=>Float & n=>n & Int) =
+def lu (_:Eq n) ?=> (a: n=>n=>Float) :
+       (LowerTriMat n & UpperTriMat n & Permutation n & Int) =
   -- Computes lower, upper, and permuntation matrices from a square matrix,
   -- such that apply_permutation permutation a == lower ** upper.
   -- I.e. it uses partial pivoting.
-  (permutation, swapcount) = pivotize a'
-  a = apply_permutation permutation a'
+  (permutation, swapcount) = pivotize a
+  a = apply_permutation permutation a
 
-  init_state = (identity_matrix, zero_matrix)
-  (lower, upper) = snd $ withState init_state \stateRef.
-    (lRef, uRef) = (fstRef stateRef, sndRef stateRef)
+  init_lower = for i:n. for j':(..i).
+    select (i == (%inject j')) 1.0 0.0
+  init_upper = for i:n. for j'':(i..). 0.0
+
+  (lower, upper) = snd $ withState (init_lower, init_upper) \stateRef.
+    lRef = fstRef stateRef
+    uRef = sndRef stateRef
+
+  -- For reference, here's code to computed the LU decomposition
+  -- without dependent tables (i.e. with standard flat matrices):
+  --  for j:n.
+  --    for i:(..j).
+  --      i = %inject i
+  --      s = sum for k':(..i).
+  --        k = %inject k'
+  --        (get uRef!k!j) * (get lRef!i!k)
+  --      uRef!i!j := a.i.j - s
+
+  --    for i':(j<..).
+  --      i = %inject i'
+  --      s = sum for k':(..j).
+  --        k = %inject k'
+  --        (get uRef!k!j) * (get lRef!i!k)
+  --      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
+  --    for i:n. ()
 
     for j:n.
       for i:(..j).
-        i = %inject i
-        s = sum for k':(..i).
-          k = %inject k'
-          (get uRef!k!j) * (get lRef!i!k)
-        uRef!i!j := a.i.j - s
-
-      for i:n. case i > j of  --for i:(j..).  -- type leakage bug?
-          False -> ()
-          True ->
-            s = sum for k':(..j).
-              k = %inject k'
-              (get uRef!k!j) * (get lRef!i!k)
-            lRef!i!j := (a.i.j - s) / (get uRef!j!j)
+        s = sum for k:(..i).
+          -- todo: Combine into fewer lines when bug is fixed.
+          ukRef = (upperTriIndex uRef ((ordinal k)@_))
+          ukj = get ukRef!(((ordinal j) - (ordinal k))@_)
+          liRef = lowerTriIndex lRef (%inject i)
+          lik = get liRef!((ordinal k)@_)
+          ukj * lik
+          
+        uiRef = (upperTriIndex uRef (%inject i))
+        uiRef!(((ordinal j) - (ordinal i))@_) := a.(%inject i).j - s
+      
+      for i:(j<..).
+        s = sum for k:(..j).
+          ukRef = (upperTriIndex uRef (%inject k))
+          ukj = get ukRef!(((ordinal j) - (ordinal k))@_)
+          liRef = (lowerTriIndex lRef (%inject i))
+          lik = get liRef!((ordinal k)@_)
+          ukj * lik
+        
+        ujj = get (upperTriIndex uRef j)!(((ordinal j) - (ordinal j))@_)
+        liRef = lowerTriIndex lRef (((ordinal i) + (ordinal j) + 1)@_)
+        liRef!((ordinal j)@_) := (a.(%inject i).j - s) / ujj  
+      for i:n. ()  -- Todo: Delete this no-op when type leakage bug is fixed.
   (lower, upper, permutation, swapcount)
 
-def forward_substitute (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
-  -- Solves lower triangular linear system (inverse a) **. b
-  -- todo: use triangular matrices, and write a custom version for unit diagonals.
-  snd $ withState zero \sRef.
-    for i:n.
-      s = sum for k':(..<i).  -- use dot here?
-        k = %inject k'
-        a.i.k .* (get sRef).k 
-      sRef!i := (b.i - s) / a.i.i
+def permutation_sign (swapcount:Int) : Float =
+  -- Computes the sign of the determinant of a permutation
+  -- given the number of row swaps.
+  case mod swapcount 2 == 0 of
+    True -> 1.0
+    False -> -1.0
 
-def backward_substitute (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
-  -- Solves upper triangular linear system y = (inverse a) **. b
-  -- todo: use triangular matrices.
-  snd $ withState zero \sRef.
-    rof i:n.
-      s = sum for k':(i..).
-        k = %inject k'
-        a.i.k .* (get sRef).k 
-      sRef!i := (b.i - s) / a.i.i
 
-def backward_substitute2 (_:Ord n) ?=> (_:VSpace v) ?=> (a:n=>(a..)=>Float) (b:n=>v) : n=>v =
-  -- for solving upper triangular linear systems ay = b
-  -- todo: use triangular matrices.
-  for i:n.
-    s = sum for k.
-          a.i.k .* b.((ordinal k@n)) 
-    (b.i - s) / a.i.(ordinal i@_)
+'### General linear algebra functions.
 
-def solve (_:Ord n) ?=> (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
+def solve (_:Eq n) ?=> (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
+  -- There's a small speedup possible by exploiting the fact
+  -- that l always has ones on the diagonal.  It would just require a
+  -- custom forward_substitute routine that doesn't divide
+  -- by the diagonal entries.
   (l, u, p, _) = lu a
   b' = apply_permutation p b
   y = forward_substitute l b'
   backward_substitute u y
 
-def invert (_:Ord n) ?=> (a:n=>n=>Float) : n=>n=>Float =
+def invert (_:Eq n) ?=> (a:n=>n=>Float) : n=>n=>Float =
   solve a identity_matrix
 
-def permutation_sign (swapcount:Int) : Float =
-  case mod swapcount 2 == 0 of
-    True -> 1.0
-    False -> -1.0
-
-def determinant (_:Ord n) ?=> (a:n=>n=>Float) : Float =
+def determinant (_:Eq n) ?=> (a:n=>n=>Float) : Float =
   (l, u, p, swapcount) = lu a
-  (prod for i. u.i.i * l.i.i) * (permutation_sign swapcount)
+  -- formerly u.i.i * l.i.i
+  (prod for i. u.i.(0@_) * l.i.((ordinal i)@_)) * (permutation_sign swapcount)
 
--- Move to prelude?
-def sign (x:Float) : Float =
-  case x == 0.0 of
-    True -> 0.0
-    False -> case x < 0.0 of
-      True -> 1.0
-      False -> -1.0
-
-def sign_and_log_determinant (_:Ord n) ?=> (a:n=>n=>Float) : (Float & Float) =
+def sign_and_log_determinant (_:Eq n) ?=> (a:n=>n=>Float) : (Float & Float) =
   (l, u, p, swapcount) = lu a
-  diags = for i. u.i.i * l.i.i
+  -- formerly u.i.i * l.i.i
+  diags = for i. u.i.(0@_) * l.i.((ordinal i)@_)
   sign = (permutation_sign swapcount) * prod for i. sign diags.i
   sum_of_log_abs = sum for i. log (abs diags.i) 
   (sign, sum_of_log_abs)
 
+
+'### Numerical Tests
+
+-- Check that the inverse of the inverse is identity.
 mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
+:p allCloseMat mat (invert (invert mat))
 
-:p lu mat
-(l, u, p) = lu mat
+-- Check that solving gives the inverse.
+v = [1., 2., 3., 4.]
+:p allCloseVec v (mat **. (solve mat v))
 
---:p mat
---:p (apply_permutation p mat) ~~ (l ** u)
+-- Check that det and exp(logdet) are the same.
+(s, logdet) = sign_and_log_determinant mat
+:p (determinant mat) ~~ (s * (exp logdet))
 
-:p (invert mat) ** mat
-:p invert $ invert mat
-:p mat
-
-x = solve mat [1., 2., 3., 4.]
-:p mat **. x
-
-
-:p l
-:p forward_substitute l identity_matrix
-x2 = forward_substitute l [10., 2., 30., 4.]
-:p l **. x2
-:p (transpose l) **. x2
-x3 = backward_substitute u [12., 2., 3., 4.]
-:p u **. x3
-
-:p determinant mat
-:p sign_and_log_determinant mat
-(s, ld) = sign_and_log_determinant mat
-:p s * (exp ld) 
-:t transpose
 
