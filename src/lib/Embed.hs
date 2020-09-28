@@ -114,7 +114,11 @@ emitUnpack expr = do
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
-emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
+emitBlock (Block decls result) = do
+  mapM_ emitDecl decls
+  case result of
+    Atom x -> return x
+    _      -> emit result
 
 freshVarE :: MonadEmbed m => BinderInfo -> Binder -> m Var
 freshVarE bInfo b = do
@@ -439,11 +443,19 @@ instance MonadEmbed m => MonadEmbed (StateT s m) where
     return x
 
 instance (Monoid env, MonadEmbed m) => MonadEmbed (CatT env m) where
-  embedLook = undefined
-  embedExtend _ = error "not implemented"
-  embedScoped _ = error "not implemented"
+  embedLook = lift embedLook
+  embedExtend x = lift $ embedExtend x
+  embedScoped m = do
+    env <- look
+    ((ans, env'), scopeEnv) <- lift $ embedScoped $ runCatT m env
+    extend env'
+    return (ans, scopeEnv)
   embedAsk = lift embedAsk
-  embedLocal = undefined
+  embedLocal v m = do
+    env <- look
+    (ans, env') <- lift $ embedLocal v $ runCatT m env
+    extend env'
+    return ans
 
 instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
   embedLook = lift embedLook

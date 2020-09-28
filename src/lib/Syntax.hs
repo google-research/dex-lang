@@ -52,7 +52,7 @@ module Syntax (
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
-    pattern FixedIntRange, pattern RefTy,
+    pattern FixedIntRange, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow,
     pattern TyKind, pattern LamVal,
@@ -273,7 +273,7 @@ data PrimTC e =
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
       | PairType e e
       | UnitType
-      | RefType e e
+      | RefType (Maybe e) e
       | TypeKind
       | EffectRowKind
       | LabeledRowKindTC
@@ -291,6 +291,11 @@ data PrimCon e =
       | IntRangeVal   e e e
       | IndexRangeVal e (Limit e) (Limit e) e
       | IndexSliceVal e e e    -- Sliced index set, slice length. Note that this is no longer an index set!
+      | BaseTypeRef e
+      | TabRef e
+      | ConRef (PrimCon e)
+      | DataConRef DataDef [e] [e]
+      | RecordRef (LabeledItems e)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -479,6 +484,7 @@ data ImpInstr = Store IExpr IExpr           -- dest, val
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
               | IPrimOp IPrimOp
+              | IExpr IExpr
                 deriving (Show)
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | Interp  deriving (Show, Eq)
@@ -1303,7 +1309,10 @@ pattern PtrTy :: PtrType -> Type
 pattern PtrTy ty = BaseTy (PtrType ty)
 
 pattern RefTy :: Atom -> Type -> Type
-pattern RefTy r a = TC (RefType r a)
+pattern RefTy r a = TC (RefType (Just r) a)
+
+pattern RawRefTy :: Type -> Type
+pattern RawRefTy a = TC (RefType Nothing a)
 
 pattern CharTy :: Type
 pattern CharTy = TC CharType
@@ -1448,7 +1457,7 @@ builtinNames = M.fromList
   , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
   , ("Int8"    , TCExpr $ BaseType $ Scalar Int8Type)
   , ("IntRange", TCExpr $ IntRange () ())
-  , ("Ref"     , TCExpr $ RefType () ())
+  , ("Ref"     , TCExpr $ RefType (Just ()) ())
   , ("PairType", TCExpr $ PairType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("EffKind" , TCExpr $ EffectRowKind)

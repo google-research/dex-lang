@@ -33,7 +33,7 @@ newtype Env a = Env (M.Map Name a)
 data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
             deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName
-               | SumName | AbstractedPtrName | TopFunctionName
+               | SumName | AbstractedPtrName | TopFunctionName | AllocPtrName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text

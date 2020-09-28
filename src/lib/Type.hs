@@ -418,8 +418,10 @@ checkEffRow (EffectRow effs effTail) = do
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       Just (ty, _) -> assertEq EffKind ty "Effect var"
 
-declareEff :: Effect -> TypeM ()
-declareEff (effName, h) = declareEffs $ EffectRow [(effName, h)] Nothing
+declareEff :: (EffectName, Maybe Name) -> TypeM ()
+declareEff (effName, Just h) =
+  declareEffs $ EffectRow [(effName, h)] Nothing
+declareEff (effName, Nothing) = return ()
 
 declareEffs :: EffectRow -> TypeM ()
 declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
@@ -510,7 +512,8 @@ typeCheckTyCon tc = case tc of
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
-  RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
+  RefType (Just r) a  -> r|:TyKind >> a|:TyKind >> return TyKind
+  RefType Nothing a   ->              a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
@@ -527,6 +530,34 @@ typeCheckCon con = case con of
   ClassDictHole _ ty -> ty |: TyKind >> return ty
   IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
   IndexRangeVal t l h i -> i|:IdxRepTy >> return (TC $ IndexRange t l h)
+  BaseTypeRef p -> do
+    (PtrTy (_, _, b)) <- typeCheck p
+    return $ RawRefTy $ BaseTy b
+  TabRef tabTy -> do
+    TabTy b (RawRefTy a) <- typeCheck tabTy
+    return $ RawRefTy $ TabTy b a
+  ConRef con -> case con of
+    UnitCon -> return $ RawRefTy UnitTy
+    PairCon x y ->
+      RawRefTy <$> (PairTy <$> typeCheckRef x <*> typeCheckRef y)
+    CharCon x -> do
+      x |: RawRefTy (BaseTy $ Scalar Int8Type)
+      return $ RawRefTy CharTy
+    IntRangeVal     l h i ->
+      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l h)
+    IndexRangeVal t l h i ->
+      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IndexRange t l h)
+    SumAsProd ty tag _ -> do    -- TODO: check args!
+      tag |:(RawRefTy TagRepTy)
+      return $ RawRefTy ty
+    _ -> error $ "Not implemented " ++ pprint con
+  DataConRef _ _ _ -> error "Not implemented"
+  RecordRef _ -> error "Not implemented"
+
+typeCheckRef :: HasType a => a -> TypeM Type
+typeCheckRef x = do
+  TC (RefType _ a) <- typeCheck x
+  return a
 
 checkIntBaseType :: MonadError Err m => Bool -> Type -> m ()
 checkIntBaseType allowVector t = case t of
@@ -600,12 +631,15 @@ typeCheckOp op = case op of
     TC (IndexRange ty _ _) <- typeCheck i
     return ty
   PrimEffect ref m -> do
-    RefTy (Var (h:>TyKind)) s <- typeCheck ref
+    TC (RefType h s) <- typeCheck ref
+    let h' = case h of
+               Just (Var (h':>TyKind)) -> Just h'
+               Nothing -> Nothing
     case m of
-      MGet    ->         declareEff (State , h) $> s
-      MPut  x -> x|:s >> declareEff (State , h) $> UnitTy
-      MAsk    ->         declareEff (Reader, h) $> s
-      MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
+      MGet    ->         declareEff (State , h') $> s
+      MPut  x -> x|:s >> declareEff (State , h') $> UnitTy
+      MAsk    ->         declareEff (Reader, h') $> s
+      MTell x -> x|:s >> declareEff (Writer, h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTy b a) <- typeCheck ref
     i |: (binderType b)
