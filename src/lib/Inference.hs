@@ -112,11 +112,16 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       emitZonked $ Hof $ For dir lam
   UApp arr f x -> do
     fVal <- inferRho f
-    fVal' <- zonk fVal
-    piTy <- addSrcContext' (srcPos f) $ fromPiType True arr $ getType fVal'
-    -- Zonking twice! Once for linearity and once for the embedding. Not ideal...
-    fVal'' <- zonk fVal
-    xVal <- checkSigma x (absArgType piTy)
+    -- NB: We never infer dependent function types, but we accept them, provided they
+    --     come with annotations. So, unless we already know that the function is
+    --     dependent here (i.e. the type of the zonk comes as a dependent Pi type),
+    --     then nothing in the remainder of the program can convince us that the type
+    --     is dependent. Also, the Pi binder is never considered to be in scope for
+    --     inference variables, so they cannot get unified with it. Hence, this zonk
+    --     is safe and doesn't make the type checking depend on the program order.
+    infTy <- getType <$> zonk fVal
+    piTy  <- addSrcContext' (srcPos f) $ fromPiType True arr infTy
+    xVal  <- checkSigma x (absArgType piTy)
     (arr', xVal') <- case piTy of
       Abs (Ignore _) (arr', _) -> return (arr', xVal)
       _ -> do
@@ -124,7 +129,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         let xVal' = reduceAtom scope xVal
         return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
-    appVal <- emitZonked $ App fVal'' xVal'
+    appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
   UPi b arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
