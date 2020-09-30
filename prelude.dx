@@ -34,36 +34,78 @@ def IToI8  (x : Int)     : Int8    = internalCast _ x
 def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
 
-data Add a:Type =
-  MkAdd (a->a->a) (a->a->a) a  -- add, sub, zero
+interface Add a:Type where
+  add : a -> a -> a
+  sub : a -> a -> a
+  zero : a
 
-def (+)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd add _   _    -> add
-def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
-def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
+def (+)  (d:Add a) ?=> : a -> a -> a = add
+def (-)  (d:Add a) ?=> : a -> a -> a = sub
 
-@instance float64Add : Add Float64 = MkAdd (\x:Float64 y:Float64. %fadd x y) (\x y. %fsub x y) (FToF64 0.0)
-@instance float32Add : Add Float32 = MkAdd (\x:Float32 y:Float32. %fadd x y) (\x y. %fsub x y) (FToF32 0.0)
-@instance int64Add   : Add Int64   = MkAdd (\x:Int64   y:Int64.   %iadd x y) (\x y. %isub x y) (IToI64 0)
-@instance int32Add   : Add Int32   = MkAdd (\x:Int32   y:Int32.   %iadd x y) (\x y. %isub x y) (IToI32 0)
-@instance int8Add    : Add Int8    = MkAdd (\x:Int8    y:Int8.    %iadd x y) (\x y. %isub x y) (IToI8  0)
-@instance unitAdd    : Add Unit    = MkAdd (\x y. ())                        (\x y. ())        ()
+instance float64Add : Add Float64 where
+  add = \x:Float64 y:Float64. %fadd x y
+  sub = \x:Float64 y:Float64. %fsub x y
+  zero = FToF64 0.0
 
-@instance tabAdd : Add a ?=> Add (n=>a) =
-  (MkAdd ( \xs ys. for i. xs.i + ys.i )
-         ( \xs ys. for i. xs.i - ys.i )
-         ( for _. zero ))
+instance float32Add : Add Float32 where
+  add = \x:Float32 y:Float32. %fadd x y
+  sub = \x:Float32 y:Float32. %fsub x y
+  zero = FToF32 0.0
 
-data Mul a:Type = MkMul (a->a->a) a  -- multiply, one
+instance int64Add : Add Int64 where
+  add = \x:Int64 y:Int64. %iadd x y
+  sub = \x:Int64 y:Int64. %isub x y
+  zero = IToI64 0
 
-def (*) (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul _   -> mul
-def one (d:Mul a) ?=> : a           = case d of MkMul _   one -> one
+instance int32Add : Add Int32 where
+  add = \x:Int32 y:Int32. %iadd x y
+  sub = \x:Int32 y:Int32. %isub x y
+  zero = IToI32 0
 
-@instance float64Mul : Mul Float64 = MkMul (\x:Float64 y:Float64. %fmul x y) (FToF64 1.0)
-@instance float32Mul : Mul Float32 = MkMul (\x:Float32 y:Float32. %fmul x y) (FToF32 1.0)
-@instance int64Mul   : Mul Int64   = MkMul (\x:Int64   y:Int64.   %imul x y) (IToI64 1)
-@instance int32Mul   : Mul Int32   = MkMul (\x:Int32   y:Int32.   %imul x y) (IToI32 1)
-@instance int8Mul    : Mul Int8    = MkMul (\x:Int8    y:Int8.    %imul x y) (IToI8  1)
-@instance unitMul    : Mul Unit    = MkMul (\x y. ()) ()
+instance int8Add : Add Int8 where
+  add = \x:Int8 y:Int8. %iadd x y
+  sub = \x:Int8 y:Int8. %isub x y
+  zero = IToI8 0
+
+instance unitAdd : Add Unit where
+  add = \x y. ()
+  sub = \x y. ()
+  zero = ()
+
+instance tabAdd : Add a ?=> Add (n=>a) where
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+interface Mul a:Type where
+  mul : a -> a -> a
+  one : a
+
+def (*) (d:Mul a) ?=> : a -> a -> a = mul
+
+instance float64Mul : Mul Float64 where
+  mul = \x:Float64 y:Float64. %fmul x y
+  one = FToF64 1.0
+
+instance float32Mul : Mul Float32 where
+  mul = \x:Float32 y:Float32. %fmul x y
+  one = FToF32 1.0
+
+instance int64Mul : Mul Int64 where
+  mul = \x:Int64 y:Int64. %imul x y
+  one = IToI64 1
+
+instance int32Mul : Mul Int32 where
+  mul = \x:Int32 y:Int32. %imul x y
+  one = IToI32 1
+
+instance int8Mul : Mul Int8 where
+  mul = \x:Int8 y:Int8. %imul x y
+  one = IToI8 1
+
+instance unitMul : Mul Unit where
+  mul = \x y. ()
+  one = ()
 
 data Integral a:Type =
   MkIntegral (a->a->a) (a->a->a) -- idiv, rem
