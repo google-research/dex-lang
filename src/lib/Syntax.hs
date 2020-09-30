@@ -31,7 +31,7 @@ module Syntax (
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars,
-    strToName, nameToStr, showPrimName,
+    strToPrimName, primNameToStr, showPrimName,
     monMapSingle, monMapLookup, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
@@ -389,16 +389,16 @@ data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
 type PrimName = PrimExpr ()
 
-strToName :: String -> Maybe PrimName
-strToName s = M.lookup s builtinNames
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s builtinNames
 
-nameToStr :: PrimName -> String
-nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
   Just s  -> s
   Nothing -> show prim
 
 showPrimName :: PrimExpr e -> String
-showPrimName prim = nameToStr $ fmap (const ()) prim
+showPrimName prim = primNameToStr $ fmap (const ()) prim
 
 -- === effects ===
 
