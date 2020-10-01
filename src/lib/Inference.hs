@@ -122,7 +122,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       allowedEff <- getAllowedEffects
       lam <- inferULam b (PlainArrow allowedEff) body
       emitZonked $ Hof $ For dir lam
-  UApp arr f x -> do
+  UApp arr f x@(WithSrc xPos _) -> do
     fVal <- inferRho f
     -- NB: We never infer dependent function types, but we accept them, provided they
     --     come with annotations. So, unless we already know that the function is
@@ -133,13 +133,18 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     --     is safe and doesn't make the type checking depend on the program order.
     infTy <- getType <$> zonk fVal
     piTy  <- addSrcContext' (srcPos f) $ fromPiType True arr infTy
-    xVal  <- checkSigma x Suggest (absArgType piTy)
-    (arr', xVal') <- case piTy of
-      Abs (Ignore _) (arr', _) -> return (arr', xVal)
-      _ -> do
-        scope <- getScope
-        let xVal' = reduceAtom scope xVal
-        return (fst $ applyAbs piTy xVal', xVal')
+    (xVal, embedEnv@(_, xDecls)) <- embedScoped $ checkSigma x Suggest (absArgType piTy)
+    (xVal', arr') <- case piTy of
+      Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
+        False -> embedExtend embedEnv $> (xVal, arr')
+        True  -> do
+          xValMaybeRed <- flip reduceBlock (Block xDecls (Atom xVal)) <$> getScope
+          case xValMaybeRed of
+            Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
+            Nothing      -> addSrcContext' xPos $ do
+              throw TypeErr $ "Dependent functions can only be applied to fully " ++
+                              "evaluated expressions. Bind the argument to a name " ++
+                              "before you apply the function."
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
