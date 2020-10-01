@@ -350,3 +350,13 @@ def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
 >
 > (for i:(Fin 5). for j:(i..). 0.0).(0@_)
 >                                    ^^^
+
+-- Type inference of arguments always happens in checking mode, but the checking
+-- doesn't provide any insight into what the argument is in this case. This checks
+-- that type inference is able to realize that and switch to inference mode, so that
+-- it can correctly infer the full dependent type.
+--
+-- There was a time when this wasn't possible, because checking mode would unify the
+-- input type with a non-dependent function type, leading to a later unification errors.
+id (for i:(Fin 2). for j:(..i). 1.0)
+> [[1.0]@(..(0@Fin 2)), [1.0, 1.0]@(..(1@Fin 2))]

@@ -68,8 +68,7 @@ checkSigma expr reqCon sTy = case sTy of
           checkULam b body piTy
         _ -> do
           buildLam (Bind ("a":> absArgType piTy)) arrow $ \x@(Var v) ->
-            -- TODO: Should we preserve reqCon here?
-            checkLeaks [v] $ checkSigma expr Suggest $ snd $ applyAbs piTy x
+            checkLeaks [v] $ checkSigma expr reqCon $ snd $ applyAbs piTy x
   _ -> checkOrInferRho expr (reqCon sTy)
 
 inferSigma :: UExpr -> UInferM Atom
@@ -104,24 +103,28 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     argTy <- checkAnn ann
     x <- freshType argTy
     withBindPat p x $ checkOrInferRho body reqTy
-  ULam b arr body -> case reqTy of
-    Check ty -> do
-      piTy@(Abs _ (arrReq, _)) <- fromPiType False arr ty
-      checkArrow arrReq arr
-      checkULam b body piTy
-    Infer -> inferULam b (fmap (const Pure) arr) body
-  UFor dir b body -> case reqTy of
-    Check ty -> do
-      Abs n (arr, a) <- fromPiType False TabArrow ty
-      unless (arr == TabArrow) $
-        throw TypeErr $ "Not an table arrow type: " ++ pprint arr
-      allowedEff <- getAllowedEffects
-      lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      emitZonked $ Hof $ For dir lam
-    Infer -> do
-      allowedEff <- getAllowedEffects
-      lam <- inferULam b (PlainArrow allowedEff) body
-      emitZonked $ Hof $ For dir lam
+  ULam b arr body -> do
+    let infer = inferULam b (fmap (const Pure) arr) body
+    case reqTy of
+      Check (Pi piTy@(Abs _ (arrReq, _))) -> do
+        checkArrow arrReq arr
+        checkULam b body piTy
+      Check _ -> infer >>= matchRequirement
+      Infer   -> infer
+  UFor dir b body -> do
+    let infer = do
+          allowedEff <- getAllowedEffects
+          lam <- inferULam b (PlainArrow allowedEff) body
+          emitZonked $ Hof $ For dir lam
+    case reqTy of
+      Check (Pi (Abs n (arr, a))) -> do
+        unless (arr == TabArrow) $
+          throw TypeErr $ "Not an table arrow type: " ++ pprint arr
+        allowedEff <- getAllowedEffects
+        lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
+        emitZonked $ Hof $ For dir lam
+      Check _ -> infer >>= matchRequirement
+      Infer   -> infer
   UApp arr f x@(WithSrc xPos _) -> do
     fVal <- inferRho f
     -- NB: We never infer dependent function types, but we accept them, provided they
