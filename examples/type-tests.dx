@@ -344,3 +344,9 @@ def getFst3 (b:Type) ?-> (n:Type) ?-> (xs:n=>b) : b =
 
 def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
   %indexRef ref i
+
+(for i:(Fin 5). for j:(i..). 0.0).(0@_)
+> Type error:Dependent functions can only be applied to fully evaluated expressions. Bind the argument to a name before you apply the function.
+>
+> (for i:(Fin 5). for j:(i..). 0.0).(0@_)
+>                                    ^^^
