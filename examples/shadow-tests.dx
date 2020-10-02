@@ -73,7 +73,6 @@ ShadowCon = 1
 data Shadow = ShadowCon
 > Error: variable already defined: ShadowCon
 
--- In the opposite direction, it already worked properly
 data Shadow = ShadowCon'
 ShadowCon' = 1
 > Error: variable already defined: ShadowCon'
