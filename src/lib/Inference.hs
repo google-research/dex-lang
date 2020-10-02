@@ -367,6 +367,8 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
+  scope <- getScope
+  when (tc' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName tc'
   let paramVars = map (\(Bind v) -> v) $ toList paramBs  -- TODO: refresh things properly
   (dcs', _) <- embedScoped $
     extendR (newEnv paramBs (map Var paramVars)) $ do
@@ -376,6 +378,9 @@ inferUDecl True (UData tc dcs) = do
   let tyConTy = getType $ TypeCon dataDef []
   extendScope $ tc' @> (tyConTy, DataBoundTypeCon dataDef)
   forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
+    -- Retrieving scope at every step to avoid duplicate constructor names
+    scope' <- getScope
+    when (dc `isin` scope') $ throw RepeatedVarErr $ pprint $ getName dc
     let ty = getType $ DataCon dataDef [] i []
     extendScope $ dc @> (ty, DataBoundDataCon dataDef i)
   return mempty

@@ -59,3 +59,21 @@ x = 1
    (_, _, w) = (1,2,4)
    w
 > 4
+
+-- Testing data shadowing
+data Shadow = Shadow
+> Error: variable already defined: Shadow
+
+data Shadow =
+  Shadow1 Int
+  Shadow1
+> Error: variable already defined: Shadow1
+
+ShadowCon = 1
+data Shadow = ShadowCon
+> Error: variable already defined: ShadowCon
+
+-- In the opposite direction, it already worked properly
+data Shadow = ShadowCon'
+ShadowCon' = 1
+> Error: variable already defined: ShadowCon'
