@@ -241,6 +241,10 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
+  UAnnotatedExpr val ty -> do
+    ty' <- checkUType ty
+    val' <- checkRho val ty'
+    matchRequirement val'
   UPrimExpr prim -> do
     prim' <- traverse lookupName prim
     val <- case prim' of

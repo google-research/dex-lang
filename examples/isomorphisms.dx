@@ -43,30 +43,29 @@ that produce isos. We will start with the first two:
 - `#?x` produces a "prism-like" variant matcher `Iso {x:a | ...r} (a | {|...r})`
 
 %passes parse
-:t astype (Iso {a:Int & b:Float & c:Unit} _) #b
+:t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
 > === parse ===
 > _ans_:() =
->   astype (Iso {a: Int & b: Float & c: Unit} _)
->     (MkIso
->        { bwd = \(x:(), r:()). {b = x, ...r}
->        , fwd = \{b = x:(), ...r:()}. (,) x r})
+>   MkIso
+>     {bwd = \(x:(), r:()). {b = x, ...r}, fwd = \{b = x:(), ...r:()}. (,) x r}
+>   : Iso {a: Int & b: Float & c: Unit} _
 
 %passes parse
-:t astype (Iso {a:Int | b:Float | c:Unit} _) #?b
+:t #?b : Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
 > === parse ===
 > _ans_:() =
->   astype (Iso {a: Int | b: Float | c: Unit} _)
->     (MkIso
->        { bwd = \v:(). case v
->                    ((Left x:())) -> {| b = x |}
->                    ((Right r:())) -> {|b| ...r |}
->                    
->        , fwd = \v:(). case v
->                    {| b = x:() |} -> (Left x)
->                    {|b| ...r:() |} -> (Right r)
->                    })
+>   MkIso
+>     { bwd = \v:(). case v
+>                 ((Left x:())) -> {| b = x |}
+>                 ((Right r:())) -> {|b| ...r |}
+>                 
+>     , fwd = \v:(). case v
+>                 {| b = x:() |} -> (Left x)
+>                 {|b| ...r:() |} -> (Right r)
+>                 }
+>   : Iso {a: Int | b: Float | c: Unit} _
 
 'There are also two "zipper" forms, described later on this page:
 - `#&x` produces a "record-zipper" isomorphism
@@ -119,16 +118,16 @@ Similarly, there are prism-like helpers
 
 'which can be used with variant accessors or any other prism-like isomorphism:
 
-:p matchWith #?foo $ astype {foo:Int | bar:Float} {|foo = 1|}
+:p matchWith #?foo $ {|foo = 1|}:{foo:Int | bar:Float}
 > Just 1
 
-:p matchWith #?foo $ astype {foo:Int | bar:Float} {|bar = 1.0|}
+:p matchWith #?foo $ {|bar = 1.0|}:{foo:Int | bar:Float}
 > Nothing
 
-:p astype {foo:Int | bar:Float} $ buildWith #?foo 3
+:p buildWith #?foo 3 : {foo:Int | bar:Float}
 > {| foo = 3 |}
 
-:p matchWith (exceptPrism #?foo) $ astype {foo:Int | bar:Float} {|bar = 1.0|}
+:p matchWith (exceptPrism #?foo) $  {|bar = 1.0|}:{foo:Int | bar:Float}
 > Just {| bar = 1.0 |}
 
 '## Record zipper isomorphisms
@@ -139,18 +138,18 @@ a "zipper isomorphism", which moves a subset of fields from one place to
 another. For instance:
 
 %passes parse
-:t astype (Iso ({&} & {a:Int & b:Float & c:Unit}) _) #&a
+:t #&a : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
 >    ({ &} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
 > === parse ===
 > _ans_:() =
->   astype (Iso ((&) { &} {a: Int & b: Float & c: Unit}) _)
->     (MkIso
->        { bwd = \({a = x:(), ...l:()}, {, ...r:()}). (,) {, ...l} {a = x, ...r}
->        , fwd = \({, ...l:()}, {a = x:(), ...r:()}). (,) {a = x, ...l} {, ...r}})
+>   MkIso
+>     { bwd = \({a = x:(), ...l:()}, {, ...r:()}). (,) {, ...l} {a = x, ...r}
+>     , fwd = \({, ...l:()}, {a = x:(), ...r:()}). (,) {a = x, ...l} {, ...r}}
+>   : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _
 
-:t astype (Iso ({&} & {a:Int & b:Float & c:Unit}) _) (#&a &>> #&b)
+:t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
 >    ({ &} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32 & b: Float32} & {c: Unit}))
@@ -209,28 +208,28 @@ Just as there are record zipper isomorphisms, there are also variant
 zipper isomorphisms:
 
 %passes parse
-:t astype (Iso ({|} | {a:Int | b:Float | c:Unit}) _) #|a
+:t #|a : Iso ({|} | {a:Int | b:Float | c:Unit}) _
 > (Iso
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
 > === parse ===
 > _ans_:() =
->   astype (Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
->     (MkIso
->        { bwd = \v:(). case v
->                    ((Left w:())) -> (case w
->                                        {| a = x:() |} -> (Right {| a = x |})
->                                        {|a| ...r:() |} -> (Left r)
->                                        )
->                    ((Right l:())) -> (Right {|a| ...l |})
->                    
->        , fwd = \v:(). case v
->                    ((Left l:())) -> (Left {|a| ...l |})
->                    ((Right w:())) -> (case w
->                                         {| a = x:() |} -> (Left {| a = x |})
->                                         {|a| ...r:() |} -> (Right r)
->                                         )
->                    })
+>   MkIso
+>     { bwd = \v:(). case v
+>                 ((Left w:())) -> (case w
+>                                     {| a = x:() |} -> (Right {| a = x |})
+>                                     {|a| ...r:() |} -> (Left r)
+>                                     )
+>                 ((Right l:())) -> (Right {|a| ...l |})
+>                 
+>     , fwd = \v:(). case v
+>                 ((Left l:())) -> (Left {|a| ...l |})
+>                 ((Right w:())) -> (case w
+>                                      {| a = x:() |} -> (Left {| a = x |})
+>                                      {|a| ...r:() |} -> (Right r)
+>                                      )
+>                 }
+>   : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:
 
