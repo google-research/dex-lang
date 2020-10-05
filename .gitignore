@@ -19,3 +19,4 @@ dist-newstyle/
 *.db
 *.bc
 .benchmarks
+benchmarks/rodinia/exe/**/*
