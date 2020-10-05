@@ -856,7 +856,7 @@ limFromMaybe (Just x) = InclusiveLim x
 
 annotatedExpr :: Operator Parser UExpr
 annotatedExpr = InfixL $ opWithSrc $
-  sym ":" $> (\pos v ty -> WithSrc (Just pos) $ UAnnotatedExpr v ty)
+  sym ":" $> (\pos v ty -> WithSrc (Just pos) $ UTypeAnn v ty)
 
 inpostfix :: Parser (UExpr -> Maybe UExpr -> UExpr) -> Operator Parser UExpr
 inpostfix = inpostfix' expr

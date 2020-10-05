@@ -215,7 +215,7 @@ data UExpr' = UVar UVar
             | UFor Direction UPatAnn UExpr
             | UCase UExpr [UAlt]
             | UHole
-            | UAnnotatedExpr UExpr UExpr
+            | UTypeAnn UExpr UExpr
             | UTabCon [UExpr]
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
@@ -673,7 +673,7 @@ instance HasUVars UExpr' where
     UDecl decl body -> freeUVars $ Abs decl body
     UFor _ (pat,ty) body -> freeUVars ty <> freeUVars (Abs pat body)
     UHole -> mempty
-    UAnnotatedExpr v ty -> freeUVars v <> freeUVars ty
+    UTypeAnn v ty -> freeUVars v <> freeUVars ty
     UTabCon xs -> foldMap freeUVars xs
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
