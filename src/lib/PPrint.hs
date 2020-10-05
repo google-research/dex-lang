@@ -300,7 +300,11 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyFor dir ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
-      _ -> (thisOne <> ".", body')
+      _ -> (thisOne <> punctuation, body')
+        where punctuation = case lamType of
+                PrettyFor _ -> "."
+                PrettyLam PureArrow -> "."
+                PrettyLam arr -> " " <> p arr
   (binders, body) = rec lamExpr True
   in align (group $ nest 4 $ binders) <> (group $ nest 2 $ p body)
 
@@ -513,9 +517,12 @@ instance Pretty UExpr' where pretty = prettyFromPrettyPrec
 instance PrettyPrec UExpr' where
   prettyPrec expr = case expr of
     UVar (v:>_) -> atPrec ArgPrec $ p v
-    ULam binder h body ->
-      atPrec LowestPrec $ align $ "\\" <> annImplicity h (prettyUBinder binder)
-                                      <> "." <+> nest 2 (pLowest body)
+    ULam binder arr body ->
+      atPrec LowestPrec $ align $ "\\" <> prettyUBinder binder
+                                      <> punctuation <+> nest 2 (pLowest body)
+      where punctuation = case arr of
+                            PlainArrow () -> "."
+                            _ -> " " <> p arr
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UFor dir binder body ->
@@ -602,10 +609,6 @@ instance Pretty EffectName where
     Reader -> "Read"
     Writer -> "Accum"
     State  -> "State"
-
-annImplicity :: ArrowP a -> Doc ann -> Doc ann
-annImplicity ImplicitArrow x = braces x
-annImplicity _ x = x
 
 instance Pretty eff => Pretty (ArrowP eff) where
   pretty arr = case arr of
