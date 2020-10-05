@@ -432,8 +432,16 @@ uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
   bs <- some patAnn
-  body <- argTerm >> blockOrExpr
-  return $ buildLam (map (,PlainArrow ()) bs) body
+  arrowType <-
+    (argTerm >> return (PlainArrow ()))
+    <|> (arrow (return ()) >>= \case
+          PlainArrow _ -> fail
+            "To construct an explicit lambda function, use '.' instead of '->'\n"
+          TabArrow -> fail
+            "To construct a table, use 'for i. body' instead of '\\i => body'\n"
+          arr -> return arr)
+  body <- blockOrExpr
+  return $ buildLam (map (,arrowType) bs) body
 
 buildLam :: [(UPatAnn, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
