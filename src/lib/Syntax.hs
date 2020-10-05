@@ -25,12 +25,12 @@ module Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
     Scope, CmdName (..), HasIVars (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..),
+    Val, TopEnv, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpStatement (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..),
-    UAlt (..), AltP, Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
+    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..),
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -99,6 +99,9 @@ data Atom = Var Var
           | TC  TC
           | Eff EffectRow
           | ACase Atom [AltP Atom] Type
+            -- single-constructor only for now
+          | DataConRef DataDef [Atom] (Nest DataConRefBinding)
+          | BoxedRef Binder Atom Atom Atom  -- binder, ptr, size, body
             deriving (Show, Generic)
 
 data Expr = App Atom Atom
@@ -110,6 +113,8 @@ data Expr = App Atom Atom
 
 data Decl = Let LetAnn Binder Expr
           | Unpack (Nest Binder) Expr  deriving (Show, Generic)
+
+data DataConRefBinding = DataConRefBinding Binder Atom  deriving (Show, Generic)
 
 data Block = Block (Nest Decl) Expr    deriving (Show, Generic)
 type AltP a = Abs (Nest Binder) a
@@ -294,7 +299,6 @@ data PrimCon e =
       | BaseTypeRef e
       | TabRef e
       | ConRef (PrimCon e)
-      | DataConRef DataDef [e] [e]
       | RecordRef (LabeledItems e)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -827,9 +831,6 @@ scopelessSubst env x = subst (env, scope) x
 bindingsAsVars :: Bindings -> [Var]
 bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
 
-binderBinding :: Binder -> Bindings
-binderBinding b = b @> (binderType b, UnknownBinder)
-
 class HasVars a where
   freeVars :: a -> Scope
 
@@ -887,6 +888,20 @@ instance BindsVars Binder where
           b' = Bind (v':>ty')
           ty' = subst env ty
           env' = (b@>Var (v':>ty'), b'@>(ty', UnknownBinder))
+
+instance HasVars DataConRefBinding where
+  freeVars (DataConRefBinding b ref) = freeVars b <> freeVars ref
+
+instance Subst DataConRefBinding where
+  subst env (DataConRefBinding b ref) =
+    DataConRefBinding (subst env b) (subst env ref)
+
+instance BindsVars DataConRefBinding where
+  boundVars (DataConRefBinding b ref) = b @> (binderType b, UnknownBinder)
+  renamingSubst env (DataConRefBinding b ref) = (DataConRefBinding b' ref', env')
+    where
+      ref' = subst env ref
+      (b', env') = renamingSubst env b
 
 -- unlike renamingSubst, this produces a non-Ignore binder
 renameBinder :: Name -> Scope -> Binder -> (Binder, ScopedSubstEnv)
@@ -1040,9 +1055,12 @@ instance HasVars Atom where
     RecordTy row -> freeVars row
     VariantTy row -> freeVars row
     ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
+    DataConRef _ params args -> freeVars params <> freeVars args
+    BoxedRef b ptr size body ->
+      freeVars ptr <> freeVars size <> freeVars (Abs b body)
 
 instance Subst Atom where
-  subst env atom = case atom of
+   subst env atom = case atom of
     Var v   -> substVar env v
     Lam lam -> Lam $ subst env lam
     Pi  ty  -> Pi  $ subst env ty
@@ -1057,6 +1075,10 @@ instance Subst Atom where
     RecordTy row -> RecordTy $ subst env row
     VariantTy row -> VariantTy $ subst env row
     ACase v alts rty -> ACase (subst env v) (subst env alts) (subst env rty)
+    DataConRef def params args -> DataConRef def (subst env params) args'
+      where Abs args' () = subst env $ Abs args ()
+    BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
+        where Abs b' body' = subst env $ Abs b body
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -1513,3 +1535,4 @@ instance Store BaseType
 instance Store AddressSpace
 instance Store PtrOrigin
 instance Store Device
+instance Store DataConRefBinding

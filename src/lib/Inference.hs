@@ -342,7 +342,7 @@ inferUDecl True (UData tc dcs) = do
   let paramVars = map (\(Bind v) -> v) $ toList paramBs  -- TODO: refresh things properly
   (dcs', _) <- embedScoped $
     extendR (newEnv paramBs (map Var paramVars)) $ do
-      extendScope (foldMap binderBinding paramBs)
+      extendScope (foldMap boundVars paramBs)
       mapM inferUConDef dcs
   let dataDef = DataDef tc' paramBs $ map (uncurry DataConDef) dcs'
   let tyConTy = getType $ TypeCon dataDef []
@@ -362,7 +362,7 @@ checkNestedBinders :: Nest UAnnBinder -> UInferM (Nest Binder)
 checkNestedBinders Empty = return Empty
 checkNestedBinders (Nest b bs) = do
   b' <- mapM checkUType b
-  extendScope (binderBinding b')
+  extendScope (boundVars b')
   let env = case b' of Bind v   -> b' @> Var v
                        Ignore _ -> mempty
   bs' <- extendR env $ checkNestedBinders bs

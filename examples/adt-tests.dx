@@ -178,3 +178,10 @@ xsList = AsList _ [1,2,3]
   (AsList _ ans) = xs <> ys
   sum ans
 > 15
+
+:p
+  (MkMyPair x y) = case 3 < 2 of
+    True  -> MkMyPair 1 2
+    False -> MkMyPair 3 4
+  (x, y)
+> (3, 4)

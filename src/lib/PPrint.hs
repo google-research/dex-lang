@@ -240,8 +240,7 @@ prettyPrecPrimCon con = case con of
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef con -> atPrec ArgPrec $ "Ref" -- TODO: figure out overlapping issues <+> pApp con
-  DataConRef _ _ _ -> atPrec ArgPrec "DataConRef"  -- TODO
+  ConRef con -> atPrec AppPrec $ "Ref" -- TODO: figure out overlapping issues <+> pApp con
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
@@ -352,6 +351,15 @@ instance PrettyPrec Atom where
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
+    DataConRef def params args -> atPrec AppPrec $
+      "DataConRef" <+> p params <+> p args
+    BoxedRef b ptr size body -> atPrec AppPrec $
+      "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
+
+instance Pretty DataConRefBinding where pretty = prettyFromPrettyPrec
+instance PrettyPrec DataConRefBinding where
+  prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
+
 
 fromInfix :: Text -> Maybe Text
 fromInfix t = do

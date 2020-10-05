@@ -13,7 +13,7 @@ module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, (|:),
-  indexSetConcreteSize, checkNoShadow) where
+  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -48,10 +48,20 @@ getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
 
 checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
 checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeCheck x
-  where ctx = addContext $ "Checking:\n" ++ pprint x
+  where ctx = addContext $ "Checking:\n" ++ pprint x ++ "\nWith env:\n" ++ pprint env
 
 runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
 runTypeCheck env m = runReaderT m env
+
+-- For debugging
+traceCheckM :: (HasCallStack, HasVars a, HasType a, Monad m) => a -> m ()
+traceCheckM x = traceCheck x (return ())
+
+traceCheck :: (HasCallStack, HasVars a, HasType a) => a -> b -> b
+traceCheck x y =
+  case checkType (freeVars x) Pure x of
+    Right () -> y
+    Left e -> error $ "Check failed: " ++ pprint x ++ "\n" ++ pprint e
 
 -- === Module interfaces ===
 
@@ -138,6 +148,29 @@ instance HasType Atom where
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy
+    DataConRef def@(DataDef _ paramBs cons) params args -> do
+      checkEq (length paramBs) (length params)
+      forM (zip (toList paramBs) (toList params)) $ \(b, param) ->
+        param |: binderAnn b
+      let argBs' = applyNaryAbs (Abs paramBs argBs) params
+      checkDataConRefBindings argBs' args
+      return $ RawRefTy $ TypeCon def params
+      where DataConDef _ argBs = cons !! 0
+    BoxedRef b ptr numel body -> do
+      PtrTy (_, _, t) <- typeCheck ptr
+      checkEq (binderAnn b) (BaseTy t)
+      numel |: IdxRepTy
+      typeCheck b
+      withBinder b $ typeCheck body
+
+checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
+checkDataConRefBindings Empty Empty = return ()
+checkDataConRefBindings (Nest b restBs) (Nest refBinding restRefs) = do
+  let DataConRefBinding b'@(Bind v) ref = refBinding
+  ref |: RawRefTy (binderAnn b)
+  checkEq (binderAnn b) (binderAnn b')
+  let restBs' = scopelessSubst (b@>Var v) restBs
+  withBinder b' $ checkDataConRefBindings restBs' restRefs
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -240,7 +273,9 @@ instance HasType Block where
       SkipChecks -> typeCheck result
       CheckWith (env, _) -> do
         env' <- catFoldM checkDecl env decls
-        withTypeEnv (env <> env') $ typeCheck result
+        ty <- withTypeEnv (env <> env') $ typeCheck result
+        ty |: TyKind
+        return ty
 
 instance HasType Binder where
   typeCheck b = do
@@ -256,7 +291,7 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     ty  <- typeCheck b
     ty' <- typeCheck rhs
     checkEq ty ty'
-    return $ binderBinding b
+    return $ boundVars b
   Unpack bs rhs -> do
     void $ checkNestedBinders bs
     ty <- typeCheck rhs
@@ -269,14 +304,14 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
       RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
       _ -> throw TypeErr $ "Only single-member ADTs and record types can be unpacked in let bindings"
     checkEq bs bs'
-    return $ foldMap binderBinding bs
+    return $ foldMap boundVars bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkNestedBinders :: Nest Binder -> TypeM (Nest Type)
 checkNestedBinders Empty = return Empty
 checkNestedBinders (Nest b bs) = do
   void $ typeCheck b
-  extendTypeEnv (binderBinding b) $ checkNestedBinders bs
+  extendTypeEnv (boundVars b) $ checkNestedBinders bs
 
 checkArrow :: Arrow -> TypeM ()
 checkArrow arr = mapM_ checkEffRow arr
@@ -291,7 +326,7 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b m = typeCheck b >> extendTypeEnv (binderBinding b) m
+withBinder b m = typeCheck b >> extendTypeEnv (boundVars b) m
 
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> BinderP b -> m ()
 checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
@@ -551,7 +586,6 @@ typeCheckCon con = case con of
       tag |:(RawRefTy TagRepTy)
       return $ RawRefTy ty
     _ -> error $ "Not implemented " ++ pprint con
-  DataConRef _ _ _ -> error "Not implemented"
   RecordRef _ -> error "Not implemented"
 
 typeCheckRef :: HasType a => a -> TypeM Type

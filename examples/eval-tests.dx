@@ -780,3 +780,12 @@ s1 = "hello world"
             False -> (\w. w)
   (f x 4, f y 4)
 > (6, 4)
+
+:p
+  nz = sum [1, 1, 2]
+  zs = for i:(Fin nz).
+    i' = ordinal i
+    i'
+
+  sum zs + sum zs
+> 12

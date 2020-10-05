@@ -593,7 +593,7 @@ traverseExpr def@(_, _, fAtom) expr = case expr of
       bs' <- mapM (mapM fAtom) bs
       buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
-traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
+traverseAtom :: forall m . (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
 traverseAtom def@(_, _, fAtom) atom = case atom of
   Var _ -> substEmbedR atom
@@ -623,7 +623,24 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     items' <- traverse fAtom items
     return $ VariantTy $ Ext items' rest
   ACase e alts ty -> ACase <$> fAtom e <*> mapM traverseAAlt alts <*> fAtom ty
+  DataConRef dataDef params args -> DataConRef dataDef <$>
+    traverse fAtom params <*> traverseNestedArgs args
+  BoxedRef b ptr size body -> do
+    ptr'  <- fAtom ptr
+    size' <- fAtom size
+    -- Is this what we want? We can't recur because we don't want decls
+    Abs b' body' <- substEmbedR $ Abs b body
+    return $ BoxedRef b' ptr' size' body'
   where
+    traverseNestedArgs :: Nest DataConRefBinding -> m (Nest DataConRefBinding)
+    traverseNestedArgs Empty = return Empty
+    traverseNestedArgs (Nest (DataConRefBinding b ref) rest) = do
+      ref' <- fAtom ref
+      b' <- substEmbedR b
+      v <- freshVarE UnknownBinder b'
+      rest' <- extendR (b @> Var v) $ traverseNestedArgs rest
+      return $ Nest (DataConRefBinding (Bind v) ref') rest'
+
     traverseAAlt (Abs bs a) = do
       bs' <- mapM (mapM fAtom) bs
       (Abs bs'' b) <- buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ fAtom a
@@ -706,7 +723,7 @@ clampPositive x = do
 indexToIntE :: MonadEmbed m => Atom -> m Atom
 indexToIntE idx = case getType idx of
   UnitTy  -> return $ IdxRepVal 0
-  PairTy lType rType -> do
+  PairTy _ rType -> do
     (lVal, rVal) <- fromPair idx
     lIdx  <- indexToIntE lVal
     rIdx  <- indexToIntE rVal
