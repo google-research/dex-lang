@@ -1,14 +1,14 @@
 'Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
 stepsize calculation.
 This version is a port of the [Jax implementation](https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py).
-A notable algorithmic difference is that it avoids zero-padding the butcher tableaux when computing the Runge-Kutta stages.
+A notable algorithmic difference is that it uses a lower-triangular
+matrix type for the Butcher tableua, and so avoid zero-padding everywhere.
 
 Time = Float
 
 -- Should these go in the prelude?
 def length (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 def (./) (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
-
 def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 
 def fit_4th_order_polynomial (_:VSpace v) ?=>
@@ -50,15 +50,13 @@ def initial_step_size (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Float)
 -- Dopri5 Butcher tableaux
 alpha = [1. / 5., 3. / 10., 4. / 5., 8. / 9., 1., 1.]
 
--- Todo: Write as triangular array when concrete syntax supports it.
-beta' = [[1. / 5., 0., 0., 0., 0., 0.],
-       [3. / 40., 9. / 40., 0., 0., 0., 0.],
-       [44. / 45., -56. / 15., 32.0 / 9., 0., 0., 0.],
-       [19372. / 6561., -25360. / 2187., 64448. / 6561., -212. / 729., 0., 0.],
-       [9017./3168., -355./33., 46732./5247., 49./176., -5103./18656., 0.],
+beta : (i:(Fin 6)=>(..i)=>Float) =  -- triangular array type.
+       [[1. / 5.],
+       [3. / 40., 9. / 40.],
+       [44. / 45., -56. / 15., 32.0 / 9.],
+       [19372. / 6561., -25360. / 2187., 64448. / 6561., -212. / 729.],
+       [9017./3168., -355./33., 46732./5247., 49./176., -5103./18656.],
        [35. / 384., 0., 500. / 1113., 125./192., -2187./6784., 11./84.]]
--- Convert to triangular array type.
-beta = for i. for j:(..i). beta'.i.((ordinal j)@(Fin 6))
 
 c_sol = [35. /384., 0., 500. /1113., 125. /192., -2187. /6784., 11. / 84., 0.]
 c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
@@ -165,12 +163,12 @@ t1 = [1.0]
 
 approx_e = odeint myDyn z0 t0 t1
 :p approx_e
-> [[2.720203]]
+> [[2.719482]]
 
 exact_e = [[exp 1.0]]
 
 :p (approx_e - exact_e)
-> [[1.9211608e-3]]
+> [[1.2001991e-3]]  -- amount of numerical error
 
 times = linspace (Fin 100) 0.00001 1.0
 ys = odeint myDyn z0 t0 times
