@@ -91,11 +91,27 @@ def prepare_backprop():
         ])
       print(f'Created {case_exe_path}')
 
-def random_vec(ty):
-  return f'((for i. rand (ixkey (newKey 0) i)) : ({ty}))'
+def prepare_pathfinder():
+  exe_path = EXE_ROOT / 'pathfinder'
+  exe_path.mkdir(parents=True, exist_ok=True)
+  world_sizes = [(100, 100000)]
 
-def random_mat(ty):
-  return f'((for i j. rand (ixkey (newKey 0) (i, j))) : ({ty}))'
+  for rows, cols in world_sizes:
+    case_exe_path = exe_path / f'{rows}_{cols}.dx'
+    with open(case_exe_path, 'w') as f:
+      emit_dex(f, 'pathfinder', [
+          ('world', random_mat('rows=>cols=>Int', gen='randInt')),
+        ], preamble=[
+          ('rows', f'Fin {rows}'),
+          ('cols', f'Fin {cols}'),
+        ])
+      print(f'Created {case_exe_path}')
+
+def random_vec(ty, gen='rand'):
+  return f'((for i. {gen} (ixkey (newKey 0) i)) : ({ty}))'
+
+def random_mat(ty, gen='rand'):
+  return f'((for i j. {gen} (ixkey (newKey 0) (i, j))) : ({ty}))'
 
 def chunk(l, s):
   for i in range(0, len(l), s):
@@ -126,6 +142,8 @@ def ensure_float(s):
     return s + ".0"
   return s
 
+prepare_pathfinder()
 prepare_backprop()
+# Verified outputs
 prepare_hotspot()
 prepare_kmeans()
