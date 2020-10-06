@@ -462,19 +462,28 @@ instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 
+prettyDuration :: Double -> Doc ann
+prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
+  where (mult, unit) =      if d >= 1    then (1  , "s")
+                       else if d >= 1e-3 then (1e3, "ms")
+                       else if d >= 1e-6 then (1e6, "us")
+                       else                   (1e9, "ns")
+
 instance Pretty Output where
   pretty (TextOut s) = pretty s
   pretty (HtmlOut _) = "<html output>"
-  pretty (BenchResult name compileTime runTime) =
-    benchName <>
-    "\nCompile time: " <> p (showFFloat (Just 3) compileTime "") <+> "s" <>
-    "\nRun time:     " <> p (showFFloat (Just 3) runTime     "") <+> "s"
+  pretty (BenchResult name compileTime runTime stats) =
+    benchName <> hardline <>
+    "Compile time: " <> prettyDuration compileTime <> hardline <>
+    "Run time:     " <> prettyDuration runTime <+>
+    (case stats of Just runs -> "\t" <> parens ("based on" <+> p runs <+> "runs")
+                   Nothing   -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
   pretty (HeatmapOut _ _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
-  pretty (EvalTime    t) = "Eval (s):  " <+> p t
+  pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
   pretty (MiscLog s) = "===" <+> p s <+> "==="
 
@@ -689,7 +698,7 @@ instance ToJSON Result where
         Left e   -> ["error" .= String (fromString $ pprint e)]
         Right () -> []
       outMaps = flip foldMap outs $ \case
-        BenchResult name compileTime runTime ->
+        BenchResult name compileTime runTime _ ->
           [ "bench_name"   .= toJSON name
           , "compile_time" .= toJSON compileTime
           , "run_time"     .= toJSON runTime ]

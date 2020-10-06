@@ -32,7 +32,7 @@ module Syntax (
     IFunType (..), IFunVar, CallingConvention (..),
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
-    IScope, BinderInfo (..), Bindings, CUDAKernel (..),
+    IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -579,14 +579,15 @@ type LitProg = [(SourceBlock, Result)]
 type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
+type BenchStats = Int -- number of runs
 data Output = TextOut String
             | HtmlOut String
             | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
-            | EvalTime  Double
+            | EvalTime  Double (Maybe BenchStats)
             | TotalTime Double
-            | BenchResult String Double Double  -- name, compile time, eval time
+            | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
             | MiscLog String
               deriving (Show, Eq, Generic)
 

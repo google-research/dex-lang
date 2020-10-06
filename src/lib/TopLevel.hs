@@ -36,9 +36,13 @@ import Optimize
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , logFile     :: Maybe FilePath
-  , logService  :: Logger [Output] }
+  }
 
-type TopPassM a = ReaderT EvalConfig IO a
+data TopPassEnv = TopPassEnv
+  { logService :: Logger [Output]
+  , benchmark  :: Bool
+  , evalConfig :: EvalConfig }
+type TopPassM a = ReaderT TopPassEnv IO a
 
 evalDecl :: EvalConfig -> SourceBlock -> StateT TopEnv IO Result
 evalDecl opts block = do
@@ -60,16 +64,17 @@ evalSource opts source = do
 -- TODO: handle errors due to upstream modules failing
 evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
 evalSourceBlock opts env block = do
-  (ans, outs) <- runTopPassM opts $ withCompileTime $ evalSourceBlockM env block
+  let bench = case sbLogLevel block of PrintBench _ -> True; _ -> False
+  (ans, outs) <- runTopPassM bench opts $ withCompileTime $ evalSourceBlockM env block
   let (logOuts, requiredOuts) = partition isLogInfo outs
   let outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
   case ans of
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
     Right env' -> return (env'  , Result outs' (Right ()))
 
-runTopPassM :: EvalConfig -> TopPassM a -> IO (Except a, [Output])
-runTopPassM opts m = runLogger (logFile opts) $ \logger ->
-  runExceptT $ catchIOExcept $ runReaderT m $ opts {logService = logger}
+runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
+runTopPassM bench opts m = runLogger (logFile opts) $ \logger ->
+  runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
 evalSourceBlockM env block = case sbContents block of
@@ -109,18 +114,18 @@ processLogs logLevel logs = case logLevel of
                         PassInfo pass _ | pass `elem` passes -> True
                                         | otherwise          -> False
                         _ -> False
-  PrintEvalTime -> [BenchResult "" compileTime runTime]
-    where (compileTime, runTime) = timesFromLogs logs
-  PrintBench benchName -> [BenchResult benchName compileTime runTime]
-    where (compileTime, runTime) = timesFromLogs logs
+  PrintEvalTime -> [BenchResult "" compileTime runTime benchStats]
+    where (compileTime, runTime, benchStats) = timesFromLogs logs
+  PrintBench benchName -> [BenchResult benchName compileTime runTime benchStats]
+    where (compileTime, runTime, benchStats) = timesFromLogs logs
 
-timesFromLogs :: [Output] -> (Double, Double)
-timesFromLogs logs = (totalTime - evalTime, evalTime)
+timesFromLogs :: [Output] -> (Double, Double, Maybe BenchStats)
+timesFromLogs logs = (totalTime - evalTime, evalTime, benchStats)
   where
-    evalTime  = case [tEval | EvalTime tEval <- logs] of
-                  []  -> 0.0
-                  [t] -> t
-                  _   -> error "Expect at most one result"
+    (evalTime, benchStats) = case [(t, stats) | EvalTime t stats <- logs] of
+                  []           -> (0.0, Nothing)
+                  [(t, stats)] -> (t, stats)
+                  _            -> error "Expect at most one result"
     totalTime = case [tTotal | TotalTime tTotal <- logs] of
                   []  -> 0.0
                   [t] -> t
@@ -130,7 +135,7 @@ isLogInfo :: Output -> Bool
 isLogInfo out = case out of
   PassInfo _ _ -> True
   MiscLog  _   -> True
-  EvalTime _   -> True
+  EvalTime _ _ -> True
   TotalTime _  -> True
   _ -> False
 
@@ -176,12 +181,14 @@ evalModule bindings normalized = do
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
-  backend <- asks backendName
+  backend <- asks (backendName . evalConfig)
+  bench   <- asks benchmark
   logger  <- asks logService
   let (impModule, args, reconAtom) = toImpModule backend block
   checkPass ImpPass impModule
   llvmModule <- liftIO $ impToLLVM logger impModule
-  resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmModule args
+  let llvmEvaluate = if bench then benchLLVM else callLLVM
+  resultVals <- liftM (map (Con . Lit)) $ liftIO $ llvmEvaluate logger llvmModule args
   return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a
