@@ -9,8 +9,8 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module LLVMExec (LLVMModule (..), LLVMKernel (..), ptxDataLayout,
-                 callLLVM, compileCUDAKernel, ptxTargetTriple, loadLitVal) where
+module LLVMExec (LLVMModule (..), LLVMKernel (..), ptxDataLayout, callLLVM,
+                 benchLLVM, compileCUDAKernel, ptxTargetTriple, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -57,27 +57,13 @@ import Syntax
 import Resources
 
 foreign import ccall "dynamic"
-  callFunPtr :: FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
-             -> Ptr () -> Ptr () -> IO DexExitCode
+  callFunPtr :: DexExecutable -> Ptr () -> Ptr () -> IO DexExitCode
 
+type DexExecutable = FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
 data LLVMModule = LLVMModule [BaseType] [BaseType] L.Module
 data LLVMKernel = LLVMKernel L.Module
-
-callLLVM :: Logger [Output] -> LLVMModule -> [LitVal] -> IO [LitVal]
-callLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
-  argsPtr   <- mallocBytes $ length argTypes    * cellSize
-  resultPtr <- mallocBytes $ length resultTypes * cellSize
-  storeLitVals argsPtr args
-  exitCode <- evalLLVM logger llvmModule argsPtr resultPtr
-  case exitCode of
-    0 -> do
-      results <- loadLitVals resultPtr resultTypes
-      free argsPtr
-      free resultPtr
-      return results
-    _ -> throwIO $ Err RuntimeErr Nothing ""
 
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) = do
@@ -110,8 +96,46 @@ compileCUDAKernel logger (LLVMKernel ast) = do
     ptxasPath = "/usr/local/cuda/bin/ptxas"
     arch = "sm_60"
 
-evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> Ptr () -> IO DexExitCode
-evalLLVM logger ast argPtr resultPtr = do
+checkedCallFunPtr :: Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr argsPtr resultPtr fPtr = do
+  t1 <- getCurrentTime
+  exitCode <- callFunPtr fPtr argsPtr resultPtr
+  t2 <- getCurrentTime
+  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+  return $ t2 `secondsSince` t1
+  where
+    secondsSince end start = realToFrac $ end `diffUTCTime` start
+
+callLLVM :: Logger [Output] -> LLVMModule -> [LitVal] -> IO [LitVal]
+callLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
+  allocaBytes (length argTypes * cellSize) $ \argsPtr ->
+    allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+      storeLitVals argsPtr args
+      evalTime <- evalLLVM logger llvmModule $ checkedCallFunPtr argsPtr resultPtr
+      logThis logger [EvalTime evalTime Nothing]
+      loadLitVals resultPtr resultTypes
+
+benchLLVM :: Logger [Output] -> LLVMModule -> [LitVal] -> IO [LitVal]
+benchLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
+  allocaBytes (length argTypes * cellSize) $ \argsPtr ->
+    allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+      storeLitVals argsPtr args
+      evalLLVM logger llvmModule $ \fPtr -> do
+        exampleDuration <- checkedCallFunPtr argsPtr resultPtr fPtr
+        results <- loadLitVals resultPtr resultTypes
+        let timeBudget = 2 -- seconds
+        let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+        times <- forM [1..benchRuns] $ const $ do
+          time <- checkedCallFunPtr argsPtr resultPtr fPtr
+          _benchResults <- loadLitVals resultPtr resultTypes
+          -- TODO: Free results!
+          return time
+        let avgTime = sum times / (fromIntegral benchRuns)
+        logThis logger [EvalTime avgTime (Just benchRuns)]
+        return results
+
+evalLLVM :: Logger [Output] -> L.Module -> (DexExecutable -> IO a) -> IO a
+evalLLVM logger ast f = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
@@ -136,12 +160,8 @@ evalLLVM logger ast argPtr resultPtr = do
                   modifyIORef resolvers (M.insert moduleKey resolver)
                   JIT.withModule compileLayer moduleKey m $ do
                     entryFunSymbol <- JIT.mangleSymbol compileLayer "entryFun"
-                    Right (JIT.JITSymbol f _) <- JIT.findSymbol compileLayer entryFunSymbol False
-                    t1 <- getCurrentTime
-                    exitCode <- callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr resultPtr
-                    t2 <- getCurrentTime
-                    logThis logger [EvalTime $ realToFrac $ t2 `diffUTCTime` t1]
-                    return exitCode
+                    Right (JIT.JITSymbol funAddr _) <- JIT.findSymbol compileLayer entryFunSymbol False
+                    f $ castPtrToFunPtr $ wordPtrToPtr funAddr
   where
     makeResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
     makeResolver cl = JIT.SymbolResolver $ \sym -> do

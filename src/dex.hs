@@ -148,7 +148,6 @@ parseEvalOpts = EvalConfig
   <*> (optional $ strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
-  <*> pure (error "Logging not initialized")
 
 main :: IO ()
 main = do
