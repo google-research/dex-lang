@@ -19,4 +19,6 @@ dist-newstyle/
 *.db
 *.bc
 .benchmarks
-benchmarks/rodinia/exe/**/*
+benchmarks/exe/**/*
+benchmarks/parboil/data
+benchmarks/rodinia/rodinia
