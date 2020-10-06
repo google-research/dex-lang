@@ -463,6 +463,9 @@ def randIdx (n:Type) ?-> (k:Key) : n =
   unif = rand k
   fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
 
+-- TODO: Make this better...
+def randInt (k:Key) : Int = (I64ToI k) `mod` 2147483647
+
 def bern (p:Float) (k:Key) : Bool = rand k < p
 
 def randnVec (n:Type) ?-> (k:Key) : n=>Float =
