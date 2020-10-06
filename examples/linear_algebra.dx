@@ -63,12 +63,13 @@ def identity_permutation (n:Type) ?-> : Permutation n =
 
 '### LU decomposition functions
 
-def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : (Permutation n & Int) =
-  -- Rearranges a matrix to make Gaussian elimination more stable.
-  -- Returns permutation and number of swaps in permutation,
-  -- for use in computing the determinant.
-  snd $ withState (identity_permutation, 0) \stateRef.
-    (pRef, countRef) = (fstRef stateRef, sndRef stateRef)
+Sign = Float  -- Either 1.0 or -1.0
+
+def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : (Permutation n & Sign) =
+  -- Permutes rows of a matrix to make Gaussian elimination more stable.
+  -- Returns permutation and the sign of its determinant.
+  snd $ withState (identity_permutation, 1.0) \stateRef.
+    (pRef, signRef) = (fstRef stateRef, sndRef stateRef)
     for j:n.
       row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j))
       row_with_largest = %inject row_with_largest
@@ -78,20 +79,12 @@ def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : (Permutation n & Int) =
           tempj = get pRef!j  -- Is there a refSwap?
           pRef!j := get pRef!row_with_largest
           pRef!row_with_largest := tempj
-          countRef := (get countRef) + 1  -- TODO: Use += 1
-
-def permutation_sign (swapcount:Int) : Float =
-  -- Computes the sign of the determinant of a permutation
-  -- given the number of row swaps.
-  case mod swapcount 2 == 0 of
-    True -> 1.0
-    False -> -1.0
+          signRef := -(get signRef)
 
 def lu (_:Eq n) ?=> (a: n=>n=>Float) :
-       (LowerTriMat n & UpperTriMat n & Permutation n & Int) =
+       (LowerTriMat n & UpperTriMat n & Permutation n & Sign) =
   -- Computes lower, upper, and permuntation matrices from a square matrix,
   -- such that apply_permutation permutation a == lower ** upper.
-  -- I.e. it uses partial pivoting.
   (permutation, swapcount) = pivotize a
   a = apply_permutation permutation a
 
@@ -125,7 +118,8 @@ def lu (_:Eq n) ?=> (a: n=>n=>Float) :
       for i:(..j).
         i' = %inject i
         s = sum for k:(..i).
-          k' = (ordinal k)@n
+          k'' = %inject k
+          k' = %inject k''
           ukj = get (upperTriIndex uRef k')!(((ordinal j) - (ordinal k))@_)
           lik = get (lowerTriIndex lRef i')!((ordinal k)@_)
           ukj * lik
@@ -165,15 +159,15 @@ def invert (_:Eq n) ?=> (a:n=>n=>Float) : n=>n=>Float =
   solve a identity_matrix
 
 def determinant (_:Eq n) ?=> (a:n=>n=>Float) : Float =
-  (l, u, p, swapcount) = lu a
+  (l, u, perm, permutation_sign) = lu a
   -- formerly u.i.i * l.i.i
-  (prod for i. u.i.(0@_) * l.i.((ordinal i)@_)) * (permutation_sign swapcount)
+  (prod for i. u.i.(0@_) * l.i.((ordinal i)@_)) * permutation_sign
 
 def sign_and_log_determinant (_:Eq n) ?=> (a:n=>n=>Float) : (Float & Float) =
-  (l, u, p, swapcount) = lu a
+  (l, u, perm, permutation_sign) = lu a
   -- formerly u.i.i * l.i.i
   diags = for i. u.i.(0@_) * l.i.((ordinal i)@_)
-  sign = (permutation_sign swapcount) * prod for i. sign diags.i
+  sign = permutation_sign * prod for i. sign diags.i
   sum_of_log_abs = sum for i. log (abs diags.i) 
   (sign, sum_of_log_abs)
 
