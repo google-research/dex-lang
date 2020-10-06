@@ -133,8 +133,6 @@ def fst (p: (a & b)) : a = %fst p
 def snd (p: (a & b)) : b = %snd p
 def swap (p:(a&b)) : (b&a) = (snd p, fst p)
 
-def astype (t:Type) (x:t) : t = x  -- to give hints to type inference
-
 def (<<<) (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
 def (>>>) (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
 

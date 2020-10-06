@@ -527,6 +527,8 @@ instance PrettyPrec UExpr' where
     UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
                                                          <> pLowest body
     UHole -> atPrec ArgPrec "_"
+    UTypeAnn v ty -> atPrec LowestPrec $
+      group $ pApp v <> line <> ":" <+> pApp ty
     UTabCon xs -> atPrec ArgPrec $ p xs
     UIndexRange low high -> atPrec LowestPrec $ low' <> ".." <> high'
       where

@@ -68,19 +68,13 @@ Syntax for records, variants, and their types.
 'Variants (enums)
 
 
-:p
-  x : {a:Int | b:Float} = {| a=3 |}
-  x
+:p {| a=3 |} : {a:Int | b:Float}
 > {| a = 3 |}
 
-:p
-  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
-  x
+:p {| a | a = 3.0 |} : {a:Int | a:Float | a:Int}
 > {|a| a = 3.0 |}
 
-:t
-  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
-  x
+:t {| a | a = 3.0 |} : {a:Int | a:Float | a:Int}
 > {a: Int32 | a: Float32 | a: Int32}
 
 :p
@@ -94,27 +88,27 @@ Syntax for records, variants, and their types.
 
 :p {a:Int & b:Float | c:Int }
 
-> Parse error:95:21:
+> Parse error:89:21:
 >    |
-> 95 | :p {a:Int & b:Float | c:Int }
+> 89 | :p {a:Int & b:Float | c:Int }
 >    |                     ^
 > unexpected '|'
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', '}', arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', ':', '}', arrow, backquoted name, expression, or infix operator
 
 :p {a:Int,}
 
-> Parse error:104:10:
->     |
-> 104 | :p {a:Int,}
->     |          ^
+> Parse error:98:10:
+>    |
+> 98 | :p {a:Int,}
+>    |          ^
 > unexpected ','
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
 
 :p {|3}
 
-> Parse error:113:6:
+> Parse error:107:6:
 >     |
-> 113 | :p {|3}
+> 107 | :p {|3}
 >     |      ^
 > unexpected '3'
 > expecting "...", '}', or field label

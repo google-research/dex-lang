@@ -750,6 +750,7 @@ ops =
   [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
   , [InfixL $ sc $> mkApp]
   , [prefixNegOp]
+  , [annotatedExpr]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkArrow TabArrow,
@@ -852,6 +853,10 @@ indexRangeOps =
 limFromMaybe :: Maybe a -> Limit a
 limFromMaybe Nothing = Unlimited
 limFromMaybe (Just x) = InclusiveLim x
+
+annotatedExpr :: Operator Parser UExpr
+annotatedExpr = InfixL $ opWithSrc $
+  sym ":" $> (\pos v ty -> WithSrc (Just pos) $ UTypeAnn v ty)
 
 inpostfix :: Parser (UExpr -> Maybe UExpr -> UExpr) -> Operator Parser UExpr
 inpostfix = inpostfix' expr

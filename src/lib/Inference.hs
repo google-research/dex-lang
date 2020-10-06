@@ -241,6 +241,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
+  UTypeAnn val ty -> do
+    ty' <- zonk =<< checkUType ty
+    let reqCon = if null (toList $ freeVars ty') then Concrete else Suggest
+    val' <- checkSigma val reqCon ty'
+    matchRequirement val'
   UPrimExpr prim -> do
     prim' <- traverse lookupName prim
     val <- case prim' of
