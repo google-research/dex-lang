@@ -1,6 +1,7 @@
 import sys
 import os
 from pathlib import Path
+from itertools import product
 
 RODINIA_ROOT = Path('rodinia')
 if not RODINIA_ROOT.exists():
@@ -14,17 +15,6 @@ EXE_ROOT = Path('exe')
 #       that doesn't work when the return type depends on any of them.
 PREVENT_PARAMETER_INLINING = True
 PRINT_OUTPUTS = False
-
-def format_table(l, sep=','):
-  return '[' + sep.join(l) + ']'
-
-def format_matrix(m):
-  return format_table((format_table(cols) for cols in m), sep=',\n  ')
-
-def ensure_float(s):
-  if '.' not in s:
-    return s + ".0"
-  return s
 
 def prepare_kmeans():
   kmeans_data_path = RODINIA_ROOT / 'data' / 'kmeans'
@@ -44,11 +34,11 @@ def prepare_kmeans():
     case_exe_path = kmeans_exe_path / (df.stem + '.dx')
     with open(case_exe_path, 'w') as f:
       emit_dex(f, 'kmeans', [
-        ('points', format_matrix(vals)),
-        ('k', k),
-        ('threshold', 0),
-        ('max_iterations', 500),
-      ])
+          ('points', format_matrix(vals)),
+          ('k', k),
+          ('threshold', 0),
+          ('max_iterations', 500),
+        ])
     print(f'Created {case_exe_path}')
 
 def prepare_hotspot():
@@ -68,14 +58,52 @@ def prepare_hotspot():
 
     case_exe_path = exe_path / f'{size}.dx'
     with open(case_exe_path, 'w') as f:
-      emit_dex(f, 'hotspot', [('numIterations', 360), ('T', format_matrix(ts)), ('P', format_matrix(ps))])
+      emit_dex(f, 'hotspot', [
+          ('numIterations', 360),
+          ('T', format_matrix(ts)),
+          ('P', format_matrix(ps))
+        ])
       print(f'Created {case_exe_path}')
+
+def prepare_backprop():
+  exe_path = EXE_ROOT / 'backprop'
+  exe_path.mkdir(parents=True, exist_ok=True)
+  exe_path_ad = EXE_ROOT / 'backprop-ad'
+  exe_path_ad.mkdir(parents=True, exist_ok=True)
+  in_features = [512, 123]
+
+  for inf, use_ad in product(in_features, (False, True)):
+    outf = 1
+    hidf = 16
+    case_exe_path = (exe_path_ad if use_ad else exe_path) / f'{inf}_{hidf}_{outf}.dx'
+    with open(case_exe_path, 'w') as f:
+      emit_dex(f, 'backprop', [
+          ('input', random_vec('in=>Float')),
+          ('target', random_vec('out=>Float')),
+          ('inputWeights', random_mat('{ b: Unit | w: in }=>hid=>Float')),
+          ('hiddenWeights', random_mat('{ b: Unit | w: hid }=>out=>Float')),
+          ('oldInputWeights', random_mat('{ b: Unit | w: in }=>hid=>Float')),
+          ('oldHiddenWeights', random_mat('{ b: Unit | w: hid }=>out=>Float')),
+        ], preamble=[
+          ('in', f'Fin {inf}'),
+          ('hid', f'Fin {hidf}'),
+          ('out', f'Fin {outf}'),
+        ])
+      print(f'Created {case_exe_path}')
+
+def random_vec(ty):
+  return f'((for i. rand (ixkey (newKey 0) i)) : ({ty}))'
+
+def random_mat(ty):
+  return f'((for i j. rand (ixkey (newKey 0) (i, j))) : ({ty}))'
 
 def chunk(l, s):
   for i in range(0, len(l), s):
     yield l[i:i + s]
 
-def emit_dex(f, name, params):
+def emit_dex(f, name, params, *, preamble=[]):
+  for n, v in preamble:
+    f.write(f'{n} = {v}\n')
   for n, v in params:
     f.write(f'{n} = {v}\n')
   f.write('\n')
@@ -87,5 +115,17 @@ def emit_dex(f, name, params):
     f.write('\n')
     f.write('result\n')
 
+def format_table(l, sep=','):
+  return '[' + sep.join(l) + ']'
+
+def format_matrix(m):
+  return format_table((format_table(cols) for cols in m), sep=',\n  ')
+
+def ensure_float(s):
+  if '.' not in s:
+    return s + ".0"
+  return s
+
+prepare_backprop()
 prepare_hotspot()
 prepare_kmeans()
