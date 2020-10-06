@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE IncoherentInstances #-}  -- due to `ConRef`
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, pprintList, printLitBlock, asStr,
@@ -240,7 +241,7 @@ prettyPrecPrimCon con = case con of
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef con -> atPrec AppPrec $ "Ref" -- TODO: figure out overlapping issues <+> pApp con
+  ConRef con -> atPrec AppPrec $ "Ref" <+> pApp con -- TODO: figure out overlapping issues <+> pApp con
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec

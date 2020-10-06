@@ -910,14 +910,15 @@ indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ fromIntegral $ high - low
   _                      -> Nothing
 
-checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
-checkDataLike msg env ty = case ty of
+checkDataLike :: MonadError Err m => String -> Type -> m ()
+checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
   RecordTy (NoExt items)  -> void $ traverse recur items
   VariantTy (NoExt items) -> void $ traverse recur items
   -- TODO: check that data constructor arguments are data-like, and so on
-  TypeCon _ _ -> return ()
+  TypeCon def params ->
+    mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
     BaseType _       -> return ()
     CharType         -> return ()
@@ -928,13 +929,17 @@ checkDataLike msg env ty = case ty of
     IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg
   _   -> throw TypeErr $ pprint ty ++ msg
-  where recur x = checkDataLike msg env x
+  where recur x = checkDataLike msg x
 
-checkData :: MonadError Err m => Bindings -> Type -> m ()
+checkDataLikeDataCon :: MonadError Err m => DataConDef -> m ()
+checkDataLikeDataCon (DataConDef _ bs) =
+  mapM_ (checkDataLike "data con binder" . binderAnn) bs
+
+checkData :: MonadError Err m => Type -> m ()
 checkData = checkDataLike " is not serializable"
 
 --TODO: Make this work even if the type has type variables!
-isData :: Bindings -> Type -> Bool
-isData bindings ty = case checkData bindings ty of
+isData :: Type -> Bool
+isData ty = case checkData ty of
   Left  _ -> False
   Right _ -> True

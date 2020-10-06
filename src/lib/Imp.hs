@@ -269,11 +269,17 @@ toImpOp (maybeDest, op) = case op of
     (BaseTy _, BaseTy bt) -> returnVal =<< toScalarAtom <$> cast (fromScalarAtom x) bt
     _ -> error $ "Invalid cast: " ++ pprint (getType x) ++ " -> " ++ pprint destTy
   Select p x y -> do
-    dest <- allocDest maybeDest resultTy
-    p' <- cast (fromScalarAtom p) tagBT
-    emitSwitch p' [copyAtom dest y, copyAtom dest x]
-    destToAtom dest
-    where (BaseTy tagBT) = TagRepTy
+    case getType x of
+      BaseTy _ -> do
+        ans <- emitInstr $ IPrimOp $
+                 Select (fromScalarAtom p) (fromScalarAtom x) (fromScalarAtom y)
+        returnVal $ toScalarAtom ans
+      _ -> do
+        dest <- allocDest maybeDest resultTy
+        p' <- cast (fromScalarAtom p) tagBT
+        emitSwitch p' [copyAtom dest y, copyAtom dest x]
+        destToAtom dest
+        where (BaseTy tagBT) = TagRepTy
   RecordCons   _ _ -> error "Unreachable: should have simplified away"
   RecordSplit  _ _ -> error "Unreachable: should have simplified away"
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
@@ -448,9 +454,8 @@ makeBoxes :: [(Name, (Type, Block))] -> Dest -> DestM Dest
 makeBoxes [] dest = return dest
 makeBoxes ((v, (ptrTy, numel)):rest) dest = do
   ptrPtr <- makeBaseTypePtr $ fromScalarType ptrTy
-  numel' <- emitBlock numel
   dest' <- makeBoxes rest dest
-  return $ BoxedRef (Bind (v:>ptrTy)) ptrPtr numel' dest'
+  return $ BoxedRef (Bind (v:>ptrTy)) ptrPtr numel dest'
 
 makeBaseTypePtr :: BaseType -> DestM Atom
 makeBaseTypePtr ty = do
@@ -497,7 +502,8 @@ copyAtom :: Dest -> Atom -> ImpM ()
 copyAtom (BoxedRef b ptrPtr size body) src = do
   -- TODO: load old ptr and free (recursively)
   let PtrTy ptrTy = binderAnn b
-  ptr <- emitAlloc ptrTy $ fromScalarAtom size
+  size' <- translateBlock mempty (Nothing, size)
+  ptr <- emitAlloc ptrTy $ fromScalarAtom size'
   body' <- impSubst (b@>toScalarAtom ptr) body
   copyAtom body' src
   store (fromScalarAtom ptrPtr) ptr

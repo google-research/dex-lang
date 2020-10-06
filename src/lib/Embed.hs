@@ -16,7 +16,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               runSubstEmbed, runEmbed, getScope, reduceBlock,
               app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
               reduceScoped, select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
-              fromPair, getFst, getSnd, naryApp, appReduce,
+              fromPair, getFst, getSnd, naryApp, appReduce, buildAbs,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, reduceAtom, unpackConsList, emitRunWriter,
@@ -150,6 +150,14 @@ buildPi b f = do
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
   return piTy
+
+buildAbs :: MonadEmbed m => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
+buildAbs b f = do
+  ((b', ans), decls) <- scopedDecls $ do
+     v <- freshVarE UnknownBinder b
+     ans <- f $ Var v
+     return (b, ans)
+  return (Abs b' (decls, ans))
 
 buildLam :: MonadEmbed m => Binder -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
@@ -627,7 +635,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     traverse fAtom params <*> traverseNestedArgs args
   BoxedRef b ptr size body -> do
     ptr'  <- fAtom ptr
-    size' <- fAtom size
+    size' <- buildScoped $ evalBlockE def size
     -- Is this what we want? We can't recur because we don't want decls
     Abs b' body' <- substEmbedR $ Abs b body
     return $ BoxedRef b' ptr' size' body'

@@ -101,7 +101,7 @@ data Atom = Var Var
           | ACase Atom [AltP Atom] Type
             -- single-constructor only for now
           | DataConRef DataDef [Atom] (Nest DataConRefBinding)
-          | BoxedRef Binder Atom Atom Atom  -- binder, ptr, size, body
+          | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
             deriving (Show, Generic)
 
 data Expr = App Atom Atom

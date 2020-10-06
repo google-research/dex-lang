@@ -22,6 +22,7 @@ import Env
 import Embed
 import Type
 import Inference
+import Interpreter
 import Simplify
 import Serialize
 import Imp
@@ -162,10 +163,17 @@ evalModule bindings normalized = do
   checkPass SimpPass defunctionalized
   let optimized = optimizeModule defunctionalized
   checkPass OptimPass optimized
-  evaluated <- evalSimplified optimized evalBackend
-  checkPass ResultPass evaluated
-  Module Evaluated Empty newBindings <- return evaluated
-  return newBindings
+  case optimized of
+    Module _ Empty newBindings -> return newBindings
+    _ -> do
+      let (block, rest) = splitSimpModule bindings optimized
+      result <- evalBackend block
+      newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
+      checkPass ResultPass $ Module Evaluated Empty newBindings
+      return newBindings
+
+evalBackendInterp :: TopEnv -> Module -> Module
+evalBackendInterp = undefined
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do

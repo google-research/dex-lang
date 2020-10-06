@@ -16,8 +16,6 @@ import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 
 import Interpreter
-import Simplify
-import Type hiding (indexSetConcreteSize)
 import Syntax
 import PPrint
 import Interpreter (indices)
@@ -37,6 +35,13 @@ prettyVal val = case val of
                       FixedIntRange l _ | l == 0 -> mempty
                       _                          -> "@" <> pretty idxSet
     return $ pretty elems <> idxSetStr
+  DataCon (DataDef _ _ dataCons) _ con args ->
+    case args of
+      [] -> return $ pretty conName
+      _  -> do
+        ans <- mapM prettyVal args
+        return $ parens $ pretty conName <+> hsep ans
+    where DataConDef conName _ = dataCons !! con
   Con con -> case con of
     PairCon x y -> do
       xStr <- asStr <$> prettyVal x

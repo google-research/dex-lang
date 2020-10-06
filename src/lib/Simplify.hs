@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Simplify (simplifyModule, simplifyCase, evalSimplified) where
+module Simplify (simplifyModule, simplifyCase, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -39,17 +39,31 @@ simplifyModule scope (Module Core decls bindings) = do
   Module Simp (toNest declsNotDone) (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
-evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
-evalSimplified (Module Simp Empty bindings) _ =
-  return $ Module Evaluated Empty bindings
-evalSimplified (Module Simp decls bindings) evalBlock = do
+splitSimpModule :: TopEnv -> Module -> (Block, Abs Binder Module)
+splitSimpModule scope m = do
+  let (Module Simp decls bindings) = hoistDepDataCons scope m
   let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
   let block = Block decls $ Atom $ mkConsList $ map Var localVars
-  vals <- (ignoreExcept . fromConsList) <$> evalBlock block
-  return $ Module Evaluated Empty $
-    scopelessSubst (newEnv localVars vals) bindings
-evalSimplified (Module _ _ _) _ =
-  error "Not a simplified module"
+  let (Abs b (decls', bindings')) =
+        fst $ flip runEmbed scope $ buildAbs (Bind ("result":>getType block)) $
+          \result -> do
+             results <- unpackConsList result
+             substEmbed (newEnv localVars results) bindings
+  (block, Abs b (Module Evaluated decls' bindings'))
+
+-- Bundling up the free vars in a result with a dependent constructor like
+-- `AsList n xs` doesn't give us a well typed term. This is a short-term
+-- workaround.
+hoistDepDataCons :: TopEnv -> Module -> Module
+hoistDepDataCons scope (Module Simp decls bindings) =
+  Module Simp decls' bindings'
+  where
+    (bindings', (_, decls')) = flip runEmbed scope $ do
+      mapM_ emitDecl decls
+      forM bindings $ \(ty, info) -> case info of
+        LetBound ann x | isData ty -> do x' <- emit x
+                                         return (ty, LetBound ann $ Atom x')
+        _ -> return (ty, info)
 
 simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
 simplifyDecls Empty = return mempty
@@ -164,8 +178,7 @@ simplifyLams numArgs lam = do
 
 defunBlock :: MonadEmbed m => Scope -> Block -> SimplifyM (Either Atom ([Atom], [Atom] -> m Atom))
 defunBlock localScope block = do
-  topScope <- getScope
-  if isData topScope (getType block)
+  if isData (getType block)
     then Left <$> simplifyBlock block
     else do
       (result, (localScope', decls)) <- embedScoped $ simplifyBlock block
@@ -212,8 +225,7 @@ simplifyExpr expr = case expr of
     case simplifyCase e' alts of
       Just (env, body) -> extendR env $ simplifyBlock body
       Nothing -> do
-        topScope <- getScope
-        if isData topScope resultTy'
+        if isData resultTy'
           then do
             alts' <- forM alts $ \(Abs bs body) -> do
               bs' <-  mapM (mapM substEmbedR) bs
