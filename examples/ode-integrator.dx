@@ -1,8 +1,8 @@
 'Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
 stepsize calculation.
 This version is a port of the [Jax implementation](https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py).
-A notable algorithmic difference is that it uses a lower-triangular
-matrix type for the Butcher tableua, and so avoid zero-padding everywhere.
+One difference is that it uses a lower-triangular
+matrix type for the Butcher tableau, and so avoids zero-padding everywhere.
 
 Time = Float
 
@@ -66,17 +66,14 @@ c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
 def runge_kutta_step (_:VSpace v) ?=> (func:v->Time->v)
     (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
 
-  runge_kutta_stage = \i func_evals.
-    ti = t0 + dt .* alpha.i
-    zi = z0 + dt .* dot beta.i func_evals
-    func zi ti
-
-  evals_init = for i. select (i == (0@_)) f0 zero
+  evals_init = snd $ withState zero \r.
+    r!(0@_) := f0
 
   evals_filled = snd $ withState evals_init \func_evals. for i:(Fin 6).
-    cur_evals = for j:(..i). (get func_evals).((ordinal j)@_)
-    ft = runge_kutta_stage i cur_evals
-    func_evals!(((ordinal i) + 1)@_) := ft
+    cur_evals = for j:(..i). get func_evals!((ordinal j)@_)
+    ti = t0 + dt .* alpha.i
+    zi = z0 + dt .* dot beta.i cur_evals
+    func_evals!(((ordinal i) + 1)@_) := func zi ti
 
   z_last =  z0 + dt .* dot c_sol   evals_filled
   z_last_error = dt .* dot c_error evals_filled
