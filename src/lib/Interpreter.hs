@@ -6,7 +6,8 @@
 
 {-# LANGUAGE Rank2Types #-}
 
-module Interpreter (evalBlock, indices, evalModuleInterp, indexSetSize) where
+module Interpreter (evalBlock, indices, indicesNoIO, evalModuleInterp,
+                    indexSetSize) where
 
 import Control.Monad
 import Data.Foldable
@@ -14,6 +15,7 @@ import Data.Int
 import Foreign.Ptr
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import System.IO.Unsafe (unsafePerformIO)
 
 import Cat
 import Syntax
@@ -125,7 +127,13 @@ evalOpDefined expr = case expr of
   Snd p -> return y  where (PairVal _ y) = p
   _ -> error $ "Not implemented: " ++ pprint expr
 
-indices :: Type -> InterpM [Atom]
+-- We can use this when we know we won't be dereferencing pointers. A better
+-- approach might be to have a typeclass for the pointer dereferencing that the
+-- interpreter does, with a dummy instance that throws an error if you try.
+indicesNoIO :: Type -> [Atom]
+indicesNoIO = unsafePerformIO . indices
+
+indices :: Type -> IO [Atom]
 indices ty = do
   n <- indexSetSize ty
   case ty of

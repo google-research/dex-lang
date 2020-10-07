@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Inference (inferModule, synthModule) where
 
@@ -21,6 +22,7 @@ import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
 import Syntax
+import Interpreter (indicesNoIO)
 import Embed  hiding (sub)
 import Env
 import Type
@@ -32,7 +34,16 @@ type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((EmbedT (SolverT (Either Err)))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
-data RequiredTy a = Check a | Infer
+data RequiredTy a = Concrete a | Suggest a | Infer deriving (Show, Functor, Foldable, Traversable)
+
+pattern Check :: a -> RequiredTy a
+pattern Check t <-
+  ((\case Concrete t -> Just t
+          Suggest  t -> Just t
+          Infer      -> Nothing) -> Just t)
+  where Check t = Suggest t
+
+{-# COMPLETE Infer, Check #-}
 
 inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
@@ -49,16 +60,16 @@ runUInferM :: (Subst a, Pretty a)
 runUInferM env scope m = runSolverT $
   runEmbedT (runReaderT (runReaderT m env) Nothing) scope
 
-checkSigma :: UExpr -> SigmaType -> UInferM Atom
-checkSigma expr sTy = case sTy of
+checkSigma :: UExpr -> (Type -> RequiredTy Type) -> SigmaType -> UInferM Atom
+checkSigma expr reqCon sTy = case sTy of
   Pi piTy@(Abs _ (arrow, _))
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrc _ (ULam b arrow' body) | arrow' == void arrow ->
           checkULam b body piTy
         _ -> do
           buildLam (Bind ("a":> absArgType piTy)) arrow $ \x@(Var v) ->
-            checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
-  _ -> checkRho expr sTy
+            checkLeaks [v] $ checkSigma expr reqCon $ snd $ applyAbs piTy x
+  _ -> checkOrInferRho expr (reqCon sTy)
 
 inferSigma :: UExpr -> UInferM Atom
 inferSigma (WithSrc pos expr) = case expr of
@@ -92,39 +103,53 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     argTy <- checkAnn ann
     x <- freshType argTy
     withBindPat p x $ checkOrInferRho body reqTy
-  ULam b arr body -> case reqTy of
-    Check ty -> do
-      piTy@(Abs _ (arrReq, _)) <- fromPiType False arr ty
-      checkArrow arrReq arr
-      checkULam b body piTy
-    Infer -> inferULam b (fmap (const Pure) arr) body
-  UFor dir b body -> case reqTy of
-    Check ty -> do
-      Abs n (arr, a) <- fromPiType False TabArrow ty
-      unless (arr == TabArrow) $
-        throw TypeErr $ "Not an table arrow type: " ++ pprint arr
-      allowedEff <- getAllowedEffects
-      lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      emitZonked $ Hof $ For dir lam
-    Infer -> do
-      allowedEff <- getAllowedEffects
-      lam <- inferULam b (PlainArrow allowedEff) body
-      emitZonked $ Hof $ For dir lam
-  UApp arr f x -> do
+  ULam b arr body -> do
+    let infer = inferULam b (fmap (const Pure) arr) body
+    case reqTy of
+      Check (Pi piTy@(Abs _ (arrReq, _))) -> do
+        checkArrow arrReq arr
+        checkULam b body piTy
+      Check _ -> infer >>= matchRequirement
+      Infer   -> infer
+  UFor dir b body -> do
+    let infer = do
+          allowedEff <- getAllowedEffects
+          lam <- inferULam b (PlainArrow allowedEff) body
+          emitZonked $ Hof $ For dir lam
+    case reqTy of
+      Check (Pi (Abs n (arr, a))) -> do
+        unless (arr == TabArrow) $
+          throw TypeErr $ "Not an table arrow type: " ++ pprint arr
+        allowedEff <- getAllowedEffects
+        lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
+        emitZonked $ Hof $ For dir lam
+      Check _ -> infer >>= matchRequirement
+      Infer   -> infer
+  UApp arr f x@(WithSrc xPos _) -> do
     fVal <- inferRho f
-    fVal' <- zonk fVal
-    piTy <- addSrcContext' (srcPos f) $ fromPiType True arr $ getType fVal'
-    -- Zonking twice! Once for linearity and once for the embedding. Not ideal...
-    fVal'' <- zonk fVal
-    xVal <- checkSigma x (absArgType piTy)
-    (arr', xVal') <- case piTy of
-      Abs (Ignore _) (arr', _) -> return (arr', xVal)
-      _ -> do
-        scope <- getScope
-        let xVal' = reduceAtom scope xVal
-        return (fst $ applyAbs piTy xVal', xVal')
+    -- NB: We never infer dependent function types, but we accept them, provided they
+    --     come with annotations. So, unless we already know that the function is
+    --     dependent here (i.e. the type of the zonk comes as a dependent Pi type),
+    --     then nothing in the remainder of the program can convince us that the type
+    --     is dependent. Also, the Pi binder is never considered to be in scope for
+    --     inference variables, so they cannot get unified with it. Hence, this zonk
+    --     is safe and doesn't make the type checking depend on the program order.
+    infTy <- getType <$> zonk fVal
+    piTy  <- addSrcContext' (srcPos f) $ fromPiType True arr infTy
+    (xVal, embedEnv@(_, xDecls)) <- embedScoped $ checkSigma x Suggest (absArgType piTy)
+    (xVal', arr') <- case piTy of
+      Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
+        False -> embedExtend embedEnv $> (xVal, arr')
+        True  -> do
+          xValMaybeRed <- flip reduceBlock (Block xDecls (Atom xVal)) <$> getScope
+          case xValMaybeRed of
+            Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
+            Nothing      -> addSrcContext' xPos $ do
+              throw TypeErr $ "Dependent functions can only be applied to fully " ++
+                              "evaluated expressions. Bind the argument to a name " ++
+                              "before you apply the function."
     addEffects $ arrowEff arr'
-    appVal <- emitZonked $ App fVal'' xVal'
+    appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
   UPi b arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
@@ -207,7 +232,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
             emit $ Case split [leftCase, tailAlt] reqTy'
           _ -> throw TypeErr "Can't specify more than one variant tail pattern."
       _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy'
-  UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
+  UTabCon xs -> inferTabCon xs reqTy >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
     low'  <- mapM (flip checkRho n) low
@@ -216,6 +241,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
+  UTypeAnn val ty -> do
+    ty' <- zonk =<< checkUType ty
+    let reqCon = if null (toList $ freeVars ty') then Concrete else Suggest
+    val' <- checkSigma val reqCon ty'
+    matchRequirement val'
   UPrimExpr prim -> do
     prim' <- traverse lookupName prim
     val <- case prim' of
@@ -329,7 +359,10 @@ inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   val <- case ann of
     Nothing -> inferSigma rhs
-    Just ty -> checkUType ty >>= checkSigma rhs
+    Just ty -> do
+      ty' <- zonk =<< checkUType ty
+      let reqCon = if null (toList $ freeVars ty') then Concrete else Suggest
+      checkSigma rhs reqCon ty'
   expr <- zonk $ Atom val
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
@@ -339,6 +372,8 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
+  scope <- getScope
+  when (tc' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName tc'
   let paramVars = map (\(Bind v) -> v) $ toList paramBs  -- TODO: refresh things properly
   (dcs', _) <- embedScoped $
     extendR (newEnv paramBs (map Var paramVars)) $ do
@@ -348,6 +383,9 @@ inferUDecl True (UData tc dcs) = do
   let tyConTy = getType $ TypeCon dataDef []
   extendScope $ tc' @> (tyConTy, DataBoundTypeCon dataDef)
   forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
+    -- Retrieving scope at every step to avoid duplicate constructor names
+    scope' <- getScope
+    when (dc `isin` scope') $ throw RepeatedVarErr $ pprint $ getName dc
     let ty = getType $ DataCon dataDef [] i []
     extendScope $ dc @> (ty, DataBoundDataCon dataDef i)
   return mempty
@@ -382,7 +420,7 @@ checkULam (p, ann) body piTy = do
   buildDepEffLam (Bind $ patNameHint p :> argTy)
     ( \x -> return $ fst $ applyAbs piTy x)
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
-                      checkSigma body $ snd $ applyAbs piTy x
+                      checkSigma body Suggest $ snd $ applyAbs piTy x
 
 checkUEff :: EffectRow -> UInferM EffectRow
 checkUEff (EffectRow effs t) = do
@@ -556,28 +594,28 @@ checkExtLabeledRow (Ext types (Just ext)) = do
   Var (ext':>_) <- checkRho ext LabeledRowKind
   return $ Ext types' $ Just ext'
 
-inferTabCon :: [UExpr] -> Maybe UType -> UInferM Atom
-inferTabCon xs ann = do
-  (n, ty) <- inferTabTy xs ann
-  let tabTy = n==>ty
-  xs' <- mapM (flip checkRho ty) xs
+inferTabCon :: [UExpr] -> RequiredTy RhoType -> UInferM Atom
+inferTabCon xs reqTy = do
+  (tabTy, xs') <- case reqTy of
+    Concrete tabTy@(TabTyAbs a) -> do
+      let idx = indicesNoIO $ absArgType a
+      -- TODO: Check length!!
+      unless (length idx == length xs) $
+        throw TypeErr "Table type doesn't match annotation"
+      xs' <- mapM (\(x, i) -> checkOrInferRho x $ Concrete $ snd $ applyAbs a i) $ zip xs idx
+      return (tabTy, xs')
+    _ -> do
+      elemTy <- case xs of
+        []    -> freshType TyKind
+        (x:_) -> getType <$> inferRho x
+      let tabTy = (FixedIntRange 0 (fromIntegral $ length xs)) ==> elemTy
+      case reqTy of
+        Suggest sTy -> constrainEq sTy tabTy
+        Infer       -> return ()
+        _           -> error "Missing case"
+      xs' <- mapM (flip checkRho elemTy) xs
+      return (tabTy, xs')
   emitZonked $ Op $ TabCon tabTy xs'
-
-inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
-inferTabTy xs ann = case ann of
-  Just ty -> do
-    ty' <- checkUType ty
-    case ty' of
-      TabTy b a -> do
-        unless (indexSetConcreteSize (binderType b) == Just (length xs)) $
-           throw TypeErr $ "Table size doesn't match annotation"
-        return (binderType b, a)
-      _ -> throw TypeErr $ "Table constructor annotation must be a table type"
-  Nothing -> case xs of
-   [] -> throw TypeErr $ "Empty table constructor must have type annotation"
-   (x:_) -> do
-    ty <- getType <$> inferRho x
-    return (FixedIntRange 0 (fromIntegral $ length xs), ty)
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Bool -> UArrow -> Type -> UInferM PiType

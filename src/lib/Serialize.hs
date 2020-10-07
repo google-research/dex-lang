@@ -4,13 +4,19 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Serialize (pprintVal, memoizeFileEval) where
+{-# LANGUAGE CPP #-}
+
+module Serialize (pprintVal, cached) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad
 import qualified Data.ByteString as BS
 import System.Directory
 import System.IO.Error
+import System.FilePath
+import System.IO
+import System.IO.MMap
+import System.Posix hiding (ReadOnly, version)
 import Data.Foldable (toList)
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
@@ -72,22 +78,28 @@ prettyVal val = case val of
 curCompilerVersion :: String
 curCompilerVersion = __TIME__
 
-memoizeFileEval :: Store a => FilePath -> (FilePath -> IO a) -> FilePath -> IO a
-memoizeFileEval cacheFile f fname = do
-  cacheFresh <- cacheFile `newerFileThan` fname
-  if cacheFresh
+cached :: (Eq k, Store k, Store a) => String -> k -> IO a -> IO a
+cached cacheName key create = do
+  cacheDir <- getXdgDirectory XdgCache "dex"
+  createDirectoryIfMissing True cacheDir
+  let cacheKeyPath = cacheDir </> (cacheName ++ ".key")
+  let cachePath    = cacheDir </> (cacheName ++ ".cache")
+  cacheExists <- (&&) <$> doesFileExist cacheKeyPath <*> doesFileExist cachePath
+  cacheUpToDate <- case cacheExists of
+                     False -> return False
+                     True -> do
+                       maybeCacheKey <- decode <$> BS.readFile cacheKeyPath
+                       case maybeCacheKey of
+                         Right cacheKey -> return $ cacheKey == (curCompilerVersion, key)
+                         Left  _        -> return False
+  if cacheUpToDate
     then do
-      decoded <- decode <$> BS.readFile cacheFile
+      decoded <- decode <$> BS.readFile cachePath
       case decoded of
-        Right (version, result) | version == curCompilerVersion -> return result
-        _ -> removeFile cacheFile >> memoizeFileEval cacheFile f fname
+        Right result -> return result
+        _            -> removeFile cachePath >> cached cacheName key create
     else do
-      result <- f fname
-      BS.writeFile cacheFile (encode (curCompilerVersion, result))
+      result <- create
+      BS.writeFile cacheKeyPath $ encode (curCompilerVersion, key)
+      BS.writeFile cachePath    $ encode result
       return result
-
-newerFileThan :: FilePath -> FilePath -> IO Bool
-newerFileThan f1 f2 = flip catchIOError (const $ return False) $ do
-  f1Mod <- getModificationTime f1
-  f2Mod <- getModificationTime f2
-  return $ f1Mod > f2Mod

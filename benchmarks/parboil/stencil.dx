@@ -1,0 +1,27 @@
+-- Assumes that off >= 0
+def (+|) (i:n) (off:Int) : n =
+  newOrd = ordinal i + off
+  case newOrd < size n of
+    True  -> unsafeFromOrdinal _ newOrd
+    False -> i
+
+-- Assumes that off >= 0
+def (-|) (i:n) (off:Int) : n =
+  newOrd = ordinal i - off
+  case 0 <= newOrd of
+    True  -> unsafeFromOrdinal _ newOrd
+    False -> i
+
+def stencil (input : nx=>ny=>nz=>Float) : nx=>ny=>nz=>Float =
+  c0 = 1.0 / 6.0
+  c1 = c0 * c0
+  (xs, ys, zs) = (size nx, size ny, size nz)
+  for x y z.
+    (xi, yi, zi) = (ordinal x, ordinal y, ordinal z)
+    case xi == 0 || xi == (xs-1) || yi == 0 || yi == (ys-1) || zi == 0 || zi == (zs-1) of
+      True  -> input.x.y.z
+      False ->
+        neigh = (input.x.y.(z -| 1) + input.x.y.(z +| 1) +
+                 input.x.(y -| 1).z + input.x.(y +| 1).z +
+                 input.(x -| 1).y.z + input.(x +| 1).y.z)
+        input.x.y.z * c0 + neigh * c1

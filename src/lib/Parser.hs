@@ -16,6 +16,7 @@ import Text.Megaparsec.Char hiding (space)
 import Data.Char (isLower)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.Map.Strict as M
 import Data.Void
 import Data.String (fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -111,10 +112,13 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (\d -> RunModule $ UModule (toNest [d])) (topDecl <* eolf)
+  <|> liftM (declsToModule . (:[])) (topDecl <* eolf)
+  <|> liftM (declsToModule . (:[])) (interfaceInstance <* eolf)
+  <|> liftM declsToModule (interfaceDef <* eolf)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
+  where declsToModule = RunModule . UModule . toNest
 
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $ char '\'' >> liftM (ProseBlock . fst) (withSource consumeTillBreak)
@@ -211,7 +215,7 @@ uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
   let cs = map (WithSrc (Just pos) . UCharLit) s
-  return $ WithSrc (Just pos) $ UTabCon cs Nothing
+  return $ WithSrc (Just pos) $ UTabCon cs
 
 uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
@@ -240,17 +244,17 @@ topLet = do
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
   return $ ULet lAnn (p, ann') rhs'
+    
+addImplicitImplicitArgs :: SrcPos -> Maybe UType -> UExpr -> (Maybe UType, UExpr)
+addImplicitImplicitArgs _ Nothing e = (Nothing, e)
+addImplicitImplicitArgs sourcePos (Just typ) ex =
+  let (ty', e') = foldr (addImplicitArg sourcePos) (typ, ex) implicitVars
+  in (Just ty', e')
   where
-    addImplicitImplicitArgs :: SrcPos -> Maybe UType -> UExpr -> (Maybe UType, UExpr)
-    addImplicitImplicitArgs _ Nothing e = (Nothing, e)
-    addImplicitImplicitArgs pos (Just ty) e =
-      let (ty', e') = foldr (addImplicitArg pos) (ty,e) implicitVars
-      in (Just ty', e')
-      where
-        implicitVars = filter isLowerCaseName $ envNames $ freeUVars ty
-        isLowerCaseName :: Name -> Bool
-        isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
-        isLowerCaseName _ = False
+    implicitVars = filter isLowerCaseName $ envNames $ freeUVars typ
+    isLowerCaseName :: Name -> Bool
+    isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
+    isLowerCaseName _ = False
 
     addImplicitArg :: SrcPos -> Name -> (UType, UExpr) -> (UType, UExpr)
     addImplicitArg pos v (ty, e) =
@@ -259,6 +263,52 @@ topLet = do
       where
         k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc (Just pos) $ UPrimExpr $ TCExpr k
+
+interfaceDef :: Parser [UDecl]
+interfaceDef = do
+  keyWord InterfaceKW
+  -- TODO: allow multi-parameter type classes
+  interfaceName <- upperName <|> symName
+  (oneAnnBinder, pos) <- withPos annBinder
+  keyWord WhereKW
+  record <- withSrc $ URecordTy <$> interfaceRecordFields ":"
+  let consName = mkInterfaceConsName interfaceName
+  let (varTypeName, oneAnnBinder') = case oneAnnBinder of
+        Bind v    -> (varName v, oneAnnBinder)
+        Ignore ty -> let genVar = mkName $ mkNoShadowingStr "gen" in
+            (genVar, Bind (genVar:>ty))
+  let tyCon = UConDef interfaceName $ toNest [oneAnnBinder']
+  let funDefs = mkFunDefs (pos, varTypeName, interfaceName) record
+  return $ (UData tyCon [UConDef consName (toNest [Ignore record])]) : funDefs
+  where
+    mkFunDefs :: (SrcPos, Name, Name) -> UExpr -> [UDecl]
+    mkFunDefs meta ~(WithSrc _ (URecordTy (NoExt (LabeledItems items)))) =
+        fmap (\(name, ty :| []) -> mkOneFunDef meta (name, ty)) $ M.toList items
+    mkOneFunDef :: (SrcPos, Name, Name) -> (Label, UExpr) -> UDecl
+    mkOneFunDef (pos, varTypeName, interfaceName) (fLabel, fType) =
+      let (p, ann) = lhs
+      in let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
+      in ULet PlainLet (p, ann') rhs'
+      where
+        lhs = let uAnnBinder = Bind $ instanceName :> ns (UApp
+                    (PlainArrow ()) (var interfaceName) (var varTypeName))
+          in (patb fLabel, Just $ ns $ UPi uAnnBinder ClassArrow fType)
+        rhs =
+          let recordStr = mkNoShadowingStr "recordVar"
+              recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
+                fLabel)) $ Just (ns (UPatBinder (Ignore ())))
+              conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
+                $ toNest [patb recordStr]
+              let1 = ULet PlainLet (conPat, Nothing) $ var instanceName
+              let2 = ULet PlainLet (recordPat, Nothing) $ var $ mkName recordStr
+              body = ns $ UDecl let1 (ns $ UDecl let2 (var (mkName fLabel)))
+          in ns $ ULam (patb instanceStr, Nothing) ClassArrow body
+        
+        ns = WithSrc Nothing
+        patb s = ns $ UPatBinder $ Bind $ mkName s :> ()
+        instanceStr = mkNoShadowingStr "instance"
+        instanceName = mkName instanceStr
+        var name = ns $ UVar $ name :> ()
 
 dataDef :: Parser UDecl
 dataDef = do
@@ -284,6 +334,41 @@ decl = do
   lhs <- simpleLet <|> funDefLet
   rhs <- sym "=" >> blockOrExpr
   return $ lhs rhs
+
+interfaceInstance :: Parser UDecl
+interfaceInstance = do
+  keyWord InstanceKW
+  (p, pos) <- withPos letPat
+  ann <- annot uType
+  keyWord WhereKW
+  rhs <- mkRhs ann <$> (withSrc $ URecord <$> interfaceRecordFields "=")
+  let (ann', rhs') = addImplicitImplicitArgs pos (Just ann) rhs
+  return $ ULet InstanceLet (p, ann') rhs'
+  where
+    -- Here, we are traversing the type annotation to retrieve the name of
+    -- the interface and generate its corresponding constructor.
+    mkRhs (WithSrc _ (UPi _ _ lrhs))      rhs = mkRhs lrhs rhs
+    mkRhs (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) rhs =
+      (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` rhs
+    -- We let this case through to fail during type checking.
+    mkRhs _ rhs = rhs
+    var s = WithSrc Nothing $ UVar $ mkName s :> ()
+
+oneLabeledItem
+  :: String -> Parser a -> Maybe (SrcPos -> Label -> a)
+  -> Parser (LabeledItems a)
+oneLabeledItem bindwith itemparser punner = do
+  (l, pos) <- withPos fieldLabel
+  let explicitBound = symbol bindwith *> itemparser
+  itemVal <- case punner of
+    Just punFn -> explicitBound <|> pure (punFn pos l)
+    Nothing -> explicitBound
+  return $ labeledSingleton l itemVal
+
+interfaceRecordFields :: String -> Parser (ExtLabeledItems UExpr UExpr)
+interfaceRecordFields bindwith =
+  fuse <$> onePerLine (oneLabeledItem bindwith expr (Just varPun))
+  where fuse = foldr prefixExtLabeledItems (NoExt NoLabeledItems)
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
@@ -347,8 +432,16 @@ uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
   bs <- some patAnn
-  body <- argTerm >> blockOrExpr
-  return $ buildLam (map (,PlainArrow ()) bs) body
+  arrowType <-
+    (argTerm >> return (PlainArrow ()))
+    <|> (arrow (return ()) >>= \case
+          PlainArrow _ -> fail
+            "To construct an explicit lambda function, use '.' instead of '->'\n"
+          TabArrow -> fail
+            "To construct a table, use 'for i. body' instead of '\\i => body'\n"
+          arr -> return arr)
+  body <- blockOrExpr
+  return $ buildLam (map (,arrowType) bs) body
 
 buildLam :: [(UPatAnn, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
@@ -377,8 +470,7 @@ unitCon = withSrc $ symbol "()" $> (UPrimExpr $ ConExpr $ UnitCon)
 uTabCon :: Parser UExpr
 uTabCon = withSrc $ do
   xs <- brackets $ expr `sepBy` sym ","
-  ty <- optional (annot uType)
-  return $ UTabCon xs ty
+  return $ UTabCon xs
 
 type UStatement = (Either UDecl UExpr, SrcPos)
 
@@ -471,7 +563,7 @@ uPrim = withSrc $ do
       retTy <- baseType
       args <- some lowerName
       return $ UPrimExpr $ OpExpr $ FFICall f retTy args
-    _ -> case strToName s of
+    _ -> case strToPrimName s of
       Just prim -> UPrimExpr <$> traverse (const lowerName) prim
       Nothing -> fail $ "Unrecognized primitive: " ++ s
 
@@ -554,7 +646,7 @@ uIsoSugar = withSrc (char '#' *> options) where
             (ns $ UPatRecord $ Ext NoLabeledItems $ Just $ patb "l")
             (ns $ UPatRecord $ Ext (labeledSingleton field $ patb "x")
                                    $ Just $ patb "r"))
-          $ (var "(,)") 
+          $ (var "(,)")
             `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ var "x")
                                         $ Just $ var "l")
             `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ var "r")
@@ -564,7 +656,7 @@ uIsoSugar = withSrc (char '#' *> options) where
             (ns $ UPatRecord $ Ext (labeledSingleton field $ patb "x")
                                    $ Just $ patb "l")
             (ns $ UPatRecord $ Ext NoLabeledItems $ Just $ patb "r"))
-          $ (var "(,)") 
+          $ (var "(,)")
             `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ var "l")
             `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ var "x")
                                         $ Just $ var "r")
@@ -574,7 +666,7 @@ uIsoSugar = withSrc (char '#' *> options) where
       ns $ URecord $ NoExt $
         labeledSingleton "fwd" (lam (patb "v") $ ns $ UCase (var "v")
             [ UAlt (ns $ UPatCon (mkName "Left") (toNest [patb "l"]))
-                $ var "Left" `mkApp` (ns $ 
+                $ var "Left" `mkApp` (ns $
                     UVariantLift (labeledSingleton field ()) $ var "l")
             , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "w"]))
                 $ ns $ UCase (var "w")
@@ -598,7 +690,7 @@ uIsoSugar = withSrc (char '#' *> options) where
                     $ var "Left" `mkApp` var "r"
                 ]
             , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "l"]))
-                $ var "Right" `mkApp` (ns $ 
+                $ var "Right" `mkApp` (ns $
                     UVariantLift (labeledSingleton field ()) $ var "l")
             ]
         )
@@ -623,13 +715,9 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
-      (l, pos) <- withPos $ fieldLabel
-      let explicitBound = symbol bindwith *> itemparser 
-      itemVal <- case punner of
-        Just punFn -> explicitBound <|> pure (punFn pos l)
-        Nothing -> explicitBound
+      oneItem <- oneLabeledItem bindwith itemparser punner
       rest <- beforeSep
-      return $ prefixExtLabeledItems (labeledSingleton l itemVal) rest
+      return $ prefixExtLabeledItems oneItem rest
 
 -- Combine two parsers such that if the first fails, we try the second one.
 -- If both fail, consume the same amount of input as the parser that
@@ -670,6 +758,7 @@ ops =
   [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
   , [InfixL $ sc $> mkApp]
   , [prefixNegOp]
+  , [annotatedExpr]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkArrow TabArrow,
@@ -773,6 +862,10 @@ limFromMaybe :: Maybe a -> Limit a
 limFromMaybe Nothing = Unlimited
 limFromMaybe (Just x) = InclusiveLim x
 
+annotatedExpr :: Operator Parser UExpr
+annotatedExpr = InfixL $ opWithSrc $
+  sym ":" $> (\pos v ty -> WithSrc (Just pos) $ UTypeAnn v ty)
+
 inpostfix :: Parser (UExpr -> Maybe UExpr -> UExpr) -> Operator Parser UExpr
 inpostfix = inpostfix' expr
 
@@ -785,13 +878,27 @@ inpostfix' p op = Postfix $ do
 mkName :: String -> Name
 mkName s = Name SourceName (fromString s) 0
 
+nameToStr :: Name -> String
+nameToStr = tagToStr . nameTag
+
+-- This function is used to generate a string that is guaranteed to never shadow
+-- any user-defined name, as "#" is an invalid identifier character in normal
+-- source code.
+mkNoShadowingStr :: String -> String
+mkNoShadowingStr = (++ "#")
+
+mkInterfaceConsName :: Name -> Name
+mkInterfaceConsName =
+  GlobalName . fromString . mkNoShadowingStr . nameToStr
+
 -- === lexemes ===
 
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 type Lexer = Parser
 
 data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
-             | ReadKW | WriteKW | StateKW | DataKW | WhereKW
+             | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
+             | InstanceKW | WhereKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -820,11 +927,14 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       WriteKW -> "Accum"
       StateKW -> "State"
       DataKW -> "data"
+      InterfaceKW -> "interface"
+      InstanceKW -> "instance"
       WhereKW -> "where"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
-               "Read", "Write", "Accum", "data", "where"]
+               "Read", "Write", "Accum", "data", "interface",
+               "instance", "where"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

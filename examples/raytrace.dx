@@ -189,9 +189,8 @@ def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
   (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
   (objs.i, d)
 
-def calcNormal (scene:Scene n) (pos:Position) : Direction =
-  dist = \p. snd $ sdScene scene p
-  normalize (grad dist pos)
+def calcNormal (obj:Object) (pos:Position) : Direction =
+  normalize (grad (flip sdObject obj) pos)
 
 data RayMarchResult =
   -- incident ray, surface normal, surface properties
@@ -216,7 +215,7 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
         case d < tol of
           False -> Continue $ dNew
           True ->
-            surfNorm = calcNormal scene rayPos
+            surfNorm = calcNormal obj rayPos
             case positiveProjection rayDir surfNorm of
               True ->
                 -- Oops, we didn't escape the surface we're leaving..

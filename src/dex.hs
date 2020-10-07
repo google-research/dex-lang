@@ -13,11 +13,14 @@ import Control.Monad.State.Strict
 import Options.Applicative
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
+import System.Exit
+import System.Directory
 
 import Syntax
 import PPrint
 import RenderHtml
 import Serialize
+import Resources
 
 import TopLevel
 import Parser  hiding (Parser)
@@ -29,11 +32,13 @@ data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
               | ScriptMode FilePath DocFmt ErrorHandling
+
 data CmdOpts = CmdOpts EvalMode EvalConfig
 
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
-  env <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
+  key <- show <$> getModificationTime (preludeFile opts)
+  env <- cached "prelude" key $ evalPrelude opts
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
@@ -46,9 +51,10 @@ runMode evalMode opts = do
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalPrelude :: EvalConfig -> FilePath -> IO TopEnv
-evalPrelude opts fname = flip execStateT mempty $ do
-  result <- evalFile opts fname
+evalPrelude :: EvalConfig -> IO TopEnv
+evalPrelude opts = flip execStateT mempty $ do
+  source <- liftIO $ readFile $ preludeFile opts
+  result <- evalSource opts source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
 replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()

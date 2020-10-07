@@ -1,0 +1,19 @@
+-- Assumes that off >= 0
+def (+|) (i:n) (off:Int) : n =
+  newOrd = ordinal i + off
+  case newOrd < size n of
+    True  -> unsafeFromOrdinal _ newOrd
+    False -> i
+
+-- Assumes that off >= 0
+def (-|) (i:n) (off:Int) : n =
+  newOrd = ordinal i - off
+  case 0 <= newOrd of
+    True  -> unsafeFromOrdinal _ newOrd
+    False -> i
+
+def pathfinder (world : rows=>cols=>Int) : cols=>Int =
+  snd $ withState zero $ \costs.
+    for r.
+      costs := for c. world.r.c + (min (get costs!c) $ (min (get costs!(c -| 1))
+                                                            (get costs!(c +| 1))))

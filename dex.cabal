@@ -16,6 +16,10 @@ flag cuda
   description:         Enables building with CUDA support
   default:             False
 
+flag optimized
+  description:         Enables GHC optimizations
+  default:             False
+
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
@@ -31,12 +35,12 @@ library
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
-                       aeson, megaparsec >=8.0, warp, wai,
+                       aeson, megaparsec >=8.0, warp, wai, filepath,
                        parser-combinators, http-types, prettyprinter, text,
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
                        diagrams-rasterific, JuicyPixels, transformers,
                        base64-bytestring, vector, directory, mmap, unix,
-                       process, primitive, store, dex-resources, temporary
+                       process, primitive, store, dex-resources, temporary,
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources
@@ -45,7 +49,7 @@ library
     build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
-  ghc-options:         -Wall -O0 -fPIC
+  ghc-options:         -Wall -fPIC
   cxx-sources:         src/lib/dexrt.cpp
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
@@ -55,15 +59,25 @@ library
     extra-libraries:   cuda
     cxx-options:       -DDEX_CUDA
     cpp-options:       -DDEX_CUDA
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0
 
 executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
   build-depends:       dex, base, haskeline, prettyprinter, mtl,
-                       optparse-applicative, unix, store, bytestring
+                       optparse-applicative, unix, store, bytestring, directory
+  if os(darwin)
+    build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src
   default-extensions:  CPP
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0
 
 foreign-library Dex
   type:                native-shared
@@ -74,6 +88,10 @@ foreign-library Dex
   ghc-options:         -Wall
   default-language:    Haskell2010
   default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0
 
 Test-Suite test-dex
   type:                exitcode-stdio-1.0
@@ -85,3 +103,7 @@ Test-Suite test-dex
   hs-source-dirs:      tests
   ghc-options:         cbits/libdex.so
                        -Wall
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0

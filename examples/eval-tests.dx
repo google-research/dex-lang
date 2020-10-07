@@ -728,14 +728,14 @@ arr2d.(1@_)
 > True
 :p any [False, False]
 > False
-:p any []:(Fin 0)=>Bool
+:p any []
 > False
 
 :p all [True, True]
 > True
 :p all [False, True]
 > False
-:p all []:(Fin 0)=>Bool
+:p all []
 > True
 
 
@@ -789,3 +789,10 @@ s1 = "hello world"
 
   sum zs + sum zs
 > 12
+
+triLit : i:(Fin 4)=>(..i)=>Int = [ [0], [1, 2], [3, 4, 5], [6, 7, 8, 9] ]
+triLit
+> [ [0]@(..(0@Fin 4))
+> , [1, 2]@(..(1@Fin 4))
+> , [3, 4, 5]@(..(2@Fin 4))
+> , [6, 7, 8, 9]@(..(3@Fin 4)) ]

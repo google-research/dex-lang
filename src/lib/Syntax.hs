@@ -38,7 +38,7 @@ module Syntax (
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, renamingSubst, renameBinder, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
-    AddressSpace (..), PtrOrigin (..), strToName, nameToStr, showPrimName,
+    AddressSpace (..), PtrOrigin (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
@@ -214,7 +214,8 @@ data UExpr' = UVar UVar
             | UFor Direction UPatAnn UExpr
             | UCase UExpr [UAlt]
             | UHole
-            | UTabCon [UExpr] (Maybe UExpr)
+            | UTypeAnn UExpr UExpr
+            | UTabCon [UExpr]
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
             | URecord (ExtLabeledItems UExpr UExpr)     -- {a=x, b=y, ...rest}
@@ -325,7 +326,7 @@ data PrimOp e =
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
-      | IntAsIndex e e   -- index set, ordinal index
+      | IntAsIndex       e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
       | ThrowError e
@@ -390,16 +391,16 @@ type PrimName = PrimExpr ()
 
 type IndexStructure = Nest Binder
 
-strToName :: String -> Maybe PrimName
-strToName s = M.lookup s builtinNames
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s builtinNames
 
-nameToStr :: PrimName -> String
-nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
   Just s  -> s
   Nothing -> show prim
 
 showPrimName :: PrimExpr e -> String
-showPrimName prim = nameToStr $ fmap (const ()) prim
+showPrimName prim = primNameToStr $ fmap (const ()) prim
 
 -- === effects ===
 
@@ -688,7 +689,8 @@ instance HasUVars UExpr' where
     UDecl decl body -> freeUVars $ Abs decl body
     UFor _ (pat,ty) body -> freeUVars ty <> freeUVars (Abs pat body)
     UHole -> mempty
-    UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
+    UTypeAnn v ty -> freeUVars v <> freeUVars ty
+    UTabCon xs -> foldMap freeUVars xs
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
@@ -1455,7 +1457,7 @@ builtinNames = M.fromList
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
-  , ("asidx"       , OpExpr $ IntAsIndex () ())
+  , ("asidx"        , OpExpr $ IntAsIndex () ())
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())

@@ -1,0 +1,67 @@
+ETA = 0.3
+MOMENTUM = 0.3
+
+def squash (x : Float) : Float = 1.0 / (1.0 + exp (-x))
+
+def layerForward (input : in=>Float)
+                 (params : { b: Unit| w: in }=>out=>Float)
+                   : out=>Float =
+  bias = params.{| b=() |}
+  -- TODO: Push the j loop into the sum or not?
+  total = (for j:out. sum $ for i:in. params.{| w=i |}.j  * input.i) + bias
+  for i. squash total.i
+
+def adjustWeights (delta : out=>Float)
+                  (input : in=>Float)
+                  (weight : { b: Unit | w: in }=>out=>Float)
+                  (oldWeight : { b: Unit | w: in }=>out=>Float)
+                  : ({ b: Unit | w: in }=>out=>Float & { b: Unit | w: in }=>out=>Float) =
+  weight' = for k:{ b: Unit | w: in } j:out.
+    i = case k of
+      {| b=() |} -> 1.0
+      {| w=k' |} -> input.k'
+    d = ETA * delta.j * i + (MOMENTUM * oldWeight.k.j)
+    weight.k.j + d
+  (weight', weight)
+
+def outputError (target : out=>Float)
+                (output : out=>Float)
+                  : (Float & out=>Float) =
+  swap $ withAccum \err.
+    for i.
+      o = output.i
+      d = o * (1.0 - o) * (target.i - o)
+      err += abs d
+      d
+
+def hiddenError (outputDelta : out=>Float)
+                (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
+                (hidden : hid=>Float)
+                  : (Float & hid=>Float) =
+  swap $ withAccum \err.
+    for i:hid.
+      mult = sum $ for j. outputDelta.j * hiddenWeights.{| w = i |}.j
+      r = hidden.i * (1.0 - hidden.i) * mult
+      err += abs r
+      r
+
+def backprop (input : in=>Float)
+             (target : out=>Float)
+             (inputWeights : { b: Unit | w: in }=>hid=>Float)
+             (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
+             (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
+             (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
+               : ( Float
+                 & Float
+                 & { b: Unit | w: in }=>hid=>Float
+                 & { b: Unit | w: hid }=>out=>Float) =
+  hidden = layerForward input  inputWeights
+  output = layerForward hidden hiddenWeights
+
+  (outputErr, outputDelta) = outputError target output
+  (hiddenErr, hiddenDelta) = hiddenError outputDelta hiddenWeights hidden
+
+  (hiddenWeights', oldHiddenWeights') = adjustWeights outputDelta hidden hiddenWeights oldHiddenWeights
+  (inputWeights', oldInputWeights') = adjustWeights hiddenDelta input inputWeights oldInputWeights
+
+  (outputErr, hiddenErr, inputWeights', hiddenWeights')
