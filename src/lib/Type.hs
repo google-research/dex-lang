@@ -12,7 +12,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
-  checkIntBaseType, checkFloatBaseType, withBinder, (|:),
+  checkIntBaseType, checkFloatBaseType, withBinder,
   indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck) where
 
 import Prelude hiding (pi)
@@ -49,7 +49,7 @@ getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
 
 checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
 checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeCheck x
-  where ctx = addContext $ "Checking:\n" ++ pprint x ++ "\nWith env:\n" ++ pprint env
+  where ctx = addContext $ "Checking:\n" ++ pprint x
 
 runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
 runTypeCheck env m = runReaderT m env
@@ -149,14 +149,13 @@ instance HasType Atom where
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy
-    DataConRef def@(DataDef _ paramBs cons) params args -> do
+    DataConRef def@(DataDef _ paramBs [DataConDef _ argBs]) params args -> do
       checkEq (length paramBs) (length params)
       forM (zip (toList paramBs) (toList params)) $ \(b, param) ->
         param |: binderAnn b
       let argBs' = applyNaryAbs (Abs paramBs argBs) params
       checkDataConRefBindings argBs' args
       return $ RawRefTy $ TypeCon def params
-      where DataConDef _ argBs = cons !! 0
     BoxedRef b ptr numel body -> do
       PtrTy (_, _, t) <- typeCheck ptr
       checkEq (binderAnn b) (BaseTy t)
@@ -548,8 +547,7 @@ typeCheckTyCon tc = case tc of
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
-  RefType (Just r) a  -> r|:TyKind >> a|:TyKind >> return TyKind
-  RefType Nothing a   ->              a|:TyKind >> return TyKind
+  RefType r a      -> mapM (|: TyKind) r  >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
@@ -558,7 +556,6 @@ typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
-  -- BufferLit buffer -> return $ BaseTy $ snd $ arrayType buffer
   AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
@@ -586,7 +583,7 @@ typeCheckCon con = case con of
     SumAsProd ty tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
       return $ RawRefTy ty
-    _ -> error $ "Not implemented " ++ pprint con
+    _ -> error $ "Not a valid ref: " ++ pprint con
   RecordRef _ -> error "Not implemented"
 
 typeCheckRef :: HasType a => a -> TypeM Type
@@ -691,9 +688,6 @@ typeCheckOp op = case op of
   PtrLoad ptr -> do
     PtrTy (_, _, t)  <- typeCheck ptr
     return $ BaseTy t
-  PtrAllocSize ptr -> do
-    PtrTy (AllocatedPtr, _, _) <- typeCheck ptr
-    return $ IdxRepTy
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i
@@ -916,7 +910,6 @@ checkDataLike msg ty = case ty of
   TabTy _ b -> recur b
   RecordTy (NoExt items)  -> void $ traverse recur items
   VariantTy (NoExt items) -> void $ traverse recur items
-  -- TODO: check that data constructor arguments are data-like, and so on
   TypeCon def params ->
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of

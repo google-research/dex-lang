@@ -800,8 +800,6 @@ intToIndexE (VariantTy (NoExt types)) i = do
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
-
-
 anyValue :: Type -> Atom
 anyValue (BaseTy (Scalar Int64Type  )) = Con $ Lit $ Int64Lit    0
 anyValue (BaseTy (Scalar Int32Type  )) = Con $ Lit $ Int32Lit    0

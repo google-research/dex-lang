@@ -35,7 +35,7 @@ type InterpM = IO
 evalModuleInterp :: SubstEnv -> Module -> InterpM Bindings
 evalModuleInterp env (Module _ decls bindings) = do
   env' <- catFoldM evalDecl env decls
-  return $ subst (env', mempty) bindings
+  return $ subst (env <> env', mempty) bindings
 
 evalBlock :: SubstEnv -> Block -> InterpM Atom
 evalBlock env (Block decls result) = do

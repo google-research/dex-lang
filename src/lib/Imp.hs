@@ -73,7 +73,9 @@ toImpModule :: Backend -> Block -> (ImpModule, [LitVal], AtomRecon)
 toImpModule backend block = runImpMBinders initOpts argBinders $ do
   (reconAtom, impBlock) <- scopedBlock $ translateTopLevel block'
   functions <- toList <$> looks envFunctions
-  let ty = IFunType EntryFun (map binderAnn argBinders) (impBlockType impBlock)
+  let requiresCUDA = case backend of LLVMCUDA -> True
+                                     _        -> False
+  let ty = IFunType (EntryFun requiresCUDA) (map binderAnn argBinders) (impBlockType impBlock)
   let mainFunction = ImpFunction (impMainFunName:>ty) argBinders impBlock
   return (ImpModule (functions ++ [mainFunction]), argVals, reconAtom)
   where
@@ -582,7 +584,7 @@ makeAllocDest :: AllocType -> Type -> ImpM Dest
 makeAllocDest allocTy ty = do
   backend <- asks impBackend
   curDev <- asks curDevice
-  (ptrsSizes, dest) <- fromEmbedSubst $ makeDest (backend, curDev, allocTy) ty
+  (ptrsSizes, dest) <- fromEmbed $ makeDest (backend, curDev, allocTy) ty
   env <- liftM fold $ forM ptrsSizes $ \(Bind (ptr:>PtrTy ptrTy), size) -> do
     ptr' <- emitAlloc ptrTy $ fromScalarAtom size
     case ptrTy of
@@ -685,7 +687,7 @@ allocateBuffer addrSpace mustFree b numel = do
 deviceFromCallingConvention :: CallingConvention -> Device
 deviceFromCallingConvention cc = case cc of
   OrdinaryFun      -> CPU
-  EntryFun         -> CPU
+  EntryFun _       -> CPU
   MCThreadLaunch   -> CPU
   CUDAKernelLaunch -> GPU
 
@@ -711,13 +713,8 @@ toScalarType b = BaseTy b
 
 -- === Type classes ===
 
-fromEmbed :: Embed Atom -> ImpM Atom
+fromEmbed :: Subst a => Embed a -> ImpM a
 fromEmbed m = do
-  scope <- variableScope
-  translateBlock mempty (Nothing, fst $ runEmbed (buildScoped m) scope)
-
-fromEmbedSubst :: Subst a => Embed a -> ImpM a
-fromEmbedSubst m = do
   scope <- variableScope
   let (ans, (_, decls)) = runEmbed m scope
   env <- catFoldM translateDecl mempty $ fmap (Nothing,) decls
@@ -827,11 +824,7 @@ memcopy :: IExpr -> IExpr -> IExpr -> ImpM ()
 memcopy dest src numel = emitStatement $ IInstr (Nothing , MemCopy dest src numel)
 
 store :: HasCallStack => IExpr -> IExpr -> ImpM ()
-store dest src =
-  let (PtrType (_, _, ty)) = getIType dest
-  in if getIType src /= ty
-       then error "BAD!"
-       else emitStatement $ IInstr (Nothing, Store dest src)
+store dest src = emitStatement $ IInstr (Nothing, Store dest src)
 
 alloc :: Type -> ImpM Dest
 alloc ty = allocKind Managed ty

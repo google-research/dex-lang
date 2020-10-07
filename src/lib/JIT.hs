@@ -8,7 +8,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (impToLLVM, impKernelToLLVMGPU) where
+module JIT (impToLLVM) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import LLVM.Prelude (ShortByteString, Word32)
@@ -80,13 +80,12 @@ compileFunction :: Logger [Output] -> ImpFunction
                 -> IO (L.Definition, S.Set ExternFunSpec)
 compileFunction logger fun = case cc of
   OrdinaryFun -> error "not implemented"
-  EntryFun -> return $ runCompile CPU $ do
+  EntryFun requiresCUDA -> return $ runCompile CPU $ do
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     argOperands <- forM (zip [0..] argTys) $ \(i, ty) ->
       gep argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load
-
-    ensureHasCUDAContext
+    when requiresCUDA ensureHasCUDAContext
     results <- extendOperands (newEnv bs argOperands) $ compileBlock body
     forM_ (zip [0..] results) $ \(i, x) ->
       gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x
@@ -94,7 +93,7 @@ compileFunction logger fun = case cc of
                  [argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return (L.GlobalDefinition mainFun, extraSpecs)
-    where attrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 64, L.Dereferenceable 64]
+    where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
     (CUDAKernel str) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
     let strFun = constStringFunction (asLLVMName name) str

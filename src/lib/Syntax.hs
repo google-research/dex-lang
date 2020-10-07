@@ -36,7 +36,7 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    boundUVars, PassName (..), boundVars, renamingSubst, renameBinder, bindingsAsVars,
+    boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), PtrOrigin (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
@@ -296,7 +296,7 @@ data PrimCon e =
       | CharCon e         -- Wraps an Int8 value
       | IntRangeVal   e e e
       | IndexRangeVal e (Limit e) (Limit e) e
-      | IndexSliceVal e e e    -- Sliced index set, slice length. Note that this is no longer an index set!
+      | IndexSliceVal e e e    -- Sliced index set, slice length, ordinal index
       | BaseTypeRef e
       | TabRef e
       | ConRef (PrimCon e)
@@ -318,7 +318,6 @@ data PrimOp e =
       | Inject e
       | PtrOffset e e
       | PtrLoad e
-      | PtrAllocSize e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
@@ -326,7 +325,7 @@ data PrimOp e =
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
-      | IntAsIndex       e e   -- index set, ordinal index
+      | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
       | ThrowError e
@@ -466,9 +465,12 @@ type IType = BaseType
 type Size = IExpr
 
 type IFunVar = VarP IFunType
-data IFunType = IFunType CallingConvention [IType] [IType]  deriving (Show)
-data CallingConvention = OrdinaryFun | EntryFun
-                       | CUDAKernelLaunch | MCThreadLaunch deriving (Show)
+data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
+                deriving (Show)
+data CallingConvention = OrdinaryFun
+                       | EntryFun Bool  -- flag indicates whether CUDA required
+                       | CUDAKernelLaunch
+                       | MCThreadLaunch deriving (Show)
 
 data ImpModule   = ImpModule [ImpFunction] deriving (Show)
 data ImpFunction = ImpFunction IFunVar [IBinder] ImpBlock  deriving (Show)
@@ -489,7 +491,6 @@ data ImpInstr = Store IExpr IExpr           -- dest, val
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
               | IPrimOp IPrimOp
-              | IExpr IExpr
                 deriving (Show)
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | Interp  deriving (Show, Eq)
@@ -905,15 +906,6 @@ instance BindsVars DataConRefBinding where
       ref' = subst env ref
       (b', env') = renamingSubst env b
 
--- unlike renamingSubst, this produces a non-Ignore binder
-renameBinder :: Name -> Scope -> Binder -> (Binder, ScopedSubstEnv)
-renameBinder hint scope (Ignore ty) =
-  (Bind v, (mempty, v@>(ty, UnknownBinder)))
-  where v = genFresh hint scope :> ty
-renameBinder hint scope (Bind (v:>ty)) =
-  (Bind v', (v@>Var v', v'@>(ty, UnknownBinder)))
-  where v' = genFresh v scope :> ty
-
 instance Eq Atom where
   Var v == Var v' = v == v'
   Pi ab == Pi ab' = ab == ab'
@@ -1062,7 +1054,7 @@ instance HasVars Atom where
       freeVars ptr <> freeVars size <> freeVars (Abs b body)
 
 instance Subst Atom where
-   subst env atom = case atom of
+  subst env atom = case atom of
     Var v   -> substVar env v
     Lam lam -> Lam $ subst env lam
     Pi  ty  -> Pi  $ subst env ty
@@ -1221,7 +1213,7 @@ instance HasIVars ImpInstr where
     Alloc _ t s   -> freeIVars t <> freeIVars s
     MemCopy x y z -> freeIVars x <> freeIVars y <> freeIVars z
     Free x        -> freeIVars x
-    ICastOp _ x   -> freeIVars x
+    ICastOp t x   -> freeIVars t <> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
     IThrowError   -> mempty
 

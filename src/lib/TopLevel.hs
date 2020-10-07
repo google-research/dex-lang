@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 EvalConfig (..), Backend (..)) where
+                 EvalConfig (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -147,8 +147,6 @@ lookupBindings scope v = reduceAtom scope x
 -- errors, but there could still be internal shadowing errors.
 evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
 evalUModule env untyped = do
-  -- TODO: it's handy to log the env, but we need to filter out just the
-  --       relevant part (transitive closure of free vars)
   logPass Parse untyped
   typed <- liftEitherIO $ inferModule env untyped
   checkPass TypePass typed

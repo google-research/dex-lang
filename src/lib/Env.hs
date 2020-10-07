@@ -12,8 +12,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
             rawName, nameSpace, nameTag, envMaxName, genFresh,
             tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
-            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind,
-            genFreshBinder) where
+            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
 
 import Data.Store
 import Data.String
@@ -32,9 +31,16 @@ newtype Env a = Env (M.Map Name a)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName
-               | SumName | AbstractedPtrName | TopFunctionName | AllocPtrName
-                 deriving  (Show, Ord, Eq, Generic)
+data NameSpace =
+       GenName
+     | SourceName         -- names from source program
+     | Skolem
+     | InferenceName
+     | SumName
+     | AbstractedPtrName  -- used in `abstractPtrLiterals` in Imp lowering
+     | TopFunctionName    -- top-level Imp functions
+     | AllocPtrName       -- used for constructing dests in Imp lowering
+       deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
@@ -154,10 +160,6 @@ isGlobal _ = False
 
 isGlobalBinder :: BinderP ann -> Bool
 isGlobalBinder b = isGlobal $ fromBind "" b
-
-genFreshBinder :: BinderP ann -> Env a -> BinderP ann
-genFreshBinder (Ignore ann) _ = Ignore ann
-genFreshBinder (Bind (v:>ann)) env = Bind $ genFresh v env :> ann
 
 genFresh :: Name-> Env a -> Name
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum

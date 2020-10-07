@@ -41,7 +41,7 @@ dexCreateContext = do
       Left  _          -> return nullPtr
   where
 
-evalPrelude :: EvalConfig -> FilePath -> IO (Either Err TopEnv)
+evalPrelude :: EvalConfig -> String -> IO (Either Err TopEnv)
 evalPrelude opts contents = flip evalStateT mempty $ do
   results <- fmap snd <$> evalSource opts contents
   env <- get
