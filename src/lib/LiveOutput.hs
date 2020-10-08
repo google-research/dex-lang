@@ -89,7 +89,10 @@ sourceBlockToDag block = do
   let parents = sort $ nub $ toList $
                   (boundUVars block <> freeUVars block) `envIntersect` varMap
   n <- lift $ addToBlockDag (block, alwaysInScope <> parents)
-  extend $ asFst $ foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block
+  -- TODO: Stop forcing dependencies on all preceding blocks. This will require
+  --       an improvement of the analysis above, such that all blocks depend on those
+  --       that contain interface instance definitions.
+  extend $ (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
   case sbContents block of
     IncludeSourceFile _ -> extend $ asSnd [n]
     _ -> return ()
