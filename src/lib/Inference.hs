@@ -97,7 +97,7 @@ instantiateSigma f = case getType f of
   _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
-checkOrInferRho (WithSrc pos expr) reqTy =
+checkOrInferRho (WithSrc pos expr) reqTy = do
  addSrcContext' pos $ case expr of
   UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
@@ -358,7 +358,11 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
-  val <- case ann of
+  -- We don't display global names in any visually distinct way from local names
+  -- so avoid giving the name hint for top-level declarations. Otherwise we might
+  -- end up with x = x decls in the module (with left x being global and right being local).
+  let nameHint = if topLevel then liftM id else withPatHint p
+  val <- nameHint $ case ann of
     Nothing -> inferSigma rhs
     Just ty -> do
       ty' <- zonk =<< checkUType ty
@@ -367,10 +371,7 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   expr <- zonk $ Atom val
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
-    else do
-      -- TODO: non-top-level annotations?
-      val' <- withPatHint p $ emitAnn PlainLet expr
-      bindPat p val'
+    else bindPat p val
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
   scope <- getScope
