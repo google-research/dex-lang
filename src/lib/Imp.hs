@@ -307,25 +307,25 @@ toImpHof env (maybeDest, hof) = do
         ithDest <- destGet dest idx
         void $ translateBlock (env <> b @> idx) (Just ithDest, body)
       destToAtom dest
-    -- Tile d (LamVal tb tBody) (LamVal sb sBody) -> do
-    --   ~(TC (IndexSlice idxTy tileIdxTy)) <- impSubst env $ binderType tb
-    --   n <- indexSetSize idxTy
-    --   dest <- allocDest maybeDest resultTy
-    --   tileLen <- indexSetSize tileIdxTy
-    --   nTiles      <- n `idivI` tileLen
-    --   epilogueOff <- nTiles `imulI` tileLen
-    --   nEpilogue   <- n `isubI` epilogueOff
-    --   emitLoop (binderNameHint tb) Fwd nTiles $ \iTile -> do
-    --     tileOffset <- toScalarAtom <$> iTile `imulI` tileLen
-    --     let tileAtom = Con $ IndexSliceVal idxTy tileIdxTy tileOffset
-    --     tileDest <- destSliceDim dest d tileOffset tileIdxTy
-    --     void $ translateBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
-    --   emitLoop (binderNameHint sb) Fwd nEpilogue $ \iEpi -> do
-    --     i <- iEpi `iaddI` epilogueOff
-    --     idx <- intToIndex idxTy i
-    --     sDest <- destGetDim dest d idx
-    --     void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
-    --   destToAtom dest
+    Tile d (LamVal tb tBody) (LamVal sb sBody) -> do
+      ~(TC (IndexSlice idxTy tileIdxTy)) <- impSubst env $ binderType tb
+      n <- indexSetSize idxTy
+      dest <- allocDest maybeDest resultTy
+      tileLen <- indexSetSize tileIdxTy
+      nTiles      <- n `idivI` tileLen
+      epilogueOff <- nTiles `imulI` tileLen
+      nEpilogue   <- n `isubI` epilogueOff
+      emitLoop (binderNameHint tb) Fwd nTiles $ \iTile -> do
+        tileOffset <- toScalarAtom <$> iTile `imulI` tileLen
+        let tileAtom = Con $ IndexSliceVal idxTy tileIdxTy tileOffset
+        tileDest <- fromEmbed $ sliceDestDim d dest tileOffset tileIdxTy
+        void $ translateBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
+      emitLoop (binderNameHint sb) Fwd nEpilogue $ \iEpi -> do
+        i <- iEpi `iaddI` epilogueOff
+        idx <- intToIndex idxTy i
+        sDest <- fromEmbed $ indexDestDim d dest idx
+        void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
+      destToAtom dest
     While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
       cond' <- liftM snd $ scopedBlock $ do
                  ans <- translateBlock env (Nothing, cond)
@@ -398,6 +398,7 @@ data DestEnv = DestEnv
 -- blocks that compute allocation sizes needed
 type DestM = ReaderT DestEnv (CatT (Env (Type, Block)) Embed)
 
+-- builds a dest and a list of pointer binders along with their required allocation sizes
 makeDest :: AllocInfo -> Type -> Embed ([(Binder, Atom)], Dest)
 makeDest allocInfo ty = do
   (dest, ptrs) <- flip runCatT mempty $ flip runReaderT env $ makeDestRec ty
@@ -430,6 +431,8 @@ makeDestRec ty = case ty of
         dests <- makeDataConDest bs
         return $ DataConRef def params dests
       _ -> do
+        when (any isDependent dcs) $ error
+          "Dependent data constructors only allowed for single-constructor types"
         tag <- rec TagRepTy
         let dcs' = applyDataDefParams def params
         contents <- forM dcs' $ \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
@@ -543,7 +546,6 @@ loadDest dest@(DataConRef def params bs) = do
   DataCon def params 0 <$> loadDataConArgs bs
 loadDest (Con dest) = do
  case dest of
-  -- BaseTypeRef ptr -> ptrLoad ptr
   BaseTypeRef ptr -> ptrLoad ptr
   TabRef (TabVal b body) -> buildLam b TabArrow $ \i -> do
     body' <- substEmbed (b@>i) body
@@ -557,7 +559,7 @@ loadDest (Con dest) = do
     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
     CharCon d -> CharCon <$> loadDest d
   RecordRef xs -> Record <$> traverse loadDest xs
-  _ -> error $ "Not implemented: " ++ pprint dest
+  _ -> error $ "Not a valid dest: " ++ pprint dest
 
 loadDataConArgs :: MonadEmbed m => Nest DataConRefBinding -> m [Atom]
 loadDataConArgs Empty = return []
@@ -566,9 +568,35 @@ loadDataConArgs (Nest (DataConRefBinding b ref) rest) = do
   rest' <- substEmbed (b@>val) rest
   (val:) <$> loadDataConArgs rest'
 
+indexDestDim :: MonadEmbed m => Int->Dest -> Atom -> m Dest
+indexDestDim 0 dest i = indexDest dest i
+indexDestDim d dest i = buildFor Fwd (Bind ("i":>idxTy)) $ \j -> do
+  dest' <- indexDest dest j
+  indexDestDim (d-1) dest' i
+  where
+    RawRefTy (TabTy idxBinder _) = dest
+    idxTy = binderType idxBinder
+
 indexDest :: MonadEmbed m => Dest -> Atom -> m Dest
 indexDest (Con (TabRef tabVal)) i = appReduce tabVal i
 indexDest dest _ = error $ pprint dest
+
+sliceDestDim :: MonadEmbed m => Int -> Dest -> Atom -> Type -> m Dest
+sliceDestDim 0 dest i sliceIdxTy = sliceDest dest i sliceIdxTy
+sliceDestDim d dest i sliceIdxTy = buildFor Fwd (Bind ("i":>idxTy)) $ \j -> do
+  dest' <- indexDest dest j
+  sliceDest dest' i sliceIdxTy
+  where
+    RawRefTy (TabTy idxBinder _) = dest
+    idxTy = binderType idxBinder
+
+sliceDest :: MonadEmbed m => Dest -> Atom -> Type -> m Dest
+sliceDest ~(Con (TabRef tab@(TabVal b _))) i sliceIdxTy = (Con . TabRef) <$> do
+  buildFor Fwd (Bind ("j" :> sliceIdxTy)) $ \j -> do
+    j' <- indexToIntE j
+    ioff <- iadd j' i
+    vidx <- intToIndexE (binderType b) ioff
+    appReduce tab vidx
 
 destToAtom :: Dest -> ImpM Atom
 destToAtom dest = fromEmbed $ loadDest dest
@@ -585,7 +613,7 @@ makeAllocDest allocTy ty = do
   backend <- asks impBackend
   curDev <- asks curDevice
   (ptrsSizes, dest) <- fromEmbed $ makeDest (backend, curDev, allocTy) ty
-  env <- liftM fold $ forM ptrsSizes $ \(Bind (ptr:>PtrTy ptrTy), size) -> do
+  env <- flip foldMapM ptrsSizes $ \(Bind (ptr:>PtrTy ptrTy), size) -> do
     ptr' <- emitAlloc ptrTy $ fromScalarAtom size
     case ptrTy of
       (_, Heap _, _) | allocTy == Managed -> extendAlloc ptr'

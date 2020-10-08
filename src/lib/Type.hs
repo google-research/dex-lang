@@ -12,7 +12,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
-  checkIntBaseType, checkFloatBaseType, withBinder,
+  checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
   indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck) where
 
 import Prelude hiding (pi)
@@ -181,6 +181,13 @@ typeCheckVar v@(name:>annTy) = do
     Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
     Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
   return annTy
+
+isDependent :: DataConDef -> Bool
+isDependent (DataConDef _ bs) = go bs
+  where
+    go :: Nest Binder -> Bool
+    go Empty = False
+    go (Nest b bs) = (b `isin` freeVars bs) || go bs
 
 instance HasType Expr where
   typeCheck expr = case expr of
