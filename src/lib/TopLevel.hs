@@ -26,7 +26,6 @@ import Array
 import Syntax
 import Cat
 import Env
-import Embed
 import Type
 import Inference
 import Simplify
@@ -175,7 +174,7 @@ evalUModuleVal env v m = do
   liftIO $ substArrayLiterals backend val
 
 lookupBindings :: Scope -> VarP ann -> Atom
-lookupBindings scope v = reduceAtom scope x
+lookupBindings scope v = x
   where (_, LetBound PlainLet (Atom x)) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
