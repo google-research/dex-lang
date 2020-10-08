@@ -34,7 +34,7 @@ data Context = Context EvalConfig TopEnv
 
 dexCreateContext :: IO (Ptr ())
 dexCreateContext = do
-    let evalConfig = EvalConfig LLVM undefined Nothing (error "Logging not initialized")
+    let evalConfig = EvalConfig LLVM Nothing (error "Logging not initialized")
     maybePreludeEnv <- evalPrelude evalConfig preludeSource
     case maybePreludeEnv of
       Right preludeEnv -> castStablePtrToPtr <$> newStablePtr (Context evalConfig preludeEnv)

@@ -36,7 +36,6 @@ import Optimize
 
 data EvalConfig = EvalConfig
   { backendName :: Backend
-  , preludeFile :: FilePath
   , logFile     :: Maybe FilePath
   , logService  :: Logger [Output] }
 

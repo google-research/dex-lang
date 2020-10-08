@@ -33,12 +33,14 @@ data EvalMode = ReplMode String
               | WatchMode  FilePath
               | ScriptMode FilePath DocFmt ErrorHandling
 
-data CmdOpts = CmdOpts EvalMode EvalConfig
+data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
-runMode :: EvalMode -> EvalConfig -> IO ()
-runMode evalMode opts = do
-  key <- show <$> getModificationTime (preludeFile opts)
-  env <- cached "prelude" key $ evalPrelude opts
+runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
+runMode evalMode preludeFile opts = do
+  key <- case preludeFile of
+           Nothing   -> return ""  -- memoizeFileEval already checks compiler version
+           Just path -> show <$> getModificationTime path
+  env <- cached "prelude" key $ evalPrelude opts preludeFile
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
@@ -51,9 +53,11 @@ runMode evalMode opts = do
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalPrelude :: EvalConfig -> IO TopEnv
-evalPrelude opts = flip execStateT mempty $ do
-  source <- liftIO $ readFile $ preludeFile opts
+evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
+evalPrelude opts fname = flip execStateT mempty $ do
+  source <- case fname of
+              Nothing   -> return $ preludeSource
+              Just path -> liftIO $ readFile path
   result <- evalSource opts source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
@@ -102,7 +106,10 @@ printLitProg JSONDoc prog =
     s -> putStrLn s
 
 parseOpts :: ParserInfo CmdOpts
-parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
+parseOpts = simpleInfo $ CmdOpts
+  <$> parseMode
+  <*> (optional $ strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
+  <*> parseEvalOpts
 
 parseMode :: Parser EvalMode
 parseMode = subparser $
@@ -138,8 +145,6 @@ parseEvalOpts = EvalConfig
                      , ("LLVM-MC", LLVMMC)
                      , ("interp", Interp)])
          (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|interp)"))
-  <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
-                                  <> help "Prelude file" <> showDefault)
   <*> (optional $ strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
@@ -147,5 +152,5 @@ parseEvalOpts = EvalConfig
 
 main :: IO ()
 main = do
-  CmdOpts evalMode opts <- execParser parseOpts
-  runMode evalMode opts
+  CmdOpts evalMode preludeFile opts <- execParser parseOpts
+  runMode evalMode preludeFile opts
