@@ -23,7 +23,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, evalBlockE, substTraversalDef,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
-              clampPositive, buildNAbs, buildNAbsAux, emitRunState, buildNestedLam, zeroAt,
+              clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue, freshVarE) where
 
 import Control.Applicative
@@ -641,8 +641,11 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     ptr'  <- fAtom ptr
     size' <- buildScoped $ evalBlockE def size
     -- Is this what we want? We can't recur because we don't want decls
-    Abs b' body' <- substEmbedR $ Abs b body
-    return $ BoxedRef b' ptr' size' body'
+    Abs b' (decls, body') <- buildAbs b $ \x ->
+      extendR (b@>x) $ evalBlockE def (Block Empty $ Atom body)
+    case decls of
+      Empty -> return $ BoxedRef b' ptr' size' body'
+      _ -> error "Traversing the body atom shouldn't produce decls"
   where
     traverseNestedArgs :: Nest DataConRefBinding -> m (Nest DataConRefBinding)
     traverseNestedArgs Empty = return Empty

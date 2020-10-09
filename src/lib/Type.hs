@@ -149,9 +149,9 @@ instance HasType Atom where
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy
-    DataConRef def@(DataDef _ paramBs [DataConDef _ argBs]) params args -> do
+    DataConRef ~def@(DataDef _ paramBs [DataConDef _ argBs]) params args -> do
       checkEq (length paramBs) (length params)
-      forM (zip (toList paramBs) (toList params)) $ \(b, param) ->
+      forM_ (zip (toList paramBs) (toList params)) $ \(b, param) ->
         param |: binderAnn b
       let argBs' = applyNaryAbs (Abs paramBs argBs) params
       checkDataConRefBindings argBs' args
@@ -160,7 +160,7 @@ instance HasType Atom where
       PtrTy (_, _, t) <- typeCheck ptr
       checkEq (binderAnn b) (BaseTy t)
       numel |: IdxRepTy
-      typeCheck b
+      void $ typeCheck b
       withBinder b $ typeCheck body
 
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
@@ -171,6 +171,7 @@ checkDataConRefBindings (Nest b restBs) (Nest refBinding restRefs) = do
   checkEq (binderAnn b) (binderAnn b')
   let restBs' = scopelessSubst (b@>Var v) restBs
   withBinder b' $ checkDataConRefBindings restBs' restRefs
+checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -183,7 +184,7 @@ typeCheckVar v@(name:>annTy) = do
   return annTy
 
 isDependent :: DataConDef -> Bool
-isDependent (DataConDef _ bs) = go bs
+isDependent (DataConDef _ binders) = go binders
   where
     go :: Nest Binder -> Bool
     go Empty = False
@@ -370,6 +371,8 @@ instance CoreVariant Atom where
     Variant _ _ _ _ -> alwaysAllowed
     VariantTy _ -> alwaysAllowed
     ACase _ _ _ -> goneBy Simp
+    DataConRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    BoxedRef _ _ _ _ -> neverAllowed  -- only used internally in Imp lowering
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
@@ -463,7 +466,7 @@ checkEffRow (EffectRow effs effTail) = do
 declareEff :: (EffectName, Maybe Name) -> TypeM ()
 declareEff (effName, Just h) =
   declareEffs $ EffectRow [(effName, h)] Nothing
-declareEff (effName, Nothing) = return ()
+declareEff (_, Nothing) = return ()
 
 declareEffs :: EffectRow -> TypeM ()
 declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
@@ -570,13 +573,14 @@ typeCheckCon con = case con of
   ClassDictHole _ ty -> ty |: TyKind >> return ty
   IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
   IndexRangeVal t l h i -> i|:IdxRepTy >> return (TC $ IndexRange t l h)
+  IndexSliceVal _ _ _ -> error "not implemented"
   BaseTypeRef p -> do
     (PtrTy (_, _, b)) <- typeCheck p
     return $ RawRefTy $ BaseTy b
   TabRef tabTy -> do
     TabTy b (RawRefTy a) <- typeCheck tabTy
     return $ RawRefTy $ TabTy b a
-  ConRef con -> case con of
+  ConRef conRef -> case conRef of
     UnitCon -> return $ RawRefTy UnitTy
     PairCon x y ->
       RawRefTy <$> (PairTy <$> typeCheckRef x <*> typeCheckRef y)
@@ -590,7 +594,7 @@ typeCheckCon con = case con of
     SumAsProd ty tag _ -> do    -- TODO: check args!
       tag |:(RawRefTy TagRepTy)
       return $ RawRefTy ty
-    _ -> error $ "Not a valid ref: " ++ pprint con
+    _ -> error $ "Not a valid ref: " ++ pprint conRef
   RecordRef _ -> error "Not implemented"
 
 typeCheckRef :: HasType a => a -> TypeM Type
@@ -670,14 +674,14 @@ typeCheckOp op = case op of
     return ty
   PrimEffect ref m -> do
     TC (RefType h s) <- typeCheck ref
-    let h' = case h of
-               Just (Var (h':>TyKind)) -> Just h'
+    let h'' = case h of
+               Just ~(Var (h':>TyKind)) -> Just h'
                Nothing -> Nothing
     case m of
-      MGet    ->         declareEff (State , h') $> s
-      MPut  x -> x|:s >> declareEff (State , h') $> UnitTy
-      MAsk    ->         declareEff (Reader, h') $> s
-      MTell x -> x|:s >> declareEff (Writer, h') $> UnitTy
+      MGet    ->         declareEff (State , h'') $> s
+      MPut  x -> x|:s >> declareEff (State , h'') $> UnitTy
+      MAsk    ->         declareEff (Reader, h'') $> s
+      MTell x -> x|:s >> declareEff (Writer, h'') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
     i |: (absArgType a)

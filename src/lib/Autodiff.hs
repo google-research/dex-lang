@@ -303,6 +303,13 @@ linearizePrimCon con = case con of
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
+  IntRangeVal _ _ _     -> emitWithZero
+  IndexRangeVal _ _ _ _ -> emitWithZero
+  IndexSliceVal _ _ _   -> emitWithZero
+  BaseTypeRef _  -> error "Unexpected ref"
+  TabRef _       -> error "Unexpected ref"
+  ConRef _       -> error "Unexpected ref"
+  RecordRef _    -> error "Unexpected ref"
   ClassDictHole _ _ -> error "Unexpected ClassDictHole"
   where emitWithZero = LinA $ return $ withZeroTangent $ Con con
 
@@ -331,6 +338,8 @@ linearizeAtom atom = case atom of
   -- Those should be gone after simplification
   Lam _           -> error "Unexpected non-table lambda"
   ACase _ _ _     -> error "Unexpected ACase"
+  DataConRef _ _ _ -> error "Unexpected ref"
+  BoxedRef _ _ _ _ -> error "Unexpected ref"
   where
     emitWithZero = LinA $ return $ withZeroTangent atom
     rematPrimal wrt m = do
@@ -682,6 +691,8 @@ transposeAtom atom ct = case atom of
   TC _            -> notTangent
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
+  DataConRef _ _ _ -> error "Unexpected ref"
+  BoxedRef _ _ _ _ -> error "Unexpected ref"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeCon :: Con -> Atom -> TransposeM ()
@@ -695,6 +706,13 @@ transposeCon con ct = case con of
   CharCon _         -> notTangent
   AnyValue _        -> notTangent
   ClassDictHole _ _ -> notTangent
+  IntRangeVal _ _ _     -> notImplemented
+  IndexRangeVal _ _ _ _ -> notImplemented
+  IndexSliceVal _ _ _   -> notImplemented
+  BaseTypeRef _  -> notImplemented
+  TabRef _       -> notImplemented
+  ConRef _       -> notImplemented
+  RecordRef _    -> notImplemented
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 freeLinVars :: HasVars a => a -> TransposeM [Var]

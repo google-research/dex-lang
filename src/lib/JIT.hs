@@ -17,7 +17,6 @@ import qualified LLVM.AST.AddrSpace as L
 import qualified LLVM.AST.DataLayout as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
-import qualified LLVM.AST.Type as L
 import qualified LLVM.AST.Typed as L
 import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
@@ -36,7 +35,6 @@ import qualified Data.ByteString.Char8 as B
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
-import Foreign.Ptr (ptrToWordPtr)
 import GHC.Stack
 import qualified Data.Set as S
 
@@ -154,7 +152,6 @@ compileInstr instr = case instr of
     src'  <- compileExpr src  >>= castVoidPtr
     numel' <- compileExpr numel >>= (`asIntWidth` i64)
     numBytes <- numel' `mul` sizeof (scalarTy ty)
-    dev <- asks curDevice
     case (destDev, srcDev) of
       (CPU, GPU) -> cuMemcpyDToH numBytes src'  dest'
       (GPU, CPU) -> cuMemcpyHToD numBytes dest' src'
@@ -326,7 +323,7 @@ cuMemFree ptr = do
 -- === GPU Kernel compilation ===
 
 impKernelToLLVMGPU :: ImpFunction -> LLVMKernel
-impKernelToLLVMGPU (ImpFunction _ (lvar:args) body) = runCompile GPU $ do
+impKernelToLLVMGPU (ImpFunction _ ~(lvar:args) body) = runCompile GPU $ do
   (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair ptrParamAttrs) argTypes
   (sizeParam, sizeOperand) <- freshParamOpPair [] lidxType
   tidx <- threadIdxX
@@ -446,6 +443,7 @@ compileStatement stmt = case stmt of
         ptxPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
         kernelParams <- packArgs $ size' : args'
         launchCUDAKernel ptxPtr size' kernelParams
+      _ -> error $ "Not a valid calling convention for a launch: " ++ pprint cc
 
 compileExpr :: IExpr -> Compile Operand
 compileExpr expr = case expr of

@@ -45,7 +45,7 @@ import Foreign.Ptr
 import Foreign.Storable hiding (alignment)
 import Control.Monad
 import Control.Exception hiding (throw)
-import Data.ByteString.Short (toShort, ShortByteString)
+import Data.ByteString.Short (ShortByteString)
 import Data.ByteString.Char8 (unpack, pack)
 import Data.IORef
 import qualified Data.ByteString.Char8 as B
@@ -245,6 +245,7 @@ loadLitVal ptr (Scalar ty) = case ty of
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
 loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
+loadLitVal _ _ = error "not implemented"
 
 storeLitVal :: Ptr () -> LitVal -> IO ()
 storeLitVal ptr val = case val of
@@ -254,6 +255,7 @@ storeLitVal ptr val = case val of
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
   PtrLit _   x -> poke (castPtr ptr) x
+  _ -> error "not implemented"
 
 cellSize :: Int
 cellSize = 8

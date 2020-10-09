@@ -239,9 +239,11 @@ prettyPrecPrimCon con = case con of
   ClassDictHole _ _ -> atPrec ArgPrec "_"
   IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
+  IndexSliceVal ty n i ->
+    atPrec LowestPrec $ "IndexSlice" <+> pApp ty <+> pApp n <+> pApp i
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef con -> atPrec AppPrec $ "Ref" <+> pApp con -- TODO: figure out overlapping issues <+> pApp con
+  ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
@@ -356,7 +358,7 @@ instance PrettyPrec Atom where
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
-    DataConRef def params args -> atPrec AppPrec $
+    DataConRef _ params args -> atPrec AppPrec $
       "DataConRef" <+> p params <+> p args
     BoxedRef b ptr size body -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body

@@ -12,11 +12,7 @@ import Prelude hiding (pi, abs)
 import Control.Monad
 import qualified Data.ByteString as BS
 import System.Directory
-import System.IO.Error
 import System.FilePath
-import System.IO
-import System.IO.MMap
-import System.Posix hiding (ReadOnly, version)
 import Data.Foldable (toList)
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)

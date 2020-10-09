@@ -36,6 +36,7 @@ statementFlops stmt = case stmt of
   IFor _ _ size block -> local (mulTerm $ evalSizeExpr size) $ flops block
   ICond _ _ _         -> return () -- TODO: Implement
   IWhile _ _          -> return () -- TODO: Implement
+  ILaunch _ _ _       -> return () -- TODO: Implement
 
 instrFlops :: ImpInstr -> FlopM ()
 instrFlops instr = case instr of

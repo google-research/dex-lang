@@ -69,7 +69,7 @@ dexEval ctxPtr sourcePtr = do
 
 dexLookup :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
 dexLookup ctxPtr namePtr = do
-  Context opts env <- deRefStablePtr $ castPtrToStablePtr $ castPtr ctxPtr
+  Context _ env <- deRefStablePtr $ castPtrToStablePtr $ castPtr ctxPtr
   name <- peekCString namePtr
   case envLookup env (GlobalName $ fromString name) of
     Just (_, LetBound _ (Atom atom)) -> do
@@ -146,6 +146,7 @@ instance Storable CAtom where
         Float64Lit v -> val @Word64 1 3 >> val 2 v
         Float32Lit v -> val @Word64 1 4 >> val 2 v
         VecLit     _ -> error "Unsupported"
+        PtrLit _ _   -> error "Unsupported"
     CRectArray _ _ _ -> error "Unsupported"
     where
       val :: forall a. Storable a => Int -> a -> IO ()

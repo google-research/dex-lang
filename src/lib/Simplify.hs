@@ -65,6 +65,8 @@ hoistDepDataCons scope (Module Simp decls bindings) =
         LetBound ann x | isData ty -> do x' <- emit x
                                          return (ty, LetBound ann $ Atom x')
         _ -> return (ty, info)
+hoistDepDataCons _ (Module _ _ _) =
+  error "Should only be hoisting data cons on core-Simp IR"
 
 simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
 simplifyDecls Empty = return mempty
@@ -142,6 +144,8 @@ simplifyAtom atom = case atom of
             Block Empty (Atom r) -> return $ Abs bs'' r
             _                    -> error $ "Nontrivial block in ACase simplification"
         ACase e' alts' <$> (substEmbedR rty)
+  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
+  BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
@@ -229,7 +233,6 @@ separateDataComponent localVars v = do
   return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
   where
     rec atom = do
-      topScope <- getScope
       let atomTy = getType atom
       case atomTy of
         PairTy _ _ -> do

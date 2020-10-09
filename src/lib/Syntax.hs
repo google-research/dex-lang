@@ -900,7 +900,7 @@ instance Subst DataConRefBinding where
     DataConRefBinding (subst env b) (subst env ref)
 
 instance BindsVars DataConRefBinding where
-  boundVars (DataConRefBinding b ref) = b @> (binderType b, UnknownBinder)
+  boundVars (DataConRefBinding b _) = b @> (binderType b, UnknownBinder)
   renamingSubst env (DataConRefBinding b ref) = (DataConRefBinding b' ref', env')
     where
       ref' = subst env ref
@@ -1198,6 +1198,7 @@ instance HasIVars ImpBlock where
         IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
         IWhile c p        -> freeIVars c <> freeIVars p
         ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
+        ILaunch _ size args -> freeIVars size <> foldMap freeIVars args
 
 instance BindsIVars ImpStatement where
   boundIVars stmt = case stmt of
@@ -1206,6 +1207,7 @@ instance BindsIVars ImpStatement where
     IFor _ _ _ _ -> mempty
     IWhile _ _   -> mempty
     ICond  _ _ _ -> mempty
+    ILaunch _ _ _ -> mempty
 
 instance HasIVars ImpInstr where
   freeIVars i = case i of

@@ -25,7 +25,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
 import Data.Functor
-import Data.Foldable (toList, fold)
+import Data.Foldable (toList)
 import Data.Int
 import Data.Maybe (fromJust)
 import GHC.Stack
@@ -255,11 +255,11 @@ toImpOp (maybeDest, op) = case op of
     buf <- impOffset (fromScalarAtom arr) (fromScalarAtom off)
     returnVal $ toScalarAtom buf
   PtrLoad arr -> returnVal . toScalarAtom =<< loadAnywhere (fromScalarAtom arr)
-  SliceOffset ~(Con (IndexSliceVal n l tileOffset)) idx -> do
+  SliceOffset ~(Con (IndexSliceVal n _ tileOffset)) idx -> do
     i' <- indexToInt idx
     i <- iaddI (fromScalarAtom tileOffset) i'
     returnVal =<< intToIndex n i
-  SliceCurry ~(Con (IndexSliceVal _ (PairTy u v) tileOffset)) idx -> do
+  SliceCurry ~(Con (IndexSliceVal _ (PairTy _ v) tileOffset)) idx -> do
     vz <- intToIndex v $ IIdxRepVal 0
     extraOffset <- indexToInt (PairVal idx vz)
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
@@ -390,7 +390,7 @@ type Dest = Atom  -- has type `Ref a` for some a
 type WithDest a = (Maybe Dest, a)
 
 data DestEnv = DestEnv
-       { allocationInfo :: AllocInfo
+       { _allocationInfo :: AllocInfo
        , enclosingIdxs :: IndexStructure
        , destDepVars :: Env () }
 
@@ -497,7 +497,7 @@ makeDataConDest (Nest b rest) = do
 
 applyIdxs :: MonadEmbed m => Atom -> IndexStructure -> m Atom
 applyIdxs ptr Empty = return ptr
-applyIdxs ptr idxs@(Nest (Bind i) rest) = do
+applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
   ordinal <- indexToIntE $ Var i
   offset <- offsetToE idxs ordinal
   ptr' <- ptrOffset ptr offset
@@ -529,6 +529,7 @@ copyAtom (Con dest) src = case (dest, src) of
     copyAtom tag (TagRepVal $ fromIntegral index)
     zipWithM_ copyAtom (payload !! index) [x]
   _ -> error $ "Not implemented: " ++ pprint (dest, src)
+copyAtom dest src = error $ "Not a valid dest-source pair: " ++ pprint (dest, src)
 
 copyDataConArgs :: Nest DataConRefBinding -> [Atom] -> ImpM ()
 copyDataConArgs Empty [] = return ()
@@ -536,13 +537,15 @@ copyDataConArgs (Nest (DataConRefBinding b ref) rest) (x:xs) = do
   copyAtom ref x
   rest' <- impSubst (b@>x) rest
   copyDataConArgs rest' xs
+copyDataConArgs bindings args =
+  error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
 
 loadDest :: MonadEmbed m => Dest -> m Atom
 loadDest (BoxedRef b ptrPtr _ body) = do
   ptr <- ptrLoad ptrPtr
   body' <- substEmbed (b@>ptr) body
   loadDest body'
-loadDest dest@(DataConRef def params bs) = do
+loadDest (DataConRef def params bs) = do
   DataCon def params 0 <$> loadDataConArgs bs
 loadDest (Con dest) = do
  case dest of
@@ -551,6 +554,7 @@ loadDest (Con dest) = do
     body' <- substEmbed (b@>i) body
     result <- emitBlock body'
     loadDest result
+  RecordRef xs -> Record <$> traverse loadDest xs
   ConRef con -> Con <$> case con of
     PairCon d1 d2 -> PairCon <$> loadDest d1 <*> loadDest d2
     UnitCon -> return UnitCon
@@ -558,8 +562,9 @@ loadDest (Con dest) = do
     IntRangeVal     l h iRef -> IntRangeVal     l h <$> loadDest iRef
     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
     CharCon d -> CharCon <$> loadDest d
-  RecordRef xs -> Record <$> traverse loadDest xs
-  _ -> error $ "Not a valid dest: " ++ pprint dest
+    _        -> error $ "Not a valid dest: " ++ pprint dest
+  _          -> error $ "Not a valid dest: " ++ pprint dest
+loadDest dest = error $ "Not a valid dest: " ++ pprint dest
 
 loadDataConArgs :: MonadEmbed m => Nest DataConRefBinding -> m [Atom]
 loadDataConArgs Empty = return []
@@ -585,7 +590,7 @@ sliceDestDim :: MonadEmbed m => Int -> Dest -> Atom -> Type -> m Dest
 sliceDestDim 0 dest i sliceIdxTy = sliceDest dest i sliceIdxTy
 sliceDestDim d dest i sliceIdxTy = buildFor Fwd (Bind ("i":>idxTy)) $ \j -> do
   dest' <- indexDest dest j
-  sliceDest dest' i sliceIdxTy
+  sliceDestDim (d-1) dest' i sliceIdxTy
   where
     RawRefTy (TabTy idxBinder _) = dest
     idxTy = binderType idxBinder
@@ -620,9 +625,6 @@ makeAllocDest allocTy ty = do
       _ -> return ()
     return (ptr @> toScalarAtom ptr')
   impSubst env dest
-
-fromIVar :: IExpr -> IVar
-fromIVar ~(IVar v) = v
 
 splitDest :: WithDest Block -> ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
 splitDest (maybeDest, (Block decls ans)) = do
@@ -756,9 +758,6 @@ indexToInt idx = fromScalarAtom <$> fromEmbed (indexToIntE idx)
 
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize ty = fromScalarAtom <$> fromEmbed (indexSetSizeE ty)
-
-elemCount :: IndexStructure -> ImpM IExpr
-elemCount idxs = fromScalarAtom <$> fromEmbed (elemCountE idxs)
 
 elemCountE :: MonadEmbed m => IndexStructure -> m Atom
 elemCountE idxs = case idxs of
@@ -958,11 +957,14 @@ checkStatement stmt = addContext ctx $ case stmt of
     ty <- instrTypeChecked instr
     case (binder, ty) of
       (Nothing, Nothing) -> return mempty
-      (Just _ , Nothing) -> throw CompilerErr $ "Can't assign result of void instruction"
       (Just b, Just t) -> do
         checkBinder b
         assertEq (binderAnn b) t $ "Type mismatch in instruction " ++ pprint instr
         return (b@>t)
+      (Just _ , Nothing) ->
+        throw CompilerErr $ "Can't assign result of void instruction"
+      (Nothing, Just _) ->
+        throw CompilerErr $ "Can't ignore result of non-void instruction"
   IFor _ i size block -> do
     checkInt size
     checkBinder i
@@ -1108,6 +1110,7 @@ impInstrType instr = case instr of
   Store _ _       -> Nothing
   Free _          -> Nothing
   IThrowError     -> Nothing
+  MemCopy _ _ _   -> Nothing
 
 checkImpBinOp :: MonadError Err m => BinOp -> IType -> IType -> m IType
 checkImpBinOp op x y = do

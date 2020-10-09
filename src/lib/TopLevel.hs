@@ -82,11 +82,13 @@ evalSourceBlockM env block = case sbContents block of
         Printed -> do
           s <- liftIO $ pprintVal val
           logTop $ TextOut s
-        Heatmap color -> return mempty -- logTop $ valToHeatmap color val
-        Scatter       -> return mempty -- logTop $ valToScatter val
+        Heatmap _    -> error "not implemented"
+        ColorHeatmap -> error "not implemented"
+        Scatter      -> error "not implemented"
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
+    Dump _ _ -> error "Not implemented"
   GetNameType v -> case envLookup env (v:>()) of
     Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
     _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
@@ -168,9 +170,6 @@ evalModule bindings normalized = do
       newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
-
-evalBackendInterp :: TopEnv -> Module -> Module
-evalBackendInterp = undefined
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
