@@ -76,6 +76,11 @@ linearizeBlock env (Block decls result) = case decls of
             --     when multiple values are returned from a case statement).
             -- Don't mark variables with trivial tangent types as active. This lets us avoid
             -- pretending that we're differentiating wrt e.g. equality tests which yield discrete results.
+            -- TODO: This check might fail if the result type does not have a defined tangent type.
+            --       For example, what if it's a reference? Some of those should be marked as active
+            --       variables, but I don't think that we want to define them to have tangents.
+            --       We should delete this check, but to do that we would have to support differentiation
+            --       through case statements with active scrutinees.
             let nontrivialVsMask = [not $ isSingletonType $ tangentType $ varType v | v <- vs]
             let nontrivialVs = vs `takeWhere` nontrivialVsMask
             (ans, bodyLin) <- extendWrt nontrivialVs [] $ runLinA $ linearizeBlock (env <> newEnv bs xs) body
@@ -280,7 +285,7 @@ linearizeHof env hof = case hof of
                     Nothing     -> do
                       let (BinaryFunTy _ b _ _) = getType lam'
                       let RefTy _ wTy = binderType b
-                      return $ emitter wTy
+                      return $ emitter $ tangentType wTy
                   valEmitter $ \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
                       extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
@@ -644,8 +649,8 @@ linAtomRef (Var x) = do
   refs <- asks linRefs
   case envLookup refs x of
     Just ref -> return ref
-    _ -> error $ "Not a linear var" ++ pprint (Var x)
-linAtomRef a = error $ "Not a linear var" ++ pprint a
+    _ -> error $ "Not a linear var: " ++ pprint (Var x)
+linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
@@ -687,11 +692,11 @@ transposeAtom atom ct = case atom of
   Record  e       -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   DataCon _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
-  TabVal _ e       | isSingletonType $ getType e -> return ()
-  TabVal _ _      -> notTangent  -- This could technically be a tangent (its type is
-                                 -- a valid tangent type), but we never produce such
-                                 -- tangents for linear values. We might need to revise
-                                 -- this in the future though!
+  TabVal b body   ->
+    void $ buildFor Fwd b $ \i -> do
+      ct' <- tabGet ct i
+      localNonlinSubst (b@>i) $ transposeBlock body ct'
+      return UnitVal
   Lam _           -> notTangent
   TypeCon _ _     -> notTangent
   LabeledRow _    -> notTangent

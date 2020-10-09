@@ -92,7 +92,7 @@ simplifyAtom atom = case atom of
           _ -> substEmbedR atom
         _   -> substEmbedR atom
   -- Tables that only contain data aren't necessarily getting inlined,
-  -- so this might be the last change to simplify them.
+  -- so this might be the last chance to simplify them.
   TabVal _ _ -> do
     topScope <- getScope
     case isData topScope (getType atom) of
