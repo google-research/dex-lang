@@ -255,15 +255,16 @@ vec = [1.]
   (checkDeriv (\x. f {x=x, y=4.0, z=5}) 2.0, checkDeriv (\y. f {x=2.0, y=y, z=5}) 4.0)
 > (True, True)
 
-:p
-  f = \x.
-    y = for i:(Fin 10). { x=x * (IToF $ ordinal i) }
-    z = for i.
-      ({ x=x, ... }) = y.i
-      x
-    sum' z
-  checkDeriv f 1.0
-> True
+-- TODO: Re-enable once the big PR is merged
+-- :p
+--   f = \x.
+--     y = for i:(Fin 10). { x=x * (IToF $ ordinal i) }
+--     z = for i.
+--       ({ x=x, ... }) = y.i
+--       x
+--     sum' z
+--   checkDeriv f 1.0
+-- > True
 
 :p
   f = \x. for i:(Fin 4). { x=x * x * (IToF $ ordinal i) }
@@ -286,3 +287,19 @@ vec = [1.]
   f = max 0.0
   (checkDerivBase f 1.0, checkDerivBase f (-1.0))
 > (True, True)
+
+:p
+  xs = for i:(Fin 2). 2.0
+  f = \x. sum xs
+  checkDeriv f 1.0
+> True
+
+:p
+  f = \c.
+    v = for i:(Fin 2). 2.0
+    (c, v) = snd $ withState (c, v) \r. for i:(Fin 2).
+      (c, v) = get r
+      r := (c + sum v, v)
+    c
+  checkDeriv f 1.0
+> True

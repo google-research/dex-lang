@@ -13,7 +13,7 @@
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
-              runSubstEmbed, runEmbed, getScope, reduceBlock,
+              runSubstEmbed, runEmbed, getScope, reduceBlock, embedLook,
               app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
               reduceScoped, select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce,
@@ -190,15 +190,9 @@ wrapDecls decls atom = inlineLastDecl $ Block decls $ Atom atom
 inlineLastDecl :: Block -> Block
 inlineLastDecl block@(Block decls result) =
   case (reverse (toList decls), result) of
-    (Let _ (Bind v) expr:rest, Atom atom)
-      | atom == Var v || sameSingletonVal (varType v) (getType atom) ->
-          Block (toNest (reverse rest)) expr
+    (Let _ (Bind v) expr:rest, Atom atom) | atom == Var v ->
+      Block (toNest (reverse rest)) expr
     _ -> block
-  where
-    sameSingletonVal t1 t2 =
-      case (singletonTypeVal t1, singletonTypeVal t2) of
-        (Just x1, Just x2) | x1 == x2 -> True
-        _ -> False
 
 fLitLike :: Double -> Atom -> Atom
 fLitLike x t = case getType t of
