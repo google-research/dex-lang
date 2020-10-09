@@ -222,10 +222,7 @@ toImpOp (maybeDest, op) = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
-  UnsafeFromOrdinal n i -> do
-    let i' = fromScalarAtom i
-    returnVal =<< intToIndex resultTy i'
-    where (BaseTy tagBT) = TagRepTy
+  UnsafeFromOrdinal n i -> returnVal =<< (intToIndex n $ fromScalarAtom i)
   IdxSetSize n -> returnVal . toScalarAtom  =<< indexSetSize n
   ToOrdinal idx -> asInt $ case idx of
       Con (AnyValue t) -> anyValue t
@@ -800,6 +797,8 @@ addToAtom dest src = case (dest, src) of
     store ptr' updated
   (Con (TabRef _), TabVal _ _) -> zipTabDestAtom addToAtom dest src
   (Con (ConRef destCon), Con srcCon) -> zipWithRefConM addToAtom destCon srcCon
+  (Con (RecordRef dests), Record srcs) ->
+    zipWithM_ addToAtom (toList dests) (toList srcs)
   _ -> error $ "Not implemented " ++ pprint (dest, src)
 
 loadAnywhere :: IExpr -> ImpM IExpr

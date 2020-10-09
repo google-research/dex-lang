@@ -32,7 +32,7 @@ def odeint (dict: VSpace a) ?=> (dynamics: a -> Time -> a)
   -- todo: never go past final time
 
   init = (z0, t0, z0, t0)
-  
+
   body = \i state.
     t = times.i
     (za, ta, zb, tb) = singleEuler dynamics state t dt
@@ -52,9 +52,9 @@ dt = 0.001
 :p odeint myDyn z0 t0 t1 dt
 > [[2.7169456]]
 
-:plot
-  xs = linspace (Fin 100) 0.0 1.0
-  ys = odeint myDyn z0 t0 xs dt
-  ys' = for i. ys.i.(fromOrdinal _ 0)
-  zip xs ys'
-> <graphical output>
+-- :plot
+--   xs = linspace (Fin 100) 0.0 1.0
+--   ys = odeint myDyn z0 t0 xs dt
+--   ys' = for i. ys.i.(fromOrdinal _ 0)
+--   zip xs ys'
+-- > <graphical output>

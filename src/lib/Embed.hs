@@ -217,6 +217,7 @@ zeroAt ty = case ty of
   TabTy i a  -> TabValA i $ zeroAt a
   UnitTy     -> UnitVal
   PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  RecordTy (Ext tys Nothing) -> Record $ fmap zeroAt tys
   _          -> unreachable
   where
     unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty

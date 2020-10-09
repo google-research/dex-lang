@@ -345,8 +345,8 @@ params = (num_samples, num_bounces, share_prng)
 -- %time
 image = takePicture params theScene num_pix camera
 
-:plotmatcolor image
-> <graphical output>
+-- :plotmatcolor image
+-- > <graphical output>
 
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)

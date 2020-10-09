@@ -25,6 +25,7 @@ import Interpreter (indices)
 pprintVal :: Val -> IO String
 pprintVal val = asStr <$> prettyVal val
 
+-- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
 prettyVal :: Val -> IO (Doc ann)
 prettyVal val = case val of
   Lam abs@(Abs b (TabArrow, _)) -> do
