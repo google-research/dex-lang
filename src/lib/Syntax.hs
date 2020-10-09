@@ -325,8 +325,8 @@ data PrimOp e =
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
-      | IntAsIndex e e   -- index set, ordinal index
-      | IndexAsInt e
+      | UnsafeFromOrdinal e e   -- index set, ordinal index. XXX: doesn't check bounds
+      | ToOrdinal e
       | IdxSetSize e
       | ThrowError e
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
@@ -1449,9 +1449,9 @@ builtinNames = M.fromList
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("log1p", unOp Log1p), ("lgamma", unOp LGamma)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
-  , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
-  , ("asidx"        , OpExpr $ IntAsIndex () ())
+  , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
+  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())

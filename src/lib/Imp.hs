@@ -222,16 +222,12 @@ toImpOp (maybeDest, op) = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
-  IntAsIndex n i -> do
+  UnsafeFromOrdinal n i -> do
     let i' = fromScalarAtom i
-    n' <- indexSetSize n
-    cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Less) i' n'
-    cond' <- cast cond tagBT
-    emitSwitch cond' [emitStatement $ IInstr (Nothing, IThrowError), return ()]
     returnVal =<< intToIndex resultTy i'
     where (BaseTy tagBT) = TagRepTy
   IdxSetSize n -> returnVal . toScalarAtom  =<< indexSetSize n
-  IndexAsInt idx -> asInt $ case idx of
+  ToOrdinal idx -> asInt $ case idx of
       Con (AnyValue t) -> anyValue t
       _                -> idx
     where

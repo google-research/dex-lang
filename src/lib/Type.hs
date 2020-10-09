@@ -658,8 +658,8 @@ typeCheckOp op = case op of
     ty <- typeCheck x
     y |: ty
     return ty
-  IntAsIndex ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
-  IndexAsInt i -> typeCheck i $> IdxRepTy
+  UnsafeFromOrdinal ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
+  ToOrdinal i -> typeCheck i $> IdxRepTy
   IdxSetSize i -> typeCheck i $> IdxRepTy
   FFICall _ ansTy args -> do
     forM_ args $ \arg -> do

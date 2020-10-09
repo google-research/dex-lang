@@ -142,8 +142,8 @@ linearizeOp op = case op of
   VectorBinOp _ _ _      -> notImplemented
   VectorPack  vals       -> (VectorPack  <$> traverse la vals) `bindLin` emitOp
   VectorIndex v i        -> (VectorIndex <$> la v <*> pure i ) `bindLin` emitOp
-  IntAsIndex _ _         -> emitDiscrete
-  IndexAsInt _           -> emitDiscrete
+  UnsafeFromOrdinal _ _  -> emitDiscrete
+  ToOrdinal _            -> emitDiscrete
   IdxSetSize _           -> emitDiscrete
   ThrowError _           -> emitWithZero
   CastOp t v             -> do
@@ -620,8 +620,8 @@ transposeOp op ct = case op of
   Inject       _        -> notLinear
   SliceOffset  _ _      -> notLinear
   SliceCurry   _ _      -> notLinear
-  IntAsIndex   _ _      -> notLinear
-  IndexAsInt   _        -> notLinear
+  UnsafeFromOrdinal _ _ -> notLinear
+  ToOrdinal   _         -> notLinear
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
   FFICall      _ _ _    -> notLinear
@@ -709,10 +709,10 @@ transposeCon con ct = case con of
   IntRangeVal _ _ _     -> notImplemented
   IndexRangeVal _ _ _ _ -> notImplemented
   IndexSliceVal _ _ _   -> notImplemented
-  BaseTypeRef _  -> notImplemented
-  TabRef _       -> notImplemented
-  ConRef _       -> notImplemented
-  RecordRef _    -> notImplemented
+  BaseTypeRef _  -> notTangent
+  TabRef _       -> notTangent
+  ConRef _       -> notTangent
+  RecordRef _    -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 freeLinVars :: HasVars a => a -> TransposeM [Var]

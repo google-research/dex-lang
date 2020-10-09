@@ -38,7 +38,7 @@ data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
 runMode evalMode preludeFile opts = do
   key <- case preludeFile of
-           Nothing   -> return ""  -- memoizeFileEval already checks compiler version
+           Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
            Just path -> show <$> getModificationTime path
   env <- cached "prelude" key $ evalPrelude opts preludeFile
   let runEnv m = evalStateT m env

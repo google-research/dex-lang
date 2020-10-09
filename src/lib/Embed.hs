@@ -413,7 +413,7 @@ singletonTypeVal (TC con) = case con of
 singletonTypeVal _ = Nothing
 
 indexAsInt :: MonadEmbed m => Atom -> m Atom
-indexAsInt idx = emitOp $ IndexAsInt idx
+indexAsInt idx = emitOp $ ToOrdinal idx
 
 instance MonadTrans EmbedT where
   lift m = EmbedT $ lift $ lift m
@@ -640,7 +640,6 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
   BoxedRef b ptr size body -> do
     ptr'  <- fAtom ptr
     size' <- buildScoped $ evalBlockE def size
-    -- Is this what we want? We can't recur because we don't want decls
     Abs b' (decls, body') <- buildAbs b $ \x ->
       extendR (b@>x) $ evalBlockE def (Block Empty $ Atom body)
     case decls of
@@ -736,6 +735,8 @@ clampPositive x = do
 --      generate the same instruction again, potentially leading to an
 --      infinite loop.
 indexToIntE :: MonadEmbed m => Atom -> m Atom
+indexToIntE (Con (IntRangeVal _ _ i))     = return i
+indexToIntE (Con (IndexRangeVal _ _ _ i)) = return i
 indexToIntE idx = case getType idx of
   UnitTy  -> return $ IdxRepVal 0
   PairTy _ rType -> do

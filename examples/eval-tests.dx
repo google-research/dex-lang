@@ -526,7 +526,7 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p
   x : (Int|Float) = Right 1.2
   x
-> Right 1.2
+> (Right 1.2)
 
 -- Sum types as flattened index sets!
 def Weights (n:Type) (m:Type) : Type = n=>m=>Float

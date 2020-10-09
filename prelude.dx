@@ -211,6 +211,7 @@ def BToI (x:Bool) : Int  =
 
 def BToF (x:Bool) : Float = IToF (BToI x)
 def todo (a:Type) ?-> : a = %throwError a
+def throw (a:Type) ?-> : a = %throwError a
 
 'Effects
 
@@ -345,11 +346,16 @@ float32Floating : Floating Float32 =
 
 def Range (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = Range 0 n
-def ordinal (i:a) : Int = %asint i
+def ordinal (i:a) : Int = %toOrdinal i
 def size (n:Type) : Int = %idxSetSize n
-def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
 -- TODO: make this the built-in and define `fromOrdinal` with a userspace branch/error
--- def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
+def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
+
+def fromOrdinal (n:Type) (i:Int) : n =
+  case i < size n of
+    True  -> unsafeFromOrdinal _ i
+    False -> throw
+
 def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
 def (@) (i:Int) (n:Type) : n = fromOrdinal n i
 def iota (n:Type) : n=>Int = for i. ordinal i

@@ -118,7 +118,7 @@ evalOpDefined expr = case expr of
   PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> (Con . Lit) <$> loadLitVal p t
   PtrLoad (Con (Lit (PtrLit (_, a, _) _))) ->
     error $ "Can't load from this address space in interpreter: " ++ pprint a
-  IndexAsInt idxArg -> case idxArg of
+  ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
     Con (AnyValue t)                       -> return $ anyValue t
