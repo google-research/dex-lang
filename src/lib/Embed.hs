@@ -13,13 +13,13 @@
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
-              runSubstEmbed, runEmbed, getScope, reduceBlock,
+              runSubstEmbed, runEmbed, getScope, embedLook,
               app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
-              reduceScoped, select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
+              select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce, buildAbs, buildForAux,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, reduceAtom, unpackConsList, emitRunWriter, emitRunState,
+              embedExtend, unpackConsList, emitRunWriter, emitRunState,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, evalBlockE, substTraversalDef,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
@@ -35,7 +35,6 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
-import Data.Maybe
 import GHC.Stack
 
 import Env
@@ -201,15 +200,9 @@ wrapDecls decls atom = inlineLastDecl $ Block decls $ Atom atom
 inlineLastDecl :: Block -> Block
 inlineLastDecl block@(Block decls result) =
   case (reverse (toList decls), result) of
-    (Let _ (Bind v) expr:rest, Atom atom)
-      | atom == Var v || sameSingletonVal (varType v) (getType atom) ->
-          Block (toNest (reverse rest)) expr
+    (Let _ (Bind v) expr:rest, Atom atom) | atom == Var v ->
+      Block (toNest (reverse rest)) expr
     _ -> block
-  where
-    sameSingletonVal t1 t2 =
-      case (singletonTypeVal t1, singletonTypeVal t2) of
-        (Just x1, Just x2) | x1 == x2 -> True
-        _ -> False
 
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
@@ -662,44 +655,6 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
       case b of
         Block Empty (Atom r) -> return $ Abs bs'' r
         _                    -> error "ACase alternative traversal has emitted decls or exprs!"
-
--- === partial evaluation using definitions in scope ===
-
-reduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
-reduceScoped m = do
-  block <- buildScoped m
-  scope <- getScope
-  return $ reduceBlock scope block
-
-reduceBlock :: Scope -> Block -> Maybe Atom
-reduceBlock scope (Block decls result) = do
-  let localScope = foldMap boundVars decls
-  ans <- reduceExpr (scope <> localScope) result
-  [] <- return $ toList $ localScope `envIntersect` freeVars ans
-  return ans
-
-reduceAtom :: Scope -> Atom -> Atom
-reduceAtom scope x = case x of
-  Var (Name InferenceName _ _ :> _) -> x
-  Var v -> case snd (scope ! v) of
-    -- TODO: worry about effects!
-    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
-    _ -> x
-  _ -> x
-
-reduceExpr :: Scope -> Expr -> Maybe Atom
-reduceExpr scope expr = case expr of
-  Atom val -> return $ reduceAtom scope val
-  App f x -> do
-    let f' = reduceAtom scope f
-    let x' = reduceAtom scope x
-    -- TODO: Worry about variable capture. Should really carry a substitution.
-    case f' of
-      Lam (Abs b (PureArrow, block)) ->
-        reduceBlock scope $ subst (b@>x', scope) block
-      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
-      _ -> Nothing
-  _ -> Nothing
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of

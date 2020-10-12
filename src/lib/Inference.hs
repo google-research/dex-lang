@@ -16,6 +16,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable (fold, toList, asum)
 import Data.Functor
+import Data.Maybe
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.String (fromString)
@@ -96,7 +97,7 @@ instantiateSigma f = case getType f of
   _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
-checkOrInferRho (WithSrc pos expr) reqTy =
+checkOrInferRho (WithSrc pos expr) reqTy = do
  addSrcContext' pos $ case expr of
   UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
@@ -357,7 +358,11 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
-  val <- case ann of
+  -- We don't display global names in any visually distinct way from local names
+  -- so avoid giving the name hint for top-level declarations. Otherwise we might
+  -- end up with x = x decls in the module (with left x being global and right being local).
+  let nameHint = if topLevel then liftM id else withPatHint p
+  val <- nameHint $ case ann of
     Nothing -> inferSigma rhs
     Just ty -> do
       ty' <- zonk =<< checkUType ty
@@ -366,10 +371,7 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   expr <- zonk $ Atom val
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
-    else do
-      -- TODO: non-top-level annotations?
-      val' <- withPatHint p $ emitAnn PlainLet expr
-      bindPat p val'
+    else bindPat p val
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
   scope <- getScope
@@ -928,3 +930,61 @@ instance Semigroup SolverEnv where
 instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
+
+-- === Inference-time reduction ===
+
+reduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
+reduceScoped m = do
+  block <- buildScoped m
+  scope <- getScope
+  return $ reduceBlock scope block
+
+reduceBlock :: Scope -> Block -> Maybe Atom
+reduceBlock scope (Block decls result) = do
+  let localScope = foldMap boundVars decls
+  ans <- reduceExpr (scope <> localScope) result
+  [] <- return $ toList $ localScope `envIntersect` freeVars ans
+  return ans
+
+-- XXX: This should handle all terms of type Type. Otherwise type equality checking
+--      will get broken.
+reduceAtom :: Scope -> Atom -> Atom
+reduceAtom scope x = case x of
+  Var (Name InferenceName _ _ :> _) -> x
+  Var v -> case snd (scope ! v) of
+    -- TODO: worry about effects!
+    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
+    _ -> x
+  TC con -> TC $ fmap (reduceAtom scope) con
+  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, reduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
+  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
+  RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
+  VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
+  ACase _ _ _ -> error "Not implemented"
+  _ -> x
+  where
+    rec = reduceAtom scope
+    reduceNest s n = case n of
+      Empty       -> Empty
+      -- Technically this should use a more concrete type than UnknownBinder, but anything else
+      -- than LetBound is indistinguishable for this reduction anyway.
+      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
+        where b' = fmap (reduceAtom s) b
+    reduceDataDef (DataDef n bs cons) =
+      DataDef n (reduceNest scope bs)
+            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
+    reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
+
+reduceExpr :: Scope -> Expr -> Maybe Atom
+reduceExpr scope expr = case expr of
+  Atom val -> return $ reduceAtom scope val
+  App f x -> do
+    let f' = reduceAtom scope f
+    let x' = reduceAtom scope x
+    -- TODO: Worry about variable capture. Should really carry a substitution.
+    case f' of
+      Lam (Abs b (PureArrow, block)) ->
+        reduceBlock scope $ subst (b@>x', scope) block
+      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+      _ -> Nothing
+  _ -> Nothing

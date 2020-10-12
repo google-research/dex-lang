@@ -19,7 +19,6 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Syntax
 import Cat
 import Env
-import Embed
 import Type
 import Inference
 import Interpreter
@@ -144,7 +143,7 @@ evalUModuleVal env v m = do
   return $ lookupBindings (env <> env') (v:>())
 
 lookupBindings :: Scope -> VarP ann -> Atom
-lookupBindings scope v = reduceAtom scope x
+lookupBindings scope v = x
   where (_, LetBound PlainLet (Atom x)) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level

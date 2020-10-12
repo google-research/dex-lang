@@ -166,16 +166,16 @@ when using a record type as an index set:
 >  ?-> (c:Type)
 >  ?-> (v:Type) ?-> (Iso ({ &} & a) (b & c)) -> (a => v) -> b => c => v)
 
-:p
-  x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
-    ordinal a * 100 + ordinal b * 10 + ordinal c
-  v1 = x
-  v2 = sum $ overFields (#&b) x
-  v3 = sum $ overFields (#&b &>> #&c) x
-  v4 = sum $ overFields (#&a &>> #&b &>> #&c) x
-  (v1, v2, v3, v4)
-> ( [0, 100, 10, 110, 1, 101, 11, 111]@{a: Fin 2 & b: Fin 2 & c: Fin 2}
-> , ([10, 210, 12, 212]@{a: Fin 2 & c: Fin 2}, ([22, 422]@{a: Fin 2}, [444]@{ &})) )
+-- :p
+--   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
+--     ordinal a * 100 + ordinal b * 10 + ordinal c
+--   v1 = x
+--   v2 = sum $ overFields (#&b) x
+--   v3 = sum $ overFields (#&b &>> #&c) x
+--   v4 = sum $ overFields (#&a &>> #&b &>> #&c) x
+--   (v1, v2, v3, v4)
+-- > ( [0, 100, 10, 110, 1, 101, 11, 111]@{a: Fin 2 & b: Fin 2 & c: Fin 2}
+-- > , ([10, 210, 12, 212]@{a: Fin 2 & c: Fin 2}, ([22, 422]@{a: Fin 2}, [444]@{ &})) )
 
 'Note that `overFields` is just a simple wrapper combining `splitR` and
 `overLens`:

@@ -379,3 +379,11 @@ instance instanceTest3 : InterfaceTest3 where
 >
 > instance instanceTest3 : InterfaceTest3 where
 >                          ^^^^^^^^^^^^^^^
+
+def weakerInferenceReduction (l : i:n=>(..i)=>Float) (j:n): Unit =
+  for i:(..j).
+    i' = %inject i
+    for k:(..i').
+      l.i'.k
+    ()
+  ()
