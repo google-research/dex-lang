@@ -82,6 +82,10 @@ evalSourceBlockM env block = case sbContents block of
         Printed -> do
           s <- liftIO $ pprintVal val
           logTop $ TextOut s
+        RenderHtml -> do
+          -- TODO: check types before we get here
+          s <- liftIO $ getDexString val
+          logTop $ HtmlOut s
         Heatmap _    -> error "not implemented"
         ColorHeatmap -> error "not implemented"
         Scatter      -> error "not implemented"

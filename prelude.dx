@@ -348,11 +348,10 @@ def Range (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = Range 0 n
 def ordinal (i:a) : Int = %toOrdinal i
 def size (n:Type) : Int = %idxSetSize n
--- TODO: make this the built-in and define `fromOrdinal` with a userspace branch/error
 def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
 
 def fromOrdinal (n:Type) (i:Int) : n =
-  case i < size n of
+  case (0 <= i) && (i < size n) of
     True  -> unsafeFromOrdinal _ i
     False -> throw
 

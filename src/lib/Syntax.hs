@@ -445,7 +445,7 @@ data SourceBlock' = RunModule UModule
                     deriving (Show, Generic)
 
 data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
-                deriving  (Show, Generic)
+               deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
               | LogPasses [PassName] | LogAll
@@ -579,6 +579,7 @@ type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 data Output = TextOut String
+            | HtmlOut String
             | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
@@ -588,7 +589,7 @@ data Output = TextOut String
             | MiscLog String
               deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | Heatmap Bool | ColorHeatmap | Scatter
+data OutFormat = Printed | RenderHtml | Heatmap Bool | ColorHeatmap | Scatter
                  deriving (Show, Eq, Generic)
 data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
@@ -1474,6 +1475,8 @@ builtinNames = M.fromList
   , ("Int64"   , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
   , ("Int8"    , TCExpr $ BaseType $ Scalar Int8Type)
+  , ("Char"    , TCExpr $ CharType)
+  , ("MkChar"  , ConExpr $ CharCon ())
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType (Just ()) ())
   , ("PairType", TCExpr $ PairType () ())

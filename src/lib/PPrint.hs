@@ -461,6 +461,7 @@ instance Pretty a => Pretty (SetVal a) where
 
 instance Pretty Output where
   pretty (TextOut s) = pretty s
+  pretty (HtmlOut _) = "<html output>"
   pretty (BenchResult name compileTime runTime) =
     benchName <>
     "\nCompile time: " <> p (showFFloat (Just 3) compileTime "") <+> "s" <>

@@ -6,7 +6,7 @@
 
 {-# LANGUAGE CPP #-}
 
-module Serialize (pprintVal, cached) where
+module Serialize (pprintVal, cached, getDexString) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad
@@ -19,11 +19,21 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 
 import Interpreter
 import Syntax
+import Type
 import PPrint
 import Interpreter (indices)
 
 pprintVal :: Val -> IO String
 pprintVal val = asStr <$> prettyVal val
+
+getDexString :: Val -> IO String
+getDexString (DataCon _ _ 0 [_, xs]) = do
+  let (TabTy b _) = getType xs
+  idxs <- indices $ getType b
+  forM idxs $ \i -> do
+    ~(CharLit c) <- evalBlock mempty (Block Empty (App xs i))
+    return $ toEnum $ fromIntegral c
+getDexString x = error $ "Not a string: " ++ pprint x
 
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
 prettyVal :: Val -> IO (Doc ann)

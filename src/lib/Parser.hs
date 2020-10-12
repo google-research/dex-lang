@@ -164,6 +164,7 @@ explicitCommand = do
   cmd <- case cmdName of
     "p"       -> return $ EvalExpr Printed
     "t"       -> return $ GetType
+    "html"    -> return $ EvalExpr RenderHtml
     "plot"    -> return $ EvalExpr Scatter
     "plotmat"      -> return $ EvalExpr (Heatmap False)
     "plotmatcolor" -> return $ EvalExpr (Heatmap True)
@@ -244,7 +245,7 @@ topLet = do
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
   return $ ULet lAnn (p, ann') rhs'
-    
+
 addImplicitImplicitArgs :: SrcPos -> Maybe UType -> UExpr -> (Maybe UType, UExpr)
 addImplicitImplicitArgs _ Nothing e = (Nothing, e)
 addImplicitImplicitArgs sourcePos (Just typ) ex =
@@ -303,7 +304,7 @@ interfaceDef = do
               let2 = ULet PlainLet (recordPat, Nothing) $ var $ mkName recordStr
               body = ns $ UDecl let1 (ns $ UDecl let2 (var (mkName fLabel)))
           in ns $ ULam (patb instanceStr, Nothing) ClassArrow body
-        
+
         ns = WithSrc Nothing
         patb s = ns $ UPatBinder $ Bind $ mkName s :> ()
         instanceStr = mkNoShadowingStr "instance"

@@ -11,7 +11,7 @@ garbage.hs
 stack.yaml.lock
 *.pyc
 doc/
-scratch.dx
+scratch*
 scratch/
 test-scratch/
 dist-newstyle/
