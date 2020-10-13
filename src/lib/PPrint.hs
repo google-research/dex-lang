@@ -416,19 +416,10 @@ instance Pretty IExpr where
 
 instance PrettyPrec IExpr where prettyPrec = atPrec ArgPrec . pretty
 
-instance Pretty ImpStatement where
-  pretty (IInstr (Nothing, instr)) = p instr
-  pretty (IInstr (Just b , instr)) = p b <+> "=" <+> p instr
-  pretty (IFor d i n block)         = dirStr d <+> p i <+> "<" <+> p n <>
-                                      nest 4 (hardline <> p block)
-  pretty (IWhile cond body) = "while" <+>
-                                  nest 2 (p cond) <+> "do" <>
-                                  nest 4 (hardline <> p body)
-  pretty (ICond predicate cons alt) =
-    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
-    hardline <> "else" <> nest 2 (hardline <> p alt)
-  pretty (ILaunch f size args) =
-    "launch_kernel" <+> p (varName f) <+> p size <+> spaced args
+instance Pretty ImpDecl where
+  pretty (ImpLet [] instr) = p instr
+  pretty (ImpLet [b] instr) = p b <+> "=" <+> p instr
+  pretty (ImpLet _ _) = error "Not implemented"
 
 instance Pretty IFunType where
   pretty (IFunType cc argTys retTys) =
@@ -441,8 +432,19 @@ instance Pretty ImpFunction where
   pretty (ImpFunction (f:>IFunType cc _ _) bs body) =
     "def" <+> p f <+> p cc <+> p bs
     <> nest 2 (hardline <> p body) <> hardline
+  pretty (FFIFunction f) = p f
 
 instance Pretty ImpInstr where
+  pretty (IFor d i n block) = dirStr d <+> p i <+> "<" <+> p n <>
+                                nest 4 (hardline <> p block)
+  pretty (IWhile cond body) = "while" <+>
+                                  nest 2 (p cond) <+> "do" <>
+                                  nest 4 (hardline <> p body)
+  pretty (ICond predicate cons alt) =
+    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
+    hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (ILaunch f size args) =
+    "launch_kernel" <+> p (varName f) <+> p size <+> spaced args
   pretty (IPrimOp op)     = pLowest op
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
@@ -450,6 +452,7 @@ instance Pretty ImpInstr where
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty IThrowError = "throwError"
+  pretty (ICall f args) = "call" <+> p f <+> p args
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"

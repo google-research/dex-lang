@@ -28,18 +28,17 @@ impFunctionFlops (ImpFunction _ _ body) =
   snd $ runWriter (runReaderT (flops body) (litTerm 1))
 
 flops :: ImpBlock -> FlopM ()
-flops (ImpBlock statements _) = void $ traverse statementFlops statements
+flops (ImpBlock statements _) = void $ traverse declFlops statements
 
-statementFlops :: ImpStatement -> FlopM ()
-statementFlops stmt = case stmt of
-  IInstr (_, instr)   -> instrFlops instr
+declFlops :: ImpDecl -> FlopM ()
+declFlops (ImpLet _ instr) = instrFlops instr
+
+instrFlops :: ImpInstr -> FlopM ()
+instrFlops instr = case instr of
   IFor _ _ size block -> local (mulTerm $ evalSizeExpr size) $ flops block
   ICond _ _ _         -> return () -- TODO: Implement
   IWhile _ _          -> return () -- TODO: Implement
   ILaunch _ _ _       -> return () -- TODO: Implement
-
-instrFlops :: ImpInstr -> FlopM ()
-instrFlops instr = case instr of
   IPrimOp op -> do
     n <- ask
     tell $ Profile $ M.singleton (showPrimName $ OpExpr op) [n]

@@ -37,6 +37,7 @@ data NameSpace =
      | Skolem
      | InferenceName
      | SumName
+     | FFIName
      | AbstractedPtrName  -- used in `abstractPtrLiterals` in Imp lowering
      | TopFunctionName    -- top-level Imp functions
      | AllocPtrName       -- used for constructing dests in Imp lowering

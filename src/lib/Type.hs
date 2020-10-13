@@ -668,7 +668,7 @@ typeCheckOp op = case op of
         BaseTy _ -> return ()
         _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
                                     "fixed-width base types, but got: " ++ pprint argTy
-    return $ BaseTy ansTy
+    return ansTy
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i
     return ty

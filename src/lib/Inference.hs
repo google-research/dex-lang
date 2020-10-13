@@ -248,14 +248,16 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     val' <- checkSigma val reqCon ty'
     matchRequirement val'
   UPrimExpr prim -> do
-    prim' <- traverse lookupName prim
+    prim' <- forM prim $ \e -> do
+      e' <- inferRho e
+      scope <- getScope
+      return $ reduceAtom scope e'
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
       OpExpr  e -> emitZonked $ Op e
       HofExpr e -> emitZonked $ Hof e
     matchRequirement val
-    where lookupName v = asks (! (v:>()))
   URecord (Ext items Nothing) -> do
     items' <- mapM inferRho items
     matchRequirement $ Record items'

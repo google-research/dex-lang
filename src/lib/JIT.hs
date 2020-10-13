@@ -32,11 +32,13 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
+import Data.List (concat)
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import qualified Data.Set as S
+import qualified Data.Text as T
 
 import Syntax
 import Env
@@ -72,11 +74,12 @@ impToLLVM logger m@(ImpModule fs) = do
   let IFunType _ argTypes resultTypes = impFunType $ getMainFun m
   return $ LLVMModule argTypes resultTypes $ L.defaultModule
     { L.moduleName = "dexModule"
-    , L.moduleDefinitions = defns ++ externDefns }
+    , L.moduleDefinitions = concat defns ++ externDefns }
 
 compileFunction :: Logger [Output] -> ImpFunction
-                -> IO (L.Definition, S.Set ExternFunSpec)
-compileFunction logger fun = case cc of
+                -> IO ([L.Definition], S.Set ExternFunSpec)
+compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f))
+compileFunction logger fun@(ImpFunction f bs body) = case cc of
   OrdinaryFun -> error "not implemented"
   EntryFun requiresCUDA -> return $ runCompile CPU $ do
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -90,12 +93,12 @@ compileFunction logger fun = case cc of
     mainFun <- makeFunction (asLLVMName name)
                  [argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return (L.GlobalDefinition mainFun, extraSpecs)
+    return ([L.GlobalDefinition mainFun], extraSpecs)
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
     (CUDAKernel str) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
     let strFun = constStringFunction (asLLVMName name) str
-    return (L.GlobalDefinition strFun, S.singleton mallocFun)
+    return ([L.GlobalDefinition strFun], S.singleton mallocFun)
   MCThreadLaunch -> return $ runCompile CPU $ do
     (startIdxParam, startIdx) <- freshParamOpPair [] i64
     (endIdxParam, endIdx)     <- freshParamOpPair [] i64
@@ -116,19 +119,43 @@ compileFunction logger fun = case cc of
     kernel <- makeFunction (asLLVMName name)
                 [startIdxParam, endIdxParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
-    return (L.GlobalDefinition kernel , extraSpecs)
+    return ([L.GlobalDefinition kernel], extraSpecs)
     where
       (idxBinder:argBinders) = bs
       idxType = scalarTy $ binderAnn idxBinder
       argTypes = map (scalarTy . binderAnn) argBinders
   where
-    ImpFunction f bs body = fun
     name :> IFunType cc argTys _ = f
 
-compileInstr :: ImpInstr -> Compile (Maybe Operand)
+compileInstr :: ImpInstr -> Compile [Operand]
 compileInstr instr = case instr of
-  IThrowError   -> Nothing <$  throwRuntimeError
-  Alloc a t s -> Just <$> case a of
+  IFor d i n body  -> [] <$ do
+    n' <- compileExpr n
+    compileLoop d i n' $ compileVoidBlock body
+  IWhile cond body -> [] <$ do
+    compileWhile (head <$> compileBlock cond) (compileVoidBlock body)
+  ICond p cons alt -> [] <$ do
+    p' <- compileExpr p >>= (`asIntWidth` i1)
+    compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
+  ILaunch f size args -> [] <$ do
+    let IFunType cc _ _ = varAnn f
+    size' <- (`asIntWidth` i64) =<< compileExpr size
+    args' <- mapM compileExpr args
+    let kernelFuncName = asLLVMName $ varName f
+    case cc of
+      MCThreadLaunch -> do
+        kernelParams <- packArgs args'
+        let funPtr = L.ConstantOperand $ C.BitCast
+                        (C.GlobalReference mcKernelPtrType kernelFuncName) hostVoidp
+        emitVoidExternCall runMCKernel [funPtr, size',kernelParams]
+      CUDAKernelLaunch -> do
+        let ptxPtrFun = callableOperand (funTy (hostPtrTy i8) []) kernelFuncName
+        ptxPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
+        kernelParams <- packArgs $ size' : args'
+        launchCUDAKernel ptxPtr size' kernelParams
+      _ -> error $ "Not a valid calling convention for a launch: " ++ pprint cc
+  IThrowError   -> [] <$  throwRuntimeError
+  Alloc a t s -> (:[]) <$> case a of
     Stack -> alloca (getIntLit l) elemTy  where ILit l = s
     Heap dev -> do
       numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
@@ -136,14 +163,14 @@ compileInstr instr = case instr of
         CPU -> malloc     elemTy numBytes
         GPU -> cuMemAlloc elemTy numBytes
     where elemTy = scalarTy t
-  Free ptr -> Nothing <$ do
+  Free ptr -> [] <$ do
     let PtrType (_, addr, _) = getIType ptr
     ptr' <- compileExpr ptr
     case addr of
       Heap CPU -> free      ptr'
       Heap GPU -> cuMemFree ptr'
       Stack -> error "Shouldn't be freeing alloca"
-  MemCopy dest src numel -> do
+  MemCopy dest src numel -> [] <$ do
     let PtrType (_, destAddr, ty) = getIType dest
     let PtrType (_, srcAddr , _ ) = getIType src
     destDev <- deviceFromAddr destAddr
@@ -156,17 +183,14 @@ compileInstr instr = case instr of
       (CPU, GPU) -> cuMemcpyDToH numBytes src'  dest'
       (GPU, CPU) -> cuMemcpyHToD numBytes dest' src'
       _ -> error $ "Not implemented"
-    return Nothing
-  Store dest val -> do
+  Store dest val -> [] <$ do
     dest' <- compileExpr dest
     val'  <- compileExpr val
     store dest' val'
     return Nothing
-  IPrimOp (PtrLoad ptr) -> do
-    ptr' <- compileExpr ptr
-    Just <$> load ptr'
-  IPrimOp op     -> Just    <$> (traverse compileExpr op >>= compilePrimOp)
-  ICastOp idt ix -> Just    <$> do
+  IPrimOp (PtrLoad ptr) -> (:[]) <$> (compileExpr ptr >>= load)
+  IPrimOp op -> (:[]) <$> (traverse compileExpr op >>= compilePrimOp)
+  ICastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
     let (xt, dt) = (L.typeOf x, scalarTy idt)
     case (xt, dt) of
@@ -178,6 +202,17 @@ compileInstr instr = case instr of
       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
       _ -> error $ "Unsupported cast"
+  ICall f args -> (:[]) <$> do
+    args' <- mapM compileExpr args
+    emitInstr retTy $ externCall (makeFunSpec f) args'
+    where
+      (_:> IFunType _ _ [resultTy]) = f
+      retTy = scalarTy resultTy
+
+makeFunSpec :: IFunVar -> ExternFunSpec
+makeFunSpec (Name _ name _ :> IFunType _ argTys [resultTy]) =
+   ExternFunSpec (L.Name (fromString $ T.unpack name)) (scalarTy resultTy)
+                    [] [] (map scalarTy argTys)
 
 compileLoop :: Direction -> IBinder -> Operand -> Compile () -> Compile ()
 compileLoop d iBinder n compileBody = do
@@ -233,9 +268,6 @@ compilePrimOp pop = case pop of
   Select      p  x y -> do
     pb <- p `asIntWidth` i1
     emitInstr (L.typeOf x) $ L.Select pb x y []
-  FFICall name rt xs -> do
-    emitExternCall f xs
-    where f = ExternFunSpec (L.Name (fromString name)) (scalarTy rt) [] [] (map L.typeOf xs)
   VectorPack elems   -> foldM fillElem undef $ zip elems [0..]
     where
       resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf $ head elems
@@ -405,45 +437,19 @@ gpuBinaryIntrinsic op x y = case L.typeOf x of
 
 compileBlock :: ImpBlock -> Compile [Operand]
 compileBlock (ImpBlock Empty result) = traverse compileExpr result
-compileBlock (ImpBlock (Nest stmt rest) result) = do
-  env <- compileStatement stmt
+compileBlock (ImpBlock (Nest decl rest) result) = do
+  env <- compileDecl decl
   extendOperands env $ compileBlock (ImpBlock rest result)
+
+compileDecl :: ImpDecl -> Compile OperandEnv
+compileDecl (ImpLet bs instr) = do
+  results <- compileInstr instr
+  if length results == length bs
+    then return $ foldMap (uncurry (@>)) $ zip bs results
+    else error "Unexpected number of results"
 
 compileVoidBlock :: ImpBlock -> Compile ()
 compileVoidBlock = void . compileBlock
-
-compileStatement :: ImpStatement -> Compile OperandEnv
-compileStatement stmt = case stmt of
-  IInstr (Just b, instr) -> do
-    ans <- compileInstr instr
-    return $ foldMap (b@>) ans
-  IInstr (Nothing, instr) -> mempty <$ do
-    void $ compileInstr instr
-  IFor d i n body  -> mempty <$ do
-    n' <- compileExpr n
-    compileLoop d i n' $ compileVoidBlock body
-  IWhile cond body -> mempty <$ do
-    compileWhile (head <$> compileBlock cond) (compileVoidBlock body)
-  ICond p cons alt -> mempty <$ do
-    p' <- compileExpr p >>= (`asIntWidth` i1)
-    compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
-  ILaunch f size args -> mempty <$ do
-    let IFunType cc _ _ = varAnn f
-    size' <- (`asIntWidth` i64) =<< compileExpr size
-    args' <- mapM compileExpr args
-    let kernelFuncName = asLLVMName $ varName f
-    case cc of
-      MCThreadLaunch -> do
-        kernelParams <- packArgs args'
-        let funPtr = L.ConstantOperand $ C.BitCast
-                        (C.GlobalReference mcKernelPtrType kernelFuncName) hostVoidp
-        emitVoidExternCall runMCKernel [funPtr, size',kernelParams]
-      CUDAKernelLaunch -> do
-        let ptxPtrFun = callableOperand (funTy (hostPtrTy i8) []) kernelFuncName
-        ptxPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
-        kernelParams <- packArgs $ size' : args'
-        launchCUDAKernel ptxPtr size' kernelParams
-      _ -> error $ "Not a valid calling convention for a launch: " ++ pprint cc
 
 compileExpr :: IExpr -> Compile Operand
 compileExpr expr = case expr of

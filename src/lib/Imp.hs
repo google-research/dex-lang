@@ -28,6 +28,7 @@ import Data.Functor
 import Data.Foldable (toList)
 import Data.Int
 import Data.Maybe (fromJust)
+import Data.String (fromString)
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -63,7 +64,7 @@ data ImpCtx = ImpCtx { impBackend :: Backend
 data ImpCatEnv = ImpCatEnv
   { envPtrsToFree :: [IExpr]
   , envScope      :: Scope
-  , envStatements :: [ImpStatement]
+  , envDecls      :: [ImpDecl]
   , envFunctions  :: Env ImpFunction }
 
 type ImpM = ReaderT ImpCtx (Cat ImpCatEnv)
@@ -196,6 +197,14 @@ emitFunction cc bs body = do
   extend $ mempty {envFunctions = fvar @> ImpFunction fvar bs body}
   return fvar
 
+emitFFIFunction :: String -> [IType] -> [IType] -> ImpM IFunVar
+emitFFIFunction s argTys resultTys = do
+  let fname = Name FFIName (fromString s) 0
+  let f = fname :> IFunType FFIFun argTys resultTys
+  -- TODO: check that if it's already in the env, it's with the same type
+  extend $ mempty {envFunctions = fname @> FFIFunction f}
+  return f
+
 impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
   scope <- variableScope
@@ -258,7 +267,7 @@ toImpOp (maybeDest, op) = case op of
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom tileOffset'
   ThrowError ty -> do
-    emitStatement $ IInstr (Nothing, IThrowError)
+    emitStatement $ IThrowError
     return $ Con $ AnyValue ty
   CastOp destTy x -> case (getType x, destTy) of
     (BaseTy _, BaseTy bt) -> returnVal =<< toScalarAtom <$> cast (fromScalarAtom x) bt
@@ -279,6 +288,12 @@ toImpOp (maybeDest, op) = case op of
   RecordSplit  _ _ -> error "Unreachable: should have simplified away"
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
   VariantSplit _ _ -> error "Unreachable: should have simplified away"
+  FFICall name returnTy xs -> do
+    let returnTy' = fromScalarType returnTy
+    let xTys = map (fromScalarType . getType) xs
+    f <- emitFFIFunction name xTys [returnTy']
+    result <- emitInstr $ ICall f $ (map fromScalarAtom xs)
+    returnVal $ toScalarAtom result
   _ -> do
     returnVal . toScalarAtom =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -711,6 +726,7 @@ deviceFromCallingConvention :: CallingConvention -> Device
 deviceFromCallingConvention cc = case cc of
   OrdinaryFun      -> CPU
   EntryFun _       -> CPU
+  FFIFun           -> CPU
   MCThreadLaunch   -> CPU
   CUDAKernelLaunch -> GPU
 
@@ -843,10 +859,10 @@ load :: IExpr -> ImpM IExpr
 load x = emitInstr $ IPrimOp $ PtrLoad x
 
 memcopy :: IExpr -> IExpr -> IExpr -> ImpM ()
-memcopy dest src numel = emitStatement $ IInstr (Nothing , MemCopy dest src numel)
+memcopy dest src numel = emitStatement $ MemCopy dest src numel
 
 store :: HasCallStack => IExpr -> IExpr -> ImpM ()
-store dest src = emitStatement $ IInstr (Nothing, Store dest src)
+store dest src = emitStatement $ Store dest src
 
 alloc :: Type -> ImpM Dest
 alloc ty = allocKind Managed ty
@@ -873,11 +889,25 @@ emitLoop hint d n body = do
     return (i, [])
   emitStatement $ IFor d (Bind i) n loopBody
 
+emitMultiReturnInstr :: ImpInstr -> ImpM [IExpr]
+emitMultiReturnInstr instr = do
+  vs <- forM (impInstrTypes instr) $ \ty -> freshVar ("v":>ty)
+  emitImpDecl $ ImpLet (map Bind vs) instr
+  return (map IVar vs)
+
 emitInstr :: ImpInstr -> ImpM IExpr
 emitInstr instr = do
-  v <- freshVar ("v":>getIType instr)
-  emitStatement $ IInstr (Just (Bind v), instr)
-  return $ IVar v
+  xs <- emitMultiReturnInstr instr
+  case xs of
+    [x] -> return x
+    _ -> error "unexpected numer of return values"
+
+emitStatement :: ImpInstr -> ImpM ()
+emitStatement instr = do
+  xs <- emitMultiReturnInstr instr
+  case xs of
+    [] -> return ()
+    _ -> error "unexpected numer of return values"
 
 data AllocType = Managed | Unmanaged  deriving (Show, Eq)
 
@@ -898,11 +928,11 @@ scopedBlock body = do
   ((aux, results), env) <- scoped body
   extend $ mempty { envScope     = envScope     env
                   , envFunctions = envFunctions env }  -- Keep the scope extension to avoid reusing variable names
-  let frees = [IInstr (Nothing, Free x) | x <- envPtrsToFree env]
-  return (aux, ImpBlock (toNest (envStatements env <> frees)) results)
+  let frees = [ImpLet [] (Free x) | x <- envPtrsToFree env]
+  return (aux, ImpBlock (toNest (envDecls env <> frees)) results)
 
-emitStatement :: ImpStatement -> ImpM ()
-emitStatement statement = extend $ mempty { envStatements = [statement] }
+emitImpDecl :: ImpDecl -> ImpM ()
+emitImpDecl decl = extend $ mempty { envDecls = [decl] }
 
 variableScope :: ImpM Scope
 variableScope = looks envScope
@@ -939,80 +969,74 @@ instance Checkable ImpFunction where
     void $ flip runReaderT (env, deviceFromCallingConvention cc) $
       flip runStateT scope $ checkBlock block
     where ctx = "Checking:\n" ++ pprint f
+  checkValid (FFIFunction _) = return ()
 
 checkBlock :: ImpBlock -> ImpCheckM [IType]
 checkBlock (ImpBlock Empty val) = mapM checkIExpr val
-checkBlock (ImpBlock (Nest stmt rest) val) = do
-  env <- checkStatement stmt
+checkBlock (ImpBlock (Nest decl rest) val) = do
+  env <- checkDecl decl
   withTypeEnv env $ checkBlock $ ImpBlock rest val
 
-checkStatement :: ImpStatement -> ImpCheckM (Env IType)
-checkStatement stmt = addContext ctx $ case stmt of
-  IInstr (binder, instr) -> do
-    ty <- instrTypeChecked instr
-    case (binder, ty) of
-      (Nothing, Nothing) -> return mempty
-      (Just b, Just t) -> do
-        checkBinder b
-        assertEq (binderAnn b) t $ "Type mismatch in instruction " ++ pprint instr
-        return (b@>t)
-      (Just _ , Nothing) ->
-        throw CompilerErr $ "Can't assign result of void instruction"
-      (Nothing, Just _) ->
-        throw CompilerErr $ "Can't ignore result of non-void instruction"
+checkDecl :: ImpDecl -> ImpCheckM (Env IType)
+checkDecl decl@(ImpLet bs instr) = addContext ctx $ do
+  tys <- instrTypeChecked instr
+  mapM_ checkBinder bs
+  assertEq (map binderAnn bs) tys $ "Type mismatch in decl " ++ pprint decl
+  return $ newEnv bs tys
+  where ctx = "Checking:\n" ++ pprint decl
+
+instrTypeChecked :: ImpInstr -> ImpCheckM [IType]
+instrTypeChecked instr = case instr of
   IFor _ i size block -> do
     checkInt size
     checkBinder i
     assertEq (binderAnn i) (getIType size) $ "Mismatch between the loop iterator and upper bound type"
     [] <- withTypeEnv (i @> getIType size) $ checkBlock block
-    return mempty
+    return []
   IWhile cond body -> do
     [condTy] <- checkBlock cond
     assertEq (Scalar Int8Type) condTy $ "Not a bool: " ++ pprint cond
     [] <- checkBlock body
-    return mempty
+    return []
   ICond predicate consequent alternative -> do
     predTy <- checkIExpr predicate
     assertEq (Scalar Int8Type) predTy "Type mismatch in predicate"
     [] <- checkBlock consequent
     [] <- checkBlock alternative
-    return mempty
-  ILaunch _ n args -> do
+    return []
+  ILaunch _ n args -> [] <$ do
     -- TODO: check args against type of function
     assertHost
     checkInt n
     mapM_ checkIExpr args
-    return mempty
-  where ctx = "Checking:\n" ++ pprint stmt
-
-instrTypeChecked :: ImpInstr -> ImpCheckM (Maybe IType)
-instrTypeChecked instr = case instr of
-  IPrimOp op -> Just <$> checkImpOp op
-  ICastOp dt x -> do
+  IPrimOp op -> (:[]) <$> checkImpOp op
+  ICastOp dt x -> (:[]) <$> do
     case getIType x of
       Scalar _ -> return ()
       _ -> throw CompilerErr $ "Invalid cast source type: " ++ pprint dt
     case dt of
       Scalar _ -> return ()
       _ -> throw CompilerErr $ "Invalid cast destination type: " ++ pprint dt
-    return $ Just dt
-  Alloc a ty _ -> do
+    return dt
+  Alloc a ty _ -> (:[]) <$> do
     when (a /= Stack) assertHost
-    return $ Just $ PtrType (AllocatedPtr, a, ty)
-  MemCopy dest src numel -> do
+    return $ PtrType (AllocatedPtr, a, ty)
+  MemCopy dest src numel -> [] <$ do
     PtrType (_, _, destTy) <- checkIExpr dest
     PtrType (_, _, srcTy)  <- checkIExpr src
     assertEq destTy srcTy "pointer type mismatch"
     checkInt numel
-    return Nothing
-  Store dest val -> do
+  Store dest val -> [] <$ do
     PtrType (_, addr, ty) <- checkIExpr dest
     checkAddrAccessible addr
     valTy <- checkIExpr val
     assertEq ty valTy "Type mismatch in store"
-    return Nothing
-  Free _ -> return Nothing  -- TODO: check matched alloc/free
-  IThrowError -> return Nothing
+  Free _ -> return []  -- TODO: check matched alloc/free
+  IThrowError -> return []
+  ICall (_:>IFunType _ argTys resultTys) args -> do
+    argTys' <- mapM checkIExpr args
+    assertEq argTys argTys' "Args types don't match function type"
+    return resultTys
 
 checkBinder :: IBinder -> ImpCheckM ()
 checkBinder v = do
@@ -1079,9 +1103,6 @@ checkImpOp op = do
 class HasIType a where
   getIType :: a -> IType
 
-instance HasIType ImpInstr where
-  getIType = fromJust . impInstrType
-
 instance HasIType IExpr where
   getIType x = case x of
     ILit val -> litType val
@@ -1093,19 +1114,25 @@ getMainFun (ImpModule fs) = fromJust $
 
 impFunType :: ImpFunction -> IFunType
 impFunType (ImpFunction (_:>ty) _ _) = ty
+impFunType (FFIFunction (_:>ty)) = ty
 
 impBlockType :: ImpBlock -> [IType]
 impBlockType (ImpBlock _ results) = map getIType results
 
-impInstrType :: ImpInstr -> Maybe IType
-impInstrType instr = case instr of
-  IPrimOp op      -> Just $ impOpType op
-  ICastOp t _     -> Just $ t
-  Alloc a ty _    -> Just $ PtrType (AllocatedPtr, a, ty)
-  Store _ _       -> Nothing
-  Free _          -> Nothing
-  IThrowError     -> Nothing
-  MemCopy _ _ _   -> Nothing
+impInstrTypes :: ImpInstr -> [IType]
+impInstrTypes instr = case instr of
+  IPrimOp op      -> [impOpType op]
+  ICastOp t _     -> [t]
+  Alloc a ty _    -> [PtrType (AllocatedPtr, a, ty)]
+  Store _ _       -> []
+  Free _          -> []
+  IThrowError     -> []
+  MemCopy _ _ _   -> []
+  IFor _ _ _ _    -> []
+  IWhile _ _      -> []
+  ICond _ _ _     -> []
+  ILaunch _ _ _   -> []
+  ICall (_:>IFunType _ _ resultTys) _ -> resultTys
 
 checkImpBinOp :: MonadError Err m => BinOp -> IType -> IType -> m IType
 checkImpBinOp op x y = do
@@ -1127,7 +1154,6 @@ impOpType pop = case pop of
   ScalarBinOp op x y -> ignoreExcept $ checkImpBinOp op (getIType x) (getIType y)
   ScalarUnOp  op x   -> ignoreExcept $ checkImpUnOp  op (getIType x)
   VectorBinOp op x y -> ignoreExcept $ checkImpBinOp op (getIType x) (getIType y)
-  FFICall _ ty _     -> ty
   Select  _ x  _     -> getIType x
   VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
   VectorIndex x _    -> Scalar ty  where Vector ty = getIType x

@@ -561,16 +561,12 @@ uPrim = withSrc $ do
   case s of
     "ffi" -> do
       f <- lexeme $ some nameTailChar
-      retTy <- baseType
-      args <- some lowerName
+      retTy <- leafExpr
+      args <- some leafExpr
       return $ UPrimExpr $ OpExpr $ FFICall f retTy args
     _ -> case strToPrimName s of
-      Just prim -> UPrimExpr <$> traverse (const lowerName) prim
+      Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
       Nothing -> fail $ "Unrecognized primitive: " ++ s
-
-baseType :: Parser BaseType
-baseType =   (symbol "Int64"   $> Scalar Int64Type)
-         <|> (symbol "Float64" $> Scalar Float64Type)
 
 uVariantExpr :: Parser UExpr
 uVariantExpr = withSrc $ parseVariant expr UVariant UVariantLift
