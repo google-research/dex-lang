@@ -32,7 +32,7 @@ module Syntax (
     IFunType (..), IFunVar, CallingConvention (..),
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
-    IScope, BinderInfo (..), Bindings, CUDAKernel (..),
+    IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -444,7 +444,7 @@ data SourceBlock' = RunModule UModule
                   | UnParseable ReachedEOF String
                     deriving (Show, Generic)
 
-data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
+data CmdName = GetType | EvalExpr OutFormat | ExportFun String | Dump DataFormat String
                deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
@@ -467,7 +467,7 @@ type Size = IExpr
 type IFunVar = VarP IFunType
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
                 deriving (Show)
-data CallingConvention = OrdinaryFun
+data CallingConvention = CEntryFun
                        | EntryFun Bool  -- flag indicates whether CUDA required
                        | FFIFun
                        | FFIMultiResultFun
@@ -580,15 +580,17 @@ type LitProg = [(SourceBlock, Result)]
 type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
+type BenchStats = Int -- number of runs
 data Output = TextOut String
             | HtmlOut String
             | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
-            | EvalTime  Double
+            | EvalTime  Double (Maybe BenchStats)
             | TotalTime Double
-            | BenchResult String Double Double  -- name, compile time, eval time
+            | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
             | MiscLog String
+            | ExportedFun String Atom
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | RenderHtml | Heatmap Bool | ColorHeatmap | Scatter

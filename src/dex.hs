@@ -31,6 +31,7 @@ data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
 data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
+              | ExportMode FilePath FilePath -- Dex path, .o path
               | ScriptMode FilePath DocFmt ErrorHandling
 
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
@@ -50,8 +51,15 @@ runMode evalMode preludeFile opts = do
       printLitProg fmt results
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode   fname -> runWeb      fname opts env
-    WatchMode fname -> runTerminal fname opts env
+    WebMode    fname -> runWeb      fname opts env
+    WatchMode  fname -> runTerminal fname opts env
+    ExportMode dexPath objPath -> do
+      results <- fmap snd <$> (runEnv $ evalFile opts dexPath)
+      let outputs = foldMap (\(Result outs _) -> outs) results
+      let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
+      putStr $ foldMap (nonEmptyNewline . pprint) errors
+      let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
+      exportFunctions objPath exportedFuns env opts
 
 evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
 evalPrelude opts fname = flip execStateT mempty $ do
@@ -93,9 +101,6 @@ simpleInfo p = info (p <**> helper) mempty
 
 printLitProg :: DocFmt -> LitProg -> IO ()
 printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
-  where
-    nonEmptyNewline [] = []
-    nonEmptyNewline l  = l ++ ['\n']
 printLitProg HTMLDoc prog = putStr $ progHtml prog
 printLitProg TextDoc prog = do
   isatty <- queryTerminal stdOutput
@@ -104,6 +109,9 @@ printLitProg JSONDoc prog =
   forM_ prog $ \(_, result) -> case toJSONStr result of
     "{}" -> return ()
     s -> putStrLn s
+
+nonEmptyNewline [] = []
+nonEmptyNewline l  = l ++ ['\n']
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts
@@ -118,6 +126,8 @@ parseMode = subparser $
                          <> metavar "STRING" <> help "REPL prompt"))
   <> (command "web"    $ simpleInfo (WebMode    <$> sourceFileInfo ))
   <> (command "watch"  $ simpleInfo (WatchMode  <$> sourceFileInfo ))
+  <> (command "export" $ simpleInfo (ExportMode <$> sourceFileInfo
+    <*> objectFileInfo))
   <> (command "script" $ simpleInfo (ScriptMode <$> sourceFileInfo
     <*> (option
             (optionList [ ("literate"   , TextDoc)
@@ -131,6 +141,7 @@ parseMode = subparser $
                <> help "Evaluate programs containing non-fatal type errors")))
   where
     sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
+    objectFileInfo = argument str (metavar "OBJFILE" <> help "Output path (.o file)")
 
 optionList :: [(String, a)] -> ReadM a
 optionList opts = eitherReader $ \s -> case lookup s opts of
@@ -148,7 +159,6 @@ parseEvalOpts = EvalConfig
   <*> (optional $ strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
-  <*> pure (error "Logging not initialized")
 
 main :: IO ()
 main = do

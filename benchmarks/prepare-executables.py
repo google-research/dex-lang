@@ -78,7 +78,7 @@ def prepare_rodinia_backprop():
   exe_path.mkdir(parents=True, exist_ok=True)
   exe_path_ad = RODINIA_EXE_ROOT / 'backprop-ad'
   exe_path_ad.mkdir(parents=True, exist_ok=True)
-  in_features = [512, 123]
+  in_features = [128, 1048576]
 
   for inf, use_ad in product(in_features, (False, True)):
     outf = 1

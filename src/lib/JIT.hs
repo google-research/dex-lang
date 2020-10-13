@@ -67,12 +67,11 @@ type Function = L.Global
 
 -- === Imp to LLVM ===
 
-impToLLVM :: Logger [Output] -> ImpModule -> IO LLVMModule
-impToLLVM logger m@(ImpModule fs) = do
+impToLLVM :: Logger [Output] -> ImpModule -> IO L.Module
+impToLLVM logger (ImpModule fs) = do
   (defns, externSpecs) <- unzip <$> mapM (compileFunction logger) fs
   let externDefns = map externDecl $ toList $ fold externSpecs
-  let IFunType _ argTypes resultTypes = impFunType $ getMainFun m
-  return $ LLVMModule argTypes resultTypes $ L.defaultModule
+  return $ L.defaultModule
     { L.moduleName = "dexModule"
     , L.moduleDefinitions = concat defns ++ externDefns }
 
@@ -80,7 +79,13 @@ compileFunction :: Logger [Output] -> ImpFunction
                 -> IO ([L.Definition], S.Set ExternFunSpec)
 compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f))
 compileFunction logger fun@(ImpFunction f bs body) = case cc of
-  OrdinaryFun -> error "not implemented"
+  CEntryFun -> return $ runCompile CPU $ do
+    (argParams   , argOperands   ) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
+    unless (null retTys) $ error "CEntryFun doesn't support returning values"
+    void $ extendOperands (newEnv bs argOperands) $ compileBlock body
+    mainFun <- makeFunction (asLLVMName name) argParams (Just $ i64Lit 0)
+    extraSpecs <- gets funSpecs
+    return ([L.GlobalDefinition mainFun], extraSpecs)
   EntryFun requiresCUDA -> return $ runCompile CPU $ do
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -125,7 +130,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
       idxType = scalarTy $ binderAnn idxBinder
       argTypes = map (scalarTy . binderAnn) argBinders
   where
-    name :> IFunType cc argTys _ = f
+    name :> IFunType cc argTys retTys = f
 
 compileInstr :: ImpInstr -> Compile [Operand]
 compileInstr instr = case instr of
@@ -649,10 +654,8 @@ callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 asLLVMName :: Name -> L.Name
-asLLVMName name@(Name TopFunctionName _ _)
-  | name == impMainFunName = "entryFun"
-  | otherwise = fromString $ pprint name
-asLLVMName _ = error "Should only only top-level function names directly"
+asLLVMName name@(Name TopFunctionName _ _) = fromString $ pprint name
+asLLVMName name = error $ "Expected a top function name: " ++ show name
 
 showName :: Name -> String
 showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counter

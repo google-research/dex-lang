@@ -165,6 +165,7 @@ explicitCommand = do
     "p"       -> return $ EvalExpr Printed
     "t"       -> return $ GetType
     "html"    -> return $ EvalExpr RenderHtml
+    "export"  -> ExportFun <$> nameString
     "plot"    -> return $ EvalExpr Scatter
     "plotmat"      -> return $ EvalExpr (Heatmap False)
     "plotmatcolor" -> return $ EvalExpr (Heatmap True)

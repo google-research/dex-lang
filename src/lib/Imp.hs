@@ -13,10 +13,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE BlockArguments #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpModule, getIType, impBlockType, impFunType, getMainFun,
-            toScalarType, fromScalarType, impMainFunName) where
+module Imp (toImpModule, getIType, impBlockType, impFunType,
+            toScalarType, fromScalarType) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad.Reader
@@ -25,9 +26,9 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
 import Data.Functor
+import Data.Maybe
 import Data.Foldable (toList)
 import Data.Int
-import Data.Maybe (fromJust)
 import Data.String (fromString)
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
@@ -70,33 +71,37 @@ data ImpCatEnv = ImpCatEnv
 type ImpM = ReaderT ImpCtx (Cat ImpCatEnv)
 type AtomRecon = Abs (Nest Binder) Atom
 
-toImpModule :: Backend -> Block -> (ImpModule, [LitVal], AtomRecon)
-toImpModule backend block = runImpMBinders initOpts argBinders $ do
-  (reconAtom, impBlock) <- scopedBlock $ translateTopLevel block'
-  functions <- toList <$> looks envFunctions
-  let requiresCUDA = case backend of LLVMCUDA -> True
-                                     _        -> False
-  let ty = IFunType (EntryFun requiresCUDA) (map binderAnn argBinders) (impBlockType impBlock)
-  let mainFunction = ImpFunction (impMainFunName:>ty) argBinders impBlock
-  return (ImpModule (functions ++ [mainFunction]), argVals, reconAtom)
-  where
-    (argBinders, argVals, block') = abstractPtrLiterals block
-    initOpts = ImpCtx backend CPU TopLevel
-
-runImpMBinders :: ImpCtx -> [IBinder] -> ImpM a -> a
-runImpMBinders opts inBinders m = runImpM opts inVarScope m
+toImpModule :: Backend -> CallingConvention -> Name
+            -> [IBinder] -> Maybe Dest -> Block
+            -> (ImpFunction, ImpModule, AtomRecon)
+toImpModule backend cc entryName argBinders maybeDest block =
+  runImpM initOpts inVarScope $ do
+    (reconAtom, impBlock) <- scopedBlock $ translateTopLevel (maybeDest, block)
+    functions <- toList <$> looks envFunctions
+    let ty = IFunType cc (map binderAnn argBinders) (impBlockType impBlock)
+    let mainFunction = ImpFunction (entryName:>ty) argBinders impBlock
+    return (mainFunction, ImpModule (functions ++ [mainFunction]), reconAtom)
   where
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
-    inVarScope = foldMap binderAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inBinders
+    inVarScope = binderScope <> destScope
+    binderScope = foldMap binderAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) argBinders
+    destScope = fromMaybe mempty $ fmap freeVars maybeDest
+    initOpts = ImpCtx backend CPU TopLevel
 
-translateTopLevel :: Block -> ImpM (AtomRecon, [IExpr])
-translateTopLevel block = do
-  outDest <- allocKind Unmanaged $ getType block
+-- We don't emit any results when a destination is provided, since they are already
+-- going to be available through the dest.
+translateTopLevel :: WithDest Block -> ImpM (AtomRecon, [IExpr])
+translateTopLevel (maybeDest, block) = do
+  outDest <- case maybeDest of
+        Nothing   -> allocKind Unmanaged $ getType block
+        Just dest -> return dest
   void $ translateBlock mempty (Just outDest, block)
   resultAtom <- destToAtom outDest
   let vsOut = envAsVars $ freeVars resultAtom
   let reconAtom = Abs (toNest $ [Bind (v:>ty) | (v:>(ty, _)) <- vsOut]) resultAtom
-  let resultIExprs = [IVar (v:>fromScalarType ty) | (v:>(ty, _)) <- vsOut]
+  let resultIExprs = case maybeDest of
+        Nothing -> [IVar (v:>fromScalarType ty) | (v:>(ty, _)) <- vsOut]
+        Just _  -> []
   return (reconAtom, resultIExprs)
 
 runImpM :: ImpCtx -> Scope -> ImpM a -> a
@@ -185,9 +190,6 @@ launchKernel env (maybeDest, ~hof@(For _ (LamVal b body))) = do
   f <- emitFunction cc (map Bind (i:args)) kernelBody
   emitStatement $ ILaunch f n $ map IVar args
   destToAtom dest
-
-impMainFunName :: Name
-impMainFunName = Name TopFunctionName "impMain" 0
 
 emitFunction :: CallingConvention -> [IBinder] -> ImpBlock -> ImpM IFunVar
 emitFunction cc bs body = do
@@ -361,40 +363,6 @@ toImpHof env (maybeDest, hof) = do
       void $ translateBlock (env <> ref @> sDest) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom sDest
     _ -> error $ "Invalid higher order function primitive: " ++ pprint hof
-
-abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
-abstractPtrLiterals block = flip evalState initState $ do
-  block' <- traverseLiterals block $ \val -> case val of
-    PtrLit ty ptr -> do
-      ptrName <- gets $ M.lookup (ty, ptr). fst
-      case ptrName of
-        Just v -> return $ Var $ v :> getType (Con $ Lit val)
-        Nothing -> do
-          (varMap, usedNames) <- get
-          let name = genFresh (Name AbstractedPtrName "ptr" 0) usedNames
-          put ( varMap    <> M.insert (ty, ptr) name varMap
-              , usedNames <> (name @> ()))
-          return $ Var $ name :> BaseTy (PtrType ty)
-    _ -> return $ Con $ Lit val
-  valsAndNames <- gets $ M.toAscList . fst
-  let impBinders = [Bind (name :> PtrType ty ) | ((ty, _), name) <- valsAndNames]
-  let vals = map (uncurry PtrLit . fst) valsAndNames
-  return (impBinders, vals, block')
-  where
-    initState :: (M.Map (PtrType, Ptr ()) Name, Env ())
-    initState = mempty
-
-traverseLiterals :: forall m . Monad m => Block -> (LitVal -> m Atom) -> m Block
-traverseLiterals block f =
-  liftM fst $ flip runSubstEmbedT  mempty $ traverseBlock def block
-  where
-    def :: TraversalDef (SubstEmbedT m)
-    def = (traverseDecl def, traverseExpr def, traverseAtomLiterals)
-
-    traverseAtomLiterals :: Atom -> SubstEmbedT m Atom
-    traverseAtomLiterals atom = case atom of
-      Con (Lit x) -> lift $ lift $ f x
-      _ -> traverseAtom def atom
 
 -- === Destination type ===
 
@@ -728,7 +696,7 @@ allocateBuffer addrSpace mustFree b numel = do
 -- TODO: separate these concepts in IFunType?
 deviceFromCallingConvention :: CallingConvention -> Device
 deviceFromCallingConvention cc = case cc of
-  OrdinaryFun       -> CPU
+  CEntryFun         -> CPU
   EntryFun _        -> CPU
   FFIFun            -> CPU
   FFIMultiResultFun -> CPU
@@ -1131,10 +1099,6 @@ instance HasIType IExpr where
   getIType x = case x of
     ILit val -> litType val
     IVar v   -> varAnn v
-
-getMainFun :: HasCallStack => ImpModule -> ImpFunction
-getMainFun (ImpModule fs) = fromJust $
-  lookup impMainFunName [(name, f) | f@(ImpFunction (name:>_) _ _) <- fs]
 
 impFunType :: ImpFunction -> IFunType
 impFunType (ImpFunction (_:>ty) _ _) = ty
