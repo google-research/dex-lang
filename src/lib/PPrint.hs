@@ -419,7 +419,7 @@ instance PrettyPrec IExpr where prettyPrec = atPrec ArgPrec . pretty
 instance Pretty ImpDecl where
   pretty (ImpLet [] instr) = p instr
   pretty (ImpLet [b] instr) = p b <+> "=" <+> p instr
-  pretty (ImpLet _ _) = error "Not implemented"
+  pretty (ImpLet bs instr) = p bs <+> "=" <+> p instr
 
 instance Pretty IFunType where
   pretty (IFunType cc argTys retTys) =

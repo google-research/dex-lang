@@ -202,17 +202,28 @@ compileInstr instr = case instr of
       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
       _ -> error $ "Unsupported cast"
-  ICall f args -> (:[]) <$> do
+  ICall f@(_:> IFunType cc _ resultTys) args -> do
+    -- TODO: consider having a separate calling convention specification rather
+    -- than switching on the number of results
     args' <- mapM compileExpr args
-    emitInstr retTy $ externCall (makeFunSpec f) args'
-    where
-      (_:> IFunType _ _ [resultTy]) = f
-      retTy = scalarTy resultTy
+    let resultTys' = map scalarTy resultTys
+    case cc of
+      FFIFun -> do
+        let [resultTy] = resultTys'
+        ans <- emitInstr resultTy $ externCall (makeFunSpec f) args'
+        return [ans]
+      FFIMultiResultFun -> do
+        resultPtr <- makeMultiResultAlloc resultTys'
+        emitVoidExternCall (makeFunSpec f) (resultPtr : args')
+        loadMultiResultAlloc resultTys' resultPtr
 
 makeFunSpec :: IFunVar -> ExternFunSpec
-makeFunSpec (Name _ name _ :> IFunType _ argTys [resultTy]) =
+makeFunSpec (Name _ name _ :> IFunType FFIFun argTys [resultTy]) =
    ExternFunSpec (L.Name (fromString $ T.unpack name)) (scalarTy resultTy)
                     [] [] (map scalarTy argTys)
+makeFunSpec (Name _ name _ :> IFunType FFIMultiResultFun argTys _) =
+   ExternFunSpec (L.Name (fromString $ T.unpack name)) L.VoidType [] []
+     (hostPtrTy hostVoidp : map scalarTy argTys)
 
 compileLoop :: Direction -> IBinder -> Operand -> Compile () -> Compile ()
 compileLoop d iBinder n compileBody = do
@@ -472,6 +483,20 @@ unpackArgs argArrayPtr types =
     argVoidPtr <- gep argArrayPtr $ i64Lit i
     argPtr <- castLPtr (hostPtrTy ty) argVoidPtr
     load =<< load argPtr
+
+makeMultiResultAlloc :: [L.Type] -> Compile Operand
+makeMultiResultAlloc tys = do
+  resultsPtr <- alloca (length tys) hostVoidp
+  forM (zip [0..] tys) $ \(i, ty) -> do
+    ptr <- alloca 1 ty >>= castVoidPtr
+    resultsPtrOffset <- gep resultsPtr $ i32Lit i
+    store resultsPtrOffset ptr
+  return resultsPtr
+
+loadMultiResultAlloc :: [L.Type] -> Operand -> Compile [Operand]
+loadMultiResultAlloc tys ptr =
+  forM (zip [0..] tys) $ \(i, ty) ->
+    gep ptr (i32Lit i) >>= load >>= castLPtr ty >>= load
 
 runMCKernel :: ExternFunSpec
 runMCKernel = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [hostVoidp, i64, hostPtrTy hostVoidp]

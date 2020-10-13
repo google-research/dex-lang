@@ -470,6 +470,7 @@ data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
 data CallingConvention = OrdinaryFun
                        | EntryFun Bool  -- flag indicates whether CUDA required
                        | FFIFun
+                       | FFIMultiResultFun
                        | CUDAKernelLaunch
                        | MCThreadLaunch
                          deriving (Show)

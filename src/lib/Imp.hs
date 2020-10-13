@@ -200,7 +200,11 @@ emitFunction cc bs body = do
 emitFFIFunction :: String -> [IType] -> [IType] -> ImpM IFunVar
 emitFFIFunction s argTys resultTys = do
   let fname = Name FFIName (fromString s) 0
-  let f = fname :> IFunType FFIFun argTys resultTys
+  let cc = case length resultTys of
+        0 -> error "Not implemented"
+        1 -> FFIFun
+        _ -> FFIMultiResultFun
+  let f = fname :> IFunType cc argTys resultTys
   -- TODO: check that if it's already in the env, it's with the same type
   extend $ mempty {envFunctions = fname @> FFIFunction f}
   return f
@@ -289,11 +293,11 @@ toImpOp (maybeDest, op) = case op of
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
   VariantSplit _ _ -> error "Unreachable: should have simplified away"
   FFICall name returnTy xs -> do
-    let returnTy' = fromScalarType returnTy
+    let returnTys = fromScalarOrPairType returnTy
     let xTys = map (fromScalarType . getType) xs
-    f <- emitFFIFunction name xTys [returnTy']
-    result <- emitInstr $ ICall f $ (map fromScalarAtom xs)
-    returnVal $ toScalarAtom result
+    f <- emitFFIFunction name xTys returnTys
+    results <- emitMultiReturnInstr $ ICall f $ map fromScalarAtom xs
+    returnVal $ restructureScalarOrPairType returnTy results
   _ -> do
     returnVal . toScalarAtom =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -724,11 +728,12 @@ allocateBuffer addrSpace mustFree b numel = do
 -- TODO: separate these concepts in IFunType?
 deviceFromCallingConvention :: CallingConvention -> Device
 deviceFromCallingConvention cc = case cc of
-  OrdinaryFun      -> CPU
-  EntryFun _       -> CPU
-  FFIFun           -> CPU
-  MCThreadLaunch   -> CPU
-  CUDAKernelLaunch -> GPU
+  OrdinaryFun       -> CPU
+  EntryFun _        -> CPU
+  FFIFun            -> CPU
+  FFIMultiResultFun -> CPU
+  MCThreadLaunch    -> CPU
+  CUDAKernelLaunch  -> GPU
 
 -- === Atom <-> IExpr conversions ===
 
@@ -888,6 +893,26 @@ emitLoop hint d n body = do
     body $ IVar i
     return (i, [])
   emitStatement $ IFor d (Bind i) n loopBody
+
+fromScalarOrPairType :: Type -> [IType]
+fromScalarOrPairType (PairTy a b) =
+  fromScalarOrPairType a <> fromScalarOrPairType b
+fromScalarOrPairType (BaseTy ty) = [ty]
+fromScalarOrPairType ty = error $ "Not a scalar or pair: " ++ pprint ty
+
+restructureScalarOrPairType :: Type -> [IExpr] -> Atom
+restructureScalarOrPairType ty xs =
+  case restructureScalarOrPairTypeRec ty xs of
+    (atom, []) -> atom
+    _ -> error "Wrong number of scalars"
+
+restructureScalarOrPairTypeRec :: Type -> [IExpr] -> (Atom, [IExpr])
+restructureScalarOrPairTypeRec (PairTy t1 t2) xs = do
+  let (atom1, rest1) = restructureScalarOrPairTypeRec t1 xs
+  let (atom2, rest2) = restructureScalarOrPairTypeRec t2 rest1
+  (PairVal atom1 atom2, rest2)
+restructureScalarOrPairTypeRec (BaseTy _) (x:xs) = (toScalarAtom x, xs)
+restructureScalarOrPairTypeRec ty _ = error $ "Not a scalar or pair: " ++ pprint ty
 
 emitMultiReturnInstr :: ImpInstr -> ImpM [IExpr]
 emitMultiReturnInstr instr = do
@@ -1078,7 +1103,6 @@ checkImpOp op = do
     VectorBinOp bop x y -> checkImpBinOp bop x y
     ScalarUnOp  uop x   -> checkImpUnOp  uop x
     Select _ x y -> checkEq x y >> return x
-    FFICall _ ty _ -> return ty
     VectorPack xs -> do
       Scalar ty <- return $ head xs
       mapM_ (checkEq (Scalar ty)) xs
