@@ -26,6 +26,7 @@ library dex-resources
   build-depends:       base, bytestring, file-embed
   hs-source-dirs:      src/resources
   default-language:    Haskell2010
+  default-extensions:  CPP
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
