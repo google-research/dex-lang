@@ -86,7 +86,7 @@ quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: quine-tests repl-test
+tests: quine-tests repl-test export-tests
 
 quine-tests: $(quine-test-targets)
 
@@ -104,6 +104,11 @@ update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
+
+export-tests: build
+	$(dex) export examples/export/scalar.dx examples/export/scalar.o
+	$(CXX) -std=c++11 examples/export/scalar.o examples/export/scalar.cpp -o examples/export/scalar
+	examples/export/scalar
 
 jax-tests: build
 	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script

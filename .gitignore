@@ -22,3 +22,4 @@ dist-newstyle/
 benchmarks/exe/**/*
 benchmarks/parboil/data
 benchmarks/rodinia/rodinia
+examples/export/scalar
