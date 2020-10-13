@@ -1486,6 +1486,10 @@ builtinNames = M.fromList
   , ("cast", OpExpr  $ CastOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
+  , ("ptrOffset", OpExpr $ PtrOffset () ())
+  , ("ptrLoad"  , OpExpr $ PtrLoad ())
+  , ("CharPtr" , TCExpr $ BaseType $ PtrType
+                     (AllocatedPtr, Heap CPU,  Scalar Int8Type))
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
