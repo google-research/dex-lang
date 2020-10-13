@@ -14,6 +14,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
             fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
 
+import Data.Maybe
 import Data.Store
 import Data.String
 import qualified Data.Text as T
@@ -149,10 +150,10 @@ isin x env = case getName x of
 envMaxName :: Env a -> Maybe Name
 envMaxName (Env m) = if M.null m then Nothing else Just $ fst $ M.findMax m
 
-(!) :: HasCallStack => Env a -> VarP ann -> a
+(!) :: (HasCallStack, HasName b) => Env a -> b -> a
 env ! v = case envLookup env v of
   Just x -> x
-  Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
+  Nothing -> error $ "Lookup of " ++ show (fromMaybe "<no name>" $ getName v) ++ " failed"
 
 isGlobal :: VarP ann -> Bool
 isGlobal (GlobalName _ :> _) = True

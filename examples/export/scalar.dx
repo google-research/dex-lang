@@ -1,0 +1,5 @@
+addi32 : Int32 -> Int32 -> Int32 = (+)
+:export addi32 addi32
+
+addf32 : Float32 -> Float32 -> Float32 = (+)
+:export addf32 addf32

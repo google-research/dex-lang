@@ -7,16 +7,20 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 EvalConfig (..)) where
+                 exportFunctions, EvalConfig (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Control.Monad.Writer hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
-import Data.List (partition)
+import Data.String
+import Data.List (partition, nub)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import qualified Data.Map.Strict as M
 
 import Syntax
+import Embed
 import Cat
 import Env
 import Type
@@ -93,6 +97,13 @@ evalSourceBlockM env block = case sbContents block of
         Heatmap _    -> error "not implemented"
         ColorHeatmap -> error "not implemented"
         Scatter      -> error "not implemented"
+    ExportFun name -> do
+      f <- evalUModuleVal env v m
+      void $ traverseLiterals f $ \val -> case val of
+        PtrLit _ _ -> liftEitherIO $ throw CompilerErr $
+          "Can't export functions with captured pointers (not implemented)."
+        _ -> return $ Con $ Lit val
+      logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
@@ -162,18 +173,14 @@ evalUModule env untyped = do
   synthed <- liftEitherIO $ synthModule env typed
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
-  evalModule env synthed
-
-evalModule :: TopEnv -> Module -> TopPassM TopEnv
-evalModule bindings normalized = do
-  let defunctionalized = simplifyModule bindings normalized
+  let defunctionalized = simplifyModule env synthed
   checkPass SimpPass defunctionalized
   let optimized = optimizeModule defunctionalized
   checkPass OptimPass optimized
   case optimized of
     Module _ Empty newBindings -> return newBindings
     _ -> do
-      let (block, rest) = splitSimpModule bindings optimized
+      let (block, rest) = splitSimpModule env optimized
       result <- evalBackend block
       newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty newBindings
@@ -184,11 +191,19 @@ evalBackend block = do
   backend <- asks (backendName . evalConfig)
   bench   <- asks benchmark
   logger  <- asks logService
-  let (impModule, args, reconAtom) = toImpModule backend block
+  let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
+  let funcName = "entryFun"
+  let mainName = Name TopFunctionName (fromString funcName) 0
+  let cc = case backend of LLVMCUDA -> EntryFun True
+                           _        -> EntryFun False
+  let (mainFunc, impModule, reconAtom) =
+        toImpModule backend cc mainName ptrBinders Nothing block'
   checkPass ImpPass impModule
-  llvmModule <- liftIO $ impToLLVM logger impModule
+  llvmAST <- liftIO $ impToLLVM logger impModule
+  let IFunType _ _ resultTypes = impFunType $ mainFunc
   let llvmEvaluate = if bench then benchLLVM else callLLVM
-  resultVals <- liftM (map (Con . Lit)) $ liftIO $ llvmEvaluate logger llvmModule args
+  resultVals <- liftM (map (Con . Lit)) $ liftIO $
+    llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a
@@ -220,3 +235,95 @@ logTop :: Output -> TopPassM ()
 logTop x = do
   logger <- asks logService
   logThis logger [x]
+
+exportFunctions :: FilePath -> [(String, Atom)] -> TopEnv -> EvalConfig -> IO ()
+exportFunctions objPath funcs env opts = do
+  let names = fmap fst funcs
+  unless (length (nub names) == length names) $ liftEitherIO $
+    throw CompilerErr "Duplicate export names"
+  modules <- forM funcs $ \(nameStr, func) -> do
+    -- Create a module that simulates an application of arguments to the function
+    let ((dest, cargs), (_, decls)) = flip runEmbed (freeVars func) $ do
+          (args, cargArgs) <- runWriterT $ createArgs $ getType func
+          resultAtom <- naryApp func args
+          (resultDest, cdestArgs) <- runWriterT $ createDest $ getType resultAtom
+          void $ emitTo outputName PlainLet $ Atom resultAtom
+          return (resultDest, cdestArgs <> cargArgs)
+
+    let coreModule = Module Core decls mempty
+    let defunctionalized = simplifyModule env coreModule
+    let Module _ optDecls optBindings = optimizeModule defunctionalized
+    let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
+    let block = Block optDecls outputExpr
+
+    let backend = backendName opts
+    let name = Name TopFunctionName (fromString nameStr) 0
+    let (_, impModule, _) = toImpModule backend CEntryFun name cargs (Just dest) block
+    llvmAST <- execLogger Nothing $ flip impToLLVM impModule
+    return (llvmAST, [nameStr])
+  exportLLVM objPath modules
+  where
+    outputName = GlobalName "_ans_"
+
+    createArgs :: Type -> WriterT [IBinder] Embed [Atom]
+    createArgs ty = case ty of
+      BaseTy _            -> return []
+      FunTy b Pure result -> (:) <$> (createArg $ binderType b) <*> createArgs result
+      _ -> error $ "Unexpected type for an exported function: " ++ pprint ty
+
+    createArg :: Type -> WriterT [IBinder] Embed Atom
+    createArg ty = case ty of
+      BaseTy bt@(Scalar _) -> newCVar "val" bt
+      _ -> error $ "Unsupported arg type: " ++ pprint ty
+
+    createDest :: Type -> WriterT [IBinder] Embed Atom
+    createDest ty = case ty of
+      BaseTy bt@(Scalar _) -> Con . BaseTypeRef <$> newCVar "out" (ptrTy bt)
+      _ -> error $ "Unsupported result type: " ++ pprint ty
+
+    -- TODO: I guess that the address space depends on the backend?
+    -- TODO: Have an ExternalPtr tag?
+    ptrTy ty = PtrType (DerivedPtr, Heap CPU, ty)
+
+    newCVar :: Name -> BaseType -> WriterT [IBinder] Embed Atom
+    newCVar nameHint bt = do
+      v@(name:>_) <- freshVarE UnknownBinder (Bind $ nameHint :> BaseTy bt)
+      tell [Bind $ name :> bt]
+      return $ Var v
+
+abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
+abstractPtrLiterals block = flip evalState mempty $ do
+  block' <- traverseLiterals block $ \val -> case val of
+    PtrLit ty ptr -> do
+      ptrName <- gets $ M.lookup (ty, ptr) . fst
+      case ptrName of
+        Just v -> return $ Var $ v :> getType (Con $ Lit val)
+        Nothing -> do
+          (varMap, usedNames) <- get
+          let name = genFresh (Name AbstractedPtrName "ptr" 0) usedNames
+          put ( varMap    <> M.insert (ty, ptr) name varMap
+              , usedNames <> (name @> ()))
+          return $ Var $ name :> BaseTy (PtrType ty)
+    _ -> return $ Con $ Lit val
+  valsAndNames <- gets $ M.toAscList . fst
+  let impBinders = [Bind (name :> PtrType ty) | ((ty, _), name) <- valsAndNames]
+  let vals = map (uncurry PtrLit . fst) valsAndNames
+  return (impBinders, vals, block')
+
+class HasTraversal a where
+  traverseCore :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m -> a -> m a
+
+instance HasTraversal Block where
+  traverseCore = traverseBlock
+
+instance HasTraversal Atom where
+  traverseCore = traverseAtom
+
+traverseLiterals :: (HasTraversal e, Monad m) => e -> (LitVal -> m Atom) -> m e
+traverseLiterals block f =
+    liftM fst $ flip runSubstEmbedT mempty $ traverseCore def block
+  where
+    def = (traverseDecl def, traverseExpr def, traverseAtomLiterals)
+    traverseAtomLiterals atom = case atom of
+      Con (Lit x) -> lift $ lift $ f x
+      _ -> traverseAtom def atom

@@ -444,7 +444,7 @@ data SourceBlock' = RunModule UModule
                   | UnParseable ReachedEOF String
                     deriving (Show, Generic)
 
-data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
+data CmdName = GetType | EvalExpr OutFormat | ExportFun String | Dump DataFormat String
                deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
@@ -467,7 +467,7 @@ type Size = IExpr
 type IFunVar = VarP IFunType
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
                 deriving (Show)
-data CallingConvention = OrdinaryFun
+data CallingConvention = CEntryFun
                        | EntryFun Bool  -- flag indicates whether CUDA required
                        | FFIFun
                        | CUDAKernelLaunch
@@ -589,6 +589,7 @@ data Output = TextOut String
             | TotalTime Double
             | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
             | MiscLog String
+            | ExportedFun String Atom
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | RenderHtml | Heatmap Bool | ColorHeatmap | Scatter

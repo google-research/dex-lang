@@ -472,6 +472,7 @@ prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
 instance Pretty Output where
   pretty (TextOut s) = pretty s
   pretty (HtmlOut _) = "<html output>"
+  pretty (ExportedFun _ _) = ""
   pretty (BenchResult name compileTime runTime stats) =
     benchName <> hardline <>
     "Compile time: " <> prettyDuration compileTime <> hardline <>

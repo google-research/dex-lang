@@ -9,8 +9,9 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module LLVMExec (LLVMModule (..), LLVMKernel (..), ptxDataLayout, callLLVM,
-                 benchLLVM, compileCUDAKernel, ptxTargetTriple, loadLitVal) where
+module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
+                 callLLVM, benchLLVM, exportLLVM,
+                 compileCUDAKernel, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -47,6 +48,7 @@ import Control.Monad
 import Control.Exception hiding (throw)
 import Data.ByteString.Short (ShortByteString)
 import Data.ByteString.Char8 (unpack, pack)
+import Data.String
 import Data.IORef
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
@@ -62,7 +64,6 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-data LLVMModule = LLVMModule [BaseType] [BaseType] L.Module
 data LLVMKernel = LLVMKernel L.Module
 
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
@@ -106,21 +107,21 @@ checkedCallFunPtr argsPtr resultPtr fPtr = do
   where
     secondsSince end start = realToFrac $ end `diffUTCTime` start
 
-callLLVM :: Logger [Output] -> LLVMModule -> [LitVal] -> IO [LitVal]
-callLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
-  allocaBytes (length argTypes * cellSize) $ \argsPtr ->
+callLLVM :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
+callLLVM logger ast fname args resultTypes = do
+  allocaBytes (length args * cellSize) $ \argsPtr ->
     allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
       storeLitVals argsPtr args
-      evalTime <- evalLLVM logger llvmModule $ checkedCallFunPtr argsPtr resultPtr
+      evalTime <- compileFunc logger ast fname $ checkedCallFunPtr argsPtr resultPtr
       logThis logger [EvalTime evalTime Nothing]
       loadLitVals resultPtr resultTypes
 
-benchLLVM :: Logger [Output] -> LLVMModule -> [LitVal] -> IO [LitVal]
-benchLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
-  allocaBytes (length argTypes * cellSize) $ \argsPtr ->
+benchLLVM :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
+benchLLVM logger ast fname args resultTypes = do
+  allocaBytes (length args * cellSize) $ \argsPtr ->
     allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
       storeLitVals argsPtr args
-      evalLLVM logger llvmModule $ \fPtr -> do
+      compileFunc logger ast fname $ \fPtr -> do
         exampleDuration <- checkedCallFunPtr argsPtr resultPtr fPtr
         results <- loadLitVals resultPtr resultTypes
         let timeBudget = 2 -- seconds
@@ -134,21 +135,42 @@ benchLLVM logger (LLVMModule argTypes resultTypes llvmModule) args = do
         logThis logger [EvalTime avgTime (Just benchRuns)]
         return results
 
-evalLLVM :: Logger [Output] -> L.Module -> (DexExecutable -> IO a) -> IO a
-evalLLVM logger ast f = do
+exportLLVM :: FilePath -> [(L.Module, [String])] -> IO ()
+exportLLVM objFile modules = do
+  withContext $ \c -> do
+    void $ Linking.loadLibraryPermanently Nothing
+    withHostTargetMachine $ \tm ->
+      withBrackets (fmap (toLLVM c tm) modules) $ \mods -> do
+        Mod.withModuleFromAST c L.defaultModule $ \exportMod -> do
+          void $ foldM linkModules exportMod mods
+          linkDexrt c exportMod
+          internalize allExports exportMod
+          Mod.writeObjectToFile tm (Mod.File objFile) exportMod
+  where
+    allExports = foldMap snd modules
+
+    toLLVM :: Context -> T.TargetMachine -> (L.Module, [String]) -> (Mod.Module -> IO a) -> IO a
+    toLLVM c tm (ast, exports) cont = do
+      Mod.withModuleFromAST c ast $ \m -> do
+        internalize exports m
+        execLogger Nothing $ \logger -> compileModule c logger tm m
+        cont m
+
+    linkModules a b = a <$ Mod.linkModules a b
+
+    withBrackets :: [(a -> IO b) -> IO b] -> ([a] -> IO b) -> IO b
+    withBrackets brackets f = go brackets []
+      where
+        go (h:t) args = h $ \arg -> go t (arg:args)
+        go []    args = f args
+
+compileFunc :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileFunc logger ast name f = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
     Mod.withModuleFromAST c ast $ \m ->
-      -- XXX: We need to use the large code model for macOS, because the libC functions
-      --      are loaded very far away from the JITed code. This does not prevent the
-      --      runtime linker from attempting to shove their offsets into 32-bit values
-      --      which cannot represent them, leading to segfaults that are very fun to debug.
-      --      It would be good to find a better solution, because larger code models might
-      --      hurt performance if we were to end up doing a lot of function calls.
-      -- TODO: Consider changing the linking layer, as suggested in:
-      --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
-      T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive $ \tm -> do
+      withHostTargetMachine $ \tm -> do
         linkDexrt     c            m
         internalize   ["entryFun"] m
         compileModule c logger tm  m
@@ -159,7 +181,7 @@ evalLLVM logger ast f = do
                 JIT.withSymbolResolver exe (makeResolver compileLayer) $ \resolver -> do
                   modifyIORef resolvers (M.insert moduleKey resolver)
                   JIT.withModule compileLayer moduleKey m $ do
-                    entryFunSymbol <- JIT.mangleSymbol compileLayer "entryFun"
+                    entryFunSymbol <- JIT.mangleSymbol compileLayer (fromString name)
                     Right (JIT.JITSymbol funAddr _) <- JIT.findSymbol compileLayer entryFunSymbol False
                     f $ castPtrToFunPtr $ wordPtrToPtr funAddr
   where
@@ -233,6 +255,18 @@ internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeE
 
 instance Show LLVMKernel where
   show (LLVMKernel ast) = unsafePerformIO $ withContext $ \c -> Mod.withModuleFromAST c ast showModule
+
+-- XXX: We need to use the large code model for macOS, because the libC functions
+--      are loaded very far away from the JITed code. This does not prevent the
+--      runtime linker from attempting to shove their offsets into 32-bit values
+--      which cannot represent them, leading to segfaults that are very fun to debug.
+--      It would be good to find a better solution, because larger code models might
+--      hurt performance if we were to end up doing a lot of function calls.
+-- TODO: Consider changing the linking layer, as suggested in:
+--       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
+withHostTargetMachine :: (T.TargetMachine -> IO a) -> IO a
+withHostTargetMachine f =
+  T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive f
 
 withGPUTargetMachine :: B.ByteString -> (T.TargetMachine -> IO a) -> IO a
 withGPUTargetMachine computeCapability next = do
