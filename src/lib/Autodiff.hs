@@ -248,7 +248,7 @@ linearizeBinOp op x' y' = LinA $ do
 -- abstract over the whole tangent state.
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
-  For d ~(LamVal i body) -> LinA $ do
+  For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
     (ansWithLinTab, vi'') <- buildForAux d i' $ \i''@(Var vi'') ->
        (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
@@ -644,7 +644,7 @@ linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
-  For d ~(Lam (Abs b (_, body))) ->
+  For ~(RegularFor d) ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b $ \i -> do
       ct' <- tabGet ct i
       localNonlinSubst (b@>i) $ transposeBlock body ct'

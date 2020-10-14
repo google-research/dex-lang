@@ -176,7 +176,13 @@ evalUModule env untyped = do
   checkPass SynthPass synthed
   let defunctionalized = simplifyModule env synthed
   checkPass SimpPass defunctionalized
-  let optimized = optimizeModule defunctionalized
+  let stdOptimized = optimizeModule defunctionalized
+  -- Apply backend specific optimizations
+  backend <- asks (backendName . evalConfig)
+  let optimized = case backend of
+                    LLVMCUDA -> parallelizeModule stdOptimized
+                    LLVMMC   -> parallelizeModule stdOptimized
+                    _        -> stdOptimized
   checkPass OptimPass optimized
   case optimized of
     Module _ Empty newBindings -> return newBindings

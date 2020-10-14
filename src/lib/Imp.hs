@@ -130,16 +130,7 @@ translateDecl env (maybeDest, (Unpack bs bound)) = do
 
 translateExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 translateExpr env (maybeDest, expr) = case expr of
-  Hof hof@(For _ _) -> do
-    -- TODO: Add support for reductions
-    -- TODO: Not every parallel for can be made a kernel, since we don't
-    --       lift large allocations just yet.
-    backend <- asks impBackend
-    level   <- asks curLevel
-    if level == TopLevel && backend `elem` [LLVMCUDA, LLVMMC] && isPure expr
-      then launchKernel env (maybeDest, hof)
-      else toImpHof env (maybeDest, hof)
-  Hof hof -> toImpHof env (maybeDest, hof)
+  Hof hof     -> toImpHof env (maybeDest, hof)
   App x' idx' -> case getType x' of
     TabTy _ _ -> do
       x <- impSubst env x'
@@ -171,12 +162,12 @@ translateExpr env (maybeDest, expr) = case expr of
         destToAtom dest
       _ -> error $ "Unexpected scrutinee: " ++ pprint e'
 
-launchKernel :: SubstEnv -> WithDest Hof -> ImpM Atom
-launchKernel env (maybeDest, ~hof@(For _ (LamVal b body))) = do
+launchKernel :: SubstEnv -> WithDest Atom -> ImpM Atom
+launchKernel env (maybeDest, ~lbody@(LamVal b body)) = do
   opts  <- ask
   idxTy <- impSubst env $ binderType b
   n     <- indexSetSize idxTy
-  dest  <- allocDest maybeDest $ getType $ Hof hof
+  dest  <- allocDest maybeDest $ getType $ Hof $ For ParallelFor lbody
   i <- freshVar (binderNameHint b:>getIType n)
   let (cc, dev) = case impBackend opts of
         LLVMCUDA -> (CUDAKernelLaunch, GPU)
@@ -312,7 +303,14 @@ toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
 toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
-    For d (LamVal b body) -> do
+    For ParallelFor body -> do
+      backend <- asks impBackend
+      level   <- asks curLevel
+      unless (  level == TopLevel
+             && backend `elem` [LLVMCUDA, LLVMMC]
+             && isPure (Hof hof)) $ error "Invalid kernel launch"
+      launchKernel env (maybeDest, body)
+    For (RegularFor d) (LamVal b body) -> do
       idxTy <- impSubst env $ binderType b
       n' <- indexSetSize idxTy
       dest <- allocDest maybeDest resultTy

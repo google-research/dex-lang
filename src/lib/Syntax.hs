@@ -24,7 +24,7 @@ module Syntax (
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
-    Scope, CmdName (..), HasIVars (..),
+    Scope, CmdName (..), HasIVars (..), ForAnn (..),
     Val, TopEnv, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
@@ -346,7 +346,7 @@ data PrimOp e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
-        For Direction e
+        For ForAnn e
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e e
       | RunReader e e
@@ -376,6 +376,8 @@ data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
              deriving (Show, Eq, Generic)
 
 data Direction = Fwd | Rev  deriving (Show, Eq, Generic)
+data ForAnn = RegularFor Direction | ParallelFor
+                deriving (Show, Eq, Generic)
 
 data Limit a = InclusiveLim a
              | ExclusiveLim a
@@ -1507,6 +1509,7 @@ instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (LabeledItems a)
 instance (Store a, Store b) => Store (ExtLabeledItems a b)
+instance Store ForAnn
 instance Store Atom
 instance Store Expr
 instance Store Block

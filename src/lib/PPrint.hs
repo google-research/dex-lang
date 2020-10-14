@@ -153,8 +153,8 @@ instance PrettyPrec Expr where
     atPrec AppPrec $ pApp f <+> pArg x
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For dir (Lam lamExpr))) =
-    atPrec LowestPrec $ dirStr dir <+> prettyLamHelper lamExpr (PrettyFor dir)
+  prettyPrec (Hof (For ann (Lam lamExpr))) =
+    atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
 
@@ -268,7 +268,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For dir lam -> atPrec LowestPrec $ dirStr dir <+> pArg lam
+    For ann lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty a => Pretty (VarP a) where
@@ -300,7 +300,7 @@ prettyPiTypeHelper (Abs binder (arr, body)) = let
     _ -> pLowest body
   in prettyBinder <> (group $ line <> p arr <+> prettyBody)
 
-data PrettyLamType = PrettyLam Arrow | PrettyFor Direction deriving (Eq)
+data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: LamExpr -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
@@ -312,8 +312,8 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyLam arr' ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
-      Block Empty (Hof (For dir (Lam next)))
-        | lamType == PrettyFor dir ->
+      Block Empty (Hof (For ann (Lam next)))
+        | lamType == PrettyFor ann ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
       _ -> (thisOne <> punctuation, body')
@@ -435,7 +435,7 @@ instance Pretty ImpFunction where
   pretty (FFIFunction f) = p f
 
 instance Pretty ImpInstr where
-  pretty (IFor d i n block) = dirStr d <+> p i <+> "<" <+> p n <>
+  pretty (IFor a i n block) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
                                 nest 4 (hardline <> p block)
   pretty (IWhile cond body) = "while" <+>
                                   nest 2 (p cond) <+> "do" <>
@@ -454,9 +454,10 @@ instance Pretty ImpInstr where
   pretty IThrowError = "throwError"
   pretty (ICall f args) = "call" <+> p f <+> p args
 
-dirStr :: Direction -> Doc ann
-dirStr Fwd = "for"
-dirStr Rev = " rof"
+forStr :: ForAnn -> Doc ann
+forStr (RegularFor Fwd) = "for"
+forStr (RegularFor Rev) = "rof"
+forStr ParallelFor      = "pfor"
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
