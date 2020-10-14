@@ -42,6 +42,7 @@ data NameSpace =
      | AbstractedPtrName  -- used in `abstractPtrLiterals` in Imp lowering
      | TopFunctionName    -- top-level Imp functions
      | AllocPtrName       -- used for constructing dests in Imp lowering
+     | CArgName           -- used for constructing arguments in export
        deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text

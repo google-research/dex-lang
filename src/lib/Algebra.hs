@@ -4,9 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Algebra (Constant, Monomial, Polynomial,
-                elemCount, offsets,
-                evalClampPolynomial, evalSumClampPolynomial,
+module Algebra (offsetToE, elemCountE, applyIdxs,
                 showPolyC, showSumPolyC) where
 
 import Prelude hiding (lookup, sum, pi)
@@ -22,7 +20,8 @@ import Data.Coerce
 import Env
 import Syntax
 import PPrint
-import Embed (MonadEmbed, iadd, imul, idiv, clampPositive)
+import Embed ( MonadEmbed, iadd, imul, idiv, clampPositive, ptrOffset
+             , indexToIntE, indexSetSizeE )
 
 -- MVar is like Var, but it additionally defines Ord. The invariant here is that the variables
 -- should never be shadowing, and so it is sufficient to only use the name for equality and
@@ -50,6 +49,22 @@ type ClampPolynomial  = PolynomialP ClampMonomial
 -- given by Var bundled in this ADT.
 data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
 data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
+
+applyIdxs :: MonadEmbed m => Atom -> IndexStructure -> m Atom
+applyIdxs ptr Empty = return ptr
+applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
+  ordinal <- indexToIntE $ Var i
+  offset <- offsetToE idxs ordinal
+  ptr' <- ptrOffset ptr offset
+  applyIdxs ptr' rest
+
+offsetToE :: MonadEmbed m => IndexStructure -> Atom -> m Atom
+offsetToE idxs i = evalSumClampPolynomial (offsets idxs) i
+
+elemCountE :: MonadEmbed m => IndexStructure -> m Atom
+elemCountE idxs = case idxs of
+  Empty    -> return $ IdxRepVal 1
+  Nest b _ -> offsetToE idxs =<< indexSetSizeE (binderType b)
 
 elemCount :: IndexStructure -> ClampPolynomial
 elemCount idxs = case idxs of
@@ -111,8 +126,8 @@ toPolynomial atom = case atom of
 
 -- === Embedding ===
 
-evalClampPolynomial :: MonadEmbed m => ClampPolynomial -> m Atom
-evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
+_evalClampPolynomial :: MonadEmbed m => ClampPolynomial -> m Atom
+_evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
 
 evalSumClampPolynomial :: MonadEmbed m => SumClampPolynomial -> Atom -> m Atom
 evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
