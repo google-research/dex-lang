@@ -101,7 +101,7 @@ execCatT :: (Monoid env, Monad m) => CatT env m a -> m env
 execCatT m = snd <$> runCatT m mempty
 
 newCatT :: (Monoid env, Monad m) => (env -> m (a, env)) -> CatT env m a
-newCatT  f = do
+newCatT f = do
   env <- look
   (ans, env') <- lift $ f env
   extend env'

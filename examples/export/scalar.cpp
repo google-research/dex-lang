@@ -4,19 +4,19 @@
 #include <array>
 
 extern "C" {
-extern int addi32(int32_t* result, int32_t x, int32_t y);
-extern int addf32(float*   result, float   x, float   y);
+extern int addi32(int32_t x, int32_t y, int32_t* result);
+extern int addf32(float   x, float   y, float*   result);
 }
 
 int32_t add(int32_t x, int32_t y) {
   int32_t result = 0;
-  assert(addi32(&result, x, y) == 0);
+  assert(addi32(x, y, &result) == 0);
   return result;
 }
 
 float add(float x, float y) {
   float result = 0;
-  assert(addf32(&result, x, y) == 0);
+  assert(addf32(x, y, &result) == 0);
   return result;
 }
 

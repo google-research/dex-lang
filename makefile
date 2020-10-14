@@ -105,10 +105,12 @@ update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-export-tests: build
-	$(dex) export examples/export/scalar.dx examples/export/scalar.o
-	$(CXX) -std=c++11 examples/export/scalar.o examples/export/scalar.cpp -o examples/export/scalar
-	examples/export/scalar
+export-tests: export-test-scalar export-test-array
+
+export-test-%: build
+	$(dex) export examples/export/$*.dx examples/export/$*.o
+	$(CXX) -std=c++11 examples/export/$*.o examples/export/$*.cpp -o examples/export/$*
+	examples/export/$*
 
 jax-tests: build
 	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script

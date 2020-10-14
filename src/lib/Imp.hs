@@ -40,7 +40,7 @@ import Env
 import Type
 import PPrint
 import Cat
-import qualified Algebra as A
+import Algebra
 import Util
 
 -- Note [Valid Imp atoms]
@@ -475,14 +475,6 @@ makeDataConDest (Nest b rest) = do
   rest'' <- withDepVar (Bind v) $ makeDataConDest rest'
   return $ Nest (DataConRefBinding (Bind v) dest) rest''
 
-applyIdxs :: MonadEmbed m => Atom -> IndexStructure -> m Atom
-applyIdxs ptr Empty = return ptr
-applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
-  ordinal <- indexToIntE $ Var i
-  offset <- offsetToE idxs ordinal
-  ptr' <- ptrOffset ptr offset
-  applyIdxs ptr' rest
-
 copyAtom :: Dest -> Atom -> ImpM ()
 copyAtom (BoxedRef b ptrPtr size body) src = do
   -- TODO: load old ptr and free (recursively)
@@ -740,14 +732,6 @@ indexToInt idx = fromScalarAtom <$> fromEmbed (indexToIntE idx)
 
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize ty = fromScalarAtom <$> fromEmbed (indexSetSizeE ty)
-
-elemCountE :: MonadEmbed m => IndexStructure -> m Atom
-elemCountE idxs = case idxs of
-  Empty    -> return $ IdxRepVal 1
-  Nest b _ -> offsetToE idxs =<< indexSetSizeE (binderType b)
-
-offsetToE :: HasCallStack => MonadEmbed m => IndexStructure -> Atom -> m Atom
-offsetToE idxs i = A.evalSumClampPolynomial (A.offsets idxs) i
 
 zipTabDestAtom :: HasCallStack => (Dest -> Atom -> ImpM ()) -> Dest -> Atom -> ImpM ()
 zipTabDestAtom f ~dest@(Con (TabRef (TabVal b _))) ~src@(TabVal b' _) = do
