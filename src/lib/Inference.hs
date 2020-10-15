@@ -116,14 +116,14 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     let infer = do
           allowedEff <- getAllowedEffects
           lam <- inferULam b (PlainArrow allowedEff) body
-          emitZonked $ Hof $ For dir lam
+          emitZonked $ Hof $ For (RegularFor dir) lam
     case reqTy of
       Check (Pi (Abs n (arr, a))) -> do
         unless (arr == TabArrow) $
           throw TypeErr $ "Not an table arrow type: " ++ pprint arr
         allowedEff <- getAllowedEffects
         lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-        emitZonked $ Hof $ For dir lam
+        emitZonked $ Hof $ For (RegularFor dir) lam
       Check _ -> infer >>= matchRequirement
       Infer   -> infer
   UApp arr f x@(WithSrc xPos _) -> do

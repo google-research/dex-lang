@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Optimize (optimizeModule, dceModule, inlineModule) where
+module Optimize (parallelizeModule, optimizeModule, dceModule, inlineModule) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -107,6 +107,10 @@ inlineTraverseDecl decl = case decl of
     return $ b @> TabVal ib block
   _ -> traverseDecl inlineTraversalDef decl
 
+-- TODO: This is a bit overeager. We should count under how many loops are we.
+--       Even if the array is accessed in an injective fashion, the accesses might
+--       be happen in a deeply nested loop and we might not want to repeat the
+--       compute over and over.
 inlineTraverseExpr :: Expr -> InlineM Expr
 inlineTraverseExpr expr = case expr of
   Hof (For d body) -> do
@@ -200,6 +204,26 @@ computeInlineHints m@(Module _ _ bindings) =
     noInlineFree :: HasVars a => a -> InlineHintM a
     noInlineFree a = modify (<> (fmap (const NoInline) (freeVars a))) >> return a
 
+-- === Parallelization ===
+
+type ParallelM = SubstEmbed
+
+parallelizeModule :: Module -> Module
+parallelizeModule = transformModuleAsBlock parallelizeBlock
+  where parallelizeBlock block = fst $ runSubstEmbed (traverseBlock parallelTrav block) mempty
+
+
+parallelTrav :: TraversalDef ParallelM
+parallelTrav = (traverseDecl parallelTrav, parallelTraverseExpr, traverseAtom parallelTrav)
+
+-- TODO: Check the the inner loop works in "constant space"?
+--       We might not be unable to codegen the kernel otherwise.
+parallelTraverseExpr :: Expr -> ParallelM Expr
+parallelTraverseExpr expr = case expr of
+  Hof (For ParallelFor    _   ) -> traverseExpr substTraversalDef expr
+  Hof (For (RegularFor _) body) | isPure expr -> do
+    Hof . For ParallelFor <$> traverseAtom substTraversalDef body
+  _ -> traverseExpr parallelTrav expr
 
 -- === Helpers ===
 

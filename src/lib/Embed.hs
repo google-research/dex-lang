@@ -346,7 +346,7 @@ buildForAux :: MonadEmbed m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m
 buildForAux d i body = do
   eff <- getAllowedEffects
   (lam, aux) <- buildLamAux i (const $ return $ PlainArrow eff) body
-  (,aux) <$> (emit $ Hof $ For d lam)
+  (,aux) <$> (emit $ Hof $ For (RegularFor d) lam)
 
 buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
 buildFor d i body = fst <$> buildForAux d i (\x -> (,()) <$> body x)
