@@ -16,7 +16,9 @@ import Foreign.Ptr
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import System.IO.Unsafe (unsafePerformIO)
+import Foreign.Marshal.Alloc
 
+import CUDA
 import Cat
 import Syntax
 import Env
@@ -115,9 +117,13 @@ evalOpDefined expr = case expr of
     _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (_, a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (DerivedPtr, a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> (Con . Lit) <$> loadLitVal p t
-  PtrLoad (Con (Lit (PtrLit (_, a, _) _))) ->
-    error $ "Can't load from this address space in interpreter: " ++ pprint a
+  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> Con . Lit <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (_, Heap GPU, t) p))) ->
+    allocaBytes (sizeOf t) $ \hostPtr -> do
+      loadCUDAArray hostPtr p (sizeOf t)
+      Con . Lit <$> loadLitVal hostPtr t
+  PtrLoad (Con (Lit (PtrLit (_, Stack, _) _))) ->
+    error $ "Unexpected stack pointer in interpreter"
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i

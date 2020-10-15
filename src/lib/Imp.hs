@@ -483,10 +483,10 @@ copyAtom (BoxedRef b ptrPtr size body) src = do
   ptr <- emitAlloc ptrTy $ fromScalarAtom size'
   body' <- impSubst (b@>toScalarAtom ptr) body
   copyAtom body' src
-  store (fromScalarAtom ptrPtr) ptr
+  storeAnywhere (fromScalarAtom ptrPtr) ptr
 copyAtom (DataConRef _ _ refs) (DataCon _ _ _ vals) = copyDataConArgs refs vals
 copyAtom (Con dest) src = case (dest, src) of
-  (BaseTypeRef ptr, _) -> store (fromScalarAtom ptr) (fromScalarAtom src)
+  (BaseTypeRef ptr, _) -> storeAnywhere (fromScalarAtom ptr) (fromScalarAtom src)
   (TabRef _, TabVal _ _) -> zipTabDestAtom copyAtom (Con dest) src
   (ConRef (SumAsProd _ tag payload), DataCon _ _ con x) -> do
     copyAtom tag (TagRepVal $ fromIntegral con)
@@ -761,13 +761,13 @@ addToAtom dest src = case (dest, src) of
   (Con (BaseTypeRef ptr), x) -> do
     let ptr' = fromScalarAtom ptr
     let x'   = fromScalarAtom x
-    cur <- load ptr'
+    cur <- loadAnywhere ptr'
     let op = case getIType cur of
                Scalar _ -> ScalarBinOp
                Vector _ -> VectorBinOp
                _ -> error $ "The result of load cannot be a reference"
     updated <- emitInstr $ IPrimOp $ op FAdd cur x'
-    store ptr' updated
+    storeAnywhere ptr' updated
   (Con (TabRef _), TabVal _ _) -> zipTabDestAtom addToAtom dest src
   (Con (ConRef destCon), Con srcCon) -> zipWithRefConM addToAtom destCon srcCon
   (Con (RecordRef dests), Record srcs) ->
@@ -784,6 +784,17 @@ loadAnywhere ptr = do
       memcopy localPtr ptr (IIdxRepVal 1)
       load localPtr
     _ -> load ptr
+
+storeAnywhere :: IExpr -> IExpr -> ImpM ()
+storeAnywhere ptr val = do
+  curDev <- asks curDevice
+  let (PtrType (_, addrSpace, ty)) = getIType ptr
+  case addrSpace of
+    Heap ptrDev | ptrDev /= curDev -> do
+      localPtr <- allocateStackSingleton ty
+      store localPtr val
+      memcopy ptr localPtr (IIdxRepVal 1)
+    _ -> store ptr val
 
 allocateStackSingleton :: IType -> ImpM IExpr
 allocateStackSingleton ty = allocateBuffer Stack False ty (IIdxRepVal 1)
