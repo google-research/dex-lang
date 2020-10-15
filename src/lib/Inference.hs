@@ -675,7 +675,7 @@ type SynthDictM = SubstEmbedT []
 
 synthModule :: Scope -> Module -> Except Module
 synthModule scope (Module Typed decls bindings) = do
-  decls' <- fst <$> runSubstEmbedT
+  decls' <- fst . fst <$> runSubstEmbedT
               (traverseDecls (traverseHoles synthDictTop) decls) scope
   return $ Module Core decls' bindings
 synthModule _ _ = error $ "Unexpected IR variant"

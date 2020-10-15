@@ -16,14 +16,16 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               runSubstEmbed, runEmbed, getScope, embedLook,
               app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
               select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
-              fromPair, getFst, getSnd, naryApp, appReduce, buildAbs, buildForAux,
-              emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
+              fromPair, getFst, getSnd, naryApp, appReduce, appTryReduce, buildAbs,
+              buildFor, buildForAux, buildForAnn, buildForAnnAux,
+              emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, unpackConsList, emitRunWriter, emitRunState,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, evalBlockE, substTraversalDef,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
+              transformModuleAsBlock, dropSub, appReduceTraversalDef,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue, freshVarE) where
 
 import Control.Applicative
@@ -35,6 +37,7 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
+import Data.Tuple (swap)
 import GHC.Stack
 
 import Env
@@ -305,6 +308,11 @@ appReduce (Lam (Abs v (_, b))) a =
   runReaderT (evalBlockE substTraversalDef b) (v @> a)
 appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
+appTryReduce :: MonadEmbed m => Atom -> Atom -> m Atom
+appTryReduce f x = case f of
+  Lam _ -> appReduce f x
+  _     -> app f x
+
 ptrOffset :: MonadEmbed m => Atom -> Atom -> m Atom
 ptrOffset x i = emitOp $ PtrOffset x i
 
@@ -342,19 +350,25 @@ mkBinaryEffFun newEff v ty body = do
     let arr = PlainArrow $ extendEffect (newEff, rName) eff
     buildLam (Bind (v:> RefTy r ty)) arr body
 
-buildForAux :: MonadEmbed m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
-buildForAux d i body = do
+buildForAnnAux :: MonadEmbed m => ForAnn -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
+buildForAnnAux ann i body = do
   eff <- getAllowedEffects
   (lam, aux) <- buildLamAux i (const $ return $ PlainArrow eff) body
-  (,aux) <$> (emit $ Hof $ For (RegularFor d) lam)
+  (,aux) <$> (emit $ Hof $ For ann lam)
+
+buildForAnn :: MonadEmbed m => ForAnn -> Binder -> (Atom -> m Atom) -> m Atom
+buildForAnn ann i body = fst <$> buildForAnnAux ann i (\x -> (,()) <$> body x)
+
+buildForAux :: MonadEmbed m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
+buildForAux = buildForAnnAux . RegularFor
 
 buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
-buildFor d i body = fst <$> buildForAux d i (\x -> (,()) <$> body x)
+buildFor = buildForAnn . RegularFor
 
-buildNestedLam :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m Atom
-buildNestedLam [] f = f []
-buildNestedLam (b:bs) f =
-  buildLam b PureArrow $ \x -> buildNestedLam bs $ \xs -> f (x:xs)
+buildNestedLam :: MonadEmbed m => Arrow -> [Binder] -> ([Atom] -> m Atom) -> m Atom
+buildNestedLam _ [] f = f []
+buildNestedLam arr (b:bs) f =
+  buildLam b arr $ \x -> buildNestedLam arr bs $ \xs -> f (x:xs)
 
 tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
 tabGet x i = emit $ App x i
@@ -544,12 +558,29 @@ type TraversalDef m = (Decl -> m SubstEnv, Expr -> m Expr, Atom -> m Atom)
 substTraversalDef :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m
 substTraversalDef = ( traverseDecl substTraversalDef
                     , traverseExpr substTraversalDef
-                    , traverseAtom substTraversalDef)
+                    , traverseAtom substTraversalDef
+                    )
+
+appReduceTraversalDef :: TraversalDef SubstEmbed
+appReduceTraversalDef = ( traverseDecl appReduceTraversalDef
+                        , reduceAppExpr
+                        , traverseAtom appReduceTraversalDef
+                        )
+  where
+    reduceAppExpr expr = case expr of
+      App f' x' -> do
+        f <- traverseAtom appReduceTraversalDef f'
+        x <- traverseAtom appReduceTraversalDef x'
+        case f of
+          TabVal b body ->
+            Atom <$> (dropSub $ extendR (b@>x) $ evalBlockE appReduceTraversalDef body)
+          _ -> return $ App f x
+      _ -> traverseExpr appReduceTraversalDef expr
 
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
-              => TraversalDef m -> Nest Decl -> m (Nest Decl)
-traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
+              => TraversalDef m -> Nest Decl -> m ((Nest Decl), SubstEnv)
+traverseDecls def decls = liftM swap $ scopedDecls $ traverseDeclsOpen def decls
 
 traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
                   => TraversalDef m -> Nest Decl -> m SubstEnv
@@ -655,6 +686,17 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
       case b of
         Block Empty (Atom r) -> return $ Abs bs'' r
         _                    -> error "ACase alternative traversal has emitted decls or exprs!"
+
+transformModuleAsBlock :: (Block -> Block) -> Module -> Module
+transformModuleAsBlock transform (Module ir decls bindings) = do
+  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
+  let block = Block decls $ Atom $ mkConsList $ map Var localVars
+  let (Block newDecls (Atom newResult)) = transform block
+  let newLocalVals = ignoreExcept $ fromConsList newResult
+  Module ir newDecls $ scopelessSubst (newEnv localVars newLocalVals) bindings
+
+dropSub :: MonadReader SubstEnv m => m a -> m a
+dropSub m = local mempty m
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of

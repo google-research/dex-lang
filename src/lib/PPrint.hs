@@ -26,6 +26,8 @@ import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, unpack, uncons, unsnoc)
 import System.Console.ANSI
+import System.IO.Unsafe
+import System.Environment
 import Numeric
 
 import Env
@@ -56,8 +58,12 @@ pprint x = asStr $ pretty x
 pprintList :: Pretty a => [a] -> String
 pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
 
+layout :: LayoutOptions
+layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
+  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
+
 asStr :: Doc ann -> String
-asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc
+asStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
 
 p :: Pretty a => a -> Doc ann
 p = pretty

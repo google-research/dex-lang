@@ -37,6 +37,7 @@ import PPrint
 import Parser
 import Util (highlightRegion)
 import Optimize
+import Parallelize
 
 data EvalConfig = EvalConfig
   { backendName :: Backend

@@ -6,10 +6,9 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Optimize (parallelizeModule, optimizeModule, dceModule, inlineModule) where
+module Optimize (optimizeModule, dceModule, inlineModule) where
 
 import Control.Monad.State.Strict
-import Control.Monad.Reader
 import Data.Foldable
 import Data.Maybe
 
@@ -18,7 +17,6 @@ import Embed
 import Cat
 import Env
 import Type
-import PPrint
 
 optimizeModule :: Module -> Module
 optimizeModule = dceModule . inlineModule . dceModule
@@ -117,6 +115,11 @@ inlineTraverseExpr expr = case expr of
     newBody <- traverseAtom inlineTraversalDef body
     case newBody of
       -- Trivial bodies
+      -- XXX: The trivial body might be a table lambda, and those could technically
+      --      get quite expensive. But I think this should never be the case in practice.
+      -- XXX: This doesn't always have to end up being beneficial. If the result is
+      --      significantly smaller than the intermediates it refers to, then this
+      --      optimization will waste a bunch of memory by keeping the large intermediates alive.
       LamVal ib block@(Block Empty (Atom _)) -> return $ Atom $ TabVal ib block
       -- Pure broadcasts
       LamVal ib@(Ignore _) block | blockEffs block == NoEffects -> do
@@ -131,9 +134,6 @@ inlineTraverseExpr expr = case expr of
       _ -> return $ App f x
   _ -> nope
   where nope = traverseExpr inlineTraversalDef expr
-
-dropSub :: InlineM a -> InlineM a
-dropSub m = local mempty m
 
 type InlineHintM = State (Env InlineHint)
 
@@ -203,34 +203,3 @@ computeInlineHints m@(Module _ _ bindings) =
 
     noInlineFree :: HasVars a => a -> InlineHintM a
     noInlineFree a = modify (<> (fmap (const NoInline) (freeVars a))) >> return a
-
--- === Parallelization ===
-
-type ParallelM = SubstEmbed
-
-parallelizeModule :: Module -> Module
-parallelizeModule = transformModuleAsBlock parallelizeBlock
-  where parallelizeBlock block = fst $ runSubstEmbed (traverseBlock parallelTrav block) mempty
-
-
-parallelTrav :: TraversalDef ParallelM
-parallelTrav = (traverseDecl parallelTrav, parallelTraverseExpr, traverseAtom parallelTrav)
-
--- TODO: Check the the inner loop works in "constant space"?
---       We might not be unable to codegen the kernel otherwise.
-parallelTraverseExpr :: Expr -> ParallelM Expr
-parallelTraverseExpr expr = case expr of
-  Hof (For ParallelFor    _   ) -> traverseExpr substTraversalDef expr
-  Hof (For (RegularFor _) body) | isPure expr -> do
-    Hof . For ParallelFor <$> traverseAtom substTraversalDef body
-  _ -> traverseExpr parallelTrav expr
-
--- === Helpers ===
-
-transformModuleAsBlock :: (Block -> Block) -> Module -> Module
-transformModuleAsBlock transform (Module ir decls bindings) = do
-  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ mkConsList $ map Var localVars
-  let (Block newDecls (Atom newResult)) = transform block
-  let newLocalVals = ignoreExcept $ fromConsList newResult
-  Module ir newDecls $ scopelessSubst (newEnv localVars newLocalVals) bindings
