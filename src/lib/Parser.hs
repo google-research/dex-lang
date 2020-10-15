@@ -370,11 +370,19 @@ interfaceInstance = do
     -- the interface and generate its corresponding constructor.
     mkConstructorCall (WithSrc _ (UPi _ arr typ)) record
       | arr `elem` [ClassArrow, ImplicitArrow] = mkConstructorCall typ record
+    -- The innermost UApp is an application of a variable that has the name of
+    -- the interface to a type. We retrieve its name and derive the name of
+    -- its automatically generated constructor, which we apply to the record
+    -- passed as a parameter.
     mkConstructorCall (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) record =
       (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` record
+    -- Given the instance "I Int Float" of a multi-parameter interface I, we
+    -- end up with something similar to UApp _ (UApp _ I Int) Float. The below
+    -- traverses UApps to get to the innermost one..
     mkConstructorCall (WithSrc _ (UApp _ func _)) record =
       mkConstructorCall func record
-    -- We let this case through to fail during typechecking
+    -- In this case, the type annotation does not contain any function
+    -- application; this indicates a Kind error.
     mkConstructorCall _ record = record
     var s = WithSrc Nothing $ UVar $ mkName s :> ()
 
