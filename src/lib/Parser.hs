@@ -302,25 +302,26 @@ interfaceDef = do
         fmap (\(name, ty :| []) -> mkOneFunDef meta (name, ty)) $ M.toList items
     mkOneFunDef :: (SrcPos, [Name], Name) -> (Label, UExpr) -> UDecl
     mkOneFunDef (pos, typeVarNames, interfaceName) (fLabel, fType) =
-      let (p, ann) = lhs
-          (ann', rhs') = addImplicitImplicitArgs pos ann rhs
-      in ULet PlainLet (p, ann') rhs'
+      ULet PlainLet (p, ann') rhs'
       where
-        lhs = let uAnnBinder = Bind $ instanceName :> (foldl mkUApp
-                    (var interfaceName) typeVarNames)
-          in (patb fLabel, Just $ ns $ UPi uAnnBinder ClassArrow fType)
+        uAnnBinder = Bind $
+          instanceName :> (foldl mkUApp (var interfaceName) typeVarNames)
+        p = patb fLabel
+        ann = Just $ ns $ UPi uAnnBinder ClassArrow fType
+
         mkUApp func typeVarName =
           ns $ UApp (PlainArrow ()) func (var typeVarName)
-        rhs =
-          let recordStr = "recordVar"
-              recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
-                fLabel)) $ Just (ns (UPatBinder (Ignore ())))
-              conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
-                $ toNest [patb recordStr]
-              let1 = ULet PlainLet (conPat, Nothing) $ var instanceName
-              let2 = ULet PlainLet (recordPat, Nothing) $ var $ mkName recordStr
-              body = ns $ UDecl let1 (ns $ UDecl let2 (var (mkName fLabel)))
-          in ns $ ULam (patb instanceStr, Nothing) ClassArrow body
+        recordStr = "recordVar"
+        recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
+          fLabel)) $ Just (ns (UPatBinder (Ignore ())))
+        conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
+          $ toNest [patb recordStr]
+
+        let1 = ULet PlainLet (conPat, Nothing) $ var instanceName
+        let2 = ULet PlainLet (recordPat, Nothing) $ var $ mkName recordStr
+        body = ns $ UDecl let1 (ns $ UDecl let2 (var (mkName fLabel)))
+        rhs = ns $ ULam (patb instanceStr, Nothing) ClassArrow body
+        (ann', rhs') = addImplicitImplicitArgs pos ann rhs
 
         ns = WithSrc Nothing
         patb s = ns $ UPatBinder $ Bind $ mkName s :> ()
