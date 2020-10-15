@@ -16,6 +16,7 @@ import Text.Megaparsec.Char hiding (space)
 import Data.Char (isLower)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Traversable (mapAccumR)
 import qualified Data.Map.Strict as M
 import Data.Void
 import Data.String (fromString)
@@ -269,34 +270,49 @@ addImplicitImplicitArgs sourcePos (Just typ) ex =
 interfaceDef :: Parser [UDecl]
 interfaceDef = do
   keyWord InterfaceKW
-  -- TODO: allow multi-parameter type classes
-  interfaceName <- upperName <|> symName
-  (oneAnnBinder, pos) <- withPos annBinder
+  (tyCon, pos) <- withPos tyConDef
   keyWord WhereKW
-  record <- withSrc $ URecordTy <$> interfaceRecordFields ":"
-  let consName = mkInterfaceConsName interfaceName
-  let (varTypeName, oneAnnBinder') = case oneAnnBinder of
-        Bind v    -> (varName v, oneAnnBinder)
-        Ignore ty -> let genVar = mkName $ mkNoShadowingStr "gen" in
-            (genVar, Bind (genVar:>ty))
-  let tyCon = UConDef interfaceName $ toNest [oneAnnBinder']
-  let funDefs = mkFunDefs (pos, varTypeName, interfaceName) record
-  return $ (UData tyCon [UConDef consName (toNest [Ignore record])]) : funDefs
+  recordFields <- withSrc $ interfaceRecordFields ":"
+  let (UConDef interfaceName uAnnBinderNest) = tyCon
+      record = (URecordTy . NoExt) <$> recordFields
+      consName = mkInterfaceConsName interfaceName
+      ((_, varNames), uAnnBinderNest') =
+          mapAccumR mkFreeVarTypeName (0, []) uAnnBinderNest
+      tyCon' = UConDef interfaceName uAnnBinderNest'
+      funDefs = mkFunDefs (pos, varNames, interfaceName) recordFields
+  return $ (UData tyCon' [UConDef consName (toNest [Ignore record])]) : funDefs
   where
-    mkFunDefs :: (SrcPos, Name, Name) -> UExpr -> [UDecl]
-    mkFunDefs meta ~(WithSrc _ (URecordTy (NoExt (LabeledItems items)))) =
+    mkFreeVarTypeName
+      :: (Int, [Name]) -> UAnnBinder -> ((Int, [Name]), UAnnBinder)
+    mkFreeVarTypeName (n, varNames) (Ignore ty) =
+      let genVarName = mkName $ mkNoShadowingStr ("gen" ++ show n) in
+      ((n + 1, genVarName:varNames), Bind (genVarName:>ty))
+    mkFreeVarTypeName (n, varNames) b@(Bind v) = ((n, (varName v):varNames), b)
+    -- From an interface
+    --   interface I a:Type b:Type where
+    --     f : a -> b
+    -- mkFunDefs generates the equivalent of the following function definition:
+    --   def f (instance# : I a b) ?=> a -> b =
+    --     (I# {f=f,...}) = instance#
+    --     f
+    -- where I# is an automatically generated constructor of I.
+    mkFunDefs
+      :: (SrcPos, [Name], Name) -> WithSrc (LabeledItems UExpr) -> [UDecl]
+    mkFunDefs meta ~(WithSrc _ (LabeledItems items)) =
         fmap (\(name, ty :| []) -> mkOneFunDef meta (name, ty)) $ M.toList items
-    mkOneFunDef :: (SrcPos, Name, Name) -> (Label, UExpr) -> UDecl
-    mkOneFunDef (pos, varTypeName, interfaceName) (fLabel, fType) =
+    mkOneFunDef :: (SrcPos, [Name], Name) -> (Label, UExpr) -> UDecl
+    mkOneFunDef (pos, typeVarNames, interfaceName) (fLabel, fType) =
       let (p, ann) = lhs
-      in let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
+          (ann', rhs') = addImplicitImplicitArgs pos ann rhs
       in ULet PlainLet (p, ann') rhs'
       where
-        lhs = let uAnnBinder = Bind $ instanceName :> ns (UApp
-                    (PlainArrow ()) (var interfaceName) (var varTypeName))
+        lhs = let uAnnBinder = Bind $ instanceName :> (foldl mkUApp
+                    (var interfaceName) typeVarNames)
           in (patb fLabel, Just $ ns $ UPi uAnnBinder ClassArrow fType)
+        mkUApp func typeVarName =
+          ns $ UApp (PlainArrow ()) func (var typeVarName)
         rhs =
-          let recordStr = mkNoShadowingStr "recordVar"
+          let recordStr = "recordVar"
               recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
                 fLabel)) $ Just (ns (UPatBinder (Ignore ())))
               conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
@@ -343,17 +359,21 @@ interfaceInstance = do
   (p, pos) <- withPos letPat
   ann <- annot uType
   keyWord WhereKW
-  rhs <- mkRhs ann <$> (withSrc $ URecord <$> interfaceRecordFields "=")
+  rhs <- mkConstructorCall ann <$> (withSrc $ (URecord . NoExt) <$>
+      interfaceRecordFields "=")
   let (ann', rhs') = addImplicitImplicitArgs pos (Just ann) rhs
   return $ ULet InstanceLet (p, ann') rhs'
   where
     -- Here, we are traversing the type annotation to retrieve the name of
     -- the interface and generate its corresponding constructor.
-    mkRhs (WithSrc _ (UPi _ _ lrhs))      rhs = mkRhs lrhs rhs
-    mkRhs (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) rhs =
-      (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` rhs
-    -- We let this case through to fail during type checking.
-    mkRhs _ rhs = rhs
+    mkConstructorCall (WithSrc _ (UPi _ ClassArrow typ)) record =
+      mkConstructorCall typ record
+    mkConstructorCall (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) record =
+      (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` record
+    mkConstructorCall (WithSrc _ (UApp _ func _)) record =
+      mkConstructorCall func record
+    -- We let this case through to fail during typechecking
+    mkConstructorCall _ record = record
     var s = WithSrc Nothing $ UVar $ mkName s :> ()
 
 oneLabeledItem
@@ -367,10 +387,10 @@ oneLabeledItem bindwith itemparser punner = do
     Nothing -> explicitBound
   return $ labeledSingleton l itemVal
 
-interfaceRecordFields :: String -> Parser (ExtLabeledItems UExpr UExpr)
+interfaceRecordFields :: String -> Parser (LabeledItems UExpr)
 interfaceRecordFields bindwith =
   fuse <$> onePerLine (oneLabeledItem bindwith expr (Just varPun))
-  where fuse = foldr prefixExtLabeledItems (NoExt NoLabeledItems)
+  where fuse = foldr (<>) NoLabeledItems
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
