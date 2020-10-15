@@ -1,0 +1,166 @@
+
+Point : Type = (Float & Float)
+
+data Geom =
+  Dot
+  Circle Float
+  Rectangle Float Float  -- width, height
+  Line Point
+
+-- HTML color string. TODO: consider an RGB triple instead
+Color : Type = String
+
+-- TODO: we should add overloaded string literals so we don't need this
+def str (n:Int) ?-> (s:(Fin n=>Char)) : String = AsList _ s
+
+black : Color = str "black"
+white : Color = str "white"
+gray  : Color = str "gray"
+red   : Color = str "red"
+green : Color = str "green"
+blue  : Color = str "blue"
+
+Attributes : Type = { fill   : Maybe Color
+                    & stroke : Maybe Color
+                    & lw     : Int }
+defaultAttributes : Attributes = { fill   = Nothing
+                                 , stroke = Just black
+                                 , lw = 1 }
+
+-- TODO: consider sharing attributes among a set of objects for efficiency
+data Diagram = MkDiagram (List (Attributes & Point & Geom))
+
+instance monoidDiagram : Monoid Diagram where
+  mempty = MkDiagram mempty
+  mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
+
+-- TODO: arbitrary affine transformations. Our current representation of
+-- rectangles and circles means we can only do scale/flip/rotate90.
+-- Should we use lenses/isomorphisms for these instead?
+def applyTransformation
+      (transformPoint: Point -> Point)
+      (transformGeom:  Geom -> Geom)
+      (d:Diagram) : Diagram =
+  (MkDiagram (AsList _ objs)) = d
+  (MkDiagram $ AsList _ for i.
+    (attr, p, geom) = objs.i
+    (attr, transformPoint p, transformGeom geom))
+
+flipY : Diagram -> Diagram =
+  applyTransformation (\(x,y). (x, -y)) \geom. case geom of
+    Dot           -> Dot
+    Circle r      -> Circle r
+    Rectangle w h -> Rectangle w h
+    Line (x, y)   -> Line (x, -y)
+
+def scale (s:Float) : (Diagram -> Diagram) =
+  applyTransformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
+    Dot           -> Dot
+    Circle r      -> Circle (s * r)
+    Rectangle w h -> Rectangle (s * w) (s * h)
+    Line (x, y)   -> Line (s * x, s * y)
+
+def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
+  applyTransformation (\(x,y). (x + offX, y + offY) ) id
+
+def singletonDefault (geom:Geom) : Diagram =
+  MkDiagram $ AsList _ [(defaultAttributes, (0.0, 0.0), geom)]
+
+-- TODO: should really allow nullary functions with `def`
+dot                            : Diagram = singletonDefault Dot
+def circle (r:Float)           : Diagram = singletonDefault $ Circle r
+def rect   (w:Float) (h:Float) : Diagram = singletonDefault $ Rectangle w h
+def line   (p:Point)           : Diagram = singletonDefault $ Line p
+
+def updateAttributes (d:Diagram) (update: Attributes -> Attributes) : Diagram =
+  (MkDiagram (AsList _ objs)) = d
+  MkDiagram $ AsList _ for i.
+    (attr       , geoms) = objs.i
+    (update attr, geoms)
+
+def setFill   (c:Color) (d:Diagram) : Diagram = updateAttributes d $ setAt #fill   (Just c)
+def setStroke (c:Color) (d:Diagram) : Diagram = updateAttributes d $ setAt #stroke (Just c)
+def removeFill          (d:Diagram) : Diagram = updateAttributes d $ setAt #fill   Nothing
+def removeStroke        (d:Diagram) : Diagram = updateAttributes d $ setAt #stroke Nothing
+def setLW     (w:Int)   (d:Diagram) : Diagram = updateAttributes d $ setAt #lw     w
+
+-- === serialization ===
+
+def listLength ((AsList n _):List a) : Int = n
+
+-- TODO: this doesn't work for arbitrary `List a` because we need to be able to
+-- initialize with an arbitrary element. Should we allow that somehow?
+-- TODO: we want this for any monoid but this implementation won't work.
+def concat (strings:n=>String) : String =
+  totalSize = sum for i. listLength strings.i
+  AsList _ $ snd $
+    withState (for i:(Fin totalSize). 'x') \buf.
+      withState 0 \outIdx.
+        for i.
+          (AsList n xs) = strings.i
+          for j.
+            buf ! (fromOrdinal _ (get outIdx)) := xs.j
+            outIdx := get outIdx + 1
+          ()  -- TODO: missing this causes a compiler crash. At worst it should
+              -- just be an escaped variable error.
+
+def quote (s:String) : String = str "\"" <> s <> str "\""
+
+def (<+>) (s1:String) (s2:String) : String = s1 <> str " " <> s2
+
+def angleBrackets (s:String) : String = str "<" <> s <> str "/>"
+
+def tagBrackets (tag:String) (s:String) : String =
+  str "<" <> tag <> str ">" <> s <> str "</" <> tag <> str ">"
+
+def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
+  str "<" <> tag <+> attr <> str ">" <> s <> str "</" <> tag <> str ">"
+
+def makeAttr (attr:String) (val:String) : String =
+  attr <> str "=" <> quote val
+
+def punctuate (punctuation:String) (xs:n=>String) : String = todo
+
+def colorStr (c: Maybe Color) : String =
+  case c of
+    Nothing -> str "none"
+    Just s  -> s
+
+def renderGeom ((x,y):Point) (geom:Geom) : String =
+  case geom of
+    Circle r ->
+      angleBrackets $ (str "circle" <+>
+                       str "cx=" <> quote (show x) <>
+                       str "cy=" <> quote (show y) <>
+                       str "r="  <> quote (show r))
+
+def attrString (attr:Attributes) : String =
+  (  makeAttr (str "stroke")       (colorStr $ getAt #stroke attr)
+  <> makeAttr (str "fill")         (colorStr $ getAt #fill   attr)
+  <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
+
+BoundingBox : Type = (Point & Point)
+
+def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
+  (MkDiagram (AsList _ objs)) = flipY d
+  ((xmin, ymin), (xmax, ymax)) = bounds
+  viewBoxStr = makeAttr (str "viewBox") $
+     (show xmin <+> show (-ymax) <+>
+      show (xmax - xmin) <+> show (ymax - ymin))
+  tagBracketsAttr (str "svg") viewBoxStr $
+    concat for i.
+      (attr, pos, geom) = objs.i
+      tagBracketsAttr (str "g") (attrString attr) $ renderGeom pos geom
+
+-- === derived convenience methods and combinators ===
+
+moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
+moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
+
+mydiagram : Diagram =
+  (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFill blue |> setStroke red)
+  <> (circle 5.0 |> moveXY (40.0, 40.0))
+  )
+
+:html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+

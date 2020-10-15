@@ -636,20 +636,31 @@ def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
 
+
+'Monoid
+
+interface Monoid a:Type where
+  mempty : a
+  mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
+
+(<>) : Monoid a ?=> a -> a -> a = mcombine
+
 'Length-erased lists
 
 data List a:Type =
   AsList n:Int foo:(Fin n => a)
 
-def (<>) (x:List a) (y:List a) : List a =
-  (AsList nx xs) = x
-  (AsList ny ys) = y
-  nz = nx + ny
-  AsList _ $ for i:(Fin nz).
-    i' = ordinal i
-    case i' < nx of
-      True  -> xs.(fromOrdinal _ i')
-      False -> ys.(fromOrdinal _ (i' - nx))
+instance monoidList : Monoid (List a) where
+  mempty = AsList _ []
+  mcombine = \x y.
+    (AsList nx xs) = x
+    (AsList ny ys) = y
+    nz = nx + ny
+    AsList _ $ for i:(Fin nz).
+      i' = ordinal i
+      case i' < nx of
+        True  -> xs.(fromOrdinal _ i')
+        False -> ys.(fromOrdinal _ (i' - nx))
 
 'Isomorphisms
 
@@ -746,5 +757,16 @@ def showFloat' (x:Float) : String =
   AsList n $ for i:(Fin n).
     MkChar $ %ptrLoad (%ptrOffset ptr (ordinal i))
 
+def showInt' (x:Int) : String =
+  (n, ptr) = %ffi showInt (Int & CharPtr) x
+  AsList n $ for i:(Fin n).
+    MkChar $ %ptrLoad (%ptrOffset ptr (ordinal i))
+
 instance showFloat : Show Float where
   show = showFloat'
+
+instance showInt : Show Int where
+  show = showInt'
+
+-- pipe-like reverse function application
+def (|>) (x:a) (f: a -> b) : b = f x
