@@ -272,13 +272,14 @@ interfaceDef = do
   keyWord InterfaceKW
   (tyCon, pos) <- withPos tyConDef
   keyWord WhereKW
-  recordFields <- withSrc $ interfaceRecordFields ":"
+  recordFieldsWithSrc <- withSrc $ interfaceRecordFields ":"
   let (UConDef interfaceName uAnnBinderNest) = tyCon
-      record = (URecordTy . NoExt) <$> recordFields
+      record = (URecordTy . NoExt) <$> recordFieldsWithSrc
       consName = mkInterfaceConsName interfaceName
       ((_, varNames), uAnnBinderNest') =
           mapAccumR mkFreeVarTypeName (0, []) uAnnBinderNest
       tyCon' = UConDef interfaceName uAnnBinderNest'
+      (WithSrc _ recordFields) = recordFieldsWithSrc
       funDefs = mkFunDefs (pos, varNames, interfaceName) recordFields
   return $ (UData tyCon' [UConDef consName (toNest [Ignore record])]) : funDefs
   where
@@ -297,8 +298,8 @@ interfaceDef = do
     --     f
     -- where I# is an automatically generated constructor of I.
     mkFunDefs
-      :: (SrcPos, [Name], Name) -> WithSrc (LabeledItems UExpr) -> [UDecl]
-    mkFunDefs meta ~(WithSrc _ (LabeledItems items)) =
+      :: (SrcPos, [Name], Name) -> LabeledItems UExpr -> [UDecl]
+    mkFunDefs meta (LabeledItems items) =
         fmap (\(name, ty :| []) -> mkOneFunDef meta (name, ty)) $ M.toList items
     mkOneFunDef :: (SrcPos, [Name], Name) -> (Label, UExpr) -> UDecl
     mkOneFunDef (pos, typeVarNames, interfaceName) (fLabel, fType) =
