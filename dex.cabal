@@ -30,7 +30,7 @@ library dex-resources
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, PPrint, Algebra,
+                       Parser, Util, Imp, PPrint, Algebra, Parallelize,
                        Actor, Cat, Flops, Embed, Serialize, Optimize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA

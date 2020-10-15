@@ -414,14 +414,14 @@ tangentFunAsLambda m = do
   let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
     tanLam <- makeLambdas rematList $ \rematArgs ->
-      buildNestedLam hs $ \hVals -> do
+      buildNestedLam PureArrow hs $ \hVals -> do
         let hVarNames = map (\(Var (v:>_)) -> v) hVals
         let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
         -- want to use tangents here, not the original binders
         let regionMap = newEnv (map ((:>()) . snd) effs) hVals
         -- TODO: Only bind tangents for free variables?
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-        buildNestedLam activeVarBinders $ \activeVarArgs ->
+        buildNestedLam PureArrow activeVarBinders $ \activeVarArgs ->
           buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
             runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames (newEnv rematList $ fmap Var rematArgs)
     case rematList of

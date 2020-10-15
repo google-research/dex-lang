@@ -471,7 +471,3 @@ simplifyHof hof = case hof of
   where
     applyRecon Nothing x = return x
     applyRecon (Just f) x = f x
-
-
-dropSub :: SimplifyM a -> SimplifyM a
-dropSub m = local mempty m
