@@ -368,8 +368,8 @@ interfaceInstance = do
   where
     -- Here, we are traversing the type annotation to retrieve the name of
     -- the interface and generate its corresponding constructor.
-    mkConstructorCall (WithSrc _ (UPi _ ClassArrow typ)) record =
-      mkConstructorCall typ record
+    mkConstructorCall (WithSrc _ (UPi _ arr typ)) record
+      | arr `elem` [ClassArrow, ImplicitArrow] = mkConstructorCall typ record
     mkConstructorCall (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) record =
       (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` record
     mkConstructorCall (WithSrc _ (UApp _ func _)) record =
