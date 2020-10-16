@@ -361,31 +361,33 @@ interfaceInstance = do
   (p, pos) <- withPos letPat
   ann <- annot uType
   keyWord WhereKW
-  rhsEither <- mkConstructorCall ann <$> (withSrc $ (URecord . NoExt) <$>
-      interfaceRecordFields "=")
-  case rhsEither of
-    Left err  -> fail err
-    Right rhs -> let (ann', rhs') = addImplicitImplicitArgs pos (Just ann) rhs
-                 in return $ ULet InstanceLet (p, ann') rhs'
+  record <- withSrc $ (URecord . NoExt) <$> interfaceRecordFields "="
+  case mkConstructorNameVar ann of
+    Left err              -> fail err
+    Right constructorNameVar ->
+      let constructorCall = constructorNameVar `mkApp` record
+          (ann', rhs') = addImplicitImplicitArgs pos (Just ann) constructorCall
+      in return $ ULet InstanceLet (p, ann') rhs'
   where
     -- Here, we are traversing the type annotation to retrieve the name of
     -- the interface and generate its corresponding constructor.
-    mkConstructorCall (WithSrc _ (UPi _ arr typ)) record
-      | arr `elem` [ClassArrow, ImplicitArrow] = mkConstructorCall typ record
+    mkConstructorNameVar (WithSrc _ (UPi _ arr typ))
+      | arr `elem` [ClassArrow, ImplicitArrow] = mkConstructorNameVar typ
+      | otherwise = Left $ "TODO: errormessage"
     -- The innermost UApp is an application of a variable that has the name of
     -- the interface to a type. We retrieve its name and derive the name of
     -- its automatically generated constructor, which we apply to the record
     -- passed as a parameter.
-    mkConstructorCall (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) record =
-      Right $ (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` record
+    mkConstructorNameVar (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) =
+      Right $ (var . nameToStr . mkInterfaceConsName . varName) v
     -- Given the instance "I Int Float" of a multi-parameter interface I, we
     -- end up with something similar to UApp _ (UApp _ I Int) Float. The below
     -- traverses UApps to get to the innermost one..
-    mkConstructorCall (WithSrc _ (UApp _ func _)) record =
-      mkConstructorCall func record
+    mkConstructorNameVar (WithSrc _ (UApp _ func _)) =
+      mkConstructorNameVar func
     -- In this case, the type annotation does not contain any function
     -- application; this indicates a Kind error.
-    mkConstructorCall _ _ =
+    mkConstructorNameVar _ =
       Left ("Interface constructor was not applied to any type and can not " ++
             "be instantiated")
     var s = WithSrc Nothing $ UVar $ mkName s :> ()
