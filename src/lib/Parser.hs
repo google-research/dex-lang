@@ -293,7 +293,7 @@ interfaceDef = do
     --   interface I a:Type b:Type where
     --     f : a -> b
     -- mkFunDefs generates the equivalent of the following function definition:
-    --   def f (instance# : I a b) ?=> a -> b =
+    --   def f (instance# : I a b) ?=> : a -> b =
     --     (I# {f=f,...}) = instance#
     --     f
     -- where I# is an automatically generated constructor of I.
