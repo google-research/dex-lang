@@ -361,10 +361,12 @@ interfaceInstance = do
   (p, pos) <- withPos letPat
   ann <- annot uType
   keyWord WhereKW
-  rhs <- mkConstructorCall ann <$> (withSrc $ (URecord . NoExt) <$>
+  rhsEither <- mkConstructorCall ann <$> (withSrc $ (URecord . NoExt) <$>
       interfaceRecordFields "=")
-  let (ann', rhs') = addImplicitImplicitArgs pos (Just ann) rhs
-  return $ ULet InstanceLet (p, ann') rhs'
+  case rhsEither of
+    Left err  -> fail err
+    Right rhs -> let (ann', rhs') = addImplicitImplicitArgs pos (Just ann) rhs
+                 in return $ ULet InstanceLet (p, ann') rhs'
   where
     -- Here, we are traversing the type annotation to retrieve the name of
     -- the interface and generate its corresponding constructor.
@@ -375,7 +377,7 @@ interfaceInstance = do
     -- its automatically generated constructor, which we apply to the record
     -- passed as a parameter.
     mkConstructorCall (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) record =
-      (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` record
+      Right $ (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` record
     -- Given the instance "I Int Float" of a multi-parameter interface I, we
     -- end up with something similar to UApp _ (UApp _ I Int) Float. The below
     -- traverses UApps to get to the innermost one..
@@ -383,23 +385,16 @@ interfaceInstance = do
       mkConstructorCall func record
     -- In this case, the type annotation does not contain any function
     -- application; this indicates a Kind error.
-    mkConstructorCall _ record = record
+    mkConstructorCall _ _ =
+      Left ("Interface constructor was not applied to any type and can not " ++
+            "be instantiated")
     var s = WithSrc Nothing $ UVar $ mkName s :> ()
-
-oneLabeledItem
-  :: String -> Parser a -> Maybe (SrcPos -> Label -> a)
-  -> Parser (LabeledItems a)
-oneLabeledItem bindwith itemparser punner = do
-  (l, pos) <- withPos fieldLabel
-  let explicitBound = symbol bindwith *> itemparser
-  itemVal <- case punner of
-    Just punFn -> explicitBound <|> pure (punFn pos l)
-    Nothing -> explicitBound
-  return $ labeledSingleton l itemVal
 
 interfaceRecordFields :: String -> Parser (LabeledItems UExpr)
 interfaceRecordFields bindwith =
-  fuse <$> onePerLine (oneLabeledItem bindwith expr (Just varPun))
+  fuse <$> onePerLine (do l <- fieldLabel
+                          e <- symbol bindwith *> expr
+                          return $ labeledSingleton l e)
   where fuse = foldr (<>) NoLabeledItems
 
 simpleLet :: Parser (UExpr -> UDecl)
@@ -743,9 +738,13 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
-      oneItem <- oneLabeledItem bindwith itemparser punner
+      (l, pos) <- withPos fieldLabel
+      let explicitBound = symbol bindwith *> itemparser
+      itemVal <- case punner of
+        Just punFn -> explicitBound <|> pure (punFn pos l)
+        Nothing -> explicitBound
       rest <- beforeSep
-      return $ prefixExtLabeledItems oneItem rest
+      return $ prefixExtLabeledItems (labeledSingleton l itemVal) rest
 
 -- Combine two parsers such that if the first fails, we try the second one.
 -- If both fail, consume the same amount of input as the parser that

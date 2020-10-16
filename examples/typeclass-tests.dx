@@ -1,0 +1,10 @@
+interface TestInterface where
+  foo : Int
+
+instance TestInstance : TestInterface where
+  foo = 1
+> Parse error:5:10:
+>   |
+> 5 |   foo = 1
+>   |          ^
+> Interface constructor was not applied to any type and can not be instantiated
