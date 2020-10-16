@@ -142,7 +142,8 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
       Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
         False -> embedExtend embedEnv $> (xVal, arr')
         True  -> do
-          xValMaybeRed <- flip reduceBlock (Block xDecls (Atom xVal)) <$> getScope
+          scope <- getScope
+          let xValMaybeRed = reduceBlock scope $ Block (toNest $ fromRList xDecls) (Atom xVal)
           case xValMaybeRed of
             Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
             Nothing      -> addSrcContext' xPos $ do
@@ -686,7 +687,7 @@ synthDictTop ctx ty = do
   let solutions = runSubstEmbedT (synthDict ty) scope
   addSrcContext ctx $ case solutions of
     [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-    [(ans, env)] -> embedExtend env $> ans
+    [(ans, (scope', decls))] -> embedExtend (scope', toRList decls) $> ans
     _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
            ++ "\n" ++ pprint solutions
 
@@ -775,9 +776,11 @@ solveLocal :: Subst a => UInferM a -> UInferM a
 solveLocal m = do
   (ans, env@(SolverEnv freshVars sub)) <- scoped $ do
     -- This might get expensive. TODO: revisit once we can measure performance.
-    (ans, embedEnv) <- zonk =<< embedScoped m
-    embedExtend embedEnv
-    return ans
+    (ans, (scope, decls)) <- embedScoped m
+    let decls' = toNest $ fromRList decls
+    (ans', (scope', decls'')) <- zonk (ans, (scope, decls'))
+    embedExtend (scope', toRList decls'')
+    return ans'
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 

@@ -49,6 +49,7 @@ module Syntax (
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
+    RList, fromRList, toRList, rsingle,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
@@ -964,9 +965,29 @@ makeAbs b body | b `isin` freeVars body = Abs b body
 absArgType :: Abs Binder a -> Type
 absArgType (Abs b _) = binderType b
 
-toNest :: [a] -> Nest a
-toNest (x:xs) = Nest x $ toNest xs
-toNest [] = Empty
+toNest :: Foldable f => f a -> Nest a
+toNest = listToNest . toList
+
+listToNest :: [a] -> Nest a
+listToNest (x:xs) = Nest x $ listToNest xs
+listToNest [] = Empty
+
+newtype RList a = RList [a]
+
+fromRList :: RList a -> [a]
+fromRList (RList xs) = reverse xs
+
+toRList :: Foldable f => f a -> RList a
+toRList xs = RList $ reverse $ toList xs
+
+rsingle :: a -> RList a
+rsingle x = RList [x]
+
+instance Semigroup (RList a) where
+  RList xs <> RList ys = RList $ ys <> xs
+
+instance Monoid (RList a) where
+  mempty = RList []
 
 instance HasVars Arrow where
   freeVars arrow = case arrow of

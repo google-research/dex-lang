@@ -63,9 +63,9 @@ data ImpCtx = ImpCtx { impBackend :: Backend
                      , curDevice  :: Device
                      , curLevel   :: ParallelismLevel }
 data ImpCatEnv = ImpCatEnv
-  { envPtrsToFree :: [IExpr]
+  { envPtrsToFree :: RList IExpr
   , envScope      :: Scope
-  , envDecls      :: [ImpDecl]
+  , envDecls      :: RList ImpDecl
   , envFunctions  :: Env ImpFunction }
 
 type ImpM = ReaderT ImpCtx (Cat ImpCatEnv)
@@ -892,7 +892,7 @@ allocKind :: AllocType -> Type -> ImpM Dest
 allocKind allocTy ty = makeAllocDest allocTy ty
 
 extendAlloc :: IExpr -> ImpM ()
-extendAlloc v = extend $ mempty { envPtrsToFree = [v] }
+extendAlloc v = extend $ mempty { envPtrsToFree = rsingle v }
 
 emitAlloc :: HasCallStack => PtrType -> IExpr -> ImpM IExpr
 emitAlloc (_, addr, ty) n = emitInstr $ Alloc addr ty n
@@ -905,11 +905,11 @@ scopedBlock body = do
   ((aux, results), env) <- scoped body
   extend $ mempty { envScope     = envScope     env
                   , envFunctions = envFunctions env }  -- Keep the scope extension to avoid reusing variable names
-  let frees = [ImpLet [] (Free x) | x <- envPtrsToFree env]
-  return (aux, ImpBlock (toNest (envDecls env <> frees)) results)
+  let frees = toRList [ImpLet [] (Free x) | x <- fromRList $ envPtrsToFree env]
+  return (aux, ImpBlock (toNest $ fromRList (envDecls env <> frees)) results)
 
 emitImpDecl :: ImpDecl -> ImpM ()
-emitImpDecl decl = extend $ mempty { envDecls = [decl] }
+emitImpDecl decl = extend $ mempty { envDecls = rsingle decl }
 
 variableScope :: ImpM Scope
 variableScope = looks envScope

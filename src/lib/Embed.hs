@@ -54,22 +54,22 @@ type SubstEmbedT m = ReaderT SubstEnv (EmbedT m)
 type SubstEmbed    = SubstEmbedT Identity
 
 -- Carries the vars in scope (with optional definitions) and the emitted decls
-type EmbedEnvC = (Scope, Nest Decl)
+type EmbedEnvC = (Scope, RList Decl)
 -- Carries a name suggestion and the allowable effects
 type EmbedEnvR = (Tag, EffectRow)
 
-runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, EmbedEnvC)
+runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, (Scope, Nest Decl))
 runEmbedT (EmbedT m) scope = do
-  (ans, env) <- runCatT (runReaderT m ("tmp", Pure)) (scope, Empty)
-  return (ans, env)
+  (ans, (scope', decls)) <- runCatT (runReaderT m ("tmp", Pure)) (scope, mempty)
+  return (ans, (scope', toNest $ fromRList decls))
 
-runEmbed :: Embed a -> Scope -> (a, EmbedEnvC)
+runEmbed :: Embed a -> Scope -> (a, (Scope, Nest Decl))
 runEmbed m scope = runIdentity $ runEmbedT m scope
 
-runSubstEmbedT :: Monad m => SubstEmbedT m a -> Scope -> m (a, EmbedEnvC)
+runSubstEmbedT :: Monad m => SubstEmbedT m a -> Scope -> m (a, (Scope, Nest Decl))
 runSubstEmbedT m scope = runEmbedT (runReaderT m mempty) scope
 
-runSubstEmbed :: SubstEmbed a -> Scope -> (a, EmbedEnvC)
+runSubstEmbed :: SubstEmbed a -> Scope -> (a, (Scope, Nest Decl))
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
@@ -88,7 +88,7 @@ emitTo name ann expr = do
   let ty    = deShadow (getType expr) scope
   let expr' = deShadow expr scope
   v <- freshVarE (LetBound ann expr') $ Bind (name:>ty)
-  embedExtend $ asSnd $ Nest (Let ann (Bind v) expr') Empty
+  embedExtend $ asSnd $ rsingle (Let ann (Bind v) expr')
   return $ Var v
 
 emitOp :: MonadEmbed m => Op -> m Atom
@@ -108,7 +108,7 @@ emitUnpack expr = do
     _ -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint (getType expr)
   expr' <- deShadow expr <$> getScope
   vs <- freshNestedBinders bs
-  embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty
+  embedExtend $ asSnd $ rsingle (Unpack (fmap Bind vs) expr')
   return $ map Var $ toList vs
 
 -- Assumes the decl binders are already fresh wrt current scope
@@ -527,7 +527,7 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl = embedExtend (bindings, Nest decl Empty)
+emitDecl decl = embedExtend (bindings, rsingle decl)
   where bindings = case decl of
           Let ann b expr -> b @> (binderType b, LetBound ann expr)
           Unpack bs _ -> foldMap (\b -> b @> (binderType b, PatBound)) bs
@@ -535,7 +535,7 @@ emitDecl decl = embedExtend (bindings, Nest decl Empty)
 scopedDecls :: MonadEmbed m => m a -> m (a, Nest Decl)
 scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
-  return (ans, decls)
+  return (ans, toNest $ fromRList decls)
 
 -- === generic traversal ===
 

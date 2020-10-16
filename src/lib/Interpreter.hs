@@ -173,7 +173,7 @@ indexSetSize ty = do
 evalEmbed :: EmbedT InterpM Atom -> InterpM Atom
 evalEmbed embed = do
   (atom, (_, decls)) <- runEmbedT embed mempty
-  evalBlock mempty $ Block decls (Atom atom)
+  evalBlock mempty $ Block (toNest decls) (Atom atom)
 
 pattern Int64Val :: Int64 -> Atom
 pattern Int64Val x = Con (Lit (Int64Lit x))

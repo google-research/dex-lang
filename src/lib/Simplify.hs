@@ -57,7 +57,7 @@ splitSimpModule scope m = do
 -- workaround.
 hoistDepDataCons :: TopEnv -> Module -> Module
 hoistDepDataCons scope (Module Simp decls bindings) =
-  Module Simp decls' bindings'
+  Module Simp (toNest decls') bindings'
   where
     (bindings', (_, decls')) = flip runEmbed scope $ do
       mapM_ emitDecl decls
@@ -202,7 +202,7 @@ defunBlock localScope block = do
     then Left <$> simplifyBlock block
     else do
       (result, (localScope', decls)) <- embedScoped $ simplifyBlock block
-      mapM_ emitDecl decls
+      mapM_ emitDecl (toNest $ fromRList decls)
       Right <$> separateDataComponent (localScope <> localScope') result
 
 data RTree a = RNode [RTree a] | RLeaf a

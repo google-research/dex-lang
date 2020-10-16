@@ -162,5 +162,6 @@ mydiagram : Diagram =
   <> (circle 5.0 |> moveXY (40.0, 40.0))
   )
 
+%time
 :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
 
