@@ -449,6 +449,7 @@ instance Pretty ImpInstr where
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (IQueryParallelism f s) = "query_parallelism" <+> p (varName f) <+> p s
   pretty (ILaunch f size args) =
     "launch_kernel" <+> p (varName f) <+> p size <+> spaced args
   pretty (IPrimOp op)     = pLowest op

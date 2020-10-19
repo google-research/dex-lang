@@ -49,7 +49,8 @@ module Syntax (
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
-    pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal,
+    pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal,
+    pattern TagRepTy, pattern TagRepVal,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern RawRefTy,
@@ -486,6 +487,7 @@ data ImpDecl     = ImpLet [IBinder] ImpInstr deriving (Show)
 data ImpInstr = IFor Direction IBinder Size ImpBlock
               | IWhile ImpBlock ImpBlock  -- cond block, body block
               | ICond IExpr ImpBlock ImpBlock
+              | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
               | ILaunch IFunVar Size [IExpr]
               | ICall IFunVar [IExpr]
               | Store IExpr IExpr           -- dest, val
@@ -1202,7 +1204,9 @@ instance HasIVars ImpInstr where
     IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
     IWhile c p        -> freeIVars c <> freeIVars p
     ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
+    IQueryParallelism _ s -> freeIVars s
     ILaunch _ size args -> freeIVars size <> foldMap freeIVars args
+    ICall   _      args -> foldMap freeIVars args
     Store d e     -> freeIVars d <> freeIVars e
     Alloc _ t s   -> freeIVars t <> freeIVars s
     MemCopy x y z -> freeIVars x <> freeIVars y <> freeIVars z
@@ -1292,6 +1296,9 @@ pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
 
 pattern IdxRepVal :: Int32 -> Atom
 pattern IdxRepVal x = Con (Lit (Int32Lit x))
+
+pattern IIdxRepVal :: Int32 -> IExpr
+pattern IIdxRepVal x = ILit (Int32Lit x)
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type
