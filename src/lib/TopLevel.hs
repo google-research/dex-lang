@@ -30,6 +30,7 @@ import Interpreter
 import Simplify
 import Serialize
 import Imp
+import Imp.Optimize
 import JIT
 import Logging
 import LLVMExec
@@ -204,8 +205,15 @@ evalBackend block = do
   let mainName = Name TopFunctionName (fromString funcName) 0
   let cc = case backend of LLVMCUDA -> EntryFun True
                            _        -> EntryFun False
-  let (mainFunc, impModule, reconAtom) =
+  let (mainFunc, impModuleUnoptimized, reconAtom) =
         toImpModule backend cc mainName ptrBinders Nothing block'
+  -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
+  --       were not lifted from the kernels just yet. We should split the Imp IR
+  --       into different levels so that we can check the output here!
+  --checkPass ImpPass impModuleUnoptimized
+  let impModule = case backend of
+                    LLVMCUDA -> liftCUDAAllocations impModuleUnoptimized
+                    _        -> impModuleUnoptimized
   checkPass ImpPass impModule
   llvmAST <- liftIO $ impToLLVM logger impModule
   let IFunType _ _ resultTypes = impFunType $ mainFunc

@@ -16,8 +16,8 @@
 {-# LANGUAGE BlockArguments #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpModule, getIType, impBlockType, impFunType,
-            toScalarType, fromScalarType) where
+module Imp (toImpModule, getIType, impBlockType, impFunType, impFunVar,
+            toScalarType, fromScalarType, impInstrTypes) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad.Reader
@@ -28,7 +28,6 @@ import Data.Text.Prettyprint.Doc
 import Data.Functor
 import Data.Maybe
 import Data.Foldable (toList)
-import Data.Int
 import Data.String (fromString)
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
@@ -168,7 +167,8 @@ launchKernel env (maybeDest, ~lbody@(LamVal b body)) = do
   idxTy <- impSubst env $ binderType b
   n     <- indexSetSize idxTy
   dest  <- allocDest maybeDest $ getType $ Hof $ For ParallelFor lbody
-  i <- freshVar (binderNameHint b:>getIType n)
+  i     <- freshVar $ binderNameHint b:>getIType n
+  tid   <- freshVar $ "tid":>getIType n
   let (cc, dev) = case impBackend opts of
         LLVMCUDA -> (CUDAKernelLaunch, GPU)
         LLVMMC   -> (MCThreadLaunch  , CPU)
@@ -178,7 +178,7 @@ launchKernel env (maybeDest, ~lbody@(LamVal b body)) = do
     ithDest <- destGet dest idx
     void $ translateBlock (env <> b @> idx) (Just ithDest, body)
   let args = envAsVars $ freeIVars kernelBody `envDiff` (i @> ())
-  f <- emitFunction cc (map Bind (i:args)) kernelBody
+  f <- emitFunction cc (map Bind (tid:i:args)) kernelBody
   emitStatement $ ILaunch f n $ map IVar args
   destToAtom dest
 
@@ -912,8 +912,9 @@ scopedVoidBlock body = liftM snd $ scopedBlock $ body $> ((),[])
 scopedBlock :: ImpM (a, [IExpr]) -> ImpM (a, ImpBlock)
 scopedBlock body = do
   ((aux, results), env) <- scoped body
+  -- Keep the scope extension to avoid reusing variable names
   extend $ mempty { envScope     = envScope     env
-                  , envFunctions = envFunctions env }  -- Keep the scope extension to avoid reusing variable names
+                  , envFunctions = envFunctions env }
   let frees = [ImpLet [] (Free x) | x <- envPtrsToFree env]
   return (aux, ImpBlock (toNest (envDecls env <> frees)) results)
 
@@ -990,6 +991,7 @@ instrTypeChecked instr = case instr of
     [] <- checkBlock consequent
     [] <- checkBlock alternative
     return []
+  IQueryParallelism _ _ -> return [Scalar Int32Type]
   ILaunch _ n args -> [] <$ do
     -- TODO: check args against type of function
     assertHost
@@ -1094,8 +1096,11 @@ instance HasIType IExpr where
     IVar v   -> varAnn v
 
 impFunType :: ImpFunction -> IFunType
-impFunType (ImpFunction (_:>ty) _ _) = ty
-impFunType (FFIFunction (_:>ty)) = ty
+impFunType = varAnn . impFunVar
+
+impFunVar :: ImpFunction -> IFunVar
+impFunVar (ImpFunction v _ _) = v
+impFunVar (FFIFunction v) = v
 
 impBlockType :: ImpBlock -> [IType]
 impBlockType (ImpBlock _ results) = map getIType results
@@ -1113,6 +1118,7 @@ impInstrTypes instr = case instr of
   IWhile _ _      -> []
   ICond _ _ _     -> []
   ILaunch _ _ _   -> []
+  IQueryParallelism _ _ -> [Scalar Int32Type]
   ICall (_:>IFunType _ _ resultTys) _ -> resultTys
 
 checkImpBinOp :: MonadError Err m => BinOp -> IType -> IType -> m IType
@@ -1153,6 +1159,3 @@ instance Semigroup ImpCatEnv where
 instance Monoid ImpCatEnv where
   mempty = ImpCatEnv mempty mempty mempty mempty
   mappend = (<>)
-
-pattern IIdxRepVal :: Int32 -> IExpr
-pattern IIdxRepVal x = ILit (Int32Lit x)

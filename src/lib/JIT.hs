@@ -105,6 +105,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     let strFun = constStringFunction (asLLVMName name) str
     return ([L.GlobalDefinition strFun], S.singleton mallocFun)
   MCThreadLaunch -> return $ runCompile CPU $ do
+    (threadIdParam, threadId) <- freshParamOpPair [] i64
     (startIdxParam, startIdx) <- freshParamOpPair [] i64
     (endIdxParam, endIdx)     <- freshParamOpPair [] i64
     -- TODO: Preserve pointer attributes??
@@ -120,13 +121,13 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
           idx64 <- add startIdx =<< (innerIdx `asIntWidth` i64)
           idx <- idx64 `asIntWidth` idxType
           return $ idxBinder @> idx
-      void $ extendOperands (idxEnv <> argEnv) $ compileBlock body
+      void $ extendOperands (tidBinder @> threadId <> idxEnv <> argEnv) $ compileBlock body
     kernel <- makeFunction (asLLVMName name)
-                [startIdxParam, endIdxParam, argArrayParam] Nothing
+                [threadIdParam, startIdxParam, endIdxParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition kernel], extraSpecs)
     where
-      (idxBinder:argBinders) = bs
+      (tidBinder:idxBinder:argBinders) = bs
       idxType = scalarTy $ binderAnn idxBinder
       argTypes = map (scalarTy . binderAnn) argBinders
   where
@@ -142,6 +143,12 @@ compileInstr instr = case instr of
   ICond p cons alt -> [] <$ do
     p' <- compileExpr p >>= (`asIntWidth` i1)
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
+  IQueryParallelism f s -> do
+    let IFunType cc _ _ = varAnn f
+    case cc of
+      MCThreadLaunch   -> error "Not implemented yet"
+      -- TODO: Use the occupancy calculator and emit a loop inside the kernel
+      CUDAKernelLaunch -> (:[]) <$> ((`asIntWidth` i32) =<< compileExpr s)
   ILaunch f size args -> [] <$ do
     let IFunType cc _ _ = varAnn f
     size' <- (`asIntWidth` i64) =<< compileExpr size
@@ -159,7 +166,14 @@ compileInstr instr = case instr of
         kernelParams <- packArgs $ size' : args'
         launchCUDAKernel ptxPtr size' kernelParams
       _ -> error $ "Not a valid calling convention for a launch: " ++ pprint cc
-  IThrowError   -> [] <$  throwRuntimeError
+  IThrowError   -> do
+    dev <- asks curDevice
+    case dev of
+      CPU -> [] <$ throwRuntimeError
+      -- TODO: Implement proper error handling on GPUs.
+      --       For now we generate an invalid memory access, hoping that the
+      --       runtime will catch it.
+      GPU -> [] <$ load (L.ConstantOperand $ C.Null $ devicePtrTy i8)
   Alloc a t s -> (:[]) <$> case a of
     Stack -> alloca (getIntLit l) elemTy  where ILit l = s
     Heap dev -> do
@@ -371,23 +385,24 @@ cuMemFree ptr = do
 -- === GPU Kernel compilation ===
 
 impKernelToLLVMGPU :: ImpFunction -> LLVMKernel
-impKernelToLLVMGPU (ImpFunction _ ~(lvar:args) body) = runCompile GPU $ do
+impKernelToLLVMGPU (ImpFunction _ ~(tidvar:lidxvar:args) body) = runCompile GPU $ do
   (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair ptrParamAttrs) argTypes
   (sizeParam, sizeOperand) <- freshParamOpPair [] lidxType
   tidx <- threadIdxX
   bidx <- blockIdxX
   bsz  <- blockDimX
   lidx <- mul bidx bsz >>= (add tidx) >>= (`asIntWidth` lidxType)
+  let tid = lidx
   outOfBounds <- emitInstr i1 $ L.ICmp IP.UGE lidx sizeOperand []
   compileIf outOfBounds (return ()) $ do
     let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
     -- TODO: Use a restricted form of compileBlock that e.g. never emits FFI calls!
-    void $ extendOperands (paramEnv <> lvar @> lidx) $ compileBlock body
+    void $ extendOperands (paramEnv <> lidxvar @> lidx <> tidvar @> tid) $ compileBlock body
   kernel <- makeFunction "kernel" (sizeParam : argParams) Nothing
   LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple
                    [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
-    lidxType = scalarTy $ binderAnn lvar
+    lidxType = scalarTy $ binderAnn lidxvar
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     argTypes = fmap (scalarTy . binderAnn) args
     kernelMetaId = L.MetadataNodeID 0
@@ -507,7 +522,7 @@ runMCKernel :: ExternFunSpec
 runMCKernel = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [hostVoidp, i64, hostPtrTy hostVoidp]
 
 mcKernelPtrType :: L.Type
-mcKernelPtrType = hostPtrTy $ L.FunctionType L.VoidType [i64, i64, hostPtrTy $ hostVoidp] False
+mcKernelPtrType = hostPtrTy $ L.FunctionType L.VoidType [i64, i64, i64, hostPtrTy $ hostVoidp] False
 
 -- === LLVM embedding ===
 

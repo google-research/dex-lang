@@ -105,6 +105,15 @@ update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
+run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
+run-gpu-tests: examples/gpu-tests.dx
+	misc/check-quine $< $(dex) --backend LLVM-CUDA script --allow-errors
+
+update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
+update-gpu-tests: examples/gpu-tests.dx
+	$(dex) --backend LLVM-CUDA script --allow-errors $< > $<.tmp
+	mv $<.tmp $<
+
 export-tests: export-test-scalar export-test-array
 
 export-test-%: build
