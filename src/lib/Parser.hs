@@ -360,20 +360,22 @@ interfaceInstance = do
   keyWord InstanceKW
   (p, pos) <- withPos letPat
   ann <- annot uType
-  keyWord WhereKW
-  record <- withSrc $ (URecord . NoExt) <$> interfaceRecordFields "="
   case mkConstructorNameVar ann of
     Left err              -> fail err
-    Right constructorNameVar ->
+    Right constructorNameVar -> do
+      keyWord WhereKW
+      record <- withSrc $ (URecord . NoExt) <$> interfaceRecordFields "="
       let constructorCall = constructorNameVar `mkApp` record
           (ann', rhs') = addImplicitImplicitArgs pos (Just ann) constructorCall
-      in return $ ULet InstanceLet (p, ann') rhs'
+      return $ ULet InstanceLet (p, ann') rhs'
   where
     -- Here, we are traversing the type annotation to retrieve the name of
     -- the interface and generate its corresponding constructor.
     mkConstructorNameVar (WithSrc _ (UPi _ arr typ))
       | arr `elem` [ClassArrow, ImplicitArrow] = mkConstructorNameVar typ
-      | otherwise = Left $ "TODO: errormessage"
+      | otherwise = Left ("Met invalid arrow '" ++ pprint arr ++ "' in type " ++
+                          "annotation of instance. Only class arrows and " ++
+                          "implicit arrows are allowed.")
     -- The innermost UApp is an application of a variable that has the name of
     -- the interface to a type. We retrieve its name and derive the name of
     -- its automatically generated constructor, which we apply to the record

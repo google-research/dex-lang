@@ -3,8 +3,19 @@ interface TestInterface where
 
 instance TestInstance : TestInterface where
   foo = 1
-> Parse error:5:10:
+
+> Parse error:4:39:
 >   |
-> 5 |   foo = 1
->   |          ^
+> 4 | instance TestInstance : TestInterface where
+>   |                                       ^
 > Interface constructor was not applied to any type and can not be instantiated
+instance tabAdd2 : Add x -> Add a ?=> Add (n=>a) where
+  add = \x y. for i. x.i + y.i
+  sub = \x y. for i. x.i - y.i
+  zero = for _. zero
+
+> Parse error:7:50:
+>   |
+> 7 | instance tabAdd2 : Add x -> Add a ?=> Add (n=>a) where
+>   |                                                  ^
+> Met invalid arrow '->' in type annotation of instance. Only class arrows and implicit arrows are allowed.
