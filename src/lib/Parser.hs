@@ -370,8 +370,8 @@ interfaceInstance = do
     -- the interface and generate its corresponding constructor. A valid type
     -- annotation for an instance is composed of:
     -- 1) implicit/class arguments
-    -- 2) a function whose name is the name of the interface applied to several
-    --    arguments
+    -- 2) a function whose name is the name of the interface applied to 0 or
+    --    more arguments
     mkConstructorNameVar ann =
       stripArrows ann >>= stripAppliedArgs >>= buildConstructor
 
