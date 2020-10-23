@@ -276,19 +276,16 @@ interfaceDef = do
   let (UConDef interfaceName uAnnBinderNest) = tyCon
       record = (URecordTy . NoExt) <$> recordFieldsWithSrc
       consName = mkInterfaceConsName interfaceName
-      ((_, varNames), uAnnBinderNest') =
-          mapAccumR mkFreeVarTypeName (0, []) uAnnBinderNest
-      tyCon' = UConDef interfaceName uAnnBinderNest'
+      ((_, varNames), _) = mapAccumR mkVarTypeName (0, []) uAnnBinderNest
+      tyCon' = UConDef interfaceName uAnnBinderNest
       (WithSrc _ recordFields) = recordFieldsWithSrc
       funDefs = mkFunDefs (pos, varNames, interfaceName) recordFields
   return $ (UData tyCon' [UConDef consName (toNest [Ignore record])]) : funDefs
   where
-    mkFreeVarTypeName
-      :: (Int, [Name]) -> UAnnBinder -> ((Int, [Name]), UAnnBinder)
-    mkFreeVarTypeName (n, varNames) (Ignore ty) =
-      let genVarName = mkName $ mkNoShadowingStr ("gen" ++ show n) in
-      ((n + 1, genVarName:varNames), Bind (genVarName:>ty))
-    mkFreeVarTypeName (n, varNames) b@(Bind v) = ((n, (varName v):varNames), b)
+    mkVarTypeName
+      :: (Int, [Name]) -> UAnnBinder -> ((Int, [Name]), ())
+    mkVarTypeName (n, varNames) ann
+      | ~(Bind v) <- ann = ((n, (varName v):varNames), ())
     -- From an interface
     --   interface I a:Type b:Type where
     --     f : a -> b
@@ -340,7 +337,7 @@ dataDef = do
 
 -- TODO: default to `Type` if unannoted
 tyConDef :: Parser UConDef
-tyConDef = UConDef <$> (upperName <|> symName) <*> manyNested annBinder
+tyConDef = UConDef <$> (upperName <|> symName) <*> manyNested namedBinder
 
 -- TODO: dependent types
 dataConDef :: Parser UConDef
@@ -370,28 +367,29 @@ interfaceInstance = do
       return $ ULet InstanceLet (p, ann') rhs'
   where
     -- Here, we are traversing the type annotation to retrieve the name of
-    -- the interface and generate its corresponding constructor.
-    mkConstructorNameVar (WithSrc _ (UPi _ arr typ))
-      | arr `elem` [ClassArrow, ImplicitArrow] = mkConstructorNameVar typ
+    -- the interface and generate its corresponding constructor. A valid type
+    -- annotation for an instance is composed of:
+    -- 1) implicit/class arguments
+    -- 2) a function whose name is the name of the interface applied to several
+    --    arguments
+    mkConstructorNameVar ann =
+      stripArrows ann >>= stripAppliedArgs >>= buildConstructor
+
+    stripArrows (WithSrc _ (UPi _ arr typ))
+      | arr `elem` [ClassArrow, ImplicitArrow] = stripArrows typ
       | otherwise = Left ("Met invalid arrow '" ++ pprint arr ++ "' in type " ++
                           "annotation of instance. Only class arrows and " ++
                           "implicit arrows are allowed.")
-    -- The innermost UApp is an application of a variable that has the name of
-    -- the interface to a type. We retrieve its name and derive the name of
-    -- its automatically generated constructor, which we apply to the record
-    -- passed as a parameter.
-    mkConstructorNameVar (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) =
+    stripArrows ann = Right ann
+
+    stripAppliedArgs ann
+      | (WithSrc _ (UApp _ func _)) <- ann = stripAppliedArgs func
+      | otherwise = Right ann
+
+    buildConstructor (WithSrc _ (UVar v)) =
       Right $ (var . nameToStr . mkInterfaceConsName . varName) v
-    -- Given the instance "I Int Float" of a multi-parameter interface I, we
-    -- end up with something similar to UApp _ (UApp _ I Int) Float. The below
-    -- traverses UApps to get to the innermost one..
-    mkConstructorNameVar (WithSrc _ (UApp _ func _)) =
-      mkConstructorNameVar func
-    -- In this case, the type annotation does not contain any function
-    -- application; this indicates a Kind error.
-    mkConstructorNameVar _ =
-      Left ("Interface constructor was not applied to any type and can not " ++
-            "be instantiated")
+    buildConstructor _ = Left ("Could not extract interface name from type " ++
+                               "annotation.")
     var s = WithSrc Nothing $ UVar $ mkName s :> ()
 
 interfaceRecordFields :: String -> Parser (LabeledItems UExpr)
@@ -530,12 +528,17 @@ uPiType :: Parser UExpr
 uPiType = withSrc $ UPi <$> annBinder <*> arrow effects <*> uType
 
 annBinder :: Parser UAnnBinder
-annBinder = label "annoted binder" $ do
-  v <- try $ ((Just <$> lowerName) <|> (underscore $> Nothing)) <* sym ":"
-  ty <- containedExpr
-  return $ case v of
-    Just v' -> Bind (v':>ty)
-    Nothing -> Ignore ty
+annBinder = try $ namedBinder <|> anonBinder
+
+namedBinder :: Parser UAnnBinder
+namedBinder = label "named annoted binder" $ lowerName
+                                           >>= \v  -> sym ":" >> containedExpr
+                                           >>= \ty -> return $ Bind (v:>ty)
+
+anonBinder :: Parser UAnnBinder
+anonBinder =
+  label "anonymous annoted binder" $ Ignore <$> (underscore >> sym ":"
+                                                            >> containedExpr)
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
