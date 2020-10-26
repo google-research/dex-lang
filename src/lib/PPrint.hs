@@ -239,7 +239,6 @@ prettyPrecPrimCon con = case con of
   PairCon x y -> atPrec ArgPrec $ align $ group $
     parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
-  AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"

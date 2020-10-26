@@ -288,7 +288,6 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | AnyValue e        -- Produces an arbitrary value of a given type
       | PairCon e e
       | UnitCon
       | ClassDictHole SrcCtx e   -- Only used during type inference
@@ -1487,7 +1486,6 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
-  , ("anyVal", ConExpr $ AnyValue ())
   -- TODO: Lift vectors to constructors
   --, ("VectorFloatType",  TCExpr $ BaseType $ Vector FloatType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())

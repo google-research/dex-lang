@@ -566,7 +566,6 @@ typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
-  AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
