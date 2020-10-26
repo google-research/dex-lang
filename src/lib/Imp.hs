@@ -25,6 +25,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.State.Strict
 import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
+import Data.Either
 import Data.Functor
 import Data.Maybe
 import Data.Foldable (toList)
@@ -53,7 +54,7 @@ import Util
 -- only:
 --   * Variables of base type or array type
 --   * Table lambdas
---   * Constructors for: pairs, sum types, AnyValue, Unit and Coerce
+--   * Constructors for: pairs, sum types, Unit and Coerce
 --
 -- TODO: Use an ImpAtom type alias to better document the code
 
@@ -67,7 +68,7 @@ data ImpCatEnv = ImpCatEnv
   , envDecls      :: [ImpDecl]
   , envFunctions  :: Env ImpFunction }
 
-type ImpM = ReaderT ImpCtx (Cat ImpCatEnv)
+type ImpM = ExceptT () (ReaderT ImpCtx (Cat ImpCatEnv))
 type AtomRecon = Abs (Nest Binder) Atom
 
 toImpModule :: Backend -> CallingConvention -> Name
@@ -94,7 +95,7 @@ translateTopLevel (maybeDest, block) = do
   outDest <- case maybeDest of
         Nothing   -> allocKind Unmanaged $ getType block
         Just dest -> return dest
-  void $ translateBlock mempty (Just outDest, block)
+  handleErrors $ void $ translateBlock mempty (Just outDest, block)
   resultAtom <- destToAtom outDest
   let vsOut = envAsVars $ freeVars resultAtom
   let reconAtom = Abs (toNest $ [Bind (v:>ty) | (v:>(ty, _)) <- vsOut]) resultAtom
@@ -105,7 +106,8 @@ translateTopLevel (maybeDest, block) = do
 
 runImpM :: ImpCtx -> Scope -> ImpM a -> a
 runImpM opts inVarScope m =
-  fst $ runCat (runReaderT m opts) $ mempty {envScope = inVarScope}
+  fromRight (error "Unexpected top level error") $
+    fst $ runCat (runReaderT (runExceptT m) opts) $ mempty {envScope = inVarScope}
 
 translateBlock :: SubstEnv -> WithDest Block -> ImpM Atom
 translateBlock env destBlock = do
@@ -173,7 +175,7 @@ launchKernel env (maybeDest, ~lbody@(LamVal b body)) = do
         LLVMCUDA -> (CUDAKernelLaunch, GPU)
         LLVMMC   -> (MCThreadLaunch  , CPU)
         backend -> error $ "Shouldn't be launching kernels from " ++ show backend
-  kernelBody <- withDevice dev $ withLevel ThreadLevel $ scopedVoidBlock $ do
+  kernelBody <- withDevice dev $ withLevel ThreadLevel $ scopedErrBlock $ do
     idx <- intToIndex idxTy $ IVar i
     ithDest <- destGet dest idx
     void $ translateBlock (env <> b @> idx) (Just ithDest, body)
@@ -230,14 +232,10 @@ toImpOp (maybeDest, op) = case op of
         destToAtom dest
   UnsafeFromOrdinal n i -> returnVal =<< (intToIndex n $ fromScalarAtom i)
   IdxSetSize n -> returnVal . toScalarAtom  =<< indexSetSize n
-  ToOrdinal idx -> asInt $ case idx of
-      Con (AnyValue t) -> anyValue t
-      _                -> idx
-    where
-      asInt a = case a of
-        Con (IntRangeVal   _ _   i) -> returnVal $ i
-        Con (IndexRangeVal _ _ _ i) -> returnVal $ i
-        _ -> returnVal . toScalarAtom =<< indexToInt idx
+  ToOrdinal idx -> case idx of
+    Con (IntRangeVal   _ _   i) -> returnVal $ i
+    Con (IndexRangeVal _ _ _ i) -> returnVal $ i
+    _ -> returnVal . toScalarAtom =<< indexToInt idx
   Inject e -> do
     let (TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -263,9 +261,7 @@ toImpOp (maybeDest, op) = case op of
     extraOffset <- indexToInt (PairVal idx vz)
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom tileOffset'
-  ThrowError ty -> do
-    emitStatement $ IThrowError
-    return $ Con $ AnyValue ty
+  ThrowError _ -> throwError ()
   CastOp destTy x -> case (getType x, destTy) of
     (BaseTy _, BaseTy bt) -> returnVal =<< toScalarAtom <$> cast (fromScalarAtom x) bt
     _ -> error $ "Invalid cast: " ++ pprint (getType x) ++ " -> " ++ pprint destTy
@@ -342,7 +338,7 @@ toImpHof env (maybeDest, hof) = do
       cond' <- liftM snd $ scopedBlock $ do
                  ans <- translateBlock env (Nothing, cond)
                  return ((), [fromScalarAtom ans])
-      body' <- scopedVoidBlock $ void $ translateBlock env (Nothing, body)
+      body' <- scopedErrBlock $ void $ translateBlock env (Nothing, body)
       emitStatement $ IWhile cond' body'
       return UnitVal
     RunReader r (BinaryFunVal _ ref _ body) -> do
@@ -833,6 +829,9 @@ store dest src = emitStatement $ Store dest src
 alloc :: Type -> ImpM Dest
 alloc ty = allocKind Managed ty
 
+handleErrors :: ImpM () -> ImpM ()
+handleErrors m = m `catchError` (const $ emitStatement IThrowError)
+
 -- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
 emitSwitch :: IExpr -> [ImpM ()] -> ImpM ()
 emitSwitch testIdx = rec 0
@@ -843,15 +842,15 @@ emitSwitch testIdx = rec 0
     rec curIdx (body:rest) = do
       let curTag = fromScalarAtom $ TagRepVal $ fromIntegral curIdx
       cond       <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx curTag
-      thisCase   <- scopedVoidBlock $ body
-      otherCases <- scopedVoidBlock $ rec (curIdx + 1) rest
+      thisCase   <- scopedErrBlock $ body
+      otherCases <- scopedErrBlock $ rec (curIdx + 1) rest
       emitStatement $ ICond cond thisCase otherCases
 
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop hint d n body = do
   (i, loopBody) <- scopedBlock $ do
     i <- freshVar (hint:>getIType n)
-    body $ IVar i
+    handleErrors $ body $ IVar i
     return (i, [])
   emitStatement $ IFor d (Bind i) n loopBody
 
@@ -906,9 +905,10 @@ extendAlloc v = extend $ mempty { envPtrsToFree = [v] }
 emitAlloc :: HasCallStack => PtrType -> IExpr -> ImpM IExpr
 emitAlloc (_, addr, ty) n = emitInstr $ Alloc addr ty n
 
-scopedVoidBlock :: ImpM () -> ImpM ImpBlock
-scopedVoidBlock body = liftM snd $ scopedBlock $ body $> ((),[])
+scopedErrBlock :: ImpM () -> ImpM ImpBlock
+scopedErrBlock body = liftM snd $ scopedBlock $ handleErrors body $> ((),[])
 
+-- XXX: This does not handle errors that happen inside the block!
 scopedBlock :: ImpM (a, [IExpr]) -> ImpM (a, ImpBlock)
 scopedBlock body = do
   ((aux, results), env) <- scoped body

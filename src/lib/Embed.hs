@@ -26,7 +26,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
               transformModuleAsBlock, dropSub, appReduceTraversalDef,
-              indexSetSizeE, indexToIntE, intToIndexE, anyValue, freshVarE) where
+              indexSetSizeE, indexToIntE, intToIndexE, freshVarE) where
 
 import Control.Applicative
 import Control.Monad
@@ -801,11 +801,3 @@ intToIndexE (VariantTy (NoExt types)) i = do
   start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
-
-anyValue :: Type -> Atom
-anyValue (BaseTy (Scalar Int64Type  )) = Con $ Lit $ Int64Lit    0
-anyValue (BaseTy (Scalar Int32Type  )) = Con $ Lit $ Int32Lit    0
-anyValue (BaseTy (Scalar Int8Type   )) = Con $ Lit $ Int8Lit     0
-anyValue (BaseTy (Scalar Float64Type)) = Con $ Lit $ Float64Lit  0
-anyValue (BaseTy (Scalar Float32Type)) = Con $ Lit $ Float32Lit  0
-anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t

@@ -304,7 +304,6 @@ linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
   CharCon _             -> emitWithZero
-  AnyValue _            -> emitWithZero
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
@@ -709,7 +708,6 @@ transposeCon con ct = case con of
     getSnd ct >>= transposeAtom y
   SumAsProd _ _ _   -> notImplemented
   CharCon _         -> notTangent
-  AnyValue _        -> notTangent
   ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notImplemented
   IndexRangeVal _ _ _ _ -> notImplemented

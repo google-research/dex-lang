@@ -71,7 +71,10 @@ instance (Monoid w, MonadCat env m) => MonadCat env (WriterT w m) where
 instance MonadCat env m => MonadCat env (ExceptT e m) where
   look = lift look
   extend x = lift $ extend x
-  scoped = error "TODO"
+  scoped m = do (xerr, env) <- lift $ scoped $ runExceptT m
+                case xerr of
+                  Left err -> throwError err
+                  Right x  -> return (x, env)
 
 instance (Monoid env, MonadError e m) => MonadError e (CatT env m) where
   throwError = lift . throwError
