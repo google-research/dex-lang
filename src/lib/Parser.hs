@@ -16,7 +16,6 @@ import Text.Megaparsec.Char hiding (space)
 import Data.Char (isLower)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Traversable (mapAccumR)
 import qualified Data.Map.Strict as M
 import Data.Void
 import Data.String (fromString)
@@ -276,16 +275,11 @@ interfaceDef = do
   let (UConDef interfaceName uAnnBinderNest) = tyCon
       record = (URecordTy . NoExt) <$> recordFieldsWithSrc
       consName = mkInterfaceConsName interfaceName
-      ((_, varNames), _) = mapAccumR mkVarTypeName (0, []) uAnnBinderNest
-      tyCon' = UConDef interfaceName uAnnBinderNest
+      varNames = fmap (\(Bind v) -> varName v) uAnnBinderNest
       (WithSrc _ recordFields) = recordFieldsWithSrc
       funDefs = mkFunDefs (pos, varNames, interfaceName) recordFields
-  return $ (UData tyCon' [UConDef consName (toNest [Ignore record])]) : funDefs
+  return $ (UData tyCon [UConDef consName (toNest [Ignore record])]) : funDefs
   where
-    mkVarTypeName
-      :: (Int, [Name]) -> UAnnBinder -> ((Int, [Name]), ())
-    mkVarTypeName (n, varNames) ann
-      | ~(Bind v) <- ann = ((n, (varName v):varNames), ())
     -- From an interface
     --   interface I a:Type b:Type where
     --     f : a -> b
@@ -295,10 +289,10 @@ interfaceDef = do
     --     f
     -- where I# is an automatically generated constructor of I.
     mkFunDefs
-      :: (SrcPos, [Name], Name) -> LabeledItems UExpr -> [UDecl]
+      :: (SrcPos, Nest Name, Name) -> LabeledItems UExpr -> [UDecl]
     mkFunDefs meta (LabeledItems items) =
         fmap (\(name, ty :| []) -> mkOneFunDef meta (name, ty)) $ M.toList items
-    mkOneFunDef :: (SrcPos, [Name], Name) -> (Label, UExpr) -> UDecl
+    mkOneFunDef :: (SrcPos, Nest Name, Name) -> (Label, UExpr) -> UDecl
     mkOneFunDef (pos, typeVarNames, interfaceName) (fLabel, fType) =
       ULet PlainLet (p, ann') rhs'
       where
