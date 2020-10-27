@@ -1,0 +1,227 @@
+'## Complex Numbers
+
+
+'## Things to add to prelude
+
+def sign (x:Float) : Float =
+  case x > 0.0 of
+    True -> 1.0
+    False -> case x < 0.0 of
+      True -> -1.0
+      False -> x
+
+def copysign (a:Float) (b:Float) : Float =
+  case b > 0.0 of
+    True -> a
+    False -> case b < 0.0 of
+      True -> (-a)
+      False -> 0.0
+
+def atan_neg1_to1 (x:Float) : Float = 
+  -- From https://arxiv.org/abs/1508.03211
+  -- Only accurate in the range [-1, 1]
+  s = x * x
+  r = 0.0027856871
+  r = r * s - 0.0158660002
+  r = r * s + 0.042472221
+  r = r * s - 0.0749753043
+  r = r * s + 0.106448799
+  r = r * s - 0.142070308
+  r = r * s + 0.199934542
+  r = r * s - 0.333331466
+  r = r * s
+  r * x + x
+
+def atan2 (y:Float) (x:Float) : Float =
+  -- Based off of the Tensorflow implementation at
+  -- https://github.com/tensorflow/mlir-hlo/blob/master/lib/Dialect/mhlo/transforms/legalize_trigonometric_to_approximation.cc#L147
+  -- todo: Handle nans and infs
+  ax = abs x
+  ay = abs y
+  zero_to_one = (min ax ay) / (max ax ay)
+  a = atan_neg1_to1 zero_to_one
+  a = select (ax <= ay) ((pi / 2.0) -a) a
+  a = select (x < 0.0) pi a
+  t = select (x < 0.0) pi 0.0
+  a = select (y == 0.0) t a
+  copysign a y
+
+def atan (x:Float) : Float = atan2 x 1.0
+
+-- Todo: better numerics for very large and small values.
+def sinh (x:Float) : Float = ((exp x) - exp (-x)) / 2.0
+def cosh (x:Float) : Float = ((exp x) + exp (-x)) / 2.0
+def tanh (x:Float) : Float = (1.0 - (exp (-x))) / (1.0 + (exp (-x)))
+
+
+'## Complex number definition
+
+-- Maybe use a newtype or typeclass, to avoid accidentally
+-- treating a tuple of two floats as a complex number?
+Complex = (Float & Float)  -- real, imaginary
+def real (x : Complex) : Float = fst x
+def imag (x : Complex) : Float = snd x
+
+@instance allCloseComplex : HasAllClose Complex =
+  MkHasAllClose \atol rtol (a,b):Complex (c,d):Complex.
+    fstclose = abs (a - c) <= ((fst atol) + (fst rtol) * abs c)
+    sndclose = abs (b - d) <= ((snd atol) + (snd rtol) * abs d)
+    fstclose && sndclose
+
+@instance defaultToleranceComplex : HasDefaultTolerance Complex =
+  MkHasDefaultTolerance (FToF32 0.00001, FToF32 0.00001) (FToF32 0.0001, FToF32 0.00001)
+
+instance ComplexAdd : Add Complex where
+  add = \(a, b):Complex (c, d):Complex. (a + c, b + d)
+  sub = \(a, b):Complex (c, d):Complex. (a - c, b - d)
+  zero = (0.0, 0.0)
+
+instance ComplexMul : Mul Complex where
+  mul = \(a, b):Complex (c, d):Complex.
+          (a * c - b * d,
+           a * d + b * c)
+  one = (1.0, 0.0)
+
+@instance complexVS : VSpace Complex =
+  MkVSpace ComplexAdd \a:Float (c, d):Complex. (a * c, a * d)
+
+complex_division = \(a, b):Complex (c, d):Complex.
+  ((a * c + b * d) / (c * c + d * d),
+   (b * c - a * d) / (c * c + d * d))
+
+@instance ComplexFractional : Fractional Complex =
+  MkFractional (complex_division)
+
+complex_exp = \(a, b):Complex.
+  expx = exp a
+  (expx * cos b, expx * sin b)
+
+complex_exp2 = \(a, b):Complex.
+  exp2x = exp2 a
+  b' = (log 2.0) * b
+  (exp2x * cos b', exp2x * sin b')
+
+complex_conj  = \(a,b):Complex. (a, -b)
+complex_mag : Complex -> Float = \(a,b):Complex. sqrt (a * a + b * b)
+complex_arg : Complex -> Float = \(a,b):Complex. atan2 b a
+
+complex_log   = \x:Complex. (log (complex_mag x), complex_arg x)
+complex_log2  = \x:Complex. (complex_log x) / log 2.0
+complex_log10 = \x:Complex. (complex_log x) / log 10.0
+
+complex_pow = \base:Complex power:Complex.
+  complex_exp (power * complex_log base)
+
+complex_sqrt = \(a,b):Complex.
+  m = complex_mag (a, b)
+  gamma = sqrt ((a + m) / 2.0)
+  delta = sign b * sqrt ((m - a) / 2.0)
+  (gamma, delta)
+
+complex_sin  = \(a,b):Complex. (sin a * cosh b,  cos a * sinh b) 
+complex_cos  = \(a,b):Complex. (cos a * cosh b, -sin a * sinh b) 
+complex_tan  = \    x:Complex. complex_division (complex_sin x) (complex_cos x)
+complex_sinh = \(a,b):Complex. (sinh a * cos b,  cosh a * sin b)
+complex_cosh = \(a,b):Complex. (cosh a * cos b, -sinh a * sin b)
+complex_tanh = \    x:Complex. complex_division (complex_sinh x) (complex_cosh x)
+
+complex_floor = \(r,i):Complex.
+  -- from "Complex Floor" by Eugene McDonnell 
+  -- https://www.jsoftware.com/papers/eem/complexfloor.htm
+  fr = floor r
+  fi = floor i
+  x = r - fr
+  y = i - fi
+  case (x + y) < 1.0 of
+    True -> (fr, fi)
+    False -> case x >= y of
+      True -> (fr + 1.0, fi)
+      False -> (fr, fi + 1.0)
+complex_ceil =  \x:Complex. -(complex_floor (-x))
+complex_round = \x:Complex. complex_floor (x + (0.5, 0.0))  -- not sure about this.
+complex_lgamma : Complex -> Complex = \x:Complex. todo
+complex_log1p = \x:Complex.
+  a = real x
+  case a == 0.0 of
+    True -> x
+    False -> 
+      u = x + (1.0, 0.0)
+      case a <= -1.0 of
+        True -> complex_log u
+        False -> complex_division ((complex_log u) * x) x
+
+@instance
+complexFloating : Floating Complex =
+  (MkFloating (\x:Complex. complex_exp x) (\x. complex_exp2 x)
+              (\x. complex_log x) (\x. complex_log2 x)
+              (\x. complex_log10 x) (\x. complex_log1p x)
+              (\x. complex_sin x) (\x. complex_cos x) (\x. complex_tan x)
+              (\x. complex_floor  x) (\x. complex_ceil  x) (\x. complex_round x)
+              (\x. complex_sqrt x) (\x y. complex_pow x y)
+              (\x. complex_lgamma x))
+
+
+------------------- Tests ---------------------
+
+:p complex_floor (0.3, 0.6)
+> (0.0, 0.0)
+:p complex_floor (0.6, 0.8)
+> (0.0, 1.0)
+:p complex_floor (0.8, 0.6)
+> (1.0, 0.0)
+:p complex_floor (0.6, 0.3)
+> (0.0, 0.0)
+
+a = (2.1, 0.4)
+b = (-1.1, 1.3)
+
+:p (a + b - a) ~~ b
+> True
+
+:p complex_division (a * b) a ~~ b
+> True
+
+:p a == b
+> False
+
+:p a == a
+> True
+
+:p log (exp a) ~~ a
+> True
+
+:p exp (log a) ~~ a
+> True
+
+:p sqrt (sq a) ~~ a
+> True
+
+:p log ((1.0, 0.0) + a) ~~ log1p a
+> True
+
+:p sin (-a) ~~ (-(sin a))
+> True
+
+:p cos (-a) ~~ cos a
+> True
+
+:p tan (-a) ~~ (- (tan a))
+> True
+
+:p exp (pi .* (0.0, 1.0)) ~~ (-1.0, 0.0)  -- Euler's identity
+> True
+
+:p ((sq (sin a)) + (sq (cos a))) ~~ (1.0, 0.0)
+> True
+
+complex_sinh (1.2, 3.2)
+> (-1.5068874, -0.10569556)
+
+complex_cosh (1.2, 3.2)
+> (-1.807568, 8.811359e-2)
+
+tan (1.2, 3.2)
+> (2.2501666e-3, 1.002451)
+
+:p sinh 1.2 ~~ 1.5094614
+> True
