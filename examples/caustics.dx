@@ -137,14 +137,15 @@ def rasterLineSegmentInFourPixels (height:Int)?-> (width:Int)?-> (ref:Type)?->
     ()
 
 
--- Bilinear approximation preserves line integral! Computed value:
-:p sum $ sum $ drawIntoCanvas 100 100 $ \canvas.
+-- Bilinear approximation preserves line integral
+trueLineIntegral = sqrt (square (0.8 - 0.1) + square (0.6 - 0.3))
+renderedLineIntegral = sum $ sum $ drawIntoCanvas 100 100 $ \canvas.
   for i:(Fin 99) j:(Fin 99).
     rasterLineSegmentInFourPixels (ordinal i) (ordinal j) (0.1, 0.3) (0.8, 0.6) 1.0 canvas
   ()
 
--- True line integral:
-:p sqrt (square (0.8 - 0.1) + square (0.6 - 0.3))
+:p trueLineIntegral
+:p trueLineIntegral ~~ renderedLineIntegral
 
 -- TODO: This doesn't work because of https://github.com/google-research/dex-lang/issues/267
 -- def forEachBetween (eff:Effects)?-> (lo: Int) (hi: Int) (f: Int ->{|eff} Unit) :{|eff} Unit =
@@ -226,8 +227,10 @@ def rasterLineSegment (height:Int)?-> (width:Int)?-> (ref:Type)?->
 
 -- Bilinear approximation still preserves line integral, confirming we are
 -- rendering the right set of pixels.
-:p sum $ sum $ drawIntoCanvas 100 100 $
+sparseRenderedLineIntegral = sum $ sum $ drawIntoCanvas 100 100 $
   rasterLineSegment (0.1, 0.3) (0.8, 0.6) 1.0
+
+:p trueLineIntegral ~~ sparseRenderedLineIntegral
 
 '## Light path visualization
 We can visualize light by rasterizing many lines coming from a single point.
