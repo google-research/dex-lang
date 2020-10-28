@@ -284,7 +284,7 @@ data PrimTC e =
       | TypeKind
       | EffectRowKind
       | LabeledRowKindTC
-      | ParIndexRange Device e e e  -- Global thread id, thread count, full index set
+      | ParIndexRange e e e  -- Full index set, global thread id, thread count
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -356,6 +356,7 @@ data PrimHof e =
       | RunState  e e
       | Linearize e
       | Transpose e
+      | PTileReduce e e       -- index set, thread body
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
@@ -413,6 +414,16 @@ data EffectRow = EffectRow [Effect] (Maybe Name)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
 type EffectSummary = S.Set Effect
+
+instance HasVars EffectSummary where
+  freeVars effs = foldMap (\(_, reg) -> reg @> (TyKind, UnknownBinder)) effs
+
+instance Subst EffectSummary where
+  subst (env, _) effs = S.map substEff effs
+    where
+      substEff (eff, name) = case envLookup env name of
+        Just (Var (name':>_)) -> (eff, name')
+        Nothing               -> (eff, name)
 
 pattern Pure :: EffectRow
 pattern Pure = EffectRow [] Nothing
@@ -489,6 +500,7 @@ data ImpInstr = IFor Direction IBinder Size ImpBlock
               | IWhile ImpBlock ImpBlock  -- cond block, body block
               | ICond IExpr ImpBlock ImpBlock
               | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
+              | ISyncWorkgroup
               | ILaunch IFunVar Size [IExpr]
               | ICall IFunVar [IExpr]
               | Store IExpr IExpr           -- dest, val
@@ -1206,6 +1218,7 @@ instance HasIVars ImpInstr where
     IWhile c p        -> freeIVars c <> freeIVars p
     ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
     IQueryParallelism _ s -> freeIVars s
+    ISyncWorkgroup      -> mempty
     ILaunch _ size args -> freeIVars size <> foldMap freeIVars args
     ICall   _      args -> foldMap freeIVars args
     Store d e     -> freeIVars d <> freeIVars e

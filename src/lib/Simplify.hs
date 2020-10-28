@@ -437,6 +437,7 @@ simplifyHof hof = case hof of
     ~(fT', Nothing) <- simplifyLam fT
     ~(fS', Nothing) <- simplifyLam fS
     emit $ Hof $ Tile d fT' fS'
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
   While cond body -> do
     ~(cond', Nothing) <- simplifyLam cond
     ~(body', Nothing) <- simplifyLam body

@@ -214,7 +214,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
         high' = case high of InclusiveLim x -> pApp x
                              ExclusiveLim x -> "<" <> pApp x
                              Unlimited      -> ""
-    ParIndexRange d _ _ n -> atPrec LowestPrec $ parens (p $ show d) <> pApp n
+    ParIndexRange n _ _ -> atPrec ArgPrec $ "{" <> pLowest n <> "}"
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
@@ -451,17 +451,18 @@ instance Pretty ImpInstr where
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
-  pretty (IQueryParallelism f s) = "query_parallelism" <+> p (varName f) <+> p s
+  pretty (IQueryParallelism f s) = "queryParallelism" <+> p (varName f) <+> p s
   pretty (ILaunch f size args) =
-    "launch_kernel" <+> p (varName f) <+> p size <+> spaced args
+    "launch" <+> p (varName f) <+> p size <+> spaced args
   pretty (IPrimOp op)     = pLowest op
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
   pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
-  pretty IThrowError = "throwError"
-  pretty (ICall f args) = "call" <+> p f <+> p args
+  pretty ISyncWorkgroup   = "syncWorkgroup"
+  pretty IThrowError      = "throwError"
+  pretty (ICall f args)   = "call" <+> p f <+> p args
 
 forStr :: ForAnn -> Doc ann
 forStr (RegularFor Fwd) = "for"
