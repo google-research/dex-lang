@@ -14,6 +14,8 @@ import Cat
 import Syntax
 import Imp.Embed
 
+-- TODO: DCE!
+
 type AllocInfo    = (BaseType, Int)
 type FuncAllocEnv = [(IBinder, AllocInfo)]
 type ModAllocEnv  = Env [AllocInfo]
@@ -29,9 +31,10 @@ liftCUDAAllocations m =
         CUDAKernelLaunch -> do
           let ((argBs, body), fAllocEnv) =
                 flip runCat mempty $ runISubstEmbedT (ISubstEnv mempty fenv) $ do
-                  ~args@(tid:_) <- traverse freshIVar argBs'
-                  newBody <- extendValSubst (newEnv argBs' $ fmap IVar args) $
-                      traverseImpBlock (liftAlloc $ IVar tid) body'
+                  ~args@(tid:wid:wsz:_) <- traverse freshIVar argBs'
+                  newBody <- extendValSubst (newEnv argBs' $ fmap IVar args) $ buildScoped $ do
+                    gtid <- iadd (IVar tid) =<< imul (IVar wid) (IVar wsz)
+                    evalImpBlock (liftAlloc gtid) body'
                   return (fmap Bind args, newBody)
           let (allocBs, allocs) = unzip fAllocEnv
           extend $ fname @> allocs
@@ -40,9 +43,9 @@ liftCUDAAllocations m =
         _ -> traverseImpFunction amendLaunch fenv f
 
     liftAlloc :: IExpr -> ITraversalDef (Cat FuncAllocEnv)
-    liftAlloc tid = (liftAllocDecl, traverseImpInstr rec)
+    liftAlloc gtid = (liftAllocDecl, traverseImpInstr rec)
       where
-        rec = liftAlloc tid
+        rec = liftAlloc gtid
         liftAllocDecl decl = case decl of
           ImpLet [b] (Alloc addrSpace ty (IIdxRepVal size)) ->
             case addrSpace of
@@ -51,7 +54,7 @@ liftCUDAAllocations m =
               Heap GPU -> do
                 bArg <- freshIVar b
                 liftSE $ extend $ [(Bind bArg, (ty, fromIntegral size))]
-                ptr <- ptrOffset (IVar bArg) =<< imul tid (IIdxRepVal size)
+                ptr <- ptrOffset (IVar bArg) =<< imul gtid (IIdxRepVal size)
                 return $ b @> ptr
           ImpLet _ (Alloc _ _ _) ->
             error $ "Failed to lift an allocation out of a CUDA kernel: " ++ pprint decl
@@ -71,7 +74,8 @@ liftCUDAAllocations m =
             extraArgs <- case null liftedAllocs of
               True -> return []
               False -> do
-                ~[nthreads] <- emit $ IQueryParallelism f s
+                ~[numWorkgroups, workgroupSize] <- emit $ IQueryParallelism f s
+                nthreads <- imul numWorkgroups workgroupSize
                 forM liftedAllocs $ \(ty, size) -> do
                   totalSize <- imul (IIdxRepVal $ fromIntegral size) nthreads
                   alloc (Heap GPU) ty totalSize

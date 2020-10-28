@@ -314,6 +314,7 @@ linearizePrimCon con = case con of
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"
   RecordRef _    -> error "Unexpected ref"
+  ParIndexCon   _ _ -> error "Unexpected ParIndexCon"
   ClassDictHole _ _ -> error "Unexpected ClassDictHole"
   where emitWithZero = LinA $ return $ withZeroTangent $ Con con
 
@@ -709,9 +710,10 @@ transposeCon con ct = case con of
   SumAsProd _ _ _   -> notImplemented
   CharCon _         -> notTangent
   ClassDictHole _ _ -> notTangent
-  IntRangeVal _ _ _     -> notImplemented
-  IndexRangeVal _ _ _ _ -> notImplemented
-  IndexSliceVal _ _ _   -> notImplemented
+  IntRangeVal _ _ _     -> notTangent
+  IndexRangeVal _ _ _ _ -> notTangent
+  IndexSliceVal _ _ _   -> notTangent
+  ParIndexCon _ _       -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent
   ConRef _       -> notTangent

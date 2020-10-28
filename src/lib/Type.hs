@@ -561,6 +561,7 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
+  ParIndexRange _ gtid nthr t -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -594,6 +595,7 @@ typeCheckCon con = case con of
       tag |:(RawRefTy TagRepTy)
       return $ RawRefTy ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
+  ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> return t
   RecordRef _ -> error "Not implemented"
 
 typeCheckRef :: HasType a => a -> TypeM Type
@@ -669,8 +671,11 @@ typeCheckOp op = case op of
                                     "fixed-width base types, but got: " ++ pprint argTy
     return ansTy
   Inject i -> do
-    TC (IndexRange ty _ _) <- typeCheck i
-    return ty
+    TC tc <- typeCheck i
+    case tc of
+      IndexRange ty _ _ -> return ty
+      ParIndexRange _ _ _ ty -> return ty
+      _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType h s) <- typeCheck ref
     let h'' = case h of

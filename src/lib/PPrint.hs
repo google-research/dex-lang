@@ -214,6 +214,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
         high' = case high of InclusiveLim x -> pApp x
                              ExclusiveLim x -> "<" <> pApp x
                              Unlimited      -> ""
+    ParIndexRange d _ _ n -> atPrec LowestPrec $ parens (p $ show d) <> pApp n
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
@@ -244,6 +245,8 @@ prettyPrecPrimCon con = case con of
   ClassDictHole _ _ -> atPrec ArgPrec "_"
   IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
+  ParIndexCon ty i ->
+    atPrec LowestPrec $ pApp i <> "@" <> pApp ty
   IndexSliceVal ty n i ->
     atPrec LowestPrec $ "IndexSlice" <+> pApp ty <+> pApp n <+> pApp i
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr

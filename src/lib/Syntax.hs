@@ -49,11 +49,11 @@ module Syntax (
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
-    pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal,
+    pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
-    pattern FixedIntRange, pattern RefTy, pattern RawRefTy,
+    pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow,
     pattern TyKind, pattern LamVal,
@@ -284,6 +284,7 @@ data PrimTC e =
       | TypeKind
       | EffectRowKind
       | LabeledRowKindTC
+      | ParIndexRange Device e e e  -- Global thread id, thread count, full index set
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -301,6 +302,7 @@ data PrimCon e =
       | TabRef e
       | ConRef (PrimCon e)
       | RecordRef (LabeledItems e)
+      | ParIndexCon e e        -- Type, value
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -1291,13 +1293,16 @@ pattern CharLit x = Con (CharCon (Con (Lit (Int8Lit x))))
 
 -- Type used to represent indices at run-time
 pattern IdxRepTy :: Type
-pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
+pattern IdxRepTy = TC (BaseType IIdxRepTy)
 
 pattern IdxRepVal :: Int32 -> Atom
 pattern IdxRepVal x = Con (Lit (Int32Lit x))
 
 pattern IIdxRepVal :: Int32 -> IExpr
 pattern IIdxRepVal x = ILit (Int32Lit x)
+
+pattern IIdxRepTy :: IType
+pattern IIdxRepTy = Scalar Int32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type
@@ -1344,6 +1349,9 @@ pattern LabeledRowKind = TC LabeledRowKindTC
 
 pattern FixedIntRange :: Int32 -> Int32 -> Type
 pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
+
+pattern Fin :: Atom -> Type
+pattern Fin n = TC (IntRange (IdxRepVal 0) n)
 
 pattern PureArrow :: Arrow
 pattern PureArrow = PlainArrow Pure
