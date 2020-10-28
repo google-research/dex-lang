@@ -14,7 +14,10 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, getScope, embedLook,
-              app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
+              app,
+              add, mul, sub, neg, div',
+              iadd, imul, isub, idiv, ilt, ieq,
+              fpow, flog, fLitLike,
               select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce, appTryReduce, buildAbs,
               buildFor, buildForAux, buildForAnn, buildForAnnAux,
@@ -283,6 +286,10 @@ flog x = emitOp $ ScalarUnOp Log x
 ilt :: MonadEmbed m => Atom -> Atom -> m Atom
 ilt x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (<) x y
 ilt x y = emitOp $ ScalarBinOp (ICmp Less) x y
+
+ieq :: MonadEmbed m => Atom -> Atom -> m Atom
+ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
+ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
 
 getFst :: MonadEmbed m => Atom -> m Atom
 getFst (PairVal x _) = return x

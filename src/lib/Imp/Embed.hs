@@ -7,10 +7,13 @@
 module Imp.Embed ( ISubstEmbedT, ISubstEnv (..)
                  , runISubstEmbedT, liftSE
                  , emit, freshIVar, extendValSubst
+                 , buildScoped
                  -- embedding
-                 , ptrOffset, imul, alloc
+                 , iadd, imul
+                 , alloc, ptrOffset
                  -- traversal
-                 , traverseImpModule, traverseImpFunction, traverseImpBlock
+                 , traverseImpModule, traverseImpFunction
+                 , traverseImpBlock, evalImpBlock
                  , traverseImpDecl, traverseImpInstr
                  , traverseIExpr, traverseIFunVar
                  , ITraversalDef, substTraversalDef
@@ -82,6 +85,9 @@ ptrOffset ptr off = liftM head $ emit $ IPrimOp $ PtrOffset ptr off
 
 imul :: Monad m => IExpr -> IExpr -> IEmbedT m IExpr
 imul x y = liftM head $ emit $ IPrimOp $ ScalarBinOp IMul x y
+
+iadd :: Monad m => IExpr -> IExpr -> IEmbedT m IExpr
+iadd x y = liftM head $ emit $ IPrimOp $ ScalarBinOp IAdd x y
 
 alloc :: Monad m => AddressSpace -> IType -> IExpr -> IEmbedT m IExpr
 alloc addrSpc ty size = liftM head $ emit $ Alloc addrSpc ty size
