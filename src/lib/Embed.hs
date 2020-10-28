@@ -19,7 +19,8 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               iadd, imul, isub, idiv, ilt, ieq,
               fpow, flog, fLitLike,
               select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
-              fromPair, getFst, getSnd, naryApp, appReduce, appTryReduce, buildAbs,
+              fromPair, getFst, getSnd, getFstRef, getSndRef,
+              naryApp, appReduce, appTryReduce, buildAbs,
               buildFor, buildForAux, buildForAnn, buildForAnnAux,
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -299,6 +300,12 @@ getSnd :: MonadEmbed m => Atom -> m Atom
 getSnd (PairVal _ y) = return y
 getSnd p = emitOp $ Snd p
 
+getFstRef :: MonadEmbed m => Atom -> m Atom
+getFstRef r = emitOp $ FstRef r
+
+getSndRef :: MonadEmbed m => Atom -> m Atom
+getSndRef r = emitOp $ SndRef r
+
 getUnpacked :: MonadEmbed m => Atom -> m [Atom]
 getUnpacked (DataCon _ _ _ xs) = return xs
 getUnpacked (Record items) = return $ toList items
@@ -353,7 +360,7 @@ emitRunState v x0 body = do
 mkBinaryEffFun :: MonadEmbed m => EffectName -> Name -> Type -> (Atom -> m Atom) -> m Atom
 mkBinaryEffFun newEff v ty body = do
   eff <- getAllowedEffects
-  buildLam (Bind ("r":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
+  buildLam (Bind ("h":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
     let arr = PlainArrow $ extendEffect (newEff, rName) eff
     buildLam (Bind (v:> RefTy r ty)) arr body
 
@@ -514,6 +521,19 @@ instance MonadError e m => MonadError e (EmbedT m) where
     embedExtend envC'
     return ans
 
+instance MonadReader r m => MonadReader r (EmbedT m) where
+  ask = lift ask
+  local r m = do
+    envC <- embedLook
+    envR <- embedAsk
+    (ans, envC') <- lift $ local r $ runEmbedT' m (envR, envC)
+    embedExtend envC'
+    return ans
+
+instance MonadState s m => MonadState s (EmbedT m) where
+  get = lift get
+  put = lift . put
+
 getNameHint :: MonadEmbed m => m Name
 getNameHint = do
   tag <- fst <$> embedAsk
@@ -568,7 +588,7 @@ substTraversalDef = ( traverseDecl substTraversalDef
                     , traverseAtom substTraversalDef
                     )
 
-appReduceTraversalDef :: TraversalDef SubstEmbed
+appReduceTraversalDef :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m
 appReduceTraversalDef = ( traverseDecl appReduceTraversalDef
                         , reduceAppExpr
                         , traverseAtom appReduceTraversalDef
@@ -720,8 +740,8 @@ indexSetSizeE (TC con) = case con of
       Unlimited      -> indexSetSizeE n
     clampPositive =<< high' `isub` low'
   PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
+  ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
   _ -> error $ "Not implemented " ++ pprint con
-  where
 indexSetSizeE (RecordTy (NoExt types)) = do
   sizes <- traverse indexSetSizeE types
   foldM imul (IdxRepVal 1) sizes
@@ -752,6 +772,7 @@ indexToIntE idx = case getType idx of
     imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
+  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
   RecordTy (NoExt types) -> do
     sizes <- traverse indexSetSizeE types
     (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IdxRepVal 1)
@@ -781,6 +802,7 @@ intToIndexE (TC con) i = case con of
     iA <- intToIndexE a =<< idiv i bSize
     iB <- intToIndexE b =<< irem i bSize
     return $ PairVal iA iB
+  ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
   _ -> error $ "Unexpected type " ++ pprint con
 intToIndexE (RecordTy (NoExt types)) i = do
   sizes <- traverse indexSetSizeE types

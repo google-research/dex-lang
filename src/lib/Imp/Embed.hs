@@ -154,6 +154,7 @@ traverseImpInstr def instr = case instr of
                             <*> traverseImpBlock def fb
   IQueryParallelism f s -> IQueryParallelism <$> traverseIFunVar f
                                              <*> traverseIExpr s
+  ISyncWorkgroup   -> return ISyncWorkgroup
   ILaunch f s args -> ILaunch <$> traverseIFunVar f
                               <*> traverseIExpr s
                               <*> traverse traverseIExpr args

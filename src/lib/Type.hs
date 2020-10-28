@@ -11,7 +11,7 @@
 
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
-  isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
+  isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
   indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck) where
 
@@ -263,6 +263,7 @@ exprEffs expr = case expr of
     RunReader _ f   -> handleRunner Reader f
     RunWriter   f   -> handleRunner Writer f
     RunState  _ f   -> handleRunner State  f
+    PTileReduce _ _ -> mempty
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
     handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs Nothing) _) =
@@ -430,6 +431,7 @@ instance CoreVariant (PrimHof a) where
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
+    PTileReduce _ _ -> absentUntil Simp -- really absent until parallelization
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -561,7 +563,7 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
-  ParIndexRange _ gtid nthr t -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
+  ParIndexRange t gtid nthr -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -674,7 +676,7 @@ typeCheckOp op = case op of
     TC tc <- typeCheck i
     case tc of
       IndexRange ty _ _ -> return ty
-      ParIndexRange _ _ _ ty -> return ty
+      ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType h s) <- typeCheck ref
@@ -806,6 +808,15 @@ typeCheckHof hof = case hof of
       replaceDim 0 (TabTy _ b) n  = TabTy (Ignore n) b
       replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
       replaceDim _ _ _ = error "This should be checked before"
+  PTileReduce n mapping -> do
+    -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> ((ParIndexRange n gtid nthr)=>a, r)
+    BinaryFunTy (Bind gtid) (Bind nthr) Pure mapResultTy <- typeCheck mapping
+    PairTy tiledArrTy accTy <- return mapResultTy
+    let threadRange = TC $ ParIndexRange n (Var gtid) (Var nthr)
+    TabTy threadRange' tileElemTy <- return tiledArrTy
+    checkEq threadRange (binderType threadRange')
+    -- PTileReduce n mapping : (n=>a, ro)
+    return $ PairTy (TabTy (Ignore n) tileElemTy) accTy
   While cond body -> do
     Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck cond
     Pi (Abs (Ignore UnitTy) (arr', bodyTy)) <- typeCheck body

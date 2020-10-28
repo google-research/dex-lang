@@ -193,9 +193,9 @@ void dex_queryParallelismCUDA(const void* _, int64_t iters,
     return;
   }
   // TODO: Use the occupancy calculator, or at least use a fixed number of blocks?
-  const int32_t fixedWgSize = 256;
+  const int64_t fixedWgSize = 1024;
   *workgroupSize = fixedWgSize;
-  *numWorkgroups = (iters + fixedWgSize - 1) / fixedWgSize;
+  *numWorkgroups = std::min((iters + fixedWgSize - 1) / fixedWgSize, fixedWgSize);
 }
 
 void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {

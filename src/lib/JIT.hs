@@ -162,6 +162,12 @@ compileInstr instr = case instr of
           queryParallelismCUDAFun = ExternFunSpec "dex_queryParallelismCUDA" L.VoidType [] []
                                                   [hostPtrTy i8, i64, hostPtrTy i32, hostPtrTy i32]
       _                -> error $ "Unsupported calling convention: " ++ show cc
+  ISyncWorkgroup -> do
+    dev <- asks curDevice
+    case dev of
+      CPU -> error "Not yet implemented"
+      GPU -> [] <$ emitVoidExternCall barrierSpec []
+        where barrierSpec = ExternFunSpec "llvm.nvvm.barrier0" L.VoidType [] [] []
   ILaunch f size args -> [] <$ do
     let IFunType cc _ _ = varAnn f
     size' <- (`asIntWidth` i64) =<< compileExpr size

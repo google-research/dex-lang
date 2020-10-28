@@ -224,7 +224,7 @@ toImpOp (maybeDest, op) = case op of
         ExclusiveLim a -> indexToInt a >>= iaddI (IIdxRepVal 1)
         Unlimited      -> return (IIdxRepVal 0)
       returnVal =<< intToIndex t =<< iaddI (fromScalarAtom restrictIdx) offset
-    Con (ParIndexCon (TC (ParIndexRange _ _ _ realIdxTy)) i) -> do
+    Con (ParIndexCon (TC (ParIndexRange realIdxTy _ _)) i) -> do
       returnVal =<< intToIndex realIdxTy (fromScalarAtom i)
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
@@ -283,8 +283,9 @@ toImpHof env (maybeDest, hof) = do
   case hof of
     For (RegularFor d) ~(LamVal b body) -> do
       idxTy <- impSubst env $ binderType b
+      dev   <- asks curDevice
       case idxTy of
-        TC (ParIndexRange dev gtid numThreads realIdxTy) -> do
+        TC (ParIndexRange realIdxTy gtid numThreads) -> do
           let gtidI = fromScalarAtom gtid
           let numThreadsI = fromScalarAtom numThreads
           n    <- indexSetSize realIdxTy
@@ -359,6 +360,80 @@ toImpHof env (maybeDest, hof) = do
         sDest <- fromEmbed $ indexDestDim d dest idx
         void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
       destToAtom dest
+    PTileReduce idxTy' ~(BinaryFunVal gtidB nthrB _ body) -> do
+      idxTy <- impSubst env idxTy'
+      (mappingDest, finalAccDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+      let PairTy _ accType = resultTy
+      (numTileWorkgroups, wgResArr, widIdxTy) <- buildKernel idxTy $ \LaunchInfo{..} buildBody -> do
+        let widIdxTy = Fin $ toScalarAtom numWorkgroups
+        let tidIdxTy = Fin $ toScalarAtom workgroupSize
+        wgResArr  <- alloc $ TabTy (Ignore widIdxTy) accType
+        thrAccArr <- alloc $ TabTy (Ignore widIdxTy) $ TabTy (Ignore tidIdxTy) accType
+        mappingKernelBody <- buildBody $ \ThreadInfo{..} -> do
+          let TC (ParIndexRange _ gtid nthr) = threadRange
+          let scope = freeVars mappingDest
+          let tileDest = Con $ TabRef $ fst $ flip runSubstEmbed scope $ do
+                buildLam (Bind $ "hwidx":>threadRange) TabArrow $ \hwidx -> do
+                  indexDest mappingDest =<< (emitOp $ Inject hwidx)
+          wgAccs <- destGet thrAccArr =<< intToIndex widIdxTy wid
+          thrAcc <- destGet wgAccs    =<< intToIndex tidIdxTy tid
+          let threadDest = Con $ ConRef $ PairCon tileDest thrAcc
+          void $ translateBlock (env <> gtidB @> gtid <> nthrB @> nthr) (Just threadDest, body)
+          wgRes <- destGet wgResArr =<< intToIndex widIdxTy wid
+          workgroupReduce tid wgRes wgAccs workgroupSize
+        return (mappingKernelBody, (numWorkgroups, wgResArr, widIdxTy))
+      -- TODO: Skip the reduction kernel if unnecessary?
+      -- TODO: Reduce sequentially in the CPU backend?
+      -- TODO: Actually we only need the previous-power-of-2 many threads
+      buildKernel widIdxTy $ \LaunchInfo{..} buildBody -> do
+        -- We only do a one-level reduciton in the workgroup, so it is correct
+        -- only if the end up scheduling a single workgroup.
+        moreThanOneGroup <- (IIdxRepVal 1) `iltI` numWorkgroups
+        guardBlock moreThanOneGroup $ emitStatement IThrowError
+        redKernelBody <- buildBody $ \ThreadInfo{..} ->
+          workgroupReduce tid finalAccDest wgResArr numTileWorkgroups
+        return (redKernelBody, ())
+      PairVal <$> destToAtom mappingDest <*> destToAtom finalAccDest
+      where
+        guardBlock cond m = do
+          block <- scopedErrBlock m
+          emitStatement $ ICond cond block (ImpBlock mempty mempty)
+        workgroupReduce tid resDest arrDest elemCount = do
+          elemCountDown2 <- prevPowerOf2 elemCount
+          let RawRefTy (TabTy arrIdxB _) = getType arrDest
+          let arrIdxTy = binderType arrIdxB
+          offPtr <- alloc IdxRepTy
+          copyAtom offPtr $ toScalarAtom elemCountDown2
+          cond <- liftM snd $ scopedBlock $ do
+            off  <- fromScalarAtom <$> destToAtom offPtr
+            cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Greater) off (IIdxRepVal 0)
+            return ((), [cond])
+          wbody <- scopedErrBlock $ do
+            off       <- fromScalarAtom <$> destToAtom offPtr
+            loadIdx   <- iaddI tid off
+            shouldAdd <- bindM2 bandI (tid `iltI` off) (loadIdx `iltI` elemCount)
+            guardBlock shouldAdd $ do
+              threadDest <- destGet arrDest =<< intToIndex arrIdxTy tid
+              addToAtom threadDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy loadIdx
+            emitStatement ISyncWorkgroup
+            copyAtom offPtr . toScalarAtom =<< off `idivI` (IIdxRepVal 2)
+          emitStatement $ IWhile cond wbody
+          firstThread <- tid `iltI` (IIdxRepVal 1)
+          guardBlock firstThread $
+            copyAtom resDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy tid
+        -- TODO: Do some popcount tricks?
+        prevPowerOf2 :: IExpr -> ImpM IExpr
+        prevPowerOf2 x = do
+          rPtr <- alloc IdxRepTy
+          copyAtom rPtr (IdxRepVal 1)
+          let getNext = imulI (IIdxRepVal 2) . fromScalarAtom =<< destToAtom rPtr
+          cond <- liftM snd $ scopedBlock $ do
+            canGrow <- getNext >>= (`iltI` x)
+            return ((), [canGrow])
+          wbody <- scopedErrBlock $ do
+            copyAtom rPtr . toScalarAtom =<< getNext
+          emitStatement $ IWhile cond wbody
+          fromScalarAtom <$> destToAtom rPtr
     While ~(Lam (Abs _ (_, cond))) ~(Lam (Abs _ (_, body))) -> do
       cond' <- liftM snd $ scopedBlock $ do
                  ans <- translateBlock env (Nothing, cond)
@@ -416,9 +491,7 @@ buildKernel idxTy f = do
   ((kernelBody, aux), env) <- scoped $ f LaunchInfo{..} $ \mkBody ->
     withDevice dev $ withLevel ThreadLevel $ scopedErrBlock $ do
       gtid <- iaddI tid =<< imulI wid wsz
-      let threadRange = TC $ ParIndexRange dev (toScalarAtom gtid)
-                                               (toScalarAtom nthr)
-                                               idxTy
+      let threadRange = TC $ ParIndexRange idxTy (toScalarAtom gtid) (toScalarAtom nthr)
       mkBody ThreadInfo{..}
   let args = envAsVars $ freeIVars kernelBody `envDiff` (newEnv threadInfoVars (repeat ()))
   kernelFunc <- emitFunction cc (fmap Bind (tidVar:widVar:wszVar:nthrVar:args)) kernelBody
@@ -1071,6 +1144,7 @@ instrTypeChecked instr = case instr of
     [] <- checkBlock consequent
     [] <- checkBlock alternative
     return []
+  ISyncWorkgroup -> return []
   IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
   ILaunch _ n args -> [] <$ do
     -- TODO: check args against type of function
@@ -1198,6 +1272,7 @@ impInstrTypes instr = case instr of
   IWhile _ _      -> []
   ICond _ _ _     -> []
   ILaunch _ _ _   -> []
+  ISyncWorkgroup  -> []
   IQueryParallelism _ _ -> [IIdxRepTy, IIdxRepTy]
   ICall (_:>IFunType _ _ resultTys) _ -> resultTys
 
