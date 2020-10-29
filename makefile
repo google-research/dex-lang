@@ -76,7 +76,7 @@ build-python: build
 # TODO: re-enable linear-tests ad-tests include-test chol
 example-names = uexpr-tests adt-tests type-tests eval-tests \
                 shadow-tests monad-tests \
-                ad-tests mandelbrot pi sierpinsky \
+                ad-tests mandelbrot pi sierpinski \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \

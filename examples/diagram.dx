@@ -1,3 +1,19 @@
+def listLength ((AsList n _):List a) : Int = n
+
+-- TODO: we want this for any monoid but this implementation won't work.
+def concat (lists:n=>(List a)) : List a =
+  totalSize = sum for i. listLength lists.i
+  AsList _ $ fst $ withState 0 \listIdx.
+    fst $ withState 0 \eltIdx.
+      for i:(Fin totalSize).
+        while (\(). get eltIdx >= listLength (lists.((get listIdx)@_))) \().
+          eltIdx := 0
+          listIdx := get listIdx + 1
+        (AsList _ xs) = lists.((get listIdx)@_)
+        eltIdxVal = get eltIdx
+        eltIdx := eltIdxVal + 1
+        xs.(eltIdxVal@_)
+
 
 Point : Type = (Float & Float)
 
@@ -33,6 +49,11 @@ data Diagram = MkDiagram (List (Attributes & Point & Geom))
 instance monoidDiagram : Monoid Diagram where
   mempty = MkDiagram mempty
   mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
+
+def concatDiagrams (diagrams:n=>Diagram) : Diagram =
+  MkDiagram $ concat for i.
+    (MkDiagram d) = diagrams.i
+    d
 
 -- TODO: arbitrary affine transformations. Our current representation of
 -- rectangles and circles means we can only do scale/flip/rotate90.
@@ -86,24 +107,6 @@ def setLW     (w:Int)   (d:Diagram) : Diagram = updateAttributes d $ setAt #lw  
 
 -- === serialization ===
 
-def listLength ((AsList n _):List a) : Int = n
-
--- TODO: this doesn't work for arbitrary `List a` because we need to be able to
--- initialize with an arbitrary element. Should we allow that somehow?
--- TODO: we want this for any monoid but this implementation won't work.
-def concat (strings:n=>String) : String =
-  totalSize = sum for i. listLength strings.i
-  AsList _ $ snd $
-    withState (for i:(Fin totalSize). 'x') \buf.
-      withState 0 \outIdx.
-        for i.
-          (AsList n xs) = strings.i
-          for j.
-            buf ! (fromOrdinal _ (get outIdx)) := xs.j
-            outIdx := get outIdx + 1
-          ()  -- TODO: missing this causes a compiler crash. At worst it should
-              -- just be an escaped variable error.
-
 def quote (s:String) : String = str "\"" <> s <> str "\""
 
 def (<+>) (s1:String) (s2:String) : String = s1 <> str " " <> s2
@@ -126,41 +129,67 @@ def colorStr (c: Maybe Color) : String =
     Nothing -> str "none"
     Just s  -> s
 
-def renderGeom ((x,y):Point) (geom:Geom) : String =
-  case geom of
-    Circle r ->
-      angleBrackets $ (str "circle" <+>
-                       str "cx=" <> quote (show x) <>
-                       str "cy=" <> quote (show y) <>
-                       str "r="  <> quote (show r))
-
 def attrString (attr:Attributes) : String =
   (  makeAttr (str "stroke")       (colorStr $ getAt #stroke attr)
   <> makeAttr (str "fill")         (colorStr $ getAt #fill   attr)
   <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
 
+def dotAttrString (attr:Attributes) : String =
+  (  makeAttr (str "stroke")       (colorStr $ getAt #stroke attr)
+  <> makeAttr (str "fill")         (colorStr $ getAt #stroke attr)
+  <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
+
+def renderGeom (attr:Attributes) ((x,y):Point) (geom:Geom) : String =
+  case geom of
+    Dot ->
+     tagBracketsAttr (str "g") (dotAttrString attr) $ angleBrackets $
+       (str "circle" <+>
+        str "cx=" <> quote (show x) <>
+        str "cy=" <> quote (show y) <>
+        str "r=\"1\"")
+    Circle r ->
+     tagBracketsAttr (str "g") (attrString attr) $ angleBrackets $
+       (str "circle" <+>
+        str "cx=" <> quote (show x) <>
+        str "cy=" <> quote (show y) <>
+        str "r="  <> quote (show r))
+    Rectangle w h ->
+     tagBracketsAttr (str "g") (attrString attr) $ angleBrackets $
+       (str "rect" <+>
+        str "width="  <> quote (show w) <>
+        str "height=" <> quote (show h) <>
+        str "x="      <> quote (show (x - (w/2.0))) <>
+        str "y="      <> quote (show (y - (h/2.0))))
+
 BoundingBox : Type = (Point & Point)
 
 def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
-  (MkDiagram (AsList _ objs)) = flipY d
   ((xmin, ymin), (xmax, ymax)) = bounds
+  imgWidth = 400.0
+  scaleFactor = imgWidth / (xmax - xmin)
+  imgHeight = (ymax - ymin) * scaleFactor
+  (MkDiagram (AsList _ objs)) = d |> flipY |> scale scaleFactor
   viewBoxStr = makeAttr (str "viewBox") $
-     (show xmin <+> show (-ymax) <+>
-      show (xmax - xmin) <+> show (ymax - ymin))
-  tagBracketsAttr (str "svg") viewBoxStr $
+     (show (xmin * scaleFactor) <+> show (-(ymax * scaleFactor)) <+>
+      show imgWidth <+> show imgHeight)
+  svgAttrStr = (    makeAttr (str "width" ) (show imgWidth)
+                <+> makeAttr (str "height") (show imgHeight)
+                <+> viewBoxStr)
+  tagBracketsAttr (str "svg") svgAttrStr $
     concat for i.
       (attr, pos, geom) = objs.i
-      tagBracketsAttr (str "g") (attrString attr) $ renderGeom pos geom
+      renderGeom attr pos geom
 
 -- === derived convenience methods and combinators ===
 
 moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
 moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 
-mydiagram : Diagram =
-  (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFill blue |> setStroke red)
-  <> (circle 5.0 |> moveXY (40.0, 40.0))
-  )
+-- mydiagram : Diagram =
+--   (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFill blue |> setStroke red)
+--   <> (circle 5.0 |> moveXY (40.0, 40.0))
+--   <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStroke red)
+--   )
 
-:html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+-- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
 
