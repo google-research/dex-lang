@@ -46,6 +46,9 @@ jobs:
         key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-
 
+    - name: Remove cached Setup executables
+      run: rm -rf ~/.stack/setup-exe-cache
+
     - name: Build
       run: make
 
