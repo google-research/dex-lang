@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module Parser (Parser, parseit, parseProg, runTheParser, parseData,
-               parseTopDeclRepl, uint, withSource,
+               parseTopDeclRepl, uint, withSource, parseExpr, exprAsModule,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
 import Control.Monad
@@ -44,6 +44,11 @@ parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
   _ -> Just b
   where b = mustParseit s sourceBlock
+
+parseExpr :: String -> Maybe UExpr
+parseExpr s = case parseit s (expr <* eof) of
+  Right ans -> Just ans
+  Left  e   -> Nothing
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case runTheParser s (p <* (optional eol >> eof)) of
