@@ -47,7 +47,9 @@ import Foreign.Storable hiding (alignment)
 import Control.Monad
 import Control.Exception hiding (throw)
 import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.ByteString.Char8 (unpack, pack)
+import Data.List (sortBy)
 import Data.String
 import Data.IORef
 import qualified Data.ByteString.Char8 as B
@@ -57,9 +59,13 @@ import qualified Data.Set as S
 import Logging
 import Syntax
 import Resources
+import CUDA (synchronizeCUDA)
 
 foreign import ccall "dynamic"
   callFunPtr :: DexExecutable -> Ptr () -> Ptr () -> IO DexExitCode
+
+foreign import ccall "dynamic"
+  callDtor :: FunPtr (IO ()) -> IO ()
 
 type DexExecutable = FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
@@ -97,10 +103,11 @@ compileCUDAKernel logger (LLVMKernel ast) = do
     ptxasPath = "/usr/local/cuda/bin/ptxas"
     arch = "sm_60"
 
-checkedCallFunPtr :: Ptr () -> Ptr () -> DexExecutable -> IO Double
-checkedCallFunPtr argsPtr resultPtr fPtr = do
+checkedCallFunPtr :: Bool -> Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr sync argsPtr resultPtr fPtr = do
   t1 <- getCurrentTime
   exitCode <- callFunPtr fPtr argsPtr resultPtr
+  when sync $ synchronizeCUDA
   t2 <- getCurrentTime
   unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
   return $ t2 `secondsSince` t1
@@ -112,7 +119,7 @@ callLLVM logger ast fname args resultTypes = do
   allocaBytes (length args * cellSize) $ \argsPtr ->
     allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
       storeLitVals argsPtr args
-      evalTime <- compileFunc logger ast fname $ checkedCallFunPtr argsPtr resultPtr
+      evalTime <- compileFunc logger ast fname $ checkedCallFunPtr False argsPtr resultPtr
       logThis logger [EvalTime evalTime Nothing]
       loadLitVals resultPtr resultTypes
 
@@ -122,15 +129,18 @@ benchLLVM logger ast fname args resultTypes = do
     allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
       storeLitVals argsPtr args
       compileFunc logger ast fname $ \fPtr -> do
-        exampleDuration <- checkedCallFunPtr argsPtr resultPtr fPtr
+        -- First warmup iteration, which we also use to get the results
+        void $ checkedCallFunPtr True argsPtr resultPtr fPtr
         results <- loadLitVals resultPtr resultTypes
+        let run = do
+              time <- checkedCallFunPtr True argsPtr resultPtr fPtr
+              _benchResults <- loadLitVals resultPtr resultTypes
+              -- TODO: Free results!
+              return time
+        exampleDuration <- run
         let timeBudget = 2 -- seconds
         let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
-        times <- forM [1..benchRuns] $ const $ do
-          time <- checkedCallFunPtr argsPtr resultPtr fPtr
-          _benchResults <- loadLitVals resultPtr resultTypes
-          -- TODO: Free results!
-          return time
+        times <- forM [1..benchRuns] $ const run
         let avgTime = sum times / (fromIntegral benchRuns)
         logThis logger [EvalTime avgTime (Just benchRuns)]
         return results
@@ -169,10 +179,11 @@ compileFunc logger ast name f = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
-    Mod.withModuleFromAST c ast $ \m ->
+    Mod.withModuleFromAST c ast $ \m -> do
       withHostTargetMachine $ \tm -> do
         linkDexrt     c            m
-        internalize   ["entryFun"] m
+        let exports = name : dtorNames
+        internalize   exports      m
         compileModule c logger tm  m
         JIT.withExecutionSession $ \exe ->
           JIT.withObjectLinkingLayer exe (\k -> (M.! k) <$> readIORef resolvers) $ \linkLayer ->
@@ -183,7 +194,12 @@ compileFunc logger ast name f = do
                   JIT.withModule compileLayer moduleKey m $ do
                     entryFunSymbol <- JIT.mangleSymbol compileLayer (fromString name)
                     Right (JIT.JITSymbol funAddr _) <- JIT.findSymbol compileLayer entryFunSymbol False
-                    f $ castPtrToFunPtr $ wordPtrToPtr funAddr
+                    res <- f $ castPtrToFunPtr $ wordPtrToPtr funAddr
+                    forM_ dtorNames $ \dtorName -> do
+                      dtorSymbol <- JIT.mangleSymbol compileLayer (fromString dtorName)
+                      Right (JIT.JITSymbol dtorAddr _) <- JIT.findSymbol compileLayer dtorSymbol False
+                      callDtor $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
+                    return res
   where
     makeResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
     makeResolver cl = JIT.SymbolResolver $ \sym -> do
@@ -202,6 +218,19 @@ compileFunc logger ast name f = do
       JIT.JITSymbol { JIT.jitSymbolAddress = ptr
                     , JIT.jitSymbolFlags = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True, JIT.jitSymbolAbsolute = True }
                     }
+    -- Unfortunately the JIT layers we use here don't handle the destructors properly,
+    -- so we have to find and call them ourselves.
+    dtorNames = do
+      let dtorStructs = flip foldMap (L.moduleDefinitions ast) $ \case
+            L.GlobalDefinition
+              L.GlobalVariable{name="llvm.global_dtors",
+                               initializer=Just (C.Array _ elems),
+                               ..} -> elems
+            _ -> []
+      -- Sort in the order of decreasing priority!
+      fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
+        \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (L.Name dname), _]) ->
+          (n, unpack $ SBS.fromShort dname)
 
 compileModule :: Context -> Logger [Output] -> T.TargetMachine -> Mod.Module -> IO ()
 compileModule ctx logger tm m = do
