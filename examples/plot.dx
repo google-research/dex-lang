@@ -13,9 +13,10 @@ def ScaledData (n:Type) (a:Type) : Type =
   { scale : Scale a
   & dat   : n => a }
 
-def Plot (n:Type) (xdata:Type) (ydata:Type) : Type =
-  { xs : ScaledData n xdata
-  & ys : ScaledData n ydata }
+def Plot (n:Type) (a:Type) (b:Type) (c:Type) : Type =
+  { xs : ScaledData n a
+  & ys : ScaledData n b
+  & cs : ScaledData n c }
 
 def applyScale (s:Scale a) (x:a) : Maybe Float = getAt #mapping s x
 
@@ -41,35 +42,68 @@ def floatScale (xmin:Float) (xmax:Float) : Scale Float =
 def getScaled (sd:ScaledData n a) (i:n) : Maybe Float =
   applyScale (getAt #scale sd) (getAt #dat sd).i
 
-def showPlot (plot:Plot n a b) : String =
+lowColor  = [1.0, 0.5, 0.0]
+highColor = [0.0, 0.5, 1.0]
+
+def showHex (x:Int) : String =
+  (n, ptr) = %ffi showHex (Int & CharPtr) x
+  AsList n $ for i:(Fin n).
+    MkChar $ %ptrLoad (%ptrOffset ptr (ordinal i))
+
+def makeRGBColor (c : Fin 3 => Float) : Color =
+  str "#" <> concat for i. showHex $ FToI $ floor (255.0 * c.i)
+
+def interpolate (_:VSpace a) ?=> (low:a) (high:a) (x:Float) : a =
+  (x .* low) + ((1.0 - x) .* high)
+
+def colorScale (x:Float) : Color =
+  makeRGBColor $ interpolate lowColor highColor x
+
+def showPlot (plot:Plot n a b c) : String =
   points = concatDiagrams for i.
     x = getScaled (getAt #xs plot) i
     y = getScaled (getAt #ys plot) i
+    c = getScaled (getAt #cs plot) i
+    -- TODO: nested may-fail patterns would make this much better
     case x of
       Just x' -> case y of
-        Just y' -> dot |> moveXY (x', y') |> setStroke blue
+        Just y' -> case c of
+          Just c' -> dot |> moveXY (x', y') |> setStroke (colorScale c')
+          Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty
   boundingBox = moveXY (0.5, 0.5) $ rect 1.0 1.0
   diagram = boundingBox <> points
   renderSVG diagram ((0.0, 0.0), (1.0, 1.0))
 
-
 blankData : ScaledData n Unit = {scale = unitTypeScale, dat = for i. ()}
 
-blankPlot : Plot n Unit Unit = { xs = blankData
-                               , ys = blankData }
+blankPlot : Plot n Unit Unit Unit = { xs = blankData
+                                    , ys = blankData
+                                    , cs = blankData }
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def autoScale (xs:n=>Float) : ScaledData n Float =
   {scale = floatScale (minimum xs) (maximum xs), dat = xs}
 
-def setXDataScaled (xs:ScaledData n c) (plot:Plot n a b) : Plot n c b =
+def setXData (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c=
   -- We can't use `setAt` here because we're changing the type
-  {xs = xs, ys = getAt #ys plot}
+  {xs = xs, ys = getAt #ys plot, cs = getAt #cs plot}
 
-def setYDataScaled (ys:ScaledData n c) (plot:Plot n a b) : Plot n a c =
-  {xs = getAt #xs plot, ys = ys}
+def setYData (ys:ScaledData n new) (plot:Plot n a b c) : Plot n a new c =
+  {xs = getAt #xs plot, ys = ys, cs = getAt #cs plot}
 
-def xyPlot (xs:n=>Float) (ys:n=>Float) : Plot n Float Float =
-  blankPlot |> setXDataScaled (autoScale xs) |> setYDataScaled (autoScale ys)
+def setCData (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
+  {xs = getAt #xs plot, ys = getAt #ys plot, cs = cs}
+
+def xyPlot (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
+  blankPlot |> setXData (autoScale xs) |> setYData (autoScale ys)
+
+def xycPlot (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
+  blankPlot |>
+    setXData (autoScale xs) |>
+    setYData (autoScale ys) |>
+    setCData (autoScale cs)
+
+-- xs = linspace (Fin 100) 0. 1.0
+-- :html showPlot $ xycPlot xs xs xs

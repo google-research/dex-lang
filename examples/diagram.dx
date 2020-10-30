@@ -122,8 +122,6 @@ def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
 def makeAttr (attr:String) (val:String) : String =
   attr <> str "=" <> quote val
 
-def punctuate (punctuation:String) (xs:n=>String) : String = todo
-
 def colorStr (c: Maybe Color) : String =
   case c of
     Nothing -> str "none"

@@ -99,7 +99,7 @@ classify =
    <|> (do s <- lowerWord
            return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
    <|> (upperWord >> return TypeNameStr)
-   <|> (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
+   <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
         >> lowerWord >> return IsoSugarStr)
    <|> (some symChar >> return SymbolStr)
    <|> (anySingle >> return NormalStr)
