@@ -269,42 +269,51 @@ addImplicitImplicitArgs sourcePos (Just typ) ex =
 interfaceDef :: Parser [UDecl]
 interfaceDef = do
   keyWord InterfaceKW
-  -- TODO: allow multi-parameter type classes
-  interfaceName <- upperName <|> symName
-  (oneAnnBinder, pos) <- withPos annBinder
+  (tyCon, pos) <- withPos tyConDef
   keyWord WhereKW
-  record <- withSrc $ URecordTy <$> interfaceRecordFields ":"
-  let consName = mkInterfaceConsName interfaceName
-  let (varTypeName, oneAnnBinder') = case oneAnnBinder of
-        Bind v    -> (varName v, oneAnnBinder)
-        Ignore ty -> let genVar = mkName $ mkNoShadowingStr "gen" in
-            (genVar, Bind (genVar:>ty))
-  let tyCon = UConDef interfaceName $ toNest [oneAnnBinder']
-  let funDefs = mkFunDefs (pos, varTypeName, interfaceName) record
+  recordFieldsWithSrc <- withSrc $ interfaceRecordFields ":"
+  let (UConDef interfaceName uAnnBinderNest) = tyCon
+      record = (URecordTy . NoExt) <$> recordFieldsWithSrc
+      consName = mkInterfaceConsName interfaceName
+      varNames = fmap (\(Bind v) -> varName v) uAnnBinderNest
+      (WithSrc _ recordFields) = recordFieldsWithSrc
+      funDefs = mkFunDefs (pos, varNames, interfaceName) recordFields
   return $ (UData tyCon [UConDef consName (toNest [Ignore record])]) : funDefs
   where
-    mkFunDefs :: (SrcPos, Name, Name) -> UExpr -> [UDecl]
-    mkFunDefs meta ~(WithSrc _ (URecordTy (NoExt (LabeledItems items)))) =
+    -- From an interface
+    --   interface I a:Type b:Type where
+    --     f : a -> b
+    -- mkFunDefs generates the equivalent of the following function definition:
+    --   def f (instance# : I a b) ?=> : a -> b =
+    --     (I# {f=f,...}) = instance#
+    --     f
+    -- where I# is an automatically generated constructor of I.
+    mkFunDefs
+      :: (SrcPos, Nest Name, Name) -> LabeledItems UExpr -> [UDecl]
+    mkFunDefs meta (LabeledItems items) =
         fmap (\(name, ty :| []) -> mkOneFunDef meta (name, ty)) $ M.toList items
-    mkOneFunDef :: (SrcPos, Name, Name) -> (Label, UExpr) -> UDecl
-    mkOneFunDef (pos, varTypeName, interfaceName) (fLabel, fType) =
-      let (p, ann) = lhs
-      in let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
-      in ULet PlainLet (p, ann') rhs'
+    mkOneFunDef :: (SrcPos, Nest Name, Name) -> (Label, UExpr) -> UDecl
+    mkOneFunDef (pos, typeVarNames, interfaceName) (fLabel, fType) =
+      ULet PlainLet (p, ann') rhs'
       where
-        lhs = let uAnnBinder = Bind $ instanceName :> ns (UApp
-                    (PlainArrow ()) (var interfaceName) (var varTypeName))
-          in (patb fLabel, Just $ ns $ UPi uAnnBinder ClassArrow fType)
-        rhs =
-          let recordStr = mkNoShadowingStr "recordVar"
-              recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
-                fLabel)) $ Just (ns (UPatBinder (Ignore ())))
-              conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
-                $ toNest [patb recordStr]
-              let1 = ULet PlainLet (conPat, Nothing) $ var instanceName
-              let2 = ULet PlainLet (recordPat, Nothing) $ var $ mkName recordStr
-              body = ns $ UDecl let1 (ns $ UDecl let2 (var (mkName fLabel)))
-          in ns $ ULam (patb instanceStr, Nothing) ClassArrow body
+        uAnnBinder = Bind $
+          instanceName :> (foldl mkUApp (var interfaceName) typeVarNames)
+        p = patb fLabel
+        ann = Just $ ns $ UPi uAnnBinder ClassArrow fType
+
+        mkUApp func typeVarName =
+          ns $ UApp (PlainArrow ()) func (var typeVarName)
+        recordStr = "recordVar"
+        recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
+          fLabel)) $ Just (ns (UPatBinder (Ignore ())))
+        conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
+          $ toNest [patb recordStr]
+
+        let1 = ULet PlainLet (conPat, Nothing) $ var instanceName
+        let2 = ULet PlainLet (recordPat, Nothing) $ var $ mkName recordStr
+        body = ns $ UDecl let1 (ns $ UDecl let2 (var (mkName fLabel)))
+        rhs = ns $ ULam (patb instanceStr, Nothing) ClassArrow body
+        (ann', rhs') = addImplicitImplicitArgs pos ann rhs
 
         ns = WithSrc Nothing
         patb s = ns $ UPatBinder $ Bind $ mkName s :> ()
@@ -322,7 +331,7 @@ dataDef = do
 
 -- TODO: default to `Type` if unannoted
 tyConDef :: Parser UConDef
-tyConDef = UConDef <$> (upperName <|> symName) <*> manyNested annBinder
+tyConDef = UConDef <$> (upperName <|> symName) <*> manyNested namedBinder
 
 -- TODO: dependent types
 dataConDef :: Parser UConDef
@@ -342,35 +351,47 @@ interfaceInstance = do
   keyWord InstanceKW
   (p, pos) <- withPos letPat
   ann <- annot uType
-  keyWord WhereKW
-  rhs <- mkRhs ann <$> (withSrc $ URecord <$> interfaceRecordFields "=")
-  let (ann', rhs') = addImplicitImplicitArgs pos (Just ann) rhs
-  return $ ULet InstanceLet (p, ann') rhs'
+  case mkConstructorNameVar ann of
+    Left err              -> fail err
+    Right constructorNameVar -> do
+      keyWord WhereKW
+      record <- withSrc $ (URecord . NoExt) <$> interfaceRecordFields "="
+      let constructorCall = constructorNameVar `mkApp` record
+          (ann', rhs') = addImplicitImplicitArgs pos (Just ann) constructorCall
+      return $ ULet InstanceLet (p, ann') rhs'
   where
     -- Here, we are traversing the type annotation to retrieve the name of
-    -- the interface and generate its corresponding constructor.
-    mkRhs (WithSrc _ (UPi _ _ lrhs))      rhs = mkRhs lrhs rhs
-    mkRhs (WithSrc _ (UApp _ (WithSrc _ (UVar v)) _)) rhs =
-      (var . nameToStr . mkInterfaceConsName . varName) v `mkApp` rhs
-    -- We let this case through to fail during type checking.
-    mkRhs _ rhs = rhs
+    -- the interface and generate its corresponding constructor. A valid type
+    -- annotation for an instance is composed of:
+    -- 1) implicit/class arguments
+    -- 2) a function whose name is the name of the interface applied to 0 or
+    --    more arguments
+    mkConstructorNameVar ann =
+      stripArrows ann >>= stripAppliedArgs >>= buildConstructor
+
+    stripArrows (WithSrc _ (UPi _ arr typ))
+      | arr `elem` [ClassArrow, ImplicitArrow] = stripArrows typ
+      | otherwise = Left ("Met invalid arrow '" ++ pprint arr ++ "' in type " ++
+                          "annotation of instance. Only class arrows and " ++
+                          "implicit arrows are allowed.")
+    stripArrows ann = Right ann
+
+    stripAppliedArgs ann
+      | (WithSrc _ (UApp _ func _)) <- ann = stripAppliedArgs func
+      | otherwise = Right ann
+
+    buildConstructor (WithSrc _ (UVar v)) =
+      Right $ (var . nameToStr . mkInterfaceConsName . varName) v
+    buildConstructor _ = Left ("Could not extract interface name from type " ++
+                               "annotation.")
     var s = WithSrc Nothing $ UVar $ mkName s :> ()
 
-oneLabeledItem
-  :: String -> Parser a -> Maybe (SrcPos -> Label -> a)
-  -> Parser (LabeledItems a)
-oneLabeledItem bindwith itemparser punner = do
-  (l, pos) <- withPos fieldLabel
-  let explicitBound = symbol bindwith *> itemparser
-  itemVal <- case punner of
-    Just punFn -> explicitBound <|> pure (punFn pos l)
-    Nothing -> explicitBound
-  return $ labeledSingleton l itemVal
-
-interfaceRecordFields :: String -> Parser (ExtLabeledItems UExpr UExpr)
+interfaceRecordFields :: String -> Parser (LabeledItems UExpr)
 interfaceRecordFields bindwith =
-  fuse <$> onePerLine (oneLabeledItem bindwith expr (Just varPun))
-  where fuse = foldr prefixExtLabeledItems (NoExt NoLabeledItems)
+  fuse <$> onePerLine (do l <- fieldLabel
+                          e <- symbol bindwith *> expr
+                          return $ labeledSingleton l e)
+  where fuse = foldr (<>) NoLabeledItems
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
@@ -501,12 +522,17 @@ uPiType :: Parser UExpr
 uPiType = withSrc $ UPi <$> annBinder <*> arrow effects <*> uType
 
 annBinder :: Parser UAnnBinder
-annBinder = label "annoted binder" $ do
-  v <- try $ ((Just <$> lowerName) <|> (underscore $> Nothing)) <* sym ":"
-  ty <- containedExpr
-  return $ case v of
-    Just v' -> Bind (v':>ty)
-    Nothing -> Ignore ty
+annBinder = try $ namedBinder <|> anonBinder
+
+namedBinder :: Parser UAnnBinder
+namedBinder = label "named annoted binder" $ lowerName
+                                           >>= \v  -> sym ":" >> containedExpr
+                                           >>= \ty -> return $ Bind (v:>ty)
+
+anonBinder :: Parser UAnnBinder
+anonBinder =
+  label "anonymous annoted binder" $ Ignore <$> (underscore >> sym ":"
+                                                            >> containedExpr)
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
@@ -713,9 +739,13 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
-      oneItem <- oneLabeledItem bindwith itemparser punner
+      (l, pos) <- withPos fieldLabel
+      let explicitBound = symbol bindwith *> itemparser
+      itemVal <- case punner of
+        Just punFn -> explicitBound <|> pure (punFn pos l)
+        Nothing -> explicitBound
       rest <- beforeSep
-      return $ prefixExtLabeledItems oneItem rest
+      return $ prefixExtLabeledItems (labeledSingleton l itemVal) rest
 
 -- Combine two parsers such that if the first fails, we try the second one.
 -- If both fail, consume the same amount of input as the parser that
