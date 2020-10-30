@@ -126,8 +126,7 @@ parseMode = subparser $
                          <> metavar "STRING" <> help "REPL prompt"))
   <> (command "web"    $ simpleInfo (WebMode    <$> sourceFileInfo ))
   <> (command "watch"  $ simpleInfo (WatchMode  <$> sourceFileInfo ))
-  <> (command "export" $ simpleInfo (ExportMode <$> sourceFileInfo
-    <*> objectFileInfo))
+  <> (command "export" $ simpleInfo (ExportMode <$> sourceFileInfo <*> objectFileInfo))
   <> (command "script" $ simpleInfo (ScriptMode <$> sourceFileInfo
     <*> (option
             (optionList [ ("literate"   , TextDoc)
