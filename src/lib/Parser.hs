@@ -793,12 +793,12 @@ ops =
   [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
   , [InfixL $ sc $> mkApp]
   , [prefixNegOp]
-  , [annotatedExpr]
   , [anySymOp] -- other ops with default fixity
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkArrow TabArrow,
      InfixL $ opWithSrc $ backquoteName >>= (return . binApp),
      symOp "<<<", symOp ">>>", symOp "<<&", symOp "&>>"]
+  , [annotatedExpr]
   , [InfixR $ mayBreak (infixSym "$") $> mkApp]
   , [symOp "+=", symOp ":=", InfixL $ pairingSymOpP "|", InfixR infixArrow]
   , [InfixR $ pairingSymOpP "&", InfixR $ pairingSymOpP ","]
