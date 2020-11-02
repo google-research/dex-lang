@@ -173,6 +173,9 @@ def getTwoFoosAndABar (rest : Fields)?->
 x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 ({| a | a = a |}) = x
 > Type error:Variant not allowed in can't-fail pattern
+>
+> ({| a | a = a |}) = x
+>  ^^^^^^^^^^^^^^^
 
 'Record puns
 
