@@ -1,0 +1,48 @@
+include "examples/complex.dx"
+
+:p complex_floor (0.3, 0.6)
+> (0.0, 0.0)
+:p complex_floor (0.6, 0.8)
+> (0.0, 1.0)
+:p complex_floor (0.8, 0.6)
+> (1.0, 0.0)
+:p complex_floor (0.6, 0.3)
+> (0.0, 0.0)
+
+a = (2.1, 0.4)
+b = (-1.1, 1.3)
+:p (a + b - a) ~~ b
+> True
+:p (a * b) ~~ (b * a)
+> True
+:p complex_division (a * b) a ~~ b
+> True
+:p a == b
+> False
+:p a == a
+> True
+:p log (exp a) ~~ a
+> True
+:p exp (log a) ~~ a
+> True
+:p sqrt (sq a) ~~ a
+> True
+:p log ((1.0, 0.0) + a) ~~ log1p a
+> True
+:p sin (-a) ~~ (-(sin a))
+> True
+:p cos (-a) ~~ cos a
+> True
+:p tan (-a) ~~ (- (tan a))
+> True
+:p exp (pi .* (0.0, 1.0)) ~~ (-1.0, 0.0)  -- Euler's identity
+> True
+:p ((sq (sin a)) + (sq (cos a))) ~~ (1.0, 0.0)
+> True
+
+:p complex_sinh (1.2, 3.2)
+> (-1.5068874, -0.10569556)
+:p complex_cosh (1.2, 3.2)
+> (-1.807568, 8.811359e-2)
+:p tan (1.2, 3.2)
+> (2.2501666e-3, 1.002451)

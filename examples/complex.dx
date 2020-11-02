@@ -97,9 +97,8 @@ instance ComplexAdd : Add Complex where
   zero = (0.0, 0.0)
 
 instance ComplexMul : Mul Complex where
-  mul = \(a, b):Complex (c, d):Complex.
-          (a * c - b * d,
-           a * d + b * c)
+  mul = \(a, b):Complex (c, d):Complex. (a * c - b * d,
+                                         a * d + b * c)
   one = (1.0, 0.0)
 
 @instance complexVS : VSpace Complex =
@@ -183,108 +182,3 @@ complexFloating : Floating Complex =
               (\x. complex_floor x) (\x. complex_ceil  x) (\x. complex_round x)
               (\x. complex_sqrt x) (\x y. complex_pow x y)
               (\x. complex_lgamma x))
-
-
-------------------- Prelude Tests ---------------------
-
-:p infinity
-:p nan
-
-:p isnan nan
->True
-:p isnan 1.0
-> False
-:p isinf infinity
-> True
-:p isinf (-infinity)
-> True
-:p isinf 1.0
-> False
-
-:p either_is_nan infinity nan
-> True
-:p either_is_nan nan nan
-> True
-
-:p atan2 (sin 0.44)     (cos 0.44) ~~ 0.44
-> True
-:p atan2 (sin (-0.44))  (cos (-0.44)) ~~ (-0.44)
-> True
-:p atan2 (-sin (-0.44)) (cos (-0.44)) ~~ (0.44)
-> True
-
-:p (atan2   infinity  1.0) ~~ ( pi / 2.0)
-> True
-:p (atan2 (-infinity) 1.0) ~~ (-pi / 2.0)
-> True
-:p (atan2  1.0   infinity) ~~ 0.0
-> True
-:p (atan2 (-1.0) infinity) ~~ 0.0
-> True
-
-:p (atan2   infinity    infinity)  ~~ ( pi / 4.0)
-> True
-:p (atan2   infinity  (-infinity)) ~~ ( 3.0 * pi / 4.0)
-> True
-:p (atan2 (-infinity)   infinity)  ~~ (-pi / 4.0)
-> True
-:p (atan2 (-infinity) (-infinity)) ~~ (-3.0 * pi / 4.0)
-> True
-
-:p isnan $ atan2 nan infinity
-> True
-:p isnan $ atan2 infinity nan
-> True
-:p isnan $ atan2 nan nan
-> True
-
-:p sinh 1.2 ~~ 1.5094614
-> True
-
-
-------------------- Complex Number Tests ---------------------
-
-:p complex_floor (0.3, 0.6)
-> (0.0, 0.0)
-:p complex_floor (0.6, 0.8)
-> (0.0, 1.0)
-:p complex_floor (0.8, 0.6)
-> (1.0, 0.0)
-:p complex_floor (0.6, 0.3)
-> (0.0, 0.0)
-
-a = (2.1, 0.4)
-b = (-1.1, 1.3)
-:p (a + b - a) ~~ b
-> True
-:p complex_division (a * b) a ~~ b
-> True
-:p a == b
-> False
-:p a == a
-> True
-:p log (exp a) ~~ a
-> True
-:p exp (log a) ~~ a
-> True
-:p sqrt (sq a) ~~ a
-> True
-:p log ((1.0, 0.0) + a) ~~ log1p a
-> True
-:p sin (-a) ~~ (-(sin a))
-> True
-:p cos (-a) ~~ cos a
-> True
-:p tan (-a) ~~ (- (tan a))
-> True
-:p exp (pi .* (0.0, 1.0)) ~~ (-1.0, 0.0)  -- Euler's identity
-> True
-:p ((sq (sin a)) + (sq (cos a))) ~~ (1.0, 0.0)
-> True
-
-:p complex_sinh (1.2, 3.2)
-> (-1.5068874, -0.10569556)
-:p complex_cosh (1.2, 3.2)
-> (-1.807568, 8.811359e-2)
-:p tan (1.2, 3.2)
-> (2.2501666e-3, 1.002451)
