@@ -310,53 +310,14 @@ lookupSourceVar v = do
 
 -- TODO: de-dup with `bindPat`
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
-unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
-  UPatBinder b -> do
-    let b' = binderAsGlobal b
+unpackTopPat letAnn pat expr = do
+  atom <- emit expr
+  bindings <- bindPat pat atom
+  void $ flip traverseNames bindings $ \name val -> do
+    let name' = asGlobal name
     scope <- getScope
-    when (b' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName b'
-    void $ emitTo (binderNameHint b') letAnn expr
-  UPatUnit -> return () -- TODO: change if we allow effects at the top level
-  UPatPair p1 p2 -> do
-    val  <- emit expr
-    x1   <- lift $ getFst val
-    x2   <- lift $ getSnd val
-    unpackTopPat letAnn p1 (Atom x1)
-    unpackTopPat letAnn p2 (Atom x2)
-  UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
-    when (length cons /= 1) $ throw TypeErr $
-      "sum type constructor in can't-fail pattern"
-    let DataConDef _ argBs = cons !! con
-    when (length argBs /= length ps) $ throw TypeErr $
-      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
-                                             ++ " got " ++ show (length ps)
-    params <- mapM (freshType . binderType) paramBs
-    constrainEq (TypeCon def $ toList params) (getType expr)
-    xs <- zonk expr >>= emitUnpack
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
-  UPatRecord (Ext items Nothing) -> do
-    RecordTy (NoExt types) <- pure $ getType expr
-    when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
-      "Labels in record pattern do not match record type. Expected structure "
-      ++ pprint (RecordTy $ NoExt types)
-    xs <- zonk expr >>= emitUnpack
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList items) xs
-  UPatRecord (Ext pats (Just tailPat)) -> do
-    wantedTypes <- lift $ mapM (const $ freshType TyKind) pats
-    restType <- lift $ freshInferenceName LabeledRowKind
-    let vty = getType expr
-    lift $ constrainEq (RecordTy $ Ext wantedTypes $ Just restType) vty
-    -- Split the record.
-    wantedTypes' <- lift $ zonk wantedTypes
-    val <- emit =<< zonk expr
-    split <- emit $ Op $ RecordSplit wantedTypes' val
-    [left, right] <- getUnpacked split
-    leftVals <- getUnpacked left
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList pats) leftVals
-    unpackTopPat letAnn tailPat (Atom right)
-  UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
-  UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
+    when (name' `isin` scope) $ throw RepeatedVarErr $ pprint $ name'
+    emitTo name' letAnn $ Atom val
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
@@ -505,6 +466,8 @@ withBindPat pat val m = do
 bindPat :: UPat -> Atom -> UInferM SubstEnv
 bindPat pat val = evalCatT $ bindPat' pat val
 
+-- CatT wrapper is used to prevent duplicate bindings within the same pattern,
+-- e.g. (a, a) = (1, 2) should throw RepeatedVarErr
 bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
 bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
   UPatBinder b -> do
@@ -652,10 +615,6 @@ addEffects eff = do
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
-
-binderAsGlobal :: BinderP a -> BinderP a
-binderAsGlobal (Ignore ann) = Ignore ann
-binderAsGlobal (Bind (v:>ann)) = Bind $ asGlobal v :> ann
 
 addSrcContext' :: SrcCtx -> UInferM a -> UInferM a
 addSrcContext' pos m = do
