@@ -102,6 +102,7 @@ xr = map IToF arr
 > Type error:
 > Expected: Int32
 >   Actual: ((Fin 1) => Int32)
+> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
 >
 > :t [1, [2]]
 >        ^^^
@@ -113,6 +114,7 @@ xr = map IToF arr
 > Type error:
 > Expected: ((Fin 2) => Int32)
 >   Actual: ((Fin 1) => Int32)
+> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
 >
 > :t [[1, 2], [3]]
 >             ^^^

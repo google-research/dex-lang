@@ -614,6 +614,7 @@ instance PrettyPrec UPat' where
     UPatRecord pats -> prettyExtLabeledItems pats (line' <> ",") " ="
     UPatVariant labels label value -> prettyVariant labels label value
     UPatVariantLift labels value -> prettyVariantLift labels value
+    UPatTable pats -> atPrec ArgPrec $ p pats
 
 prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where

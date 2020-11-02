@@ -255,6 +255,7 @@ data UPat' = UPatBinder UBinder
            | UPatRecord (ExtLabeledItems UPat UPat)     -- {a=x, b=y, ...rest}
            | UPatVariant (LabeledItems ()) Label UPat   -- {|a|b| a=x |}
            | UPatVariantLift (LabeledItems ()) UPat     -- {|a|b| ...rest |}
+           | UPatTable [UPat]
              deriving (Show)
 
 data WithSrc a = WithSrc SrcCtx a
@@ -741,6 +742,7 @@ instance HasUVars UPat' where
     UPatRecord items -> freeUVars items
     UPatVariant _ _ p -> freeUVars p
     UPatVariantLift _ p -> freeUVars p
+    UPatTable ps -> foldMap freeUVars ps
 
 instance BindsUVars UPat' where
   boundUVars pat = case pat of
@@ -751,6 +753,7 @@ instance BindsUVars UPat' where
     UPatRecord items -> boundUVars items
     UPatVariant _ _ p -> boundUVars p
     UPatVariantLift _ p -> boundUVars p
+    UPatTable ps -> foldMap boundUVars ps
 
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr

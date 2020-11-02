@@ -400,7 +400,7 @@ interfaceRecordFields bindwith =
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
-  p <- try $ (letPat <|> parens pat) <* lookAhead (sym "=" <|> sym ":")
+  p <- try $ (letPat <|> leafPat) <* lookAhead (sym "=" <|> sym ":")
   ann <- optional $ annot uType
   return $ ULet PlainLet (p, ann)
 
@@ -565,11 +565,13 @@ pat = makeExprParser leafPat patOps
 leafPat :: Parser UPat
 leafPat =
       (withSrc (symbol "()" $> UPatUnit))
-  <|> parens pat <|> (withSrc $
+  <|> parens pat
+  <|> (withSrc $
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
       <|> (UPatCon    <$> upperName <*> manyNested pat)
       <|> (variantPat `fallBackTo` recordPat)
+      <|> brackets (UPatTable <$> leafPat `sepBy` sym ",")
   )
   where pun pos l = WithSrc (Just pos) $ UPatBinder $ Bind (mkName l:>())
         def pos = WithSrc (Just pos) $ UPatBinder $ Ignore ()
