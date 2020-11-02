@@ -258,3 +258,52 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 
 :p (eitherFloor (Left 1), eitherFloor (Right 2.3))
 > (1, 2)
+
+:p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
+> Type error:
+> Expected: ((Fin a & Fin 2) => Int32)
+>   Actual: ((Fin 4) => Int32)
+> (Solving for: [a:Int32])
+> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+>
+> :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
+>    ^^^^^^^^^^^^^
+
+:p
+  [(a, b), c] = [(1, 2), (3, 4)]
+  (a, c)
+> (1, (3, 4))
+
+:p
+  [a, b] = [1, 2, 3]
+  (a, b)
+> Type error:
+> Expected: ((Fin 3) => Int32)
+>   Actual: ((Fin 2) => a)
+> (Solving for: [a:Type])
+>
+>   [a, b] = [1, 2, 3]
+>   ^^^^^^^
+
+:p
+  [[a, _], [_, d]] = [[1, 2], [3, 4]]
+  a + d
+> 5
+
+-- Can only unpack tables indexed by `Fin n`
+:p
+  [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
+  (a, b, c, d)
+> Type error:
+> Expected: ((Fin 2 & Fin 2) => Int32)
+>   Actual: ((Fin 4) => a)
+> (Solving for: [a:Type])
+>
+>   [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
+>   ^^^^^^^^^^^^^
+
+:p
+  -- parentheses needed to stop the parser from reading "zero" as a binder name
+  [a, b, c, d] = (zero) : (_ => Int)
+  (a, b, c, d)
+> (0, (0, (0, 0)))

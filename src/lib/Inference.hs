@@ -308,7 +308,6 @@ lookupSourceVar v = do
         Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
--- TODO: de-dup with `bindPat`
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
 unpackTopPat letAnn pat expr = do
   atom <- emit expr
@@ -519,6 +518,18 @@ bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
     return $ env1 <> env2
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
+  UPatTable ps -> do
+    elemTy <- lift $ freshType TyKind
+    let idxTy = FixedIntRange 0 (fromIntegral $ length ps)
+    lift $ constrainEq (getType val) (idxTy ==> elemTy)
+    let idxs = indicesNoIO idxTy
+    unless (length idxs == length ps) $
+      throw TypeErr $ "Incorrect length of table pattern: table index set has "
+                      <> pprint (length idxs) <> " elements but there are "
+                      <> pprint (length ps) <> " patterns."
+    flip foldMapM (zip ps idxs) $ \(p, i) -> do
+      v <- lift $ emitZonked $ App val i
+      bindPat' p v
 
 -- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it
 patNameHint :: UPat -> Name
@@ -577,7 +588,12 @@ inferTabCon xs reqTy = do
         (x:_) -> getType <$> inferRho x
       let tabTy = (FixedIntRange 0 (fromIntegral $ length xs)) ==> elemTy
       case reqTy of
-        Suggest sTy -> constrainEq sTy tabTy
+        Suggest sTy -> addContext context $ constrainEq sTy tabTy
+          where context = "If attempting to construct a fixed-size table not " <>
+                          "indexed by 'Fin n' for some n, this error may " <>
+                          "indicate there was not enough information to infer " <>
+                          "a concrete index set; try adding an explicit " <>
+                          "annotation."
         Infer       -> return ()
         _           -> error "Missing case"
       xs' <- mapM (flip checkRho elemTy) xs
