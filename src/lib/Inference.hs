@@ -756,9 +756,15 @@ solveLocal m = do
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: Subst a => [Var] -> UInferM a -> UInferM a
+checkLeaks :: (HasType a, Subst a) => [Var] -> UInferM a -> UInferM a
 checkLeaks tvs m = do
+  scope <- getScope
   (ans, env) <- scoped $ solveLocal $ m
+  let resultTypeLeaks = filter (\case (Name InferenceName _ _) -> False; _ -> True) $
+                          envNames $ freeVars (getType ans) `envDiff` scope
+  unless (null $ resultTypeLeaks) $
+    throw TypeErr $ "Leaked local variable `" ++ pprint (head resultTypeLeaks) ++
+                    "` in result type " ++ pprint (getType ans)
   forM_ (solverSub env) $ \ty ->
     forM_ tvs $ \tv ->
       throwIf (tv `occursIn` ty) TypeErr $ "Leaked type variable: " ++ pprint tv
