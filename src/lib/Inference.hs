@@ -670,7 +670,7 @@ traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
 traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
-      Con (ClassDictHole ctx ty) -> fillHole ctx ty
+      Con (ClassDictHole ctx ty) -> fillHole ctx =<< substEmbedR ty
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
