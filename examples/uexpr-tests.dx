@@ -307,3 +307,13 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
   [a, b, c, d] = (zero) : (_ => Int)
   (a, b, c, d)
 > (0, (0, (0, 0)))
+
+def bug (n : Type) : Unit =
+  for w':n.
+    w : n = todo
+    for i:(w..). ()
+  ()
+> Type error:Leaked local variable `w` in result type ((w..) => Unit)
+>
+>   for w':n.
+>   ^^^^
