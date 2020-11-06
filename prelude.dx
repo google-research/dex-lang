@@ -849,7 +849,7 @@ data Complex = MkComplex Float Float  -- real, imaginary
     -- A helper function to name the implicit dict.
     case d of MkHasDefaultTolerance atol rtol -> (atol, rtol)
   (atol, rtol) = get_float_tols
-  MkHasDefaultTolerance (MkComplex atol rtol) (MkComplex atol rtol)
+  MkHasDefaultTolerance (MkComplex atol atol) (MkComplex rtol rtol)
 
 @instance ComplexEq : Eq Complex =
   MkEq \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
