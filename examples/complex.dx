@@ -1,7 +1,4 @@
-'## Complex Numbers
-
-
-'## Things to add to prelude
+'## Floating point helper functions
 
 def sign (x:Float) : Float =
   case x > 0.0 of
@@ -17,23 +14,22 @@ def copysign (a:Float) (b:Float) : Float =
       True -> (-a)
       False -> 0.0
 
-infinity = exp 1000.0  -- Todo: use builtins
-nan = 0.0 / 0.0
+-- Todo: use IEEE floating-point builtins.
+infinity = 1.0 / 0.0
+nan      = 0.0 / 0.0
 
-def isinf (x:Float) : Bool =
-  (x == infinity) || (x == -infinity)  -- Todo: use a builtin.
+-- Todo: use IEEE floating-point builtins.
+def isinf (x:Float) : Bool = (x == infinity) || (x == -infinity)  
+def isnan (x:Float) : Bool = not (x >= x && x <= x)
 
-def isnan (x:Float) : Bool =
-  not $ x >= x && x <= x  -- Todo: use a builtin.
+-- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
+def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y) 
 
-def either_is_nan (x:Float) (y:Float) : Bool =
-  -- Todo: use builtin for
-  -- IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered
-  (isnan x) || (isnan y)  
 
-def atan_neg1_to1 (x:Float) : Float = 
-  -- From 
-  -- "Computing accurate Horner form approximations to
+'## Trigonometric functions.
+
+def atan_inner (x:Float) : Float = 
+  -- From "Computing accurate Horner form approximations to
   -- special functions in finite precision arithmetic"
   -- https://arxiv.org/abs/1508.03211
   -- Only accurate in the range [-1, 1]
@@ -49,6 +45,9 @@ def atan_neg1_to1 (x:Float) : Float =
   r = r * s
   r * x + x
 
+def min_and_max (_: Ord a) ?=> (x:a) (y:a) : (a & a) =
+  select (x < y) (x, y) (y, x)  -- get both with one comparison.
+
 def atan2 (y:Float) (x:Float) : Float =
   -- Based off of the Tensorflow implementation at
   -- github.com/tensorflow/mlir-hlo/blob/master/lib/
@@ -56,18 +55,16 @@ def atan2 (y:Float) (x:Float) : Float =
   -- With a fix to the nan propagation.
   abs_x = abs x
   abs_y = abs y
-  a = atan_neg1_to1 (min abs_x abs_y) / (max abs_x abs_y)
+  (min_abs_x_y, max_abs_x_y) = min_and_max abs_x abs_y
+  a = atan_inner min_abs_x_y / max_abs_x_y
   a = select (abs_x <= abs_y) ((pi / 2.0) -a) a
   a = select (x < 0.0) pi a
   t = select (x < 0.0) pi 0.0
   a = select (y == 0.0) t a
-
-  -- Handle infinite inputs.
   t = select (x < 0.0) (3.0 * pi / 4.0) (pi / 4.0)
-  a = select (isinf x && isinf y) t a
-
+  a = select (isinf x && isinf y) t a  -- Handle infinite inputs.
   a = copysign a y
-  select (either_is_nan x y) nan a
+  select (either_is_nan x y) nan a  -- Propagate NaNs.
 
 def atan (x:Float) : Float = atan2 x 1.0
 
@@ -77,101 +74,101 @@ def cosh (x:Float) : Float = ((exp x) + exp (-x)) / 2.0
 def tanh (x:Float) : Float = (1.0 - (exp (-x))) / (1.0 + (exp (-x)))
 
 
-'## Complex number definition
+'## Complex numbers
 
--- Maybe use a newtype or typeclass, to avoid accidentally
--- treating a tuple of two floats as a complex number?
-Complex = (Float & Float)  -- real, imaginary
-def real (x : Complex) : Float = fst x
-def imag (x : Complex) : Float = snd x
+data Complex = MkComplex Float Float  -- real, imaginary
 
 @instance allCloseComplex : HasAllClose Complex =
-  MkHasAllClose \atol rtol (a,b) (c,d). (a ~~ c) && (b ~~ d)
+  MkHasAllClose \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
 
 @instance defaultToleranceComplex : HasDefaultTolerance Complex =
-  MkHasDefaultTolerance (FToF32 0.00001, FToF32 0.00001) (FToF32 0.0001, FToF32 0.00001)
+  def get_float_tols (d:HasDefaultTolerance Float) ?=> : (Float & Float) =
+    -- A helper function to name the implicit dict.
+    case d of MkHasDefaultTolerance atol rtol -> (atol, rtol)
+  (atol, rtol) = get_float_tols
+  MkHasDefaultTolerance (MkComplex atol rtol) (MkComplex atol rtol)
+
+@instance ComplexEq : Eq Complex =
+  MkEq \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
 
 instance ComplexAdd : Add Complex where
-  add = \(a, b):Complex (c, d):Complex. (a + c, b + d)
-  sub = \(a, b):Complex (c, d):Complex. (a - c, b - d)
-  zero = (0.0, 0.0)
+  add = \(MkComplex a b) (MkComplex c d). MkComplex (a + c) (b + d)
+  sub = \(MkComplex a b) (MkComplex c d). MkComplex (a - c) (b - d)
+  zero = MkComplex 0.0 0.0
 
 instance ComplexMul : Mul Complex where
-  mul = \(a, b):Complex (c, d):Complex. (a * c - b * d,
-                                         a * d + b * c)
-  one = (1.0, 0.0)
+  mul = \(MkComplex a b) (MkComplex c d).
+    MkComplex (a * c - b * d) (a * d + b * c)
+  one = MkComplex 1.0 0.0
 
 @instance complexVS : VSpace Complex =
-  MkVSpace ComplexAdd \a:Float (c, d):Complex. (a * c, a * d)
+  MkVSpace ComplexAdd \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
 
-complex_division = \(a, b):Complex (c, d):Complex.
-  ((a * c + b * d) / (c * c + d * d),
-   (b * c - a * d) / (c * c + d * d))
+-- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
+def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
+  MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
 
 @instance ComplexFractional : Fractional Complex =
-  MkFractional (complex_division)
+  MkFractional complex_division
 
-complex_exp = \(a, b):Complex.
+def complex_exp (MkComplex a b:Complex) : Complex =
   expx = exp a
-  (expx * cos b, expx * sin b)
+  MkComplex (expx * cos b) (expx * sin b)
 
-complex_exp2 = \(a, b):Complex.
+def complex_exp2 (MkComplex a b:Complex) : Complex =
   exp2x = exp2 a
-  b' = (log 2.0) * b
-  (exp2x * cos b', exp2x * sin b')
+  b' = b * log 2.0
+  MkComplex (exp2x * cos b') (exp2x * sin b')
 
-complex_conj  = \(a,b):Complex. (a, -b)
-complex_mag : Complex -> Float = \(a,b):Complex. sqrt (a * a + b * b)
-complex_arg : Complex -> Float = \(a,b):Complex. atan2 b a
+def complex_conj (MkComplex a b:Complex) : Complex = MkComplex a (-b)
+def complex_mag  (MkComplex a b:Complex) : Float = sqrt (a * a + b * b)
+def complex_arg  (MkComplex a b:Complex) : Float = atan2 b a
 
-complex_log   = \x:Complex. (log (complex_mag x), complex_arg x)
+complex_log   = \x:Complex. MkComplex (log (complex_mag x)) (complex_arg x)
 complex_log2  = \x:Complex. (complex_log x) / log 2.0
 complex_log10 = \x:Complex. (complex_log x) / log 10.0
+complex_pow = \base:Complex power:Complex. complex_exp (power * complex_log base)
 
-complex_pow = \base:Complex power:Complex.
-  complex_exp (power * complex_log base)
+def complex_sqrt (MkComplex a b:Complex) : Complex =
+  m = complex_mag $ MkComplex a b
+  MkComplex (sqrt ((a + m) / 2.0)) (sign b * sqrt ((m - a) / 2.0))
 
-complex_sqrt = \(a,b):Complex.
-  m = complex_mag (a, b)
-  gamma = sqrt ((a + m) / 2.0)
-  delta = sign b * sqrt ((m - a) / 2.0)
-  (gamma, delta)
+def complex_sin  (MkComplex a b:Complex) : Complex = MkComplex (sin  a * cosh b) (cos   a * sinh b)
+def complex_sinh (MkComplex a b:Complex) : Complex = MkComplex (sinh a *  cos b) (cosh  a * sin  b)
+def complex_cos  (MkComplex a b:Complex) : Complex = MkComplex (cos  a * cosh b) (-sin  a * sinh b)
+def complex_cosh (MkComplex a b:Complex) : Complex = MkComplex (cosh a *  cos b) (-sinh a * sin  b)
+def complex_tan  (x:Complex) : Complex = fdiv (complex_sin  x) (complex_cos  x)
+def complex_tanh (x:Complex) : Complex = fdiv (complex_sinh x) (complex_cosh x)
 
-complex_sin  = \(a,b):Complex. (sin a * cosh b,  cos a * sinh b) 
-complex_cos  = \(a,b):Complex. (cos a * cosh b, -sin a * sinh b) 
-complex_tan  = \    x:Complex. complex_division (complex_sin x) (complex_cos x)
-complex_sinh = \(a,b):Complex. (sinh a * cos b,  cosh a * sin b)
-complex_cosh = \(a,b):Complex. (cosh a * cos b, -sinh a * sin b)
-complex_tanh = \    x:Complex. complex_division (complex_sinh x) (complex_cosh x)
-
-complex_floor = \(r,i):Complex.
+def complex_floor (MkComplex re im:Complex) : Complex =
   -- from "Complex Floor" by Eugene McDonnell 
   -- https://www.jsoftware.com/papers/eem/complexfloor.htm
-  fr = floor r
-  fi = floor i
-  x = r - fr
-  y = i - fi
+  fr = floor re
+  fi = floor im
+  x = re - fr
+  y = im - fi
   case (x + y) < 1.0 of
-    True -> (fr, fi)
+    True -> MkComplex fr fi
     False -> case x >= y of
-      True -> (fr + 1.0, fi)
-      False -> (fr, fi + 1.0)
+      True  -> MkComplex (fr + 1.0) fi
+      False -> MkComplex fr (fi + 1.0)
+
 complex_ceil =  \x:Complex. -(complex_floor (-x))
-complex_round = \x:Complex. complex_floor (x + (0.5, 0.0))
+complex_round = \x:Complex. complex_floor $ MkComplex 0.5 0.0
 
 complex_lgamma : Complex -> Complex = \x:Complex.
   todo  -- This one is pretty hairy.
         -- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
 
-complex_log1p = \x:Complex.
-  a = real x
+def complex_log1p (x:Complex) : Complex =
+  (MkComplex a b) = x
   case a == 0.0 of
     True -> x
     False -> 
-      u = x + (1.0, 0.0)
+      u = x + MkComplex 1.0 0.0
       case a <= -1.0 of
         True -> complex_log u
-        False -> complex_division ((complex_log u) * x) x
+        False -> fdiv ((complex_log u) * x) x
 
 @instance
 complexFloating : Floating Complex =
