@@ -533,6 +533,16 @@ def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool =
 @instance defaultToleranceF32 : HasDefaultTolerance Float32 = MkHasDefaultTolerance (FToF32 0.00001   ) (FToF32 0.0001 )
 @instance defaultToleranceF64 : HasDefaultTolerance Float64 = MkHasDefaultTolerance (FToF64 0.00000001) (FToF64 0.00001)
 
+@instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) =
+  MkHasAllClose \atol rtol a b. all for i:n. (a.i ~~ b.i)
+
+@instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) =
+  def getdt (d:HasDefaultTolerance t) ?=> : (t & t) =   -- helper to name implicit dict
+    case d of MkHasDefaultTolerance atol rtol -> (atol, rtol)
+  (atol, rtol) = getdt
+  MkHasDefaultTolerance (for i. atol) (for i. rtol)
+
+
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
   eps = 0.01
   ansFwd  = deriv    f x

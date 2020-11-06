@@ -81,7 +81,7 @@ example-names = uexpr-tests adt-tests type-tests eval-tests \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \
                 isomorphisms typeclass-tests complex-tests trig-tests \
-                ode-integrator
+                ode-integrator linear_algebra
 
 quine-test-targets = $(example-names:%=run-%)
 
