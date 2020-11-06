@@ -1,31 +1,16 @@
 '# Mandelbrot set
 
-'First, we implement complex arithmetic
-
-Complex : Type = (Float & Float)
-
-cadd : Complex -> Complex -> Complex =
-  \(x1, y1) (x2, y2). (x1 + x2, y1 + y2)
-
-cmul : Complex -> Complex -> Complex =
-  \(x1, y1) (x2, y2). (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
-
-cabs : Complex -> Float =
-  \(x, y). x * x + y * y
-
-czero : Complex = (0.0, 0.0)
-
-'The actual escape time algorithm
+'Escape time algorithm
 
 update : Complex -> Complex -> Complex =
-  \c z. cadd c (cmul z z)
+  \c z. c + (z * z)
 
 tol = 2.0
 inBounds : Complex -> Bool =
-  \z. cabs z < tol
+  \z. complex_abs z < tol
 
 escapeTime : Complex -> Float =
-  \c. fst $ fold (0.0, czero) $ \i:(Fin 1000) (n, z).
+  \c. fst $ fold (0.0, zero) $ \i:(Fin 1000) (n, z).
      z' = update c z
      (n + BToF (inBounds z'), z')
 
@@ -34,7 +19,7 @@ escapeTime : Complex -> Float =
 xs = linspace (Fin 300) (-2.0) 1.0
 ys = linspace (Fin 200) (-1.0) 1.0
 
-escapeGrid = for j i. escapeTime (xs.i, ys.j)
+escapeGrid = for j i. escapeTime (MkComplex xs.i ys.j)
 
 -- :plotmat escapeGrid
 -- > <graphical output>

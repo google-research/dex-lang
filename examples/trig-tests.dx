@@ -1,12 +1,5 @@
-
-include "examples/complex.dx"
-------------------- Prelude Tests ---------------------
-
-:p infinity
-:p nan
-
 :p isnan nan
->True
+> True
 :p isnan 1.0
 > False
 :p isinf infinity

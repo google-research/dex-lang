@@ -21,7 +21,6 @@ def directionAndLength (x: d=>Float) : (d=>Float & Float) =
   l = length x
   (x / (length x), l)
 
-def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 

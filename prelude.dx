@@ -809,7 +809,7 @@ def atan2 (y:Float) (x:Float) : Float =
   abs_x = abs x
   abs_y = abs y
   (min_abs_x_y, max_abs_x_y) = min_and_max abs_x abs_y
-  a = atan_inner min_abs_x_y / max_abs_x_y
+  a = atan_inner (min_abs_x_y / max_abs_x_y)
   a = select (abs_x <= abs_y) ((pi / 2.0) -a) a
   a = select (x < 0.0) pi a
   t = select (x < 0.0) pi 0.0
@@ -874,6 +874,7 @@ def complex_exp2 (MkComplex a b:Complex) : Complex =
   MkComplex (exp2x * cos b') (exp2x * sin b')
 
 def complex_conj (MkComplex a b:Complex) : Complex = MkComplex a (-b)
+def complex_abs  (MkComplex a b:Complex) : Float = a * a + b * b
 def complex_mag  (MkComplex a b:Complex) : Float = sqrt (a * a + b * b)
 def complex_arg  (MkComplex a b:Complex) : Float = atan2 b a
 
@@ -925,7 +926,7 @@ def complex_log1p (x:Complex) : Complex =
 
 @instance
 complexFloating : Floating Complex =
-  (MkFloating (\x:Complex. complex_exp x) (\x. complex_exp2 x)
+  (MkFloating (\x. complex_exp x) (\x. complex_exp2 x)
               (\x. complex_log x) (\x. complex_log2 x)
               (\x. complex_log10 x) (\x. complex_log1p x)
               (\x. complex_sin x) (\x. complex_cos x) (\x. complex_tan x)
