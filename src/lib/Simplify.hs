@@ -119,17 +119,17 @@ simplifyAtom atom = case atom of
   Lam _ -> substEmbedR atom
   Pi  _ -> substEmbedR atom
   Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM substEmbedR tc
+  TC tc -> TC <$> mapM simplifyAtom tc
   Eff eff -> Eff <$> substEmbedR eff
-  TypeCon def params          -> TypeCon def <$> substEmbedR params
-  DataCon def params con args -> DataCon def <$> substEmbedR params
+  TypeCon def params          -> TypeCon def <$> mapM simplifyAtom params
+  DataCon def params con args -> DataCon def <$> mapM simplifyAtom params
                                              <*> pure con <*> mapM simplifyAtom args
   Record items -> Record <$> mapM simplifyAtom items
-  RecordTy items -> RecordTy <$> substEmbedR items
+  RecordTy items -> RecordTy <$> simplifyExtLabeledItems items
   Variant types label i value -> Variant <$>
     substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
-  VariantTy items -> VariantTy <$> substEmbedR items
-  LabeledRow items -> LabeledRow <$> substEmbedR items
+  VariantTy items -> VariantTy <$> simplifyExtLabeledItems items
+  LabeledRow items -> LabeledRow <$> simplifyExtLabeledItems items
   ACase e alts rty   -> do
     e' <- substEmbedR e
     case simplifyCase e' alts of
@@ -145,6 +145,12 @@ simplifyAtom atom = case atom of
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
+
+simplifyExtLabeledItems :: ExtLabeledItems Atom Name -> SimplifyM (ExtLabeledItems Atom Name)
+simplifyExtLabeledItems (Ext items ext) = do
+    items' <- mapM simplifyAtom items
+    ext' <- substEmbedR (Ext NoLabeledItems ext)
+    return $ prefixExtLabeledItems items' ext'
 
 simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
 simplifyCase e alts = case e of

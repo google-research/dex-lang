@@ -162,11 +162,10 @@ data MyIntish = MkIntish Int
 
 xsList = AsList _ [1,2,3]
 
--- TODO: reenable!
--- :p
---   (AsList _ xsTab) = xsList
---   sum xsTab
--- > 6
+:p
+  (AsList _ xsTab) = xsList
+  sum xsTab
+> 6
 
 (AsList _ xsTab) = xsList
 
