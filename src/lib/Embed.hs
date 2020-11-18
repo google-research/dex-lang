@@ -103,20 +103,7 @@ emitOp op = emit $ Op op
 
 emitUnpack :: MonadEmbed m => Expr -> m [Atom]
 emitUnpack expr = do
-  bs <- case getType expr of
-    TypeCon def params -> do
-      let [DataConDef _ bs] = applyDataDefParams def params
-      return bs
-    RecordTy (NoExt types) -> do
-      -- TODO: is using Ignore here appropriate? We don't have any existing
-      -- binders to bind, but we still plan to use the results.
-      let bs = toNest $ map Ignore $ toList types
-      return bs
-    _ -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint (getType expr)
-  expr' <- deShadow expr <$> getScope
-  vs <- freshNestedBinders bs
-  embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty
-  return $ map Var $ toList vs
+  getUnpacked =<< emit expr
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
@@ -292,6 +279,7 @@ ieq :: MonadEmbed m => Atom -> Atom -> m Atom
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
 
+-- TODO: make pairs also use projection atoms?
 getFst :: MonadEmbed m => Atom -> m Atom
 getFst (PairVal x _) = return x
 getFst p = emitOp $ Fst p
@@ -306,10 +294,16 @@ getFstRef r = emitOp $ FstRef r
 getSndRef :: MonadEmbed m => Atom -> m Atom
 getSndRef r = emitOp $ SndRef r
 
+-- TODO: refactor?
 getUnpacked :: MonadEmbed m => Atom -> m [Atom]
-getUnpacked (DataCon _ _ _ xs) = return xs
-getUnpacked (Record items) = return $ toList items
-getUnpacked a = emitUnpack (Atom a)
+getUnpacked atom = return res where
+  len = case getType atom of
+    TypeCon def params ->
+      let [DataConDef _ bs] = applyDataDefParams def params
+      in length bs
+    RecordTy (NoExt types) -> length types
+    ty -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint ty
+  res = map (\i -> getProjection [i] atom) [0..(len-1)]
 
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i

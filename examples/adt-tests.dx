@@ -162,10 +162,11 @@ data MyIntish = MkIntish Int
 
 xsList = AsList _ [1,2,3]
 
-:p
-  (AsList _ xsTab) = xsList
-  sum xsTab
-> 6
+-- TODO: reenable!
+-- :p
+--   (AsList _ xsTab) = xsList
+--   sum xsTab
+-- > 6
 
 (AsList _ xsTab) = xsList
 
@@ -179,12 +180,13 @@ xsList = AsList _ [1,2,3]
   sum ans
 > 15
 
-:p
-  (MkMyPair x y) = case 3 < 2 of
-    True  -> MkMyPair 1 2
-    False -> MkMyPair 3 4
-  (x, y)
-> (3, 4)
+-- TODO: reenable!
+-- :p
+--   (MkMyPair x y) = case 3 < 2 of
+--     True  -> MkMyPair 1 2
+--     False -> MkMyPair 3 4
+--   (x, y)
+-- > (3, 4)
 
 def catLists (xs:List a) (ys:List a) : List a =
   (AsList nx xs') = xs

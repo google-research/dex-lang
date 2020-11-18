@@ -144,7 +144,7 @@ simplifyAtom atom = case atom of
         ACase e' alts' <$> (substEmbedR rty)
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
-  ProjectElt idxs v -> reduceProjection (toList idxs) <$> simplifyAtom (Var v)
+  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
 
 simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
 simplifyCase e alts = case e of

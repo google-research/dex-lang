@@ -46,7 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    reduceProjection,
+    getProjection,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
@@ -1179,17 +1179,18 @@ substProjectElt :: SubstEnv -> NE.NonEmpty Int -> Var -> Atom
 substProjectElt env idxs v = case envLookup env v of
   Nothing -> ProjectElt idxs v
   Just (Var v') -> ProjectElt idxs v'
-  Just atom -> reduceProjection (toList idxs) atom
+  Just atom -> getProjection (toList idxs) atom
 
-reduceProjection :: [Int] -> Atom -> Atom
-reduceProjection [] a = a
-reduceProjection (i:is) a = case reduceProjection is a of
+getProjection :: [Int] -> Atom -> Atom
+getProjection [] a = a
+getProjection (i:is) a = case getProjection is a of
+  Var v -> ProjectElt (NE.fromList [i]) v
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ xs -> xs !! i
   Record items -> (toList items) !! i
   PairVal x _ | i == 0 -> x
   PairVal _ y | i == 1 -> y
-  _ -> error "Not a valid projection"
+  _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
 instance HasVars () where freeVars () = mempty
 instance Subst () where subst _ () = ()
