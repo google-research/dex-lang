@@ -162,6 +162,29 @@ instance HasType Atom where
       numel |: IdxRepTy
       void $ typeCheck b
       withBinder b $ typeCheck body
+    ProjectElt (i NE.:| is) v -> do
+      ty <- typeCheck $ case NE.nonEmpty is of
+            Nothing -> Var v
+            Just is' -> ProjectElt is' v
+      case ty of
+        TypeCon def params -> do
+          [DataConDef _ bs'] <- return $ applyDataDefParams def params
+          -- Users might be accessing a value whose type depends on earlier
+          -- projected values from this constructor. Rewrite them to also
+          -- use projections.
+          let go :: Int -> Nest Binder -> Type
+              go j (Nest b _) | i == j = binderAnn b
+              -- TODO: is scopelessSubst correct here?
+              go j (Nest b rest) = go (j+1) (scopelessSubst (b @> proj) rest)
+                where proj = ProjectElt (j NE.:| is) v
+              go _ _ = error "Bad projection index"
+          return $ go 0 bs'
+        RecordTy (NoExt types) -> return $ toList types !! i
+        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
+        PairTy x _ | i == 0 -> return x
+        PairTy _ y | i == 1 -> return y
+        _ -> throw TypeErr "Only single-member ADTs and record types can be projected"
+
 
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
 checkDataConRefBindings Empty Empty = return ()
@@ -374,6 +397,7 @@ instance CoreVariant Atom where
     ACase _ _ _ -> goneBy Simp
     DataConRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
     BoxedRef _ _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    ProjectElt _ (_:>ty) -> checkVariant ty
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of

@@ -341,6 +341,7 @@ linearizeAtom atom = case atom of
   Pi _            -> emitWithZero
   TC _            -> emitWithZero
   Eff _           -> emitWithZero
+  ProjectElt _ _  -> error "TODO: linearize projections"
   -- Those should be gone after simplification
   Lam _           -> error "Unexpected non-table lambda"
   ACase _ _ _     -> error "Unexpected ACase"
@@ -700,6 +701,7 @@ transposeAtom atom ct = case atom of
   ACase _ _ _     -> error "Unexpected ACase"
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _ _ _ -> error "Unexpected ref"
+  ProjectElt _ _  -> error "TODO: projection transpose types"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeCon :: Con -> Atom -> TransposeM ()

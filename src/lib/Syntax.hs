@@ -46,6 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
+    reduceProjection,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
@@ -103,6 +104,7 @@ data Atom = Var Var
             -- single-constructor only for now
           | DataConRef DataDef [Atom] (Nest DataConRefBinding)
           | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
+          | ProjectElt (NE.NonEmpty Int) Var  -- access a nested member of a binder
             deriving (Show, Generic)
 
 data Expr = App Atom Atom
@@ -945,6 +947,7 @@ instance Eq Atom where
   Con con == Con con' = con == con'
   TC  con == TC  con' = con == con'
   Eff eff == Eff eff' = eff == eff'
+  ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
   _ == _ = False
 
 instance Eq DataDef where
@@ -1077,6 +1080,7 @@ instance HasVars Atom where
     DataConRef _ params args -> freeVars params <> freeVars args
     BoxedRef b ptr size body ->
       freeVars ptr <> freeVars size <> freeVars (Abs b body)
+    ProjectElt _ v -> freeVars (Var v)
 
 instance Subst Atom where
   subst env atom = case atom of
@@ -1098,6 +1102,7 @@ instance Subst Atom where
       where Abs args' () = subst env $ Abs args ()
     BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
         where Abs b' body' = subst env $ Abs b body
+    ProjectElt idxs v -> substProjectElt (fst env) idxs v
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -1169,6 +1174,22 @@ substExtLabeledItemsTail env (Just v) = case envLookup env (v:>()) of
   Just (Var (v':>_)) -> Ext NoLabeledItems $ Just v'
   Just (LabeledRow row) -> row
   _ -> error "Not a valid labeled row substitution"
+
+substProjectElt :: SubstEnv -> NE.NonEmpty Int -> Var -> Atom
+substProjectElt env idxs v = case envLookup env v of
+  Nothing -> ProjectElt idxs v
+  Just (Var v') -> ProjectElt idxs v'
+  Just atom -> reduceProjection (toList idxs) atom
+
+reduceProjection :: [Int] -> Atom -> Atom
+reduceProjection [] a = a
+reduceProjection (i:is) a = case reduceProjection is a of
+  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
+  DataCon _ _ _ xs -> xs !! i
+  Record items -> (toList items) !! i
+  PairVal x _ | i == 0 -> x
+  PairVal _ y | i == 1 -> y
+  _ -> error "Not a valid projection"
 
 instance HasVars () where freeVars () = mempty
 instance Subst () where subst _ () = ()

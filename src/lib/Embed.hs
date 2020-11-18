@@ -697,6 +697,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     case decls of
       Empty -> return $ BoxedRef b' ptr' size' body'
       _ -> error "Traversing the body atom shouldn't produce decls"
+  ProjectElt _ _ -> substEmbedR atom
   where
     traverseNestedArgs :: Nest DataConRefBinding -> m (Nest DataConRefBinding)
     traverseNestedArgs Empty = return Empty
