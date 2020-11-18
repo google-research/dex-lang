@@ -179,13 +179,12 @@ xsList = AsList _ [1,2,3]
   sum ans
 > 15
 
--- TODO: reenable!
--- :p
---   (MkMyPair x y) = case 3 < 2 of
---     True  -> MkMyPair 1 2
---     False -> MkMyPair 3 4
---   (x, y)
--- > (3, 4)
+:p
+  (MkMyPair x y) = case 3 < 2 of
+    True  -> MkMyPair 1 2
+    False -> MkMyPair 3 4
+  (x, y)
+> (3, 4)
 
 def catLists (xs:List a) (ys:List a) : List a =
   (AsList nx xs') = xs

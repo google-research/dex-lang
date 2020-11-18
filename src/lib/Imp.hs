@@ -773,6 +773,7 @@ splitDest (maybeDest, (Block decls ans)) = do
         | fmap (const ()) items == fmap (const ()) items' -> do
             zipWithM_ gatherVarDests (toList items) (toList items')
       (Con (ConRef (SumAsProd _ _ _)), _) -> tell [(dest, result)]  -- TODO
+      (_, ProjectElt _ _) -> tell [(dest, result)]  -- TODO: is this reasonable?
       _ -> unreachable
       where
         unreachable = error $ "Invalid dest-result pair:\n"
