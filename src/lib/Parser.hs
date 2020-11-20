@@ -252,16 +252,57 @@ topLet = do
   let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
   return $ ULet lAnn (p, ann') rhs'
 
+-- Given a type signature, find all "implicit implicit args": lower-case
+-- identifiers, not explicitly bound by Pi binders, not appearing on the left
+-- hand side of an application. These identifiers are implicit in the sense
+-- that they will be solved for by type inference, and also implicit in the
+-- sense that the user did NOT explicitly annotate them as implicit.
+findImplicitImplicitArgNames :: UType -> [Name]
+findImplicitImplicitArgNames typ = filter isLowerCaseName $ envNames $
+    freeUVars typ `envDiff` findFunctionVars typ
+  where
+
+  isLowerCaseName :: Name -> Bool
+  isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
+  isLowerCaseName _ = False
+
+  -- Finds all variables used in function position, which should be pulled out.
+  findFunctionVars :: UType -> Env ()
+  findFunctionVars (WithSrc _ typ') = case typ' of
+    UVar _ -> mempty
+    UPi b _ ty ->
+      findFunctionVars (binderAnn b) <> (findFunctionVars ty `envDiff` freeUVars b)
+    UApp _ (WithSrc _ (UVar (v:>_))) x -> (v @> ()) <> findFunctionVars x
+    UApp _ f x -> findFunctionVars f <> findFunctionVars x
+    ULam (p, ann) _ x ->
+      foldMap findFunctionVars ann <> (findFunctionVars x `envDiff` boundUVars p)
+    UDecl _ _ -> error "Unexpected let binding in type annotation"
+    UFor _ _ _ -> error "Unexpected for in type annotation"
+    UHole -> mempty
+    UTypeAnn v ty -> findFunctionVars v <> findFunctionVars ty
+    UTabCon _ -> error "Unexpected table in type annotation"
+    UIndexRange low high ->
+      foldMap findFunctionVars low <> foldMap findFunctionVars high
+    UPrimExpr prim -> foldMap findFunctionVars prim
+    UCase _ _ -> error "Unexpected case in type annotation"
+    URecord (Ext ulr _) -> foldMap findFunctionVars ulr
+    UVariant _ _ val -> findFunctionVars val
+    URecordTy (Ext ulr v) ->
+      foldMap findFunctionVars ulr <> foldMap findFunctionVars v
+    UVariantTy (Ext ulr v) ->
+      foldMap findFunctionVars ulr <> foldMap findFunctionVars v
+    UVariantLift _ val -> findFunctionVars val
+    UIntLit  _ -> mempty
+    UCharLit _ -> mempty
+    UFloatLit _ -> mempty
+
 addImplicitImplicitArgs :: SrcPos -> Maybe UType -> UExpr -> (Maybe UType, UExpr)
 addImplicitImplicitArgs _ Nothing e = (Nothing, e)
 addImplicitImplicitArgs sourcePos (Just typ) ex =
   let (ty', e') = foldr (addImplicitArg sourcePos) (typ, ex) implicitVars
   in (Just ty', e')
   where
-    implicitVars = filter isLowerCaseName $ envNames $ freeUVars typ
-    isLowerCaseName :: Name -> Bool
-    isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
-    isLowerCaseName _ = False
+    implicitVars = findImplicitImplicitArgNames typ
 
     addImplicitArg :: SrcPos -> Name -> (UType, UExpr) -> (UType, UExpr)
     addImplicitArg pos v (ty, e) =

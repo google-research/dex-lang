@@ -104,7 +104,10 @@ data Atom = Var Var
             -- single-constructor only for now
           | DataConRef DataDef [Atom] (Nest DataConRefBinding)
           | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
-          | ProjectElt (NE.NonEmpty Int) Var  -- access a nested member of a binder
+          -- access a nested member of a binder
+          -- XXX: Variable name MUST be fully reduced, it cannot be a synonym!
+          -- This is because the variable name may also appear in the type.
+          | ProjectElt (NE.NonEmpty Int) Var
             deriving (Show, Generic)
 
 data Expr = App Atom Atom

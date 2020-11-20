@@ -209,3 +209,20 @@ def catLists (xs:List a) (ys:List a) : List a =
   n = 1 + 4
   AsList _ (for i:(Fin n). ordinal i)
 > (AsList 5 [0, 1, 2, 3, 4])
+
+def listLength ((AsList length xs):List a) : Int = length
+
+-- TODO: not yet supported
+-- def listToTable1 ((AsList n xs): List a) : (Fin n)=>a = xs
+
+def listToTable2 (l: List a) : (Fin (listLength l))=>a =
+  (AsList _ xs) = l
+  xs
+
+:t listToTable2
+> ((a:Type) ?-> (l:(List a)) -> (Fin (ProjectElt [0] l)) => a)
+
+:p
+  l = AsList _ [1, 2, 3]
+  sum $ listToTable2 l
+> 6
