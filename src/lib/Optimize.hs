@@ -52,7 +52,6 @@ dceDecl :: Decl -> DceM (Maybe Decl)
 dceDecl decl = do
   newDecl <- case decl of
     Let ann b expr -> go [b] expr $ Let ann b
-    Unpack bs expr -> go bs  expr $ Unpack bs
   modify (<> freeVars newDecl)
   return newDecl
   where
@@ -155,7 +154,6 @@ computeInlineHints m@(Module _ _ bindings) =
 
     hintDecl decl = case decl of
       Let ann b expr -> go [b] expr $ Let ann . head
-      Unpack bs expr -> go bs  expr $ Unpack
       where
         go bs expr mkDecl = do
           void $ noInlineFree bs

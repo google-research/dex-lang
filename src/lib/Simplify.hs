@@ -82,13 +82,6 @@ simplifyDecl (Let ann b expr) = do
   if isGlobalBinder b
     then emitTo name ann (Atom x) $> mempty
     else return $ b @> x
-simplifyDecl (Unpack bs expr) = do
-  x <- simplifyExpr expr
-  xs <- case x of
-    DataCon _ _ _ xs -> return xs
-    Record items -> return $ toList items
-    _ -> emitUnpack $ Atom x
-  return $ newEnv bs xs
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do

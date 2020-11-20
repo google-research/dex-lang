@@ -565,7 +565,6 @@ emitDecl :: MonadEmbed m => Decl -> m ()
 emitDecl decl = embedExtend (bindings, Nest decl Empty)
   where bindings = case decl of
           Let ann b expr -> b @> (binderType b, LetBound ann expr)
-          Unpack bs _ -> foldMap (\b -> b @> (binderType b, PatBound)) bs
 
 scopedDecls :: MonadEmbed m => m a -> m (a, Nest Decl)
 scopedDecls m = do
@@ -620,10 +619,6 @@ traverseDecl (_, fExpr, _) decl = case decl of
       Atom a | not (isGlobalBinder b) -> return $ b @> a
       -- TODO: Do we need to use the name hint here?
       _ -> (b@>) <$> emitTo (binderNameHint b) letAnn expr'
-  Unpack bs expr -> do
-    expr' <- fExpr expr
-    xs <- emitUnpack expr'
-    return $ newEnv bs xs
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block

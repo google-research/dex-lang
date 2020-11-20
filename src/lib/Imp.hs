@@ -123,13 +123,6 @@ translateDecl env (maybeDest, (Let _ b bound)) = do
   b' <- traverse (impSubst env) b
   ans <- translateExpr env (maybeDest, bound)
   return $ b' @> ans
-translateDecl env (maybeDest, (Unpack bs bound)) = do
-  bs' <- mapM (traverse (impSubst env)) bs
-  expr <- translateExpr env (maybeDest, bound)
-  case expr of
-    DataCon _ _ _ ans -> return $ newEnv bs' ans
-    Record items -> return $ newEnv bs $ toList items
-    _ -> error "Unsupported type in an Unpack binding"
 
 translateExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 translateExpr env (maybeDest, expr) = case expr of
@@ -750,7 +743,6 @@ splitDest (maybeDest, (Block decls ans)) = do
 
       let destDecls = flip fmap (toList decls) $ \d -> case d of
                         Let _ b _  -> (fst <$> varDests `envLookup` b, d)
-                        Unpack _ _ -> (Nothing, d)
       (destDecls, (Nothing, ans), gatherCopies ++ closureCopies)
     _ -> (fmap (Nothing,) $ toList decls, (maybeDest, ans), [])
   where
@@ -781,7 +773,6 @@ splitDest (maybeDest, (Block decls ans)) = do
 
 letBoundVars :: Decl -> Env ()
 letBoundVars (Let _ b _) = b @> ()
-letBoundVars (Unpack _ _) = mempty
 
 copyDest :: Maybe Dest -> Atom -> ImpM Atom
 copyDest maybeDest atom = case maybeDest of

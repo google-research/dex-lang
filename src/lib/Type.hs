@@ -260,7 +260,6 @@ blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
   foldMap declEffs decls <> exprEffs result
   where declEffs (Let _ _ expr) = exprEffs expr
-        declEffs (Unpack _ expr) = exprEffs expr
 
 isPure :: Expr -> Bool
 isPure expr = exprEffs expr == mempty
@@ -324,19 +323,6 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     ty' <- typeCheck rhs
     checkEq ty ty'
     return $ boundVars b
-  Unpack bs rhs -> do
-    void $ checkNestedBinders bs
-    ty <- typeCheck rhs
-    bs' <- case ty of
-      TypeCon def params -> do
-        [DataConDef _ bs'] <- return $ applyDataDefParams def params
-        return bs'
-      RecordTy (NoExt types) ->
-        return $ toNest $ map Ignore $ toList types
-      RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
-      _ -> throw TypeErr $ "Only single-member ADTs and record types can be unpacked in let bindings"
-    checkEq bs bs'
-    return $ foldMap boundVars bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkNestedBinders :: Nest Binder -> TypeM (Nest Type)
@@ -419,7 +405,6 @@ instance CoreVariant Expr where
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariant b >> checkVariant e
-  checkVariant (Unpack bs e) = mapM checkVariant bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e

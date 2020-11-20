@@ -114,8 +114,7 @@ data Expr = App Atom Atom
           | Hof Hof
             deriving (Show, Generic)
 
-data Decl = Let LetAnn Binder Expr
-          | Unpack (Nest Binder) Expr  deriving (Show, Generic)
+data Decl = Let LetAnn Binder Expr deriving (Show, Generic)
 
 data DataConRefBinding = DataConRefBinding Binder Atom  deriving (Show, Generic)
 
@@ -1033,25 +1032,19 @@ instance Subst Expr where
 instance HasVars Decl where
   freeVars decl = case decl of
     Let _  b expr  -> freeVars expr <> freeVars b
-    Unpack bs expr -> freeVars expr <> freeVars bs
 
 instance Subst Decl where
   subst env decl = case decl of
     Let ann b expr -> Let ann (fmap (subst env) b) $ subst env expr
-    Unpack bs expr -> Unpack (subst env bs) $ subst env expr
 
 instance BindsVars Decl where
   boundVars decl = case decl of
     Let ann b expr -> b @> (binderType b, LetBound ann expr)
-    Unpack bs _ -> boundVars bs
 
   renamingSubst env decl = case decl of
     Let ann b expr -> (Let ann b' expr', env')
       where expr' = subst env expr
             (b', env') = renamingSubst env b
-    Unpack bs expr -> (Unpack bs' expr', env')
-      where expr' = subst env expr
-            (bs', env') = renamingSubst env bs
 
 instance HasVars Block where
   freeVars (Block decls result) = freeVars $ Abs decls result

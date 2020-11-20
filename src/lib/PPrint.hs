@@ -296,7 +296,6 @@ instance Pretty Decl where
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 prettyPiTypeHelper :: PiType -> Doc ann
 prettyPiTypeHelper (Abs binder (arr, body)) = let

@@ -54,10 +54,10 @@ linearizeBlock env (Block decls result) = case decls of
   Empty -> linearizeExpr env result
   Nest decl rest -> case decl of
     (Let  _ b  expr) -> linearizeBinding False [b]         expr
-    (Unpack bs expr) -> linearizeBinding True  (toList bs) expr
     where
       body = Block rest result
       takeWhere l m = fmap snd $ filter fst $ zip m l
+      -- TODO: refactor this to not have isUnpack
       linearizeBinding :: Bool -> [Binder] -> Expr -> LinA Atom
       linearizeBinding isUnpack bs expr = LinA $ do
         -- Don't linearize expressions with no free active variables.
@@ -538,7 +538,6 @@ transposeBlock (Block decls result) ct = case decls of
   Empty -> transposeExpr result ct
   Nest decl rest -> case decl of
     (Let  _ b  expr) -> transposeBinding False [b]         expr
-    (Unpack bs expr) -> transposeBinding True  (toList bs) expr
     where
       body = Block rest result
       transposeBinding isUnpack bs expr = do
