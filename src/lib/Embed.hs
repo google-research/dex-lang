@@ -139,12 +139,16 @@ freshNestedBindersRec substEnv (Nest b bs) = do
 buildPi :: (MonadError Err m, MonadEmbed m)
         => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
 buildPi b f = do
-  (piTy, decls) <- scopedDecls $ do
+  scope <- getScope
+  (ans, decls) <- scopedDecls $ do
      v <- freshVarE PiBound b
      (arr, ans) <- f $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
-  unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
-  return piTy
+  let block = wrapDecls decls ans
+  case reduceBlock scope block of
+    Just piTy -> return piTy
+    Nothing -> throw CompilerErr $
+      "Unexpected irreducible decls in pi type: " ++ pprint decls
 
 buildAbs :: MonadEmbed m => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
 buildAbs b f = do

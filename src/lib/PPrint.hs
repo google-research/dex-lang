@@ -561,7 +561,8 @@ instance PrettyPrec UExpr' where
                             <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UPi a arr b -> atPrec LowestPrec $ p a <+> pretty arr <+> pLowest b
+    UPi binder arr ty -> atPrec LowestPrec $
+      prettyUPiBinder binder <+> pretty arr <+> pLowest ty
     UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
                                                          <> pLowest body
     UHole -> atPrec ArgPrec "_"
@@ -621,6 +622,12 @@ prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where
   annDoc = case ann of
     Just ty -> ":" <> pApp ty
+    Nothing -> mempty
+
+prettyUPiBinder :: UPiPatAnn -> Doc ann
+prettyUPiBinder (pat, ann) = patDoc <> p ann where
+  patDoc = case pat of
+    Just pat' -> pApp pat' <> ":"
     Nothing -> mempty
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann

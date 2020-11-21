@@ -40,7 +40,7 @@ module Syntax (
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), PtrOrigin (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
-    UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
+    UExpr, UExpr' (..), UType, UPatAnn, UPiPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
@@ -213,7 +213,7 @@ prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
 type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
             | ULam UPatAnn UArrow UExpr
-            | UPi  UAnnBinder Arrow UType
+            | UPi  UPiPatAnn Arrow UType
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
             | UFor Direction UPatAnn UExpr
@@ -244,6 +244,7 @@ type UVar    = VarP ()
 type UBinder = BinderP ()
 
 type UPatAnn   = (UPat, Maybe UType)
+type UPiPatAnn   = (Maybe UPat, UType)
 type UAnnBinder = BinderP UType
 
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
@@ -710,7 +711,7 @@ instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v @>()
     ULam (pat,ty) _ body -> freeUVars ty <> freeUVars (Abs pat body)
-    UPi b arr ty -> freeUVars $ Abs b (arr, ty)
+    UPi (pat,kind) arr ty -> freeUVars kind <> freeUVars (Abs pat (arr, ty))
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x

@@ -152,12 +152,20 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi b arr ty -> do
+  UPi (pat, kind) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
-    b'  <- mapM checkUType b
-    piTy <- buildPi b' $ \x -> extendR (b@>x) $
-              (,) <$> mapM checkUEff arr <*> checkUType ty
+    kind' <- checkUType kind
+    piTy <- case pat of
+      Just pat' -> withNameHint ("pat" :: Name) $ buildPi b $ \x ->
+        withBindPat pat' x $ (,) <$> mapM checkUEff arr <*> checkUType ty
+        where b = case pat' of
+                    -- Note: must bind it by name if the user gives an explicit
+                    -- name, since the binder name becomes part of the type.
+                    WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>kind')
+                    _ -> Ignore kind'
+      Nothing -> buildPi (Ignore kind') $ const $
+        (,) <$> mapM checkUEff arr <*> checkUType ty
     matchRequirement piTy
   UDecl decl body -> do
     env <- inferUDecl False decl
