@@ -569,17 +569,16 @@ def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
-data HasAllClose a:Type =
-  MkHasAllClose (a -> a -> a -> a -> Bool)
+interface HasAllClose a:Type where
+  allclose : a -> a -> a -> a -> Bool
 
 interface HasDefaultTolerance a:Type where
   atol : a
   rtol : a
 
-def allCloseWithTolerance (d : HasAllClose a) ?=> : a -> a -> a -> a -> Bool = case d of MkHasAllClose f -> f
-def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool = allCloseWithTolerance atol rtol
+def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool = allclose atol rtol
 
-@instance allCloseF : HasAllClose Float = MkHasAllClose \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+instance allCloseF : HasAllClose Float where allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
 instance defaultToleranceF32 : HasDefaultTolerance Float32 where
   atol = FToF32 0.00001
   rtol = FToF32 0.0001
@@ -588,8 +587,8 @@ instance defaultToleranceF64 : HasDefaultTolerance Float64 where
   atol = FToF64 0.00000001
   rtol = FToF64 0.00001
 
-@instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) =
-  MkHasAllClose \atol rtol a b. all for i:n. (a.i ~~ b.i)
+instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) where
+  allclose = \atol rtol a b. all for i:n. (a.i ~~ b.i)
 
 instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) where
   atol = for i. atol
@@ -889,8 +888,8 @@ def atan (x:Float) : Float = atan2 x 1.0
 
 data Complex = MkComplex Float Float  -- real, imaginary
 
-@instance allCloseComplex : HasAllClose Complex =
-  MkHasAllClose \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
+instance allCloseComplex : HasAllClose Complex where
+  allclose = \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
 
 instance defaultToleranceComplex : HasDefaultTolerance Complex where
   atol = MkComplex atol atol
