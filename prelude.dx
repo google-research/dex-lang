@@ -572,25 +572,28 @@ def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 data HasAllClose a:Type =
   MkHasAllClose (a -> a -> a -> a -> Bool)
 
-data HasDefaultTolerance a:Type =
-  MkHasDefaultTolerance a a
+interface HasDefaultTolerance a:Type where
+  atol : a
+  rtol : a
 
 def allCloseWithTolerance (d : HasAllClose a) ?=> : a -> a -> a -> a -> Bool = case d of MkHasAllClose f -> f
-def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool =
-  case d of MkHasDefaultTolerance atol rtol -> allCloseWithTolerance atol rtol
+def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool = allCloseWithTolerance atol rtol
 
 @instance allCloseF : HasAllClose Float = MkHasAllClose \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
-@instance defaultToleranceF32 : HasDefaultTolerance Float32 = MkHasDefaultTolerance (FToF32 0.00001   ) (FToF32 0.0001 )
-@instance defaultToleranceF64 : HasDefaultTolerance Float64 = MkHasDefaultTolerance (FToF64 0.00000001) (FToF64 0.00001)
+instance defaultToleranceF32 : HasDefaultTolerance Float32 where
+  atol = FToF32 0.00001
+  rtol = FToF32 0.0001
+
+instance defaultToleranceF64 : HasDefaultTolerance Float64 where
+  atol = FToF64 0.00000001
+  rtol = FToF64 0.00001
 
 @instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) =
   MkHasAllClose \atol rtol a b. all for i:n. (a.i ~~ b.i)
 
-@instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) =
-  def getdt (d:HasDefaultTolerance t) ?=> : (t & t) =   -- helper to name implicit dict
-    case d of MkHasDefaultTolerance atol rtol -> (atol, rtol)
-  (atol, rtol) = getdt
-  MkHasDefaultTolerance (for i. atol) (for i. rtol)
+instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) where
+  atol = for i. atol
+  rtol = for i. rtol
 
 
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
@@ -889,12 +892,9 @@ data Complex = MkComplex Float Float  -- real, imaginary
 @instance allCloseComplex : HasAllClose Complex =
   MkHasAllClose \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
 
-@instance defaultToleranceComplex : HasDefaultTolerance Complex =
-  def get_float_tols (d:HasDefaultTolerance Float) ?=> : (Float & Float) =
-    -- A helper function to name the implicit dict.
-    case d of MkHasDefaultTolerance atol rtol -> (atol, rtol)
-  (atol, rtol) = get_float_tols
-  MkHasDefaultTolerance (MkComplex atol atol) (MkComplex rtol rtol)
+instance defaultToleranceComplex : HasDefaultTolerance Complex where
+  atol = MkComplex atol atol
+  rtol = MkComplex rtol rtol
 
 @instance ComplexEq : Eq Complex =
   MkEq \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
