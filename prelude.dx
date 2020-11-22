@@ -117,13 +117,34 @@ def rem  (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral _  rm -> rm
 @instance int32Integral : Integral Int32 = MkIntegral (\x:Int32 y:Int32. %idiv x y) (\x y. %irem x y)
 @instance int8Integral  : Integral Int8  = MkIntegral (\x:Int8  y:Int8.  %idiv x y) (\x y. %irem x y)
 
-data Fractional a:Type =
-  MkFractional (a->a->a) -- fdiv
+interface Fractional a:Type where
+  fdiv : a -> a -> a
+  sinh : a -> a
+  cosh : a -> a
+  tanh : a -> a
 
-def fdiv (d:Fractional a) ?=> : a -> a -> a = case d of MkFractional div -> div
+-- Todo: better numerics for very large and small values.
+-- Using %exp here to avoid circular definition problems.
+def float32_sinh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) 2.0
+def float32_cosh (x:Float32) : Float32 = %fdiv ((%exp x) + (%exp (%fsub 0.0 x))) 2.0
+def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub 1.0 (%exp (%fsub 0.0 x))) (1.0 + (%exp (%fsub 0.0 x)))
 
-@instance float64Fractional : Fractional Float64 = MkFractional (\x:Float64 y:Float64. %fdiv x y)
-@instance float32Fractional : Fractional Float32 = MkFractional (\x:Float32 y:Float32. %fdiv x y)
+-- Todo: unify this with float32 functions.
+def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_cosh (x:Float64) : Float64 = %fdiv ((%exp x) + (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_tanh (x:Float64) : Float64 = %fdiv (%fsub (FToF64 1.0) (%exp (%fsub (FToF64 0.0) x))) ((FToF64 1.0) + (%exp (%fsub (FToF64 0.0) x)))
+
+instance float64Fractional : Fractional Float64 where
+  fdiv = \x:Float64 y:Float64. %fdiv x y
+  sinh = float64_sinh
+  cosh = float64_cosh
+  tanh = float64_tanh
+
+instance float32Fractional : Fractional Float32 where
+  fdiv = \x:Float32 y:Float32. %fdiv x y
+  sinh = float32_sinh
+  cosh = float32_cosh
+  tanh = float32_tanh
 
 'Basic polymorphic functions and types
 
@@ -831,11 +852,6 @@ def atan2 (y:Float) (x:Float) : Float =
 
 def atan (x:Float) : Float = atan2 x 1.0
 
--- Todo: better numerics for very large and small values.
-def sinh (x:Float) : Float = ((exp x) - exp (-x)) / 2.0
-def cosh (x:Float) : Float = ((exp x) + exp (-x)) / 2.0
-def tanh (x:Float) : Float = (1.0 - (exp (-x))) / (1.0 + (exp (-x)))
-
 
 '## Complex numbers
 
@@ -871,9 +887,6 @@ instance ComplexMul : Mul Complex where
 def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
   MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
 
-@instance ComplexFractional : Fractional Complex =
-  MkFractional complex_division
-
 def complex_exp (MkComplex a b:Complex) : Complex =
   expx = exp a
   MkComplex (expx * cos b) (expx * sin b)
@@ -901,8 +914,17 @@ def complex_sin  (MkComplex a b:Complex) : Complex = MkComplex (sin  a * cosh b)
 def complex_sinh (MkComplex a b:Complex) : Complex = MkComplex (sinh a *  cos b) (cosh  a * sin  b)
 def complex_cos  (MkComplex a b:Complex) : Complex = MkComplex (cos  a * cosh b) (-sin  a * sinh b)
 def complex_cosh (MkComplex a b:Complex) : Complex = MkComplex (cosh a *  cos b) (-sinh a * sin  b)
-def complex_tan  (x:Complex) : Complex = fdiv (complex_sin  x) (complex_cos  x)
-def complex_tanh (x:Complex) : Complex = fdiv (complex_sinh x) (complex_cosh x)
+def complex_tan  (x:Complex) : Complex = complex_division (complex_sin  x) (complex_cos  x)
+def complex_tanh (MkComplex a b:Complex) : Complex =
+  num = MkComplex (sinh a * cos b) (cosh a * sin  b)
+  den = MkComplex (cosh a * cos b) (sinh a * sin  b)
+  complex_division num den
+
+instance ComplexFractional : Fractional Complex where
+  fdiv = complex_division
+  sinh = complex_sinh
+  cosh = complex_cosh
+  tanh = complex_tanh
 
 def complex_floor (MkComplex re im:Complex) : Complex =
   -- from "Complex Floor" by Eugene McDonnell
