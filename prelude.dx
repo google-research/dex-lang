@@ -323,45 +323,74 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
 
 'Transcencendental functions
 
-data Floating a:Type =
-  MkFloating (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a->a) (a->a)
+interface Floating a:Type where
+  floating_exp    : a -> a
+  floating_exp2   : a -> a
+  floating_log    : a -> a
+  floating_log2   : a -> a
+  floating_log10  : a -> a
+  floating_log1p  : a -> a
+  floating_sin    : a -> a
+  floating_cos    : a -> a
+  floating_tan    : a -> a
+  floating_floor  : a -> a
+  floating_ceil   : a -> a
+  floating_round  : a -> a
+  floating_sqrt   : a -> a
+  floating_pow    : a -> a -> a
+  floating_lgamma : a -> a
 
-def exp    (d:Floating a) ?=> : a -> a = case d of MkFloating f _ _ _ _ _ _ _ _ _ _ _ _ _ _ -> f
-def exp2   (d:Floating a) ?=> : a -> a = case d of MkFloating _ f _ _ _ _ _ _ _ _ _ _ _ _ _ -> f
-def log    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ f _ _ _ _ _ _ _ _ _ _ _ _ -> f
-def log2   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ f _ _ _ _ _ _ _ _ _ _ _ -> f
-def log10  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ f _ _ _ _ _ _ _ _ _ _ -> f
-def log1p  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ f _ _ _ _ _ _ _ _ _ -> f
-
-def sin    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ f _ _ _ _ _ _ _ _ -> f
-def cos    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ f _ _ _ _ _ _ _ -> f
-def tan    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ f _ _ _ _ _ _ -> f
-
-def floor  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ f _ _ _ _ _ -> f
-def ceil   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ f _ _ _ _ -> f
-def round  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ f _ _ _ -> f
-
-def sqrt   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ f _ _ -> f
-def pow    (d:Floating a) ?=> : a -> a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ _ f _ -> f
-
-def lgamma (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ _ _ f -> f
+def exp    (d:Floating a) ?=> : a -> a = floating_exp
+def exp2   (d:Floating a) ?=> : a -> a = floating_exp2
+def log    (d:Floating a) ?=> : a -> a = floating_log
+def log2   (d:Floating a) ?=> : a -> a = floating_log2
+def log10  (d:Floating a) ?=> : a -> a = floating_log10
+def log1p  (d:Floating a) ?=> : a -> a = floating_log1p
+def sin    (d:Floating a) ?=> : a -> a = floating_sin
+def cos    (d:Floating a) ?=> : a -> a = floating_cos
+def tan    (d:Floating a) ?=> : a -> a = floating_tan
+def floor  (d:Floating a) ?=> : a -> a = floating_floor
+def ceil   (d:Floating a) ?=> : a -> a = floating_ceil
+def round  (d:Floating a) ?=> : a -> a = floating_round
+def sqrt   (d:Floating a) ?=> : a -> a = floating_sqrt
+def pow    (d:Floating a) ?=> : a -> a -> a = floating_pow
+def lgamma (d:Floating a) ?=> : a -> a = floating_lgamma
 
 def lbeta (_ : Add a) ?=> (_ : Floating a) ?=> : a -> a -> a = \x y. lgamma x + lgamma y - lgamma (x + y)
 
-@instance
-float64Floating : Floating Float64 =
-  (MkFloating (\x:Float64. %exp x) (\x. %exp2 x) (\x. %log x) (\x. %log2 x) (\x. %log10 x) (\x. %log1p x)
-              (\x. %sin    x) (\x. %cos   x) (\x. %tan   x)
-              (\x. %floor  x) (\x. %ceil  x) (\x. %round x)
-              (\x. %sqrt   x) (\x y. %fpow x y)
-              (\x. %lgamma x))
-@instance
-float32Floating : Floating Float32 =
-  (MkFloating (\x:Float32. %exp x) (\x. %exp2 x) (\x. %log x) (\x. %log2 x) (\x. %log10 x) (\x. %log1p x)
-              (\x. %sin    x) (\x. %cos   x) (\x. %tan   x)
-              (\x. %floor  x) (\x. %ceil  x) (\x. %round x)
-              (\x. %sqrt   x) (\x y. %fpow x y)
-              (\x. %lgamma x))
+instance float64Floating : Floating Float64 where
+  floating_exp    = \x:Float64. %exp x
+  floating_exp2   = \x:Float64. %exp2   x
+  floating_log    = \x:Float64. %log    x
+  floating_log2   = \x:Float64. %log2   x
+  floating_log10  = \x:Float64. %log10  x
+  floating_log1p  = \x:Float64. %log1p  x
+  floating_sin    = \x:Float64. %sin    x
+  floating_cos    = \x:Float64. %cos    x
+  floating_tan    = \x:Float64. %tan    x
+  floating_floor  = \x:Float64. %floor  x
+  floating_ceil   = \x:Float64. %ceil   x
+  floating_round  = \x:Float64. %round  x
+  floating_sqrt   = \x:Float64. %sqrt   x
+  floating_pow    = \x:Float64 y:Float64. %fpow x y
+  floating_lgamma = \x:Float64. %lgamma x
+
+instance float32Floating : Floating Float32 where
+  floating_exp    = \x:Float32. %exp x
+  floating_exp2   = \x:Float32. %exp2   x
+  floating_log    = \x:Float32. %log    x
+  floating_log2   = \x:Float32. %log2   x
+  floating_log10  = \x:Float32. %log10  x
+  floating_log1p  = \x:Float32. %log1p  x
+  floating_sin    = \x:Float32. %sin    x
+  floating_cos    = \x:Float32. %cos    x
+  floating_tan    = \x:Float32. %tan    x
+  floating_floor  = \x:Float32. %floor  x
+  floating_ceil   = \x:Float32. %ceil   x
+  floating_round  = \x:Float32. %round  x
+  floating_sqrt   = \x:Float32. %sqrt   x
+  floating_pow    = \x:Float32 y:Float32. %fpow x y
+  floating_lgamma = \x:Float32. %lgamma x
 
 'Working with index sets
 
@@ -956,12 +985,19 @@ def complex_log1p (x:Complex) : Complex =
         True -> complex_log u
         False -> fdiv ((complex_log u) * x) x
 
-@instance
-complexFloating : Floating Complex =
-  (MkFloating (\x. complex_exp x) (\x. complex_exp2 x)
-              (\x. complex_log x) (\x. complex_log2 x)
-              (\x. complex_log10 x) (\x. complex_log1p x)
-              (\x. complex_sin x) (\x. complex_cos x) (\x. complex_tan x)
-              (\x. complex_floor x) (\x. complex_ceil  x) (\x. complex_round x)
-              (\x. complex_sqrt x) (\x y. complex_pow x y)
-              (\x. complex_lgamma x))
+instance complexFloating : Floating Complex where
+  floating_exp    = complex_exp
+  floating_exp2   = complex_exp2
+  floating_log    = complex_log
+  floating_log2   = complex_log2
+  floating_log10  = complex_log10
+  floating_log1p  = complex_log1p
+  floating_sin    = complex_sin
+  floating_cos    = complex_cos
+  floating_tan    = complex_tan
+  floating_floor  = complex_floor
+  floating_ceil   = complex_ceil
+  floating_round  = complex_round
+  floating_sqrt   = complex_sqrt
+  floating_pow    = complex_pow
+  floating_lgamma = complex_lgamma
