@@ -1,0 +1,102 @@
+' # Clustering
+
+' ## Data
+Here we will generate some data.
+
+mix_of_isoguassians = for obs:(Fin 30). for feat:(Fin 2).
+  val = randn $ ixkey2 (newKey 42) obs feat
+  (select (ordinal obs <= 10)
+    (1.0 * val)
+    (select (ordinal obs <= 20)
+      (2.0 * val + [8.5, 0.0].feat)
+      (select (ordinal obs <= 30)
+        (3.0 * val + [10.0, 10.0].feat)
+        0.0 -- never used
+      )
+    )
+  )
+
+:plot for i. (mix_of_isoguassians.i.(0@_), mix_of_isoguassians.i.(1@_))
+
+' ## Helpers
+
+' `sse` sum of squared errors
+
+def sse (x:a=>Float) (y:a=>Float) : Float = sum for i. sq $ x.i - y.i
+
+:p sse [0.0, 0.0] [1.0, 1.0]
+
+:p sse [7.0, 8.0] [7.0, 8.0]
+
+
+' `ifso cond value`
+' if the condition is so so return the value, else return zero
+' TODO: this should be generalizable to anything that has the Add interface.
+
+
+def ifso (cond:Bool) (value:Float) : Float = select (cond) value 0.0
+
+:p ifso True 2.0
+
+:p ifso False 3.0
+
+' `ifnot cond value`
+' if the condition is not so return the value, else return zero
+' TODO: this should be generalizable to anything that has the Add interface.
+' TODO: this should be written point-free
+
+def ifnot (cond:Bool) (v:Float) : Float = ifso (not cond) v
+
+
+:p ifnot True 2.0
+
+:p ifnot False 3.0
+
+' ## Affinity Propagation
+https://en.wikipedia.org/wiki/Affinity_propagation
+#### Arguments Types
+ - (v:Type) -- number of observations
+#### Key Variables
+ - (s: v=>v=>Float) -- affinity matrix
+ - (r: v=>v=>Float) -- responsibility matrix
+ - (a: v=>v=>Float) -- availability matrix
+
+
+def affprop
+  (d:Ord v) ?=>
+  (s: v=>v=>Float) -- affinity matrix
+  : v=>v =  -- really this should be v=e for some e<=v
+  -- TODO: old_r is never used, restructure this code?
+  updateStep = \(old_r, a).
+    r = for i. for k.
+      s.i.k - (maximum $ for k'. 
+        select (k == k') ( -1.0/0.0 ) (a.i.k' + s.i.k'))
+    new_a = for i. for k.
+      max_r_to_others = sum for i'.
+        ifnot (i' == k || i' == i) $ max 0.0 r.i'.k
+      r_to_self = r.k.k
+      min 0.0 $ max_r_to_others + (ifnot (i == k) r_to_self)
+    (r, new_a)
+  r_init = for i:v. for j:v. 0.0
+  a_init = for i:v. for j:v. 0.0
+  -- TODO change this from a fixed number of steps to running to convergence
+  (r_final, a_final) = fold (r_init, a_init) (\iter:(Fin 10). updateStep)
+  isExemplar = \i. (r_final.i.i + a_final.i.i) > 0.0
+  assignments = for obs.
+    -- TODO: add argmax and then use that 
+    argmin $ neg $ for exemplar. ifso (isExemplar exemplar) s.obs.exemplar
+  assignments
+
+
+--TODO set diagonal to median of similarity. This can be done with lenses probably
+mix_of_isoguassians_affinity = neg for obs1. for obs2.
+  select (obs1 == obs2) (0.2884) $ 
+    sse mix_of_isoguassians.obs1 mix_of_isoguassians.obs2
+
+:plotmat mix_of_isoguassians_affinity
+
+
+
+
+:p affprop (mix_of_isoguassians_affinity)
+
