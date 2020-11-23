@@ -35,7 +35,7 @@ jobs:
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
-        echo "::add-path::${{ matrix.path_extension }}"
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
 
     - name: Cache
       uses: actions/cache@v2
@@ -46,8 +46,10 @@ jobs:
         key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-
 
+      # See https://github.com/actions/cache/issues/445
     - name: Remove cached Setup executables
       run: rm -rf ~/.stack/setup-exe-cache
+      if: runner.os == 'macOS'
 
     - name: Build
       run: make
