@@ -29,7 +29,7 @@ development. Contributions welcome!
   * Install [stack](https://www.haskellstack.org)
   * Install LLVM 9
     * `apt-get install llvm-9-dev` on Ubuntu/Debian,
-    * `brew install llvm@9` on macOS.
+    * `brew install llvm@9` on macOS, and ensure it is on your `PATH` e.g. via `export PATH="/usr/local/opt/llvm@9/bin:$PATH"` before building.
 
 ## Building
 
@@ -43,7 +43,8 @@ make sure to have the `PREFIX` environment variable set when you run `make insta
 For example `PREFIX=$HOME make install` would install `dex` in `$HOME/bin`.
 
 While working in development mode, it is convenient to set up a `dex` alias
-(e.g. in .bashrc): `alias dex="stack exec dex --"`.
+(e.g. in .bashrc): `alias dex="stack exec dex --"`,
+or if on macOS: `alias dex="stack --stack-yaml=stack-macos.yaml exec -- dex"`.
 
 ## Running
 
