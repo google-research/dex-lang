@@ -80,7 +80,8 @@ example-names = uexpr-tests adt-tests type-tests eval-tests \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \
-                isomorphisms typeclass-tests
+                isomorphisms typeclass-tests complex-tests trig-tests \
+                ode-integrator linear_algebra
 
 quine-test-targets = $(example-names:%=run-%)
 

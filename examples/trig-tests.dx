@@ -1,0 +1,56 @@
+:p isnan nan
+> True
+:p isnan 1.0
+> False
+:p isinf infinity
+> True
+:p isinf (-infinity)
+> True
+:p isinf 1.0
+> False
+
+:p either_is_nan infinity nan
+> True
+:p either_is_nan nan nan
+> True
+
+:p atan2 (sin 0.44)     (cos 0.44) ~~ 0.44
+> True
+:p atan2 (sin (-0.44))  (cos (-0.44)) ~~ (-0.44)
+> True
+:p atan2 (-sin (-0.44)) (cos (-0.44)) ~~ (0.44)
+> True
+
+:p (atan2   infinity  1.0) ~~ ( pi / 2.0)
+> True
+:p (atan2 (-infinity) 1.0) ~~ (-pi / 2.0)
+> True
+:p (atan2  1.0   infinity) ~~ 0.0
+> True
+:p (atan2 (-1.0) infinity) ~~ 0.0
+> True
+
+:p (atan2   infinity    infinity)  ~~ ( pi / 4.0)
+> True
+:p (atan2   infinity  (-infinity)) ~~ ( 3.0 * pi / 4.0)
+> True
+:p (atan2 (-infinity)   infinity)  ~~ (-pi / 4.0)
+> True
+:p (atan2 (-infinity) (-infinity)) ~~ (-3.0 * pi / 4.0)
+> True
+
+:p isnan $ atan2 nan infinity
+> True
+:p isnan $ atan2 infinity nan
+> True
+:p isnan $ atan2 nan nan
+> True
+
+:p sinh 1.2 ~~ 1.5094614
+> True
+
+:p tanh 1.2 ~~ ((sinh 1.2) / (cosh 1.2))
+> True
+
+:p tanh (FToF64 1.2) ~~ divide (sinh (FToF64 1.2)) (cosh (FToF64 1.2))
+> True

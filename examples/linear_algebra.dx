@@ -1,27 +1,7 @@
 '## LU Decomposition and Matrix Inversion
 
-'### Generic helper functions
-
---  Todo: Move these to prelude?
-def sign (x:Float) : Float =
-  case x == 0.0 of
-    True -> 0.0
-    False -> case x < 0.0 of
-      True -> 1.0
-      False -> -1.0
-
-def identity_matrix (_:Eq n) ?=> : n=>n=>Float =
-  for i j. select (i == j) 1.0 0.0
-
--- Todo: generalize the HasAllClose typeclass and delete these
-def allCloseVec (x:n=>Float) (y:n=>Float) : Bool =
-  all for i.
-      x.i ~~ y.i
-
-def allCloseMat (x:n=>n=>Float) (y:n=>n=>Float) : Bool =
-  all for i.
-    all for j.
-      x.i.j ~~ y.i.j
+def identity_matrix (_:Eq n) ?=> (_:Add a) ?=> (_:Mul a) ?=> : n=>n=>a =
+  for i j. select (i == j) one zero
 
 
 '### Triangular matrices
@@ -176,12 +156,12 @@ def sign_and_log_determinant (_:Eq n) ?=> (a:n=>n=>Float) : (Float & Float) =
 
 -- Check that the inverse of the inverse is identity.
 mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
-:p allCloseMat mat (invert (invert mat))
+:p mat ~~ (invert (invert mat))
 > True
 
 -- Check that solving gives the inverse.
 v = [1., 2., 3., 4.]
-:p allCloseVec v (mat **. (solve mat v))
+:p v ~~ (mat **. (solve mat v))
 > True
 
 -- Check that det and exp(logdet) are the same.

@@ -6,10 +6,9 @@ matrix type for the Butcher tableau, and so avoids zero-padding everywhere.
 
 Time = Float
 
--- Should these go in the prelude?
+-- Should this go in the prelude?
 def length (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 def (./) (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
-def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 
 def fit_4th_order_polynomial (_:VSpace v) ?=>
     (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =

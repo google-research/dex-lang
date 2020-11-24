@@ -180,7 +180,6 @@ infty = 1./0.
 :p infty
 > Infinity
 
-nan = 0./0.
 :p nan
 > NaN
 
