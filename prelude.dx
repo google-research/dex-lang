@@ -107,15 +107,23 @@ instance unitMul : Mul Unit where
   mul = \x y. ()
   one = ()
 
-data Integral a:Type =
-  MkIntegral (a->a->a) (a->a->a) -- idiv, rem
 
-def idiv (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral div _ -> div
-def rem  (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral _  rm -> rm
+interface Integral a:Type where
+  idiv: a->a->a
+  rem: a->a->a
 
-@instance int64Integral : Integral Int64 = MkIntegral (\x:Int64 y:Int64. %idiv x y) (\x y. %irem x y)
-@instance int32Integral : Integral Int32 = MkIntegral (\x:Int32 y:Int32. %idiv x y) (\x y. %irem x y)
-@instance int8Integral  : Integral Int8  = MkIntegral (\x:Int8  y:Int8.  %idiv x y) (\x y. %irem x y)
+instance int64Integral : Integral Int64 where
+  idiv = \x:Int64 y:Int64. %idiv x y
+  rem  = \x:Int64 y:Int64. %irem x y
+
+instance int32Integral : Integral Int32 where
+  idiv = \x:Int32 y:Int32. %idiv x y
+  rem  = \x:Int32 y:Int32. %irem x y
+
+instance int8Integral  : Integral Int8  where
+  idiv = \x:Int8  y:Int8.  %idiv x y
+  rem  = \x:Int8  y:Int8.  %irem x y
+
 
 interface Fractional a:Type where
   divide : a -> a -> a
@@ -268,6 +276,7 @@ def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 @instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   I8ToB $ %ieq x y
 @instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   I8ToB $ %ieq x y
 @instance int8Eq    : Eq Int8    = MkEq \x:Int8    y:Int8.    I8ToB $ %ieq x y
+@instance boolEq    : Eq Bool    = MkEq \x y. BToI8 x == BToI8 y
 @instance unitEq    : Eq Unit    = MkEq \x y. True
 
 @instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. I8ToB $ %fgt x y)

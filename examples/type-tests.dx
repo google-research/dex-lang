@@ -320,6 +320,12 @@ bad_range : Int = (1@Fin 3)..(2@_)
 5.0 .* ()
 > ()
 
+-- Tests for Bool
+:p True == True
+> True
+:p False == True
+> False
+
 :p (\x:Int. x) == (\x:Int. x)
 > Type error:Couldn't synthesize a class dictionary for: (Eq (Int32 -> Int32))
 >
