@@ -48,3 +48,9 @@
 
 :p sinh 1.2 ~~ 1.5094614
 > True
+
+:p tanh 1.2 ~~ ((sinh 1.2) / (cosh 1.2))
+> True
+
+:p tanh (FToF64 1.2) ~~ divide (sinh (FToF64 1.2)) (cosh (FToF64 1.2))
+> True
