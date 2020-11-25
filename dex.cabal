@@ -57,7 +57,7 @@ library
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
-    extra-libraries:   cuda
+    extra-libraries:   cuda png
     cxx-options:       -DDEX_CUDA
     cpp-options:       -DDEX_CUDA
   if flag(optimized)

@@ -699,6 +699,10 @@ typeCheckOp op = case op of
   PtrLoad ptr -> do
     PtrTy (_, _, t)  <- typeCheck ptr
     return $ BaseTy t
+  GetPtr tab -> do
+    TabTy _ (BaseTy a) <- typeCheck tab
+    return $ BaseTy $ PtrType (AllocatedPtr, Heap CPU, a)
+  MakePtrType ty -> ty|:TyKind >> return TyKind
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i

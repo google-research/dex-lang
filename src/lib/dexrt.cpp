@@ -11,6 +11,10 @@
 #include <thread>
 #include <vector>
 
+#include <png.h>
+#include <cstring>
+#include <fstream>
+
 #ifdef DEX_CUDA
 #include <cuda.h>
 #endif
@@ -183,6 +187,42 @@ void showInt(char **resultPtr, int32_t x) {
   auto result2Ptr = reinterpret_cast<char**>(  resultPtr[1]);
   *result1Ptr = n;
   *result2Ptr = p;
+}
+
+void doubleVec(char **resultPtr, int32_t n, float* xs) {
+  auto p1 = reinterpret_cast<float*>(malloc_dex(4 * n));
+  auto p2 = reinterpret_cast<float*>(malloc_dex(4 * n));
+  for (int i=0;i<n;++i) {
+    p1[i] = xs[i] * 2;
+    p2[i] = xs[i] * 3;
+  }
+  auto result1Ptr = reinterpret_cast<float**>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<float**>(resultPtr[1]);
+  *result1Ptr = p1;
+  *result2Ptr = p2;
+}
+
+void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) {
+    png_image img;
+    memset(&img, 0, sizeof(img));
+    img.version = PNG_IMAGE_VERSION;
+    img.opaque = NULL;
+    img.width = width;
+    img.height = height;
+    img.format = PNG_FORMAT_RGB;
+    img.flags = 0;
+    img.colormap_entries = 0;
+
+    const int num_pixels = width * height;
+    png_alloc_size_t num_bytes = 0;
+    png_image_write_to_memory(&img, NULL, &num_bytes, 0, (void*)pixels, 0, NULL);
+    void* out_buffer = malloc(num_bytes);
+    png_image_write_to_memory(&img, out_buffer, &num_bytes, 0, (void*)pixels, 0, NULL);
+
+    auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+    auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
+    *result1Ptr = num_bytes;
+    *result2Ptr = out_buffer;
 }
 
 #ifdef DEX_CUDA

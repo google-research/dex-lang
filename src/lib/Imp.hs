@@ -93,7 +93,7 @@ toImpModule backend cc entryName argBinders maybeDest block =
 translateTopLevel :: WithDest Block -> ImpM (AtomRecon, [IExpr])
 translateTopLevel (maybeDest, block) = do
   outDest <- case maybeDest of
-        Nothing   -> allocKind Unmanaged $ getType block
+        Nothing   -> makeAllocDest Unmanaged $ getType block
         Just dest -> return dest
   void $ translateBlock mempty (Just outDest, block)
   resultAtom <- destToAtom outDest
@@ -263,6 +263,10 @@ toImpOp (maybeDest, op) = case op of
     buf <- impOffset (fromScalarAtom arr) (fromScalarAtom off)
     returnVal $ toScalarAtom buf
   PtrLoad arr -> returnVal . toScalarAtom =<< loadAnywhere (fromScalarAtom arr)
+  GetPtr tab -> do
+    (dest, ptr) <- makeAllocDestForPtr (getType tab)
+    copyAtom dest tab
+    returnVal ptr
   SliceOffset ~(Con (IndexSliceVal n _ tileOffset)) idx -> do
     i' <- indexToInt idx
     i <- iaddI (fromScalarAtom tileOffset) i'
@@ -598,6 +602,17 @@ makeAllocDest allocTy ty = do
     return (ptr @> toScalarAtom ptr')
   impSubst env dest
 
+-- TODO: deallocation!
+makeAllocDestForPtr :: Type -> ImpM (Dest, Atom)
+makeAllocDestForPtr ty = do
+  (ptrSizes, dest) <- fromEmbed $ makeDest (LLVM, CPU, Unmanaged) ty
+  case ptrSizes of
+    [(Bind (ptr:>PtrTy ptrTy), size)] -> do
+      ptr' <- emitAlloc ptrTy $ fromScalarAtom size
+      dest' <- impSubst (ptr @> toScalarAtom ptr') dest
+      return (dest', toScalarAtom ptr')
+    _ -> error $ "expected a single pointer"
+
 splitDest :: WithDest Block -> ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
 splitDest (maybeDest, (Block decls ans)) = do
   case (maybeDest, ans) of
@@ -822,7 +837,7 @@ store :: HasCallStack => IExpr -> IExpr -> ImpM ()
 store dest src = emitStatement $ Store dest src
 
 alloc :: Type -> ImpM Dest
-alloc ty = allocKind Managed ty
+alloc ty = makeAllocDest Managed ty
 
 -- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
 emitSwitch :: IExpr -> [ImpM ()] -> ImpM ()
@@ -887,9 +902,6 @@ emitStatement instr = do
     _ -> error "unexpected numer of return values"
 
 data AllocType = Managed | Unmanaged  deriving (Show, Eq)
-
-allocKind :: AllocType -> Type -> ImpM Dest
-allocKind allocTy ty = makeAllocDest allocTy ty
 
 extendAlloc :: IExpr -> ImpM ()
 extendAlloc v = extend $ mempty { envPtrsToFree = [v] }

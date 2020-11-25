@@ -318,6 +318,8 @@ data PrimOp e =
       | Inject e
       | PtrOffset e e
       | PtrLoad e
+      | GetPtr e
+      | MakePtrType e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
@@ -1488,13 +1490,16 @@ builtinNames = M.fromList
   , ("sliceCurry", OpExpr $ SliceCurry () ())
   , ("ptrOffset", OpExpr $ PtrOffset () ())
   , ("ptrLoad"  , OpExpr $ PtrLoad ())
-  , ("CharPtr" , TCExpr $ BaseType $ PtrType
-                     (AllocatedPtr, Heap CPU,  Scalar Int8Type))
+  , ("getPtr"   , OpExpr $ GetPtr () )
+  , ("makePtrType", OpExpr $ MakePtrType ())
+  , ("CharPtr"  , ptrTy Int8Type)
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
     binOp  op = OpExpr $ ScalarBinOp op () ()
     unOp   op = OpExpr $ ScalarUnOp  op ()
+    ptrTy  ty = TCExpr $ BaseType $ PtrType $
+                  (AllocatedPtr, Heap CPU,  Scalar ty)
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)

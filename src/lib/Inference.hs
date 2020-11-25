@@ -989,4 +989,9 @@ reduceExpr scope expr = case expr of
         reduceBlock scope $ subst (b@>x', scope) block
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
       _ -> Nothing
+  Op (MakePtrType ty) -> do
+    let ty' = reduceAtom scope ty
+    case ty' of
+      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
+      _ -> Nothing
   _ -> Nothing
