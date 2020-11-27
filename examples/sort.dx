@@ -1,0 +1,101 @@
+'## Stack operations.
+
+def push (x:a) (xs:List a) --o : List a =
+  xs <> (AsList 1 [x])
+
+def pop (list: List a) --o : (Maybe a & List a) =
+  (AsList nx xs) = list
+  case nx == 0 of
+    True -> (Nothing, list)
+    False ->
+      newLength = nx - 1
+      (Just xs.((nx-1)@_), AsList newLength (for i. xs.((ordinal i)@_)))
+
+
+'## Generic helper functions
+
+def swapInRef (xsRef: Ref h (n=>t)) (a:n) (b:n) : {State h} Unit =
+  temp     = get xsRef!a
+  xsRef!a := get xsRef!b
+  xsRef!b := temp
+
+def unMaybe (maybeA: Maybe a) : a =
+  case maybeA of
+    Just x -> x
+    Nothing -> throw
+
+def (-|) (i:n) (delta:Int) : n =
+  i' = ordinal i - delta
+  fromOrdinal _ $ select (i' < 0) 0 i'
+
+def (+|) (i:n) (delta:Int) : n =
+  i' = ordinal i + delta
+  fromOrdinal _ $ select (i' >= size n) (size n - 1) i'
+
+def notEmpty ((AsList n xs):List a) : Bool = n > 0
+def firstIx (n:Type) : n = 0@n
+def lastIx  (n:Type) : n = ((size n) - 1)@n
+
+def sorted (_:Ord a) ?=> (xs:n=>a) : Bool =
+  all for i. (xs.i <= xs.(i +| 1))
+
+-- Right now the Range type doesn't support unpacking,
+-- so this is a temporary workaround.
+data MyRange a:Type =
+  MkRange low:a high:a
+
+def rangeSize (MkRange low high:MyRange a) : Int =
+  1 + ordinal high - ordinal low
+
+
+'# Sort functions
+
+def partition (_:Ord a) ?=>
+  (xsRef: Ref h (n=>a))
+  (MkRange low high:MyRange n) : {State h} n = 
+  -- Chooses the last element as the pivot, then
+  -- moves all elements smaller than the pivot to its left,
+  -- and all elements greater to the right.  Operates in place
+  -- and returns the final location of the pivot.
+    pivotval = get xsRef!high
+    
+    final_pivot_ix = snd $ withState low \pivotIxRef.
+      low'  = ordinal low  -- can't inline these two.
+      high' = ordinal high  
+      for j':(Range low' high').
+        j = (low' + ordinal j')@n 
+        case get xsRef!j < pivotval of
+          True ->
+            swapInRef xsRef (get pivotIxRef) j
+            pivotIxRef := (get pivotIxRef) +| 1
+          False -> ()
+      ()
+    swapInRef xsRef final_pivot_ix high 
+    final_pivot_ix
+
+def sort (_:Ord a) ?=> (xs:n=>a) --o : n=>a =
+  -- In-place iterative quicksort.
+  init_stack = AsList _ [MkRange (first n) (last n)]
+  snd $ withState xs \xsRef.
+    withState init_stack \stackRef.
+      while (\(). notEmpty (get stackRef)) \().
+        (maybe_cur_range, remaining_stack) = pop (get stackRef)
+        stackRef := remaining_stack
+        cur_range = unMaybe maybe_cur_range
+        case rangeSize cur_range > 1 of
+          False -> ()
+          True ->
+            pivot_ix = partition xsRef cur_range
+            (MkRange low high) = cur_range
+
+            left_range  = MkRange low (pivot_ix -| 1)
+            stackRef := push left_range (get stackRef)
+
+            right_range = MkRange (pivot_ix +| 1) high
+            stackRef := push right_range (get stackRef)
+          
+        
+---------- Tests -----------
+
+:p sorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
+> True
