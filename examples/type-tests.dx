@@ -102,6 +102,7 @@ xr = map IToF arr
 > Type error:
 > Expected: Int32
 >   Actual: ((Fin 1) => Int32)
+> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
 >
 > :t [1, [2]]
 >        ^^^
@@ -113,6 +114,7 @@ xr = map IToF arr
 > Type error:
 > Expected: ((Fin 2) => Int32)
 >   Actual: ((Fin 1) => Int32)
+> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -318,6 +320,12 @@ bad_range : Int = (1@Fin 3)..(2@_)
 5.0 .* ()
 > ()
 
+-- Tests for Bool
+:p True == True
+> True
+:p False == True
+> False
+
 :p (\x:Int. x) == (\x:Int. x)
 > Type error:Couldn't synthesize a class dictionary for: (Eq (Int32 -> Int32))
 >
@@ -360,25 +368,6 @@ def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
 -- input type with a non-dependent function type, leading to a later unification errors.
 id (for i:(Fin 2). for j:(..i). 1.0)
 > [[1.0]@(..(0@Fin 2)), [1.0, 1.0]@(..(1@Fin 2))]
-
-interface InterfaceTest1 a:Type where
-  InterfaceTest1 : a
-> Error: variable already defined: InterfaceTest1
-
-interface InterfaceTest2 typeName:Type where
-  typeName : typeName -> typeName
-
-interface InterfaceTest3 _:Type where
-  att : Int32
-
-instance instanceTest3 : InterfaceTest3 where
-  att = 1
-> Type error:
-> Expected: Type
->   Actual: (Type -> Type)
->
-> instance instanceTest3 : InterfaceTest3 where
->                          ^^^^^^^^^^^^^^^
 
 def weakerInferenceReduction (l : i:n=>(..i)=>Float) (j:n): Unit =
   for i:(..j).

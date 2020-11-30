@@ -13,6 +13,7 @@ module JIT (impToLLVM) where
 import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import LLVM.Prelude (ShortByteString, Word32)
 import qualified LLVM.AST as L
+import qualified LLVM.AST.Linkage as L
 import qualified LLVM.AST.AddrSpace as L
 import qualified LLVM.AST.DataLayout as L
 import qualified LLVM.AST.Global as L
@@ -101,33 +102,92 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     return ([L.GlobalDefinition mainFun], extraSpecs)
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
-    (CUDAKernel str) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
-    let strFun = constStringFunction (asLLVMName name) str
-    return ([L.GlobalDefinition strFun], S.singleton mallocFun)
+    (CUDAKernel kernelText) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
+    let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) (B.unpack kernelText) ++ [0]
+    let textArr = C.Array i8 chars
+    let textArrTy = L.typeOf textArr
+    let textGlobalName = fromString $ pprint name ++ "#text"
+    let textArrDef = L.globalVariableDefaults
+                          { L.name = textGlobalName
+                          , L.type' = textArrTy
+                          , L.linkage = L.Private
+                          , L.isConstant = True
+                          , L.initializer = Just textArr
+                          , L.unnamedAddr = Just L.GlobalAddr
+                          }
+    let kernelModuleCacheName = fromString $ pprint name ++ "#cuModule"
+    let kernelModuleCacheDef = L.globalVariableDefaults
+                                    { L.name = kernelModuleCacheName
+                                    , L.type' = hostVoidp
+                                    , L.linkage = L.Private
+                                    , L.initializer = Just $ C.Null hostVoidp }
+    let kernelModuleCache = L.ConstantOperand $ C.GlobalReference (hostPtrTy hostVoidp) kernelModuleCacheName
+    let kernelFuncCacheName = fromString $ pprint name ++ "#cuFunction"
+    let kernelFuncCacheDef   = L.globalVariableDefaults
+                                    { L.name = kernelFuncCacheName
+                                    , L.type' = hostVoidp
+                                    , L.linkage = L.Private
+                                    , L.initializer = Just $ C.Null hostVoidp }
+    let kernelFuncCache = L.ConstantOperand $ C.GlobalReference (hostPtrTy hostVoidp) kernelFuncCacheName
+    let textPtr = C.GetElementPtr True
+                                  (C.GlobalReference (hostPtrTy textArrTy) textGlobalName)
+                                  [C.Int 32 0, C.Int 32 0]
+    let loaderDef = runCompile CPU $ do
+          emitVoidExternCall kernelLoaderSpec
+            [ L.ConstantOperand $ textPtr, kernelModuleCache, kernelFuncCache]
+          kernelFunc <- load kernelFuncCache
+          makeFunction (asLLVMName name) [] (Just kernelFunc)
+    let dtorName = fromString $ pprint name ++ "#dtor"
+    let dtorType = L.FunctionType L.VoidType [] False
+    let dtorDef = runCompile CPU $ do
+          emitVoidExternCall kernelUnloaderSpec
+            [ kernelModuleCache, kernelFuncCache ]
+          makeFunction dtorName [] Nothing
+    let dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]
+    let dtorRegDef = L.globalVariableDefaults
+                         { L.name = "llvm.global_dtors"
+                         , L.type' = L.ArrayType 1 dtorRegEntryTy
+                         , L.linkage = L.Appending
+                         , L.initializer =
+                              Just $ C.Array dtorRegEntryTy [
+                                  C.Struct Nothing False
+                                           [ C.Int 32 1
+                                           , C.GlobalReference (hostPtrTy dtorType) dtorName
+                                           , C.Null hostVoidp ]
+                                ]
+                         }
+    let globals = [textArrDef, kernelModuleCacheDef, kernelFuncCacheDef, loaderDef, dtorDef, dtorRegDef]
+    return ( L.GlobalDefinition <$> globals
+           , S.fromList [kernelLoaderSpec, kernelUnloaderSpec] )
+    where
+      kernelLoaderSpec   = ExternFunSpec "dex_loadKernelCUDA" L.VoidType [] []
+                                         [hostPtrTy i8, hostPtrTy hostVoidp, hostPtrTy hostVoidp]
+      kernelUnloaderSpec = ExternFunSpec "dex_unloadKernelCUDA" L.VoidType [] []
+                                         [hostPtrTy hostVoidp, hostPtrTy hostVoidp]
   MCThreadLaunch -> return $ runCompile CPU $ do
-    (startIdxParam, startIdx) <- freshParamOpPair [] i64
-    (endIdxParam, endIdx)     <- freshParamOpPair [] i64
-    -- TODO: Preserve pointer attributes??
+    -- Set up arguments
     (argArrayParam, argArray) <- freshParamOpPair [] $ hostPtrTy hostVoidp
     args <- unpackArgs argArray argTypes
     let argEnv = foldMap (uncurry (@>)) $ zip argBinders args
-    niter <- (`asIntWidth` idxType) =<< endIdx `sub` startIdx
-    compileLoop Fwd idxBinder niter $ do
-      idxEnv <- case idxBinder of
-        Ignore _ -> return mempty
-        Bind v -> do
-          innerIdx <- lookupImpVar v
-          idx64 <- add startIdx =<< (innerIdx `asIntWidth` i64)
-          idx <- idx64 `asIntWidth` idxType
-          return $ idxBinder @> idx
-      void $ extendOperands (idxEnv <> argEnv) $ compileBlock body
+    -- Set up thread info
+    wid                       <- compileExpr $ IIdxRepVal 0
+    (threadIdParam, tidArg  ) <- freshParamOpPair [] i32
+    (nThreadParam , nthrArg ) <- freshParamOpPair [] i32
+    tid  <- tidArg  `asIntWidth` idxRepTy
+    nthr <- nthrArg `asIntWidth` idxRepTy
+    let threadInfoEnv =  tidBinder  @> tid
+                      <> widBinder  @> wid
+                      <> wszBinder  @> nthr
+                      <> nthrBinder @> nthr
+    -- Emit the body
+    void $ extendOperands (argEnv <> threadInfoEnv) $ compileBlock body
     kernel <- makeFunction (asLLVMName name)
-                [startIdxParam, endIdxParam, argArrayParam] Nothing
+                [threadIdParam, nThreadParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition kernel], extraSpecs)
     where
-      (idxBinder:argBinders) = bs
-      idxType = scalarTy $ binderAnn idxBinder
+      idxRepTy = scalarTy $ IIdxRepTy
+      (tidBinder:widBinder:wszBinder:nthrBinder:argBinders) = bs
       argTypes = map (scalarTy . binderAnn) argBinders
   where
     name :> IFunType cc argTys retTys = f
@@ -142,6 +202,32 @@ compileInstr instr = case instr of
   ICond p cons alt -> [] <$ do
     p' <- compileExpr p >>= (`asIntWidth` i1)
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
+  IQueryParallelism f s -> do
+    let IFunType cc _ _ = varAnn f
+    let kernelFuncName = asLLVMName $ varName f
+    n <- (`asIntWidth` i64) =<< compileExpr s
+    case cc of
+      MCThreadLaunch -> do
+        numThreads <- emitExternCall queryParallelismMCFun [n]
+        return [i32Lit 1, numThreads]
+        where queryParallelismMCFun = ExternFunSpec "dex_queryParallelismMC" i32 [] [] [i64]
+      CUDAKernelLaunch -> do
+        let ptxPtrFun = callableOperand (funTy (hostPtrTy i8) []) kernelFuncName
+        kernelPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
+        numWorkgroupsPtr <- alloca 1 i32
+        workgroupSizePtr <- alloca 1 i32
+        emitVoidExternCall queryParallelismCUDAFun [kernelPtr, n, numWorkgroupsPtr, workgroupSizePtr]
+        traverse load [numWorkgroupsPtr, workgroupSizePtr]
+        where
+          queryParallelismCUDAFun = ExternFunSpec "dex_queryParallelismCUDA" L.VoidType [] []
+                                                  [hostPtrTy i8, i64, hostPtrTy i32, hostPtrTy i32]
+      _                -> error $ "Unsupported calling convention: " ++ show cc
+  ISyncWorkgroup -> do
+    dev <- asks curDevice
+    case dev of
+      CPU -> error "Not yet implemented"
+      GPU -> [] <$ emitVoidExternCall barrierSpec []
+        where barrierSpec = ExternFunSpec "llvm.nvvm.barrier0" L.VoidType [] [] []
   ILaunch f size args -> [] <$ do
     let IFunType cc _ _ = varAnn f
     size' <- (`asIntWidth` i64) =<< compileExpr size
@@ -155,11 +241,18 @@ compileInstr instr = case instr of
         emitVoidExternCall runMCKernel [funPtr, size',kernelParams]
       CUDAKernelLaunch -> do
         let ptxPtrFun = callableOperand (funTy (hostPtrTy i8) []) kernelFuncName
-        ptxPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
-        kernelParams <- packArgs $ size' : args'
-        launchCUDAKernel ptxPtr size' kernelParams
+        kernelPtr <- emitInstr (hostPtrTy i8) $ callInstr ptxPtrFun []
+        kernelParams <- packArgs args'
+        launchCUDAKernel kernelPtr size' kernelParams
       _ -> error $ "Not a valid calling convention for a launch: " ++ pprint cc
-  IThrowError   -> [] <$  throwRuntimeError
+  IThrowError   -> do
+    dev <- asks curDevice
+    case dev of
+      CPU -> [] <$ throwRuntimeError
+      -- TODO: Implement proper error handling on GPUs.
+      --       For now we generate an invalid memory access, hoping that the
+      --       runtime will catch it.
+      GPU -> [] <$ load (L.ConstantOperand $ C.Null $ devicePtrTy i8)
   Alloc a t s -> (:[]) <$> case a of
     Stack -> alloca (getIntLit l) elemTy  where ILit l = s
     Heap dev -> do
@@ -221,6 +314,7 @@ compileInstr instr = case instr of
         resultPtr <- makeMultiResultAlloc resultTys'
         emitVoidExternCall (makeFunSpec f) (resultPtr : args')
         loadMultiResultAlloc resultTys' resultPtr
+      _ -> error $ "Unsupported calling convention: " ++ show cc
 
 makeFunSpec :: IFunVar -> ExternFunSpec
 makeFunSpec (Name _ name _ :> IFunType FFIFun argTys [resultTy]) =
@@ -369,31 +463,35 @@ cuMemFree ptr = do
   where spec = ExternFunSpec "dex_cuMemFree" L.VoidType [] [] [deviceVoidp]
 
 -- === GPU Kernel compilation ===
+-- Useful docs:
+-- * NVVM IR specification: https://docs.nvidia.com/cuda/nvvm-ir-spec/index.html
+-- * PTX docs: https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/index.html
 
 impKernelToLLVMGPU :: ImpFunction -> LLVMKernel
-impKernelToLLVMGPU (ImpFunction _ ~(lvar:args) body) = runCompile GPU $ do
+impKernelToLLVMGPU ~(ImpFunction _ ~(tidVar:widVar:wszVar:nthrVar:args) body) = runCompile GPU $ do
   (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair ptrParamAttrs) argTypes
-  (sizeParam, sizeOperand) <- freshParamOpPair [] lidxType
-  tidx <- threadIdxX
-  bidx <- blockIdxX
-  bsz  <- blockDimX
-  lidx <- mul bidx bsz >>= (add tidx) >>= (`asIntWidth` lidxType)
-  outOfBounds <- emitInstr i1 $ L.ICmp IP.UGE lidx sizeOperand []
-  compileIf outOfBounds (return ()) $ do
-    let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
-    -- TODO: Use a restricted form of compileBlock that e.g. never emits FFI calls!
-    void $ extendOperands (paramEnv <> lvar @> lidx) $ compileBlock body
-  kernel <- makeFunction "kernel" (sizeParam : argParams) Nothing
+  tidx <- threadIdxX >>= (`asIntWidth` idxRepTy)
+  bidx <- blockIdxX  >>= (`asIntWidth` idxRepTy)
+  bsz  <- blockDimX  >>= (`asIntWidth` idxRepTy)
+  gsz  <- gridDimX   >>= (`asIntWidth` idxRepTy)
+  nthr <- mul bsz gsz
+  let threadInfoEnv =  tidVar  @> tidx
+                    <> widVar  @> bidx
+                    <> wszVar  @> bsz
+                    <> nthrVar @> nthr
+  let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
+  void $ extendOperands (paramEnv <> threadInfoEnv) $ compileBlock body
+  kernel <- makeFunction "kernel" argParams Nothing
   LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple
                    [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
-    lidxType = scalarTy $ binderAnn lvar
+    idxRepTy = scalarTy $ IIdxRepTy
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     argTypes = fmap (scalarTy . binderAnn) args
     kernelMetaId = L.MetadataNodeID 0
     kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
       [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference
-          (funTy L.VoidType (lidxType : argTypes)) "kernel"
+          (funTy L.VoidType argTypes) "kernel"
       , Just $ L.MDString "kernel"
       , Just $ L.MDValue $ L.ConstantOperand $ C.Int 32 1
       ]
@@ -410,6 +508,10 @@ blockIdxX = emitExternCall spec []
 blockDimX :: Compile Operand
 blockDimX = emitExternCall spec []
   where spec = ptxSpecialReg "llvm.nvvm.read.ptx.sreg.ntid.x"
+
+gridDimX :: Compile Operand
+gridDimX = emitExternCall spec []
+  where spec = ptxSpecialReg "llvm.nvvm.read.ptx.sreg.nctaid.x"
 
 ptxSpecialReg :: L.Name -> ExternFunSpec
 ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
@@ -450,6 +552,20 @@ gpuBinaryIntrinsic op x y = case L.typeOf x of
       _    -> error $ "Unsupported GPU operation: " ++ show op
     floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
+
+_gpuDebugPrint :: Operand -> Compile ()
+_gpuDebugPrint i32Val = do
+  let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) "%d\n" ++ [0]
+  let formatStrArr = L.ConstantOperand $ C.Array i8 chars
+  formatStrPtr <- alloca (length chars) i8
+  castLPtr (L.typeOf formatStrArr) formatStrPtr >>= (`store` formatStrArr)
+  valPtr <- alloca 1 i32
+  store valPtr i32Val
+  valPtri8 <- castLPtr i8 valPtr
+  void $ emitExternCall vprintfSpec [formatStrPtr, valPtri8]
+  where
+    genericPtrTy ty = L.PointerType ty $ L.AddrSpace 0
+    vprintfSpec = ExternFunSpec "vprintf" i32 [] [] [genericPtrTy i8, genericPtrTy i8]
 
 compileBlock :: ImpBlock -> Compile [Operand]
 compileBlock (ImpBlock Empty result) = traverse compileExpr result
@@ -492,7 +608,7 @@ unpackArgs argArrayPtr types =
 makeMultiResultAlloc :: [L.Type] -> Compile Operand
 makeMultiResultAlloc tys = do
   resultsPtr <- alloca (length tys) hostVoidp
-  forM (zip [0..] tys) $ \(i, ty) -> do
+  forM_ (zip [0..] tys) $ \(i, ty) -> do
     ptr <- alloca 1 ty >>= castVoidPtr
     resultsPtrOffset <- gep resultsPtr $ i32Lit i
     store resultsPtrOffset ptr
@@ -504,10 +620,10 @@ loadMultiResultAlloc tys ptr =
     gep ptr (i32Lit i) >>= load >>= castLPtr ty >>= load
 
 runMCKernel :: ExternFunSpec
-runMCKernel = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [hostVoidp, i64, hostPtrTy hostVoidp]
+runMCKernel = ExternFunSpec "dex_launchKernelMC" L.VoidType [] [] [hostVoidp, i64, hostPtrTy hostVoidp]
 
 mcKernelPtrType :: L.Type
-mcKernelPtrType = hostPtrTy $ L.FunctionType L.VoidType [i64, i64, hostPtrTy $ hostVoidp] False
+mcKernelPtrType = hostPtrTy $ L.FunctionType L.VoidType [i32, i32, hostPtrTy $ hostVoidp] False
 
 -- === LLVM embedding ===
 
@@ -724,15 +840,6 @@ cpuBinaryIntrinsic op x y = case L.typeOf x of
       _ -> error $ "Unsupported CPU operation: " ++ show op
     floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
-
-constStringFunction :: L.Name -> B.ByteString -> Function
-constStringFunction name str = runCompile CPU $ do
-  let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) (B.unpack str) ++ [0]
-  ptr <- malloc i8 $ i64Lit $ length chars
-  let strVal = L.ConstantOperand $ C.Array i8 chars
-  tyPtr <- castLPtr (L.typeOf strVal) ptr
-  store tyPtr strVal
-  makeFunction name [] (Just ptr)
 
 -- === Compile monad utilities ===
 

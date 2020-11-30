@@ -248,7 +248,7 @@ linearizeBinOp op x' y' = LinA $ do
 -- abstract over the whole tangent state.
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
-  For d ~(LamVal i body) -> LinA $ do
+  For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
     (ansWithLinTab, vi'') <- buildForAux d i' $ \i''@(Var vi'') ->
        (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
@@ -264,6 +264,7 @@ linearizeHof env hof = case hof of
   While _ _   -> notImplemented
   Linearize _ -> error "Unexpected linearization"
   Transpose _ -> error "Unexpected transposition"
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
   where
     linearizeEff maybeInit lam hasResult hofMaker emitter eff = LinA $ do
       (valHofMaker, maybeLinInit) <- case maybeInit of
@@ -304,7 +305,6 @@ linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
   CharCon _             -> emitWithZero
-  AnyValue _            -> emitWithZero
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
@@ -315,6 +315,7 @@ linearizePrimCon con = case con of
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"
   RecordRef _    -> error "Unexpected ref"
+  ParIndexCon   _ _ -> error "Unexpected ParIndexCon"
   ClassDictHole _ _ -> error "Unexpected ClassDictHole"
   where emitWithZero = LinA $ return $ withZeroTangent $ Con con
 
@@ -414,14 +415,14 @@ tangentFunAsLambda m = do
   let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
     tanLam <- makeLambdas rematList $ \rematArgs ->
-      buildNestedLam hs $ \hVals -> do
+      buildNestedLam PureArrow hs $ \hVals -> do
         let hVarNames = map (\(Var (v:>_)) -> v) hVals
         let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
         -- want to use tangents here, not the original binders
         let regionMap = newEnv (map ((:>()) . snd) effs) hVals
         -- TODO: Only bind tangents for free variables?
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-        buildNestedLam activeVarBinders $ \activeVarArgs ->
+        buildNestedLam PureArrow activeVarBinders $ \activeVarArgs ->
           buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
             runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames (newEnv rematList $ fmap Var rematArgs)
     case rematList of
@@ -644,7 +645,7 @@ linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
-  For d ~(Lam (Abs b (_, body))) ->
+  For ~(RegularFor d) ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b $ \i -> do
       ct' <- tabGet ct i
       localNonlinSubst (b@>i) $ transposeBlock body ct'
@@ -666,10 +667,11 @@ transposeHof hof ct = case hof of
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
     transposeAtom s cts
-  Tile   _ _ _ -> notImplemented
-  While    _ _ -> notImplemented
-  Linearize  _ -> error "Unexpected linearization"
-  Transpose  _ -> error "Unexpected transposition"
+  Tile      _ _ _ -> notImplemented
+  While       _ _ -> notImplemented
+  Linearize     _ -> error "Unexpected linearization"
+  Transpose     _ -> error "Unexpected transposition"
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
@@ -709,11 +711,11 @@ transposeCon con ct = case con of
     getSnd ct >>= transposeAtom y
   SumAsProd _ _ _   -> notImplemented
   CharCon _         -> notTangent
-  AnyValue _        -> notTangent
   ClassDictHole _ _ -> notTangent
-  IntRangeVal _ _ _     -> notImplemented
-  IndexRangeVal _ _ _ _ -> notImplemented
-  IndexSliceVal _ _ _   -> notImplemented
+  IntRangeVal _ _ _     -> notTangent
+  IndexRangeVal _ _ _ _ -> notTangent
+  IndexSliceVal _ _ _   -> notTangent
+  ParIndexCon _ _       -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent
   ConRef _       -> notTangent

@@ -26,6 +26,8 @@ import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, unpack, uncons, unsnoc)
 import System.Console.ANSI
+import System.IO.Unsafe
+import System.Environment
 import Numeric
 
 import Env
@@ -56,8 +58,12 @@ pprint x = asStr $ pretty x
 pprintList :: Pretty a => [a] -> String
 pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
 
+layout :: LayoutOptions
+layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
+  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
+
 asStr :: Doc ann -> String
-asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc
+asStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
 
 p :: Pretty a => a -> Doc ann
 p = pretty
@@ -153,8 +159,8 @@ instance PrettyPrec Expr where
     atPrec AppPrec $ pApp f <+> pArg x
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For dir (Lam lamExpr))) =
-    atPrec LowestPrec $ dirStr dir <+> prettyLamHelper lamExpr (PrettyFor dir)
+  prettyPrec (Hof (For ann (Lam lamExpr))) =
+    atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
 
@@ -208,6 +214,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
         high' = case high of InclusiveLim x -> pApp x
                              ExclusiveLim x -> "<" <> pApp x
                              Unlimited      -> ""
+    ParIndexRange n _ _ -> atPrec ArgPrec $ "{" <> pLowest n <> "}"
     RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
@@ -233,12 +240,13 @@ prettyPrecPrimCon con = case con of
   PairCon x y -> atPrec ArgPrec $ align $ group $
     parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
-  AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"
   IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
   IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
+  ParIndexCon ty i ->
+    atPrec LowestPrec $ pApp i <> "@" <> pApp ty
   IndexSliceVal ty n i ->
     atPrec LowestPrec $ "IndexSlice" <+> pApp ty <+> pApp n <+> pApp i
   BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
@@ -268,7 +276,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For dir lam -> atPrec LowestPrec $ dirStr dir <+> pArg lam
+    For ann lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty a => Pretty (VarP a) where
@@ -300,7 +308,7 @@ prettyPiTypeHelper (Abs binder (arr, body)) = let
     _ -> pLowest body
   in prettyBinder <> (group $ line <> p arr <+> prettyBody)
 
-data PrettyLamType = PrettyLam Arrow | PrettyFor Direction deriving (Eq)
+data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: LamExpr -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
@@ -312,8 +320,8 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyLam arr' ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
-      Block Empty (Hof (For dir (Lam next)))
-        | lamType == PrettyFor dir ->
+      Block Empty (Hof (For ann (Lam next)))
+        | lamType == PrettyFor ann ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
       _ -> (thisOne <> punctuation, body')
@@ -435,7 +443,7 @@ instance Pretty ImpFunction where
   pretty (FFIFunction f) = p f
 
 instance Pretty ImpInstr where
-  pretty (IFor d i n block) = dirStr d <+> p i <+> "<" <+> p n <>
+  pretty (IFor a i n block) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
                                 nest 4 (hardline <> p block)
   pretty (IWhile cond body) = "while" <+>
                                   nest 2 (p cond) <+> "do" <>
@@ -443,20 +451,23 @@ instance Pretty ImpInstr where
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (IQueryParallelism f s) = "queryParallelism" <+> p (varName f) <+> p s
   pretty (ILaunch f size args) =
-    "launch_kernel" <+> p (varName f) <+> p size <+> spaced args
+    "launch" <+> p (varName f) <+> p size <+> spaced args
   pretty (IPrimOp op)     = pLowest op
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
   pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
-  pretty IThrowError = "throwError"
-  pretty (ICall f args) = "call" <+> p f <+> p args
+  pretty ISyncWorkgroup   = "syncWorkgroup"
+  pretty IThrowError      = "throwError"
+  pretty (ICall f args)   = "call" <+> p f <+> p args
 
-dirStr :: Direction -> Doc ann
-dirStr Fwd = "for"
-dirStr Rev = " rof"
+forStr :: ForAnn -> Doc ann
+forStr (RegularFor Fwd) = "for"
+forStr (RegularFor Rev) = "rof"
+forStr ParallelFor      = "pfor"
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
@@ -603,6 +614,7 @@ instance PrettyPrec UPat' where
     UPatRecord pats -> prettyExtLabeledItems pats (line' <> ",") " ="
     UPatVariant labels label value -> prettyVariant labels label value
     UPatVariantLift labels value -> prettyVariantLift labels value
+    UPatTable pats -> atPrec ArgPrec $ p pats
 
 prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where

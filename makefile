@@ -80,7 +80,8 @@ example-names = uexpr-tests adt-tests type-tests eval-tests \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \
-                isomorphisms
+                isomorphisms typeclass-tests complex-tests trig-tests \
+                ode-integrator linear_algebra
 
 quine-test-targets = $(example-names:%=run-%)
 
@@ -103,6 +104,15 @@ prop-tests: cbits/libdex.so
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
+	mv $<.tmp $<
+
+run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
+run-gpu-tests: examples/gpu-tests.dx build
+	misc/check-quine $< $(dex) --backend LLVM-CUDA script --allow-errors
+
+update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
+update-gpu-tests: examples/gpu-tests.dx build
+	$(dex) --backend LLVM-CUDA script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
 export-tests: export-test-scalar export-test-array

@@ -107,23 +107,32 @@ instance unitMul : Mul Unit where
   mul = \x y. ()
   one = ()
 
-data Integral a:Type =
-  MkIntegral (a->a->a) (a->a->a) -- idiv, rem
 
-def idiv (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral div _ -> div
-def rem  (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral _  rm -> rm
+interface Integral a:Type where
+  idiv: a->a->a
+  rem: a->a->a
 
-@instance int64Integral : Integral Int64 = MkIntegral (\x:Int64 y:Int64. %idiv x y) (\x y. %irem x y)
-@instance int32Integral : Integral Int32 = MkIntegral (\x:Int32 y:Int32. %idiv x y) (\x y. %irem x y)
-@instance int8Integral  : Integral Int8  = MkIntegral (\x:Int8  y:Int8.  %idiv x y) (\x y. %irem x y)
+instance int64Integral : Integral Int64 where
+  idiv = \x:Int64 y:Int64. %idiv x y
+  rem  = \x:Int64 y:Int64. %irem x y
 
-data Fractional a:Type =
-  MkFractional (a->a->a) -- fdiv
+instance int32Integral : Integral Int32 where
+  idiv = \x:Int32 y:Int32. %idiv x y
+  rem  = \x:Int32 y:Int32. %irem x y
 
-def fdiv (d:Fractional a) ?=> : a -> a -> a = case d of MkFractional div -> div
+instance int8Integral  : Integral Int8  where
+  idiv = \x:Int8  y:Int8.  %idiv x y
+  rem  = \x:Int8  y:Int8.  %irem x y
 
-@instance float64Fractional : Fractional Float64 = MkFractional (\x:Float64 y:Float64. %fdiv x y)
-@instance float32Fractional : Fractional Float32 = MkFractional (\x:Float32 y:Float32. %fdiv x y)
+
+interface Fractional a:Type where
+  divide : a -> a -> a
+
+instance float64Fractional : Fractional Float64 where
+  divide = \x:Float64 y:Float64. %fdiv x y
+
+instance float32Fractional : Fractional Float32 where
+  divide = \x:Float32 y:Float32. %fdiv x y
 
 'Basic polymorphic functions and types
 
@@ -149,7 +158,7 @@ def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
 
 def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
 (*.)  : VSpace a ?=> a -> Float -> a = flip (.*)
-def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (fdiv 1.0 s) .* v
+def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (divide 1.0 s) .* v
 def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 
 @instance floatVS : VSpace Float = MkVSpace float32Add (*)
@@ -267,6 +276,7 @@ def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 @instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   I8ToB $ %ieq x y
 @instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   I8ToB $ %ieq x y
 @instance int8Eq    : Eq Int8    = MkEq \x:Int8    y:Int8.    I8ToB $ %ieq x y
+@instance boolEq    : Eq Bool    = MkEq \x y. BToI8 x == BToI8 y
 @instance unitEq    : Eq Unit    = MkEq \x y. True
 
 @instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. I8ToB $ %fgt x y)
@@ -302,45 +312,79 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
 
 'Transcencendental functions
 
-data Floating a:Type =
-  MkFloating (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a->a) (a->a)
-
-def exp    (d:Floating a) ?=> : a -> a = case d of MkFloating f _ _ _ _ _ _ _ _ _ _ _ _ _ _ -> f
-def exp2   (d:Floating a) ?=> : a -> a = case d of MkFloating _ f _ _ _ _ _ _ _ _ _ _ _ _ _ -> f
-def log    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ f _ _ _ _ _ _ _ _ _ _ _ _ -> f
-def log2   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ f _ _ _ _ _ _ _ _ _ _ _ -> f
-def log10  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ f _ _ _ _ _ _ _ _ _ _ -> f
-def log1p  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ f _ _ _ _ _ _ _ _ _ -> f
-
-def sin    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ f _ _ _ _ _ _ _ _ -> f
-def cos    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ f _ _ _ _ _ _ _ -> f
-def tan    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ f _ _ _ _ _ _ -> f
-
-def floor  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ f _ _ _ _ _ -> f
-def ceil   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ f _ _ _ _ -> f
-def round  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ f _ _ _ -> f
-
-def sqrt   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ f _ _ -> f
-def pow    (d:Floating a) ?=> : a -> a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ _ f _ -> f
-
-def lgamma (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ _ _ f -> f
+interface Floating a:Type where
+  exp    : a -> a
+  exp2   : a -> a
+  log    : a -> a
+  log2   : a -> a
+  log10  : a -> a
+  log1p  : a -> a
+  sin    : a -> a
+  cos    : a -> a
+  tan    : a -> a
+  sinh   : a -> a
+  cosh   : a -> a
+  tanh   : a -> a
+  floor  : a -> a
+  ceil   : a -> a
+  round  : a -> a
+  sqrt   : a -> a
+  pow    : a -> a -> a
+  lgamma : a -> a
 
 def lbeta (_ : Add a) ?=> (_ : Floating a) ?=> : a -> a -> a = \x y. lgamma x + lgamma y - lgamma (x + y)
 
-@instance
-float64Floating : Floating Float64 =
-  (MkFloating (\x:Float64. %exp x) (\x. %exp2 x) (\x. %log x) (\x. %log2 x) (\x. %log10 x) (\x. %log1p x)
-              (\x. %sin    x) (\x. %cos   x) (\x. %tan   x)
-              (\x. %floor  x) (\x. %ceil  x) (\x. %round x)
-              (\x. %sqrt   x) (\x y. %fpow x y)
-              (\x. %lgamma x))
-@instance
-float32Floating : Floating Float32 =
-  (MkFloating (\x:Float32. %exp x) (\x. %exp2 x) (\x. %log x) (\x. %log2 x) (\x. %log10 x) (\x. %log1p x)
-              (\x. %sin    x) (\x. %cos   x) (\x. %tan   x)
-              (\x. %floor  x) (\x. %ceil  x) (\x. %round x)
-              (\x. %sqrt   x) (\x y. %fpow x y)
-              (\x. %lgamma x))
+-- Todo: better numerics for very large and small values.
+-- Using %exp here to avoid circular definition problems.
+def float32_sinh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) 2.0
+def float32_cosh (x:Float32) : Float32 = %fdiv ((%exp x) + (%exp (%fsub 0.0 x))) 2.0
+def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) ((%exp x) + (%exp (%fsub 0.0 x)))
+
+-- Todo: unify this with float32 functions.
+def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_cosh (x:Float64) : Float64 = %fdiv ((%exp x) + (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_tanh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) ((%exp x) + (%exp (%fsub (FToF64 0.0) x)))
+
+
+instance float64Floating : Floating Float64 where
+  exp    = \x:Float64. %exp x
+  exp2   = \x:Float64. %exp2   x
+  log    = \x:Float64. %log    x
+  log2   = \x:Float64. %log2   x
+  log10  = \x:Float64. %log10  x
+  log1p  = \x:Float64. %log1p  x
+  sin    = \x:Float64. %sin    x
+  cos    = \x:Float64. %cos    x
+  tan    = \x:Float64. %tan    x
+  sinh   = float64_sinh
+  cosh   = float64_cosh
+  tanh   = float64_tanh
+  floor  = \x:Float64. %floor  x
+  ceil   = \x:Float64. %ceil   x
+  round  = \x:Float64. %round  x
+  sqrt   = \x:Float64. %sqrt   x
+  pow    = \x:Float64 y:Float64. %fpow x y
+  lgamma = \x:Float64. %lgamma x
+
+instance float32Floating : Floating Float32 where
+  exp    = \x:Float32. %exp x
+  exp2   = \x:Float32. %exp2   x
+  log    = \x:Float32. %log    x
+  log2   = \x:Float32. %log2   x
+  log10  = \x:Float32. %log10  x
+  log1p  = \x:Float32. %log1p  x
+  sin    = \x:Float32. %sin    x
+  cos    = \x:Float32. %cos    x
+  tan    = \x:Float32. %tan    x
+  sinh   = float32_sinh
+  cosh   = float32_cosh
+  tanh   = float32_tanh
+  floor  = \x:Float32. %floor  x
+  ceil   = \x:Float32. %ceil   x
+  round  = \x:Float32. %round  x
+  sqrt   = \x:Float32. %sqrt   x
+  pow    = \x:Float32 y:Float32. %fpow x y
+  lgamma = \x:Float32. %lgamma x
 
 'Working with index sets
 
@@ -378,7 +422,7 @@ def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
 def fanout (n:Type) (x:a) : n=>a = for i. x
 def sq (d:Mul a) ?=> (x:a) : a = x * x
-def abs (x:Float) : Float = select (x > 0.0) x (-x)
+def abs (_:Add a) ?=> (_:Ord a) ?=> (x:a) : a = select (x > zero) x (zero - x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
@@ -394,11 +438,11 @@ def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
     y
 
 def fold (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
-def reduce (identity:a) (binop:(a->a->a)) (xs:n=>a) : a =
-  -- `binop` should be a commutative and associative, and form a
+def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
+  -- `combine` should be a commutative and associative, and form a
   -- commutative monoid with `identity`
   -- TODO: implement with a parallelizable monoid-parameterized writer
-  fold identity (\i c. binop c xs.i)
+  fold identity (\i c. combine c xs.i)
 
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
@@ -420,8 +464,9 @@ def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
   dx = (high - low) / IToF (size n)
   for i:n. low + IToF (ordinal i) * dx
 
-def transpose (x:n=>m=>Float) : m=>n=>Float = for i j. x.j.i
+def transpose (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
 def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
+def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
 (**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
@@ -518,19 +563,36 @@ def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
-data HasAllClose a:Type =
-  MkHasAllClose (a -> a -> a -> a -> Bool)
+interface HasAllClose a:Type where
+  allclose : a -> a -> a -> a -> Bool
 
-data HasDefaultTolerance a:Type =
-  MkHasDefaultTolerance a a
+interface HasDefaultTolerance a:Type where
+  atol : a
+  rtol : a
 
-def allCloseWithTolerance (d : HasAllClose a) ?=> : a -> a -> a -> a -> Bool = case d of MkHasAllClose f -> f
-def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool =
-  case d of MkHasDefaultTolerance atol rtol -> allCloseWithTolerance atol rtol
+def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool = allclose atol rtol
 
-@instance allCloseF : HasAllClose Float = MkHasAllClose \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
-@instance defaultToleranceF32 : HasDefaultTolerance Float32 = MkHasDefaultTolerance (FToF32 0.00001   ) (FToF32 0.0001 )
-@instance defaultToleranceF64 : HasDefaultTolerance Float64 = MkHasDefaultTolerance (FToF64 0.00000001) (FToF64 0.00001)
+instance allCloseF32 : HasAllClose Float32 where
+  allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+
+instance allCloseF64 : HasAllClose Float64 where
+  allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+
+instance defaultToleranceF32 : HasDefaultTolerance Float32 where
+  atol = FToF32 0.00001
+  rtol = FToF32 0.0001
+
+instance defaultToleranceF64 : HasDefaultTolerance Float64 where
+  atol = FToF64 0.00000001
+  rtol = FToF64 0.00001
+
+instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) where
+  allclose = \atol rtol a b. all for i:n. (a.i ~~ b.i)
+
+instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) where
+  atol = for i. atol
+  rtol = for i. rtol
+
 
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
   eps = 0.01
@@ -770,3 +832,191 @@ instance showInt : Show Int where
 
 -- pipe-like reverse function application
 def (|>) (x:a) (f: a -> b) : b = f x
+
+'## Floating point helper functions
+
+def sign (x:Float) : Float =
+  case x > 0.0 of
+    True -> 1.0
+    False -> case x < 0.0 of
+      True -> -1.0
+      False -> x
+
+def copysign (a:Float) (b:Float) : Float =
+  case b > 0.0 of
+    True -> a
+    False -> case b < 0.0 of
+      True -> (-a)
+      False -> 0.0
+
+-- Todo: use IEEE floating-point builtins.
+infinity = 1.0 / 0.0
+nan      = 0.0 / 0.0
+
+-- Todo: use IEEE floating-point builtins.
+def isinf (x:Float) : Bool = (x == infinity) || (x == -infinity)
+def isnan (x:Float) : Bool = not (x >= x && x <= x)
+
+-- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
+def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
+
+
+'## Trigonometric functions.
+
+def atan_inner (x:Float) : Float =
+  -- From "Computing accurate Horner form approximations to
+  -- special functions in finite precision arithmetic"
+  -- https://arxiv.org/abs/1508.03211
+  -- Only accurate in the range [-1, 1]
+  s = x * x
+  r = 0.0027856871
+  r = r * s - 0.0158660002
+  r = r * s + 0.042472221
+  r = r * s - 0.0749753043
+  r = r * s + 0.106448799
+  r = r * s - 0.142070308
+  r = r * s + 0.199934542
+  r = r * s - 0.333331466
+  r = r * s
+  r * x + x
+
+def min_and_max (_: Ord a) ?=> (x:a) (y:a) : (a & a) =
+  select (x < y) (x, y) (y, x)  -- get both with one comparison.
+
+def atan2 (y:Float) (x:Float) : Float =
+  -- Based off of the Tensorflow implementation at
+  -- github.com/tensorflow/mlir-hlo/blob/master/lib/
+  -- Dialect/mhlo/transforms/legalize_trigonometric_to_approximation.cc#L147
+  -- With a fix to the nan propagation.
+  abs_x = abs x
+  abs_y = abs y
+  (min_abs_x_y, max_abs_x_y) = min_and_max abs_x abs_y
+  a = atan_inner (min_abs_x_y / max_abs_x_y)
+  a = select (abs_x <= abs_y) ((pi / 2.0) -a) a
+  a = select (x < 0.0) pi a
+  t = select (x < 0.0) pi 0.0
+  a = select (y == 0.0) t a
+  t = select (x < 0.0) (3.0 * pi / 4.0) (pi / 4.0)
+  a = select (isinf x && isinf y) t a  -- Handle infinite inputs.
+  a = copysign a y
+  select (either_is_nan x y) nan a  -- Propagate NaNs.
+
+def atan (x:Float) : Float = atan2 x 1.0
+
+
+'## Complex numbers
+
+data Complex = MkComplex Float Float  -- real, imaginary
+
+instance allCloseComplex : HasAllClose Complex where
+  allclose = \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
+
+instance defaultToleranceComplex : HasDefaultTolerance Complex where
+  atol = MkComplex atol atol
+  rtol = MkComplex rtol rtol
+
+@instance ComplexEq : Eq Complex =
+  MkEq \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
+
+instance ComplexAdd : Add Complex where
+  add = \(MkComplex a b) (MkComplex c d). MkComplex (a + c) (b + d)
+  sub = \(MkComplex a b) (MkComplex c d). MkComplex (a - c) (b - d)
+  zero = MkComplex 0.0 0.0
+
+instance ComplexMul : Mul Complex where
+  mul = \(MkComplex a b) (MkComplex c d).
+    MkComplex (a * c - b * d) (a * d + b * c)
+  one = MkComplex 1.0 0.0
+
+@instance complexVS : VSpace Complex =
+  MkVSpace ComplexAdd \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+
+-- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
+def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
+  MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
+
+def complex_exp (MkComplex a b:Complex) : Complex =
+  expx = exp a
+  MkComplex (expx * cos b) (expx * sin b)
+
+def complex_exp2 (MkComplex a b:Complex) : Complex =
+  exp2x = exp2 a
+  b' = b * log 2.0
+  MkComplex (exp2x * cos b') (exp2x * sin b')
+
+def complex_conj (MkComplex a b:Complex) : Complex = MkComplex a (-b)
+def complex_abs  (MkComplex a b:Complex) : Float = a * a + b * b
+def complex_mag  (MkComplex a b:Complex) : Float = sqrt (a * a + b * b)
+def complex_arg  (MkComplex a b:Complex) : Float = atan2 b a
+
+complex_log   = \x:Complex. MkComplex (log (complex_mag x)) (complex_arg x)
+complex_log2  = \x:Complex. (complex_log x) / log 2.0
+complex_log10 = \x:Complex. (complex_log x) / log 10.0
+complex_pow = \base:Complex power:Complex. complex_exp (power * complex_log base)
+
+def complex_sqrt (MkComplex a b:Complex) : Complex =
+  m = complex_mag $ MkComplex a b
+  MkComplex (sqrt ((a + m) / 2.0)) (sign b * sqrt ((m - a) / 2.0))
+
+def complex_sin  (MkComplex a b:Complex) : Complex = MkComplex (sin  a * cosh b) (cos   a * sinh b)
+def complex_sinh (MkComplex a b:Complex) : Complex = MkComplex (sinh a *  cos b) (cosh  a * sin  b)
+def complex_cos  (MkComplex a b:Complex) : Complex = MkComplex (cos  a * cosh b) (-sin  a * sinh b)
+def complex_cosh (MkComplex a b:Complex) : Complex = MkComplex (cosh a *  cos b) (-sinh a * sin  b)
+def complex_tan  (x:Complex) : Complex = complex_division (complex_sin  x) (complex_cos  x)
+def complex_tanh (MkComplex a b:Complex) : Complex =
+  num = MkComplex (sinh a * cos b) (cosh a * sin  b)
+  den = MkComplex (cosh a * cos b) (sinh a * sin  b)
+  complex_division num den
+
+instance ComplexFractional : Fractional Complex where
+  divide = complex_division
+
+def complex_floor (MkComplex re im:Complex) : Complex =
+  -- from "Complex Floor" by Eugene McDonnell
+  -- https://www.jsoftware.com/papers/eem/complexfloor.htm
+  fr = floor re
+  fi = floor im
+  x = re - fr
+  y = im - fi
+  case (x + y) < 1.0 of
+    True -> MkComplex fr fi
+    False -> case x >= y of
+      True  -> MkComplex (fr + 1.0) fi
+      False -> MkComplex fr (fi + 1.0)
+
+complex_ceil =  \x:Complex. -(complex_floor (-x))
+complex_round = \x:Complex. complex_floor $ MkComplex 0.5 0.0
+
+complex_lgamma : Complex -> Complex = \x:Complex.
+  todo  -- This one is pretty hairy.
+        -- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
+
+def complex_log1p (x:Complex) : Complex =
+  (MkComplex a b) = x
+  case a == 0.0 of
+    True -> x
+    False ->
+      u = x + MkComplex 1.0 0.0
+      case a <= -1.0 of
+        True -> complex_log u
+        False -> divide ((complex_log u) * x) x
+
+instance complexFloating : Floating Complex where
+  exp    = complex_exp
+  exp2   = complex_exp2
+  log    = complex_log
+  log2   = complex_log2
+  log10  = complex_log10
+  log1p  = complex_log1p
+  sin    = complex_sin
+  cos    = complex_cos
+  tan    = complex_tan
+  sinh   = complex_sinh
+  cosh   = complex_cosh
+  tanh   = complex_tanh
+  floor  = complex_floor
+  ceil   = complex_ceil
+  round  = complex_round
+  sqrt   = complex_sqrt
+  pow    = complex_pow
+  lgamma = complex_lgamma

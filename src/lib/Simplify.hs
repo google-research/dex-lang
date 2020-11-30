@@ -118,8 +118,6 @@ simplifyAtom atom = case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbedR atom
   Pi  _ -> substEmbedR atom
-  Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
-  Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbedR tc
   Eff eff -> Eff <$> substEmbedR eff
@@ -146,7 +144,6 @@ simplifyAtom atom = case atom of
         ACase e' alts' <$> (substEmbedR rty)
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
-  where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
 simplifyCase e alts = case e of
@@ -440,6 +437,7 @@ simplifyHof hof = case hof of
     ~(fT', Nothing) <- simplifyLam fT
     ~(fS', Nothing) <- simplifyLam fS
     emit $ Hof $ Tile d fT' fS'
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
   While cond body -> do
     ~(cond', Nothing) <- simplifyLam cond
     ~(body', Nothing) <- simplifyLam body
@@ -471,7 +469,3 @@ simplifyHof hof = case hof of
   where
     applyRecon Nothing x = return x
     applyRecon (Just f) x = f x
-
-
-dropSub :: SimplifyM a -> SimplifyM a
-dropSub m = local mempty m

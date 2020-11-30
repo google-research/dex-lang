@@ -251,10 +251,8 @@ void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
 
 extern "C" {
 
-void* load_cuda_array(void* device_ptr, int64_t bytes) {
-  void* host_ptr = malloc_dex(bytes);
+void load_cuda_array(void* host_ptr, void* device_ptr, int64_t bytes) {
   CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
-  return host_ptr;
 }
 
 void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
@@ -265,14 +263,40 @@ void dex_cuMemcpyHtoD(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyHtoD, reinterpret_cast<CUdeviceptr>(device_ptr), host_ptr, bytes);
 }
 
-void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {
+void dex_queryParallelismCUDA(const char* kernel_func, int64_t iters,
+                              int32_t* numWorkgroups, int32_t* workgroupSize) {
+  if (iters == 0) {
+    *numWorkgroups = 0;
+    *workgroupSize = 0;
+    return;
+  }
+  // TODO: Use the occupancy calculator, or at least use a fixed number of blocks?
+  const int64_t fixedWgSize = 1024;
+  *workgroupSize = fixedWgSize;
+  *numWorkgroups = std::min((iters + fixedWgSize - 1) / fixedWgSize, fixedWgSize);
+}
+
+void dex_loadKernelCUDA(const char* kernel_text, char** module_storage, char** kernel_storage) {
+  if (*kernel_storage) { return; }
+  CUmodule *module = reinterpret_cast<CUmodule*>(module_storage);
+  CHECK(cuModuleLoadData, module, kernel_text);
+  CUfunction *kernel = reinterpret_cast<CUfunction*>(kernel_storage);
+  CHECK(cuModuleGetFunction, kernel, *module, "kernel");
+}
+
+void dex_unloadKernelCUDA(char** module_storage, char** kernel_storage) {
+  CUmodule *module = reinterpret_cast<CUmodule*>(module_storage);
+  CUfunction *kernel = reinterpret_cast<CUfunction*>(kernel_storage);
+  CHECK(cuModuleUnload, *module);
+  *module = nullptr;
+  *kernel = nullptr;
+}
+
+void dex_cuLaunchKernel(char* kernel_func, int64_t iters, char** args) {
   if (iters == 0) return;
-  CUmodule module;
-  CHECK(cuModuleLoadData, &module, kernel_text);
-  CUfunction kernel;
-  CHECK(cuModuleGetFunction, &kernel, module, "kernel");
-  const int64_t block_dim_x = 256;
-  const int64_t grid_dim_x = (iters + block_dim_x - 1) / block_dim_x;
+  CUfunction kernel = reinterpret_cast<CUfunction>(kernel_func);
+  int32_t block_dim_x, grid_dim_x;
+  dex_queryParallelismCUDA(kernel_func, iters, &grid_dim_x, &block_dim_x);
   CHECK(cuLaunchKernel, kernel,
                         grid_dim_x, 1, 1,               // grid size
                         block_dim_x, 1, 1,              // block size
@@ -280,7 +304,6 @@ void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {
                         CU_STREAM_LEGACY,               // stream
                         reinterpret_cast<void**>(args), // kernel arguments
                         nullptr);
-  CHECK(cuModuleUnload, module);
 }
 
 char* dex_cuMemAlloc(int64_t size) {
@@ -293,6 +316,10 @@ char* dex_cuMemAlloc(int64_t size) {
 void dex_cuMemFree(char* ptr) {
   if (!ptr) return;
   CHECK(cuMemFree, reinterpret_cast<CUdeviceptr>(ptr));
+}
+
+void dex_synchronizeCUDA() {
+  CHECK(cuStreamSynchronize, CU_STREAM_LEGACY);
 }
 
 void dex_ensure_has_cuda_context() {
@@ -310,5 +337,27 @@ void dex_ensure_has_cuda_context() {
 #undef CHECK
 
 #endif
+
+int32_t dex_queryParallelismMC(int64_t iters) {
+  int32_t nthreads = std::thread::hardware_concurrency();
+  if (iters < nthreads) {
+    nthreads = iters;
+  }
+  return nthreads;
+}
+
+void dex_launchKernelMC(char *function_ptr, int64_t size, char **args) {
+  auto function = reinterpret_cast<void (*)(int32_t, int32_t, char**)>(function_ptr);
+  int32_t nthreads = dex_queryParallelismMC(size);
+  std::vector<std::thread> threads(nthreads);
+  for (int32_t tid = 0; tid < nthreads; ++tid) {
+    threads[tid] = std::thread([function, args, tid, nthreads]() {
+      function(tid, nthreads, args);
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+}
 
 } // end extern "C"

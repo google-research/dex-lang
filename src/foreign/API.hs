@@ -19,16 +19,20 @@ import Data.Word
 
 import Resources
 import Syntax  hiding (sizeOf)
+import Type
 import TopLevel
+import Parser (parseExpr, exprAsModule)
 import Serialize (pprintVal)
 import Env hiding (Tag)
 
-foreign export ccall "dexCreateContext" dexCreateContext :: IO (Ptr ())
+foreign export ccall "dexCreateContext"  dexCreateContext  :: IO (Ptr ())
 foreign export ccall "dexDestroyContext" dexDestroyContext :: Ptr () -> IO ()
-foreign export ccall "dexPrint"   dexPrint   :: Ptr Atom    -> IO CString
-foreign export ccall "dexEval"    dexEval    :: Ptr Context -> CString -> IO (Ptr Context)
-foreign export ccall "dexLookup"  dexLookup  :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
-foreign export ccall "dexToCAtom" dexToCAtom :: Ptr Atom               -> IO (Ptr (WithErr APIErr CAtom))
+foreign export ccall "dexPrint"    dexPrint    :: Ptr Atom    -> IO CString
+foreign export ccall "dexInsert"   dexInsert   :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
+foreign export ccall "dexEval"     dexEval     :: Ptr Context -> CString -> IO (Ptr Context)
+foreign export ccall "dexEvalExpr" dexEvalExpr :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
+foreign export ccall "dexLookup"   dexLookup   :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
+foreign export ccall "dexToCAtom"  dexToCAtom  :: Ptr Atom               -> IO (Ptr (WithErr APIErr CAtom))
 
 data Context = Context EvalConfig TopEnv
 
@@ -57,15 +61,36 @@ dexDestroyContext = freeStablePtr . castPtrToStablePtr @Context
 
 dexPrint :: Ptr Atom -> IO CString
 dexPrint atomPtr = do
-  atom <- deRefStablePtr $ castPtrToStablePtr $ castPtr atomPtr
-  newCString =<< pprintVal (atom :: Atom)
+  newCString =<< pprintVal =<< fromStablePtr atomPtr
 
 dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
-  Context evalConfig env <- deRefStablePtr $ castPtrToStablePtr $ castPtr ctxPtr
+  Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
   finalEnv <- execStateT (evalSource evalConfig source) env
-  castPtr . castStablePtrToPtr <$> newStablePtr (Context evalConfig finalEnv)
+  -- TODO: This ignores errors!
+  toStablePtr $ Context evalConfig finalEnv
+
+dexInsert :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
+dexInsert ctxPtr namePtr atomPtr = do
+  Context evalConfig env <- fromStablePtr ctxPtr
+  name <- GlobalName . fromString <$> peekCString namePtr
+  atom <- fromStablePtr atomPtr
+  let env' = env <> name @> (getType atom, LetBound PlainLet (Atom atom))
+  toStablePtr $ Context evalConfig env'
+
+dexEvalExpr :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
+dexEvalExpr ctxPtr sourcePtr = do
+  Context evalConfig env <- fromStablePtr ctxPtr
+  maybeExpr <- parseExpr <$> peekCString sourcePtr
+  case maybeExpr of
+    Just expr -> do
+      let (v, m) = exprAsModule expr
+      (resultEnv, _) <- evalSourceBlock evalConfig env $ SourceBlock 0 0 LogNothing "" (RunModule m) Nothing
+      let (_, LetBound _ (Atom atom)) = resultEnv ! v
+      atomPtr <- castPtr . castStablePtrToPtr <$> newStablePtr atom
+      packSuccess atomPtr
+    _ -> packErr EInvalidExpr
 
 dexLookup :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
 dexLookup ctxPtr namePtr = do
@@ -79,7 +104,7 @@ dexLookup ctxPtr namePtr = do
     Nothing                         -> packErr ENotFound
 
 dexToCAtom :: Ptr Atom -> IO (Ptr (WithErr APIErr CAtom))
-dexToCAtom atomPtr = packAtom =<< (deRefStablePtr $ castPtrToStablePtr $ castPtr atomPtr)
+dexToCAtom atomPtr = packAtom =<< fromStablePtr atomPtr
 
 packAtom :: Atom -> IO (Ptr (WithErr APIErr CAtom))
 packAtom atom = case atom of
@@ -99,7 +124,7 @@ unpackAtom catom = case catom of
 data CAtom = CLit LitVal | CRectArray (Ptr ()) [Int] [Int]
 
 data WithErr err val = Fail err | Success val
-data APIErr = ENotFound | EUnsupported deriving (Enum)
+data APIErr = ENotFound | EUnsupported | EInvalidExpr deriving (Enum)
 
 packErr :: (Storable err, Storable val) => err -> IO (Ptr (WithErr err val))
 packErr = putOnHeap . Fail
@@ -181,3 +206,9 @@ putOnHeap x = do
   addr <- calloc
   poke addr x
   return addr
+
+fromStablePtr :: Ptr a -> IO a
+fromStablePtr = deRefStablePtr . castPtrToStablePtr . castPtr
+
+toStablePtr :: a -> IO (Ptr a)
+toStablePtr x = castPtr . castStablePtrToPtr <$> newStablePtr x

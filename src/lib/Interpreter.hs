@@ -16,13 +16,14 @@ import Foreign.Ptr
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import System.IO.Unsafe (unsafePerformIO)
+import Foreign.Marshal.Alloc
 
+import CUDA
 import Cat
 import Syntax
 import Env
 import PPrint
 import Embed
-import Type
 import Util (enumerate, restructure)
 import LLVMExec
 
@@ -77,18 +78,6 @@ evalExpr env expr = case expr of
 
 evalOp :: Op -> InterpM Atom
 evalOp expr = case expr of
-  -- Any ops that might have a defined result even with AnyValue arguments
-  -- should be implemented here.
-  Select p t f -> return $ if (getBool p) then t else f
-  _ -> if any isUndefined (toList expr)
-         then return $ Con $ AnyValue (getType $ Op expr)
-         else evalOpDefined expr
-  where
-    isUndefined (Con (AnyValue _)) = True
-    isUndefined _                  = False
-
-evalOpDefined :: Op -> InterpM Atom
-evalOpDefined expr = case expr of
   ScalarBinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
     ISub -> applyIntBinOp   (-) x y
@@ -115,13 +104,16 @@ evalOpDefined expr = case expr of
     _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (_, a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (DerivedPtr, a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> (Con . Lit) <$> loadLitVal p t
-  PtrLoad (Con (Lit (PtrLit (_, a, _) _))) ->
-    error $ "Can't load from this address space in interpreter: " ++ pprint a
+  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> Con . Lit <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (_, Heap GPU, t) p))) ->
+    allocaBytes (sizeOf t) $ \hostPtr -> do
+      loadCUDAArray hostPtr p (sizeOf t)
+      Con . Lit <$> loadLitVal hostPtr t
+  PtrLoad (Con (Lit (PtrLit (_, Stack, _) _))) ->
+    error $ "Unexpected stack pointer in interpreter"
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
-    Con (AnyValue t)                       -> return $ anyValue t
     _ -> evalEmbed (indexToIntE idxArg)
   Fst p -> return x  where (PairVal x _) = p
   Snd p -> return y  where (PairVal _ y) = p
@@ -160,10 +152,6 @@ indices ty = do
       return $concatMap (\((label, i), args) ->
         Variant (NoExt types) label i <$> args) zipped
     _ -> error $ "Not implemented: " ++ pprint ty
-
-getBool :: Atom -> Bool
-getBool (Con (Lit (Int8Lit p))) = p /= 0
-getBool x = error $ "Expected a bool atom, got: " ++ pprint x
 
 indexSetSize :: Type -> InterpM Int
 indexSetSize ty = do

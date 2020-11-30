@@ -9,8 +9,8 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..),
             varAnn, varName, BinderP (..), binderAnn, binderNameHint,
-            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
-            rawName, nameSpace, nameTag, envMaxName, genFresh,
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, traverseNames,
+            envAsVars, rawName, nameSpace, nameTag, envMaxName, genFresh,
             tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
             fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
 
@@ -43,6 +43,7 @@ data NameSpace =
      | TopFunctionName    -- top-level Imp functions
      | AllocPtrName       -- used for constructing dests in Imp lowering
      | CArgName           -- used for constructing arguments in export
+     | LoopBinderName     -- used to easily generate non-shadowing names in parallelization
        deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
@@ -123,6 +124,9 @@ envPairs (Env m) = M.toAscList m
 
 fmapNames :: (Name -> a -> b) -> Env a -> Env b
 fmapNames f (Env m) = Env $ M.mapWithKey f m
+
+traverseNames :: Applicative t => (Name -> a -> t b) -> Env a -> t (Env b)
+traverseNames f (Env m) = Env <$> M.traverseWithKey f m
 
 envDelete :: HasName a => a -> Env b -> Env b
 envDelete x (Env m) = Env $ case getName x of
