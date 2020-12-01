@@ -13,6 +13,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe
 import Data.Foldable
 import Data.Traversable
@@ -24,7 +25,7 @@ import Syntax
 import PPrint
 import Embed
 import Cat
-import Util (bindM2, zipWithT, enumerate)
+import Util (bindM2, zipWithT, enumerate, restructure)
 import GHC.Stack
 
 -- === linearization ===
@@ -132,8 +133,6 @@ linearizeOp op = case op of
          MTell x -> liftA MTell $ la x
          MGet    -> pure MGet
          MPut  x -> liftA MPut $ la x) `bindLin` emitOp
-  Fst x                  -> (Fst <$> la x) `bindLin` emitOp
-  Snd x                  -> (Snd <$> la x) `bindLin` emitOp
   IndexRef ref i         -> (IndexRef <$> la ref <*> pure i) `bindLin` emitOp
   FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
   SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
@@ -341,7 +340,7 @@ linearizeAtom atom = case atom of
   Pi _            -> emitWithZero
   TC _            -> emitWithZero
   Eff _           -> emitWithZero
-  ProjectElt _ _  -> error "TODO: linearize projections"
+  ProjectElt idxs v -> getProjection (toList idxs) <$> linearizeAtom (Var v)
   -- Those should be gone after simplification
   Lam _           -> error "Unexpected non-table lambda"
   ACase _ _ _     -> error "Unexpected ACase"
@@ -396,8 +395,9 @@ addTangent x y = case getType x of
 
 pack :: Type -> [Atom] -> Atom
 pack ty elems = case ty of
+  PairTy _ _ -> let [x, y] = elems in PairVal x y
   TypeCon def params     -> DataCon def params 0 elems
-  RecordTy (NoExt types) -> Record $ snd $ mapAccumL (\(h:t) _ -> (t, h)) elems types
+  RecordTy (NoExt types) -> Record $ restructure elems types
   _ -> error $ "Unexpected Unpack argument type: " ++ pprint ty
 
 isTrivialForAD :: Expr -> Bool
@@ -582,8 +582,6 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
-  Fst x                 -> flip emitCTToRef ct =<< (traverse $ emitOp . FstRef) =<< linAtomRef x
-  Snd x                 -> flip emitCTToRef ct =<< (traverse $ emitOp . SndRef) =<< linAtomRef x
   ScalarUnOp  FNeg x    -> transposeAtom x =<< neg ct
   ScalarUnOp  _    _    -> notLinear
   ScalarBinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct
@@ -641,6 +639,16 @@ linAtomRef (Var x) = do
   case envLookup refs x of
     Just ref -> return ref
     _ -> error $ "Not a linear var: " ++ pprint (Var x)
+linAtomRef (ProjectElt (i NE.:| is) x) = do
+  let subproj = getProjection is (Var x)
+  case getType subproj of
+    PairTy _ _ -> do
+      ref <- linAtomRef subproj
+      (traverse $ emitOp . getter) ref
+      where getter = case i of 0 -> FstRef
+                               1 -> SndRef
+                               _ -> error "bad pair projection"
+    ty -> error $ "Projecting references not implemented for type " <> pprint ty
 linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
 transposeHof :: Hof -> Atom -> TransposeM ()
@@ -700,7 +708,9 @@ transposeAtom atom ct = case atom of
   ACase _ _ _     -> error "Unexpected ACase"
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _ _ _ -> error "Unexpected ref"
-  ProjectElt _ _  -> error "TODO: projection transpose types"
+  ProjectElt _ v -> do
+    lin <- isLin $ Var v
+    when lin $ flip emitCTToRef ct =<< linAtomRef atom
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeCon :: Con -> Atom -> TransposeM ()

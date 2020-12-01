@@ -107,8 +107,6 @@ evalOp expr = case expr of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
     _ -> evalEmbed (indexToIntE idxArg)
-  Fst p -> return x  where (PairVal x _) = p
-  Snd p -> return y  where (PairVal _ y) = p
   _ -> error $ "Not implemented: " ++ pprint expr
 
 -- We can use this when we know we won't be dereferencing pointers. A better

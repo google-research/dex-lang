@@ -312,9 +312,7 @@ data PrimCon e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
-        Fst e
-      | Snd e
-      | TabCon e [e]                 -- table type elements
+        TabCon e [e]                 -- table type elements
       | ScalarBinOp BinOp e e
       | ScalarUnOp UnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
@@ -1099,7 +1097,7 @@ instance Subst Atom where
       where Abs args' () = subst env $ Abs args ()
     BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
         where Abs b' body' = subst env $ Abs b body
-    ProjectElt idxs v -> substProjectElt (fst env) idxs v
+    ProjectElt idxs v -> getProjection (toList idxs) $ substVar env v
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -1172,19 +1170,13 @@ substExtLabeledItemsTail env (Just v) = case envLookup env (v:>()) of
   Just (LabeledRow row) -> row
   _ -> error "Not a valid labeled row substitution"
 
-substProjectElt :: SubstEnv -> NE.NonEmpty Int -> Var -> Atom
-substProjectElt env idxs v = case envLookup env v of
-  Nothing -> ProjectElt idxs v
-  Just (Var v') -> ProjectElt idxs v'
-  Just atom -> getProjection (toList idxs) atom
-
 getProjection :: [Int] -> Atom -> Atom
 getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var v -> ProjectElt (NE.fromList [i]) v
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ xs -> xs !! i
-  Record items -> (toList items) !! i
+  Record items -> toList items !! i
   PairVal x _ | i == 0 -> x
   PairVal _ y | i == 1 -> y
   _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
@@ -1525,8 +1517,6 @@ builtinNames = M.fromList
   , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
   , ("pair", ConExpr $ PairCon () ())
-  , ("fst", OpExpr $ Fst ())
-  , ("snd", OpExpr $ Snd ())
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
   -- TODO: Lift vectors to constructors

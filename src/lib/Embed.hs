@@ -285,14 +285,17 @@ ieq :: MonadEmbed m => Atom -> Atom -> m Atom
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
 
--- TODO: make pairs also use projection atoms?
+fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
+fromPair pair = do
+  scope <- getScope
+  let pair' = reduceAtom scope pair
+  return (getProjection [0] pair', getProjection [1] pair')
+
 getFst :: MonadEmbed m => Atom -> m Atom
-getFst (PairVal x _) = return x
-getFst p = emitOp $ Fst p
+getFst p = fst <$> fromPair p
 
 getSnd :: MonadEmbed m => Atom -> m Atom
-getSnd (PairVal _ y) = return y
-getSnd p = emitOp $ Snd p
+getSnd p = snd <$> fromPair p
 
 getFstRef :: MonadEmbed m => Atom -> m Atom
 getFstRef r = emitOp $ FstRef r
@@ -305,12 +308,7 @@ getSndRef r = emitOp $ SndRef r
 getUnpacked :: MonadEmbed m => Atom -> m [Atom]
 getUnpacked atom = do
   scope <- getScope
-  let len = case getType atom of
-        TypeCon def params ->
-          let [DataConDef _ bs] = applyDataDefParams def params
-          in length bs
-        RecordTy (NoExt types) -> length types
-        ty -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint ty
+  let len = projectLength $ getType atom
       atom' = reduceAtom scope atom
       res = map (\i -> getProjection [i] atom') [0..(len-1)]
   return res
@@ -336,9 +334,6 @@ ptrOffset x i = emitOp $ PtrOffset x i
 
 ptrLoad :: MonadEmbed m => Atom -> m Atom
 ptrLoad x = emitOp $ PtrLoad x
-
-fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
-fromPair pair = (,) <$> getFst pair <*> getSnd pair
 
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
 unpackConsList xs = case getType xs of

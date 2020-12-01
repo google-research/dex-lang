@@ -13,7 +13,7 @@ module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
-  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck) where
+  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -183,7 +183,8 @@ instance HasType Atom where
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         PairTy x _ | i == 0 -> return x
         PairTy _ y | i == 1 -> return y
-        _ -> throw TypeErr "Only single-member ADTs and record types can be projected"
+        Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
+        _ -> throw TypeErr $ "Only single-member ADTs and record types can be projected. Got " <> pprint ty
 
 
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
@@ -661,8 +662,6 @@ typeCheckOp op = case op of
     mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
     assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
-  Fst p -> do { PairTy x _ <- typeCheck p; return x}
-  Snd p -> do { PairTy _ y <- typeCheck p; return y}
   ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
   ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do
@@ -971,3 +970,12 @@ isData :: Type -> Bool
 isData ty = case checkData ty of
   Left  _ -> False
   Right _ -> True
+
+projectLength :: Type -> Int
+projectLength ty = case ty of
+  TypeCon def params ->
+    let [DataConDef _ bs] = applyDataDefParams def params
+    in length bs
+  RecordTy (NoExt types) -> length types
+  PairTy _ _ -> 2
+  _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty

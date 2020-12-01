@@ -129,8 +129,8 @@ def fdiv (d:Fractional a) ?=> : a -> a -> a = case d of MkFractional div -> div
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
-def fst (p: (a & b)) : a = %fst p
-def snd (p: (a & b)) : b = %snd p
+def fst ((x, _): (a & b)) : a = x
+def snd ((_, y): (a & b)) : b = y
 def swap (p:(a&b)) : (b&a) = (snd p, fst p)
 
 def (<<<) (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)

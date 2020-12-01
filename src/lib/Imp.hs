@@ -191,8 +191,6 @@ toImpOp (maybeDest, op) = case op of
       ithDest <- destGet dest =<< intToIndex (binderType b) (IIdxRepVal i)
       copyAtom ithDest row
     destToAtom dest
-  Fst ~(PairVal x _) -> returnVal x
-  Snd ~(PairVal _ y) -> returnVal y
   PrimEffect refDest m -> do
     case m of
       MAsk    -> returnVal =<< destToAtom refDest
