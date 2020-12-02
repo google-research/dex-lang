@@ -215,7 +215,7 @@ def catLists (xs:List a) (ys:List a) : List a =
 def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
 
 :t listToTable
-> ((a:Type) ?-> (pat:(List a)) -> (Fin (ProjectElt [0] pat)) => a)
+> ((a:Type) ?-> (pat:(List a)) -> (Fin (%projectElt [0] pat)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
@@ -228,7 +228,7 @@ def listToTable2 (l: List a) : (Fin (listLength l))=>a =
   xs
 
 :t listToTable2
-> ((a:Type) ?-> (l:(List a)) -> (Fin (ProjectElt [0] l)) => a)
+> ((a:Type) ?-> (l:(List a)) -> (Fin (%projectElt [0] l)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
@@ -247,7 +247,7 @@ def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
 
 :t graphToAdjacencyMatrix
 > ((a:Type)
->  ?-> (pat:(Graph a)) -> (ProjectElt [0] pat) => (ProjectElt [0] pat) => Bool)
+>  ?-> (pat:(Graph a)) -> (%projectElt [0] pat) => (%projectElt [0] pat) => Bool)
 
 :p
   g : Graph Int = MkGraph (Fin 3) [5, 6, 7] (Fin 4) [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]

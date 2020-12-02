@@ -370,7 +370,7 @@ instance PrettyPrec Atom where
     BoxedRef b ptr size body -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
     ProjectElt idxs (x:>_) -> atPrec AppPrec $
-      "ProjectElt" <+> p idxs <+> p x
+      "%projectElt" <+> p idxs <+> p x
 
 instance Pretty DataConRefBinding where pretty = prettyFromPrettyPrec
 instance PrettyPrec DataConRefBinding where
