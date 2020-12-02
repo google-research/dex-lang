@@ -174,7 +174,6 @@ instance HasType Atom where
           -- use projections.
           let go :: Int -> Nest Binder -> Type
               go j (Nest b _) | i == j = binderAnn b
-              -- TODO: is scopelessSubst correct here?
               go j (Nest b rest) = go (j+1) (scopelessSubst (b @> proj) rest)
                 where proj = ProjectElt (j NE.:| is) v
               go _ _ = error "Bad projection index"

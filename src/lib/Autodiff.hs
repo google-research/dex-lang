@@ -54,13 +54,11 @@ linearizeBlock :: SubstEnv -> Block -> LinA Atom
 linearizeBlock env (Block decls result) = case decls of
   Empty -> linearizeExpr env result
   Nest decl rest -> case decl of
-    (Let  _ b  expr) -> linearizeBinding False [b]         expr
+    (Let _ b expr) -> linearizeBinding b expr
     where
       body = Block rest result
-      takeWhere l m = fmap snd $ filter fst $ zip m l
-      -- TODO: refactor this to not have isUnpack
-      linearizeBinding :: Bool -> [Binder] -> Expr -> LinA Atom
-      linearizeBinding isUnpack bs expr = LinA $ do
+      linearizeBinding :: Binder -> Expr -> LinA Atom
+      linearizeBinding b expr = LinA $ do
         -- Don't linearize expressions with no free active variables.
         -- Technically, we could do this and later run the code through a simplification
         -- pass that would eliminate a bunch of multiplications with zeros, but this seems
@@ -70,8 +68,7 @@ linearizeBlock env (Block decls result) = case decls of
         if any id varsAreActive
           then do
             (x, boundLin) <- runLinA $ linearizeExpr env expr
-            xs <- if isUnpack then emitUnpack (Atom x) else (:[]) <$> emit (Atom x)
-            let vs = fmap (\(Var v) -> v) xs
+            ~(Var v) <- emit $ Atom x
             -- NB: This can still overestimate the set of active variables (e.g.
             --     when multiple values are returned from a case statement).
             -- Don't mark variables with trivial tangent types as active. This lets us avoid
@@ -81,20 +78,20 @@ linearizeBlock env (Block decls result) = case decls of
             --       variables, but I don't think that we want to define them to have tangents.
             --       We should delete this check, but to do that we would have to support differentiation
             --       through case statements with active scrutinees.
-            let nontrivialVsMask = [not $ isSingletonType $ tangentType $ varType v | v <- vs]
-            let nontrivialVs = vs `takeWhere` nontrivialVsMask
-            (ans, bodyLin) <- extendWrt nontrivialVs [] $ runLinA $ linearizeBlock (env <> newEnv bs xs) body
+            let vIsTrivial = isSingletonType $ tangentType $ varType v
+            let nontrivialVs = if vIsTrivial then [] else [v]
+            (ans, bodyLin) <- extendWrt nontrivialVs [] $ runLinA $
+              linearizeBlock (env <> b @> Var v) body
             return (ans, do
               t <- boundLin
-              ts <- if isUnpack then emitUnpack (Atom t) else return [t]
               -- Tangent environment needs to be synced between the primal and tangent
               -- monads (tangentFunAsLambda and applyLinToTangents need that).
-              let nontrivialTs = ts `takeWhere` nontrivialVsMask
+              let nontrivialTs = if vIsTrivial then [] else [t]
               extendTangentEnv (newEnv nontrivialVs nontrivialTs) [] bodyLin)
           else do
             expr' <- substEmbed env expr
-            xs <- if isUnpack then emitUnpack expr' else (:[]) <$> emit expr'
-            runLinA $ linearizeBlock (env <> newEnv bs xs) body
+            x <- emit expr'
+            runLinA $ linearizeBlock (env <> b @> x) body
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
@@ -537,19 +534,19 @@ transposeBlock :: Block -> Atom -> TransposeM ()
 transposeBlock (Block decls result) ct = case decls of
   Empty -> transposeExpr result ct
   Nest decl rest -> case decl of
-    (Let  _ b  expr) -> transposeBinding False [b]         expr
+    (Let _ b expr) -> transposeBinding b expr
     where
       body = Block rest result
-      transposeBinding isUnpack bs expr = do
+      transposeBinding b expr = do
         isLinearExpr <- (||) <$> isLinEff (exprEffs expr) <*> isLin expr
         if isLinearExpr
           then do
-            cts <- withLinVars bs $ transposeBlock body ct
-            transposeExpr expr $ if isUnpack then pack (getType expr) cts else head cts
+            cts <- withLinVars [b] $ transposeBlock body ct
+            transposeExpr expr $ head cts
           else do
             expr' <- substNonlin expr
-            xs <- if isUnpack then emitUnpack expr' else (:[]) <$> emit expr'
-            localNonlinSubst (newEnv bs xs) $ transposeBlock body ct
+            x <- emit expr'
+            localNonlinSubst (b @> x) $ transposeBlock body ct
 
       withLinVars :: [Binder] -> TransposeM () -> TransposeM [Atom]
       withLinVars [] m     = m >> return []

@@ -303,8 +303,9 @@ getFstRef r = emitOp $ FstRef r
 getSndRef :: MonadEmbed m => Atom -> m Atom
 getSndRef r = emitOp $ SndRef r
 
--- TODO: refactor?
--- TODO: is this the best place for the reduction?
+-- XXX: getUnpacked must reduce its argument to enforce the invariant that
+-- ProjectElt atoms are always fully reduced (to avoid type errors between two
+-- equivalent types spelled differently).
 getUnpacked :: MonadEmbed m => Atom -> m [Atom]
 getUnpacked atom = do
   scope <- getScope

@@ -603,12 +603,12 @@ onePerLine p =   liftM (:[]) p
              <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
 
 pat :: Parser UPat
-pat = makeExprParser leafPat patOps
+pat = mayNotPair $ makeExprParser leafPat patOps
 
 leafPat :: Parser UPat
 leafPat =
       (withSrc (symbol "()" $> UPatUnit))
-  <|> parens pat
+  <|> parens (mayPair $ makeExprParser leafPat patOps)
   <|> (withSrc $
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
@@ -624,7 +624,14 @@ leafPat =
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
-patOps = [[InfixR $ sym "," $> \x y -> joinSrc x y $ UPatPair x y]]
+patOps = [[InfixR patPairOp]]
+
+patPairOp :: Parser (UPat -> UPat -> UPat)
+patPairOp = do
+  allowed <- asks canPair
+  if allowed
+    then sym "," $> \x y -> joinSrc x y $ UPatPair x y
+    else fail "pair pattern not allowed outside parentheses"
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p

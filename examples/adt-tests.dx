@@ -221,3 +221,47 @@ def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
   l = AsList _ [1, 2, 3]
   sum $ listToTable l
 > 6
+
+def listLength ((AsList length xs):List a) : Int = length
+def listToTable2 (l: List a) : (Fin (listLength l))=>a =
+  (AsList _ xs) = l
+  xs
+
+:t listToTable2
+> ((a:Type) ?-> (l:(List a)) -> (Fin (ProjectElt [0] l)) => a)
+
+:p
+  l = AsList _ [1, 2, 3]
+  sum $ listToTable2 l
+> 6
+
+data Graph a:Type =
+  MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
+
+def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
+  init = for i j. False
+  snd $ withState init \mRef.
+    for i:m.
+      (from, to) = edges.i
+      mRef!from!to := True
+
+:t graphToAdjacencyMatrix
+> ((a:Type)
+>  ?-> (pat:(Graph a)) -> (ProjectElt [0] pat) => (ProjectElt [0] pat) => Bool)
+
+:p
+  g : Graph Int = MkGraph (Fin 3) [5, 6, 7] (Fin 4) [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]
+  graphToAdjacencyMatrix g
+> [[False, True, True], [False, True, False], [True, False, False]]
+
+
+def deepUnpack (x:MyPair a (MyPair (MyIntish & b) c)) : Int =
+  (MkMyPair _ (MkMyPair (MkIntish y, _) _)) = x
+  y
+
+:t deepUnpack
+> ((a:Type)
+>  ?-> (b:Type) ?-> (c:Type) ?-> (MyPair a (MyPair (MyIntish & b) c)) -> Int32)
+
+:p deepUnpack (MkMyPair 3 (MkMyPair (MkIntish 4, 5) 6))
+> 4
