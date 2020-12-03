@@ -21,7 +21,6 @@ def directionAndLength (x: d=>Float) : (d=>Float & Float) =
   l = length x
   (x / (length x), l)
 
-def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
@@ -345,8 +344,8 @@ params = (num_samples, num_bounces, share_prng)
 -- %time
 image = takePicture params theScene num_pix camera
 
-:plotmatcolor image
-> <graphical output>
+-- :plotmatcolor image
+-- > <graphical output>
 
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)

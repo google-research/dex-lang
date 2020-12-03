@@ -18,7 +18,6 @@ import Data.Foldable
 import Data.Traversable
 import qualified Data.Set as S
 
-import Array
 import Type
 import Env
 import Syntax
@@ -139,17 +138,17 @@ linearizeOp op = case op of
   FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
   SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
   Select p t f           -> (Select p <$> la t   <*> la f  ) `bindLin` emitOp
-  ArrayLoad _            -> emitWithZero -- XXX: This assumes that arrays are always constants
+  PtrLoad _              -> emitWithZero -- XXX: This assumes that pointers are always constants
+  PtrOffset _ _          -> emitDiscrete
   TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
-  ArrayOffset _ _ _      -> emitDiscrete
   Inject _               -> emitDiscrete
   SliceOffset _ _        -> emitDiscrete
   SliceCurry  _ _        -> emitDiscrete
   VectorBinOp _ _ _      -> notImplemented
   VectorPack  vals       -> (VectorPack  <$> traverse la vals) `bindLin` emitOp
   VectorIndex v i        -> (VectorIndex <$> la v <*> pure i ) `bindLin` emitOp
-  IntAsIndex _ _         -> emitDiscrete
-  IndexAsInt _           -> emitDiscrete
+  UnsafeFromOrdinal _ _  -> emitDiscrete
+  ToOrdinal _            -> emitDiscrete
   IdxSetSize _           -> emitDiscrete
   ThrowError _           -> emitWithZero
   CastOp t v             -> do
@@ -249,7 +248,7 @@ linearizeBinOp op x' y' = LinA $ do
 -- abstract over the whole tangent state.
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
-  For d ~(LamVal i body) -> LinA $ do
+  For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
     (ansWithLinTab, vi'') <- buildForAux d i' $ \i''@(Var vi'') ->
        (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
@@ -265,6 +264,7 @@ linearizeHof env hof = case hof of
   While _ _   -> notImplemented
   Linearize _ -> error "Unexpected linearization"
   Transpose _ -> error "Unexpected transposition"
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
   where
     linearizeEff maybeInit lam hasResult hofMaker emitter eff = LinA $ do
       (valHofMaker, maybeLinInit) <- case maybeInit of
@@ -305,12 +305,17 @@ linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
   CharCon _             -> emitWithZero
-  ArrayLit _ _          -> emitWithZero
-  AnyValue _            -> emitWithZero
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   UnitCon               -> emitWithZero
-  Coerce _ _            -> emitWithZero -- XXX: This assumes that coercions are only used for discrete types
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
+  IntRangeVal _ _ _     -> emitWithZero
+  IndexRangeVal _ _ _ _ -> emitWithZero
+  IndexSliceVal _ _ _   -> emitWithZero
+  BaseTypeRef _  -> error "Unexpected ref"
+  TabRef _       -> error "Unexpected ref"
+  ConRef _       -> error "Unexpected ref"
+  RecordRef _    -> error "Unexpected ref"
+  ParIndexCon   _ _ -> error "Unexpected ParIndexCon"
   ClassDictHole _ _ -> error "Unexpected ClassDictHole"
   where emitWithZero = LinA $ return $ withZeroTangent $ Con con
 
@@ -339,6 +344,8 @@ linearizeAtom atom = case atom of
   -- Those should be gone after simplification
   Lam _           -> error "Unexpected non-table lambda"
   ACase _ _ _     -> error "Unexpected ACase"
+  DataConRef _ _ _ -> error "Unexpected ref"
+  BoxedRef _ _ _ _ -> error "Unexpected ref"
   where
     emitWithZero = LinA $ return $ withZeroTangent atom
     rematPrimal wrt m = do
@@ -366,7 +373,6 @@ tangentType ty = case ty of
     UnitType                      -> UnitTy
     PairType a b                  -> PairTy (tangentType a) (tangentType b)
     -- XXX: This assumes that arrays are always constants.
-    ArrayType _                   -> UnitTy
     _ -> unsupported
   _ -> unsupported
   where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
@@ -386,21 +392,6 @@ addTangent x y = case getType x of
     _ -> notTangent
   _ -> notTangent
   where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
-
-zeroAt :: Type -> Atom
-zeroAt ty = case ty of
-  BaseTy bt  -> Con $ Lit $ zeroLit bt
-  TabTy i a  -> TabValA i $ zeroAt a
-  UnitTy     -> UnitVal
-  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
-  _          -> unreachable
-  where
-    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
-    zeroLit bt = case bt of
-      Scalar Float64Type -> Float64Lit 0.0
-      Scalar Float32Type -> Float32Lit 0.0
-      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
-      _                  -> unreachable
 
 pack :: Type -> [Atom] -> Atom
 pack ty elems = case ty of
@@ -424,14 +415,14 @@ tangentFunAsLambda m = do
   let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
     tanLam <- makeLambdas rematList $ \rematArgs ->
-      buildNestedLam hs $ \hVals -> do
+      buildNestedLam PureArrow hs $ \hVals -> do
         let hVarNames = map (\(Var (v:>_)) -> v) hVals
         let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
         -- want to use tangents here, not the original binders
         let regionMap = newEnv (map ((:>()) . snd) effs) hVals
         -- TODO: Only bind tangents for free variables?
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-        buildNestedLam activeVarBinders $ \activeVarArgs ->
+        buildNestedLam PureArrow activeVarBinders $ \activeVarArgs ->
           buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
             runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames (newEnv rematList $ fmap Var rematArgs)
     case rematList of
@@ -630,13 +621,13 @@ transposeOp op ct = case op of
   RecordSplit  _ _      -> notImplemented
   VariantLift  _ _      -> notImplemented
   VariantSplit _ _      -> notImplemented
-  ArrayLoad    _        -> notLinear
-  ArrayOffset  _ _ _    -> notLinear
+  PtrLoad    _          -> notLinear
+  PtrOffset  _ _        -> notLinear
   Inject       _        -> notLinear
   SliceOffset  _ _      -> notLinear
   SliceCurry   _ _      -> notLinear
-  IntAsIndex   _ _      -> notLinear
-  IndexAsInt   _        -> notLinear
+  UnsafeFromOrdinal _ _ -> notLinear
+  ToOrdinal   _         -> notLinear
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
   FFICall      _ _ _    -> notLinear
@@ -654,7 +645,7 @@ linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
-  For d ~(Lam (Abs b (_, body))) ->
+  For ~(RegularFor d) ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b $ \i -> do
       ct' <- tabGet ct i
       localNonlinSubst (b@>i) $ transposeBlock body ct'
@@ -676,10 +667,11 @@ transposeHof hof ct = case hof of
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
     transposeAtom s cts
-  Tile   _ _ _ -> notImplemented
-  While    _ _ -> notImplemented
-  Linearize  _ -> error "Unexpected linearization"
-  Transpose  _ -> error "Unexpected transposition"
+  Tile      _ _ _ -> notImplemented
+  While       _ _ -> notImplemented
+  Linearize     _ -> error "Unexpected linearization"
+  Transpose     _ -> error "Unexpected transposition"
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
@@ -706,6 +698,8 @@ transposeAtom atom ct = case atom of
   TC _            -> notTangent
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
+  DataConRef _ _ _ -> error "Unexpected ref"
+  BoxedRef _ _ _ _ -> error "Unexpected ref"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeCon :: Con -> Atom -> TransposeM ()
@@ -717,10 +711,15 @@ transposeCon con ct = case con of
     getSnd ct >>= transposeAtom y
   SumAsProd _ _ _   -> notImplemented
   CharCon _         -> notTangent
-  ArrayLit _ _      -> notTangent
-  AnyValue _        -> notTangent
-  Coerce _ _        -> notTangent  -- Technically this depends on the legal coercions
   ClassDictHole _ _ -> notTangent
+  IntRangeVal _ _ _     -> notTangent
+  IndexRangeVal _ _ _ _ -> notTangent
+  IndexSliceVal _ _ _   -> notTangent
+  ParIndexCon _ _       -> notTangent
+  BaseTypeRef _  -> notTangent
+  TabRef _       -> notTangent
+  ConRef _       -> notTangent
+  RecordRef _    -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 freeLinVars :: HasVars a => a -> TransposeM [Var]

@@ -114,7 +114,7 @@ logits = for i:time j:vocab. (randn $ ixkey2 (newKey 0) i j)
 -- Create random labels
 labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
 :p labels
-> [1@(Fin 6), 5@(Fin 6), 5@(Fin 6)]
+> [(1@Fin 6), (5@Fin 6), (5@Fin 6)]
 
 -- Evaluate marginal probability of labels given logits
 :p exp $ ctc blank logits labels

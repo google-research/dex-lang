@@ -7,6 +7,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 import System.Console.Haskeline
+import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative
@@ -30,13 +31,15 @@ data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
 data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
+              | ExportMode FilePath FilePath -- Dex path, .o path
               | ScriptMode FilePath DocFmt ErrorHandling
-data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig Backend
 
-runMode :: EvalMode -> (Maybe FilePath) -> EvalConfig -> IO ()
+data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
+
+runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
 runMode evalMode preludeFile opts = do
   key <- case preludeFile of
-           Nothing   -> return ""  -- memoizeFileEval already checks compiler version
+           Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
            Just path -> show <$> getModificationTime path
   env <- cached "prelude" key $ evalPrelude opts preludeFile
   let runEnv m = evalStateT m env
@@ -48,10 +51,17 @@ runMode evalMode preludeFile opts = do
       printLitProg fmt results
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode   fname -> runWeb      fname opts env
-    WatchMode fname -> runTerminal fname opts env
+    WebMode    fname -> runWeb      fname opts env
+    WatchMode  fname -> runTerminal fname opts env
+    ExportMode dexPath objPath -> do
+      results <- fmap snd <$> (runEnv $ evalFile opts dexPath)
+      let outputs = foldMap (\(Result outs _) -> outs) results
+      let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
+      putStr $ foldMap (nonEmptyNewline . pprint) errors
+      let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
+      exportFunctions objPath exportedFuns env opts
 
-evalPrelude :: EvalConfig -> (Maybe FilePath) -> IO TopEnv
+evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
 evalPrelude opts fname = flip execStateT mempty $ do
   source <- case fname of
               Nothing   -> return $ preludeSource
@@ -59,18 +69,18 @@ evalPrelude opts fname = flip execStateT mempty $ do
   result <- evalSource opts source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-liftErrIO :: MonadIO m => Except a -> m a
-liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
-liftErrIO (Right x) = return x
-
 replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
 replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
-  result <- lift $ (evalDecl opts) sourceBlock
+  result <- lift $ evalDecl opts sourceBlock
   case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
+
+liftErrIO :: MonadIO m => Except a -> m a
+liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
+liftErrIO (Right x) = return x
 
 readMultiline :: (MonadException m, MonadIO m) =>
                    String -> (String -> Maybe a) -> InputT m a
@@ -91,9 +101,6 @@ simpleInfo p = info (p <**> helper) mempty
 
 printLitProg :: DocFmt -> LitProg -> IO ()
 printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
-  where
-    nonEmptyNewline [] = []
-    nonEmptyNewline l  = l ++ ['\n']
 printLitProg HTMLDoc prog = putStr $ progHtml prog
 printLitProg TextDoc prog = do
   isatty <- queryTerminal stdOutput
@@ -103,8 +110,14 @@ printLitProg JSONDoc prog =
     "{}" -> return ()
     s -> putStrLn s
 
+nonEmptyNewline [] = []
+nonEmptyNewline l  = l ++ ['\n']
+
 parseOpts :: ParserInfo CmdOpts
-parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parsePreludeFile <*> parseEvalOpts <*> parseBackend
+parseOpts = simpleInfo $ CmdOpts
+  <$> parseMode
+  <*> (optional $ strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
+  <*> parseEvalOpts
 
 parseMode :: Parser EvalMode
 parseMode = subparser $
@@ -113,6 +126,7 @@ parseMode = subparser $
                          <> metavar "STRING" <> help "REPL prompt"))
   <> (command "web"    $ simpleInfo (WebMode    <$> sourceFileInfo ))
   <> (command "watch"  $ simpleInfo (WatchMode  <$> sourceFileInfo ))
+  <> (command "export" $ simpleInfo (ExportMode <$> sourceFileInfo <*> objectFileInfo))
   <> (command "script" $ simpleInfo (ScriptMode <$> sourceFileInfo
     <*> (option
             (optionList [ ("literate"   , TextDoc)
@@ -126,6 +140,7 @@ parseMode = subparser $
                <> help "Evaluate programs containing non-fatal type errors")))
   where
     sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
+    objectFileInfo = argument str (metavar "OBJFILE" <> help "Output path (.o file)")
 
 optionList :: [(String, a)] -> ReadM a
 optionList opts = eitherReader $ \s -> case lookup s opts of
@@ -134,27 +149,17 @@ optionList opts = eitherReader $ \s -> case lookup s opts of
 
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
-  <$> (optional $ strOption $ long "logto"
-                    <> metavar "FILE"
-                    <> help "File to log to" <> showDefault)
-  <*> pure (error "Backend not initialized")
-  <*> pure (error "Logging not initialized")
-
-parsePreludeFile :: Parser (Maybe FilePath)
-parsePreludeFile = optional $ strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file"
-
-parseBackend :: Parser Backend
-parseBackend =
-  (option
+  <$> (option
          (optionList [ ("LLVM", LLVM)
                      , ("LLVM-CUDA", LLVMCUDA)
                      , ("LLVM-MC", LLVMMC)
-                     , ("JAX", JAX)
                      , ("interp", Interp)])
-         (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|JAX|interp)"))
+         (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|interp)"))
+  <*> (optional $ strOption $ long "logto"
+                    <> metavar "FILE"
+                    <> help "File to log to" <> showDefault)
 
 main :: IO ()
 main = do
-  CmdOpts evalMode preludeFile opts backendName <- execParser parseOpts
-  engine <- initializeBackend backendName
-  runMode evalMode preludeFile $ opts { evalEngine = engine }
+  CmdOpts evalMode preludeFile opts <- execParser parseOpts
+  runMode evalMode preludeFile opts

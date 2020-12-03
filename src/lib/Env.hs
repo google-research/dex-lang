@@ -9,11 +9,12 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..),
             varAnn, varName, BinderP (..), binderAnn, binderNameHint,
-            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
-            rawName, nameSpace, nameTag, envMaxName, genFresh,
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, traverseNames,
+            envAsVars, rawName, nameSpace, nameTag, envMaxName, genFresh,
             tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
             fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
 
+import Data.Maybe
 import Data.Store
 import Data.String
 import qualified Data.Text as T
@@ -31,8 +32,19 @@ newtype Env a = Env (M.Map Name a)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName | SumName
-                 deriving  (Show, Ord, Eq, Generic)
+data NameSpace =
+       GenName
+     | SourceName         -- names from source program
+     | Skolem
+     | InferenceName
+     | SumName
+     | FFIName
+     | AbstractedPtrName  -- used in `abstractPtrLiterals` in Imp lowering
+     | TopFunctionName    -- top-level Imp functions
+     | AllocPtrName       -- used for constructing dests in Imp lowering
+     | CArgName           -- used for constructing arguments in export
+     | LoopBinderName     -- used to easily generate non-shadowing names in parallelization
+       deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
@@ -113,6 +125,9 @@ envPairs (Env m) = M.toAscList m
 fmapNames :: (Name -> a -> b) -> Env a -> Env b
 fmapNames f (Env m) = Env $ M.mapWithKey f m
 
+traverseNames :: Applicative t => (Name -> a -> t b) -> Env a -> t (Env b)
+traverseNames f (Env m) = Env <$> M.traverseWithKey f m
+
 envDelete :: HasName a => a -> Env b -> Env b
 envDelete x (Env m) = Env $ case getName x of
   Nothing -> m
@@ -140,10 +155,10 @@ isin x env = case getName x of
 envMaxName :: Env a -> Maybe Name
 envMaxName (Env m) = if M.null m then Nothing else Just $ fst $ M.findMax m
 
-(!) :: HasCallStack => Env a -> VarP ann -> a
+(!) :: (HasCallStack, HasName b) => Env a -> b -> a
 env ! v = case envLookup env v of
   Just x -> x
-  Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
+  Nothing -> error $ "Lookup of " ++ show (fromMaybe "<no name>" $ getName v) ++ " failed"
 
 isGlobal :: VarP ann -> Bool
 isGlobal (GlobalName _ :> _) = True

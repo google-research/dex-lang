@@ -9,14 +9,16 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module LLVMExec (LLVMFunction (..), LLVMKernel (..),
-                 callLLVM, compileCUDAKernel) where
+module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
+                 callLLVM, benchLLVM, exportLLVM,
+                 compileCUDAKernel, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.AddrSpace as L
 import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.DataLayout as L
 import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.Relocation as R
 import qualified LLVM.CodeModel as CM
@@ -44,20 +46,31 @@ import Foreign.Ptr
 import Foreign.Storable hiding (alignment)
 import Control.Monad
 import Control.Exception hiding (throw)
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.ByteString.Char8 (unpack, pack)
+import Data.List (sortBy)
+import Data.String
 import Data.IORef
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 import Logging
 import Syntax
-import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
 import Resources
-
-type DexExitCode = Int
+import CUDA (synchronizeCUDA)
 
 foreign import ccall "dynamic"
-  callFunPtr :: FunPtr (Ptr () -> IO DexExitCode) -> Ptr () -> IO DexExitCode
+  callFunPtr :: DexExecutable -> Ptr () -> Ptr () -> IO DexExitCode
+
+foreign import ccall "dynamic"
+  callDtor :: FunPtr (IO ()) -> IO ()
+
+type DexExecutable = FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
+type DexExitCode = Int
+
+data LLVMKernel = LLVMKernel L.Module
 
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) = do
@@ -90,40 +103,87 @@ compileCUDAKernel logger (LLVMKernel ast) = do
     ptxasPath = "/usr/local/cuda/bin/ptxas"
     arch = "sm_60"
 
-
-callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
-callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
-  argsPtr <- mallocBytes $ (numOutputs + numInputs) * ptrSize
-  forM_ (zip [numOutputs..] inArrays) $ \(i, p) -> do
-    poke (argsPtr `plusPtr` (i * ptrSize)) p
-  exitCode <- evalLLVM logger ast argsPtr
-  case exitCode of
-    0 -> do
-      outputPtrs <- forM [0..numOutputs - 1] $ \i -> peek (argsPtr `plusPtr` (i * ptrSize))
-      free argsPtr
-      return outputPtrs
-    _ -> throwIO $ Err RuntimeErr Nothing ""
+checkedCallFunPtr :: Bool -> Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr sync argsPtr resultPtr fPtr = do
+  t1 <- getCurrentTime
+  exitCode <- callFunPtr fPtr argsPtr resultPtr
+  when sync $ synchronizeCUDA
+  t2 <- getCurrentTime
+  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+  return $ t2 `secondsSince` t1
   where
-    numInputs = length inArrays
-    ptrSize = 8 -- TODO: Get this from LLVM instead of hardcoding!
+    secondsSince end start = realToFrac $ end `diffUTCTime` start
 
-evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO DexExitCode
-evalLLVM logger ast argPtr = do
+callLLVM :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
+callLLVM logger ast fname args resultTypes = do
+  allocaBytes (length args * cellSize) $ \argsPtr ->
+    allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+      storeLitVals argsPtr args
+      evalTime <- compileFunc logger ast fname $ checkedCallFunPtr False argsPtr resultPtr
+      logThis logger [EvalTime evalTime Nothing]
+      loadLitVals resultPtr resultTypes
+
+benchLLVM :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
+benchLLVM logger ast fname args resultTypes = do
+  allocaBytes (length args * cellSize) $ \argsPtr ->
+    allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+      storeLitVals argsPtr args
+      compileFunc logger ast fname $ \fPtr -> do
+        -- First warmup iteration, which we also use to get the results
+        void $ checkedCallFunPtr True argsPtr resultPtr fPtr
+        results <- loadLitVals resultPtr resultTypes
+        let run = do
+              time <- checkedCallFunPtr True argsPtr resultPtr fPtr
+              _benchResults <- loadLitVals resultPtr resultTypes
+              -- TODO: Free results!
+              return time
+        exampleDuration <- run
+        let timeBudget = 2 -- seconds
+        let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+        times <- forM [1..benchRuns] $ const run
+        let avgTime = sum times / (fromIntegral benchRuns)
+        logThis logger [EvalTime avgTime (Just benchRuns)]
+        return results
+
+exportLLVM :: FilePath -> [(L.Module, [String])] -> IO ()
+exportLLVM objFile modules = do
+  withContext $ \c -> do
+    void $ Linking.loadLibraryPermanently Nothing
+    withHostTargetMachine $ \tm ->
+      withBrackets (fmap (toLLVM c tm) modules) $ \mods -> do
+        Mod.withModuleFromAST c L.defaultModule $ \exportMod -> do
+          void $ foldM linkModules exportMod mods
+          linkDexrt c exportMod
+          internalize allExports exportMod
+          Mod.writeObjectToFile tm (Mod.File objFile) exportMod
+  where
+    allExports = foldMap snd modules
+
+    toLLVM :: Context -> T.TargetMachine -> (L.Module, [String]) -> (Mod.Module -> IO a) -> IO a
+    toLLVM c tm (ast, exports) cont = do
+      Mod.withModuleFromAST c ast $ \m -> do
+        internalize exports m
+        execLogger Nothing $ \logger -> compileModule c logger tm m
+        cont m
+
+    linkModules a b = a <$ Mod.linkModules a b
+
+    withBrackets :: [(a -> IO b) -> IO b] -> ([a] -> IO b) -> IO b
+    withBrackets brackets f = go brackets []
+      where
+        go (h:t) args = h $ \arg -> go t (arg:args)
+        go []    args = f args
+
+compileFunc :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileFunc logger ast name f = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
-    Mod.withModuleFromAST c ast $ \m ->
-      -- XXX: We need to use the large code model for macOS, because the libC functions
-      --      are loaded very far away from the JITed code. This does not prevent the
-      --      runtime linker from attempting to shove their offsets into 32-bit values
-      --      which cannot represent them, leading to segfaults that are very fun to debug.
-      --      It would be good to find a better solution, because larger code models might
-      --      hurt performance if we were to end up doing a lot of function calls.
-      -- TODO: Consider changing the linking layer, as suggested in:
-      --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
-      T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive $ \tm -> do
+    Mod.withModuleFromAST c ast $ \m -> do
+      withHostTargetMachine $ \tm -> do
         linkDexrt     c            m
-        internalize   ["entryFun"] m
+        let exports = name : dtorNames
+        internalize   exports      m
         compileModule c logger tm  m
         JIT.withExecutionSession $ \exe ->
           JIT.withObjectLinkingLayer exe (\k -> (M.! k) <$> readIORef resolvers) $ \linkLayer ->
@@ -132,13 +192,14 @@ evalLLVM logger ast argPtr = do
                 JIT.withSymbolResolver exe (makeResolver compileLayer) $ \resolver -> do
                   modifyIORef resolvers (M.insert moduleKey resolver)
                   JIT.withModule compileLayer moduleKey m $ do
-                    entryFunSymbol <- JIT.mangleSymbol compileLayer "entryFun"
-                    Right (JIT.JITSymbol f _) <- JIT.findSymbol compileLayer entryFunSymbol False
-                    t1 <- getCurrentTime
-                    exitCode <- callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr
-                    t2 <- getCurrentTime
-                    logThis logger [EvalTime $ realToFrac $ t2 `diffUTCTime` t1]
-                    return exitCode
+                    entryFunSymbol <- JIT.mangleSymbol compileLayer (fromString name)
+                    Right (JIT.JITSymbol funAddr _) <- JIT.findSymbol compileLayer entryFunSymbol False
+                    res <- f $ castPtrToFunPtr $ wordPtrToPtr funAddr
+                    forM_ dtorNames $ \dtorName -> do
+                      dtorSymbol <- JIT.mangleSymbol compileLayer (fromString dtorName)
+                      Right (JIT.JITSymbol dtorAddr _) <- JIT.findSymbol compileLayer dtorSymbol False
+                      callDtor $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
+                    return res
   where
     makeResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
     makeResolver cl = JIT.SymbolResolver $ \sym -> do
@@ -157,6 +218,19 @@ evalLLVM logger ast argPtr = do
       JIT.JITSymbol { JIT.jitSymbolAddress = ptr
                     , JIT.jitSymbolFlags = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True, JIT.jitSymbolAbsolute = True }
                     }
+    -- Unfortunately the JIT layers we use here don't handle the destructors properly,
+    -- so we have to find and call them ourselves.
+    dtorNames = do
+      let dtorStructs = flip foldMap (L.moduleDefinitions ast) $ \case
+            L.GlobalDefinition
+              L.GlobalVariable{name="llvm.global_dtors",
+                               initializer=Just (C.Array _ elems),
+                               ..} -> elems
+            _ -> []
+      -- Sort in the order of decreasing priority!
+      fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
+        \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (L.Name dname), _]) ->
+          (n, unpack $ SBS.fromShort dname)
 
 compileModule :: Context -> Logger [Output] -> T.TargetMachine -> Mod.Module -> IO ()
 compileModule ctx logger tm m = do
@@ -191,7 +265,6 @@ runDefaultPasses t m = do
     extraPasses = [ P.SuperwordLevelParallelismVectorize
                   , P.FunctionInlining 0 ]
 
-
 runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
 runPasses passes mt m = do
   dl <- case mt of
@@ -212,6 +285,18 @@ internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeE
 instance Show LLVMKernel where
   show (LLVMKernel ast) = unsafePerformIO $ withContext $ \c -> Mod.withModuleFromAST c ast showModule
 
+-- XXX: We need to use the large code model for macOS, because the libC functions
+--      are loaded very far away from the JITed code. This does not prevent the
+--      runtime linker from attempting to shove their offsets into 32-bit values
+--      which cannot represent them, leading to segfaults that are very fun to debug.
+--      It would be good to find a better solution, because larger code models might
+--      hurt performance if we were to end up doing a lot of function calls.
+-- TODO: Consider changing the linking layer, as suggested in:
+--       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
+withHostTargetMachine :: (T.TargetMachine -> IO a) -> IO a
+withHostTargetMachine f =
+  T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive f
+
 withGPUTargetMachine :: B.ByteString -> (T.TargetMachine -> IO a) -> IO a
 withGPUTargetMachine computeCapability next = do
   (tripleTarget, _) <- T.lookupTarget Nothing ptxTargetTriple
@@ -226,6 +311,40 @@ withGPUTargetMachine computeCapability next = do
       CM.Default
       CGO.Aggressive
       next
+
+-- === serializing scalars ===
+
+loadLitVals :: Ptr () -> [BaseType] -> IO [LitVal]
+loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
+
+storeLitVals :: Ptr () -> [LitVal] -> IO ()
+storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
+
+loadLitVal :: Ptr () -> BaseType -> IO LitVal
+loadLitVal ptr (Scalar ty) = case ty of
+  Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
+  Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
+  Int8Type    -> Int8Lit    <$> peek (castPtr ptr)
+  Float64Type -> Float64Lit <$> peek (castPtr ptr)
+  Float32Type -> Float32Lit <$> peek (castPtr ptr)
+loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
+loadLitVal _ _ = error "not implemented"
+
+storeLitVal :: Ptr () -> LitVal -> IO ()
+storeLitVal ptr val = case val of
+  Int64Lit   x -> poke (castPtr ptr) x
+  Int32Lit   x -> poke (castPtr ptr) x
+  Int8Lit    x -> poke (castPtr ptr) x
+  Float64Lit x -> poke (castPtr ptr) x
+  Float32Lit x -> poke (castPtr ptr) x
+  PtrLit _   x -> poke (castPtr ptr) x
+  _ -> error "not implemented"
+
+cellSize :: Int
+cellSize = 8
+
+ptrArray :: Ptr () -> [Ptr ()]
+ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
 
 -- === dex runtime ===
 
@@ -303,3 +422,18 @@ zeroNVVMReflect =
                    }
                ]
            }
+
+ptxTargetTriple :: ShortByteString
+ptxTargetTriple = "nvptx64-nvidia-cuda"
+
+ptxDataLayout :: L.DataLayout
+ptxDataLayout = (L.defaultDataLayout L.LittleEndian)
+    { L.endianness     = L.LittleEndian
+    , L.pointerLayouts = M.fromList [(L.AddrSpace 0, (64, L.AlignmentInfo 64 64))]
+    , L.typeLayouts    = M.fromList $
+        [ ((L.IntegerAlign, 1), L.AlignmentInfo 8 8) ] ++
+        [ ((L.IntegerAlign, w), L.AlignmentInfo w w) | w <- [8, 16, 32, 64] ] ++
+        [ ((L.FloatAlign,   w), L.AlignmentInfo w w) | w <- [32, 64] ] ++
+        [ ((L.VectorAlign,  w), L.AlignmentInfo w w) | w <- [16, 32, 64, 128] ]
+    , L.nativeSizes    = Just $ S.fromList [16, 32, 64]
+    }

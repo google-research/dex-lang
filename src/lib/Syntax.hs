@@ -1,3 +1,9 @@
+-- Copyright 2019 Google LLC
+--
+-- Use of this source code is governed by a BSD-style
+-- license that can be found in the LICENSE file or at
+-- https://developers.google.com/open-source/licenses/bsd
+
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -17,43 +23,44 @@ module Syntax (
     PrimEffect (..), PrimOp (..), EffectSummary, pattern NoEffects,
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), IStmt (..),
-    IProg, IProgVal, ImpProgram, ImpStatement, ImpInstr (..), IExpr (..), IVal,
-    IPrimOp, IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    UAlt (..), AltP, Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
+    ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
+    Scope, CmdName (..), HasIVars (..), ForAnn (..),
+    Val, TopEnv, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
+    ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
+    IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
+    IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
+    IFunType (..), IFunVar, CallingConvention (..),
+    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
-    MDImpFunction (..), MDImpProgram, MDImpInstr (..), MDImpStatement,
-    ImpKernel (..), CUDAKernel (..), IScope,
-    ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
+    IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    boundUVars, PassName (..), boundVars, bindingsAsVars,
-    freeVars, freeUVars, Subst, HasVars, BindsVars,
-    strToPrimName, primNameToStr, showPrimName,
-    monMapSingle, monMapLookup, Direction (..), ArrayRef, Array, Limit (..),
+    boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
+    freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
+    AddressSpace (..), PtrOrigin (..), showPrimName, strToPrimName, primNameToStr,
+    monMapSingle, monMapLookup, Direction (..), Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
-    applyNaryAbs, applyDataDefParams, freshSkolemVar,
+    applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    scalarTableBaseType, varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
+    varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    getIntLit, getFloatLit, pattern CharLit,
-    pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal,
+    getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
+    pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
+    pattern TagRepTy, pattern TagRepVal,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
-    pattern FixedIntRange, pattern RefTy,
-    pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern PureArrow, pattern ArrayVal,
+    pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
+    pattern BaseTy, pattern PtrTy, pattern UnitVal,
+    pattern PairVal, pattern PureArrow,
     pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
     pattern Unlabeled, pattern NoExt, pattern LabeledRowKind,
-    pattern NoLabeledItems, pattern InternalSingletonLabel,
-    pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
+    pattern NoLabeledItems, pattern InternalSingletonLabel, pattern EffKind)
   where
 
 import qualified Data.Map.Strict as M
@@ -71,10 +78,10 @@ import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
 import Data.Int
+import Foreign.Ptr
 import GHC.Generics
 
 import Env
-import Array
 import Util (enumerate, (...))
 
 -- === core IR ===
@@ -93,6 +100,9 @@ data Atom = Var Var
           | TC  TC
           | Eff EffectRow
           | ACase Atom [AltP Atom] Type
+            -- single-constructor only for now
+          | DataConRef DataDef [Atom] (Nest DataConRefBinding)
+          | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
             deriving (Show, Generic)
 
 data Expr = App Atom Atom
@@ -104,6 +114,8 @@ data Expr = App Atom Atom
 
 data Decl = Let LetAnn Binder Expr
           | Unpack (Nest Binder) Expr  deriving (Show, Generic)
+
+data DataConRefBinding = DataConRefBinding Binder Atom  deriving (Show, Generic)
 
 data Block = Block (Nest Decl) Expr    deriving (Show, Generic)
 type AltP a = Abs (Nest Binder) a
@@ -149,18 +161,6 @@ type TopEnv = Scope
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
-
--- A subset of Type generated by the following grammar:
--- data ScalarTableType = TabType (Pi ScalarTableType) | Scalar BaseType
-type ScalarTableType = Type
-type ScalarTableBinder  = BinderP ScalarTableType
-
-scalarTableBaseType :: ScalarTableType -> BaseType
-scalarTableBaseType t = case t of
-  TabTy _ a -> scalarTableBaseType a
-  BaseTy b  -> b
-  _         -> error $ "Not a scalar table: " ++ show t
-
 
 -- The label for a field in a record or variant.
 type Label = String
@@ -218,7 +218,7 @@ data UExpr' = UVar UVar
             | UTypeAnn UExpr UExpr
             | UTabCon [UExpr]
             | UIndexRange (Limit UExpr) (Limit UExpr)
-            | UPrimExpr (PrimExpr Name)
+            | UPrimExpr (PrimExpr UExpr)
             | URecord (ExtLabeledItems UExpr UExpr)     -- {a=x, b=y, ...rest}
             | UVariant (LabeledItems ()) Label UExpr    -- {|a|b| a=x |}
             | UVariantLift (LabeledItems ()) UExpr      -- {|a|b| ...rest |}
@@ -255,6 +255,7 @@ data UPat' = UPatBinder UBinder
            | UPatRecord (ExtLabeledItems UPat UPat)     -- {a=x, b=y, ...rest}
            | UPatVariant (LabeledItems ()) Label UPat   -- {|a|b| a=x |}
            | UPatVariantLift (LabeledItems ()) UPat     -- {|a|b| ...rest |}
+           | UPatTable [UPat]
              deriving (Show)
 
 data WithSrc a = WithSrc SrcCtx a
@@ -273,35 +274,36 @@ data PrimExpr e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimTC e =
-        BaseType  BaseType
+        BaseType BaseType
       | CharType
-      | ArrayType e         -- A pointer to memory storing a ScalarTableType value
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
       | PairType e e
       | UnitType
-      | RefType e e
+      | RefType (Maybe e) e
       | TypeKind
       | EffectRowKind
       | LabeledRowKindTC
-        -- NOTE: This is just a hack so that we can construct an Atom from an Imp or Jax expression.
-        --       In the future it might make sense to parametrize Atoms by the types
-        --       of values they can hold.
-        -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
-      | JArrayType [Int] ScalarBaseType
+      | ParIndexRange e e e  -- Full index set, global thread id, thread count
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
         Lit LitVal
-      | CharCon e         -- Wraps an Int8 value
-      | ArrayLit e Array  -- Used to store results of module evaluation
-      | AnyValue e        -- Produces an arbitrary value of a given type
       | PairCon e e
       | UnitCon
-      | Coerce e e        -- Type, then value. See Type.hs for valid coercions.
       | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
+      -- These are just newtype wrappers. TODO: use ADTs instead
+      | CharCon e         -- Wraps an Int8 value
+      | IntRangeVal   e e e
+      | IndexRangeVal e (Limit e) (Limit e) e
+      | IndexSliceVal e e e    -- Sliced index set, slice length, ordinal index
+      | BaseTypeRef e
+      | TabRef e
+      | ConRef (PrimCon e)
+      | RecordRef (LabeledItems e)
+      | ParIndexCon e e        -- Type, value
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -315,11 +317,10 @@ data PrimOp e =
       | IndexRef e e
       | FstRef e
       | SndRef e
-      | FFICall String BaseType [e]
+      | FFICall String e [e]
       | Inject e
-      | ArrayOffset e e e            -- Second argument is the index for type checking,
-                                     -- Third argument is the linear offset for evaluation
-      | ArrayLoad e
+      | PtrOffset e e
+      | PtrLoad e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
@@ -327,8 +328,8 @@ data PrimOp e =
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
-      | IntAsIndex e e   -- index set, ordinal index
-      | IndexAsInt e
+      | UnsafeFromOrdinal e e   -- index set, ordinal index. XXX: doesn't check bounds
+      | ToOrdinal e
       | IdxSetSize e
       | ThrowError e
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
@@ -348,7 +349,7 @@ data PrimOp e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
-        For Direction e
+        For ForAnn e
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e e
       | RunReader e e
@@ -356,6 +357,7 @@ data PrimHof e =
       | RunState  e e
       | Linearize e
       | Transpose e
+      | PTileReduce e e       -- index set, thread body
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
@@ -378,6 +380,8 @@ data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
              deriving (Show, Eq, Generic)
 
 data Direction = Fwd | Rev  deriving (Show, Eq, Generic)
+data ForAnn = RegularFor Direction | ParallelFor
+                deriving (Show, Eq, Generic)
 
 data Limit a = InclusiveLim a
              | ExclusiveLim a
@@ -389,6 +393,8 @@ data ClassName = DataClass | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Gene
 data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
 type PrimName = PrimExpr ()
+
+type IndexStructure = Nest Binder
 
 strToPrimName :: String -> Maybe PrimName
 strToPrimName s = M.lookup s builtinNames
@@ -409,6 +415,16 @@ data EffectRow = EffectRow [Effect] (Maybe Name)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
 type EffectSummary = S.Set Effect
+
+instance HasVars EffectSummary where
+  freeVars effs = foldMap (\(_, reg) -> reg @> (TyKind, UnknownBinder)) effs
+
+instance Subst EffectSummary where
+  subst (env, _) effs = S.map substEff effs
+    where
+      substEff (eff, name) = case envLookup env name of
+        Just (Var (name':>_)) -> (eff, name')
+        Nothing               -> (eff, name)
 
 pattern Pure :: EffectRow
 pattern Pure = EffectRow [] Nothing
@@ -444,22 +460,14 @@ data SourceBlock' = RunModule UModule
                   | UnParseable ReachedEOF String
                     deriving (Show, Generic)
 
-data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
-                deriving  (Show, Generic)
+data CmdName = GetType | EvalExpr OutFormat | ExportFun String | Dump DataFormat String
+               deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
               | LogPasses [PassName] | LogAll
                 deriving  (Show, Generic)
 
 -- === imperative IR ===
-
-type IProg instr = Nest (IStmt instr)
-type IProgVal instr = (IProg instr, Maybe IExpr)
-data IStmt instr = IInstr (IBinder, instr)
-                 | IFor Direction IBinder Size (IProg instr)
-                 | IWhile (IProgVal instr) (IProg instr)  -- cond block, body block
-                 | ICond IExpr (IProg instr) (IProg instr)
-                 deriving (Show, Functor, Foldable, Traversable)
 
 data IExpr = ILit LitVal
            | IVar IVar
@@ -469,51 +477,80 @@ type IPrimOp = PrimOp IExpr
 type IVal = IExpr  -- only ILit and IRef constructors
 type IBinder = BinderP IType
 type IVar = VarP IType
-data IType = IValType BaseType
-           | IRefType ScalarTableType -- This represents ArrayType (ScalarTableType)
-           | IVoidType
-             deriving (Show, Eq)
+type IType = BaseType
+type Size = IExpr
 
-type Size  = IExpr
+type IFunVar = VarP IFunType
+data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
+                deriving (Show)
+data CallingConvention = CEntryFun
+                       | EntryFun Bool  -- flag indicates whether CUDA required
+                       | FFIFun
+                       | FFIMultiResultFun
+                       | CUDAKernelLaunch
+                       | MCThreadLaunch
+                         deriving (Show)
 
--- Destinations first, arguments second
-data ImpFunction = ImpFunction [ScalarTableBinder] [ScalarTableBinder] ImpProgram
+data ImpModule   = ImpModule [ImpFunction] deriving (Show)
+data ImpFunction = ImpFunction IFunVar [IBinder] ImpBlock
+                 | FFIFunction IFunVar
                    deriving (Show)
-type ImpProgram   = IProg ImpInstr
-type ImpStatement = IStmt ImpInstr
-
-data ImpInstr = Load  IExpr
-              | Store IExpr IExpr           -- Destination first
-              | Alloc ScalarTableType Size  -- Second argument is the size of the table
-              | Free IVar
-                                            -- Second argument is the linear offset for code generation
-                                            -- Third argument is the result type for type checking
-              | IOffset IExpr IExpr ScalarTableType
+data ImpBlock    = ImpBlock (Nest ImpDecl) [IExpr]    deriving (Show)
+data ImpDecl     = ImpLet [IBinder] ImpInstr deriving (Show)
+data ImpInstr = IFor Direction IBinder Size ImpBlock
+              | IWhile ImpBlock ImpBlock  -- cond block, body block
+              | ICond IExpr ImpBlock ImpBlock
+              | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
+              | ISyncWorkgroup
+              | ILaunch IFunVar Size [IExpr]
+              | ICall IFunVar [IExpr]
+              | Store IExpr IExpr           -- dest, val
+              | Alloc AddressSpace IType Size
+              | MemCopy IExpr IExpr IExpr   -- dest, source, numel
+              | Free IExpr
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
               | IPrimOp IPrimOp
                 deriving (Show)
 
--- === multi-device imperative IR ===
-
--- Destinations first, arguments second
-data MDImpFunction k = MDImpFunction [ScalarTableBinder] [ScalarTableBinder] (MDImpProgram k)
-                       deriving (Show, Functor, Foldable, Traversable)
-type MDImpProgram k   = IProg (MDImpInstr k)
-type MDImpStatement k = IStmt (MDImpInstr k)
-
-data MDImpInstr k = MDLaunch Size [IVar] k
-                  | MDAlloc ScalarTableType Size
-                  | MDFree IVar
-                  | MDLoadScalar  IVar
-                  | MDStoreScalar IVar IExpr
-                  | MDHostInstr ImpInstr
-                    deriving (Show, Functor, Foldable, Traversable)
-
--- Parameters, linear thread index, kernel body
-data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram
-                 deriving (Show)
+data Backend = LLVM | LLVMCUDA | LLVMMC | Interp  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
+
+-- === base types ===
+
+data LitVal = Int64Lit   Int64
+            | Int32Lit   Int32
+            | Int8Lit    Int8
+            | Float64Lit Double
+            | Float32Lit Float
+            | PtrLit PtrType (Ptr ())
+            | VecLit [LitVal]  -- Only one level of nesting allowed!
+              deriving (Show, Eq, Ord, Generic)
+
+data ScalarBaseType = Int64Type | Int32Type | Int8Type | Float64Type | Float32Type
+                      deriving (Show, Eq, Ord, Generic)
+data BaseType = Scalar  ScalarBaseType
+              | Vector  ScalarBaseType
+              | PtrType PtrType
+                deriving (Show, Eq, Ord, Generic)
+
+data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
+data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
+data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Eq, Ord, Generic)
+type PtrType = (PtrOrigin, AddressSpace, BaseType)
+
+sizeOf :: BaseType -> Int
+sizeOf t = case t of
+  Scalar Int64Type   -> 8
+  Scalar Int32Type   -> 4
+  Scalar Int8Type    -> 1
+  Scalar Float64Type -> 8
+  Scalar Float32Type -> 4
+  PtrType _          -> 8
+  Vector st          -> vectorWidth * sizeOf (Scalar st)
+
+vectorWidth :: Int
+vectorWidth = 4
 
 -- === some handy monoids ===
 
@@ -561,17 +598,20 @@ type LitProg = [(SourceBlock, Result)]
 type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
+type BenchStats = Int -- number of runs
 data Output = TextOut String
+            | HtmlOut String
             | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
-            | EvalTime  Double
+            | EvalTime  Double (Maybe BenchStats)
             | TotalTime Double
-            | BenchResult String Double Double  -- name, compile time, eval time
+            | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
             | MiscLog String
+            | ExportedFun String Atom
               deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | Heatmap Bool | ColorHeatmap | Scatter
+data OutFormat = Printed | RenderHtml | Heatmap Bool | ColorHeatmap | Scatter
                  deriving (Show, Eq, Generic)
 data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
@@ -676,7 +716,7 @@ instance HasUVars UExpr' where
     UTypeAnn v ty -> freeUVars v <> freeUVars ty
     UTabCon xs -> foldMap freeUVars xs
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
-    UPrimExpr _ -> mempty
+    UPrimExpr prim -> foldMap freeUVars prim
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
     URecord ulr -> freeUVars ulr
     UVariant types _ val -> freeUVars types <> freeUVars val
@@ -702,6 +742,7 @@ instance HasUVars UPat' where
     UPatRecord items -> freeUVars items
     UPatVariant _ _ p -> freeUVars p
     UPatVariantLift _ p -> freeUVars p
+    UPatTable ps -> foldMap freeUVars ps
 
 instance BindsUVars UPat' where
   boundUVars pat = case pat of
@@ -712,6 +753,7 @@ instance BindsUVars UPat' where
     UPatRecord items -> boundUVars items
     UPatVariant _ _ p -> boundUVars p
     UPatVariantLift _ p -> boundUVars p
+    UPatTable ps -> foldMap boundUVars ps
 
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
@@ -817,9 +859,6 @@ scopelessSubst env x = subst (env, scope) x
 bindingsAsVars :: Bindings -> [Var]
 bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
 
-binderBinding :: Binder -> Bindings
-binderBinding b = b @> (binderType b, UnknownBinder)
-
 class HasVars a where
   freeVars :: a -> Scope
 
@@ -877,6 +916,20 @@ instance BindsVars Binder where
           b' = Bind (v':>ty')
           ty' = subst env ty
           env' = (b@>Var (v':>ty'), b'@>(ty', UnknownBinder))
+
+instance HasVars DataConRefBinding where
+  freeVars (DataConRefBinding b ref) = freeVars b <> freeVars ref
+
+instance Subst DataConRefBinding where
+  subst env (DataConRefBinding b ref) =
+    DataConRefBinding (subst env b) (subst env ref)
+
+instance BindsVars DataConRefBinding where
+  boundVars (DataConRefBinding b _) = b @> (binderType b, UnknownBinder)
+  renamingSubst env (DataConRefBinding b ref) = (DataConRefBinding b' ref', env')
+    where
+      ref' = subst env ref
+      (b', env') = renamingSubst env b
 
 instance Eq Atom where
   Var v == Var v' = v == v'
@@ -1021,6 +1074,9 @@ instance HasVars Atom where
     RecordTy row -> freeVars row
     VariantTy row -> freeVars row
     ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
+    DataConRef _ params args -> freeVars params <> freeVars args
+    BoxedRef b ptr size body ->
+      freeVars ptr <> freeVars size <> freeVars (Abs b body)
 
 instance Subst Atom where
   subst env atom = case atom of
@@ -1038,6 +1094,10 @@ instance Subst Atom where
     RecordTy row -> RecordTy $ subst env row
     VariantTy row -> VariantTy $ subst env row
     ACase v alts rty -> ACase (subst env v) (subst env alts) (subst env rty)
+    DataConRef def params args -> DataConRef def (subst env params) args'
+      where Abs args' () = subst env $ Abs args ()
+    BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
+        where Abs b' body' = subst env $ Abs b body
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -1141,57 +1201,36 @@ type IScope = Env IType
 class HasIVars a where
   freeIVars :: a -> IScope
 
-class BindsIVars a where
-  boundIVars :: a -> IScope
-
--- XXX: Only for ScalarTableType!
-instance HasIVars Type where
-  freeIVars t = fmap (\(BaseTy bt, _) -> IValType bt) $ freeVars t
-
 instance HasIVars IExpr where
   freeIVars e = case e of
     ILit _        -> mempty
     IVar v@(_:>t) -> v @> t <> freeIVars t
 
 instance HasIVars IType where
-  freeIVars t = case t of
-    IValType _  -> mempty
-    IRefType rt -> freeIVars rt
-    IVoidType   -> mempty
+  freeIVars _ = mempty
 
-instance HasIVars instr => HasIVars (IProg instr) where
-  freeIVars Empty = mempty
-  freeIVars (Nest stmt cont) = stmtFree <> (freeIVars cont `envDiff` boundIVars stmt)
-    where
-      stmtFree = case stmt of
-        IInstr (_, instr) -> freeIVars instr
-        IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
-        IWhile c p        -> freeIVars c <> freeIVars p
-        ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
-
-instance BindsIVars (IStmt instr) where
-  boundIVars stmt = case stmt of
-    IInstr (b, _) -> binderAsEnv b
-    IFor _ _ _ _  -> mempty
-    IWhile _ _    -> mempty
-    ICond _ _ _   -> mempty
-
-instance BindsIVars (IProg instr) where
-  boundIVars prog = foldMap boundIVars prog
+instance HasIVars ImpBlock where
+  freeIVars (ImpBlock Empty results) = foldMap freeIVars results
+  freeIVars (ImpBlock (Nest (ImpLet bs instr) rest) results) =
+    freeIVars instr <>
+      (freeIVars (ImpBlock rest results) `envDiff` newEnv bs (repeat ()))
 
 instance HasIVars ImpInstr where
   freeIVars i = case i of
-    Load  e       -> freeIVars e
+    IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
+    IWhile c p        -> freeIVars c <> freeIVars p
+    ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
+    IQueryParallelism _ s -> freeIVars s
+    ISyncWorkgroup      -> mempty
+    ILaunch _ size args -> freeIVars size <> foldMap freeIVars args
+    ICall   _      args -> foldMap freeIVars args
     Store d e     -> freeIVars d <> freeIVars e
-    Alloc t s     -> freeIVars t <> freeIVars s
-    Free  v       -> varAsEnv v
-    IOffset a o t -> freeIVars a <> freeIVars o <> freeIVars t
+    Alloc _ t s   -> freeIVars t <> freeIVars s
+    MemCopy x y z -> freeIVars x <> freeIVars y <> freeIVars z
+    Free x        -> freeIVars x
     ICastOp t x   -> freeIVars t <> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
     IThrowError   -> mempty
-
-instance HasIVars instr => HasIVars (IProgVal instr) where
-  freeIVars (prog, val) = freeIVars prog <> (maybe mempty freeIVars val `envDiff` boundIVars prog)
 
 instance Semigroup (Nest a) where
   (<>) = mappend
@@ -1270,10 +1309,16 @@ pattern CharLit x = Con (CharCon (Con (Lit (Int8Lit x))))
 
 -- Type used to represent indices at run-time
 pattern IdxRepTy :: Type
-pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
+pattern IdxRepTy = TC (BaseType IIdxRepTy)
 
 pattern IdxRepVal :: Int32 -> Atom
 pattern IdxRepVal x = Con (Lit (Int32Lit x))
+
+pattern IIdxRepVal :: Int32 -> IExpr
+pattern IIdxRepVal x = ILit (Int32Lit x)
+
+pattern IIdxRepTy :: IType
+pattern IIdxRepTy = Scalar Int32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type
@@ -1281,9 +1326,6 @@ pattern TagRepTy = TC (BaseType (Scalar Int8Type))
 
 pattern TagRepVal :: Int8 -> Atom
 pattern TagRepVal x = Con (Lit (Int8Lit x))
-
-pattern ArrayVal :: Type -> Array -> Atom
-pattern ArrayVal t arr = Con (ArrayLit t arr)
 
 pattern PairVal :: Atom -> Atom -> Atom
 pattern PairVal x y = Con (PairCon x y)
@@ -1297,14 +1339,17 @@ pattern UnitVal = Con UnitCon
 pattern UnitTy :: Type
 pattern UnitTy = TC UnitType
 
-pattern JArrayTy :: [Int] -> ScalarBaseType -> Type
-pattern JArrayTy shape b = TC (JArrayType shape b)
-
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
 
+pattern PtrTy :: PtrType -> Type
+pattern PtrTy ty = BaseTy (PtrType ty)
+
 pattern RefTy :: Atom -> Type -> Type
-pattern RefTy r a = TC (RefType r a)
+pattern RefTy r a = TC (RefType (Just r) a)
+
+pattern RawRefTy :: Type -> Type
+pattern RawRefTy a = TC (RefType Nothing a)
 
 pattern CharTy :: Type
 pattern CharTy = TC CharType
@@ -1321,11 +1366,11 @@ pattern LabeledRowKind = TC LabeledRowKindTC
 pattern FixedIntRange :: Int32 -> Int32 -> Type
 pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
+pattern Fin :: Atom -> Type
+pattern Fin n = TC (IntRange (IdxRepVal 0) n)
+
 pattern PureArrow :: Arrow
 pattern PureArrow = PlainArrow Pure
-
-pattern ArrayTy :: Type -> Type
-pattern ArrayTy t = TC (ArrayType t)
 
 pattern TabTy :: Binder -> Type -> Type
 pattern TabTy v i = Pi (Abs v (TabArrow, i))
@@ -1374,9 +1419,6 @@ pattern BinaryFunVal :: Binder -> Binder -> EffectRow -> Block -> Type
 pattern BinaryFunVal b1 b2 eff body =
           Lam (Abs b1 (PureArrow, Block Empty (Atom (
           Lam (Abs b2 (PlainArrow eff, body))))))
-
-pattern IDo :: BinderP IType
-pattern IDo = Ignore IVoidType
 
 pattern NoLabeledItems :: LabeledItems a
 pattern NoLabeledItems <- ((\(LabeledItems items) -> M.null items) -> True)
@@ -1429,9 +1471,9 @@ builtinNames = M.fromList
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("log1p", unOp Log1p), ("lgamma", unOp LGamma)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
-  , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
-  , ("asidx"       , OpExpr $ IntAsIndex () ())
+  , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
+  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
@@ -1454,8 +1496,10 @@ builtinNames = M.fromList
   , ("Int64"   , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
   , ("Int8"    , TCExpr $ BaseType $ Scalar Int8Type)
+  , ("Char"    , TCExpr $ CharType)
+  , ("MkChar"  , ConExpr $ CharCon ())
   , ("IntRange", TCExpr $ IntRange () ())
-  , ("Ref"     , TCExpr $ RefType () ())
+  , ("Ref"     , TCExpr $ RefType (Just ()) ())
   , ("PairType", TCExpr $ PairType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("EffKind" , TCExpr $ EffectRowKind)
@@ -1466,15 +1510,17 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
-  , ("anyVal", ConExpr $ AnyValue ())
   -- TODO: Lift vectors to constructors
   --, ("VectorFloatType",  TCExpr $ BaseType $ Vector FloatType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
-  , ("unsafeAsIndex", ConExpr $ Coerce   () ())
   , ("cast", OpExpr  $ CastOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
+  , ("ptrOffset", OpExpr $ PtrOffset () ())
+  , ("ptrLoad"  , OpExpr $ PtrLoad ())
+  , ("CharPtr" , TCExpr $ BaseType $ PtrType
+                     (AllocatedPtr, Heap CPU,  Scalar Int8Type))
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
@@ -1492,6 +1538,7 @@ instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (LabeledItems a)
 instance (Store a, Store b) => Store (ExtLabeledItems a b)
+instance Store ForAnn
 instance Store Atom
 instance Store Expr
 instance Store Block
@@ -1506,3 +1553,10 @@ instance Store LetAnn
 instance Store BinderInfo
 instance Store DataDef
 instance Store DataConDef
+instance Store LitVal
+instance Store ScalarBaseType
+instance Store BaseType
+instance Store AddressSpace
+instance Store PtrOrigin
+instance Store Device
+instance Store DataConRefBinding

@@ -1,0 +1,38 @@
+interface InterfaceTest1 a:Type where
+  InterfaceTest1 : a
+> Error: variable already defined: InterfaceTest1
+
+interface InterfaceTest2 typeName:Type where
+  typeName : typeName -> typeName
+
+interface InterfaceTest3 _:Type where
+  foo : Int32
+
+> Parse error:8:26:
+>   |
+> 8 | interface InterfaceTest3 _:Type where
+>   |                          ^^^^^
+> unexpected "_:Typ"
+> expecting "where" or named annoted binder
+interface InterfaceTest4 where
+  foo : Int
+
+instance instanceTest4 : InterfaceTest4 where
+  foo = 1
+
+instance instanceTest4 : InterfaceTest4 x -> InterfaceTest4 (n=>a) where
+  foo = 1
+
+> Parse error:23:68:
+>    |
+> 23 | instance instanceTest4 : InterfaceTest4 x -> InterfaceTest4 (n=>a) where
+>    |                                                                    ^
+> Met invalid arrow '->' in type annotation of instance. Only class arrows and implicit arrows are allowed.
+instance instanceTest5 : (..i) where
+  bar = bar
+
+> Parse error:31:32:
+>    |
+> 31 | instance instanceTest5 : (..i) where
+>    |                                ^
+> Could not extract interface name from type annotation.
