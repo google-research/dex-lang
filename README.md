@@ -21,8 +21,8 @@ or these example programs:
   * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
 
-Please note that Dex is an experimental research project at an early stage of
-development. Contributions welcome!
+⚠️ Dex is an experimental research project at an early stage of
+development. Expect monstrous bugs and razor-sharp edges. Contributions welcome! ⚠️
 
 ## Dependencies
 
