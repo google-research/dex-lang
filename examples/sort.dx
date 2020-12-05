@@ -1,15 +1,40 @@
 '## Stack operations.
+This is a fake stack for now until Dex gets dependent dereferencing,
+or can handle nested references.
 
-def push (x:a) (xs:List a) --o : List a =
-  xs <> (AsList 1 [x])
+bufsize = 1000
 
-def pop (list: List a) --o : (Maybe a & List a) =
-  (AsList nx xs) = list
-  case nx == 0 of
-    True -> (Nothing, list)
+data Stack a:Type h:Type =
+  AsStack size: (Ref h Int) buf: (Ref h ((Fin bufsize)=>a))
+
+def pop (stack:Stack a h) : {State h} Maybe a =
+  (AsStack size buf) = stack
+  case get size == 0 of
+    True -> Nothing
     False ->
-      newLength = nx - 1
-      (Just xs.((nx-1)@_), AsList newLength (for i. xs.((ordinal i)@_)))
+      size := (get size) - 1
+      Just (get buf!((get size)@_))
+
+def push (stack:Stack b h) (x:b) : {State h} Unit =
+  (AsStack size buf) = stack
+  buf!((get size)@_) := x
+  size := (get size) + 1
+
+def empty (stack:Stack b h) : {State h} Bool =
+  (AsStack size buf) = stack
+  (get size) <= 0
+
+-- This will be a nice helper function, but for now it doesn't
+-- typecheck due to a unification bug.
+def withStack
+      (eff:Effects) ?->
+      (init:t)
+      (action: (Stack t h -> {State h |eff} Unit))
+      : {|eff} Unit =
+  withState (1, for i:(Fin bufsize). init) \pairref.
+    stack = AsStack (fstRef pairref) (sndRef pairref)
+    action stack
+  ()
 
 
 '## Generic helper functions
@@ -19,7 +44,7 @@ def swapInRef (xsRef: Ref h (n=>t)) (a:n) (b:n) : {State h} Unit =
   xsRef!a := get xsRef!b
   xsRef!b := temp
 
-def unMaybe (maybeA: Maybe a) : a =
+def fromJust (maybeA: Maybe a) : a =
   case maybeA of
     Just x -> x
     Nothing -> throw
@@ -32,15 +57,10 @@ def (+|) (i:n) (delta:Int) : n =
   i' = ordinal i + delta
   fromOrdinal _ $ select (i' >= size n) (size n - 1) i'
 
-def notEmpty ((AsList n xs):List a) : Bool = n > 0
 def firstIx (n:Type) : n = 0@n
 def lastIx  (n:Type) : n = ((size n) - 1)@n
 
-def sorted (_:Ord a) ?=> (xs:n=>a) : Bool =
-  all for i. (xs.i <= xs.(i +| 1))
 
--- Right now the Range type doesn't support unpacking,
--- so this is a temporary workaround.
 data MyRange a:Type =
   MkRange low:a high:a
 
@@ -50,8 +70,7 @@ def rangeSize (MkRange low high:MyRange a) : Int =
 
 '# Sort functions
 
-def partition (_:Ord a) ?=>
-  (xsRef: Ref h (n=>a))
+def partition (_:Ord a) ?=> (xsRef: Ref h (n=>a))
   (MkRange low high:MyRange n) : {State h} n = 
   -- Chooses the last element as the pivot, then
   -- moves all elements smaller than the pivot to its left,
@@ -60,42 +79,42 @@ def partition (_:Ord a) ?=>
     pivotval = get xsRef!high
     
     final_pivot_ix = snd $ withState low \pivotIxRef.
-      low'  = ordinal low  -- can't inline these two.
-      high' = ordinal high  
-      for j':(Range low' high').
-        j = (low' + ordinal j')@n 
+      for j':(low..<high).
+        j = %inject j'
         case get xsRef!j < pivotval of
           True ->
             swapInRef xsRef (get pivotIxRef) j
             pivotIxRef := (get pivotIxRef) +| 1
           False -> ()
-      ()
     swapInRef xsRef final_pivot_ix high 
     final_pivot_ix
 
-def sort (_:Ord a) ?=> (xs:n=>a) --o : n=>a =
-  -- In-place iterative quicksort.
-  init_stack = AsList _ [MkRange (first n) (last n)]
-  snd $ withState xs \xsRef.
-    withState init_stack \stackRef.
-      while (\(). notEmpty (get stackRef)) \().
-        (maybe_cur_range, remaining_stack) = pop (get stackRef)
-        stackRef := remaining_stack
-        cur_range = unMaybe maybe_cur_range
-        case rangeSize cur_range > 1 of
-          False -> ()
-          True ->
-            pivot_ix = partition xsRef cur_range
-            (MkRange low high) = cur_range
+def quickSortInPlace (_:Ord a) ?=> (xsRef: Ref h (n=>a)) : {State h} Unit =
+  initrange = MkRange (firstIx n) (lastIx n)
+  withState (1, for i:(Fin bufsize). initrange) \pairref.
+    stack = AsStack (fstRef pairref) (sndRef pairref)
+    while (\(). not (empty stack)) \().
+      cur_range = fromJust $ pop stack
+      case rangeSize cur_range <= 1 of
+        True -> ()
+        False ->
+          pivot_ix = partition xsRef cur_range
+          (MkRange low high) = cur_range
 
-            left_range  = MkRange low (pivot_ix -| 1)
-            stackRef := push left_range (get stackRef)
+          left_range  = MkRange low (pivot_ix -| 1)
+          right_range = MkRange (pivot_ix +| 1) high
 
-            right_range = MkRange (pivot_ix +| 1) high
-            stackRef := push right_range (get stackRef)
-          
-        
+          push stack left_range
+          push stack right_range
+  ()
+
+def sort (_:Ord a) ?=> (xs:n=>a) : n=>a =
+  snd $ withState xs quickSortInPlace
+
+def isSorted (_:Ord a) ?=> (xs:n=>a) : Bool =
+  all for i. xs.i <= xs.(i +| 1)
+
 ---------- Tests -----------
 
-:p sorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
+:p isSorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
 > True
