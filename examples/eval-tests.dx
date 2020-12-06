@@ -772,19 +772,19 @@ s1 = "hello world"
 > ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd']
 
 :p codepoint 'a'
-97
+> 97
 
 :p 'a' == 'a'
-True
+> True
 
 :p 'a' == 'A'
-False
+> False
 
 :p 'a' < 'b'
-True
+> True
 
 :p 'a' > 'b'
-false
+> False
 
 :p
   x = 2 + 2
