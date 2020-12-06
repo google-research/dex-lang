@@ -244,8 +244,7 @@ toImpOp (maybeDest, op) = case op of
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom tileOffset'
   ThrowError _ -> throwError ()
-  CodePoint ~(Con (CharCon x)) -> do
-    returnVal x
+  CodePoint ~(Con (CharCon x)) -> returnVal x
   CastOp destTy x -> case (getType x, destTy) of
     (BaseTy _, BaseTy bt) -> returnVal =<< toScalarAtom <$> cast (fromScalarAtom x) bt
     _ -> error $ "Invalid cast: " ++ pprint (getType x) ++ " -> " ++ pprint destTy
