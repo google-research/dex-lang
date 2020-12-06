@@ -728,9 +728,10 @@ typeCheckOp op = case op of
     i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
-  -- TODO: type check that c is a character
   -- TODO: this should really be a 32 bit integer for unicode code point: but for now is 8 bit ASCII code point
-  CodePoint c -> return $ BaseTy $ Scalar Int8Type
+  CodePoint c -> do
+    c |: CharTy
+    return $ BaseTy $ Scalar Int8Type
   CastOp t@(Var _) _ -> t |: TyKind $> t
   CastOp destTy e -> do
     sourceTy <- typeCheck e
