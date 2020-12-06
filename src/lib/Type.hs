@@ -18,7 +18,7 @@ import Prelude hiding (pi)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Data.Foldable (toList)
+import Data.Foldable (toList, traverse_)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -394,7 +394,7 @@ instance CoreVariant Expr where
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariant b >> checkVariant e
-  checkVariant (Unpack bs e) = mapM checkVariant bs >> checkVariant e
+  checkVariant (Unpack bs e) = mapM_ checkVariant bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
@@ -558,7 +558,7 @@ typeCheckTyCon tc = case tc of
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
-  RefType r a      -> mapM (|: TyKind) r  >> a|:TyKind >> return TyKind
+  RefType r a      -> mapM_ (|: TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
@@ -933,8 +933,8 @@ checkDataLike :: MonadError Err m => String -> Type -> m ()
 checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
-  RecordTy (NoExt items)  -> void $ traverse recur items
-  VariantTy (NoExt items) -> void $ traverse recur items
+  RecordTy (NoExt items)  -> traverse_ recur items
+  VariantTy (NoExt items) -> traverse_ recur items
   TypeCon def params ->
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
