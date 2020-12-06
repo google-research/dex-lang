@@ -48,7 +48,7 @@ parseTopDeclRepl s = case sbContents b of
 parseExpr :: String -> Maybe UExpr
 parseExpr s = case parseit s (expr <* eof) of
   Right ans -> Just ans
-  Left  e   -> Nothing
+  Left  _   -> Nothing
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case runTheParser s (p <* (optional eol >> eof)) of
