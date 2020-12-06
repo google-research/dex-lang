@@ -7,7 +7,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
@@ -77,7 +76,7 @@ instance Checkable Module where
         throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
-        let block = Block decls $ Atom $ UnitVal
+        let block = Block decls $ Atom UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
         checkBindings (env <> foldMap boundVars decls) ir bindings
@@ -94,7 +93,7 @@ checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
 checkBinding ir (GlobalName v, b@(ty, info)) =
   addContext ("binding: " ++ pprint (v, b)) $ do
     ty |: TyKind
-    when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars b)) $
+    when (ir >= Evaluated && not (all isGlobal (envAsVars $ freeVars b))) $
       throw CompilerErr "Non-global name in a fully evaluated atom"
     case info of
       LetBound _ atom -> atom |: ty
@@ -323,7 +322,7 @@ checkNestedBinders (Nest b bs) = do
   extendTypeEnv (boundVars b) $ checkNestedBinders bs
 
 checkArrow :: Arrow -> TypeM ()
-checkArrow arr = mapM_ checkEffRow arr
+checkArrow = mapM_ checkEffRow
 
 infixr 7 |:
 (|:) :: HasType a => a -> Type -> TypeM ()
@@ -690,7 +689,7 @@ typeCheckOp op = case op of
       MTell x -> x|:s >> declareEff (Writer, h'') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
-    i |: (absArgType a)
+    i |: absArgType a
     return $ RefTy h $ snd $ applyAbs a i
   FstRef ref -> do
     RefTy h (PairTy a _) <- typeCheck ref

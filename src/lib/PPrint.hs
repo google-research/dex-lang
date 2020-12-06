@@ -229,7 +229,7 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
   prettyPrec = prettyPrecPrimCon
 
 instance {-# OVERLAPPING #-} PrettyPrec (PrimCon Atom) where
-  prettyPrec con = case (Con con) of
+  prettyPrec con = case Con con of
     CharLit c -> atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral c
     _         -> prettyPrecPrimCon con
 
