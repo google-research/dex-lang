@@ -117,16 +117,16 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (declsToModule . (:[])) (topDecl <* eolf)
-  <|> liftM (declsToModule . (:[])) (interfaceInstance <* eolf)
-  <|> liftM declsToModule (interfaceDef <* eolf)
-  <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
+  <|> fmap (declsToModule . (:[])) (topDecl <* eolf)
+  <|> fmap (declsToModule . (:[])) (interfaceInstance <* eolf)
+  <|> fmap declsToModule (interfaceDef <* eolf)
+  <|> fmap (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
   where declsToModule = RunModule . UModule . toNest
 
 proseBlock :: Parser SourceBlock'
-proseBlock = label "prose block" $ char '\'' >> liftM (ProseBlock . fst) (withSource consumeTillBreak)
+proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSource consumeTillBreak)
 
 loadData :: Parser SourceBlock'
 loadData = do
@@ -281,12 +281,12 @@ interfaceDef = do
   keyWord WhereKW
   recordFieldsWithSrc <- withSrc $ interfaceRecordFields ":"
   let (UConDef interfaceName uAnnBinderNest) = tyCon
-      record = (URecordTy . NoExt) <$> recordFieldsWithSrc
+      record = URecordTy . NoExt <$> recordFieldsWithSrc
       consName = mkInterfaceConsName interfaceName
       varNames = fmap (\(Bind v) -> varName v) uAnnBinderNest
       (WithSrc _ recordFields) = recordFieldsWithSrc
       funDefs = mkFunDefs (pos, varNames, interfaceName) recordFields
-  return $ (UData tyCon [UConDef consName (toNest [Ignore record])]) : funDefs
+  return $ UData tyCon [UConDef consName (toNest [Ignore record])] : funDefs
   where
     -- From an interface
     --   interface I a:Type b:Type where

@@ -7,7 +7,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
@@ -19,7 +18,7 @@ import Prelude hiding (pi)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Data.Foldable (toList)
+import Data.Foldable (toList, traverse_)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -77,7 +76,7 @@ instance Checkable Module where
         throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
-        let block = Block decls $ Atom $ UnitVal
+        let block = Block decls $ Atom UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
         checkBindings (env <> foldMap boundVars decls) ir bindings
@@ -94,7 +93,7 @@ checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
 checkBinding ir (GlobalName v, b@(ty, info)) =
   addContext ("binding: " ++ pprint (v, b)) $ do
     ty |: TyKind
-    when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars b)) $
+    when (ir >= Evaluated && not (all isGlobal (envAsVars $ freeVars b))) $
       throw CompilerErr "Non-global name in a fully evaluated atom"
     case info of
       LetBound _ atom -> atom |: ty
@@ -323,7 +322,7 @@ checkNestedBinders (Nest b bs) = do
   extendTypeEnv (boundVars b) $ checkNestedBinders bs
 
 checkArrow :: Arrow -> TypeM ()
-checkArrow arr = mapM_ checkEffRow arr
+checkArrow = mapM_ checkEffRow
 
 infixr 7 |:
 (|:) :: HasType a => a -> Type -> TypeM ()
@@ -395,7 +394,7 @@ instance CoreVariant Expr where
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariant b >> checkVariant e
-  checkVariant (Unpack bs e) = mapM checkVariant bs >> checkVariant e
+  checkVariant (Unpack bs e) = mapM_ checkVariant bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
@@ -558,7 +557,7 @@ typeCheckTyCon tc = case tc of
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
-  RefType r a      -> mapM (|: TyKind) r  >> a|:TyKind >> return TyKind
+  RefType r a      -> mapM_ (|: TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
@@ -685,7 +684,7 @@ typeCheckOp op = case op of
       MTell x -> x|:s >> declareEff (Writer, h'') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
-    i |: (absArgType a)
+    i |: absArgType a
     return $ RefTy h $ snd $ applyAbs a i
   FstRef ref -> do
     RefTy h (PairTy a _) <- typeCheck ref
@@ -727,6 +726,7 @@ typeCheckOp op = case op of
     i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
+  -- TODO: this should really be a 32 bit integer for unicode code point: but for now is 8 bit ASCII code point
   CastOp t@(Var _) _ -> t |: TyKind $> t
   CastOp destTy e -> do
     sourceTy <- typeCheck e
@@ -930,8 +930,8 @@ checkDataLike :: MonadError Err m => String -> Type -> m ()
 checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
-  RecordTy (NoExt items)  -> void $ traverse recur items
-  VariantTy (NoExt items) -> void $ traverse recur items
+  RecordTy (NoExt items)  -> traverse_ recur items
+  VariantTy (NoExt items) -> traverse_ recur items
   TypeCon def params ->
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of

@@ -16,3 +16,4 @@ trianglePoints : (Fin 3)=>Point = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 (xs, ys) = unzip $ runChain 3000 (update trianglePoints) (newKey 0) (0.0, 0.0)
 
 :html showPlot $ xyPlot xs ys
+> <html output>

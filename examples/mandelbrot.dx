@@ -24,4 +24,4 @@ ys = linspace (Fin 200) (-1.0) 1.0
 escapeGrid = for j i. escapeTime (MkComplex xs.i ys.j)
 
 :html matshow (-escapeGrid)
-> <graphical output>
+> <html output>

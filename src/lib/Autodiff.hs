@@ -625,7 +625,7 @@ transposeOp op ct = case op of
   SliceOffset  _ _      -> notLinear
   SliceCurry   _ _      -> notLinear
   UnsafeFromOrdinal _ _ -> notLinear
-  ToOrdinal   _         -> notLinear
+  ToOrdinal    _        -> notLinear
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
   FFICall      _ _ _    -> notLinear

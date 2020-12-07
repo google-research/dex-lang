@@ -985,8 +985,7 @@ absArgType :: Abs Binder a -> Type
 absArgType (Abs b _) = binderType b
 
 toNest :: [a] -> Nest a
-toNest (x:xs) = Nest x $ toNest xs
-toNest [] = Empty
+toNest = foldr Nest Empty
 
 instance HasVars Arrow where
   freeVars arrow = case arrow of
@@ -1386,10 +1385,10 @@ isTabTy (TabTy _ _) = True
 isTabTy _ = False
 
 mkConsListTy :: [Type] -> Type
-mkConsListTy tys = foldr PairTy UnitTy tys
+mkConsListTy = foldr PairTy UnitTy
 
 mkConsList :: [Atom] -> Atom
-mkConsList xs = foldr PairVal UnitVal xs
+mkConsList = foldr PairVal UnitVal
 
 fromConsListTy :: MonadError Err m => Type -> m [Type]
 fromConsListTy ty = case ty of
@@ -1429,7 +1428,7 @@ pattern InternalSingletonLabel :: Label
 pattern InternalSingletonLabel = "%UNLABELED%"
 
 _getUnlabeled :: LabeledItems a -> Maybe [a]
-_getUnlabeled (LabeledItems items) = case (length items) of
+_getUnlabeled (LabeledItems items) = case length items of
   0 -> Just []
   1 -> NE.toList <$> M.lookup InternalSingletonLabel items
   _ -> Nothing
@@ -1468,7 +1467,7 @@ builtinNames = M.fromList
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
-  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
+  , ("toOrdinal"        , OpExpr $ ToOrdinal ())  
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
