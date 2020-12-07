@@ -353,3 +353,4 @@ key among pixels)
 
 :html imshow $
    takePicture (1, num_bounces, share_prng) theScene num_pix camera
+> <html output>

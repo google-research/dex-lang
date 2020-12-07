@@ -18,7 +18,7 @@ def concat (lists:n=>(List a)) : List a =
 Point : Type = (Float & Float)
 
 data Geom =
-  Dot
+  Spot
   Circle Float
   Rectangle Float Float  -- width, height
   Line Point
@@ -69,14 +69,14 @@ def applyTransformation
 
 flipY : Diagram -> Diagram =
   applyTransformation (\(x,y). (x, -y)) \geom. case geom of
-    Dot           -> Dot
+    Spot          -> Spot
     Circle r      -> Circle r
     Rectangle w h -> Rectangle w h
     Line (x, y)   -> Line (x, -y)
 
 def scale (s:Float) : (Diagram -> Diagram) =
   applyTransformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
-    Dot           -> Dot
+    Spot          -> Spot
     Circle r      -> Circle (s * r)
     Rectangle w h -> Rectangle (s * w) (s * h)
     Line (x, y)   -> Line (s * x, s * y)
@@ -88,7 +88,7 @@ def singletonDefault (geom:Geom) : Diagram =
   MkDiagram $ AsList _ [(defaultAttributes, (0.0, 0.0), geom)]
 
 -- TODO: should really allow nullary functions with `def`
-dot                            : Diagram = singletonDefault Dot
+spot                           : Diagram = singletonDefault Spot
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r
 def rect   (w:Float) (h:Float) : Diagram = singletonDefault $ Rectangle w h
 def line   (p:Point)           : Diagram = singletonDefault $ Line p
@@ -132,15 +132,15 @@ def attrString (attr:Attributes) : String =
   <> makeAttr (str "fill")         (colorStr $ getAt #fill   attr)
   <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
 
-def dotAttrString (attr:Attributes) : String =
+def spotAttrString (attr:Attributes) : String =
   (  makeAttr (str "stroke")       (colorStr $ getAt #stroke attr)
   <> makeAttr (str "fill")         (colorStr $ getAt #stroke attr)
   <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
 
 def renderGeom (attr:Attributes) ((x,y):Point) (geom:Geom) : String =
   case geom of
-    Dot ->
-     tagBracketsAttr (str "g") (dotAttrString attr) $ angleBrackets $
+    Spot ->
+     tagBracketsAttr (str "g") (spotAttrString attr) $ angleBrackets $
        (str "circle" <+>
         str "cx=" <> quote (show x) <>
         str "cy=" <> quote (show y) <>

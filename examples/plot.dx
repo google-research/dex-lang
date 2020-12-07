@@ -48,10 +48,10 @@ highColor = [0.0, 0.5, 1.0]
 def showHex (x:Int) : String =
   (n, ptr) = %ffi showHex (Int & CharPtr) x
   AsList n $ for i:(Fin n).
-    MkChar $ %ptrLoad (%ptrOffset ptr (ordinal i))
+    %ptrLoad (%ptrOffset ptr (ordinal i))
 
 def makeRGBColor (c : Fin 3 => Float) : Color =
-  str "#" <> concat for i. showHex $ FToI $ floor (255.0 * c.i)
+  toList "#" <> concat for i. showHex $ FToI $ floor (255.0 * c.i)
 
 def interpolate (_:VSpace a) ?=> (low:a) (high:a) (x:Float) : a =
   (x .* low) + ((1.0 - x) .* high)
@@ -68,7 +68,7 @@ def showPlot (plot:Plot n a b c) : String =
     case x of
       Just x' -> case y of
         Just y' -> case c of
-          Just c' -> dot |> moveXY (x', y') |> setStroke (colorScale c')
+          Just c' -> spot |> moveXY (x', y') |> setStroke (colorScale c')
           Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty

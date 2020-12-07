@@ -31,7 +31,7 @@ trueFun : Float -> Float =
 xs : Nx=>Float = for i. rand (ixkey k1 i)
 ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
 
-:html showPlot $ xyPlot xs ys
+-- :html showPlot $ xyPlot xs ys
 
 'Implement basis function regression
 
@@ -54,7 +54,7 @@ predict : Float -> Float =
 
 xsTest = linspace (Fin 200) 0.0 1.0
 
-:html showPlot $ xyPlot xsTest (map predict xsTest)
+-- :html showPlot $ xyPlot xsTest (map predict xsTest)
 
 'RMS error
 
@@ -73,7 +73,7 @@ def tabCat (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
 xsPlot = tabCat xs xsTest
 ysPlot = tabCat ys $ map predict xsTest
 
-:html showPlot $ xycPlot xsPlot ysPlot $
-        for i. case i of
-                 {| left  = _ |} -> 0.0
-                 {| right = _ |} -> 1.0
+-- :html showPlot $ xycPlot xsPlot ysPlot $
+--         for i. case i of
+--                  {| left  = _ |} -> 0.0
+--                  {| right = _ |} -> 1.0
