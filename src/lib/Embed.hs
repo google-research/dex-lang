@@ -264,7 +264,7 @@ isub x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (-) x y
 isub x y = emitOp $ ScalarBinOp ISub x y
 
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
-select (Con (Lit (Int8Lit p))) x y = return $ if p /= 0 then x else y
+select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
 select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom

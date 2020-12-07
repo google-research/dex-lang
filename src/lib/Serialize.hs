@@ -26,12 +26,13 @@ import Interpreter (indices)
 pprintVal :: Val -> IO String
 pprintVal val = asStr <$> prettyVal val
 
+-- TODO: get the pointer rather than reading char by char
 getDexString :: Val -> IO String
 getDexString (DataCon _ _ 0 [_, xs]) = do
   let (TabTy b _) = getType xs
   idxs <- indices $ getType b
   forM idxs $ \i -> do
-    ~(CharLit c) <- evalBlock mempty (Block Empty (App xs i))
+    ~(Con (Lit (Word8Lit c))) <- evalBlock mempty (Block Empty (App xs i))
     return $ toEnum $ fromIntegral c
 getDexString x = error $ "Not a string: " ++ pprint x
 

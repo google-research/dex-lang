@@ -48,7 +48,7 @@ parseTopDeclRepl s = case sbContents b of
 parseExpr :: String -> Maybe UExpr
 parseExpr s = case parseit s (expr <* eof) of
   Right ans -> Just ans
-  Left  e   -> Nothing
+  Left  _   -> Nothing
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case runTheParser s (p <* (optional eol >> eof)) of
@@ -221,15 +221,18 @@ uType = expr
 uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
-  let cs = map (WithSrc (Just pos) . UCharLit) s
+  let cs = map (WithSrc (Just pos) . charExpr) s
   return $ WithSrc (Just pos) $ UTabCon cs
 
 uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
-  where uLitParser = UCharLit <$> charLit
+  where uLitParser = charExpr <$> charLit
                  <|> UIntLit  <$> intLit
                  <|> UFloatLit <$> doubleLit
                  <?> "literal"
+
+charExpr :: Char -> UExpr'
+charExpr c = UPrimExpr $ ConExpr $ Lit $ Word8Lit $ fromIntegral $ fromEnum c
 
 uVarOcc :: Parser UExpr
 uVarOcc = withSrc $ try $ (UVar . (:>())) <$> (occName <* notFollowedBy (sym ":"))

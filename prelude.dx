@@ -12,9 +12,12 @@ Fields = %LabeledRowKind
 
 Int64 = %Int64
 Int32 = %Int32
-Int8  = %Int8
 Float64 = %Float64
 Float32 = %Float32
+
+Word8 = %Word8
+Byte = Word8
+Char = Byte
 
 Int = Int32
 Float = Float32
@@ -27,10 +30,10 @@ def FToF64 (x : Float)   : Float64 = internalCast _ x
 def FToF32 (x : Float)   : Float32 = internalCast _ x
 def I64ToI (x : Int64)   : Int     = internalCast _ x
 def I32ToI (x : Int32)   : Int     = internalCast _ x
-def I8ToI  (x : Int8 )   : Int     = internalCast _ x
+def W8ToI  (x : Word8)   : Int     = internalCast _ x
 def IToI64 (x : Int)     : Int64   = internalCast _ x
 def IToI32 (x : Int)     : Int32   = internalCast _ x
-def IToI8  (x : Int)     : Int8    = internalCast _ x
+def IToW8  (x : Int)     : Word8   = internalCast _ x
 def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
 
@@ -62,10 +65,10 @@ instance int32Add : Add Int32 where
   sub = \x:Int32 y:Int32. %isub x y
   zero = IToI32 0
 
-instance int8Add : Add Int8 where
-  add = \x:Int8 y:Int8. %iadd x y
-  sub = \x:Int8 y:Int8. %isub x y
-  zero = IToI8 0
+instance word8Add : Add Word8 where
+  add = \x:Word8 y:Word8. %iadd x y
+  sub = \x:Word8 y:Word8. %isub x y
+  zero = IToW8 0
 
 instance unitAdd : Add Unit where
   add = \x y. ()
@@ -99,9 +102,9 @@ instance int32Mul : Mul Int32 where
   mul = \x:Int32 y:Int32. %imul x y
   one = IToI32 1
 
-instance int8Mul : Mul Int8 where
-  mul = \x:Int8 y:Int8. %imul x y
-  one = IToI8 1
+instance word8Mul : Mul Word8 where
+  mul = \x:Word8 y:Word8. %imul x y
+  one = IToW8 1
 
 instance unitMul : Mul Unit where
   mul = \x y. ()
@@ -120,9 +123,9 @@ instance int32Integral : Integral Int32 where
   idiv = \x:Int32 y:Int32. %idiv x y
   rem  = \x:Int32 y:Int32. %irem x y
 
-instance int8Integral  : Integral Int8  where
-  idiv = \x:Int8  y:Int8.  %idiv x y
-  rem  = \x:Int8  y:Int8.  %irem x y
+instance word8Integral  : Integral Word8  where
+  idiv = \x:Word8  y:Word8.  %idiv x y
+  rem  = \x:Word8  y:Word8.  %irem x y
 
 
 interface Fractional a:Type where
@@ -171,29 +174,29 @@ data Bool =
   False
   True
 
-def BToI8 (x : Bool) : Int8 =
+def BToW8 (x : Bool) : Word8 =
   case x of
-    False -> (IToI8 0)
-    True  -> (IToI8 1)
+    False -> (IToW8 0)
+    True  -> (IToW8 1)
 
-def I8ToB (x : Int8) : Bool =
+def W8ToB (x : Word8) : Bool =
   t = True
   f = False
   %select x t f
 
 def (&&) (x:Bool) (y:Bool) : Bool =
-  x' = BToI8 x
-  y' = BToI8 y
-  I8ToB $ %and x' y'
+  x' = BToW8 x
+  y' = BToW8 y
+  W8ToB $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
-  x' = BToI8 x
-  y' = BToI8 y
-  I8ToB $ %or x' y'
+  x' = BToW8 x
+  y' = BToW8 y
+  W8ToB $ %or x' y'
 
 def not  (x:Bool) : Bool =
-  x' = BToI8 x
-  I8ToB $ %not x'
+  x' = BToW8 x
+  W8ToB $ %not x'
 
 'Sum types
 
@@ -271,24 +274,24 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance float64Eq : Eq Float64 = MkEq \x:Float64 y:Float64. I8ToB $ %feq x y
-@instance float32Eq : Eq Float32 = MkEq \x:Float32 y:Float32. I8ToB $ %feq x y
-@instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   I8ToB $ %ieq x y
-@instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   I8ToB $ %ieq x y
-@instance int8Eq    : Eq Int8    = MkEq \x:Int8    y:Int8.    I8ToB $ %ieq x y
-@instance boolEq    : Eq Bool    = MkEq \x y. BToI8 x == BToI8 y
+@instance float64Eq : Eq Float64 = MkEq \x:Float64 y:Float64. W8ToB $ %feq x y
+@instance float32Eq : Eq Float32 = MkEq \x:Float32 y:Float32. W8ToB $ %feq x y
+@instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   W8ToB $ %ieq x y
+@instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   W8ToB $ %ieq x y
+@instance word8Eq   : Eq Word8   = MkEq \x:Word8   y:Word8.   W8ToB $ %ieq x y
+@instance boolEq    : Eq Bool    = MkEq \x y. BToW8 x == BToW8 y
 @instance unitEq    : Eq Unit    = MkEq \x y. True
 
-@instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. I8ToB $ %fgt x y)
-                                                      (\x y. I8ToB $ %flt x y))
-@instance float32Ord : Ord Float32 = (MkOrd float32Eq (\x y. I8ToB $ %fgt x y)
-                                                      (\x y. I8ToB $ %flt x y))
-@instance int64Ord   : Ord Int64   = (MkOrd int64Eq   (\x y. I8ToB $ %igt x y)
-                                                      (\x y. I8ToB $ %ilt x y))
-@instance int32Ord   : Ord Int32   = (MkOrd int32Eq   (\x y. I8ToB $ %igt x y)
-                                                      (\x y. I8ToB $ %ilt x y))
-@instance int8Ord    : Ord Int8    = (MkOrd int8Eq    (\x y. I8ToB $ %igt x y)
-                                                      (\x y. I8ToB $ %ilt x y))
+@instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. W8ToB $ %fgt x y)
+                                                      (\x y. W8ToB $ %flt x y))
+@instance float32Ord : Ord Float32 = (MkOrd float32Eq (\x y. W8ToB $ %fgt x y)
+                                                      (\x y. W8ToB $ %flt x y))
+@instance int64Ord   : Ord Int64   = (MkOrd int64Eq   (\x y. W8ToB $ %igt x y)
+                                                      (\x y. W8ToB $ %ilt x y))
+@instance int32Ord   : Ord Int32   = (MkOrd int32Eq   (\x y. W8ToB $ %igt x y)
+                                                      (\x y. W8ToB $ %ilt x y))
+@instance word8Ord   : Ord Word8   = (MkOrd word8Eq   (\x y. W8ToB $ %igt x y)
+                                                      (\x y. W8ToB $ %ilt x y))
 @instance unitOrd    : Ord Unit    = (MkOrd unitEq (\x y. False) (\x y. False))
 
 @instance
@@ -611,7 +614,7 @@ def while
     (cond: Unit -> {|eff} Bool)
     (body: Unit -> {|eff} Unit)
     : {|eff} Unit =
-  cond' : Unit -> {|eff} Int8 = \_. BToI8 $ cond ()
+  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
   %while cond' body
 
 'Vector support
@@ -804,9 +807,6 @@ splitV : Iso a ({|} | a) =
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (buildWith $ splitV &>> iso) tab
 
-Char : Type = %Char
-def MkChar (c:Int8) : Char = %MkChar c
-
 String : Type = List Char
 
 CharPtr : Type = %CharPtr
@@ -816,13 +816,11 @@ interface Show a:Type where
 
 def showFloat' (x:Float) : String =
   (n, ptr) = %ffi showFloat (Int & CharPtr) x
-  AsList n $ for i:(Fin n).
-    MkChar $ %ptrLoad (%ptrOffset ptr (ordinal i))
+  AsList n $ for i:(Fin n). %ptrLoad (%ptrOffset ptr (ordinal i))
 
 def showInt' (x:Int) : String =
   (n, ptr) = %ffi showInt (Int & CharPtr) x
-  AsList n $ for i:(Fin n).
-    MkChar $ %ptrLoad (%ptrOffset ptr (ordinal i))
+  AsList n $ for i:(Fin n). %ptrLoad (%ptrOffset ptr (ordinal i))
 
 instance showFloat : Show Float where
   show = showFloat'
@@ -1020,3 +1018,11 @@ instance complexFloating : Floating Complex where
   sqrt   = complex_sqrt
   pow    = complex_pow
   lgamma = complex_lgamma
+
+'## Bitwise operations
+
+-- TODO: type class like Haskell's `Bits`
+def (<<) (x:Byte) (y:Int) : Byte = %shl x (IToW8 y)
+def (>>) (x:Byte) (y:Int) : Byte = %shr x (IToW8 y)
+def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
+def (.&.) (x:Byte) (y:Byte) : Byte = %and x y

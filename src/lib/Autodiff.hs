@@ -304,7 +304,6 @@ linearizeHof env hof = case hof of
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
-  CharCon _             -> emitWithZero
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
@@ -366,7 +365,6 @@ tangentType ty = case ty of
     BaseType (Vector Float64Type) -> TC con
     BaseType (Vector Float32Type) -> TC con
     BaseType   _                  -> UnitTy
-    CharType                      -> UnitTy
     IntRange   _ _                -> UnitTy
     IndexRange _ _ _              -> UnitTy
     IndexSlice _ _                -> UnitTy
@@ -710,7 +708,6 @@ transposeCon con ct = case con of
     getFst ct >>= transposeAtom x
     getSnd ct >>= transposeAtom y
   SumAsProd _ _ _   -> notImplemented
-  CharCon _         -> notTangent
   ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent
