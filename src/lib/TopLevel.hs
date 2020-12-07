@@ -97,9 +97,6 @@ evalSourceBlockM env block = case sbContents block of
           -- TODO: check types before we get here
           s <- liftIO $ getDexString val
           logTop $ HtmlOut s
-        Heatmap _    -> error "not implemented"
-        ColorHeatmap -> error "not implemented"
-        Scatter      -> error "not implemented"
     ExportFun name -> do
       f <- evalUModuleVal env v m
       void $ traverseLiterals f $ \val -> case val of

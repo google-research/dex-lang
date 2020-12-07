@@ -33,15 +33,14 @@ library
                        Parser, Util, Imp, Imp.Embed, Imp.Optimize,
                        PPrint, Algebra, Parallelize, Optimize, Serialize
                        Actor, Cat, Flops, Embed,
-                       RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
+                       RenderHtml, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
                        aeson, megaparsec >=8.0, warp, wai, filepath,
                        parser-combinators, http-types, prettyprinter, text,
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
-                       diagrams-rasterific, JuicyPixels, transformers,
-                       base64-bytestring, vector, directory, mmap, unix,
+                       transformers, directory, mmap, unix,
                        process, primitive, store, dex-resources, temporary,
   if !os(darwin)
     exposed-modules:   Resources

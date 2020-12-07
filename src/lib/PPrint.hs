@@ -485,8 +485,6 @@ instance Pretty Output where
                    Nothing   -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
-  pretty (HeatmapOut _ _ _ _) = "<graphical output>"
-  pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
   pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"

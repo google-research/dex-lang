@@ -171,9 +171,6 @@ explicitCommand = do
     "t"       -> return $ GetType
     "html"    -> return $ EvalExpr RenderHtml
     "export"  -> ExportFun <$> nameString
-    "plot"    -> return $ EvalExpr Scatter
-    "plotmat"      -> return $ EvalExpr (Heatmap False)
-    "plotmatcolor" -> return $ EvalExpr (Heatmap True)
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
