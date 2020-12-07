@@ -6,6 +6,7 @@ described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 Specifically, it's based on his unrolled ```lax.scan``` version.
 
+include "examples/png.dx"
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
@@ -344,10 +345,11 @@ params = (num_samples, num_bounces, share_prng)
 -- %time
 image = takePicture params theScene num_pix camera
 
--- :plotmatcolor image
--- > <graphical output>
+:html imshow image
+> <graphical output>
 
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
--- :plotmatcolor takePicture (1, num_bounces, share_prng) theScene num_pix camera
+:html imshow $
+   takePicture (1, num_bounces, share_prng) theScene num_pix camera

@@ -1,0 +1,117 @@
+'## Base 64 encoder
+
+encodingTable = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+                 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+                 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+                 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+                 'w', 'x', 'y', 'z', '0', '1', '2', '3',
+                 '4', '5', '6', '7', '8', '9', '+', '/']
+
+-- TODO: make `Word8` an index set instead of using `Fin 256`
+decodingTable : Fin 256 => Maybe Char =
+  for i:(Fin 256).
+    idx = linearSearch encodingTable (IToW8 (ordinal i))
+    case idx of
+      Nothing -> Nothing
+      Just x  -> Just $ IToW8 $ ordinal x
+
+Base64 = Byte -- first two bits should be zero
+
+-- This could go in the prelude, or in a library of array-dicing functions.
+-- An explicit "view" builder would be good here, to avoid copies
+def getChunks (n:Type) ?->
+    (chunkSize:Int) (padVal:a) (xs:n=>a)
+    : List (Fin chunkSize => a) =
+  numChunks = idivCeil (size n) chunkSize
+  paddedSize = numChunks * chunkSize
+  xsPadded = padTo (Fin paddedSize) padVal xs
+  toList for i:(Fin numChunks).
+    slice xsPadded (ordinal i * chunkSize) (Fin chunkSize)
+
+def base64sToBytes (chunk : Fin 4 => Base64) : Fin 3 => Byte =
+  [a, b, c, d] = chunk
+  [ (a << 2) .|. (b >> 4)
+  , (b << 4) .|. (c >> 2)
+  , (c << 6) .|.  d       ]
+
+def bytesToBase64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
+  [a, b, c] = chunk
+  -- '?' is 00111111
+  map ((.&.) '?') $
+    [               a >> 2
+    , (a << 4) .|. (b >> 4)
+    , (b << 2) .|. (c >> 6)
+    ,  c                    ]
+
+def base64ToAscii (x:Base64) : Char =
+  encodingTable.(fromOrdinal _ (W8ToI x))
+
+def encodeChunk (chunk : Fin 3 => Char) : Fin 4 => Char =
+  map base64ToAscii $ bytesToBase64s chunk
+
+-- TODO: the `AsList` unpacking is very tedious. Daniel's change will help
+def base64Encode (s:String) : String =
+  (AsList n cs) = s
+  (AsList numChunks chunks) = getChunks 3 '\NUL' cs
+  encodedChunks = map encodeChunk chunks
+  flattened = for (i,j). encodedChunks.i.j
+  padChars = rem (3 - rem n 3) 3
+  validOutputChars = (numChunks * 4) - padChars
+  toList for i. case ordinal i < validOutputChars of
+    True  -> flattened.i
+    False -> '='
+
+def asciiToBase64 (c:Char) : Maybe Base64 =
+  decodingTable.(fromOrdinal _ (W8ToI c))
+
+def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
+  case seqMaybes $ map asciiToBase64 chunk of
+    Nothing -> Nothing
+    Just base64s -> Just $ base64sToBytes base64s
+
+def base64Decode (s:String) : Maybe String =
+  (AsList n cs) = s
+  numValidInputChars = sum for i. BToI $ cs.i /= '='
+  numValidOutputChars = idiv (numValidInputChars * 3) 4
+  csZeroed = for i. case cs.i == '=' of
+    True  -> 'A'
+    False -> cs.i
+  (AsList _ chunks) = getChunks 4 '\NUL' csZeroed
+  case seqMaybes $ map decodeChunk chunks of
+    Nothing -> Nothing
+    Just decodedChunks ->
+      resultPadded = for (i,j). decodedChunks.i.j
+      Just $ toList $ slice resultPadded 0 (Fin numValidOutputChars)
+
+'## PNG FFI
+
+Html : Type = List Char
+
+def makePNG (n:Type) ?-> (m:Type) ?->
+      (img:n=>m=>(Fin 3)=>Word8) : List Byte =
+  (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
+  (n, ptr) = (%ffi encodePNG (Int & CharPtr) (%getPtr imgFlat)
+               (size m) (size n))
+  AsList n $ for i. %ptrLoad (%ptrOffset ptr (ordinal i))
+
+def pngToHtml (png:List Byte) : List Char =
+  (toList "<img class=\"plot-img\" src=\"data:image/png;base64, "
+       <> base64Encode png
+       <> toList "\">")
+
+'## API entry points
+
+def floatTo8Bit (x:Float) : Word8 =
+  IToW8 $ FToI $ 255.0 * clip (0.0, 1.0) x
+
+def imshow (img:n=>m=>(Fin 3)=>Float) : Html =
+  pngToHtml $ makePNG for i j k. floatTo8Bit img.i.j.k
+
+def matshow (img:n=>m=>Float) : Html =
+  low  = minimum  $ for (i,j). img.i.j
+  high = maximum $ for (i,j). img.i.j
+  pngToHtml $ makePNG for i j.
+    x = floatTo8Bit $ (img.i.j - low) / (high - low)
+    [x, x, x]

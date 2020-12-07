@@ -1,5 +1,7 @@
 '# Mandelbrot set
 
+include "examples/png.dx"
+
 'Escape time algorithm
 
 update : Complex -> Complex -> Complex =
@@ -21,5 +23,5 @@ ys = linspace (Fin 200) (-1.0) 1.0
 
 escapeGrid = for j i. escapeTime (MkComplex xs.i ys.j)
 
--- :plotmat escapeGrid
--- > <graphical output>
+:html matshow (-escapeGrid)
+> <graphical output>
