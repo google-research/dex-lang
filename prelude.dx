@@ -545,7 +545,6 @@ def argmin (_:Ord o) ?=> (xs:n=>o) : n =
   zipped = for i. (i, xs.i)
   fst $ reduce zeroth compare zipped
 
-
 'Automatic differentiation
 
 -- TODO: add vector space constraints
@@ -793,6 +792,8 @@ splitV : Iso a ({|} | a) =
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (buildWith $ splitV &>> iso) tab
 
+'## Strings and Characters
+
 Char : Type = %Char
 def MkChar (c:Int8) : Char = %MkChar c
 
@@ -803,6 +804,14 @@ CharPtr : Type = %CharPtr
 interface Show a:Type where
   show : a -> String
 
+-- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint 
+def codepoint (c:Char) : Int8 = %codePoint c
+
+@instance charEq  : Eq Char  = MkEq \x y. codepoint x == codepoint y
+@instance charOrd : Ord Char = (MkOrd charEq (\x y. codepoint x > codepoint y)
+                                             (\x y. codepoint x < codepoint y))
+
+
 def showFloat' (x:Float) : String =
   (n, ptr) = %ffi showFloat (Int & CharPtr) x
   AsList n $ for i:(Fin n).
@@ -810,7 +819,6 @@ def showFloat' (x:Float) : String =
 
 instance showFloat : Show Float where
   show = showFloat'
-
 
 '## Floating point helper functions
 

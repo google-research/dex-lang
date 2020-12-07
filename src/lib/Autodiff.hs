@@ -150,6 +150,7 @@ linearizeOp op = case op of
   UnsafeFromOrdinal _ _  -> emitDiscrete
   ToOrdinal _            -> emitDiscrete
   IdxSetSize _           -> emitDiscrete
+  CodePoint _           -> emitDiscrete
   ThrowError _           -> emitWithZero
   CastOp t v             -> do
     if tangentType vt == vt && tangentType t == t
@@ -627,8 +628,9 @@ transposeOp op ct = case op of
   SliceOffset  _ _      -> notLinear
   SliceCurry   _ _      -> notLinear
   UnsafeFromOrdinal _ _ -> notLinear
-  ToOrdinal   _         -> notLinear
+  ToOrdinal    _        -> notLinear
   IdxSetSize   _        -> notLinear
+  CodePoint    _        -> notLinear
   ThrowError   _        -> notLinear
   FFICall      _ _ _    -> notLinear
   where

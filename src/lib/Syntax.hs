@@ -332,6 +332,7 @@ data PrimOp e =
       | ToOrdinal e
       | IdxSetSize e
       | ThrowError e
+      | CodePoint e
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
       -- Extensible record and variant operations:
       -- Add fields to a record (on the left). Left arg contains values to add.
@@ -1472,7 +1473,8 @@ builtinNames = M.fromList
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
-  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
+  , ("toOrdinal"        , OpExpr $ ToOrdinal ())  
+  , ("codePoint" , OpExpr $ CodePoint ())
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())

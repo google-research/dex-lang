@@ -771,6 +771,21 @@ s1 = "hello world"
 :p s1
 > ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd']
 
+:p codepoint 'a'
+> 97
+
+:p 'a' == 'a'
+> True
+
+:p 'a' == 'A'
+> False
+
+:p 'a' < 'b'
+> True
+
+:p 'a' > 'b'
+> False
+
 :p
   x = 2 + 2
   y = 2 + 4
