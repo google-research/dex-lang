@@ -367,8 +367,6 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Fst (PairVal x _) -> return x
-  Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
     RecordTy (NoExt rightTys) -> do
       -- Unpack, then repack with new arguments (possibly in the middle).

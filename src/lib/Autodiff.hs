@@ -132,8 +132,6 @@ linearizeOp op = case op of
          MTell x -> liftA MTell $ la x
          MGet    -> pure MGet
          MPut  x -> liftA MPut $ la x) `bindLin` emitOp
-  Fst x                  -> (Fst <$> la x) `bindLin` emitOp
-  Snd x                  -> (Snd <$> la x) `bindLin` emitOp
   IndexRef ref i         -> (IndexRef <$> la ref <*> pure i) `bindLin` emitOp
   FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
   SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
@@ -582,8 +580,6 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
-  Fst x                 -> flip emitCTToRef ct =<< (traverse $ emitOp . FstRef) =<< linAtomRef x
-  Snd x                 -> flip emitCTToRef ct =<< (traverse $ emitOp . SndRef) =<< linAtomRef x
   ScalarUnOp  FNeg x    -> transposeAtom x =<< neg ct
   ScalarUnOp  _    _    -> notLinear
   ScalarBinOp FAdd x y  -> transposeAtom x ct >> transposeAtom y ct

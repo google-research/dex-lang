@@ -652,8 +652,6 @@ typeCheckOp op = case op of
     mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
     assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
-  Fst p -> do { PairTy x _ <- typeCheck p; return x}
-  Snd p -> do { PairTy _ y <- typeCheck p; return y}
   ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
   ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do

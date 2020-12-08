@@ -307,8 +307,6 @@ data PrimCon e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
-        Fst e
-      | Snd e
       | TabCon e [e]                 -- table type elements
       | ScalarBinOp BinOp e e
       | ScalarUnOp UnOp e
