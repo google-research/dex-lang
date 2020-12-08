@@ -1,0 +1,95 @@
+'# Fast Fourier Transform
+Using a simple radix-2 algorithm.
+
+
+'## General helper functions
+
+-- Todo: Better algorithms exist for these.
+def intpow (base:Int) (power:Int) : Int =
+  reduce 1 (\i j. j * i) for a:(Fin power). base
+def intlog2 (x:Int) : Int = FToI $ floor (log2 (IToF x))
+
+
+'## FFT functions
+
+-- FFT can be called in either forwards mode (for FFT),
+-- or backwards mode (for inverse FFT).
+data Direction =
+  Forward
+  Backward
+
+def power_of_2_fft (direction: Direction) (x: n=>Complex) : n=>Complex =
+  -- input size must be a power of 2.
+  -- Could enforce this with function-level types like (x: (2^log2n)=>Complex)).
+  dir_const = case direction of
+    Forward -> -pi
+    Backward -> pi
+
+  log2n = intlog2 (size n)
+  iters = idiv (size n) 2
+  
+  snd $ withState x \ref.  
+    for i:(Fin log2n).
+      pow2 = intpow 2 (ordinal i)
+      copy = get ref
+      for j:(Fin iters).  -- Todo: Parallelize this loop.
+        j' = ordinal j
+
+        angle = dir_const * (IToF $ mod j' pow2) / IToF pow2
+        h = (j' + (idiv (size n) 2))@n
+        v = copy.h * (MkComplex (cos angle) (sin angle))
+        k = ((idiv j' pow2) * pow2 * 2) + mod j' pow2
+        
+        ref!(k@n)          := copy.(j'@n) + v
+        ref!((k + pow2)@n) := copy.(j'@n) - v
+
+def fft_ (direction: Direction) (x: n=>Complex): n=>Complex =
+  -- Todo: pad to power of 2
+  power_of_2_fft direction x
+
+def  fft (x: n=>Complex): n=>Complex = fft_ Forward x
+def ifft (x: n=>Complex): n=>Complex =
+  nc = size n
+  (fft_ Backward x) / (IToF nc)
+
+def  fft_real (x: n=>Float): n=>Complex =  fft for i. MkComplex x.i 0.0
+def ifft_real (x: n=>Float): n=>Complex = ifft for i. MkComplex x.i 0.0
+
+def fft2_ (direction: Direction) (x: n=>m=>Complex): n=>m=>Complex =
+  -- todo: pad to power of 2
+  x'  = for i. power_of_2_fft direction x.i
+  x'' = for i. power_of_2_fft direction (transpose x').i
+  transpose x''
+
+def fft2  (x: n=>m=>Complex): n=>m=>Complex = fft2_ Forward x
+def ifft2 (x: n=>m=>Complex): n=>m=>Complex =
+  nc = (size n) * (size m)
+  (fft2_ Backward x) / (IToF nc)
+
+def  fft2_real (x: n=>m=>Float): n=>m=>Complex =  fft2 for i j. MkComplex x.i.j 0.0
+def ifft2_real (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex x.i.j 0.0
+
+
+-------- Tests --------
+
+real = \(MkComplex re im). re
+imag = \(MkComplex re im). im
+
+def realmat (x:n=>m=>Complex) : n=>m=>Float =
+ for i j. real x.i.j
+
+a = [10.1, -2.2, 8.3, 4.5]
+:p a ~~ (map real (ifft $ fft_real a))
+> True
+:p a ~~ (map real (fft $ ifft_real a))
+> True
+
+b = for i:(Fin 8) j:(Fin 8). randn $ ixkey2 (newKey 0) i j
+
+:p b ~~ realmat (ifft2 $ fft2_real b)
+> True
+:p b ~~ realmat (fft2 $ ifft2_real b)
+> True
+
+
+
