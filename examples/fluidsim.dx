@@ -148,5 +148,8 @@ init_color = for i:N j:M.
 -- Run fluid sim and plot it.
 num_steps = 50
 final_color = fluidsim num_steps init_color v
-:plotmat final_color
-> <graphical output>
+
+-- FIXME(https://github.com/google-research/dex-lang/issues/173):
+-- Uncomment when plotting is fixed.
+-- :plotmat final_color
+-- > <graphical output>
