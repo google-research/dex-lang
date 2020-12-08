@@ -21,7 +21,7 @@ Base64 = Byte -- first two bits should be zero
 
 -- This could go in the prelude, or in a library of array-dicing functions.
 -- An explicit "view" builder would be good here, to avoid copies
-def getChunks (n:Type) ?->
+def getChunks
     (chunkSize:Int) (padVal:a) (xs:n=>a)
     : List (Fin chunkSize => a) =
   numChunks = idivCeil (size n) chunkSize
@@ -89,8 +89,7 @@ def base64Decode (s:String) : Maybe String =
 
 Html : Type = List Char
 
-def makePNG (n:Type) ?-> (m:Type) ?->
-      (img:n=>m=>(Fin 3)=>Word8) : List Byte =
+def makePNG (img:n=>m=>(Fin 3)=>Word8) : List Byte =
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
   (n, ptr) = (%ffi encodePNG (Int & CharPtr) (%getPtr imgFlat)
                (size m) (size n))

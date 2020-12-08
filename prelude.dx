@@ -304,6 +304,7 @@ def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
   pairLt = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
   MkOrd pairEq pairGt pairLt
 
+
 -- TODO: accumulate using the True/&& monoid
 @instance
 def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $

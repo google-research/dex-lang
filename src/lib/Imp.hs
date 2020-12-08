@@ -886,8 +886,8 @@ indexSetSize ty = fromScalarAtom <$> fromEmbed (indexSetSizeE ty)
 
 zipTabDestAtom :: HasCallStack => (Dest -> Atom -> ImpM ()) -> Dest -> Atom -> ImpM ()
 zipTabDestAtom f ~dest@(Con (TabRef (TabVal b _))) ~src@(TabVal b' _) = do
-  -- unless (binderType b == binderType b') $
-  --   error $ "Mismatched dimensions: " <> pprint b <> " != " <> pprint b'
+  unless (binderType b == binderType b') $
+    error $ "Mismatched dimensions: " <> pprint b <> " != " <> pprint b'
   let idxTy = binderType b
   n <- indexSetSize idxTy
   emitLoop "i" Fwd n $ \i -> do

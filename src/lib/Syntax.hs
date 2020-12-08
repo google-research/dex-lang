@@ -422,7 +422,7 @@ instance Subst EffectSummary where
   subst (env, _) effs = S.map substEff effs
     where
       substEff (eff, name) = case envLookup env name of
-        Just (Var (name':>_)) -> (eff, name')
+        Just ~(Var (name':>_)) -> (eff, name')
         Nothing               -> (eff, name)
 
 pattern Pure :: EffectRow

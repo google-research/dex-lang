@@ -24,6 +24,7 @@ newtype Profile = Profile (M.Map String Count)
 type FlopM a = ReaderT Term (Writer Profile) a
 
 impFunctionFlops :: ImpFunction -> Profile
+impFunctionFlops (FFIFunction _) = mempty
 impFunctionFlops (ImpFunction _ _ body) =
   snd $ runWriter (runReaderT (flops body) (litTerm 1))
 

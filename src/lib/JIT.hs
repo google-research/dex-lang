@@ -80,6 +80,8 @@ compileFunction :: Logger [Output] -> ImpFunction
                 -> IO ([L.Definition], S.Set ExternFunSpec)
 compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f))
 compileFunction logger fun@(ImpFunction f bs body) = case cc of
+  FFIFun            -> error "shouldn't be trying to compile an FFI function"
+  FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
   CEntryFun -> return $ runCompile CPU $ do
     (argParams   , argOperands   ) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CEntryFun doesn't support returning values"
@@ -323,6 +325,7 @@ makeFunSpec (Name _ name _ :> IFunType FFIFun argTys [resultTy]) =
 makeFunSpec (Name _ name _ :> IFunType FFIMultiResultFun argTys _) =
    ExternFunSpec (L.Name (fromString $ T.unpack name)) L.VoidType [] []
      (hostPtrTy hostVoidp : map scalarTy argTys)
+makeFunSpec (_ :> IFunType _ _ _) = error "not implemented"
 
 compileLoop :: Direction -> IBinder -> Operand -> Compile () -> Compile ()
 compileLoop d iBinder n compileBody = do
