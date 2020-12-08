@@ -74,7 +74,7 @@ build-python: build
 # --- running tests ---
 
 # TODO: re-enable linear-tests ad-tests include-test chol
-example-names = uexpr-tests adt-tests type-tests eval-tests \
+example-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
                 shadow-tests monad-tests \
                 ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \

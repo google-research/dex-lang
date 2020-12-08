@@ -1,0 +1,89 @@
+'# `Show` instances
+
+-- Int32
+
+:p show (1234: Int32)
+> (AsList 4 ['1', '2', '3', '4'])
+
+:p show (-1234: Int32)
+> (AsList 5 ['-', '1', '2', '3', '4'])
+
+:p show ((FToI (-(pow 2. 31.))): Int32)
+> (AsList 11 ['-', '2', '1', '4', '7', '4', '8', '3', '6', '4', '8'])
+
+-- Int64
+
+:p show (IToI64 1234: Int64)
+> (AsList 4 ['1', '2', '3', '4'])
+
+-- FIXME(https://github.com/google-research/dex-lang/issues/317):
+-- Unexpected zext from type conversion of negative Int32 to Int64.
+:p show (IToI64 (-1234): Int64)
+> (AsList 10 ['4', '2', '9', '4', '9', '6', '6', '0', '6', '2'])
+
+-- Float32
+
+:p show (123.456789: Float32)
+> (AsList 10 ['1', '2', '3', '.', '4', '5', '6', '7', '8', '7'])
+
+:p show ((pow 2. 16.): Float32)
+> (AsList 5 ['6', '5', '5', '3', '6'])
+
+-- FIXME(https://github.com/google-research/dex-lang/issues/316):
+-- Unparenthesized expression with type ascription does not parse.
+-- :p show (nan: Float32)
+
+:p show ((nan): Float32)
+> (AsList 3 ['n', 'a', 'n'])
+
+-- Note: `show nan` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p nan
+> NaN
+
+:p show ((infinity): Float32)
+> (AsList 3 ['i', 'n', 'f'])
+
+-- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p infinity
+> Infinity
+
+-- Float64
+
+:p show (FToF64 123.456789: Float64)
+> (AsList 16 [ '1'
+>            , '2'
+>            , '3'
+>            , '.'
+>            , '4'
+>            , '5'
+>            , '6'
+>            , '7'
+>            , '8'
+>            , '7'
+>            , '1'
+>            , '0'
+>            , '9'
+>            , '3'
+>            , '7'
+>            , '5' ])
+
+:p show (FToF64 (pow 2. 16.): Float64)
+> (AsList 5 ['6', '5', '5', '3', '6'])
+
+:p show ((FToF64 nan): Float64)
+> (AsList 3 ['n', 'a', 'n'])
+
+-- Note: `show nan` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p (FToF64 nan)
+> NaN
+
+:p show ((FToF64 infinity): Float64)
+> (AsList 3 ['i', 'n', 'f'])
+
+-- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p (FToF64 infinity)
+> Infinity
