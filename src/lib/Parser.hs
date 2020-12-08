@@ -1102,7 +1102,7 @@ argTerm :: Parser ()
 argTerm = mayNotBreak $ sym "."
 
 bracketed :: Parser () -> Parser () -> Parser a -> Parser a
-bracketed left right p = between left right $ mayBreak p
+bracketed left right p = between left right $ mayBreak $ sc >> p
 
 parens :: Parser a -> Parser a
 parens p = bracketed lParen rParen p
