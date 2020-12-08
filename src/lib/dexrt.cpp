@@ -4,6 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#include <cfloat>
+#include <cinttypes>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -13,7 +15,7 @@
 
 #ifdef DEX_CUDA
 #include <cuda.h>
-#endif
+#endif // DEX_CUDA
 
 extern "C" {
 
@@ -138,14 +140,47 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-void showFloat(char **resultPtr, float x) {
-  auto p = reinterpret_cast<char*>(malloc_dex(100));
-  auto n = sprintf(p, "%.4f", x);
-  auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
-  auto result2Ptr = reinterpret_cast<char**>(  resultPtr[1]);
-  *result1Ptr = n;
-  *result2Ptr = p;
+// The string buffer size used for converting integer and floating-point types.
+static constexpr int showStringBufferSize = 32;
+
+void showInt32(char **resultPtr, int32_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId32, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
 }
+
+void showInt64(char **resultPtr, int64_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId64, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showFloat32(char **resultPtr, float x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length =
+      snprintf(buffer, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showFloat64(char **resultPtr, double x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length =
+      snprintf(buffer, showStringBufferSize, "%.*g", __DBL_DECIMAL_DIG__, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
 
 #ifdef DEX_CUDA
 
@@ -258,7 +293,7 @@ void dex_ensure_has_cuda_context() {
 
 #undef CHECK
 
-#endif
+#endif // DEX_CUDA
 
 int32_t dex_queryParallelismMC(int64_t iters) {
   int32_t nthreads = std::thread::hardware_concurrency();
