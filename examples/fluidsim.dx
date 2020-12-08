@@ -109,14 +109,16 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
 
     -- Relative weight of right-hand and bottom cells.
     -- TODO: clipping shouldn't be necessary here, find out why it is.
-    right_weight  = clip $ center_xs - IToF source_col
-    bottom_weight = clip $ center_ys - IToF source_row
+    right_weight  = clip $ center_xs - source_col
+    bottom_weight = clip $ center_ys - source_row
 
     -- Cast back to indices, wrapping around edges.
-    l = wrapidx n  source_col
-    r = wrapidx n (source_col + 1)
-    t = wrapidx m  source_row
-    b = wrapidx m (source_row + 1)
+    source_col_int = FToI source_col
+    source_row_int = FToI source_row
+    l = wrapidx n source_col_int
+    r = wrapidx n (source_col_int + 1)
+    t = wrapidx m  source_row_int
+    b = wrapidx m (source_row_int + 1)
 
     -- A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
@@ -141,10 +143,13 @@ v = for i:N j:M k:(Fin 2). 3.0 * (randn $ ixkey3 (newKey 0) i j k)
 
 -- Create diagonally-striped color pattern.
 init_color = for i:N j:M.
-  b2r $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
+  BToF $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
 
 -- Run fluid sim and plot it.
 num_steps = 50
 final_color = fluidsim num_steps init_color v
-:plotmat final_color
-> <graphical output>
+
+-- FIXME(https://github.com/google-research/dex-lang/issues/173):
+-- Uncomment when plotting is fixed.
+-- :plotmat final_color
+-- > <graphical output>
