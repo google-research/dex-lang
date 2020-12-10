@@ -34,7 +34,7 @@ library
                        PPrint, Algebra, Parallelize, Optimize, Serialize
                        Actor, Cat, Flops, Embed,
                        RenderHtml, LiveOutput, Simplify, TopLevel,
-                       Autodiff, Interpreter, Logging, PipeRPC, CUDA
+                       Autodiff, Interpreter, Logging, PipeRPC, CUDA, LLVM.JIT
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
                        aeson, megaparsec >=8.0, warp, wai, filepath,
