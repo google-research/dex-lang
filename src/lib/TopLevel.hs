@@ -214,7 +214,7 @@ evalBackend block = do
   checkPass ImpPass impModule
   llvmAST <- liftIO $ impToLLVM logger impModule
   let IFunType _ _ resultTypes = impFunType $ mainFunc
-  let llvmEvaluate = if bench then benchLLVM else callLLVM
+  let llvmEvaluate = if bench then compileAndBench else compileAndEval
   resultVals <- liftM (map (Con . Lit)) $ liftIO $
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
@@ -281,7 +281,7 @@ exportFunctions objPath funcs env opts = do
     let (_, impModule, _) = toImpModule backend CEntryFun name cargs (Just dest) block
     llvmAST <- execLogger Nothing $ flip impToLLVM impModule
     return (llvmAST, [nameStr])
-  exportLLVM objPath modules
+  exportObjectFile objPath modules
   where
     outputName = GlobalName "_ans_"
 
