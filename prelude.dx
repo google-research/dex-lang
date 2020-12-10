@@ -470,8 +470,7 @@ def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
 (**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
-  y' = transpose y
-  for i k. fsum \j. x.i.j * y'.k.j
+  for i k. fsum \j. x.i.j * y.j.k
 
 (**.) : (n=>m=>Float) -> (m=>Float) -> (n=>Float) = \mat v. for i. vdot mat.i v
 (.**) : (m=>Float) -> (n=>m=>Float) -> (n=>Float) = flip (**.)
