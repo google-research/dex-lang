@@ -91,6 +91,8 @@ example-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
 
 quine-test-targets = $(example-names:%=run-%)
 
+update-targets = $(example-names:%=update-%)
+
 doc-names = $(example-names:%=doc/%.html)
 
 tests: quine-tests repl-test export-tests
@@ -106,6 +108,8 @@ run-%: examples/%.dx build
 # Run these with profiling on while they're catching lots of crashes
 prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
+
+update-all: $(update-targets)
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: examples/%.dx build

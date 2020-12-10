@@ -764,12 +764,12 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 str = ['x', 'y']
 
 :p str
-> ['x', 'y']
+> "xy"
 
 s1 = "hello world"
 
 :p s1
-> ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd']
+> "hello world"
 
 :p codepoint 'a'
 > 97
