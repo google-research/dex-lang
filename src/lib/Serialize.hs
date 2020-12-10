@@ -37,19 +37,31 @@ getDexString (DataCon _ _ 0 [_, xs]) = do
     return $ toEnum $ fromIntegral c
 getDexString x = error $ "Not a string: " ++ pprint x
 
+-- Pretty-print values, e.g. for displaying in the REPL.
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
 prettyVal :: Val -> IO (Doc ann)
 prettyVal val = case val of
-  Lam abs@(Abs b (TabArrow, _)) -> do
+  -- Pretty-print tables.
+  Lam abs@(Abs b (TabArrow, body)) -> do
+    -- Pretty-print index set.
     let idxSet = binderType b
+    let idxSetDoc = case idxSet of
+          Fin _ -> mempty               -- (Fin n) is not shown
+          _     -> "@" <> pretty idxSet -- Otherwise, show explicit index set
+    -- Pretty-print elements.
     idxs <- indices idxSet
     elems <- forM idxs $ \idx -> do
-      ans <- evalBlock mempty $ snd $ applyAbs abs idx
-      asStr <$> prettyVal ans
-    let idxSetStr = case idxSet of
-                      FixedIntRange l _ | l == 0 -> mempty
-                      _                          -> "@" <> pretty idxSet
-    return $ pretty elems <> idxSetStr
+      atom <- evalBlock mempty $ snd $ applyAbs abs idx
+      case atom of
+        Con (Lit (Word8Lit c)) ->
+          return $ showChar (toEnum @Char $ fromIntegral c) ""
+        _ -> pprintVal atom
+    let bodyType = getType body
+    let elemsDoc = case bodyType of
+          -- Print table of characters as a string literal.
+          TC (BaseType (Scalar Word8Type)) -> pretty ('"': concat elems ++ "\"")
+          _      -> pretty elems
+    return $ elemsDoc <> idxSetDoc
   DataCon (DataDef _ _ dataCons) _ con args ->
     case args of
       [] -> return $ pretty conName
@@ -85,9 +97,7 @@ prettyVal val = case val of
     let separator = line' <> ","
     let bindwith = " ="
     let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
-    let fmElem = \(label :: Label, v) -> do
-          vStr <- prettyVal v
-          return $ pretty label <> bindwith <+> vStr
+    let fmElem = \(label, v) -> ((pretty label <> bindwith) <+>) <$> prettyVal v
     docs <- mapM fmElem elems
     let innerDoc = "{" <> flatAlt " " ""
           <> concatWith (surround (separator <> " ")) docs
