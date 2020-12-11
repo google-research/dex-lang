@@ -286,7 +286,6 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
   UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int32Lit $ fromIntegral x
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
-  UCharLit x  -> matchRequirement $ CharLit $ fromIntegral $ fromEnum x
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -969,5 +968,10 @@ reduceExpr scope expr = case expr of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+      _ -> Nothing
+  Op (MakePtrType ty) -> do
+    let ty' = reduceAtom scope ty
+    case ty' of
+      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
       _ -> Nothing
   _ -> Nothing

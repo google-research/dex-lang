@@ -116,7 +116,7 @@ toPolynomial atom = case atom of
   Var v                  -> poly [(1, mono [(v, 1)])]
   Con (Lit (Int64Lit x)) -> fromInt x
   Con (Lit (Int32Lit x)) -> fromInt x
-  Con (Lit (Int8Lit  x)) -> fromInt x
+  Con (Lit (Word8Lit x)) -> fromInt x
   Con (IntRangeVal _ _ i) -> toPolynomial i
   -- TODO: Coercions? Unit constructor?
   _ -> unreachable

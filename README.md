@@ -17,7 +17,7 @@ or these example programs:
   * [Estimating pi](https://google-research.github.io/dex-lang/pi.html)
   * [Hamiltonian Monte Carlo](https://google-research.github.io/dex-lang/mcmc.html)
   * [ODE integrator](https://google-research.github.io/dex-lang/ode-integrator.html)
-  * [Sierpinsky triangle](https://google-research.github.io/dex-lang/sierpinsky.html)
+  * [Sierpinski triangle](https://google-research.github.io/dex-lang/sierpinski.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
 
@@ -30,6 +30,7 @@ development. Contributions welcome!
   * Install LLVM 9
     * `apt-get install llvm-9-dev` on Ubuntu/Debian,
     * `brew install llvm@9` on macOS, and ensure it is on your `PATH` e.g. via `export PATH="$(brew --prefix llvm@9)/bin:$PATH"` before building.
+  * Install libpng (often included by default in *nix)
 
 ## Building
 

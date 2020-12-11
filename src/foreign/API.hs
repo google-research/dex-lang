@@ -147,7 +147,7 @@ instance Storable CAtom where
         CLit <$> case litTag of
                    0 -> Int64Lit   <$> val 2
                    1 -> Int32Lit   <$> val 2
-                   2 -> Int8Lit    <$> val 2
+                   2 -> Word8Lit   <$> val 2
                    3 -> Float64Lit <$> val 2
                    4 -> Float32Lit <$> val 2
                    _ -> error "Invalid tag"
@@ -161,7 +161,7 @@ instance Storable CAtom where
       case lit of
         Int64Lit   v -> val @Word64 1 0 >> val 2 v
         Int32Lit   v -> val @Word64 1 1 >> val 2 v
-        Int8Lit    v -> val @Word64 1 2 >> val 2 v
+        Word8Lit   v -> val @Word64 1 2 >> val 2 v
         Float64Lit v -> val @Word64 1 3 >> val 2 v
         Float32Lit v -> val @Word64 1 4 >> val 2 v
         VecLit     _ -> error "Unsupported"

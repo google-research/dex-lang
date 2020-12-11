@@ -552,7 +552,6 @@ withAllowedEff eff m = updateAllowedEff (const eff) m
 typeCheckTyCon :: TC -> TypeM Type
 typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
-  CharType         -> return TyKind
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
@@ -567,7 +566,6 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
@@ -585,9 +583,6 @@ typeCheckCon con = case con of
     UnitCon -> return $ RawRefTy UnitTy
     PairCon x y ->
       RawRefTy <$> (PairTy <$> typeCheckRef x <*> typeCheckRef y)
-    CharCon x -> do
-      x |: RawRefTy (BaseTy $ Scalar Int8Type)
-      return $ RawRefTy CharTy
     IntRangeVal     l h i ->
       i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l h)
     IndexRangeVal t l h i ->
@@ -613,7 +608,7 @@ checkIntBaseType allowVector t = case t of
     checkSBT sbt = case sbt of
       Int64Type -> return ()
       Int32Type -> return ()
-      Int8Type  -> return ()
+      Word8Type  -> return ()
       _         -> notInt
     notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                              "integer type, but found: " ++ pprint t
@@ -637,7 +632,7 @@ checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType des
     checkScalarType ty = case ty of
       BaseTy (Scalar Int64Type  ) -> return ()
       BaseTy (Scalar Int32Type  ) -> return ()
-      BaseTy (Scalar Int8Type   ) -> return ()
+      BaseTy (Scalar Word8Type  ) -> return ()
       BaseTy (Scalar Float64Type) -> return ()
       BaseTy (Scalar Float32Type) -> return ()
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
@@ -656,7 +651,7 @@ typeCheckOp op = case op of
   ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
   ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do
-    p |: (BaseTy $ Scalar Int8Type)
+    p |: (BaseTy $ Scalar Word8Type)
     ty <- typeCheck x
     y |: ty
     return ty
@@ -704,6 +699,10 @@ typeCheckOp op = case op of
   PtrLoad ptr -> do
     PtrTy (_, _, t)  <- typeCheck ptr
     return $ BaseTy t
+  GetPtr tab -> do
+    TabTy _ (BaseTy a) <- typeCheck tab
+    return $ BaseTy $ PtrType (AllocatedPtr, Heap CPU, a)
+  MakePtrType ty -> ty|:TyKind >> return TyKind
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i
@@ -728,9 +727,6 @@ typeCheckOp op = case op of
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
   -- TODO: this should really be a 32 bit integer for unicode code point: but for now is 8 bit ASCII code point
-  CodePoint c -> do
-    c |: CharTy
-    return $ BaseTy $ Scalar Int8Type
   CastOp t@(Var _) _ -> t |: TyKind $> t
   CastOp destTy e -> do
     sourceTy <- typeCheck e
@@ -825,7 +821,7 @@ typeCheckHof hof = case hof of
     Pi (Abs (Ignore UnitTy) (arr', bodyTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     declareEffs $ arrowEff arr'
-    checkEq (BaseTy $ Scalar Int8Type) condTy
+    checkEq (BaseTy $ Scalar Word8Type) condTy
     checkEq UnitTy bodyTy
     return UnitTy
   Linearize f -> do
@@ -859,25 +855,22 @@ litType :: LitVal -> BaseType
 litType v = case v of
   Int64Lit   _ -> Scalar Int64Type
   Int32Lit   _ -> Scalar Int32Type
-  Int8Lit    _ -> Scalar Int8Type
+  Word8Lit   _ -> Scalar Word8Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
   PtrLit t _   -> PtrType t
   VecLit  l -> Vector sb
     where Scalar sb = litType $ head l
 
-data ArgumentType = SomeFloatArg | SomeIntArg | Int8Arg
-data ReturnType   = SameReturn | Int8Return
+data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
+data ReturnType   = SameReturn | Word8Return
 
 checkOpArgType :: MonadError Err m => ArgumentType -> Type -> m ()
 checkOpArgType argTy x =
   case argTy of
     SomeIntArg   -> checkIntBaseType   True x
+    SomeUIntArg  -> assertEq x Word8Ty ""
     SomeFloatArg -> checkFloatBaseType True x
-    Int8Arg      -> case x of
-      BaseTy (Scalar Int8Type) -> return ()
-      BaseTy (Vector Int8Type) -> return ()
-      _ -> throw TypeErr "Expected an Int8 argument"
 
 checkBinOp :: MonadError Err m => BinOp -> Type -> Type -> m Type
 checkBinOp op x y = do
@@ -885,7 +878,7 @@ checkBinOp op x y = do
   assertEq x y ""
   return $ case retTy of
     SameReturn -> x
-    Int8Return -> BaseTy $ Scalar Int8Type
+    Word8Return -> BaseTy $ Scalar Word8Type
   where
     (argTy, retTy) = case op of
       IAdd   -> (ia, sr);  ISub   -> (ia, sr)
@@ -896,17 +889,18 @@ checkBinOp op x y = do
       FMul   -> (fa, sr);  FDiv   -> (fa, sr);
       FPow   -> (fa, sr)
       FCmp _ -> (fa, br)
-      BAnd   -> (ba, br);  BOr    -> (ba, br)
+      BAnd   -> (ia, sr);  BOr    -> (ia, sr)
+      BShL   -> (ia, sr);  BShR   -> (ia, sr)
       where
-        ba = Int8Arg; ia = SomeIntArg; fa = SomeFloatArg
-        br = Int8Return; sr = SameReturn
+        ia = SomeIntArg; fa = SomeFloatArg
+        br = Word8Return; sr = SameReturn
 
 checkUnOp :: MonadError Err m => UnOp -> Type -> m Type
 checkUnOp op x = do
   checkOpArgType argTy x
   return $ case retTy of
     SameReturn -> x
-    Int8Return -> BaseTy $ Scalar Int8Type
+    Word8Return -> BaseTy $ Scalar Word8Type
   where
     (argTy, retTy) = case op of
       Exp              -> (f, sr)
@@ -924,9 +918,9 @@ checkUnOp op x = do
       Round            -> (f, sr)
       LGamma           -> (f, sr)
       FNeg             -> (f, sr)
-      BNot             -> (b, sr)
+      BNot             -> (u, sr)
       where
-        b = Int8Arg; f = SomeFloatArg; sr = SameReturn
+        u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
@@ -943,7 +937,6 @@ checkDataLike msg ty = case ty of
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
     BaseType _       -> return ()
-    CharType         -> return ()
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()
     IntRange _ _     -> return ()

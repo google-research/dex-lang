@@ -32,9 +32,15 @@ endif
 
 CFLAGS := -fPIC
 
+# CUDA
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
 STACK_FLAGS = --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
+endif
+
+# libpng
+ifneq (,$(wildcard /usr/local/include/png.h))
+CFLAGS := $(CFLAGS) -I/usr/local/include
 endif
 
 ifneq (,$(PREFIX))
@@ -76,7 +82,7 @@ build-python: build
 # TODO: re-enable linear-tests ad-tests include-test chol
 example-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
                 shadow-tests monad-tests \
-                ad-tests mandelbrot pi sierpinsky \
+                ad-tests mandelbrot pi sierpinski \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \

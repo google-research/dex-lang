@@ -169,9 +169,6 @@ explicitCommand = do
     "t"       -> return $ GetType
     "html"    -> return $ EvalExpr RenderHtml
     "export"  -> ExportFun <$> nameString
-    "plot"    -> return $ EvalExpr Scatter
-    "plotmat"      -> return $ EvalExpr (Heatmap False)
-    "plotmatcolor" -> return $ EvalExpr (Heatmap True)
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
@@ -219,15 +216,18 @@ uType = expr
 uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
-  let cs = map (WithSrc (Just pos) . UCharLit) s
+  let cs = map (WithSrc (Just pos) . charExpr) s
   return $ WithSrc (Just pos) $ UTabCon cs
 
 uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
-  where uLitParser = UCharLit <$> charLit
+  where uLitParser = charExpr <$> charLit
                  <|> UIntLit  <$> intLit
                  <|> UFloatLit <$> doubleLit
                  <?> "literal"
+
+charExpr :: Char -> UExpr'
+charExpr c = UPrimExpr $ ConExpr $ Lit $ Word8Lit $ fromIntegral $ fromEnum c
 
 uVarOcc :: Parser UExpr
 uVarOcc = withSrc $ try $ (UVar . (:>())) <$> (occName <* notFollowedBy (sym ":"))

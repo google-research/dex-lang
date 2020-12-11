@@ -1,6 +1,6 @@
-'# Sierpinsky triangle ("chaos game")
+'# Sierpinski triangle ("chaos game")
 
-Point : Type = (Float & Float)
+include "examples/plot.dx"
 
 update : n=>Point -> Key -> Point -> Point =
   \points key (x,y).
@@ -12,5 +12,8 @@ runChain : n:Int -> (Key -> a -> a) -> Key -> a -> (Fin n)=>a =
 
 trianglePoints : (Fin 3)=>Point = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 
--- :plot runChain 3000 (update trianglePoints) (newKey 0) (0.0, 0.0)
--- > <graphical output>
+(xs, ys) = unzip $ runChain 3000 (update trianglePoints) (newKey 0) (0.0, 0.0)
+
+-- Disabling this for now because the plotting function is too slow to compile
+-- :html showPlot $ xyPlot xs ys
+-- > <html output>

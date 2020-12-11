@@ -2,6 +2,8 @@
 Fluid simulation code based on
 [Real-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
 
+include "examples/plot.dx"
+
 def zeroedges (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (x: n=>m=>a) : n=>m=>a =
   -- Todo: update in place without starting with a copy.
   snd $ withState x \buf.
@@ -81,8 +83,6 @@ def bilinear_interp (dict:VSpace a) ?=> (right_weight:Float) --o (bottom_weight:
 N = Fin 100
 M = Fin 100
 
-def clip (x:Float):Float = max 0.0 (min 1.0 x)
-
 -- BUG: Changing the order of implicit arguments causes an error further down.
 -- i.e. it doesn't work to start the next line with
 -- (n:Type) ?-> (m:Type) ?-> (dict:VSpace a) ?=>
@@ -109,8 +109,8 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
 
     -- Relative weight of right-hand and bottom cells.
     -- TODO: clipping shouldn't be necessary here, find out why it is.
-    right_weight  = clip $ center_xs - source_col
-    bottom_weight = clip $ center_ys - source_row
+    right_weight  = clip (0.0, 1.0) $ center_xs - source_col
+    bottom_weight = clip (0.0, 1.0) $ center_ys - source_row
 
     -- Cast back to indices, wrapping around edges.
     source_col_int = FToI source_col
@@ -149,7 +149,5 @@ init_color = for i:N j:M.
 num_steps = 50
 final_color = fluidsim num_steps init_color v
 
--- FIXME(https://github.com/google-research/dex-lang/issues/173):
--- Uncomment when plotting is fixed.
--- :plotmat final_color
--- > <graphical output>
+:html matshow final_color
+> <html output>
