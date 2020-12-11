@@ -32,9 +32,15 @@ endif
 
 CFLAGS := -fPIC
 
+# CUDA
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
 STACK_FLAGS = --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
+endif
+
+# libpng
+ifneq (,$(wildcard /usr/local/include/png.h))
+CFLAGS := $(CFLAGS) -I/usr/local/include
 endif
 
 ifneq (,$(PREFIX))
