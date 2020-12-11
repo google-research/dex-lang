@@ -2,6 +2,8 @@
 Fluid simulation code based on
 [Real-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
 
+include "examples/plot.dx"
+
 def zeroedges (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (x: n=>m=>a) : n=>m=>a =
   -- Todo: update in place without starting with a copy.
   snd $ withState x \buf.
@@ -147,7 +149,5 @@ init_color = for i:N j:M.
 num_steps = 50
 final_color = fluidsim num_steps init_color v
 
--- FIXME(https://github.com/google-research/dex-lang/issues/173):
--- Uncomment when plotting is fixed.
--- :plotmat final_color
--- > <graphical output>
+:html matshow final_color
+> <html output>

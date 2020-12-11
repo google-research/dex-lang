@@ -16,7 +16,7 @@ jobs:
             install_deps: brew install llvm@9
             path_extension: $(brew --prefix llvm@9)/bin
           - os: ubuntu-18.04
-            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev
+            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev libpng-dev
             path_extension: /usr/lib/llvm-9/bin
 
     runs-on: ${{ matrix.os }}

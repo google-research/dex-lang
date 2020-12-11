@@ -1,5 +1,7 @@
+'# Plotting library
 
 include "examples/diagram.dx"
+include "examples/png.dx"
 
 data CompactSet a:Type =
   Interval a a
@@ -45,18 +47,19 @@ def getScaled (sd:ScaledData n a) (i:n) : Maybe Float =
 lowColor  = [1.0, 0.5, 0.0]
 highColor = [0.0, 0.5, 1.0]
 
-def showHex (x:Int) : String =
-  (n, ptr) = %ffi showHex (Int & CharPtr) x
+def showHex (x:Int32) : String =
+  (n, ptr) = %ffi showHex (Int32 & CharPtr) x
   AsList n $ for i:(Fin n).
     %ptrLoad (%ptrOffset ptr (ordinal i))
 
-def makeRGBColor (c : Fin 3 => Float) : Color =
+def makeRGBColor (c : Fin 3 => Float) : HtmlColor =
   toList "#" <> concat for i. showHex $ FToI $ floor (255.0 * c.i)
 
 def interpolate (_:VSpace a) ?=> (low:a) (high:a) (x:Float) : a =
-  (x .* low) + ((1.0 - x) .* high)
+  x' = clip (0.0, 1.0) x
+  (x' .* low) + ((1.0 - x') .* high)
 
-def colorScale (x:Float) : Color =
+def colorScale (x:Float) : HtmlColor =
   makeRGBColor $ interpolate lowColor highColor x
 
 def showPlot (plot:Plot n a b c) : String =
@@ -68,7 +71,8 @@ def showPlot (plot:Plot n a b c) : String =
     case x of
       Just x' -> case y of
         Just y' -> case c of
-          Just c' -> spot |> moveXY (x', y') |> setStroke (colorScale c')
+          Just c' ->
+            pointDiagram |> moveXY (x', y') |> setStrokeColor (colorScale c' )
           Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty
@@ -107,3 +111,13 @@ def xycPlot (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float
 
 -- xs = linspace (Fin 100) 0. 1.0
 -- :html showPlot $ xycPlot xs xs xs
+
+'## Heatmap-style plots
+
+-- TODO: scales
+def matshow (img:n=>m=>Float) : Html =
+  low  = minimum  $ for (i,j). img.i.j
+  high = maximum $ for (i,j). img.i.j
+  pngToHtml $ makePNG for i j.
+    x = floatTo8Bit $ (img.i.j - low) / (high - low)
+    [x, x, x]

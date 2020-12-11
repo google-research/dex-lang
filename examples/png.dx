@@ -71,13 +71,17 @@ def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
     Nothing -> Nothing
     Just base64s -> Just $ base64sToBytes base64s
 
+-- TODO: put this in prelude?
+def replace (_:Eq a) ?=> ((old,new):(a&a)) (x:a) : a =
+  case x == old of
+    True  -> new
+    False -> x
+
 def base64Decode (s:String) : Maybe String =
   (AsList n cs) = s
   numValidInputChars = sum for i. BToI $ cs.i /= '='
   numValidOutputChars = idiv (numValidInputChars * 3) 4
-  csZeroed = for i. case cs.i == '=' of
-    True  -> 'A'
-    False -> cs.i
+  csZeroed = map (replace ('=', 'A')) cs  -- swap padding char with 'zero' char
   (AsList _ chunks) = getChunks 4 '\NUL' csZeroed
   case seqMaybes $ map decodeChunk chunks of
     Nothing -> Nothing
@@ -100,17 +104,10 @@ def pngToHtml (png:List Byte) : List Char =
        <> base64Encode png
        <> toList "\">")
 
-'## API entry points
+'## API entry point
 
 def floatTo8Bit (x:Float) : Word8 =
   IToW8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
 def imshow (img:n=>m=>(Fin 3)=>Float) : Html =
   pngToHtml $ makePNG for i j k. floatTo8Bit img.i.j.k
-
-def matshow (img:n=>m=>Float) : Html =
-  low  = minimum  $ for (i,j). img.i.j
-  high = maximum $ for (i,j). img.i.j
-  pngToHtml $ makePNG for i j.
-    x = floatTo8Bit $ (img.i.j - low) / (high - low)
-    [x, x, x]

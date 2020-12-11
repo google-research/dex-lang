@@ -1,50 +1,38 @@
-def listLength ((AsList n _):List a) : Int = n
-
--- TODO: we want this for any monoid but this implementation won't work.
-def concat (lists:n=>(List a)) : List a =
-  totalSize = sum for i. listLength lists.i
-  AsList _ $ fst $ withState 0 \listIdx.
-    fst $ withState 0 \eltIdx.
-      for i:(Fin totalSize).
-        while (\(). get eltIdx >= listLength (lists.((get listIdx)@_))) \().
-          eltIdx := 0
-          listIdx := get listIdx + 1
-        (AsList _ xs) = lists.((get listIdx)@_)
-        eltIdxVal = get eltIdx
-        eltIdx := eltIdxVal + 1
-        xs.(eltIdxVal@_)
-
+'# Vector graphics library
 
 Point : Type = (Float & Float)
 
 data Geom =
-  Spot
+  PointGeom
   Circle Float
   Rectangle Float Float  -- width, height
   Line Point
 
 -- HTML color string. TODO: consider an RGB triple instead
-Color : Type = String
+HtmlColor : Type = String
 
 -- TODO: we should add overloaded string literals so we don't need this
 def str (n:Int) ?-> (s:(Fin n=>Char)) : String = AsList _ s
 
-black : Color = str "black"
-white : Color = str "white"
-gray  : Color = str "gray"
-red   : Color = str "red"
-green : Color = str "green"
-blue  : Color = str "blue"
+black : HtmlColor = str "black"
+white : HtmlColor = str "white"
+gray  : HtmlColor = str "gray"
+red   : HtmlColor = str "red"
+green : HtmlColor = str "green"
+blue  : HtmlColor = str "blue"
 
-Attributes : Type = { fill   : Maybe Color
-                    & stroke : Maybe Color
-                    & lw     : Int }
-defaultAttributes : Attributes = { fill   = Nothing
-                                 , stroke = Just black
-                                 , lw = 1 }
+GeomStyle : Type =
+  { fillColor   : Maybe HtmlColor
+  & strokeColor : Maybe HtmlColor
+  & strokeWidth : Int }
+
+defaultGeomStyle : GeomStyle =
+  { fillColor   = Nothing
+  , strokeColor = Just black
+  , strokeWidth = 1 }
 
 -- TODO: consider sharing attributes among a set of objects for efficiency
-data Diagram = MkDiagram (List (Attributes & Point & Geom))
+data Diagram = MkDiagram (List (GeomStyle & Point & Geom))
 
 instance monoidDiagram : Monoid Diagram where
   mempty = MkDiagram mempty
@@ -69,14 +57,14 @@ def applyTransformation
 
 flipY : Diagram -> Diagram =
   applyTransformation (\(x,y). (x, -y)) \geom. case geom of
-    Spot          -> Spot
+    PointGeom     -> PointGeom
     Circle r      -> Circle r
     Rectangle w h -> Rectangle w h
     Line (x, y)   -> Line (x, -y)
 
 def scale (s:Float) : (Diagram -> Diagram) =
   applyTransformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
-    Spot          -> Spot
+    PointGeom     -> PointGeom
     Circle r      -> Circle (s * r)
     Rectangle w h -> Rectangle (s * w) (s * h)
     Line (x, y)   -> Line (s * x, s * y)
@@ -85,33 +73,34 @@ def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
   applyTransformation (\(x,y). (x + offX, y + offY) ) id
 
 def singletonDefault (geom:Geom) : Diagram =
-  MkDiagram $ AsList _ [(defaultAttributes, (0.0, 0.0), geom)]
+  MkDiagram $ AsList _ [(defaultGeomStyle, (0.0, 0.0), geom)]
 
 -- TODO: should really allow nullary functions with `def`
-spot                           : Diagram = singletonDefault Spot
+pointDiagram                   : Diagram = singletonDefault PointGeom
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r
 def rect   (w:Float) (h:Float) : Diagram = singletonDefault $ Rectangle w h
 def line   (p:Point)           : Diagram = singletonDefault $ Line p
 
-def updateAttributes (d:Diagram) (update: Attributes -> Attributes) : Diagram =
+def updateGeom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
   (MkDiagram (AsList _ objs)) = d
   MkDiagram $ AsList _ for i.
     (attr       , geoms) = objs.i
     (update attr, geoms)
 
-def setFill   (c:Color) (d:Diagram) : Diagram = updateAttributes d $ setAt #fill   (Just c)
-def setStroke (c:Color) (d:Diagram) : Diagram = updateAttributes d $ setAt #stroke (Just c)
-def removeFill          (d:Diagram) : Diagram = updateAttributes d $ setAt #fill   Nothing
-def removeStroke        (d:Diagram) : Diagram = updateAttributes d $ setAt #stroke Nothing
-def setLW     (w:Int)   (d:Diagram) : Diagram = updateAttributes d $ setAt #lw     w
+def setFillColor   (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #fillColor   (Just c)
+def setStrokeColor (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #strokeColor (Just c)
+def setStrokeWidth (w:Int)       : Diagram -> Diagram = updateGeom $ setAt #strokeWidth w
+-- TODO: argumentless def!
+removeStroke : Diagram -> Diagram = updateGeom $ setAt #strokeColor Nothing
+removeFill   : Diagram -> Diagram = updateGeom $ setAt #fillColor   Nothing
 
--- === serialization ===
+'## Serialization to SVG string
 
 def quote (s:String) : String = str "\"" <> s <> str "\""
 
 def (<+>) (s1:String) (s2:String) : String = s1 <> str " " <> s2
 
-def angleBrackets (s:String) : String = str "<" <> s <> str "/>"
+def selfClosingBrackets (s:String) : String = str "<" <> s <> str "/>"
 
 def tagBrackets (tag:String) (s:String) : String =
   str "<" <> tag <> str ">" <> s <> str "</" <> tag <> str ">"
@@ -122,37 +111,37 @@ def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
 def makeAttr (attr:String) (val:String) : String =
   attr <> str "=" <> quote val
 
-def colorStr (c: Maybe Color) : String =
+def optionalStr (c: Maybe String) : String =
   case c of
     Nothing -> str "none"
     Just s  -> s
 
-def attrString (attr:Attributes) : String =
-  (  makeAttr (str "stroke")       (colorStr $ getAt #stroke attr)
-  <> makeAttr (str "fill")         (colorStr $ getAt #fill   attr)
-  <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
+def attrString (attr:GeomStyle) : String =
+  (   makeAttr (str "stroke")       (optionalStr $ getAt #strokeColor attr)
+  <+> makeAttr (str "fill")         (optionalStr $ getAt #fillColor   attr)
+  <+> makeAttr (str "stroke-width") (show        $ getAt #strokeWidth attr))
 
-def spotAttrString (attr:Attributes) : String =
-  (  makeAttr (str "stroke")       (colorStr $ getAt #stroke attr)
-  <> makeAttr (str "fill")         (colorStr $ getAt #stroke attr)
-  <> makeAttr (str "stroke-width") (show $ getAt #lw attr))
+def pointAttrString (attr:GeomStyle) : String =
+  (   makeAttr (str "stroke")       (optionalStr $ getAt #strokeColor attr)
+  <+> makeAttr (str "fill")         (optionalStr $ getAt #strokeColor attr)
+  <+> makeAttr (str "stroke-width") (show        $ getAt #strokeWidth attr))
 
-def renderGeom (attr:Attributes) ((x,y):Point) (geom:Geom) : String =
+def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   case geom of
-    Spot ->
-     tagBracketsAttr (str "g") (spotAttrString attr) $ angleBrackets $
+    PointGeom ->
+     tagBracketsAttr (str "g") (pointAttrString attr) $ selfClosingBrackets $
        (str "circle" <+>
         str "cx=" <> quote (show x) <>
         str "cy=" <> quote (show y) <>
         str "r=\"1\"")
     Circle r ->
-     tagBracketsAttr (str "g") (attrString attr) $ angleBrackets $
+     tagBracketsAttr (str "g") (attrString attr) $ selfClosingBrackets $
        (str "circle" <+>
         str "cx=" <> quote (show x) <>
         str "cy=" <> quote (show y) <>
         str "r="  <> quote (show r))
     Rectangle w h ->
-     tagBracketsAttr (str "g") (attrString attr) $ angleBrackets $
+     tagBracketsAttr (str "g") (attrString attr) $ selfClosingBrackets $
        (str "rect" <+>
         str "width="  <> quote (show w) <>
         str "height=" <> quote (show h) <>
@@ -178,16 +167,15 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
       (attr, pos, geom) = objs.i
       renderGeom attr pos geom
 
--- === derived convenience methods and combinators ===
+'## Derived convenience methods and combinators
 
 moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
 moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 
 -- mydiagram : Diagram =
---   (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFill blue |> setStroke red)
+--   (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
 --   <> (circle 5.0 |> moveXY (40.0, 40.0))
---   <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStroke red)
+--   <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
 --   )
 
 -- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
-

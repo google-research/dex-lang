@@ -748,13 +748,7 @@ indexSetSizeE (RecordTy (NoExt types)) = do
 indexSetSizeE (VariantTy (NoExt types)) = do
   sizes <- traverse indexSetSizeE types
   foldM iadd (IdxRepVal 0) sizes
--- XXX: doesn't handle dependent constructors
-indexSetSizeE (TypeCon def params) = do
-  let datacons = applyDataDefParams def params
-  sizes <- forM datacons $ \(DataConDef _ args) -> do
-    argSizes <- traverse (indexSetSizeE . binderAnn) args
-    foldM imul (IdxRepVal 1) argSizes
-  foldM iadd (IdxRepVal 0) sizes
+indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
 
 clampPositive :: MonadEmbed m => Atom -> m Atom
 clampPositive x = do

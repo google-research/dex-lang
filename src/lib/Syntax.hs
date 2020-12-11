@@ -50,7 +50,7 @@ module Syntax (
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
-    pattern TagRepTy, pattern TagRepVal,
+    pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
@@ -1319,6 +1319,9 @@ pattern TagRepTy = TC (BaseType (Scalar Word8Type))
 pattern TagRepVal :: Word8 -> Atom
 pattern TagRepVal x = Con (Lit (Word8Lit x))
 
+pattern Word8Ty :: Type
+pattern Word8Ty = TC (BaseType (Scalar Word8Type))
+
 pattern PairVal :: Atom -> Atom -> Atom
 pattern PairVal x y = Con (PairCon x y)
 
@@ -1463,7 +1466,7 @@ builtinNames = M.fromList
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
-  , ("toOrdinal"        , OpExpr $ ToOrdinal ())  
+  , ("toOrdinal"        , OpExpr $ ToOrdinal ())
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())

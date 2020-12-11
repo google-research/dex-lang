@@ -862,13 +862,14 @@ litType v = case v of
   VecLit  l -> Vector sb
     where Scalar sb = litType $ head l
 
-data ArgumentType = SomeFloatArg | SomeIntArg
+data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
 data ReturnType   = SameReturn | Word8Return
 
 checkOpArgType :: MonadError Err m => ArgumentType -> Type -> m ()
 checkOpArgType argTy x =
   case argTy of
     SomeIntArg   -> checkIntBaseType   True x
+    SomeUIntArg  -> assertEq x Word8Ty ""
     SomeFloatArg -> checkFloatBaseType True x
 
 checkBinOp :: MonadError Err m => BinOp -> Type -> Type -> m Type
@@ -917,9 +918,9 @@ checkUnOp op x = do
       Round            -> (f, sr)
       LGamma           -> (f, sr)
       FNeg             -> (f, sr)
-      BNot             -> (i, sr)
+      BNot             -> (u, sr)
       where
-        i = SomeIntArg; f = SomeFloatArg; sr = SameReturn
+        u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of

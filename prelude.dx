@@ -488,7 +488,7 @@ def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
 -- TODO: newtype
 Key = Int64
 
-def hash (x:Key) (y:Int) : Key =
+def hash (x:Key) (y:Int32) : Key =
   y64 = IToI64 y
   %ffi threefry2x32 Int64 x y64
 def newKey (x:Int) : Key = hash (IToI64 0) x
@@ -1060,7 +1060,9 @@ def ptrToTab (n:Int) (ptr:Ptr Float) : Fin n => Float =
 -- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 -- TODO: safe (runtime-checked) and unsafe versions
 def castTable (m:Type) (xs:n=>a) : m=>a =
-  for i. xs.(fromOrdinal _ (ordinal i))
+  case size m == size n of
+     True  -> for i. xs.(unsafeFromOrdinal _ (ordinal i))
+     False -> throw
 
 def toList (n:Type) ?-> (xs:n=>a) : List a =
   n' = size n
@@ -1080,7 +1082,7 @@ def padTo (n:Type) ?-> (m:Type) (x:a) (xs:n=>a) : (m=>a) =
 
 def idivCeil (x:Int) (y:Int) : Int = idiv x y + BToI (rem x y /= 0)
 
-def unsafeFromJust (x:Maybe a) : a = case x of Just x' -> x'
+def fromJust (x:Maybe a) : a = case x of Just x' -> x'
 
 def anySat (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 
@@ -1091,10 +1093,27 @@ def seqMaybes (xs : n=>Maybe a) : Maybe (n => a) =
   -- functions)
   case anySat isNothing xs of
     True  -> Nothing
-    False -> Just $ map unsafeFromJust xs
+    False -> Just $ map fromJust xs
 
 def linearSearch (_:Eq a) ?=> (xs:n=>a) (query:a) : Maybe n =
   snd $ withState Nothing \ref. for i.
     case xs.i == query of
       True  -> ref := Just i
       False -> ()
+
+def listLength ((AsList n _):List a) : Int = n
+
+-- This is for efficiency (rather than using `<>` repeatedly)
+-- TODO: we want this for any monoid but this implementation won't work.
+def concat (lists:n=>(List a)) : List a =
+  totalSize = sum for i. listLength lists.i
+  AsList _ $ fst $ withState 0 \listIdx.
+    fst $ withState 0 \eltIdx.
+      for i:(Fin totalSize).
+        while (\(). get eltIdx >= listLength (lists.((get listIdx)@_))) \().
+          eltIdx := 0
+          listIdx := get listIdx + 1
+        (AsList _ xs) = lists.((get listIdx)@_)
+        eltIdxVal = get eltIdx
+        eltIdx := eltIdxVal + 1
+        xs.(eltIdxVal@_)

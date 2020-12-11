@@ -30,6 +30,7 @@ development. Contributions welcome!
   * Install LLVM 9
     * `apt-get install llvm-9-dev` on Ubuntu/Debian,
     * `brew install llvm@9` on macOS, and ensure it is on your `PATH` e.g. via `export PATH="$(brew --prefix llvm@9)/bin:$PATH"` before building.
+  * Install libpng (often included by default in *nix)
 
 ## Building
 
