@@ -71,17 +71,17 @@ build-python: build
 %.bc: %.cpp
 	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
 
-# --- running tets ---
+# --- running tests ---
 
 # TODO: re-enable linear-tests ad-tests include-test chol
-example-names = uexpr-tests adt-tests type-tests eval-tests \
+example-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
                 shadow-tests monad-tests \
                 ad-tests mandelbrot pi sierpinski \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \
                 isomorphisms typeclass-tests complex-tests trig-tests \
-                ode-integrator linear_algebra
+                ode-integrator linear_algebra fluidsim
 
 quine-test-targets = $(example-names:%=run-%)
 

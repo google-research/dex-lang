@@ -13,6 +13,7 @@ extra-deps:
   - llvm-hs-9.0.1
   - llvm-hs-pure-9.0.0
   - megaparsec-8.0.0
+  - prettyprinter-1.6.2
 
 flags:
   llvm-hs:

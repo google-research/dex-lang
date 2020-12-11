@@ -86,7 +86,8 @@ foreign-library Dex
   build-depends:       base, dex, dex-resources, mtl
   hs-source-dirs:      src/foreign
   c-sources:           src/foreign/rts.c
-  ghc-options:         -Wall
+  cc-options:          -std=c11 -fPIC
+  ghc-options:         -Wall -fPIC
   default-language:    Haskell2010
   default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase
   if flag(optimized)

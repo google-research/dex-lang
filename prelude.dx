@@ -816,25 +816,35 @@ String : Type = List Char
 
 CharPtr : Type = %CharPtr
 
-interface Show a:Type where
-  show : a -> String
-
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = W8ToI c
 
-def showFloat' (x:Float) : String =
-  (n, ptr) = %ffi showFloat (Int & CharPtr) x
-  AsList n $ for i:(Fin n). %ptrLoad (%ptrOffset ptr (ordinal i))
+interface Show a:Type where
+  show : a -> String
 
-def showInt' (x:Int) : String =
-  (n, ptr) = %ffi showInt (Int & CharPtr) x
-  AsList n $ for i:(Fin n). %ptrLoad (%ptrOffset ptr (ordinal i))
+instance showInt32 : Show Int32 where
+  show = \x: Int32.
+    (n, ptr) = %ffi showInt32 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
 
-instance showFloat : Show Float where
-  show = showFloat'
+instance showInt64 : Show Int64 where
+  show = \x: Int64.
+    (n, ptr) = %ffi showInt64 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
 
-instance showInt : Show Int where
-  show = showInt'
+instance showFloat32 : Show Float32 where
+  show = \x: Float32.
+    (n, ptr) = %ffi showFloat32 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
+
+instance showFloat64 : Show Float64 where
+  show = \x: Float64.
+    (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
 
 -- pipe-like reverse function application
 def (|>) (x:a) (f: a -> b) : b = f x

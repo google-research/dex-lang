@@ -39,3 +39,7 @@ def test_function_call():
   y = dex.eval("[2, 3, 4]")
   assert str(m.addOne(x)) == "3.5"
   assert str(m.sum(y)) == "9"
+
+def test_scalar_conversions():
+  assert float(dex.eval("5.0")) == 5.0
+  assert int(dex.eval("5")) == 5

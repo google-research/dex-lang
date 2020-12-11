@@ -76,3 +76,11 @@ lam4 = \n m ?-> (0@n, 0@m)
 >    |       ^
 > To construct a table, use 'for i. body' instead of '\i => body'
 >
+
+
+:p (
+    1
+    +
+    2
+   )
+> 3

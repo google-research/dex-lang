@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# This script checks whether two input files have a diff.
+#
+# Usage:
+#
+#   check-no-diff <first file> <second file>
+#
+# If there is no diff, the script exits with a zero success status.
+# If there is a diff, the script prints the diff to stdout and exits with a
+# non-zero error status.
+
 tmpdiff=$(mktemp)
 diff --left-column -y $1 $2 > $tmpdiff \
        && echo OK || (cat $tmpdiff; false)

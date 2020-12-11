@@ -4,6 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#include <cfloat>
+#include <cinttypes>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -17,7 +19,7 @@
 
 #ifdef DEX_CUDA
 #include <cuda.h>
-#endif
+#endif // DEX_CUDA
 
 extern "C" {
 
@@ -142,26 +144,6 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-void dex_parallel_for(char *function_ptr, int64_t size, char **args) {
-  auto function = reinterpret_cast<void (*)(int64_t, int64_t, char**)>(function_ptr);
-  int64_t nthreads = std::thread::hardware_concurrency();
-  if (size < nthreads) {
-    nthreads = size;
-  }
-  std::vector<std::thread> threads(nthreads);
-  int64_t chunk_size = size / nthreads;
-  for (int64_t t = 0; t < nthreads; ++t) {
-    int64_t start = t * chunk_size;
-    int64_t end = t == nthreads - 1 ? size : (t + 1) * chunk_size;
-    threads[t] = std::thread([function, args, start, end]() {
-      function(start, end, args);
-    });
-  }
-  for (auto& thread : threads) {
-    thread.join();
-  }
-}
-
 void showHex(char **resultPtr, int x) {
   auto p = reinterpret_cast<char*>(malloc_dex(100));  // TODO: something better!
   auto n = sprintf(p, "%02x", x);
@@ -223,6 +205,47 @@ void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) 
     auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
     *result1Ptr = num_bytes;
     *result2Ptr = out_buffer;
+}
+
+// The string buffer size used for converting integer and floating-point types.
+static constexpr int showStringBufferSize = 32;
+
+void showInt32(char **resultPtr, int32_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId32, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showInt64(char **resultPtr, int64_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId64, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showFloat32(char **resultPtr, float x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length =
+      snprintf(buffer, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showFloat64(char **resultPtr, double x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length =
+      snprintf(buffer, showStringBufferSize, "%.*g", __DBL_DECIMAL_DIG__, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
 }
 
 #ifdef DEX_CUDA
@@ -336,7 +359,7 @@ void dex_ensure_has_cuda_context() {
 
 #undef CHECK
 
-#endif
+#endif // DEX_CUDA
 
 int32_t dex_queryParallelismMC(int64_t iters) {
   int32_t nthreads = std::thread::hardware_concurrency();
