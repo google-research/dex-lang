@@ -55,9 +55,10 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
+  pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
-    extra-libraries:   cuda png
+    extra-libraries:   cuda
     cxx-options:       -DDEX_CUDA
     cpp-options:       -DDEX_CUDA
   if flag(optimized)
