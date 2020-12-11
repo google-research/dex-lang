@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2020 Google LLC
 #
 # Use of this source code is governed by a BSD-style
 # license that can be found in the LICENSE file or at
@@ -10,8 +10,11 @@ packages:
 - .
 
 extra-deps:
-  - llvm-hs-9.0.1
-  - llvm-hs-pure-9.0.0
+  - github: apaszke/llvm-hs
+    commit: a9a74be1a7c15f3d21b2fffd35a425002ae7736f
+    subdirs:
+      - llvm-hs
+      - llvm-hs-pure
   - megaparsec-8.0.0
   - prettyprinter-1.6.2
   - store-0.7.8@sha256:0b604101fd5053b6d7d56a4ef4c2addf97f4e08fe8cd06b87ef86f958afef3ae,8001

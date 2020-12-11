@@ -36,56 +36,49 @@ assert ctypes.sizeof(CAtom) == 4 * 8
 
 class HsAtom(ctypes.Structure): pass
 class HsContext(ctypes.Structure): pass
+class HsJIT(ctypes.Structure): pass
+class NativeFunctionObj(ctypes.Structure): pass
 
-_init = lib.dexInit
-_init.restype = None
-_init.argtypes = []
+HsAtomPtr = ctypes.POINTER(HsAtom)
+HsContextPtr = ctypes.POINTER(HsContext)
+HsJITPtr = ctypes.POINTER(HsJIT)
+CAtomPtr = ctypes.POINTER(CAtom)
+NativeFunction = ctypes.POINTER(NativeFunctionObj)
 
-_fini = lib.dexFini
-_fini.restype = None
-_fini.argtypes = []
+def _dex_func(name, *signature):
+  argtypes, restype = signature[:-1], signature[-1]
+  f = getattr(lib, name)
+  f.restype = restype
+  f.argtypes = argtypes
+  return f
 
-_create_context = lib.dexCreateContext
-_create_context.restype = ctypes.POINTER(HsContext)
-_create_context.argtypes = []
+_init = _dex_func('dexInit', None)
+_fini = _dex_func('dexFini', None)
+_getError = _dex_func('dexGetError', ctypes.c_char_p)
 
-_destroy_context = lib.dexDestroyContext
-_destroy_context.restype = None
-_destroy_context.argtypes = [ctypes.POINTER(HsContext)]
+_create_context  = _dex_func('dexCreateContext',  HsContextPtr)
+_destroy_context = _dex_func('dexDestroyContext', HsContextPtr, None)
 
-_print = lib.dexPrint
-_print.restype = ctypes.c_char_p
-_print.argtypes = [ctypes.POINTER(HsAtom)]
+_eval     = _dex_func('dexEval',     HsContextPtr, ctypes.c_char_p,            HsContextPtr)
+_insert   = _dex_func('dexInsert',   HsContextPtr, ctypes.c_char_p, HsAtomPtr, HsContextPtr)
+_evalExpr = _dex_func('dexEvalExpr', HsContextPtr, ctypes.c_char_p,            HsAtomPtr)
+_lookup   = _dex_func('dexLookup',   HsContextPtr, ctypes.c_char_p,            HsAtomPtr)
 
-_insert = lib.dexInsert
-_insert.restype = ctypes.POINTER(HsContext)
-_insert.argtypes = [ctypes.POINTER(HsContext), ctypes.c_char_p, ctypes.POINTER(HsAtom)]
+_print   = _dex_func('dexPrint',   HsAtomPtr,           ctypes.c_char_p)
+_toCAtom = _dex_func('dexToCAtom', HsAtomPtr, CAtomPtr, ctypes.c_int)
 
-_eval = lib.dexEval
-_eval.restype = ctypes.POINTER(HsContext)
-_eval.argtypes = [ctypes.POINTER(HsContext), ctypes.c_char_p]
-
-_evalExpr = lib.dexEvalExpr
-_evalExpr.restype = ctypes.POINTER(HsAtom)
-_evalExpr.argtypes = [ctypes.POINTER(HsContext), ctypes.c_char_p]
-
-_lookup = lib.dexLookup
-_lookup.restype = ctypes.POINTER(HsAtom)
-_lookup.argtypes = [ctypes.POINTER(HsContext), ctypes.c_char_p]
-
-_toCAtom = lib.dexToCAtom
-_toCAtom.restype = ctypes.c_int
-_toCAtom.argtypes = [ctypes.POINTER(HsAtom), ctypes.POINTER(CAtom)]
-
-_getError = lib.dexGetError
-_getError.restype = ctypes.c_char_p
-_getError.argtypes = []
+_createJIT  = _dex_func('dexCreateJIT',  HsJITPtr)
+_destroyJIT = _dex_func('dexDestroyJIT', HsJITPtr, None)
+_compile    = _dex_func('dexCompile',    HsJITPtr, HsContextPtr, HsAtomPtr, NativeFunction)
+_unload     = _dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
 
 _init()
+_jit = _createJIT()
 _nofree = False
 @atexit.register
 def _teardown():
   global _nofree
+  _destroyJIT(_jit)
   _fini()
   _nofree = True  # Don't destruct any Haskell objects after the RTS has been shutdown
 
@@ -94,7 +87,7 @@ def _as_cstr(x: str):
   return ctypes.c_char_p(x.encode('ascii'))
 
 def _from_cstr(cx):
-  return cx.value.decode('ascii')
+  return cx.decode('ascii')
 
 
 class Module:
@@ -148,6 +141,7 @@ class Atom:
     pass
 
   def __repr__(self):
+    # TODO: Free!
     return _print(self).decode('ascii')
 
   def __int__(self):
@@ -176,3 +170,19 @@ class Atom:
       old_env, env = env, _insert(env, _as_cstr(f"python_arg{i}"), atom)
       _destroy_context(old_env)
     return eval(" ".join(f"python_arg{i}" for i in range(len(args) + 1)), module=self.module, _env=env)
+
+  def compile(self):
+    func_ptr = _compile(_jit, self.module, self)
+    if not func_ptr:
+      raise RuntimeError("Failed to JIT-compile a Dex function")
+    return NativeFunction(func_ptr)
+
+
+class NativeFunction:
+  def __init__(self, ptr):
+    self._as_parameter_ = ptr
+    self.ptr = ptr
+
+  def __del__(self):
+    if _nofree: return
+    _unload(_jit, self)

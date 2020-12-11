@@ -5,6 +5,8 @@
 # https://developers.google.com/open-source/licenses/bsd
 
 import unittest
+import ctypes
+import numpy as np
 from textwrap import dedent
 
 # TODO: Write a proper setup.py instead of using this hack...
@@ -43,3 +45,23 @@ def test_function_call():
 def test_scalar_conversions():
   assert float(dex.eval("5.0")) == 5.0
   assert int(dex.eval("5")) == 5
+
+def test_jit():
+  m = dex.eval(r"\x:Float. 1.0 / (1.0 + exp(-x))")
+  native_func = m.compile()
+  func_ptr = ctypes.cast(native_func.ptr, ctypes.c_void_p).value
+  signature = ctypes.CFUNCTYPE(ctypes.c_int64, ctypes.c_float, ctypes.POINTER(ctypes.c_float))
+  func = signature(func_ptr)
+
+  def dex_sigmoid(x):
+    res = ctypes.c_float()
+    has_error = func(x, ctypes.pointer(res))
+    assert not has_error
+    return res.value
+
+  one = np.float32(1.0)
+  def py_sigmoid(x): return one / (one + np.exp(-x))
+
+  for value in map(np.float32, (-1.0, -0.5, 0.0, 0.5, 1.0)):
+    np.testing.assert_allclose(dex_sigmoid(value), py_sigmoid(value),
+                               rtol=1e-4, atol=1e-6)

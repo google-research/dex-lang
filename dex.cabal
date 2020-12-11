@@ -84,10 +84,11 @@ executable dex
 
 foreign-library Dex
   type:                native-shared
-  other-modules:       API
-  build-depends:       base, dex, dex-resources, mtl
-  hs-source-dirs:      src/foreign
-  c-sources:           src/foreign/rts.c
+  other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
+                     , Dex.Foreign.Context, Dex.Foreign.Serialize
+  build-depends:       base, dex, dex-resources, mtl, llvm-hs, containers
+  hs-source-dirs:      src/
+  c-sources:           src/Dex/Foreign/rts.c
   cc-options:          -std=c11 -fPIC
   ghc-options:         -Wall -fPIC
   default-language:    Haskell2010
