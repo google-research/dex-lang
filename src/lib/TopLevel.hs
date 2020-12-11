@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 exportFunctions, EvalConfig (..)) where
+                 exportFunctions, prepareFunctionForExport, EvalConfig (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -257,32 +257,25 @@ runCArg :: CArgEnv -> CArgM a -> Embed (a, [IBinder], CArgEnv)
 runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
   where repack ((ans, cargs), env) = (ans, cargs, env)
 
-exportFunctions :: FilePath -> [(String, Atom)] -> TopEnv -> EvalConfig -> IO ()
-exportFunctions objPath funcs env opts = do
-  let names = fmap fst funcs
-  unless (length (nub names) == length names) $ liftEitherIO $
-    throw CompilerErr "Duplicate export names"
-  modules <- forM funcs $ \(nameStr, func) -> do
-    -- Create a module that simulates an application of arguments to the function
-    let ((dest, cargs), (_, decls)) = flip runEmbed (freeVars func) $ do
-          (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
-          resultAtom <- naryApp func args
-          (resultDest, cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
-          void $ emitTo outputName PlainLet $ Atom resultAtom
-          return (resultDest, cargArgs <> cdestArgs)
+prepareFunctionForExport :: TopEnv -> String -> Atom -> ImpModule
+prepareFunctionForExport env nameStr func = do
+  -- Create a module that simulates an application of arguments to the function
+  let ((dest, cargs), (_, decls)) = flip runEmbed (freeVars func) $ do
+        (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
+        resultAtom <- naryApp func args
+        (resultDest, cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
+        void $ emitTo outputName PlainLet $ Atom resultAtom
+        return (resultDest, cargArgs <> cdestArgs)
 
-    let coreModule = Module Core decls mempty
-    let defunctionalized = simplifyModule env coreModule
-    let Module _ optDecls optBindings = optimizeModule defunctionalized
-    let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
-    let block = Block optDecls outputExpr
+  let coreModule = Module Core decls mempty
+  let defunctionalized = simplifyModule env coreModule
+  let Module _ optDecls optBindings = optimizeModule defunctionalized
+  let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
+  let block = Block optDecls outputExpr
 
-    let backend = backendName opts
-    let name = Name TopFunctionName (fromString nameStr) 0
-    let (_, impModule, _) = toImpModule env backend CEntryFun name cargs (Just dest) block
-    llvmAST <- execLogger Nothing $ flip impToLLVM impModule
-    return (llvmAST, [nameStr])
-  exportObjectFile objPath modules
+  let name = Name TopFunctionName (fromString nameStr) 0
+  let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
+  impModule
   where
     outputName = GlobalName "_ans_"
 
@@ -337,6 +330,18 @@ exportFunctions objPath funcs env opts = do
       extend $ asSnd $ name @> ()
       tell [Bind $ name :> bt]
       return $ Var $ name :> BaseTy bt
+
+exportFunctions :: FilePath -> [(String, Atom)] -> TopEnv -> EvalConfig -> IO ()
+exportFunctions objPath funcs env opts = do
+  unless (backendName opts == LLVM) $ liftEitherIO $
+    throw CompilerErr "Export only supported with the LLVM CPU backend"
+  let names = fmap fst funcs
+  unless (length (nub names) == length names) $ liftEitherIO $
+    throw CompilerErr "Duplicate export names"
+  modules <- forM funcs $ \(name, funcAtom) -> do
+    let impModule = prepareFunctionForExport env name funcAtom
+    (,[name]) <$> execLogger Nothing (flip impToLLVM impModule)
+  exportObjectFile objPath modules
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do
