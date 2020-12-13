@@ -47,6 +47,7 @@ import PPrint
 import Imp
 import Logging
 import LLVMExec
+import Util (IsBool (..))
 
 type OperandEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
@@ -94,7 +95,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     argOperands <- forM (zip [0..] argTys) $ \(i, ty) ->
       gep argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load
-    when requiresCUDA ensureHasCUDAContext
+    when (toBool requiresCUDA) ensureHasCUDAContext
     results <- extendOperands (newEnv bs argOperands) $ compileBlock body
     forM_ (zip [0..] results) $ \(i, x) ->
       gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x

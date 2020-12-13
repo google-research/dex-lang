@@ -29,7 +29,7 @@ module Syntax (
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
-    IFunType (..), IFunVar, CallingConvention (..),
+    IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
@@ -82,7 +82,7 @@ import Foreign.Ptr
 import GHC.Generics
 
 import Env
-import Util (enumerate, (...))
+import Util (IsBool (..), enumerate, (...))
 
 -- === core IR ===
 
@@ -482,8 +482,15 @@ type Size = IExpr
 type IFunVar = VarP IFunType
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
                 deriving (Show)
+
+data IsCUDARequired = CUDARequired | CUDANotRequired  deriving (Eq, Show)
+
+instance IsBool IsCUDARequired where
+  toBool CUDARequired = True
+  toBool CUDANotRequired = False
+
 data CallingConvention = CEntryFun
-                       | EntryFun Bool  -- flag indicates whether CUDA required
+                       | EntryFun IsCUDARequired
                        | FFIFun
                        | FFIMultiResultFun
                        | CUDAKernelLaunch

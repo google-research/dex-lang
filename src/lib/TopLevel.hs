@@ -200,8 +200,8 @@ evalBackend block = do
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
   let mainName = Name TopFunctionName (fromString funcName) 0
-  let cc = case backend of LLVMCUDA -> EntryFun True
-                           _        -> EntryFun False
+  let cc = case backend of LLVMCUDA -> EntryFun CUDARequired
+                           _        -> EntryFun CUDANotRequired
   let (mainFunc, impModuleUnoptimized, reconAtom) =
         toImpModule backend cc mainName ptrBinders Nothing block'
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
