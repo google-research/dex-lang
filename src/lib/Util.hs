@@ -6,7 +6,7 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
+module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
              scanM, composeN, mapMaybe, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
@@ -20,6 +20,9 @@ import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+
+class IsBool a where
+  toBool :: a -> Bool
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"
