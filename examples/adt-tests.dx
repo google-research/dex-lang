@@ -215,7 +215,7 @@ def catLists (xs:List a) (ys:List a) : List a =
 def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
 
 :t listToTable
-> ((a:Type) ?-> (pat:(List a)) -> (Fin (%projectElt [0] pat)) => a)
+> ((a:Type) ?-> (pat:(List a)) -> (Fin ((\((AsList n _)). n) pat)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
@@ -227,7 +227,7 @@ def listToTable2 (l: List a) : (Fin (listLength l))=>a =
   xs
 
 :t listToTable2
-> ((a:Type) ?-> (l:(List a)) -> (Fin (%projectElt [0] l)) => a)
+> ((a:Type) ?-> (l:(List a)) -> (Fin ((\((AsList n _)). n) l)) => a)
 
 :p
   l = AsList _ [1, 2, 3]
@@ -246,21 +246,35 @@ def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
 
 :t graphToAdjacencyMatrix
 > ((a:Type)
->  ?-> (pat:(Graph a)) -> (%projectElt [0] pat) => (%projectElt [0] pat) => Bool)
+>  ?-> (pat:(Graph a))
+>  -> ((\((MkGraph n _ _ _)). n) pat) => ((\((MkGraph n _ _ _)). n) pat) => Bool)
 
 :p
   g : Graph Int = MkGraph (Fin 3) [5, 6, 7] (Fin 4) [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]
   graphToAdjacencyMatrix g
 > [[False, True, True], [False, True, False], [True, False, False]]
 
+-- Test how (nested) projections are handled and pretty-printed in the IR.
 
-def deepUnpack (x:MyPair a (MyPair (MyIntish & b) c)) : Int =
+def pairUnpack ((v, _):(Int & Float)) : Int = v
+:p pairUnpack
+> \pat:(Int32 & Float32). (\(a, _). a) pat
+
+def adtUnpack ((MkMyPair v _):MyPair Int Float) : Int = v
+:p adtUnpack
+> \pat:(MyPair Int32 Float32). (\((MkMyPair elt _)). elt) pat
+
+def recordUnpack ({a=v, b=_}:{a:Int & b:Float}) : Int = v
+:p recordUnpack
+> \pat:{a: Int32 & b: Float32}. (\{a = a, b = _}. a) pat
+
+def nestedUnpack (x:MyPair Int (MyPair (MyIntish & Int) Int)) : Int =
   (MkMyPair _ (MkMyPair (MkIntish y, _) _)) = x
   y
 
-:t deepUnpack
-> ((a:Type)
->  ?-> (b:Type) ?-> (c:Type) ?-> (MyPair a (MyPair (MyIntish & b) c)) -> Int32)
+:p nestedUnpack
+> \x:(MyPair Int32 (MyPair (MyIntish & Int32) Int32)).
+>   (\((MkIntish (((MkMyPair ((MkMyPair _ elt)) _)), _))). elt) x
 
-:p deepUnpack (MkMyPair 3 (MkMyPair (MkIntish 4, 5) 6))
+:p nestedUnpack (MkMyPair 3 (MkMyPair (MkIntish 4, 5) 6))
 > 4
