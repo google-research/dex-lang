@@ -388,7 +388,7 @@ interfaceInstance = do
       Right $ (var . nameToStr . mkInterfaceConsName . varName) v
     buildConstructor _ = Left ("Could not extract interface name from type " ++
                                "annotation.")
-    var s = WithSrc Nothing $ UVar $ mkName s :> ()
+    var s = noSrc $ UVar $ mkName s :> ()
 
 interfaceRecordFields :: String -> Parser (LabeledItems UExpr)
 interfaceRecordFields bindwith =
@@ -484,9 +484,24 @@ buildFor pos dir binders body = case binders of
 
 uForExpr :: Parser UExpr
 uForExpr = do
-  (dir, pos) <- withPos $   (keyWord ForKW $> Fwd)
-                        <|> (keyWord RofKW $> Rev)
-  buildFor pos dir <$> (some patAnn <* argTerm) <*> blockOrExpr
+  ((dir, trailingUnit), pos) <- withPos $
+          (keyWord ForKW  $> (Fwd, False))
+      <|> (keyWord For_KW $> (Fwd, True ))
+      <|> (keyWord RofKW  $> (Rev, False))
+      <|> (keyWord Rof_KW $> (Rev, True ))
+  e <- buildFor pos dir <$> (some patAnn <* argTerm) <*> blockOrExpr
+  if trailingUnit
+    then return $ noSrc $ UDecl (ULet PlainLet underscorePat e) unit
+    else return e
+  where
+    underscorePat :: UPatAnn
+    underscorePat = (noSrc $ UPatBinder $ Ignore (), Nothing)
+
+    unit :: UExpr
+    unit = noSrc $ UPrimExpr $ ConExpr UnitCon
+
+noSrc :: a -> WithSrc a
+noSrc = WithSrc Nothing
 
 blockOrExpr :: Parser UExpr
 blockOrExpr =  block <|> expr
@@ -567,7 +582,7 @@ ifExpr = withSrc $ do
       , UAlt (globalEnumPat "False") alt2]
 
 globalEnumPat :: Tag -> UPat
-globalEnumPat s = WithSrc Nothing $ UPatCon (GlobalName s) Empty
+globalEnumPat s = noSrc $ UPatCon (GlobalName s) Empty
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
@@ -945,7 +960,7 @@ mkInterfaceConsName =
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 type Lexer = Parser
 
-data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
+data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW
 
@@ -970,6 +985,8 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       DefKW  -> "def"
       ForKW  -> "for"
       RofKW  -> "rof"
+      For_KW  -> "for_"
+      Rof_KW  -> "rof_"
       CaseKW -> "case"
       IfKW   -> "if"
       ThenKW -> "then"
@@ -984,7 +1001,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       WhereKW -> "where"
 
 keyWordStrs :: [String]
-keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
+keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "data", "interface",
                "instance", "where", "if", "then", "else"]
 

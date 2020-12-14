@@ -92,3 +92,10 @@ lam4 = \n m ?-> (0@n, 0@m)
       then 0
       else 1
 > [1, 0, 0]
+
+:p
+  withState 5 \ref.
+    n = get ref
+    for_ i:(Fin n).
+      ref := get ref + 1
+> ((), 10)
