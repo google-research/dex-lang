@@ -410,9 +410,10 @@ funDefLet :: Parser (UExpr -> UDecl)
 funDefLet = label "function definition" $ mayBreak $ do
   keyWord DefKW
   v <- letPat
-  bs <- some arg
+  bs <- many arg
   (eff, ty) <- label "result type annotation" $ annot effectiveType
   let piBinders = flip map bs $ \(p, ann, arr) -> (patAsBinder p ann, arr)
+  when (null piBinders && eff /= Pure) $ fail "Nullary def can't have effects"
   let funTy = buildPiType piBinders eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
@@ -432,7 +433,8 @@ nameAsPat :: Parser Name -> Parser UPat
 nameAsPat p = withSrc $ (UPatBinder . Bind . (:>())) <$> p
 
 buildPiType :: [(UAnnBinder, UArrow)] -> EffectRow -> UType -> UType
-buildPiType [] _ _ = error "shouldn't be possible"
+buildPiType [] Pure ty = ty
+buildPiType [] _ _  = error "shouldn't happen"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
   [] -> UPi b (fmap (const eff ) arr) ty
   _  -> UPi b (fmap (const Pure) arr) $ buildPiType bs eff ty

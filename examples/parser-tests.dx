@@ -99,3 +99,15 @@ lam4 = \n m ?-> (0@n, 0@m)
     for_ i:(Fin n).
       ref := get ref + 1
 > ((), 10)
+
+def myInt : Int = 1
+:p myInt
+> 1
+
+def myInt : {State h} Int = 1
+
+> Parse error:107:27:
+>     |
+> 107 | def myInt : {State h} Int = 1
+>     |                           ^
+> Nullary def can't have effects
