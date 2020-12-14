@@ -47,6 +47,7 @@ import PPrint
 import Imp
 import Logging
 import LLVMExec
+import Util (IsBool (..))
 
 type OperandEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
@@ -80,6 +81,8 @@ compileFunction :: Logger [Output] -> ImpFunction
                 -> IO ([L.Definition], S.Set ExternFunSpec)
 compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f))
 compileFunction logger fun@(ImpFunction f bs body) = case cc of
+  FFIFun            -> error "shouldn't be trying to compile an FFI function"
+  FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
   CEntryFun -> return $ runCompile CPU $ do
     (argParams   , argOperands   ) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CEntryFun doesn't support returning values"
@@ -92,7 +95,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     argOperands <- forM (zip [0..] argTys) $ \(i, ty) ->
       gep argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load
-    when requiresCUDA ensureHasCUDAContext
+    when (toBool requiresCUDA) ensureHasCUDAContext
     results <- extendOperands (newEnv bs argOperands) $ compileBlock body
     forM_ (zip [0..] results) $ \(i, x) ->
       gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x
@@ -323,6 +326,7 @@ makeFunSpec (Name _ name _ :> IFunType FFIFun argTys [resultTy]) =
 makeFunSpec (Name _ name _ :> IFunType FFIMultiResultFun argTys _) =
    ExternFunSpec (L.Name (fromString $ T.unpack name)) L.VoidType [] []
      (hostPtrTy hostVoidp : map scalarTy argTys)
+makeFunSpec (_ :> IFunType _ _ _) = error "not implemented"
 
 compileLoop :: Direction -> IBinder -> Operand -> Compile () -> Compile ()
 compileLoop d iBinder n compileBody = do
@@ -409,6 +413,8 @@ compileBinOp op x y = case op of
   FDiv   -> emitInstr (L.typeOf x) $ L.FDiv mathFlags x y []
   BAnd   -> emitInstr (L.typeOf x) $ L.And x y []
   BOr    -> emitInstr (L.typeOf x) $ L.Or  x y []
+  BShL   -> emitInstr (L.typeOf x) $ L.Shl  False False x y []
+  BShR   -> emitInstr (L.typeOf x) $ L.LShr False       x y []
   ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
   FCmp c -> emitInstr i1 (L.FCmp (floatCmpOp c) x y []) >>= (`zeroExtendTo` boolTy)
   where
@@ -631,7 +637,7 @@ litVal :: LitVal -> Operand
 litVal lit = case lit of
   Int64Lit x   -> i64Lit $ fromIntegral x
   Int32Lit x   -> i32Lit $ fromIntegral x
-  Int8Lit  x   -> i8Lit  $ fromIntegral x
+  Word8Lit x   -> i8Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
   VecLit l     -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
@@ -748,7 +754,7 @@ scalarTy b = case b of
   Scalar sb -> case sb of
     Int64Type   -> i64
     Int32Type   -> i32
-    Int8Type    -> i8
+    Word8Type   -> i8
     Float64Type -> fp64
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb

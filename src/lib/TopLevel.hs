@@ -97,9 +97,6 @@ evalSourceBlockM env block = case sbContents block of
           -- TODO: check types before we get here
           s <- liftIO $ getDexString val
           logTop $ HtmlOut s
-        Heatmap _    -> error "not implemented"
-        ColorHeatmap -> error "not implemented"
-        Scatter      -> error "not implemented"
     ExportFun name -> do
       f <- evalUModuleVal env v m
       void $ traverseLiterals f $ \val -> case val of
@@ -203,8 +200,8 @@ evalBackend block = do
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
   let mainName = Name TopFunctionName (fromString funcName) 0
-  let cc = case backend of LLVMCUDA -> EntryFun True
-                           _        -> EntryFun False
+  let cc = case backend of LLVMCUDA -> EntryFun CUDARequired
+                           _        -> EntryFun CUDANotRequired
   let (mainFunc, impModuleUnoptimized, reconAtom) =
         toImpModule backend cc mainName ptrBinders Nothing block'
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations

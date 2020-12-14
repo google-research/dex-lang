@@ -29,7 +29,7 @@ module Syntax (
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
-    IFunType (..), IFunVar, CallingConvention (..),
+    IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
@@ -49,9 +49,9 @@ module Syntax (
     getProjection,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    getIntLit, getFloatLit, sizeOf, vectorWidth, pattern CharLit,
+    getIntLit, getFloatLit, sizeOf, vectorWidth,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
-    pattern TagRepTy, pattern TagRepVal,
+    pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
     pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
@@ -59,7 +59,7 @@ module Syntax (
     pattern PairVal, pattern PureArrow,
     pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
-    pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
+    pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
     pattern Unlabeled, pattern NoExt, pattern LabeledRowKind,
     pattern NoLabeledItems, pattern InternalSingletonLabel, pattern EffKind)
   where
@@ -70,7 +70,6 @@ import Control.Monad.Fail
 import Control.Monad.Identity
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
-import qualified Data.Vector.Storable  as V
 import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
@@ -79,11 +78,12 @@ import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
 import Data.Int
+import Data.Word
 import Foreign.Ptr
 import GHC.Generics
 
 import Env
-import Util (enumerate, (...))
+import Util (IsBool (..), enumerate, (...))
 
 -- === core IR ===
 
@@ -229,7 +229,6 @@ data UExpr' = UVar UVar
             | URecordTy (ExtLabeledItems UExpr UExpr)   -- {a:X & b:Y & ...rest}
             | UVariantTy (ExtLabeledItems UExpr UExpr)  -- {a:X | b:Y | ...rest}
             | UIntLit  Int
-            | UCharLit Char
             | UFloatLit Double
               deriving (Show, Generic)
 
@@ -280,7 +279,6 @@ data PrimExpr e =
 
 data PrimTC e =
         BaseType BaseType
-      | CharType
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
@@ -300,7 +298,6 @@ data PrimCon e =
       | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
       -- These are just newtype wrappers. TODO: use ADTs instead
-      | CharCon e         -- Wraps an Int8 value
       | IntRangeVal   e e e
       | IndexRangeVal e (Limit e) (Limit e) e
       | IndexSliceVal e e e    -- Sliced index set, slice length, ordinal index
@@ -324,6 +321,8 @@ data PrimOp e =
       | Inject e
       | PtrOffset e e
       | PtrLoad e
+      | GetPtr e
+      | MakePtrType e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
@@ -368,7 +367,7 @@ data PrimEffect e = MAsk | MTell e | MGet | MPut e
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
            | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
-           | BAnd | BOr | IRem
+           | BAnd | BOr | BShL | BShR | IRem
              deriving (Show, Eq, Generic)
 
 data UnOp = Exp | Exp2
@@ -426,7 +425,7 @@ instance Subst EffectSummary where
   subst (env, _) effs = S.map substEff effs
     where
       substEff (eff, name) = case envLookup env name of
-        Just (Var (name':>_)) -> (eff, name')
+        Just ~(Var (name':>_)) -> (eff, name')
         Nothing               -> (eff, name)
 
 pattern Pure :: EffectRow
@@ -486,8 +485,15 @@ type Size = IExpr
 type IFunVar = VarP IFunType
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
                 deriving (Show)
+
+data IsCUDARequired = CUDARequired | CUDANotRequired  deriving (Eq, Show)
+
+instance IsBool IsCUDARequired where
+  toBool CUDARequired = True
+  toBool CUDANotRequired = False
+
 data CallingConvention = CEntryFun
-                       | EntryFun Bool  -- flag indicates whether CUDA required
+                       | EntryFun IsCUDARequired
                        | FFIFun
                        | FFIMultiResultFun
                        | CUDAKernelLaunch
@@ -523,14 +529,15 @@ newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
 data LitVal = Int64Lit   Int64
             | Int32Lit   Int32
-            | Int8Lit    Int8
+            | Word8Lit   Word8
             | Float64Lit Double
             | Float32Lit Float
             | PtrLit PtrType (Ptr ())
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Ord, Generic)
 
-data ScalarBaseType = Int64Type | Int32Type | Int8Type | Float64Type | Float32Type
+data ScalarBaseType = Int64Type | Int32Type | Word8Type
+                    | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
 data BaseType = Scalar  ScalarBaseType
               | Vector  ScalarBaseType
@@ -546,7 +553,7 @@ sizeOf :: BaseType -> Int
 sizeOf t = case t of
   Scalar Int64Type   -> 8
   Scalar Int32Type   -> 4
-  Scalar Int8Type    -> 1
+  Scalar Word8Type   -> 1
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
   PtrType _          -> 8
@@ -604,8 +611,6 @@ data Result = Result [Output] (Except ())  deriving (Show, Eq)
 type BenchStats = Int -- number of runs
 data Output = TextOut String
             | HtmlOut String
-            | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
-            | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
             | EvalTime  Double (Maybe BenchStats)
             | TotalTime Double
@@ -614,8 +619,7 @@ data Output = TextOut String
             | ExportedFun String Atom
               deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | RenderHtml | Heatmap Bool | ColorHeatmap | Scatter
-                 deriving (Show, Eq, Generic)
+data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
 data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
 data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
@@ -727,7 +731,6 @@ instance HasUVars UExpr' where
     UVariantTy ulr -> freeUVars ulr
     UVariantLift skip val -> freeUVars skip <> freeUVars val
     UIntLit  _ -> mempty
-    UCharLit _ -> mempty
     UFloatLit _ -> mempty
 
 instance HasUVars UAlt where
@@ -989,8 +992,7 @@ absArgType :: Abs Binder a -> Type
 absArgType (Abs b _) = binderType b
 
 toNest :: [a] -> Nest a
-toNest (x:xs) = Nest x $ toNest xs
-toNest [] = Empty
+toNest = foldr Nest Empty
 
 instance HasVars Arrow where
   freeVars arrow = case arrow of
@@ -1257,14 +1259,14 @@ applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a) => (a -> Atom) -> 
 applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
   (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
-  (Con (Lit (Int8Lit xv)) , Con (Lit (Int8Lit  yv))) -> f (Con . Lit . Int8Lit ) xv yv
+  (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
   _ -> error "Expected integer atoms"
 
 applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom -> Atom -> Atom
 applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
 
 applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom -> Atom -> Atom
-applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Int8Lit . fromIntegral . fromEnum) ... f) x y
+applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
 
 applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom -> Atom -> Atom
 applyFloatBinOp f x y = case (x, y) of
@@ -1306,7 +1308,7 @@ getIntLit :: LitVal -> Int
 getIntLit l = case l of
   Int64Lit i -> fromIntegral i
   Int32Lit i -> fromIntegral i
-  Int8Lit  i -> fromIntegral i
+  Word8Lit  i -> fromIntegral i
   _ -> error $ "Expected an integer literal"
 
 getFloatLit :: LitVal -> Double
@@ -1314,9 +1316,6 @@ getFloatLit l = case l of
   Float64Lit f -> f
   Float32Lit f -> realToFrac f
   _ -> error $ "Expected a floating-point literal"
-
-pattern CharLit :: Int8 -> Atom
-pattern CharLit x = Con (CharCon (Con (Lit (Int8Lit x))))
 
 -- Type used to represent indices at run-time
 pattern IdxRepTy :: Type
@@ -1333,10 +1332,13 @@ pattern IIdxRepTy = Scalar Int32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type
-pattern TagRepTy = TC (BaseType (Scalar Int8Type))
+pattern TagRepTy = TC (BaseType (Scalar Word8Type))
 
-pattern TagRepVal :: Int8 -> Atom
-pattern TagRepVal x = Con (Lit (Int8Lit x))
+pattern TagRepVal :: Word8 -> Atom
+pattern TagRepVal x = Con (Lit (Word8Lit x))
+
+pattern Word8Ty :: Type
+pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
 pattern PairVal :: Atom -> Atom -> Atom
 pattern PairVal x y = Con (PairCon x y)
@@ -1361,9 +1363,6 @@ pattern RefTy r a = TC (RefType (Just r) a)
 
 pattern RawRefTy :: Type -> Type
 pattern RawRefTy a = TC (RefType Nothing a)
-
-pattern CharTy :: Type
-pattern CharTy = TC CharType
 
 pattern TyKind :: Kind
 pattern TyKind = TC TypeKind
@@ -1403,10 +1402,10 @@ isTabTy (TabTy _ _) = True
 isTabTy _ = False
 
 mkConsListTy :: [Type] -> Type
-mkConsListTy tys = foldr PairTy UnitTy tys
+mkConsListTy = foldr PairTy UnitTy
 
 mkConsList :: [Atom] -> Atom
-mkConsList xs = foldr PairVal UnitVal xs
+mkConsList = foldr PairVal UnitVal
 
 fromConsListTy :: MonadError Err m => Type -> m [Type]
 fromConsListTy ty = case ty of
@@ -1446,7 +1445,7 @@ pattern InternalSingletonLabel :: Label
 pattern InternalSingletonLabel = "%UNLABELED%"
 
 _getUnlabeled :: LabeledItems a -> Maybe [a]
-_getUnlabeled (LabeledItems items) = case (length items) of
+_getUnlabeled (LabeledItems items) = case length items of
   0 -> Just []
   1 -> NE.toList <$> M.lookup InternalSingletonLabel items
   _ -> Nothing
@@ -1471,6 +1470,7 @@ builtinNames = M.fromList
   , ("irem", binOp IRem)
   , ("fpow", binOp FPow)
   , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot)
+  , ("shl" , binOp BShL), ("shr" , binOp BShR)
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
@@ -1506,9 +1506,7 @@ builtinNames = M.fromList
   , ("Float32" , TCExpr $ BaseType $ Scalar Float32Type)
   , ("Int64"   , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
-  , ("Int8"    , TCExpr $ BaseType $ Scalar Int8Type)
-  , ("Char"    , TCExpr $ CharType)
-  , ("MkChar"  , ConExpr $ CharCon ())
+  , ("Word8"   , TCExpr $ BaseType $ Scalar Word8Type)
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType (Just ()) ())
   , ("PairType", TCExpr $ PairType () ())
@@ -1528,13 +1526,16 @@ builtinNames = M.fromList
   , ("sliceCurry", OpExpr $ SliceCurry () ())
   , ("ptrOffset", OpExpr $ PtrOffset () ())
   , ("ptrLoad"  , OpExpr $ PtrLoad ())
-  , ("CharPtr" , TCExpr $ BaseType $ PtrType
-                     (AllocatedPtr, Heap CPU,  Scalar Int8Type))
+  , ("getPtr"   , OpExpr $ GetPtr () )
+  , ("makePtrType", OpExpr $ MakePtrType ())
+  , ("CharPtr"  , ptrTy Word8Type)
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
     binOp  op = OpExpr $ ScalarBinOp op () ()
     unOp   op = OpExpr $ ScalarUnOp  op ()
+    ptrTy  ty = TCExpr $ BaseType $ PtrType $
+                  (AllocatedPtr, Heap CPU,  Scalar ty)
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)

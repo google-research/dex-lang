@@ -294,7 +294,6 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
   UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int32Lit $ fromIntegral x
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
-  UCharLit x  -> matchRequirement $ CharLit $ fromIntegral $ fromEnum x
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -678,7 +677,7 @@ traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
 traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
-      Con (ClassDictHole ctx ty) -> fillHole ctx ty
+      Con (ClassDictHole ctx ty) -> fillHole ctx =<< substEmbedR ty
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
@@ -764,9 +763,15 @@ solveLocal m = do
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: Subst a => [Var] -> UInferM a -> UInferM a
+checkLeaks :: (HasType a, Subst a) => [Var] -> UInferM a -> UInferM a
 checkLeaks tvs m = do
+  scope <- getScope
   (ans, env) <- scoped $ solveLocal $ m
+  let resultTypeLeaks = filter (\case (Name InferenceName _ _) -> False; _ -> True) $
+                          envNames $ freeVars (getType ans) `envDiff` scope
+  unless (null $ resultTypeLeaks) $
+    throw TypeErr $ "Leaked local variable `" ++ pprint (head resultTypeLeaks) ++
+                    "` in result type " ++ pprint (getType ans)
   forM_ (solverSub env) $ \ty ->
     forM_ tvs $ \tv ->
       throwIf (tv `occursIn` ty) TypeErr $ "Leaked type variable: " ++ pprint tv

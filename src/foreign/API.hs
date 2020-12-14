@@ -13,9 +13,13 @@ import Foreign.StablePtr
 import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
+import Foreign.C.Types
 
 import Data.String
 import Data.Word
+import Data.Int
+import Data.Functor
+import Data.Foldable
 
 import Resources
 import Syntax  hiding (sizeOf)
@@ -24,52 +28,62 @@ import TopLevel
 import Parser (parseExpr, exprAsModule)
 import Serialize (pprintVal)
 import Env hiding (Tag)
+import PPrint
 
-foreign export ccall "dexCreateContext"  dexCreateContext  :: IO (Ptr ())
-foreign export ccall "dexDestroyContext" dexDestroyContext :: Ptr () -> IO ()
-foreign export ccall "dexPrint"    dexPrint    :: Ptr Atom    -> IO CString
-foreign export ccall "dexInsert"   dexInsert   :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
-foreign export ccall "dexEval"     dexEval     :: Ptr Context -> CString -> IO (Ptr Context)
-foreign export ccall "dexEvalExpr" dexEvalExpr :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
-foreign export ccall "dexLookup"   dexLookup   :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
-foreign export ccall "dexToCAtom"  dexToCAtom  :: Ptr Atom               -> IO (Ptr (WithErr APIErr CAtom))
+-- Public API (commented out exports are defined in rts.c)
+-- foreign export ccall "dexInit"     _ :: IO ()
+-- foreign export ccall "dexFini"     _ :: IO ()
+-- foreign export ccall "dexGetError" _ :: CString
+foreign export ccall "dexCreateContext"  dexCreateContext  :: IO (Ptr Context)
+foreign export ccall "dexDestroyContext" dexDestroyContext :: Ptr Context -> IO ()
+foreign export ccall "dexPrint"    dexPrint    :: Ptr Atom                 -> IO CString
+foreign export ccall "dexInsert"   dexInsert   :: Ptr Context -> CString   -> Ptr Atom -> IO (Ptr Context)
+foreign export ccall "dexEval"     dexEval     :: Ptr Context -> CString   -> IO (Ptr Context)
+foreign export ccall "dexEvalExpr" dexEvalExpr :: Ptr Context -> CString   -> IO (Ptr Atom)
+foreign export ccall "dexLookup"   dexLookup   :: Ptr Context -> CString   -> IO (Ptr Atom)
+foreign export ccall "dexToCAtom"  dexToCAtom  :: Ptr Atom    -> Ptr CAtom -> IO CInt
 
 data Context = Context EvalConfig TopEnv
 
-dexCreateContext :: IO (Ptr ())
+foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
+setError :: String -> IO ()
+setError msg = withCStringLen msg $ \(ptr, len) ->
+  internalSetErrorPtr ptr (fromIntegral len)
+
+dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do
-    let evalConfig = EvalConfig LLVM Nothing
-    maybePreludeEnv <- evalPrelude evalConfig preludeSource
-    case maybePreludeEnv of
-      Right preludeEnv -> castStablePtrToPtr <$> newStablePtr (Context evalConfig preludeEnv)
-      Left  _          -> return nullPtr
+  let evalConfig = EvalConfig LLVM Nothing
+  maybePreludeEnv <- evalPrelude evalConfig preludeSource
+  case maybePreludeEnv of
+    Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
+    Left  _          -> setError "Failed to initialize standard library" $> nullPtr
   where
+    evalPrelude :: EvalConfig -> String -> IO (Either Err TopEnv)
+    evalPrelude opts contents = flip evalStateT mempty $ do
+      results <- fmap snd <$> evalSource opts contents
+      env <- get
+      return $ env `unlessError` results
+      where
+        unlessError :: TopEnv -> [Result] -> Except TopEnv
+        result `unlessError` []                        = Right result
+        _      `unlessError` ((Result _ (Left err)):_) = Left err
+        result `unlessError` (_:t                    ) = result `unlessError` t
 
-evalPrelude :: EvalConfig -> String -> IO (Either Err TopEnv)
-evalPrelude opts contents = flip evalStateT mempty $ do
-  results <- fmap snd <$> evalSource opts contents
-  env <- get
-  return $ env `unlessError` results
-  where
-    unlessError :: TopEnv -> [Result] -> Except TopEnv
-    result `unlessError` []                        = Right result
-    _      `unlessError` ((Result _ (Left err)):_) = Left err
-    result `unlessError` (_:t                    ) = result `unlessError` t
-
-dexDestroyContext :: Ptr () -> IO ()
-dexDestroyContext = freeStablePtr . castPtrToStablePtr @Context
+dexDestroyContext :: Ptr Context -> IO ()
+dexDestroyContext = freeStablePtr . castPtrToStablePtr . castPtr
 
 dexPrint :: Ptr Atom -> IO CString
-dexPrint atomPtr = do
-  newCString =<< pprintVal =<< fromStablePtr atomPtr
+dexPrint atomPtr = newCString =<< pprintVal =<< fromStablePtr atomPtr
 
 dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
-  finalEnv <- execStateT (evalSource evalConfig source) env
-  -- TODO: This ignores errors!
-  toStablePtr $ Context evalConfig finalEnv
+  (results, finalEnv) <- runStateT (evalSource evalConfig source) env
+  let anyError = asum $ fmap (\case (_, Result _ (Left err)) -> Just err; _ -> Nothing) results
+  case anyError of
+    Nothing  -> toStablePtr $ Context evalConfig finalEnv
+    Just err -> setError (pprint err) $> nullPtr
 
 dexInsert :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
 dexInsert ctxPtr namePtr atomPtr = do
@@ -79,67 +93,47 @@ dexInsert ctxPtr namePtr atomPtr = do
   let env' = env <> name @> (getType atom, LetBound PlainLet (Atom atom))
   toStablePtr $ Context evalConfig env'
 
-dexEvalExpr :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
+dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
 dexEvalExpr ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   maybeExpr <- parseExpr <$> peekCString sourcePtr
   case maybeExpr of
-    Just expr -> do
+    Right expr -> do
       let (v, m) = exprAsModule expr
-      (resultEnv, _) <- evalSourceBlock evalConfig env $ SourceBlock 0 0 LogNothing "" (RunModule m) Nothing
-      let (_, LetBound _ (Atom atom)) = resultEnv ! v
-      atomPtr <- castPtr . castStablePtrToPtr <$> newStablePtr atom
-      packSuccess atomPtr
-    _ -> packErr EInvalidExpr
+      let block = SourceBlock 0 0 LogNothing "" (RunModule m) Nothing
+      (resultEnv, Result [] maybeErr) <- evalSourceBlock evalConfig env block
+      case maybeErr of
+        Right () -> do
+          let (_, LetBound _ (Atom atom)) = resultEnv ! v
+          toStablePtr atom
+        Left err -> setError (pprint err) $> nullPtr
+    Left err -> setError (pprint err) $> nullPtr
 
-dexLookup :: Ptr Context -> CString -> IO (Ptr (WithErr APIErr (Ptr Atom)))
+dexLookup :: Ptr Context -> CString -> IO (Ptr Atom)
 dexLookup ctxPtr namePtr = do
-  Context _ env <- deRefStablePtr $ castPtrToStablePtr $ castPtr ctxPtr
+  Context _ env <- fromStablePtr ctxPtr
   name <- peekCString namePtr
   case envLookup env (GlobalName $ fromString name) of
-    Just (_, LetBound _ (Atom atom)) -> do
-      atomPtr <- castPtr . castStablePtrToPtr <$> newStablePtr atom
-      packSuccess atomPtr
-    Just _                          -> packErr EUnsupported
-    Nothing                         -> packErr ENotFound
+    Just (_, LetBound _ (Atom atom)) -> toStablePtr atom
+    Just _                           -> setError "Looking up an expression" $> nullPtr
+    Nothing                          -> setError "Unbound name" $> nullPtr
 
-dexToCAtom :: Ptr Atom -> IO (Ptr (WithErr APIErr CAtom))
-dexToCAtom atomPtr = packAtom =<< fromStablePtr atomPtr
-
-packAtom :: Atom -> IO (Ptr (WithErr APIErr CAtom))
-packAtom atom = case atom of
-  Con con -> case con of
-    Lit (VecLit _) -> notSerializable
-    Lit l          -> packSuccess $ CLit l
+dexToCAtom :: Ptr Atom -> Ptr CAtom -> IO CInt
+dexToCAtom atomPtr resultPtr = do
+  atom <- fromStablePtr atomPtr
+  case atom of
+    Con con -> case con of
+      Lit (VecLit _) -> notSerializable
+      Lit l          -> poke resultPtr (CLit l) $> 1
+      _ -> notSerializable
     _ -> notSerializable
-  _ -> notSerializable
   where
-    notSerializable = packErr EUnsupported
+    notSerializable = setError "Unserializable atom" $> 0
 
-unpackAtom :: CAtom -> Atom
-unpackAtom catom = case catom of
-  CLit l           -> Con $ Lit l
-  CRectArray _ _ _ -> error "Unsupported"
+dexFreeCAtom :: Ptr CAtom -> IO ()
+dexFreeCAtom = free
 
 data CAtom = CLit LitVal | CRectArray (Ptr ()) [Int] [Int]
-
-data WithErr err val = Fail err | Success val
-data APIErr = ENotFound | EUnsupported | EInvalidExpr deriving (Enum)
-
-packErr :: (Storable err, Storable val) => err -> IO (Ptr (WithErr err val))
-packErr = putOnHeap . Fail
-
-packSuccess :: (Storable err, Storable val) => val -> IO (Ptr (WithErr err val))
-packSuccess = putOnHeap . Success
-
-bitcastWord :: Storable a => a -> IO Word64
-bitcastWord x = do
-  unless (sizeOf    x <= sizeOf    (undefined :: Word64)) $ error "Payload too large"
-  unless (alignment x >= alignment (undefined :: Word64)) $ error "Payload requires stricter alignment"
-  alloca $ \ref -> do
-    poke ref 0
-    poke (castPtr ref) x
-    peek ref
 
 instance Storable CAtom where
   sizeOf _ = tag + val + val + val
@@ -153,7 +147,7 @@ instance Storable CAtom where
         CLit <$> case litTag of
                    0 -> Int64Lit   <$> val 2
                    1 -> Int32Lit   <$> val 2
-                   2 -> Int8Lit    <$> val 2
+                   2 -> Word8Lit   <$> val 2
                    3 -> Float64Lit <$> val 2
                    4 -> Float32Lit <$> val 2
                    _ -> error "Invalid tag"
@@ -167,7 +161,7 @@ instance Storable CAtom where
       case lit of
         Int64Lit   v -> val @Word64 1 0 >> val 2 v
         Int32Lit   v -> val @Word64 1 1 >> val 2 v
-        Int8Lit    v -> val @Word64 1 2 >> val 2 v
+        Word8Lit   v -> val @Word64 1 2 >> val 2 v
         Float64Lit v -> val @Word64 1 3 >> val 2 v
         Float32Lit v -> val @Word64 1 4 >> val 2 v
         VecLit     _ -> error "Unsupported"
@@ -176,36 +170,6 @@ instance Storable CAtom where
     where
       val :: forall a. Storable a => Int -> a -> IO ()
       val i v = pokeByteOff (castPtr addr) (i * 8) v
-
-instance Storable APIErr where
-  sizeOf    _ = sizeOf    (undefined :: Word64)
-  alignment _ = alignment (undefined :: Word64)
-  peek addr   = toEnum @APIErr . fromIntegral <$> peek (castPtr @_ @Word64 addr)
-  poke addr x = poke (castPtr @_ @Word64 addr) $ fromIntegral $ fromEnum x
-
-instance (Storable err, Storable val) => Storable (WithErr err val) where
-  -- TODO: Assert that alignment of err and val is not more than 8
-  sizeOf    _ = 8 + max (sizeOf (undefined :: err)) (sizeOf (undefined :: val))
-  alignment _ = 8
-  peek ptr    = do
-    tag <- peek (castPtr @_ @Word64 ptr)
-    let payloadPtr = plusPtr ptr 8
-    case tag of
-      0 -> Fail    <$> peek (castPtr payloadPtr)
-      1 -> Success <$> peek (castPtr payloadPtr)
-      _ -> error    $  "Unexpected tag value: " ++ show tag
-  poke ptr x  = do
-    let tagPtr = castPtr @_ @Word64 ptr
-    let payloadPtr = plusPtr ptr 8
-    case x of
-      Fail err    -> poke tagPtr 0 >> poke payloadPtr err
-      Success val -> poke tagPtr 1 >> poke payloadPtr val
-
-putOnHeap :: Storable a => a -> IO (Ptr a)
-putOnHeap x = do
-  addr <- calloc
-  poke addr x
-  return addr
 
 fromStablePtr :: Ptr a -> IO a
 fromStablePtr = deRefStablePtr . castPtrToStablePtr . castPtr

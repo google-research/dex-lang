@@ -14,6 +14,7 @@ import qualified Data.ByteString as BS
 import System.Directory
 import System.FilePath
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as M
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 
@@ -26,12 +27,13 @@ import Interpreter (indices)
 pprintVal :: Val -> IO String
 pprintVal val = asStr <$> prettyVal val
 
+-- TODO: get the pointer rather than reading char by char
 getDexString :: Val -> IO String
 getDexString (DataCon _ _ 0 [_, xs]) = do
   let (TabTy b _) = getType xs
   idxs <- indices $ getType b
   forM idxs $ \i -> do
-    ~(CharLit c) <- evalBlock mempty (Block Empty (App xs i))
+    ~(Con (Lit (Word8Lit c))) <- evalBlock mempty (Block Empty (App xs i))
     return $ toEnum $ fromIntegral c
 getDexString x = error $ "Not a string: " ++ pprint x
 
@@ -57,8 +59,8 @@ prettyVal val = case val of
     where DataConDef conName _ = dataCons !! con
   Con con -> case con of
     PairCon x y -> do
-      xStr <- asStr <$> prettyVal x
-      yStr <- asStr <$> prettyVal y
+      xStr <- pprintVal x
+      yStr <- pprintVal y
       return $ pretty (xStr, yStr)
     SumAsProd ty (TagRepVal trep) payload -> do
       let t = fromIntegral trep
@@ -79,6 +81,18 @@ prettyVal val = case val of
             variant = Variant (NoExt types) theLabel repeatNum value
         _ -> error "SumAsProd with an unsupported type"
     _ -> return $ pretty con
+  Record (LabeledItems row) -> do
+    let separator = line' <> ","
+    let bindwith = " ="
+    let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
+    let fmElem = \(label :: Label, v) -> do
+          vStr <- prettyVal v
+          return $ pretty label <> bindwith <+> vStr
+    docs <- mapM fmElem elems
+    let innerDoc = "{" <> flatAlt " " ""
+          <> concatWith (surround (separator <> " ")) docs
+          <> "}"
+    return $ align $ group innerDoc
   atom -> return $ prettyPrec atom LowestPrec
 
 -- TODO: this isn't enough, since this module's compilation might be cached

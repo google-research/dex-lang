@@ -138,6 +138,8 @@ linearizeOp op = case op of
   PtrOffset _ _          -> emitDiscrete
   TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
   Inject _               -> emitDiscrete
+  GetPtr _               -> emitDiscrete
+  MakePtrType _          -> emitDiscrete
   SliceOffset _ _        -> emitDiscrete
   SliceCurry  _ _        -> emitDiscrete
   VectorBinOp _ _ _      -> notImplemented
@@ -233,6 +235,8 @@ linearizeBinOp op x' y' = LinA $ do
     FCmp _ -> emitDiscrete
     BAnd   -> emitDiscrete
     BOr    -> emitDiscrete
+    BShL   -> emitDiscrete
+    BShR   -> emitDiscrete
   where
     emitDiscrete = if isTrivialForAD (Op $ ScalarBinOp op x' y')
       then withZeroTangent <$> emitOp (ScalarBinOp op x' y')
@@ -300,7 +304,6 @@ linearizeHof env hof = case hof of
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
-  CharCon _             -> emitWithZero
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
@@ -363,7 +366,6 @@ tangentType ty = case ty of
     BaseType (Vector Float64Type) -> TC con
     BaseType (Vector Float32Type) -> TC con
     BaseType   _                  -> UnitTy
-    CharType                      -> UnitTy
     IntRange   _ _                -> UnitTy
     IndexRange _ _ _              -> UnitTy
     IndexSlice _ _                -> UnitTy
@@ -590,6 +592,8 @@ transposeOp op ct = case op of
       else transposeAtom y =<< mul ct =<< substNonlin x
   ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
   ScalarBinOp _    _ _  -> notLinear
+  GetPtr _              -> notLinear
+  MakePtrType _         -> notLinear
   PrimEffect refArg m   -> do
     refArg' <- substTranspose linRefSubst refArg
     let emitEff = emitOp . PrimEffect refArg'
@@ -622,7 +626,7 @@ transposeOp op ct = case op of
   SliceOffset  _ _      -> notLinear
   SliceCurry   _ _      -> notLinear
   UnsafeFromOrdinal _ _ -> notLinear
-  ToOrdinal   _         -> notLinear
+  ToOrdinal    _        -> notLinear
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
   FFICall      _ _ _    -> notLinear
@@ -718,7 +722,6 @@ transposeCon con ct = case con of
     getFst ct >>= transposeAtom x
     getSnd ct >>= transposeAtom y
   SumAsProd _ _ _   -> notImplemented
-  CharCon _         -> notTangent
   ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notTangent
   IndexRangeVal _ _ _ _ -> notTangent

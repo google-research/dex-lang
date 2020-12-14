@@ -6,6 +6,7 @@ described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 Specifically, it's based on his unrolled ```lax.scan``` version.
 
+include "examples/plot.dx"
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
@@ -21,7 +22,6 @@ def directionAndLength (x: d=>Float) : (d=>Float & Float) =
   l = length x
   (x / (length x), l)
 
-def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
@@ -345,10 +345,12 @@ params = (num_samples, num_bounces, share_prng)
 -- %time
 image = takePicture params theScene num_pix camera
 
--- :plotmatcolor image
--- > <graphical output>
+:html imshow image
+> <html output>
 
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
--- :plotmatcolor takePicture (1, num_bounces, share_prng) theScene num_pix camera
+:html imshow $
+   takePicture (1, num_bounces, share_prng) theScene num_pix camera
+> <html output>

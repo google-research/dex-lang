@@ -19,6 +19,20 @@
 :p ()
 > ()
 
+'Records and variants
+
+:p {a=1, b=2}
+> {a = 1, b = 2}
+
+:p {a="1234", b=[1, 2, 3]}
+> {a = ['1', '2', '3', '4'], b = [1, 2, 3]}
+
+:p [{| a=1 |}, {| b=2.0 |}] : (Fin 2) => {a:Int | b:Float}
+> [{| a = 1 |}, {| b = 2.0 |}]
+
+:p {table = [{| a=1 |}, {| b=2.0 |}]} : {table: (Fin 2) => {a:Int | b:Float}}
+> {table = [{| a = 1 |}, {| b = 2.0 |}]}
+
 'Values without a pretty-printer (currently shows warning message):
 
 :p Int

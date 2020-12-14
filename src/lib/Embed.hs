@@ -257,7 +257,7 @@ isub x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (-) x y
 isub x y = emitOp $ ScalarBinOp ISub x y
 
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
-select (Con (Lit (Int8Lit p))) x y = return $ if p /= 0 then x else y
+select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
 select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
@@ -882,5 +882,10 @@ reduceExpr scope expr = case expr of
       Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
         reduceBlock scope $ subst (b@>x', scope) block
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+      _ -> Nothing
+  Op (MakePtrType ty) -> do
+    let ty' = reduceAtom scope ty
+    case ty' of
+      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
       _ -> Nothing
   _ -> Nothing

@@ -16,14 +16,12 @@ import Data.Text (pack)
 import CMark (commonmarkToHtml)
 
 import Control.Monad
-import qualified Data.Vector.Storable as V
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
 import Syntax
 import PPrint
 import Parser
-import Plot
 import Serialize()
 
 pprintHtml :: ToMarkup a => a -> String
@@ -49,9 +47,6 @@ instance ToMarkup Result where
 
 instance ToMarkup Output where
   toMarkup out = case out of
-    HeatmapOut False h w zs -> heatmapHtml h w zs
-    HeatmapOut True h w zs  -> colorHeatmapHtml h w zs
-    ScatterOut xs ys  -> scatterHtml (V.toList xs) (V.toList ys)
     HtmlOut s -> preEscapedString s
     _ -> cdiv "result-block" $ toHtml $ pprint out
 
@@ -99,7 +94,7 @@ classify =
    <|> (do s <- lowerWord
            return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
    <|> (upperWord >> return TypeNameStr)
-   <|> (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
+   <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
         >> lowerWord >> return IsoSugarStr)
    <|> (some symChar >> return SymbolStr)
    <|> (anySingle >> return NormalStr)

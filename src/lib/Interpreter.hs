@@ -125,7 +125,7 @@ indices ty = do
       lt' <- indices lt
       rt' <- indices rt
       return $ [PairVal l r | l <- lt', r <- rt']
-    TC (UnitType)          -> return $ [UnitVal]
+    TC UnitType            -> return [UnitVal]
     RecordTy (NoExt types) -> do
       subindices <- mapM indices (toList types)
       -- Earlier indices change faster than later ones, so we need to first

@@ -95,7 +95,7 @@ toImpModule backend cc entryName argBinders maybeDest block =
 translateTopLevel :: WithDest Block -> ImpM (AtomRecon, [IExpr])
 translateTopLevel (maybeDest, block) = do
   outDest <- case maybeDest of
-        Nothing   -> allocKind Unmanaged $ getType block
+        Nothing   -> makeAllocDest Unmanaged $ getType block
         Just dest -> return dest
   handleErrors $ void $ translateBlock mempty (Just outDest, block)
   resultAtom <- destToAtom outDest
@@ -151,7 +151,7 @@ translateExpr env (maybeDest, expr) = case expr of
         translateBlock (env <> newEnv bs [x]) (maybeDest, body)
       Con (SumAsProd _ tag xss) -> do
         let tag' = fromScalarAtom tag
-        dest <- allocDest maybeDest $ getType expr
+        dest <- allocDest maybeDest =<< impSubst env (getType expr)
         emitSwitch tag' $ flip map (zip xss alts) $
           \(xs, Abs bs body) ->
              void $ translateBlock (env <> newEnv bs xs) (Just dest, body)
@@ -225,6 +225,10 @@ toImpOp (maybeDest, op) = case op of
     buf <- impOffset (fromScalarAtom arr) (fromScalarAtom off)
     returnVal $ toScalarAtom buf
   PtrLoad arr -> returnVal . toScalarAtom =<< loadAnywhere (fromScalarAtom arr)
+  GetPtr tab -> do
+    (dest, ptr) <- makeAllocDestForPtr (getType tab)
+    copyAtom dest tab
+    returnVal ptr
   SliceOffset ~(Con (IndexSliceVal n _ tileOffset)) idx -> do
     i' <- indexToInt idx
     i <- iaddI (fromScalarAtom tileOffset) i'
@@ -557,7 +561,6 @@ makeDestRec ty = case ty of
       return $ Con $ BaseTypeRef ptr
     PairType a b -> (Con . ConRef) <$> (PairCon <$> rec a <*> rec b)
     UnitType     -> (Con . ConRef) <$> return UnitCon
-    CharType     -> (Con . ConRef . CharCon) <$> rec (BaseTy $ Scalar Int8Type)
     IntRange     l h -> (Con . ConRef . IntRangeVal     l h) <$> rec IdxRepTy
     IndexRange t l h -> (Con . ConRef . IndexRangeVal t l h) <$> rec IdxRepTy
     _ -> error $ "not implemented: " ++ pprint con
@@ -662,7 +665,6 @@ loadDest (Con dest) = do
     SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
     IntRangeVal     l h iRef -> IntRangeVal     l h <$> loadDest iRef
     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
-    CharCon d -> CharCon <$> loadDest d
     _        -> error $ "Not a valid dest: " ++ pprint dest
   _          -> error $ "Not a valid dest: " ++ pprint dest
 loadDest dest = error $ "Not a valid dest: " ++ pprint dest
@@ -726,6 +728,17 @@ makeAllocDest allocTy ty = do
       _ -> return ()
     return (ptr @> toScalarAtom ptr')
   impSubst env dest
+
+-- TODO: deallocation!
+makeAllocDestForPtr :: Type -> ImpM (Dest, Atom)
+makeAllocDestForPtr ty = do
+  (ptrSizes, dest) <- fromEmbed $ makeDest (LLVM, CPU, Unmanaged) ty
+  case ptrSizes of
+    [(Bind (ptr:>PtrTy ptrTy), size)] -> do
+      ptr' <- emitAlloc ptrTy $ fromScalarAtom size
+      dest' <- impSubst (ptr @> toScalarAtom ptr') dest
+      return (dest', toScalarAtom ptr')
+    _ -> error $ "expected a single pointer"
 
 splitDest :: WithDest Block -> ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
 splitDest (maybeDest, (Block decls ans)) = do
@@ -863,7 +876,8 @@ indexSetSize ty = fromScalarAtom <$> fromEmbed (indexSetSizeE ty)
 
 zipTabDestAtom :: HasCallStack => (Dest -> Atom -> ImpM ()) -> Dest -> Atom -> ImpM ()
 zipTabDestAtom f ~dest@(Con (TabRef (TabVal b _))) ~src@(TabVal b' _) = do
-  unless (binderType b == binderType b') $ error $ "Mismatched dimensions"
+  unless (binderType b == binderType b') $
+    error $ "Mismatched dimensions: " <> pprint b <> " != " <> pprint b'
   let idxTy = binderType b
   n <- indexSetSize idxTy
   emitLoop "i" Fwd n $ \i -> do
@@ -880,7 +894,6 @@ zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
     f tagRef tag >> zipWithM_ (zipWithM f) xssRef xss
   (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> f iRef i
   (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> f iRef i
-  (CharCon d, CharCon x) -> f d x
   _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
 
 -- TODO: put this in userspace using type classes
@@ -969,8 +982,8 @@ memcopy dest src numel = emitStatement $ MemCopy dest src numel
 store :: HasCallStack => IExpr -> IExpr -> ImpM ()
 store dest src = emitStatement $ Store dest src
 
-alloc :: Type -> ImpM Dest
-alloc ty = allocKind Managed ty
+alloc :: HasCallStack => Type -> ImpM Dest
+alloc ty = makeAllocDest Managed ty
 
 handleErrors :: ImpM () -> ImpM ()
 handleErrors m = m `catchError` (const $ emitStatement IThrowError)
@@ -1038,9 +1051,6 @@ emitStatement instr = do
     _ -> error "unexpected numer of return values"
 
 data AllocType = Managed | Unmanaged  deriving (Show, Eq)
-
-allocKind :: AllocType -> Type -> ImpM Dest
-allocKind allocTy ty = makeAllocDest allocTy ty
 
 extendAlloc :: IExpr -> ImpM ()
 extendAlloc v = extend $ mempty { envPtrsToFree = [v] }
@@ -1125,12 +1135,12 @@ instrTypeChecked instr = case instr of
     return []
   IWhile cond body -> do
     [condTy] <- checkBlock cond
-    assertEq (Scalar Int8Type) condTy $ "Not a bool: " ++ pprint cond
+    assertEq (Scalar Word8Type) condTy $ "Not a bool: " ++ pprint cond
     [] <- checkBlock body
     return []
   ICond predicate consequent alternative -> do
     predTy <- checkIExpr predicate
-    assertEq (Scalar Int8Type) predTy "Type mismatch in predicate"
+    assertEq (Scalar Word8Type) predTy "Type mismatch in predicate"
     [] <- checkBlock consequent
     [] <- checkBlock alternative
     return []

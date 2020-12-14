@@ -222,7 +222,6 @@ def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
   sum $ listToTable l
 > 6
 
-def listLength ((AsList length xs):List a) : Int = length
 def listToTable2 (l: List a) : (Fin (listLength l))=>a =
   (AsList _ xs) = l
   xs
