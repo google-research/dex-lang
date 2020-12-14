@@ -104,8 +104,7 @@ emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
 
 emitUnpack :: MonadEmbed m => Expr -> m [Atom]
-emitUnpack expr = do
-  getUnpacked =<< emit expr
+emitUnpack expr = getUnpacked =<< emit expr
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
@@ -287,9 +286,8 @@ ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
 
 fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair pair = do
-  scope <- getScope
-  let pair' = reduceAtom scope pair
-  return (getProjection [0] pair', getProjection [1] pair')
+  ~[x, y] <- getUnpacked pair
+  return (x, y)
 
 getFst :: MonadEmbed m => Atom -> m Atom
 getFst p = fst <$> fromPair p

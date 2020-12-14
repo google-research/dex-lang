@@ -378,7 +378,9 @@ tangentType ty = case ty of
 
 addTangent :: MonadEmbed m => Atom -> Atom -> m Atom
 addTangent x y = case getType x of
-  RecordTy _ -> pack (getType x) <$> bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
+  RecordTy (NoExt tys) -> do
+    elems <- bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
+    return $ Record $ restructure elems tys
   TabTy b _  -> buildFor Fwd b $ \i -> bindM2 addTangent (tabGet x i) (tabGet y i)
   TC con -> case con of
     BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
@@ -391,13 +393,6 @@ addTangent x y = case getType x of
     _ -> notTangent
   _ -> notTangent
   where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
-
-pack :: Type -> [Atom] -> Atom
-pack ty elems = case ty of
-  PairTy _ _ -> let [x, y] = elems in PairVal x y
-  TypeCon def params     -> DataCon def params 0 elems
-  RecordTy (NoExt types) -> Record $ restructure elems types
-  _ -> error $ "Unexpected Unpack argument type: " ++ pprint ty
 
 isTrivialForAD :: Expr -> Bool
 isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
@@ -640,9 +635,11 @@ linAtomRef (Var x) = do
   case envLookup refs x of
     Just ref -> return ref
     _ -> error $ "Not a linear var: " ++ pprint (Var x)
-linAtomRef (ProjectElt (i NE.:| is) x) = do
-  let subproj = getProjection is (Var x)
-  case getType subproj of
+linAtomRef (ProjectElt (i NE.:| is) x) =
+  let subproj = case NE.nonEmpty is of
+        Just is' -> ProjectElt is' x
+        Nothing -> Var x
+  in case getType subproj of
     PairTy _ _ -> do
       ref <- linAtomRef subproj
       (traverse $ emitOp . getter) ref

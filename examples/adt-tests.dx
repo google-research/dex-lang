@@ -234,6 +234,16 @@ def listToTable2 (l: List a) : (Fin (listLength l))=>a =
   sum $ listToTable2 l
 > 6
 
+l2 = AsList _ [1, 2, 3]
+:p sum $ listToTable2 l2
+> 6
+
+def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
+  for i:(Fin $ listLength l). 0.0
+
+:p zerosLikeList l2
+> [0.0, 0.0, 0.0]
+
 data Graph a:Type =
   MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
 
@@ -254,7 +264,7 @@ def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
   graphToAdjacencyMatrix g
 > [[False, True, True], [False, True, False], [True, False, False]]
 
--- Test how (nested) projections are handled and pretty-printed in the IR.
+-- Test how (nested) projections are handled and pretty-printed.
 
 def pairUnpack ((v, _):(Int & Float)) : Int = v
 :p pairUnpack

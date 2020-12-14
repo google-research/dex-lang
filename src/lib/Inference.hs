@@ -160,8 +160,8 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
       Just pat' -> withNameHint ("pat" :: Name) $ buildPi b $ \x ->
         withBindPat pat' x $ (,) <$> mapM checkUEff arr <*> checkUType ty
         where b = case pat' of
-                    -- Note: must bind it by name if the user gives an explicit
-                    -- name, since the binder name becomes part of the type.
+                    -- Note: The binder name becomes part of the type, so we
+                    -- need to keep the same name used in the pattern.
                     WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>kind')
                     _ -> Ignore kind'
       Nothing -> buildPi (Ignore kind') $ const $

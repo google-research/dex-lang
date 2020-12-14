@@ -258,39 +258,42 @@ topLet = do
 -- sense that the user did NOT explicitly annotate them as implicit.
 findImplicitImplicitArgNames :: UType -> [Name]
 findImplicitImplicitArgNames typ = filter isLowerCaseName $ envNames $
-    freeUVars typ `envDiff` findFunctionVars typ
+    freeUVars typ `envDiff` findVarsInAppLHS typ
   where
 
   isLowerCaseName :: Name -> Bool
   isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
   isLowerCaseName _ = False
 
-  -- Finds all variables used in function position, which should be pulled out.
-  findFunctionVars :: UType -> Env ()
-  findFunctionVars (WithSrc _ typ') = case typ' of
+  -- Finds all variables used in the left hand of an application, which should
+  -- be filtered out and not automatically inferred.
+  findVarsInAppLHS :: UType -> Env ()
+  findVarsInAppLHS (WithSrc _ typ') = case typ' of
+    -- base case
+    UApp _ (WithSrc _ (UVar (v:>_))) x -> (v @> ()) <> findVarsInAppLHS x
+    -- recursive steps
     UVar _ -> mempty
     UPi (p, ann) _ ty ->
-      findFunctionVars ann <> (findFunctionVars ty `envDiff` boundUVars p)
-    UApp _ (WithSrc _ (UVar (v:>_))) x -> (v @> ()) <> findFunctionVars x
-    UApp _ f x -> findFunctionVars f <> findFunctionVars x
+      findVarsInAppLHS ann <> (findVarsInAppLHS ty `envDiff` boundUVars p)
+    UApp _ f x -> findVarsInAppLHS f <> findVarsInAppLHS x
     ULam (p, ann) _ x ->
-      foldMap findFunctionVars ann <> (findFunctionVars x `envDiff` boundUVars p)
+      foldMap findVarsInAppLHS ann <> (findVarsInAppLHS x `envDiff` boundUVars p)
     UDecl _ _ -> error "Unexpected let binding in type annotation"
     UFor _ _ _ -> error "Unexpected for in type annotation"
     UHole -> mempty
-    UTypeAnn v ty -> findFunctionVars v <> findFunctionVars ty
+    UTypeAnn v ty -> findVarsInAppLHS v <> findVarsInAppLHS ty
     UTabCon _ -> error "Unexpected table in type annotation"
     UIndexRange low high ->
-      foldMap findFunctionVars low <> foldMap findFunctionVars high
-    UPrimExpr prim -> foldMap findFunctionVars prim
+      foldMap findVarsInAppLHS low <> foldMap findVarsInAppLHS high
+    UPrimExpr prim -> foldMap findVarsInAppLHS prim
     UCase _ _ -> error "Unexpected case in type annotation"
-    URecord (Ext ulr _) -> foldMap findFunctionVars ulr
-    UVariant _ _ val -> findFunctionVars val
+    URecord (Ext ulr _) -> foldMap findVarsInAppLHS ulr
+    UVariant _ _ val -> findVarsInAppLHS val
     URecordTy (Ext ulr v) ->
-      foldMap findFunctionVars ulr <> foldMap findFunctionVars v
+      foldMap findVarsInAppLHS ulr <> foldMap findVarsInAppLHS v
     UVariantTy (Ext ulr v) ->
-      foldMap findFunctionVars ulr <> foldMap findFunctionVars v
-    UVariantLift _ val -> findFunctionVars val
+      foldMap findVarsInAppLHS ulr <> foldMap findVarsInAppLHS v
+    UVariantLift _ val -> findVarsInAppLHS val
     UIntLit  _ -> mempty
     UFloatLit _ -> mempty
 

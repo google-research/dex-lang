@@ -171,12 +171,12 @@ instance HasType Atom where
           -- Users might be accessing a value whose type depends on earlier
           -- projected values from this constructor. Rewrite them to also
           -- use projections.
-          let go :: Int -> Nest Binder -> Type
-              go j (Nest b _) | i == j = binderAnn b
-              go j (Nest b rest) = go (j+1) (scopelessSubst (b @> proj) rest)
+          let go :: Int -> SubstEnv -> Nest Binder -> Type
+              go j env (Nest b _) | i == j = scopelessSubst env $ binderAnn b
+              go j env (Nest b rest) = go (j+1) (env <> (b @> proj)) rest
                 where proj = ProjectElt (j NE.:| is) v
-              go _ _ = error "Bad projection index"
-          return $ go 0 bs'
+              go _ _ _ = error "Bad projection index"
+          return $ go 0 mempty bs'
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         PairTy x _ | i == 0 -> return x
