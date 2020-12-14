@@ -198,6 +198,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> uLamExpr
          <|> uForExpr
          <|> caseExpr
+         <|> ifExpr
          <|> uPrim
          <|> unitCon
          <|> (uLabeledExprs `fallBackTo` uVariantExpr)
@@ -552,6 +553,21 @@ caseExpr = withSrc $ do
   keyWord OfKW
   alts <- onePerLine $ UAlt <$> pat <*> (sym "->" *> blockOrExpr)
   return $ UCase e alts
+
+ifExpr :: Parser UExpr
+ifExpr = withSrc $ do
+  keyWord IfKW
+  e <- expr
+  withIndent $ mayNotBreak $ do
+    alt1 <- keyWord ThenKW >> blockOrExpr
+    nextLine
+    alt2 <- keyWord ElseKW >> blockOrExpr
+    return $ UCase e
+      [ UAlt (globalEnumPat "True") alt1
+      , UAlt (globalEnumPat "False") alt2]
+
+globalEnumPat :: Tag -> UPat
+globalEnumPat s = WithSrc Nothing $ UPatCon (GlobalName s) Empty
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
@@ -931,7 +947,7 @@ type Lexer = Parser
 
 data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
-             | InstanceKW | WhereKW
+             | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -955,6 +971,9 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ForKW  -> "for"
       RofKW  -> "rof"
       CaseKW -> "case"
+      IfKW   -> "if"
+      ThenKW -> "then"
+      ElseKW -> "else"
       OfKW   -> "of"
       ReadKW  -> "Read"
       WriteKW -> "Accum"
@@ -967,7 +986,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
                "Read", "Write", "Accum", "data", "interface",
-               "instance", "where"]
+               "instance", "where", "if", "then", "else"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $
