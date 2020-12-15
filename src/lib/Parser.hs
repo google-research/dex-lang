@@ -240,6 +240,7 @@ uHole = withSrc $ underscore $> UHole
 letAnnStr :: Parser LetAnn
 letAnnStr =   (string "instance"   $> InstanceLet)
           <|> (string "superclass" $> SuperclassLet)
+          <|> (string "noinline"   $> NoInlineLet)
 
 topDecl :: Parser UDecl
 topDecl = dataDef <|> topLet

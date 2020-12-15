@@ -187,13 +187,13 @@ evalUModule env untyped = do
     Module _ Empty newBindings -> return newBindings
     _ -> do
       let (block, rest) = splitSimpModule env optimized
-      result <- evalBackend block
+      result <- evalBackend env block
       newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
 
-evalBackend :: Block -> TopPassM Atom
-evalBackend block = do
+evalBackend :: TopEnv -> Block -> TopPassM Atom
+evalBackend env block = do
   backend <- asks (backendName . evalConfig)
   bench   <- asks benchmark
   logger  <- asks logService
@@ -203,7 +203,7 @@ evalBackend block = do
   let cc = case backend of LLVMCUDA -> EntryFun CUDARequired
                            _        -> EntryFun CUDANotRequired
   let (mainFunc, impModuleUnoptimized, reconAtom) =
-        toImpModule backend cc mainName ptrBinders Nothing block'
+        toImpModule env backend cc mainName ptrBinders Nothing block'
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
   --       were not lifted from the kernels just yet. We should split the Imp IR
   --       into different levels so that we can check the output here!
@@ -278,7 +278,7 @@ exportFunctions objPath funcs env opts = do
 
     let backend = backendName opts
     let name = Name TopFunctionName (fromString nameStr) 0
-    let (_, impModule, _) = toImpModule backend CEntryFun name cargs (Just dest) block
+    let (_, impModule, _) = toImpModule env backend CEntryFun name cargs (Just dest) block
     llvmAST <- execLogger Nothing $ flip impToLLVM impModule
     return (llvmAST, [nameStr])
   exportObjectFile objPath modules

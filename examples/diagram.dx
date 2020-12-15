@@ -96,57 +96,70 @@ removeFill   : Diagram -> Diagram = updateGeom $ setAt #fillColor   Nothing
 
 '## Serialization to SVG string
 
-def quote (s:String) : String = str "\"" <> s <> str "\""
+'Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).
 
-def (<+>) (s1:String) (s2:String) : String = s1 <> str " " <> s2
+@noinline
+def strCatUncurried ((xs,ys):(String & String)) : String = xs <> ys
 
-def selfClosingBrackets (s:String) : String = str "<" <> s <> str "/>"
+def (<.>) (xs:String) (ys:String) : String = strCatUncurried (xs, ys)
+
+def quote (s:String) : String = str "\"" <.> s <.> str "\""
+
+@noinline
+def strSpaceCatUncurried ((s1,s2):(String & String)) : String =
+  s1 <.> str " " <.> s2
+
+def (<+>) (s1:String) (s2:String) : String =
+  strSpaceCatUncurried (s1, s2)
+
+def selfClosingBrackets (s:String) : String = str "<" <.> s <.> str "/>"
 
 def tagBrackets (tag:String) (s:String) : String =
-  str "<" <> tag <> str ">" <> s <> str "</" <> tag <> str ">"
+  str "<" <.> tag <.> str ">" <.> s <.> str "</" <.> tag <.> str ">"
+
+@noinline
+def tagBracketsAttrUncurried ((tag, attr, s):(String & String & String)) : String =
+  str "<" <.> tag <+> attr <.> str ">" <.> s <.> str "</" <.> tag <.> str ">"
 
 def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
-  str "<" <> tag <+> attr <> str ">" <> s <> str "</" <> tag <> str ">"
+  tagBracketsAttrUncurried (tag, attr, s)
 
 def makeAttr (attr:String) (val:String) : String =
-  attr <> str "=" <> quote val
+  attr <.> str "=" <.> quote val
 
 def optionalStr (c: Maybe String) : String =
   case c of
     Nothing -> str "none"
     Just s  -> s
 
+@noinline
 def attrString (attr:GeomStyle) : String =
   (   makeAttr (str "stroke")       (optionalStr $ getAt #strokeColor attr)
   <+> makeAttr (str "fill")         (optionalStr $ getAt #fillColor   attr)
   <+> makeAttr (str "stroke-width") (show        $ getAt #strokeWidth attr))
 
-def pointAttrString (attr:GeomStyle) : String =
-  (   makeAttr (str "stroke")       (optionalStr $ getAt #strokeColor attr)
-  <+> makeAttr (str "fill")         (optionalStr $ getAt #strokeColor attr)
-  <+> makeAttr (str "stroke-width") (show        $ getAt #strokeWidth attr))
-
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   case geom of
     PointGeom ->
-     tagBracketsAttr (str "g") (pointAttrString attr) $ selfClosingBrackets $
+     pointAttr = setAt #fillColor (getAt #strokeColor attr) attr
+     tagBracketsAttr (str "g") (attrString pointAttr) $ selfClosingBrackets $
        (str "circle" <+>
-        str "cx=" <> quote (show x) <>
-        str "cy=" <> quote (show y) <>
+        str "cx=" <.> quote (show x) <.>
+        str "cy=" <.> quote (show y) <.>
         str "r=\"1\"")
     Circle r ->
      tagBracketsAttr (str "g") (attrString attr) $ selfClosingBrackets $
        (str "circle" <+>
-        str "cx=" <> quote (show x) <>
-        str "cy=" <> quote (show y) <>
-        str "r="  <> quote (show r))
+        str "cx=" <.> quote (show x) <.>
+        str "cy=" <.> quote (show y) <.>
+        str "r="  <.> quote (show r))
     Rectangle w h ->
      tagBracketsAttr (str "g") (attrString attr) $ selfClosingBrackets $
        (str "rect" <+>
-        str "width="  <> quote (show w) <>
-        str "height=" <> quote (show h) <>
-        str "x="      <> quote (show (x - (w/2.0))) <>
-        str "y="      <> quote (show (y - (h/2.0))))
+        str "width="  <.> quote (show w) <.>
+        str "height=" <.> quote (show h) <.>
+        str "x="      <.> quote (show (x - (w/2.0))) <.>
+        str "y="      <.> quote (show (y - (h/2.0))))
 
 BoundingBox : Type = (Point & Point)
 

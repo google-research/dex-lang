@@ -368,8 +368,12 @@ instance CoreVariant Atom where
     Lam (Abs b (_, body)) -> checkVariant b >> checkVariant body
     Pi  (Abs b (arr, body)) -> do
       case arr of
-        TabArrow -> alwaysAllowed
-        _        -> goneBy Simp
+        -- The restriction on function types after Simp is a bit more subtle now
+        -- that we allow non-inlined functions. TODO: decide what the
+        -- restriction is and enforce it here.
+        -- TabArrow -> alwaysAllowed
+        -- _        -> goneBy Simp
+        _ -> alwaysAllowed
       checkVariant b >> checkVariant body
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
