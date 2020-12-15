@@ -303,7 +303,7 @@ compileInstr instr = case instr of
       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
       _ -> error $ "Unsupported cast"
-  ICall f@(_:> IFunType cc _ resultTys) args -> do
+  ICall f@(fname:> IFunType cc argTys resultTys) args -> do
     -- TODO: consider having a separate calling convention specification rather
     -- than switching on the number of results
     args' <- mapM compileExpr args
@@ -317,6 +317,12 @@ compileInstr instr = case instr of
         resultPtr <- makeMultiResultAlloc resultTys'
         emitVoidExternCall (makeFunSpec f) (resultPtr : args')
         loadMultiResultAlloc resultTys' resultPtr
+      CEntryFun -> do
+        void $ emitInstr i64 $ callInstr fun args'
+        return []
+          where
+            fTy = funTy i64 $ map scalarTy argTys
+            fun = callableOperand fTy $ asLLVMName fname
       _ -> error $ "Unsupported calling convention: " ++ show cc
 
 makeFunSpec :: IFunVar -> ExternFunSpec
@@ -777,6 +783,7 @@ callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 asLLVMName :: Name -> L.Name
 asLLVMName name@(Name TopFunctionName _ _) = fromString $ pprint name
+asLLVMName (GlobalName tag) = fromString $ "__" ++ pprint tag
 asLLVMName name = error $ "Expected a top function name: " ++ show name
 
 showName :: Name -> String

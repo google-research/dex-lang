@@ -76,6 +76,9 @@ simplifyDecls (Nest decl rest) = do
   return (substEnv <> substEnv')
 
 simplifyDecl :: Decl -> SimplifyM SubstEnv
+simplifyDecl (Let NoInlineLet (Bind (name:>_)) expr) = do
+  x <- simplifyStandalone $ Block Empty expr
+  emitTo name NoInlineLet (Atom x) $> mempty
 simplifyDecl (Let ann b expr) = do
   x <- simplifyExpr expr
   let name = binderNameHint b
@@ -89,6 +92,13 @@ simplifyDecl (Unpack bs expr) = do
     Record items -> return $ toList items
     _ -> emitUnpack $ Atom x
   return $ newEnv bs xs
+
+simplifyStandalone :: Block -> SimplifyM Atom
+simplifyStandalone (Block Empty (Atom (LamVal b body))) = do
+  b' <- mapM substEmbedR b
+  buildLam b' PureArrow $ \x ->
+    extendR (b@>x) $ simplifyStandalone body
+simplifyStandalone block = simplifyBlock block
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do
@@ -104,7 +114,7 @@ simplifyAtom atom = case atom of
       Just x -> return $ deShadow x scope
       Nothing -> case envLookup scope v of
         Just (_, info) -> case info of
-          LetBound _ (Atom x) -> dropSub $ simplifyAtom x
+          LetBound ann (Atom x) | ann /= NoInlineLet -> dropSub $ simplifyAtom x
           _ -> substEmbedR atom
         _   -> substEmbedR atom
   -- Tables that only contain data aren't necessarily getting inlined,

@@ -145,6 +145,7 @@ data ArrowP eff = PlainArrow eff
 data LetAnn = PlainLet
             | InstanceLet
             | SuperclassLet
+            | NoInlineLet
               deriving (Show, Eq, Generic)
 
 type Val  = Atom
