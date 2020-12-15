@@ -30,8 +30,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
               transformModuleAsBlock, dropSub, appReduceTraversalDef,
-              indexSetSizeE, indexToIntE, intToIndexE, freshVarE,
-              reduceScoped, reduceBlock, reduceAtom, reduceExpr) where
+              indexSetSizeE, indexToIntE, intToIndexE, freshVarE) where
 
 import Control.Applicative
 import Control.Monad
@@ -144,7 +143,7 @@ buildPi b f = do
      (arr, ans) <- f $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   let block = wrapDecls decls ans
-  case reduceBlock scope block of
+  case typeReduceBlock scope block of
     Just piTy -> return piTy
     Nothing -> throw CompilerErr $
       "Unexpected irreducible decls in pi type: " ++ pprint decls
@@ -308,7 +307,7 @@ getUnpacked :: MonadEmbed m => Atom -> m [Atom]
 getUnpacked atom = do
   scope <- getScope
   let len = projectLength $ getType atom
-      atom' = reduceAtom scope atom
+      atom' = typeReduceAtom scope atom
       res = map (\i -> getProjection [i] atom') [0..(len-1)]
   return res
 
@@ -824,66 +823,3 @@ intToIndexE (VariantTy (NoExt types)) i = do
   start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
-
--- === Reduction ===
-
-reduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
-reduceScoped m = do
-  block <- buildScoped m
-  scope <- getScope
-  return $ reduceBlock scope block
-
-reduceBlock :: Scope -> Block -> Maybe Atom
-reduceBlock scope (Block decls result) = do
-  let localScope = foldMap boundVars decls
-  ans <- reduceExpr (scope <> localScope) result
-  [] <- return $ toList $ localScope `envIntersect` freeVars ans
-  return ans
-
--- XXX: This should handle all terms of type Type. Otherwise type equality checking
---      will get broken.
-reduceAtom :: Scope -> Atom -> Atom
-reduceAtom scope x = case x of
-  Var (Name InferenceName _ _ :> _) -> x
-  Var v -> case snd (scope ! v) of
-    -- TODO: worry about effects!
-    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
-    _ -> x
-  TC con -> TC $ fmap (reduceAtom scope) con
-  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, reduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
-  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
-  RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
-  VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
-  ACase _ _ _ -> error "Not implemented"
-  _ -> x
-  where
-    rec = reduceAtom scope
-    reduceNest s n = case n of
-      Empty       -> Empty
-      -- Technically this should use a more concrete type than UnknownBinder, but anything else
-      -- than LetBound is indistinguishable for this reduction anyway.
-      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
-        where b' = fmap (reduceAtom s) b
-    reduceDataDef (DataDef n bs cons) =
-      DataDef n (reduceNest scope bs)
-            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
-    reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
-
-reduceExpr :: Scope -> Expr -> Maybe Atom
-reduceExpr scope expr = case expr of
-  Atom val -> return $ reduceAtom scope val
-  App f x -> do
-    let f' = reduceAtom scope f
-    let x' = reduceAtom scope x
-    -- TODO: Worry about variable capture. Should really carry a substitution.
-    case f' of
-      Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
-        reduceBlock scope $ subst (b@>x', scope) block
-      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
-      _ -> Nothing
-  Op (MakePtrType ty) -> do
-    let ty' = reduceAtom scope ty
-    case ty' of
-      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
-      _ -> Nothing
-  _ -> Nothing

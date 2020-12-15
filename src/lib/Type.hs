@@ -12,7 +12,8 @@ module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
-  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength) where
+  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
+  typeReduceBlock, typeReduceAtom, typeReduceExpr) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -32,6 +33,7 @@ import Env
 import PPrint
 import Cat
 import Util (bindM2)
+import Data.Maybe (fromMaybe)
 
 type TypeEnv = Bindings  -- Only care about type payload
 
@@ -974,3 +976,67 @@ projectLength ty = case ty of
   RecordTy (NoExt types) -> length types
   PairTy _ _ -> 2
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
+
+
+-- === Type-level reduction using variables in scope. ===
+
+-- Note: These are simple reductions that are performed when normalizing a
+-- value to use it as a type annotation. If they succeed, these functions should
+-- return atoms that can be compared for equality to check whether the types
+-- are equivalent. If they fail (return Nothing), this means we cannot use
+-- the value as a type in the IR.
+
+typeReduceBlock :: Scope -> Block -> Maybe Atom
+typeReduceBlock scope (Block decls result) = do
+  let localScope = foldMap boundVars decls
+  ans <- typeReduceExpr (scope <> localScope) result
+  [] <- return $ toList $ localScope `envIntersect` freeVars ans
+  return ans
+
+-- XXX: This should handle all terms of type Type. Otherwise type equality checking
+--      will get broken.
+typeReduceAtom :: Scope -> Atom -> Atom
+typeReduceAtom scope x = case x of
+  Var (Name InferenceName _ _ :> _) -> x
+  Var v -> case snd (scope ! v) of
+    -- TODO: worry about effects!
+    LetBound PlainLet expr -> fromMaybe x $ typeReduceExpr scope expr
+    _ -> x
+  TC con -> TC $ fmap (typeReduceAtom scope) con
+  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
+  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
+  RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
+  VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
+  ACase _ _ _ -> error "Not implemented"
+  _ -> x
+  where
+    rec = typeReduceAtom scope
+    reduceNest s n = case n of
+      Empty       -> Empty
+      -- Technically this should use a more concrete type than UnknownBinder, but anything else
+      -- than LetBound is indistinguishable for this reduction anyway.
+      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
+        where b' = fmap (typeReduceAtom s) b
+    reduceDataDef (DataDef n bs cons) =
+      DataDef n (reduceNest scope bs)
+            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
+    reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
+
+typeReduceExpr :: Scope -> Expr -> Maybe Atom
+typeReduceExpr scope expr = case expr of
+  Atom val -> return $ typeReduceAtom scope val
+  App f x -> do
+    let f' = typeReduceAtom scope f
+    let x' = typeReduceAtom scope x
+    -- TODO: Worry about variable capture. Should really carry a substitution.
+    case f' of
+      Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
+        typeReduceBlock scope $ subst (b@>x', scope) block
+      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+      _ -> Nothing
+  Op (MakePtrType ty) -> do
+    let ty' = typeReduceAtom scope ty
+    case ty' of
+      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
+      _ -> Nothing
+  _ -> Nothing

@@ -142,7 +142,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
       Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
         False -> embedExtend embedEnv $> (xVal, arr')
         True  -> do
-          xValMaybeRed <- flip reduceBlock (Block xDecls (Atom xVal)) <$> getScope
+          xValMaybeRed <- flip typeReduceBlock (Block xDecls (Atom xVal)) <$> getScope
           case xValMaybeRed of
             Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
             Nothing      -> addSrcContext' xPos $ do
@@ -259,7 +259,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     prim' <- forM prim $ \e -> do
       e' <- inferRho e
       scope <- getScope
-      return $ reduceAtom scope e'
+      return $ typeReduceAtom scope e'
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
@@ -553,7 +553,7 @@ checkAnn ann = case ann of
 
 checkUType :: UType -> UInferM Type
 checkUType ty = do
-  reduced <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
+  reduced <- typeReduceScoped $ withEffects Pure $ checkRho ty TyKind
   case reduced of
     Just ty' -> return $ ty'
     Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
@@ -920,3 +920,9 @@ instance Semigroup SolverEnv where
 instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
+
+typeReduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
+typeReduceScoped m = do
+  block <- buildScoped m
+  scope <- getScope
+  return $ typeReduceBlock scope block
