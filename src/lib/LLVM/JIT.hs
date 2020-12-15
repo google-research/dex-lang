@@ -3,7 +3,7 @@
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
---
+
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -16,7 +16,6 @@ module LLVM.JIT (
 
 import Control.Monad
 import Control.Exception
-import Foreign.C.String
 import Foreign.Ptr
 import Data.IORef
 import Data.String
@@ -25,11 +24,8 @@ import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as C8BS
 import qualified Data.ByteString.Short as SBS
 
-import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Internal.OrcJIT.CompileLayer as OrcJIT
-import qualified LLVM.Internal.OrcJIT as OrcJIT
-import qualified LLVM.Internal.FFI.OrcJIT as OrcJIT.FFI
-import qualified LLVM.Internal.Coding as OrcJIT.FFI
+import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Target as T
 import qualified LLVM.Linking as Linking
 
@@ -38,6 +34,8 @@ import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.Constant as C
 
+import LLVM.Shims
+
 data JIT =
     JIT { execSession  :: OrcJIT.ExecutionSession
         , linkLayer    :: OrcJIT.ObjectLinkingLayer
@@ -45,6 +43,7 @@ data JIT =
         , resolvers    :: IORef (M.Map OrcJIT.ModuleKey SymbolResolver)
         }
 
+-- XXX: The target machine cannot be destroyed before JIT is destroyed
 -- TODO: This leaks resources if we fail halfway
 createJIT :: T.TargetMachine -> IO JIT
 createJIT tm = do
@@ -144,27 +143,3 @@ getFunctionPtr NativeModule{..} funcName = do
   symbol <- OrcJIT.mangleSymbol compileLayer $ fromString funcName
   Right (OrcJIT.JITSymbol funcAddr _) <- OrcJIT.findSymbol compileLayer symbol False
   return $ castPtrToFunPtr $ wordPtrToPtr funcAddr
-
-
--- === llvm-hs shims ===
-
--- llvm-hs doesn't expose any way to manage the symbol resolvers in a non-bracketed
--- way, so we have to use some internal APIs to do that.
-
-type FFIResolver = CString -> Ptr OrcJIT.FFI.JITSymbol -> IO ()
-foreign import ccall "wrapper" wrapFFIResolver :: FFIResolver -> IO (FunPtr FFIResolver)
-data SymbolResolver = SymbolResolver (FunPtr FFIResolver) (Ptr OrcJIT.FFI.SymbolResolver)
-
--- | Create a `FFI.SymbolResolver` that can be used with the JIT.
-newSymbolResolver :: OrcJIT.ExecutionSession -> OrcJIT.SymbolResolver -> IO SymbolResolver
-newSymbolResolver (OrcJIT.ExecutionSession session) (OrcJIT.SymbolResolver resolverFn) = do
-  ffiResolverPtr <- wrapFFIResolver $ \sym res -> do
-    f <- OrcJIT.FFI.encodeM =<< resolverFn =<< OrcJIT.FFI.decodeM sym
-    f res
-  lambdaResolver <- OrcJIT.FFI.createLambdaResolver session ffiResolverPtr
-  return $ SymbolResolver ffiResolverPtr lambdaResolver
-
-disposeSymbolResolver :: SymbolResolver -> IO ()
-disposeSymbolResolver (SymbolResolver wrapper resolver) = do
-  OrcJIT.FFI.disposeSymbolResolver resolver
-  freeHaskellFunPtr wrapper
