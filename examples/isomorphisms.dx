@@ -46,24 +46,23 @@ that produce isos. We will start with the first two:
 :t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
 > === parse ===
-> _ans_:() =
->   MkIso
->     {bwd = \(x:(), r:()). {b = x, ...r}, fwd = \{b = x:(), ...r:()}. (,) x r}
+> _ans_ =
+>   MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = x, ...r}. (,) x r}
 >   : Iso {a: Int & b: Float & c: Unit} _
 
 %passes parse
 :t #?b : Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
 > === parse ===
-> _ans_:() =
+> _ans_ =
 >   MkIso
->     { bwd = \v:(). case v
->                 ((Left x:())) -> {| b = x |}
->                 ((Right r:())) -> {|b| ...r |}
+>     { bwd = \v. case v
+>                 ((Left x)) -> {| b = x |}
+>                 ((Right r)) -> {|b| ...r |}
 >                 
->     , fwd = \v:(). case v
->                 {| b = x:() |} -> (Left x)
->                 {|b| ...r:() |} -> (Right r)
+>     , fwd = \v. case v
+>                 {| b = x |} -> (Left x)
+>                 {|b| ...r |} -> (Right r)
 >                 }
 >   : Iso {a: Int | b: Float | c: Unit} _
 
@@ -143,10 +142,10 @@ another. For instance:
 >    ({ &} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
 > === parse ===
-> _ans_:() =
+> _ans_ =
 >   MkIso
->     { bwd = \({a = x:(), ...l:()}, {, ...r:()}). (,) {, ...l} {a = x, ...r}
->     , fwd = \({, ...l:()}, {a = x:(), ...r:()}). (,) {a = x, ...l} {, ...r}}
+>     { bwd = \({a = x, ...l}, {, ...r}). (,) {, ...l} {a = x, ...r}
+>     , fwd = \({, ...l}, {a = x, ...r}). (,) {a = x, ...l} {, ...r}}
 >   : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _
 
 :t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
@@ -213,21 +212,21 @@ zipper isomorphisms:
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
 > === parse ===
-> _ans_:() =
+> _ans_ =
 >   MkIso
->     { bwd = \v:(). case v
->                 ((Left w:())) -> (case w
->                                     {| a = x:() |} -> (Right {| a = x |})
->                                     {|a| ...r:() |} -> (Left r)
->                                     )
->                 ((Right l:())) -> (Right {|a| ...l |})
+>     { bwd = \v. case v
+>                 ((Left w)) -> (case w
+>                                  {| a = x |} -> (Right {| a = x |})
+>                                  {|a| ...r |} -> (Left r)
+>                                  )
+>                 ((Right l)) -> (Right {|a| ...l |})
 >                 
->     , fwd = \v:(). case v
->                 ((Left l:())) -> (Left {|a| ...l |})
->                 ((Right w:())) -> (case w
->                                      {| a = x:() |} -> (Left {| a = x |})
->                                      {|a| ...r:() |} -> (Right r)
->                                      )
+>     , fwd = \v. case v
+>                 ((Left l)) -> (Left {|a| ...l |})
+>                 ((Right w)) -> (case w
+>                                   {| a = x |} -> (Left {| a = x |})
+>                                   {|a| ...r |} -> (Right r)
+>                                   )
 >                 }
 >   : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _
 

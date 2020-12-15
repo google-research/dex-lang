@@ -251,22 +251,66 @@ topLet = do
   let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
   return $ ULet lAnn (p, ann') rhs'
 
+-- Given a type signature, find all "implicit implicit args": lower-case
+-- identifiers, not explicitly bound by Pi binders, not appearing on the left
+-- hand side of an application. These identifiers are implicit in the sense
+-- that they will be solved for by type inference, and also implicit in the
+-- sense that the user did NOT explicitly annotate them as implicit.
+findImplicitImplicitArgNames :: UType -> [Name]
+findImplicitImplicitArgNames typ = filter isLowerCaseName $ envNames $
+    freeUVars typ `envDiff` findVarsInAppLHS typ
+  where
+
+  isLowerCaseName :: Name -> Bool
+  isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
+  isLowerCaseName _ = False
+
+  -- Finds all variables used in the left hand of an application, which should
+  -- be filtered out and not automatically inferred.
+  findVarsInAppLHS :: UType -> Env ()
+  findVarsInAppLHS (WithSrc _ typ') = case typ' of
+    -- base case
+    UApp _ (WithSrc _ (UVar (v:>_))) x -> (v @> ()) <> findVarsInAppLHS x
+    -- recursive steps
+    UVar _ -> mempty
+    UPi (p, ann) _ ty ->
+      findVarsInAppLHS ann <> (findVarsInAppLHS ty `envDiff` boundUVars p)
+    UApp _ f x -> findVarsInAppLHS f <> findVarsInAppLHS x
+    ULam (p, ann) _ x ->
+      foldMap findVarsInAppLHS ann <> (findVarsInAppLHS x `envDiff` boundUVars p)
+    UDecl _ _ -> error "Unexpected let binding in type annotation"
+    UFor _ _ _ -> error "Unexpected for in type annotation"
+    UHole -> mempty
+    UTypeAnn v ty -> findVarsInAppLHS v <> findVarsInAppLHS ty
+    UTabCon _ -> error "Unexpected table in type annotation"
+    UIndexRange low high ->
+      foldMap findVarsInAppLHS low <> foldMap findVarsInAppLHS high
+    UPrimExpr prim -> foldMap findVarsInAppLHS prim
+    UCase _ _ -> error "Unexpected case in type annotation"
+    URecord (Ext ulr _) -> foldMap findVarsInAppLHS ulr
+    UVariant _ _ val -> findVarsInAppLHS val
+    URecordTy (Ext ulr v) ->
+      foldMap findVarsInAppLHS ulr <> foldMap findVarsInAppLHS v
+    UVariantTy (Ext ulr v) ->
+      foldMap findVarsInAppLHS ulr <> foldMap findVarsInAppLHS v
+    UVariantLift _ val -> findVarsInAppLHS val
+    UIntLit  _ -> mempty
+    UFloatLit _ -> mempty
+
 addImplicitImplicitArgs :: SrcPos -> Maybe UType -> UExpr -> (Maybe UType, UExpr)
 addImplicitImplicitArgs _ Nothing e = (Nothing, e)
 addImplicitImplicitArgs sourcePos (Just typ) ex =
   let (ty', e') = foldr (addImplicitArg sourcePos) (typ, ex) implicitVars
   in (Just ty', e')
   where
-    implicitVars = filter isLowerCaseName $ envNames $ freeUVars typ
-    isLowerCaseName :: Name -> Bool
-    isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
-    isLowerCaseName _ = False
+    implicitVars = findImplicitImplicitArgNames typ
 
     addImplicitArg :: SrcPos -> Name -> (UType, UExpr) -> (UType, UExpr)
     addImplicitArg pos v (ty, e) =
-      ( WithSrc (Just pos) $ UPi  (Bind (v:>uTyKind)) ImplicitArrow ty
-      , WithSrc (Just pos) $ ULam (WithSrc (Just pos) (UPatBinder (Bind (v:>()))), Just uTyKind) ImplicitArrow e)
+      ( WithSrc (Just pos) $ UPi (Just uPat, uTyKind) ImplicitArrow ty
+      , WithSrc (Just pos) $ ULam (uPat, Just uTyKind) ImplicitArrow e)
       where
+        uPat = WithSrc (Just pos) $ UPatBinder $ Bind $ v:>()
         k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc (Just pos) $ UPrimExpr $ TCExpr k
 
@@ -300,10 +344,10 @@ interfaceDef = do
     mkOneFunDef (pos, typeVarNames, interfaceName) (fLabel, fType) =
       ULet PlainLet (p, ann') rhs'
       where
-        uAnnBinder = Bind $
-          instanceName :> (foldl mkUApp (var interfaceName) typeVarNames)
+        uAnnPat = ( Just $ WithSrc (Just pos) $ UPatBinder $ Bind $ instanceName :> ()
+                  , foldl mkUApp (var interfaceName) typeVarNames)
         p = patb fLabel
-        ann = Just $ ns $ UPi uAnnBinder ClassArrow fType
+        ann = Just $ ns $ UPi uAnnPat ClassArrow fType
 
         mkUApp func typeVarName =
           ns $ UApp (PlainArrow ()) func (var typeVarName)
@@ -412,9 +456,8 @@ funDefLet = label "function definition" $ mayBreak $ do
   v <- letPat
   bs <- many arg
   (eff, ty) <- label "result type annotation" $ annot effectiveType
-  let piBinders = flip map bs $ \(p, ann, arr) -> (patAsBinder p ann, arr)
-  when (null piBinders && eff /= Pure) $ fail "Nullary def can't have effects"
-  let funTy = buildPiType piBinders eff ty
+  when (null bs && eff /= Pure) $ fail "Nullary def can't have effects"
+  let funTy = buildPiType bs eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
   return $ \body -> ULet PlainLet letBinder (buildLam lamBinders body)
@@ -425,20 +468,16 @@ funDefLet = label "function definition" $ mayBreak $ do
       arr <- arrow (return ()) <|> return (PlainArrow ())
       return (p, ty, arr)
 
-patAsBinder :: UPat -> UType -> UAnnBinder
-patAsBinder (WithSrc _ (UPatBinder (Bind (v:>())))) ty = Bind $ v:>ty
-patAsBinder _ ty = Ignore ty
-
 nameAsPat :: Parser Name -> Parser UPat
 nameAsPat p = withSrc $ (UPatBinder . Bind . (:>())) <$> p
 
-buildPiType :: [(UAnnBinder, UArrow)] -> EffectRow -> UType -> UType
+buildPiType :: [(UPat, UType, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] Pure ty = ty
-buildPiType [] _ _  = error "shouldn't happen"
-buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
-  [] -> UPi b (fmap (const eff ) arr) ty
-  _  -> UPi b (fmap (const Pure) arr) $ buildPiType bs eff ty
-  where WithSrc pos _ = binderAnn b
+buildPiType [] _ _ = error "shouldn't be possible"
+buildPiType ((p, patTy, arr):bs) eff resTy = WithSrc pos $ case bs of
+  [] -> UPi (Just p, patTy) (fmap (const eff ) arr) resTy
+  _  -> UPi (Just p, patTy) (fmap (const Pure) arr) $ buildPiType bs eff resTy
+  where WithSrc pos _ = patTy
 
 effectiveType :: Parser (EffectRow, UType)
 effectiveType = (,) <$> effects <*> uType
@@ -540,7 +579,13 @@ uStatement = withPos $   liftM Left  decl
 
 -- TODO: put the `try` only around the `x:` not the annotation itself
 uPiType :: Parser UExpr
-uPiType = withSrc $ UPi <$> annBinder <*> arrow effects <*> uType
+uPiType = withSrc $ UPi <$> piBinderPat <*> arrow effects <*> uType
+  where piBinderPat = do
+          b <- annBinder
+          return $ case b of
+            Bind (n:>a@(WithSrc pos _)) ->
+              (Just $ WithSrc pos $ UPatBinder $ Bind $ n:>(), a)
+            Ignore a -> (Nothing, a)
 
 annBinder :: Parser UAnnBinder
 annBinder = try $ namedBinder <|> anonBinder
@@ -591,12 +636,12 @@ onePerLine p =   liftM (:[]) p
              <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
 
 pat :: Parser UPat
-pat = makeExprParser leafPat patOps
+pat = mayNotPair $ makeExprParser leafPat patOps
 
 leafPat :: Parser UPat
 leafPat =
       (withSrc (symbol "()" $> UPatUnit))
-  <|> parens pat
+  <|> parens (mayPair $ makeExprParser leafPat patOps)
   <|> (withSrc $
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
@@ -612,7 +657,14 @@ leafPat =
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
-patOps = [[InfixR $ sym "," $> \x y -> joinSrc x y $ UPatPair x y]]
+patOps = [[InfixR patPairOp]]
+
+patPairOp :: Parser (UPat -> UPat -> UPat)
+patPairOp = do
+  allowed <- asks canPair
+  if allowed
+    then sym "," $> \x y -> joinSrc x y $ UPatPair x y
+    else fail "pair pattern not allowed outside parentheses"
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
@@ -894,10 +946,10 @@ infixArrow :: Parser (UType -> UType -> UType)
 infixArrow = do
   notFollowedBy (sym "=>")  -- table arrows have special fixity
   (arr, pos) <- withPos $ arrow effects
-  return $ \a b -> WithSrc (Just pos) $ UPi (Ignore a) arr b
+  return $ \a b -> WithSrc (Just pos) $ UPi (Nothing, a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
-mkArrow arr a b = joinSrc a b $ UPi (Ignore a) arr b
+mkArrow arr a b = joinSrc a b $ UPi (Nothing, a) arr b
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do

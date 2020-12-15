@@ -82,13 +82,6 @@ simplifyDecl (Let ann b expr) = do
   if isGlobalBinder b
     then emitTo name ann (Atom x) $> mempty
     else return $ b @> x
-simplifyDecl (Unpack bs expr) = do
-  x <- simplifyExpr expr
-  xs <- case x of
-    DataCon _ _ _ xs -> return xs
-    Record items -> return $ toList items
-    _ -> emitUnpack $ Atom x
-  return $ newEnv bs xs
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do
@@ -119,17 +112,17 @@ simplifyAtom atom = case atom of
   Lam _ -> substEmbedR atom
   Pi  _ -> substEmbedR atom
   Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM substEmbedR tc
+  TC tc -> TC <$> mapM simplifyAtom tc
   Eff eff -> Eff <$> substEmbedR eff
-  TypeCon def params          -> TypeCon def <$> substEmbedR params
-  DataCon def params con args -> DataCon def <$> substEmbedR params
+  TypeCon def params          -> TypeCon def <$> mapM simplifyAtom params
+  DataCon def params con args -> DataCon def <$> mapM simplifyAtom params
                                              <*> pure con <*> mapM simplifyAtom args
   Record items -> Record <$> mapM simplifyAtom items
-  RecordTy items -> RecordTy <$> substEmbedR items
+  RecordTy items -> RecordTy <$> simplifyExtLabeledItems items
   Variant types label i value -> Variant <$>
     substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
-  VariantTy items -> VariantTy <$> substEmbedR items
-  LabeledRow items -> LabeledRow <$> substEmbedR items
+  VariantTy items -> VariantTy <$> simplifyExtLabeledItems items
+  LabeledRow items -> LabeledRow <$> simplifyExtLabeledItems items
   ACase e alts rty   -> do
     e' <- substEmbedR e
     case simplifyCase e' alts of
@@ -144,6 +137,13 @@ simplifyAtom atom = case atom of
         ACase e' alts' <$> (substEmbedR rty)
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
+  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
+
+simplifyExtLabeledItems :: ExtLabeledItems Atom Name -> SimplifyM (ExtLabeledItems Atom Name)
+simplifyExtLabeledItems (Ext items ext) = do
+    items' <- mapM simplifyAtom items
+    ext' <- substEmbedR (Ext NoLabeledItems ext)
+    return $ prefixExtLabeledItems items' ext'
 
 simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
 simplifyCase e alts = case e of
@@ -367,8 +367,6 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Fst (PairVal x _) -> return x
-  Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
     RecordTy (NoExt rightTys) -> do
       -- Unpack, then repack with new arguments (possibly in the middle).

@@ -142,7 +142,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
       Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
         False -> embedExtend embedEnv $> (xVal, arr')
         True  -> do
-          xValMaybeRed <- flip reduceBlock (Block xDecls (Atom xVal)) <$> getScope
+          xValMaybeRed <- flip typeReduceBlock (Block xDecls (Atom xVal)) <$> getScope
           case xValMaybeRed of
             Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
             Nothing      -> addSrcContext' xPos $ do
@@ -152,12 +152,20 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi b arr ty -> do
+  UPi (pat, kind) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
-    b'  <- mapM checkUType b
-    piTy <- buildPi b' $ \x -> extendR (b@>x) $
-              (,) <$> mapM checkUEff arr <*> checkUType ty
+    kind' <- checkUType kind
+    piTy <- case pat of
+      Just pat' -> withNameHint ("pat" :: Name) $ buildPi b $ \x ->
+        withBindPat pat' x $ (,) <$> mapM checkUEff arr <*> checkUType ty
+        where b = case pat' of
+                    -- Note: The binder name becomes part of the type, so we
+                    -- need to keep the same name used in the pattern.
+                    WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>kind')
+                    _ -> Ignore kind'
+      Nothing -> buildPi (Ignore kind') $ const $
+        (,) <$> mapM checkUEff arr <*> checkUType ty
     matchRequirement piTy
   UDecl decl body -> do
     env <- inferUDecl False decl
@@ -251,7 +259,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     prim' <- forM prim $ \e -> do
       e' <- inferRho e
       scope <- getScope
-      return $ reduceAtom scope e'
+      return $ typeReduceAtom scope e'
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
@@ -545,7 +553,7 @@ checkAnn ann = case ann of
 
 checkUType :: UType -> UInferM Type
 checkUType ty = do
-  reduced <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
+  reduced <- typeReduceScoped $ withEffects Pure $ checkRho ty TyKind
   case reduced of
     Just ty' -> return $ ty'
     Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
@@ -913,65 +921,8 @@ instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
 
--- === Inference-time reduction ===
-
-reduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
-reduceScoped m = do
+typeReduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
+typeReduceScoped m = do
   block <- buildScoped m
   scope <- getScope
-  return $ reduceBlock scope block
-
-reduceBlock :: Scope -> Block -> Maybe Atom
-reduceBlock scope (Block decls result) = do
-  let localScope = foldMap boundVars decls
-  ans <- reduceExpr (scope <> localScope) result
-  [] <- return $ toList $ localScope `envIntersect` freeVars ans
-  return ans
-
--- XXX: This should handle all terms of type Type. Otherwise type equality checking
---      will get broken.
-reduceAtom :: Scope -> Atom -> Atom
-reduceAtom scope x = case x of
-  Var (Name InferenceName _ _ :> _) -> x
-  Var v -> case snd (scope ! v) of
-    -- TODO: worry about effects!
-    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
-    _ -> x
-  TC con -> TC $ fmap (reduceAtom scope) con
-  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, reduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
-  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
-  RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
-  VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
-  ACase _ _ _ -> error "Not implemented"
-  _ -> x
-  where
-    rec = reduceAtom scope
-    reduceNest s n = case n of
-      Empty       -> Empty
-      -- Technically this should use a more concrete type than UnknownBinder, but anything else
-      -- than LetBound is indistinguishable for this reduction anyway.
-      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
-        where b' = fmap (reduceAtom s) b
-    reduceDataDef (DataDef n bs cons) =
-      DataDef n (reduceNest scope bs)
-            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
-    reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
-
-reduceExpr :: Scope -> Expr -> Maybe Atom
-reduceExpr scope expr = case expr of
-  Atom val -> return $ reduceAtom scope val
-  App f x -> do
-    let f' = reduceAtom scope f
-    let x' = reduceAtom scope x
-    -- TODO: Worry about variable capture. Should really carry a substitution.
-    case f' of
-      Lam (Abs b (PureArrow, block)) ->
-        reduceBlock scope $ subst (b@>x', scope) block
-      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
-      _ -> Nothing
-  Op (MakePtrType ty) -> do
-    let ty' = reduceAtom scope ty
-    case ty' of
-      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
-      _ -> Nothing
-  _ -> Nothing
+  return $ typeReduceBlock scope block

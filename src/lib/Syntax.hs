@@ -40,12 +40,13 @@ module Syntax (
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), PtrOrigin (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
-    UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
+    UExpr, UExpr' (..), UType, UPatAnn, UPiPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
+    getProjection,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
@@ -103,6 +104,12 @@ data Atom = Var Var
             -- single-constructor only for now
           | DataConRef DataDef [Atom] (Nest DataConRefBinding)
           | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
+          -- access a nested member of a binder
+          -- XXX: Variable name must not be an alias for another name or for
+          -- a statically-known atom. This is because the variable name used
+          -- here may also appear in the type of the atom. (We maintain this
+          -- invariant during substitution and in Embed.hs.)
+          | ProjectElt (NE.NonEmpty Int) Var
             deriving (Show, Generic)
 
 data Expr = App Atom Atom
@@ -112,8 +119,7 @@ data Expr = App Atom Atom
           | Hof Hof
             deriving (Show, Generic)
 
-data Decl = Let LetAnn Binder Expr
-          | Unpack (Nest Binder) Expr  deriving (Show, Generic)
+data Decl = Let LetAnn Binder Expr deriving (Show, Generic)
 
 data DataConRefBinding = DataConRefBinding Binder Atom  deriving (Show, Generic)
 
@@ -209,7 +215,7 @@ prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
 type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
             | ULam UPatAnn UArrow UExpr
-            | UPi  UAnnBinder Arrow UType
+            | UPi  UPiPatAnn Arrow UType
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
             | UFor Direction UPatAnn UExpr
@@ -239,6 +245,7 @@ type UVar    = VarP ()
 type UBinder = BinderP ()
 
 type UPatAnn   = (UPat, Maybe UType)
+type UPiPatAnn   = (Maybe UPat, UType)
 type UAnnBinder = BinderP UType
 
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
@@ -304,9 +311,7 @@ data PrimCon e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
-        Fst e
-      | Snd e
-      | TabCon e [e]                 -- table type elements
+        TabCon e [e]                 -- table type elements
       | ScalarBinOp BinOp e e
       | ScalarUnOp UnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
@@ -710,7 +715,7 @@ instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v @>()
     ULam (pat,ty) _ body -> freeUVars ty <> freeUVars (Abs pat body)
-    UPi b arr ty -> freeUVars $ Abs b (arr, ty)
+    UPi (pat,kind) arr ty -> freeUVars kind <> freeUVars (Abs pat (arr, ty))
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
@@ -948,6 +953,7 @@ instance Eq Atom where
   Con con == Con con' = con == con'
   TC  con == TC  con' = con == con'
   Eff eff == Eff eff' = eff == eff'
+  ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
   _ == _ = False
 
 instance Eq DataDef where
@@ -1032,25 +1038,19 @@ instance Subst Expr where
 instance HasVars Decl where
   freeVars decl = case decl of
     Let _  b expr  -> freeVars expr <> freeVars b
-    Unpack bs expr -> freeVars expr <> freeVars bs
 
 instance Subst Decl where
   subst env decl = case decl of
     Let ann b expr -> Let ann (fmap (subst env) b) $ subst env expr
-    Unpack bs expr -> Unpack (subst env bs) $ subst env expr
 
 instance BindsVars Decl where
   boundVars decl = case decl of
     Let ann b expr -> b @> (binderType b, LetBound ann expr)
-    Unpack bs _ -> boundVars bs
 
   renamingSubst env decl = case decl of
     Let ann b expr -> (Let ann b' expr', env')
       where expr' = subst env expr
             (b', env') = renamingSubst env b
-    Unpack bs expr -> (Unpack bs' expr', env')
-      where expr' = subst env expr
-            (bs', env') = renamingSubst env bs
 
 instance HasVars Block where
   freeVars (Block decls result) = freeVars $ Abs decls result
@@ -1079,6 +1079,7 @@ instance HasVars Atom where
     DataConRef _ params args -> freeVars params <> freeVars args
     BoxedRef b ptr size body ->
       freeVars ptr <> freeVars size <> freeVars (Abs b body)
+    ProjectElt _ v -> freeVars (Var v)
 
 instance Subst Atom where
   subst env atom = case atom of
@@ -1100,6 +1101,7 @@ instance Subst Atom where
       where Abs args' () = subst env $ Abs args ()
     BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
         where Abs b' body' = subst env $ Abs b body
+    ProjectElt idxs v -> getProjection (toList idxs) $ substVar env v
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -1171,6 +1173,17 @@ substExtLabeledItemsTail env (Just v) = case envLookup env (v:>()) of
   Just (Var (v':>_)) -> Ext NoLabeledItems $ Just v'
   Just (LabeledRow row) -> row
   _ -> error "Not a valid labeled row substitution"
+
+getProjection :: [Int] -> Atom -> Atom
+getProjection [] a = a
+getProjection (i:is) a = case getProjection is a of
+  Var v -> ProjectElt (NE.fromList [i]) v
+  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
+  DataCon _ _ _ xs -> xs !! i
+  Record items -> toList items !! i
+  PairVal x _ | i == 0 -> x
+  PairVal _ y | i == 1 -> y
+  _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
 instance HasVars () where freeVars () = mempty
 instance Subst () where subst _ () = ()
@@ -1504,8 +1517,6 @@ builtinNames = M.fromList
   , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
   , ("pair", ConExpr $ PairCon () ())
-  , ("fst", OpExpr $ Fst ())
-  , ("snd", OpExpr $ Snd ())
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
   -- TODO: Lift vectors to constructors

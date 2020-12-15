@@ -21,6 +21,7 @@ import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.ByteString.Lazy.Char8 as B
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -32,6 +33,7 @@ import Numeric
 
 import Env
 import Syntax
+import Util (enumerate)
 
 -- Specifies what kinds of operations are allowed to be printed at this point.
 -- Printing at AppPrec level means that applications can be printed
@@ -289,7 +291,6 @@ instance Pretty Decl where
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 prettyPiTypeHelper :: PiType -> Doc ann
 prettyPiTypeHelper (Abs binder (arr, body)) = let
@@ -363,17 +364,56 @@ instance PrettyPrec Atom where
       "DataConRef" <+> p params <+> p args
     BoxedRef b ptr size body -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
+    ProjectElt idxs x -> prettyProjection idxs x
 
 instance Pretty DataConRefBinding where pretty = prettyFromPrettyPrec
 instance PrettyPrec DataConRefBinding where
   prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
-
 
 fromInfix :: Text -> Maybe Text
 fromInfix t = do
   ('(', t') <- uncons t
   (t'', ')') <- unsnoc t'
   return t''
+
+prettyProjection :: NE.NonEmpty Int -> Var -> DocPrec ann
+prettyProjection idxs (name :> ty) = prettyPrec uproj where
+  -- Builds a source expression that performs the given projection.
+  uproj = UApp (PlainArrow ()) (nosrc ulam) (nosrc uvar)
+  ulam = ULam (upat, Nothing) (PlainArrow ()) (nosrc $ UVar $ target :> ())
+  uvar = UVar $ name :> ()
+  (_, upat, target) = buildProj idxs
+
+  buildProj :: NE.NonEmpty Int -> (Type, UPat, Name)
+  buildProj (i NE.:| is) = let
+    -- Lazy Haskell trick: refer to `target` even though this function is
+    -- responsible for setting it!
+    (ty', pat', eltName) = case NE.nonEmpty is of
+      Just is' -> let (x, y, z) = buildProj is' in (x, y, Just z)
+      Nothing -> (ty, nosrc $ UPatBinder $ Bind $ target :> (), Nothing)
+    in case ty' of
+      TypeCon def params -> let
+        [DataConDef conName bs] = applyDataDefParams def params
+        b = toList bs !! i
+        pats = (\(j,_)-> if i == j then pat' else uignore) <$> enumerate bs
+        hint = case b of
+          Bind (n :> _) -> n
+          Ignore _ -> Name SourceName "elt" 0
+        in ( binderAnn b, nosrc $ UPatCon conName pats, fromMaybe hint eltName)
+      RecordTy (NoExt types) -> let
+        ty'' = toList types !! i
+        pats = (\(j,_)-> if i == j then pat' else uignore) <$> enumerate types
+        (fieldName, _) = toList (reflectLabels types) !! i
+        hint = Name SourceName (fromString fieldName) 0
+        in (ty'', nosrc $ UPatRecord $ NoExt pats, fromMaybe hint eltName)
+      PairTy x _ | i == 0 ->
+        (x, nosrc $ UPatPair pat' uignore, fromMaybe "a" eltName)
+      PairTy _ y | i == 1 ->
+        (y, nosrc $ UPatPair uignore pat', fromMaybe "b" eltName)
+      _ -> error "Bad projection"
+
+  nosrc = WithSrc Nothing
+  uignore = nosrc $ UPatBinder $ Ignore ()
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -551,7 +591,8 @@ instance PrettyPrec UExpr' where
                             <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UPi a arr b -> atPrec LowestPrec $ p a <+> pretty arr <+> pLowest b
+    UPi binder arr ty -> atPrec LowestPrec $
+      prettyUPiBinder binder <+> pretty arr <+> pLowest ty
     UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
                                                          <> pLowest body
     UHole -> atPrec ArgPrec "_"
@@ -597,7 +638,7 @@ instance Pretty UConDef where
 instance Pretty UPat' where pretty = prettyFromPrettyPrec
 instance PrettyPrec UPat' where
   prettyPrec pat = case pat of
-    UPatBinder x -> atPrec ArgPrec $ p x
+    UPatBinder x -> atPrec ArgPrec $ prettyBinderNoAnn x
     UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
@@ -610,6 +651,12 @@ prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where
   annDoc = case ann of
     Just ty -> ":" <> pApp ty
+    Nothing -> mempty
+
+prettyUPiBinder :: UPiPatAnn -> Doc ann
+prettyUPiBinder (pat, ann) = patDoc <> p ann where
+  patDoc = case pat of
+    Just pat' -> pApp pat' <> ":"
     Nothing -> mempty
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann

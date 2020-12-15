@@ -12,7 +12,8 @@ module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
-  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck) where
+  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
+  typeReduceBlock, typeReduceAtom, typeReduceExpr) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -32,6 +33,7 @@ import Env
 import PPrint
 import Cat
 import Util (bindM2)
+import Data.Maybe (fromMaybe)
 
 type TypeEnv = Bindings  -- Only care about type payload
 
@@ -161,6 +163,29 @@ instance HasType Atom where
       numel |: IdxRepTy
       void $ typeCheck b
       withBinder b $ typeCheck body
+    ProjectElt (i NE.:| is) v -> do
+      ty <- typeCheck $ case NE.nonEmpty is of
+            Nothing -> Var v
+            Just is' -> ProjectElt is' v
+      case ty of
+        TypeCon def params -> do
+          [DataConDef _ bs'] <- return $ applyDataDefParams def params
+          -- Users might be accessing a value whose type depends on earlier
+          -- projected values from this constructor. Rewrite them to also
+          -- use projections.
+          let go :: Int -> SubstEnv -> Nest Binder -> Type
+              go j env (Nest b _) | i == j = scopelessSubst env $ binderAnn b
+              go j env (Nest b rest) = go (j+1) (env <> (b @> proj)) rest
+                where proj = ProjectElt (j NE.:| is) v
+              go _ _ _ = error "Bad projection index"
+          return $ go 0 mempty bs'
+        RecordTy (NoExt types) -> return $ toList types !! i
+        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
+        PairTy x _ | i == 0 -> return x
+        PairTy _ y | i == 1 -> return y
+        Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
+        _ -> throw TypeErr $ "Only single-member ADTs and record types can be projected. Got " <> pprint ty
+
 
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
 checkDataConRefBindings Empty Empty = return ()
@@ -236,7 +261,6 @@ blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
   foldMap declEffs decls <> exprEffs result
   where declEffs (Let _ _ expr) = exprEffs expr
-        declEffs (Unpack _ expr) = exprEffs expr
 
 isPure :: Expr -> Bool
 isPure expr = exprEffs expr == mempty
@@ -300,19 +324,6 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     ty' <- typeCheck rhs
     checkEq ty ty'
     return $ boundVars b
-  Unpack bs rhs -> do
-    void $ checkNestedBinders bs
-    ty <- typeCheck rhs
-    bs' <- case ty of
-      TypeCon def params -> do
-        [DataConDef _ bs'] <- return $ applyDataDefParams def params
-        return bs'
-      RecordTy (NoExt types) ->
-        return $ toNest $ map Ignore $ toList types
-      RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
-      _ -> throw TypeErr $ "Only single-member ADTs and record types can be unpacked in let bindings"
-    checkEq bs bs'
-    return $ foldMap boundVars bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkNestedBinders :: Nest Binder -> TypeM (Nest Type)
@@ -373,6 +384,7 @@ instance CoreVariant Atom where
     ACase _ _ _ -> goneBy Simp
     DataConRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
     BoxedRef _ _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    ProjectElt _ (_:>ty) -> checkVariant ty
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
@@ -394,7 +406,6 @@ instance CoreVariant Expr where
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariant b >> checkVariant e
-  checkVariant (Unpack bs e) = mapM_ checkVariant bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
@@ -646,8 +657,6 @@ typeCheckOp op = case op of
     mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
     assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
-  Fst p -> do { PairTy x _ <- typeCheck p; return x}
-  Snd p -> do { PairTy _ y <- typeCheck p; return y}
   ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
   ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do
@@ -958,3 +967,76 @@ isData :: Type -> Bool
 isData ty = case checkData ty of
   Left  _ -> False
   Right _ -> True
+
+projectLength :: Type -> Int
+projectLength ty = case ty of
+  TypeCon def params ->
+    let [DataConDef _ bs] = applyDataDefParams def params
+    in length bs
+  RecordTy (NoExt types) -> length types
+  PairTy _ _ -> 2
+  _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
+
+
+-- === Type-level reduction using variables in scope. ===
+
+-- Note: These are simple reductions that are performed when normalizing a
+-- value to use it as a type annotation. If they succeed, these functions should
+-- return atoms that can be compared for equality to check whether the types
+-- are equivalent. If they fail (return Nothing), this means we cannot use
+-- the value as a type in the IR.
+
+typeReduceBlock :: Scope -> Block -> Maybe Atom
+typeReduceBlock scope (Block decls result) = do
+  let localScope = foldMap boundVars decls
+  ans <- typeReduceExpr (scope <> localScope) result
+  [] <- return $ toList $ localScope `envIntersect` freeVars ans
+  return ans
+
+-- XXX: This should handle all terms of type Type. Otherwise type equality checking
+--      will get broken.
+typeReduceAtom :: Scope -> Atom -> Atom
+typeReduceAtom scope x = case x of
+  Var (Name InferenceName _ _ :> _) -> x
+  Var v -> case snd (scope ! v) of
+    -- TODO: worry about effects!
+    LetBound PlainLet expr -> fromMaybe x $ typeReduceExpr scope expr
+    _ -> x
+  TC con -> TC $ fmap (typeReduceAtom scope) con
+  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
+  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
+  RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
+  VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
+  ACase _ _ _ -> error "Not implemented"
+  _ -> x
+  where
+    rec = typeReduceAtom scope
+    reduceNest s n = case n of
+      Empty       -> Empty
+      -- Technically this should use a more concrete type than UnknownBinder, but anything else
+      -- than LetBound is indistinguishable for this reduction anyway.
+      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
+        where b' = fmap (typeReduceAtom s) b
+    reduceDataDef (DataDef n bs cons) =
+      DataDef n (reduceNest scope bs)
+            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
+    reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
+
+typeReduceExpr :: Scope -> Expr -> Maybe Atom
+typeReduceExpr scope expr = case expr of
+  Atom val -> return $ typeReduceAtom scope val
+  App f x -> do
+    let f' = typeReduceAtom scope f
+    let x' = typeReduceAtom scope x
+    -- TODO: Worry about variable capture. Should really carry a substitution.
+    case f' of
+      Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
+        typeReduceBlock scope $ subst (b@>x', scope) block
+      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+      _ -> Nothing
+  Op (MakePtrType ty) -> do
+    let ty' = typeReduceAtom scope ty
+    case ty' of
+      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
+      _ -> Nothing
+  _ -> Nothing

@@ -141,9 +141,9 @@ instance float32Fractional : Fractional Float32 where
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
-def fst (p: (a & b)) : a = %fst p
-def snd (p: (a & b)) : b = %snd p
-def swap (p:(a&b)) : (b&a) = (snd p, fst p)
+def fst ((x, _): (a & b)) : a = x
+def snd ((_, y): (a & b)) : b = y
+def swap ((x, y):(a&b)) : (b&a) = (y, x)
 
 def (<<<) (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
 def (>>>) (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
