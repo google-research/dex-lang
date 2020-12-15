@@ -20,7 +20,7 @@
 > ()
 
 x = "ab"
-:p for i,j. [x.i, x.j]
+:p for (i,j). [x.i, x.j]
 > ["aa", "ab", "ba", "bb"]@(Fin 2 & Fin 2)
 
 'Records and variants
