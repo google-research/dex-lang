@@ -295,6 +295,11 @@ toImpOp (maybeDest, op) = case op of
   RecordSplit  _ _ -> error "Unreachable: should have simplified away"
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
   VariantSplit _ _ -> error "Unreachable: should have simplified away"
+  DataConTag con -> case con of
+    (Con (SumAsProd _ tag _)) -> returnVal tag
+    (DataCon _ _ i _) -> returnVal $ TagRepVal $ fromIntegral i
+  ToEnum ~ty@(TypeCon (DataDef _ _ cons) _) i ->
+    returnVal $ Con $ SumAsProd ty i (map (const []) cons)
   FFICall name returnTy xs -> do
     let returnTys = fromScalarOrPairType returnTy
     let xTys = map (fromScalarType . getType) xs

@@ -783,6 +783,13 @@ typeCheckOp op = case op of
     diff <- labeledRowDifference full (NoExt types)
     return $ VariantTy $ NoExt $
       Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
+  DataConTag x -> do
+    (TypeCon _ _) <- typeCheck x
+    return TagRepTy
+  ToEnum t x -> do
+    t |: TyKind
+    x |: Word8Ty
+    return t
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

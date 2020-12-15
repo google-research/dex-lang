@@ -351,6 +351,10 @@ data PrimOp e =
       -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
       -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
       | VariantSplit (LabeledItems e) e
+      -- Ask which constructor was used, as its Word8 index
+      | DataConTag e
+      -- Create an enum (payload-free ADT) from a Word8
+      | ToEnum e e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -1532,6 +1536,8 @@ builtinNames = M.fromList
   , ("getPtr"   , OpExpr $ GetPtr () )
   , ("makePtrType", OpExpr $ MakePtrType ())
   , ("CharPtr"  , ptrTy Word8Type)
+  , ("dataConTag", OpExpr $ DataConTag ())
+  , ("toEnum"    , OpExpr $ ToEnum () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
