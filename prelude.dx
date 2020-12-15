@@ -174,15 +174,9 @@ data Bool =
   False
   True
 
-def BToW8 (x : Bool) : Word8 =
-  case x of
-    False -> (IToW8 0)
-    True  -> (IToW8 1)
+def BToW8 (x : Bool) : Word8 = %dataConTag x
 
-def W8ToB (x : Word8) : Bool =
-  t = True
-  f = False
-  %select x t f
+def W8ToB (x : Word8) : Bool = %toEnum Bool x
 
 def (&&) (x:Bool) (y:Bool) : Bool =
   x' = BToW8 x
@@ -216,10 +210,7 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
-def BToI (x:Bool) : Int  =
-  case x of
-    False -> 0
-    True  -> 1
+def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
 
 def BToF (x:Bool) : Float = IToF (BToI x)
 def todo (a:Type) ?-> : a = %throwError a
