@@ -46,14 +46,6 @@ evalBlock env (Block decls result) = do
 evalDecl :: SubstEnv -> Decl -> InterpM SubstEnv
 evalDecl env (Let _ v rhs) = liftM (v @>) $ evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
-evalDecl env (Unpack vs rhs) = do
-  let rhs' = subst (env, mempty) rhs
-  ans <- evalExpr env rhs'
-  let atoms = case ans of
-                DataCon _ _ _ atoms' -> atoms'
-                Record atoms' -> toList atoms'
-                _ -> error $ "Can't unpack: " <> pprint rhs'
-  return $ fold $ map (uncurry (@>)) $ zip (toList vs) atoms
 
 evalExpr :: SubstEnv -> Expr -> InterpM Atom
 evalExpr env expr = case expr of
@@ -115,8 +107,6 @@ evalOp expr = case expr of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
     _ -> evalEmbed (indexToIntE idxArg)
-  Fst p -> return x  where (PairVal x _) = p
-  Snd p -> return y  where (PairVal _ y) = p
   _ -> error $ "Not implemented: " ++ pprint expr
 
 -- We can use this when we know we won't be dereferencing pointers. A better

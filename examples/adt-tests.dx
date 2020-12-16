@@ -209,3 +209,82 @@ def catLists (xs:List a) (ys:List a) : List a =
   n = 1 + 4
   AsList _ (for i:(Fin n). ordinal i)
 > (AsList 5 [0, 1, 2, 3, 4])
+
+
+
+def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
+
+:t listToTable
+> ((a:Type) ?-> (pat:(List a)) -> (Fin ((\((AsList n _)). n) pat)) => a)
+
+:p
+  l = AsList _ [1, 2, 3]
+  sum $ listToTable l
+> 6
+
+def listToTable2 (l: List a) : (Fin (listLength l))=>a =
+  (AsList _ xs) = l
+  xs
+
+:t listToTable2
+> ((a:Type) ?-> (l:(List a)) -> (Fin ((\((AsList n _)). n) l)) => a)
+
+:p
+  l = AsList _ [1, 2, 3]
+  sum $ listToTable2 l
+> 6
+
+l2 = AsList _ [1, 2, 3]
+:p sum $ listToTable2 l2
+> 6
+
+def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
+  for i:(Fin $ listLength l). 0.0
+
+:p zerosLikeList l2
+> [0.0, 0.0, 0.0]
+
+data Graph a:Type =
+  MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
+
+def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
+  init = for i j. False
+  snd $ withState init \mRef.
+    for i:m.
+      (from, to) = edges.i
+      mRef!from!to := True
+
+:t graphToAdjacencyMatrix
+> ((a:Type)
+>  ?-> (pat:(Graph a))
+>  -> ((\((MkGraph n _ _ _)). n) pat) => ((\((MkGraph n _ _ _)). n) pat) => Bool)
+
+:p
+  g : Graph Int = MkGraph (Fin 3) [5, 6, 7] (Fin 4) [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]
+  graphToAdjacencyMatrix g
+> [[False, True, True], [False, True, False], [True, False, False]]
+
+-- Test how (nested) projections are handled and pretty-printed.
+
+def pairUnpack ((v, _):(Int & Float)) : Int = v
+:p pairUnpack
+> \pat:(Int32 & Float32). (\(a, _). a) pat
+
+def adtUnpack ((MkMyPair v _):MyPair Int Float) : Int = v
+:p adtUnpack
+> \pat:(MyPair Int32 Float32). (\((MkMyPair elt _)). elt) pat
+
+def recordUnpack ({a=v, b=_}:{a:Int & b:Float}) : Int = v
+:p recordUnpack
+> \pat:{a: Int32 & b: Float32}. (\{a = a, b = _}. a) pat
+
+def nestedUnpack (x:MyPair Int (MyPair (MyIntish & Int) Int)) : Int =
+  (MkMyPair _ (MkMyPair (MkIntish y, _) _)) = x
+  y
+
+:p nestedUnpack
+> \x:(MyPair Int32 (MyPair (MyIntish & Int32) Int32)).
+>   (\((MkIntish (((MkMyPair ((MkMyPair _ elt)) _)), _))). elt) x
+
+:p nestedUnpack (MkMyPair 3 (MkMyPair (MkIntish 4, 5) 6))
+> 4

@@ -50,6 +50,7 @@ import Cat
 import Type
 import PPrint
 import Util (bindM2, scanM, restructure)
+import Data.Maybe (fromMaybe)
 
 newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
@@ -102,21 +103,7 @@ emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
 
 emitUnpack :: MonadEmbed m => Expr -> m [Atom]
-emitUnpack expr = do
-  bs <- case getType expr of
-    TypeCon def params -> do
-      let [DataConDef _ bs] = applyDataDefParams def params
-      return bs
-    RecordTy (NoExt types) -> do
-      -- TODO: is using Ignore here appropriate? We don't have any existing
-      -- binders to bind, but we still plan to use the results.
-      let bs = toNest $ map Ignore $ toList types
-      return bs
-    _ -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint (getType expr)
-  expr' <- deShadow expr <$> getScope
-  vs <- freshNestedBinders bs
-  embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty
-  return $ map Var $ toList vs
+emitUnpack expr = getUnpacked =<< emit expr
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
@@ -150,12 +137,16 @@ freshNestedBindersRec substEnv (Nest b bs) = do
 buildPi :: (MonadError Err m, MonadEmbed m)
         => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
 buildPi b f = do
-  (piTy, decls) <- scopedDecls $ do
+  scope <- getScope
+  (ans, decls) <- scopedDecls $ do
      v <- freshVarE PiBound b
      (arr, ans) <- f $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
-  unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
-  return piTy
+  let block = wrapDecls decls ans
+  case typeReduceBlock scope block of
+    Just piTy -> return piTy
+    Nothing -> throw CompilerErr $
+      "Unexpected irreducible decls in pi type: " ++ pprint decls
 
 buildAbs :: MonadEmbed m => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
 buildAbs b f = do
@@ -292,13 +283,16 @@ ieq :: MonadEmbed m => Atom -> Atom -> m Atom
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
 
+fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
+fromPair pair = do
+  ~[x, y] <- getUnpacked pair
+  return (x, y)
+
 getFst :: MonadEmbed m => Atom -> m Atom
-getFst (PairVal x _) = return x
-getFst p = emitOp $ Fst p
+getFst p = fst <$> fromPair p
 
 getSnd :: MonadEmbed m => Atom -> m Atom
-getSnd (PairVal _ y) = return y
-getSnd p = emitOp $ Snd p
+getSnd p = snd <$> fromPair p
 
 getFstRef :: MonadEmbed m => Atom -> m Atom
 getFstRef r = emitOp $ FstRef r
@@ -306,10 +300,16 @@ getFstRef r = emitOp $ FstRef r
 getSndRef :: MonadEmbed m => Atom -> m Atom
 getSndRef r = emitOp $ SndRef r
 
+-- XXX: getUnpacked must reduce its argument to enforce the invariant that
+-- ProjectElt atoms are always fully reduced (to avoid type errors between two
+-- equivalent types spelled differently).
 getUnpacked :: MonadEmbed m => Atom -> m [Atom]
-getUnpacked (DataCon _ _ _ xs) = return xs
-getUnpacked (Record items) = return $ toList items
-getUnpacked a = emitUnpack (Atom a)
+getUnpacked atom = do
+  scope <- getScope
+  let len = projectLength $ getType atom
+      atom' = typeReduceAtom scope atom
+      res = map (\i -> getProjection [i] atom') [0..(len-1)]
+  return res
 
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
@@ -332,9 +332,6 @@ ptrOffset x i = emitOp $ PtrOffset x i
 
 ptrLoad :: MonadEmbed m => Atom -> m Atom
 ptrLoad x = emitOp $ PtrLoad x
-
-fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
-fromPair pair = (,) <$> getFst pair <*> getSnd pair
 
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
 unpackConsList xs = case getType xs of
@@ -571,7 +568,6 @@ emitDecl :: MonadEmbed m => Decl -> m ()
 emitDecl decl = embedExtend (bindings, Nest decl Empty)
   where bindings = case decl of
           Let ann b expr -> b @> (binderType b, LetBound ann expr)
-          Unpack bs _ -> foldMap (\b -> b @> (binderType b, PatBound)) bs
 
 scopedDecls :: MonadEmbed m => m a -> m (a, Nest Decl)
 scopedDecls m = do
@@ -626,10 +622,6 @@ traverseDecl (_, fExpr, _) decl = case decl of
       Atom a | not (isGlobalBinder b) -> return $ b @> a
       -- TODO: Do we need to use the name hint here?
       _ -> (b@>) <$> emitTo (binderNameHint b) letAnn expr'
-  Unpack bs expr -> do
-    expr' <- fExpr expr
-    xs <- emitUnpack expr'
-    return $ newEnv bs xs
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block
@@ -697,6 +689,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     case decls of
       Empty -> return $ BoxedRef b' ptr' size' body'
       _ -> error "Traversing the body atom shouldn't produce decls"
+  ProjectElt _ _ -> substEmbedR atom
   where
     traverseNestedArgs :: Nest DataConRefBinding -> m (Nest DataConRefBinding)
     traverseNestedArgs Empty = return Empty
