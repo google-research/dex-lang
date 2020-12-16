@@ -8,18 +8,23 @@ data Geom =
   Rectangle Float Float  -- width, height
   Line Point
 
--- HTML color string. TODO: consider an RGB triple instead
-HtmlColor : Type = String
+-- HTML color (no alpha)
+-- TODO: replace with `Fin 3 => Word8` when we fix #348
+HtmlColor : Type = (Word8 & Word8 & Word8)
+
+def showHex (x:Int32) : String =
+  (n, ptr) = %ffi showHex (Int32 & CharPtr) x
+  AsList n $ for i:(Fin n).
+    %ptrLoad (%ptrOffset ptr (ordinal i))
 
 -- TODO: we should add overloaded string literals so we don't need this
 def str (n:Int) ?-> (s:(Fin n=>Char)) : String = AsList _ s
 
-black : HtmlColor = str "black"
-white : HtmlColor = str "white"
-gray  : HtmlColor = str "gray"
-red   : HtmlColor = str "red"
-green : HtmlColor = str "green"
-blue  : HtmlColor = str "blue"
+black : HtmlColor = (IToW8   0, IToW8   0, IToW8   0)
+white : HtmlColor = (IToW8 255, IToW8 255, IToW8 255)
+red   : HtmlColor = (IToW8 255, IToW8   0, IToW8   0)
+green : HtmlColor = (IToW8   0, IToW8 255, IToW8   0)
+blue  : HtmlColor = (IToW8   0, IToW8   0, IToW8 255)
 
 GeomStyle : Type =
   { fillColor   : Maybe HtmlColor
@@ -75,8 +80,7 @@ def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
 def singletonDefault (geom:Geom) : Diagram =
   MkDiagram $ AsList _ [(defaultGeomStyle, (0.0, 0.0), geom)]
 
--- TODO: should really allow nullary functions with `def`
-pointDiagram                   : Diagram = singletonDefault PointGeom
+def pointDiagram               : Diagram = singletonDefault PointGeom
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r
 def rect   (w:Float) (h:Float) : Diagram = singletonDefault $ Rectangle w h
 def line   (p:Point)           : Diagram = singletonDefault $ Line p
@@ -90,9 +94,8 @@ def updateGeom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
 def setFillColor   (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #fillColor   (Just c)
 def setStrokeColor (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #strokeColor (Just c)
 def setStrokeWidth (w:Int)       : Diagram -> Diagram = updateGeom $ setAt #strokeWidth w
--- TODO: argumentless def!
-removeStroke : Diagram -> Diagram = updateGeom $ setAt #strokeColor Nothing
-removeFill   : Diagram -> Diagram = updateGeom $ setAt #fillColor   Nothing
+def removeStroke                 : Diagram -> Diagram = updateGeom $ setAt #strokeColor Nothing
+def removeFill                   : Diagram -> Diagram = updateGeom $ setAt #fillColor   Nothing
 
 '## Serialization to SVG string
 
@@ -127,16 +130,20 @@ def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
 def makeAttr (attr:String) (val:String) : String =
   attr <.> str "=" <.> quote val
 
-def optionalStr (c: Maybe String) : String =
+def htmlColorStr (cs:HtmlColor) : String =
+  (r, g, b) = cs
+  toList "#" <> (showHex $ W8ToI r) <> (showHex $ W8ToI g) <> (showHex $ W8ToI b)
+
+def optionalHtmlColorStr (c: Maybe HtmlColor) : String =
   case c of
     Nothing -> str "none"
-    Just s  -> s
+    Just c' -> htmlColorStr c'
 
 @noinline
 def attrString (attr:GeomStyle) : String =
-  (   makeAttr (str "stroke")       (optionalStr $ getAt #strokeColor attr)
-  <+> makeAttr (str "fill")         (optionalStr $ getAt #fillColor   attr)
-  <+> makeAttr (str "stroke-width") (show        $ getAt #strokeWidth attr))
+  (  --  makeAttr (str "stroke")       (optionalHtmlColorStr $ getAt #strokeColor attr)
+      makeAttr (str "fill")         (optionalHtmlColorStr $ getAt #fillColor   attr)
+  <+> makeAttr (str "stroke-width") (show                 $ getAt #strokeWidth attr))
 
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   case geom of
@@ -189,6 +196,7 @@ moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 --   (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
 --   <> (circle 5.0 |> moveXY (40.0, 40.0))
 --   <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
+--   <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
 --   )
 
 -- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))

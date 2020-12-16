@@ -718,8 +718,8 @@ instance monoidList : Monoid (List a) where
     AsList _ $ for i:(Fin nz).
       i' = ordinal i
       case i' < nx of
-        True  -> xs.(fromOrdinal _ i')
-        False -> ys.(fromOrdinal _ (i' - nx))
+        True  -> xs.(unsafeFromOrdinal _ i')
+        False -> ys.(unsafeFromOrdinal _ (i' - nx))
 
 'Isomorphisms
 
