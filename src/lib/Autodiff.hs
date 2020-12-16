@@ -16,7 +16,6 @@ import Control.Monad.State.Strict
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe
 import Data.Foldable
-import Data.Traversable
 import qualified Data.Set as S
 
 import Type
@@ -149,6 +148,8 @@ linearizeOp op = case op of
   ToOrdinal _            -> emitDiscrete
   IdxSetSize _           -> emitDiscrete
   ThrowError _           -> emitWithZero
+  DataConTag _           -> emitDiscrete
+  ToEnum _ _             -> emitDiscrete
   CastOp t v             -> do
     if tangentType vt == vt && tangentType t == t
       then (CastOp t <$> la v) `bindLin` emitOp
@@ -625,6 +626,8 @@ transposeOp op ct = case op of
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
   FFICall      _ _ _    -> notLinear
+  DataConTag _          -> notLinear
+  ToEnum _ _            -> notLinear
   where
     -- Both nonlinear operations and operations on discrete types, where linearity doesn't make sense
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op

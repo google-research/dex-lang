@@ -326,12 +326,6 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     return $ boundVars b
   where ctxStr = "checking decl:\n" ++ pprint decl
 
-checkNestedBinders :: Nest Binder -> TypeM (Nest Type)
-checkNestedBinders Empty = return Empty
-checkNestedBinders (Nest b bs) = do
-  void $ typeCheck b
-  extendTypeEnv (boundVars b) $ checkNestedBinders bs
-
 checkArrow :: Arrow -> TypeM ()
 checkArrow = mapM_ checkEffRow
 

@@ -50,7 +50,6 @@ import Cat
 import Type
 import PPrint
 import Util (bindM2, scanM, restructure)
-import Data.Maybe (fromMaybe)
 
 newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
