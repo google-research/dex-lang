@@ -298,6 +298,7 @@ toImpOp (maybeDest, op) = case op of
   DataConTag con -> case con of
     (Con (SumAsProd _ tag _)) -> returnVal tag
     (DataCon _ _ i _) -> returnVal $ TagRepVal $ fromIntegral i
+    _ -> error $ "Not a data constructor: " ++ pprint con
   ToEnum ~ty@(TypeCon (DataDef _ _ cons) _) i ->
     returnVal $ Con $ SumAsProd ty i (map (const []) cons)
   FFICall name returnTy xs -> do

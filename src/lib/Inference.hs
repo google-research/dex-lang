@@ -16,7 +16,6 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable (fold, toList, asum)
 import Data.Functor
-import Data.Maybe
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.String (fromString)

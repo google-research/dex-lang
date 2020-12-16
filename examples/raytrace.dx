@@ -69,7 +69,6 @@ def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
   [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
 
 -- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
-Color = (Fin 3)=>Float
 def ColorImage     (height:Int) (width:Int) : Type = Fin height => Fin width => Color
 def GrayScaleImage (height:Int) (width:Int) : Type = Fin height => Fin width => Float
 

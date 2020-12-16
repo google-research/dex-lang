@@ -109,10 +109,8 @@ def xycPlot (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float
     setYData (autoScale ys) |>
     setCData (autoScale cs)
 
-xs = linspace (Fin 100) 0. 1.0
-
-
-:html showPlot $ xycPlot xs xs xs
+-- xs = linspace (Fin 100) 0. 1.0
+-- :html showPlot $ xycPlot xs xs xs
 
 '## Heatmap-style plots
 
