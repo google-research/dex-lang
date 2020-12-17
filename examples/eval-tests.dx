@@ -822,3 +822,25 @@ def fromLeftFloat (x:(Float | Int)) : Float =
 
 :p fromLeftFloat $ Left 1.2
 > 1.2
+
+@noinline
+def f1 (x:Int) : Int = x + 1
+
+@noinline
+def f2 (x:Int) : Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
+
+@noinline
+def f3 (x:Int) : Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
+
+@noinline
+def f4 (x:Int) : Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
+
+@noinline
+def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
+
+@noinline
+def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
+
+-- This will compile extremely slowly if non-inlining is broken
+:p f6 0
+> 100000
