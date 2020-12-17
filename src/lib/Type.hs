@@ -783,6 +783,9 @@ typeCheckOp op = case op of
   ToEnum t x -> do
     t |: TyKind
     x |: Word8Ty
+    (TypeCon (DataDef _ _ dataConDefs) _) <- return t
+    forM_ dataConDefs $ \(DataConDef _ binders) ->
+      assertEq binders Empty "Not an enum"
     return t
 
 typeCheckHof :: Hof -> TypeM Type

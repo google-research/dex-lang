@@ -77,7 +77,7 @@ simplifyDecls (Nest decl rest) = do
 
 simplifyDecl :: Decl -> SimplifyM SubstEnv
 simplifyDecl (Let NoInlineLet (Bind (name:>_)) expr) = do
-  x <- simplifyStandalone $ Block Empty expr
+  x <- simplifyStandalone expr
   emitTo name NoInlineLet (Atom x) $> mempty
 simplifyDecl (Let ann b expr) = do
   x <- simplifyExpr expr
@@ -86,12 +86,13 @@ simplifyDecl (Let ann b expr) = do
     then emitTo name ann (Atom x) $> mempty
     else return $ b @> x
 
-simplifyStandalone :: Block -> SimplifyM Atom
-simplifyStandalone (Block Empty (Atom (LamVal b body))) = do
+simplifyStandalone :: Expr -> SimplifyM Atom
+simplifyStandalone (Atom (LamVal b body)) = do
   b' <- mapM substEmbedR b
   buildLam b' PureArrow $ \x ->
-    extendR (b@>x) $ simplifyStandalone body
-simplifyStandalone block = simplifyBlock block
+    extendR (b@>x) $ simplifyBlock body
+simplifyStandalone block =
+  error $ "@noinline decorator applied to non-function" ++ pprint block
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do
