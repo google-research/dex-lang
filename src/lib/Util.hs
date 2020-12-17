@@ -5,10 +5,11 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated,
+             scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
@@ -20,6 +21,8 @@ import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+
+import Cat
 
 class IsBool a where
   toBool :: a -> Bool
@@ -218,3 +221,14 @@ zipWithT f trav args = flip evalStateT (toList args) $ flip traverse trav $ \e -
 
 for :: Functor f => f a -> (a -> b) -> f b
 for = flip fmap
+
+transitiveClosure :: forall a. Ord a => (a -> [a]) -> [a] -> [a]
+transitiveClosure getParents seeds =
+  toList $ snd $ runCat (mapM_ go seeds) mempty
+  where
+    go :: a -> Cat (Set.Set a) ()
+    go x = do
+      visited <- look
+      unless (x `Set.member` visited) $ do
+        extend $ Set.singleton x
+        mapM_ go $ getParents x

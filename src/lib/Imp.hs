@@ -80,9 +80,8 @@ toImpModule :: TopEnv -> Backend -> CallingConvention -> Name
             -> (ImpFunction, ImpModule, AtomRecon)
 toImpModule env backend cc entryName argBinders maybeDest block = do
   let standaloneFunctions =
-        for (envPairs $ envIntersect (freeVars block) env) $
-           \(v, (_, LetBound _ (Atom f))) ->
-              runImpM initCtx inVarScope $ toImpStandalone v f
+        for (requiredFunctions env block) $ \(v, f) ->
+          runImpM initCtx inVarScope $ toImpStandalone v f
   runImpM initCtx inVarScope $ do
     (reconAtom, impBlock) <- scopedBlock $ translateTopLevel (maybeDest, block)
     otherFunctions <- toList <$> looks envFunctions
@@ -96,6 +95,18 @@ toImpModule env backend cc entryName argBinders maybeDest block = do
     binderScope = foldMap binderAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) argBinders
     destScope = fromMaybe mempty $ fmap freeVars maybeDest
     initCtx = ImpCtx backend CPU TopLevel
+
+requiredFunctions :: HasVars a => Scope -> a -> [(Name, Atom)]
+requiredFunctions scope expr =
+  for (transitiveClosure getParents immediateParents) $ \fname -> do
+    let (_, LetBound _ (Atom f)) = scope ! fname
+    (fname, f)
+  where
+    getParents :: Name -> [Name]
+    getParents fname = envNames $ freeVars $ scope ! fname
+
+    immediateParents :: [Name]
+    immediateParents = envNames $ freeVars expr `envIntersect` scope
 
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
