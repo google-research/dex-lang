@@ -122,9 +122,10 @@ toImpStandalone :: Name -> Atom -> ImpM ImpFunction
 toImpStandalone fname ~(LamVal b body) = do
   let argTy = binderAnn b
   let outTy = getType body
-  -- TODO(dougalm): need to think carefully about these pointers!
+  backend <- asks impBackend
+  curDev <- asks curDevice
   (ptrSizes, ~(Con (ConRef (PairCon outDest argDest)))) <- fromEmbed $
-    makeDest (LLVM, CPU, Unmanaged) (PairTy outTy argTy)
+    makeDest (backend, curDev, Unmanaged) (PairTy outTy argTy)
   impBlock <- scopedErrBlock $ do
     arg <- destToAtom argDest
     void $ translateBlock (b@>arg) (Just outDest, body)
@@ -157,6 +158,7 @@ translateExpr env (maybeDest, expr) = case expr of
           Lam a@(Abs _ (TabArrow, _)) ->
             translateBlock mempty (maybeDest, snd $ applyAbs a x)
           _ -> error $ "Invalid Imp atom: " ++ pprint f
+      -- Runtime function calls for non-inlined functions
       _ -> do
         let (Var (fname:>(FunTy argBinder _ outTy))) = f
         let argTy = binderAnn argBinder
@@ -1225,8 +1227,7 @@ instrTypeChecked instr = case instr of
   IThrowError -> return []
   ICall (_:>IFunType _ argTys resultTys) args -> do
     argTys' <- mapM checkIExpr args
-    -- TODO: be more careful about pointer types and re-enable!
-    -- assertEq argTys argTys' "Args types don't match function type"
+    assertEq argTys argTys' "Args types don't match function type"
     return resultTys
 
 checkBinder :: IBinder -> ImpCheckM ()

@@ -318,7 +318,8 @@ compileInstr instr = case instr of
         emitVoidExternCall (makeFunSpec f) (resultPtr : args')
         loadMultiResultAlloc resultTys' resultPtr
       CEntryFun -> do
-        void $ emitInstr i64 $ callInstr fun args'
+        exitCode <- emitInstr i64 (callInstr fun args') >>= (`asIntWidth` i1)
+        compileIf exitCode throwRuntimeError (return ())
         return []
           where
             fTy = funTy i64 $ map scalarTy argTys
@@ -783,6 +784,9 @@ callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 asLLVMName :: Name -> L.Name
 asLLVMName name@(Name TopFunctionName _ _) = fromString $ pprint name
+-- TODO: Non-inlined functions use the GlobalName namespace. The underscores are
+-- a crude way to distinguish them from TopFunctionName names. We should try to
+-- make `asLLVM` properly invertible. proper invertible Name -> L.Name mapping.
 asLLVMName (GlobalName tag) = fromString $ "__" ++ pprint tag
 asLLVMName name = error $ "Expected a top function name: " ++ show name
 
