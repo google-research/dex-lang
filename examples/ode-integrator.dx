@@ -4,6 +4,8 @@ This version is a port of the [Jax implementation](https://github.com/google/jax
 One difference is that it uses a lower-triangular
 matrix type for the Butcher tableau, and so avoids zero-padding everywhere.
 
+include "plot.dx"
+
 Time = Float
 
 -- Should this go in the prelude?
@@ -168,7 +170,5 @@ exact_e = [[exp 1.0]]
 times = linspace (Fin 100) 0.00001 1.0
 ys = odeint myDyn z0 t0 times
 
--- :plot
---   ys' = for i. ys.i.(fromOrdinal _ 0)
---   zip times ys'
--- > <graphical output>
+:html showPlot $ yPlot for i. ys.i.(fromOrdinal _ 0)
+> <html output>

@@ -1,20 +1,19 @@
 '# Monte Carlo estimates of pi
 
-estimatePiArea : Key -> Float = \key.
+def estimatePiArea (key:Key) : Float =
   (k1, k2) = splitKey key
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0
   4.0 * BToF inBounds
 
-estimatePiAvgVal : Key -> Float = \key.
+def estimatePiAvgVal (key:Key) : Float =
   x = rand key
   4.0 * sqrt (1.0 - sq x)
 
-meanAndStdDev :  Int -> (Key -> Float) -> Key -> (Float & Float) =
-  \n f key.
-    samps = for i:(Fin n). many f key i
-    (mean samps, std samps)
+def meanAndStdDev (n:Int) (f: Key -> Float) (key:Key) : (Float & Float) =
+  samps = for i:(Fin n). many f key i
+  (mean samps, std samps)
 
 numSamps = 1000000
 
