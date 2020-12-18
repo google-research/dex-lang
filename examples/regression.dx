@@ -1,5 +1,7 @@
 '# Basis function regression
 
+include "examples/plot.dx"
+
 -- Conjugate gradients solver
 def solve (m:Type)?-> : m=>m=>Float -> m=>Float -> m=>Float =
   \mat b.
@@ -29,8 +31,7 @@ trueFun : Float -> Float =
 xs : Nx=>Float = for i. rand (ixkey k1 i)
 ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
 
-:plot zip xs ys
-> <graphical output>
+-- :html showPlot $ xyPlot xs ys
 
 'Implement basis function regression
 
@@ -50,10 +51,10 @@ params : (Fin 4)=>Float = regress poly xs ys
 predict : Float -> Float =
   \x. vdot params (poly x)
 
-:plot
-   xsTest = linspace (Fin 100) 0.0 1.0
-   zip xsTest (map predict xsTest)
-> <graphical output>
+
+xsTest = linspace (Fin 200) 0.0 1.0
+
+-- :html showPlot $ xyPlot xsTest (map predict xsTest)
 
 'RMS error
 
@@ -62,3 +63,17 @@ rmsErr : n=>Float -> n=>Float -> Float =
 
 :p rmsErr ys (map predict xs)
 > 0.25269496
+
+
+def tabCat (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
+  for i. case i of
+    {| left  = i' |} -> xs.i'
+    {| right = i' |} -> ys.i'
+
+xsPlot = tabCat xs xsTest
+ysPlot = tabCat ys $ map predict xsTest
+
+-- :html showPlot $ xycPlot xsPlot ysPlot $
+--         for i. case i of
+--                  {| left  = _ |} -> 0.0
+--                  {| right = _ |} -> 1.0

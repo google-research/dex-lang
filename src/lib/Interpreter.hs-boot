@@ -8,4 +8,4 @@ module Interpreter where
 
 import Syntax
 
-indices :: Type -> [Atom]
+indicesNoIO :: Type -> [Atom]

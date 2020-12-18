@@ -76,3 +76,38 @@ lam4 = \n m ?-> (0@n, 0@m)
 >    |       ^
 > To construct a table, use 'for i. body' instead of '\i => body'
 >
+
+
+:p (
+    1
+    +
+    2
+   )
+> 3
+
+:p
+  xs = [1,2,3]
+  for i.
+    if xs.i > 1
+      then 0
+      else 1
+> [1, 0, 0]
+
+:p
+  withState 5 \ref.
+    n = get ref
+    for_ i:(Fin n).
+      ref := get ref + 1
+> ((), 10)
+
+def myInt : Int = 1
+:p myInt
+> 1
+
+def myInt : {State h} Int = 1
+
+> Parse error:107:27:
+>     |
+> 107 | def myInt : {State h} Int = 1
+>     |                           ^
+> Nullary def can't have effects

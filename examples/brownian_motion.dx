@@ -18,5 +18,5 @@ sampleBM : Key -> UnitInterval -> Float =
 xs = linspace (Fin 1000) 0.0 1.0
 ys = map (sampleBM (newKey 0)) xs
 
-:plot zip xs ys
-> <graphical output>
+-- :plot zip xs ys
+-- > <html output>

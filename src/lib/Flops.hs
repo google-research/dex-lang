@@ -24,21 +24,22 @@ newtype Profile = Profile (M.Map String Count)
 type FlopM a = ReaderT Term (Writer Profile) a
 
 impFunctionFlops :: ImpFunction -> Profile
-impFunctionFlops (ImpFunction _ _ prog) =
-  snd $ runWriter (runReaderT (flops prog) (litTerm 1))
+impFunctionFlops (FFIFunction _) = mempty
+impFunctionFlops (ImpFunction _ _ body) =
+  snd $ runWriter (runReaderT (flops body) (litTerm 1))
 
-flops :: ImpProgram -> FlopM ()
-flops prog = void $ traverse statementFlops prog
+flops :: ImpBlock -> FlopM ()
+flops (ImpBlock statements _) = void $ traverse declFlops statements
 
-statementFlops :: ImpStatement -> FlopM ()
-statementFlops stmt = case stmt of
-  IInstr (_, instr)   -> instrFlops instr
-  IFor _ _ size block -> local (mulTerm $ evalSizeExpr size) $ flops block
-  ICond _ _ _         -> return () -- TODO: Implement
-  IWhile _ _          -> return () -- TODO: Implement
+declFlops :: ImpDecl -> FlopM ()
+declFlops (ImpLet _ instr) = instrFlops instr
 
 instrFlops :: ImpInstr -> FlopM ()
 instrFlops instr = case instr of
+  IFor _ _ size block -> local (mulTerm $ evalSizeExpr size) $ flops block
+  ICond _ _ _         -> return () -- TODO: Implement
+  IWhile _ _          -> return () -- TODO: Implement
+  ILaunch _ _ _       -> return () -- TODO: Implement
   IPrimOp op -> do
     n <- ask
     tell $ Profile $ M.singleton (showPrimName $ OpExpr op) [n]

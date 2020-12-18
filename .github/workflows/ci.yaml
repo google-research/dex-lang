@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 jobs:
   build:
@@ -13,10 +13,10 @@ jobs:
         os: [ubuntu-18.04, macos-latest]
         include:
           - os: macos-latest
-            install_deps: brew install llvm@9
+            install_deps: brew install llvm@9 pkg-config
             path_extension: $(brew --prefix llvm@9)/bin
           - os: ubuntu-18.04
-            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev
+            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config
             path_extension: /usr/lib/llvm-9/bin
 
     runs-on: ${{ matrix.os }}
@@ -35,7 +35,7 @@ jobs:
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
-        echo "::add-path::${{ matrix.path_extension }}"
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
 
     - name: Cache
       uses: actions/cache@v2
@@ -45,6 +45,11 @@ jobs:
           $GITHUB_WORKSPACE/.stack-work
         key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-
+
+      # See https://github.com/actions/cache/issues/445
+    - name: Remove cached Setup executables
+      run: rm -rf ~/.stack/setup-exe-cache
+      if: runner.os == 'macOS'
 
     - name: Build
       run: make

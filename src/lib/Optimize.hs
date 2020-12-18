@@ -9,7 +9,6 @@
 module Optimize (optimizeModule, dceModule, inlineModule) where
 
 import Control.Monad.State.Strict
-import Control.Monad.Reader
 import Data.Foldable
 import Data.Maybe
 
@@ -18,7 +17,6 @@ import Embed
 import Cat
 import Env
 import Type
-import PPrint
 
 optimizeModule :: Module -> Module
 optimizeModule = dceModule . inlineModule . dceModule
@@ -54,7 +52,6 @@ dceDecl :: Decl -> DceM (Maybe Decl)
 dceDecl decl = do
   newDecl <- case decl of
     Let ann b expr -> go [b] expr $ Let ann b
-    Unpack bs expr -> go bs  expr $ Unpack bs
   modify (<> freeVars newDecl)
   return newDecl
   where
@@ -107,12 +104,21 @@ inlineTraverseDecl decl = case decl of
     return $ b @> TabVal ib block
   _ -> traverseDecl inlineTraversalDef decl
 
+-- TODO: This is a bit overeager. We should count under how many loops are we.
+--       Even if the array is accessed in an injective fashion, the accesses might
+--       be happen in a deeply nested loop and we might not want to repeat the
+--       compute over and over.
 inlineTraverseExpr :: Expr -> InlineM Expr
 inlineTraverseExpr expr = case expr of
   Hof (For d body) -> do
     newBody <- traverseAtom inlineTraversalDef body
     case newBody of
       -- Trivial bodies
+      -- XXX: The trivial body might be a table lambda, and those could technically
+      --      get quite expensive. But I think this should never be the case in practice.
+      -- XXX: This doesn't always have to end up being beneficial. If the result is
+      --      significantly smaller than the intermediates it refers to, then this
+      --      optimization will waste a bunch of memory by keeping the large intermediates alive.
       LamVal ib block@(Block Empty (Atom _)) -> return $ Atom $ TabVal ib block
       -- Pure broadcasts
       LamVal ib@(Ignore _) block | blockEffs block == NoEffects -> do
@@ -127,9 +133,6 @@ inlineTraverseExpr expr = case expr of
       _ -> return $ App f x
   _ -> nope
   where nope = traverseExpr inlineTraversalDef expr
-
-dropSub :: InlineM a -> InlineM a
-dropSub m = local mempty m
 
 type InlineHintM = State (Env InlineHint)
 
@@ -151,7 +154,6 @@ computeInlineHints m@(Module _ _ bindings) =
 
     hintDecl decl = case decl of
       Let ann b expr -> go [b] expr $ Let ann . head
-      Unpack bs expr -> go bs  expr $ Unpack
       where
         go bs expr mkDecl = do
           void $ noInlineFree bs
@@ -199,14 +201,3 @@ computeInlineHints m@(Module _ _ bindings) =
 
     noInlineFree :: HasVars a => a -> InlineHintM a
     noInlineFree a = modify (<> (fmap (const NoInline) (freeVars a))) >> return a
-
-
--- === Helpers ===
-
-transformModuleAsBlock :: (Block -> Block) -> Module -> Module
-transformModuleAsBlock transform (Module ir decls bindings) = do
-  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ mkConsList $ map Var localVars
-  let (Block newDecls (Atom newResult)) = transform block
-  let newLocalVals = ignoreExcept $ fromConsList newResult
-  Module ir newDecls $ scopelessSubst (newEnv localVars newLocalVals) bindings

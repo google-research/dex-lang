@@ -6,48 +6,53 @@
 
 {-# LANGUAGE Rank2Types #-}
 
-module Interpreter (evalBlock, indices, indexSetSize, evalEmbed) where
+module Interpreter (evalBlock, indices, indicesNoIO, evalModuleInterp,
+                    indexSetSize) where
 
+import Control.Monad
 import Data.Foldable
 import Data.Int
+import Foreign.Ptr
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import System.IO.Unsafe (unsafePerformIO)
+import Foreign.Marshal.Alloc
 
-import Array
+import CUDA
 import Cat
 import Syntax
 import Env
 import PPrint
 import Embed
-import Type
 import Util (enumerate, restructure)
+import LLVMExec
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int64 -> Int64 -> Int64
 
-evalBlock :: SubstEnv -> Block -> Atom
+type InterpM = IO
+
+evalModuleInterp :: SubstEnv -> Module -> InterpM Bindings
+evalModuleInterp env (Module _ decls bindings) = do
+  env' <- catFoldM evalDecl env decls
+  return $ subst (env <> env', mempty) bindings
+
+evalBlock :: SubstEnv -> Block -> InterpM Atom
 evalBlock env (Block decls result) = do
-  let env' = catFold evalDecl env decls
+  env' <- catFoldM evalDecl env decls
   evalExpr env $ subst (env <> env', mempty) result
 
-evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let _ v rhs) = v @> evalExpr env rhs'
+evalDecl :: SubstEnv -> Decl -> InterpM SubstEnv
+evalDecl env (Let _ v rhs) = liftM (v @>) $ evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
-evalDecl env (Unpack vs rhs) = let
-  rhs' = subst (env, mempty) rhs
-  atoms = case evalExpr env rhs' of
-    DataCon _ _ _ atoms' -> atoms'
-    Record atoms' -> toList atoms'
-    _ -> error $ "Can't unpack: " <> pprint rhs'
-  in fold $ map (uncurry (@>)) $ zip (toList vs) atoms
 
-evalExpr :: SubstEnv -> Expr -> Atom
+evalExpr :: SubstEnv -> Expr -> InterpM Atom
 evalExpr env expr = case expr of
   App f x   -> case f of
     Lam a -> evalBlock env $ snd $ applyAbs a x
     _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
-  Atom atom -> atom
+  Atom atom -> return $ atom
   Op op     -> evalOp op
   Case e alts _ -> case e of
     DataCon _ _ con args ->
@@ -63,21 +68,9 @@ evalExpr env expr = case expr of
     _ -> error $ "Unexpected scrutinee: " ++ pprint e
   _ -> error $ "Not implemented: " ++ pprint expr
 
-evalOp :: Op -> Atom
+evalOp :: Op -> InterpM Atom
 evalOp expr = case expr of
-  -- Any ops that might have a defined result even with AnyValue arguments
-  -- should be implemented here.
-  Select p t f -> if (getBool p) then t else f
-  _ -> if any isUndefined (toList expr)
-         then Con $ AnyValue (getType $ Op expr)
-         else evalOpDefined expr
-  where
-    isUndefined (Con (AnyValue _)) = True
-    isUndefined _                  = False
-
-evalOpDefined :: Op -> Atom
-evalOpDefined expr = case expr of
-  ScalarBinOp op x y -> case op of
+  ScalarBinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
     ISub -> applyIntBinOp   (-) x y
     IMul -> applyIntBinOp   (*) x y
@@ -94,60 +87,71 @@ evalOpDefined expr = case expr of
       LessEqual    -> applyIntCmpOp (<=) x y
       GreaterEqual -> applyIntCmpOp (>=) x y
     _ -> error $ "Not implemented: " ++ pprint expr
-  ScalarUnOp op x -> case op of
+  ScalarUnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  FFICall name _ args -> case name of
-    "randunif"     -> Float64Val $ c_unif x         where [Int64Val x]  = args
-    "threefry2x32" -> Int64Val   $ c_threefry x y    where [Int64Val x, Int64Val y] = args
+  FFICall name _ args -> return $ case name of
+    "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
+    "threefry2x32" -> Int64Val   $ c_threefry x y  where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name
-  ArrayOffset arrArg _ offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr $ fromIntegral off)
-    where (ArrayVal (ArrayTy (TabTy _ b)) arr, IdxRepVal off) = (arrArg, offArg)
-  ArrayLoad arrArg -> Con $ Lit $ arrayHead arr where (ArrayVal (ArrayTy (BaseTy _)) arr) = arrArg
-  IndexAsInt idxArg -> case idxArg of
-    Con (Coerce (TC (IntRange   _ _  )) i) -> i
-    Con (Coerce (TC (IndexRange _ _ _)) i) -> i
-    Con (AnyValue t)                       -> anyValue t
-    _ -> evalEmbed (indexToIntE (getType idxArg) idxArg)
-  Fst p         -> x                     where (PairVal x _) = p
-  Snd p         -> y                     where (PairVal _ y) = p
+  PtrOffset (Con (Lit (PtrLit (_, a, t) p))) (IdxRepVal i) ->
+    return $ Con $ Lit $ PtrLit (DerivedPtr, a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
+  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> Con . Lit <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (_, Heap GPU, t) p))) ->
+    allocaBytes (sizeOf t) $ \hostPtr -> do
+      loadCUDAArray hostPtr p (sizeOf t)
+      Con . Lit <$> loadLitVal hostPtr t
+  PtrLoad (Con (Lit (PtrLit (_, Stack, _) _))) ->
+    error $ "Unexpected stack pointer in interpreter"
+  ToOrdinal idxArg -> case idxArg of
+    Con (IntRangeVal   _ _   i) -> return i
+    Con (IndexRangeVal _ _ _ i) -> return i
+    _ -> evalEmbed (indexToIntE idxArg)
   _ -> error $ "Not implemented: " ++ pprint expr
 
-indices :: Type -> [Atom]
-indices ty = case ty of
-  TC (IntRange _ _)      -> fmap (Con . Coerce ty . IdxRepVal) [0..(fromIntegral $ n - 1)]
-  TC (IndexRange _ _ _)  -> fmap (Con . Coerce ty . IdxRepVal) [0..(fromIntegral $ n - 1)]
-  TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]
-  TC (UnitType)          -> [UnitVal]
-  RecordTy (NoExt types) -> let
-    subindices = map indices (toList types)
-    -- Earlier indices change faster than later ones, so we need to first
-    -- iterate over the current index and then over all previous ones. For
-    -- efficiency we build the indices in reverse order and then reassign them
-    -- at the end with `reverse`.
-    addAxisInReverse prevs curs = [cur:prev | cur <- curs, prev <- prevs]
-    products = foldl addAxisInReverse [[]] subindices
-    in map (\idxs -> Record $ restructure (reverse idxs) types) products
-  VariantTy (NoExt types) -> let
-    subindices = fmap indices types
-    reflect = reflectLabels types
-    zipped = zip (toList reflect) (toList subindices)
-    in concatMap (\((label, i), args) ->
-      Variant (NoExt types) label i <$> args) zipped
-  _ -> error $ "Not implemented: " ++ pprint ty
-  where n = indexSetSize ty
+-- We can use this when we know we won't be dereferencing pointers. A better
+-- approach might be to have a typeclass for the pointer dereferencing that the
+-- interpreter does, with a dummy instance that throws an error if you try.
+indicesNoIO :: Type -> [Atom]
+indicesNoIO = unsafePerformIO . indices
 
-getBool :: Atom -> Bool
-getBool (Con (Lit (Int8Lit p))) = p /= 0
-getBool x = error $ "Expected a bool atom, got: " ++ pprint x
+indices :: Type -> IO [Atom]
+indices ty = do
+  n <- indexSetSize ty
+  case ty of
+    TC (IntRange l h)      -> return $ fmap (Con . IntRangeVal     l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
+    TC (IndexRange t l h)  -> return $ fmap (Con . IndexRangeVal t l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
+    TC (PairType lt rt)    -> do
+      lt' <- indices lt
+      rt' <- indices rt
+      return $ [PairVal l r | l <- lt', r <- rt']
+    TC UnitType            -> return [UnitVal]
+    RecordTy (NoExt types) -> do
+      subindices <- mapM indices (toList types)
+      -- Earlier indices change faster than later ones, so we need to first
+      -- iterate over the current index and then over all previous ones. For
+      -- efficiency we build the indices in reverse order and then reassign them
+      -- at the end with `reverse`.
+      let addAxisInReverse prevs curs = [cur:prev | cur <- curs, prev <- prevs]
+      let products = foldl addAxisInReverse [[]] subindices
+      return $ map (\idxs -> Record $ restructure (reverse idxs) types) products
+    VariantTy (NoExt types) -> do
+      subindices <- mapM indices types
+      let reflect = reflectLabels types
+      let zipped = zip (toList reflect) (toList subindices)
+      return $concatMap (\((label, i), args) ->
+        Variant (NoExt types) label i <$> args) zipped
+    _ -> error $ "Not implemented: " ++ pprint ty
 
-indexSetSize :: Type -> Int
-indexSetSize ty = fromIntegral l
-  where (IdxRepVal l) = evalEmbed (indexSetSizeE ty)
+indexSetSize :: Type -> InterpM Int
+indexSetSize ty = do
+  IdxRepVal l <- evalEmbed (indexSetSizeE ty)
+  return $ fromIntegral l
 
-evalEmbed :: Embed Atom -> Atom
-evalEmbed embed = evalBlock mempty $ Block decls (Atom atom)
-  where (atom, (_, decls)) = runEmbed embed mempty
+evalEmbed :: EmbedT InterpM Atom -> InterpM Atom
+evalEmbed embed = do
+  (atom, (_, decls)) <- runEmbedT embed mempty
+  evalBlock mempty $ Block decls (Atom atom)
 
 pattern Int64Val :: Int64 -> Atom
 pattern Int64Val x = Con (Lit (Int64Lit x))

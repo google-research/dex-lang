@@ -7,19 +7,19 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
-  isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
-  checkIntBaseType, checkFloatBaseType,
-  indexSetConcreteSize, checkNoShadow) where
+  isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
+  checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
+  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
+  typeReduceBlock, typeReduceAtom, typeReduceExpr) where
 
 import Prelude hiding (pi)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Data.Foldable (toList)
+import Data.Foldable (toList, traverse_)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -27,13 +27,13 @@ import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 
-import Array
-import {-# SOURCE #-} Interpreter (indices)
+import {-# SOURCE #-} Interpreter (indicesNoIO)
 import Syntax
 import Env
 import PPrint
 import Cat
 import Util (bindM2)
+import Data.Maybe (fromMaybe)
 
 type TypeEnv = Bindings  -- Only care about type payload
 
@@ -55,6 +55,16 @@ checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeChe
 runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
 runTypeCheck env m = runReaderT m env
 
+-- For debugging
+traceCheckM :: (HasCallStack, HasVars a, HasType a, Monad m) => a -> m ()
+traceCheckM x = traceCheck x (return ())
+
+traceCheck :: (HasCallStack, HasVars a, HasType a) => a -> b -> b
+traceCheck x y =
+  case checkType (freeVars x) Pure x of
+    Right () -> y
+    Left e -> error $ "Check failed: " ++ pprint x ++ "\n" ++ pprint e
+
 -- === Module interfaces ===
 
 class Pretty a => Checkable a where
@@ -68,7 +78,7 @@ instance Checkable Module where
         throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
-        let block = Block decls $ Atom $ UnitVal
+        let block = Block decls $ Atom UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
         checkBindings (env <> foldMap boundVars decls) ir bindings
@@ -85,7 +95,7 @@ checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
 checkBinding ir (GlobalName v, b@(ty, info)) =
   addContext ("binding: " ++ pprint (v, b)) $ do
     ty |: TyKind
-    when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars b)) $
+    when (ir >= Evaluated && not (all isGlobal (envAsVars $ freeVars b))) $
       throw CompilerErr "Non-global name in a fully evaluated atom"
     case info of
       LetBound _ atom -> atom |: ty
@@ -140,6 +150,52 @@ instance HasType Atom where
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy
+    DataConRef ~def@(DataDef _ paramBs [DataConDef _ argBs]) params args -> do
+      checkEq (length paramBs) (length params)
+      forM_ (zip (toList paramBs) (toList params)) $ \(b, param) ->
+        param |: binderAnn b
+      let argBs' = applyNaryAbs (Abs paramBs argBs) params
+      checkDataConRefBindings argBs' args
+      return $ RawRefTy $ TypeCon def params
+    BoxedRef b ptr numel body -> do
+      PtrTy (_, _, t) <- typeCheck ptr
+      checkEq (binderAnn b) (BaseTy t)
+      numel |: IdxRepTy
+      void $ typeCheck b
+      withBinder b $ typeCheck body
+    ProjectElt (i NE.:| is) v -> do
+      ty <- typeCheck $ case NE.nonEmpty is of
+            Nothing -> Var v
+            Just is' -> ProjectElt is' v
+      case ty of
+        TypeCon def params -> do
+          [DataConDef _ bs'] <- return $ applyDataDefParams def params
+          -- Users might be accessing a value whose type depends on earlier
+          -- projected values from this constructor. Rewrite them to also
+          -- use projections.
+          let go :: Int -> SubstEnv -> Nest Binder -> Type
+              go j env (Nest b _) | i == j = scopelessSubst env $ binderAnn b
+              go j env (Nest b rest) = go (j+1) (env <> (b @> proj)) rest
+                where proj = ProjectElt (j NE.:| is) v
+              go _ _ _ = error "Bad projection index"
+          return $ go 0 mempty bs'
+        RecordTy (NoExt types) -> return $ toList types !! i
+        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
+        PairTy x _ | i == 0 -> return x
+        PairTy _ y | i == 1 -> return y
+        Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
+        _ -> throw TypeErr $ "Only single-member ADTs and record types can be projected. Got " <> pprint ty
+
+
+checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
+checkDataConRefBindings Empty Empty = return ()
+checkDataConRefBindings (Nest b restBs) (Nest refBinding restRefs) = do
+  let DataConRefBinding b'@(Bind v) ref = refBinding
+  ref |: RawRefTy (binderAnn b)
+  checkEq (binderAnn b) (binderAnn b')
+  let restBs' = scopelessSubst (b@>Var v) restBs
+  withBinder b' $ checkDataConRefBindings restBs' restRefs
+checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -150,6 +206,13 @@ typeCheckVar v@(name:>annTy) = do
     Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
     Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
   return annTy
+
+isDependent :: DataConDef -> Bool
+isDependent (DataConDef _ binders) = go binders
+  where
+    go :: Nest Binder -> Bool
+    go Empty = False
+    go (Nest b bs) = (b `isin` freeVars bs) || go bs
 
 instance HasType Expr where
   typeCheck expr = case expr of
@@ -198,7 +261,6 @@ blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
   foldMap declEffs decls <> exprEffs result
   where declEffs (Let _ _ expr) = exprEffs expr
-        declEffs (Unpack _ expr) = exprEffs expr
 
 isPure :: Expr -> Bool
 isPure expr = exprEffs expr == mempty
@@ -224,6 +286,7 @@ exprEffs expr = case expr of
     RunReader _ f   -> handleRunner Reader f
     RunWriter   f   -> handleRunner Writer f
     RunState  _ f   -> handleRunner State  f
+    PTileReduce _ _ -> mempty
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
     handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs Nothing) _) =
@@ -242,7 +305,9 @@ instance HasType Block where
       SkipChecks -> typeCheck result
       CheckWith (env, _) -> do
         env' <- catFoldM checkDecl env decls
-        withTypeEnv (env <> env') $ typeCheck result
+        ty <- withTypeEnv (env <> env') $ typeCheck result
+        ty |: TyKind
+        return ty
 
 instance HasType Binder where
   typeCheck b = do
@@ -258,30 +323,11 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     ty  <- typeCheck b
     ty' <- typeCheck rhs
     checkEq ty ty'
-    return $ binderBinding b
-  Unpack bs rhs -> do
-    void $ checkNestedBinders bs
-    ty <- typeCheck rhs
-    bs' <- case ty of
-      TypeCon def params -> do
-        [DataConDef _ bs'] <- return $ applyDataDefParams def params
-        return bs'
-      RecordTy (NoExt types) ->
-        return $ toNest $ map Ignore $ toList types
-      RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
-      _ -> throw TypeErr $ "Only single-member ADTs and record types can be unpacked in let bindings"
-    checkEq bs bs'
-    return $ foldMap binderBinding bs
+    return $ boundVars b
   where ctxStr = "checking decl:\n" ++ pprint decl
 
-checkNestedBinders :: Nest Binder -> TypeM (Nest Type)
-checkNestedBinders Empty = return Empty
-checkNestedBinders (Nest b bs) = do
-  void $ typeCheck b
-  extendTypeEnv (binderBinding b) $ checkNestedBinders bs
-
 checkArrow :: Arrow -> TypeM ()
-checkArrow arr = mapM_ checkEffRow arr
+checkArrow = mapM_ checkEffRow
 
 infixr 7 |:
 (|:) :: HasType a => a -> Type -> TypeM ()
@@ -293,7 +339,7 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b m = typeCheck b >> extendTypeEnv (binderBinding b) m
+withBinder b m = typeCheck b >> extendTypeEnv (boundVars b) m
 
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> BinderP b -> m ()
 checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
@@ -316,8 +362,12 @@ instance CoreVariant Atom where
     Lam (Abs b (_, body)) -> checkVariant b >> checkVariant body
     Pi  (Abs b (arr, body)) -> do
       case arr of
-        TabArrow -> alwaysAllowed
-        _        -> goneBy Simp
+        -- The restriction on function types after Simp is a bit more subtle now
+        -- that we allow non-inlined functions. TODO: decide what the
+        -- restriction is and enforce it here.
+        -- TabArrow -> alwaysAllowed
+        -- _        -> goneBy Simp
+        _ -> alwaysAllowed
       checkVariant b >> checkVariant body
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
@@ -330,6 +380,9 @@ instance CoreVariant Atom where
     Variant _ _ _ _ -> alwaysAllowed
     VariantTy _ -> alwaysAllowed
     ACase _ _ _ -> goneBy Simp
+    DataConRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    BoxedRef _ _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    ProjectElt _ (_:>ty) -> checkVariant ty
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
@@ -351,7 +404,6 @@ instance CoreVariant Expr where
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariant b >> checkVariant e
-  checkVariant (Unpack bs e) = mapM checkVariant bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
@@ -365,7 +417,6 @@ instance CoreVariant (PrimTC a) where
     -- distinct tyep for those, so we can rule out this case.
     TypeKind -> alwaysAllowed
     EffectRowKind  -> alwaysAllowed
-    JArrayType _ _ -> neverAllowed
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimOp a) where
@@ -388,6 +439,7 @@ instance CoreVariant (PrimHof a) where
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
+    PTileReduce _ _ -> absentUntil Simp -- really absent until parallelization
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -421,8 +473,10 @@ checkEffRow (EffectRow effs effTail) = do
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       Just (ty, _) -> assertEq EffKind ty "Effect var"
 
-declareEff :: Effect -> TypeM ()
-declareEff (effName, h) = declareEffs $ EffectRow [(effName, h)] Nothing
+declareEff :: (EffectName, Maybe Name) -> TypeM ()
+declareEff (effName, Just h) =
+  declareEffs $ EffectRow [(effName, h)] Nothing
+declareEff (_, Nothing) = return ()
 
 declareEffs :: EffectRow -> TypeM ()
 declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
@@ -507,35 +561,52 @@ withAllowedEff eff m = updateAllowedEff (const eff) m
 typeCheckTyCon :: TC -> TypeM Type
 typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
-  CharType         -> return TyKind
-  ArrayType t      -> t|:TyKind >> return TyKind
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
-  RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
+  RefType r a      -> mapM_ (|: TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
-  JArrayType _ _   -> undefined
+  ParIndexRange t gtid nthr -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
-  ArrayLit ty _ -> return $ ArrayTy ty
-  AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
-  Coerce t@(Var _) _ -> t |: TyKind $> t
-  Coerce destTy e -> do
-    sourceTy <- typeCheck e
-    destTy  |: TyKind
-    checkValidCoercion sourceTy destTy
-    return destTy
-  SumAsProd ty _ _ -> return ty  -- TODO: check!
+  SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
   ClassDictHole _ ty -> ty |: TyKind >> return ty
+  IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
+  IndexRangeVal t l h i -> i|:IdxRepTy >> return (TC $ IndexRange t l h)
+  IndexSliceVal _ _ _ -> error "not implemented"
+  BaseTypeRef p -> do
+    (PtrTy (_, _, b)) <- typeCheck p
+    return $ RawRefTy $ BaseTy b
+  TabRef tabTy -> do
+    TabTy b (RawRefTy a) <- typeCheck tabTy
+    return $ RawRefTy $ TabTy b a
+  ConRef conRef -> case conRef of
+    UnitCon -> return $ RawRefTy UnitTy
+    PairCon x y ->
+      RawRefTy <$> (PairTy <$> typeCheckRef x <*> typeCheckRef y)
+    IntRangeVal     l h i ->
+      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l h)
+    IndexRangeVal t l h i ->
+      i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IndexRange t l h)
+    SumAsProd ty tag _ -> do    -- TODO: check args!
+      tag |:(RawRefTy TagRepTy)
+      return $ RawRefTy ty
+    _ -> error $ "Not a valid ref: " ++ pprint conRef
+  ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> return t
+  RecordRef _ -> error "Not implemented"
+
+typeCheckRef :: HasType a => a -> TypeM Type
+typeCheckRef x = do
+  TC (RefType _ a) <- typeCheck x
+  return a
 
 checkIntBaseType :: MonadError Err m => Bool -> Type -> m ()
 checkIntBaseType allowVector t = case t of
@@ -546,7 +617,7 @@ checkIntBaseType allowVector t = case t of
     checkSBT sbt = case sbt of
       Int64Type -> return ()
       Int32Type -> return ()
-      Int8Type  -> return ()
+      Word8Type  -> return ()
       _         -> notInt
     notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                              "integer type, but found: " ++ pprint t
@@ -564,22 +635,13 @@ checkFloatBaseType allowVector t = case t of
     notFloat = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                                "floating-point type, but found: " ++ pprint t
 
-checkValidCoercion :: Type -> Type -> TypeM ()
-checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
-  (ArrayTy st, ArrayTy CharTy)   -> checkIntBaseType   False st
-  (ArrayTy st, ArrayTy dt)       -> checkValidCoercion st dt
-  (IdxRepTy  , TC (IntRange   _ _  )) -> return () -- from ordinal
-  (IdxRepTy  , TC (IndexRange _ _ _)) -> return () -- from ordinal
-  (IdxRepTy  , TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
-  _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
-
 checkValidCast :: Type -> Type -> TypeM ()
 checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType destTy
   where
     checkScalarType ty = case ty of
       BaseTy (Scalar Int64Type  ) -> return ()
       BaseTy (Scalar Int32Type  ) -> return ()
-      BaseTy (Scalar Int8Type   ) -> return ()
+      BaseTy (Scalar Word8Type  ) -> return ()
       BaseTy (Scalar Float64Type) -> return ()
       BaseTy (Scalar Float32Type) -> return ()
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
@@ -589,21 +651,19 @@ typeCheckOp op = case op of
   TabCon ty xs -> do
     ty |: TyKind
     TabTyAbs a <- return ty
-    let idxs = indices $ absArgType a
+    let idxs = indicesNoIO $ absArgType a
     mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
     assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
-  Fst p -> do { PairTy x _ <- typeCheck p; return x}
-  Snd p -> do { PairTy _ y <- typeCheck p; return y}
   ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
   ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do
-    p |: (BaseTy $ Scalar Int8Type)
+    p |: (BaseTy $ Scalar Word8Type)
     ty <- typeCheck x
     y |: ty
     return ty
-  IntAsIndex ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
-  IndexAsInt i -> typeCheck i $> IdxRepTy
+  UnsafeFromOrdinal ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
+  ToOrdinal i -> typeCheck i $> IdxRepTy
   IdxSetSize i -> typeCheck i $> IdxRepTy
   FFICall _ ansTy args -> do
     forM_ args $ \arg -> do
@@ -612,20 +672,26 @@ typeCheckOp op = case op of
         BaseTy _ -> return ()
         _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
                                     "fixed-width base types, but got: " ++ pprint argTy
-    return $ BaseTy ansTy
+    return ansTy
   Inject i -> do
-    TC (IndexRange ty _ _) <- typeCheck i
-    return ty
+    TC tc <- typeCheck i
+    case tc of
+      IndexRange ty _ _ -> return ty
+      ParIndexRange ty _ _ -> return ty
+      _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
-    RefTy (Var (h:>TyKind)) s <- typeCheck ref
+    TC (RefType h s) <- typeCheck ref
+    let h'' = case h of
+               Just ~(Var (h':>TyKind)) -> Just h'
+               Nothing -> Nothing
     case m of
-      MGet    ->         declareEff (State , h) $> s
-      MPut  x -> x|:s >> declareEff (State , h) $> UnitTy
-      MAsk    ->         declareEff (Reader, h) $> s
-      MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
+      MGet    ->         declareEff (State , h'') $> s
+      MPut  x -> x|:s >> declareEff (State , h'') $> UnitTy
+      MAsk    ->         declareEff (Reader, h'') $> s
+      MTell x -> x|:s >> declareEff (Writer, h'') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
-    i |: (absArgType a)
+    i |: absArgType a
     return $ RefTy h $ snd $ applyAbs a i
   FstRef ref -> do
     RefTy h (PairTy a _) <- typeCheck ref
@@ -633,14 +699,17 @@ typeCheckOp op = case op of
   SndRef ref -> do
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
-  ArrayOffset arr idx off -> do
-    ArrayTy (TabTyAbs a) <- typeCheck arr
+  PtrOffset arr off -> do
+    PtrTy (_, a, b) <- typeCheck arr
     off |: IdxRepTy
-    idx |: absArgType a
-    return $ ArrayTy $ snd $ applyAbs a idx
-  ArrayLoad arr -> do
-    ArrayTy (BaseTy b)  <- typeCheck arr
-    return $ BaseTy b
+    return $ PtrTy (DerivedPtr, a, b)
+  PtrLoad ptr -> do
+    PtrTy (_, _, t)  <- typeCheck ptr
+    return $ BaseTy t
+  GetPtr tab -> do
+    TabTy _ (BaseTy a) <- typeCheck tab
+    return $ BaseTy $ PtrType (AllocatedPtr, Heap CPU, a)
+  MakePtrType ty -> ty|:TyKind >> return TyKind
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i
@@ -664,6 +733,7 @@ typeCheckOp op = case op of
     i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
+  -- TODO: this should really be a 32 bit integer for unicode code point: but for now is 8 bit ASCII code point
   CastOp t@(Var _) _ -> t |: TyKind $> t
   CastOp destTy e -> do
     sourceTy <- typeCheck e
@@ -707,6 +777,16 @@ typeCheckOp op = case op of
     diff <- labeledRowDifference full (NoExt types)
     return $ VariantTy $ NoExt $
       Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
+  DataConTag x -> do
+    (TypeCon _ _) <- typeCheck x
+    return TagRepTy
+  ToEnum t x -> do
+    t |: TyKind
+    x |: Word8Ty
+    (TypeCon (DataDef _ _ dataConDefs) _) <- return t
+    forM_ dataConDefs $ \(DataConDef _ binders) ->
+      assertEq binders Empty "Not an enum"
+    return t
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
@@ -744,12 +824,21 @@ typeCheckHof hof = case hof of
       replaceDim 0 (TabTy _ b) n  = TabTy (Ignore n) b
       replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
       replaceDim _ _ _ = error "This should be checked before"
+  PTileReduce n mapping -> do
+    -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> ((ParIndexRange n gtid nthr)=>a, r)
+    BinaryFunTy (Bind gtid) (Bind nthr) Pure mapResultTy <- typeCheck mapping
+    PairTy tiledArrTy accTy <- return mapResultTy
+    let threadRange = TC $ ParIndexRange n (Var gtid) (Var nthr)
+    TabTy threadRange' tileElemTy <- return tiledArrTy
+    checkEq threadRange (binderType threadRange')
+    -- PTileReduce n mapping : (n=>a, ro)
+    return $ PairTy (TabTy (Ignore n) tileElemTy) accTy
   While cond body -> do
     Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck cond
     Pi (Abs (Ignore UnitTy) (arr', bodyTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     declareEffs $ arrowEff arr'
-    checkEq (BaseTy $ Scalar Int8Type) condTy
+    checkEq (BaseTy $ Scalar Word8Type) condTy
     checkEq UnitTy bodyTy
     return UnitTy
   Linearize f -> do
@@ -783,24 +872,22 @@ litType :: LitVal -> BaseType
 litType v = case v of
   Int64Lit   _ -> Scalar Int64Type
   Int32Lit   _ -> Scalar Int32Type
-  Int8Lit    _ -> Scalar Int8Type
+  Word8Lit   _ -> Scalar Word8Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
+  PtrLit t _   -> PtrType t
   VecLit  l -> Vector sb
-    where (Scalar sb) = litType $ head l
+    where Scalar sb = litType $ head l
 
-data ArgumentType = SomeFloatArg | SomeIntArg | Int8Arg
-data ReturnType   = SameReturn | Int8Return
+data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
+data ReturnType   = SameReturn | Word8Return
 
 checkOpArgType :: MonadError Err m => ArgumentType -> Type -> m ()
 checkOpArgType argTy x =
   case argTy of
     SomeIntArg   -> checkIntBaseType   True x
+    SomeUIntArg  -> assertEq x Word8Ty ""
     SomeFloatArg -> checkFloatBaseType True x
-    Int8Arg      -> case x of
-      BaseTy (Scalar Int8Type) -> return ()
-      BaseTy (Vector Int8Type) -> return ()
-      _ -> throw TypeErr "Expected an Int8 argument"
 
 checkBinOp :: MonadError Err m => BinOp -> Type -> Type -> m Type
 checkBinOp op x y = do
@@ -808,7 +895,7 @@ checkBinOp op x y = do
   assertEq x y ""
   return $ case retTy of
     SameReturn -> x
-    Int8Return -> BaseTy $ Scalar Int8Type
+    Word8Return -> BaseTy $ Scalar Word8Type
   where
     (argTy, retTy) = case op of
       IAdd   -> (ia, sr);  ISub   -> (ia, sr)
@@ -819,17 +906,18 @@ checkBinOp op x y = do
       FMul   -> (fa, sr);  FDiv   -> (fa, sr);
       FPow   -> (fa, sr)
       FCmp _ -> (fa, br)
-      BAnd   -> (ba, br);  BOr    -> (ba, br)
+      BAnd   -> (ia, sr);  BOr    -> (ia, sr)
+      BShL   -> (ia, sr);  BShR   -> (ia, sr)
       where
-        ba = Int8Arg; ia = SomeIntArg; fa = SomeFloatArg
-        br = Int8Return; sr = SameReturn
+        ia = SomeIntArg; fa = SomeFloatArg
+        br = Word8Return; sr = SameReturn
 
 checkUnOp :: MonadError Err m => UnOp -> Type -> m Type
 checkUnOp op x = do
   checkOpArgType argTy x
   return $ case retTy of
     SameReturn -> x
-    Int8Return -> BaseTy $ Scalar Int8Type
+    Word8Return -> BaseTy $ Scalar Word8Type
   where
     (argTy, retTy) = case op of
       Exp              -> (f, sr)
@@ -847,26 +935,25 @@ checkUnOp op x = do
       Round            -> (f, sr)
       LGamma           -> (f, sr)
       FNeg             -> (f, sr)
-      BNot             -> (b, sr)
+      BNot             -> (u, sr)
       where
-        b = Int8Arg; f = SomeFloatArg; sr = SameReturn
+        u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ fromIntegral $ high - low
   _                      -> Nothing
 
-checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
-checkDataLike msg env ty = case ty of
+checkDataLike :: MonadError Err m => String -> Type -> m ()
+checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
-  RecordTy (NoExt items)  -> void $ traverse recur items
-  VariantTy (NoExt items) -> void $ traverse recur items
-  -- TODO: check that data constructor arguments are data-like, and so on
-  TypeCon _ _ -> return ()
+  RecordTy (NoExt items)  -> traverse_ recur items
+  VariantTy (NoExt items) -> traverse_ recur items
+  TypeCon def params ->
+    mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
     BaseType _       -> return ()
-    CharType         -> return ()
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()
     IntRange _ _     -> return ()
@@ -874,13 +961,90 @@ checkDataLike msg env ty = case ty of
     IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg
   _   -> throw TypeErr $ pprint ty ++ msg
-  where recur x = checkDataLike msg env x
+  where recur x = checkDataLike msg x
 
-checkData :: MonadError Err m => Bindings -> Type -> m ()
+checkDataLikeDataCon :: MonadError Err m => DataConDef -> m ()
+checkDataLikeDataCon (DataConDef _ bs) =
+  mapM_ (checkDataLike "data con binder" . binderAnn) bs
+
+checkData :: MonadError Err m => Type -> m ()
 checkData = checkDataLike " is not serializable"
 
 --TODO: Make this work even if the type has type variables!
-isData :: Bindings -> Type -> Bool
-isData bindings ty = case checkData bindings ty of
+isData :: Type -> Bool
+isData ty = case checkData ty of
   Left  _ -> False
   Right _ -> True
+
+projectLength :: Type -> Int
+projectLength ty = case ty of
+  TypeCon def params ->
+    let [DataConDef _ bs] = applyDataDefParams def params
+    in length bs
+  RecordTy (NoExt types) -> length types
+  PairTy _ _ -> 2
+  _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
+
+
+-- === Type-level reduction using variables in scope. ===
+
+-- Note: These are simple reductions that are performed when normalizing a
+-- value to use it as a type annotation. If they succeed, these functions should
+-- return atoms that can be compared for equality to check whether the types
+-- are equivalent. If they fail (return Nothing), this means we cannot use
+-- the value as a type in the IR.
+
+typeReduceBlock :: Scope -> Block -> Maybe Atom
+typeReduceBlock scope (Block decls result) = do
+  let localScope = foldMap boundVars decls
+  ans <- typeReduceExpr (scope <> localScope) result
+  [] <- return $ toList $ localScope `envIntersect` freeVars ans
+  return ans
+
+-- XXX: This should handle all terms of type Type. Otherwise type equality checking
+--      will get broken.
+typeReduceAtom :: Scope -> Atom -> Atom
+typeReduceAtom scope x = case x of
+  Var (Name InferenceName _ _ :> _) -> x
+  Var v -> case snd (scope ! v) of
+    -- TODO: worry about effects!
+    LetBound PlainLet expr -> fromMaybe x $ typeReduceExpr scope expr
+    _ -> x
+  TC con -> TC $ fmap (typeReduceAtom scope) con
+  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
+  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
+  RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
+  VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
+  ACase _ _ _ -> error "Not implemented"
+  _ -> x
+  where
+    rec = typeReduceAtom scope
+    reduceNest s n = case n of
+      Empty       -> Empty
+      -- Technically this should use a more concrete type than UnknownBinder, but anything else
+      -- than LetBound is indistinguishable for this reduction anyway.
+      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
+        where b' = fmap (typeReduceAtom s) b
+    reduceDataDef (DataDef n bs cons) =
+      DataDef n (reduceNest scope bs)
+            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
+    reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
+
+typeReduceExpr :: Scope -> Expr -> Maybe Atom
+typeReduceExpr scope expr = case expr of
+  Atom val -> return $ typeReduceAtom scope val
+  App f x -> do
+    let f' = typeReduceAtom scope f
+    let x' = typeReduceAtom scope x
+    -- TODO: Worry about variable capture. Should really carry a substitution.
+    case f' of
+      Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
+        typeReduceBlock scope $ subst (b@>x', scope) block
+      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+      _ -> Nothing
+  Op (MakePtrType ty) -> do
+    let ty' = typeReduceAtom scope ty
+    case ty' of
+      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
+      _ -> Nothing
+  _ -> Nothing

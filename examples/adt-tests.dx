@@ -13,7 +13,7 @@ data MyPair a:Type b:Type =
 z = MkMyPair 1 2.3
 
 :p z
-> MkMyPair 1 2.3
+> (MkMyPair 1 2.3)
 
 :t z
 > (MyPair Int32 Float32)
@@ -33,7 +33,7 @@ data Dual a:Type =
 > (1, 2)
 
 :p for i:(Fin 3). MkMyPair (ordinal i) (ordinal i + 1)
-> [MkMyPair 0 1, MkMyPair 1 2, MkMyPair 2 3]
+> [(MkMyPair 0 1), (MkMyPair 1 2), (MkMyPair 2 3)]
 
 zz = MkMyPair 1 (MkMyPair True 2.3)
 
@@ -57,7 +57,7 @@ data MyEither a:Type b:Type =
 x : MyEither Int Float = MyLeft 1
 
 :p x
-> MyLeft 1
+> (MyLeft 1)
 
 :p
   (MyLeft x') = x
@@ -178,3 +178,113 @@ xsList = AsList _ [1,2,3]
   (AsList _ ans) = xs <> ys
   sum ans
 > 15
+
+:p
+  (MkMyPair x y) = case 3 < 2 of
+    True  -> MkMyPair 1 2
+    False -> MkMyPair 3 4
+  (x, y)
+> (3, 4)
+
+def catLists (xs:List a) (ys:List a) : List a =
+  (AsList nx xs') = xs
+  (AsList ny ys') = ys
+  nz = nx + ny
+  zs = for i:(Fin nz).
+    i' = ordinal i
+    case i' < nx of
+      True  -> xs'.(fromOrdinal _ i')
+      False -> ys'.(fromOrdinal _ (i' - nx))
+  AsList _ zs
+
+:p
+  (AsList _ xs) = catLists (AsList _ [1,2,3]) (AsList _ [4,5])
+  sum xs
+> 15
+
+:p catLists (AsList _ [1,2,3]) (AsList _ [4,5])
+> (AsList 5 [1, 2, 3, 4, 5])
+
+:p
+  n = 1 + 4
+  AsList _ (for i:(Fin n). ordinal i)
+> (AsList 5 [0, 1, 2, 3, 4])
+
+
+
+def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
+
+:t listToTable
+> ((a:Type) ?-> (pat:(List a)) -> (Fin ((\((AsList n _)). n) pat)) => a)
+
+:p
+  l = AsList _ [1, 2, 3]
+  sum $ listToTable l
+> 6
+
+def listToTable2 (l: List a) : (Fin (listLength l))=>a =
+  (AsList _ xs) = l
+  xs
+
+:t listToTable2
+> ((a:Type) ?-> (l:(List a)) -> (Fin ((\((AsList n _)). n) l)) => a)
+
+:p
+  l = AsList _ [1, 2, 3]
+  sum $ listToTable2 l
+> 6
+
+l2 = AsList _ [1, 2, 3]
+:p sum $ listToTable2 l2
+> 6
+
+def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
+  for i:(Fin $ listLength l). 0.0
+
+:p zerosLikeList l2
+> [0.0, 0.0, 0.0]
+
+data Graph a:Type =
+  MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
+
+def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
+  init = for i j. False
+  snd $ withState init \mRef.
+    for i:m.
+      (from, to) = edges.i
+      mRef!from!to := True
+
+:t graphToAdjacencyMatrix
+> ((a:Type)
+>  ?-> (pat:(Graph a))
+>  -> ((\((MkGraph n _ _ _)). n) pat) => ((\((MkGraph n _ _ _)). n) pat) => Bool)
+
+:p
+  g : Graph Int = MkGraph (Fin 3) [5, 6, 7] (Fin 4) [(0@_, 1@_), (0@_, 2@_), (2@_, 0@_), (1@_, 1@_)]
+  graphToAdjacencyMatrix g
+> [[False, True, True], [False, True, False], [True, False, False]]
+
+-- Test how (nested) projections are handled and pretty-printed.
+
+def pairUnpack ((v, _):(Int & Float)) : Int = v
+:p pairUnpack
+> \pat:(Int32 & Float32). (\(a, _). a) pat
+
+def adtUnpack ((MkMyPair v _):MyPair Int Float) : Int = v
+:p adtUnpack
+> \pat:(MyPair Int32 Float32). (\((MkMyPair elt _)). elt) pat
+
+def recordUnpack ({a=v, b=_}:{a:Int & b:Float}) : Int = v
+:p recordUnpack
+> \pat:{a: Int32 & b: Float32}. (\{a = a, b = _}. a) pat
+
+def nestedUnpack (x:MyPair Int (MyPair (MyIntish & Int) Int)) : Int =
+  (MkMyPair _ (MkMyPair (MkIntish y, _) _)) = x
+  y
+
+:p nestedUnpack
+> \x:(MyPair Int32 (MyPair (MyIntish & Int32) Int32)).
+>   (\((MkIntish (((MkMyPair ((MkMyPair _ elt)) _)), _))). elt) x
+
+:p nestedUnpack (MkMyPair 3 (MkMyPair (MkIntish 4, 5) 6))
+> 4

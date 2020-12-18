@@ -20,12 +20,12 @@ Syntax for records, variants, and their types.
 'Records
 
 :p {}
-> {,}
+> {}
 :t {}
 > { &}
 
 :p {,}
-> {,}
+> {}
 :t {,}
 > { &}
 
@@ -173,6 +173,9 @@ def getTwoFoosAndABar (rest : Fields)?->
 x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 ({| a | a = a |}) = x
 > Type error:Variant not allowed in can't-fail pattern
+>
+> ({| a | a = a |}) = x
+>  ^^^^^^^^^^^^^^^
 
 'Record puns
 
@@ -313,16 +316,16 @@ myStuff :(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_}) =
 :p ordinal {a=(7@Fin 10), b=(2@Fin 3)}
 > 27
 :p fromOrdinal {a:Fin 10 & b:Fin 3} 14
-> {a = 4@Fin 10, b = 1@Fin 3}
+> {a = (4@Fin 10), b = (1@Fin 3)}
 
 recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
 :p recordsAsIndices
-> [ {a = 0@Fin 2, b = 0@Fin 3}
-> , {a = 1@Fin 2, b = 0@Fin 3}
-> , {a = 0@Fin 2, b = 1@Fin 3}
-> , {a = 1@Fin 2, b = 1@Fin 3}
-> , {a = 0@Fin 2, b = 2@Fin 3}
-> , {a = 1@Fin 2, b = 2@Fin 3} ]@{a: Fin 2 & b: Fin 3}
+> [ {a = (0@Fin 2), b = (0@Fin 3)}
+> , {a = (1@Fin 2), b = (0@Fin 3)}
+> , {a = (0@Fin 2), b = (1@Fin 3)}
+> , {a = (1@Fin 2), b = (1@Fin 3)}
+> , {a = (0@Fin 2), b = (2@Fin 3)}
+> , {a = (1@Fin 2), b = (2@Fin 3)} ]@{a: Fin 2 & b: Fin 3}
 
 -- TODO: this still causes an error
 -- :p for i:(Fin 6). recordsAsIndices.((ordinal i) @ _)

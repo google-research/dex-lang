@@ -26,20 +26,22 @@ library dex-resources
   build-depends:       base, bytestring, file-embed
   hs-source-dirs:      src/resources
   default-language:    Haskell2010
+  default-extensions:  CPP
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, PPrint, Array, Algebra,
-                       Actor, Cat, Flops, Embed, Serialize, Optimize,
-                       RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
-                       Autodiff, Interpreter, Logging, PipeRPC, CUDA
+                       Parser, Util, Imp, Imp.Embed, Imp.Optimize,
+                       PPrint, Algebra, Parallelize, Optimize, Serialize
+                       Actor, Cat, Flops, Embed,
+                       RenderHtml, LiveOutput, Simplify, TopLevel,
+                       Autodiff, Interpreter, Logging, PipeRPC, CUDA,
+                       LLVM.JIT, LLVM.Shims
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
                        aeson, megaparsec >=8.0, warp, wai, filepath,
                        parser-combinators, http-types, prettyprinter, text,
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
-                       diagrams-rasterific, JuicyPixels, transformers,
-                       base64-bytestring, vector, directory, mmap, unix,
+                       transformers, directory, mmap, unix,
                        process, primitive, store, dex-resources, temporary,
   if !os(darwin)
     exposed-modules:   Resources
@@ -54,6 +56,7 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
+  pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
     extra-libraries:   cuda
@@ -73,7 +76,7 @@ executable dex
     build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src
-  default-extensions:  CPP
+  default-extensions:  CPP, LambdaCase
   if flag(optimized)
     ghc-options:       -O3
   else
@@ -85,7 +88,8 @@ foreign-library Dex
   build-depends:       base, dex, dex-resources, mtl
   hs-source-dirs:      src/foreign
   c-sources:           src/foreign/rts.c
-  ghc-options:         -Wall
+  cc-options:          -std=c11 -fPIC
+  ghc-options:         -Wall -fPIC
   default-language:    Haskell2010
   default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase
   if flag(optimized)

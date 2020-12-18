@@ -6,13 +6,14 @@
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE IncoherentInstances #-}  -- due to `ConRef`
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, pprintList, printLitBlock, asStr,
                assertEq, ignoreExcept, PrecedenceLevel(..), DocPrec,
                PrettyPrec(..), atPrec, toJSONStr) where
 
-import Data.Aeson hiding (Result, Null, Value, Array)
+import Data.Aeson hiding (Result, Null, Value)
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
@@ -20,16 +21,19 @@ import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.ByteString.Lazy.Char8 as B
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, unpack, uncons, unsnoc)
 import System.Console.ANSI
+import System.IO.Unsafe
+import System.Environment
 import Numeric
 
 import Env
-import Array
 import Syntax
+import Util (enumerate)
 
 -- Specifies what kinds of operations are allowed to be printed at this point.
 -- Printing at AppPrec level means that applications can be printed
@@ -56,8 +60,12 @@ pprint x = asStr $ pretty x
 pprintList :: Pretty a => [a] -> String
 pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
 
+layout :: LayoutOptions
+layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
+  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
+
 asStr :: Doc ann -> String
-asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc
+asStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
 
 p :: Pretty a => a -> Doc ann
 p = pretty
@@ -108,15 +116,24 @@ instance PrettyPrec BaseType where
   prettyPrec b = case b of
     Scalar sb -> prettyPrec sb
     Vector sb -> atPrec ArgPrec $ "<" <> p vectorWidth <+> "x" <+> p sb <> ">"
+    PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
+
+instance Pretty PtrOrigin where
+  pretty AllocatedPtr = "a"
+  pretty DerivedPtr   = "d"
+
+instance Pretty AddressSpace where
+  pretty Stack    = "stack"
+  pretty (Heap d) = p (show d)
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
   prettyPrec sb = atPrec ArgPrec $ case sb of
     Int64Type   -> "Int64"
     Int32Type   -> "Int32"
-    Int8Type    -> "Int8"
     Float64Type -> "Float64"
     Float32Type -> "Float32"
+    Word8Type   -> "Word8"
 
 printDouble :: Double -> Doc ann
 printDouble x = p (double2Float x)
@@ -125,9 +142,10 @@ instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
   prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
-  prettyPrec (Int8Lit    x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ p x
+  prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
+  prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty Block where
@@ -143,8 +161,8 @@ instance PrettyPrec Expr where
     atPrec AppPrec $ pApp f <+> pArg x
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For dir (Lam lamExpr))) =
-    atPrec LowestPrec $ dirStr dir <+> prettyLamHelper lamExpr (PrettyFor dir)
+  prettyPrec (Hof (For ann (Lam lamExpr))) =
+    atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
 
@@ -183,8 +201,6 @@ instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
-    CharType       -> atPrec ArgPrec "Char"
-    ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
     PairType a b  -> atPrec ArgPrec $ align $ group $
       parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
@@ -199,44 +215,47 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
         high' = case high of InclusiveLim x -> pApp x
                              ExclusiveLim x -> "<" <> pApp x
                              Unlimited      -> ""
-    RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
+    ParIndexRange n _ _ -> atPrec ArgPrec $ "{" <> pLowest n <> "}"
+    RefType (Just h) a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
+    RefType Nothing a  -> atPrec AppPrec $ pAppArg "Ref" [a]
     TypeKind -> atPrec ArgPrec "Type"
     EffectRowKind -> atPrec ArgPrec "EffKind"
     LabeledRowKindTC -> atPrec ArgPrec "Fields"
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
-instance {-# OVERLAPPING #-} Pretty (PrimCon Atom) where pretty = prettyFromPrettyPrec
+instance Pretty (PrimCon Atom) where pretty = prettyFromPrettyPrec
 
 instance PrettyPrec e => PrettyPrec (PrimCon e) where
   prettyPrec = prettyPrecPrimCon
 
-instance {-# OVERLAPPING #-} PrettyPrec (PrimCon Atom) where
-  prettyPrec con = case (Con con) of
-    CharLit c -> atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral c
-    _         -> prettyPrecPrimCon con
-
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
-  CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
-  ArrayLit _ array -> atPrec ArgPrec $ p array
   PairCon x y -> atPrec ArgPrec $ align $ group $
     parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
-  Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
-  AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"
+  IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
+  IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
+  ParIndexCon ty i ->
+    atPrec LowestPrec $ pApp i <> "@" <> pApp ty
+  IndexSliceVal ty n i ->
+    atPrec LowestPrec $ "IndexSlice" <+> pApp ty <+> pApp n <+> pApp i
+  BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
+  TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
+  ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
+  RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
     PrimEffect ref (MPut val ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
     PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
-    ArrayOffset arr idx off -> atPrec LowestPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pLowest idx)
-    ArrayLoad arr       -> atPrec AppPrec $ pAppArg "load" [arr]
+    PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
+    PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
     RecordCons items rest ->
       prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
     RecordSplit types val -> atPrec AppPrec $
@@ -252,7 +271,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For dir lam -> atPrec LowestPrec $ dirStr dir <+> pArg lam
+    For ann lam -> atPrec LowestPrec $ forStr ann <+> pArg lam
     _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty a => Pretty (VarP a) where
@@ -272,7 +291,6 @@ instance Pretty Decl where
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 prettyPiTypeHelper :: PiType -> Doc ann
 prettyPiTypeHelper (Abs binder (arr, body)) = let
@@ -284,7 +302,7 @@ prettyPiTypeHelper (Abs binder (arr, body)) = let
     _ -> pLowest body
   in prettyBinder <> (group $ line <> p arr <+> prettyBody)
 
-data PrettyLamType = PrettyLam Arrow | PrettyFor Direction deriving (Eq)
+data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: LamExpr -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
@@ -296,8 +314,8 @@ prettyLamHelper lamExpr lamType = let
         | lamType == PrettyLam arr' ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
-      Block Empty (Hof (For dir (Lam next)))
-        | lamType == PrettyFor dir ->
+      Block Empty (Hof (For ann (Lam next)))
+        | lamType == PrettyFor ann ->
             let (binders', block) = rec next False
             in (thisOne <> binders', block)
       _ -> (thisOne <> punctuation, body')
@@ -342,12 +360,60 @@ instance PrettyPrec Atom where
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
+    DataConRef _ params args -> atPrec AppPrec $
+      "DataConRef" <+> p params <+> p args
+    BoxedRef b ptr size body -> atPrec AppPrec $
+      "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
+    ProjectElt idxs x -> prettyProjection idxs x
+
+instance Pretty DataConRefBinding where pretty = prettyFromPrettyPrec
+instance PrettyPrec DataConRefBinding where
+  prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
 
 fromInfix :: Text -> Maybe Text
 fromInfix t = do
   ('(', t') <- uncons t
   (t'', ')') <- unsnoc t'
   return t''
+
+prettyProjection :: NE.NonEmpty Int -> Var -> DocPrec ann
+prettyProjection idxs (name :> ty) = prettyPrec uproj where
+  -- Builds a source expression that performs the given projection.
+  uproj = UApp (PlainArrow ()) (nosrc ulam) (nosrc uvar)
+  ulam = ULam (upat, Nothing) (PlainArrow ()) (nosrc $ UVar $ target :> ())
+  uvar = UVar $ name :> ()
+  (_, upat, target) = buildProj idxs
+
+  buildProj :: NE.NonEmpty Int -> (Type, UPat, Name)
+  buildProj (i NE.:| is) = let
+    -- Lazy Haskell trick: refer to `target` even though this function is
+    -- responsible for setting it!
+    (ty', pat', eltName) = case NE.nonEmpty is of
+      Just is' -> let (x, y, z) = buildProj is' in (x, y, Just z)
+      Nothing -> (ty, nosrc $ UPatBinder $ Bind $ target :> (), Nothing)
+    in case ty' of
+      TypeCon def params -> let
+        [DataConDef conName bs] = applyDataDefParams def params
+        b = toList bs !! i
+        pats = (\(j,_)-> if i == j then pat' else uignore) <$> enumerate bs
+        hint = case b of
+          Bind (n :> _) -> n
+          Ignore _ -> Name SourceName "elt" 0
+        in ( binderAnn b, nosrc $ UPatCon conName pats, fromMaybe hint eltName)
+      RecordTy (NoExt types) -> let
+        ty'' = toList types !! i
+        pats = (\(j,_)-> if i == j then pat' else uignore) <$> enumerate types
+        (fieldName, _) = toList (reflectLabels types) !! i
+        hint = Name SourceName (fromString fieldName) 0
+        in (ty'', nosrc $ UPatRecord $ NoExt pats, fromMaybe hint eltName)
+      PairTy x _ | i == 0 ->
+        (x, nosrc $ UPatPair pat' uignore, fromMaybe "a" eltName)
+      PairTy _ y | i == 1 ->
+        (y, nosrc $ UPatPair uignore pat', fromMaybe "b" eltName)
+      _ -> error "Bad projection"
+
+  nosrc = WithSrc Nothing
+  uignore = nosrc $ UPatBinder $ Ignore ()
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -391,81 +457,76 @@ instance Pretty IExpr where
 
 instance PrettyPrec IExpr where prettyPrec = atPrec ArgPrec . pretty
 
-instance Pretty IType where
-  pretty (IRefType t) = "Ref" <+> (parens $ p t)
-  pretty (IValType t) = p t
-  pretty IVoidType = "Void"
+instance Pretty ImpDecl where
+  pretty (ImpLet [] instr) = p instr
+  pretty (ImpLet [b] instr) = p b <+> "=" <+> p instr
+  pretty (ImpLet bs instr) = p bs <+> "=" <+> p instr
 
-instance PrettyPrec IType where prettyPrec = atPrec ArgPrec . pretty
+instance Pretty IFunType where
+  pretty (IFunType cc argTys retTys) =
+    "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
 
-instance Pretty instr => Pretty (IStmt instr) where
-  pretty (IInstr (Ignore _, instr)) = p instr
-  pretty (IInstr (b       , instr)) = p b <+> "=" <+> p instr
-  pretty (IFor d i n block)         = dirStr d <+> p i <+> "<" <+> p n <>
-                                      nest 4 (hardline <> p block)
-  pretty (IWhile (cond, mcExpr) body) = "while" <+>
-                                        nest 2 condDoc <+> "do" <>
-                                        nest 4 (hardline <> p body)
-    where condDoc = case mcExpr of
-                      Just cExpr -> hardline <> p cond <> line <> p cExpr
-                      Nothing    -> "??"
+instance Pretty CallingConvention where
+  pretty = p . show
+
+instance Pretty ImpFunction where
+  pretty (ImpFunction (f:>IFunType cc _ _) bs body) =
+    "def" <+> p f <+> p cc <+> p bs
+    <> nest 2 (hardline <> p body) <> hardline
+  pretty (FFIFunction f) = p f
+
+instance Pretty ImpInstr where
+  pretty (IFor a i n block) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
+                                nest 4 (hardline <> p block)
+  pretty (IWhile cond body) = "while" <+>
+                                  nest 2 (p cond) <+> "do" <>
+                                  nest 4 (hardline <> p body)
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (IQueryParallelism f s) = "queryParallelism" <+> p (varName f) <+> p s
+  pretty (ILaunch f size args) =
+    "launch" <+> p (varName f) <+> p size <+> spaced args
+  pretty (IPrimOp op)     = pLowest op
+  pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
+  pretty (Store dest val) = "store" <+> p dest <+> p val
+  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
+  pretty (Free ptr)       = "free"  <+> p ptr
+  pretty ISyncWorkgroup   = "syncWorkgroup"
+  pretty IThrowError      = "throwError"
+  pretty (ICall f args)   = "call" <+> p f <+> p args
 
-instance Pretty ImpFunction where
-  pretty (ImpFunction vsOut vsIn body) =
-                   "in:        " <> p vsIn
-    <> hardline <> "out:       " <> p vsOut
-    <> hardline <> p body
-
-instance Pretty ImpInstr where
-  pretty (IPrimOp op)            = pLowest op
-  pretty (ICastOp t x)           = "cast"  <+> p x <+> "to" <+> p t
-  pretty (Load ref)              = "load"  <+> p ref
-  pretty (Store dest val)        = "store" <+> p dest <+> p val
-  pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr lidx t)   = p expr  <+> "++" <+> p lidx <+> (parens $ "coerced to:" <+> p t)
-  pretty (Free (v:>_))           = "free"  <+> p v
-  pretty IThrowError = "throwError"
-
-instance Pretty k => Pretty (MDImpFunction k) where
-  pretty (MDImpFunction vsOut vsIn body) =
-                   "in:        " <> p vsIn
-    <> hardline <> "out:       " <> p vsOut
-    <> hardline <> p body
-
-instance Pretty k => Pretty (MDImpInstr k) where
-  pretty (MDLaunch size args kernel) = "launch_kernel" <+> p size <+> p args <> nest 2 (hardline <> p kernel)
-  pretty (MDAlloc t s)    = "device_alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (MDFree v)       = "free" <+> p v
-  pretty (MDLoadScalar v) = "device_load" <+> p v
-  pretty (MDStoreScalar v x) = "device_store" <+> p v <+> p x
-  pretty (MDHostInstr instr) = pretty instr
-
-instance Pretty ImpKernel where
-  pretty (ImpKernel args idxVar kernel) = parens (p idxVar <+> p args) <> nest 2 (hardline <> p kernel)
-
-dirStr :: Direction -> Doc ann
-dirStr Fwd = "for"
-dirStr Rev = " rof"
+forStr :: ForAnn -> Doc ann
+forStr (RegularFor Fwd) = "for"
+forStr (RegularFor Rev) = "rof"
+forStr ParallelFor      = "pfor"
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 
+prettyDuration :: Double -> Doc ann
+prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
+  where (mult, unit) =      if d >= 1    then (1  , "s")
+                       else if d >= 1e-3 then (1e3, "ms")
+                       else if d >= 1e-6 then (1e6, "us")
+                       else                   (1e9, "ns")
+
 instance Pretty Output where
   pretty (TextOut s) = pretty s
-  pretty (BenchResult name compileTime runTime) =
-    benchName <>
-    "\nCompile time: " <> p (showFFloat (Just 3) compileTime "") <+> "s" <>
-    "\nRun time:     " <> p (showFFloat (Just 3) runTime     "") <+> "s"
+  pretty (HtmlOut _) = "<html output>"
+  pretty (ExportedFun _ _) = ""
+  pretty (BenchResult name compileTime runTime stats) =
+    benchName <> hardline <>
+    "Compile time: " <> prettyDuration compileTime <> hardline <>
+    "Run time:     " <> prettyDuration runTime <+>
+    (case stats of Just runs -> "\t" <> parens ("based on" <+> p runs <+> "runs")
+                   Nothing   -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
-  pretty (HeatmapOut _ _ _ _) = "<graphical output>"
-  pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
-  pretty (EvalTime    t) = "Eval (s):  " <+> p t
+  pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
   pretty (MiscLog s) = "===" <+> p s <+> "==="
 
@@ -530,7 +591,8 @@ instance PrettyPrec UExpr' where
                             <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UPi a arr b -> atPrec LowestPrec $ p a <+> pretty arr <+> pLowest b
+    UPi binder arr ty -> atPrec LowestPrec $
+      prettyUPiBinder binder <+> pretty arr <+> pLowest ty
     UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
                                                          <> pLowest body
     UHole -> atPrec ArgPrec "_"
@@ -553,8 +615,7 @@ instance PrettyPrec UExpr' where
     UVariant labels label value -> prettyVariant labels label value
     UVariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
     UVariantLift labels value -> prettyVariantLift labels value
-    UIntLit  v -> atPrec ArgPrec $ p v
-    UCharLit v -> atPrec ArgPrec $ p v
+    UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
 
 instance Pretty UAlt where
@@ -577,18 +638,25 @@ instance Pretty UConDef where
 instance Pretty UPat' where pretty = prettyFromPrettyPrec
 instance PrettyPrec UPat' where
   prettyPrec pat = case pat of
-    UPatBinder x -> atPrec ArgPrec $ p x
+    UPatBinder x -> atPrec ArgPrec $ prettyBinderNoAnn x
     UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
     UPatRecord pats -> prettyExtLabeledItems pats (line' <> ",") " ="
     UPatVariant labels label value -> prettyVariant labels label value
     UPatVariantLift labels value -> prettyVariantLift labels value
+    UPatTable pats -> atPrec ArgPrec $ p pats
 
 prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where
   annDoc = case ann of
     Just ty -> ":" <> pApp ty
+    Nothing -> mempty
+
+prettyUPiBinder :: UPiPatAnn -> Doc ann
+prettyUPiBinder (pat, ann) = patDoc <> p ann where
+  patDoc = case pat of
+    Just pat' -> pApp pat' <> ":"
     Nothing -> mempty
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
@@ -618,13 +686,6 @@ instance Pretty eff => Pretty (ArrowP eff) where
     ImplicitArrow  -> "?->"
     ClassArrow     -> "?=>"
 
-instance Pretty Array where
-  pretty a = p b <> "[" <> p size <> "]"
-    where (size, b) = arrayType a
-
-instance Pretty ArrayRef where
-  pretty (ArrayRef (size, b) ptr) = p b <> "[" <> p size <> "]@" <> (pretty $ show ptr)
-
 instance PrettyPrec () where prettyPrec = atPrec ArgPrec . pretty
 instance PrettyPrec Name where prettyPrec = atPrec ArgPrec . pretty
 
@@ -634,8 +695,15 @@ instance PrettyPrec a => PrettyPrec [a] where
 instance Pretty a => Pretty (Nest a) where
   pretty xs = pretty $ toList xs
 
-instance {-# OVERLAPPING #-} Pretty instr => Pretty (IProg instr) where
-  pretty prog = vcat $ toList $ pretty <$> prog
+instance Pretty ImpModule where
+  pretty (ImpModule fs) = vcat (map p fs)
+
+instance Pretty ImpBlock where
+  pretty (ImpBlock statements results) =
+    (vcat $ map pretty $ toList statements) <> resultDoc
+    where resultDoc = case results of
+                       [] -> ""
+                       _  -> hardline <> "return" <+> p results
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =
@@ -680,7 +748,7 @@ instance ToJSON Result where
         Left e   -> ["error" .= String (fromString $ pprint e)]
         Right () -> []
       outMaps = flip foldMap outs $ \case
-        BenchResult name compileTime runTime ->
+        BenchResult name compileTime runTime _ ->
           [ "bench_name"   .= toJSON name
           , "compile_time" .= toJSON compileTime
           , "run_time"     .= toJSON runTime ]

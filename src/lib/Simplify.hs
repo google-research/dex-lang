@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Simplify (simplifyModule, simplifyCase, evalSimplified) where
+module Simplify (simplifyModule, simplifyCase, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -40,17 +40,33 @@ simplifyModule scope (Module Core decls bindings) = do
   Module Simp (toNest declsNotDone) (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
-evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
-evalSimplified (Module Simp Empty bindings) _ =
-  return $ Module Evaluated Empty bindings
-evalSimplified (Module Simp decls bindings) evalBlock = do
+splitSimpModule :: TopEnv -> Module -> (Block, Abs Binder Module)
+splitSimpModule scope m = do
+  let (Module Simp decls bindings) = hoistDepDataCons scope m
   let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
   let block = Block decls $ Atom $ mkConsList $ map Var localVars
-  vals <- (ignoreExcept . fromConsList) <$> evalBlock block
-  return $ Module Evaluated Empty $
-    scopelessSubst (newEnv localVars vals) bindings
-evalSimplified (Module _ _ _) _ =
-  error "Not a simplified module"
+  let (Abs b (decls', bindings')) =
+        fst $ flip runEmbed scope $ buildAbs (Bind ("result":>getType block)) $
+          \result -> do
+             results <- unpackConsList result
+             substEmbed (newEnv localVars results) bindings
+  (block, Abs b (Module Evaluated decls' bindings'))
+
+-- Bundling up the free vars in a result with a dependent constructor like
+-- `AsList n xs` doesn't give us a well typed term. This is a short-term
+-- workaround.
+hoistDepDataCons :: TopEnv -> Module -> Module
+hoistDepDataCons scope (Module Simp decls bindings) =
+  Module Simp decls' bindings'
+  where
+    (bindings', (_, decls')) = flip runEmbed scope $ do
+      mapM_ emitDecl decls
+      forM bindings $ \(ty, info) -> case info of
+        LetBound ann x | isData ty -> do x' <- emit x
+                                         return (ty, LetBound ann $ Atom x')
+        _ -> return (ty, info)
+hoistDepDataCons _ (Module _ _ _) =
+  error "Should only be hoisting data cons on core-Simp IR"
 
 simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
 simplifyDecls Empty = return mempty
@@ -60,19 +76,23 @@ simplifyDecls (Nest decl rest) = do
   return (substEnv <> substEnv')
 
 simplifyDecl :: Decl -> SimplifyM SubstEnv
+simplifyDecl (Let NoInlineLet (Bind (name:>_)) expr) = do
+  x <- simplifyStandalone expr
+  emitTo name NoInlineLet (Atom x) $> mempty
 simplifyDecl (Let ann b expr) = do
   x <- simplifyExpr expr
   let name = binderNameHint b
   if isGlobalBinder b
     then emitTo name ann (Atom x) $> mempty
     else return $ b @> x
-simplifyDecl (Unpack bs expr) = do
-  x <- simplifyExpr expr
-  xs <- case x of
-    DataCon _ _ _ xs -> return xs
-    Record items -> return $ toList items
-    _ -> emitUnpack $ Atom x
-  return $ newEnv bs xs
+
+simplifyStandalone :: Expr -> SimplifyM Atom
+simplifyStandalone (Atom (LamVal b body)) = do
+  b' <- mapM substEmbedR b
+  buildLam b' PureArrow $ \x ->
+    extendR (b@>x) $ simplifyBlock body
+simplifyStandalone block =
+  error $ "@noinline decorator applied to non-function" ++ pprint block
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do
@@ -88,14 +108,13 @@ simplifyAtom atom = case atom of
       Just x -> return $ deShadow x scope
       Nothing -> case envLookup scope v of
         Just (_, info) -> case info of
-          LetBound _ (Atom x) -> dropSub $ simplifyAtom x
+          LetBound ann (Atom x) | ann /= NoInlineLet -> dropSub $ simplifyAtom x
           _ -> substEmbedR atom
         _   -> substEmbedR atom
   -- Tables that only contain data aren't necessarily getting inlined,
   -- so this might be the last chance to simplify them.
   TabVal _ _ -> do
-    topScope <- getScope
-    case isData topScope (getType atom) of
+    case isData (getType atom) of
       True -> do
         ~(tab', Nothing) <- simplifyLam atom
         return tab'
@@ -103,20 +122,18 @@ simplifyAtom atom = case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbedR atom
   Pi  _ -> substEmbedR atom
-  Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
-  Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM substEmbedR tc
+  TC tc -> TC <$> mapM simplifyAtom tc
   Eff eff -> Eff <$> substEmbedR eff
-  TypeCon def params          -> TypeCon def <$> substEmbedR params
-  DataCon def params con args -> DataCon def <$> substEmbedR params
+  TypeCon def params          -> TypeCon def <$> mapM simplifyAtom params
+  DataCon def params con args -> DataCon def <$> mapM simplifyAtom params
                                              <*> pure con <*> mapM simplifyAtom args
   Record items -> Record <$> mapM simplifyAtom items
-  RecordTy items -> RecordTy <$> substEmbedR items
+  RecordTy items -> RecordTy <$> simplifyExtLabeledItems items
   Variant types label i value -> Variant <$>
     substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
-  VariantTy items -> VariantTy <$> substEmbedR items
-  LabeledRow items -> LabeledRow <$> substEmbedR items
+  VariantTy items -> VariantTy <$> simplifyExtLabeledItems items
+  LabeledRow items -> LabeledRow <$> simplifyExtLabeledItems items
   ACase e alts rty   -> do
     e' <- substEmbedR e
     case simplifyCase e' alts of
@@ -129,7 +146,15 @@ simplifyAtom atom = case atom of
             Block Empty (Atom r) -> return $ Abs bs'' r
             _                    -> error $ "Nontrivial block in ACase simplification"
         ACase e' alts' <$> (substEmbedR rty)
-  where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
+  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
+  BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
+  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
+
+simplifyExtLabeledItems :: ExtLabeledItems Atom Name -> SimplifyM (ExtLabeledItems Atom Name)
+simplifyExtLabeledItems (Ext items ext) = do
+    items' <- mapM simplifyAtom items
+    ext' <- substEmbedR (Ext NoLabeledItems ext)
+    return $ prefixExtLabeledItems items' ext'
 
 simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
 simplifyCase e alts = case e of
@@ -181,8 +206,7 @@ simplifyLams numArgs lam = do
 
 defunBlock :: Scope -> Block -> SimplifyM (Either Atom (AtomFac SimplifyM))
 defunBlock localScope block = do
-  topScope <- getScope
-  if isData topScope (getType block)
+  if isData (getType block)
     then Left <$> simplifyBlock block
     else do
       (result, (localScope', decls)) <- embedScoped $ simplifyBlock block
@@ -217,7 +241,6 @@ separateDataComponent localVars v = do
   return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
   where
     rec atom = do
-      topScope <- getScope
       let atomTy = getType atom
       case atomTy of
         PairTy _ _ -> do
@@ -231,9 +254,9 @@ separateDataComponent localVars v = do
           let atomf = \(RNode [xdat', ydat']) (RNode [xnondat', ynondat']) ->
                 PairVal (xatomf xdat' xnondat') (yatomf ydat' ynondat')
           return (RNode [xdat, ydat], (RNode [xctx, yctx], recon), atomf)
-        UnitTy                     -> return (RNil      , (RNil, nilRecon), \RNil      RNil      -> UnitVal)
-        _ | isData topScope atomTy -> return (RLeaf atom, (RNil, nilRecon), \(RLeaf a) RNil      -> a)
-        _                          -> return (RNil      , nonDataRecon    , \RNil      (RLeaf a) -> a)
+        UnitTy            -> return (RNil      , (RNil, nilRecon), \RNil      RNil      -> UnitVal)
+        _ | isData atomTy -> return (RLeaf atom, (RNil, nilRecon), \(RLeaf a) RNil      -> a)
+        _                 -> return (RNil      , nonDataRecon    , \RNil      (RLeaf a) -> a)
         where
           nilRecon = \_ -> return RNil
           nonDataRecon = (RNode $ fmap (RLeaf . Var) vs, recon)
@@ -296,8 +319,7 @@ simplifyExpr expr = case expr of
     case simplifyCase e' alts of
       Just (env, body) -> extendR env $ simplifyBlock body
       Nothing -> do
-        topScope <- getScope
-        if isData topScope resultTy'
+        if isData resultTy'
           then do
             alts' <- forM alts $ \(Abs bs body) -> do
               bs' <-  mapM (mapM substEmbedR) bs
@@ -356,8 +378,6 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Fst (PairVal x _) -> return x
-  Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
     RecordTy (NoExt rightTys) -> do
       -- Unpack, then repack with new arguments (possibly in the middle).
@@ -426,6 +446,7 @@ simplifyHof hof = case hof of
     ~(fT', Nothing) <- simplifyLam fT
     ~(fS', Nothing) <- simplifyLam fS
     emit $ Hof $ Tile d fT' fS'
+  PTileReduce _ _ -> error "Unexpected PTileReduce"
   While cond body -> do
     ~(cond', Nothing) <- simplifyLam cond
     ~(body', Nothing) <- simplifyLam body
@@ -457,7 +478,3 @@ simplifyHof hof = case hof of
   where
     applyRecon Nothing x = return x
     applyRecon (Just f) x = f x
-
-
-dropSub :: SimplifyM a -> SimplifyM a
-dropSub m = local mempty m

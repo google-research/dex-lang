@@ -4,6 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#include <cfloat>
+#include <cinttypes>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -11,9 +13,13 @@
 #include <thread>
 #include <vector>
 
+#include <png.h>
+#include <cstring>
+#include <fstream>
+
 #ifdef DEX_CUDA
 #include <cuda.h>
-#endif
+#endif // DEX_CUDA
 
 extern "C" {
 
@@ -138,24 +144,108 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-void dex_parallel_for(char *function_ptr, int64_t size, char **args) {
-  auto function = reinterpret_cast<void (*)(int64_t, int64_t, char**)>(function_ptr);
-  int64_t nthreads = std::thread::hardware_concurrency();
-  if (size < nthreads) {
-    nthreads = size;
+void showHex(char **resultPtr, int x) {
+  auto p = reinterpret_cast<char*>(malloc_dex(100));  // TODO: something better!
+  auto n = sprintf(p, "%02x", x);
+  auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char**>(  resultPtr[1]);
+  *result1Ptr = n;
+  *result2Ptr = p;
+}
+
+void showFloat(char **resultPtr, float x) {
+  auto p = reinterpret_cast<char*>(malloc_dex(100));  // TODO: something better!
+  auto n = sprintf(p, "%.4f", x);
+  auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char**>(  resultPtr[1]);
+  *result1Ptr = n;
+  *result2Ptr = p;
+}
+
+void showInt(char **resultPtr, int32_t x) {
+  auto p = reinterpret_cast<char*>(malloc_dex(100));  // TODO: something better!
+  auto n = sprintf(p, "%d", x);
+  auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char**>(  resultPtr[1]);
+  *result1Ptr = n;
+  *result2Ptr = p;
+}
+
+void doubleVec(char **resultPtr, int32_t n, float* xs) {
+  auto p1 = reinterpret_cast<float*>(malloc_dex(4 * n));
+  auto p2 = reinterpret_cast<float*>(malloc_dex(4 * n));
+  for (int i=0;i<n;++i) {
+    p1[i] = xs[i] * 2;
+    p2[i] = xs[i] * 3;
   }
-  std::vector<std::thread> threads(nthreads);
-  int64_t chunk_size = size / nthreads;
-  for (int64_t t = 0; t < nthreads; ++t) {
-    int64_t start = t * chunk_size;
-    int64_t end = t == nthreads - 1 ? size : (t + 1) * chunk_size;
-    threads[t] = std::thread([function, args, start, end]() {
-      function(start, end, args);
-    });
-  }
-  for (auto& thread : threads) {
-    thread.join();
-  }
+  auto result1Ptr = reinterpret_cast<float**>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<float**>(resultPtr[1]);
+  *result1Ptr = p1;
+  *result2Ptr = p2;
+}
+
+void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) {
+    png_image img;
+    memset(&img, 0, sizeof(img));
+    img.version = PNG_IMAGE_VERSION;
+    img.opaque = NULL;
+    img.width = width;
+    img.height = height;
+    img.format = PNG_FORMAT_RGB;
+    img.flags = 0;
+    img.colormap_entries = 0;
+
+    const int num_pixels = width * height;
+    png_alloc_size_t num_bytes = 0;
+    png_image_write_to_memory(&img, NULL, &num_bytes, 0, (void*)pixels, 0, NULL);
+    void* out_buffer = malloc(num_bytes);
+    png_image_write_to_memory(&img, out_buffer, &num_bytes, 0, (void*)pixels, 0, NULL);
+
+    auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+    auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
+    *result1Ptr = num_bytes;
+    *result2Ptr = out_buffer;
+}
+
+// The string buffer size used for converting integer and floating-point types.
+static constexpr int showStringBufferSize = 32;
+
+void showInt32(char **resultPtr, int32_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId32, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showInt64(char **resultPtr, int64_t x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length = snprintf(buffer, showStringBufferSize, "%" PRId64, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showFloat32(char **resultPtr, float x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length =
+      snprintf(buffer, showStringBufferSize, "%.*g", __FLT_DECIMAL_DIG__, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
+}
+
+void showFloat64(char **resultPtr, double x) {
+  auto buffer = reinterpret_cast<char *>(malloc_dex(showStringBufferSize));
+  auto length =
+      snprintf(buffer, showStringBufferSize, "%.*g", __DBL_DECIMAL_DIG__, x);
+  auto result1Ptr = reinterpret_cast<int32_t *>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<char **>(resultPtr[1]);
+  *result1Ptr = length;
+  *result2Ptr = buffer;
 }
 
 #ifdef DEX_CUDA
@@ -184,10 +274,8 @@ void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
 
 extern "C" {
 
-void* load_cuda_array(void* device_ptr, int64_t bytes) {
-  void* host_ptr = malloc_dex(bytes);
+void load_cuda_array(void* host_ptr, void* device_ptr, int64_t bytes) {
   CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
-  return host_ptr;
 }
 
 void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
@@ -198,14 +286,40 @@ void dex_cuMemcpyHtoD(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyHtoD, reinterpret_cast<CUdeviceptr>(device_ptr), host_ptr, bytes);
 }
 
-void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {
+void dex_queryParallelismCUDA(const char* kernel_func, int64_t iters,
+                              int32_t* numWorkgroups, int32_t* workgroupSize) {
+  if (iters == 0) {
+    *numWorkgroups = 0;
+    *workgroupSize = 0;
+    return;
+  }
+  // TODO: Use the occupancy calculator, or at least use a fixed number of blocks?
+  const int64_t fixedWgSize = 1024;
+  *workgroupSize = fixedWgSize;
+  *numWorkgroups = std::min((iters + fixedWgSize - 1) / fixedWgSize, fixedWgSize);
+}
+
+void dex_loadKernelCUDA(const char* kernel_text, char** module_storage, char** kernel_storage) {
+  if (*kernel_storage) { return; }
+  CUmodule *module = reinterpret_cast<CUmodule*>(module_storage);
+  CHECK(cuModuleLoadData, module, kernel_text);
+  CUfunction *kernel = reinterpret_cast<CUfunction*>(kernel_storage);
+  CHECK(cuModuleGetFunction, kernel, *module, "kernel");
+}
+
+void dex_unloadKernelCUDA(char** module_storage, char** kernel_storage) {
+  CUmodule *module = reinterpret_cast<CUmodule*>(module_storage);
+  CUfunction *kernel = reinterpret_cast<CUfunction*>(kernel_storage);
+  CHECK(cuModuleUnload, *module);
+  *module = nullptr;
+  *kernel = nullptr;
+}
+
+void dex_cuLaunchKernel(char* kernel_func, int64_t iters, char** args) {
   if (iters == 0) return;
-  CUmodule module;
-  CHECK(cuModuleLoadData, &module, kernel_text);
-  CUfunction kernel;
-  CHECK(cuModuleGetFunction, &kernel, module, "kernel");
-  const int64_t block_dim_x = 256;
-  const int64_t grid_dim_x = (iters + block_dim_x - 1) / block_dim_x;
+  CUfunction kernel = reinterpret_cast<CUfunction>(kernel_func);
+  int32_t block_dim_x, grid_dim_x;
+  dex_queryParallelismCUDA(kernel_func, iters, &grid_dim_x, &block_dim_x);
   CHECK(cuLaunchKernel, kernel,
                         grid_dim_x, 1, 1,               // grid size
                         block_dim_x, 1, 1,              // block size
@@ -213,7 +327,6 @@ void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {
                         CU_STREAM_LEGACY,               // stream
                         reinterpret_cast<void**>(args), // kernel arguments
                         nullptr);
-  CHECK(cuModuleUnload, module);
 }
 
 char* dex_cuMemAlloc(int64_t size) {
@@ -226,6 +339,10 @@ char* dex_cuMemAlloc(int64_t size) {
 void dex_cuMemFree(char* ptr) {
   if (!ptr) return;
   CHECK(cuMemFree, reinterpret_cast<CUdeviceptr>(ptr));
+}
+
+void dex_synchronizeCUDA() {
+  CHECK(cuStreamSynchronize, CU_STREAM_LEGACY);
 }
 
 void dex_ensure_has_cuda_context() {
@@ -242,6 +359,28 @@ void dex_ensure_has_cuda_context() {
 
 #undef CHECK
 
-#endif
+#endif // DEX_CUDA
+
+int32_t dex_queryParallelismMC(int64_t iters) {
+  int32_t nthreads = std::thread::hardware_concurrency();
+  if (iters < nthreads) {
+    nthreads = iters;
+  }
+  return nthreads;
+}
+
+void dex_launchKernelMC(char *function_ptr, int64_t size, char **args) {
+  auto function = reinterpret_cast<void (*)(int32_t, int32_t, char**)>(function_ptr);
+  int32_t nthreads = dex_queryParallelismMC(size);
+  std::vector<std::thread> threads(nthreads);
+  for (int32_t tid = 0; tid < nthreads; ++tid) {
+    threads[tid] = std::thread([function, args, tid, nthreads]() {
+      function(tid, nthreads, args);
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+}
 
 } // end extern "C"

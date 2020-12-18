@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Logging (Logger, runLogger, logThis, readLog) where
+module Logging (Logger, runLogger, execLogger, logThis, readLog) where
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -24,6 +24,9 @@ runLogger maybePath m = do
   ans <- m $ Logger log logFile
   logged <- liftIO $ readMVar log
   return (ans, logged)
+
+execLogger :: (Monoid l, MonadIO m) => Maybe FilePath -> (Logger l -> m a) -> m a
+execLogger maybePath m = fst <$> runLogger maybePath m
 
 logThis :: (Pretty l, Monoid l, MonadIO m) => Logger l -> l -> m ()
 logThis (Logger log maybeLogHandle) x = liftIO $ do

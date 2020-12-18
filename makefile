@@ -32,9 +32,15 @@ endif
 
 CFLAGS := -fPIC
 
+# CUDA
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
 STACK_FLAGS = --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
+endif
+
+# libpng
+ifneq (,$(wildcard /usr/local/include/png.h))
+CFLAGS := $(CFLAGS) -I/usr/local/include
 endif
 
 ifneq (,$(PREFIX))
@@ -71,22 +77,25 @@ build-python: build
 %.bc: %.cpp
 	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
 
-# --- running tets ---
+# --- running tests ---
 
 # TODO: re-enable linear-tests ad-tests include-test chol
-example-names = uexpr-tests adt-tests type-tests eval-tests \
+example-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
                 shadow-tests monad-tests \
-                ad-tests mandelbrot pi sierpinsky \
+                ad-tests mandelbrot pi sierpinski \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests \
                 mcmc record-variant-tests simple-include-test ctc raytrace \
-                isomorphisms
+                isomorphisms typeclass-tests complex-tests trig-tests \
+                ode-integrator linear_algebra fluidsim
 
 quine-test-targets = $(example-names:%=run-%)
 
+update-targets = $(example-names:%=update-%)
+
 doc-names = $(example-names:%=doc/%.html)
 
-tests: quine-tests repl-test
+tests: quine-tests repl-test export-tests
 
 quine-tests: $(quine-test-targets)
 
@@ -100,10 +109,28 @@ run-%: examples/%.dx build
 prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
 
+update-all: $(update-targets)
+
 update-%: export DEX_ALLOW_CONTRACTIONS=0
 update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
+
+run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
+run-gpu-tests: examples/gpu-tests.dx build
+	misc/check-quine $< $(dex) --backend LLVM-CUDA script --allow-errors
+
+update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
+update-gpu-tests: examples/gpu-tests.dx build
+	$(dex) --backend LLVM-CUDA script --allow-errors $< > $<.tmp
+	mv $<.tmp $<
+
+export-tests: export-test-scalar export-test-array
+
+export-test-%: build
+	$(dex) export examples/export/$*.dx examples/export/$*.o
+	$(CXX) -std=c++11 examples/export/$*.o examples/export/$*.cpp -o examples/export/$*
+	examples/export/$*
 
 jax-tests: build
 	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script
