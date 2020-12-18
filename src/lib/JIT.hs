@@ -33,7 +33,6 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
-import Data.List (concat)
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc

@@ -34,7 +34,6 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
 
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
