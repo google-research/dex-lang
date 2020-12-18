@@ -6,7 +6,7 @@ described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 Specifically, it's based on his unrolled ```lax.scan``` version.
 
-include "examples/plot.dx"
+include "plot.dx"
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.

@@ -1,6 +1,6 @@
 '# Sierpinski triangle ("chaos game")
 
-include "examples/plot.dx"
+include "plot.dx"
 
 update : n=>Point -> Key -> Point -> Point =
   \points key (x,y).

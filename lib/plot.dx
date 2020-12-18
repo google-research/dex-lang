@@ -1,7 +1,7 @@
 '# Plotting library
 
-include "examples/diagram.dx"
-include "examples/png.dx"
+include "diagram.dx"
+include "png.dx"
 
 data CompactSet a:Type =
   Interval a a

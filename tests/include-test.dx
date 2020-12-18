@@ -1,12 +1,12 @@
 
-include "examples/included.dx"
+include "included.dx"
 > 30
 > 40
 
 :p x
 > 10
 
-load dxo "examples/somedata.dxo" as dat
+load dxo "somedata.dxo" as dat
 
 :t dat
 > (Float, 2, (2=>(3=>Float)), (2=>(Int, Bool)))
@@ -27,7 +27,7 @@ load dxbo  "test-scratch/bin-data-dump.dxbo" as dat2
 load dxbo "not-a-file" as notData
 > IO error: not-a-file: openFile: does not exist (No such file or directory)
 
-load dxbo  "examples/bad-binary-file.dxbo" as badData
+load dxbo  "bad-binary-file.dxbo" as badData
 > IO error: unexpected number of buffers: [16,8] vs [8,8,8]
 > Validation error
 > Claimed header length: 128

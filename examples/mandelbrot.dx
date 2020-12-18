@@ -1,6 +1,6 @@
 '# Mandelbrot set
 
-include "examples/plot.dx"
+include "plot.dx"
 
 'Escape time algorithm
 

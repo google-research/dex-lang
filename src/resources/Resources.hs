@@ -12,4 +12,4 @@ dexrtBC :: B.ByteString
 dexrtBC = $(embedFile "src/lib/dexrt.bc")
 
 preludeSource :: String
-preludeSource = B.unpack $ $(embedFile "prelude.dx")
+preludeSource = B.unpack $ $(embedFile "lib/prelude.dx")
