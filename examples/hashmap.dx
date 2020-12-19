@@ -1,0 +1,227 @@
+' # Associative Collections
+Secretly this is actually an example on type-classes
+
+data Hashable a:Type = MkHashable (a->a->Bool) (Int->a->Int) -- isequal, hash
+
+' Like == but handles isequal(nan,nan) etc
+
+def isequal (d:Hashable a) ?=> (x:a) (y:a) : Bool = case d of MkHashable ieq _ -> ieq x y
+
+def ahash (d:Hashable a) ?=> (seed:Int) (x:a) : Int = case d of MkHashable _ hsh  -> hsh seed x
+
+thehash: Hashable a ?=> a->Int = ahash 0
+
+@instance Int32Hashable : Hashable Int32 = (MkHashable
+    (\a b. a==b)
+    (\seed x. I64ToI $ hash (IToI64 seed) x)
+)
+
+:p thehash 1
+
+:p isequal 1 1
+
+:p isequal 1 2
+
+@instance float32Hashable : Hashable Float32 = (MkHashable
+    (\a b. a==b || isnan a && isnan b)
+    (\seed x. 
+        -- because FToI actually just truncates to Integer it is bad for small floats
+        -- To combat that we compute a hash based on multiple scalings of x
+        -- This could be removed if we had a way to get at the raw bits directly
+        hash_step:Float->Int->Int = \scale seed. ahash seed $ (FToI (scale *  x))
+        hash_step 1000000.0 $ hash_step 100.0 $ hash_step 10.0 $ hash_step 1.0 seed))
+
+:p thehash 1.2
+
+:p thehash 1.0
+
+:p thehash 10.1
+
+:p thehash nan
+
+@instance CharHashable : Hashable Char = (MkHashable
+    (\a b. a==b)
+    (\seed x. ahash seed (codepoint x))
+)
+
+:p thehash 'a'
+
+--TODO: should not hash all elements just a few at start end and middle
+@instance TblHashable : Hashable t ?=> Hashable (n=>t) = (MkHashable
+    (\a b. all $ for i. isequal a.i b.i)
+    (\seed x. fold seed \i state. ahash state x.i)
+)
+
+:p thehash "abcdef"
+
+' # broken because https://github.com/google-research/dex-lang/issues/340
+-- should be a fallback for anything that doesn't have a better definition of its own
+```
+@instance FallbackHashable : Eq t ?=> Hashable t = (MkHashable
+    (\a b. a==b)
+    (\seed x. 1)  -- performance degrades to O(n) search 🤷
+)
+```
+```
+:p thehash (1, 2)
+:p thehash (10, 20)
+```
+
+' ## ListDict
+A fallback Associative Map, that performs end to end search.
+This is faster then a HashDict for sufficiently small collections, where the hash time dominates over the equality check time.
+Really we only need `isequal`, so perhaps that should be seperated out of `Hashable`.
+(The LittleDict design of pair of lists rather than list of pairs is probably faster as more SIMD friendly but causes weird errors)
+
+
+-- Can't require type-classes in type definitions?
+-- data ListDict : Hashable k ?=> k:Type v:Type =
+data ListDict k:Type v:Type =
+  AsListDict vals:(List (k&v))
+
+eg_listdict = AsListDict $ AsList _ [(10,'a'), (20, 'b'), (30, 'c')]
+
+:p eg_listdict
+
+def push (collectionL:List a) (datum:a) : List a =
+    (AsList n collection) = collectionL
+    neo_n = Fin (n+1)
+    AsList _  $ for i:neo_n. case (ordinal i < n) of
+        True -> collection.(ordinal i@(Fin n))
+        False -> datum
+
+:p push (AsList _ "abc") 'x'
+
+def tryGetListDict (_:Hashable k) ?=> (dict:ListDict k v) (key:k) : Maybe v =
+    (AsListDict (AsList _ vals)) = dict
+    fold Nothing \i state. 
+        case ((fst vals.i) `isequal` key) of
+            False -> state
+            True -> Just $ snd vals.i
+
+:p tryGetListDict eg_listdict 20
+
+
+:p tryGetListDict eg_listdict 21
+
+'store dict key val
+Stores the value in the dict at the key.
+Note that we never actually delete anything, and it grows without bounds
+This could be improved.
+
+def storeListDict (dict:ListDict k v) (key:k) (val:v) : ListDict k v =
+    (AsListDict list) = dict
+    pair = (key, val)
+    AsListDict (push list pair)
+
+
+eg_listdict2 = storeListDict eg_listdict 40 'x'
+
+:p eg_listdict2
+
+
+:p tryGetListDict eg_listdict2 40
+
+
+def emptyListDict (k:Type) (v:Type) : ListDict k v =
+    empty_table : Fin 0 => (k&v) = []
+    AsListDict $ AsList _ empty_table
+
+:p emptyListDict Int Char
+
+:p storeListDict (emptyListDict Int Char) 100 'a'
+
+' ## HashDict
+Now we can build a HashMap on top of that ListDict.
+We are going to hard-code a bunch of buffer sizes for simplicity
+
+
+data HashDict k:Type v:Type =
+  HashDictBuckets n:Int buckets:(Fin n=>(ListDict k v))
+
+
+def emptyHashDict (n:Int) (k:Type) (v:Type) : HashDict k v =
+    HashDictBuckets n for i:(Fin n). emptyListDict k v
+
+:p emptyHashDict 8 Int Char
+
+def storeHashDict (_:Hashable k) ?=> (dict:HashDict k v) (key:k) (val:v) : HashDict k v =
+    (HashDictBuckets nbuckets buckets) = dict
+    keyhash = thehash key
+    bucket_index = (keyhash `mod` nbuckets)@(Fin nbuckets)
+    bucket = buckets.bucket_index
+    neo_buckets = snd $ withState buckets \bucketsRef.
+        bucketsRef!bucket_index := storeListDict bucket key val
+    HashDictBuckets _ neo_buckets
+
+hd = emptyHashDict 4 Char Int
+
+hd1 = storeHashDict hd 'a' 200
+hd2 = storeHashDict hd1 'b' 201
+hd3 = storeHashDict hd2 'c' 202
+hd4 = storeHashDict hd3 'd' 203
+hd5 = storeHashDict hd4 'e' 204
+
+:p hd5
+
+def tryGetHashDict (_:Hashable k) ?=> (dict:HashDict k v) (key:k) : Maybe v =
+    (HashDictBuckets nbuckets buckets) = dict
+    keyhash = thehash key
+    bucket_index = (keyhash `mod` nbuckets)@(Fin nbuckets)
+    bucket = buckets.bucket_index
+    tryGetListDict bucket key
+
+
+:p tryGetHashDict hd5 'b'
+:p tryGetHashDict hd5 'd'
+
+
+' Benchmarking
+https://github.com/google-research/dex-lang/issues/341
+
+full_data = for i:(Fin 256). ([10 * ordinal i, ordinal i], i)
+
+big_listdict = fold (emptyListDict _ _)  \i state. storeListDict state (fst full_data.i) (snd full_data.i)
+
+
+big_hashdict = fold (emptyHashDict 128 _ _) \i state. storeHashDict state (fst full_data.i) (snd full_data.i)
+
+%time
+tryGetHashDict big_hashdict [1280, 128]
+
+%time
+tryGetListDict big_listdict [1280, 128]
+
+%time
+thehash [1280, 128]
+
+
+' ## Wrap under a common interface
+See how annoying above was without a common interface that i could just pass in the initial value (with its type) and have it work out which store to read etc
+TODO: once this is working remove stand-alone manually type-specied functions from the ListDict and the HashDict
+
+
+interface Associative dict:Type k:Type v:Type where
+    tryGet : dict -> k -> Maybe v
+    store : dict -> k -> v -> dict
+
+
+instance listDictAssociative : Hashable k ?=>  Associative (ListDict k v) k v where
+    store = storeListDict
+    tryGet = tryGetListDict
+
+instance HashDictAssociative : Hashable k ?=>  Associative (HashDict k v) k v where
+    store = storeHashDict
+    tryGet = tryGetHashDict
+
+
+' all of the following error except the first
+
+:p store hd5 'q' 200
+
+:p store eg_listdict 'q' 200
+
+:p tryGet hd5 'a'
+
+:p tryGet eg_listdict 'a'
+
