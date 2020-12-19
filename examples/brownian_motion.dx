@@ -1,22 +1,22 @@
 
+include "plot.dx"
 
 UnitInterval = Float
 
-bmIter : (Key & Float & Float & UnitInterval) -> (Key & Float & Float & UnitInterval) =
-  \(key, y, sigma, t).
-    (kDraw, kL, kR) = splitKey3 key
-    t' = abs (t - 0.5)
-    y' = sigma * randn kDraw * (0.5 - t')
-    key' = select (t > 0.5) kL kR
-    (key', y + y', sigma / sqrt 2.0, t' * 2.0)
+def bmIter ((key, y, sigma, t):(Key & Float & Float & UnitInterval)) :
+                               (Key & Float & Float & UnitInterval) =
+  [kDraw, kL, kR] = splitKey key
+  t' = abs (t - 0.5)
+  y' = sigma * randn kDraw * (0.5 - t')
+  key' = select (t > 0.5) kL kR
+  (key', y + y', sigma / sqrt 2.0, t' * 2.0)
 
-sampleBM : Key -> UnitInterval -> Float =
-  \key t.
-    (_, y, _, _) = fold (key, 0.0, 1.0, t) \i:(Fin 10). bmIter
-    y
+def sampleBM (key:Key) (t:UnitInterval) : Float =
+  (_, y, _, _) = fold (key, 0.0, 1.0, t) \i:(Fin 10). bmIter
+  y
 
 xs = linspace (Fin 1000) 0.0 1.0
 ys = map (sampleBM (newKey 0)) xs
 
--- :plot zip xs ys
--- > <html output>
+:html showPlot $ xyPlot xs ys
+> <html output>

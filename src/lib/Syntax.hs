@@ -66,7 +66,6 @@ module Syntax (
 
 import qualified Data.Map.Strict as M
 import Control.Exception hiding (throw)
-import Control.Monad.Fail
 import Control.Monad.Identity
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)

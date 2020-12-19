@@ -80,16 +80,20 @@ build-python: build
 # --- running tests ---
 
 # TODO: re-enable linear-tests ad-tests include-test chol
-example-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-                shadow-tests monad-tests \
-                ad-tests mandelbrot pi sierpinski \
+example-names = mandelbrot pi sierpinski \
                 regression brownian_motion particle-swarm-optimizer \
-                ode-integrator parser-tests serialize-tests \
-                mcmc record-variant-tests simple-include-test ctc raytrace \
-                isomorphisms typeclass-tests complex-tests trig-tests \
-                ode-integrator linear_algebra fluidsim
+                ode-integrator mcmc ctc raytrace particle-filter \
+                isomorphisms ode-integrator linear_algebra fluidsim
 
-quine-test-targets = $(example-names:%=run-%)
+test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
+             shadow-tests monad-tests \
+             ad-tests parser-tests serialize-tests \
+             record-variant-tests simple-include-test \
+             typeclass-tests complex-tests trig-tests
+
+all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
+
+quine-test-targets = $(all-names:%=run-%)
 
 update-targets = $(example-names:%=update-%)
 
@@ -102,7 +106,9 @@ quine-tests: $(quine-test-targets)
 quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
-run-%: examples/%.dx build
+run-tests/%: tests/%.dx build
+	misc/check-quine $< $(dex) script --allow-errors
+run-examples/%: examples/%.dx build
 	misc/check-quine $< $(dex) script --allow-errors
 
 # Run these with profiling on while they're catching lots of crashes
@@ -112,16 +118,16 @@ prop-tests: cbits/libdex.so
 update-all: $(update-targets)
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
-update-%: examples/%.dx build
+update-%: tests/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
 run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
-run-gpu-tests: examples/gpu-tests.dx build
+run-gpu-tests: tests/gpu-tests.dx build
 	misc/check-quine $< $(dex) --backend LLVM-CUDA script --allow-errors
 
 update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
-update-gpu-tests: examples/gpu-tests.dx build
+update-gpu-tests: tests/gpu-tests.dx build
 	$(dex) --backend LLVM-CUDA script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
@@ -140,8 +146,8 @@ uexpr-tests:
 
 repl-test:
 	misc/check-no-diff \
-	  examples/repl-multiline-test-expected-output \
-	  <($(dex) repl < examples/repl-multiline-test.dx)
+	  tests/repl-multiline-test-expected-output \
+	  <($(dex) repl < tests/repl-multiline-test.dx)
 
 # --- running and querying benchmarks ---
 

@@ -1,20 +1,18 @@
 '# Mandelbrot set
 
-include "examples/plot.dx"
+include "plot.dx"
 
 'Escape time algorithm
 
-update : Complex -> Complex -> Complex =
-  \c z. c + (z * z)
+def update (c:Complex) (z:Complex) : Complex = c + (z * z)
 
 tol = 2.0
-inBounds : Complex -> Bool =
-  \z. complex_abs z < tol
+def inBounds (z:Complex) : Bool = complex_abs z < tol
 
-escapeTime : Complex -> Float =
-  \c. fst $ fold (0.0, zero) $ \i:(Fin 1000) (n, z).
-     z' = update c z
-     (n + BToF (inBounds z'), z')
+def escapeTime (c:Complex) : Float =
+  fst $ fold (0.0, zero) $ \i:(Fin 1000) (n, z).
+    z' = update c z
+    (n + BToF (inBounds z'), z')
 
 'Evaluate on a grid and plot the results
 

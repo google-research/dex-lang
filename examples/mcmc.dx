@@ -1,6 +1,8 @@
 
 -- === General MCMC utilities ===
 
+include "plot.dx"
+
 LogProb : Type = Float
 
 def runChain
@@ -9,7 +11,7 @@ def runChain
       (numSamples: Int)
       (k:Key)
       : Fin numSamples => a =
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   fst $ withState (initialize k1) \s.
     for i:(Fin numSamples).
       x = step (ixkey k2 i) (get s)
@@ -43,7 +45,7 @@ def mhStep
       (k:Key)
       (x:d=>Float)
       : d=>Float =
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   proposal = x + stepSize .* randnVec k1
   propose logProb x proposal k2
 
@@ -72,7 +74,7 @@ def hmcStep
       (x:d=>Float)
       : d=>Float =
   hamiltonian = \(x, p). logProb x - 0.5 * vdot p p
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   p = randnVec k1
   proposal = leapfrogIntegrate params logProb (x, p)
   fst $ propose hamiltonian (x, p) proposal k2
@@ -88,17 +90,17 @@ mhParams = 0.1
 numSamples = 500
 k0 = newKey 1
 
-hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
-
-:p meanAndCovariance hmcSamples
-> ([1.4468338, 2.4944723], [[1.065676, 2.047594e-2], [2.047594e-2, 5.288498e-2]])
-
--- :plot for i. (IToF (ordinal i), hmcSamples.i.(0@_))
--- > <graphical output>
+hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 
 :p meanAndCovariance mhSamples
 > ([0.64555484, 2.4140575], [[0.38236195, 0.17941256], [0.17941256, 0.22895703]])
 
--- :plot for i. (IToF (ordinal i), mhSamples.i.(0@_))
--- > <graphical output>
+:html showPlot $ yPlot (for i.  mhSamples.i.(0@_))
+> <html output>
+
+:p meanAndCovariance hmcSamples
+> ([1.4468338, 2.4944723], [[1.065676, 2.047594e-2], [2.047594e-2, 5.288498e-2]])
+
+:html showPlot $ yPlot (for i.  hmcSamples.i.(0@_))
+> <html output>

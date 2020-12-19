@@ -1,19 +1,17 @@
 '# Sierpinski triangle ("chaos game")
 
-include "examples/plot.dx"
+include "plot.dx"
 
-update : n=>Point -> Key -> Point -> Point =
-  \points key (x,y).
-    (x', y') = points.(randIdx key)
-    (0.5 * (x + x'), 0.5 * (y + y'))
+def update (points:n=>Point) (key:Key) ((x,y):Point) : Point =
+  (x', y') = points.(randIdx key)
+  (0.5 * (x + x'), 0.5 * (y + y'))
 
-runChain : n:Int -> (Key -> a -> a) -> Key -> a -> (Fin n)=>a =
-  \n f key x0. scan' x0 (many f key)
+def runChain (n:Int) (f:Key -> a -> a) (key:Key) (x0:a) : Fin n => a =
+  scan' x0 (many f key)
 
 trianglePoints : (Fin 3)=>Point = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 
 (xs, ys) = unzip $ runChain 3000 (update trianglePoints) (newKey 0) (0.0, 0.0)
 
--- Disabling this for now because the plotting function is too slow to compile
--- :html showPlot $ xyPlot xs ys
--- > <html output>
+:html showPlot $ xyPlot xs ys
+> <html output>

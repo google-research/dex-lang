@@ -4,9 +4,8 @@
 [JAX implementation](https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb),
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
-Specifically, it's based on his unrolled ```lax.scan``` version.
 
-include "examples/plot.dx"
+include "plot.dx"
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
@@ -25,10 +24,6 @@ def directionAndLength (x: d=>Float) : (d=>Float & Float) =
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def reverse (x:n=>a) : n=>a =
-  s = size n
-  for i. x.((s - 1 - ordinal i)@_)
-
 def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
   snd $ withState zero \total.
     for i:(Fin n).
@@ -36,41 +31,16 @@ def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
 
 def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
-data IterResult a:Type b:Type =
-  Continue a
-  Done b
-
--- A little iteration combinator
--- TODO: allow effects (currently there's some type inference bug preventing it)
-def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
-  result = snd $ withState Nothing \resultRef.
-    withState init \carryRef.
-      withState 0 \i.
-        while (\(). isNothing (get resultRef)) \().
-          case body (get i) (get carryRef) of
-            Continue carry ->
-              i := get i + 1
-              carryRef := carry
-            Done result ->
-              resultRef := Just result
-  case result of
-    Just ans -> ans
-    Nothing -> todo  -- should be unreachable
-
 ' ### 3D Helper Functions
 
--- TODO: implement table unpacking
-def unpackvec3 (p:Vec 3) : (Float & Float & Float) =
-  (p.(0@(Fin 3)), p.(1@(Fin 3)), p.(2@(Fin 3)))
-
 def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
-  (a1, a2, a3) = unpackvec3 a
-  (b1, b2, b3) = unpackvec3 b
+  [a1, a2, a3] = a
+  [b1, b2, b3] = b
   [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
 
 -- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
-def ColorImage     (height:Int) (width:Int) : Type = Fin height => Fin width => Color
-def GrayScaleImage (height:Int) (width:Int) : Type = Fin height => Fin width => Float
+data Image =
+ MkImage height:Int width:Int (Fin height => Fin width => Color)
 
 xHat : Vec 3 = [1., 0., 0.]
 yHat : Vec 3 = [0., 1., 0.]
@@ -81,23 +51,23 @@ Angle = Float  -- angle in radians
 def rotateX (p:Vec 3) (angle:Angle) : Vec 3 =
   c = cos angle
   s = sin angle
-  (px, py, pz) = unpackvec3(p)
+  [px, py, pz] = p
   [px, c*py - s*pz, s*py + c*pz]
 
 def rotateY (p:Vec 3) (angle:Angle) : Vec 3 =
   c = cos angle
   s = sin angle
-  (px, py, pz) = unpackvec3(p)
+  [px, py, pz] = p
   [c*px + s*pz, py, - s*px+ c*pz]
 
 def rotateZ (p:Vec 3) (angle:Angle) : Vec 3 =
   c = cos angle
   s = sin angle
-  (px, py, pz) = unpackvec3(p)
+  [px, py, pz] = p
   [c*px - s*py, s*px+c*py, pz]
 
 def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   u1 = rand k1
   u2 = rand k2
   uu = normalize $ cross normal [0.0, 1.1, 1.1]
@@ -112,7 +82,6 @@ def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
 ' ### Raytracer
 
 Distance = Float
-def Image (n:Int) :Type = Fin n => Fin n => Color -- TODO: hide the size
 
 Position  = Vec 3
 Direction = Vec 3  -- Should be normalized. TODO: use a newtype wrapper
@@ -142,7 +111,9 @@ Filter   = Color
 
 -- TODO: use a record
 -- num samples, num bounces, share seed?
-Params = (Int & Int & Bool)
+Params = { numSamples : Int
+         & maxBounces : Int
+         & shareSeed  : Bool }
 
 -- TODO: use a list instead, once they work
 data Scene n:Type = MkScene (n=>Object)
@@ -233,7 +204,7 @@ def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
     HitObj _ _ -> zero
 
 def sampleSquare (hw:Float) (k:Key) : Position =
- (kx, kz) = splitKey k
+ [kx, kz] = splitKey k
  x = randuniform (- hw) hw kx
  z = randuniform (- hw) hw kz
  [x, 0.0, z]
@@ -258,12 +229,11 @@ def sampleLightRadiance
             radiance += coeff .* rayDirectRadiance scene outRay
 
 def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
-  (_, max_bounces, _) = params
   -- TODO: we ought to be able to use an accumulator here, but there's a bug
   noFilter = [1.0, 1.0, 1.0]
   iter (noFilter, zero, init_ray) $
     \i (filter, radiance, ray).
-      case i >= max_bounces of
+      case i >= getAt #maxBounces params of
         True -> Done radiance
         False -> case raymarch scene ray of
           HitNothing -> Done radiance
@@ -271,7 +241,7 @@ def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
             True  -> Done intensity  -- TODO: scale etc
             False -> Done radiance
           HitObj incidentRay osurf ->
-            (k1, k2) = splitKey $ hash k i
+            [k1, k2] = splitKey $ hash k i
             lightRadiance    = sampleLightRadiance scene osurf incidentRay k1
             outRayHemisphere = sampleReflection          osurf incidentRay k2
             newFilter = surfaceFilter filter (snd osurf)
@@ -281,35 +251,38 @@ def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
 -- TODO: add number of pixels once we can hide sizes
 -- sensor half-width, pinhole-sensor distance, pinhole position
 -- (Assumes we're looking towards -z.)
-Camera = (Position & Float & Float)
+Camera =
+  { numPix     : Int
+  & pos        : Position
+  & halfWidth  : Float
+  & sensorDist : Float }
 
+-- TODO: might be better with an anonymous dependent pair for the result
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
-  (pos, halfWidth, sensorDist) = camera
+  halfWidth = getAt #halfWidth camera
   pixHalfWidth = halfWidth / IToF n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.
-    (kx, ky) = splitKey key
+    [kx, ky] = splitKey key
     x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
-    (pos, normalize [x, y, neg sensorDist])
+    (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
 
-def takePicture
-       (params:Params) (scene:Scene m) (n:Int) (camera:Camera)
-      : ColorImage n n =
-  (numSamples, _, shareSeed) = params
+def takePicture (params:Params) (scene:Scene m) (camera:Camera) : Image =
+  n = getAt #numPix camera
   rays = cameraRays n camera
   rootKey = newKey 0
   image = for i j.
-    pixKey = case shareSeed of
-      True  -> rootKey
-      False -> ixkey (ixkey rootKey i) j
+    pixKey = if getAt #shareSeed params
+      then rootKey
+      else ixkey (ixkey rootKey i) j
     sampleRayColor : Key -> Color =  \k.
-      (k1, k2) = splitKey k
+      [k1, k2] = splitKey k
       trace params scene (rays.i.j k1) k2
-    sampleAveraged sampleRayColor numSamples pixKey
-  image / mean (for (i,j,k). image.i.j.k)
+    sampleAveraged sampleRayColor (getAt #numSamples params) pixKey
+  MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
 
 ' ### Define the scene and render it
 
@@ -331,25 +304,29 @@ theScene = MkScene $
     , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
     ]
 
-camera = (10.0 .* zHat, 0.3, 1.0)
+defaultParams = { numSamples = 50
+                , maxBounces = 10
+                , shareSeed  = True }
 
--- num_pix = 250
-num_pix = 10
-num_samples = 50
-num_bounces = 10
-share_prng = True
-params = (num_samples, num_bounces, share_prng)
+defaultCamera = { numPix     = 250
+                , pos        = 10.0 .* zHat
+                , halfWidth  = 0.3
+                , sensorDist = 1.0 }
 
+-- We change to a small num pix here to reduce the compute needed for tests
+camera = defaultCamera |> setAt #numPix 10
+params = defaultParams
 
 -- %time
-image = takePicture params theScene num_pix camera
-
+(MkImage _ _ image) = takePicture params theScene camera
 :html imshow image
 > <html output>
 
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
-:html imshow $
-   takePicture (1, num_bounces, share_prng) theScene num_pix camera
+params2 = defaultParams |> setAt #numSamples 1
+(MkImage _ _ image2) = takePicture params2 theScene camera
+
+:html imshow image2
 > <html output>

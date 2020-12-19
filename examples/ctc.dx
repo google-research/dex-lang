@@ -103,16 +103,16 @@ def randIdxNoZero (n:Type) -> (k:Key) : n =
   unif = rand k
   fromOrdinal n $ (1 + (FToI (floor ( unif * IToF ((size n) - 1)))))
 
-vocab = Fin 6
+Vocab = Fin 6
 position = Fin 3
-blank = 0@vocab
+blank = 0@Vocab
 
 -- Create random logits
-time = Fin 4
-logits = for i:time j:vocab. (randn $ ixkey2 (newKey 0) i j)
+Time = Fin 4
+logits : Time => Vocab => Float = arb $ newKey 0
 
 -- Create random labels
-labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
+labels = for i:position. randIdxNoZero Vocab (newKey (ordinal i))
 :p labels
 > [(1@Fin 6), (5@Fin 6), (5@Fin 6)]
 
@@ -130,14 +130,14 @@ labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
 -- e.g. the summed-over labels should include blanks.
 
 
-:p sum for i:vocab.
+:p sum for i:Vocab.
   exp $ ctc blank logits [i]
 > 0.14146839
 
-:p sum for (i, j):(vocab & vocab).
+:p sum for (i, j):(Vocab & Vocab).
   exp $ ctc blank logits [i, j]
 > 0.7091234
 
-:p sum for (i, j, k):(vocab & vocab & vocab).
+:p sum for (i, j, k):(Vocab & Vocab & Vocab).
   exp $ ctc blank logits [i, j, k]
 > 0.9251011

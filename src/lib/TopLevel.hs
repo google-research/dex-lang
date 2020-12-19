@@ -112,7 +112,8 @@ evalSourceBlockM env block = case sbContents block of
     Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
     _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
-    source <- liftIO $ readFile fname
+    fullPath <- liftIO $ findSourceFile fname
+    source <- liftIO $ readFile fullPath
     evalSourceBlocks env $ parseProg source
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
@@ -373,3 +374,7 @@ traverseLiterals block f =
     traverseAtomLiterals atom = case atom of
       Con (Lit x) -> lift $ lift $ f x
       _ -> traverseAtom def atom
+
+-- TODO: use something like a `DEXPATH` env var for finding source files
+findSourceFile :: FilePath -> IO FilePath
+findSourceFile fpath = return $ "lib/" ++ fpath

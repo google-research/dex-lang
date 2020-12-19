@@ -22,7 +22,6 @@ import Interpreter
 import Syntax
 import Type
 import PPrint
-import Interpreter (indices)
 
 pprintVal :: Val -> IO String
 pprintVal val = asStr <$> prettyVal val

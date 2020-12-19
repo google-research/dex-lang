@@ -1,7 +1,7 @@
 '# Plotting library
 
-include "examples/diagram.dx"
-include "examples/png.dx"
+include "diagram.dx"
+include "png.dx"
 
 data CompactSet a:Type =
   Interval a a
@@ -108,6 +108,10 @@ def xycPlot (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float
     setXData (autoScale xs) |>
     setYData (autoScale ys) |>
     setCData (autoScale cs)
+
+def yPlot (ys:n=>Float) : Plot n Float Float Unit =
+  xs = for i. IToF $ ordinal i
+  xyPlot xs ys
 
 -- xs = linspace (Fin 100) 0. 1.0
 -- :html showPlot $ xycPlot xs xs xs
