@@ -30,6 +30,7 @@ import LLVMExec
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int64 -> Int64 -> Int64
+foreign import ccall "fasthash"  c_fasthash :: Int32 -> Int32 -> Int32
 
 type InterpM = IO
 
