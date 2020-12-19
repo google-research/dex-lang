@@ -1,7 +1,7 @@
 '# Monte Carlo estimates of pi
 
 def estimatePiArea (key:Key) : Float =
-  (k1, k2) = splitKey key
+  [k1, k2] = splitKey key
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0

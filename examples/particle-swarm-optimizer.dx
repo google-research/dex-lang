@@ -72,7 +72,7 @@ def optimize
             minbyfst pbests.p (f newPositions.p, newPositions.p)
         newGbest:(Float & d=>Float) =
             minbyfst gbest (minimumbyfst newPbests)
-        (keyG, keyP, keyNext) = splitKey3 keyL
+        [keyG, keyP, keyNext] = splitKey keyL
         (gscore, gloc) = gbest
         plocs = map snd pbests
         gVel:(np=>d=>Float) = for p i.
@@ -87,7 +87,7 @@ def optimize
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     randInit1 = \keyI1. randBounded keyI1 lb ub
     randInit  = \keyI. for p:np. randInit1 $ ixkey keyI p
-    (keyPos, keyVel, keyLoop) = splitKey3 key
+    [keyPos, keyVel, keyLoop] = splitKey key
     initPositions:(np=>d=>Float) = randInit keyPos
     initVelocities:(np=>d=>Float) = randInit keyVel
     initPs:(np=>(Float & d=>Float)) = for p. (f initPositions.p, initPositions.p)
@@ -103,13 +103,13 @@ Run it for more iterations and result should improve.
 Which it indeed does.
 
 :p optimize 50 10 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [3.7902741, 14.911411]
+> [7.698643e-2, 0.23281813]
 
 :p optimize 50 20 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [1.737732, 3.1227117]
+> [0.90125036, 0.75044703]
 
 :p optimize 50 100 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [1.0062296, 1.0128789]
+> [0.9990686, 0.9981924]
 
 :p optimize 50 1000 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1.0, 1.0]

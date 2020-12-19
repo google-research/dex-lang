@@ -22,7 +22,7 @@ def solve (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
 
 Nx = Fin 100
 noise = 0.1
-(k1, k2) = splitKey (newKey 0)
+[k1, k2] = splitKey (newKey 0)
 
 def trueFun (x:Float) : Float =
   x + sin (5.0 * x)

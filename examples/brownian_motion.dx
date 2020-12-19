@@ -5,7 +5,7 @@ UnitInterval = Float
 
 def bmIter ((key, y, sigma, t):(Key & Float & Float & UnitInterval)) :
                                (Key & Float & Float & UnitInterval) =
-  (kDraw, kL, kR) = splitKey3 key
+  [kDraw, kL, kR] = splitKey key
   t' = abs (t - 0.5)
   y' = sigma * randn kDraw * (0.5 - t')
   key' = select (t > 0.5) kL kR

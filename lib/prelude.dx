@@ -483,15 +483,10 @@ def hash (x:Key) (y:Int32) : Key =
   y64 = IToI64 y
   %ffi threefry2x32 Int64 x y64
 def newKey (x:Int) : Key = hash (IToI64 0) x
-def splitKey (k:Key) : (Key & Key) = (hash k 0, hash k 1)
-def splitKey3 (k:Key) : (Key & Key & Key) =
-  (k1, k') = splitKey k
-  (k2, k3) = splitKey k'
-  (k1, k2, k3)
-
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
+def splitKey (n:Int) ?-> (k:Key) : Fin n => Key = for i. ixkey k i
 def rand (k:Key) : Float = F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
@@ -500,7 +495,7 @@ def randMat (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
   for i j. f (ixkey2 k i j)
 
 def randn (k:Key) : Float =
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   u1 = rand k1
   u2 = rand k2
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
@@ -523,6 +518,21 @@ def cumSum (xs: n=>Float) : n=>Float =
       newTotal = get total + xs.i
       total := newTotal
       newTotal
+
+interface Arbitrary a:Type where
+  arb : Key -> a
+
+instance float32Arb : Arbitrary Float32 where
+  arb = randn
+
+instance in32Arb : Arbitrary Int32 where
+  arb = \key. FToI $ randn key * 5.0
+
+instance tabArb : Arbitrary a ?=> Arbitrary (n=>a) where
+  arb = \key. for i. arb $ ixkey key i
+
+instance finArb : n:Int ?-> Arbitrary (Fin n) where
+  arb = randIdx
 
 'min / max etc
 

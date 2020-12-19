@@ -11,7 +11,7 @@ def runChain
       (numSamples: Int)
       (k:Key)
       : Fin numSamples => a =
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   fst $ withState (initialize k1) \s.
     for i:(Fin numSamples).
       x = step (ixkey k2 i) (get s)
@@ -45,7 +45,7 @@ def mhStep
       (k:Key)
       (x:d=>Float)
       : d=>Float =
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   proposal = x + stepSize .* randnVec k1
   propose logProb x proposal k2
 
@@ -74,7 +74,7 @@ def hmcStep
       (x:d=>Float)
       : d=>Float =
   hamiltonian = \(x, p). logProb x - 0.5 * vdot p p
-  (k1, k2) = splitKey k
+  [k1, k2] = splitKey k
   p = randnVec k1
   proposal = leapfrogIntegrate params logProb (x, p)
   fst $ propose hamiltonian (x, p) proposal k2
