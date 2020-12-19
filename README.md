@@ -28,9 +28,12 @@ development. Expect monstrous bugs and razor-sharp edges. Contributions welcome!
 
   * Install [stack](https://www.haskellstack.org)
   * Install LLVM 9
-    * `apt-get install llvm-9-dev` on Ubuntu/Debian,
-    * `brew install llvm@9` on macOS, and ensure it is on your `PATH` e.g. via `export PATH="$(brew --prefix llvm@9)/bin:$PATH"` before building.
-  * Install libpng (often included by default in *nix)
+    * Ubuntu/Debian: `apt-get install llvm-9-dev`
+    * macOS: `brew install llvm@9`
+      * Make sure `llvm@9` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@9)/bin:$PATH"`
+  * Install libpng (often included by default in *nix platforms)
+    * Ubuntu/Debian: `apt-get install libpng-dev`
+    * macOS: `brew install libpng`
 
 ## Building
 
