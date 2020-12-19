@@ -1,0 +1,113 @@
+'For now, arithmetic is not sensitive to whitespace:
+
+:p 1.0+1.0
+> 2.0
+
+:p 1.0 +1.0
+> 2.0
+
+:p 1.0+ 1.0
+> 2.0
+
+:p 1.0 + 1.0
+> 2.0
+
+:p 1.0-1.0
+> 0.0
+
+:p 1.0 -1.0
+> 0.0
+
+:p 1.0- 1.0
+> 0.0
+
+:p 1.0 - 1.0
+> 0.0
+
+'Applying a function to a negative literal thus requires parentheses.
+
+f = \x. x + 10.
+
+:p f -1.0   -- parses as (-) f (-1.0)
+> Type error:
+> Expected: (Float32 -> Float32)
+>   Actual: Float32
+>
+> :p f -1.0   -- parses as (-) f (-1.0)
+>       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:p f (-1.0)
+> 9.0
+
+'Lambdas can have specific arrow annotations.
+
+lam1 = \n ?-> \x. fromOrdinal n x
+:t lam1
+> ((n:Type) ?-> Int32 -> n)
+
+lam2 = \x --o 2.0 * x
+:t lam2
+> (Float32 --o Float32)
+
+lam3 = \d:(Eq Int) ?=> ()
+:t lam3
+> ((Eq Int32) ?=> Unit)
+
+lam4 = \n m ?-> (0@n, 0@m)
+:t lam4
+> ((n:Type) ?-> (m:Type) ?-> (n & m))
+
+-- Not allowed to write regular lambdas or tables using explicit arrows:
+
+\x -> x + 1.0
+
+> Parse error:62:7:
+>    |
+> 62 | \x -> x + 1.0
+>    |       ^
+> To construct an explicit lambda function, use '.' instead of '->'
+>
+
+\i => i
+
+> Parse error:71:7:
+>    |
+> 71 | \i => i
+>    |       ^
+> To construct a table, use 'for i. body' instead of '\i => body'
+>
+
+
+:p (
+    1
+    +
+    2
+   )
+> 3
+
+:p
+  xs = [1,2,3]
+  for i.
+    if xs.i > 1
+      then 0
+      else 1
+> [1, 0, 0]
+
+:p
+  withState 5 \ref.
+    n = get ref
+    for_ i:(Fin n).
+      ref := get ref + 1
+> ((), 10)
+
+def myInt : Int = 1
+:p myInt
+> 1
+
+def myInt : {State h} Int = 1
+
+> Parse error:107:27:
+>     |
+> 107 | def myInt : {State h} Int = 1
+>     |                           ^
+> Nullary def can't have effects

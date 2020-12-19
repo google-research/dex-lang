@@ -1,0 +1,7 @@
+
+include "../tests/included.dx"
+> 30
+> 40
+
+:p x
+> 10

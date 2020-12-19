@@ -12,13 +12,12 @@
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
             extendR, captureW, asFst, asSnd, capture, asCat, evalCatT, evalCat,
-            Cat, runCat, newCatT, catTraverse,
+            Cat, runCat, newCatT, catTraverse, evalScoped, execCat, execCatT,
             catFold, catFoldM, catMap, catMapM) where
 
 -- Monad for tracking monoidal state
 
 import Control.Applicative
-import Control.Monad.Fail
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -71,7 +70,10 @@ instance (Monoid w, MonadCat env m) => MonadCat env (WriterT w m) where
 instance MonadCat env m => MonadCat env (ExceptT e m) where
   look = lift look
   extend x = lift $ extend x
-  scoped = error "TODO"
+  scoped m = do (xerr, env) <- lift $ scoped $ runExceptT m
+                case xerr of
+                  Left err -> throwError err
+                  Right x  -> return (x, env)
 
 instance (Monoid env, MonadError e m) => MonadError e (CatT env m) where
   throwError = lift . throwError
@@ -95,10 +97,13 @@ runCatT (CatT m) initEnv = do
   return (ans, newEnv)
 
 evalCatT :: (Monoid env, Monad m) => CatT env m a -> m a
-evalCatT m = liftM fst $ runCatT m mempty
+evalCatT m = fst <$> runCatT m mempty
+
+execCatT :: (Monoid env, Monad m) => CatT env m a -> m env
+execCatT m = snd <$> runCatT m mempty
 
 newCatT :: (Monoid env, Monad m) => (env -> m (a, env)) -> CatT env m a
-newCatT  f = do
+newCatT f = do
   env <- look
   (ans, env') <- lift $ f env
   extend env'
@@ -110,8 +115,14 @@ runCat m env = runIdentity $ runCatT m env
 evalCat :: Monoid env => Cat env a -> a
 evalCat m = runIdentity $ evalCatT m
 
+execCat :: Monoid env => Cat env a -> env
+execCat m = runIdentity $ execCatT m
+
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look
+
+evalScoped :: Monoid env => Cat env a -> Cat env a
+evalScoped m = fst <$> scoped m
 
 capture :: (Monoid env, MonadCat env m) => m a -> m (a, env)
 capture m = do

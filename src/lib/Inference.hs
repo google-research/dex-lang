@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Inference (inferModule, synthModule) where
 
@@ -21,6 +22,7 @@ import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
 import Syntax
+import Interpreter (indicesNoIO)
 import Embed  hiding (sub)
 import Env
 import Type
@@ -32,7 +34,16 @@ type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((EmbedT (SolverT (Either Err)))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
-data RequiredTy a = Check a | Infer
+data RequiredTy a = Concrete a | Suggest a | Infer deriving (Show, Functor, Foldable, Traversable)
+
+pattern Check :: a -> RequiredTy a
+pattern Check t <-
+  ((\case Concrete t -> Just t
+          Suggest  t -> Just t
+          Infer      -> Nothing) -> Just t)
+  where Check t = Suggest t
+
+{-# COMPLETE Infer, Check #-}
 
 inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
@@ -49,20 +60,20 @@ runUInferM :: (Subst a, Pretty a)
 runUInferM env scope m = runSolverT $
   runEmbedT (runReaderT (runReaderT m env) Nothing) scope
 
-checkSigma :: UExpr -> SigmaType -> UInferM Atom
-checkSigma expr sTy = case sTy of
+checkSigma :: UExpr -> (Type -> RequiredTy Type) -> SigmaType -> UInferM Atom
+checkSigma expr reqCon sTy = case sTy of
   Pi piTy@(Abs _ (arrow, _))
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrc _ (ULam b arrow' body) | arrow' == void arrow ->
           checkULam b body piTy
         _ -> do
           buildLam (Bind ("a":> absArgType piTy)) arrow $ \x@(Var v) ->
-            checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
-  _ -> checkRho expr sTy
+            checkLeaks [v] $ checkSigma expr reqCon $ snd $ applyAbs piTy x
+  _ -> checkOrInferRho expr (reqCon sTy)
 
 inferSigma :: UExpr -> UInferM Atom
 inferSigma (WithSrc pos expr) = case expr of
-  ULam pat ImplicitArrow body -> addSrcPos pos $
+  ULam pat ImplicitArrow body -> addSrcContext' pos $
     inferULam pat ImplicitArrow body
   _ ->
     inferRho (WithSrc pos expr)
@@ -85,53 +96,75 @@ instantiateSigma f = case getType f of
   _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
-checkOrInferRho (WithSrc pos expr) reqTy =
- addSrcPos pos $ case expr of
+checkOrInferRho (WithSrc pos expr) reqTy = do
+ addSrcContext' pos $ case expr of
   UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
     x <- freshType argTy
     withBindPat p x $ checkOrInferRho body reqTy
-  ULam b arr body -> case reqTy of
-    Check ty -> do
-      piTy@(Abs _ (arrReq, _)) <- fromPiType False arr ty
-      checkArrow arrReq arr
-      checkULam b body piTy
-    Infer -> inferULam b (fmap (const Pure) arr) body
-  UFor dir b body -> case reqTy of
-    Check ty -> do
-      Abs n (arr, a) <- fromPiType False TabArrow ty
-      unless (arr == TabArrow) $
-        throw TypeErr $ "Not an table arrow type: " ++ pprint arr
-      allowedEff <- getAllowedEffects
-      lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      emitZonked $ Hof $ For dir lam
-    Infer -> do
-      allowedEff <- getAllowedEffects
-      lam <- inferULam b (PlainArrow allowedEff) body
-      emitZonked $ Hof $ For dir lam
-  UApp arr f x -> do
+  ULam b arr body -> do
+    let infer = inferULam b (fmap (const Pure) arr) body
+    case reqTy of
+      Check (Pi piTy@(Abs _ (arrReq, _))) -> do
+        checkArrow arrReq arr
+        checkULam b body piTy
+      Check _ -> infer >>= matchRequirement
+      Infer   -> infer
+  UFor dir b body -> do
+    let infer = do
+          allowedEff <- getAllowedEffects
+          lam <- inferULam b (PlainArrow allowedEff) body
+          emitZonked $ Hof $ For (RegularFor dir) lam
+    case reqTy of
+      Check (Pi (Abs n (arr, a))) -> do
+        unless (arr == TabArrow) $
+          throw TypeErr $ "Not an table arrow type: " ++ pprint arr
+        allowedEff <- getAllowedEffects
+        lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
+        emitZonked $ Hof $ For (RegularFor dir) lam
+      Check _ -> infer >>= matchRequirement
+      Infer   -> infer
+  UApp arr f x@(WithSrc xPos _) -> do
     fVal <- inferRho f
-    fVal' <- zonk fVal
-    piTy <- addSrcPos (srcPos f) $ fromPiType True arr $ getType fVal'
-    -- Zonking twice! Once for linearity and once for the embedding. Not ideal...
-    fVal'' <- zonk fVal
-    xVal <- checkSigma x (absArgType piTy)
-    (arr', xVal') <- case piTy of
-      Abs (Ignore _) (arr', _) -> return (arr', xVal)
-      _ -> do
-        scope <- getScope
-        let xVal' = reduceAtom scope xVal
-        return (fst $ applyAbs piTy xVal', xVal')
+    -- NB: We never infer dependent function types, but we accept them, provided they
+    --     come with annotations. So, unless we already know that the function is
+    --     dependent here (i.e. the type of the zonk comes as a dependent Pi type),
+    --     then nothing in the remainder of the program can convince us that the type
+    --     is dependent. Also, the Pi binder is never considered to be in scope for
+    --     inference variables, so they cannot get unified with it. Hence, this zonk
+    --     is safe and doesn't make the type checking depend on the program order.
+    infTy <- getType <$> zonk fVal
+    piTy  <- addSrcContext' (srcPos f) $ fromPiType True arr infTy
+    (xVal, embedEnv@(_, xDecls)) <- embedScoped $ checkSigma x Suggest (absArgType piTy)
+    (xVal', arr') <- case piTy of
+      Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
+        False -> embedExtend embedEnv $> (xVal, arr')
+        True  -> do
+          xValMaybeRed <- flip typeReduceBlock (Block xDecls (Atom xVal)) <$> getScope
+          case xValMaybeRed of
+            Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
+            Nothing      -> addSrcContext' xPos $ do
+              throw TypeErr $ "Dependent functions can only be applied to fully " ++
+                              "evaluated expressions. Bind the argument to a name " ++
+                              "before you apply the function."
     addEffects $ arrowEff arr'
-    appVal <- emitZonked $ App fVal'' xVal'
+    appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi b arr ty -> do
+  UPi (pat, kind) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
-    b'  <- mapM checkUType b
-    piTy <- buildPi b' $ \x -> extendR (b@>x) $
-              (,) <$> mapM checkUEff arr <*> checkUType ty
+    kind' <- checkUType kind
+    piTy <- case pat of
+      Just pat' -> withNameHint ("pat" :: Name) $ buildPi b $ \x ->
+        withBindPat pat' x $ (,) <$> mapM checkUEff arr <*> checkUType ty
+        where b = case pat' of
+                    -- Note: The binder name becomes part of the type, so we
+                    -- need to keep the same name used in the pattern.
+                    WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>kind')
+                    _ -> Ignore kind'
+      Nothing -> buildPi (Ignore kind') $ const $
+        (,) <$> mapM checkUEff arr <*> checkUType ty
     matchRequirement piTy
   UDecl decl body -> do
     env <- inferUDecl False decl
@@ -207,7 +240,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
             emit $ Case split [leftCase, tailAlt] reqTy'
           _ -> throw TypeErr "Can't specify more than one variant tail pattern."
       _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy'
-  UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
+  UTabCon xs -> inferTabCon xs reqTy >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
     low'  <- mapM (flip checkRho n) low
@@ -216,15 +249,22 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
+  UTypeAnn val ty -> do
+    ty' <- zonk =<< checkUType ty
+    let reqCon = if null (toList $ freeVars ty') then Concrete else Suggest
+    val' <- checkSigma val reqCon ty'
+    matchRequirement val'
   UPrimExpr prim -> do
-    prim' <- traverse lookupName prim
+    prim' <- forM prim $ \e -> do
+      e' <- inferRho e
+      scope <- getScope
+      return $ typeReduceAtom scope e'
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
       OpExpr  e -> emitZonked $ Op e
       HofExpr e -> emitZonked $ Hof e
     matchRequirement val
-    where lookupName v = asks (! (v:>()))
   URecord (Ext items Nothing) -> do
     items' <- mapM inferRho items
     matchRequirement $ Record items'
@@ -250,10 +290,9 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emit (Op $ VariantLift prev value')
-  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int64Lit $ fromIntegral x
-  UFloatLit x -> matchRequirement $ Con $ Lit  $ Float64Lit x
+  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int32Lit $ fromIntegral x
+  UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
-  UCharLit x  -> matchRequirement $ CharLit $ fromIntegral $ fromEnum x
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -275,79 +314,48 @@ lookupSourceVar v = do
         Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
--- TODO: de-dup with `bindPat`
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
-unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
-  UPatBinder b -> do
-    let b' = binderAsGlobal b
+unpackTopPat letAnn pat expr = do
+  atom <- emit expr
+  bindings <- bindPat pat atom
+  void $ flip traverseNames bindings $ \name val -> do
+    let name' = asGlobal name
     scope <- getScope
-    when (b' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName b'
-    void $ emitTo (binderNameHint b') letAnn expr
-  UPatUnit -> return () -- TODO: change if we allow effects at the top level
-  UPatPair p1 p2 -> do
-    val  <- emit expr
-    x1   <- lift $ getFst val
-    x2   <- lift $ getSnd val
-    unpackTopPat letAnn p1 (Atom x1)
-    unpackTopPat letAnn p2 (Atom x2)
-  UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
-    when (length cons /= 1) $ throw TypeErr $
-      "sum type constructor in can't-fail pattern"
-    let DataConDef _ argBs = cons !! con
-    when (length argBs /= length ps) $ throw TypeErr $
-      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
-                                             ++ " got " ++ show (length ps)
-    params <- mapM (freshType . binderType) paramBs
-    constrainEq (TypeCon def $ toList params) (getType expr)
-    xs <- zonk expr >>= emitUnpack
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
-  UPatRecord (Ext items Nothing) -> do
-    RecordTy (NoExt types) <- pure $ getType expr
-    when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
-      "Labels in record pattern do not match record type. Expected structure "
-      ++ pprint (RecordTy $ NoExt types)
-    xs <- zonk expr >>= emitUnpack
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList items) xs
-  UPatRecord (Ext pats (Just tailPat)) -> do
-    wantedTypes <- lift $ mapM (const $ freshType TyKind) pats
-    restType <- lift $ freshInferenceName LabeledRowKind
-    let vty = getType expr
-    lift $ constrainEq (RecordTy $ Ext wantedTypes $ Just restType) vty
-    -- Split the record.
-    wantedTypes' <- lift $ zonk wantedTypes
-    val <- emit =<< zonk expr
-    split <- emit $ Op $ RecordSplit wantedTypes' val
-    [left, right] <- getUnpacked split
-    leftVals <- getUnpacked left
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList pats) leftVals
-    unpackTopPat letAnn tailPat (Atom right)
-  UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
-  UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
+    when (name' `isin` scope) $ throw RepeatedVarErr $ pprint $ name'
+    emitTo name' letAnn $ Atom val
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
-  val <- case ann of
+  -- We don't display global names in any visually distinct way from local names
+  -- so avoid giving the name hint for top-level declarations. Otherwise we might
+  -- end up with x = x decls in the module (with left x being global and right being local).
+  let nameHint = if topLevel then liftM id else withPatHint p
+  val <- nameHint $ case ann of
     Nothing -> inferSigma rhs
-    Just ty -> checkUType ty >>= checkSigma rhs
+    Just ty -> do
+      ty' <- zonk =<< checkUType ty
+      let reqCon = if null (toList $ freeVars ty') then Concrete else Suggest
+      checkSigma rhs reqCon ty'
   expr <- zonk $ Atom val
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
-    else do
-      -- TODO: non-top-level annotations?
-      val' <- withPatHint p $ emitAnn PlainLet expr
-      bindPat p val'
+    else bindPat p val
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
+  scope <- getScope
+  when (tc' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName tc'
   let paramVars = map (\(Bind v) -> v) $ toList paramBs  -- TODO: refresh things properly
   (dcs', _) <- embedScoped $
     extendR (newEnv paramBs (map Var paramVars)) $ do
-      extendScope (foldMap binderBinding paramBs)
+      extendScope (foldMap boundVars paramBs)
       mapM inferUConDef dcs
   let dataDef = DataDef tc' paramBs $ map (uncurry DataConDef) dcs'
   let tyConTy = getType $ TypeCon dataDef []
   extendScope $ tc' @> (tyConTy, DataBoundTypeCon dataDef)
   forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
+    -- Retrieving scope at every step to avoid duplicate constructor names
+    scope' <- getScope
+    when (dc `isin` scope') $ throw RepeatedVarErr $ pprint $ getName dc
     let ty = getType $ DataCon dataDef [] i []
     extendScope $ dc @> (ty, DataBoundDataCon dataDef i)
   return mempty
@@ -362,7 +370,7 @@ checkNestedBinders :: Nest UAnnBinder -> UInferM (Nest Binder)
 checkNestedBinders Empty = return Empty
 checkNestedBinders (Nest b bs) = do
   b' <- mapM checkUType b
-  extendScope (binderBinding b')
+  extendScope (boundVars b')
   let env = case b' of Bind v   -> b' @> Var v
                        Ignore _ -> mempty
   bs' <- extendR env $ checkNestedBinders bs
@@ -382,7 +390,7 @@ checkULam (p, ann) body piTy = do
   buildDepEffLam (Bind $ patNameHint p :> argTy)
     ( \x -> return $ fst $ applyAbs piTy x)
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
-                      checkSigma body $ snd $ applyAbs piTy x
+                      checkSigma body Suggest $ snd $ applyAbs piTy x
 
 checkUEff :: EffectRow -> UInferM EffectRow
 checkUEff (EffectRow effs t) = do
@@ -421,7 +429,7 @@ lookupDataCon conName = do
     Nothing -> throw UnboundVarErr $ pprint conName'
 
 checkCasePat :: UPat -> Type -> UInferM (CaseAltIndex, [(UPat, Type)])
-checkCasePat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
+checkCasePat (WithSrc pos pat) scrutineeTy = addSrcContext' pos $ case pat of
   UPatCon conName ps -> do
     (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
@@ -463,8 +471,10 @@ withBindPat pat val m = do
 bindPat :: UPat -> Atom -> UInferM SubstEnv
 bindPat pat val = evalCatT $ bindPat' pat val
 
+-- CatT wrapper is used to prevent duplicate bindings within the same pattern,
+-- e.g. (a, a) = (1, 2) should throw RepeatedVarErr
 bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
-bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
+bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
   UPatBinder b -> do
     usedVars <- look
     when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint $ getName b
@@ -514,6 +524,18 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     return $ env1 <> env2
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
+  UPatTable ps -> do
+    elemTy <- lift $ freshType TyKind
+    let idxTy = FixedIntRange 0 (fromIntegral $ length ps)
+    lift $ constrainEq (getType val) (idxTy ==> elemTy)
+    let idxs = indicesNoIO idxTy
+    unless (length idxs == length ps) $
+      throw TypeErr $ "Incorrect length of table pattern: table index set has "
+                      <> pprint (length idxs) <> " elements but there are "
+                      <> pprint (length ps) <> " patterns."
+    flip foldMapM (zip ps idxs) $ \(p, i) -> do
+      v <- lift $ emitZonked $ App val i
+      bindPat' p v
 
 -- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it
 patNameHint :: UPat -> Name
@@ -530,7 +552,7 @@ checkAnn ann = case ann of
 
 checkUType :: UType -> UInferM Type
 checkUType ty = do
-  reduced <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
+  reduced <- typeReduceScoped $ withEffects Pure $ checkRho ty TyKind
   case reduced of
     Just ty' -> return $ ty'
     Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
@@ -556,28 +578,33 @@ checkExtLabeledRow (Ext types (Just ext)) = do
   Var (ext':>_) <- checkRho ext LabeledRowKind
   return $ Ext types' $ Just ext'
 
-inferTabCon :: [UExpr] -> Maybe UType -> UInferM Atom
-inferTabCon xs ann = do
-  (n, ty) <- inferTabTy xs ann
-  let tabTy = n==>ty
-  xs' <- mapM (flip checkRho ty) xs
+inferTabCon :: [UExpr] -> RequiredTy RhoType -> UInferM Atom
+inferTabCon xs reqTy = do
+  (tabTy, xs') <- case reqTy of
+    Concrete tabTy@(TabTyAbs a) -> do
+      let idx = indicesNoIO $ absArgType a
+      -- TODO: Check length!!
+      unless (length idx == length xs) $
+        throw TypeErr "Table type doesn't match annotation"
+      xs' <- mapM (\(x, i) -> checkOrInferRho x $ Concrete $ snd $ applyAbs a i) $ zip xs idx
+      return (tabTy, xs')
+    _ -> do
+      elemTy <- case xs of
+        []    -> freshType TyKind
+        (x:_) -> getType <$> inferRho x
+      let tabTy = (FixedIntRange 0 (fromIntegral $ length xs)) ==> elemTy
+      case reqTy of
+        Suggest sTy -> addContext context $ constrainEq sTy tabTy
+          where context = "If attempting to construct a fixed-size table not " <>
+                          "indexed by 'Fin n' for some n, this error may " <>
+                          "indicate there was not enough information to infer " <>
+                          "a concrete index set; try adding an explicit " <>
+                          "annotation."
+        Infer       -> return ()
+        _           -> error "Missing case"
+      xs' <- mapM (flip checkRho elemTy) xs
+      return (tabTy, xs')
   emitZonked $ Op $ TabCon tabTy xs'
-
-inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
-inferTabTy xs ann = case ann of
-  Just ty -> do
-    ty' <- checkUType ty
-    case ty' of
-      TabTy b a -> do
-        unless (indexSetConcreteSize (binderType b) == Just (length xs)) $
-           throw TypeErr $ "Table size doesn't match annotation"
-        return (binderType b, a)
-      _ -> throw TypeErr $ "Table constructor annotation must be a table type"
-  Nothing -> case xs of
-   [] -> throw TypeErr $ "Empty table constructor must have type annotation"
-   (x:_) -> do
-    ty <- getType <$> inferRho x
-    return (FixedIntRange 0 (fromIntegral $ length xs), ty)
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Bool -> UArrow -> Type -> UInferM PiType
@@ -611,15 +638,11 @@ openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
-binderAsGlobal :: BinderP a -> BinderP a
-binderAsGlobal (Ignore ann) = Ignore ann
-binderAsGlobal (Bind (v:>ann)) = Bind $ asGlobal v :> ann
-
-addSrcPos :: SrcPos -> UInferM a -> UInferM a
-addSrcPos pos m = do
+addSrcContext' :: SrcCtx -> UInferM a -> UInferM a
+addSrcContext' pos m = do
   env <- ask
-  addSrcContext (Just pos) $ lift $
-    local (const (Just pos)) $ runReaderT m env
+  addSrcContext pos $ lift $
+    local (const pos) $ runReaderT m env
 
 getSrcCtx :: UInferM SrcCtx
 getSrcCtx = lift ask
@@ -633,7 +656,7 @@ type SynthDictM = SubstEmbedT []
 
 synthModule :: Scope -> Module -> Except Module
 synthModule scope (Module Typed decls bindings) = do
-  decls' <- fst <$> runSubstEmbedT
+  decls' <- fst . fst <$> runSubstEmbedT
               (traverseDecls (traverseHoles synthDictTop) decls) scope
   return $ Module Core decls' bindings
 synthModule _ _ = error $ "Unexpected IR variant"
@@ -650,10 +673,10 @@ synthDictTop ctx ty = do
 
 traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
               => (SrcCtx -> Type -> m Atom) -> TraversalDef m
-traverseHoles fillHole = (traverseExpr recur, synthPassAtom)
+traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
-      Con (ClassDictHole ctx ty) -> fillHole ctx ty
+      Con (ClassDictHole ctx ty) -> fillHole ctx =<< substEmbedR ty
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
@@ -739,9 +762,15 @@ solveLocal m = do
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: Subst a => [Var] -> UInferM a -> UInferM a
+checkLeaks :: (HasType a, Subst a) => [Var] -> UInferM a -> UInferM a
 checkLeaks tvs m = do
+  scope <- getScope
   (ans, env) <- scoped $ solveLocal $ m
+  let resultTypeLeaks = filter (\case (Name InferenceName _ _) -> False; _ -> True) $
+                          envNames $ freeVars (getType ans) `envDiff` scope
+  unless (null $ resultTypeLeaks) $
+    throw TypeErr $ "Leaked local variable `" ++ pprint (head resultTypeLeaks) ++
+                    "` in result type " ++ pprint (getType ans)
   forM_ (solverSub env) $ \ty ->
     forM_ tvs $ \tv ->
       throwIf (tv `occursIn` ty) TypeErr $ "Leaked type variable: " ++ pprint tv
@@ -890,3 +919,9 @@ instance Semigroup SolverEnv where
 instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
+
+typeReduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
+typeReduceScoped m = do
+  block <- buildScoped m
+  scope <- getScope
+  return $ typeReduceBlock scope block

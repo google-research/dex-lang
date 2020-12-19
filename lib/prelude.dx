@@ -1,0 +1,1187 @@
+
+'## Dex prelude
+
+'Runs before every Dex program unless an alternative is provided with `--prelude`.
+
+'Wrappers around primitives
+
+Unit = %UnitType
+Type = %TyKind
+Effects = %EffKind
+Fields = %LabeledRowKind
+
+Int64 = %Int64
+Int32 = %Int32
+Float64 = %Float64
+Float32 = %Float32
+
+Word8 = %Word8
+Byte = Word8
+Char = Byte
+
+Int = Int32
+Float = Float32
+
+def internalCast (b:Type) (x:a) : b = %cast b x
+
+def F64ToF (x : Float64) : Float   = internalCast _ x
+def F32ToF (x : Float32) : Float   = internalCast _ x
+def FToF64 (x : Float)   : Float64 = internalCast _ x
+def FToF32 (x : Float)   : Float32 = internalCast _ x
+def I64ToI (x : Int64)   : Int     = internalCast _ x
+def I32ToI (x : Int32)   : Int     = internalCast _ x
+def W8ToI  (x : Word8)   : Int     = internalCast _ x
+def IToI64 (x : Int)     : Int64   = internalCast _ x
+def IToI32 (x : Int)     : Int32   = internalCast _ x
+def IToW8  (x : Int)     : Word8   = internalCast _ x
+def IToF (x:Int) : Float = internalCast _ x
+def FToI (x:Float) : Int = internalCast _ x
+
+interface Add a:Type where
+  add : a -> a -> a
+  sub : a -> a -> a
+  zero : a
+
+def (+)  (d:Add a) ?=> : a -> a -> a = add
+def (-)  (d:Add a) ?=> : a -> a -> a = sub
+
+instance float64Add : Add Float64 where
+  add = \x:Float64 y:Float64. %fadd x y
+  sub = \x:Float64 y:Float64. %fsub x y
+  zero = FToF64 0.0
+
+instance float32Add : Add Float32 where
+  add = \x:Float32 y:Float32. %fadd x y
+  sub = \x:Float32 y:Float32. %fsub x y
+  zero = FToF32 0.0
+
+instance int64Add : Add Int64 where
+  add = \x:Int64 y:Int64. %iadd x y
+  sub = \x:Int64 y:Int64. %isub x y
+  zero = IToI64 0
+
+instance int32Add : Add Int32 where
+  add = \x:Int32 y:Int32. %iadd x y
+  sub = \x:Int32 y:Int32. %isub x y
+  zero = IToI32 0
+
+instance word8Add : Add Word8 where
+  add = \x:Word8 y:Word8. %iadd x y
+  sub = \x:Word8 y:Word8. %isub x y
+  zero = IToW8 0
+
+instance unitAdd : Add Unit where
+  add = \x y. ()
+  sub = \x y. ()
+  zero = ()
+
+instance tabAdd : Add a ?=> Add (n=>a) where
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+interface Mul a:Type where
+  mul : a -> a -> a
+  one : a
+
+def (*) (d:Mul a) ?=> : a -> a -> a = mul
+
+instance float64Mul : Mul Float64 where
+  mul = \x:Float64 y:Float64. %fmul x y
+  one = FToF64 1.0
+
+instance float32Mul : Mul Float32 where
+  mul = \x:Float32 y:Float32. %fmul x y
+  one = FToF32 1.0
+
+instance int64Mul : Mul Int64 where
+  mul = \x:Int64 y:Int64. %imul x y
+  one = IToI64 1
+
+instance int32Mul : Mul Int32 where
+  mul = \x:Int32 y:Int32. %imul x y
+  one = IToI32 1
+
+instance word8Mul : Mul Word8 where
+  mul = \x:Word8 y:Word8. %imul x y
+  one = IToW8 1
+
+instance unitMul : Mul Unit where
+  mul = \x y. ()
+  one = ()
+
+
+interface Integral a:Type where
+  idiv: a->a->a
+  rem: a->a->a
+
+instance int64Integral : Integral Int64 where
+  idiv = \x:Int64 y:Int64. %idiv x y
+  rem  = \x:Int64 y:Int64. %irem x y
+
+instance int32Integral : Integral Int32 where
+  idiv = \x:Int32 y:Int32. %idiv x y
+  rem  = \x:Int32 y:Int32. %irem x y
+
+instance word8Integral  : Integral Word8  where
+  idiv = \x:Word8  y:Word8.  %idiv x y
+  rem  = \x:Word8  y:Word8.  %irem x y
+
+
+interface Fractional a:Type where
+  divide : a -> a -> a
+
+instance float64Fractional : Fractional Float64 where
+  divide = \x:Float64 y:Float64. %fdiv x y
+
+instance float32Fractional : Fractional Float32 where
+  divide = \x:Float32 y:Float32. %fdiv x y
+
+'Basic polymorphic functions and types
+
+def (&) (a:Type) (b:Type) : Type = %PairType a b
+def (,) (x:a) (y:b) : (a & b) = %pair x y
+def fst ((x, _): (a & b)) : a = x
+def snd ((_, y): (a & b)) : b = y
+def swap ((x, y):(a&b)) : (b&a) = (y, x)
+
+def (<<<) (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
+def (>>>) (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
+
+flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
+uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
+const : a -> b -> a = \x _. x
+
+'Vector spaces
+
+data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
+
+@superclass
+def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
+
+def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
+(*.)  : VSpace a ?=> a -> Float -> a = flip (.*)
+def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (divide 1.0 s) .* v
+def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
+
+@instance floatVS : VSpace Float = MkVSpace float32Add (*)
+@instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
+@instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
+
+'Bool type
+
+data Bool =
+  False
+  True
+
+def BToW8 (x : Bool) : Word8 = %dataConTag x
+
+def W8ToB (x : Word8) : Bool = %toEnum Bool x
+
+def (&&) (x:Bool) (y:Bool) : Bool =
+  x' = BToW8 x
+  y' = BToW8 y
+  W8ToB $ %and x' y'
+
+def (||) (x:Bool) (y:Bool) : Bool =
+  x' = BToW8 x
+  y' = BToW8 y
+  W8ToB $ %or x' y'
+
+def not  (x:Bool) : Bool =
+  x' = BToW8 x
+  W8ToB $ %not x'
+
+'Sum types
+
+data Maybe a:Type =
+  Nothing
+  Just a
+
+def isNothing (x:Maybe a) : Bool = case x of
+  Nothing -> True
+  Just _ -> False
+
+data (|) a:Type b:Type =
+  Left  a
+  Right b
+
+def select (p:Bool) (x:a) (y:a) : a = case p of
+  True  -> x
+  False -> y
+
+def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
+
+def BToF (x:Bool) : Float = IToF (BToI x)
+def todo (a:Type) ?-> : a = %throwError a
+def throw (a:Type) ?-> : a = %throwError a
+
+'Effects
+
+def Ref (r:Type) (a:Type) : Type = %Ref r a
+def get  (ref:Ref h s)       : {State h} s    = %get  ref
+def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
+def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
+def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
+def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
+def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
+
+def withReader
+      (eff:Effects) ?-> (a:Type) ?-> (r:Type) ?->
+      (init:r) (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
+      : {|eff} a =
+    def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
+    %runReader init explicitAction
+
+def withAccum
+      (eff:Effects) ?-> (a:Type) ?-> (w:Type) ?->
+      (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
+      : {|eff} (a & w) =
+    def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a = action ref
+    %runWriter explicitAction
+
+def withState
+      (eff:Effects) ?-> (a:Type) ?-> (s:Type) ?->
+      (init:s)
+      (action: (h:Type ?-> Ref h s -> {State h |eff} a))
+      : {|eff} (a & s) =
+    def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
+    %runState init explicitAction
+
+'Type classes
+
+data Eq  a:Type = MkEq  (a -> a -> Bool)
+data Ord a:Type = MkOrd (Eq a) (a -> a -> Bool) (a -> a -> Bool)  -- eq, gt, lt
+
+@superclass
+def eqFromOrd (d:Ord a) : Eq a = case d of MkOrd eq _ _ -> eq
+
+def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = case d of MkEq eq -> eq x y
+def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
+
+def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ gt _  -> gt x y
+def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
+def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
+def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
+
+@instance float64Eq : Eq Float64 = MkEq \x:Float64 y:Float64. W8ToB $ %feq x y
+@instance float32Eq : Eq Float32 = MkEq \x:Float32 y:Float32. W8ToB $ %feq x y
+@instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   W8ToB $ %ieq x y
+@instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   W8ToB $ %ieq x y
+@instance word8Eq   : Eq Word8   = MkEq \x:Word8   y:Word8.   W8ToB $ %ieq x y
+@instance boolEq    : Eq Bool    = MkEq \x y. BToW8 x == BToW8 y
+@instance unitEq    : Eq Unit    = MkEq \x y. True
+
+@instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. W8ToB $ %fgt x y)
+                                                      (\x y. W8ToB $ %flt x y))
+@instance float32Ord : Ord Float32 = (MkOrd float32Eq (\x y. W8ToB $ %fgt x y)
+                                                      (\x y. W8ToB $ %flt x y))
+@instance int64Ord   : Ord Int64   = (MkOrd int64Eq   (\x y. W8ToB $ %igt x y)
+                                                      (\x y. W8ToB $ %ilt x y))
+@instance int32Ord   : Ord Int32   = (MkOrd int32Eq   (\x y. W8ToB $ %igt x y)
+                                                      (\x y. W8ToB $ %ilt x y))
+@instance word8Ord   : Ord Word8   = (MkOrd word8Eq   (\x y. W8ToB $ %igt x y)
+                                                      (\x y. W8ToB $ %ilt x y))
+@instance unitOrd    : Ord Unit    = (MkOrd unitEq (\x y. False) (\x y. False))
+
+@instance
+def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
+  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+
+@instance
+def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
+  pairGt = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
+  pairLt = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
+  MkOrd pairEq pairGt pairLt
+
+
+-- TODO: accumulate using the True/&& monoid
+@instance
+def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
+  \xs ys.
+    numDifferent : Float =
+      snd $ withAccum \ref. for i.
+        ref += (IToF (BToI (xs.i /= ys.i)))
+    numDifferent == 0.0
+
+'Transcencendental functions
+
+interface Floating a:Type where
+  exp    : a -> a
+  exp2   : a -> a
+  log    : a -> a
+  log2   : a -> a
+  log10  : a -> a
+  log1p  : a -> a
+  sin    : a -> a
+  cos    : a -> a
+  tan    : a -> a
+  sinh   : a -> a
+  cosh   : a -> a
+  tanh   : a -> a
+  floor  : a -> a
+  ceil   : a -> a
+  round  : a -> a
+  sqrt   : a -> a
+  pow    : a -> a -> a
+  lgamma : a -> a
+
+def lbeta (_ : Add a) ?=> (_ : Floating a) ?=> : a -> a -> a = \x y. lgamma x + lgamma y - lgamma (x + y)
+
+-- Todo: better numerics for very large and small values.
+-- Using %exp here to avoid circular definition problems.
+def float32_sinh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) 2.0
+def float32_cosh (x:Float32) : Float32 = %fdiv ((%exp x) + (%exp (%fsub 0.0 x))) 2.0
+def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) ((%exp x) + (%exp (%fsub 0.0 x)))
+
+-- Todo: unify this with float32 functions.
+def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_cosh (x:Float64) : Float64 = %fdiv ((%exp x) + (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_tanh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) ((%exp x) + (%exp (%fsub (FToF64 0.0) x)))
+
+
+instance float64Floating : Floating Float64 where
+  exp    = \x:Float64. %exp x
+  exp2   = \x:Float64. %exp2   x
+  log    = \x:Float64. %log    x
+  log2   = \x:Float64. %log2   x
+  log10  = \x:Float64. %log10  x
+  log1p  = \x:Float64. %log1p  x
+  sin    = \x:Float64. %sin    x
+  cos    = \x:Float64. %cos    x
+  tan    = \x:Float64. %tan    x
+  sinh   = float64_sinh
+  cosh   = float64_cosh
+  tanh   = float64_tanh
+  floor  = \x:Float64. %floor  x
+  ceil   = \x:Float64. %ceil   x
+  round  = \x:Float64. %round  x
+  sqrt   = \x:Float64. %sqrt   x
+  pow    = \x:Float64 y:Float64. %fpow x y
+  lgamma = \x:Float64. %lgamma x
+
+instance float32Floating : Floating Float32 where
+  exp    = \x:Float32. %exp x
+  exp2   = \x:Float32. %exp2   x
+  log    = \x:Float32. %log    x
+  log2   = \x:Float32. %log2   x
+  log10  = \x:Float32. %log10  x
+  log1p  = \x:Float32. %log1p  x
+  sin    = \x:Float32. %sin    x
+  cos    = \x:Float32. %cos    x
+  tan    = \x:Float32. %tan    x
+  sinh   = float32_sinh
+  cosh   = float32_cosh
+  tanh   = float32_tanh
+  floor  = \x:Float32. %floor  x
+  ceil   = \x:Float32. %ceil   x
+  round  = \x:Float32. %round  x
+  sqrt   = \x:Float32. %sqrt   x
+  pow    = \x:Float32 y:Float32. %fpow x y
+  lgamma = \x:Float32. %lgamma x
+
+'Working with index sets
+
+def Range (low:Int) (high:Int) : Type = %IntRange low high
+def Fin (n:Int) : Type = Range 0 n
+def ordinal (i:a) : Int = %toOrdinal i
+def size (n:Type) : Int = %idxSetSize n
+def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
+
+def fromOrdinal (n:Type) (i:Int) : n =
+  case (0 <= i) && (i < size n) of
+    True  -> unsafeFromOrdinal _ i
+    False -> throw
+
+def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
+def (@) (i:Int) (n:Type) : n = fromOrdinal n i
+def iota (n:Type) : n=>Int = for i. ordinal i
+
+-- TODO: we want Eq and Ord for all index sets, not just `Fin n`
+@instance
+def finEq (n:Int) ?-> : Eq (Fin n) = MkEq \x y. ordinal x == ordinal y
+
+@instance
+def finOrd (n:Int) ?-> : Ord (Fin n) =
+  MkOrd finEq (\x y. ordinal x > ordinal y) (\x y. ordinal x < ordinal y)
+
+'Misc
+
+pi : Float = 3.141592653589793
+
+def id (x:a) : a = x
+def dup (x:a) : (a & a) = (x, x)
+def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
+def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
+def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
+def fanout (n:Type) (x:a) : n=>a = for i. x
+def sq (d:Mul a) ?=> (x:a) : a = x * x
+def abs (_:Add a) ?=> (_:Ord a) ?=> (x:a) : a = select (x > zero) x (zero - x)
+def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
+
+def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
+  for i. xs.(fromOrdinal _ (ordinal i + start))
+
+def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
+
+def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
+  swap $ withState init \s. for i.
+    c = get s
+    (c', y) = body i c
+    s := c'
+    y
+
+def fold (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
+def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
+  -- `combine` should be a commutative and associative, and form a
+  -- commutative monoid with `identity`
+  -- TODO: implement with a parallelizable monoid-parameterized writer
+  fold identity (\i c. combine c xs.i)
+
+-- TODO: call this `scan` and call the current `scan` something else
+def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
+-- TODO: allow tables-via-lambda and get rid of this
+def fsum (xs:n->Float) : Float = snd $ withAccum \ref. for i. ref += xs i
+def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
+def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
+def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / IToF (size n)
+def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
+def any (xs:n=>Bool) : Bool = reduce False (||) xs
+def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
+
+
+def applyN (n:Int) (x:a) (f:a -> a) : a =
+  snd $ withState x \ref. for _:(Fin n).
+    ref := f (get ref)
+
+def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
+  dx = (high - low) / IToF (size n)
+  for i:n. low + IToF (ordinal i) * dx
+
+def transpose (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
+def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
+def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
+
+-- matmul. Better symbol to use? `@`?
+(**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
+  y' = transpose y
+  for i k. fsum \j. x.i.j * y'.k.j
+
+(**.) : (n=>m=>Float) -> (m=>Float) -> (n=>Float) = \mat v. for i. vdot mat.i v
+(.**) : (m=>Float) -> (n=>m=>Float) -> (n=>Float) = flip (**.)
+
+def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
+  fsum \(i,j). x.i * mat.i.j * y.j
+
+'Functions for working with the pseudorandom number generator
+
+-- TODO: newtype
+Key = Int64
+
+def hash (x:Key) (y:Int32) : Key =
+  y64 = IToI64 y
+  %ffi threefry2x32 Int64 x y64
+def newKey (x:Int) : Key = hash (IToI64 0) x
+def splitKey (k:Key) : (Key & Key) = (hash k 0, hash k 1)
+def splitKey3 (k:Key) : (Key & Key & Key) =
+  (k1, k') = splitKey k
+  (k2, k3) = splitKey k'
+  (k1, k2, k3)
+
+def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
+def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
+def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
+def rand (k:Key) : Float = F64ToF $ %ffi randunif Float64 k
+def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
+  for i:(Fin n). f (ixkey k i)
+
+def randMat (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
+  for i j. f (ixkey2 k i j)
+
+def randn (k:Key) : Float =
+  (k1, k2) = splitKey k
+  u1 = rand k1
+  u2 = rand k2
+  sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
+
+def randIdx (n:Type) ?-> (k:Key) : n =
+  unif = rand k
+  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
+
+-- TODO: Make this better...
+def randInt (k:Key) : Int = (I64ToI k) `mod` 2147483647
+
+def bern (p:Float) (k:Key) : Bool = rand k < p
+
+def randnVec (n:Type) ?-> (k:Key) : n=>Float =
+  for i. randn (ixkey k i)
+
+def cumSum (xs: n=>Float) : n=>Float =
+  fst $ withState 0.0 \total.
+    for i.
+      newTotal = get total + xs.i
+      total := newTotal
+      newTotal
+
+'min / max etc
+
+def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
+
+def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
+def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
+
+def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (minBy f) xs
+def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (maxBy f) xs
+
+def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
+def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
+
+def argmin (_:Ord o) ?=> (xs:n=>o) : n =
+  zeroth = (0@_, xs.(0@_))
+  compare = \(idx1, x1) (idx2, x2).
+    select (x1 < x2) (idx1, x1) (idx2, x2)
+  zipped = for i. (i, xs.i)
+  fst $ reduce zeroth compare zipped
+
+def clip (_:Ord a) ?=> ((low,high):(a&a)) (x:a) : a =
+  min high $ max low x
+
+'Automatic differentiation
+
+-- TODO: add vector space constraints
+def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
+def jvp (f:a->b) (x:a) : a --o b = snd (linearize f x)
+def transposeLinear (f:a --o b) : b --o a = %linearTranspose f
+
+def vjp (f:a->b) (x:a) : (b & b --o a) =
+  (y, df) = linearize f x
+  (y, transposeLinear df)
+
+def grad (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
+
+def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
+
+def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
+
+interface HasAllClose a:Type where
+  allclose : a -> a -> a -> a -> Bool
+
+interface HasDefaultTolerance a:Type where
+  atol : a
+  rtol : a
+
+def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool = allclose atol rtol
+
+instance allCloseF32 : HasAllClose Float32 where
+  allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+
+instance allCloseF64 : HasAllClose Float64 where
+  allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
+
+instance defaultToleranceF32 : HasDefaultTolerance Float32 where
+  atol = FToF32 0.00001
+  rtol = FToF32 0.0001
+
+instance defaultToleranceF64 : HasDefaultTolerance Float64 where
+  atol = FToF64 0.00000001
+  rtol = FToF64 0.00001
+
+instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) where
+  allclose = \atol rtol a b. all for i:n. (a.i ~~ b.i)
+
+instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) where
+  atol = for i. atol
+  rtol = for i. rtol
+
+
+def checkDerivBase (f:Float->Float) (x:Float) : Bool =
+  eps = 0.01
+  ansFwd  = deriv    f x
+  ansRev  = derivRev f x
+  ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
+  ansFwd ~~ ansNumeric && ansRev ~~ ansNumeric
+
+def checkDeriv (f:Float->Float) (x:Float) : Bool =
+  checkDerivBase f x && checkDerivBase (deriv f) x
+
+'Control flow
+
+def while
+    (eff:Effects) ?->
+    (cond: Unit -> {|eff} Bool)
+    (body: Unit -> {|eff} Unit)
+    : {|eff} Unit =
+  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
+  %while cond' body
+
+data IterResult a:Type b:Type =
+  Continue a
+  Done b
+
+-- A little iteration combinator
+-- TODO: allow effects (bug #267)
+def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
+  result = snd $ withState Nothing \resultRef.
+    withState init \carryRef.
+      withState 0 \i.
+        while (\(). isNothing (get resultRef)) \().
+          case body (get i) (get carryRef) of
+            Continue carry ->
+              i := get i + 1
+              carryRef := carry
+            Done result ->
+              resultRef := Just result
+  case result of
+    Just ans -> ans
+    Nothing -> todo  -- should be unreachable
+
+-- returns the highest index `i` such that `xs.i <= x`
+def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
+  case size n == 0 of
+    True -> Nothing
+    False -> case x < xs.(fromOrdinal _ 0) of
+      True -> Nothing
+      False ->
+        iter (0, size n) \_ (low, high).
+          numLeft = high - low
+          case numLeft == 1 of
+            True -> Done $ Just $ fromOrdinal _ low
+            False ->
+              centerIx = low + idiv (high - low) 2
+              case x < xs.(fromOrdinal _ centerIx) of
+                True  -> Continue (low, centerIx)
+                False -> Continue (centerIx, high)
+
+
+'Vector support
+
+-- TODO: Reenable vector suport once fixed-width types are supported.
+-- def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
+--
+-- VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
+-- VectorFloat  = todo
+--
+-- def packVector (a : Float) (b : Float) (c : Float) (d : Float) : VectorFloat = %vectorPack a b c d
+-- def indexVector (v : VectorFloat) (i : Fin VectorWidth) : Float = %vectorIndex v i
+--
+-- -- NB: Backends should be smart enough to optimize this to a vector load from v
+-- def loadVector (v : (Fin VectorWidth)=>Float) : VectorFloat =
+--   idx = Fin VectorWidth
+--   (packVector v.(UNSAFEFromOrdinal idx 0)
+--               v.(UNSAFEFromOrdinal idx 1)
+--               v.(UNSAFEFromOrdinal idx 2)
+--               v.(UNSAFEFromOrdinal idx 3))
+-- def storeVector (v : VectorFloat) : (Fin VectorWidth)=>Float =
+--   idx = Fin VectorWidth
+--   [ indexVector v (UNSAFEFromOrdinal idx 0)
+--   , indexVector v (UNSAFEFromOrdinal idx 1)
+--   , indexVector v (UNSAFEFromOrdinal idx 2)
+--   , indexVector v (UNSAFEFromOrdinal idx 3) ]
+--
+-- def broadcastVector (v : Float) : VectorFloat = packVector v v v v
+--
+-- @instance vectorFloatAdd : Add VectorFloat =
+--   (MkAdd ( \x y. %vfadd x y )
+--          ( \x y. %vfsub x y )
+--          ( broadcastVector zero ))
+-- @instance vectorFloatMul : Mul VectorFloat =
+--   MkMul (\x y. %vfmul x y) $ packVector 1.0 1.0 1.0 1.0
+-- @instance vectorFloatVSpace : VSpace VectorFloat =
+--   MkVSpace vectorFloatAdd \x v. broadcastVector x * v
+
+'Tiling
+
+def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
+
+-- One can think of instances of `Tile n m` as injective functions `m -> n`,
+-- with the special property that consecutive elements of m map to consecutive
+-- elements of n. In this view (+>) is just function application, while ++>
+-- is currying followed by function application. We cannot represent currying
+-- in isolation, because `Tile n (Tile u v)` does not make sense, unlike `Tile n (u & v)`.
+def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
+def (++>) (t : Tile n (u & v)) (i : u) : Tile n v = %sliceCurry t i
+
+def tile  (l : Type) ?->
+          (fTile : (t:(Tile n l) -> {|eff} l=>a))
+          (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
+def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
+          (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
+          (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
+
+-- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
+--       once we are able to eliminate temporary arrays. Until then, we inline for performance...
+--def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Float) : VectorFloat =
+--  idx = Fin VectorWidth
+--  (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
+--              arr.(t +> UNSAFEFromOrdinal idx 1)
+--              arr.(t +> UNSAFEFromOrdinal idx 2)
+--              arr.(t +> UNSAFEFromOrdinal idx 3))
+
+'Numerical utilities
+
+def logsumexp (x: n=>Float) : Float =
+  m = maximum x
+  m + (log $ sum for i. exp (x.i - m))
+
+def logsoftmax (x: n=>Float) : n=>Float =
+  lse = logsumexp x
+  for i. x.i - lse
+
+def softmax (x: n=>Float) : n=>Float =
+  m = maximum x
+  e =  for i. exp (x.i - m)
+  s = sum e
+  for i. e.i / s
+
+def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
+  -- Evaluate a polynomial at x.  Same as Numpy's polyval.
+  fold zero \i c. coefficients.i + x .* c
+
+
+'Monoid
+
+interface Monoid a:Type where
+  mempty : a
+  mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
+
+(<>) : Monoid a ?=> a -> a -> a = mcombine
+
+'Length-erased lists
+
+data List a:Type =
+  AsList n:Int foo:(Fin n => a)
+
+instance monoidList : Monoid (List a) where
+  mempty = AsList _ []
+  mcombine = \x y.
+    (AsList nx xs) = x
+    (AsList ny ys) = y
+    nz = nx + ny
+    AsList _ $ for i:(Fin nz).
+      i' = ordinal i
+      case i' < nx of
+        True  -> xs.(unsafeFromOrdinal _ i')
+        False -> ys.(unsafeFromOrdinal _ (i' - nx))
+
+'Isomorphisms
+
+data Iso a:Type b:Type = MkIso { fwd: a -> b & bwd: b -> a }
+
+def appIso (iso: Iso a b) (x:a) : b =
+  (MkIso {fwd, bwd}) = iso
+  fwd x
+
+def flipIso (iso: Iso a b) : Iso b a =
+  (MkIso {fwd, bwd}) = iso
+  MkIso {fwd=bwd, bwd=fwd}
+
+def revIso (iso: Iso a b) (x:b) : a = appIso (flipIso iso) x
+
+idIso : Iso a a = MkIso {fwd=id, bwd=id}
+
+def (&>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
+  (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
+  (MkIso {fwd=fwd2, bwd=bwd2}) = iso2
+  MkIso {fwd=(fwd1 >>> fwd2), bwd=(bwd1 <<< bwd2)}
+
+def (<<&) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
+
+-- Lens-like accessors
+-- (note: #foo is an Iso {foo: a & ...b} (a & {&...b}))
+def getAt  (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
+def popAt  (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
+def pushAt (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
+def setAt  (iso: Iso a (b & c)) (x:b) (r:a) : a =
+  pushAt iso x $ popAt iso r
+
+-- Prism-like accessors
+-- (note: #?foo is an Iso {foo: a | ...b} (a | {|...b}))
+def matchWith (iso: Iso a (b | c)) (x: a) : Maybe b =
+  case appIso iso x of
+    Left x -> Just x
+    Right _ -> Nothing
+def buildWith (iso: Iso a (b | c)) (x: b) : a = revIso iso $ Left x
+
+swapPairIso : Iso (a & b) (b & a) =
+  MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
+
+-- Complement the focus of a lens-like isomorphism
+exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso &>> swapPairIso
+
+swapEitherIso : Iso (a | b) (b | a) =
+  fwd = \x. case x of
+    Left l -> Right l
+    Right r -> Left r
+  bwd = \x. case x of
+    Left r -> Right r
+    Right l -> Left l
+  MkIso {fwd, bwd}
+
+-- Complement the focus of a prism-like isomorphism
+exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEitherIso
+
+-- Use a lens-like iso to split a 1d table into a 2d table
+def overLens (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
+  for i j. tab.(revIso iso (i, j))
+
+-- Zipper isomorphisms to easily specify many record/variant fields:
+-- #&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
+-- #|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
+
+-- Convert a record zipper isomorphism to a normal lens-like isomorphism
+-- by using splitR &>> iso
+splitR : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
+
+def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
+  overLens (splitR &>> iso) tab
+
+-- Convert a variant zipper isomorphism to a normal prism-like isomorphism
+-- by using splitV &>> iso
+splitV : Iso a ({|} | a) =
+  MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
+
+def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
+  reindex (buildWith $ splitV &>> iso) tab
+
+'## Strings and Characters
+
+String : Type = List Char
+
+CharPtr : Type = %CharPtr
+
+-- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
+def codepoint (c:Char) : Int = W8ToI c
+
+interface Show a:Type where
+  show : a -> String
+
+instance showInt32 : Show Int32 where
+  show = \x: Int32.
+    (n, ptr) = %ffi showInt32 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
+
+instance showInt64 : Show Int64 where
+  show = \x: Int64.
+    (n, ptr) = %ffi showInt64 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
+
+instance showFloat32 : Show Float32 where
+  show = \x: Float32.
+    (n, ptr) = %ffi showFloat32 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
+
+instance showFloat64 : Show Float64 where
+  show = \x: Float64.
+    (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
+    AsList n $ for i:(Fin n).
+      %ptrLoad (%ptrOffset ptr (ordinal i))
+
+-- pipe-like reverse function application
+def (|>) (x:a) (f: a -> b) : b = f x
+
+'## Floating point helper functions
+
+def sign (x:Float) : Float =
+  case x > 0.0 of
+    True -> 1.0
+    False -> case x < 0.0 of
+      True -> -1.0
+      False -> x
+
+def copysign (a:Float) (b:Float) : Float =
+  case b > 0.0 of
+    True -> a
+    False -> case b < 0.0 of
+      True -> (-a)
+      False -> 0.0
+
+-- Todo: use IEEE floating-point builtins.
+infinity = 1.0 / 0.0
+nan      = 0.0 / 0.0
+
+-- Todo: use IEEE floating-point builtins.
+def isinf (x:Float) : Bool = (x == infinity) || (x == -infinity)
+def isnan (x:Float) : Bool = not (x >= x && x <= x)
+
+-- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
+def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
+
+
+'## Trigonometric functions.
+
+def atan_inner (x:Float) : Float =
+  -- From "Computing accurate Horner form approximations to
+  -- special functions in finite precision arithmetic"
+  -- https://arxiv.org/abs/1508.03211
+  -- Only accurate in the range [-1, 1]
+  s = x * x
+  r = 0.0027856871
+  r = r * s - 0.0158660002
+  r = r * s + 0.042472221
+  r = r * s - 0.0749753043
+  r = r * s + 0.106448799
+  r = r * s - 0.142070308
+  r = r * s + 0.199934542
+  r = r * s - 0.333331466
+  r = r * s
+  r * x + x
+
+def min_and_max (_: Ord a) ?=> (x:a) (y:a) : (a & a) =
+  select (x < y) (x, y) (y, x)  -- get both with one comparison.
+
+def atan2 (y:Float) (x:Float) : Float =
+  -- Based off of the Tensorflow implementation at
+  -- github.com/tensorflow/mlir-hlo/blob/master/lib/
+  -- Dialect/mhlo/transforms/legalize_trigonometric_to_approximation.cc#L147
+  -- With a fix to the nan propagation.
+  abs_x = abs x
+  abs_y = abs y
+  (min_abs_x_y, max_abs_x_y) = min_and_max abs_x abs_y
+  a = atan_inner (min_abs_x_y / max_abs_x_y)
+  a = select (abs_x <= abs_y) ((pi / 2.0) -a) a
+  a = select (x < 0.0) pi a
+  t = select (x < 0.0) pi 0.0
+  a = select (y == 0.0) t a
+  t = select (x < 0.0) (3.0 * pi / 4.0) (pi / 4.0)
+  a = select (isinf x && isinf y) t a  -- Handle infinite inputs.
+  a = copysign a y
+  select (either_is_nan x y) nan a  -- Propagate NaNs.
+
+def atan (x:Float) : Float = atan2 x 1.0
+
+
+'## Complex numbers
+
+data Complex = MkComplex Float Float  -- real, imaginary
+
+instance allCloseComplex : HasAllClose Complex where
+  allclose = \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
+
+instance defaultToleranceComplex : HasDefaultTolerance Complex where
+  atol = MkComplex atol atol
+  rtol = MkComplex rtol rtol
+
+@instance ComplexEq : Eq Complex =
+  MkEq \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
+
+instance ComplexAdd : Add Complex where
+  add = \(MkComplex a b) (MkComplex c d). MkComplex (a + c) (b + d)
+  sub = \(MkComplex a b) (MkComplex c d). MkComplex (a - c) (b - d)
+  zero = MkComplex 0.0 0.0
+
+instance ComplexMul : Mul Complex where
+  mul = \(MkComplex a b) (MkComplex c d).
+    MkComplex (a * c - b * d) (a * d + b * c)
+  one = MkComplex 1.0 0.0
+
+@instance complexVS : VSpace Complex =
+  MkVSpace ComplexAdd \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+
+-- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
+def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
+  MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
+
+def complex_exp (MkComplex a b:Complex) : Complex =
+  expx = exp a
+  MkComplex (expx * cos b) (expx * sin b)
+
+def complex_exp2 (MkComplex a b:Complex) : Complex =
+  exp2x = exp2 a
+  b' = b * log 2.0
+  MkComplex (exp2x * cos b') (exp2x * sin b')
+
+def complex_conj (MkComplex a b:Complex) : Complex = MkComplex a (-b)
+def complex_abs  (MkComplex a b:Complex) : Float = a * a + b * b
+def complex_mag  (MkComplex a b:Complex) : Float = sqrt (a * a + b * b)
+def complex_arg  (MkComplex a b:Complex) : Float = atan2 b a
+
+complex_log   = \x:Complex. MkComplex (log (complex_mag x)) (complex_arg x)
+complex_log2  = \x:Complex. (complex_log x) / log 2.0
+complex_log10 = \x:Complex. (complex_log x) / log 10.0
+complex_pow = \base:Complex power:Complex. complex_exp (power * complex_log base)
+
+def complex_sqrt (MkComplex a b:Complex) : Complex =
+  m = complex_mag $ MkComplex a b
+  MkComplex (sqrt ((a + m) / 2.0)) (sign b * sqrt ((m - a) / 2.0))
+
+def complex_sin  (MkComplex a b:Complex) : Complex = MkComplex (sin  a * cosh b) (cos   a * sinh b)
+def complex_sinh (MkComplex a b:Complex) : Complex = MkComplex (sinh a *  cos b) (cosh  a * sin  b)
+def complex_cos  (MkComplex a b:Complex) : Complex = MkComplex (cos  a * cosh b) (-sin  a * sinh b)
+def complex_cosh (MkComplex a b:Complex) : Complex = MkComplex (cosh a *  cos b) (-sinh a * sin  b)
+def complex_tan  (x:Complex) : Complex = complex_division (complex_sin  x) (complex_cos  x)
+def complex_tanh (MkComplex a b:Complex) : Complex =
+  num = MkComplex (sinh a * cos b) (cosh a * sin  b)
+  den = MkComplex (cosh a * cos b) (sinh a * sin  b)
+  complex_division num den
+
+instance ComplexFractional : Fractional Complex where
+  divide = complex_division
+
+def complex_floor (MkComplex re im:Complex) : Complex =
+  -- from "Complex Floor" by Eugene McDonnell
+  -- https://www.jsoftware.com/papers/eem/complexfloor.htm
+  fr = floor re
+  fi = floor im
+  x = re - fr
+  y = im - fi
+  case (x + y) < 1.0 of
+    True -> MkComplex fr fi
+    False -> case x >= y of
+      True  -> MkComplex (fr + 1.0) fi
+      False -> MkComplex fr (fi + 1.0)
+
+complex_ceil =  \x:Complex. -(complex_floor (-x))
+complex_round = \x:Complex. complex_floor $ MkComplex 0.5 0.0
+
+complex_lgamma : Complex -> Complex = \x:Complex.
+  todo  -- This one is pretty hairy.
+        -- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
+
+def complex_log1p (x:Complex) : Complex =
+  (MkComplex a b) = x
+  case a == 0.0 of
+    True -> x
+    False ->
+      u = x + MkComplex 1.0 0.0
+      case a <= -1.0 of
+        True -> complex_log u
+        False -> divide ((complex_log u) * x) x
+
+instance complexFloating : Floating Complex where
+  exp    = complex_exp
+  exp2   = complex_exp2
+  log    = complex_log
+  log2   = complex_log2
+  log10  = complex_log10
+  log1p  = complex_log1p
+  sin    = complex_sin
+  cos    = complex_cos
+  tan    = complex_tan
+  sinh   = complex_sinh
+  cosh   = complex_cosh
+  tanh   = complex_tanh
+  floor  = complex_floor
+  ceil   = complex_ceil
+  round  = complex_round
+  sqrt   = complex_sqrt
+  pow    = complex_pow
+  lgamma = complex_lgamma
+
+'## Bitwise operations
+
+-- TODO: type class like Haskell's `Bits`
+def (<<) (x:Byte) (y:Int) : Byte = %shl x (IToW8 y)
+def (>>) (x:Byte) (y:Int) : Byte = %shr x (IToW8 y)
+def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
+def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
+
+'## Raw pointer operations
+
+def Ptr (ty:Type) : Type = %makePtrType ty
+
+def tabToPtr (n:Int) ?-> (xs:(Fin n)=>Float) : Ptr Float =
+  %getPtr xs
+
+def ptrToTab (n:Int) (ptr:Ptr Float) : Fin n => Float =
+  for i:(Fin n). %ptrLoad (%ptrOffset ptr (ordinal i))
+
+'## Misc
+
+-- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
+-- TODO: safe (runtime-checked) and unsafe versions
+def castTable (m:Type) (xs:n=>a) : m=>a =
+  case size m == size n of
+     True  -> for i. xs.(unsafeFromOrdinal _ (ordinal i))
+     False -> throw
+
+def reverse (x:n=>a) : n=>a =
+  s = size n
+  for i. x.((s - 1 - ordinal i)@_)
+
+def toList (n:Type) ?-> (xs:n=>a) : List a =
+  n' = size n
+  AsList _ $ castTable (Fin n') xs
+
+def tail (n:Type) ?-> (xs:n=>a) (start:Int) : List a =
+  numElts = size n - start
+  toList $ slice xs start (Fin numElts)
+
+def padTo (n:Type) ?-> (m:Type) (x:a) (xs:n=>a) : (m=>a) =
+  n' = size n
+  for i.
+    i' = ordinal i
+    case i' < n' of
+      True  -> xs.(i'@_)
+      False -> x
+
+def idivCeil (x:Int) (y:Int) : Int = idiv x y + BToI (rem x y /= 0)
+
+def fromJust (x:Maybe a) : a = case x of Just x' -> x'
+
+def anySat (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
+
+-- In Haskell this would just be `mapM`. The equivalent for us would be having
+-- an exception effect.
+def seqMaybes (xs : n=>Maybe a) : Maybe (n => a) =
+  -- is it possible to implement this safely? (i.e. without using partial
+  -- functions)
+  case anySat isNothing xs of
+    True  -> Nothing
+    False -> Just $ map fromJust xs
+
+def linearSearch (_:Eq a) ?=> (xs:n=>a) (query:a) : Maybe n =
+  snd $ withState Nothing \ref. for i.
+    case xs.i == query of
+      True  -> ref := Just i
+      False -> ()
+
+def listLength ((AsList n _):List a) : Int = n
+
+-- This is for efficiency (rather than using `<>` repeatedly)
+-- TODO: we want this for any monoid but this implementation won't work.
+def concat (lists:n=>(List a)) : List a =
+  totalSize = sum for i. listLength lists.i
+  AsList _ $ fst $ withState 0 \listIdx.
+    fst $ withState 0 \eltIdx.
+      for i:(Fin totalSize).
+        while (\(). get eltIdx >= listLength (lists.((get listIdx)@_))) \().
+          eltIdx := 0
+          listIdx := get listIdx + 1
+        (AsList _ xs) = lists.((get listIdx)@_)
+        eltIdxVal = get eltIdx
+        eltIdx := eltIdxVal + 1
+        xs.(eltIdxVal@_)
+
+def cumSumLow (xs: n=>Float) : n=>Float =
+  fst $ withState 0.0 \total.
+    for i.
+      oldTotal = get total
+      total := oldTotal + xs.i
+      oldTotal
+-- cdf should include 0.0 but not 1.0
+def categoricalFromCDF (cdf: n=>Float) (key: Key) : n =
+  r = rand key
+  case searchSorted cdf r of
+    Just i -> i
+
+def normalizePdf (xs: d=>Float) : d=>Float = xs / sum xs
+
+def cdfForCategorical (logprobs: n=>Float) : n=>Float =
+  maxLogProb = maximum logprobs
+  cumSumLow $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
+
+def categorical (logprobs: n=>Float) (key: Key) : n =
+  categoricalFromCDF (cdfForCategorical logprobs) key
+
+-- batch variant to share the work of forming the cumsum
+-- (alternatively we could rely on hoisting of loop constants)
+def categoricalBatch (logprobs: n=>Float) (key: Key) : m=>n =
+  cdf = cdfForCategorical logprobs
+  for i. categoricalFromCDF cdf $ ixkey key i

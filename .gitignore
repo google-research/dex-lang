@@ -1,4 +1,3 @@
-dex
 *.hi
 *.o
 test.db
@@ -12,9 +11,16 @@ garbage.hs
 stack.yaml.lock
 *.pyc
 doc/
-scratch.dx
+scratch*
 scratch/
 test-scratch/
 dist-newstyle/
 *.cache
+*.db
 *.bc
+.benchmarks
+benchmarks/exe/**/*
+benchmarks/parboil/data
+benchmarks/rodinia/rodinia
+examples/export/scalar
+examples/export/array

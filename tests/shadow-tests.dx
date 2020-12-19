@@ -1,0 +1,78 @@
+
+-- repeated vars in patterns not allowed
+:p
+  (x, x) = (1, 1)
+  x
+> Error: variable already defined: x
+>
+>   (x, x) = (1, 1)
+>       ^
+
+:p
+  f = \(x, x). x
+  f (1, 1)
+> Error: variable already defined: x
+>
+>   f = \(x, x). x
+>            ^
+
+-- TODO: re-enable if we choose to allow non-peer shadowing
+-- -- shouldn't cause error even though it shadows x elsewhere
+-- x = 50
+
+-- :p let x = 100 in (let x = 200 in x)
+
+-- > [200]
+
+arr = 10
+
+-- TODO: enable when we handle this case
+-- _ = 10
+-- _ = 10 -- underscore shadows allowed
+
+arr = 20
+> Error: variable already defined: arr
+
+:p arr
+> 10
+
+-- testing top-level shadowing
+f : a -> a = \x. x
+
+x = 1
+
+:p f 1
+> 1
+
+:p y
+> Error: variable not in scope: y
+>
+> :p y
+>    ^
+
+(_, _, z) = (1,2,3)
+
+:p z
+> 3
+
+:p
+   (_, _, w) = (1,2,4)
+   w
+> 4
+
+-- Testing data shadowing
+data Shadow = Shadow
+> Error: variable already defined: Shadow
+
+data Shadow =
+  Shadow1 Int
+  Shadow1
+> Error: variable already defined: Shadow1
+
+ShadowCon = 1
+data Shadow = ShadowCon
+> Error: variable already defined: ShadowCon
+
+data Shadow = ShadowCon'
+ShadowCon' = 1
+> Error: variable already defined: ShadowCon'

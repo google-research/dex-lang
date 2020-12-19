@@ -1,0 +1,127 @@
+'# Plotting library
+
+include "diagram.dx"
+include "png.dx"
+
+data CompactSet a:Type =
+  Interval a a
+  Singleton a
+
+def Scale (a:Type) : Type =
+  { mapping : a -> Maybe Float
+  & range   : List (CompactSet Float) }  -- non-overlapping, ordered
+
+def ScaledData (n:Type) (a:Type) : Type =
+  { scale : Scale a
+  & dat   : n => a }
+
+def Plot (n:Type) (a:Type) (b:Type) (c:Type) : Type =
+  { xs : ScaledData n a
+  & ys : ScaledData n b
+  & cs : ScaledData n c }
+
+def Color : Type = Fin 3 => Float
+
+def applyScale (s:Scale a) (x:a) : Maybe Float = getAt #mapping s x
+
+unitTypeScale : Scale Unit = { mapping = \(). Just 0.0
+                             , range   = AsList _ [Singleton 0.0] }
+
+def projectUnitInterval (x:Float) : Maybe Float =
+  case x >= 0.0 && x <= 1.0 of
+    True  -> Just x
+    False -> Nothing
+
+unitIntervalScale : Scale Float =
+  { mapping = projectUnitInterval
+  , range   = AsList _ [Interval 0.0 1.0] }
+
+def mapScale (s:Scale a) (f: b -> a) : Scale b =
+  { mapping = \x. getAt #mapping s (f x)
+  , range = getAt #range s }
+
+def floatScale (xmin:Float) (xmax:Float) : Scale Float =
+  mapScale unitIntervalScale (\x. (x - xmin) / (xmax - xmin))
+
+def getScaled (sd:ScaledData n a) (i:n) : Maybe Float =
+  applyScale (getAt #scale sd) (getAt #dat sd).i
+
+lowColor  = [1.0, 0.5, 0.0]
+highColor = [0.0, 0.5, 1.0]
+
+def interpolate (_:VSpace a) ?=> (low:a) (high:a) (x:Float) : a =
+  x' = clip (0.0, 1.0) x
+  (x' .* low) + ((1.0 - x') .* high)
+
+def makeRGBColor (c : Color) : HtmlColor =
+  [r, g, b] = for i. IToW8 $ FToI $ floor (255.0 * c.i)
+  (r, g, b)
+
+def colorScale (x:Float) : HtmlColor =
+  makeRGBColor $ interpolate lowColor highColor x
+
+def plotToDiagram (plot:Plot n a b c) : Diagram =
+  points = concatDiagrams for i.
+    x = getScaled (getAt #xs plot) i
+    y = getScaled (getAt #ys plot) i
+    c = getScaled (getAt #cs plot) i
+    -- TODO: nested may-fail patterns would make this much better
+    case x of
+      Just x' -> case y of
+        Just y' -> case c of
+          Just c' ->
+            pointDiagram |> moveXY (x', y') |> setStrokeColor (colorScale c' )
+          Nothing -> mempty
+        Nothing -> mempty
+      Nothing -> mempty
+  boundingBox = moveXY (0.5, 0.5) $ rect 1.0 1.0
+  boundingBox <> points
+
+def showPlot (plot:Plot n a b c) : String =
+  renderSVG (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
+
+blankData : ScaledData n Unit = {scale = unitTypeScale, dat = for i. ()}
+
+blankPlot : Plot n Unit Unit Unit = { xs = blankData
+                                    , ys = blankData
+                                    , cs = blankData }
+
+-- -- TODO: generalize beyond Float with a type class for auto scaling
+def autoScale (xs:n=>Float) : ScaledData n Float =
+  {scale = floatScale (minimum xs) (maximum xs), dat = xs}
+
+def setXData (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c=
+  -- We can't use `setAt` here because we're changing the type
+  {xs = xs, ys = getAt #ys plot, cs = getAt #cs plot}
+
+def setYData (ys:ScaledData n new) (plot:Plot n a b c) : Plot n a new c =
+  {xs = getAt #xs plot, ys = ys, cs = getAt #cs plot}
+
+def setCData (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
+  {xs = getAt #xs plot, ys = getAt #ys plot, cs = cs}
+
+def xyPlot (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
+  blankPlot |> setXData (autoScale xs) |> setYData (autoScale ys)
+
+def xycPlot (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
+  blankPlot |>
+    setXData (autoScale xs) |>
+    setYData (autoScale ys) |>
+    setCData (autoScale cs)
+
+def yPlot (ys:n=>Float) : Plot n Float Float Unit =
+  xs = for i. IToF $ ordinal i
+  xyPlot xs ys
+
+-- xs = linspace (Fin 100) 0. 1.0
+-- :html showPlot $ xycPlot xs xs xs
+
+'## Heatmap-style plots
+
+-- TODO: scales
+def matshow (img:n=>m=>Float) : Html =
+  low  = minimum  $ for (i,j). img.i.j
+  high = maximum $ for (i,j). img.i.j
+  pngToHtml $ makePNG for i j.
+    x = floatTo8Bit $ (img.i.j - low) / (high - low)
+    [x, x, x]

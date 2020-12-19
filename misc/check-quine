@@ -1,5 +1,24 @@
 #!/bin/bash
 
+# This script checks quine programs.
+# https://en.wikipedia.org/wiki/Quine_(computing)
+#
+# Usage:
+#
+#   check-quine <input file> <command>
+#   check-quine foo.dx dex -- script --allow-errors
+#
+# Technically, quines are programs that take no input and produce their own
+# source as output. This script instead runs a command with an input file and
+# checks whether the output has no diff with the input file.
+#
+# If the output of the command applied to the input file has no diff with the
+# input file, then the input file is a quine and the script exits with a zero
+# success status.
+#
+# Otherwise, if the input file is not a quine, the script prints the diff to
+# stdout and exits with a non-zero error status.
+
 tmpout=$(mktemp)
 errout=$(mktemp)
 

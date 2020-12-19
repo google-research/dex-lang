@@ -1,4 +1,4 @@
-# Dex [![Test status](https://travis-ci.org/google-research/dex-lang.svg?branch=main)](https://travis-ci.org/google-research/dex-lang)
+# Dex [![Test status](https://github.com/google-research/dex-lang/workflows/Tests/badge.svg)](https://github.com/google-research/dex-lang/actions?query=workflow%3ATests)
 Dex (named for "index") is a research language for typed, functional array
 processing. The goal of the project is to explore:
 
@@ -17,24 +17,42 @@ or these example programs:
   * [Estimating pi](https://google-research.github.io/dex-lang/pi.html)
   * [Hamiltonian Monte Carlo](https://google-research.github.io/dex-lang/mcmc.html)
   * [ODE integrator](https://google-research.github.io/dex-lang/ode-integrator.html)
-  * [Sierpinsky triangle](https://google-research.github.io/dex-lang/sierpinsky.html)
+  * [Sierpinski triangle](https://google-research.github.io/dex-lang/sierpinski.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
 
-Please note that Dex is an experimental research project at an early stage of
-development. Contributions welcome!
+⚠️ Dex is an experimental research project at an early stage of
+development. Expect monstrous bugs and razor-sharp edges. Contributions welcome! ⚠️
 
-## Setup
+## Dependencies
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 9, e.g. `apt-get install llvm-9-dev` on Ubuntu/Debian.
-    For macOS, there's [some guidance here](https://github.com/google-research/dex-lang/issues/2#issuecomment-649896955).
+  * Install LLVM 9
+    * `apt-get install llvm-9-dev` on Ubuntu/Debian,
+    * `brew install llvm@9` on macOS, and ensure it is on your `PATH` e.g. via `export PATH="$(brew --prefix llvm@9)/bin:$PATH"` before building.
+  * Install libpng (often included by default in *nix)
 
 ## Building
 
- * Build Dex: `make`
- * Run tests: `make tests`
- * Set up a `dex` alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
+ * Build Dex in development mode: `make`
+ * Run tests in development mode: `make tests`
+ * Install a release version of Dex: `make install`
+
+The default installation directory is `$HOME/.local/bin`, so make sure to add
+that directory to `$PATH` after installing Dex. To install Dex somewhere else,
+set the `PREFIX` environment variable before running `make install`. For
+example, `PREFIX=$HOME make install` installs `dex` in `$HOME/bin`.
+
+It is convenient to set up a `dex` alias (e.g. in `.bashrc`) for running Dex in
+development mode:
+
+```console
+# Linux:
+alias dex="stack exec dex --"
+
+# macOS:
+alias dex="stack exec --stack-yaml=stack-macos.yaml dex --"
+```
 
 ## Running
 

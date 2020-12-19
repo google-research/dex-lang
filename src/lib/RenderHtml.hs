@@ -16,14 +16,12 @@ import Data.Text (pack)
 import CMark (commonmarkToHtml)
 
 import Control.Monad
-import qualified Data.Vector.Storable as V
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
 import Syntax
 import PPrint
 import Parser
-import Plot
 import Serialize()
 
 pprintHtml :: ToMarkup a => a -> String
@@ -49,9 +47,7 @@ instance ToMarkup Result where
 
 instance ToMarkup Output where
   toMarkup out = case out of
-    HeatmapOut False h w zs -> heatmapHtml h w zs
-    HeatmapOut True h w zs  -> colorHeatmapHtml h w zs
-    ScatterOut xs ys  -> scatterHtml (V.toList xs) (V.toList ys)
+    HtmlOut s -> preEscapedString s
     _ -> cdiv "result-block" $ toHtml $ pprint out
 
 instance ToMarkup SourceBlock where
@@ -84,10 +80,12 @@ syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
       CommandStr  -> "command"
       SymbolStr   -> "symbol"
       TypeNameStr -> "type-name"
+      IsoSugarStr -> "iso-sugar"
       NormalStr -> error "Should have been matched already"
 
 data StrClass = NormalStr
               | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr
+              | IsoSugarStr
 
 classify :: Parser StrClass
 classify =
@@ -96,6 +94,8 @@ classify =
    <|> (do s <- lowerWord
            return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
    <|> (upperWord >> return TypeNameStr)
+   <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
+        >> lowerWord >> return IsoSugarStr)
    <|> (some symChar >> return SymbolStr)
    <|> (anySingle >> return NormalStr)
 

@@ -16,27 +16,33 @@ flag cuda
   description:         Enables building with CUDA support
   default:             False
 
+flag optimized
+  description:         Enables GHC optimizations
+  default:             False
+
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
   build-depends:       base, bytestring, file-embed
   hs-source-dirs:      src/resources
   default-language:    Haskell2010
+  default-extensions:  CPP
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, PPrint, Array, Algebra,
-                       Actor, Cat, Flops, Embed, Serialize,
-                       RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
-                       Autodiff, Interpreter, Logging, PipeRPC, CUDA
+                       Parser, Util, Imp, Imp.Embed, Imp.Optimize,
+                       PPrint, Algebra, Parallelize, Optimize, Serialize
+                       Actor, Cat, Flops, Embed,
+                       RenderHtml, LiveOutput, Simplify, TopLevel,
+                       Autodiff, Interpreter, Logging, PipeRPC, CUDA,
+                       LLVM.JIT, LLVM.Shims
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
-                       aeson, megaparsec >=8.0, warp, wai,
+                       aeson, megaparsec >=8.0, warp, wai, filepath,
                        parser-combinators, http-types, prettyprinter, text,
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
-                       diagrams-rasterific, JuicyPixels, transformers,
-                       base64-bytestring, vector, directory, mmap, unix,
-                       process, primitive, store, dex-resources
+                       transformers, directory, mmap, unix,
+                       process, primitive, store, dex-resources, temporary,
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources
@@ -45,25 +51,51 @@ library
     build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
-  ghc-options:         -Wall -O0
+  ghc-options:         -Wall -fPIC
   cxx-sources:         src/lib/dexrt.cpp
-  cxx-options:         -std=c++17
+  cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
+  pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
     extra-libraries:   cuda
     cxx-options:       -DDEX_CUDA
     cpp-options:       -DDEX_CUDA
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0
 
 executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
   build-depends:       dex, base, haskeline, prettyprinter, mtl,
-                       optparse-applicative, unix, store, bytestring
+                       optparse-applicative, unix, store, bytestring, directory
+  if os(darwin)
+    build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src
-  default-extensions:  CPP
+  default-extensions:  CPP, LambdaCase
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0
+
+foreign-library Dex
+  type:                native-shared
+  other-modules:       API
+  build-depends:       base, dex, dex-resources, mtl
+  hs-source-dirs:      src/foreign
+  c-sources:           src/foreign/rts.c
+  cc-options:          -std=c11 -fPIC
+  ghc-options:         -Wall -fPIC
+  default-language:    Haskell2010
+  default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0
 
 Test-Suite test-dex
   type:                exitcode-stdio-1.0
@@ -75,11 +107,7 @@ Test-Suite test-dex
   hs-source-dirs:      tests
   ghc-options:         cbits/libdex.so
                        -Wall
-
--- executable dex2jax.so
---   main-is:             Dex2Jax.hs
---   build-depends:       dex, base, aeson, bytestring, mtl
---   ghc-options:         -no-hs-main -fPIC -shared -dynamic
---   hs-source-dirs:      src/ffi
---   extra-libraries:     HSrts-ghc8.6.5
---   ghc-options:         -Wall
+  if flag(optimized)
+    ghc-options:       -O3
+  else
+    ghc-options:       -O0

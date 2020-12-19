@@ -1,0 +1,202 @@
+'# Vector graphics library
+
+Point : Type = (Float & Float)
+
+data Geom =
+  PointGeom
+  Circle Float
+  Rectangle Float Float  -- width, height
+  Line Point
+
+-- HTML color (no alpha)
+-- TODO: replace with `Fin 3 => Word8` when we fix #348
+HtmlColor : Type = (Word8 & Word8 & Word8)
+
+def showHex (x:Int32) : String =
+  (n, ptr) = %ffi showHex (Int32 & CharPtr) x
+  AsList n $ for i:(Fin n).
+    %ptrLoad (%ptrOffset ptr (ordinal i))
+
+-- TODO: we should add overloaded string literals so we don't need this
+def str (n:Int) ?-> (s:(Fin n=>Char)) : String = AsList _ s
+
+black : HtmlColor = (IToW8   0, IToW8   0, IToW8   0)
+white : HtmlColor = (IToW8 255, IToW8 255, IToW8 255)
+red   : HtmlColor = (IToW8 255, IToW8   0, IToW8   0)
+green : HtmlColor = (IToW8   0, IToW8 255, IToW8   0)
+blue  : HtmlColor = (IToW8   0, IToW8   0, IToW8 255)
+
+GeomStyle : Type =
+  { fillColor   : Maybe HtmlColor
+  & strokeColor : Maybe HtmlColor
+  & strokeWidth : Int }
+
+defaultGeomStyle : GeomStyle =
+  { fillColor   = Nothing
+  , strokeColor = Just black
+  , strokeWidth = 1 }
+
+-- TODO: consider sharing attributes among a set of objects for efficiency
+data Diagram = MkDiagram (List (GeomStyle & Point & Geom))
+
+instance monoidDiagram : Monoid Diagram where
+  mempty = MkDiagram mempty
+  mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
+
+def concatDiagrams (diagrams:n=>Diagram) : Diagram =
+  MkDiagram $ concat for i.
+    (MkDiagram d) = diagrams.i
+    d
+
+-- TODO: arbitrary affine transformations. Our current representation of
+-- rectangles and circles means we can only do scale/flip/rotate90.
+-- Should we use lenses/isomorphisms for these instead?
+def applyTransformation
+      (transformPoint: Point -> Point)
+      (transformGeom:  Geom -> Geom)
+      (d:Diagram) : Diagram =
+  (MkDiagram (AsList _ objs)) = d
+  (MkDiagram $ AsList _ for i.
+    (attr, p, geom) = objs.i
+    (attr, transformPoint p, transformGeom geom))
+
+flipY : Diagram -> Diagram =
+  applyTransformation (\(x,y). (x, -y)) \geom. case geom of
+    PointGeom     -> PointGeom
+    Circle r      -> Circle r
+    Rectangle w h -> Rectangle w h
+    Line (x, y)   -> Line (x, -y)
+
+def scale (s:Float) : (Diagram -> Diagram) =
+  applyTransformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
+    PointGeom     -> PointGeom
+    Circle r      -> Circle (s * r)
+    Rectangle w h -> Rectangle (s * w) (s * h)
+    Line (x, y)   -> Line (s * x, s * y)
+
+def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
+  applyTransformation (\(x,y). (x + offX, y + offY) ) id
+
+def singletonDefault (geom:Geom) : Diagram =
+  MkDiagram $ AsList _ [(defaultGeomStyle, (0.0, 0.0), geom)]
+
+def pointDiagram               : Diagram = singletonDefault PointGeom
+def circle (r:Float)           : Diagram = singletonDefault $ Circle r
+def rect   (w:Float) (h:Float) : Diagram = singletonDefault $ Rectangle w h
+def line   (p:Point)           : Diagram = singletonDefault $ Line p
+
+def updateGeom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
+  (MkDiagram (AsList _ objs)) = d
+  MkDiagram $ AsList _ for i.
+    (attr       , geoms) = objs.i
+    (update attr, geoms)
+
+def setFillColor   (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #fillColor   (Just c)
+def setStrokeColor (c:HtmlColor) : Diagram -> Diagram = updateGeom $ setAt #strokeColor (Just c)
+def setStrokeWidth (w:Int)       : Diagram -> Diagram = updateGeom $ setAt #strokeWidth w
+def removeStroke                 : Diagram -> Diagram = updateGeom $ setAt #strokeColor Nothing
+def removeFill                   : Diagram -> Diagram = updateGeom $ setAt #fillColor   Nothing
+
+'## Serialization to SVG string
+
+'Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).
+
+@noinline
+def strCatUncurried ((xs,ys):(String & String)) : String = xs <> ys
+
+def (<.>) (xs:String) (ys:String) : String = strCatUncurried (xs, ys)
+
+def quote (s:String) : String = str "\"" <.> s <.> str "\""
+
+@noinline
+def strSpaceCatUncurried ((s1,s2):(String & String)) : String =
+  s1 <.> str " " <.> s2
+
+def (<+>) (s1:String) (s2:String) : String =
+  strSpaceCatUncurried (s1, s2)
+
+def selfClosingBrackets (s:String) : String = str "<" <.> s <.> str "/>"
+
+def tagBrackets (tag:String) (s:String) : String =
+  str "<" <.> tag <.> str ">" <.> s <.> str "</" <.> tag <.> str ">"
+
+@noinline
+def tagBracketsAttrUncurried ((tag, attr, s):(String & String & String)) : String =
+  str "<" <.> tag <+> attr <.> str ">" <.> s <.> str "</" <.> tag <.> str ">"
+
+def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
+  tagBracketsAttrUncurried (tag, attr, s)
+
+def makeAttr (attr:String) (val:String) : String =
+  attr <.> str "=" <.> quote val
+
+def htmlColorStr (cs:HtmlColor) : String =
+  (r, g, b) = cs
+  toList "#" <> (showHex $ W8ToI r) <> (showHex $ W8ToI g) <> (showHex $ W8ToI b)
+
+def optionalHtmlColorStr (c: Maybe HtmlColor) : String =
+  case c of
+    Nothing -> str "none"
+    Just c' -> htmlColorStr c'
+
+@noinline
+def attrString (attr:GeomStyle) : String =
+  (  --  makeAttr (str "stroke")       (optionalHtmlColorStr $ getAt #strokeColor attr)
+      makeAttr (str "fill")         (optionalHtmlColorStr $ getAt #fillColor   attr)
+  <+> makeAttr (str "stroke-width") (show                 $ getAt #strokeWidth attr))
+
+def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
+  case geom of
+    PointGeom ->
+     pointAttr = setAt #fillColor (getAt #strokeColor attr) attr
+     tagBracketsAttr (str "g") (attrString pointAttr) $ selfClosingBrackets $
+       (str "circle" <+>
+        str "cx=" <.> quote (show x) <.>
+        str "cy=" <.> quote (show y) <.>
+        str "r=\"1\"")
+    Circle r ->
+     tagBracketsAttr (str "g") (attrString attr) $ selfClosingBrackets $
+       (str "circle" <+>
+        str "cx=" <.> quote (show x) <.>
+        str "cy=" <.> quote (show y) <.>
+        str "r="  <.> quote (show r))
+    Rectangle w h ->
+     tagBracketsAttr (str "g") (attrString attr) $ selfClosingBrackets $
+       (str "rect" <+>
+        str "width="  <.> quote (show w) <.>
+        str "height=" <.> quote (show h) <.>
+        str "x="      <.> quote (show (x - (w/2.0))) <.>
+        str "y="      <.> quote (show (y - (h/2.0))))
+
+BoundingBox : Type = (Point & Point)
+
+def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
+  ((xmin, ymin), (xmax, ymax)) = bounds
+  imgWidth = 400.0
+  scaleFactor = imgWidth / (xmax - xmin)
+  imgHeight = (ymax - ymin) * scaleFactor
+  (MkDiagram (AsList _ objs)) = d |> flipY |> scale scaleFactor
+  viewBoxStr = makeAttr (str "viewBox") $
+     (show (xmin * scaleFactor) <+> show (-(ymax * scaleFactor)) <+>
+      show imgWidth <+> show imgHeight)
+  svgAttrStr = (    makeAttr (str "width" ) (show imgWidth)
+                <+> makeAttr (str "height") (show imgHeight)
+                <+> viewBoxStr)
+  tagBracketsAttr (str "svg") svgAttrStr $
+    concat for i.
+      (attr, pos, geom) = objs.i
+      renderGeom attr pos geom
+
+'## Derived convenience methods and combinators
+
+moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
+moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
+
+-- mydiagram : Diagram =
+--   (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
+--   <> (circle 5.0 |> moveXY (40.0, 40.0))
+--   <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
+--   <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
+--   )
+
+-- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))

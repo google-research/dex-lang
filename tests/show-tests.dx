@@ -1,0 +1,74 @@
+'# `Show` instances
+
+-- Int32
+
+:p show (1234: Int32)
+> (AsList 4 "1234")
+
+:p show (-1234: Int32)
+> (AsList 5 "-1234")
+
+:p show ((FToI (-(pow 2. 31.))): Int32)
+> (AsList 11 "-2147483648")
+
+-- Int64
+
+:p show (IToI64 1234: Int64)
+> (AsList 4 "1234")
+
+-- FIXME(https://github.com/google-research/dex-lang/issues/317):
+-- Unexpected zext from type conversion of negative Int32 to Int64.
+:p show (IToI64 (-1234): Int64)
+> (AsList 10 "4294966062")
+
+-- Float32
+
+:p show (123.456789: Float32)
+> (AsList 10 "123.456787")
+
+:p show ((pow 2. 16.): Float32)
+> (AsList 5 "65536")
+
+-- FIXME(https://github.com/google-research/dex-lang/issues/316):
+-- Unparenthesized expression with type ascription does not parse.
+-- :p show (nan: Float32)
+
+:p show ((nan): Float32)
+> (AsList 3 "nan")
+
+-- Note: `show nan` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p nan
+> NaN
+
+:p show ((infinity): Float32)
+> (AsList 3 "inf")
+
+-- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p infinity
+> Infinity
+
+-- Float64
+
+:p show (FToF64 123.456789: Float64)
+> (AsList 16 "123.456787109375")
+
+:p show (FToF64 (pow 2. 16.): Float64)
+> (AsList 5 "65536")
+
+:p show ((FToF64 nan): Float64)
+> (AsList 3 "nan")
+
+-- Note: `show nan` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p (FToF64 nan)
+> NaN
+
+:p show ((FToF64 infinity): Float64)
+> (AsList 3 "inf")
+
+-- Note: `show infinity` (Dex runtime dtoa implementation) appears different from
+-- `:p nan` (Dex interpreter implementation).
+:p (FToF64 infinity)
+> Infinity

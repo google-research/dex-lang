@@ -5,20 +5,27 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
-module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
+module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated,
+             scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             bindM2, foldMapM, lookupWithIdx, (...)) where
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import Data.Foldable
 import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+
+import Cat
+
+class IsBool a where
+  toBool :: a -> Bool
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"
@@ -206,3 +213,22 @@ foldMapM f xs = foldM (\acc x -> (acc<>) <$> f x ) mempty xs
 
 lookupWithIdx :: Eq a => a -> [(a, b)] -> Maybe (Int, b)
 lookupWithIdx k vals = lookup k $ [(x, (i, y)) | (i, (x, y)) <- zip [0..] vals]
+
+-- NOTE: (toList args) has to be at least as long as (toList trav)
+zipWithT :: (Traversable t, Monad h, Foldable f) => (a -> b -> h c) -> t a -> f b -> h (t c)
+zipWithT f trav args = flip evalStateT (toList args) $ flip traverse trav $ \e -> getNext >>= lift . f e
+  where getNext = get >>= \(h:t) -> put t >> return h
+
+for :: Functor f => f a -> (a -> b) -> f b
+for = flip fmap
+
+transitiveClosure :: forall a. Ord a => (a -> [a]) -> [a] -> [a]
+transitiveClosure getParents seeds =
+  toList $ snd $ runCat (mapM_ go seeds) mempty
+  where
+    go :: a -> Cat (Set.Set a) ()
+    go x = do
+      visited <- look
+      unless (x `Set.member` visited) $ do
+        extend $ Set.singleton x
+        mapM_ go $ getParents x

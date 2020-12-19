@@ -9,11 +9,12 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..),
             varAnn, varName, BinderP (..), binderAnn, binderNameHint,
-            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
-            rawName, nameSpace, nameTag, envMaxName, genFresh,
-            tagToStr, isGlobal, asGlobal, envFilter, binderAsEnv,
-            fromBind, newEnv, HasName, getName) where
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, traverseNames,
+            envAsVars, rawName, nameSpace, nameTag, envMaxName, genFresh,
+            tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
+            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
 
+import Data.Maybe
 import Data.Store
 import Data.String
 import qualified Data.Text as T
@@ -31,13 +32,33 @@ newtype Env a = Env (M.Map Name a)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName | SumName
-                 deriving  (Show, Ord, Eq, Generic)
+data NameSpace =
+       GenName
+     | SourceName         -- names from source program
+     | Skolem
+     | InferenceName
+     | SumName
+     | FFIName
+     | AbstractedPtrName  -- used in `abstractPtrLiterals` in Imp lowering
+     | TopFunctionName    -- top-level Imp functions
+     | AllocPtrName       -- used for constructing dests in Imp lowering
+     | CArgName           -- used for constructing arguments in export
+     | LoopBinderName     -- used to easily generate non-shadowing names in parallelization
+       deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
-data BinderP a = Ignore a | Bind (VarP a)
+data BinderP a = Ignore a | BindWithHint InlineHint (VarP a)
                  deriving (Show, Generic, Functor, Foldable, Traversable)
+
+data InlineHint = NoHint | CanInline | NoInline
+                  deriving (Show, Generic)
+
+pattern Bind :: VarP a -> BinderP a
+pattern Bind v <- BindWithHint _ v
+  where Bind v = BindWithHint NoHint v
+
+{-# COMPLETE Ignore, Bind #-}
 
 rawName :: NameSpace -> Tag -> Name
 rawName s t = Name s t 0
@@ -51,8 +72,8 @@ nameSpace :: Name -> Maybe NameSpace
 nameSpace (Name s _ _) = Just s
 nameSpace _ = Nothing
 
-newEnv :: (Foldable f, HasName a) => f a -> [b] -> Env b
-newEnv bs xs = fold $ zipWith (@>) (toList bs) xs
+newEnv :: (Foldable f, Foldable h, HasName a) => f a -> h b -> Env b
+newEnv bs xs = fold $ zipWith (@>) (toList bs) (toList xs)
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -104,8 +125,13 @@ envPairs (Env m) = M.toAscList m
 fmapNames :: (Name -> a -> b) -> Env a -> Env b
 fmapNames f (Env m) = Env $ M.mapWithKey f m
 
-envDelete :: Name -> Env a -> Env a
-envDelete v (Env m) = Env (M.delete v m)
+traverseNames :: Applicative t => (Name -> a -> t b) -> Env a -> t (Env b)
+traverseNames f (Env m) = Env <$> M.traverseWithKey f m
+
+envDelete :: HasName a => a -> Env b -> Env b
+envDelete x (Env m) = Env $ case getName x of
+  Nothing -> m
+  Just n  -> M.delete n m
 
 envSubset :: [Name] -> Env a -> Env a
 envSubset vs (Env m) = Env $ M.intersection m (M.fromList [(v,()) | v <- vs])
@@ -129,15 +155,18 @@ isin x env = case getName x of
 envMaxName :: Env a -> Maybe Name
 envMaxName (Env m) = if M.null m then Nothing else Just $ fst $ M.findMax m
 
-(!) :: HasCallStack => Env a -> VarP ann -> a
+(!) :: (HasCallStack, HasName b) => Env a -> b -> a
 env ! v = case envLookup env v of
   Just x -> x
-  Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
+  Nothing -> error $ "Lookup of " ++ show (fromMaybe "<no name>" $ getName v) ++ " failed"
 
 isGlobal :: VarP ann -> Bool
 isGlobal (GlobalName _ :> _) = True
 isGlobal (GlobalArrayName _ :> _) = True
 isGlobal _ = False
+
+isGlobalBinder :: BinderP ann -> Bool
+isGlobalBinder b = isGlobal $ fromBind "" b
 
 genFresh :: Name-> Env a -> Name
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
@@ -212,6 +241,7 @@ tagToStr s = T.unpack s
 
 instance Store Name
 instance Store NameSpace
+instance Store InlineHint
 instance Store a => Store (VarP a)
 instance Store a => Store (Env a)
 instance Store a => Store (BinderP a)

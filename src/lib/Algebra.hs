@@ -4,9 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Algebra (Constant, Monomial, Polynomial,
-                elemCount, offsets,
-                evalClampPolynomial, evalSumClampPolynomial,
+module Algebra (offsetToE, elemCountE, applyIdxs,
                 showPolyC, showSumPolyC) where
 
 import Prelude hiding (lookup, sum, pi)
@@ -22,7 +20,8 @@ import Data.Coerce
 import Env
 import Syntax
 import PPrint
-import Embed (MonadEmbed, iadd, imul, idiv, clampPositive)
+import Embed ( MonadEmbed, iadd, imul, idiv, clampPositive, ptrOffset
+             , indexToIntE, indexSetSizeE )
 
 -- MVar is like Var, but it additionally defines Ord. The invariant here is that the variables
 -- should never be shadowing, and so it is sufficient to only use the name for equality and
@@ -51,17 +50,32 @@ type ClampPolynomial  = PolynomialP ClampMonomial
 data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
 data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
 
-elemCount :: ScalarTableType -> ClampPolynomial
-elemCount t = case t of
-  BaseTy _  -> liftC $ poly [(1, mono [])]
-  TabTy b _ -> (offsets t) `psubstSumVar` (indexSetSize $ binderType b)
-  _ -> error $ "Not a ScalarTableType: " ++ pprint t
+applyIdxs :: MonadEmbed m => Atom -> IndexStructure -> m Atom
+applyIdxs ptr Empty = return ptr
+applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
+  ordinal <- indexToIntE $ Var i
+  offset <- offsetToE idxs ordinal
+  ptr' <- ptrOffset ptr offset
+  applyIdxs ptr' rest
 
-offsets :: ScalarTableType -> SumClampPolynomial
-offsets t = case t of
+offsetToE :: MonadEmbed m => IndexStructure -> Atom -> m Atom
+offsetToE idxs i = evalSumClampPolynomial (offsets idxs) i
+
+elemCountE :: MonadEmbed m => IndexStructure -> m Atom
+elemCountE idxs = case idxs of
+  Empty    -> return $ IdxRepVal 1
+  Nest b _ -> offsetToE idxs =<< indexSetSizeE (binderType b)
+
+elemCount :: IndexStructure -> ClampPolynomial
+elemCount idxs = case idxs of
+  Empty -> liftC $ poly [(1, mono [])]
+  Nest b _ -> (offsets idxs) `psubstSumVar` (indexSetSize $ binderType b)
+
+offsets :: IndexStructure -> SumClampPolynomial
+offsets idxs = case idxs of
   -- TODO: not sure about `fromBind` here`
-  TabTy b body -> sumC (fromBind "_" b) $ elemCount body
-  _ -> error $ "Not a non-scalar ScalarTableType: " ++ pprint t
+  Nest b body -> sumC (fromBind "_" b) $ elemCount body
+  _ -> error $ "Not a non-empty index structure " ++ pprint idxs
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
@@ -102,7 +116,8 @@ toPolynomial atom = case atom of
   Var v                  -> poly [(1, mono [(v, 1)])]
   Con (Lit (Int64Lit x)) -> fromInt x
   Con (Lit (Int32Lit x)) -> fromInt x
-  Con (Lit (Int8Lit  x)) -> fromInt x
+  Con (Lit (Word8Lit x)) -> fromInt x
+  Con (IntRangeVal _ _ i) -> toPolynomial i
   -- TODO: Coercions? Unit constructor?
   _ -> unreachable
   where
@@ -111,11 +126,12 @@ toPolynomial atom = case atom of
 
 -- === Embedding ===
 
-evalClampPolynomial :: MonadEmbed m => ClampPolynomial -> m Atom
-evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
+_evalClampPolynomial :: MonadEmbed m => ClampPolynomial -> m Atom
+_evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
 
 evalSumClampPolynomial :: MonadEmbed m => SumClampPolynomial -> Atom -> m Atom
-evalSumClampPolynomial (SumClampPolynomial cp summedVar) a = evalPolynomialP (evalClampMonomial varVal) cp
+evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
+  evalPolynomialP (evalClampMonomial varVal) cp
   where varVal v = if MVar v == sumVar summedVar then a else Var v
 
 -- We have to be extra careful here, because we're evaluating a polynomial

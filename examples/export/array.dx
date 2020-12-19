@@ -1,0 +1,5 @@
+
+def addVecF32 (n : Int) (x : (Fin n)=>Float) (y : (Fin n)=>Float) : (Fin n)=>Float =
+  for i. x.i + y.i
+
+:export addVecF32 addVecF32

@@ -6,248 +6,130 @@
 
 {-# LANGUAGE CPP #-}
 
-module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
-                 valToHeatmap, valToScatter,
-                 typeToArrayType, memoizeFileEval) where
+module Serialize (pprintVal, cached, getDexString) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad
-import Control.Exception (throwIO)
-import Foreign.Ptr
-import qualified Data.ByteString       as BS
-import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString as BS
 import System.Directory
-import System.IO
-import System.IO.Error
-import System.IO.MMap
-import System.Posix hiding (ReadOnly, version)
-import Text.Megaparsec hiding (State)
-import Text.Megaparsec.Char
+import System.FilePath
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as M
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
-import Data.List (transpose)
 
-import Array
 import Interpreter
-import Type hiding (indexSetConcreteSize)
 import Syntax
+import Type
 import PPrint
-import Parser
-import Interpreter (indices, indexSetSize)
-import qualified Algebra as A
 
-data DBOHeader = DBOHeader
-  { objectType     :: Type
-  , bufferSizes    :: [Int] }
+pprintVal :: Val -> IO String
+pprintVal val = asStr <$> prettyVal val
 
-preHeaderLength :: Int
-preHeaderLength = 81
+-- TODO: get the pointer rather than reading char by char
+getDexString :: Val -> IO String
+getDexString (DataCon _ _ 0 [_, xs]) = do
+  let (TabTy b _) = getType xs
+  idxs <- indices $ getType b
+  forM idxs $ \i -> do
+    ~(Con (Lit (Word8Lit c))) <- evalBlock mempty (Block Empty (App xs i))
+    return $ toEnum $ fromIntegral c
+getDexString x = error $ "Not a string: " ++ pprint x
 
-preHeaderStart :: String
-preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
-
-dumpDataFile :: FilePath -> Val -> IO ()
-dumpDataFile fname val = do
-  let arrays = getValArrays val
-  let ty = getType val
-  withFile fname WriteMode $ \h -> do
-    putBytes h $ serializeFullHeader $ createHeader ty arrays
-    mapM_ (writeArrayToFile h) arrays
-
-loadDataFile :: FilePath -> IO Val
-loadDataFile fname = do
-   -- TODO: check lengths are consistent with type
-  (n, header@(DBOHeader ty sizes)) <- readHeader fname
-  actualSize <- liftM (fromIntegral . fileSize) $ getFileStatus fname
-  liftExceptIO $ validateFile n actualSize header
-  filePtr <- memmap fname
-  let firstPtr = filePtr `plusPtr` n
-  let ptrs = init $ scanl plusPtr firstPtr sizes
-  -- TODO: typecheck result
-  valFromPtrs ty ptrs
-  where
-    valFromPtrs = undefined
-    liftExceptIO :: Except a -> IO a
-    liftExceptIO (Left e ) = throwIO e
-    liftExceptIO (Right x) = return x
-
-memmap :: FilePath -> IO (Ptr ())
-memmap fname = do
-  (ptr, _, offset, _) <- mmapFilePtr fname ReadOnly Nothing
-  return $ ptr `plusPtr` offset
-
-readHeader :: FilePath -> IO (Int, DBOHeader)
-readHeader fname = do
-  withFile fname ReadMode $ \h -> do
-    headerLength <- parseFile h preHeaderLength parsePreHeader
-    header <- parseFile h (headerLength - preHeaderLength) parseHeader
-    return (headerLength, header)
-
-serializeFullHeader :: DBOHeader -> String
-serializeFullHeader header = preHeaderPrefix <> padding <> body
-  where
-    body = serializeHeader header
-    headerSize = preHeaderLength + length body
-    preHeaderPrefix = preHeaderStart <> show headerSize <> " "
-    padding = replicate (preHeaderLength - length preHeaderPrefix - 1) '-' <> "\n"
-
-serializeHeader :: DBOHeader -> String
-serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprint ty    <> "\n"
-                                     <> "bufferSizes: " <> show sizes   <> "\n"
-
-createHeader :: Type -> [Array] -> DBOHeader
-createHeader ty arrays = DBOHeader ty sizes
-  where sizes = [sizeOf b * elems | (elems, b) <- map arrayType arrays]
-
-putBytes :: Handle -> String -> IO ()
-putBytes h s = B.hPut h $ B.pack s
-
-parseFile :: Handle -> Int -> Parser a -> IO a
-parseFile h n p = do
-  s <- liftM B.unpack $ B.hGet h n
-  return $ ignoreExcept $ parseit s p
-
-parsePreHeader :: Parser Int
-parsePreHeader = do
-  symbol preHeaderStart
-  n <- uint
-  void $ many (char '-')
-  void $ char '\n'
-  return n
-
-parseHeader :: Parser DBOHeader
-parseHeader = undefined
-  -- emptyLines
-  -- ty <- symbol "type:" >> tauType <* eol
-  -- emptyLines
-  -- sizes <-  symbol "bufferSizes:" >> brackets (uint `sepBy1` symbol ",") <* eol
-  -- emptyLines
-  -- return $ DBOHeader ty sizes
-
-writeArrayToFile :: Handle -> Array -> IO ()
-writeArrayToFile h arr = unsafeWithArrayPointer arr (\ptr -> hPutBuf h ptr (size * sizeOf b))
-  where (size, b) = arrayType arr
-
-validateFile :: Int -> Int -> DBOHeader -> Except ()
-validateFile headerLength fileLength header@(DBOHeader ty sizes) =
-  addContext ctx $ do
-     let minSizes = [size * (sizeOf b) | (size, b) <- fmap typeToArrayType $ flattenType ty]
-     when (length minSizes /= length sizes) $ throw DataIOErr $
-       "unexpected number of buffers: " <> show minSizes <> " vs " <> show sizes <> "\n"
-     zipWithM_ checkBufferSize minSizes sizes
-     when (claimedLength /= fileLength) $ throw DataIOErr $ "wrong file size\n"
-  where
-    flattenType = undefined
-    claimedLength = headerLength + sum sizes
-    ctx =   "Validation error\n"
-         <> "Claimed header length: " <> show headerLength <> "\n"
-         <> "Claimed total length:  " <> show claimedLength <> "\n"
-         <> "Actual file length:    " <> show fileLength   <> "\n"
-         <> "Header data:\n" <> serializeHeader header
-
-checkBufferSize :: Int -> Int -> Except ()
-checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
-   "buffer too small: " <> show size <> " < " <> show minSize
-
--- TODO: Optimize this!
--- Turns a fully evaluated table value into a bunch of arrays
-materializeScalarTables :: Atom -> [Array]
-materializeScalarTables atom = case atom of
-  Con (ArrayLit _ arr) -> [arr]
-  Con (Lit l)          -> [arrayFromScalar l]
-  Con (PairCon l r)    -> materializeScalarTables l ++ materializeScalarTables r
-  Con (UnitCon)        -> []
-  Lam a@(Abs b (TabArrow, _)) ->
-    fmap arrayConcat $ transpose $ fmap evalBody $ indices $ binderType b
-    where evalBody idx = materializeScalarTables $ evalBlock mempty $ snd $ applyAbs a idx
-  _ -> error $ "Not a scalar table: " ++ pprint atom
-
-pattern Float64Ty :: Type
-pattern Float64Ty = BaseTy (Scalar Float64Type)
-
--- TODO: Support fp32 outputs too!
-valToScatter :: Val -> Output
-valToScatter val = case getType val of
-  TabTy _ (PairTy Float64Ty Float64Ty) -> ScatterOut xs ys
-  _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
-  where [Array _ (Float64Vec xs), Array _ (Float64Vec ys)] = materializeScalarTables val
-
-valToHeatmap :: Bool -> Val -> Output
-valToHeatmap color val = case color of
-  False -> case getType val of
-    TabTy hv (TabTy wv Float64Ty) ->
-       HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
-    _ -> error $ "Heatmap expects a 2D array of floats, but got: " ++ pprint (getType val)
-  True -> case getType val of
-    TabTy hv (TabTy wv (TabTy _ Float64Ty)) ->
-       HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
-    _ -> error $ "Color Heatmap expects a 3D array of floats, but got: " ++ pprint (getType val)
-  where [(Array _ (Float64Vec xs))] = materializeScalarTables val
-
-pprintVal :: Val -> String
-pprintVal val = asStr $ prettyVal val
-
-prettyVal :: Val -> Doc ann
+-- Pretty-print values, e.g. for displaying in the REPL.
+-- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
+prettyVal :: Val -> IO (Doc ann)
 prettyVal val = case val of
-  Lam abs@(Abs b (TabArrow, _)) -> pretty elems <> idxSetStr
-    where idxSet = binderType b
-          elems = flip fmap (indices idxSet) $ \idx ->
-            asStr $ prettyVal $ evalBlock mempty $ snd $ applyAbs abs idx
-          idxSetStr = case idxSet of FixedIntRange l _ | l == 0 -> mempty
-                                     _                          -> "@" <> pretty idxSet
+  -- Pretty-print tables.
+  Lam abs@(Abs b (TabArrow, body)) -> do
+    -- Pretty-print index set.
+    let idxSet = binderType b
+    let idxSetDoc = case idxSet of
+          Fin _ -> mempty               -- (Fin n) is not shown
+          _     -> "@" <> pretty idxSet -- Otherwise, show explicit index set
+    -- Pretty-print elements.
+    idxs <- indices idxSet
+    elems <- forM idxs $ \idx -> do
+      atom <- evalBlock mempty $ snd $ applyAbs abs idx
+      case atom of
+        Con (Lit (Word8Lit c)) ->
+          return $ showChar (toEnum @Char $ fromIntegral c) ""
+        _ -> pprintVal atom
+    let bodyType = getType body
+    let elemsDoc = case bodyType of
+          -- Print table of characters as a string literal.
+          TC (BaseType (Scalar Word8Type)) -> pretty ('"': concat elems ++ "\"")
+          _      -> pretty elems
+    return $ elemsDoc <> idxSetDoc
+  DataCon (DataDef _ _ dataCons) _ con args ->
+    case args of
+      [] -> return $ pretty conName
+      _  -> do
+        ans <- mapM prettyVal args
+        return $ parens $ pretty conName <+> hsep ans
+    where DataConDef conName _ = dataCons !! con
   Con con -> case con of
-    PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
-    Coerce t i  -> pretty i <> "@" <> pretty t
+    PairCon x y -> do
+      xStr <- pprintVal x
+      yStr <- pprintVal y
+      return $ pretty (xStr, yStr)
     SumAsProd ty (TagRepVal trep) payload -> do
       let t = fromIntegral trep
       case ty of
         TypeCon (DataDef _ _ dataCons) _ ->
           case args of
-            [] -> pretty conName
-            _  -> parens $ pretty conName <+> hsep (map prettyVal args)
+            [] -> return $ pretty conName
+            _  -> do
+              ans <- mapM prettyVal args
+              return $ parens $ pretty conName <+> hsep ans
           where
             DataConDef conName _ = dataCons !! t
             args = payload !! t
-        VariantTy (NoExt types) -> pretty variant
+        VariantTy (NoExt types) -> return $ pretty variant
           where
             [value] = payload !! t
             (theLabel, repeatNum) = toList (reflectLabels types) !! t
             variant = Variant (NoExt types) theLabel repeatNum value
         _ -> error "SumAsProd with an unsupported type"
-    _ -> pretty con
-  atom -> prettyPrec atom LowestPrec
-
-getValArrays :: Val -> [Array]
-getValArrays = undefined
-
-typeToArrayType :: ScalarTableType -> ArrayType
-typeToArrayType t = case t of
-  BaseTy b  -> (1, b)
-  TabTy _ _ -> (fromIntegral sizeLit, scalarTableBaseType t)
-    where (IdxRepVal sizeLit) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
-  _ -> error $ "Not a scalar table type: " ++ pprint t
+    _ -> return $ pretty con
+  Record (LabeledItems row) -> do
+    let separator = line' <> ","
+    let bindwith = " ="
+    let elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
+    let fmElem = \(label, v) -> ((pretty label <> bindwith) <+>) <$> prettyVal v
+    docs <- mapM fmElem elems
+    let innerDoc = "{" <> flatAlt " " ""
+          <> concatWith (surround (separator <> " ")) docs
+          <> "}"
+    return $ align $ group innerDoc
+  atom -> return $ prettyPrec atom LowestPrec
 
 -- TODO: this isn't enough, since this module's compilation might be cached
 curCompilerVersion :: String
 curCompilerVersion = __TIME__
 
-memoizeFileEval :: Store a => FilePath -> (FilePath -> IO a) -> FilePath -> IO a
-memoizeFileEval cacheFile f fname = do
-  cacheFresh <- cacheFile `newerFileThan` fname
-  if cacheFresh
+cached :: (Eq k, Store k, Store a) => String -> k -> IO a -> IO a
+cached cacheName key create = do
+  cacheDir <- getXdgDirectory XdgCache "dex"
+  createDirectoryIfMissing True cacheDir
+  let cacheKeyPath = cacheDir </> (cacheName ++ ".key")
+  let cachePath    = cacheDir </> (cacheName ++ ".cache")
+  cacheExists <- (&&) <$> doesFileExist cacheKeyPath <*> doesFileExist cachePath
+  cacheUpToDate <- case cacheExists of
+                     False -> return False
+                     True -> do
+                       maybeCacheKey <- decode <$> BS.readFile cacheKeyPath
+                       case maybeCacheKey of
+                         Right cacheKey -> return $ cacheKey == (curCompilerVersion, key)
+                         Left  _        -> return False
+  if cacheUpToDate
     then do
-      decoded <- decode <$> BS.readFile cacheFile
+      decoded <- decode <$> BS.readFile cachePath
       case decoded of
-        Right (version, result) | version == curCompilerVersion -> return result
-        _ -> removeFile cacheFile >> memoizeFileEval cacheFile f fname
+        Right result -> return result
+        _            -> removeFile cachePath >> cached cacheName key create
     else do
-      result <- f fname
-      BS.writeFile cacheFile (encode (curCompilerVersion, result))
+      result <- create
+      BS.writeFile cacheKeyPath $ encode (curCompilerVersion, key)
+      BS.writeFile cachePath    $ encode result
       return result
-
-newerFileThan :: FilePath -> FilePath -> IO Bool
-newerFileThan f1 f2 = flip catchIOError (const $ return False) $ do
-  f1Mod <- getModificationTime f1
-  f2Mod <- getModificationTime f2
-  return $ f1Mod > f2Mod
