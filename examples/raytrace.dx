@@ -24,37 +24,12 @@ def directionAndLength (x: d=>Float) : (d=>Float & Float) =
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def reverse (x:n=>a) : n=>a =
-  s = size n
-  for i. x.((s - 1 - ordinal i)@_)
-
 def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
   snd $ withState zero \total.
     for i:(Fin n).
       total := get total + sample (ixkey k i) / IToF n
 
 def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
-
-data IterResult a:Type b:Type =
-  Continue a
-  Done b
-
--- A little iteration combinator
--- TODO: allow effects (bug #267)
-def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
-  result = snd $ withState Nothing \resultRef.
-    withState init \carryRef.
-      withState 0 \i.
-        while (\(). isNothing (get resultRef)) \().
-          case body (get i) (get carryRef) of
-            Continue carry ->
-              i := get i + 1
-              carryRef := carry
-            Done result ->
-              resultRef := Just result
-  case result of
-    Just ans -> ans
-    Nothing -> todo  -- should be unreachable
 
 ' ### 3D Helper Functions
 

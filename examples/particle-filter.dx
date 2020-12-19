@@ -1,0 +1,68 @@
+def Distribution (range:Type) : Type =
+  ( Key -> range
+  & range -> Float)  -- log prob
+
+def Model (state:Type) (observation:Type) : Type =
+  ( Distribution state                   -- initial state
+  & state -> Distribution state          -- dynamics
+  & state -> Distribution observation)   -- observations
+
+def sample (d: Distribution a) (k: Key) : a =
+  (sampler, _) = d
+  sampler k
+
+def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
+  (init, dynamics, observe) = model
+  (key, subkey) = splitKey key
+  s0 = sample init subkey
+  fst $ withState s0 \s_ref .
+    for i.
+      (k1, k2) = splitKey (ixkey key i)
+      s = get s_ref
+      s_next = sample (dynamics s) k1
+      v = sample (observe s) k2
+      s_ref := s_next
+      (s, v)
+
+def filter
+    (num_particles: Int) (num_timesteps: Int)
+    (model: Model s v)
+    (summarize: (Fin num_particles => s) -> a)
+    (obs: Fin num_timesteps=>v)
+    (key: Key)
+    : Fin num_timesteps => a =
+  (init, dynamics, observe) = model
+  (key, init_key) = splitKey key
+  init_particles = for i: (Fin num_particles). sample init (ixkey init_key i)
+  fst $ withState init_particles \p_ref .
+    for t: (Fin num_timesteps).
+      p_prev = get p_ref
+      logLikelihoods = for i. snd (observe p_prev.i) obs.t
+      (resample_key, dynamics_key) = splitKey (ixkey key t)
+      resampled_idxs = categoricalBatch logLikelihoods resample_key
+      p_resampled = for i. p_prev.(resampled_idxs.i)
+      p_next = for i. fst (dynamics p_resampled.i) (ixkey dynamics_key i)
+      p_ref := p_next
+      summarize p_resampled
+
+def normalDistn (mean: Float) (var: Float) : Distribution Float =
+  ( \k. (randn k) * (sqrt var) + mean
+  , \v. -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
+  )
+
+gaussModel : Model Float Float =
+  ( normalDistn 0.1 0.1
+  , \s. normalDistn s 1.0
+  , \s. normalDistn s 1.0
+  )
+
+timesteps = 10
+num_particles = 10000
+
+truth = for i:(Fin timesteps).
+  s = IToF (ordinal i)
+  (s, sample (normalDistn s 1.0) $ ixkey (newKey 0) i)
+
+filtered = filter num_particles _ gaussModel mean (map snd truth) (newKey 0)
+
+-- :p for i. (truth.i, filtered.i)

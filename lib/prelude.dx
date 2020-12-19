@@ -517,6 +517,13 @@ def bern (p:Float) (k:Key) : Bool = rand k < p
 def randnVec (n:Type) ?-> (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
+def cumSum (xs: n=>Float) : n=>Float =
+  fst $ withState 0.0 \total.
+    for i.
+      newTotal = get total + xs.i
+      total := newTotal
+      newTotal
+
 'min / max etc
 
 def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
@@ -610,6 +617,45 @@ def while
     : {|eff} Unit =
   cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
   %while cond' body
+
+data IterResult a:Type b:Type =
+  Continue a
+  Done b
+
+-- A little iteration combinator
+-- TODO: allow effects (bug #267)
+def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
+  result = snd $ withState Nothing \resultRef.
+    withState init \carryRef.
+      withState 0 \i.
+        while (\(). isNothing (get resultRef)) \().
+          case body (get i) (get carryRef) of
+            Continue carry ->
+              i := get i + 1
+              carryRef := carry
+            Done result ->
+              resultRef := Just result
+  case result of
+    Just ans -> ans
+    Nothing -> todo  -- should be unreachable
+
+-- returns the highest index `i` such that `xs.i <= x`
+def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
+  case size n == 0 of
+    True -> Nothing
+    False -> case x < xs.(fromOrdinal _ 0) of
+      True -> Nothing
+      False ->
+        iter (0, size n) \_ (low, high).
+          numLeft = high - low
+          case numLeft == 1 of
+            True -> Done $ Just $ fromOrdinal _ low
+            False ->
+              centerIx = low + idiv (high - low) 2
+              case x < xs.(fromOrdinal _ centerIx) of
+                True  -> Continue (low, centerIx)
+                False -> Continue (centerIx, high)
+
 
 'Vector support
 
@@ -1055,6 +1101,10 @@ def castTable (m:Type) (xs:n=>a) : m=>a =
      True  -> for i. xs.(unsafeFromOrdinal _ (ordinal i))
      False -> throw
 
+def reverse (x:n=>a) : n=>a =
+  s = size n
+  for i. x.((s - 1 - ordinal i)@_)
+
 def toList (n:Type) ?-> (xs:n=>a) : List a =
   n' = size n
   AsList _ $ castTable (Fin n') xs
@@ -1108,3 +1158,30 @@ def concat (lists:n=>(List a)) : List a =
         eltIdxVal = get eltIdx
         eltIdx := eltIdxVal + 1
         xs.(eltIdxVal@_)
+
+def cumSumLow (xs: n=>Float) : n=>Float =
+  fst $ withState 0.0 \total.
+    for i.
+      oldTotal = get total
+      total := oldTotal + xs.i
+      oldTotal
+-- cdf should include 0.0 but not 1.0
+def categoricalFromCDF (cdf: n=>Float) (key: Key) : n =
+  r = rand key
+  case searchSorted cdf r of
+    Just i -> i
+
+def normalizePdf (xs: d=>Float) : d=>Float = xs / sum xs
+
+def cdfForCategorical (logprobs: n=>Float) : n=>Float =
+  maxLogProb = maximum logprobs
+  cumSumLow $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
+
+def categorical (logprobs: n=>Float) (key: Key) : n =
+  categoricalFromCDF (cdfForCategorical logprobs) key
+
+-- batch variant to share the work of forming the cumsum
+-- (alternatively we could rely on hoisting of loop constants)
+def categoricalBatch (logprobs: n=>Float) (key: Key) : m=>n =
+  cdf = cdfForCategorical logprobs
+  for i. categoricalFromCDF cdf $ ixkey key i

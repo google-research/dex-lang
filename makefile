@@ -82,7 +82,7 @@ build-python: build
 # TODO: re-enable linear-tests ad-tests include-test chol
 example-names = mandelbrot pi sierpinski \
                 regression brownian_motion particle-swarm-optimizer \
-                ode-integrator mcmc ctc raytrace \
+                ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator linear_algebra fluidsim
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
