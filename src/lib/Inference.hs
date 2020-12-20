@@ -308,7 +308,7 @@ lookupSourceVar v = do
     Nothing -> do
       scope <- getScope
       let v' = asGlobal $ varName v
-      case envLookup scope (v':>()) of
+      case envLookup scope v' of
         Just (_, DataBoundTypeCon def    ) -> return $ TypeCon def []
         Just (_, DataBoundDataCon def con) -> return $ DataCon def [] con []
         Just (ty, _) -> return $ Var $ v':>ty
@@ -394,7 +394,9 @@ checkULam (p, ann) body piTy = do
 
 checkUEff :: EffectRow -> UInferM EffectRow
 checkUEff (EffectRow effs t) = do
-   effs' <- forM effs $ \(effName, region) -> (effName,) <$> lookupVarName TyKind region
+   effs' <- forM effs $ \(effName, region) -> do
+     (Var (v:>TyKind)) <- lookupSourceVar (region:>())
+     return (effName, v)
    t'    <- forM t $ \tv -> lookupVarName EffKind tv
    return $ EffectRow effs' t'
    where

@@ -46,7 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    getProjection,
+    getProjection, theWorld, initTopEnv,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
@@ -319,7 +319,7 @@ data PrimOp e =
       | IndexRef e e
       | FstRef e
       | SndRef e
-      | FFICall String e [e]
+      | FFICall Bool String e [e]    -- bool indicates it may do IO
       | Inject e
       | PtrOffset e e
       | PtrLoad e
@@ -363,6 +363,7 @@ data PrimHof e =
       | RunReader e e
       | RunWriter e
       | RunState  e e
+      | RunIO e
       | Linearize e
       | Transpose e
       | PTileReduce e e       -- index set, thread body
@@ -444,6 +445,13 @@ pattern NoEffects <- ((S.null) -> True)
 instance Eq EffectRow where
   EffectRow effs t == EffectRow effs' t' =
     sort effs == sort effs' && t == t'
+
+theWorld :: Name
+theWorld = GlobalName "World"
+
+initTopEnv :: TopEnv
+initTopEnv =
+  (theWorld:>TyKind) @> (TyKind, LamBound ImplicitArrow)
 
 -- === top-level constructs ===
 
@@ -1505,6 +1513,7 @@ builtinNames = M.fromList
   , ("runReader"       , HofExpr $ RunReader () ())
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
+  , ("runIO"           , HofExpr $ RunIO ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("TyKind"  , TCExpr $ TypeKind)

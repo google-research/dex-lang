@@ -276,6 +276,7 @@ exprEffs expr = case expr of
       MAsk    -> S.singleton (Reader, h)
       MTell _ -> S.singleton (Writer, h)
       where RefTy (Var (h:>_)) _ = getType ref
+    FFICall True _ _ _ -> S.singleton (State,  theWorld)
     _ -> NoEffects
   Hof hof -> case hof of
     For _ f         -> functionEffs f
@@ -287,6 +288,8 @@ exprEffs expr = case expr of
     RunWriter   f   -> handleRunner Writer f
     RunState  _ f   -> handleRunner State  f
     PTileReduce _ _ -> mempty
+    RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs Nothing), _))) ->
+      S.delete (State, theWorld) $ S.fromList effs
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
     handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs Nothing) _) =
@@ -436,6 +439,7 @@ instance CoreVariant (PrimHof a) where
     RunReader _ _ -> alwaysAllowed
     RunWriter _   -> alwaysAllowed
     RunState  _ _ -> alwaysAllowed
+    RunIO     _   -> alwaysAllowed
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
@@ -665,13 +669,14 @@ typeCheckOp op = case op of
   UnsafeFromOrdinal ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
   ToOrdinal i -> typeCheck i $> IdxRepTy
   IdxSetSize i -> typeCheck i $> IdxRepTy
-  FFICall _ ansTy args -> do
+  FFICall mayDoIO _ ansTy args -> do
     forM_ args $ \arg -> do
       argTy <- typeCheck arg
       case argTy of
         BaseTy _ -> return ()
         _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
                                     "fixed-width base types, but got: " ++ pprint argTy
+    when mayDoIO $ declareEff (State, Just theWorld)
     return ansTy
   Inject i -> do
     TC tc <- typeCheck i
@@ -856,6 +861,10 @@ typeCheckHof hof = case hof of
     (resultTy, stateTy) <- checkAction State f
     s |: stateTy
     return $ PairTy resultTy stateTy
+  RunIO f -> do
+    FunTy _ eff resultTy <- typeCheck f
+    extendAllowedEffect (State, theWorld) $ declareEffs eff
+    return resultTy
 
 checkAction :: EffectName -> Atom -> TypeM (Type, Type)
 checkAction effName f = do

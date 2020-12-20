@@ -249,6 +249,9 @@ def withState
     def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
     %runState init explicitAction
 
+def unsafeIO (f: Unit -> {State World|eff} a) : {|eff} a =
+  %runIO f
+
 'Type classes
 
 data Eq  a:Type = MkEq  (a -> a -> Bool)
@@ -892,6 +895,15 @@ instance showFloat64 : Show Float64 where
     (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
     AsList n $ for i:(Fin n).
       %ptrLoad (%ptrOffset ptr (ordinal i))
+
+def writeStdErr (s:String) : {State World} Unit =
+  (AsList n cs) = s
+  %ffi IO writeToStdErr Int n (%getPtr cs)
+  ()
+
+def throwMsg (s:String) : a = unsafeIO \().
+  writeStdErr s
+  %throwError a
 
 -- pipe-like reverse function application
 def (|>) (x:a) (f: a -> b) : b = f x

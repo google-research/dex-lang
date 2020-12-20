@@ -487,7 +487,7 @@ effects :: Parser EffectRow
 effects = braces someEffects <|> return Pure
   where
     someEffects = do
-      effs <- liftM2 (,) effectName lowerName `sepBy` sym ","
+      effs <- liftM2 (,) effectName (lowerName <|> upperName) `sepBy` sym ","
       v <- optional $ symbol "|" >> lowerName
       return $ EffectRow effs v
 
@@ -678,10 +678,11 @@ uPrim = withSrc $ do
   s <- primName
   case s of
     "ffi" -> do
+      mayDoIO <- (symbol "IO" $> True) <|> return False
       f <- lexeme $ some nameTailChar
       retTy <- leafExpr
       args <- some leafExpr
-      return $ UPrimExpr $ OpExpr $ FFICall f retTy args
+      return $ UPrimExpr $ OpExpr $ FFICall mayDoIO f retTy args
     _ -> case strToPrimName s of
       Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
       Nothing -> fail $ "Unrecognized primitive: " ++ s

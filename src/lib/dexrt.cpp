@@ -184,6 +184,14 @@ void doubleVec(char **resultPtr, int32_t n, float* xs) {
   *result2Ptr = p2;
 }
 
+int32_t writeToStdErr(int32_t numBytes, char* bytes) {
+  fwrite(bytes, 1, (size_t) numBytes, stderr);
+  fprintf(stderr, "\n");
+  fflush(stderr);
+  return 0;
+}
+
+
 void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) {
     png_image img;
     memset(&img, 0, sizeof(img));

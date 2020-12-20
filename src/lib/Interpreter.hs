@@ -90,7 +90,7 @@ evalOp expr = case expr of
   ScalarUnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  FFICall name _ args -> return $ case name of
+  FFICall _ name _ args -> return $ case name of
     "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
     "threefry2x32" -> Int64Val   $ c_threefry x y  where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name

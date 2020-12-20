@@ -98,9 +98,10 @@ toImpModule env backend cc entryName argBinders maybeDest block = do
 
 requiredFunctions :: HasVars a => Scope -> a -> [(Name, Atom)]
 requiredFunctions scope expr =
-  for (transitiveClosure getParents immediateParents) $ \fname -> do
-    let (_, LetBound _ (Atom f)) = scope ! fname
-    (fname, f)
+  flip foldMap (transitiveClosure getParents immediateParents) $ \fname ->
+    case scope ! fname of
+       (_, LetBound _ (Atom f)) -> [(fname, f)]
+       _ -> []
   where
     getParents :: Name -> [Name]
     getParents fname = envNames $ freeVars $ scope ! fname
@@ -314,7 +315,7 @@ toImpOp (maybeDest, op) = case op of
     _ -> error $ "Not a data constructor: " ++ pprint con
   ToEnum ~ty@(TypeCon (DataDef _ _ cons) _) i ->
     returnVal $ Con $ SumAsProd ty i (map (const []) cons)
-  FFICall name returnTy xs -> do
+  FFICall _ name returnTy xs -> do
     let returnTys = fromScalarOrPairType returnTy
     let xTys = map (fromScalarType . getType) xs
     f <- emitFFIFunction name xTys returnTys
@@ -507,6 +508,8 @@ toImpHof env (maybeDest, hof) = do
       copyAtom sDest =<< impSubst env s
       void $ translateBlock (env <> ref @> sDest) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom sDest
+    RunIO ~(Lam (Abs _ (_, body))) -> do
+      translateBlock env (maybeDest, body)
     Linearize _ -> error "Unexpected Linearize"
     Transpose _ -> error "Unexpected Transpose"
 

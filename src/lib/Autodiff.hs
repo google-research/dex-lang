@@ -167,7 +167,7 @@ linearizeOp op = case op of
   RecordSplit  vs r      -> (RecordSplit     <$> traverse la vs <*> la r) `bindLin` emitOp
   VariantLift  ts v      -> (VariantLift  ts <$> la v) `bindLin` emitOp
   VariantSplit ts v      -> (VariantSplit ts <$> la v) `bindLin` emitOp
-  FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
+  FFICall _ _ _ _        -> error $ "Can't differentiate through an FFI call"
   where
     emitDiscrete = if isTrivialForAD (Op op)
       then LinA $ withZeroTangent <$> emitOp op
@@ -625,7 +625,7 @@ transposeOp op ct = case op of
   ToOrdinal    _        -> notLinear
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
-  FFICall      _ _ _    -> notLinear
+  FFICall _ _ _ _       -> notLinear
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
   where
