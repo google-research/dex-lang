@@ -319,7 +319,7 @@ data PrimOp e =
       | IndexRef e e
       | FstRef e
       | SndRef e
-      | FFICall Bool String e [e]    -- bool indicates it may do IO
+      | FFICall String e [e]
       | Inject e
       | PtrOffset e e
       | PtrLoad e

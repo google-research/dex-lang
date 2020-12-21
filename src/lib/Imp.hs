@@ -315,7 +315,7 @@ toImpOp (maybeDest, op) = case op of
     _ -> error $ "Not a data constructor: " ++ pprint con
   ToEnum ~ty@(TypeCon (DataDef _ _ cons) _) i ->
     returnVal $ Con $ SumAsProd ty i (map (const []) cons)
-  FFICall _ name returnTy xs -> do
+  FFICall name returnTy xs -> do
     let returnTys = fromScalarOrPairType returnTy
     let xTys = map (fromScalarType . getType) xs
     f <- emitFFIFunction name xTys returnTys

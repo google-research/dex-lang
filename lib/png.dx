@@ -93,7 +93,7 @@ def base64Decode (s:String) : Maybe String =
 
 Html : Type = List Char
 
-def makePNG (img:n=>m=>(Fin 3)=>Word8) : List Byte =
+def makePNG (img:n=>m=>(Fin 3)=>Word8) : List Byte = unsafeIO \().
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
   (n, ptr) = (%ffi encodePNG (Int & CharPtr) (%getPtr imgFlat)
                (size m) (size n))

@@ -678,11 +678,10 @@ uPrim = withSrc $ do
   s <- primName
   case s of
     "ffi" -> do
-      mayDoIO <- (symbol "IO" $> True) <|> return False
       f <- lexeme $ some nameTailChar
       retTy <- leafExpr
       args <- some leafExpr
-      return $ UPrimExpr $ OpExpr $ FFICall mayDoIO f retTy args
+      return $ UPrimExpr $ OpExpr $ FFICall f retTy args
     _ -> case strToPrimName s of
       Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
       Nothing -> fail $ "Unrecognized primitive: " ++ s

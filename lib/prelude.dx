@@ -482,7 +482,7 @@ def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
 -- TODO: newtype
 Key = Int64
 
-def hash (x:Key) (y:Int32) : Key =
+def hash (x:Key) (y:Int32) : Key = unsafeIO \().
   y64 = IToI64 y
   %ffi threefry2x32 Int64 x y64
 def newKey (x:Int) : Key = hash (IToI64 0) x
@@ -490,7 +490,7 @@ def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
 def splitKey (n:Int) ?-> (k:Key) : Fin n => Key = for i. ixkey k i
-def rand (k:Key) : Float = F64ToF $ %ffi randunif Float64 k
+def rand (k:Key) : Float =  unsafeIO \(). F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
@@ -873,32 +873,32 @@ interface Show a:Type where
   show : a -> String
 
 instance showInt32 : Show Int32 where
-  show = \x: Int32.
+  show = \x: Int32. unsafeIO \().
     (n, ptr) = %ffi showInt32 (Int32 & CharPtr) x
     AsList n $ for i:(Fin n).
       %ptrLoad (%ptrOffset ptr (ordinal i))
 
 instance showInt64 : Show Int64 where
-  show = \x: Int64.
+  show = \x: Int64. unsafeIO \().
     (n, ptr) = %ffi showInt64 (Int32 & CharPtr) x
     AsList n $ for i:(Fin n).
       %ptrLoad (%ptrOffset ptr (ordinal i))
 
 instance showFloat32 : Show Float32 where
-  show = \x: Float32.
+  show = \x: Float32.unsafeIO \().
     (n, ptr) = %ffi showFloat32 (Int32 & CharPtr) x
     AsList n $ for i:(Fin n).
       %ptrLoad (%ptrOffset ptr (ordinal i))
 
 instance showFloat64 : Show Float64 where
-  show = \x: Float64.
+  show = \x: Float64.unsafeIO \().
     (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
     AsList n $ for i:(Fin n).
       %ptrLoad (%ptrOffset ptr (ordinal i))
 
 def writeStdErr (s:String) : {State World} Unit =
   (AsList n cs) = s
-  %ffi IO writeToStdErr Int n (%getPtr cs)
+  %ffi writeToStdErr Int n (%getPtr cs)
   ()
 
 def throwMsg (s:String) : a = unsafeIO \().

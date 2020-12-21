@@ -21,18 +21,18 @@ def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
     WriteMode -> "w"
   (MkCString path') = asCString path
   (MkCString mode') = asCString modeStr
-  MkStream $ %ffi IO fopen CharPtr path' mode'
+  MkStream $ %ffi fopen CharPtr path' mode'
 
 def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
   (MkStream stream') = stream
-  %ffi IO fclose Int64 stream'
+  %ffi fclose Int64 stream'
   ()
 
 def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
   ptr = %getPtr s'
-  ans = %ffi IO fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
+  ans = %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
   ()
 
 def fread (stream:Stream ReadMode) : {State World} String =
@@ -42,12 +42,12 @@ def fread (stream:Stream ReadMode) : {State World} String =
   n = 4096
   buffer = for i:(Fin n). '\NUL'
   ptr = %getPtr buffer
-  numRead = I64ToI $ %ffi IO fread Int64 ptr (IToI64 1) (IToI64 n) stream'
+  numRead = I64ToI $ %ffi fread Int64 ptr (IToI64 1) (IToI64 n) stream'
   AsList numRead (for i. %ptrLoad (%ptrOffset ptr (ordinal i)))
 
 def deleteFile (f:FilePath) : {State World} Unit =
   (MkCString f') = asCString f
-  %ffi IO remove Int64 f'
+  %ffi remove Int64 f'
   ()
 
 def withFile (f:FilePath) (mode:StreamMode)
@@ -69,7 +69,7 @@ def writeTemp (s:String) : {State World} FilePath =
   -- file with same name after we ask for the name and before we create it.
   template = "/tmp/dex-XXXXXX\NUL"
   ptr = %getPtr template
-  %ffi IO mktemp CharPtr ptr
+  %ffi mktemp CharPtr ptr
   AsList 15 for i. %ptrLoad (%ptrOffset ptr (ordinal i))
 
 def withTempFile (action: FilePath -> {State World} a) : {State World} a =

@@ -276,7 +276,7 @@ exprEffs expr = case expr of
       MAsk    -> S.singleton (Reader, h)
       MTell _ -> S.singleton (Writer, h)
       where RefTy (Var (h:>_)) _ = getType ref
-    FFICall True _ _ _ -> S.singleton (State,  theWorld)
+    FFICall _ _ _ -> S.singleton (State, theWorld)
     _ -> NoEffects
   Hof hof -> case hof of
     For _ f         -> functionEffs f
@@ -669,14 +669,14 @@ typeCheckOp op = case op of
   UnsafeFromOrdinal ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
   ToOrdinal i -> typeCheck i $> IdxRepTy
   IdxSetSize i -> typeCheck i $> IdxRepTy
-  FFICall mayDoIO _ ansTy args -> do
+  FFICall _ ansTy args -> do
     forM_ args $ \arg -> do
       argTy <- typeCheck arg
       case argTy of
         BaseTy _ -> return ()
         _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
                                     "fixed-width base types, but got: " ++ pprint argTy
-    when mayDoIO $ declareEff (State, Just theWorld)
+    declareEff (State, Just theWorld)
     return ansTy
   Inject i -> do
     TC tc <- typeCheck i
