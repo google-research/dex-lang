@@ -133,11 +133,14 @@ linearizeOp op = case op of
   FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
   SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
   Select p t f           -> (Select p <$> la t   <*> la f  ) `bindLin` emitOp
-  PtrLoad _              -> emitWithZero -- XXX: This assumes that pointers are always constants
+  -- XXX: This assumes that pointers are always constants
+  PtrLoad _              -> emitWithZero
+  PtrStore _ _           -> emitDiscrete
   PtrOffset _ _          -> emitDiscrete
+  IOAlloc _ _            -> emitDiscrete
+  IOFree _               -> emitDiscrete
   TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
   Inject _               -> emitDiscrete
-  GetPtr _               -> emitDiscrete
   MakePtrType _          -> emitDiscrete
   SliceOffset _ _        -> emitDiscrete
   SliceCurry  _ _        -> emitDiscrete
@@ -259,6 +262,14 @@ linearizeHof env hof = case hof of
   RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
   RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
   RunState  val lam -> linearizeEff (Just val) lam True  RunState          (emitRunState  "r") State
+  RunIO ~(Lam (Abs _ (arrow, body))) -> LinA $ do
+    arrow' <- substEmbed env arrow
+    -- TODO: consider the possibility of other effects here besides IO
+    lam <- buildLam (Ignore UnitTy) arrow' $ \_ ->
+      tangentFunAsLambda $ linearizeBlock env body
+    result <- emit $ Hof $ RunIO lam
+    (ans, linLam) <- fromPair result
+    return (ans, applyLinToTangents linLam)
   -- TODO: Consider providing an upper bound for the number of while iterations as a hint.
   --       In the current form the best we can do is try to use some dynamically growing lists,
   --       but that won't work on the GPU.
@@ -588,7 +599,6 @@ transposeOp op ct = case op of
       else transposeAtom y =<< mul ct =<< substNonlin x
   ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
   ScalarBinOp _    _ _  -> notLinear
-  GetPtr _              -> notLinear
   MakePtrType _         -> notLinear
   PrimEffect refArg m   -> do
     refArg' <- substTranspose linRefSubst refArg
@@ -616,8 +626,11 @@ transposeOp op ct = case op of
   RecordSplit  _ _      -> notImplemented
   VariantLift  _ _      -> notImplemented
   VariantSplit _ _      -> notImplemented
+  PtrStore _ _          -> notLinear
   PtrLoad    _          -> notLinear
-  PtrOffset  _ _        -> notLinear
+  PtrOffset _ _         -> notLinear
+  IOAlloc _ _           -> notLinear
+  IOFree _              -> notLinear
   Inject       _        -> notLinear
   SliceOffset  _ _      -> notLinear
   SliceCurry   _ _      -> notLinear
@@ -676,6 +689,7 @@ transposeHof hof ct = case hof of
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
     transposeAtom s cts
+  RunIO _ -> error "Not implemented"
   Tile      _ _ _ -> notImplemented
   While       _ _ -> notImplemented
   Linearize     _ -> error "Unexpected linearization"

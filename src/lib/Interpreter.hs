@@ -66,7 +66,9 @@ evalExpr env expr = case expr of
         evalBlock env $ applyNaryAbs (alts !! i) (xss !! i)
       _ -> error $ "Not implemented: SumAsProd with tag " ++ pprint expr
     _ -> error $ "Unexpected scrutinee: " ++ pprint e
-  _ -> error $ "Not implemented: " ++ pprint expr
+  Hof hof -> case hof of
+    RunIO ~(Lam (Abs _ (_, body))) -> evalBlock env body
+    _ -> error $ "Not implemented: " ++ pprint expr
 
 evalOp :: Op -> InterpM Atom
 evalOp expr = case expr of

@@ -321,12 +321,15 @@ data PrimOp e =
       | SndRef e
       | FFICall String e [e]
       | Inject e
-      | PtrOffset e e
-      | PtrLoad e
-      | GetPtr e
-      | MakePtrType e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
+      -- Low-level memory operations
+      | MakePtrType e
+      | IOAlloc BaseType e
+      | IOFree e
+      | PtrOffset e e
+      | PtrLoad e
+      | PtrStore e e
       -- SIMD operations
       | VectorBinOp BinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
@@ -560,8 +563,15 @@ data BaseType = Scalar  ScalarBaseType
 
 data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
 data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
-data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Eq, Ord, Generic)
+data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Ord, Generic)
 type PtrType = (PtrOrigin, AddressSpace, BaseType)
+
+instance Eq PtrOrigin where
+  -- XXX: this is a hack. We expose pointer operations to the surface language
+  -- but we don't yet expose the derived/allocated distinction, and they get
+  -- mixed up when we use ops like ptrOffset.
+  _ == _ = True
+
 
 sizeOf :: BaseType -> Int
 sizeOf t = case t of
@@ -1539,9 +1549,11 @@ builtinNames = M.fromList
   , ("cast", OpExpr  $ CastOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
+  , ("charAlloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
+  , ("charFree"  , OpExpr $ IOFree ())
   , ("ptrOffset", OpExpr $ PtrOffset () ())
   , ("ptrLoad"  , OpExpr $ PtrLoad ())
-  , ("getPtr"   , OpExpr $ GetPtr () )
+  , ("ptrStore" , OpExpr $ PtrStore () ())
   , ("makePtrType", OpExpr $ MakePtrType ())
   , ("CharPtr"  , ptrTy Word8Type)
   , ("dataConTag", OpExpr $ DataConTag ())

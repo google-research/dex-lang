@@ -26,7 +26,8 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, unpackConsList, emitRunWriter, emitRunState,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
-              traverseAtom, ptrOffset, ptrLoad, evalBlockE, substTraversalDef,
+              traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
+              evalBlockE, substTraversalDef,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
               transformModuleAsBlock, dropSub, appReduceTraversalDef,
@@ -327,6 +328,13 @@ appTryReduce f x = case f of
 
 ptrOffset :: MonadEmbed m => Atom -> Atom -> m Atom
 ptrOffset x i = emitOp $ PtrOffset x i
+
+unsafePtrLoad :: MonadEmbed m => Atom -> m Atom
+unsafePtrLoad x = emit $ Hof $ RunIO $ Lam $ Abs (Ignore UnitTy) $
+  (PlainArrow justIOEff, Block Empty (Op (PtrLoad x)))
+
+justIOEff :: EffectRow
+justIOEff = EffectRow [(State, theWorld)] Nothing
 
 ptrLoad :: MonadEmbed m => Atom -> m Atom
 ptrLoad x = emitOp $ PtrLoad x

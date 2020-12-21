@@ -11,17 +11,17 @@ data StreamMode =
 data Stream mode:StreamMode = MkStream CharPtr
 
 -- TODO: check the string contains no nulls
-def asCString (s:String) : CString =
-  (AsList _ s') = s <> (AsList _ "\NUL")
-  MkCString %getPtr s'
+def withCString (s:String) (action: CString -> {State World} a) : {State World} a =
+  (AsList n s') = s <> (AsList _ "\NUL")
+  withTabPtr s' \ptr. action $ MkCString ptr
 
 def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
   modeStr = AsList _ case mode of
     ReadMode  -> "r"
     WriteMode -> "w"
-  (MkCString path') = asCString path
-  (MkCString mode') = asCString modeStr
-  MkStream $ %ffi fopen CharPtr path' mode'
+  withCString path \(MkCString pathPtr).
+    withCString modeStr \(MkCString modePtr).
+      MkStream $ %ffi fopen CharPtr pathPtr modePtr
 
 def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
   (MkStream stream') = stream
@@ -31,23 +31,21 @@ def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
 def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
-  ptr = %getPtr s'
-  ans = %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
+  withTabPtr s' \ptr.
+    %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
   ()
 
 def fread (stream:Stream ReadMode) : {State World} String =
   (MkStream stream') = stream
-  -- TODO: do the malloc and pointer reads/writes in the {IO World} effect
   -- TODO: allow reading longer files!
   n = 4096
-  buffer = for i:(Fin n). '\NUL'
-  ptr = %getPtr buffer
-  numRead = I64ToI $ %ffi fread Int64 ptr (IToI64 1) (IToI64 n) stream'
-  AsList numRead (for i. %ptrLoad (%ptrOffset ptr (ordinal i)))
+  withAlloc n \ptr.
+    numRead = I64ToI $ %ffi fread Int64 ptr (IToI64 1) (IToI64 n) stream'
+    stringFromCharPtr numRead ptr
 
 def deleteFile (f:FilePath) : {State World} Unit =
-  (MkCString f') = asCString f
-  %ffi remove Int64 f'
+  withCString f \(MkCString ptr).
+    %ffi remove Int64 ptr
   ()
 
 def withFile (f:FilePath) (mode:StreamMode)
@@ -67,10 +65,9 @@ def readFile (f:FilePath) : {State World} String =
 def writeTemp (s:String) : {State World} FilePath =
   -- TODO: Make this properly atomic. It can fail if another process creates a
   -- file with same name after we ask for the name and before we create it.
-  template = "/tmp/dex-XXXXXX\NUL"
-  ptr = %getPtr template
-  %ffi mktemp CharPtr ptr
-  AsList 15 for i. %ptrLoad (%ptrOffset ptr (ordinal i))
+  withCString (AsList _ "/tmp/dex-XXXXXX") \(MkCString ptr).
+    %ffi mktemp CharPtr ptr
+    stringFromCharPtr 15 ptr
 
 def withTempFile (action: FilePath -> {State World} a) : {State World} a =
   tmpFile = writeTemp (AsList _ [])

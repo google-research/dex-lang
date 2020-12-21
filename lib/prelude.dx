@@ -409,6 +409,35 @@ def finEq (n:Int) ?-> : Eq (Fin n) = MkEq \x y. ordinal x == ordinal y
 def finOrd (n:Int) ?-> : Ord (Fin n) =
   MkOrd finEq (\x y. ordinal x > ordinal y) (\x y. ordinal x < ordinal y)
 
+'## Raw pointer operations
+
+def Ptr (ty:Type) : Type = %makePtrType ty
+
+CharPtr : Type = %CharPtr
+
+-- TODO: generalize these to other pointer types (Storable type class?)
+def malloc    (n:Int)                : {State World} CharPtr = %charAlloc n
+def free      (ptr:CharPtr)          : {State World} Unit = %charFree ptr
+def ptrStore  (ptr:CharPtr) (x:Char) : {State World} Unit = %ptrStore ptr x
+def ptrLoad   (ptr:CharPtr)          : {State World} Char = %ptrLoad  ptr
+def ptrOffset (ptr:CharPtr) (i:Int) : CharPtr = %ptrOffset ptr i
+
+-- TODO: generalize these brackets to allow other effects
+
+def withAlloc (n:Int) (action: CharPtr -> {State World} a) : {State World} a =
+  ptr = malloc n
+  result = action ptr
+  free ptr
+  result
+
+def withTabPtr (xs:n=>Char) (action : CharPtr -> {State World} a) : {State World} a =
+  withAlloc (size n) \ptr.
+    for i. ptrStore (ptrOffset ptr (ordinal i)) xs.i
+    action ptr
+
+def tabFromCharPtr (ptr:CharPtr) : {State World} n=>Char =
+  for i. ptrLoad $ ptrOffset ptr (ordinal i)
+
 'Misc
 
 pi : Float = 3.141592653589793
@@ -864,7 +893,8 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 
 String : Type = List Char
 
-CharPtr : Type = %CharPtr
+def stringFromCharPtr (n:Int) (ptr:CharPtr) : {State World} String=
+  AsList n $ tabFromCharPtr ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = W8ToI c
@@ -875,35 +905,31 @@ interface Show a:Type where
 instance showInt32 : Show Int32 where
   show = \x: Int32. unsafeIO \().
     (n, ptr) = %ffi showInt32 (Int32 & CharPtr) x
-    AsList n $ for i:(Fin n).
-      %ptrLoad (%ptrOffset ptr (ordinal i))
+    stringFromCharPtr n ptr
 
 instance showInt64 : Show Int64 where
   show = \x: Int64. unsafeIO \().
     (n, ptr) = %ffi showInt64 (Int32 & CharPtr) x
-    AsList n $ for i:(Fin n).
-      %ptrLoad (%ptrOffset ptr (ordinal i))
+    stringFromCharPtr n ptr
 
 instance showFloat32 : Show Float32 where
   show = \x: Float32.unsafeIO \().
     (n, ptr) = %ffi showFloat32 (Int32 & CharPtr) x
-    AsList n $ for i:(Fin n).
-      %ptrLoad (%ptrOffset ptr (ordinal i))
+    stringFromCharPtr n ptr
 
 instance showFloat64 : Show Float64 where
   show = \x: Float64.unsafeIO \().
     (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
-    AsList n $ for i:(Fin n).
-      %ptrLoad (%ptrOffset ptr (ordinal i))
+    stringFromCharPtr n ptr
 
-def writeStdErr (s:String) : {State World} Unit =
-  (AsList n cs) = s
-  %ffi writeToStdErr Int n (%getPtr cs)
-  ()
+-- def writeStdErr (s:String) : {State World} Unit =
+--   (AsList n cs) = s
+--   %ffi writeToStdErr Int n (%getPtr cs)
+--   ()
 
-def throwMsg (s:String) : a = unsafeIO \().
-  writeStdErr s
-  %throwError a
+-- def throwMsg (s:String) : a = unsafeIO \().
+--   writeStdErr s
+--   %throwError a
 
 -- pipe-like reverse function application
 def (|>) (x:a) (f: a -> b) : b = f x
@@ -1103,16 +1129,6 @@ def (<<) (x:Byte) (y:Int) : Byte = %shl x (IToW8 y)
 def (>>) (x:Byte) (y:Int) : Byte = %shr x (IToW8 y)
 def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
 def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
-
-'## Raw pointer operations
-
-def Ptr (ty:Type) : Type = %makePtrType ty
-
-def tabToPtr (n:Int) ?-> (xs:(Fin n)=>Float) : Ptr Float =
-  %getPtr xs
-
-def ptrToTab (n:Int) (ptr:Ptr Float) : Fin n => Float =
-  for i:(Fin n). %ptrLoad (%ptrOffset ptr (ordinal i))
 
 '## Misc
 

@@ -476,8 +476,9 @@ simplifyHof hof = case hof of
     ans' <- applyRecon recon ans
     return $ PairVal ans' sOut
   RunIO lam -> do
-    ~(lam', Nothing) <- simplifyLam lam
-    emit $ Hof $ RunIO lam'
+    ~(lam', recon) <- simplifyLam lam
+    ans <- emit $ Hof $ RunIO lam'
+    applyRecon recon ans
   where
     applyRecon Nothing x = return x
     applyRecon (Just f) x = f x

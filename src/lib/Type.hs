@@ -704,16 +704,26 @@ typeCheckOp op = case op of
   SndRef ref -> do
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
+  IOAlloc t n -> do
+    n |: IdxRepTy
+    return $ PtrTy (AllocatedPtr, Heap CPU, t)
+  IOFree ptr -> do
+    PtrTy _ <- typeCheck ptr
+    declareEff (State, Just theWorld)
+    return UnitTy
   PtrOffset arr off -> do
     PtrTy (_, a, b) <- typeCheck arr
     off |: IdxRepTy
     return $ PtrTy (DerivedPtr, a, b)
   PtrLoad ptr -> do
-    PtrTy (_, _, t)  <- typeCheck ptr
+    PtrTy (_, _, t) <- typeCheck ptr
+    declareEff (State, Just theWorld)
     return $ BaseTy t
-  GetPtr tab -> do
-    TabTy _ (BaseTy a) <- typeCheck tab
-    return $ BaseTy $ PtrType (AllocatedPtr, Heap CPU, a)
+  PtrStore ptr val -> do
+    PtrTy (_, _, t)  <- typeCheck ptr
+    val |: BaseTy t
+    declareEff (State, Just theWorld)
+    return $ UnitTy
   MakePtrType ty -> ty|:TyKind >> return TyKind
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s

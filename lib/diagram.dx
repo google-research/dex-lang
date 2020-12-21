@@ -14,8 +14,7 @@ HtmlColor : Type = (Word8 & Word8 & Word8)
 
 def showHex (x:Int32) : String = unsafeIO \().
   (n, ptr) = %ffi showHex (Int32 & CharPtr) x
-  AsList n $ for i:(Fin n).
-    %ptrLoad (%ptrOffset ptr (ordinal i))
+  stringFromCharPtr n ptr
 
 -- TODO: we should add overloaded string literals so we don't need this
 def str (n:Int) ?-> (s:(Fin n=>Char)) : String = AsList _ s

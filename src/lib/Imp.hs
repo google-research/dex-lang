@@ -83,7 +83,7 @@ toImpModule env backend cc entryName argBinders maybeDest block = do
         for (requiredFunctions env block) $ \(v, f) ->
           runImpM initCtx inVarScope $ toImpStandalone v f
   runImpM initCtx inVarScope $ do
-    (reconAtom, impBlock) <- scopedBlock $ translateTopLevel (maybeDest, block)
+    (reconAtom, impBlock) <- scopedBlock $ translateTopLevel env (maybeDest, block)
     otherFunctions <- toList <$> looks envFunctions
     let ty = IFunType cc (map binderAnn argBinders) (impBlockType impBlock)
     let mainFunction = ImpFunction (entryName:>ty) argBinders impBlock
@@ -111,14 +111,14 @@ requiredFunctions scope expr =
 
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
-translateTopLevel :: WithDest Block -> ImpM (AtomRecon, [IExpr])
-translateTopLevel (maybeDest, block) = do
+translateTopLevel :: TopEnv -> WithDest Block -> ImpM (AtomRecon, [IExpr])
+translateTopLevel topEnv (maybeDest, block) = do
   outDest <- case maybeDest of
         Nothing   -> makeAllocDest Unmanaged $ getType block
         Just dest -> return dest
   handleErrors $ void $ translateBlock mempty (Just outDest, block)
   resultAtom <- destToAtom outDest
-  let vsOut = envAsVars $ freeVars resultAtom
+  let vsOut = envAsVars $ freeVars resultAtom `envDiff` topEnv
   let reconAtom = Abs (toNest $ [Bind (v:>ty) | (v:>(ty, _)) <- vsOut]) resultAtom
   let resultIExprs = case maybeDest of
         Nothing -> [IVar (v:>fromScalarType ty) | (v:>(ty, _)) <- vsOut]
@@ -272,14 +272,19 @@ toImpOp (maybeDest, op) = case op of
   IndexRef refDest i -> returnVal =<< destGet refDest i
   FstRef ~(Con (ConRef (PairCon ref _  ))) -> returnVal ref
   SndRef ~(Con (ConRef (PairCon _   ref))) -> returnVal ref
+  IOAlloc ty n -> do
+    ptr <- emitAlloc (AllocatedPtr, Heap CPU, ty) (fromScalarAtom n)
+    returnVal $ toScalarAtom ptr
+  IOFree ptr -> do
+    emitStatement $ Free $ fromScalarAtom ptr
+    return UnitVal
   PtrOffset arr off -> do
     buf <- impOffset (fromScalarAtom arr) (fromScalarAtom off)
     returnVal $ toScalarAtom buf
   PtrLoad arr -> returnVal . toScalarAtom =<< loadAnywhere (fromScalarAtom arr)
-  GetPtr tab -> do
-    (dest, ptr) <- makeAllocDestForPtr (getType tab)
-    copyAtom dest tab
-    returnVal ptr
+  PtrStore ptr x -> do
+    store (fromScalarAtom ptr) (fromScalarAtom x)
+    return UnitVal
   SliceOffset ~(Con (IndexSliceVal n _ tileOffset)) idx -> do
     i' <- indexToInt idx
     i <- iaddI (fromScalarAtom tileOffset) i'
@@ -706,14 +711,14 @@ copyDataConArgs bindings args =
 
 loadDest :: MonadEmbed m => Dest -> m Atom
 loadDest (BoxedRef b ptrPtr _ body) = do
-  ptr <- ptrLoad ptrPtr
+  ptr <- unsafePtrLoad ptrPtr
   body' <- substEmbed (b@>ptr) body
   loadDest body'
 loadDest (DataConRef def params bs) = do
   DataCon def params 0 <$> loadDataConArgs bs
 loadDest (Con dest) = do
  case dest of
-  BaseTypeRef ptr -> ptrLoad ptr
+  BaseTypeRef ptr -> unsafePtrLoad ptr
   TabRef (TabVal b body) -> buildLam b TabArrow $ \i -> do
     body' <- substEmbed (b@>i) body
     result <- emitBlock body'
@@ -792,17 +797,6 @@ makeAllocDestWithPtrs allocTy ty = do
     return (ptr @> toScalarAtom ptr', [ptr'])
   dest' <- impSubst env dest
   return (dest', ptrs)
-
--- TODO: deallocation!
-makeAllocDestForPtr :: Type -> ImpM (Dest, Atom)
-makeAllocDestForPtr ty = do
-  (ptrSizes, dest) <- fromEmbed $ makeDest (LLVM, CPU, Unmanaged) ty
-  case ptrSizes of
-    [(Bind (ptr:>PtrTy ptrTy), size)] -> do
-      ptr' <- emitAlloc ptrTy $ fromScalarAtom size
-      dest' <- impSubst (ptr @> toScalarAtom ptr') dest
-      return (dest', toScalarAtom ptr')
-    _ -> error $ "expected a single pointer"
 
 splitDest :: WithDest Block -> ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
 splitDest (maybeDest, (Block decls ans)) = do
@@ -913,7 +907,7 @@ toScalarAtom ie = case ie of
   ILit l -> Con $ Lit l
   IVar (v:>b) -> Var (v:>BaseTy b)
 
-fromScalarType :: Type -> IType
+fromScalarType :: HasCallStack => Type -> IType
 fromScalarType (BaseTy b) =  b
 fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
 
