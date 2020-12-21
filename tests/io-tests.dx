@@ -1,0 +1,12 @@
+
+include "io.dx"
+
+:p unsafeIO \().
+  withTempFile \fname.
+    withFile fname WriteMode \stream.
+      fwrite stream $ AsList _ "lorem ipsum\n"
+      fwrite stream $ AsList _ "dolor sit amet\n"
+    readFile fname
+> (AsList 27 "lorem ipsum
+> dolor sit amet
+> ")

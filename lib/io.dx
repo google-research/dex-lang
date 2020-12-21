@@ -1,0 +1,79 @@
+
+'File system operations
+
+FilePath : Type = String
+data CString = MkCString CharPtr
+
+data StreamMode =
+  ReadMode
+  WriteMode
+
+data Stream mode:StreamMode = MkStream CharPtr
+
+-- TODO: check the string contains no nulls
+def asCString (s:String) : CString =
+  (AsList _ s') = s <> (AsList _ "\NUL")
+  MkCString %getPtr s'
+
+def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
+  modeStr = AsList _ case mode of
+    ReadMode  -> "r"
+    WriteMode -> "w"
+  (MkCString path') = asCString path
+  (MkCString mode') = asCString modeStr
+  MkStream $ %ffi IO fopen CharPtr path' mode'
+
+def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
+  (MkStream stream') = stream
+  %ffi IO fclose Int64 stream'
+  ()
+
+def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
+  (MkStream stream') = stream
+  (AsList n s') = s
+  ptr = %getPtr s'
+  ans = %ffi IO fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
+  ()
+
+def fread (stream:Stream ReadMode) : {State World} String =
+  (MkStream stream') = stream
+  -- TODO: do the malloc and pointer reads/writes in the {IO World} effect
+  -- TODO: allow reading longer files!
+  n = 4096
+  buffer = for i:(Fin n). '\NUL'
+  ptr = %getPtr buffer
+  numRead = I64ToI $ %ffi IO fread Int64 ptr (IToI64 1) (IToI64 n) stream'
+  AsList numRead (for i. %ptrLoad (%ptrOffset ptr (ordinal i)))
+
+def deleteFile (f:FilePath) : {State World} Unit =
+  (MkCString f') = asCString f
+  %ffi IO remove Int64 f'
+  ()
+
+def withFile (f:FilePath) (mode:StreamMode)
+      (action: Stream mode -> {State World} a)
+      : {State World} a =
+  stream = fopen f mode
+  result = action stream
+  fclose stream
+  result
+
+def writeFile (f:FilePath) (s:String) : {State World} Unit =
+  withFile f WriteMode \stream. fwrite stream s
+
+def readFile (f:FilePath) : {State World} String =
+  withFile f ReadMode \stream. fread stream
+
+def writeTemp (s:String) : {State World} FilePath =
+  -- TODO: Make this properly atomic. It can fail if another process creates a
+  -- file with same name after we ask for the name and before we create it.
+  template = "/tmp/dex-XXXXXX\NUL"
+  ptr = %getPtr template
+  %ffi IO mktemp CharPtr ptr
+  AsList 15 for i. %ptrLoad (%ptrOffset ptr (ordinal i))
+
+def withTempFile (action: FilePath -> {State World} a) : {State World} a =
+  tmpFile = writeTemp (AsList _ [])
+  result = action tmpFile
+  deleteFile tmpFile
+  result

@@ -86,7 +86,7 @@ example-names = mandelbrot pi sierpinski \
                 isomorphisms ode-integrator linear_algebra fluidsim
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-             shadow-tests monad-tests \
+             shadow-tests monad-tests io-tests \
              ad-tests parser-tests serialize-tests \
              record-variant-tests simple-include-test \
              typeclass-tests complex-tests trig-tests
