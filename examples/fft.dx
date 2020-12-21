@@ -1,5 +1,6 @@
 '# Fast Fourier Transform
-Using a simple radix-2 algorithm.
+Using a radix-2 algorithm as a base,
+then Bluestein on top of that.
 
 
 '## General helper functions
@@ -8,15 +9,23 @@ Using a simple radix-2 algorithm.
 def intpow (base:Int) (power:Int) : Int =
   reduce 1 (\i j. j * i) for a:(Fin power). base
 def intlog2 (x:Int) : Int = FToI $ floor (log2 (IToF x))
+def isPowerOf2 (x:Int) : Bool = x == intpow 2 (intlog2 x)
+def nextpow2 (x:Int) : Int = case isPowerOf2 x of
+  True -> x
+  False -> intpow 2 (1 + intlog2 x)
 
-
-'## FFT functions
+'## Inner FFT functions
 
 -- FFT can be called in either forwards mode (for FFT),
 -- or backwards mode (for inverse FFT).
 data Direction =
   Forward
   Backward
+
+-- Todo: Replace with reshaping.
+def butterfly_ixs (j:Int) (pow2:Int) : (n & n) =
+  k = ((idiv j pow2) * pow2 * 2) + mod j pow2
+  (k@n, (k + pow2)@n)
 
 def power_of_2_fft (direction: Direction) (x: n=>Complex) : n=>Complex =
   -- input size must be a power of 2.
@@ -26,70 +35,94 @@ def power_of_2_fft (direction: Direction) (x: n=>Complex) : n=>Complex =
     Backward -> pi
 
   log2n = intlog2 (size n)
-  iters = idiv (size n) 2
+  halfn = idiv (size n) 2
   
   snd $ withState x \ref.  
     for i:(Fin log2n).
       pow2 = intpow 2 (ordinal i)
       copy = get ref
-      for j:(Fin iters).  -- Todo: Parallelize this loop.
+      for j:(Fin halfn).  -- Todo: Parallelize this loop.
         j' = ordinal j
 
         angle = dir_const * (IToF $ mod j' pow2) / IToF pow2
-        h = (j' + (idiv (size n) 2))@n
+        h = (j' + halfn)@n
         v = copy.h * (MkComplex (cos angle) (sin angle))
-        k = ((idiv j' pow2) * pow2 * 2) + mod j' pow2
-        
-        ref!(k@n)          := copy.(j'@n) + v
-        ref!((k + pow2)@n) := copy.(j'@n) - v
+        (a, b) = butterfly_ixs j' pow2
 
-def fft_ (direction: Direction) (x: n=>Complex): n=>Complex =
-  -- Todo: pad to power of 2
-  power_of_2_fft direction x
+        ref!a := copy.(j'@n) + v
+        ref!b := copy.(j'@n) - v
 
-def  fft (x: n=>Complex): n=>Complex = fft_ Forward x
-def ifft (x: n=>Complex): n=>Complex =
-  nc = size n
-  (fft_ Backward x) / (IToF nc)
+def convolve_complex (u:n=>Complex) (v:m=>Complex) : ({ovals:n | padding:m }=>Complex)  =
+  -- Convolve by pointwise multiplication in the Fourier domain.
+  convolved_size = (size n) + (size m) - 1
+  working_size = nextpow2 convolved_size
+  u_padded = padTo (Fin working_size) zero u
+  v_padded = padTo (Fin working_size) zero v
+  spectral_u = power_of_2_fft Forward u_padded
+  spectral_v = power_of_2_fft Forward v_padded
+  spectral_conv = for i. spectral_u.i * spectral_v.i
+  padded_conv = power_of_2_fft Backward spectral_conv
+  us = slice padded_conv 0 {ovals:n | padding:m }
+  us / (IToF working_size)  -- Todo: move into fft
+
+def convolve (u:n=>Float) (v:m=>Float) : ({ovals:n | padding:m }=>Float)  =
+  u' = for i. MkComplex u.i 0.0
+  v' = for i. MkComplex v.i 0.0
+  ans = convolve_complex u' v'
+  for i.
+    (MkComplex re im) = ans.i
+    re
+
+'## FFT Interface
+
+def fft (x: n=>Complex): n=>Complex =
+  -- Bluestein's algorithm for FFT on any size of array.
+  -- Todo: short circuit for powers of two.
+  im = MkComplex 0.0 1.0
+  wks = for i:n.
+    ks = IToF $ ordinal i
+    exp $ (-im) * (MkComplex (pi * (sq ks) / (IToF (size n))) 0.0)
+  xq = for i. x.i * wks.i
+  first = exp (-im * MkComplex (pi * (IToF (size n))) 0.0)
+  sn = (size n)
+  rwks:(Fin sn)=>Complex = for i. wks.(((size n) - 1 - ordinal i)@n)
+  nm1 = (size n) - 1
+  wq' = concat [AsList _ [first], AsList _ rwks, AsList _ (slice wks 1 (Fin nm1))]
+  (AsList _ wq'') = wq'
+  wq = for i. complex_conj wq''.i
+  conved = convolve_complex xq wq
+  convslice = slice conved (size n) n
+  for i. wks.i * convslice.i
+
+def ifft (xs: n=>Complex): n=>Complex =
+  fo = fft (for i. complex_conj xs.i)
+  for i. (complex_conj fo.i) / (IToF (size n))
 
 def  fft_real (x: n=>Float): n=>Complex =  fft for i. MkComplex x.i 0.0
 def ifft_real (x: n=>Float): n=>Complex = ifft for i. MkComplex x.i 0.0
 
-def fft2_ (direction: Direction) (x: n=>m=>Complex): n=>m=>Complex =
-  -- todo: pad to power of 2
-  x'  = for i. power_of_2_fft direction x.i
-  x'' = for i. power_of_2_fft direction (transpose x').i
-  transpose x''
+def fft2 (x: n=>m=>Complex): n=>m=>Complex =
+  x'      = for i. fft x.i
+  transpose for i. fft (transpose x').i
 
-def fft2  (x: n=>m=>Complex): n=>m=>Complex = fft2_ Forward x
 def ifft2 (x: n=>m=>Complex): n=>m=>Complex =
-  nc = (size n) * (size m)
-  (fft2_ Backward x) / (IToF nc)
+  x'      = for i. ifft x.i
+  transpose for i. ifft (transpose x').i
 
 def  fft2_real (x: n=>m=>Float): n=>m=>Complex =  fft2 for i j. MkComplex x.i.j 0.0
 def ifft2_real (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex x.i.j 0.0
 
-
 -------- Tests --------
 
-real = \(MkComplex re im). re
-imag = \(MkComplex re im). im
+a = for i. MkComplex [10.1, -2.2, 8.3, 4.5, 9.3].i 0.0
+b = for i:(Fin 3) j:(Fin 7).
+  MkComplex (randn $ ixkey2 (newKey 0) i j) 0.0
 
-def realmat (x:n=>m=>Complex) : n=>m=>Float =
- for i j. real x.i.j
-
-a = [10.1, -2.2, 8.3, 4.5]
-:p a ~~ (map real (ifft $ fft_real a))
+:p a ~~ (ifft $ fft a)
 > True
-:p a ~~ (map real (fft $ ifft_real a))
+:p a ~~ (fft $ ifft a)
 > True
-
-b = for i:(Fin 8) j:(Fin 8). randn $ ixkey2 (newKey 0) i j
-
-:p b ~~ realmat (ifft2 $ fft2_real b)
+:p b ~~ (ifft2 $ fft2 b)
 > True
-:p b ~~ realmat (fft2 $ ifft2_real b)
+:p b ~~ (fft2 $ ifft2 b)
 > True
-
-
-
