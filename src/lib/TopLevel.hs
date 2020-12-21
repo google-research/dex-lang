@@ -1,25 +1,23 @@
--- Copyright 2019 Google LLC
+-- Copyright 2020 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RecordWildCards #-}
 
-module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 exportFunctions, prepareFunctionForExport, EvalConfig (..)) where
+module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile, EvalConfig (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Writer hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Data.String
-import Data.List (partition, nub)
+import Data.List (partition)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import qualified Data.Map.Strict as M
 
-import Algebra
 import Syntax
 import Embed
 import Cat
@@ -249,99 +247,6 @@ logTop :: Output -> TopPassM ()
 logTop x = do
   logger <- asks logService
   logThis logger [x]
-
-type CArgM = WriterT [IBinder] (CatT CArgEnv Embed)
-type CArgEnv = (Env IBinder, Env ())
-
-runCArg :: CArgEnv -> CArgM a -> Embed (a, [IBinder], CArgEnv)
-runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
-  where repack ((ans, cargs), env) = (ans, cargs, env)
-
-prepareFunctionForExport :: TopEnv -> String -> Atom -> ImpModule
-prepareFunctionForExport env nameStr func = do
-  -- Create a module that simulates an application of arguments to the function
-  let ((dest, cargs), (_, decls)) = flip runEmbed (freeVars func) $ do
-        (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
-        resultAtom <- naryApp func args
-        (resultDest, cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
-        void $ emitTo outputName PlainLet $ Atom resultAtom
-        return (resultDest, cargArgs <> cdestArgs)
-
-  let coreModule = Module Core decls mempty
-  let defunctionalized = simplifyModule env coreModule
-  let Module _ optDecls optBindings = optimizeModule defunctionalized
-  let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
-  let block = Block optDecls outputExpr
-
-  let name = Name TopFunctionName (fromString nameStr) 0
-  let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
-  impModule
-  where
-    outputName = GlobalName "_ans_"
-
-    createArgs :: Type -> CArgM [Atom]
-    createArgs ty = case ty of
-      FunTy b Pure result -> do
-        argSubst <- fmap (\(Bind (n:>bt)) -> Var $ n :> BaseTy bt) <$> looks fst
-        arg <- createArg $ subst (argSubst, mempty) $ b
-        (arg:) <$> createArgs result
-      FunTy _ _ _ -> error $ "Unexpected type for an exported function: " ++ pprint ty
-      _ -> return []
-
-    createArg :: Binder -> CArgM Atom
-    createArg b = case ty of
-      BaseTy bt@(Scalar _) -> do
-        ~v@(Var (name:>_)) <- newCVar bt
-        extend $ asFst $ b @> (Bind $ name :> bt)
-        return v
-      TabTy _ _ -> createTabArg mempty ty
-      _ -> error $ "Unsupported arg type: " ++ pprint ty
-      where ty = binderType b
-
-    createTabArg :: IndexStructure -> Type -> CArgM Atom
-    createTabArg idx ty = case ty of
-      BaseTy bt@(Scalar _) -> do
-        ptrLoad =<< flip applyIdxs idx =<< newCVar (ptrTy bt)
-      TabTy b elemTy -> do
-        buildLam b TabArrow $ \(Var i) -> do
-          elemTy' <- substEmbed (b@>Var i) elemTy
-          createTabArg (idx <> Nest (Bind i) Empty) elemTy'
-      _ -> unsupported
-      where unsupported = error "Unsupported table type"
-
-    createDest :: IndexStructure -> Type -> CArgM Atom
-    createDest idx ty = case ty of
-      BaseTy bt@(Scalar _) -> do
-        liftM (Con . BaseTypeRef) $ flip applyIdxs idx =<< newCVar (ptrTy bt)
-      TabTy b elemTy -> do
-        liftM (Con . TabRef) $ buildLam b TabArrow $ \(Var i) -> do
-          elemTy' <- substEmbed (b@>Var i) elemTy
-          createDest (idx <> Nest (Bind i) Empty) elemTy'
-      _ -> unsupported
-      where unsupported = error "Unsupported table type"
-
-    -- TODO: I guess that the address space depends on the backend?
-    -- TODO: Have an ExternalPtr tag?
-    ptrTy ty = PtrType (DerivedPtr, Heap CPU, ty)
-
-    newCVar :: BaseType -> CArgM Atom
-    newCVar bt = do
-      name <- genFresh (Name CArgName "arg" 0) <$> looks snd
-      extend $ asSnd $ name @> ()
-      tell [Bind $ name :> bt]
-      return $ Var $ name :> BaseTy bt
-
-exportFunctions :: FilePath -> [(String, Atom)] -> TopEnv -> EvalConfig -> IO ()
-exportFunctions objPath funcs env opts = do
-  unless (backendName opts == LLVM) $ liftEitherIO $
-    throw CompilerErr "Export only supported with the LLVM CPU backend"
-  let names = fmap fst funcs
-  unless (length (nub names) == length names) $ liftEitherIO $
-    throw CompilerErr "Duplicate export names"
-  modules <- forM funcs $ \(name, funcAtom) -> do
-    let impModule = prepareFunctionForExport env name funcAtom
-    (,[name]) <$> execLogger Nothing (flip impToLLVM impModule)
-  exportObjectFile objPath modules
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do
