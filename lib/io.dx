@@ -13,7 +13,7 @@ data Stream mode:StreamMode = MkStream CharPtr
 -- TODO: check the string contains no nulls
 def withCString (s:String) (action: CString -> {State World} a) : {State World} a =
   (AsList n s') = s <> (AsList _ "\NUL")
-  withTabPtr s' \ptr. action $ MkCString ptr
+  withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
 
 def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
   modeStr = AsList _ case mode of
@@ -31,7 +31,7 @@ def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
 def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
-  withTabPtr s' \ptr.
+  withTabPtr s' \(MkPtr ptr).
     %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
   ()
 
@@ -39,8 +39,9 @@ def fread (stream:Stream ReadMode) : {State World} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
   n = 4096
-  withAlloc n \ptr.
-    numRead = I64ToI $ %ffi fread Int64 ptr (IToI64 1) (IToI64 n) stream'
+  withAlloc n \ptr:(Ptr Char).
+    (MkPtr rawPtr) = ptr
+    numRead = I64ToI $ %ffi fread Int64 rawPtr (IToI64 1) (IToI64 n) stream'
     stringFromCharPtr numRead ptr
 
 def deleteFile (f:FilePath) : {State World} Unit =
@@ -67,7 +68,7 @@ def writeTemp (s:String) : {State World} FilePath =
   -- file with same name after we ask for the name and before we create it.
   withCString (AsList _ "/tmp/dex-XXXXXX") \(MkCString ptr).
     %ffi mktemp CharPtr ptr
-    stringFromCharPtr 15 ptr
+    stringFromCharPtr 15 (MkPtr ptr)
 
 def withTempFile (action: FilePath -> {State World} a) : {State World} a =
   tmpFile = writeTemp (AsList _ [])

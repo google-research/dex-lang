@@ -1211,12 +1211,12 @@ instrTypeChecked instr = case instr of
     mapM_ checkIExpr args
   IPrimOp op -> (:[]) <$> checkImpOp op
   ICastOp dt x -> (:[]) <$> do
-    case getIType x of
-      Scalar _ -> return ()
-      _ -> throw CompilerErr $ "Invalid cast source type: " ++ pprint dt
-    case dt of
-      Scalar _ -> return ()
-      _ -> throw CompilerErr $ "Invalid cast destination type: " ++ pprint dt
+    let st = getIType x
+    case (dt, st) of
+      (PtrType _, PtrType _) -> return ()
+      (Scalar  _, Scalar  _) -> return ()
+      _ -> throw CompilerErr $
+            "Can't cast " ++ pprint st ++ " to " ++ pprint dt
     return dt
   Alloc a ty _ -> (:[]) <$> do
     when (a /= Stack) assertHost

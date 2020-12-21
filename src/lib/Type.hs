@@ -640,7 +640,9 @@ checkFloatBaseType allowVector t = case t of
                                "floating-point type, but found: " ++ pprint t
 
 checkValidCast :: Type -> Type -> TypeM ()
-checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType destTy
+checkValidCast (BaseTy (PtrType _)) (BaseTy (PtrType _)) = return ()
+checkValidCast sourceTy destTy =
+  checkScalarType sourceTy >> checkScalarType destTy
   where
     checkScalarType ty = case ty of
       BaseTy (Scalar Int64Type  ) -> return ()
@@ -648,6 +650,7 @@ checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType des
       BaseTy (Scalar Word8Type  ) -> return ()
       BaseTy (Scalar Float64Type) -> return ()
       BaseTy (Scalar Float32Type) -> return ()
+
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type

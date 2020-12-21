@@ -1532,6 +1532,8 @@ builtinNames = M.fromList
   , ("Int64"   , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
   , ("Word8"   , TCExpr $ BaseType $ Scalar Word8Type)
+  , ("Int32Ptr", ptrTy Int32Type)
+  , ("Word8Ptr", ptrTy Word8Type)
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType (Just ()) ())
   , ("PairType", TCExpr $ PairType () ())
@@ -1555,7 +1557,6 @@ builtinNames = M.fromList
   , ("ptrLoad"  , OpExpr $ PtrLoad ())
   , ("ptrStore" , OpExpr $ PtrStore () ())
   , ("makePtrType", OpExpr $ MakePtrType ())
-  , ("CharPtr"  , ptrTy Word8Type)
   , ("dataConTag", OpExpr $ DataConTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
   ]

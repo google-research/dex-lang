@@ -411,32 +411,75 @@ def finOrd (n:Int) ?-> : Ord (Fin n) =
 
 '## Raw pointer operations
 
-def Ptr (ty:Type) : Type = %makePtrType ty
+Int32Ptr : Type = %Int32Ptr
+Word8Ptr : Type = %Word8Ptr
 
-CharPtr : Type = %CharPtr
+CharPtr = Word8Ptr
 
--- TODO: generalize these to other pointer types (Storable type class?)
-def malloc    (n:Int)                : {State World} CharPtr = %charAlloc n
-def free      (ptr:CharPtr)          : {State World} Unit = %charFree ptr
-def ptrStore  (ptr:CharPtr) (x:Char) : {State World} Unit = %ptrStore ptr x
-def ptrLoad   (ptr:CharPtr)          : {State World} Char = %ptrLoad  ptr
-def ptrOffset (ptr:CharPtr) (i:Int) : CharPtr = %ptrOffset ptr i
+data Ptr a:Type = MkPtr Word8Ptr
+
+-- Is there a better way to select the right instance for `storageSize`??
+data TypeVehicle a:Type = MkTypeVehicle
+
+interface Storable a:Type where
+  store : Ptr a -> a -> {State World} Unit
+  load  : Ptr a ->      {State World} a
+  storageSize : TypeVehicle a -> Int
+
+-- TODO: there's a bug preventing us inlining these definitions into the instance
+def charStore ((MkPtr ptr): Ptr Word8) (x:Word8) : {State World} Unit  = %ptrStore ptr x
+def charLoad  ((MkPtr ptr): Ptr Word8)           : {State World} Word8 = %ptrLoad  ptr
+
+instance charStorable : Storable Word8 where
+  store = charStore
+  load  = charLoad
+  storageSize = const 1
+
+-- TODO: there's a bug preventing us inlining these definitions into the instance
+def int32Store ((MkPtr ptr): Ptr Int32) (x:Int32) : {State World} Unit  =
+  %ptrStore (internalCast %Int32Ptr ptr) x
+def int32Load  ((MkPtr ptr): Ptr Int32) : {State World} Int32 =
+  %ptrLoad (internalCast %Int32Ptr ptr)
+
+instance int32Storable : Storable Int32 where
+  store = int32Store
+  load  = int32Load
+  storageSize = const 4
+
+-- TODO: Storable instances for other types
+
+def malloc (_:Storable a) ?=> (n:Int) : {State World} (Ptr a) =
+  typeVehicle : TypeVehicle a = MkTypeVehicle
+  numBytes = storageSize typeVehicle * n
+  MkPtr $ %charAlloc numBytes
+
+def free (ptr:Ptr a) : {State World} Unit =
+  (MkPtr ptr') = ptr
+  %charFree ptr'
+
+def (+>>) (_:Storable a) ?=> (ptr:Ptr a) (i:Int) : Ptr a =
+  typeVehicle : TypeVehicle a = MkTypeVehicle
+  (MkPtr ptr') = ptr
+  i' = i * storageSize typeVehicle
+  MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: generalize these brackets to allow other effects
 
-def withAlloc (n:Int) (action: CharPtr -> {State World} a) : {State World} a =
+def withAlloc (_:Storable a) ?=>
+      (n:Int) (action: Ptr a -> {State World} b) : {State World} b =
   ptr = malloc n
   result = action ptr
   free ptr
   result
 
-def withTabPtr (xs:n=>Char) (action : CharPtr -> {State World} a) : {State World} a =
+def withTabPtr (_:Storable a) ?=>
+      (xs:n=>a) (action : Ptr a -> {State World} b) : {State World} b =
   withAlloc (size n) \ptr.
-    for i. ptrStore (ptrOffset ptr (ordinal i)) xs.i
+    for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
-def tabFromCharPtr (ptr:CharPtr) : {State World} n=>Char =
-  for i. ptrLoad $ ptrOffset ptr (ordinal i)
+def tabFromPtr (_:Storable a) ?=> (ptr:Ptr a) : {State World} n=>a =
+  for i. load $ ptr +>> ordinal i
 
 'Misc
 
@@ -893,8 +936,8 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 
 String : Type = List Char
 
-def stringFromCharPtr (n:Int) (ptr:CharPtr) : {State World} String=
-  AsList n $ tabFromCharPtr ptr
+def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {State World} String=
+  AsList n $ tabFromPtr ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = W8ToI c
@@ -905,22 +948,22 @@ interface Show a:Type where
 instance showInt32 : Show Int32 where
   show = \x: Int32. unsafeIO \().
     (n, ptr) = %ffi showInt32 (Int32 & CharPtr) x
-    stringFromCharPtr n ptr
+    stringFromCharPtr n $ MkPtr ptr
 
 instance showInt64 : Show Int64 where
   show = \x: Int64. unsafeIO \().
     (n, ptr) = %ffi showInt64 (Int32 & CharPtr) x
-    stringFromCharPtr n ptr
+    stringFromCharPtr n $ MkPtr ptr
 
 instance showFloat32 : Show Float32 where
   show = \x: Float32.unsafeIO \().
     (n, ptr) = %ffi showFloat32 (Int32 & CharPtr) x
-    stringFromCharPtr n ptr
+    stringFromCharPtr n $ MkPtr ptr
 
 instance showFloat64 : Show Float64 where
   show = \x: Float64.unsafeIO \().
     (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
-    stringFromCharPtr n ptr
+    stringFromCharPtr n $ MkPtr ptr
 
 -- def writeStdErr (s:String) : {State World} Unit =
 --   (AsList n cs) = s

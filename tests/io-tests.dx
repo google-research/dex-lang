@@ -10,3 +10,11 @@ include "io.dx"
 > (AsList 27 "lorem ipsum
 > dolor sit amet
 > ")
+
+
+:p unsafeIO \().
+  withAlloc 4 \ptr:(Ptr Int).
+    for i:(Fin 4). store (ptr +>> ordinal i) (ordinal i)
+    result : Fin 4 => Int = tabFromPtr ptr
+    result
+> [0, 1, 2, 3]
