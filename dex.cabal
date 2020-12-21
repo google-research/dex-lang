@@ -32,7 +32,7 @@ library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, Imp.Embed, Imp.Optimize,
                        PPrint, Algebra, Parallelize, Optimize, Serialize
-                       Actor, Cat, Flops, Embed,
+                       Actor, Cat, Flops, Embed, Export,
                        RenderHtml, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA,
                        LLVM.JIT, LLVM.Shims

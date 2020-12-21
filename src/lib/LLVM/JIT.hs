@@ -151,5 +151,5 @@ getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
 getFunctionPtr NativeModule{..} funcName = do
   let JIT{..} = moduleJIT
   symbol <- OrcJIT.mangleSymbol compileLayer $ fromString funcName
-  Right (OrcJIT.JITSymbol funcAddr _) <- OrcJIT.findSymbol compileLayer symbol False
+  Right (OrcJIT.JITSymbol funcAddr _) <- OrcJIT.findSymbolIn compileLayer moduleKey symbol False
   return $ castPtrToFunPtr $ wordPtrToPtr funcAddr

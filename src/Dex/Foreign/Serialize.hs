@@ -9,7 +9,6 @@ module Dex.Foreign.Serialize (
   dexPrint, dexToCAtom
   ) where
 
-import Data.Int
 import Data.Word
 import Data.Functor
 
