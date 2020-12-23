@@ -1,4 +1,8 @@
 '# `Show` instances
+-- String
+
+:p show (AsList _ "abc")
+> (AsList 3 "abc")
 
 -- Int32
 
