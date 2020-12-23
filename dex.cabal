@@ -37,7 +37,7 @@ library
                        RenderHtml, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims
-  build-depends:       base, containers, mtl, bytestring, time,
+  build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs,
                        -- Parsing
                        megaparsec, parser-combinators,
