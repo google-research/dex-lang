@@ -4,8 +4,8 @@ include "io.dx"
 :p unsafeIO \().
   withTempFile \fname.
     withFile fname WriteMode \stream.
-      fwrite stream $ AsList _ "lorem ipsum\n"
-      fwrite stream $ AsList _ "dolor sit amet\n"
+      fwrite stream "lorem ipsum\n"
+      fwrite stream "dolor sit amet\n"
     readFile fname
 > (AsList 27 "lorem ipsum
 > dolor sit amet
@@ -15,12 +15,11 @@ include "io.dx"
 :p unsafeIO \().
   withAlloc 4 \ptr:(Ptr Int).
     for i:(Fin 4). store (ptr +>> ordinal i) (ordinal i)
-    result : Fin 4 => Int = tabFromPtr ptr
-    result
+    tabFromPtr (Fin 4) ptr
 > [0, 1, 2, 3]
 
 unsafeIO \().
-  print $ AsList _ "testing log"
+  print "testing log"
 > testing log
 > ()
 
@@ -28,8 +27,8 @@ unsafeIO \().
   for i':(Fin 10).
     i = ordinal i'
     if rem i 2 == 0
-      then print $ show i <> AsList _ " is even"
-      else print $ show i <> AsList _ " is odd"
+      then print $ show i <> " is even"
+      else print $ show i <> " is odd"
 > 0 is even
 > 1 is odd
 > 2 is even

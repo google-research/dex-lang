@@ -217,8 +217,9 @@ uType = expr
 uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
-  let cs = map (WithSrc (Just pos) . charExpr) s
-  return $ WithSrc (Just pos) $ UTabCon cs
+  let addSrc = WithSrc (Just pos)
+  let cs = map (addSrc . charExpr) s
+  return $ mkApp (addSrc "toList") $ addSrc $ UTabCon cs
 
 uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
@@ -924,7 +925,7 @@ mkSymName s = mkName $ "(" <> s <> ")"
 prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ label "negation" $ do
   ((), pos) <- withPos $ sym "-"
-  let f = WithSrc (Just pos) $ UVar $ mkName "neg" :> ()
+  let f = WithSrc (Just pos) "neg"
   return $ \case
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)

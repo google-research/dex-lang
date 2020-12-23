@@ -12,11 +12,11 @@ data Stream mode:StreamMode = MkStream CharPtr
 
 -- TODO: check the string contains no nulls
 def withCString (s:String) (action: CString -> {State World} a) : {State World} a =
-  (AsList n s') = s <> (AsList _ "\NUL")
+  (AsList n s') = s <> "\NUL"
   withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
 
 def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
-  modeStr = AsList _ case mode of
+  modeStr = case mode of
     ReadMode  -> "r"
     WriteMode -> "w"
   withCString path \(MkCString pathPtr).
@@ -67,12 +67,12 @@ def readFile (f:FilePath) : {State World} String =
 def writeTemp (s:String) : {State World} FilePath =
   -- TODO: Make this properly atomic. It can fail if another process creates a
   -- file with same name after we ask for the name and before we create it.
-  withCString (AsList _ "/tmp/dex-XXXXXX") \(MkCString ptr).
+  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
     %ffi mktemp CharPtr ptr
     stringFromCharPtr 15 (MkPtr ptr)
 
 def withTempFile (action: FilePath -> {State World} a) : {State World} a =
-  tmpFile = writeTemp (AsList _ [])
+  tmpFile = writeTemp ""
   result = action tmpFile
   deleteFile tmpFile
   result
@@ -81,4 +81,4 @@ def getOutputStream (_:Unit) : {State World} Stream WriteMode =
   MkStream $ %ptrLoad OUT_STREAM_PTR
 
 def print (s:String) : {State World} Unit =
-  fwrite (getOutputStream ()) (s <> AsList _ "\n")
+  fwrite (getOutputStream ()) (s <> "\n")

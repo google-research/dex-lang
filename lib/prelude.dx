@@ -478,7 +478,7 @@ def withTabPtr (_:Storable a) ?=>
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
-def tabFromPtr (_:Storable a) ?=> (ptr:Ptr a) : {State World} n=>a =
+def tabFromPtr (_:Storable a) ?=> (n:Type) -> (ptr:Ptr a) : {State World} n=>a =
   for i. load $ ptr +>> ordinal i
 
 'Misc
@@ -937,7 +937,7 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 String : Type = List Char
 
 def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {State World} String=
-  AsList n $ tabFromPtr ptr
+  AsList n $ tabFromPtr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = W8ToI c

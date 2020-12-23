@@ -769,7 +769,7 @@ str = ['x', 'y']
 s1 = "hello world"
 
 :p s1
-> "hello world"
+> (AsList 11 "hello world")
 
 :p codepoint 'a'
 > 97

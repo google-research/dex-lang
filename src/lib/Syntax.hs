@@ -78,6 +78,7 @@ import Data.Tuple (swap)
 import Data.Foldable (toList, fold)
 import Data.Int
 import Data.Word
+import Data.String (IsString, fromString)
 import Foreign.Ptr
 import GHC.Generics
 
@@ -269,6 +270,9 @@ data WithSrc a = WithSrc SrcCtx a
 
 srcPos :: WithSrc a -> SrcCtx
 srcPos (WithSrc pos _) = pos
+
+instance IsString UExpr' where
+  fromString s = UVar $ Name SourceName (fromString s) 0 :> ()
 
 -- === primitive constructors and operators ===
 

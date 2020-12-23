@@ -98,12 +98,12 @@ def makePNG (img:n=>m=>(Fin 3)=>Word8) : List Byte = unsafeIO \().
   withTabPtr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
     (n, ptr') = %ffi encodePNG (Int & CharPtr) rawPtr (size m) (size n)
-    AsList n $ tabFromPtr $ MkPtr ptr'
+    toList $ tabFromPtr (Fin n) $ MkPtr ptr'
 
 def pngToHtml (png:List Byte) : List Char =
-  (toList "<img class=\"plot-img\" src=\"data:image/png;base64, "
-       <> base64Encode png
-       <> toList "\">")
+  ("<img class=\"plot-img\" src=\"data:image/png;base64, "
+   <> base64Encode png
+   <> "\">")
 
 '## API entry point
 
