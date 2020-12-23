@@ -6,11 +6,8 @@ threefryHash = \seed x. I64ToI $ hash (IToI64 seed) x
 def fnvhash (seed:Int32) (x:Int32) : Int32 =
     %ffi fasthash Int32 seed x
 
-%bench "threefry"
+%passes imp
 threefryHash 0 1
-
-%bench "fnv"
-fnvhash 0 1
 
 data Hashable a:Type = MkHashable (a->a->Bool) (Int->a->Int) -- isequal, hash
 
