@@ -1,6 +1,0 @@
-
-
-addFloats :: Float -> Float -> Float
-addFloats x y = x + y
-
-
