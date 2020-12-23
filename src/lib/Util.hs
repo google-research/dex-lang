@@ -12,6 +12,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
+             measureSeconds,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
 
 import Data.Functor.Identity (Identity(..))
@@ -21,6 +22,7 @@ import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+import System.CPUTime
 
 import Cat
 
@@ -232,3 +234,10 @@ transitiveClosure getParents seeds =
       unless (x `Set.member` visited) $ do
         extend $ Set.singleton x
         mapM_ go $ getParents x
+
+measureSeconds :: MonadIO m => m a -> m (a, Double)
+measureSeconds m = do
+  t1 <- liftIO $ getCPUTime
+  ans <- m
+  t2 <- liftIO $ getCPUTime
+  return (ans, (fromIntegral $ t2 - t1) / 1e12)

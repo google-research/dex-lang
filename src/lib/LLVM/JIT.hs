@@ -29,10 +29,11 @@ import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Target as T
 import qualified LLVM.Linking as Linking
 
-import qualified LLVM.Module as Mod
-import qualified LLVM.AST as L
-import qualified LLVM.AST.Global as L
+import qualified LLVM.AST
+import qualified LLVM.AST.Global as LLVM.AST
 import qualified LLVM.AST.Constant as C
+import qualified LLVM.Module as LLVM
+import qualified LLVM.Context as LLVM
 
 import LLVM.Shims
 
@@ -71,16 +72,22 @@ data NativeModule =
   NativeModule { moduleJIT      :: JIT
                , moduleKey      :: OrcJIT.ModuleKey
                , moduleDtors    :: [FunPtr (IO ())]
+               , llvmModule     :: LLVM.Module
+               , llvmContext    :: LLVM.Context
                }
 
--- XXX: This destroys the passed in module!
+type CompilationPipeline = LLVM.Module -> IO ()
+
 -- TODO: This leaks resources if we fail halfway
-compileModule :: JIT -> (L.Module, Mod.Module) -> IO NativeModule
-compileModule moduleJIT@JIT{..} (ast, m) = do
+compileModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> IO NativeModule
+compileModule moduleJIT@JIT{..} ast compilationPipeline = do
+  llvmContext <- LLVM.createContext
+  llvmModule <- LLVM.createModuleFromAST llvmContext ast
+  compilationPipeline llvmModule
   moduleKey <- OrcJIT.allocateModuleKey execSession
   resolver <- newSymbolResolver execSession (makeResolver compileLayer)
   modifyIORef resolvers (M.insert moduleKey resolver)
-  OrcJIT.addModule compileLayer moduleKey m
+  OrcJIT.addModule compileLayer moduleKey llvmModule
   moduleDtors <- forM dtorNames $ \dtorName -> do
     dtorSymbol <- OrcJIT.mangleSymbol compileLayer (fromString dtorName)
     Right (OrcJIT.JITSymbol dtorAddr _) <- OrcJIT.findSymbol compileLayer dtorSymbol False
@@ -109,15 +116,16 @@ compileModule moduleJIT@JIT{..} (ast, m) = do
     -- Unfortunately the JIT layers we use here don't handle the destructors properly,
     -- so we have to find and call them ourselves.
     dtorNames = do
-      let dtorStructs = flip foldMap (L.moduleDefinitions ast) $ \case
-            L.GlobalDefinition
-              L.GlobalVariable{name="llvm.global_dtors",
-                               initializer=Just (C.Array _ elems),
-                               ..} -> elems
+      let dtorStructs = flip foldMap (LLVM.AST.moduleDefinitions ast) $ \case
+            LLVM.AST.GlobalDefinition
+              LLVM.AST.GlobalVariable{
+                name="llvm.global_dtors",
+                initializer=Just (C.Array _ elems),
+                ..} -> elems
             _ -> []
       -- Sort in the order of decreasing priority!
       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
-        \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (L.Name dname), _]) ->
+        \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (LLVM.AST.Name dname), _]) ->
           (n, C8BS.unpack $ SBS.fromShort dname)
 
 foreign import ccall "dynamic"
@@ -133,13 +141,15 @@ unloadNativeModule NativeModule{..} = do
   modifyIORef resolvers (M.delete moduleKey)
   OrcJIT.removeModule compileLayer moduleKey
   OrcJIT.releaseModuleKey execSession moduleKey
+  LLVM.disposeModule llvmModule
+  LLVM.disposeContext llvmContext
 
-withNativeModule :: JIT -> (L.Module, Mod.Module) -> (NativeModule -> IO a) -> IO a
-withNativeModule jit m = bracket (compileModule jit m) unloadNativeModule
+withNativeModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
+withNativeModule jit m p = bracket (compileModule jit m p) unloadNativeModule
 
 getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
 getFunctionPtr NativeModule{..} funcName = do
   let JIT{..} = moduleJIT
   symbol <- OrcJIT.mangleSymbol compileLayer $ fromString funcName
-  Right (OrcJIT.JITSymbol funcAddr _) <- OrcJIT.findSymbol compileLayer symbol False
+  Right (OrcJIT.JITSymbol funcAddr _) <- OrcJIT.findSymbolIn compileLayer moduleKey symbol False
   return $ castPtrToFunPtr $ wordPtrToPtr funcAddr

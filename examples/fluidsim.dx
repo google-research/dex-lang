@@ -4,55 +4,46 @@ Fluid simulation code based on
 
 include "plot.dx"
 
-def zeroedges (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (x: n=>m=>a) : n=>m=>a =
-  -- Todo: update in place without starting with a copy.
-  snd $ withState x \buf.
-    for i j.
-      edge = i==0 || j==0 || i==ordinal n || i==ordinal m
-      select edge (buf!(i@n)!(j@m) := zero) ()
-
 def wrapidx (n:Type) -> (i:Int) : n =
   -- Index wrapping around at ends.
   asidx $ mod i $ size n
 
-def incwrap (n:Type) ?-> (i:n) : n =
-  -- Increments index, wrapping around at ends.
+def incwrap (i:n) : n =  -- Increment index, wrapping around at ends.
   asidx $ mod ((ordinal i) + 1) $ size n
 
-def decwrap (n:Type) ?-> (i:n) : n =
-  -- Decrements index, wrapping around at ends.
+def decwrap (i:n) : n =  -- Decrement index, wrapping around at ends.
   asidx $ mod ((ordinal i) - 1) $ size n
 
-def finite_difference_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float =
+def finite_difference_neighbours (_:Add a) ?=> (x:n=>a) : n=>a =
   for i. x.(incwrap i) - x.(decwrap i)
 
-def add_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float =
+def add_neighbours (_:Add a) ?=> (x:n=>a) : n=>a =
   for i. x.(incwrap i) + x.(decwrap i)
 
-def apply_along_axis1 (f : b=>Float -> b=>Float) (x : b=>c=>Float) : b=>c=>Float =
+def apply_along_axis1 (f:b=>a -> b=>a) (x:b=>c=>a) : b=>c=>a =
   transpose for j. f for i. x.i.j
 
-def apply_along_axis2 (f : c=>Float -> c=>Float) (x : b=>c=>Float) : b=>c=>Float =
+def apply_along_axis2 (f:c=>a -> c=>a) (x:b=>c=>a) : b=>c=>a =
   for i. f x.i
 
-def fdx (x : n=>m=>Float) : (n=>m=>Float) =
+def fdx (_:Add a) ?=> (x:n=>m=>a) : (n=>m=>a) =
   apply_along_axis1 finite_difference_neighbours x
 
-def fdy (x : n=>m=>Float) : (n=>m=>Float) =
+def fdy (_:Add a) ?=> (x:n=>m=>a) : (n=>m=>a) =
   apply_along_axis2 finite_difference_neighbours x
 
-def divergence (vx : n=>m=>Float) (vy : n=>m=>Float) : (n=>m=>Float) =
+def divergence (_:Add a) ?=> (vx:n=>m=>a) (vy:n=>m=>a) : (n=>m=>a) =
   fdx vx + fdy vy
 
-def add_neighbours_2d (x : n=>m=>Float) : (n=>m=>Float) =
+def add_neighbours_2d (_:Add a) ?=> (x:n=>m=>a) : (n=>m=>a) =
   ax1 = apply_along_axis1 add_neighbours x
   ax2 = apply_along_axis2 add_neighbours x
   ax1 + ax2
 
-def project (v: n=>m=>(Fin 2)=>Float) : n=>m=>(Fin 2)=>Float =
+def project (_:VSpace a) ?=> (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
   -- Project the velocity field to be approximately mass-conserving,
   -- using a few iterations of Gauss-Seidel.
-  h = 0.01  -- todo: work out units
+  h = 1.0 / IToF (size n)
 
   -- unpack into two scalar fields
   vx = for i j. v.i.j.(fromOrdinal _ 0)
@@ -60,43 +51,27 @@ def project (v: n=>m=>(Fin 2)=>Float) : n=>m=>(Fin 2)=>Float =
 
   div = -0.5 .* h .* (divergence vx vy)
 
-  p_init = for i. for j. 0.0
-  p = snd $ withState p_init \state.
+  p = snd $ withState zero \state.
     for i:(Fin 10).
-      p = get state
-      state := (1.0 / 4.0) .* (div + add_neighbours_2d p)
+      state := (1.0 / 4.0) .* (div + add_neighbours_2d (get state))
 
   vx = vx - (0.5 / h) .* fdx(p)
   vy = vy - (0.5 / h) .* fdy(p)
 
-  for i j. [vx.i.j, vy.i.j]  -- pack back into a vector field
+  for i j. [vx.i.j, vy.i.j]  -- pack back into a table.
 
-  -- zeroedges v  -- BUG: Crashes with "Not implemented Int"
-
-def bilinear_interp (dict:VSpace a) ?=> (right_weight:Float) --o (bottom_weight:Float) --o
-  (topleft: a) --o (bottomleft: a) --o (topright: a) --o (bottomright: a) --o : a =
+def bilinear_interp (_:VSpace a) ?=> (right_weight:Float) (bottom_weight:Float)
+  (topleft: a) (bottomleft: a) (topright: a) (bottomright: a) : a =
   left  = (1.0 - right_weight) .* ((1.0 - bottom_weight) .* topleft  + bottom_weight .* bottomleft)
   right =        right_weight  .* ((1.0 - bottom_weight) .* topright + bottom_weight .* bottomright)
   left + right
 
-
-N = Fin 100
-M = Fin 100
-
--- BUG: Changing the order of implicit arguments causes an error further down.
--- i.e. it doesn't work to start the next line with
--- (n:Type) ?-> (m:Type) ?-> (dict:VSpace a) ?=>
-def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
+def advect (_:VSpace a) ?=> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   -- Move field f according to x and y velocities (u and v)
   -- using an implicit Euler integrator.
 
-  -- Create table of cell locations.
-  -- BUG: using n and m below causes a crash, so I hardcoded it for now.
-  numrows = 100.0 -- IToF $ ordinal n
-  numcols = 100.0 -- IToF $ ordinal m
-
-  cell_xs = linspace n 0.0 numrows
-  cell_ys = linspace m 0.0 numcols
+  cell_xs = linspace n 0.0 $ IToF (size n)
+  cell_ys = linspace m 0.0 $ IToF (size m)
 
   for i j.
     -- Location of source of flow for this cell.  No meshgrid!
@@ -108,22 +83,19 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
     source_row = floor center_ys
 
     -- Relative weight of right-hand and bottom cells.
-    -- TODO: clipping shouldn't be necessary here, find out why it is.
-    right_weight  = clip (0.0, 1.0) $ center_xs - source_col
-    bottom_weight = clip (0.0, 1.0) $ center_ys - source_row
+    right_weight  = center_xs - source_col
+    bottom_weight = center_ys - source_row
 
     -- Cast back to indices, wrapping around edges.
-    source_col_int = FToI source_col
-    source_row_int = FToI source_row
-    l = wrapidx n source_col_int
-    r = wrapidx n (source_col_int + 1)
-    t = wrapidx m  source_row_int
-    b = wrapidx m (source_row_int + 1)
+    l = wrapidx n  (FToI source_col)
+    r = wrapidx n ((FToI source_col) + 1)
+    t = wrapidx m  (FToI source_row)
+    b = wrapidx m ((FToI source_row) + 1)
 
     -- A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
 
-def fluidsim (dict: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
+def fluidsim (_: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
   (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   (color_final, v) = snd $ withState (color_init, v) \state.
     for i:(Fin num_steps).
@@ -136,18 +108,40 @@ def fluidsim (dict: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
 
 '### Demo
 
+N = Fin 50
+M = Fin 50
+
 -- Create random velocity field.
 def ixkey3 (k:Key) (i:n) (j:m) (k2:o) : Key =
   hash (hash (hash k (ordinal i)) (ordinal j)) (ordinal k2)
-v = for i:N j:M k:(Fin 2). 3.0 * (randn $ ixkey3 (newKey 0) i j k)
+init_velocity = for i:N j:M k:(Fin 2).
+  3.0 * (randn $ ixkey3 (newKey 0) i j k)
 
 -- Create diagonally-striped color pattern.
 init_color = for i:N j:M.
-  BToF $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
+  r = BToF $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
+  b = BToF $ (sin $ (IToF $ (ordinal j) - (ordinal i)) / 6.0) > 0.0
+  g = BToF $ (sin $ (IToF $ (ordinal j) + (ordinal i)) / 4.0) > 0.0
+  [r, g, b]
 
 -- Run fluid sim and plot it.
-num_steps = 50
-final_color = fluidsim num_steps init_color v
+num_steps = 5
+final_color = fluidsim num_steps init_color init_velocity
 
-:html matshow final_color
+:html imshow final_color
+> <html output>
+
+
+
+'### Gradient test
+
+target = transpose init_color
+
+def objective (v:N=>M=>(Fin 2)=>Float) : Float =
+  final_color = fluidsim num_steps init_color v
+  sum for (i, j, c). sq (final_color.i.j.c - target.i.j.c)
+
+init_vel_grad = grad objective zero
+
+:html imshow for i j. [0.0, init_vel_grad.i.j.(0@_), init_vel_grad.i.j.(1@_)]
 > <html output>

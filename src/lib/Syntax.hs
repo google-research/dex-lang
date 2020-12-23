@@ -53,7 +53,7 @@ module Syntax (
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
-    pattern UnitTy, pattern PairTy, pattern FunTy,
+    pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow,
@@ -639,7 +639,7 @@ type LitProg = [(SourceBlock, Result)]
 type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
-type BenchStats = Int -- number of runs
+type BenchStats = (Int, Double) -- number of runs, total benchmarking time
 data Output = TextOut String
             | HtmlOut String
             | PassInfo PassName String
@@ -1452,6 +1452,9 @@ fromConsList xs = case xs of
 
 pattern FunTy :: Binder -> EffectRow -> Type -> Type
 pattern FunTy b eff bodyTy = Pi (Abs b (PlainArrow eff, bodyTy))
+
+pattern PiTy :: Binder -> Arrow -> Type -> Type
+pattern PiTy b arr bodyTy = Pi (Abs b (arr, bodyTy))
 
 pattern BinaryFunTy :: Binder -> Binder -> EffectRow -> Type -> Type
 pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)

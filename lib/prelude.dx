@@ -1037,7 +1037,7 @@ def atan2 (y:Float) (x:Float) : Float =
   (min_abs_x_y, max_abs_x_y) = min_and_max abs_x abs_y
   a = atan_inner (min_abs_x_y / max_abs_x_y)
   a = select (abs_x <= abs_y) ((pi / 2.0) -a) a
-  a = select (x < 0.0) pi a
+  a = select (x < 0.0) (pi - a) a
   t = select (x < 0.0) pi 0.0
   a = select (y == 0.0) t a
   t = select (x < 0.0) (3.0 * pi / 4.0) (pi / 4.0)

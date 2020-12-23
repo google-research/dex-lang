@@ -1,25 +1,23 @@
--- Copyright 2019 Google LLC
+-- Copyright 2020 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RecordWildCards #-}
 
-module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 exportFunctions, EvalConfig (..)) where
+module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile, EvalConfig (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Writer hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Data.String
-import Data.List (partition, nub)
-import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import Data.Maybe
+import Data.List (partition)
 import qualified Data.Map.Strict as M
 
-import Algebra
 import Syntax
 import Embed
 import Cat
@@ -36,7 +34,7 @@ import Logging
 import LLVMExec
 import PPrint
 import Parser
-import Util (highlightRegion)
+import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
@@ -132,16 +130,18 @@ processLogs logLevel logs = case logLevel of
     where (compileTime, runTime, benchStats) = timesFromLogs logs
 
 timesFromLogs :: [Output] -> (Double, Double, Maybe BenchStats)
-timesFromLogs logs = (totalTime - evalTime, evalTime, benchStats)
+timesFromLogs logs = (totalTime - totalEvalTime, singleEvalTime, benchStats)
   where
-    (evalTime, benchStats) = case [(t, stats) | EvalTime t stats <- logs] of
-                  []           -> (0.0, Nothing)
-                  [(t, stats)] -> (t, stats)
-                  _            -> error "Expect at most one result"
+    (totalEvalTime, singleEvalTime, benchStats) =
+      case [(t, stats) | EvalTime t stats <- logs] of
+        []           -> (0.0  , 0.0, Nothing)
+        [(t, stats)] -> (total, t  , stats)
+          where total = fromMaybe t $ fmap snd stats
+        _            -> error "Expect at most one result"
     totalTime = case [tTotal | TotalTime tTotal <- logs] of
-                  []  -> 0.0
-                  [t] -> t
-                  _   -> error "Expect at most one result"
+        []  -> 0.0
+        [t] -> t
+        _   -> error "Expect at most one result"
 
 isLogInfo :: Output -> Bool
 isLogInfo out = case out of
@@ -201,8 +201,8 @@ evalBackend env block = do
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
   let mainName = Name TopFunctionName (fromString funcName) 0
-  let cc = case backend of LLVMCUDA -> EntryFun CUDARequired
-                           _        -> EntryFun CUDANotRequired
+  let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
+                                        _        -> (EntryFun CUDANotRequired, False)
   let (mainFunc, impModuleUnoptimized, reconAtom) =
         toImpModule env backend cc mainName ptrBinders Nothing block'
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
@@ -215,17 +215,15 @@ evalBackend env block = do
   checkPass ImpPass impModule
   llvmAST <- liftIO $ impToLLVM logger impModule
   let IFunType _ _ resultTypes = impFunType $ mainFunc
-  let llvmEvaluate = if bench then compileAndBench else compileAndEval
+  let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
   resultVals <- liftM (map (Con . Lit)) $ liftIO $
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a
 withCompileTime m = do
-  t1 <- liftIO $ getCurrentTime
-  ans <- m
-  t2 <- liftIO $ getCurrentTime
-  logTop $ TotalTime $ realToFrac $ t2 `diffUTCTime` t1
+  (ans, t) <- measureSeconds $ m
+  logTop $ TotalTime t
   return ans
 
 checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
@@ -249,94 +247,6 @@ logTop :: Output -> TopPassM ()
 logTop x = do
   logger <- asks logService
   logThis logger [x]
-
-type CArgM = WriterT [IBinder] (CatT CArgEnv Embed)
-type CArgEnv = (Env IBinder, Env ())
-
-runCArg :: CArgEnv -> CArgM a -> Embed (a, [IBinder], CArgEnv)
-runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
-  where repack ((ans, cargs), env) = (ans, cargs, env)
-
-exportFunctions :: FilePath -> [(String, Atom)] -> TopEnv -> EvalConfig -> IO ()
-exportFunctions objPath funcs env opts = do
-  let names = fmap fst funcs
-  unless (length (nub names) == length names) $ liftEitherIO $
-    throw CompilerErr "Duplicate export names"
-  modules <- forM funcs $ \(nameStr, func) -> do
-    -- Create a module that simulates an application of arguments to the function
-    let ((dest, cargs), (_, decls)) = flip runEmbed (freeVars func) $ do
-          (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
-          resultAtom <- naryApp func args
-          (resultDest, cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
-          void $ emitTo outputName PlainLet $ Atom resultAtom
-          return (resultDest, cargArgs <> cdestArgs)
-
-    let coreModule = Module Core decls mempty
-    let defunctionalized = simplifyModule env coreModule
-    let Module _ optDecls optBindings = optimizeModule defunctionalized
-    let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
-    let block = Block optDecls outputExpr
-
-    let backend = backendName opts
-    let name = Name TopFunctionName (fromString nameStr) 0
-    let (_, impModule, _) = toImpModule env backend CEntryFun name cargs (Just dest) block
-    llvmAST <- execLogger Nothing $ flip impToLLVM impModule
-    return (llvmAST, [nameStr])
-  exportObjectFile objPath modules
-  where
-    outputName = GlobalName "_ans_"
-
-    createArgs :: Type -> CArgM [Atom]
-    createArgs ty = case ty of
-      FunTy b Pure result -> do
-        argSubst <- fmap (\(Bind (n:>bt)) -> Var $ n :> BaseTy bt) <$> looks fst
-        arg <- createArg $ subst (argSubst, mempty) $ b
-        (arg:) <$> createArgs result
-      FunTy _ _ _ -> error $ "Unexpected type for an exported function: " ++ pprint ty
-      _ -> return []
-
-    createArg :: Binder -> CArgM Atom
-    createArg b = case ty of
-      BaseTy bt@(Scalar _) -> do
-        ~v@(Var (name:>_)) <- newCVar bt
-        extend $ asFst $ b @> (Bind $ name :> bt)
-        return v
-      TabTy _ _ -> createTabArg mempty ty
-      _ -> error $ "Unsupported arg type: " ++ pprint ty
-      where ty = binderType b
-
-    createTabArg :: IndexStructure -> Type -> CArgM Atom
-    createTabArg idx ty = case ty of
-      BaseTy bt@(Scalar _) -> do
-        ptrLoad =<< flip applyIdxs idx =<< newCVar (ptrTy bt)
-      TabTy b elemTy -> do
-        buildLam b TabArrow $ \(Var i) -> do
-          elemTy' <- substEmbed (b@>Var i) elemTy
-          createTabArg (idx <> Nest (Bind i) Empty) elemTy'
-      _ -> unsupported
-      where unsupported = error "Unsupported table type"
-
-    createDest :: IndexStructure -> Type -> CArgM Atom
-    createDest idx ty = case ty of
-      BaseTy bt@(Scalar _) -> do
-        liftM (Con . BaseTypeRef) $ flip applyIdxs idx =<< newCVar (ptrTy bt)
-      TabTy b elemTy -> do
-        liftM (Con . TabRef) $ buildLam b TabArrow $ \(Var i) -> do
-          elemTy' <- substEmbed (b@>Var i) elemTy
-          createDest (idx <> Nest (Bind i) Empty) elemTy'
-      _ -> unsupported
-      where unsupported = error "Unsupported table type"
-
-    -- TODO: I guess that the address space depends on the backend?
-    -- TODO: Have an ExternalPtr tag?
-    ptrTy ty = PtrType (DerivedPtr, Heap CPU, ty)
-
-    newCVar :: BaseType -> CArgM Atom
-    newCVar bt = do
-      name <- genFresh (Name CArgName "arg" 0) <$> looks snd
-      extend $ asSnd $ name @> ()
-      tell [Bind $ name :> bt]
-      return $ Var $ name :> BaseTy bt
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do

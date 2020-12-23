@@ -5,6 +5,8 @@
 # https://developers.google.com/open-source/licenses/bsd
 
 import unittest
+import ctypes
+import numpy as np
 from textwrap import dedent
 
 # TODO: Write a proper setup.py instead of using this hack...

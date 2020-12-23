@@ -521,8 +521,8 @@ instance Pretty Output where
     benchName <> hardline <>
     "Compile time: " <> prettyDuration compileTime <> hardline <>
     "Run time:     " <> prettyDuration runTime <+>
-    (case stats of Just runs -> "\t" <> parens ("based on" <+> p runs <+> "runs")
-                   Nothing   -> "")
+    (case stats of Just (runs, _) -> "\t" <> parens ("based on" <+> p runs <+> "runs")
+                   Nothing        -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s

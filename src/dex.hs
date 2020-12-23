@@ -25,6 +25,7 @@ import Resources
 import TopLevel
 import Parser  hiding (Parser)
 import LiveOutput
+import Export
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
@@ -59,7 +60,9 @@ runMode evalMode preludeFile opts = do
       let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
       putStr $ foldMap (nonEmptyNewline . pprint) errors
       let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-      exportFunctions objPath exportedFuns env opts
+      unless (backendName opts == LLVM) $ liftEitherIO $
+        throw CompilerErr "Export only supported with the LLVM CPU backend"
+      exportFunctions objPath exportedFuns env
 
 evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
 evalPrelude opts fname = flip execStateT initTopEnv $ do
