@@ -18,3 +18,26 @@ include "io.dx"
     result : Fin 4 => Int = tabFromPtr ptr
     result
 > [0, 1, 2, 3]
+
+unsafeIO \().
+  print $ AsList _ "testing log"
+> testing log
+> ()
+
+unsafeIO \().
+  for i':(Fin 10).
+    i = ordinal i'
+    if rem i 2 == 0
+      then print $ show i <> AsList _ " is even"
+      else print $ show i <> AsList _ " is odd"
+> 0 is even
+> 1 is odd
+> 2 is even
+> 3 is odd
+> 4 is even
+> 5 is odd
+> 6 is even
+> 7 is odd
+> 8 is even
+> 9 is odd
+> [(), (), (), (), (), (), (), (), (), ()]

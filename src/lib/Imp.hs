@@ -1164,6 +1164,7 @@ instance Checkable ImpFunction where
   checkValid f@(ImpFunction (_:> IFunType cc _ _) bs block) = addContext ctx $ do
     let scope = foldMap (binderAsEnv . fmap (const ())) bs
     let env   = foldMap (binderAsEnv                  ) bs
+             <> fmap (fromScalarType . fst) initTopEnv
     void $ flip runReaderT (env, deviceFromCallingConvention cc) $
       flip runStateT scope $ checkBlock block
     where ctx = "Checking:\n" ++ pprint f

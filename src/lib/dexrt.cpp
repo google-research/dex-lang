@@ -38,6 +38,10 @@ void free_dex(char* ptr) {
   free(ptr);
 }
 
+void* fdopen_w(int fd) {
+  return fdopen(fd, "w");
+}
+
 uint32_t rotate_left(uint32_t x, uint32_t d) {
   return (x << d) | (x >> (32 - d));
 }

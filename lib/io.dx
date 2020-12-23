@@ -33,6 +33,7 @@ def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
   (AsList n s') = s
   withTabPtr s' \(MkPtr ptr).
     %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
+  %ffi fflush Int64 stream'
   ()
 
 def fread (stream:Stream ReadMode) : {State World} String =
@@ -75,3 +76,9 @@ def withTempFile (action: FilePath -> {State World} a) : {State World} a =
   result = action tmpFile
   deleteFile tmpFile
   result
+
+def getOutputStream (_:Unit) : {State World} Stream WriteMode =
+  MkStream $ %ptrLoad OUT_STREAM_PTR
+
+def print (s:String) : {State World} Unit =
+  fwrite (getOutputStream ()) (s <> AsList _ "\n")

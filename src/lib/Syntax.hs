@@ -46,7 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    getProjection, theWorld, initTopEnv,
+    getProjection, theWorld, outputStreamPtrName, initTopEnv,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
@@ -75,7 +75,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 import Data.Store (Store)
 import Data.Tuple (swap)
-import Data.Foldable (toList)
+import Data.Foldable (toList, fold)
 import Data.Int
 import Data.Word
 import Foreign.Ptr
@@ -452,9 +452,16 @@ instance Eq EffectRow where
 theWorld :: Name
 theWorld = GlobalName "World"
 
+outputStreamPtrName :: Name
+outputStreamPtrName = GlobalName "OUT_STREAM_PTR"
+
 initTopEnv :: TopEnv
-initTopEnv =
-  (theWorld:>TyKind) @> (TyKind, LamBound ImplicitArrow)
+initTopEnv = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
+  [ (theWorld            , TyKind)
+  , (outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
+
+hostPtrTy :: BaseType -> BaseType
+hostPtrTy ty = PtrType (AllocatedPtr, Heap CPU, ty)
 
 -- === top-level constructs ===
 

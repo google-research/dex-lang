@@ -90,8 +90,10 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun], extraSpecs)
   EntryFun requiresCUDA -> return $ runCompile CPU $ do
+    (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
+    initializeOutputStream streamFDOperand
     argOperands <- forM (zip [0..] argTys) $ \(i, ty) ->
       gep argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load
     when (toBool requiresCUDA) ensureHasCUDAContext
@@ -99,9 +101,9 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     forM_ (zip [0..] results) $ \(i, x) ->
       gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x
     mainFun <- makeFunction (asLLVMName name)
-                 [argPtrParam, resultPtrParam] (Just $ i64Lit 0)
+                 [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs)
+    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs)
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
     (CUDAKernel kernelText) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
@@ -858,12 +860,36 @@ cpuBinaryIntrinsic op x y = case L.typeOf x of
     floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
 
+-- === Output stream ===
+
+outputStreamPtrLName :: L.Name
+outputStreamPtrLName  = asLLVMName outputStreamPtrName
+
+outputStreamPtrDef :: L.Definition
+outputStreamPtrDef = L.GlobalDefinition $ L.globalVariableDefaults
+  { L.name = outputStreamPtrLName
+  , L.type' = hostVoidp
+  , L.linkage = L.Private
+  , L.initializer = Just $ C.Null hostVoidp }
+
+outputStreamPtr :: Operand
+outputStreamPtr = L.ConstantOperand $ C.GlobalReference
+ (hostPtrTy hostVoidp) outputStreamPtrLName
+
+initializeOutputStream :: Operand -> Compile ()
+initializeOutputStream streamFD = do
+  streamPtr <- emitExternCall fdopenFun [streamFD]
+  store outputStreamPtr streamPtr
+
+outputStreamEnv :: OperandEnv
+outputStreamEnv = outputStreamPtrName @> outputStreamPtr
+
 -- === Compile monad utilities ===
 
 runCompile :: Device -> Compile a -> a
 runCompile dev m = evalState (runReaderT m env) initState
   where
-    env = CompileEnv mempty dev
+    env = CompileEnv outputStreamEnv dev
     initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnv -> Compile a -> Compile a
@@ -944,6 +970,9 @@ mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]
+
+fdopenFun :: ExternFunSpec
+fdopenFun = ExternFunSpec "fdopen_w" (hostPtrTy i8) [L.NoAlias] [] [i32]
 
 boolTy :: L.Type
 boolTy = i8

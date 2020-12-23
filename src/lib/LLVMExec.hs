@@ -29,7 +29,10 @@ import qualified LLVM.Transforms as P
 import qualified LLVM.Target as T
 import qualified LLVM.Linking as Linking
 import LLVM.Context
+import Data.Int
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import GHC.IO.FD
+import GHC.IO.Handle.FD
 import System.IO
 import System.IO.Unsafe
 import System.IO.Temp
@@ -40,14 +43,17 @@ import System.Exit
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
+import Foreign.C.Types (CInt (..))
 import Foreign.Storable hiding (alignment)
 import Control.Monad
+import Control.Concurrent
 import Control.Exception hiding (throw)
 import Data.ByteString.Short (ShortByteString)
 import Data.ByteString.Char8 (unpack, pack)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Control.Exception as E
 
 import Logging
 import Syntax
@@ -59,45 +65,84 @@ import LLVM.JIT
 
 compileAndEval :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndEval logger ast fname args resultTypes = do
-  allocaBytes (length args * cellSize) $ \argsPtr ->
-    allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
-      storeLitVals argsPtr args
-      evalTime <- compileOneOff logger ast fname $ checkedCallFunPtr False argsPtr resultPtr
-      logThis logger [EvalTime evalTime Nothing]
-      loadLitVals resultPtr resultTypes
+  withPipeToLogger logger $ \fd ->
+    allocaBytes (length args * cellSize) $ \argsPtr ->
+      allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+        storeLitVals argsPtr args
+        evalTime <- compileOneOff logger ast fname $
+          checkedCallFunPtr False fd argsPtr resultPtr
+        logThis logger [EvalTime evalTime Nothing]
+        loadLitVals resultPtr resultTypes
 
 compileAndBench :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndBench logger ast fname args resultTypes = do
-  allocaBytes (length args * cellSize) $ \argsPtr ->
-    allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
-      storeLitVals argsPtr args
-      compileOneOff logger ast fname $ \fPtr -> do
-        -- First warmup iteration, which we also use to get the results
-        void $ checkedCallFunPtr True argsPtr resultPtr fPtr
-        results <- loadLitVals resultPtr resultTypes
-        let run = do
-              time <- checkedCallFunPtr True argsPtr resultPtr fPtr
-              _benchResults <- loadLitVals resultPtr resultTypes
-              -- TODO: Free results!
-              return time
-        exampleDuration <- run
-        let timeBudget = 2 -- seconds
-        let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
-        times <- forM [1..benchRuns] $ const run
-        let avgTime = sum times / (fromIntegral benchRuns)
-        logThis logger [EvalTime avgTime (Just benchRuns)]
-        return results
+  withPipeToLogger logger $ \fd ->
+    allocaBytes (length args * cellSize) $ \argsPtr ->
+      allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+        storeLitVals argsPtr args
+        compileOneOff logger ast fname $ \fPtr -> do
+          -- First warmup iteration, which we also use to get the results
+          void $ checkedCallFunPtr True fd argsPtr resultPtr fPtr
+          results <- loadLitVals resultPtr resultTypes
+          let run = do
+                time <- checkedCallFunPtr True fd argsPtr resultPtr fPtr
+                _benchResults <- loadLitVals resultPtr resultTypes
+                -- TODO: Free results!
+                return time
+          exampleDuration <- run
+          let timeBudget = 2 -- seconds
+          let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+          times <- forM [1..benchRuns] $ const run
+          let avgTime = sum times / (fromIntegral benchRuns)
+          logThis logger [EvalTime avgTime (Just benchRuns)]
+          return results
 
 foreign import ccall "dynamic"
-  callFunPtr :: DexExecutable -> Ptr () -> Ptr () -> IO DexExitCode
+  callFunPtr :: DexExecutable -> Int32 -> Ptr () -> Ptr () -> IO DexExitCode
 
-type DexExecutable = FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
+type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-checkedCallFunPtr :: Bool -> Ptr () -> Ptr () -> DexExecutable -> IO Double
-checkedCallFunPtr sync argsPtr resultPtr fPtr = do
+withPipeToLogger :: Logger [Output] -> (FD -> IO a) -> IO a
+withPipeToLogger logger writeAction = do
+  snd <$> withPipe
+    (\h -> readStream h $ \s -> logThis logger [TextOut s])
+    (\h -> handleToFd h >>= writeAction)
+
+withPipe :: (Handle -> IO a) -> (Handle -> IO b) -> IO (a, b)
+withPipe readAction writeAction = do
+  (readHandle, writeHandle) <- createPipe
+  readResult  <- forkWithResult $ readAction  readHandle
+  writeResult <- forkWithResult $ writeAction writeHandle
+  y <- writeResult <* hClose writeHandle
+  x <- readResult  <* hClose readHandle
+  return (x, y)
+
+forkWithResult :: IO a -> IO (IO a)
+forkWithResult action = do
+  resultMVar <- newEmptyMVar
+  void $ forkIO $ catch (do result <- action
+                            putMVar resultMVar $ Right result)
+                        (\e -> putMVar resultMVar $ Left (e::SomeException))
+  return $ do
+    result <- takeMVar resultMVar
+    case result of
+      Left e -> E.throw e
+      Right result' -> return result'
+
+readStream :: Handle -> (String -> IO ()) -> IO ()
+readStream h action = go
+  where
+    go :: IO ()
+    go = do
+      eof <- hIsEOF h
+      unless eof $ hGetLine h >>= action >> go
+
+checkedCallFunPtr :: Bool -> FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr sync fd argsPtr resultPtr fPtr = do
+  let (CInt fd') = fdFD fd
   t1 <- getCurrentTime
-  exitCode <- callFunPtr fPtr argsPtr resultPtr
+  exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
   when sync $ synchronizeCUDA
   t2 <- getCurrentTime
   unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
