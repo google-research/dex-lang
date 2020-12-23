@@ -29,7 +29,6 @@ import qualified LLVM.PassManager as P
 import qualified LLVM.Transforms as P
 import qualified LLVM.Target as T
 import LLVM.Context
-import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import System.IO
 import System.IO.Unsafe
 import System.IO.Temp
@@ -54,6 +53,7 @@ import Syntax
 import Resources
 import CUDA (synchronizeCUDA)
 import LLVM.JIT
+import Util (measureSeconds)
 
 -- === One-shot evaluation ===
 
@@ -62,48 +62,48 @@ compileAndEval logger ast fname args resultTypes = do
   allocaBytes (length args * cellSize) $ \argsPtr ->
     allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
       storeLitVals argsPtr args
-      evalTime <- compileOneOff logger ast fname $ checkedCallFunPtr False argsPtr resultPtr
+      evalTime <- compileOneOff logger ast fname $ checkedCallFunPtr argsPtr resultPtr
       logThis logger [EvalTime evalTime Nothing]
       loadLitVals resultPtr resultTypes
 
-compileAndBench :: Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench logger ast fname args resultTypes = do
+compileAndBench :: Bool -> Logger [Output] -> L.Module -> String -> [LitVal] -> [BaseType] -> IO [LitVal]
+compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
   allocaBytes (length args * cellSize) $ \argsPtr ->
     allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
       storeLitVals argsPtr args
       compileOneOff logger ast fname $ \fPtr -> do
-        -- First warmup iteration, which we also use to get the results
-        void $ checkedCallFunPtr True argsPtr resultPtr fPtr
-        results <- loadLitVals resultPtr resultTypes
-        let run = do
-              time <- checkedCallFunPtr True argsPtr resultPtr fPtr
-              _benchResults <- loadLitVals resultPtr resultTypes
-              -- TODO: Free results!
-              return time
-        exampleDuration <- run
-        let timeBudget = 2 -- seconds
-        let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
-        times <- forM [1..benchRuns] $ const run
-        let avgTime = sum times / (fromIntegral benchRuns)
-        logThis logger [EvalTime avgTime (Just benchRuns)]
+        ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
+          -- First warmup iteration, which we also use to get the results
+          void $ checkedCallFunPtr argsPtr resultPtr fPtr
+          results <- loadLitVals resultPtr resultTypes
+          let run = do
+                exitCode <- callFunPtr fPtr argsPtr resultPtr
+                unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+                -- TODO: Free results!
+          exampleDuration <- snd <$> measureSeconds run
+          let timeBudget = 2 -- seconds
+          let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+          totalTime <- liftM snd $ measureSeconds $ do
+            forM_ [1..benchRuns] $ const run
+            when shouldSyncCUDA $ synchronizeCUDA
+          let avgTime = totalTime / (fromIntegral benchRuns)
+          return (avgTime, benchRuns, results)
+        logThis logger [EvalTime avgTime (Just (benchRuns, totalTime))]
         return results
 
-foreign import ccall "dynamic"
+foreign import ccall unsafe "dynamic"
   callFunPtr :: DexExecutable -> Ptr () -> Ptr () -> IO DexExitCode
 
 type DexExecutable = FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-checkedCallFunPtr :: Bool -> Ptr () -> Ptr () -> DexExecutable -> IO Double
-checkedCallFunPtr sync argsPtr resultPtr fPtr = do
-  t1 <- getCurrentTime
-  exitCode <- callFunPtr fPtr argsPtr resultPtr
-  when sync $ synchronizeCUDA
-  t2 <- getCurrentTime
+checkedCallFunPtr :: Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr argsPtr resultPtr fPtr = do
+  (exitCode, duration) <- measureSeconds $ do
+    exitCode <- callFunPtr fPtr argsPtr resultPtr
+    return exitCode
   unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
-  return $ t2 `secondsSince` t1
-  where
-    secondsSince end start = realToFrac $ end `diffUTCTime` start
+  return duration
 
 compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
 compileOneOff logger ast name f = do

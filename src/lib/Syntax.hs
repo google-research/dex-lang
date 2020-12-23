@@ -614,7 +614,7 @@ type LitProg = [(SourceBlock, Result)]
 type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
-type BenchStats = Int -- number of runs
+type BenchStats = (Int, Double) -- number of runs, total benchmarking time
 data Output = TextOut String
             | HtmlOut String
             | PassInfo PassName String

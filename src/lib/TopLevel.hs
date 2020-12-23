@@ -14,8 +14,8 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Data.String
+import Data.Maybe
 import Data.List (partition)
-import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import qualified Data.Map.Strict as M
 
 import Syntax
@@ -34,7 +34,7 @@ import Logging
 import LLVMExec
 import PPrint
 import Parser
-import Util (highlightRegion)
+import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
@@ -130,16 +130,18 @@ processLogs logLevel logs = case logLevel of
     where (compileTime, runTime, benchStats) = timesFromLogs logs
 
 timesFromLogs :: [Output] -> (Double, Double, Maybe BenchStats)
-timesFromLogs logs = (totalTime - evalTime, evalTime, benchStats)
+timesFromLogs logs = (totalTime - totalEvalTime, singleEvalTime, benchStats)
   where
-    (evalTime, benchStats) = case [(t, stats) | EvalTime t stats <- logs] of
-                  []           -> (0.0, Nothing)
-                  [(t, stats)] -> (t, stats)
-                  _            -> error "Expect at most one result"
+    (totalEvalTime, singleEvalTime, benchStats) =
+      case [(t, stats) | EvalTime t stats <- logs] of
+        []           -> (0.0  , 0.0, Nothing)
+        [(t, stats)] -> (total, t  , stats)
+          where total = fromMaybe t $ fmap snd stats
+        _            -> error "Expect at most one result"
     totalTime = case [tTotal | TotalTime tTotal <- logs] of
-                  []  -> 0.0
-                  [t] -> t
-                  _   -> error "Expect at most one result"
+        []  -> 0.0
+        [t] -> t
+        _   -> error "Expect at most one result"
 
 isLogInfo :: Output -> Bool
 isLogInfo out = case out of
@@ -199,8 +201,8 @@ evalBackend env block = do
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
   let mainName = Name TopFunctionName (fromString funcName) 0
-  let cc = case backend of LLVMCUDA -> EntryFun CUDARequired
-                           _        -> EntryFun CUDANotRequired
+  let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
+                                        _        -> (EntryFun CUDANotRequired, False)
   let (mainFunc, impModuleUnoptimized, reconAtom) =
         toImpModule env backend cc mainName ptrBinders Nothing block'
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
@@ -213,17 +215,15 @@ evalBackend env block = do
   checkPass ImpPass impModule
   llvmAST <- liftIO $ impToLLVM logger impModule
   let IFunType _ _ resultTypes = impFunType $ mainFunc
-  let llvmEvaluate = if bench then compileAndBench else compileAndEval
+  let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
   resultVals <- liftM (map (Con . Lit)) $ liftIO $
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a
 withCompileTime m = do
-  t1 <- liftIO $ getCurrentTime
-  ans <- m
-  t2 <- liftIO $ getCurrentTime
-  logTop $ TotalTime $ realToFrac $ t2 `diffUTCTime` t1
+  (ans, t) <- measureSeconds $ m
+  logTop $ TotalTime t
   return ans
 
 checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
