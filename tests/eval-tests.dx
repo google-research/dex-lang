@@ -815,9 +815,10 @@ triLit
 def fromLeftFloat (x:(Float | Int)) : Float =
   case x of
     Left x' -> x'
-    Right _ -> throw
+    Right _ -> error "this is an error"
 
 :p fromLeftFloat $ Right 1
+> this is an error
 > Runtime error
 
 :p fromLeftFloat $ Left 1.2

@@ -1,6 +1,4 @@
 
-include "io.dx"
-
 :p unsafeIO \().
   withTempFile \fname.
     withFile fname WriteMode \stream.
@@ -10,7 +8,6 @@ include "io.dx"
 > (AsList 27 "lorem ipsum
 > dolor sit amet
 > ")
-
 
 :p unsafeIO \().
   withAlloc 4 \ptr:(Ptr Int).

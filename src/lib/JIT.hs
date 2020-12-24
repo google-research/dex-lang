@@ -312,8 +312,7 @@ compileInstr instr = case instr of
     let resultTys' = map scalarTy resultTys
     case cc of
       FFIFun -> do
-        let [resultTy] = resultTys'
-        ans <- emitInstr resultTy $ externCall (makeFunSpec f) args'
+        ans <- emitExternCall (makeFunSpec f) args'
         return [ans]
       FFIMultiResultFun -> do
         resultPtr <- makeMultiResultAlloc resultTys'

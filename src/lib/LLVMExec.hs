@@ -111,9 +111,12 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
 
 withPipeToLogger :: Logger [Output] -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
-  snd <$> withPipe
+  result <- snd <$> withPipe
     (\h -> readStream h $ \s -> logThis logger [TextOut s])
     (\h -> handleToFd h >>= writeAction)
+  case result of
+    Left e -> E.throw e
+    Right ans -> return ans
 
 checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
 checkedCallFunPtr fd argsPtr resultPtr fPtr = do
@@ -411,26 +414,24 @@ ptxDataLayout = (L.defaultDataLayout L.LittleEndian)
 
 -- ==== unix pipe utilities ===
 
-withPipe :: (Handle -> IO a) -> (Handle -> IO b) -> IO (a, b)
+type IOExcept a = Either SomeException a
+
+withPipe :: (Handle -> IO a) -> (Handle -> IO b) -> IO (IOExcept a, IOExcept b)
 withPipe readAction writeAction = do
   (readHandle, writeHandle) <- createPipe
-  readResult  <- forkWithResult $ readAction  readHandle
-  writeResult <- forkWithResult $ writeAction writeHandle
-  y <- writeResult <* hClose writeHandle
-  x <- readResult  <* hClose readHandle
+  waitForReader <- forkWithResult $ readAction  readHandle
+  waitForWriter <- forkWithResult $ writeAction writeHandle
+  y <- waitForWriter `finally` hClose writeHandle
+  x <- waitForReader `finally` hClose readHandle
   return (x, y)
 
-forkWithResult :: IO a -> IO (IO a)
+forkWithResult :: IO a -> IO (IO (IOExcept a))
 forkWithResult action = do
   resultMVar <- newEmptyMVar
   void $ forkIO $ catch (do result <- action
                             putMVar resultMVar $ Right result)
                         (\e -> putMVar resultMVar $ Left (e::SomeException))
-  return $ do
-    result <- takeMVar resultMVar
-    case result of
-      Left e -> E.throw e
-      Right result' -> return result'
+  return $ takeMVar resultMVar
 
 readStream :: Handle -> (String -> IO ()) -> IO ()
 readStream h action = go

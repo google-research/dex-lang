@@ -97,7 +97,8 @@ myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 456]
 
 :p for i. case myTab.i of
   MyLeft  val -> val
-  MyRight _   -> todo
+  MyRight _   -> error "nope"
+> nope
 > Runtime error
 
 :p

@@ -211,10 +211,7 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
   False -> y
 
 def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
-
 def BToF (x:Bool) : Float = IToF (BToI x)
-def todo (a:Type) ?-> : a = %throwError a
-def throw (a:Type) ?-> : a = %throwError a
 
 'Effects
 
@@ -391,14 +388,6 @@ def Fin (n:Int) : Type = Range 0 n
 def ordinal (i:a) : Int = %toOrdinal i
 def size (n:Type) : Int = %idxSetSize n
 def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
-
-def fromOrdinal (n:Type) (i:Int) : n =
-  case (0 <= i) && (i < size n) of
-    True  -> unsafeFromOrdinal _ i
-    False -> throw
-
-def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
-def (@) (i:Int) (n:Type) : n = fromOrdinal n i
 def iota (n:Type) : n=>Int = for i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
@@ -495,9 +484,6 @@ def sq (d:Mul a) ?=> (x:a) : a = x * x
 def abs (_:Add a) ?=> (_:Ord a) ?=> (x:a) : a = select (x > zero) x (zero - x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 
-def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
-  for i. xs.(fromOrdinal _ (ordinal i + start))
-
 def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
 
 def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
@@ -575,10 +561,6 @@ def randn (k:Key) : Float =
   u2 = rand k2
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
-def randIdx (n:Type) ?-> (k:Key) : n =
-  unif = rand k
-  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
-
 -- TODO: Make this better...
 def randInt (k:Key) : Int = (I64ToI k) `mod` 2147483647
 
@@ -593,47 +575,6 @@ def cumSum (xs: n=>Float) : n=>Float =
       newTotal = get total + xs.i
       total := newTotal
       newTotal
-
-interface Arbitrary a:Type where
-  arb : Key -> a
-
-instance float32Arb : Arbitrary Float32 where
-  arb = randn
-
-instance in32Arb : Arbitrary Int32 where
-  arb = \key. FToI $ randn key * 5.0
-
-instance tabArb : Arbitrary a ?=> Arbitrary (n=>a) where
-  arb = \key. for i. arb $ ixkey key i
-
-instance finArb : n:Int ?-> Arbitrary (Fin n) where
-  arb = randIdx
-
-'min / max etc
-
-def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
-def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
-
-def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
-def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
-
-def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (minBy f) xs
-def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (maxBy f) xs
-
-def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
-def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
-
-def argmin (_:Ord o) ?=> (xs:n=>o) : n =
-  zeroth = (0@_, xs.(0@_))
-  compare = \(idx1, x1) (idx2, x2).
-    select (x1 < x2) (idx1, x1) (idx2, x2)
-  zipped = for i. (i, xs.i)
-  fst $ reduce zeroth compare zipped
-
-def clip (_:Ord a) ?=> ((low,high):(a&a)) (x:a) : a =
-  min high $ max low x
 
 'Automatic differentiation
 
@@ -692,55 +633,6 @@ def checkDerivBase (f:Float->Float) (x:Float) : Bool =
 
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
-
-'Control flow
-
-def while
-    (eff:Effects) ?->
-    (cond: Unit -> {|eff} Bool)
-    (body: Unit -> {|eff} Unit)
-    : {|eff} Unit =
-  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
-  %while cond' body
-
-data IterResult a:Type b:Type =
-  Continue a
-  Done b
-
--- A little iteration combinator
--- TODO: allow effects (bug #267)
-def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
-  result = snd $ withState Nothing \resultRef.
-    withState init \carryRef.
-      withState 0 \i.
-        while (\(). isNothing (get resultRef)) \().
-          case body (get i) (get carryRef) of
-            Continue carry ->
-              i := get i + 1
-              carryRef := carry
-            Done result ->
-              resultRef := Just result
-  case result of
-    Just ans -> ans
-    Nothing -> todo  -- should be unreachable
-
--- returns the highest index `i` such that `xs.i <= x`
-def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
-  case size n == 0 of
-    True -> Nothing
-    False -> case x < xs.(fromOrdinal _ 0) of
-      True -> Nothing
-      False ->
-        iter (0, size n) \_ (low, high).
-          numLeft = high - low
-          case numLeft == 1 of
-            True -> Done $ Just $ fromOrdinal _ low
-            False ->
-              centerIx = low + idiv (high - low) 2
-              case x < xs.(fromOrdinal _ centerIx) of
-                True  -> Continue (low, centerIx)
-                False -> Continue (centerIx, high)
-
 
 'Vector support
 
@@ -806,27 +698,6 @@ def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
 --              arr.(t +> UNSAFEFromOrdinal idx 2)
 --              arr.(t +> UNSAFEFromOrdinal idx 3))
 
-'Numerical utilities
-
-def logsumexp (x: n=>Float) : Float =
-  m = maximum x
-  m + (log $ sum for i. exp (x.i - m))
-
-def logsoftmax (x: n=>Float) : n=>Float =
-  lse = logsumexp x
-  for i. x.i - lse
-
-def softmax (x: n=>Float) : n=>Float =
-  m = maximum x
-  e =  for i. exp (x.i - m)
-  s = sum e
-  for i. e.i / s
-
-def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
-  -- Evaluate a polynomial at x.  Same as Numpy's polyval.
-  fold zero \i c. coefficients.i + x .* c
-
-
 'Monoid
 
 interface Monoid a:Type where
@@ -839,6 +710,13 @@ interface Monoid a:Type where
 
 data List a:Type =
   AsList n:Int foo:(Fin n => a)
+
+def unsafeCastTable (m:Type) (xs:n=>a) : m=>a =
+  for i. xs.(unsafeFromOrdinal _ (ordinal i))
+
+def toList (n:Type) ?-> (xs:n=>a) : List a =
+  n' = size n
+  AsList _ $ unsafeCastTable (Fin n') xs
 
 instance monoidList : Monoid (List a) where
   mempty = AsList _ []
@@ -965,15 +843,6 @@ instance showFloat64 : Show Float64 where
     (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
--- def writeStdErr (s:String) : {State World} Unit =
---   (AsList n cs) = s
---   %ffi writeToStdErr Int n (%getPtr cs)
---   ()
-
--- def throwMsg (s:String) : a = unsafeIO \().
---   writeStdErr s
---   %throwError a
-
 -- pipe-like reverse function application
 def (|>) (x:a) (f: a -> b) : b = f x
 
@@ -1004,6 +873,218 @@ def isnan (x:Float) : Bool = not (x >= x && x <= x)
 -- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
 def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 
+'File system operations
+
+FilePath : Type = String
+data CString = MkCString CharPtr
+
+data StreamMode =
+  ReadMode
+  WriteMode
+
+data Stream mode:StreamMode = MkStream CharPtr
+
+-- TODO: check the string contains no nulls
+def withCString (s:String) (action: CString -> {State World} a) : {State World} a =
+  (AsList n s') = s <> "\NUL"
+  withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
+
+def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
+  modeStr = case mode of
+    ReadMode  -> "r"
+    WriteMode -> "w"
+  withCString path \(MkCString pathPtr).
+    withCString modeStr \(MkCString modePtr).
+      MkStream $ %ffi fopen CharPtr pathPtr modePtr
+
+def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
+  (MkStream stream') = stream
+  %ffi fclose Int64 stream'
+  ()
+
+def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
+  (MkStream stream') = stream
+  (AsList n s') = s
+  withTabPtr s' \(MkPtr ptr).
+    %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
+  %ffi fflush Int64 stream'
+  ()
+
+def fread (stream:Stream ReadMode) : {State World} String =
+  (MkStream stream') = stream
+  -- TODO: allow reading longer files!
+  n = 4096
+  withAlloc n \ptr:(Ptr Char).
+    (MkPtr rawPtr) = ptr
+    numRead = I64ToI $ %ffi fread Int64 rawPtr (IToI64 1) (IToI64 n) stream'
+    stringFromCharPtr numRead ptr
+
+def deleteFile (f:FilePath) : {State World} Unit =
+  withCString f \(MkCString ptr).
+    %ffi remove Int64 ptr
+  ()
+
+def withFile (f:FilePath) (mode:StreamMode)
+      (action: Stream mode -> {State World} a)
+      : {State World} a =
+  stream = fopen f mode
+  result = action stream
+  fclose stream
+  result
+
+def writeFile (f:FilePath) (s:String) : {State World} Unit =
+  withFile f WriteMode \stream. fwrite stream s
+
+def readFile (f:FilePath) : {State World} String =
+  withFile f ReadMode \stream. fread stream
+
+def writeTemp (s:String) : {State World} FilePath =
+  -- TODO: Make this properly atomic. It can fail if another process creates a
+  -- file with same name after we ask for the name and before we create it.
+  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
+    %ffi mktemp CharPtr ptr
+    stringFromCharPtr 15 (MkPtr ptr)
+
+def withTempFile (action: FilePath -> {State World} a) : {State World} a =
+  tmpFile = writeTemp ""
+  result = action tmpFile
+  deleteFile tmpFile
+  result
+
+def getOutputStream (_:Unit) : {State World} Stream WriteMode =
+  MkStream $ %ptrLoad OUT_STREAM_PTR
+
+def print (s:String) : {State World} Unit =
+  fwrite (getOutputStream ()) (s <> "\n")
+
+'Partial functions
+
+def error (s:String) : a = unsafeIO \().
+  print s
+  %throwError a
+
+def todo (a:Type) ?-> : a = error "TODO: implement it!"
+
+def fromOrdinal (n:Type) (i:Int) : n =
+  case (0 <= i) && (i < size n) of
+    True  -> unsafeFromOrdinal _ i
+    False -> error $
+      "Ordinal index out of range:" <> show i <> " >= " <> show (size n)
+
+-- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
+-- TODO: safe (runtime-checked) and unsafe versions
+def castTable (m:Type) (xs:n=>a) : m=>a =
+  case size m == size n of
+     True  -> unsafeCastTable _ xs
+     False -> error $
+       "Table size mismatch in cast: " <> show (size m) <> " vs " <> show (size n)
+
+def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
+def (@) (i:Int) (n:Type) : n = fromOrdinal n i
+
+def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
+  for i. xs.(fromOrdinal _ (ordinal i + start))
+
+def tail (n:Type) ?-> (xs:n=>a) (start:Int) : List a =
+  numElts = size n - start
+  toList $ slice xs start (Fin numElts)
+
+def randIdx (n:Type) ?-> (k:Key) : n =
+  unif = rand k
+  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
+
+'Type class for generating example values
+
+interface Arbitrary a:Type where
+  arb : Key -> a
+
+instance float32Arb : Arbitrary Float32 where
+  arb = randn
+
+instance in32Arb : Arbitrary Int32 where
+  arb = \key. FToI $ randn key * 5.0
+
+instance tabArb : Arbitrary a ?=> Arbitrary (n=>a) where
+  arb = \key. for i. arb $ ixkey key i
+
+instance finArb : n:Int ?-> Arbitrary (Fin n) where
+  arb = randIdx
+
+'Control flow
+
+def while
+    (eff:Effects) ?->
+    (cond: Unit -> {|eff} Bool)
+    (body: Unit -> {|eff} Unit)
+    : {|eff} Unit =
+  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
+  %while cond' body
+
+data IterResult a:Type b:Type =
+  Continue a
+  Done b
+
+-- A little iteration combinator
+-- TODO: allow effects (bug #267)
+def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
+  result = snd $ withState Nothing \resultRef.
+    withState init \carryRef.
+      withState 0 \i.
+        while (\(). isNothing (get resultRef)) \().
+          case body (get i) (get carryRef) of
+            Continue carry ->
+              i := get i + 1
+              carryRef := carry
+            Done result ->
+              resultRef := Just result
+  case result of
+    Just ans -> ans
+    Nothing -> error "should be unreachable"
+
+-- returns the highest index `i` such that `xs.i <= x`
+def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
+  case size n == 0 of
+    True -> Nothing
+    False -> case x < xs.(fromOrdinal _ 0) of
+      True -> Nothing
+      False ->
+        iter (0, size n) \_ (low, high).
+          numLeft = high - low
+          case numLeft == 1 of
+            True -> Done $ Just $ fromOrdinal _ low
+            False ->
+              centerIx = low + idiv (high - low) 2
+              case x < xs.(fromOrdinal _ centerIx) of
+                True  -> Continue (low, centerIx)
+                False -> Continue (centerIx, high)
+
+
+
+'min / max etc
+
+def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
+
+def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
+def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
+
+def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (minBy f) xs
+def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (maxBy f) xs
+
+def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
+def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
+
+def argmin (_:Ord o) ?=> (xs:n=>o) : n =
+  zeroth = (0@_, xs.(0@_))
+  compare = \(idx1, x1) (idx2, x2).
+    select (x1 < x2) (idx1, x1) (idx2, x2)
+  zipped = for i. (i, xs.i)
+  fst $ reduce zeroth compare zipped
+
+def clip (_:Ord a) ?=> ((low,high):(a&a)) (x:a) : a =
+  min high $ max low x
 
 '## Trigonometric functions.
 
@@ -1175,24 +1256,9 @@ def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
 
 '## Misc
 
--- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
--- TODO: safe (runtime-checked) and unsafe versions
-def castTable (m:Type) (xs:n=>a) : m=>a =
-  case size m == size n of
-     True  -> for i. xs.(unsafeFromOrdinal _ (ordinal i))
-     False -> throw
-
 def reverse (x:n=>a) : n=>a =
   s = size n
   for i. x.((s - 1 - ordinal i)@_)
-
-def toList (n:Type) ?-> (xs:n=>a) : List a =
-  n' = size n
-  AsList _ $ castTable (Fin n') xs
-
-def tail (n:Type) ?-> (xs:n=>a) (start:Int) : List a =
-  numElts = size n - start
-  toList $ slice xs start (Fin numElts)
 
 def padTo (n:Type) ?-> (m:Type) (x:a) (xs:n=>a) : (m=>a) =
   n' = size n
@@ -1266,3 +1332,23 @@ def categorical (logprobs: n=>Float) (key: Key) : n =
 def categoricalBatch (logprobs: n=>Float) (key: Key) : m=>n =
   cdf = cdfForCategorical logprobs
   for i. categoricalFromCDF cdf $ ixkey key i
+
+'Numerical utilities
+
+def logsumexp (x: n=>Float) : Float =
+  m = maximum x
+  m + (log $ sum for i. exp (x.i - m))
+
+def logsoftmax (x: n=>Float) : n=>Float =
+  lse = logsumexp x
+  for i. x.i - lse
+
+def softmax (x: n=>Float) : n=>Float =
+  m = maximum x
+  e =  for i. exp (x.i - m)
+  s = sum e
+  for i. e.i / s
+
+def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
+  -- Evaluate a polynomial at x.  Same as Numpy's polyval.
+  fold zero \i c. coefficients.i + x .* c
