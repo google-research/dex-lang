@@ -276,6 +276,10 @@ exprEffs expr = case expr of
       MAsk    -> S.singleton (Reader, h)
       MTell _ -> S.singleton (Writer, h)
       where RefTy (Var (h:>_)) _ = getType ref
+    IOAlloc  _ _  -> S.singleton (State, theWorld)
+    IOFree   _    -> S.singleton (State, theWorld)
+    PtrLoad  _    -> S.singleton (State, theWorld)
+    PtrStore _ _  -> S.singleton (State, theWorld)
     FFICall _ _ _ -> S.singleton (State, theWorld)
     _ -> NoEffects
   Hof hof -> case hof of
@@ -709,6 +713,7 @@ typeCheckOp op = case op of
     return $ RefTy h b
   IOAlloc t n -> do
     n |: IdxRepTy
+    declareEff (State, Just theWorld)
     return $ PtrTy (AllocatedPtr, Heap CPU, t)
   IOFree ptr -> do
     PtrTy _ <- typeCheck ptr

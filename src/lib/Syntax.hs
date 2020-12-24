@@ -1546,8 +1546,9 @@ builtinNames = M.fromList
   , ("Int64"   , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
   , ("Word8"   , TCExpr $ BaseType $ Scalar Word8Type)
-  , ("Int32Ptr", ptrTy Int32Type)
-  , ("Word8Ptr", ptrTy Word8Type)
+  , ("Int32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Int32Type)
+  , ("Word8Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
+  , ("PtrPtr"  , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType (Just ()) ())
   , ("PairType", TCExpr $ PairType () ())
@@ -1578,8 +1579,7 @@ builtinNames = M.fromList
     vbinOp op = OpExpr $ VectorBinOp op () ()
     binOp  op = OpExpr $ ScalarBinOp op () ()
     unOp   op = OpExpr $ ScalarUnOp  op ()
-    ptrTy  ty = TCExpr $ BaseType $ PtrType $
-                  (AllocatedPtr, Heap CPU,  Scalar ty)
+    ptrTy  ty = PtrType (AllocatedPtr, Heap CPU, ty)
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)

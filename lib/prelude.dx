@@ -409,6 +409,7 @@ data Ptr a:Type = MkPtr Word8Ptr
 
 -- Is there a better way to select the right instance for `storageSize`??
 data TypeVehicle a:Type = MkTypeVehicle
+def typeVehicle (a:Type) : TypeVehicle a = MkTypeVehicle
 
 interface Storable a:Type where
   store : Ptr a -> a -> {State World} Unit
@@ -435,11 +436,48 @@ instance int32Storable : Storable Int32 where
   load  = int32Load
   storageSize = const 4
 
+def unpackPairPtr (_:Storable a) ?=> (_:Storable b) ?=>
+      (pairPtr: Ptr (a & b)) : (Ptr a & Ptr b) =
+  (MkPtr rawPtrX) = pairPtr
+  rawPtrY = %ptrOffset rawPtrX (storageSize (typeVehicle a))
+  (MkPtr rawPtrX, MkPtr rawPtrY)
+
+def pairStore (_:Storable a) ?=> (_:Storable b) ?=>
+      (pairPtr:Ptr (a & b)) ((x, y):(a & b)) : {State World} Unit  =
+  (xPtr, yPtr) = unpackPairPtr pairPtr
+  store xPtr x
+  store yPtr y
+
+def pairLoad (_:Storable a) ?=> (_:Storable b) ?=>
+      (pairPtr:Ptr (a & b)) : {State World} (a & b) =
+  (xPtr, yPtr) = unpackPairPtr pairPtr
+  (load xPtr, load yPtr)
+
+def pairStorageSize (_:Storable a) ?=> (_:Storable b) ?=>
+    (_:TypeVehicle (a & b)) : Int =
+  storageSize (typeVehicle a) + storageSize (typeVehicle b)
+
+instance pairStorable : Storable a ?=> Storable b ?=> Storable (a & b) where
+  store = pairStore
+  load  = pairLoad
+  storageSize = pairStorageSize
+
+def ptrPtrStore ((MkPtr ptr): Ptr (Ptr a)) (x:(Ptr a)) : {State World} Unit  =
+  (MkPtr x') = x
+  %ptrStore (internalCast %PtrPtr ptr) x'
+
+def ptrPtrLoad  ((MkPtr ptr): Ptr (Ptr a)) : {State World} (Ptr a) =
+  MkPtr $ %ptrLoad (internalCast %PtrPtr ptr)
+
+instance ptrStorable : Storable (Ptr a) where
+  store = ptrPtrStore
+  load  = ptrPtrLoad
+  storageSize = const 8  -- TODO: something more portable?
+
 -- TODO: Storable instances for other types
 
 def malloc (_:Storable a) ?=> (n:Int) : {State World} (Ptr a) =
-  typeVehicle : TypeVehicle a = MkTypeVehicle
-  numBytes = storageSize typeVehicle * n
+  numBytes = storageSize (typeVehicle a) * n
   MkPtr $ %charAlloc numBytes
 
 def free (ptr:Ptr a) : {State World} Unit =
@@ -447,12 +485,20 @@ def free (ptr:Ptr a) : {State World} Unit =
   %charFree ptr'
 
 def (+>>) (_:Storable a) ?=> (ptr:Ptr a) (i:Int) : Ptr a =
-  typeVehicle : TypeVehicle a = MkTypeVehicle
   (MkPtr ptr') = ptr
-  i' = i * storageSize typeVehicle
+  i' = i * storageSize (typeVehicle a)
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: generalize these brackets to allow other effects
+
+-- TODO: consider making a Storable instance for tables instead
+def storeTab (_:Storable a) ?=> (ptr: Ptr a) (tab:n=>a) : {State World} Unit =
+  for_ i. store (ptr +>> ordinal i) tab.i
+
+def memcpy (_:Storable a) ?=> (dest:Ptr a) (src:Ptr a) (n:Int) : {State World} Unit =
+  for_ i:(Fin n).
+    i' = ordinal i
+    store (dest +>> i') (load $ src +>> i')
 
 def withAlloc (_:Storable a) ?=>
       (n:Int) (action: Ptr a -> {State World} b) : {State World} b =
@@ -810,6 +856,54 @@ splitV : Iso a ({|} | a) =
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (buildWith $ splitV &>> iso) tab
 
+'Dynamic buffer
+
+-- TODO: should we be able to use `Ref World Int` instead of `Ptr Int`?
+-- TODO: would be nice to be able to use records here
+data DynBuffer a:Type = MkDynBuffer (Ptr (Int & Int & Ptr a))  -- size, max size, buf ptr
+
+def withDynamicBuffer (_:Storable a) ?=>
+      (action: DynBuffer a -> {State World} b) : {State World} b =
+  initMaxSize = 256
+  withAlloc 1 \dbPtr.
+    bufPtr = malloc initMaxSize
+    store dbPtr (0, initMaxSize, bufPtr)
+    result = action $ MkDynBuffer dbPtr
+    (_, _, bufPtr') = load dbPtr
+    free bufPtr'
+    result
+
+def maybeIncreaseBufferSize (_:Storable a) ?=>
+    (buf: DynBuffer a) (sizeDelta:Int) : {State World} Unit =
+  (MkDynBuffer dbPtr) = buf
+  (size, maxSize, bufPtr) = load dbPtr
+  newSize = sizeDelta + size
+  if newSize > maxSize
+    then
+      -- TODO: maybe this should use integer arithmetic?
+      newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ IToF newSize)
+      newBufPtr = malloc newMaxSize
+      memcpy newBufPtr bufPtr size
+      store dbPtr (size, newMaxSize, newBufPtr)
+    else ()
+
+def extendDynBuffer (_:Storable a) ?=>
+    (buf: DynBuffer a) (new:List a) : {State World} Unit =
+  (AsList n xs) = new
+  maybeIncreaseBufferSize buf n
+  (MkDynBuffer dbPtr) = buf
+  (size, maxSize, bufPtr) = load dbPtr
+  newSize = n + size
+  storeTab (bufPtr +>> size) xs
+  store dbPtr (newSize, maxSize, bufPtr)
+
+def loadDynBuffer (_:Storable a) ?=>
+      (buf: DynBuffer a) : {State World} (List a) =
+  (MkDynBuffer dbPtr) = buf
+  (size, _, bufPtr) = load dbPtr
+  AsList size $ tabFromPtr _ bufPtr
+
+
 '## Strings and Characters
 
 String : Type = List Char
@@ -910,14 +1004,26 @@ def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
   %ffi fflush Int64 stream'
   ()
 
+def while
+    (eff:Effects) ?->
+    (cond: Unit -> {|eff} Bool)
+    (body: Unit -> {|eff} Unit)
+    : {|eff} Unit =
+  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
+  %while cond' body
+
 def fread (stream:Stream ReadMode) : {State World} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
   n = 4096
   withAlloc n \ptr:(Ptr Char).
-    (MkPtr rawPtr) = ptr
-    numRead = I64ToI $ %ffi fread Int64 rawPtr (IToI64 1) (IToI64 n) stream'
-    stringFromCharPtr numRead ptr
+    withDynamicBuffer \buf.
+      while (\().
+        (MkPtr rawPtr) = ptr
+        numRead = I64ToI $ %ffi fread Int64 rawPtr (IToI64 1) (IToI64 n) stream'
+        extendDynBuffer buf $ stringFromCharPtr numRead ptr
+        numRead == n) (\(). ())
+      loadDynBuffer buf
 
 def deleteFile (f:FilePath) : {State World} Unit =
   withCString f \(MkCString ptr).
@@ -1011,14 +1117,6 @@ instance finArb : n:Int ?-> Arbitrary (Fin n) where
   arb = randIdx
 
 'Control flow
-
-def while
-    (eff:Effects) ?->
-    (cond: Unit -> {|eff} Bool)
-    (body: Unit -> {|eff} Unit)
-    : {|eff} Unit =
-  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
-  %while cond' body
 
 data IterResult a:Type b:Type =
   Continue a

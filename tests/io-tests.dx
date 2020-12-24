@@ -37,3 +37,35 @@ unsafeIO \().
 > 8 is even
 > 9 is odd
 > [(), (), (), (), (), (), (), (), (), ()]
+
+:p storageSize (typeVehicle Int)
+> 4
+
+:p unsafeIO \().
+  withAlloc 1 \ptr:(Ptr (Int & Int)).
+    store ptr (4, 3)
+    load ptr
+> (4, 3)
+
+:p unsafeIO \().
+  withAlloc 1 \ptr:(Ptr Int).
+    store ptr 3
+    load ptr
+> 3
+
+:p unsafeIO \().
+  withDynamicBuffer \buf.
+    extendDynBuffer buf $ toList for i:(Fin 1000). ordinal i
+    extendDynBuffer buf $ toList for i:(Fin 1000). ordinal i
+    (AsList _ xs) = loadDynBuffer buf
+    sum xs
+> 999000
+
+:p unsafeIO \().
+  s = for i:(Fin 10000). IToW8 $ FToI $ 128.0 * rand (ixkey (newKey 0) i)
+  withTempFile \fname.
+    withFile fname WriteMode \stream.
+      fwrite stream $ AsList _ s
+    (AsList _ s') = readFile fname
+    sum (for i. W8ToI s.i) == sum (for i. W8ToI s'.i)
+> True
