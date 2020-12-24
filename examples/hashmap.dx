@@ -1,66 +1,162 @@
 ' # Associative Collections
 Secretly this is actually an example on type-classes
 
+'## How should I hash
+TODO: Check this again when `%bench` works
 
 threefryHash = \seed x. I64ToI $ hash (IToI64 seed) x
-def fnvhash (seed:Int32) (x:Int32) : Int32 =
-    %ffi fasthash Int32 seed x
+def fnvhash (seed:Int32) (x:Int32) : Int32 = %ffi fasthash Int32 seed x
+knuthHash = \seed x. (seed + x)*(seed + x + 3) `mod` 33333331
 
-%passes imp
+%time
 threefryHash 0 1
 
-data Hashable a:Type = MkHashable (a->a->Bool) (Int->a->Int) -- isequal, hash
+%time
+fnvhash 0 1
 
-' Like == but handles isequal(nan,nan) etc
+%time
+knuthHash 0 1
 
-def isequal (d:Hashable a) ?=> (x:a) (y:a) : Bool = case d of MkHashable ieq _ -> ieq x y
 
-def ahash (d:Hashable a) ?=> (seed:Int) (x:a) : Int = case d of MkHashable _ hsh  -> hsh seed x
+' ## ListDict
+A fallback Associative Map, that performs end-to-end search.
+It's a good place to start, and we need it for the `HashDict` anyway for within the buckets.
+This is actually faster than the `HashDict` we will define lated for sufficiently small collections, where the hash time dominates over the equality check time.
+Really we only need `isequal`, so perhaps that should be seperated out of `Hashable`.
+(The LittleDict design of pair of lists rather than list of pairs is probably faster as more SIMD friendly but causes weird errors)
 
-thehash: Hashable a ?=> a->Int = ahash 0
 
-@instance Int32Hashable : Hashable Int32 = (MkHashable
-    (\a b. a==b)
-    (\seed x. I64ToI $ hash (IToI64 seed) x)
+-- Can't require type-classes in type definitions?
+-- data ListDict : (_:Eq k) ?=> k:Type v:Type =
+data ListDict k:Type v:Type =
+  AsListDict vals:(List (k&v))
+
+eg_listdict = AsListDict $ AsList _ [('a', 10), ('b', 20), ('c', 30)]
+
+:p eg_listdict
+
+def push (collectionL:List a) (datum:a) : List a =
+    (AsList n collection) = collectionL
+    neo_n = Fin (n+1)
+    AsList _  $ for i:neo_n. case (ordinal i < n) of
+        True -> collection.(ordinal i@(Fin n))
+        False -> datum
+
+:p push (AsList _ "abc") 'x'
+
+def tryGetListDict (_:Eq k) ?=> (dict:ListDict k v) (key:k) : Maybe v =
+    (AsListDict (AsList _ vals)) = dict
+    fold Nothing \i state. 
+        case ((fst vals.i) == key) of
+            False -> state
+            True -> Just $ snd vals.i
+
+:p tryGetListDict eg_listdict 'a'
+
+:p tryGetListDict eg_listdict 'x'
+
+'store dict key val
+Stores the value in the dict at the key.
+Note that we never actually delete anything, and it grows without bounds
+This could be improved.
+
+def storeListDict (dict:ListDict k v) (key:k) (val:v) : ListDict k v =
+    (AsListDict list) = dict
+    pair = (key, val)
+    AsListDict (push list pair)
+
+
+eg_listdict2 = storeListDict eg_listdict 'x' 40
+
+:p eg_listdict2
+
+
+:p tryGetListDict eg_listdict2 'x'
+
+
+def emptyListDict (k:Type) (v:Type) : ListDict k v =
+    empty_table : Fin 0 => (k&v) = []
+    AsListDict $ AsList _ empty_table
+
+:p emptyListDict Int Char
+
+:p storeListDict (emptyListDict Int Char) 100 'a'
+
+' ## Hash
+We need a hash function for everything
+
+
+data Hashable a:Type = MkHashable (Eq a) (a->Int->Int) -- equals, hash
+
+@superclass
+def eqFromHashable (d:Hashable a) : Eq a = case d of MkHashable eqDict _ -> eqDict
+
+def ahash (d:Hashable a) ?=> (x:a) (seed:Int) : Int = case d of MkHashable _ hsh  -> hsh x seed
+
+thehash: Hashable a ?=> a->Int = \x. ahash x 0
+
+-- composition operator 1 arg and 2 arg forms (would be `of` but that is a reserved word)
+ov : (a->b)->(c->a)->(c->b) = \f g x. f(g x)
+ov2: (c->d)->(a->b->c)->(a->b->d) = \f g x y. f(g x y)
+
+@instance int32Hashable : Hashable Int32 = (MkHashable
+    int32Eq
+    (I64ToI `ov2` hash `ov` IToI64)
 )
 
 :p thehash 1
 
-:p isequal 1 1
-
-:p isequal 1 2
-
-@instance float32Hashable : Hashable Float32 = (MkHashable
-    (\a b. a==b || isnan a && isnan b)
-    (\seed x. 
-        -- because FToI actually just truncates to Integer it is bad for small floats
-        -- To combat that we compute a hash based on multiple scalings of x
-        -- This could be removed if we had a way to get at the raw bits directly
-        hash_step:Float->Int->Int = \scale seed. ahash seed $ (FToI (scale *  x))
-        hash_step 1000000.0 $ hash_step 100.0 $ hash_step 10.0 $ hash_step 1.0 seed))
-
-:p thehash 1.2
-
-:p thehash 1.0
-
-:p thehash 10.1
-
-:p thehash nan
-
-@instance CharHashable : Hashable Char = (MkHashable
-    (\a b. a==b)
-    (\seed x. ahash seed (codepoint x))
+@instance word8Hashable : Hashable Word8 = (MkHashable
+    word8Eq
+    (ahash `ov` W8ToI)
 )
 
 :p thehash 'a'
 
---TODO: should not hash all elements just a few at start end and middle
+
+@instance int64Hashable : Hashable Int64 = (MkHashable
+    int64Eq
+    (ahash `ov` I64ToI)
+)
+
+:p thehash $ IToI64 213
+
+@instance boolHashable : Hashable Bool = (MkHashable
+    boolEq
+    (ahash `ov` BToI)
+)
+:p thehash True
+:p thehash False
+
+
+@instance unitHashable : Hashable Unit = (MkHashable
+    unitEq
+    (\x seed. seed)
+)
+
+:p thehash ()
+
+' due to witchcraft defining a type-class on s 2-tuple defines it on all tuples
+
+@instance pairHashable : Hashable a ?=> Hashable b ?=>  Hashable (a & b) = (MkHashable
+    pairEq
+    (\(a,b). ahash a `ov` ahash b)
+)
+
+:p thehash (1,2)
+
+:p thehash (1,2,3)
+
+
+
 @instance TblHashable : Hashable t ?=> Hashable (n=>t) = (MkHashable
-    (\a b. all $ for i. isequal a.i b.i)
-    (\seed x. fold seed \i state. ahash state x.i)
+    tabEq
+    --TODO: should not hash all elements just a few at start end and middle
+    (\x seed. fold seed \i. ahash x.i)
 )
 
 :p thehash "abcdef"
+
 
 ' # broken because https://github.com/google-research/dex-lang/issues/340
 -- should be a fallback for anything that doesn't have a better definition of its own
@@ -75,74 +171,9 @@ thehash: Hashable a ?=> a->Int = ahash 0
 :p thehash (10, 20)
 ```
 
-' ## ListDict
-A fallback Associative Map, that performs end to end search.
-This is faster then a HashDict for sufficiently small collections, where the hash time dominates over the equality check time.
-Really we only need `isequal`, so perhaps that should be seperated out of `Hashable`.
-(The LittleDict design of pair of lists rather than list of pairs is probably faster as more SIMD friendly but causes weird errors)
-
-
--- Can't require type-classes in type definitions?
--- data ListDict : Hashable k ?=> k:Type v:Type =
-data ListDict k:Type v:Type =
-  AsListDict vals:(List (k&v))
-
-eg_listdict = AsListDict $ AsList _ [(10,'a'), (20, 'b'), (30, 'c')]
-
-:p eg_listdict
-
-def push (collectionL:List a) (datum:a) : List a =
-    (AsList n collection) = collectionL
-    neo_n = Fin (n+1)
-    AsList _  $ for i:neo_n. case (ordinal i < n) of
-        True -> collection.(ordinal i@(Fin n))
-        False -> datum
-
-:p push (AsList _ "abc") 'x'
-
-def tryGetListDict (_:Hashable k) ?=> (dict:ListDict k v) (key:k) : Maybe v =
-    (AsListDict (AsList _ vals)) = dict
-    fold Nothing \i state. 
-        case ((fst vals.i) `isequal` key) of
-            False -> state
-            True -> Just $ snd vals.i
-
-:p tryGetListDict eg_listdict 20
-
-
-:p tryGetListDict eg_listdict 21
-
-'store dict key val
-Stores the value in the dict at the key.
-Note that we never actually delete anything, and it grows without bounds
-This could be improved.
-
-def storeListDict (dict:ListDict k v) (key:k) (val:v) : ListDict k v =
-    (AsListDict list) = dict
-    pair = (key, val)
-    AsListDict (push list pair)
-
-
-eg_listdict2 = storeListDict eg_listdict 40 'x'
-
-:p eg_listdict2
-
-
-:p tryGetListDict eg_listdict2 40
-
-
-def emptyListDict (k:Type) (v:Type) : ListDict k v =
-    empty_table : Fin 0 => (k&v) = []
-    AsListDict $ AsList _ empty_table
-
-:p emptyListDict Int Char
-
-:p storeListDict (emptyListDict Int Char) 100 'a'
-
 ' ## HashDict
 Now we can build a HashMap on top of that ListDict.
 We are going to hard-code a bunch of buffer sizes for simplicity
-
 
 data HashDict k:Type v:Type =
   HashDictBuckets n:Int buckets:(Fin n=>(ListDict k v))
