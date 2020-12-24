@@ -91,24 +91,42 @@ def base64Decode (s:String) : Maybe String =
 
 '## PNG FFI
 
-Html : Type = List Char
+Html : Type = String
+Png  : Type = String
+Gif  : Type = String
 
-def makePNG (img:n=>m=>(Fin 3)=>Word8) : List Byte = unsafeIO \().
+def makePNG (img:n=>m=>(Fin 3)=>Word8) : Png = unsafeIO \().
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
   withTabPtr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
     (n, ptr') = %ffi encodePNG (Int & CharPtr) rawPtr (size m) (size n)
     toList $ tabFromPtr (Fin n) $ MkPtr ptr'
 
-def pngToHtml (png:List Byte) : List Char =
+def pngsToGif (delay:Int) (pngs:t=>Png) : Gif = unsafeIO \().
+  withTempFiles \pngFiles.
+    for i. writeFile pngFiles.i pngs.i
+    withTempFile \gifFile.
+      shellOut $
+         "convert" <> " -delay " <> show delay <> " " <>
+          concat (for i. "png:" <> pngFiles.i <> " ") <>
+         "gif:" <> gifFile
+      readFile gifFile
+
+def imgToHtml (png:String) : Html =
   ("<img class=\"plot-img\" src=\"data:image/png;base64, "
    <> base64Encode png
    <> "\">")
 
-'## API entry point
-
 def floatTo8Bit (x:Float) : Word8 =
   IToW8 $ FToI $ 255.0 * clip (0.0, 1.0) x
 
+def imgToPng (img:n=>m=>(Fin 3)=>Float) : Png =
+  makePNG for i j k. floatTo8Bit img.i.j.k
+
+'## API entry point
+
 def imshow (img:n=>m=>(Fin 3)=>Float) : Html =
-  pngToHtml $ makePNG for i j k. floatTo8Bit img.i.j.k
+  imgToHtml $ imgToPng img
+
+def imseqshow (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
+  imgToHtml $ pngsToGif 50 $ map imgToPng imgs

@@ -96,15 +96,15 @@ def advect (_:VSpace a) ?=> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
 
 def fluidsim (_: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
-  (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
-  (color_final, v) = snd $ withState (color_init, v) \state.
+  (v: n=>m=>(Fin 2)=>Float) : (Fin num_steps)=>n=>m=>a =
+  fst $ withState (color_init, v) \state.
     for i:(Fin num_steps).
       (color, v) = get state
       v = advect v v          -- Move velocities
       v = project v           -- Project to be volume-preserving
-      color = advect color v  -- Move color
-      state := (color, v)
-  color_final
+      color' = advect color v -- Move color
+      state := (color', v)
+      color
 
 '### Demo
 
@@ -126,19 +126,18 @@ init_color = for i:N j:M.
 
 -- Run fluid sim and plot it.
 num_steps = 5
-final_color = fluidsim num_steps init_color init_velocity
-
-:html imshow final_color
+:html imseqshow $ fluidsim num_steps init_color init_velocity
 > <html output>
-
-
 
 '### Gradient test
 
 target = transpose init_color
 
+-- This is partial
+def last (xs:n=>a) : a = xs.((size n - 1)@_)
+
 def objective (v:N=>M=>(Fin 2)=>Float) : Float =
-  final_color = fluidsim num_steps init_color v
+  final_color = last $ fluidsim num_steps init_color v
   sum for (i, j, c). sq (final_color.i.j.c - target.i.j.c)
 
 init_vel_grad = grad objective zero

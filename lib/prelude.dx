@@ -1057,11 +1057,24 @@ def withTempFile (action: FilePath -> {State World} a) : {State World} a =
   deleteFile tmpFile
   result
 
+def withTempFiles (action: (n=>FilePath) -> {State World} a) : {State World} a =
+  tmpFiles = for i. writeTemp ""
+  result = action tmpFiles
+  for i. deleteFile tmpFiles.i
+  result
+
 def getOutputStream (_:Unit) : {State World} Stream WriteMode =
   MkStream $ %ptrLoad OUT_STREAM_PTR
 
 def print (s:String) : {State World} Unit =
   fwrite (getOutputStream ()) (s <> "\n")
+
+def shellOut (command:String) : {State World} String =
+  modeStr = "r"
+  withCString command \(MkCString commandPtr).
+    withCString modeStr \(MkCString modePtr).
+      pipe = MkStream %ffi popen CharPtr commandPtr modePtr
+      fread pipe
 
 'Partial functions
 
