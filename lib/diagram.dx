@@ -108,8 +108,8 @@ def quote (s:String) : String = "\"" <.> s <.> "\""
 def strSpaceCatUncurried ((s1,s2):(String & String)) : String =
   s1 <.> " " <.> s2
 
-def (<+>) (s1:String) (s2:String) : String =
-  strSpaceCatUncurried (s1, s2)
+def (<+>) (_:Show a) ?=> (_:Show b) ?=> (s1:a) (s2:b) : String =
+  strSpaceCatUncurried ((show s1), (show s2))
 
 def selfClosingBrackets (s:String) : String = "<" <.> s <.> "/>"
 
@@ -123,8 +123,8 @@ def tagBracketsAttrUncurried ((tag, attr, s):(String & String & String)) : Strin
 def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
   tagBracketsAttrUncurried (tag, attr, s)
 
-def makeAttr (attr:String) (val:String) : String =
-  attr <.> "=" <.> quote val
+def (<=>) (_:Show b) ?=> (attr:String) (val:b) : String =
+  attr <.> "=" <.> quote (show val)
 
 def htmlColor(cs:HtmlColor) : String =
   (r, g, b) = cs
@@ -137,32 +137,33 @@ def optionalHtmlColor(c: Maybe HtmlColor) : String =
 
 @noinline
 def attrString (attr:GeomStyle) : String =
-  (  --  makeAttr "stroke"       (optionalHtmlColor$ getAt #strokeColor attr)
-      makeAttr "fill"         (optionalHtmlColor$ getAt #fillColor   attr)
-  <+> makeAttr "stroke-width" (show                 $ getAt #strokeWidth attr))
+  (  -- "stroke"      <=> (optionalHtmlColor $ getAt #strokeColor attr)
+      ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
+  <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
 
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
+  groupEle = \attr. tagBracketsAttr "g" (attrString attr)
   case geom of
     PointGeom ->
-     pointAttr = setAt #fillColor (getAt #strokeColor attr) attr
-     tagBracketsAttr "g" (attrString pointAttr) $ selfClosingBrackets $
-       ("circle" <+>
-        "cx=" <.> quote (show x) <.>
-        "cy=" <.> quote (show y) <.>
-        "r=\"1\"")
+      pointAttr = setAt #fillColor (getAt #strokeColor attr) attr
+      groupEle pointAttr $ selfClosingBrackets $
+        ("circle" <+>
+         "cx" <=> x <.>
+         "cy" <=> y <.>
+         "r=\"1\"")
     Circle r ->
-     tagBracketsAttr "g" (attrString attr) $ selfClosingBrackets $
-       ("circle" <+>
-        "cx=" <.> quote (show x) <.>
-        "cy=" <.> quote (show y) <.>
-        "r="  <.> quote (show r))
+      groupEle attr $ selfClosingBrackets $
+        ("circle" <+>
+         "cx" <=> x <.>
+         "cy" <=> y <.>
+         "r"  <=> r)
     Rectangle w h ->
-     tagBracketsAttr "g" (attrString attr) $ selfClosingBrackets $
-       ("rect" <+>
-        "width="  <.> quote (show w) <.>
-        "height=" <.> quote (show h) <.>
-        "x="      <.> quote (show (x - (w/2.0))) <.>
-        "y="      <.> quote (show (y - (h/2.0))))
+      groupEle attr $ selfClosingBrackets $
+        ("rect" <+>
+         "width"  <=> w <.>
+         "height" <=> h <.>
+         "x"      <=> (x - (w/2.0)) <.>
+         "y"      <=> (y - (h/2.0)))
 
 BoundingBox : Type = (Point & Point)
 
@@ -171,14 +172,13 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   imgWidth = 400.0
   scaleFactor = imgWidth / (xmax - xmin)
   imgHeight = (ymax - ymin) * scaleFactor
+  imgXMin   =  xmin * scaleFactor
+  imgYMin   = -ymax * scaleFactor
   (MkDiagram (AsList _ objs)) = d |> flipY |> scale scaleFactor
-  viewBoxStr = makeAttr "viewBox" $
-     (show (xmin * scaleFactor) <+> show (-(ymax * scaleFactor)) <+>
-      show imgWidth <+> show imgHeight)
-  svgAttr= (   makeAttr "width" (show imgWidth)
-           <+> makeAttr "height" (show imgHeight)
-           <+> viewBoxStr)
-  tagBracketsAttr "svg" svgAttr$
+  svgAttrStr = (    "width"   <=> imgWidth
+                <+> "height"  <=> imgHeight
+                <+> "viewBox" <=> (imgXMin <+> imgYMin <+> imgWidth <+> imgHeight))
+  tagBracketsAttr "svg" svgAttrStr $
     concat for i.
       (attr, pos, geom) = objs.i
       renderGeom attr pos geom

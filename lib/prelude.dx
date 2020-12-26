@@ -916,6 +916,9 @@ def codepoint (c:Char) : Int = W8ToI c
 interface Show a:Type where
   show : a -> String
 
+instance showString : Show String where
+  show = id
+
 instance showInt32 : Show Int32 where
   show = \x: Int32. unsafeIO \().
     (n, ptr) = %ffi showInt32 (Int32 & RawPtr) x
