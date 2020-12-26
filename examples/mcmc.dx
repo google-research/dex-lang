@@ -1,5 +1,6 @@
+'# Markov Chain Monte Carlo
 
--- === General MCMC utilities ===
+'## General MCMC utilities
 
 include "plot.dx"
 
@@ -24,8 +25,8 @@ def propose
       (proposal : a)
       (k : Key)
       : a =
-  acceptProb = exp (logDensity proposal) / exp (logDensity cur)
-  select (bern acceptProb k) proposal cur
+  accept = logDensity proposal > (logDensity cur + log (rand k))
+  select accept proposal cur
 
 def meanAndCovariance (n:Type) ?-> (d:Type) ?->
       (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
@@ -35,7 +36,7 @@ def meanAndCovariance (n:Type) ?-> (d:Type) ?->
                            (xs.j.i  - xsMean.i )   ) / IToF (size n - 1)
    (xsMean, xsCov)
 
--- === Metropolis-Hastings implementation ===
+'## Metropolis-Hastings implementation
 
 MHParams : Type = Float  -- step size
 
@@ -49,7 +50,7 @@ def mhStep
   proposal = x + stepSize .* randnVec k1
   propose logProb x proposal k2
 
--- === HMC implementation ===
+'## HMC implementation
 
 HMCParams : Type = (Int & Float)  -- leapfrog steps, step size
 
@@ -79,28 +80,31 @@ def hmcStep
   proposal = leapfrogIntegrate params logProb (x, p)
   fst $ propose hamiltonian (x, p) proposal k2
 
--- === test it out ===
+'## Test it out
+
+'Generate samples from a multivariate normal distribution N([1.5, 2.5], [[1., 0.], [0., 0.05]]).
 
 def myLogProb (x:(Fin 2)=>Float) : LogProb =
   x' = x - [1.5, 2.5]
   neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
 
-hmcParams = (10, 0.1)
-mhParams = 0.1
-numSamples = 500
+numSamples = 10000
 k0 = newKey 1
 
+mhParams = 0.1
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
-hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 
 :p meanAndCovariance mhSamples
-> ([0.64555484, 2.4140575], [[0.38236195, 0.17941256], [0.17941256, 0.22895703]])
+> ([1.5165595, 2.493105], [[1.0373966, 1.1821209e-2], [1.1821209e-2, 5.3775612e-2]])
 
 :html showPlot $ yPlot (for i.  mhSamples.i.(0@_))
 > <html output>
 
+hmcParams = (10, 0.1)
+hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
+
 :p meanAndCovariance hmcSamples
-> ([1.4468338, 2.4944723], [[1.065676, 2.047594e-2], [2.047594e-2, 5.288498e-2]])
+> ([1.50457, 2.5000212], [[0.9738671, 3.4229287e-3], [3.4229287e-3, 5.0585825e-2]])
 
 :html showPlot $ yPlot (for i.  hmcSamples.i.(0@_))
 > <html output>
