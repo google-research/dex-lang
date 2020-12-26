@@ -99,7 +99,7 @@ foreign-library Dex
   hs-source-dirs:      src/
   c-sources:           src/Dex/Foreign/rts.c
   cc-options:          -std=c11 -fPIC
-  ghc-options:         -Wall -fPIC
+  ghc-options:         -Wall -fPIC -optP-Wno-nonportable-include-path
   default-language:    Haskell2010
   default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase
   if flag(optimized)
