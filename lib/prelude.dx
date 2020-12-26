@@ -1105,6 +1105,8 @@ def (@) (i:Int) (n:Type) : n = fromOrdinal n i
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
   for i. xs.(fromOrdinal _ (ordinal i + start))
 
+def head (xs:n=>a) : a = xs.(0@_)
+
 def tail (n:Type) ?-> (xs:n=>a) (start:Int) : List a =
   numElts = size n - start
   toList $ slice xs start (Fin numElts)

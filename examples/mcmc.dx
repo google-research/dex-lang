@@ -95,16 +95,20 @@ mhParams = 0.1
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 
 :p meanAndCovariance mhSamples
-> ([1.5165595, 2.493105], [[1.0373966, 1.1821209e-2], [1.1821209e-2, 5.3775612e-2]])
+> ( [1.5165595, 2.493105]
+> , [[1.0373967, 1.1820998e-2], [1.1820998e-2, 5.377563e-2]] )
 
-:html showPlot $ yPlot (for i.  mhSamples.i.(0@_))
+:html showPlot $ yPlot $
+  slice (map head mhSamples) 0 (Fin 1000)
 > <html output>
 
 hmcParams = (10, 0.1)
 hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 
 :p meanAndCovariance hmcSamples
-> ([1.50457, 2.5000212], [[0.9738671, 3.4229287e-3], [3.4229287e-3, 5.0585825e-2]])
+> ( [1.5045699, 2.5000212]
+> , [[0.97386724, 3.422921e-3], [3.422921e-3, 5.058581e-2]] )
 
-:html showPlot $ yPlot (for i.  hmcSamples.i.(0@_))
+:html showPlot $ yPlot $
+  slice (map head hmcSamples) 0 (Fin 1000)
 > <html output>
