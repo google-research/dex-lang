@@ -400,12 +400,9 @@ def finOrd (n:Int) ?-> : Ord (Fin n) =
 
 '## Raw pointer operations
 
-Int32Ptr : Type = %Int32Ptr
-Word8Ptr : Type = %Word8Ptr
+RawPtr : Type = %Word8Ptr
 
-CharPtr = Word8Ptr
-
-data Ptr a:Type = MkPtr Word8Ptr
+data Ptr a:Type = MkPtr RawPtr
 
 -- Is there a better way to select the right instance for `storageSize`??
 data TypeVehicle a:Type = MkTypeVehicle
@@ -416,13 +413,15 @@ interface Storable a:Type where
   load  : Ptr a ->      {State World} a
   storageSize : TypeVehicle a -> Int
 
--- TODO: there's a bug preventing us inlining these definitions into the instance
-def charStore ((MkPtr ptr): Ptr Word8) (x:Word8) : {State World} Unit  = %ptrStore ptr x
-def charLoad  ((MkPtr ptr): Ptr Word8)           : {State World} Word8 = %ptrLoad  ptr
+-- TODO: we can't inline these into the instance definitions until we change
+-- type inference to push types down into record constructors or allow `def` in
+-- instance definitions.
+def word8Store ((MkPtr ptr): Ptr Word8) (x:Word8) : {State World} Unit  = %ptrStore ptr x
+def word8Load  ((MkPtr ptr): Ptr Word8)           : {State World} Word8 = %ptrLoad  ptr
 
-instance charStorable : Storable Word8 where
-  store = charStore
-  load  = charLoad
+instance word8Storable : Storable Word8 where
+  store = word8Store
+  load  = word8Load
   storageSize = const 1
 
 -- TODO: there's a bug preventing us inlining these definitions into the instance
@@ -478,11 +477,11 @@ instance ptrStorable : Storable (Ptr a) where
 
 def malloc (_:Storable a) ?=> (n:Int) : {State World} (Ptr a) =
   numBytes = storageSize (typeVehicle a) * n
-  MkPtr $ %charAlloc numBytes
+  MkPtr $ %alloc numBytes
 
 def free (ptr:Ptr a) : {State World} Unit =
   (MkPtr ptr') = ptr
-  %charFree ptr'
+  %free ptr'
 
 def (+>>) (_:Storable a) ?=> (ptr:Ptr a) (i:Int) : Ptr a =
   (MkPtr ptr') = ptr
@@ -908,7 +907,7 @@ def loadDynBuffer (_:Storable a) ?=>
 
 String : Type = List Char
 
-def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {State World} String=
+def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {State World} String =
   AsList n $ tabFromPtr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
@@ -919,22 +918,22 @@ interface Show a:Type where
 
 instance showInt32 : Show Int32 where
   show = \x: Int32. unsafeIO \().
-    (n, ptr) = %ffi showInt32 (Int32 & CharPtr) x
+    (n, ptr) = %ffi showInt32 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 instance showInt64 : Show Int64 where
   show = \x: Int64. unsafeIO \().
-    (n, ptr) = %ffi showInt64 (Int32 & CharPtr) x
+    (n, ptr) = %ffi showInt64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 instance showFloat32 : Show Float32 where
   show = \x: Float32.unsafeIO \().
-    (n, ptr) = %ffi showFloat32 (Int32 & CharPtr) x
+    (n, ptr) = %ffi showFloat32 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 instance showFloat64 : Show Float64 where
   show = \x: Float64.unsafeIO \().
-    (n, ptr) = %ffi showFloat64 (Int32 & CharPtr) x
+    (n, ptr) = %ffi showFloat64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 -- pipe-like reverse function application
@@ -970,13 +969,13 @@ def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 'File system operations
 
 FilePath : Type = String
-data CString = MkCString CharPtr
+data CString = MkCString RawPtr
 
 data StreamMode =
   ReadMode
   WriteMode
 
-data Stream mode:StreamMode = MkStream CharPtr
+data Stream mode:StreamMode = MkStream RawPtr
 
 -- TODO: check the string contains no nulls
 def withCString (s:String) (action: CString -> {State World} a) : {State World} a =
@@ -989,7 +988,7 @@ def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
     WriteMode -> "w"
   withCString path \(MkCString pathPtr).
     withCString modeStr \(MkCString modePtr).
-      MkStream $ %ffi fopen CharPtr pathPtr modePtr
+      MkStream $ %ffi fopen RawPtr pathPtr modePtr
 
 def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
   (MkStream stream') = stream
@@ -1044,21 +1043,20 @@ def writeFile (f:FilePath) (s:String) : {State World} Unit =
 def readFile (f:FilePath) : {State World} String =
   withFile f ReadMode \stream. fread stream
 
-def writeTemp (s:String) : {State World} FilePath =
-  -- TODO: Make this properly atomic. It can fail if another process creates a
-  -- file with same name after we ask for the name and before we create it.
+def newTempFile (_:Unit) : {State World} FilePath =
   withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
-    %ffi mktemp CharPtr ptr
+    fd = %ffi mkstemp Int32 ptr
+    %ffi close Int32 fd
     stringFromCharPtr 15 (MkPtr ptr)
 
 def withTempFile (action: FilePath -> {State World} a) : {State World} a =
-  tmpFile = writeTemp ""
+  tmpFile = newTempFile ()
   result = action tmpFile
   deleteFile tmpFile
   result
 
 def withTempFiles (action: (n=>FilePath) -> {State World} a) : {State World} a =
-  tmpFiles = for i. writeTemp ""
+  tmpFiles = for i. newTempFile ()
   result = action tmpFiles
   for i. deleteFile tmpFiles.i
   result
@@ -1073,7 +1071,7 @@ def shellOut (command:String) : {State World} String =
   modeStr = "r"
   withCString command \(MkCString commandPtr).
     withCString modeStr \(MkCString modePtr).
-      pipe = MkStream %ffi popen CharPtr commandPtr modePtr
+      pipe = MkStream %ffi popen RawPtr commandPtr modePtr
       fread pipe
 
 'Partial functions

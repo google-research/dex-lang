@@ -101,7 +101,8 @@ requiredFunctions scope expr =
   flip foldMap (transitiveClosure getParents immediateParents) $ \fname ->
     case scope ! fname of
        (_, LetBound _ (Atom f)) -> [(fname, f)]
-       _ -> []
+       (_, LamBound _) -> []
+       _ -> error "Shouldn't have other free variables left"
   where
     getParents :: Name -> [Name]
     getParents fname = envNames $ freeVars $ scope ! fname
@@ -273,7 +274,7 @@ toImpOp (maybeDest, op) = case op of
   FstRef ~(Con (ConRef (PairCon ref _  ))) -> returnVal ref
   SndRef ~(Con (ConRef (PairCon _   ref))) -> returnVal ref
   IOAlloc ty n -> do
-    ptr <- emitAlloc (AllocatedPtr, Heap CPU, ty) (fromScalarAtom n)
+    ptr <- emitAlloc (Heap CPU, ty) (fromScalarAtom n)
     returnVal $ toScalarAtom ptr
   IOFree ptr -> do
     emitStatement $ Free $ fromScalarAtom ptr
@@ -513,7 +514,7 @@ toImpHof env (maybeDest, hof) = do
       copyAtom sDest =<< impSubst env s
       void $ translateBlock (env <> ref @> sDest) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom sDest
-    RunIO ~(Lam (Abs _ (_, body))) -> do
+    RunIO ~(Lam (Abs _ (_, body))) ->
       translateBlock env (maybeDest, body)
     Linearize _ -> error "Unexpected Linearize"
     Transpose _ -> error "Unexpected Transpose"
@@ -649,7 +650,7 @@ makeBaseTypePtr ty = do
   -- where they could cast shadows
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrName = genFresh (Name AllocPtrName "ptr" 0) (scope <> ptrScope)
-  let ptrTy = PtrTy (AllocatedPtr, addrSpace, ty)
+  let ptrTy = PtrTy (addrSpace, ty)
   extend (ptrName @> (ptrTy, numel))
   let ptr = Var (ptrName :> ptrTy)
   applyIdxs ptr idxs
@@ -792,7 +793,7 @@ makeAllocDestWithPtrs allocTy ty = do
   (env, ptrs) <- flip foldMapM ptrsSizes $ \(Bind (ptr:>PtrTy ptrTy), size) -> do
     ptr' <- emitAlloc ptrTy $ fromScalarAtom size
     case ptrTy of
-      (_, Heap _, _) | allocTy == Managed -> extendAlloc ptr'
+      (Heap _, _) | allocTy == Managed -> extendAlloc ptr'
       _ -> return ()
     return (ptr @> toScalarAtom ptr', [ptr'])
   dest' <- impSubst env dest
@@ -880,7 +881,7 @@ isSmall numel = case numel of
 
 allocateBuffer :: AddressSpace -> Bool -> BaseType -> IExpr -> ImpM IExpr
 allocateBuffer addrSpace mustFree b numel = do
-  buffer <- emitAlloc (AllocatedPtr, addrSpace, b) numel
+  buffer <- emitAlloc (addrSpace, b) numel
   when mustFree $ extendAlloc buffer
   return buffer
 
@@ -976,7 +977,7 @@ addToAtom dest src = case (dest, src) of
 loadAnywhere :: IExpr -> ImpM IExpr
 loadAnywhere ptr = do
   curDev <- asks curDevice
-  let (PtrType (_, addrSpace, ty)) = getIType ptr
+  let (PtrType (addrSpace, ty)) = getIType ptr
   case addrSpace of
     Heap ptrDev | ptrDev /= curDev -> do
       localPtr <- allocateStackSingleton ty
@@ -987,7 +988,7 @@ loadAnywhere ptr = do
 storeAnywhere :: IExpr -> IExpr -> ImpM ()
 storeAnywhere ptr val = do
   curDev <- asks curDevice
-  let (PtrType (_, addrSpace, ty)) = getIType ptr
+  let (PtrType (addrSpace, ty)) = getIType ptr
   case addrSpace of
     Heap ptrDev | ptrDev /= curDev -> do
       localPtr <- allocateStackSingleton ty
@@ -1114,7 +1115,7 @@ extendAlloc :: IExpr -> ImpM ()
 extendAlloc v = extend $ mempty { envPtrsToFree = [v] }
 
 emitAlloc :: HasCallStack => PtrType -> IExpr -> ImpM IExpr
-emitAlloc (_, addr, ty) n = emitInstr $ Alloc addr ty n
+emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
 
 scopedErrBlock :: ImpM () -> ImpM ImpBlock
 scopedErrBlock body = liftM snd $ scopedBlock $ handleErrors body $> ((),[])
@@ -1221,14 +1222,14 @@ instrTypeChecked instr = case instr of
     return dt
   Alloc a ty _ -> (:[]) <$> do
     when (a /= Stack) assertHost
-    return $ PtrType (AllocatedPtr, a, ty)
+    return $ PtrType (a, ty)
   MemCopy dest src numel -> [] <$ do
-    PtrType (_, _, destTy) <- checkIExpr dest
-    PtrType (_, _, srcTy)  <- checkIExpr src
+    PtrType (_, destTy) <- checkIExpr dest
+    PtrType (_, srcTy)  <- checkIExpr src
     assertEq destTy srcTy "pointer type mismatch"
     checkInt numel
   Store dest val -> [] <$ do
-    PtrType (_, addr, ty) <- checkIExpr dest
+    PtrType (addr, ty) <- checkIExpr dest
     checkAddrAccessible addr
     valTy <- checkIExpr val
     assertEq ty valTy "Type mismatch in store"
@@ -1289,12 +1290,12 @@ checkImpOp op = do
       checkIntBaseType False $ BaseTy ibt
       return $ Scalar ty
     PtrLoad ref -> do
-      PtrType (_, addr, ty) <- return ref
+      PtrType (addr, ty) <- return ref
       checkAddrAccessible addr
       return ty
     PtrOffset ref _ -> do  -- TODO: check offset too
-      PtrType (_, addr, ty) <- return ref
-      return $ PtrType (DerivedPtr, addr, ty)
+      PtrType (addr, ty) <- return ref
+      return $ PtrType (addr, ty)
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
@@ -1322,7 +1323,7 @@ impInstrTypes :: ImpInstr -> [IType]
 impInstrTypes instr = case instr of
   IPrimOp op      -> [impOpType op]
   ICastOp t _     -> [t]
-  Alloc a ty _    -> [PtrType (AllocatedPtr, a, ty)]
+  Alloc a ty _    -> [PtrType (a, ty)]
   Store _ _       -> []
   Free _          -> []
   IThrowError     -> []
@@ -1358,8 +1359,8 @@ impOpType pop = case pop of
   Select  _ x  _     -> getIType x
   VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
   VectorIndex x _    -> Scalar ty  where Vector ty = getIType x
-  PtrLoad ref        -> ty  where PtrType (_, _, ty) = getIType ref
-  PtrOffset ref _    -> PtrType (DerivedPtr, addr, ty)  where PtrType (_, addr, ty) = getIType ref
+  PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
+  PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ pprint pop
 

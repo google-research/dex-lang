@@ -266,15 +266,15 @@ compileInstr instr = case instr of
         GPU -> cuMemAlloc elemTy numBytes
     where elemTy = scalarTy t
   Free ptr -> [] <$ do
-    let PtrType (_, addr, _) = getIType ptr
+    let PtrType (addr, _) = getIType ptr
     ptr' <- compileExpr ptr
     case addr of
       Heap CPU -> free      ptr'
       Heap GPU -> cuMemFree ptr'
       Stack -> error "Shouldn't be freeing alloca"
   MemCopy dest src numel -> [] <$ do
-    let PtrType (_, destAddr, ty) = getIType dest
-    let PtrType (_, srcAddr , _ ) = getIType src
+    let PtrType (destAddr, ty) = getIType dest
+    let PtrType (srcAddr , _ ) = getIType src
     destDev <- deviceFromAddr destAddr
     srcDev  <- deviceFromAddr srcAddr
     dest' <- compileExpr dest >>= castVoidPtr
@@ -766,7 +766,7 @@ scalarTy b = case b of
     Float64Type -> fp64
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
-  PtrType (_, s, t) -> L.PointerType (scalarTy t) (lAddress s)
+  PtrType (s, t) -> L.PointerType (scalarTy t) (lAddress s)
 
 hostPtrTy :: L.Type -> L.Type
 hostPtrTy ty = L.PointerType ty $ L.AddrSpace 0

@@ -99,7 +99,7 @@ def makePNG (img:n=>m=>(Fin 3)=>Word8) : Png = unsafeIO \().
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
   withTabPtr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
-    (n, ptr') = %ffi encodePNG (Int & CharPtr) rawPtr (size m) (size n)
+    (n, ptr') = %ffi encodePNG (Int & RawPtr) rawPtr (size m) (size n)
     toList $ tabFromPtr (Fin n) $ MkPtr ptr'
 
 def pngsToGif (delay:Int) (pngs:t=>Png) : Gif = unsafeIO \().

@@ -148,7 +148,7 @@ prepareFunctionForExport env nameStr func = do
 
     -- TODO: I guess that the address space depends on the backend?
     -- TODO: Have an ExternalPtr tag?
-    ptrTy ty = PtrType (DerivedPtr, Heap CPU, ty)
+    ptrTy ty = PtrType (Heap CPU, ty)
 
     getRectShape :: Env () -> IndexStructure -> Maybe [Either Name Int]
     getRectShape scope idx = traverse (dimShape . binderType) $ toList idx

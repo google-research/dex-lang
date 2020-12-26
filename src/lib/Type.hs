@@ -158,7 +158,7 @@ instance HasType Atom where
       checkDataConRefBindings argBs' args
       return $ RawRefTy $ TypeCon def params
     BoxedRef b ptr numel body -> do
-      PtrTy (_, _, t) <- typeCheck ptr
+      PtrTy (_, t) <- typeCheck ptr
       checkEq (binderAnn b) (BaseTy t)
       numel |: IdxRepTy
       void $ typeCheck b
@@ -591,7 +591,7 @@ typeCheckCon con = case con of
   IndexRangeVal t l h i -> i|:IdxRepTy >> return (TC $ IndexRange t l h)
   IndexSliceVal _ _ _ -> error "not implemented"
   BaseTypeRef p -> do
-    (PtrTy (_, _, b)) <- typeCheck p
+    (PtrTy (_, b)) <- typeCheck p
     return $ RawRefTy $ BaseTy b
   TabRef tabTy -> do
     TabTy b (RawRefTy a) <- typeCheck tabTy
@@ -654,7 +654,6 @@ checkValidCast sourceTy destTy =
       BaseTy (Scalar Word8Type  ) -> return ()
       BaseTy (Scalar Float64Type) -> return ()
       BaseTy (Scalar Float32Type) -> return ()
-
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
@@ -714,25 +713,24 @@ typeCheckOp op = case op of
   IOAlloc t n -> do
     n |: IdxRepTy
     declareEff (State, Just theWorld)
-    return $ PtrTy (AllocatedPtr, Heap CPU, t)
+    return $ PtrTy (Heap CPU, t)
   IOFree ptr -> do
     PtrTy _ <- typeCheck ptr
     declareEff (State, Just theWorld)
     return UnitTy
   PtrOffset arr off -> do
-    PtrTy (_, a, b) <- typeCheck arr
+    PtrTy (a, b) <- typeCheck arr
     off |: IdxRepTy
-    return $ PtrTy (DerivedPtr, a, b)
+    return $ PtrTy (a, b)
   PtrLoad ptr -> do
-    PtrTy (_, _, t) <- typeCheck ptr
+    PtrTy (_, t) <- typeCheck ptr
     declareEff (State, Just theWorld)
     return $ BaseTy t
   PtrStore ptr val -> do
-    PtrTy (_, _, t)  <- typeCheck ptr
+    PtrTy (_, t)  <- typeCheck ptr
     val |: BaseTy t
     declareEff (State, Just theWorld)
     return $ UnitTy
-  MakePtrType ty -> ty|:TyKind >> return TyKind
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i
@@ -1068,10 +1066,5 @@ typeReduceExpr scope expr = case expr of
       Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
         typeReduceBlock scope $ subst (b@>x', scope) block
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
-      _ -> Nothing
-  Op (MakePtrType ty) -> do
-    let ty' = typeReduceAtom scope ty
-    case ty' of
-      BaseTy b -> return $ PtrTy (AllocatedPtr, Heap CPU, b)
       _ -> Nothing
   _ -> Nothing

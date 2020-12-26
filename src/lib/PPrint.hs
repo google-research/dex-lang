@@ -118,10 +118,6 @@ instance PrettyPrec BaseType where
     Vector sb -> atPrec ArgPrec $ "<" <> p vectorWidth <+> "x" <+> p sb <> ">"
     PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
 
-instance Pretty PtrOrigin where
-  pretty AllocatedPtr = "a"
-  pretty DerivedPtr   = "d"
-
 instance Pretty AddressSpace where
   pretty Stack    = "stack"
   pretty (Heap d) = p (show d)

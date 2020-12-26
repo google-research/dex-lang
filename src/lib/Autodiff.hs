@@ -141,7 +141,6 @@ linearizeOp op = case op of
   IOFree _               -> emitDiscrete
   TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
   Inject _               -> emitDiscrete
-  MakePtrType _          -> emitDiscrete
   SliceOffset _ _        -> emitDiscrete
   SliceCurry  _ _        -> emitDiscrete
   VectorBinOp _ _ _      -> notImplemented
@@ -599,7 +598,6 @@ transposeOp op ct = case op of
       else transposeAtom y =<< mul ct =<< substNonlin x
   ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
   ScalarBinOp _    _ _  -> notLinear
-  MakePtrType _         -> notLinear
   PrimEffect refArg m   -> do
     refArg' <- substTranspose linRefSubst refArg
     let emitEff = emitOp . PrimEffect refArg'

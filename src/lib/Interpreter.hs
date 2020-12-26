@@ -96,14 +96,14 @@ evalOp expr = case expr of
     "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
     "threefry2x32" -> Int64Val   $ c_threefry x y  where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name
-  PtrOffset (Con (Lit (PtrLit (_, a, t) p))) (IdxRepVal i) ->
-    return $ Con $ Lit $ PtrLit (DerivedPtr, a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit (_, Heap CPU, t) p))) -> Con . Lit <$> loadLitVal p t
-  PtrLoad (Con (Lit (PtrLit (_, Heap GPU, t) p))) ->
+  PtrOffset (Con (Lit (PtrLit (a, t) p))) (IdxRepVal i) ->
+    return $ Con $ Lit $ PtrLit (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
+  PtrLoad (Con (Lit (PtrLit (Heap CPU, t) p))) -> Con . Lit <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (Heap GPU, t) p))) ->
     allocaBytes (sizeOf t) $ \hostPtr -> do
       loadCUDAArray hostPtr p (sizeOf t)
       Con . Lit <$> loadLitVal hostPtr t
-  PtrLoad (Con (Lit (PtrLit (_, Stack, _) _))) ->
+  PtrLoad (Con (Lit (PtrLit (Stack, _) _))) ->
     error $ "Unexpected stack pointer in interpreter"
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i

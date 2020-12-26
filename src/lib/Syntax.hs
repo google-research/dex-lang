@@ -38,7 +38,7 @@ module Syntax (
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
-    AddressSpace (..), PtrOrigin (..), showPrimName, strToPrimName, primNameToStr,
+    AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UPiPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
@@ -328,7 +328,6 @@ data PrimOp e =
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- Low-level memory operations
-      | MakePtrType e
       | IOAlloc BaseType e
       | IOFree e
       | PtrOffset e e
@@ -465,7 +464,7 @@ initTopEnv = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
   , (outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
 
 hostPtrTy :: BaseType -> BaseType
-hostPtrTy ty = PtrType (AllocatedPtr, Heap CPU, ty)
+hostPtrTy ty = PtrType (Heap CPU, ty)
 
 -- === top-level constructs ===
 
@@ -574,15 +573,7 @@ data BaseType = Scalar  ScalarBaseType
 
 data Device = CPU | GPU  deriving (Show, Eq, Ord, Generic)
 data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Ord, Generic)
-data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Ord, Generic)
-type PtrType = (PtrOrigin, AddressSpace, BaseType)
-
-instance Eq PtrOrigin where
-  -- XXX: this is a hack. We expose pointer operations to the surface language
-  -- but we don't yet expose the derived/allocated distinction, and they get
-  -- mixed up when we use ops like ptrOffset.
-  _ == _ = True
-
+type PtrType = (AddressSpace, BaseType)
 
 sizeOf :: BaseType -> Int
 sizeOf t = case t of
@@ -1566,12 +1557,11 @@ builtinNames = M.fromList
   , ("cast", OpExpr  $ CastOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
-  , ("charAlloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
-  , ("charFree"  , OpExpr $ IOFree ())
+  , ("alloc", OpExpr $ IOAlloc (Scalar Word8Type) ())
+  , ("free" , OpExpr $ IOFree ())
   , ("ptrOffset", OpExpr $ PtrOffset () ())
   , ("ptrLoad"  , OpExpr $ PtrLoad ())
   , ("ptrStore" , OpExpr $ PtrStore () ())
-  , ("makePtrType", OpExpr $ MakePtrType ())
   , ("dataConTag", OpExpr $ DataConTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
   ]
@@ -1579,7 +1569,7 @@ builtinNames = M.fromList
     vbinOp op = OpExpr $ VectorBinOp op () ()
     binOp  op = OpExpr $ ScalarBinOp op () ()
     unOp   op = OpExpr $ ScalarUnOp  op ()
-    ptrTy  ty = PtrType (AllocatedPtr, Heap CPU, ty)
+    ptrTy  ty = PtrType (Heap CPU, ty)
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
@@ -1611,6 +1601,5 @@ instance Store LitVal
 instance Store ScalarBaseType
 instance Store BaseType
 instance Store AddressSpace
-instance Store PtrOrigin
 instance Store Device
 instance Store DataConRefBinding
