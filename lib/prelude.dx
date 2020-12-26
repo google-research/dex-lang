@@ -1,9 +1,8 @@
-
-'## Dex prelude
+'# Dex prelude
 
 'Runs before every Dex program unless an alternative is provided with `--prelude`.
 
-'Wrappers around primitives
+'## Wrappers around primitives
 
 Unit = %UnitType
 Type = %TyKind
@@ -137,7 +136,7 @@ instance float64Fractional : Fractional Float64 where
 instance float32Fractional : Fractional Float32 where
   divide = \x:Float32 y:Float32. %fdiv x y
 
-'Basic polymorphic functions and types
+'## Basic polymorphic functions and types
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
@@ -152,7 +151,7 @@ flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
 uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
 const : a -> b -> a = \x _. x
 
-'Vector spaces
+'## Vector spaces
 
 data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
 
@@ -168,7 +167,7 @@ def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
-'Bool type
+'## Boolean type
 
 data Bool =
   False
@@ -192,7 +191,7 @@ def not  (x:Bool) : Bool =
   x' = BToW8 x
   W8ToB $ %not x'
 
-'Sum types
+'## Sum types
 
 data Maybe a:Type =
   Nothing
@@ -213,7 +212,7 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
 def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
 def BToF (x:Bool) : Float = IToF (BToI x)
 
-'Effects
+'## Effects
 
 def Ref (r:Type) (a:Type) : Type = %Ref r a
 def get  (ref:Ref h s)       : {State h} s    = %get  ref
@@ -252,7 +251,7 @@ def unsafeIO (f: Unit -> {State World|eff} a) : {|eff} a =
 def unreachable (():Unit) : a = unsafeIO do
   %throwError a
 
-'Type classes
+'## Type classes
 
 data Eq  a:Type = MkEq  (a -> a -> Bool)
 data Ord a:Type = MkOrd (Eq a) (a -> a -> Bool) (a -> a -> Bool)  -- eq, gt, lt
@@ -308,7 +307,7 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
         ref += (IToF (BToI (xs.i /= ys.i)))
     numDifferent == 0.0
 
-'Transcencendental functions
+'## Transcencendental functions
 
 interface Floating a:Type where
   exp    : a -> a
@@ -384,7 +383,7 @@ instance float32Floating : Floating Float32 where
   pow    = \x:Float32 y:Float32. %fpow x y
   lgamma = \x:Float32. %lgamma x
 
-'Working with index sets
+'## Index set utilities
 
 def Range (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = Range 0 n
@@ -518,7 +517,7 @@ def withTabPtr (_:Storable a) ?=>
 def tabFromPtr (_:Storable a) ?=> (n:Type) -> (ptr:Ptr a) : {State World} n=>a =
   for i. load $ ptr +>> ordinal i
 
-'Misc
+'## Miscellaneous common utilities
 
 pi : Float = 3.141592653589793
 
@@ -559,7 +558,6 @@ def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
-
 def applyN (n:Int) (x:a) (f:a -> a) : a =
   snd $ withState x \ref. for _:(Fin n).
     ref := f (get ref)
@@ -583,7 +581,7 @@ def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum \(i,j). x.i * mat.i.j * y.j
 
-'Functions for working with the pseudorandom number generator
+'## Pseudorandom number generator utilities
 
 -- TODO: newtype
 Key = Int64
@@ -624,7 +622,7 @@ def cumSum (xs: n=>Float) : n=>Float =
       total := newTotal
       newTotal
 
-'Automatic differentiation
+'## Automatic differentiation
 
 -- TODO: add vector space constraints
 def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
@@ -682,7 +680,7 @@ def checkDerivBase (f:Float->Float) (x:Float) : Bool =
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
 
-'Vector support
+'## Vector support
 
 -- TODO: Reenable vector suport once fixed-width types are supported.
 -- def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
@@ -718,7 +716,7 @@ def checkDeriv (f:Float->Float) (x:Float) : Bool =
 -- @instance vectorFloatVSpace : VSpace VectorFloat =
 --   MkVSpace vectorFloatAdd \x v. broadcastVector x * v
 
-'Tiling
+'## Tiling functions
 
 def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 
@@ -746,7 +744,7 @@ def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
 --              arr.(t +> UNSAFEFromOrdinal idx 2)
 --              arr.(t +> UNSAFEFromOrdinal idx 3))
 
-'Monoid
+'## Monoid typeclass
 
 interface Monoid a:Type where
   mempty : a
@@ -754,7 +752,7 @@ interface Monoid a:Type where
 
 (<>) : Monoid a ?=> a -> a -> a = mcombine
 
-'Length-erased lists
+'## Length-erased lists
 
 data List a:Type =
   AsList n:Int foo:(Fin n => a)
@@ -778,7 +776,7 @@ instance monoidList : Monoid (List a) where
         True  -> xs.(unsafeFromOrdinal _ i')
         False -> ys.(unsafeFromOrdinal _ (i' - nx))
 
-'Isomorphisms
+'## Isomorphisms
 
 data Iso a:Type b:Type = MkIso { fwd: a -> b & bwd: b -> a }
 
@@ -945,7 +943,7 @@ instance showFloat64 : Show Float64 where
 -- pipe-like reverse function application
 def (|>) (x:a) (f: a -> b) : b = f x
 
-'## Floating point helper functions
+'## Floating-point helper functions
 
 def sign (x:Float) : Float =
   case x > 0.0 of
@@ -1213,7 +1211,7 @@ def argmin (_:Ord o) ?=> (xs:n=>o) : n =
 def clip (_:Ord a) ?=> ((low,high):(a&a)) (x:a) : a =
   min high $ max low x
 
-'## Trigonometric functions.
+'## Trigonometric functions
 
 def atan_inner (x:Float) : Float =
   -- From "Computing accurate Horner form approximations to
@@ -1254,7 +1252,6 @@ def atan2 (y:Float) (x:Float) : Float =
   select (either_is_nan x y) nan a  -- Propagate NaNs.
 
 def atan (x:Float) : Float = atan2 x 1.0
-
 
 '## Complex numbers
 
@@ -1381,7 +1378,7 @@ def (>>) (x:Byte) (y:Int) : Byte = %shr x (IToW8 y)
 def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
 def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
 
-'## Misc
+'## Miscellaneous utilities
 
 def reverse (x:n=>a) : n=>a =
   s = size n
@@ -1439,6 +1436,7 @@ def cumSumLow (xs: n=>Float) : n=>Float =
       oldTotal = get total
       total := oldTotal + xs.i
       oldTotal
+
 -- cdf should include 0.0 but not 1.0
 def categoricalFromCDF (cdf: n=>Float) (key: Key) : n =
   r = rand key

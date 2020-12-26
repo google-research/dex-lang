@@ -12,14 +12,14 @@ To learn more, check out our
 or these example programs:
 
   * [Dex prelude](https://google-research.github.io/dex-lang/prelude.html)
-  * [Mandelbrot set](https://google-research.github.io/dex-lang/mandelbrot.html)
-  * [Ray tracer](https://google-research.github.io/dex-lang/raytrace.html)
-  * [Estimating pi](https://google-research.github.io/dex-lang/pi.html)
-  * [Hamiltonian Monte Carlo](https://google-research.github.io/dex-lang/mcmc.html)
-  * [ODE integrator](https://google-research.github.io/dex-lang/ode-integrator.html)
-  * [Sierpinski triangle](https://google-research.github.io/dex-lang/sierpinski.html)
-  * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
-  * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
+  * [Mandelbrot set](https://google-research.github.io/dex-lang/examples/mandelbrot.html)
+  * [Ray tracer](https://google-research.github.io/dex-lang/examples/raytrace.html)
+  * [Estimating pi](https://google-research.github.io/dex-lang/examples/pi.html)
+  * [Hamiltonian Monte Carlo](https://google-research.github.io/dex-lang/examples/mcmc.html)
+  * [ODE integrator](https://google-research.github.io/dex-lang/oexamples/de-integrator.html)
+  * [Sierpinski triangle](https://google-research.github.io/dex-lang/examples/sierpinski.html)
+  * [Basis function regression](https://google-research.github.io/dex-lang/examples/regression.html)
+  * [Brownian bridge](https://google-research.github.io/dex-lang/examples/brownian_motion.html)
 
 ⚠️ Dex is an experimental research project at an early stage of
 development. Expect monstrous bugs and razor-sharp edges. Contributions welcome! ⚠️

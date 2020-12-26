@@ -91,6 +91,8 @@ test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              record-variant-tests simple-include-test \
              typeclass-tests complex-tests trig-tests
 
+lib-names = diagram plot png
+
 all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
 
 quine-test-targets = $(all-names:%=run-%)
@@ -98,7 +100,9 @@ quine-test-targets = $(all-names:%=run-%)
 update-test-targets    = $(test-names:%=update-tests-%)
 update-example-targets = $(example-names:%=update-examples-%)
 
-doc-names = $(example-names:%=doc/%.html)
+doc-example-names = $(example-names:%=doc/examples/%.html)
+
+doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
 tests: quine-tests repl-test export-tests
 
@@ -172,16 +176,21 @@ bench-summary:
 
 # --- building docs ---
 
-slow-docs = doc/mnist-nearest-neighbors.html
+slow-docs = doc/examples/mnist-nearest-neighbors.html
 
-docs: doc/style.css $(doc-names) $(slow-docs)
-	$(dex) --prelude /dev/null script prelude.dx --html > doc/prelude.html
+docs: doc-prelude $(doc-example-names) $(doc-lib-names) $(slow-docs)
 
-doc/%.html: examples/%.dx
+doc-prelude: lib/prelude.dx
+	mkdir -p doc
+	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt HTML > doc/prelude.html
+
+doc/examples/%.html: examples/%.dx
+	mkdir -p doc/examples
 	$(dex) script $^ --outfmt HTML > $@
 
-doc/%.css: static/%.css
-	cp $^ $@
+doc/lib/%.html: lib/%.dx
+	mkdir -p doc/lib
+	$(dex) script $^ --outfmt HTML > $@
 
 clean:
 	$(STACK) clean
