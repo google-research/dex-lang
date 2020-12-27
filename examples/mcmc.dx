@@ -88,15 +88,20 @@ def myLogProb (x:(Fin 2)=>Float) : LogProb =
   x' = x - [1.5, 2.5]
   neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
 
+-- check that mean and variance of samples is close to true values with relative tolerance 0.1.
+def testMeanAndCovariance (samples:n=>(Fin 2)=>Float) : Bool =
+  (m, c) = meanAndCovariance samples
+  isClose = \x y. all $ for i. allclose atol 0.1 x.i y.i
+  isClose m [1.5, 2.5] && isClose (diagonal c) [1., 0.05]
+
 numSamples = 10000
 k0 = newKey 1
 
 mhParams = 0.1
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 
-:p meanAndCovariance mhSamples
-> ( [1.5165595, 2.493105]
-> , [[1.0373967, 1.1820998e-2], [1.1820998e-2, 5.377563e-2]] )
+:p testMeanAndCovariance mhSamples
+> True
 
 :html showPlot $ yPlot $
   slice (map head mhSamples) 0 (Fin 1000)
@@ -105,9 +110,8 @@ mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 hmcParams = (10, 0.1)
 hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 
-:p meanAndCovariance hmcSamples
-> ( [1.5045699, 2.5000212]
-> , [[0.97386724, 3.422921e-3], [3.422921e-3, 5.058581e-2]] )
+:p testMeanAndCovariance mhSamples
+> True
 
 :html showPlot $ yPlot $
   slice (map head hmcSamples) 0 (Fin 1000)

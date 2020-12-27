@@ -569,6 +569,8 @@ def transpose (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
 def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
 def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
+def diagonal (x:n=>n=>a) : n=>a = for i. x.i.i
+
 -- matmul. Better symbol to use? `@`?
 (**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
   y' = transpose y
