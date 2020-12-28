@@ -429,8 +429,10 @@ tangentFunAsLambda m = do
         -- TODO: Only bind tangents for free variables?
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
         buildNestedLam PureArrow activeVarBinders $ \activeVarArgs ->
-          buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
-            runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames (newEnv rematList $ fmap Var rematArgs)
+          buildLam (Ignore UnitTy) (PlainArrow $ EffectRow (S.fromList effs') Nothing) $ \_ ->
+            runReaderT tanFun $ TangentEnv
+                 (newEnv (envNames activeVars) activeVarArgs) hVarNames
+                 (newEnv rematList $ fmap Var rematArgs)
     case rematList of
       [] -> return tanLam
       _  -> deShadow tanLam <$> getScope
@@ -753,11 +755,12 @@ freeLinVars x = do
 isLin :: HasVars a => a -> TransposeM Bool
 isLin x = not . null <$> freeLinVars x
 
-isLinEff :: EffectSummary -> TransposeM Bool
-isLinEff effs = do
+isLinEff :: EffectRow -> TransposeM Bool
+isLinEff (EffectRow effs Nothing) = do
   regions <- asks linRegions
   return $ not $ null $ effRegions `envIntersect` regions
   where effRegions = newEnv (S.map snd effs) (repeat ())
+isLinEff _ = error "Can't transpose polymorphic effects"
 
 emitCTToRef :: Maybe Atom -> Atom -> TransposeM ()
 emitCTToRef mref ct = case mref of

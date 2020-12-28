@@ -659,9 +659,9 @@ spaced :: (Foldable f, Pretty a) => f a -> Doc ann
 spaced xs = hsep $ map p $ toList xs
 
 instance Pretty EffectRow where
-  pretty (EffectRow [] Nothing) = mempty
+  pretty Pure = mempty
   pretty (EffectRow effs tailVar) =
-    braces $ hsep (punctuate "," (fmap prettyEff effs)) <> tailStr
+    braces $ hsep (punctuate "," (fmap prettyEff (toList effs))) <> tailStr
     where
       prettyEff (effName, region) = p effName <+> p region
       tailStr = case tailVar of

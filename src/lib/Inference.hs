@@ -19,6 +19,7 @@ import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.String (fromString)
+import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -394,7 +395,7 @@ checkULam (p, ann) body piTy = do
 
 checkUEff :: EffectRow -> UInferM EffectRow
 checkUEff (EffectRow effs t) = do
-   effs' <- forM effs $ \(effName, region) -> do
+   effs' <- liftM S.fromList $ forM (toList effs) $ \(effName, region) -> do
      (Var (v:>TyKind)) <- lookupSourceVar (region:>())
      return (effName, v)
    t'    <- forM t $ \tv -> lookupVarName EffKind tv
@@ -794,7 +795,7 @@ freshType EffKind = Eff <$> freshEff
 freshType k = Var . (:>k) <$> freshInferenceName k
 
 freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
-freshEff = EffectRow [] . Just <$> freshInferenceName EffKind
+freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
 constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
              => Type -> Type -> m ()
@@ -877,18 +878,15 @@ unifyEff r1 r2 = do
   vs <- looks solverVars
   case (r1', r2') of
     _ | r1' == r2' -> return ()
-    (r, EffectRow [] (Just v)) | v `isin` vs -> bindQ (v:>EffKind) (Eff r)
-    (EffectRow [] (Just v), r) | v `isin` vs -> bindQ (v:>EffKind) (Eff r)
-    (EffectRow effs1@(_:_) t1, EffectRow effs2@(_:_) t2) -> do
-      let extras1 = effs1 `setDiff` effs2
-      let extras2 = effs2 `setDiff` effs1
+    (r, EffectRow effs (Just v)) | S.null effs && v `isin` vs -> bindQ (v:>EffKind) (Eff r)
+    (EffectRow effs (Just v), r) | S.null effs && v `isin` vs -> bindQ (v:>EffKind) (Eff r)
+    (EffectRow effs1 t1, EffectRow effs2 t2) | not (S.null effs1 || S.null effs2) -> do
+      let extras1 = effs1 `S.difference` effs2
+      let extras2 = effs2 `S.difference` effs1
       newRow <- freshEff
-      unifyEff (EffectRow [] t1) (extendEffRow extras2 newRow)
-      unifyEff (extendEffRow extras1 newRow) (EffectRow [] t2)
+      unifyEff (EffectRow mempty t1) (extendEffRow extras2 newRow)
+      unifyEff (extendEffRow extras1 newRow) (EffectRow mempty t2)
     _ -> throw TypeErr ""
-
-setDiff :: Eq a => [a] -> [a] -> [a]
-setDiff xs ys = filter (`notElem` ys) xs
 
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)

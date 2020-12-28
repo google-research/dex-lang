@@ -167,3 +167,10 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
      ref += [1.,2.,3.]
      ref += [2.,4.,5.]
 > [3.0, 6.0, 8.0]
+
+def effectsAtZero (eff:Effects)?-> (f: Int ->{|eff} Unit) : {|eff} Unit =
+  f 0
+  ()
+
+:p withState 0 \ref. effectsAtZero \_. ref := 1
+> ((), 1)

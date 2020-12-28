@@ -13,7 +13,7 @@ module Type (
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
   indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
-  typeReduceBlock, typeReduceAtom, typeReduceExpr) where
+  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect, ioEffect) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -257,7 +257,7 @@ checkApp fTy x = do
   return resultTy
 
 -- TODO: replace with something more precise (this is too cautious)
-blockEffs :: Block -> EffectSummary
+blockEffs :: Block -> EffectRow
 blockEffs (Block decls result) =
   foldMap declEffs decls <> exprEffs result
   where declEffs (Let _ _ expr) = exprEffs expr
@@ -265,23 +265,23 @@ blockEffs (Block decls result) =
 isPure :: Expr -> Bool
 isPure expr = exprEffs expr == mempty
 
-exprEffs :: Expr -> EffectSummary
+exprEffs :: Expr -> EffectRow
 exprEffs expr = case expr of
-  Atom _  -> NoEffects
+  Atom _  -> Pure
   App f _ -> functionEffs f
   Op op   -> case op of
     PrimEffect ref m -> case m of
-      MGet    -> S.singleton (State,  h)
-      MPut  _ -> S.singleton (State,  h)
-      MAsk    -> S.singleton (Reader, h)
-      MTell _ -> S.singleton (Writer, h)
+      MGet    -> oneEffect (State,  h)
+      MPut  _ -> oneEffect (State,  h)
+      MAsk    -> oneEffect (Reader, h)
+      MTell _ -> oneEffect (Writer, h)
       where RefTy (Var (h:>_)) _ = getType ref
-    IOAlloc  _ _  -> S.singleton (State, theWorld)
-    IOFree   _    -> S.singleton (State, theWorld)
-    PtrLoad  _    -> S.singleton (State, theWorld)
-    PtrStore _ _  -> S.singleton (State, theWorld)
-    FFICall _ _ _ -> S.singleton (State, theWorld)
-    _ -> NoEffects
+    IOAlloc  _ _  -> oneEffect ioEffect
+    IOFree   _    -> oneEffect ioEffect
+    PtrLoad  _    -> oneEffect ioEffect
+    PtrStore _ _  -> oneEffect ioEffect
+    FFICall _ _ _ -> oneEffect ioEffect
+    _ -> Pure
   Hof hof -> case hof of
     For _ f         -> functionEffs f
     Tile _ _ _      -> error "not implemented"
@@ -292,17 +292,16 @@ exprEffs expr = case expr of
     RunWriter   f   -> handleRunner Writer f
     RunState  _ f   -> handleRunner State  f
     PTileReduce _ _ -> mempty
-    RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs Nothing), _))) ->
-      S.delete (State, theWorld) $ S.fromList effs
+    RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
+      EffectRow (S.delete ioEffect effs) t
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
-    handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs Nothing) _) =
-      S.delete (effName, h) $ S.fromList effs
+    handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs t) _) =
+      EffectRow (S.delete (effName, h) effs) t
 
-functionEffs :: Atom -> EffectSummary
+functionEffs :: Atom -> EffectRow
 functionEffs f = case getType f of
-  Pi (Abs _ (arr, _)) -> S.fromList effs
-    where EffectRow effs Nothing = arrowEff arr
+  Pi (Abs _ (arr, _)) -> arrowEff arr
   _ -> error "Expected a function type"
 
 instance HasType Block where
@@ -481,10 +480,8 @@ checkEffRow (EffectRow effs effTail) = do
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       Just (ty, _) -> assertEq EffKind ty "Effect var"
 
-declareEff :: (EffectName, Maybe Name) -> TypeM ()
-declareEff (effName, Just h) =
-  declareEffs $ EffectRow [(effName, h)] Nothing
-declareEff (_, Nothing) = return ()
+declareEff :: Effect -> TypeM ()
+declareEff eff = declareEffs $ oneEffect eff
 
 declareEffs :: EffectRow -> TypeM ()
 declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
@@ -501,7 +498,13 @@ checkExtends allowed (EffectRow effs effTail) = do
                       "\nAllowed: " ++ pprint allowed
 
 extendEffect :: Effect -> EffectRow -> EffectRow
-extendEffect eff (EffectRow effs t) = EffectRow (eff:effs) t
+extendEffect eff (EffectRow effs t) = EffectRow (S.insert eff effs) t
+
+oneEffect :: Effect -> EffectRow
+oneEffect eff = EffectRow (S.singleton eff) Nothing
+
+ioEffect :: Effect
+ioEffect = (State, theWorld)
 
 -- === labeled row types ===
 
@@ -682,7 +685,7 @@ typeCheckOp op = case op of
         BaseTy _ -> return ()
         _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
                                     "fixed-width base types, but got: " ++ pprint argTy
-    declareEff (State, Just theWorld)
+    declareEff ioEffect
     return ansTy
   Inject i -> do
     TC tc <- typeCheck i
@@ -691,15 +694,12 @@ typeCheckOp op = case op of
       ParIndexRange ty _ _ -> return ty
       _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
-    TC (RefType h s) <- typeCheck ref
-    let h'' = case h of
-               Just ~(Var (h':>TyKind)) -> Just h'
-               Nothing -> Nothing
+    TC (RefType ~(Just (Var (h':>TyKind))) s) <- typeCheck ref
     case m of
-      MGet    ->         declareEff (State , h'') $> s
-      MPut  x -> x|:s >> declareEff (State , h'') $> UnitTy
-      MAsk    ->         declareEff (Reader, h'') $> s
-      MTell x -> x|:s >> declareEff (Writer, h'') $> UnitTy
+      MGet    ->         declareEff (State , h') $> s
+      MPut  x -> x|:s >> declareEff (State , h') $> UnitTy
+      MAsk    ->         declareEff (Reader, h') $> s
+      MTell x -> x|:s >> declareEff (Writer, h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
     i |: absArgType a
@@ -712,11 +712,11 @@ typeCheckOp op = case op of
     return $ RefTy h b
   IOAlloc t n -> do
     n |: IdxRepTy
-    declareEff (State, Just theWorld)
+    declareEff ioEffect
     return $ PtrTy (Heap CPU, t)
   IOFree ptr -> do
     PtrTy _ <- typeCheck ptr
-    declareEff (State, Just theWorld)
+    declareEff ioEffect
     return UnitTy
   PtrOffset arr off -> do
     PtrTy (a, b) <- typeCheck arr
@@ -724,12 +724,12 @@ typeCheckOp op = case op of
     return $ PtrTy (a, b)
   PtrLoad ptr -> do
     PtrTy (_, t) <- typeCheck ptr
-    declareEff (State, Just theWorld)
+    declareEff ioEffect
     return $ BaseTy t
   PtrStore ptr val -> do
     PtrTy (_, t)  <- typeCheck ptr
     val |: BaseTy t
-    declareEff (State, Just theWorld)
+    declareEff ioEffect
     return $ UnitTy
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
@@ -879,7 +879,7 @@ typeCheckHof hof = case hof of
     return $ PairTy resultTy stateTy
   RunIO f -> do
     FunTy _ eff resultTy <- typeCheck f
-    extendAllowedEffect (State, theWorld) $ declareEffs eff
+    extendAllowedEffect ioEffect $ declareEffs eff
     return resultTy
 
 checkAction :: EffectName -> Atom -> TypeM (Type, Type)

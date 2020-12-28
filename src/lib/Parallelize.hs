@@ -70,9 +70,10 @@ parallelTraverseExpr expr = case expr of
     -- TODO: functionEffs is an overapproximation of the effects that really appear inside
     refs <- gets activeAccs
     let allowedRegions = foldMap (\(varType -> RefTy (Var reg) _) -> reg @> ()) refs
-    bodyEffs <- substEmbedR $ functionEffs fbody
-    let onlyAllowedEffects = flip all bodyEffs $ \(eff, reg) -> eff == Writer && reg `isin` allowedRegions
-    case onlyAllowedEffects of
+    (EffectRow bodyEffs t) <- substEmbedR $ functionEffs fbody
+    let onlyAllowedEffects =  flip all (toList bodyEffs) $ \(eff, reg) ->
+          eff == Writer && reg `isin` allowedRegions
+    case t == Nothing && onlyAllowedEffects of
       True -> do
         b' <- substEmbedR b
         liftM Atom $ runLoopM $ withLoopBinder b' $ buildParallelBlock $ asABlock body

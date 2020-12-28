@@ -121,7 +121,7 @@ inlineTraverseExpr expr = case expr of
       --      optimization will waste a bunch of memory by keeping the large intermediates alive.
       LamVal ib block@(Block Empty (Atom _)) -> return $ Atom $ TabVal ib block
       -- Pure broadcasts
-      LamVal ib@(Ignore _) block | blockEffs block == NoEffects -> do
+      LamVal ib@(Ignore _) block | blockEffs block == Pure -> do
         result <- dropSub $ evalBlockE inlineTraversalDef block
         Atom <$> buildLam ib TabArrow (\_ -> return $ result)
       _ -> return $ Hof $ For d newBody

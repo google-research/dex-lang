@@ -19,8 +19,7 @@ module Syntax (
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..),
-    PrimEffect (..), PrimOp (..), EffectSummary, pattern NoEffects,
+    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
@@ -70,7 +69,6 @@ import Control.Monad.Identity
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
 import qualified Data.ByteString.Char8 as B
-import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 import Data.Store (Store)
@@ -425,32 +423,13 @@ showPrimName prim = primNameToStr $ fmap (const ()) prim
 -- === effects ===
 
 type Effect = (EffectName, Name)
-data EffectRow = EffectRow [Effect] (Maybe Name)
-                 deriving (Show, Generic)
+data EffectRow = EffectRow (S.Set Effect) (Maybe Name)
+                 deriving (Show, Eq, Generic)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-type EffectSummary = S.Set Effect
-
-instance HasVars EffectSummary where
-  freeVars effs = foldMap (\(_, reg) -> reg @> (TyKind, UnknownBinder)) effs
-
-instance Subst EffectSummary where
-  subst (env, _) effs = S.map substEff effs
-    where
-      substEff (eff, name) = case envLookup env name of
-        Just ~(Var (name':>_)) -> (eff, name')
-        Nothing               -> (eff, name)
-
 pattern Pure :: EffectRow
-pattern Pure = EffectRow [] Nothing
-
-pattern NoEffects :: EffectSummary
-pattern NoEffects <- ((S.null) -> True)
-  where NoEffects = mempty
-
-instance Eq EffectRow where
-  EffectRow effs t == EffectRow effs' t' =
-    sort effs == sort effs' && t == t'
+pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
+ where  Pure = mempty
 
 theWorld :: Name
 theWorld = GlobalName "World"
@@ -465,6 +444,19 @@ initTopEnv = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
 
 hostPtrTy :: BaseType -> BaseType
 hostPtrTy ty = PtrType (Heap CPU, ty)
+
+instance Semigroup EffectRow where
+  EffectRow effs t <> EffectRow effs' t' =
+    EffectRow (S.union effs effs') newTail
+    where
+      newTail = case (t, t') of
+        (Nothing, effTail) -> effTail
+        (effTail, Nothing) -> effTail
+        _ | t == t' -> t
+          | otherwise -> error "Can't combine effect rows with mismatched tails"
+
+instance Monoid EffectRow where
+  mempty = EffectRow mempty Nothing
 
 -- === top-level constructs ===
 
@@ -1139,7 +1131,7 @@ instance HasVars EffectRow where
     <> foldMap (\v     -> v@>(EffKind, UnknownBinder)) t
 instance Subst EffectRow where
   subst (env, _) (EffectRow row t) = extendEffRow
-    (fmap (\(effName, v) -> (effName, substName env v)) row)
+    (S.map (\(effName, v) -> (effName, substName env v)) row)
     (substEffTail env t)
 
 instance HasVars BinderInfo where
@@ -1174,10 +1166,10 @@ instance Subst (ExtLabeledItems Type Name) where
     prefixExtLabeledItems (subst env items) (substExtLabeledItemsTail env' rest)
 
 substEffTail :: SubstEnv -> Maybe Name -> EffectRow
-substEffTail _ Nothing = EffectRow [] Nothing
+substEffTail _ Nothing = EffectRow mempty Nothing
 substEffTail env (Just v) = case envLookup env (v:>()) of
-  Nothing -> EffectRow [] (Just v)
-  Just (Var (v':>_)) -> EffectRow [] (Just v')
+  Nothing -> EffectRow mempty (Just v)
+  Just (Var (v':>_)) -> EffectRow mempty (Just v')
   Just (Eff r) -> r
   _ -> error "Not a valid effect substitution"
 
@@ -1187,7 +1179,7 @@ substName env v = case envLookup env (v:>()) of
   Just (Var (v':>_)) -> v'
   _ -> error "Should only substitute with a name"
 
-extendEffRow :: [Effect] -> EffectRow -> EffectRow
+extendEffRow :: S.Set Effect -> EffectRow -> EffectRow
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
 substExtLabeledItemsTail :: SubstEnv -> Maybe Name -> ExtLabeledItems Type Name

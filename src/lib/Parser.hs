@@ -18,6 +18,7 @@ import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as M
 import Data.Void
+import qualified Data.Set as S
 import Data.String (fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Text.Megaparsec.Debug
@@ -490,7 +491,7 @@ effects = braces someEffects <|> return Pure
     someEffects = do
       effs <- liftM2 (,) effectName (lowerName <|> upperName) `sepBy` sym ","
       v <- optional $ symbol "|" >> lowerName
-      return $ EffectRow effs v
+      return $ EffectRow (S.fromList effs) v
 
 effectName :: Parser EffectName
 effectName =     (keyWord WriteKW $> Writer)
