@@ -366,6 +366,7 @@ mkBinaryEffFun newEff v ty body = do
 
 buildForAnnAux :: MonadEmbed m => ForAnn -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildForAnnAux ann i body = do
+  -- TODO: consider only tracking the effects that are actually needed.
   eff <- getAllowedEffects
   (lam, aux) <- buildLamAux i (const $ return $ PlainArrow eff) body
   (,aux) <$> (emit $ Hof $ For ann lam)

@@ -633,9 +633,20 @@ emitZonked expr = zonk expr >>= emit
 
 addEffects :: EffectRow -> UInferM ()
 addEffects eff = do
-  eff' <- openEffectRow eff
-  allowedEffects <- getAllowedEffects
-  constrainEq (Eff allowedEffects) (Eff eff')
+  allowed <- checkAllowedUnconditionally eff
+  unless allowed $ do
+    allowedEffects <- getAllowedEffects
+    eff' <- openEffectRow eff
+    constrainEq (Eff allowedEffects) (Eff eff')
+
+checkAllowedUnconditionally :: EffectRow -> UInferM Bool
+checkAllowedUnconditionally Pure = return True
+checkAllowedUnconditionally eff = do
+  eff' <- zonk eff
+  effAllowed <- getAllowedEffects >>= zonk
+  return $ case checkExtends effAllowed eff' of
+    Left _   -> False
+    Right () -> True
 
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff

@@ -11,7 +11,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
-  checkIntBaseType, checkFloatBaseType, withBinder, isDependent,
+  checkIntBaseType, checkFloatBaseType, withBinder, isDependent, checkExtends,
   indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
   typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect, ioEffect) where
 
