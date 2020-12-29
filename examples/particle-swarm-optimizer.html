@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Particle Swarm Optimizer</h1>
+<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Particle Swarm Optimizer</h1>
 </div></div><div class="cell"><div class="prose-block"><h2>Fitness function</h2>
 </div></div><div class="cell"><div class="code-block">rosenbrock <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="symbol">\</span>x y<span class="symbol">.</span> sq (1<span class="symbol">.</span>0 <span class="symbol">-</span> x) <span class="symbol">+</span> 80<span class="symbol">.</span>0<span class="symbol">*</span>sq (y <span class="symbol">-</span> x<span class="symbol">*</span>x)
@@ -61,7 +61,7 @@
             minbyfst pbests<span class="symbol">.</span>p (f newPositions<span class="symbol">.</span>p<span class="symbol">,</span> newPositions<span class="symbol">.</span>p)
         newGbest<span class="symbol">:</span>(<span class="type-name">Float</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
             minbyfst gbest (minimumbyfst newPbests)
-        (keyG<span class="symbol">,</span> keyP<span class="symbol">,</span> keyNext) <span class="symbol">=</span> splitKey3 keyL
+        [keyG<span class="symbol">,</span> keyP<span class="symbol">,</span> keyNext] <span class="symbol">=</span> splitKey keyL
         (gscore<span class="symbol">,</span> gloc) <span class="symbol">=</span> gbest
         plocs <span class="symbol">=</span> map snd pbests
         gVel<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> p i<span class="symbol">.</span>
@@ -76,7 +76,7 @@
         (keyNext<span class="symbol">,</span>newGbest<span class="symbol">,</span>newPbests<span class="symbol">,</span>newPositions<span class="symbol">,</span>newVelocities)
     randInit1 <span class="symbol">=</span> <span class="symbol">\</span>keyI1<span class="symbol">.</span> randBounded keyI1 lb ub
     randInit  <span class="symbol">=</span> <span class="symbol">\</span>keyI<span class="symbol">.</span> <span class="keyword">for</span> p<span class="command">:np</span><span class="symbol">.</span> randInit1 <span class="symbol">$</span> ixkey keyI p
-    (keyPos<span class="symbol">,</span> keyVel<span class="symbol">,</span> keyLoop) <span class="symbol">=</span> splitKey3 key
+    [keyPos<span class="symbol">,</span> keyVel<span class="symbol">,</span> keyLoop] <span class="symbol">=</span> splitKey key
     initPositions<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> randInit keyPos
     initVelocities<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> randInit keyVel
     initPs<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>(<span class="type-name">Float</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>)) <span class="symbol">=</span> <span class="keyword">for</span> p<span class="symbol">.</span> (f initPositions<span class="symbol">.</span>p<span class="symbol">,</span> initPositions<span class="symbol">.</span>p)
@@ -91,10 +91,10 @@
 Run it for more iterations and result should improve.
 Which it indeed does.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 10 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[3.7902741, 14.911415]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[7.698673e-2, 0.23281813]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 20 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[1.7377326, 3.1227152]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.90125203, 0.750448]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 100 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
-</div><div class="result-block">[1.0062307, 1.012882]</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[0.99907273, 0.99819493]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> optimize 50 1000 (newKey 0) rosenbrock2 ([<span class="symbol">-</span>10<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>10<span class="symbol">.</span>0]<span class="symbol">,</span>[20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0]) (0<span class="symbol">.</span>5<span class="symbol">,</span>0<span class="symbol">.</span>3<span class="symbol">,</span>0<span class="symbol">.</span>4)
 </div><div class="result-block">[1.0, 1.0]</div></div></div></body></html>

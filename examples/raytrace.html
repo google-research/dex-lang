@@ -1,0 +1,357 @@
+<!DOCTYPE HTML>
+<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Multi-step Ray Tracer</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Based on Eric Jang's
+<a href="https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb">JAX implementation</a>,
+described
+<a href="https://blog.evjang.com/2019/11/jaxpt.html">here</a>.</p>
+</div></div><div class="cell"><div class="code-block">include &quot;plot<span class="symbol">.</span>dx&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Generic Helper Functions</h3>
+<p>Some of these should probably go in prelude.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Vec</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Mat</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) (m<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> m <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> max x 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> length    (x<span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> sq x<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: make a newtype for normal vectors
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize (x<span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> x <span class="symbol">/</span> (length x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> directionAndLength (x<span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+  l <span class="symbol">=</span> length x
+  (x <span class="symbol">/</span> (length x)<span class="symbol">,</span> l)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randuniform (lower<span class="symbol">:</span><span class="type-name">Float</span>) (upper<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  lower <span class="symbol">+</span> (rand k) <span class="symbol">*</span> (upper <span class="symbol">-</span> lower)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleAveraged (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (sample<span class="symbol">:</span><span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (n<span class="symbol">:</span><span class="type-name">Int</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>total<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
+      total <span class="symbol">:=</span> get total <span class="symbol">+</span> sample (ixkey k i) <span class="symbol">/</span> <span class="type-name">IToF</span> n
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> positiveProjection (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> dot x y <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>3D Helper Functions</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cross (a<span class="symbol">:</span><span class="type-name">Vec</span> 3) (b<span class="symbol">:</span><span class="type-name">Vec</span> 3) <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span>
+  [a1<span class="symbol">,</span> a2<span class="symbol">,</span> a3] <span class="symbol">=</span> a
+  [b1<span class="symbol">,</span> b2<span class="symbol">,</span> b3] <span class="symbol">=</span> b
+  [a2 <span class="symbol">*</span> b3 <span class="symbol">-</span> a3 <span class="symbol">*</span> b2<span class="symbol">,</span> a3 <span class="symbol">*</span> b1 <span class="symbol">-</span> a1 <span class="symbol">*</span> b3<span class="symbol">,</span> a1 <span class="symbol">*</span> b2 <span class="symbol">-</span> a2 <span class="symbol">*</span> b1]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Image</span> <span class="symbol">=</span>
+ <span class="type-name">MkImage</span> height<span class="symbol">:</span><span class="type-name">Int</span> width<span class="symbol">:</span><span class="type-name">Int</span> (<span class="type-name">Fin</span> height <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> width <span class="symbol">=&gt;</span> <span class="type-name">Color</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">xHat <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span> [1<span class="symbol">.,</span> 0<span class="symbol">.,</span> 0<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">yHat <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span> [0<span class="symbol">.,</span> 1<span class="symbol">.,</span> 0<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">zHat <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span> [0<span class="symbol">.,</span> 0<span class="symbol">.,</span> 1<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Angle</span> <span class="symbol">=</span> <span class="type-name">Float</span>  <span class="comment">-- angle in radians
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rotateX (p<span class="symbol">:</span><span class="type-name">Vec</span> 3) (angle<span class="symbol">:</span><span class="type-name">Angle</span>) <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span>
+  c <span class="symbol">=</span> cos angle
+  s <span class="symbol">=</span> sin angle
+  [px<span class="symbol">,</span> py<span class="symbol">,</span> pz] <span class="symbol">=</span> p
+  [px<span class="symbol">,</span> c<span class="symbol">*</span>py <span class="symbol">-</span> s<span class="symbol">*</span>pz<span class="symbol">,</span> s<span class="symbol">*</span>py <span class="symbol">+</span> c<span class="symbol">*</span>pz]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rotateY (p<span class="symbol">:</span><span class="type-name">Vec</span> 3) (angle<span class="symbol">:</span><span class="type-name">Angle</span>) <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span>
+  c <span class="symbol">=</span> cos angle
+  s <span class="symbol">=</span> sin angle
+  [px<span class="symbol">,</span> py<span class="symbol">,</span> pz] <span class="symbol">=</span> p
+  [c<span class="symbol">*</span>px <span class="symbol">+</span> s<span class="symbol">*</span>pz<span class="symbol">,</span> py<span class="symbol">,</span> <span class="symbol">-</span> s<span class="symbol">*</span>px<span class="symbol">+</span> c<span class="symbol">*</span>pz]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rotateZ (p<span class="symbol">:</span><span class="type-name">Vec</span> 3) (angle<span class="symbol">:</span><span class="type-name">Angle</span>) <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span>
+  c <span class="symbol">=</span> cos angle
+  s <span class="symbol">=</span> sin angle
+  [px<span class="symbol">,</span> py<span class="symbol">,</span> pz] <span class="symbol">=</span> p
+  [c<span class="symbol">*</span>px <span class="symbol">-</span> s<span class="symbol">*</span>py<span class="symbol">,</span> s<span class="symbol">*</span>px<span class="symbol">+</span>c<span class="symbol">*</span>py<span class="symbol">,</span> pz]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleCosineWeightedHemisphere (normal<span class="symbol">:</span> <span class="type-name">Vec</span> 3) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Vec</span> 3 <span class="symbol">=</span>
+  [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey k
+  u1 <span class="symbol">=</span> rand k1
+  u2 <span class="symbol">=</span> rand k2
+  uu <span class="symbol">=</span> normalize <span class="symbol">$</span> cross normal [0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>1<span class="symbol">,</span> 1<span class="symbol">.</span>1]
+  vv <span class="symbol">=</span> cross uu normal
+  ra <span class="symbol">=</span> sqrt u2
+  rx <span class="symbol">=</span> ra <span class="symbol">*</span> cos (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> u1)
+  ry <span class="symbol">=</span> ra <span class="symbol">*</span> sin (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> u1)
+  rz <span class="symbol">=</span> sqrt (1<span class="symbol">.</span>0 <span class="symbol">-</span> u2)
+  rr <span class="symbol">=</span> (rx <span class="symbol">.*</span> uu) <span class="symbol">+</span> (ry <span class="symbol">.*</span> vv) <span class="symbol">+</span> (rz <span class="symbol">.*</span> normal)
+  normalize rr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Raytracer</h3>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Distance</span> <span class="symbol">=</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Position</span>  <span class="symbol">=</span> <span class="type-name">Vec</span> 3
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Direction</span> <span class="symbol">=</span> <span class="type-name">Vec</span> 3  <span class="comment">-- Should be normalized. TODO: use a newtype wrapper
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">BlockHalfWidths</span> <span class="symbol">=</span> <span class="type-name">Vec</span> 3
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Radius</span> <span class="symbol">=</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Radiance</span> <span class="symbol">=</span> <span class="type-name">Color</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ObjectGeom</span> <span class="symbol">=</span>
+  <span class="type-name">Wall</span> <span class="type-name">Direction</span> <span class="type-name">Distance</span>
+  <span class="type-name">Block</span> <span class="type-name">Position</span> <span class="type-name">BlockHalfWidths</span> <span class="type-name">Angle</span>
+  <span class="type-name">Sphere</span> <span class="type-name">Position</span> <span class="type-name">Radius</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Surface</span> <span class="symbol">=</span>
+  <span class="type-name">Matte</span> <span class="type-name">Color</span>
+  <span class="type-name">Mirror</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">OrientedSurface</span> <span class="symbol">=</span> (<span class="type-name">Direction</span> <span class="symbol">&amp;</span> <span class="type-name">Surface</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Object</span> <span class="symbol">=</span>
+  <span class="type-name">PassiveObject</span> <span class="type-name">ObjectGeom</span> <span class="type-name">Surface</span>
+  <span class="comment">-- position, half-width, intensity (assumed to point down)
+</span>  <span class="type-name">Light</span> <span class="type-name">Position</span> <span class="type-name">Float</span> <span class="type-name">Radiance</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Ray</span> <span class="symbol">=</span> (<span class="type-name">Position</span> <span class="symbol">&amp;</span> <span class="type-name">Direction</span>)
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Filter</span>   <span class="symbol">=</span> <span class="type-name">Color</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a record
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- num samples, num bounces, share seed?
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Params</span> <span class="symbol">=</span> { numSamples <span class="symbol">:</span> <span class="type-name">Int</span>
+         <span class="symbol">&amp;</span> maxBounces <span class="symbol">:</span> <span class="type-name">Int</span>
+         <span class="symbol">&amp;</span> shareSeed  <span class="symbol">:</span> <span class="type-name">Bool</span> }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a list instead, once they work
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Scene</span> n<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkScene</span> (n<span class="symbol">=&gt;</span><span class="type-name">Object</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleReflection ((nor<span class="symbol">,</span> surf)<span class="symbol">:</span><span class="type-name">OrientedSurface</span>) ((pos<span class="symbol">,</span> dir)<span class="symbol">:</span><span class="type-name">Ray</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Ray</span> <span class="symbol">=</span>
+  newDir <span class="symbol">=</span> <span class="keyword">case</span> surf <span class="keyword">of</span>
+    <span class="type-name">Matte</span> _ <span class="symbol">-&gt;</span> sampleCosineWeightedHemisphere nor k
+    <span class="comment">-- TODO: surely there&#39;s some change-of-solid-angle correction we need to
+</span>    <span class="comment">-- consider when reflecting off a curved surface.
+</span>    <span class="type-name">Mirror</span>  <span class="symbol">-&gt;</span> dir <span class="symbol">-</span> (2<span class="symbol">.</span>0 <span class="symbol">*</span> dot dir nor) <span class="symbol">.*</span> nor
+  (pos<span class="symbol">,</span> newDir)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> probReflection ((nor<span class="symbol">,</span> surf)<span class="symbol">:</span><span class="type-name">OrientedSurface</span>) (_<span class="symbol">:</span><span class="type-name">Ray</span>) ((_<span class="symbol">,</span> outRayDir)<span class="symbol">:</span><span class="type-name">Ray</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="keyword">case</span> surf <span class="keyword">of</span>
+    <span class="type-name">Matte</span> _ <span class="symbol">-&gt;</span> relu <span class="symbol">$</span> dot nor outRayDir
+    <span class="type-name">Mirror</span>  <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0  <span class="comment">-- TODO: this should be a delta function of some sort
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> applyFilter (filter<span class="symbol">:</span><span class="type-name">Filter</span>) (radiance<span class="symbol">:</span><span class="type-name">Radiance</span>) <span class="symbol">:</span> <span class="type-name">Radiance</span> <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> filter<span class="symbol">.</span>i <span class="symbol">*</span> radiance<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> surfaceFilter (filter<span class="symbol">:</span><span class="type-name">Filter</span>) (surf<span class="symbol">:</span><span class="type-name">Surface</span>) <span class="symbol">:</span> <span class="type-name">Filter</span> <span class="symbol">=</span>
+  <span class="keyword">case</span> surf <span class="keyword">of</span>
+    <span class="type-name">Matte</span> color <span class="symbol">-&gt;</span> <span class="keyword">for</span> i<span class="symbol">.</span> filter<span class="symbol">.</span>i <span class="symbol">*</span> color<span class="symbol">.</span>i
+    <span class="type-name">Mirror</span>      <span class="symbol">-&gt;</span> filter
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sdObject (pos<span class="symbol">:</span><span class="type-name">Position</span>) (obj<span class="symbol">:</span><span class="type-name">Object</span>) <span class="symbol">:</span> <span class="type-name">Distance</span> <span class="symbol">=</span>
+  <span class="keyword">case</span> obj <span class="keyword">of</span>
+    <span class="type-name">PassiveObject</span> geom _ <span class="symbol">-&gt;</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
+      <span class="type-name">Wall</span> nor d <span class="symbol">-&gt;</span> d <span class="symbol">+</span> dot nor pos
+      <span class="type-name">Block</span> blockPos halfWidths angle <span class="symbol">-&gt;</span>
+        pos&#39; <span class="symbol">=</span> rotateY (pos <span class="symbol">-</span> blockPos) angle
+        length <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> max ((abs pos&#39;<span class="symbol">.</span>i) <span class="symbol">-</span> halfWidths<span class="symbol">.</span>i) 0<span class="symbol">.</span>0
+      <span class="type-name">Sphere</span> spherePos r <span class="symbol">-&gt;</span>
+        pos&#39; <span class="symbol">=</span> pos <span class="symbol">-</span> spherePos
+        max (length pos&#39; <span class="symbol">-</span> r) 0<span class="symbol">.</span>0
+    <span class="type-name">Light</span> squarePos hw _ <span class="symbol">-&gt;</span>
+      pos&#39; <span class="symbol">=</span> pos <span class="symbol">-</span> squarePos
+      halfWidths <span class="symbol">=</span> [hw<span class="symbol">,</span> 0<span class="symbol">.</span>01<span class="symbol">,</span> hw]
+      length <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> max ((abs pos&#39;<span class="symbol">.</span>i) <span class="symbol">-</span> halfWidths<span class="symbol">.</span>i) 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sdScene (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (pos<span class="symbol">:</span><span class="type-name">Position</span>) <span class="symbol">:</span> (<span class="type-name">Object</span> <span class="symbol">&amp;</span> <span class="type-name">Distance</span>) <span class="symbol">=</span>
+  (<span class="type-name">MkScene</span> objs) <span class="symbol">=</span> scene
+  (i<span class="symbol">,</span> d) <span class="symbol">=</span> minimumBy snd <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> (i<span class="symbol">,</span> sdObject pos objs<span class="symbol">.</span>i)
+  (objs<span class="symbol">.</span>i<span class="symbol">,</span> d)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> calcNormal (obj<span class="symbol">:</span><span class="type-name">Object</span>) (pos<span class="symbol">:</span><span class="type-name">Position</span>) <span class="symbol">:</span> <span class="type-name">Direction</span> <span class="symbol">=</span>
+  normalize (grad (flip sdObject obj) pos)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">RayMarchResult</span> <span class="symbol">=</span>
+  <span class="comment">-- incident ray, surface normal, surface properties
+</span>  <span class="type-name">HitObj</span> <span class="type-name">Ray</span> <span class="type-name">OrientedSurface</span>
+  <span class="type-name">HitLight</span> <span class="type-name">Radiance</span>
+  <span class="comment">-- Could refine with failure reason (beyond horizon, failed to converge etc)
+</span>  <span class="type-name">HitNothing</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> raymarch (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (ray<span class="symbol">:</span><span class="type-name">Ray</span>) <span class="symbol">:</span> <span class="type-name">RayMarchResult</span> <span class="symbol">=</span>
+  maxIters <span class="symbol">=</span> 100
+  tol <span class="symbol">=</span> 0<span class="symbol">.</span>01
+  startLength <span class="symbol">=</span> 10<span class="symbol">.</span>0 <span class="symbol">*</span> tol  <span class="comment">-- trying to escape the current surface
+</span>  (rayOrigin<span class="symbol">,</span> rayDir) <span class="symbol">=</span> ray
+  fst <span class="symbol">$</span> withState (10<span class="symbol">.</span>0 <span class="symbol">*</span> tol) <span class="symbol">\</span>rayLength<span class="symbol">.</span>
+    boundedIter maxIters <span class="type-name">HitNothing</span> <span class="symbol">\</span>_<span class="symbol">.</span>
+      rayPos <span class="symbol">=</span> rayOrigin <span class="symbol">+</span> get rayLength <span class="symbol">.*</span> rayDir
+      (obj<span class="symbol">,</span> d) <span class="symbol">=</span> sdScene scene <span class="symbol">$</span> rayPos
+      <span class="comment">-- 0.9 ensures we come close to the surface but don&#39;t touch it
+</span>      rayLength <span class="symbol">:=</span> get rayLength <span class="symbol">+</span> 0<span class="symbol">.</span>9 <span class="symbol">*</span> d
+      <span class="keyword">case</span> d <span class="symbol">&lt;</span> tol <span class="keyword">of</span>
+        <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Continue</span>
+        <span class="type-name">True</span> <span class="symbol">-&gt;</span>
+          surfNorm <span class="symbol">=</span> calcNormal obj rayPos
+          <span class="keyword">case</span> positiveProjection rayDir surfNorm <span class="keyword">of</span>
+            <span class="type-name">True</span> <span class="symbol">-&gt;</span>
+              <span class="comment">-- Oops, we didn&#39;t escape the surface we&#39;re leaving..
+</span>              <span class="comment">-- (Is there a more standard way to do this?)
+</span>              <span class="type-name">Continue</span>
+            <span class="type-name">False</span> <span class="symbol">-&gt;</span>
+              <span class="comment">-- We made it!
+</span>              <span class="type-name">Done</span> <span class="symbol">$</span> <span class="keyword">case</span> obj <span class="keyword">of</span>
+                <span class="type-name">PassiveObject</span> _ surf <span class="symbol">-&gt;</span> <span class="type-name">HitObj</span> (rayPos<span class="symbol">,</span> rayDir) (surfNorm<span class="symbol">,</span> surf)
+                <span class="type-name">Light</span> _ _ radiance   <span class="symbol">-&gt;</span> <span class="type-name">HitLight</span> radiance
+</div><div class="err-block">Error: variable not in scope: boundedIter
+
+    boundedIter maxIters HitNothing \_.
+    ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rayDirectRadiance (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (ray<span class="symbol">:</span><span class="type-name">Ray</span>) <span class="symbol">:</span> <span class="type-name">Radiance</span> <span class="symbol">=</span>
+  <span class="keyword">case</span> raymarch scene ray <span class="keyword">of</span>
+    <span class="type-name">HitLight</span> intensity <span class="symbol">-&gt;</span> intensity
+    <span class="type-name">HitNothing</span> <span class="symbol">-&gt;</span> zero
+    <span class="type-name">HitObj</span> _ _ <span class="symbol">-&gt;</span> zero
+</div><div class="err-block">Error: variable not in scope: raymarch
+
+  case raymarch scene ray of
+       ^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleSquare (hw<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Position</span> <span class="symbol">=</span>
+ [kx<span class="symbol">,</span> kz] <span class="symbol">=</span> splitKey k
+ x <span class="symbol">=</span> randuniform (<span class="symbol">-</span> hw) hw kx
+ z <span class="symbol">=</span> randuniform (<span class="symbol">-</span> hw) hw kz
+ [x<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> z]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleLightRadiance
+      (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (osurf<span class="symbol">:</span><span class="type-name">OrientedSurface</span>) (inRay<span class="symbol">:</span><span class="type-name">Ray</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Radiance</span> <span class="symbol">=</span>
+  (surfNor<span class="symbol">,</span> surf) <span class="symbol">=</span> osurf
+  (rayPos<span class="symbol">,</span> _) <span class="symbol">=</span> inRay
+  (<span class="type-name">MkScene</span> objs) <span class="symbol">=</span> scene
+  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> objs<span class="symbol">.</span>i <span class="keyword">of</span>
+      <span class="type-name">PassiveObject</span> _ _ <span class="symbol">-&gt;</span> ()
+      <span class="type-name">Light</span> lightPos hw _ <span class="symbol">-&gt;</span>
+        (dirToLight<span class="symbol">,</span> distToLight) <span class="symbol">=</span> directionAndLength <span class="symbol">$</span>
+                                      lightPos <span class="symbol">+</span> sampleSquare hw k <span class="symbol">-</span> rayPos
+        when (positiveProjection dirToLight surfNor) do
+          <span class="comment">-- light on this far side of current surface
+</span>          fracSolidAngle <span class="symbol">=</span> (relu <span class="symbol">$</span> dot dirToLight yHat) <span class="symbol">*</span> sq hw <span class="symbol">/</span> (pi <span class="symbol">*</span> sq distToLight)
+          outRay <span class="symbol">=</span> (rayPos<span class="symbol">,</span> dirToLight)
+          coeff <span class="symbol">=</span> fracSolidAngle <span class="symbol">*</span> probReflection osurf inRay outRay
+          radiance <span class="symbol">+=</span> coeff <span class="symbol">.*</span> rayDirectRadiance scene outRay
+
+</div><div class="err-block">Parse error:223:9:
+    |
+223 |           fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
+    |         ^^^^
+unexpected &quot;  fr&quot;
+expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, let binding, or negation
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trace (params<span class="symbol">:</span><span class="type-name">Params</span>) (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (initRay<span class="symbol">:</span><span class="type-name">Ray</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Color</span> <span class="symbol">=</span>
+  noFilter <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0]
+  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
+    withState  noFilter <span class="symbol">\</span>filter<span class="symbol">.</span>
+     withState initRay  <span class="symbol">\</span>ray<span class="symbol">.</span>
+      boundedIter (getAt <span class="iso-sugar">#maxBounces</span> params) () <span class="symbol">\</span>i<span class="symbol">.</span>
+        <span class="keyword">case</span> raymarch scene <span class="symbol">$</span> get ray <span class="keyword">of</span>
+          <span class="type-name">HitNothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> ()
+          <span class="type-name">HitLight</span> intensity <span class="symbol">-&gt;</span>
+            when (i <span class="symbol">==</span> 0) do radiance <span class="symbol">+=</span> intensity   <span class="comment">-- TODO: scale etc
+</span>            <span class="type-name">Done</span> ()
+          <span class="type-name">HitObj</span> incidentRay osurf <span class="symbol">-&gt;</span>
+            [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey <span class="symbol">$</span> hash k i
+            lightRadiance <span class="symbol">=</span> sampleLightRadiance scene osurf incidentRay k1
+            ray    <span class="symbol">:=</span> sampleReflection osurf incidentRay k2
+            filter <span class="symbol">:=</span> surfaceFilter (get filter) (snd osurf)
+            radiance <span class="symbol">+=</span> applyFilter (get filter) lightRadiance
+            <span class="type-name">Continue</span>
+</div><div class="err-block">Error: variable not in scope: boundedIter
+
+      boundedIter (getAt #maxBounces params) () \i.
+      ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Assumes we&#39;re looking towards -z.
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Camera</span> <span class="symbol">=</span>
+  { numPix     <span class="symbol">:</span> <span class="type-name">Int</span>
+  <span class="symbol">&amp;</span> pos        <span class="symbol">:</span> <span class="type-name">Position</span>  <span class="comment">-- pinhole position
+</span>  <span class="symbol">&amp;</span> halfWidth  <span class="symbol">:</span> <span class="type-name">Float</span>     <span class="comment">-- sensor half-width
+</span>  <span class="symbol">&amp;</span> sensorDist <span class="symbol">:</span> <span class="type-name">Float</span> }   <span class="comment">-- pinhole-sensor distance
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: might be better with an anonymous dependent pair for the result
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cameraRays (n<span class="symbol">:</span><span class="type-name">Int</span>) (camera<span class="symbol">:</span><span class="type-name">Camera</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> (<span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Ray</span>) <span class="symbol">=</span>
+  <span class="comment">-- images indexed from top-left
+</span>  halfWidth <span class="symbol">=</span> getAt <span class="iso-sugar">#halfWidth</span> camera
+  pixHalfWidth <span class="symbol">=</span> halfWidth <span class="symbol">/</span> <span class="type-name">IToF</span> n
+  ys <span class="symbol">=</span> reverse <span class="symbol">$</span> linspace (<span class="type-name">Fin</span> n) (neg halfWidth) halfWidth
+  xs <span class="symbol">=</span>           linspace (<span class="type-name">Fin</span> n) (neg halfWidth) halfWidth
+  <span class="keyword">for</span> i j<span class="symbol">.</span> <span class="symbol">\</span>key<span class="symbol">.</span>
+    [kx<span class="symbol">,</span> ky] <span class="symbol">=</span> splitKey key
+    x <span class="symbol">=</span> xs<span class="symbol">.</span>j <span class="symbol">+</span> randuniform (<span class="symbol">-</span>pixHalfWidth) pixHalfWidth kx
+    y <span class="symbol">=</span> ys<span class="symbol">.</span>i <span class="symbol">+</span> randuniform (<span class="symbol">-</span>pixHalfWidth) pixHalfWidth ky
+    (getAt <span class="iso-sugar">#pos</span> camera<span class="symbol">,</span> normalize [x<span class="symbol">,</span> y<span class="symbol">,</span> neg (getAt <span class="iso-sugar">#sensorDist</span> camera)])
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> takePicture (params<span class="symbol">:</span><span class="type-name">Params</span>) (scene<span class="symbol">:</span><span class="type-name">Scene</span> m) (camera<span class="symbol">:</span><span class="type-name">Camera</span>) <span class="symbol">:</span> <span class="type-name">Image</span> <span class="symbol">=</span>
+  n <span class="symbol">=</span> getAt <span class="iso-sugar">#numPix</span> camera
+  rays <span class="symbol">=</span> cameraRays n camera
+  rootKey <span class="symbol">=</span> newKey 0
+  image <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span>
+    pixKey <span class="symbol">=</span> <span class="keyword">if</span> getAt <span class="iso-sugar">#shareSeed</span> params
+      <span class="keyword">then</span> rootKey
+      <span class="keyword">else</span> ixkey (ixkey rootKey i) j
+    sampleRayColor <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Color</span> <span class="symbol">=</span>  <span class="symbol">\</span>k<span class="symbol">.</span>
+      [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey k
+      trace params scene (rays<span class="symbol">.</span>i<span class="symbol">.</span>j k1) k2
+    sampleAveraged sampleRayColor (getAt <span class="iso-sugar">#numSamples</span> params) pixKey
+  <span class="type-name">MkImage</span> _ _ <span class="symbol">$</span> image <span class="symbol">/</span> mean (<span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> image<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k)
+</div><div class="err-block">Error: variable not in scope: trace
+
+      trace params scene (rays.i.j k1) k2
+      ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Define the scene and render it</h3>
+</div></div><div class="cell"><div class="code-block">lightColor <span class="symbol">=</span> [0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>2]
+</div></div><div class="cell"><div class="code-block">leftWallColor  <span class="symbol">=</span> 1<span class="symbol">.</span>5 <span class="symbol">.*</span> [0<span class="symbol">.</span>611<span class="symbol">,</span> 0<span class="symbol">.</span>0555<span class="symbol">,</span> 0<span class="symbol">.</span>062]
+</div></div><div class="cell"><div class="code-block">rightWallColor <span class="symbol">=</span> 1<span class="symbol">.</span>5 <span class="symbol">.*</span> [0<span class="symbol">.</span>117<span class="symbol">,</span> 0<span class="symbol">.</span>4125<span class="symbol">,</span> 0<span class="symbol">.</span>115]
+</div></div><div class="cell"><div class="code-block">whiteWallColor <span class="symbol">=</span> [255<span class="symbol">.</span>0<span class="symbol">,</span> 239<span class="symbol">.</span>0<span class="symbol">,</span> 196<span class="symbol">.</span>0] <span class="symbol">/</span> 255<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">blockColor     <span class="symbol">=</span> [200<span class="symbol">.</span>0<span class="symbol">,</span> 200<span class="symbol">.</span>0<span class="symbol">,</span> 255<span class="symbol">.</span>0] <span class="symbol">/</span> 255<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">theScene <span class="symbol">=</span> <span class="type-name">MkScene</span> <span class="symbol">$</span>
+    [ <span class="type-name">Light</span> (1<span class="symbol">.</span>9 <span class="symbol">.*</span> yHat) 0<span class="symbol">.</span>5 lightColor
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      xHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> leftWallColor)
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span> (neg xHat) 2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> rightWallColor)
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      yHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span> (neg yHat) 2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Wall</span>      zHat  2<span class="symbol">.</span>0) (<span class="type-name">Matte</span> whiteWallColor)
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Block</span>  [ 1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>1<span class="symbol">.</span>6<span class="symbol">,</span>  1<span class="symbol">.</span>2] [0<span class="symbol">.</span>6<span class="symbol">,</span> 0<span class="symbol">.</span>8<span class="symbol">,</span> 0<span class="symbol">.</span>6] 0<span class="symbol">.</span>5) (<span class="type-name">Matte</span> blockColor)
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Sphere</span> [<span class="symbol">-</span>1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>1<span class="symbol">.</span>2<span class="symbol">,</span>  0<span class="symbol">.</span>2] 0<span class="symbol">.</span>8) (<span class="type-name">Matte</span> (0<span class="symbol">.</span>7<span class="symbol">.*</span> whiteWallColor))
+    <span class="symbol">,</span> <span class="type-name">PassiveObject</span> (<span class="type-name">Sphere</span> [ 2<span class="symbol">.</span>0<span class="symbol">,</span>  2<span class="symbol">.</span>0<span class="symbol">,</span> <span class="symbol">-</span>2<span class="symbol">.</span>0] 1<span class="symbol">.</span>5) (<span class="type-name">Mirror</span>)
+    ]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">defaultParams <span class="symbol">=</span> { numSamples <span class="symbol">=</span> 50
+                <span class="symbol">,</span> maxBounces <span class="symbol">=</span> 10
+                <span class="symbol">,</span> shareSeed  <span class="symbol">=</span> <span class="type-name">True</span> }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">defaultCamera <span class="symbol">=</span> { numPix     <span class="symbol">=</span> 250
+                <span class="symbol">,</span> pos        <span class="symbol">=</span> 10<span class="symbol">.</span>0 <span class="symbol">.*</span> zHat
+                <span class="symbol">,</span> halfWidth  <span class="symbol">=</span> 0<span class="symbol">.</span>3
+                <span class="symbol">,</span> sensorDist <span class="symbol">=</span> 1<span class="symbol">.</span>0 }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- We change to a small num pix here to reduce the compute needed for tests
+</span></div></div><div class="cell"><div class="code-block">camera <span class="symbol">=</span> defaultCamera <span class="symbol">|&gt;</span> setAt <span class="iso-sugar">#numPix</span> 10
+</div></div><div class="cell"><div class="code-block">params <span class="symbol">=</span> defaultParams
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- %time
+</span></div></div><div class="cell"><div class="code-block">(<span class="type-name">MkImage</span> _ _ image) <span class="symbol">=</span> takePicture params theScene camera
+</div><div class="err-block">Error: variable not in scope: takePicture
+
+(MkImage _ _ image) = takePicture params theScene camera
+                      ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imshow image
+</div><div class="err-block">Error: variable not in scope: image
+
+:html imshow image
+             ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Just for fun, here's what we get with a single sample (sharing the PRNG
+key among pixels)</p>
+</div></div><div class="cell"><div class="code-block">params2 <span class="symbol">=</span> defaultParams <span class="symbol">|&gt;</span> setAt <span class="iso-sugar">#numSamples</span> 1
+</div></div><div class="cell"><div class="code-block">(<span class="type-name">MkImage</span> _ _ image2) <span class="symbol">=</span> takePicture params2 theScene camera
+</div><div class="err-block">Error: variable not in scope: takePicture
+
+(MkImage _ _ image2) = takePicture params2 theScene camera
+                       ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imshow image2
+</div><div class="err-block">Error: variable not in scope: image2
+
+:html imshow image2
+             ^^^^^^
+</div></div></div></body></html>
