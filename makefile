@@ -88,8 +88,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests \
              ad-tests parser-tests serialize-tests \
-             record-variant-tests simple-include-test \
-             typeclass-tests complex-tests trig-tests
+             record-variant-tests typeclass-tests complex-tests trig-tests
 
 lib-names = diagram plot png
 
@@ -104,11 +103,9 @@ doc-example-names = $(example-names:%=doc/examples/%.html)
 
 doc-lib-names = $(lib-names:%=doc/lib/%.html)
 
-tests: quine-tests repl-test export-tests
+tests: quine-tests repl-test
 
 quine-tests: $(quine-test-targets)
-
-quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t
@@ -143,16 +140,6 @@ update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
 update-gpu-tests: tests/gpu-tests.dx build
 	$(dex) --backend LLVM-CUDA script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
-
-export-tests: export-test-scalar export-test-array
-
-export-test-%: build
-	$(dex) export examples/export/$*.dx examples/export/$*.o
-	$(CXX) -std=c++11 examples/export/$*.o examples/export/$*.cpp -o examples/export/$*
-	examples/export/$*
-
-jax-tests: build
-	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script
 
 uexpr-tests:
 	misc/check-quine examples/uexpr-tests.dx $(dex) script
