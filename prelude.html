@@ -91,6 +91,8 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Byte</span> <span class="symbol">=</span> <span class="type-name">Word8</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Char</span> <span class="symbol">=</span> <span class="type-name">Byte</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">RawPtr</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Word8Ptr</span>
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Int</span> <span class="symbol">=</span> <span class="type-name">Int32</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">Float32</span>
 </div></div><div class="cell"><div class="code-block">
@@ -108,6 +110,8 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">IToW8</span>  (x <span class="symbol">:</span> <span class="type-name">Int</span>)     <span class="symbol">:</span> <span class="type-name">Word8</span>   <span class="symbol">=</span> internalCast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">IToF</span> (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> internalCast _ x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">FToI</span> (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> internalCast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">I64ToRawPtr</span> (x<span class="symbol">:</span><span class="type-name">Int64</span> ) <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">=</span> internalCast _ x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">RawPtrToI64</span> (x<span class="symbol">:</span><span class="type-name">RawPtr</span>) <span class="symbol">:</span> <span class="type-name">Int64</span>  <span class="symbol">=</span> internalCast _ x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Add</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="keyword">where</span>
   add <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a
@@ -270,6 +274,8 @@ code {
   <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">True</span>
   <span class="type-name">Just</span> _ <span class="symbol">-&gt;</span> <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isJust (x<span class="symbol">:</span><span class="type-name">Maybe</span> a) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> not <span class="symbol">$</span> isNothing x
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> (<span class="symbol">|</span>) a<span class="symbol">:</span><span class="type-name">Type</span> b<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
   <span class="type-name">Left</span>  a
   <span class="type-name">Right</span> b
@@ -341,6 +347,7 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> word8Eq   <span class="symbol">:</span> <span class="type-name">Eq</span> <span class="type-name">Word8</span>   <span class="symbol">=</span> <span class="type-name">MkEq</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Word8</span>   y<span class="symbol">:</span><span class="type-name">Word8</span><span class="symbol">.</span>   <span class="type-name">W8ToB</span> <span class="symbol">$</span> %ieq x y
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> boolEq    <span class="symbol">:</span> <span class="type-name">Eq</span> <span class="type-name">Bool</span>    <span class="symbol">=</span> <span class="type-name">MkEq</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">BToW8</span> x <span class="symbol">==</span> <span class="type-name">BToW8</span> y
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> unitEq    <span class="symbol">:</span> <span class="type-name">Eq</span> <span class="type-name">Unit</span>    <span class="symbol">=</span> <span class="type-name">MkEq</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">True</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> rawPtrEq  <span class="symbol">:</span> <span class="type-name">Eq</span> <span class="type-name">RawPtr</span>  <span class="symbol">=</span> <span class="type-name">MkEq</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">RawPtrToI64</span> x <span class="symbol">==</span> <span class="type-name">RawPtrToI64</span> y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> float64Ord <span class="symbol">:</span> <span class="type-name">Ord</span> <span class="type-name">Float64</span> <span class="symbol">=</span> (<span class="type-name">MkOrd</span> float64Eq (<span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">W8ToB</span> <span class="symbol">$</span> %fgt x y)
                                                       (<span class="symbol">\</span>x y<span class="symbol">.</span> <span class="type-name">W8ToB</span> <span class="symbol">$</span> %flt x y))
@@ -466,8 +473,6 @@ code {
   <span class="type-name">MkOrd</span> finEq (<span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&gt;</span> ordinal y) (<span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&lt;</span> ordinal y)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Raw pointer operations</h2>
-</div></div><div class="cell"><div class="code-block"><span class="type-name">RawPtr</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Word8Ptr</span>
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Ptr</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkPtr</span> <span class="type-name">RawPtr</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Is there a better way to select the right instance for `storageSize`??
@@ -958,7 +963,10 @@ code {
   (size<span class="symbol">,</span> _<span class="symbol">,</span> bufPtr) <span class="symbol">=</span> load dbPtr
   <span class="type-name">AsList</span> size <span class="symbol">$</span> tabFromPtr _ bufPtr
 </div></div><div class="cell"><div class="code-block">
-
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pushDynBuffer (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+      (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  extendDynBuffer buf <span class="symbol">$</span> <span class="type-name">AsList</span> _ [x]
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Strings and Characters</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">String</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">List</span> <span class="type-name">Char</span>
 </div></div><div class="cell"><div class="code-block">
@@ -1026,6 +1034,17 @@ code {
 </div></div><div class="cell"><div class="prose-block"><p>File system operations</p>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">FilePath</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">CString</span> <span class="symbol">=</span> <span class="type-name">MkCString</span> <span class="type-name">RawPtr</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> nullRawPtr <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">=</span> <span class="type-name">I64ToRawPtr</span> <span class="symbol">$</span> <span class="type-name">IToI64</span> 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fromNullableRawPtr (ptr<span class="symbol">:</span><span class="type-name">RawPtr</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Ptr</span> a) <span class="symbol">=</span>
+  <span class="keyword">if</span> ptr <span class="symbol">==</span> nullRawPtr
+    <span class="keyword">then</span> <span class="type-name">Nothing</span>
+    <span class="keyword">else</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cStringPtr (s<span class="symbol">:</span><span class="type-name">CString</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Ptr</span> <span class="type-name">Char</span>) <span class="symbol">=</span>
+  (<span class="type-name">MkCString</span> ptr) <span class="symbol">=</span> s
+  fromNullableRawPtr ptr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">StreamMode</span> <span class="symbol">=</span>
   <span class="type-name">ReadMode</span>
@@ -1097,6 +1116,29 @@ code {
     <span class="keyword">if</span> i <span class="symbol">&gt;=</span> maxIters
       <span class="keyword">then</span> <span class="type-name">Done</span> fallback
       <span class="keyword">else</span> body i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fromCString (s<span class="symbol">:</span><span class="type-name">CString</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} (<span class="type-name">Maybe</span> <span class="type-name">String</span>) <span class="symbol">=</span>
+  <span class="keyword">case</span> cStringPtr s <span class="keyword">of</span>
+    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+    <span class="type-name">Just</span> ptr <span class="symbol">-&gt;</span>
+      <span class="type-name">Just</span> <span class="symbol">$</span> withDynamicBuffer <span class="symbol">\</span>buf<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
+        c <span class="symbol">=</span> load <span class="symbol">$</span> ptr <span class="symbol">+&gt;&gt;</span> i
+        <span class="keyword">if</span> c <span class="symbol">==</span> &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39;
+          <span class="keyword">then</span> <span class="type-name">Done</span> <span class="symbol">$</span> loadDynBuffer buf
+          <span class="keyword">else</span>
+            pushDynBuffer buf c
+            <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getEnv (name<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Maybe</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  withCString name <span class="symbol">\</span>(<span class="type-name">MkCString</span> ptr)<span class="symbol">.</span>
+    fromCString <span class="symbol">$</span> <span class="type-name">MkCString</span> <span class="symbol">$</span> %ffi getenv <span class="type-name">RawPtr</span> ptr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> checkEnv (name<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Bool</span> <span class="symbol">=</span>
+  <span class="comment">-- This should be just `isJust $ getEnv name` but that sefaults (only if the
+</span>  <span class="comment">-- env var *is* defined), possibly related to bug #348.
+</span>  withCString name <span class="symbol">\</span>(<span class="type-name">MkCString</span> ptr)<span class="symbol">.</span>
+    resultPtr <span class="symbol">=</span> %ffi getenv <span class="type-name">RawPtr</span> ptr
+    not <span class="symbol">$</span> resultPtr <span class="symbol">==</span> nullRawPtr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fread (stream<span class="symbol">:</span><span class="type-name">Stream</span> <span class="type-name">ReadMode</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">String</span> <span class="symbol">=</span>
   (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
@@ -1520,4 +1562,6 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> evalpoly (_<span class="symbol">:</span><span class="type-name">VSpace</span> v) <span class="symbol">?=&gt;</span> (coefficients<span class="command">:n</span><span class="symbol">=&gt;</span>v) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> v <span class="symbol">=</span>
   <span class="comment">-- Evaluate a polynomial at x.  Same as Numpy&#39;s polyval.
 </span>  fold zero <span class="symbol">\</span>i c<span class="symbol">.</span> coefficients<span class="symbol">.</span>i <span class="symbol">+</span> x <span class="symbol">.*</span> c
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dex_test_mode (()<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> unsafeIO <span class="keyword">do</span> checkEnv &quot;<span class="type-name">DEX</span>_<span class="type-name">TEST</span>_<span class="type-name">MODE</span>&quot;
 </div></div></div></body></html>
