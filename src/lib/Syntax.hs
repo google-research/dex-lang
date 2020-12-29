@@ -32,7 +32,7 @@ module Syntax (
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
-    SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
+    SrcCtx, Result (..), Output (..), OutFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
@@ -474,14 +474,13 @@ data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
                   | GetNameType Name
                   | IncludeSourceFile String
-                  | LoadData UPatAnn DataFormat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
                   | UnParseable ReachedEOF String
                     deriving (Show, Generic)
 
-data CmdName = GetType | EvalExpr OutFormat | ExportFun String | Dump DataFormat String
+data CmdName = GetType | EvalExpr OutFormat | ExportFun String
                deriving  (Show, Generic)
 
 data LogLevel = LogNothing | PrintEvalTime | PrintBench String
@@ -608,7 +607,7 @@ monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
 -- === passes ===
 
 data PassName = Parse | TypePass | SynthPass | SimpPass | ImpPass | JitPass
-              | Flops | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval
+              | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval
               | ResultPass | JaxprAndHLO | OptimPass
                 deriving (Ord, Eq, Bounded, Enum)
 
@@ -616,7 +615,7 @@ instance Show PassName where
   show p = case p of
     Parse    -> "parse" ; TypePass -> "typed"   ; SynthPass -> "synth"
     SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass   -> "llvm"
-    Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
+    LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
     LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo"; OptimPass -> "optimized"
 
@@ -638,7 +637,6 @@ data Output = TextOut String
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
-data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
 data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
 instance Exception Err

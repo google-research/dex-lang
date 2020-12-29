@@ -127,40 +127,11 @@ sourceBlock' =
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSource consumeTillBreak)
 
-loadData :: Parser SourceBlock'
-loadData = do
-  symbol "load"
-  fmt <- dataFormat
-  s <- stringLiteral
-  symbol "as"
-  b <- patAnn
-  void eol
-  return $ LoadData b fmt s
-
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       (liftM IncludeSourceFile includeSourceFile)
-  <|> loadData
-  <|> dumpData
   <|> explicitCommand
   <?> "top-level command"
-
-dataFormat :: Parser DataFormat
-dataFormat = do
-  s <- nameString
-  case s of
-    "dxo"  -> return DexObject
-    "dxbo" -> return DexBinaryObject
-    _      -> fail $ show s ++ " not a recognized data format (one of dxo|dxbo)"
-
-dumpData :: Parser SourceBlock'
-dumpData = do
-  symbol "dump"
-  fmt <- dataFormat
-  s <- stringLiteral
-  e <- blockOrExpr
-  void eol
-  return $ Command (Dump fmt s) (exprAsModule e)
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do

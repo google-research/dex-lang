@@ -105,7 +105,6 @@ evalSourceBlockM env block = case sbContents block of
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
-    Dump _ _ -> error "Not implemented"
   GetNameType v -> case envLookup env (v:>()) of
     Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
     _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
