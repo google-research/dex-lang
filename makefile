@@ -123,6 +123,7 @@ prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
 
 update-%: export DEX_ALLOW_CONTRACTIONS=0
+update-%: export DEX_TEST_MODE=t
 
 update-all: $(update-test-targets) $(update-example-targets)
 

@@ -88,14 +88,16 @@ def myLogProb (x:(Fin 2)=>Float) : LogProb =
   x' = x - [1.5, 2.5]
   neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
 
-numSamples = 10000
+numSamples = if dex_test_mode ()
+               then 1000
+               else 10000
 k0 = newKey 1
 
 mhParams = 0.1
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 
 :p meanAndCovariance mhSamples
-> ([1.51656, 2.493105], [[1.037397, 0.011821], [0.011821, 0.053776]])
+> ([0.369159, 2.453517], [[0.575722, 0.08787], [0.08787, 0.125873]])
 
 :html showPlot $ yPlot $
   slice (map head mhSamples) 0 (Fin 1000)
@@ -105,7 +107,7 @@ hmcParams = (10, 0.1)
 hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 
 :p meanAndCovariance hmcSamples
-> ([1.50457, 2.500021], [[0.973867, 0.003423], [0.003423, 0.050586]])
+> ([1.431633, 2.503093], [[0.964188, 0.005688], [0.005688, 0.049492]])
 
 :html showPlot $ yPlot $
   slice (map head hmcSamples) 0 (Fin 1000)
