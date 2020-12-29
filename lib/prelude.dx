@@ -586,6 +586,9 @@ def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum \(i,j). x.i * mat.i.j * y.j
 
+def eye (_:Eq n) ?=> : n=>n=>Float =
+  for i j. select (i == j) 1.0 0.0
+
 '## Pseudorandom number generator utilities
 
 -- TODO: newtype
@@ -1082,7 +1085,7 @@ def getEnv (name:String) : {State World} Maybe String =
     fromCString $ MkCString $ %ffi getenv RawPtr ptr
 
 def checkEnv (name:String) : {State World} Bool =
-  -- This should be just `isJust $ getEnv name` but that sefaults (only if the
+  -- This should be just `isJust $ getEnv name` but that segfaults (only if the
   -- env var *is* defined), possibly related to bug #348.
   withCString name \(MkCString ptr).
     resultPtr = %ffi getenv RawPtr ptr

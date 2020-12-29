@@ -1,3 +1,6 @@
+'# THIS FILE IS STALE
+
+'(But we plan to update it at some point)
 
 load dxbo "scratch/mnist.dxbo" as mnist
 
