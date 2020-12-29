@@ -170,32 +170,30 @@ data RayMarchResult =
   HitNothing
 
 def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
-  max_iters = 100
+  maxIters = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
   (rayOrigin, rayDir) = ray
-  iter (10.0 * tol) \i rayLength.
-    case i >= max_iters of
-      True -> Done HitNothing
-      False ->
-        rayPos = rayOrigin + rayLength .* rayDir
-        (obj, d) = sdScene scene $ rayPos
-        -- 0.9 ensures we come close to the surface but don't touch it
-        dNew = rayLength + 0.9 * d
-        case d < tol of
-          False -> Continue $ dNew
-          True ->
-            surfNorm = calcNormal obj rayPos
-            case positiveProjection rayDir surfNorm of
-              True ->
-                -- Oops, we didn't escape the surface we're leaving..
-                -- (Is there a more standard way to do this?)
-                Continue dNew
-              False ->
-                -- We made it!
-                Done $ case obj of
-                  PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
-                  Light _ _ radiance   -> HitLight radiance
+  fst $ withState (10.0 * tol) \rayLength.
+    boundedIter maxIters HitNothing \_.
+      rayPos = rayOrigin + get rayLength .* rayDir
+      (obj, d) = sdScene scene $ rayPos
+      -- 0.9 ensures we come close to the surface but don't touch it
+      rayLength := get rayLength + 0.9 * d
+      case d < tol of
+        False -> Continue
+        True ->
+          surfNorm = calcNormal obj rayPos
+          case positiveProjection rayDir surfNorm of
+            True ->
+              -- Oops, we didn't escape the surface we're leaving..
+              -- (Is there a more standard way to do this?)
+              Continue
+            False ->
+              -- We made it!
+              Done $ case obj of
+                PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
+                Light _ _ radiance   -> HitLight radiance
 
 def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
   case raymarch scene ray of
@@ -220,42 +218,38 @@ def sampleLightRadiance
       Light lightPos hw _ ->
         (dirToLight, distToLight) = directionAndLength $
                                       lightPos + sampleSquare hw k - rayPos
-        case positiveProjection dirToLight surfNor of
-          False -> () -- light on the far side of current surface
-          True ->
-            fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
-            outRay = (rayPos, dirToLight)
-            coeff = fracSolidAngle * probReflection osurf inRay outRay
-            radiance += coeff .* rayDirectRadiance scene outRay
+        when (positiveProjection dirToLight surfNor) \().
+          -- light on this far side of current surface
+          fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
+          outRay = (rayPos, dirToLight)
+          coeff = fracSolidAngle * probReflection osurf inRay outRay
+          radiance += coeff .* rayDirectRadiance scene outRay
 
-def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
-  -- TODO: we ought to be able to use an accumulator here, but there's a bug
+def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
-  iter (noFilter, zero, init_ray) $
-    \i (filter, radiance, ray).
-      case i >= getAt #maxBounces params of
-        True -> Done radiance
-        False -> case raymarch scene ray of
-          HitNothing -> Done radiance
-          HitLight intensity -> case i == 0 of
-            True  -> Done intensity  -- TODO: scale etc
-            False -> Done radiance
+  snd $ withAccum \radiance.
+    withState  noFilter \filter.
+     withState initRay  \ray.
+      boundedIter (getAt #maxBounces params) () \i.
+        case raymarch scene $ get ray of
+          HitNothing -> Done ()
+          HitLight intensity ->
+            when (i == 0) \(). radiance += intensity   -- TODO: scale etc
+            Done ()
           HitObj incidentRay osurf ->
             [k1, k2] = splitKey $ hash k i
-            lightRadiance    = sampleLightRadiance scene osurf incidentRay k1
-            outRayHemisphere = sampleReflection          osurf incidentRay k2
-            newFilter = surfaceFilter filter (snd osurf)
-            newRadiance = radiance + applyFilter newFilter lightRadiance
-            Continue (newFilter, newRadiance, outRayHemisphere)
+            lightRadiance = sampleLightRadiance scene osurf incidentRay k1
+            ray    := sampleReflection osurf incidentRay k2
+            filter := surfaceFilter (get filter) (snd osurf)
+            radiance += applyFilter (get filter) lightRadiance
+            Continue
 
--- TODO: add number of pixels once we can hide sizes
--- sensor half-width, pinhole-sensor distance, pinhole position
--- (Assumes we're looking towards -z.)
+-- Assumes we're looking towards -z.
 Camera =
   { numPix     : Int
-  & pos        : Position
-  & halfWidth  : Float
-  & sensorDist : Float }
+  & pos        : Position  -- pinhole position
+  & halfWidth  : Float     -- sensor half-width
+  & sensorDist : Float }   -- pinhole-sensor distance
 
 -- TODO: might be better with an anonymous dependent pair for the result
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =

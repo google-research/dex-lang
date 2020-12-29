@@ -249,6 +249,9 @@ def withState
 def unsafeIO (f: Unit -> {State World|eff} a) : {|eff} a =
   %runIO f
 
+def unreachable (():Unit) : a = unsafeIO \().
+  %throwError a
+
 'Type classes
 
 data Eq  a:Type = MkEq  (a -> a -> Bool)
@@ -1014,17 +1017,50 @@ def while
   cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
   %while cond' body
 
+data IterResult a:Type =
+  Continue
+  Done a
+
+def when (cond:Bool) (f:Unit -> {|eff} Unit) : {|eff} Unit =
+  if cond
+    then f ()
+    else ()
+
+-- TODO: can we improve effect inference so we don't need this?
+def liftState (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
+  f x
+
+-- A little iteration combinator
+def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
+  result = snd $ withState Nothing \resultRef. withState 0 \i.
+    while (\(). isNothing $ get resultRef) \().
+      case liftState resultRef (liftState i body) (get i) of
+        Continue -> i := get i + 1
+        Done result -> resultRef := Just result
+  case result of
+    Just ans -> ans
+    Nothing -> unreachable ()
+
+def boundedIter (maxIters:Int) (fallback:a)
+  (body: Int -> {|eff} IterResult a) : {|eff} a  =
+  iter \i.
+    if i >= maxIters
+      then Done fallback
+      else body i
+
 def fread (stream:Stream ReadMode) : {State World} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
   n = 4096
   withAlloc n \ptr:(Ptr Char).
     withDynamicBuffer \buf.
-      while (\().
+      iter \_.
         (MkPtr rawPtr) = ptr
         numRead = I64ToI $ %ffi fread Int64 rawPtr (IToI64 1) (IToI64 n) stream'
         extendDynBuffer buf $ stringFromCharPtr numRead ptr
-        numRead == n) (\(). ())
+        if numRead == n
+          then Continue
+          else Done ()
       loadDynBuffer buf
 
 def deleteFile (f:FilePath) : {State World} Unit =
@@ -1134,45 +1170,22 @@ instance finArb : n:Int ?-> Arbitrary (Fin n) where
 
 'Control flow
 
-data IterResult a:Type b:Type =
-  Continue a
-  Done b
-
--- A little iteration combinator
--- TODO: allow effects (bug #267)
-def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
-  result = snd $ withState Nothing \resultRef.
-    withState init \carryRef.
-      withState 0 \i.
-        while (\(). isNothing (get resultRef)) \().
-          case body (get i) (get carryRef) of
-            Continue carry ->
-              i := get i + 1
-              carryRef := carry
-            Done result ->
-              resultRef := Just result
-  case result of
-    Just ans -> ans
-    Nothing -> error "should be unreachable"
-
 -- returns the highest index `i` such that `xs.i <= x`
 def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
-  case size n == 0 of
-    True -> Nothing
-    False -> case x < xs.(fromOrdinal _ 0) of
-      True -> Nothing
-      False ->
-        iter (0, size n) \_ (low, high).
-          numLeft = high - low
-          case numLeft == 1 of
-            True -> Done $ Just $ fromOrdinal _ low
-            False ->
-              centerIx = low + idiv (high - low) 2
-              case x < xs.(fromOrdinal _ centerIx) of
-                True  -> Continue (low, centerIx)
-                False -> Continue (centerIx, high)
-
-
+  if size n == 0
+    then Nothing
+    else if x < xs.(fromOrdinal _ 0)
+      then Nothing
+      else fst $ withState 0 \low. fst $ withState (size n) \high. iter \_.
+        numLeft = get high - get low
+        if numLeft == 1
+          then Done $ Just $ fromOrdinal _ $ get low
+          else
+            centerIx = get low + idiv numLeft 2
+            if x < xs.(fromOrdinal _ centerIx)
+              then high := centerIx
+              else low  := centerIx
+            Continue
 
 'min / max etc
 
