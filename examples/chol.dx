@@ -1,77 +1,65 @@
 ' # Cholesky Factorization
 https://en.wikipedia.org/wiki/Cholesky_decomposition
 
-' ### Matrix Math
-
-eye : n=>n=>Float
-eye = for i j. select (i == j) 1.0 0.0
-
-mmadd: (n=>m=>Float)->(n=>m=>Float)->(n=>m=>Float)
-mmadd x y = for i j. x.i.j + y.i.j
-
 ' ## Cholesky Algorithm
 
-chol : (n=>n=>Float) -> (n=>n=>Float)
-chol x = getState (for _ _. 0.0) \buf.
-  for i.
-    for j':(...i).
+def chol (_:Eq n) ?=> (x:n=>n=>Float) : (n=>n=>Float) =
+  snd $ withState zero \buf.
+    for_ i. for j':(..i).
       j = %inject(j')
-      row  = for k:(..<j). getAt2 buf i %inject(k)
-      row' = for k:(..<j). getAt2 buf j %inject(k)
+      row  = for k:(..<j). get buf!i!(%inject k)
+      row' = for k:(..<j). get buf!j!(%inject k)
       a = x.i.j - vdot row row'
-      b = getAt2 buf j j
-      putAt2 buf i j $ select (i==j) (sqrt a) (a / b)
-    ()
+      if i==j
+        then
+          buf!i!j := sqrt a
+        else
+          b = get buf!j!j
+          buf!i!j := a / b
 
 ' ## PSD solver based on Cholesky decomposition
 
-trisolveL : n=>n=>Float -> n=>Float -> n=>Float
-trisolveL mat b = getState (for _. 0.0) \buf.
-  for i.
-    row   = for j:(..<i). mat.i.%inject(j)
-    xPrev = for j:(..<i). getAt buf %inject(j)
-    putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
+def trisolveL (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+  snd $ withState zero \buf. for i.
+    row   = for j:(..<i). mat.i.(%inject j)
+    xPrev = for j:(..<i). get (buf!%inject j)
+    buf!i := (b.i - vdot row xPrev) / mat.i.i
 
-trisolveU : n=>n=>Float -> n=>Float -> n=>Float
-trisolveU mat b = getState (for _. 0.0) \buf.
-  rof i.
-    row   = for j:(i...). mat.i.%inject(j)
-    xPrev = for j:(i...). getAt buf %inject(j)
-    putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
+def trisolveU (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+  snd $ withState zero \buf. rof i.
+    row   = for j:(i..). mat.i.%inject(j)
+    xPrev = for j:(i..). get (buf!%inject j)
+    buf!i := (b.i - vdot row xPrev) / mat.i.i
 
-psdsolve : n=>n=>Float -> n=>Float -> n=>Float
-psdsolve mat b =
+def psdsolve (_:Eq n) ?=> (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
   l = chol mat
   trisolveU (transpose l) $  trisolveL l b
 
 ' Test
 
-type N = 4
-(k1, k2) = splitKey $ newKey 0
+N = Fin 4
+[k1, k2] = splitKey $ newKey 0
 
-psd : N=>N=>Float
-psd =
+psd : N=>N=>Float =
   a = for i:N j:N. randn $ ixkey2 k1 i j
-  x = mmp a (transpose a)
-  mmadd x eye
+  x = a ** transpose a
+  x + eye
 
-l : N=>N=>Float
-l = chol psd
+l : N=>N=>Float = chol psd
 
 :p l
-> [ [2.021765, 0.0, 0.0, 0.0]
-> , [-1.7950183, 1.9901744, 0.0, 0.0]
-> , [-0.89788574, 0.18675673, 1.9802661, 0.0]
-> , [1.4457518, -0.29644823, 0.72458607, 2.2308075] ]
+> [ [2.021765, 0., 0., 0.]
+> , [-1.795019, 1.990174, 0., 0.]
+> , [-0.897886, 0.186757, 1.980266, 0.]
+> , [1.445752, -0.296448, 0.724586, 2.230807] ]
 
-psdReconstructed = l `mmp` transpose l
+psdReconstructed = l ** transpose l
 
 :p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
-> 2.4651903e-32
+> 0.
 
-vec : N=>Float
-vec = for i. randn $ ixkey k2 i
+vec : N=>Float = arb k2
 
-:p (vec, mvp psd (psdsolve psd vec))
-> ( [1.2112769, 0.23284969, -0.74191034, 0.8833507]
-> , [1.2112769, 0.23284969, -0.74191034, 0.8833507] )
+:p (vec, psd **. psdsolve psd vec)
+> ( [1.211277, 0.23285, -0.741911, 0.883351]
+> , [1.211277, 0.23285, -0.741911, 0.883351] )

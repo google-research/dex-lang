@@ -79,11 +79,11 @@ build-python: build
 
 # --- running tests ---
 
-# TODO: re-enable linear-tests ad-tests include-test chol
 example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms ode-integrator linear_algebra fluidsim
+                isomorphisms ode-integrator linear_algebra fluidsim \
+                sgd chol
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests \

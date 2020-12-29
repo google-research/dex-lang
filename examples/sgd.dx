@@ -31,5 +31,7 @@ stepsize = 0.01
 decay = 0.9
 num_iters = 1000
 :p sgd stepsize decay num_iters gradfunc x_init
+> [1.1, 1.1, 1.1, 1.1]
 
 :p optimum
+> [1.1, 1.1, 1.1, 1.1]
