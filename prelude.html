@@ -1,8 +1,7 @@
 <!DOCTYPE HTML>
-<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>Dex prelude</h2>
+<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Dex prelude</h1>
 </div></div><div class="cell"><div class="prose-block"><p>Runs before every Dex program unless an alternative is provided with <code>--prelude</code>.</p>
-</div></div><div class="cell"><div class="prose-block"><p>Wrappers around primitives</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Wrappers around primitives</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Unit</span> <span class="symbol">=</span> %<span class="type-name">UnitType</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">TyKind</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Effects</span> <span class="symbol">=</span> %<span class="type-name">EffKind</span>
@@ -135,7 +134,7 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> float32Fractional <span class="symbol">:</span> <span class="type-name">Fractional</span> <span class="type-name">Float32</span> <span class="keyword">where</span>
   divide <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Float32</span> y<span class="symbol">:</span><span class="type-name">Float32</span><span class="symbol">.</span> %fdiv x y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Basic polymorphic functions and types</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Basic polymorphic functions and types</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&amp;</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">PairType</span> a b
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">,</span>) (x<span class="command">:a</span>) (y<span class="command">:b</span>) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> b) <span class="symbol">=</span> %pair x y
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fst ((x<span class="symbol">,</span> _)<span class="symbol">:</span> (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> a <span class="symbol">=</span> x
@@ -149,7 +148,7 @@
 </div></div><div class="cell"><div class="code-block">uncurry <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> b <span class="symbol">-&gt;</span> c) <span class="symbol">-&gt;</span> (a <span class="symbol">&amp;</span> b) <span class="symbol">-&gt;</span> c <span class="symbol">=</span> <span class="symbol">\</span>f (x<span class="symbol">,</span>y)<span class="symbol">.</span> f x y
 </div></div><div class="cell"><div class="code-block">const <span class="symbol">:</span> a <span class="symbol">-&gt;</span> b <span class="symbol">-&gt;</span> a <span class="symbol">=</span> <span class="symbol">\</span>x _<span class="symbol">.</span> x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Vector spaces</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Vector spaces</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">VSpace</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkVSpace</span> (<span class="type-name">Add</span> a) (<span class="type-name">Float</span> <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>superclass
@@ -164,7 +163,7 @@
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> tabVS  <span class="symbol">:</span> <span class="type-name">VSpace</span> a <span class="symbol">?=&gt;</span> <span class="type-name">VSpace</span> (n<span class="symbol">=&gt;</span>a) <span class="symbol">=</span> <span class="type-name">MkVSpace</span> tabAdd <span class="symbol">\</span>s xs<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span><span class="keyword">instance</span> unitVS <span class="symbol">:</span> <span class="type-name">VSpace</span> <span class="type-name">Unit</span> <span class="symbol">=</span> <span class="type-name">MkVSpace</span> unitAdd <span class="symbol">\</span>s u<span class="symbol">.</span> ()
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Bool type</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Boolean type</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
   <span class="type-name">False</span>
   <span class="type-name">True</span>
@@ -187,7 +186,7 @@
   x&#39; <span class="symbol">=</span> <span class="type-name">BToW8</span> x
   <span class="type-name">W8ToB</span> <span class="symbol">$</span> %not x&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Sum types</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Sum types</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Maybe</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
   <span class="type-name">Nothing</span>
   <span class="type-name">Just</span> a
@@ -205,12 +204,9 @@
   <span class="type-name">False</span> <span class="symbol">-&gt;</span> y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">BToI</span> (x<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Int</span>  <span class="symbol">=</span> <span class="type-name">W8ToI</span> <span class="symbol">$</span> <span class="type-name">BToW8</span> x
-</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">BToF</span> (x<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">IToF</span> (<span class="type-name">BToI</span> x)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> todo (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> a <span class="symbol">=</span> %throwError a
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> throw (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> a <span class="symbol">=</span> %throwError a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Effects</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Effects</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get  (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s)       <span class="symbol">:</span> {<span class="type-name">State</span> h} s    <span class="symbol">=</span> %get  ref
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">:=</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s) (x<span class="command">:s</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span> %put  ref x
@@ -242,7 +238,23 @@
     <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; s) <span class="symbol">:</span> {<span class="type-name">State</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
     %runState init explicitAction
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Type classes</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafeIO (f<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span><span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
+  %runIO f
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unreachable (()<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafeIO do
+</div><div class="err-block">Error: variable not in scope: do
+
+def unreachable (():Unit) : a = unsafeIO do
+                                         ^^
+</div></div><div class="cell"><div class="code-block">  %throwError a
+
+</div><div class="err-block">Parse error:252:3:
+    |
+252 |   %throwError a
+    |   ^^
+unexpected &quot;%t&quot;
+expecting end of line
+</div></div><div class="cell"><div class="prose-block"><h2>Type classes</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Eq</span>  a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkEq</span>  (a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Ord</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkOrd</span> (<span class="type-name">Eq</span> a) (a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>) (a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>)  <span class="comment">-- eq, gt, lt
 </span></div></div><div class="cell"><div class="code-block">
@@ -297,7 +309,7 @@
         ref <span class="symbol">+=</span> (<span class="type-name">IToF</span> (<span class="type-name">BToI</span> (xs<span class="symbol">.</span>i <span class="symbol">/=</span> ys<span class="symbol">.</span>i)))
     numDifferent <span class="symbol">==</span> 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Transcencendental functions</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Transcencendental functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Floating</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="keyword">where</span>
   exp    <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a
   exp2   <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a
@@ -372,20 +384,12 @@
   pow    <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Float32</span> y<span class="symbol">:</span><span class="type-name">Float32</span><span class="symbol">.</span> %fpow x y
   lgamma <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Float32</span><span class="symbol">.</span> %lgamma x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Working with index sets</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Index set utilities</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Range</span> (low<span class="symbol">:</span><span class="type-name">Int</span>) (high<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">IntRange</span> low high
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Fin</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Range</span> 0 n
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ordinal (i<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %toOrdinal i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> size (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %idxSetSize n
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafeFromOrdinal (n <span class="symbol">:</span> <span class="type-name">Type</span>) (i <span class="symbol">:</span> <span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span> %unsafeFromOrdinal n i
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fromOrdinal (n<span class="symbol">:</span><span class="type-name">Type</span>) (i<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
-  <span class="keyword">case</span> (0 <span class="symbol">&lt;=</span> i) <span class="symbol">&amp;&amp;</span> (i <span class="symbol">&lt;</span> size n) <span class="keyword">of</span>
-    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> unsafeFromOrdinal _ i
-    <span class="type-name">False</span> <span class="symbol">-&gt;</span> throw
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> asidx (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (i<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span> fromOrdinal n i
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">@</span>) (i<span class="symbol">:</span><span class="type-name">Int</span>) (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> n <span class="symbol">=</span> fromOrdinal n i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iota (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ordinal i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: we want Eq and Ord for all index sets, not just `Fin n`
@@ -396,7 +400,123 @@
 <span class="keyword">def</span> finOrd (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> <span class="type-name">Ord</span> (<span class="type-name">Fin</span> n) <span class="symbol">=</span>
   <span class="type-name">MkOrd</span> finEq (<span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&gt;</span> ordinal y) (<span class="symbol">\</span>x y<span class="symbol">.</span> ordinal x <span class="symbol">&lt;</span> ordinal y)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Misc</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Raw pointer operations</h2>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">RawPtr</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Word8Ptr</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Ptr</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkPtr</span> <span class="type-name">RawPtr</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Is there a better way to select the right instance for `storageSize`??
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">TypeVehicle</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkTypeVehicle</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> typeVehicle (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">TypeVehicle</span> a <span class="symbol">=</span> <span class="type-name">MkTypeVehicle</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Storable</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="keyword">where</span>
+  store <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span>
+  load  <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span>      {<span class="type-name">State</span> <span class="type-name">World</span>} a
+  storageSize <span class="symbol">:</span> <span class="type-name">TypeVehicle</span> a <span class="symbol">-&gt;</span> <span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: we can&#39;t inline these into the instance definitions until we change
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- type inference to push types down into record constructors or allow `def` in
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- instance definitions.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> word8Store ((<span class="type-name">MkPtr</span> ptr)<span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Word8</span>) (x<span class="symbol">:</span><span class="type-name">Word8</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span>  <span class="symbol">=</span> %ptrStore ptr x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> word8Load  ((<span class="type-name">MkPtr</span> ptr)<span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Word8</span>)           <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Word8</span> <span class="symbol">=</span> %ptrLoad  ptr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> word8Storable <span class="symbol">:</span> <span class="type-name">Storable</span> <span class="type-name">Word8</span> <span class="keyword">where</span>
+  store <span class="symbol">=</span> word8Store
+  load  <span class="symbol">=</span> word8Load
+  storageSize <span class="symbol">=</span> const 1
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: there&#39;s a bug preventing us inlining these definitions into the instance
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> int32Store ((<span class="type-name">MkPtr</span> ptr)<span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Int32</span>) (x<span class="symbol">:</span><span class="type-name">Int32</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span>  <span class="symbol">=</span>
+  %ptrStore (internalCast %<span class="type-name">Int32Ptr</span> ptr) x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> int32Load  ((<span class="type-name">MkPtr</span> ptr)<span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Int32</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Int32</span> <span class="symbol">=</span>
+  %ptrLoad (internalCast %<span class="type-name">Int32Ptr</span> ptr)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> int32Storable <span class="symbol">:</span> <span class="type-name">Storable</span> <span class="type-name">Int32</span> <span class="keyword">where</span>
+  store <span class="symbol">=</span> int32Store
+  load  <span class="symbol">=</span> int32Load
+  storageSize <span class="symbol">=</span> const 4
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unpackPairPtr (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Storable</span> b) <span class="symbol">?=&gt;</span>
+      (pairPtr<span class="symbol">:</span> <span class="type-name">Ptr</span> (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> (<span class="type-name">Ptr</span> a <span class="symbol">&amp;</span> <span class="type-name">Ptr</span> b) <span class="symbol">=</span>
+  (<span class="type-name">MkPtr</span> rawPtrX) <span class="symbol">=</span> pairPtr
+  rawPtrY <span class="symbol">=</span> %ptrOffset rawPtrX (storageSize (typeVehicle a))
+  (<span class="type-name">MkPtr</span> rawPtrX<span class="symbol">,</span> <span class="type-name">MkPtr</span> rawPtrY)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pairStore (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Storable</span> b) <span class="symbol">?=&gt;</span>
+      (pairPtr<span class="symbol">:</span><span class="type-name">Ptr</span> (a <span class="symbol">&amp;</span> b)) ((x<span class="symbol">,</span> y)<span class="symbol">:</span>(a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span>  <span class="symbol">=</span>
+  (xPtr<span class="symbol">,</span> yPtr) <span class="symbol">=</span> unpackPairPtr pairPtr
+  store xPtr x
+  store yPtr y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pairLoad (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Storable</span> b) <span class="symbol">?=&gt;</span>
+      (pairPtr<span class="symbol">:</span><span class="type-name">Ptr</span> (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} (a <span class="symbol">&amp;</span> b) <span class="symbol">=</span>
+  (xPtr<span class="symbol">,</span> yPtr) <span class="symbol">=</span> unpackPairPtr pairPtr
+  (load xPtr<span class="symbol">,</span> load yPtr)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pairStorageSize (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Storable</span> b) <span class="symbol">?=&gt;</span>
+    (_<span class="symbol">:</span><span class="type-name">TypeVehicle</span> (a <span class="symbol">&amp;</span> b)) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
+  storageSize (typeVehicle a) <span class="symbol">+</span> storageSize (typeVehicle b)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> pairStorable <span class="symbol">:</span> <span class="type-name">Storable</span> a <span class="symbol">?=&gt;</span> <span class="type-name">Storable</span> b <span class="symbol">?=&gt;</span> <span class="type-name">Storable</span> (a <span class="symbol">&amp;</span> b) <span class="keyword">where</span>
+  store <span class="symbol">=</span> pairStore
+  load  <span class="symbol">=</span> pairLoad
+  storageSize <span class="symbol">=</span> pairStorageSize
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ptrPtrStore ((<span class="type-name">MkPtr</span> ptr)<span class="symbol">:</span> <span class="type-name">Ptr</span> (<span class="type-name">Ptr</span> a)) (x<span class="symbol">:</span>(<span class="type-name">Ptr</span> a)) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span>  <span class="symbol">=</span>
+  (<span class="type-name">MkPtr</span> x&#39;) <span class="symbol">=</span> x
+  %ptrStore (internalCast %<span class="type-name">PtrPtr</span> ptr) x&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ptrPtrLoad  ((<span class="type-name">MkPtr</span> ptr)<span class="symbol">:</span> <span class="type-name">Ptr</span> (<span class="type-name">Ptr</span> a)) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} (<span class="type-name">Ptr</span> a) <span class="symbol">=</span>
+  <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrLoad (internalCast %<span class="type-name">PtrPtr</span> ptr)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> ptrStorable <span class="symbol">:</span> <span class="type-name">Storable</span> (<span class="type-name">Ptr</span> a) <span class="keyword">where</span>
+  store <span class="symbol">=</span> ptrPtrStore
+  load  <span class="symbol">=</span> ptrPtrLoad
+  storageSize <span class="symbol">=</span> const 8  <span class="comment">-- TODO: something more portable?
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Storable instances for other types
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> malloc (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} (<span class="type-name">Ptr</span> a) <span class="symbol">=</span>
+  numBytes <span class="symbol">=</span> storageSize (typeVehicle a) <span class="symbol">*</span> n
+  <span class="type-name">MkPtr</span> <span class="symbol">$</span> %alloc numBytes
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> free (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (<span class="type-name">MkPtr</span> ptr&#39;) <span class="symbol">=</span> ptr
+  %free ptr&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+&gt;&gt;</span>) (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> a) (i<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">=</span>
+  (<span class="type-name">MkPtr</span> ptr&#39;) <span class="symbol">=</span> ptr
+  i&#39; <span class="symbol">=</span> i <span class="symbol">*</span> storageSize (typeVehicle a)
+  <span class="type-name">MkPtr</span> <span class="symbol">$</span> %ptrOffset ptr&#39; i&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: generalize these brackets to allow other effects
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: consider making a Storable instance for tables instead
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> storeTab (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (ptr<span class="symbol">:</span> <span class="type-name">Ptr</span> a) (tab<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  <span class="keyword">for</span>_ i<span class="symbol">.</span> store (ptr <span class="symbol">+&gt;&gt;</span> ordinal i) tab<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> memcpy (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (dest<span class="symbol">:</span><span class="type-name">Ptr</span> a) (src<span class="symbol">:</span><span class="type-name">Ptr</span> a) (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  <span class="keyword">for</span>_ i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
+    i&#39; <span class="symbol">=</span> ordinal i
+    store (dest <span class="symbol">+&gt;&gt;</span> i&#39;) (load <span class="symbol">$</span> src <span class="symbol">+&gt;&gt;</span> i&#39;)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withAlloc (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+      (n<span class="symbol">:</span><span class="type-name">Int</span>) (action<span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} b) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} b <span class="symbol">=</span>
+  ptr <span class="symbol">=</span> malloc n
+  result <span class="symbol">=</span> action ptr
+  free ptr
+  result
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withTabPtr (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+      (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (action <span class="symbol">:</span> <span class="type-name">Ptr</span> a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} b) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} b <span class="symbol">=</span>
+  withAlloc (size n) <span class="symbol">\</span>ptr<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> store (ptr <span class="symbol">+&gt;&gt;</span> ordinal i) xs<span class="symbol">.</span>i
+    action ptr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tabFromPtr (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">-&gt;</span> (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> load <span class="symbol">$</span> ptr <span class="symbol">+&gt;&gt;</span> ordinal i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Miscellaneous common utilities</h2>
 </div></div><div class="cell"><div class="code-block">pi <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 3<span class="symbol">.</span>141592653589793
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> id (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> x
@@ -408,9 +528,6 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sq (d<span class="symbol">:</span><span class="type-name">Mul</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> x <span class="symbol">*</span> x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> abs (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Ord</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select (x <span class="symbol">&gt;</span> zero) x (zero <span class="symbol">-</span> x)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mod (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> rem (y <span class="symbol">+</span> rem x y) y
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> slice (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Int</span>) (m<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(fromOrdinal _ (ordinal i <span class="symbol">+</span> start))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reindex (ixr<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>v <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> tab<span class="symbol">.</span>(ixr i)
 </div></div><div class="cell"><div class="code-block">
@@ -439,7 +556,6 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> any (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> reduce <span class="type-name">False</span> (<span class="symbol">||</span>) xs
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> all (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> reduce <span class="type-name">True</span>  (<span class="symbol">&amp;&amp;</span>) xs
 </div></div><div class="cell"><div class="code-block">
-
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> applyN (n<span class="symbol">:</span><span class="type-name">Int</span>) (x<span class="command">:a</span>) (f<span class="command">:a</span> <span class="symbol">-&gt;</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
   snd <span class="symbol">$</span> withState x <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> _<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
     ref <span class="symbol">:=</span> f (get ref)
@@ -463,74 +579,73 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inner (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (mat<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   fsum <span class="symbol">\</span>(i<span class="symbol">,</span>j)<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Functions for working with the pseudorandom number generator</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Pseudorandom number generator utilities</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: newtype
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Key</span> <span class="symbol">=</span> <span class="type-name">Int64</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> hash (x<span class="symbol">:</span><span class="type-name">Key</span>) (y<span class="symbol">:</span><span class="type-name">Int32</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span>
-  y64 <span class="symbol">=</span> <span class="type-name">IToI64</span> y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> hash (x<span class="symbol">:</span><span class="type-name">Key</span>) (y<span class="symbol">:</span><span class="type-name">Int32</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> unsafeIO do
+</div><div class="err-block">Error: variable not in scope: do
+
+def hash (x:Key) (y:Int32) : Key = unsafeIO do
+                                            ^^
+</div></div><div class="cell"><div class="code-block">  y64 <span class="symbol">=</span> <span class="type-name">IToI64</span> y
   %ffi threefry2x32 <span class="type-name">Int64</span> x y64
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> newKey (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash (<span class="type-name">IToI64</span> 0) x
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> splitKey (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> (<span class="type-name">Key</span> <span class="symbol">&amp;</span> <span class="type-name">Key</span>) <span class="symbol">=</span> (hash k 0<span class="symbol">,</span> hash k 1)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> splitKey3 (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> (<span class="type-name">Key</span> <span class="symbol">&amp;</span> <span class="type-name">Key</span> <span class="symbol">&amp;</span> <span class="type-name">Key</span>) <span class="symbol">=</span>
-  (k1<span class="symbol">,</span> k&#39;) <span class="symbol">=</span> splitKey k
-  (k2<span class="symbol">,</span> k3) <span class="symbol">=</span> splitKey k&#39;
-  (k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> many (f<span class="symbol">:</span><span class="type-name">Key</span><span class="symbol">-&gt;</span>a) (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) <span class="symbol">:</span> a <span class="symbol">=</span> f (hash k (ordinal i))
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixkey (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash k (ordinal i)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixkey2 (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) (j<span class="command">:m</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash (hash k (ordinal i)) (ordinal j)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rand (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">F64ToF</span> <span class="symbol">$</span> %ffi randunif <span class="type-name">Float64</span> k
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randVec (n<span class="symbol">:</span><span class="type-name">Int</span>) (f<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (k<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
+<span class="keyword">def</span> newKey (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash (<span class="type-name">IToI64</span> 0) x
+<span class="keyword">def</span> many (f<span class="symbol">:</span><span class="type-name">Key</span><span class="symbol">-&gt;</span>a) (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) <span class="symbol">:</span> a <span class="symbol">=</span> f (hash k (ordinal i))
+<span class="keyword">def</span> ixkey (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash k (ordinal i)
+<span class="keyword">def</span> ixkey2 (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) (j<span class="command">:m</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash (hash k (ordinal i)) (ordinal j)
+<span class="keyword">def</span> splitKey (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">?-&gt;</span> (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Key</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ixkey k i
+<span class="keyword">def</span> rand (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>  unsafeIO do <span class="type-name">F64ToF</span> <span class="symbol">$</span> %ffi randunif <span class="type-name">Float64</span> k
+<span class="keyword">def</span> randVec (n<span class="symbol">:</span><span class="type-name">Int</span>) (f<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (k<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span> f (ixkey k i)
-</div></div><div class="cell"><div class="code-block">
+
+</div><div class="err-block">Parse error:590:3:
+    |
+590 |   y64 = IToI64 y
+    |   ^^
+unexpected &quot;y6&quot;
+expecting end of line
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randMat (n<span class="symbol">:</span><span class="type-name">Int</span>) (m<span class="symbol">:</span><span class="type-name">Int</span>) (f<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (k<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> m <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
   <span class="keyword">for</span> i j<span class="symbol">.</span> f (ixkey2 k i j)
+</div><div class="err-block">Error: variable not in scope: ixkey2
+
+  for i j. f (ixkey2 k i j)
+              ^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randn (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  (k1<span class="symbol">,</span> k2) <span class="symbol">=</span> splitKey k
+  [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey k
   u1 <span class="symbol">=</span> rand k1
   u2 <span class="symbol">=</span> rand k2
   sqrt ((<span class="symbol">-</span>2<span class="symbol">.</span>0) <span class="symbol">*</span> log u1) <span class="symbol">*</span> cos (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> u2)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randIdx (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
-  unif <span class="symbol">=</span> rand k
-  fromOrdinal n <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor <span class="symbol">$</span> unif <span class="symbol">*</span> <span class="type-name">IToF</span> (size n)
+</div><div class="err-block">Error: variable not in scope: splitKey
+
+  [k1, k2] = splitKey k
+             ^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Make this better...
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randInt (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> (<span class="type-name">I64ToI</span> k) `mod` 2147483647
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bern (p<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> rand k <span class="symbol">&lt;</span> p
+</div><div class="err-block">Error: variable not in scope: rand
+
+def bern (p:Float) (k:Key) : Bool = rand k &lt; p
+                                    ^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randnVec (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> randn (ixkey k i)
+</div><div class="err-block">Error: variable not in scope: randn
+
+  for i. randn (ixkey k i)
+         ^^^^^^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>min / max etc</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select (f x <span class="symbol">&lt;</span> f y) x y
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maxBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select (f x <span class="symbol">&gt;</span> f y) x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cumSum (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  fst <span class="symbol">$</span> withState 0<span class="symbol">.</span>0 <span class="symbol">\</span>total<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span>
+      newTotal <span class="symbol">=</span> get total <span class="symbol">+</span> xs<span class="symbol">.</span>i
+      total <span class="symbol">:=</span> newTotal
+      newTotal
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> min (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (x1<span class="symbol">:</span> o) <span class="symbol">-&gt;</span> (x2<span class="symbol">:</span> o) <span class="symbol">:</span> o <span class="symbol">=</span> minBy id x1 x2
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> max (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (x1<span class="symbol">:</span> o) <span class="symbol">-&gt;</span> (x2<span class="symbol">:</span> o) <span class="symbol">:</span> o <span class="symbol">=</span> maxBy id x1 x2
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimumBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
-  reduce xs<span class="symbol">.</span>(0<span class="symbol">@</span>_) (minBy f) xs
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximumBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
-  reduce xs<span class="symbol">.</span>(0<span class="symbol">@</span>_) (maxBy f) xs
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> minimumBy id xs
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximum (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> maximumBy id xs
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmin (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span>
-  zeroth <span class="symbol">=</span> (0<span class="symbol">@</span>_<span class="symbol">,</span> xs<span class="symbol">.</span>(0<span class="symbol">@</span>_))
-  compare <span class="symbol">=</span> <span class="symbol">\</span>(idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)<span class="symbol">.</span>
-    select (x1 <span class="symbol">&lt;</span> x2) (idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)
-  zipped <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (i<span class="symbol">,</span> xs<span class="symbol">.</span>i)
-  fst <span class="symbol">$</span> reduce zeroth compare zipped
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> clip (_<span class="symbol">:</span><span class="type-name">Ord</span> a) <span class="symbol">?=&gt;</span> ((low<span class="symbol">,</span>high)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>a)) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
-  min high <span class="symbol">$</span> max low x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Automatic differentiation</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Automatic differentiation</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: add vector space constraints
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> %linearize f x
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> jvp (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">--</span>o b <span class="symbol">=</span> snd (linearize f x)
@@ -587,16 +702,7 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> checkDeriv (f<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">-&gt;</span><span class="type-name">Float</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
   checkDerivBase f x <span class="symbol">&amp;&amp;</span> checkDerivBase (deriv f) x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Control flow</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> while
-    (eff<span class="symbol">:</span><span class="type-name">Effects</span>) <span class="symbol">?-&gt;</span>
-    (cond<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Bool</span>)
-    (body<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span>)
-    <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span> <span class="symbol">=</span>
-  cond&#39; <span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Word8</span> <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> <span class="type-name">BToW8</span> <span class="symbol">$</span> cond ()
-  %while cond&#39; body
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Vector support</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Vector support</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: Reenable vector suport once fixed-width types are supported.
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
 </span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
@@ -631,7 +737,7 @@
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- @instance vectorFloatVSpace : VSpace VectorFloat =
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--   MkVSpace vectorFloatAdd \x v. broadcastVector x * v
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Tiling</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Tiling functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tile</span> (n <span class="symbol">:</span> <span class="type-name">Type</span>) (m <span class="symbol">:</span> <span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">IndexSlice</span> n m
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- One can think of instances of `Tile n m` as injective functions `m -&gt; n`,
@@ -658,36 +764,23 @@
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--              arr.(t +&gt; UNSAFEFromOrdinal idx 2)
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--              arr.(t +&gt; UNSAFEFromOrdinal idx 3))
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Numerical utilities</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logsumexp (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  m <span class="symbol">=</span> maximum x
-  m <span class="symbol">+</span> (log <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> exp (x<span class="symbol">.</span>i <span class="symbol">-</span> m))
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logsoftmax (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  lse <span class="symbol">=</span> logsumexp x
-  <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">-</span> lse
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> softmax (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  m <span class="symbol">=</span> maximum x
-  e <span class="symbol">=</span>  <span class="keyword">for</span> i<span class="symbol">.</span> exp (x<span class="symbol">.</span>i <span class="symbol">-</span> m)
-  s <span class="symbol">=</span> sum e
-  <span class="keyword">for</span> i<span class="symbol">.</span> e<span class="symbol">.</span>i <span class="symbol">/</span> s
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> evalpoly (_<span class="symbol">:</span><span class="type-name">VSpace</span> v) <span class="symbol">?=&gt;</span> (coefficients<span class="command">:n</span><span class="symbol">=&gt;</span>v) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> v <span class="symbol">=</span>
-  <span class="comment">-- Evaluate a polynomial at x.  Same as Numpy&#39;s polyval.
-</span>  fold zero <span class="symbol">\</span>i c<span class="symbol">.</span> coefficients<span class="symbol">.</span>i <span class="symbol">+</span> x <span class="symbol">.*</span> c
-</div></div><div class="cell"><div class="code-block">
-
-</div></div><div class="cell"><div class="prose-block"><p>Monoid</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Monoid typeclass</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Monoid</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="keyword">where</span>
   mempty <span class="symbol">:</span> a
   mcombine <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a  <span class="comment">-- can&#39;t use `&lt;&gt;` just for parser reasons?
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">(<span class="symbol">&lt;&gt;</span>) <span class="symbol">:</span> <span class="type-name">Monoid</span> a <span class="symbol">?=&gt;</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> mcombine
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Length-erased lists</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Length-erased lists</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">List</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
   <span class="type-name">AsList</span> n<span class="symbol">:</span><span class="type-name">Int</span> foo<span class="symbol">:</span>(<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafeCastTable (m<span class="symbol">:</span><span class="type-name">Type</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(unsafeFromOrdinal _ (ordinal i))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> toList (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+  n&#39; <span class="symbol">=</span> size n
+  <span class="type-name">AsList</span> _ <span class="symbol">$</span> unsafeCastTable (<span class="type-name">Fin</span> n&#39;) xs
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> monoidList <span class="symbol">:</span> <span class="type-name">Monoid</span> (<span class="type-name">List</span> a) <span class="keyword">where</span>
   mempty <span class="symbol">=</span> <span class="type-name">AsList</span> _ []
@@ -701,7 +794,7 @@
         <span class="type-name">True</span>  <span class="symbol">-&gt;</span> xs<span class="symbol">.</span>(unsafeFromOrdinal _ i&#39;)
         <span class="type-name">False</span> <span class="symbol">-&gt;</span> ys<span class="symbol">.</span>(unsafeFromOrdinal _ (i&#39; <span class="symbol">-</span> nx))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Isomorphisms</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Isomorphisms</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Iso</span> a<span class="symbol">:</span><span class="type-name">Type</span> b<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkIso</span> { fwd<span class="symbol">:</span> a <span class="symbol">-&gt;</span> b <span class="symbol">&amp;</span> bwd<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a }
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> appIso (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a b) (x<span class="command">:a</span>) <span class="symbol">:</span> b <span class="symbol">=</span>
@@ -780,10 +873,58 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sliceFields (iso<span class="symbol">:</span> <span class="type-name">Iso</span> ({<span class="symbol">|</span>} <span class="symbol">|</span> a) (b <span class="symbol">|</span> c)) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
   reindex (buildWith <span class="symbol">$</span> splitV <span class="symbol">&amp;&gt;&gt;</span> iso) tab
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Dynamic buffer</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: should we be able to use `Ref World Int` instead of `Ptr Int`?
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: would be nice to be able to use records here
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DynBuffer</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">MkDynBuffer</span> (<span class="type-name">Ptr</span> (<span class="type-name">Int</span> <span class="symbol">&amp;</span> <span class="type-name">Int</span> <span class="symbol">&amp;</span> <span class="type-name">Ptr</span> a))  <span class="comment">-- size, max size, buf ptr
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withDynamicBuffer (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+      (action<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} b) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} b <span class="symbol">=</span>
+  initMaxSize <span class="symbol">=</span> 256
+  withAlloc 1 <span class="symbol">\</span>dbPtr<span class="symbol">.</span>
+    bufPtr <span class="symbol">=</span> malloc initMaxSize
+    store dbPtr (0<span class="symbol">,</span> initMaxSize<span class="symbol">,</span> bufPtr)
+    result <span class="symbol">=</span> action <span class="symbol">$</span> <span class="type-name">MkDynBuffer</span> dbPtr
+    (_<span class="symbol">,</span> _<span class="symbol">,</span> bufPtr&#39;) <span class="symbol">=</span> load dbPtr
+    free bufPtr&#39;
+    result
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maybeIncreaseBufferSize (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+    (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (sizeDelta<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (<span class="type-name">MkDynBuffer</span> dbPtr) <span class="symbol">=</span> buf
+  (size<span class="symbol">,</span> maxSize<span class="symbol">,</span> bufPtr) <span class="symbol">=</span> load dbPtr
+  newSize <span class="symbol">=</span> sizeDelta <span class="symbol">+</span> size
+  <span class="keyword">if</span> newSize <span class="symbol">&gt;</span> maxSize
+    <span class="keyword">then</span>
+      <span class="comment">-- TODO: maybe this should use integer arithmetic?
+</span>      newMaxSize <span class="symbol">=</span> <span class="type-name">FToI</span> <span class="symbol">$</span> pow 2<span class="symbol">.</span>0 (ceil <span class="symbol">$</span> log2 <span class="symbol">$</span> <span class="type-name">IToF</span> newSize)
+      newBufPtr <span class="symbol">=</span> malloc newMaxSize
+      memcpy newBufPtr bufPtr size
+      store dbPtr (size<span class="symbol">,</span> newMaxSize<span class="symbol">,</span> newBufPtr)
+    <span class="keyword">else</span> ()
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> extendDynBuffer (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+    (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) (new<span class="symbol">:</span><span class="type-name">List</span> a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (<span class="type-name">AsList</span> n xs) <span class="symbol">=</span> new
+  maybeIncreaseBufferSize buf n
+  (<span class="type-name">MkDynBuffer</span> dbPtr) <span class="symbol">=</span> buf
+  (size<span class="symbol">,</span> maxSize<span class="symbol">,</span> bufPtr) <span class="symbol">=</span> load dbPtr
+  newSize <span class="symbol">=</span> n <span class="symbol">+</span> size
+  storeTab (bufPtr <span class="symbol">+&gt;&gt;</span> size) xs
+  store dbPtr (newSize<span class="symbol">,</span> maxSize<span class="symbol">,</span> bufPtr)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> loadDynBuffer (_<span class="symbol">:</span><span class="type-name">Storable</span> a) <span class="symbol">?=&gt;</span>
+      (buf<span class="symbol">:</span> <span class="type-name">DynBuffer</span> a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} (<span class="type-name">List</span> a) <span class="symbol">=</span>
+  (<span class="type-name">MkDynBuffer</span> dbPtr) <span class="symbol">=</span> buf
+  (size<span class="symbol">,</span> _<span class="symbol">,</span> bufPtr) <span class="symbol">=</span> load dbPtr
+  <span class="type-name">AsList</span> size <span class="symbol">$</span> tabFromPtr _ bufPtr
+</div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h2>Strings and Characters</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">String</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">List</span> <span class="type-name">Char</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="type-name">CharPtr</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">CharPtr</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stringFromCharPtr (n<span class="symbol">:</span><span class="type-name">Int</span>) (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> <span class="type-name">Char</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">String</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span> n <span class="symbol">$</span> tabFromPtr _ ptr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> codepoint (c<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> <span class="type-name">W8ToI</span> c
@@ -791,34 +932,57 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Show</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="keyword">where</span>
   show <span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> showString <span class="symbol">:</span> <span class="type-name">Show</span> <span class="type-name">String</span> <span class="keyword">where</span>
+  show <span class="symbol">=</span> id
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> showInt32 <span class="symbol">:</span> <span class="type-name">Show</span> <span class="type-name">Int32</span> <span class="keyword">where</span>
-  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Int32</span><span class="symbol">.</span>
-    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showInt32 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">CharPtr</span>) x
-    <span class="type-name">AsList</span> n <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
-      %ptrLoad (%ptrOffset ptr (ordinal i))
-</div></div><div class="cell"><div class="code-block">
+  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Int32</span><span class="symbol">.</span> unsafeIO do
+    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showInt32 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>) x
+    stringFromCharPtr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
+
+</div><div class="err-block">Parse error:925:3:
+    |
+925 |     (n, ptr) = %ffi showInt32 (Int32 &amp; RawPtr) x
+    |   ^
+unexpected space
+expecting field label
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> showInt64 <span class="symbol">:</span> <span class="type-name">Show</span> <span class="type-name">Int64</span> <span class="keyword">where</span>
-  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Int64</span><span class="symbol">.</span>
-    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showInt64 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">CharPtr</span>) x
-    <span class="type-name">AsList</span> n <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
-      %ptrLoad (%ptrOffset ptr (ordinal i))
-</div></div><div class="cell"><div class="code-block">
+  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Int64</span><span class="symbol">.</span> unsafeIO do
+    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showInt64 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>) x
+    stringFromCharPtr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
+
+</div><div class="err-block">Parse error:930:3:
+    |
+930 |     (n, ptr) = %ffi showInt64 (Int32 &amp; RawPtr) x
+    |   ^
+unexpected space
+expecting field label
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> showFloat32 <span class="symbol">:</span> <span class="type-name">Show</span> <span class="type-name">Float32</span> <span class="keyword">where</span>
-  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Float32</span><span class="symbol">.</span>
-    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showFloat32 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">CharPtr</span>) x
-    <span class="type-name">AsList</span> n <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
-      %ptrLoad (%ptrOffset ptr (ordinal i))
-</div></div><div class="cell"><div class="code-block">
+  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Float32</span><span class="symbol">.</span>unsafeIO do
+    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showFloat32 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>) x
+    stringFromCharPtr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
+
+</div><div class="err-block">Parse error:935:3:
+    |
+935 |     (n, ptr) = %ffi showFloat32 (Int32 &amp; RawPtr) x
+    |   ^
+unexpected space
+expecting field label
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> showFloat64 <span class="symbol">:</span> <span class="type-name">Show</span> <span class="type-name">Float64</span> <span class="keyword">where</span>
-  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Float64</span><span class="symbol">.</span>
-    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showFloat64 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">CharPtr</span>) x
-    <span class="type-name">AsList</span> n <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
-      %ptrLoad (%ptrOffset ptr (ordinal i))
-</div></div><div class="cell"><div class="code-block">
+  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span> <span class="type-name">Float64</span><span class="symbol">.</span>unsafeIO do
+    (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> %ffi showFloat64 (<span class="type-name">Int32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>) x
+    stringFromCharPtr n <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr
+
+</div><div class="err-block">Parse error:940:3:
+    |
+940 |     (n, ptr) = %ffi showFloat64 (Int32 &amp; RawPtr) x
+    |   ^
+unexpected space
+expecting field label
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- pipe-like reverse function application
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">|&gt;</span>) (x<span class="command">:a</span>) (f<span class="symbol">:</span> a <span class="symbol">-&gt;</span> b) <span class="symbol">:</span> b <span class="symbol">=</span> f x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>Floating point helper functions</h2>
+</div></div><div class="cell"><div class="prose-block"><h2>Floating-point helper functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sign (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="keyword">case</span> x <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0 <span class="keyword">of</span>
     <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1<span class="symbol">.</span>0
@@ -844,8 +1008,357 @@
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> either_is_nan (x<span class="symbol">:</span><span class="type-name">Float</span>) (y<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> (isnan x) <span class="symbol">||</span> (isnan y)
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>File system operations</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">FilePath</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">CString</span> <span class="symbol">=</span> <span class="type-name">MkCString</span> <span class="type-name">RawPtr</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">StreamMode</span> <span class="symbol">=</span>
+  <span class="type-name">ReadMode</span>
+  <span class="type-name">WriteMode</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Stream</span> mode<span class="symbol">:</span><span class="type-name">StreamMode</span> <span class="symbol">=</span> <span class="type-name">MkStream</span> <span class="type-name">RawPtr</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: check the string contains no nulls
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withCString (s<span class="symbol">:</span><span class="type-name">String</span>) (action<span class="symbol">:</span> <span class="type-name">CString</span> <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a <span class="symbol">=</span>
+  (<span class="type-name">AsList</span> n s&#39;) <span class="symbol">=</span> s <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span><span class="type-name">NUL</span>&quot;
+  withTabPtr s&#39; <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)<span class="symbol">.</span> action <span class="symbol">$</span> <span class="type-name">MkCString</span> ptr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fopen (path<span class="symbol">:</span><span class="type-name">String</span>) (mode<span class="symbol">:</span><span class="type-name">StreamMode</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} (<span class="type-name">Stream</span> mode) <span class="symbol">=</span>
+  modeStr <span class="symbol">=</span> <span class="keyword">case</span> mode <span class="keyword">of</span>
+    <span class="type-name">ReadMode</span>  <span class="symbol">-&gt;</span> &quot;r&quot;
+    <span class="type-name">WriteMode</span> <span class="symbol">-&gt;</span> &quot;w&quot;
+  withCString path <span class="symbol">\</span>(<span class="type-name">MkCString</span> pathPtr)<span class="symbol">.</span>
+    withCString modeStr <span class="symbol">\</span>(<span class="type-name">MkCString</span> modePtr)<span class="symbol">.</span>
+      <span class="type-name">MkStream</span> <span class="symbol">$</span> %ffi fopen <span class="type-name">RawPtr</span> pathPtr modePtr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fclose (mode<span class="symbol">:</span><span class="type-name">StreamMode</span>) <span class="symbol">?-&gt;</span> (stream<span class="symbol">:</span><span class="type-name">Stream</span> mode) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
+  %ffi fclose <span class="type-name">Int64</span> stream&#39;
+  ()
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fwrite (stream<span class="symbol">:</span><span class="type-name">Stream</span> <span class="type-name">WriteMode</span>) (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
+  (<span class="type-name">AsList</span> n s&#39;) <span class="symbol">=</span> s
+  withTabPtr s&#39; <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)<span class="symbol">.</span>
+    %ffi fwrite <span class="type-name">Int64</span> ptr (<span class="type-name">IToI64</span> 1) (<span class="type-name">IToI64</span> n) stream&#39;
+  %ffi fflush <span class="type-name">Int64</span> stream&#39;
+  ()
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> while
+    (eff<span class="symbol">:</span><span class="type-name">Effects</span>) <span class="symbol">?-&gt;</span>
+    (cond<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Bool</span>)
+    (body<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span>)
+    <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  cond&#39; <span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Word8</span> <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> <span class="type-name">BToW8</span> <span class="symbol">$</span> cond ()
+  %while cond&#39; body
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">IterResult</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="type-name">Continue</span>
+  <span class="type-name">Done</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> when (cond<span class="symbol">:</span><span class="type-name">Bool</span>) (f<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  <span class="keyword">if</span> cond
+    <span class="keyword">then</span> f ()
+    <span class="keyword">else</span> ()
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: can we improve effect inference so we don&#39;t need this?
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> liftState (ref<span class="symbol">:</span> <span class="type-name">Ref</span> h c) (f<span class="command">:a</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} b) (x<span class="command">:a</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h<span class="symbol">|</span>eff} b <span class="symbol">=</span>
+  f x
+</div><div class="err-block">Type error:
+Expected: {State h|eff}
+  Actual: {|eff}
 
-</div></div><div class="cell"><div class="prose-block"><h2>Trigonometric functions.</h2>
+  f x
+  ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A little iteration combinator
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iter (body<span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">IterResult</span> a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a  <span class="symbol">=</span>
+  result <span class="symbol">=</span> snd <span class="symbol">$</span> withState <span class="type-name">Nothing</span> <span class="symbol">\</span>resultRef<span class="symbol">.</span> withState 0 <span class="symbol">\</span>i<span class="symbol">.</span>
+    while (do isNothing <span class="symbol">$</span> get resultRef) do
+      <span class="keyword">case</span> liftState resultRef (liftState i body) (get i) <span class="keyword">of</span>
+        <span class="type-name">Continue</span> <span class="symbol">-&gt;</span> i <span class="symbol">:=</span> get i <span class="symbol">+</span> 1
+        <span class="type-name">Done</span> result <span class="symbol">-&gt;</span> resultRef <span class="symbol">:=</span> <span class="type-name">Just</span> result
+  <span class="keyword">case</span> result <span class="keyword">of</span>
+    <span class="type-name">Just</span> ans <span class="symbol">-&gt;</span> ans
+    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> unreachable ()
+
+</div><div class="err-block">Parse error:1035:5:
+     |
+1035 |       case liftState resultRef (liftState i body) (get i) of
+     |     ^^^^
+unexpected &quot;  ca&quot;
+expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, let binding, or negation
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> boundedIter (maxIters<span class="symbol">:</span><span class="type-name">Int</span>) (fallback<span class="command">:a</span>)
+  (body<span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">IterResult</span> a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} a  <span class="symbol">=</span>
+  iter <span class="symbol">\</span>i<span class="symbol">.</span>
+    <span class="keyword">if</span> i <span class="symbol">&gt;=</span> maxIters
+      <span class="keyword">then</span> <span class="type-name">Done</span> fallback
+      <span class="keyword">else</span> body i
+</div><div class="err-block">Error: variable not in scope: iter
+
+  iter \i.
+  ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fread (stream<span class="symbol">:</span><span class="type-name">Stream</span> <span class="type-name">ReadMode</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">String</span> <span class="symbol">=</span>
+  (<span class="type-name">MkStream</span> stream&#39;) <span class="symbol">=</span> stream
+  <span class="comment">-- TODO: allow reading longer files!
+</span>  n <span class="symbol">=</span> 4096
+  withAlloc n <span class="symbol">\</span>ptr<span class="symbol">:</span>(<span class="type-name">Ptr</span> <span class="type-name">Char</span>)<span class="symbol">.</span>
+    withDynamicBuffer <span class="symbol">\</span>buf<span class="symbol">.</span>
+      iter <span class="symbol">\</span>_<span class="symbol">.</span>
+        (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
+        numRead <span class="symbol">=</span> <span class="type-name">I64ToI</span> <span class="symbol">$</span> %ffi fread <span class="type-name">Int64</span> rawPtr (<span class="type-name">IToI64</span> 1) (<span class="type-name">IToI64</span> n) stream&#39;
+        extendDynBuffer buf <span class="symbol">$</span> stringFromCharPtr numRead ptr
+        <span class="keyword">if</span> numRead <span class="symbol">==</span> n
+          <span class="keyword">then</span> <span class="type-name">Continue</span>
+          <span class="keyword">else</span> <span class="type-name">Done</span> ()
+      loadDynBuffer buf
+</div><div class="err-block">Error: variable not in scope: iter
+
+      iter \_.
+      ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> deleteFile (f<span class="symbol">:</span><span class="type-name">FilePath</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  withCString f <span class="symbol">\</span>(<span class="type-name">MkCString</span> ptr)<span class="symbol">.</span>
+    %ffi remove <span class="type-name">Int64</span> ptr
+  ()
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withFile (f<span class="symbol">:</span><span class="type-name">FilePath</span>) (mode<span class="symbol">:</span><span class="type-name">StreamMode</span>)
+      (action<span class="symbol">:</span> <span class="type-name">Stream</span> mode <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a)
+      <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a <span class="symbol">=</span>
+  stream <span class="symbol">=</span> fopen f mode
+  result <span class="symbol">=</span> action stream
+  fclose stream
+  result
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> writeFile (f<span class="symbol">:</span><span class="type-name">FilePath</span>) (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  withFile f <span class="type-name">WriteMode</span> <span class="symbol">\</span>stream<span class="symbol">.</span> fwrite stream s
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> readFile (f<span class="symbol">:</span><span class="type-name">FilePath</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">String</span> <span class="symbol">=</span>
+  withFile f <span class="type-name">ReadMode</span> <span class="symbol">\</span>stream<span class="symbol">.</span> fread stream
+</div><div class="err-block">Error: variable not in scope: fread
+
+  withFile f ReadMode \stream. fread stream
+                               ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> newTempFile (_<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">FilePath</span> <span class="symbol">=</span>
+  withCString &quot;<span class="symbol">/</span>tmp<span class="symbol">/</span>dex<span class="symbol">-</span><span class="type-name">XXXXXX</span>&quot; <span class="symbol">\</span>(<span class="type-name">MkCString</span> ptr)<span class="symbol">.</span>
+    fd <span class="symbol">=</span> %ffi mkstemp <span class="type-name">Int32</span> ptr
+    %ffi close <span class="type-name">Int32</span> fd
+    stringFromCharPtr 15 (<span class="type-name">MkPtr</span> ptr)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withTempFile (action<span class="symbol">:</span> <span class="type-name">FilePath</span> <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a <span class="symbol">=</span>
+  tmpFile <span class="symbol">=</span> newTempFile ()
+  result <span class="symbol">=</span> action tmpFile
+  deleteFile tmpFile
+  result
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withTempFiles (action<span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">FilePath</span>) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} a <span class="symbol">=</span>
+  tmpFiles <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> newTempFile ()
+  result <span class="symbol">=</span> action tmpFiles
+  <span class="keyword">for</span> i<span class="symbol">.</span> deleteFile tmpFiles<span class="symbol">.</span>i
+  result
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getOutputStream (_<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Stream</span> <span class="type-name">WriteMode</span> <span class="symbol">=</span>
+  <span class="type-name">MkStream</span> <span class="symbol">$</span> %ptrLoad <span class="type-name">OUT</span>_<span class="type-name">STREAM</span>_<span class="type-name">PTR</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> print (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  fwrite (getOutputStream ()) (s <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span>n&quot;)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> shellOut (command<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">String</span> <span class="symbol">=</span>
+  modeStr <span class="symbol">=</span> &quot;r&quot;
+  withCString command <span class="symbol">\</span>(<span class="type-name">MkCString</span> commandPtr)<span class="symbol">.</span>
+    withCString modeStr <span class="symbol">\</span>(<span class="type-name">MkCString</span> modePtr)<span class="symbol">.</span>
+      pipe <span class="symbol">=</span> <span class="type-name">MkStream</span> %ffi popen <span class="type-name">RawPtr</span> commandPtr modePtr
+      fread pipe
+</div><div class="err-block">Error: variable not in scope: fread
+
+      fread pipe
+      ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Partial functions</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> error (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> a <span class="symbol">=</span> unsafeIO do
+</div><div class="err-block">Error: variable not in scope: do
+
+def error (s:String) : a = unsafeIO do
+                                    ^^
+</div></div><div class="cell"><div class="code-block">  print s
+  %throwError a
+
+</div><div class="err-block">Parse error:1117:3:
+     |
+1117 |   print s
+     |   ^^
+unexpected &quot;pr&quot;
+expecting end of line
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> todo (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> a <span class="symbol">=</span> error &quot;<span class="type-name">TODO</span><span class="symbol">:</span> implement it<span class="symbol">!</span>&quot;
+</div><div class="err-block">Error: variable not in scope: error
+
+def todo (a:Type) ?-&gt; : a = error &quot;TODO: implement it!&quot;
+                            ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fromOrdinal (n<span class="symbol">:</span><span class="type-name">Type</span>) (i<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+  <span class="keyword">case</span> (0 <span class="symbol">&lt;=</span> i) <span class="symbol">&amp;&amp;</span> (i <span class="symbol">&lt;</span> size n) <span class="keyword">of</span>
+    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> unsafeFromOrdinal _ i
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> error <span class="symbol">$</span>
+      &quot;<span class="type-name">Ordinal</span> index out <span class="keyword">of</span> range<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> show i <span class="symbol">&lt;&gt;</span> &quot; <span class="symbol">&gt;=</span> &quot; <span class="symbol">&lt;&gt;</span> show (size n)
+</div><div class="err-block">Error: variable not in scope: error
+
+    False -&gt; error $
+             ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: safe (runtime-checked) and unsafe versions
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> castTable (m<span class="symbol">:</span><span class="type-name">Type</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="keyword">case</span> size m <span class="symbol">==</span> size n <span class="keyword">of</span>
+     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> unsafeCastTable _ xs
+     <span class="type-name">False</span> <span class="symbol">-&gt;</span> error <span class="symbol">$</span>
+       &quot;<span class="type-name">Table</span> size mismatch in cast<span class="symbol">:</span> &quot; <span class="symbol">&lt;&gt;</span> show (size m) <span class="symbol">&lt;&gt;</span> &quot; vs &quot; <span class="symbol">&lt;&gt;</span> show (size n)
+</div><div class="err-block">Error: variable not in scope: error
+
+     False -&gt; error $
+              ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> asidx (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (i<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span> fromOrdinal n i
+</div><div class="err-block">Error: variable not in scope: fromOrdinal
+
+def asidx (n:Type) ?-&gt; (i:Int) : n = fromOrdinal n i
+                                     ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">@</span>) (i<span class="symbol">:</span><span class="type-name">Int</span>) (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> n <span class="symbol">=</span> fromOrdinal n i
+</div><div class="err-block">Error: variable not in scope: fromOrdinal
+
+def (@) (i:Int) (n:Type) : n = fromOrdinal n i
+                               ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> slice (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Int</span>) (m<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(fromOrdinal _ (ordinal i <span class="symbol">+</span> start))
+</div><div class="err-block">Error: variable not in scope: fromOrdinal
+
+  for i. xs.(fromOrdinal _ (ordinal i + start))
+             ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> head (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span> xs<span class="symbol">.</span>(0<span class="symbol">@</span>_)
+</div><div class="err-block">Error: variable not in scope: (@)
+
+def head (xs:n=&gt;a) : a = xs.(0@_)
+                              ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tail (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+  numElts <span class="symbol">=</span> size n <span class="symbol">-</span> start
+  toList <span class="symbol">$</span> slice xs start (<span class="type-name">Fin</span> numElts)
+</div><div class="err-block">Error: variable not in scope: slice
+
+  toList $ slice xs start (Fin numElts)
+           ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randIdx (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+  unif <span class="symbol">=</span> rand k
+  fromOrdinal n <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor <span class="symbol">$</span> unif <span class="symbol">*</span> <span class="type-name">IToF</span> (size n)
+</div><div class="err-block">Error: variable not in scope: rand
+
+  unif = rand k
+         ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Type class for generating example values</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Arbitrary</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="keyword">where</span>
+  arb <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> float32Arb <span class="symbol">:</span> <span class="type-name">Arbitrary</span> <span class="type-name">Float32</span> <span class="keyword">where</span>
+  arb <span class="symbol">=</span> randn
+</div><div class="err-block">Error: variable not in scope: randn
+
+  arb = randn
+        ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> in32Arb <span class="symbol">:</span> <span class="type-name">Arbitrary</span> <span class="type-name">Int32</span> <span class="keyword">where</span>
+  arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> <span class="type-name">FToI</span> <span class="symbol">$</span> randn key <span class="symbol">*</span> 5<span class="symbol">.</span>0
+</div><div class="err-block">Error: variable not in scope: randn
+
+  arb = \key. FToI $ randn key * 5.0
+                     ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> tabArb <span class="symbol">:</span> <span class="type-name">Arbitrary</span> a <span class="symbol">?=&gt;</span> <span class="type-name">Arbitrary</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">where</span>
+  arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> ixkey key i
+</div><div class="err-block">Error: variable not in scope: ixkey
+
+  arb = \key. for i. arb $ ixkey key i
+                           ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> finArb <span class="symbol">:</span> n<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">?-&gt;</span> <span class="type-name">Arbitrary</span> (<span class="type-name">Fin</span> n) <span class="keyword">where</span>
+  arb <span class="symbol">=</span> randIdx
+</div><div class="err-block">Error: variable not in scope: randIdx
+
+  arb = randIdx
+        ^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Control flow</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- returns the highest index `i` such that `xs.i &lt;= x`
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> searchSorted (_<span class="symbol">:</span><span class="type-name">Ord</span> a) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> n <span class="symbol">=</span>
+  <span class="keyword">if</span> size n <span class="symbol">==</span> 0
+    <span class="keyword">then</span> <span class="type-name">Nothing</span>
+    <span class="keyword">else</span> <span class="keyword">if</span> x <span class="symbol">&lt;</span> xs<span class="symbol">.</span>(fromOrdinal _ 0)
+      <span class="keyword">then</span> <span class="type-name">Nothing</span>
+      <span class="keyword">else</span> fst <span class="symbol">$</span> withState 0 <span class="symbol">\</span>low<span class="symbol">.</span> fst <span class="symbol">$</span> withState (size n) <span class="symbol">\</span>high<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
+        numLeft <span class="symbol">=</span> get high <span class="symbol">-</span> get low
+        <span class="keyword">if</span> numLeft <span class="symbol">==</span> 1
+          <span class="keyword">then</span> <span class="type-name">Done</span> <span class="symbol">$</span> <span class="type-name">Just</span> <span class="symbol">$</span> fromOrdinal _ <span class="symbol">$</span> get low
+          <span class="keyword">else</span>
+            centerIx <span class="symbol">=</span> get low <span class="symbol">+</span> idiv numLeft 2
+            <span class="keyword">if</span> x <span class="symbol">&lt;</span> xs<span class="symbol">.</span>(fromOrdinal _ centerIx)
+              <span class="keyword">then</span> high <span class="symbol">:=</span> centerIx
+              <span class="keyword">else</span> low  <span class="symbol">:=</span> centerIx
+            <span class="type-name">Continue</span>
+</div><div class="err-block">Error: variable not in scope: fromOrdinal
+
+    else if x &lt; xs.(fromOrdinal _ 0)
+                    ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>min / max etc</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select (f x <span class="symbol">&lt;</span> f y) x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maxBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select (f x <span class="symbol">&gt;</span> f y) x y
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> min (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (x1<span class="symbol">:</span> o) <span class="symbol">-&gt;</span> (x2<span class="symbol">:</span> o) <span class="symbol">:</span> o <span class="symbol">=</span> minBy id x1 x2
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> max (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (x1<span class="symbol">:</span> o) <span class="symbol">-&gt;</span> (x2<span class="symbol">:</span> o) <span class="symbol">:</span> o <span class="symbol">=</span> maxBy id x1 x2
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimumBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+  reduce xs<span class="symbol">.</span>(0<span class="symbol">@</span>_) (minBy f) xs
+</div><div class="err-block">Error: variable not in scope: (@)
+
+  reduce xs.(0@_) (minBy f) xs
+              ^
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximumBy (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (f<span class="command">:a</span><span class="symbol">-&gt;</span>o) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+  reduce xs<span class="symbol">.</span>(0<span class="symbol">@</span>_) (maxBy f) xs
+</div><div class="err-block">Error: variable not in scope: (@)
+
+  reduce xs.(0@_) (maxBy f) xs
+              ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> minimumBy id xs
+</div><div class="err-block">Error: variable not in scope: minimumBy
+
+def minimum (_:Ord o) ?=&gt; (xs:n=&gt;o) : o = minimumBy id xs
+                                          ^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximum (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> maximumBy id xs
+</div><div class="err-block">Error: variable not in scope: maximumBy
+
+def maximum (_:Ord o) ?=&gt; (xs:n=&gt;o) : o = maximumBy id xs
+                                          ^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmin (_<span class="symbol">:</span><span class="type-name">Ord</span> o) <span class="symbol">?=&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span>
+  zeroth <span class="symbol">=</span> (0<span class="symbol">@</span>_<span class="symbol">,</span> xs<span class="symbol">.</span>(0<span class="symbol">@</span>_))
+  compare <span class="symbol">=</span> <span class="symbol">\</span>(idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)<span class="symbol">.</span>
+    select (x1 <span class="symbol">&lt;</span> x2) (idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)
+  zipped <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (i<span class="symbol">,</span> xs<span class="symbol">.</span>i)
+  fst <span class="symbol">$</span> reduce zeroth compare zipped
+</div><div class="err-block">Error: variable not in scope: (@)
+
+  zeroth = (0@_, xs.(0@_))
+             ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> clip (_<span class="symbol">:</span><span class="type-name">Ord</span> a) <span class="symbol">?=&gt;</span> ((low<span class="symbol">,</span>high)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>a)) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+  min high <span class="symbol">$</span> max low x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Trigonometric functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> atan_inner (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="comment">-- From &quot;Computing accurate Horner form approximations to
 </span>  <span class="comment">-- special functions in finite precision arithmetic&quot;
@@ -876,7 +1389,7 @@
   (min_abs_x_y<span class="symbol">,</span> max_abs_x_y) <span class="symbol">=</span> min_and_max abs_x abs_y
   a <span class="symbol">=</span> atan_inner (min_abs_x_y <span class="symbol">/</span> max_abs_x_y)
   a <span class="symbol">=</span> select (abs_x <span class="symbol">&lt;=</span> abs_y) ((pi <span class="symbol">/</span> 2<span class="symbol">.</span>0) <span class="symbol">-</span>a) a
-  a <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) pi a
+  a <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) (pi <span class="symbol">-</span> a) a
   t <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) pi 0<span class="symbol">.</span>0
   a <span class="symbol">=</span> select (y <span class="symbol">==</span> 0<span class="symbol">.</span>0) t a
   t <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) (3<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">/</span> 4<span class="symbol">.</span>0) (pi <span class="symbol">/</span> 4<span class="symbol">.</span>0)
@@ -886,7 +1399,6 @@
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> atan (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> atan2 x 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-
 </div></div><div class="cell"><div class="prose-block"><h2>Complex numbers</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Complex</span> <span class="symbol">=</span> <span class="type-name">MkComplex</span> <span class="type-name">Float</span> <span class="type-name">Float</span>  <span class="comment">-- real, imaginary
 </span></div></div><div class="cell"><div class="code-block">
@@ -971,7 +1483,11 @@
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">complex_lgamma <span class="symbol">:</span> <span class="type-name">Complex</span> <span class="symbol">-&gt;</span> <span class="type-name">Complex</span> <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Complex</span><span class="symbol">.</span>
   todo  <span class="comment">-- This one is pretty hairy.
-</span></div></div><div class="cell"><div class="code-block">        <span class="comment">-- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
+</span></div><div class="err-block">Error: variable not in scope: todo
+
+  todo  -- This one is pretty hairy.
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">        <span class="comment">-- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> complex_log1p (x<span class="symbol">:</span><span class="type-name">Complex</span>) <span class="symbol">:</span> <span class="type-name">Complex</span> <span class="symbol">=</span>
   (<span class="type-name">MkComplex</span> a b) <span class="symbol">=</span> x
@@ -1002,6 +1518,10 @@
   sqrt   <span class="symbol">=</span> complex_sqrt
   pow    <span class="symbol">=</span> complex_pow
   lgamma <span class="symbol">=</span> complex_lgamma
+</div><div class="err-block">Error: variable not in scope: complex_lgamma
+
+  lgamma = complex_lgamma
+           ^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Bitwise operations</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: type class like Haskell&#39;s `Bits`
@@ -1010,30 +1530,14 @@
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">.|.</span>) (x<span class="symbol">:</span><span class="type-name">Byte</span>) (y<span class="symbol">:</span><span class="type-name">Byte</span>) <span class="symbol">:</span> <span class="type-name">Byte</span> <span class="symbol">=</span> %or x y
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">.&amp;.</span>) (x<span class="symbol">:</span><span class="type-name">Byte</span>) (y<span class="symbol">:</span><span class="type-name">Byte</span>) <span class="symbol">:</span> <span class="type-name">Byte</span> <span class="symbol">=</span> %and x y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>Raw pointer operations</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ptr</span> (ty<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %makePtrType ty
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tabToPtr (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">?-&gt;</span> (xs<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Ptr</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  %getPtr xs
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ptrToTab (n<span class="symbol">:</span><span class="type-name">Int</span>) (ptr<span class="symbol">:</span><span class="type-name">Ptr</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span> %ptrLoad (%ptrOffset ptr (ordinal i))
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>Misc</h2>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: safe (runtime-checked) and unsafe versions
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> castTable (m<span class="symbol">:</span><span class="type-name">Type</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  <span class="keyword">case</span> size m <span class="symbol">==</span> size n <span class="keyword">of</span>
-     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(unsafeFromOrdinal _ (ordinal i))
-     <span class="type-name">False</span> <span class="symbol">-&gt;</span> throw
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> toList (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
-  n&#39; <span class="symbol">=</span> size n
-  <span class="type-name">AsList</span> _ <span class="symbol">$</span> castTable (<span class="type-name">Fin</span> n&#39;) xs
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tail (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
-  numElts <span class="symbol">=</span> size n <span class="symbol">-</span> start
-  toList <span class="symbol">$</span> slice xs start (<span class="type-name">Fin</span> numElts)
+</div></div><div class="cell"><div class="prose-block"><h2>Miscellaneous utilities</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reverse (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  s <span class="symbol">=</span> size n
+  <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>((s <span class="symbol">-</span> 1 <span class="symbol">-</span> ordinal i)<span class="symbol">@</span>_)
+</div><div class="err-block">Error: variable not in scope: (@)
+
+  for i. x.((s - 1 - ordinal i)@_)
+                               ^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> padTo (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
   n&#39; <span class="symbol">=</span> size n
@@ -1042,6 +1546,10 @@
     <span class="keyword">case</span> i&#39; <span class="symbol">&lt;</span> n&#39; <span class="keyword">of</span>
       <span class="type-name">True</span>  <span class="symbol">-&gt;</span> xs<span class="symbol">.</span>(i&#39;<span class="symbol">@</span>_)
       <span class="type-name">False</span> <span class="symbol">-&gt;</span> x
+</div><div class="err-block">Error: variable not in scope: (@)
+
+      True  -&gt; xs.(i&#39;@_)
+                     ^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> idivCeil (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> idiv x y <span class="symbol">+</span> <span class="type-name">BToI</span> (rem x y <span class="symbol">/=</span> 0)
 </div></div><div class="cell"><div class="code-block">
@@ -1073,11 +1581,92 @@
   <span class="type-name">AsList</span> _ <span class="symbol">$</span> fst <span class="symbol">$</span> withState 0 <span class="symbol">\</span>listIdx<span class="symbol">.</span>
     fst <span class="symbol">$</span> withState 0 <span class="symbol">\</span>eltIdx<span class="symbol">.</span>
       <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> totalSize)<span class="symbol">.</span>
-        while (<span class="symbol">\</span>()<span class="symbol">.</span> get eltIdx <span class="symbol">&gt;=</span> listLength (lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_))) <span class="symbol">\</span>()<span class="symbol">.</span>
+        while (do get eltIdx <span class="symbol">&gt;=</span> listLength (lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_))) do
           eltIdx <span class="symbol">:=</span> 0
           listIdx <span class="symbol">:=</span> get listIdx <span class="symbol">+</span> 1
         (<span class="type-name">AsList</span> _ xs) <span class="symbol">=</span> lists<span class="symbol">.</span>((get listIdx)<span class="symbol">@</span>_)
         eltIdxVal <span class="symbol">=</span> get eltIdx
         eltIdx <span class="symbol">:=</span> eltIdxVal <span class="symbol">+</span> 1
         xs<span class="symbol">.</span>(eltIdxVal<span class="symbol">@</span>_)
+
+</div><div class="err-block">Parse error:1426:9:
+     |
+1426 |           eltIdx := 0
+     |         ^^^^
+unexpected &quot;  el&quot;
+expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, let binding, or negation
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cumSumLow (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  fst <span class="symbol">$</span> withState 0<span class="symbol">.</span>0 <span class="symbol">\</span>total<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span>
+      oldTotal <span class="symbol">=</span> get total
+      total <span class="symbol">:=</span> oldTotal <span class="symbol">+</span> xs<span class="symbol">.</span>i
+      oldTotal
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- cdf should include 0.0 but not 1.0
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> categoricalFromCDF (cdf<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+  r <span class="symbol">=</span> rand key
+  <span class="keyword">case</span> searchSorted cdf r <span class="keyword">of</span>
+    <span class="type-name">Just</span> i <span class="symbol">-&gt;</span> i
+</div><div class="err-block">Error: variable not in scope: rand
+
+  r = rand key
+      ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalizePdf (xs<span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> xs <span class="symbol">/</span> sum xs
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cdfForCategorical (logprobs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  maxLogProb <span class="symbol">=</span> maximum logprobs
+  cumSumLow <span class="symbol">$</span> normalizePdf <span class="symbol">$</span> map exp <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> logprobs<span class="symbol">.</span>i <span class="symbol">-</span> maxLogProb
+</div><div class="err-block">Error: variable not in scope: maximum
+
+  maxLogProb = maximum logprobs
+               ^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> categorical (logprobs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+  categoricalFromCDF (cdfForCategorical logprobs) key
+</div><div class="err-block">Error: variable not in scope: categoricalFromCDF
+
+  categoricalFromCDF (cdfForCategorical logprobs) key
+  ^^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- batch variant to share the work of forming the cumsum
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- (alternatively we could rely on hoisting of loop constants)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> categoricalBatch (logprobs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n <span class="symbol">=</span>
+  cdf <span class="symbol">=</span> cdfForCategorical logprobs
+  <span class="keyword">for</span> i<span class="symbol">.</span> categoricalFromCDF cdf <span class="symbol">$</span> ixkey key i
+</div><div class="err-block">Error: variable not in scope: cdfForCategorical
+
+  cdf = cdfForCategorical logprobs
+        ^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Numerical utilities</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logsumexp (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  m <span class="symbol">=</span> maximum x
+  m <span class="symbol">+</span> (log <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> exp (x<span class="symbol">.</span>i <span class="symbol">-</span> m))
+</div><div class="err-block">Error: variable not in scope: maximum
+
+  m = maximum x
+      ^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logsoftmax (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  lse <span class="symbol">=</span> logsumexp x
+  <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">-</span> lse
+</div><div class="err-block">Error: variable not in scope: logsumexp
+
+  lse = logsumexp x
+        ^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> softmax (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  m <span class="symbol">=</span> maximum x
+  e <span class="symbol">=</span>  <span class="keyword">for</span> i<span class="symbol">.</span> exp (x<span class="symbol">.</span>i <span class="symbol">-</span> m)
+  s <span class="symbol">=</span> sum e
+  <span class="keyword">for</span> i<span class="symbol">.</span> e<span class="symbol">.</span>i <span class="symbol">/</span> s
+</div><div class="err-block">Error: variable not in scope: maximum
+
+  m = maximum x
+      ^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> evalpoly (_<span class="symbol">:</span><span class="type-name">VSpace</span> v) <span class="symbol">?=&gt;</span> (coefficients<span class="command">:n</span><span class="symbol">=&gt;</span>v) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> v <span class="symbol">=</span>
+  <span class="comment">-- Evaluate a polynomial at x.  Same as Numpy&#39;s polyval.
+</span>  fold zero <span class="symbol">\</span>i c<span class="symbol">.</span> coefficients<span class="symbol">.</span>i <span class="symbol">+</span> x <span class="symbol">.*</span> c
 </div></div></div></body></html>

@@ -1,0 +1,127 @@
+<!DOCTYPE HTML>
+<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Plotting library</h1>
+</div></div><div class="cell"><div class="code-block">include &quot;diagram<span class="symbol">.</span>dx&quot;
+</div></div><div class="cell"><div class="code-block">include &quot;png<span class="symbol">.</span>dx&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">CompactSet</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="type-name">Interval</span> a a
+  <span class="type-name">Singleton</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Scale</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  { mapping <span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span>
+  <span class="symbol">&amp;</span> range   <span class="symbol">:</span> <span class="type-name">List</span> (<span class="type-name">CompactSet</span> <span class="type-name">Float</span>) }  <span class="comment">-- non-overlapping, ordered
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">ScaledData</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  { scale <span class="symbol">:</span> <span class="type-name">Scale</span> a
+  <span class="symbol">&amp;</span> dat   <span class="symbol">:</span> n <span class="symbol">=&gt;</span> a }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Plot</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) (c<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  { xs <span class="symbol">:</span> <span class="type-name">ScaledData</span> n a
+  <span class="symbol">&amp;</span> ys <span class="symbol">:</span> <span class="type-name">ScaledData</span> n b
+  <span class="symbol">&amp;</span> cs <span class="symbol">:</span> <span class="type-name">ScaledData</span> n c }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Color</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> applyScale (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span> getAt <span class="iso-sugar">#mapping</span> s x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">unitTypeScale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Unit</span> <span class="symbol">=</span> { mapping <span class="symbol">=</span> <span class="symbol">\</span>()<span class="symbol">.</span> <span class="type-name">Just</span> 0<span class="symbol">.</span>0
+                             <span class="symbol">,</span> range   <span class="symbol">=</span> <span class="type-name">AsList</span> _ [<span class="type-name">Singleton</span> 0<span class="symbol">.</span>0] }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> projectUnitInterval (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="keyword">case</span> x <span class="symbol">&gt;=</span> 0<span class="symbol">.</span>0 <span class="symbol">&amp;&amp;</span> x <span class="symbol">&lt;=</span> 1<span class="symbol">.</span>0 <span class="keyword">of</span>
+    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Just</span> x
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">unitIntervalScale <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  { mapping <span class="symbol">=</span> projectUnitInterval
+  <span class="symbol">,</span> range   <span class="symbol">=</span> <span class="type-name">AsList</span> _ [<span class="type-name">Interval</span> 0<span class="symbol">.</span>0 1<span class="symbol">.</span>0] }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mapScale (s<span class="symbol">:</span><span class="type-name">Scale</span> a) (f<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a) <span class="symbol">:</span> <span class="type-name">Scale</span> b <span class="symbol">=</span>
+  { mapping <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> getAt <span class="iso-sugar">#mapping</span> s (f x)
+  <span class="symbol">,</span> range <span class="symbol">=</span> getAt <span class="iso-sugar">#range</span> s }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> floatScale (xmin<span class="symbol">:</span><span class="type-name">Float</span>) (xmax<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Scale</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  mapScale unitIntervalScale (<span class="symbol">\</span>x<span class="symbol">.</span> (x <span class="symbol">-</span> xmin) <span class="symbol">/</span> (xmax <span class="symbol">-</span> xmin))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getScaled (sd<span class="symbol">:</span><span class="type-name">ScaledData</span> n a) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  applyScale (getAt <span class="iso-sugar">#scale</span> sd) (getAt <span class="iso-sugar">#dat</span> sd)<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">lowColor  <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">highColor <span class="symbol">=</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 1<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> interpolate (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (low<span class="command">:a</span>) (high<span class="command">:a</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+  x&#39; <span class="symbol">=</span> clip (0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0) x
+  (x&#39; <span class="symbol">.*</span> low) <span class="symbol">+</span> ((1<span class="symbol">.</span>0 <span class="symbol">-</span> x&#39;) <span class="symbol">.*</span> high)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> makeRGBColor (c <span class="symbol">:</span> <span class="type-name">Color</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
+  [r<span class="symbol">,</span> g<span class="symbol">,</span> b] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">IToW8</span> <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
+  (r<span class="symbol">,</span> g<span class="symbol">,</span> b)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> colorScale (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
+  makeRGBColor <span class="symbol">$</span> interpolate lowColor highColor x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> plotToDiagram (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  points <span class="symbol">=</span> concatDiagrams <span class="keyword">for</span> i<span class="symbol">.</span>
+    x <span class="symbol">=</span> getScaled (getAt <span class="iso-sugar">#xs</span> plot) i
+    y <span class="symbol">=</span> getScaled (getAt <span class="iso-sugar">#ys</span> plot) i
+    c <span class="symbol">=</span> getScaled (getAt <span class="iso-sugar">#cs</span> plot) i
+    <span class="comment">-- TODO: nested may-fail patterns would make this much better
+</span>    <span class="keyword">case</span> x <span class="keyword">of</span>
+      <span class="type-name">Just</span> x&#39; <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
+        <span class="type-name">Just</span> y&#39; <span class="symbol">-&gt;</span> <span class="keyword">case</span> c <span class="keyword">of</span>
+          <span class="type-name">Just</span> c&#39; <span class="symbol">-&gt;</span>
+            pointDiagram <span class="symbol">|&gt;</span> moveXY (x&#39;<span class="symbol">,</span> y&#39;) <span class="symbol">|&gt;</span> setStrokeColor (colorScale c&#39; )
+          <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> mempty
+        <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> mempty
+      <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> mempty
+  boundingBox <span class="symbol">=</span> moveXY (0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>5) <span class="symbol">$</span> rect 1<span class="symbol">.</span>0 1<span class="symbol">.</span>0
+  boundingBox <span class="symbol">&lt;&gt;</span> points
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showPlot (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  renderSVG (plotToDiagram plot) ((0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> (1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">blankData <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Unit</span> <span class="symbol">=</span> {scale <span class="symbol">=</span> unitTypeScale<span class="symbol">,</span> dat <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ()}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">blankPlot <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="type-name">Unit</span> <span class="symbol">=</span> { xs <span class="symbol">=</span> blankData
+                                    <span class="symbol">,</span> ys <span class="symbol">=</span> blankData
+                                    <span class="symbol">,</span> cs <span class="symbol">=</span> blankData }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- -- TODO: generalize beyond Float with a type class for auto scaling
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> autoScale (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Float</span> <span class="symbol">=</span>
+  {scale <span class="symbol">=</span> floatScale (minimum xs) (maximum xs)<span class="symbol">,</span> dat <span class="symbol">=</span> xs}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setXData (xs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n new b c<span class="symbol">=</span>
+  <span class="comment">-- We can&#39;t use `setAt` here because we&#39;re changing the type
+</span>  {xs <span class="symbol">=</span> xs<span class="symbol">,</span> ys <span class="symbol">=</span> getAt <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> getAt <span class="iso-sugar">#cs</span> plot}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setYData (ys<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n a new c <span class="symbol">=</span>
+  {xs <span class="symbol">=</span> getAt <span class="iso-sugar">#xs</span> plot<span class="symbol">,</span> ys <span class="symbol">=</span> ys<span class="symbol">,</span> cs <span class="symbol">=</span> getAt <span class="iso-sugar">#cs</span> plot}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setCData (cs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n a b new <span class="symbol">=</span>
+  {xs <span class="symbol">=</span> getAt <span class="iso-sugar">#xs</span> plot<span class="symbol">,</span> ys <span class="symbol">=</span> getAt <span class="iso-sugar">#ys</span> plot<span class="symbol">,</span> cs <span class="symbol">=</span> cs}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xyPlot (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+  blankPlot <span class="symbol">|&gt;</span> setXData (autoScale xs) <span class="symbol">|&gt;</span> setYData (autoScale ys)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xycPlot (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (cs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  blankPlot <span class="symbol">|&gt;</span>
+    setXData (autoScale xs) <span class="symbol">|&gt;</span>
+    setYData (autoScale ys) <span class="symbol">|&gt;</span>
+    setCData (autoScale cs)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> yPlot (ys<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Plot</span> n <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="type-name">Unit</span> <span class="symbol">=</span>
+  xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">IToF</span> <span class="symbol">$</span> ordinal i
+  xyPlot xs ys
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- xs = linspace (Fin 100) 0. 1.0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :html showPlot $ xycPlot xs xs xs
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Heatmap-style plots</h2>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: scales
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> matshow (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Html</span> <span class="symbol">=</span>
+  low  <span class="symbol">=</span> minimum  <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j
+  high <span class="symbol">=</span> maximum <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j
+  imgToHtml <span class="symbol">$</span> makePNG <span class="keyword">for</span> i j<span class="symbol">.</span>
+    x <span class="symbol">=</span> floatTo8Bit <span class="symbol">$</span> (img<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> low) <span class="symbol">/</span> (high <span class="symbol">-</span> low)
+    [x<span class="symbol">,</span> x<span class="symbol">,</span> x]
+</div></div></div></body></html>
