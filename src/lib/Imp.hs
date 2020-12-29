@@ -1217,6 +1217,8 @@ instrTypeChecked instr = case instr of
     case (dt, st) of
       (PtrType _, PtrType _) -> return ()
       (Scalar  _, Scalar  _) -> return ()
+      (Scalar Int64Type, PtrType  _) -> return ()
+      (PtrType _,  Scalar Int64Type) -> return ()
       _ -> throw CompilerErr $
             "Can't cast " ++ pprint st ++ " to " ++ pprint dt
     return dt

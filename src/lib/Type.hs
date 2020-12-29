@@ -648,6 +648,8 @@ checkFloatBaseType allowVector t = case t of
 
 checkValidCast :: Type -> Type -> TypeM ()
 checkValidCast (BaseTy (PtrType _)) (BaseTy (PtrType _)) = return ()
+checkValidCast (BaseTy (PtrType _)) (BaseTy (Scalar Int64Type)) = return ()
+checkValidCast (BaseTy (Scalar Int64Type)) (BaseTy (PtrType _)) = return ()
 checkValidCast sourceTy destTy =
   checkScalarType sourceTy >> checkScalarType destTy
   where
