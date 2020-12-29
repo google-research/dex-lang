@@ -649,6 +649,9 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inner (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (mat<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   fsum <span class="symbol">\</span>(i<span class="symbol">,</span>j)<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eye (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span> select (i <span class="symbol">==</span> j) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Pseudorandom number generator utilities</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: newtype
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Key</span> <span class="symbol">=</span> <span class="type-name">Int64</span>
@@ -1134,7 +1137,7 @@ code {
     fromCString <span class="symbol">$</span> <span class="type-name">MkCString</span> <span class="symbol">$</span> %ffi getenv <span class="type-name">RawPtr</span> ptr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> checkEnv (name<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">State</span> <span class="type-name">World</span>} <span class="type-name">Bool</span> <span class="symbol">=</span>
-  <span class="comment">-- This should be just `isJust $ getEnv name` but that sefaults (only if the
+  <span class="comment">-- This should be just `isJust $ getEnv name` but that segfaults (only if the
 </span>  <span class="comment">-- env var *is* defined), possibly related to bug #348.
 </span>  withCString name <span class="symbol">\</span>(<span class="type-name">MkCString</span> ptr)<span class="symbol">.</span>
     resultPtr <span class="symbol">=</span> %ffi getenv <span class="type-name">RawPtr</span> ptr

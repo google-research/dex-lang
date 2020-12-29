@@ -1,0 +1,135 @@
+<!DOCTYPE HTML>
+<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  margin: 1em auto 1em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  padding-bottom: 500px;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Cholesky Factorization</h1>
+<p>https://en.wikipedia.org/wiki/Cholesky_decomposition</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Cholesky Algorithm</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chol (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>buf<span class="symbol">.</span>
+    <span class="keyword">for</span>_ i<span class="symbol">.</span> <span class="keyword">for</span> j&#39;<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>
+      j <span class="symbol">=</span> %inject(j&#39;)
+      row  <span class="symbol">=</span> <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..&lt;</span>j)<span class="symbol">.</span> get buf<span class="symbol">!</span>i<span class="symbol">!</span>(%inject k)
+      row&#39; <span class="symbol">=</span> <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..&lt;</span>j)<span class="symbol">.</span> get buf<span class="symbol">!</span>j<span class="symbol">!</span>(%inject k)
+      a <span class="symbol">=</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> vdot row row&#39;
+      <span class="keyword">if</span> i<span class="symbol">==</span>j
+        <span class="keyword">then</span>
+          buf<span class="symbol">!</span>i<span class="symbol">!</span>j <span class="symbol">:=</span> sqrt a
+        <span class="keyword">else</span>
+          b <span class="symbol">=</span> get buf<span class="symbol">!</span>j<span class="symbol">!</span>j
+          buf<span class="symbol">!</span>i<span class="symbol">!</span>j <span class="symbol">:=</span> a <span class="symbol">/</span> b
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>PSD solver based on Cholesky decomposition</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trisolveL (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>buf<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+    row   <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">.</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>(%inject j)
+    xPrev <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">.</span> get (buf<span class="symbol">!</span>%inject j)
+    buf<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> vdot row xPrev) <span class="symbol">/</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trisolveU (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>buf<span class="symbol">.</span> <span class="keyword">rof</span> i<span class="symbol">.</span>
+    row   <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>%inject(j)
+    xPrev <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span> get (buf<span class="symbol">!</span>%inject j)
+    buf<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> vdot row xPrev) <span class="symbol">/</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> psdsolve (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  l <span class="symbol">=</span> chol mat
+  trisolveU (transpose l) <span class="symbol">$</span>  trisolveL l b
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Test</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">N</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 4
+</div></div><div class="cell"><div class="code-block">[k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey <span class="symbol">$</span> newKey 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">psd <span class="symbol">:</span> <span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  a <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">N</span> j<span class="symbol">:</span><span class="type-name">N</span><span class="symbol">.</span> randn <span class="symbol">$</span> ixkey2 k1 i j
+  x <span class="symbol">=</span> a <span class="symbol">**</span> transpose a
+  x <span class="symbol">+</span> eye
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">l <span class="symbol">:</span> <span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> chol psd
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> l
+</div><div class="result-block">[ [2.021765, 0., 0., 0.]
+, [-1.795018, 1.990174, 0., 0.]
+, [-0.897886, 0.186757, 1.980266, 0.]
+, [1.445752, -0.296448, 0.724586, 2.230807] ]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">psdReconstructed <span class="symbol">=</span> l <span class="symbol">**</span> transpose l
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> sq (psd<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> psdReconstructed<span class="symbol">.</span>i<span class="symbol">.</span>j)
+</div><div class="result-block">0.</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">vec <span class="symbol">:</span> <span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> arb k2
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (vec<span class="symbol">,</span> psd <span class="symbol">**.</span> psdsolve psd vec)
+</div><div class="result-block">( [1.211277, 0.23285, -0.741911, 0.883351]
+, [1.211277, 0.23285, -0.741911, 0.883351] )</div></div></div></body></html>
