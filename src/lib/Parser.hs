@@ -204,6 +204,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> unitCon
          <|> (uLabeledExprs `fallBackTo` uVariantExpr)
          <|> uIsoSugar
+         <|> uDoSugar
          <?> "expression"
 
 containedExpr :: Parser UExpr
@@ -714,6 +715,12 @@ uLabeledExprs = withSrc $
 varPun :: SrcPos -> Label -> UExpr
 varPun pos str = WithSrc (Just pos) $ UVar (mkName str :> ())
 
+uDoSugar :: Parser UExpr
+uDoSugar = withSrc $ do
+  keyWord DoKW
+  body <- blockOrExpr
+  return $ ULam (WithSrc Nothing UPatUnit, Nothing) (PlainArrow ()) body
+
 uIsoSugar :: Parser UExpr
 uIsoSugar = withSrc (char '#' *> options) where
   options = (recordFieldIso <$> fieldLabel)
@@ -1019,7 +1026,7 @@ type Lexer = Parser
 
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
-             | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW
+             | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -1056,11 +1063,12 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       InterfaceKW -> "interface"
       InstanceKW -> "instance"
       WhereKW -> "where"
+      DoKW  -> "do"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "data", "interface",
-               "instance", "where", "if", "then", "else"]
+               "instance", "where", "if", "then", "else", "do"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

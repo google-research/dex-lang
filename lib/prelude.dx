@@ -249,7 +249,7 @@ def withState
 def unsafeIO (f: Unit -> {State World|eff} a) : {|eff} a =
   %runIO f
 
-def unreachable (():Unit) : a = unsafeIO \().
+def unreachable (():Unit) : a = unsafeIO do
   %throwError a
 
 'Type classes
@@ -588,7 +588,7 @@ def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
 -- TODO: newtype
 Key = Int64
 
-def hash (x:Key) (y:Int32) : Key = unsafeIO \().
+def hash (x:Key) (y:Int32) : Key = unsafeIO do
   y64 = IToI64 y
   %ffi threefry2x32 Int64 x y64
 def newKey (x:Int) : Key = hash (IToI64 0) x
@@ -596,7 +596,7 @@ def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
 def splitKey (n:Int) ?-> (k:Key) : Fin n => Key = for i. ixkey k i
-def rand (k:Key) : Float =  unsafeIO \(). F64ToF $ %ffi randunif Float64 k
+def rand (k:Key) : Float =  unsafeIO do F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
@@ -923,22 +923,22 @@ instance showString : Show String where
   show = id
 
 instance showInt32 : Show Int32 where
-  show = \x: Int32. unsafeIO \().
+  show = \x: Int32. unsafeIO do
     (n, ptr) = %ffi showInt32 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 instance showInt64 : Show Int64 where
-  show = \x: Int64. unsafeIO \().
+  show = \x: Int64. unsafeIO do
     (n, ptr) = %ffi showInt64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 instance showFloat32 : Show Float32 where
-  show = \x: Float32.unsafeIO \().
+  show = \x: Float32.unsafeIO do
     (n, ptr) = %ffi showFloat32 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
 instance showFloat64 : Show Float64 where
-  show = \x: Float64.unsafeIO \().
+  show = \x: Float64.unsafeIO do
     (n, ptr) = %ffi showFloat64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
@@ -1033,7 +1033,7 @@ def liftState (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
 -- A little iteration combinator
 def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
   result = snd $ withState Nothing \resultRef. withState 0 \i.
-    while (\(). isNothing $ get resultRef) \().
+    while (do isNothing $ get resultRef) do
       case liftState resultRef (liftState i body) (get i) of
         Continue -> i := get i + 1
         Done result -> resultRef := Just result
@@ -1115,7 +1115,7 @@ def shellOut (command:String) : {State World} String =
 
 'Partial functions
 
-def error (s:String) : a = unsafeIO \().
+def error (s:String) : a = unsafeIO do
   print s
   %throwError a
 
@@ -1425,7 +1425,7 @@ def concat (lists:n=>(List a)) : List a =
   AsList _ $ fst $ withState 0 \listIdx.
     fst $ withState 0 \eltIdx.
       for i:(Fin totalSize).
-        while (\(). get eltIdx >= listLength (lists.((get listIdx)@_))) \().
+        while (do get eltIdx >= listLength (lists.((get listIdx)@_))) do
           eltIdx := 0
           listIdx := get listIdx + 1
         (AsList _ xs) = lists.((get listIdx)@_)

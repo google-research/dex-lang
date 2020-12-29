@@ -218,7 +218,7 @@ def sampleLightRadiance
       Light lightPos hw _ ->
         (dirToLight, distToLight) = directionAndLength $
                                       lightPos + sampleSquare hw k - rayPos
-        when (positiveProjection dirToLight surfNor) \().
+        when (positiveProjection dirToLight surfNor) do
           -- light on this far side of current surface
           fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
           outRay = (rayPos, dirToLight)
@@ -234,7 +234,7 @@ def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->
-            when (i == 0) \(). radiance += intensity   -- TODO: scale etc
+            when (i == 0) do radiance += intensity   -- TODO: scale etc
             Done ()
           HitObj incidentRay osurf ->
             [k1, k2] = splitKey $ hash k i

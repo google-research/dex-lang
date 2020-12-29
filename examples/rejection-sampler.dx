@@ -2,7 +2,7 @@
 def rejectionSample (try: Key -> Maybe a) (k:Key) : a =
   ans = fst $ withState 0 \i.
     snd $ withState Nothing \sample.
-      while (\(). isNothing (get sample)) \().
+      while (do isNothing (get sample)) do
         i := get i + 1
         sample := try $ hash k (get i)
   case ans of Just sample -> sample

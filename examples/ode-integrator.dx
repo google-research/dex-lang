@@ -135,7 +135,7 @@ def odeint (func: d=>Float -> Time -> d=>Float)
 
     -- Take steps until we pass target_t
     new_state = snd $ withState init_carry \state.
-      while (\(). stopping_condition (get state)) \().
+      while (do stopping_condition (get state)) do
         state := possible_step (get state)
     (_, _, t, _, last_t, interp_coeff) = new_state
 
