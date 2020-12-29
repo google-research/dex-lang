@@ -1,5 +1,80 @@
 <!DOCTYPE HTML>
-<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Connectionist Temporal Classification</h2>
+<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  margin: 1em auto 1em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  padding-bottom: 500px;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Connectionist Temporal Classification</h2>
 <p>By Alex Graves et alia.</p>
 </div></div><div class="cell"><div class="prose-block"><p><a href="https://www.cs.toronto.edu/%7Egraves/icml_2006.pdf">Link to paper</a>.</p>
 </div></div><div class="cell"><div class="prose-block"><p>This dynamic programming algorithm computes the probability of a particular sequences of labels
@@ -113,7 +188,7 @@ most implementations.</p>
 </div><div class="result-block">[(1@Fin 6), (5@Fin 6), (5@Fin 6)]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Evaluate marginal probability of labels given logits
 </span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> exp <span class="symbol">$</span> ctc blank logits labels
-</div><div class="result-block">1.0398488e-3</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.00104</div></div><div class="cell"><div class="code-block">
 
 
 </div></div><div class="cell"><div class="prose-block"><h3>Test</h3>
@@ -125,10 +200,10 @@ most implementations.</p>
 
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Vocab</span><span class="symbol">.</span>
   exp <span class="symbol">$</span> ctc blank logits [i]
-</div><div class="result-block">0.14146839</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.141468</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">:</span>(<span class="type-name">Vocab</span> <span class="symbol">&amp;</span> <span class="type-name">Vocab</span>)<span class="symbol">.</span>
   exp <span class="symbol">$</span> ctc blank logits [i<span class="symbol">,</span> j]
-</div><div class="result-block">0.7091234</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">0.709123</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span> j<span class="symbol">,</span> k)<span class="symbol">:</span>(<span class="type-name">Vocab</span> <span class="symbol">&amp;</span> <span class="type-name">Vocab</span> <span class="symbol">&amp;</span> <span class="type-name">Vocab</span>)<span class="symbol">.</span>
   exp <span class="symbol">$</span> ctc blank logits [i<span class="symbol">,</span> j<span class="symbol">,</span> k]
-</div><div class="result-block">0.9251011</div></div></div></body></html>
+</div><div class="result-block">0.925101</div></div></div></body></html>

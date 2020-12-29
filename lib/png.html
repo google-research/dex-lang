@@ -1,5 +1,80 @@
 <!DOCTYPE HTML>
-<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Base 64 encoder</h2>
+<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  margin: 1em auto 1em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  padding-bottom: 500px;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Base 64 encoder</h2>
 </div></div><div class="cell"><div class="code-block">encodingTable <span class="symbol">=</span> [&#39;<span class="type-name">A</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">B</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">C</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">D</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">E</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">F</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">G</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">H</span>&#39;<span class="symbol">,</span>
                  &#39;<span class="type-name">I</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">J</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">K</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">L</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">M</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">N</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">O</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">P</span>&#39;<span class="symbol">,</span>
                  &#39;<span class="type-name">Q</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">R</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">S</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">T</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">U</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">V</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">W</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">X</span>&#39;<span class="symbol">,</span>

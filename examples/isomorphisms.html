@@ -1,5 +1,80 @@
 <!DOCTYPE HTML>
-<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Isomorphisms in Dex</h1>
+<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  margin: 1em auto 1em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  padding-bottom: 500px;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Isomorphisms in Dex</h1>
 </div></div><div class="cell"><div class="prose-block"><p><code>Iso a b</code> is the type of an isomorphism between <code>a</code> and <code>b</code>.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="type-name">MkIso</span>
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; {bwd: b -&gt; a &amp; fwd: a -&gt; b} -&gt; Iso a b)</div></div><div class="cell"><div class="code-block">
@@ -12,16 +87,16 @@
 </div></div><div class="cell"><div class="prose-block"><p>Isomorphisms can be applied with <code>appIso</code>, applied in reverse with <code>revIso</code>,
 and flipped with <code>flipIso</code></p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso cycleThree (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
-</div><div class="result-block">(2.0, (3, 1))</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">(2., (3, 1))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> revIso cycleThree (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
-</div><div class="result-block">(3, (1, 2.0))</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">(3, (1, 2.))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso (flipIso cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
-</div><div class="result-block">(3, (1, 2.0))</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">(3, (1, 2.))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>They can also be composed with <code>&amp;&gt;&gt;</code>:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso (cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
-</div><div class="result-block">(3, (1, 2.0))</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">(3, (1, 2.))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> appIso (cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree <span class="symbol">&amp;&gt;&gt;</span> cycleThree) (1<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3)
-</div><div class="result-block">(1, (2.0, 3))</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">(1, (2., 3))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Note that we assume but do not check that the isomorphism is lawful (i.e.
 <code>appIso iso $ revIso iso x == x</code> for all <code>x</code>, or equivalently
 <code>iso &amp;&gt;&gt; (flipIso iso) == idIso</code>).</p>
@@ -73,17 +148,17 @@ _ans_ =
 </div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>We can also do other types of things:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> popAt <span class="iso-sugar">#foo</span> {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
-</div><div class="result-block">{bar = 2.0}</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">{bar = 2.}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> pushAt <span class="iso-sugar">#foo</span> 3<span class="symbol">.</span>0 {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
-</div><div class="result-block">{bar = 2.0, foo = 3.0, foo = 1}</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">{bar = 2., foo = 3., foo = 1}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> setAt <span class="iso-sugar">#foo</span> 2 {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0}
-</div><div class="result-block">{bar = 2.0, foo = 2}</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">{bar = 2., foo = 2}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>These helper functions work with any &quot;lens-like&quot; isomorphism. For instance,
 we can select everything except for a particular field:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> exceptLens
 </div><div class="result-block">((a:Type) ?-&gt; (b:Type) ?-&gt; (c:Type) ?-&gt; (Iso a (b &amp; c)) -&gt; Iso a (c &amp; b))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> getAt (exceptLens <span class="iso-sugar">#foo</span>) {foo<span class="symbol">=</span>1<span class="symbol">,</span> bar<span class="symbol">=</span>2<span class="symbol">.</span>0<span class="symbol">,</span> baz<span class="symbol">=</span>3}
-</div><div class="result-block">{bar = 2.0, baz = 3}</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">{bar = 2., baz = 3}</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Variant accessors and prism-like helpers</h2>
 <p>Similarly, there are prism-like helpers</p>
@@ -99,7 +174,7 @@ we can select everything except for a particular field:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> buildWith <span class="iso-sugar">#?foo</span> 3 <span class="symbol">:</span> {foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
 </div><div class="result-block">{| foo = 3 |}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> matchWith (exceptPrism <span class="iso-sugar">#?foo</span>) <span class="symbol">$</span>  {<span class="symbol">|</span>bar <span class="symbol">=</span> 1<span class="symbol">.</span>0<span class="symbol">|</span>}<span class="symbol">:</span>{foo<span class="symbol">:</span><span class="type-name">Int</span> <span class="symbol">|</span> bar<span class="symbol">:</span><span class="type-name">Float</span>}
-</div><div class="result-block">(Just {| bar = 1.0 |})</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">(Just {| bar = 1. |})</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Record zipper isomorphisms</h2>
 <p>The isomorphisms shown above are specialized for removing a single field from
 an object. As such, they don't compose well when trying to work with more than
@@ -159,7 +234,7 @@ ordinary record accessor lens.</p>
 , [100, 110, 101, 111]@{b: Fin 2 &amp; c: Fin 2} ]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p><code>splitR</code> can be used if you want to process multiple fields at once:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> pushAt (splitR <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#&amp;a</span> <span class="symbol">&amp;&gt;&gt;</span> <span class="iso-sugar">#&amp;b</span>) {a<span class="symbol">=</span>1<span class="symbol">,</span> b<span class="symbol">=</span>2<span class="symbol">.</span>0} {c<span class="symbol">=</span>3<span class="symbol">,</span> d<span class="symbol">=</span>4<span class="symbol">.</span>0}
-</div><div class="result-block">{a = 1, b = 2.0, c = 3, d = 4.0}</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">{a = 1, b = 2., c = 3, d = 4.}</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Variant zipper isomorphisms</h2>
 <p>Just as there are record zipper isomorphisms, there are also variant
 zipper isomorphisms:</p>

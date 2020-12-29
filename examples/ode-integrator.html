@@ -1,5 +1,80 @@
 <!DOCTYPE HTML>
-<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><p>Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
+<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  margin: 1em auto 1em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  padding-bottom: 500px;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><p>Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
 stepsize calculation.
 This version is a port of the <a href="https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py">Jax implementation</a>.
 One difference is that it uses a lower-triangular
@@ -135,39 +210,21 @@ matrix type for the Butcher tableau, and so avoids zero-padding everywhere.</p>
 
     <span class="comment">-- Take steps until we pass target_t
 </span>    new_state <span class="symbol">=</span> snd <span class="symbol">$</span> withState init_carry <span class="symbol">\</span>state<span class="symbol">.</span>
-      while (do stopping_condition (get state)) do
+      while (<span class="keyword">do</span> stopping_condition (get state)) <span class="keyword">do</span>
         state <span class="symbol">:=</span> possible_step (get state)
     (_<span class="symbol">,</span> _<span class="symbol">,</span> t<span class="symbol">,</span> _<span class="symbol">,</span> last_t<span class="symbol">,</span> interp_coeff) <span class="symbol">=</span> new_state
 
-</div><div class="err-block">Parse error:139:7:
-    |
-139 |         state := possible_step (get state)
-    |       ^^^^
-unexpected &quot;  st&quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, let binding, or negation
-</div></div><div class="cell"><div class="code-block">    <span class="comment">-- Interpolate to the target time.
-</span></div></div><div class="cell"><div class="code-block">    relative_output_time <span class="symbol">=</span> (target_t <span class="symbol">-</span> last_t) <span class="symbol">/</span> (t <span class="symbol">-</span> last_t)
+    <span class="comment">-- Interpolate to the target time.
+</span>    relative_output_time <span class="symbol">=</span> (target_t <span class="symbol">-</span> last_t) <span class="symbol">/</span> (t <span class="symbol">-</span> last_t)
     z_target <span class="symbol">=</span> evalpoly interp_coeff relative_output_time
     (new_state<span class="symbol">,</span> z_target)
 
-</div><div class="err-block">Parse error:143:5:
-    |
-143 |     relative_output_time = (target_t - last_t) / (t - last_t)
-    |     ^^
-unexpected &quot;re&quot;
-expecting end of line
-</div></div><div class="cell"><div class="code-block">  f0 <span class="symbol">=</span> func z0 t0
+  f0 <span class="symbol">=</span> func z0 t0
   init_step <span class="symbol">=</span> initial_step_size func t0 z0 4 rtol atol f0
   init_interp_coeff <span class="symbol">=</span> zero  <span class="comment">-- dummy vals
 </span>  init_carry <span class="symbol">=</span> (z0<span class="symbol">,</span> f0<span class="symbol">,</span> t0<span class="symbol">,</span> init_step<span class="symbol">,</span> t0<span class="symbol">,</span> init_interp_coeff)
   snd <span class="symbol">$</span> scan init_carry integrate_to_next_time
-
-</div><div class="err-block">Parse error:147:3:
-    |
-147 |   f0 = func z0 t0
-    |   ^^
-unexpected &quot;f0&quot;
-expecting end of line
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Example: Linear dynamics</h4>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> myDyn (z <span class="symbol">:</span> a) <span class="symbol">-&gt;</span> (t<span class="symbol">:</span><span class="type-name">Time</span>) <span class="symbol">:</span> a <span class="symbol">=</span> z
 </div></div><div class="cell"><div class="code-block">
@@ -176,34 +233,14 @@ expecting end of line
 </div></div><div class="cell"><div class="code-block">t1 <span class="symbol">=</span> [1<span class="symbol">.</span>0]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">approx_e <span class="symbol">=</span> odeint myDyn z0 t0 t1
-</div><div class="err-block">Error: variable not in scope: odeint
-
-approx_e = odeint myDyn z0 t0 t1
-           ^^^^^^^
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> approx_e
-</div><div class="err-block">Error: variable not in scope: approx_e
-
-:p approx_e
-   ^^^^^^^^
-</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">[[2.719158]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">exact_e <span class="symbol">=</span> [[exp 1<span class="symbol">.</span>0]]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (approx_e <span class="symbol">-</span> exact_e) <span class="comment">-- amount of numerical error
-</span></div><div class="err-block">Error: variable not in scope: approx_e
-
-:p (approx_e - exact_e) -- amount of numerical error
-    ^^^^^^^^^
-</div></div><div class="cell"><div class="code-block">
+</span></div><div class="result-block">[[0.000877]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">times <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 100) 0<span class="symbol">.</span>00001 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">ys <span class="symbol">=</span> odeint myDyn z0 t0 times
-</div><div class="err-block">Error: variable not in scope: odeint
-
-ys = odeint myDyn z0 t0 times
-     ^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showPlot <span class="symbol">$</span> yPlot <span class="keyword">for</span> i<span class="symbol">.</span> ys<span class="symbol">.</span>i<span class="symbol">.</span>(fromOrdinal _ 0)
-</div><div class="err-block">Error: variable not in scope: ys
-
-:html showPlot $ yPlot for i. ys.i.(fromOrdinal _ 0)
-                              ^^
-</div></div></div></body></html>
+</div><svg width="400" height="400" viewBox="0 -400 400 400"><g fill="none" stroke-width="1"><rect width="400"height="400"x="0"y="-400"/></g><g fill="#007fff" stroke-width="1"><circle cx="0"cy="-0"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="4.04040384"cy="-2.37837029"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="8.08080769"cy="-4.77577162"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="12.121212"cy="-7.21081209"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="16.1616154"cy="-9.64754391"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="20.2020206"cy="-12.1176291"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="24.242424"cy="-14.6359549"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="28.2828274"cy="-17.177906"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="32.3232307"cy="-19.6967411"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="36.363636"cy="-22.2552433"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="40.4040413"cy="-24.8487053"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="44.4444466"cy="-27.4948349"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="48.484848"cy="-30.1897964"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="52.5252533"cy="-32.9082718"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="56.5656548"cy="-35.6033745"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="60.6060638"cy="-38.2722282"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="64.6464615"cy="-41.0079613"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="68.6868668"cy="-43.7684746"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="72.727272"cy="-46.5749969"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="76.7676773"cy="-49.4391251"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="80.8080826"cy="-52.3627396"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="84.8484879"cy="-55.338089"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="88.8888931"cy="-58.3477859"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="92.9292908"cy="-61.3647232"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="96.969696"cy="-64.3522263"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="101.010094"cy="-67.263916"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="105.050507"cy="-70.218689"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="109.090912"cy="-73.2651138"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="113.13131"cy="-76.3376846"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="117.171715"cy="-79.4576416"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="121.212128"cy="-82.6387558"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="125.252518"cy="-85.8872528"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="129.292923"cy="-89.2018356"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="133.333344"cy="-92.5737076"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="137.373734"cy="-95.9865799"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="141.414139"cy="-99.4165268"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="145.454544"cy="-102.832306"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="149.494949"cy="-106.194962"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="153.535355"cy="-109.458115"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="157.57576"cy="-112.800957"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="161.616165"cy="-116.269363"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="165.65657"cy="-119.766144"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="169.696976"cy="-123.315323"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="173.737366"cy="-126.932884"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="177.777786"cy="-130.626862"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="181.818192"cy="-134.397293"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="185.858582"cy="-138.236099"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="189.898987"cy="-142.127258"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="193.939392"cy="-146.046738"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="197.979797"cy="-149.962479"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="202.020187"cy="-153.834427"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="206.060608"cy="-157.614487"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="210.101013"cy="-161.304764"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="214.141418"cy="-165.26944"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="218.181824"cy="-169.251068"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="222.222229"cy="-173.281342"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="226.262619"cy="-177.382706"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="230.303024"cy="-181.568451"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="234.34343"cy="-185.842819"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="238.383835"cy="-190.200668"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="242.424255"cy="-194.627914"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="246.464661"cy="-199.101105"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="250.505035"cy="-203.587799"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="254.545456"cy="-208.046265"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="258.585846"cy="-212.425659"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="262.626282"cy="-216.665985"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="266.666687"cy="-221.070404"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="270.707062"cy="-225.61145"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="274.747467"cy="-230.193085"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="278.787872"cy="-234.845688"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="282.828278"cy="-239.589279"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="286.868683"cy="-244.433304"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="290.909088"cy="-249.376862"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="294.949493"cy="-254.40834"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="298.989899"cy="-259.505768"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="303.030304"cy="-264.63681"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="307.070709"cy="-269.758392"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="311.111115"cy="-274.817139"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="315.15152"cy="-279.749084"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="319.191895"cy="-284.610809"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="323.23233"cy="-289.799438"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="327.272736"cy="-295.014801"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="331.313141"cy="-300.296997"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="335.353546"cy="-305.6745"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="339.393951"cy="-311.163452"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="343.434326"cy="-316.768341"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="347.474731"cy="-322.481171"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="351.515137"cy="-328.282471"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="355.555573"cy="-334.140411"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="359.595978"cy="-340.011322"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="363.636383"cy="-345.839539"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="367.676758"cy="-351.557312"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="371.717163"cy="-357.085052"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="375.757568"cy="-362.8974"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="379.797974"cy="-368.843353"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="383.838379"cy="-374.84671"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="387.878784"cy="-380.946106"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="391.919189"cy="-387.166321"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="395.959595"cy="-393.518494"r="1"/></g><g fill="#007fff" stroke-width="1"><circle cx="400"cy="-399.999969"r="1"/></g></svg></div></div></body></html>

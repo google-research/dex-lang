@@ -1,5 +1,80 @@
 <!DOCTYPE HTML>
-<html><head><style type="text/css">/*Copyright2019GoogleLLC*//**//*UseofthissourcecodeisgovernedbyaBSD-style*//*licensethatcanbefoundintheLICENSEfileorat*//*https://developers.google.com/open-source/licenses/bsd*/body{margin:1emauto1emauto;padding:1em1em1em1em;max-width:50em;font-family:Helvetica,sans-serif;font-size:100%;color:#333;padding-bottom:500px;}.cell{}.code-block,.err-block,.result-block{padding:0em0em0em2em;display:block;font-family:monospace;white-space:pre;}code{background-color:#F0F0F0;}.result-block{border-left:3pxsolid#87CEFA;}.prose-block{line-height:140%;}.err-block{font-weight:bold;color:#B22222;border-left:3pxsolid#B22222;}.plot{padding:5em;}.plot-img{width:80%;}.comment{color:#808080;}.keyword{color:#0000DD;}.command{color:#A80000;}.symbol{color:#E07000;}.type-name{color:#A80000;}.iso-sugar{color:#25BBA7;}</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Multi-step Ray Tracer</h2>
+<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  margin: 1em auto 1em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  padding-bottom: 500px;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Multi-step Ray Tracer</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Based on Eric Jang's
 <a href="https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb">JAX implementation</a>,
 described
@@ -190,20 +265,12 @@ described
 </span>              <span class="type-name">Done</span> <span class="symbol">$</span> <span class="keyword">case</span> obj <span class="keyword">of</span>
                 <span class="type-name">PassiveObject</span> _ surf <span class="symbol">-&gt;</span> <span class="type-name">HitObj</span> (rayPos<span class="symbol">,</span> rayDir) (surfNorm<span class="symbol">,</span> surf)
                 <span class="type-name">Light</span> _ _ radiance   <span class="symbol">-&gt;</span> <span class="type-name">HitLight</span> radiance
-</div><div class="err-block">Error: variable not in scope: boundedIter
-
-    boundedIter maxIters HitNothing \_.
-    ^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rayDirectRadiance (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (ray<span class="symbol">:</span><span class="type-name">Ray</span>) <span class="symbol">:</span> <span class="type-name">Radiance</span> <span class="symbol">=</span>
   <span class="keyword">case</span> raymarch scene ray <span class="keyword">of</span>
     <span class="type-name">HitLight</span> intensity <span class="symbol">-&gt;</span> intensity
     <span class="type-name">HitNothing</span> <span class="symbol">-&gt;</span> zero
     <span class="type-name">HitObj</span> _ _ <span class="symbol">-&gt;</span> zero
-</div><div class="err-block">Error: variable not in scope: raymarch
-
-  case raymarch scene ray of
-       ^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleSquare (hw<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Position</span> <span class="symbol">=</span>
  [kx<span class="symbol">,</span> kz] <span class="symbol">=</span> splitKey k
@@ -222,19 +289,13 @@ described
       <span class="type-name">Light</span> lightPos hw _ <span class="symbol">-&gt;</span>
         (dirToLight<span class="symbol">,</span> distToLight) <span class="symbol">=</span> directionAndLength <span class="symbol">$</span>
                                       lightPos <span class="symbol">+</span> sampleSquare hw k <span class="symbol">-</span> rayPos
-        when (positiveProjection dirToLight surfNor) do
+        when (positiveProjection dirToLight surfNor) <span class="keyword">do</span>
           <span class="comment">-- light on this far side of current surface
 </span>          fracSolidAngle <span class="symbol">=</span> (relu <span class="symbol">$</span> dot dirToLight yHat) <span class="symbol">*</span> sq hw <span class="symbol">/</span> (pi <span class="symbol">*</span> sq distToLight)
           outRay <span class="symbol">=</span> (rayPos<span class="symbol">,</span> dirToLight)
           coeff <span class="symbol">=</span> fracSolidAngle <span class="symbol">*</span> probReflection osurf inRay outRay
           radiance <span class="symbol">+=</span> coeff <span class="symbol">.*</span> rayDirectRadiance scene outRay
-
-</div><div class="err-block">Parse error:223:9:
-    |
-223 |           fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
-    |         ^^^^
-unexpected &quot;  fr&quot;
-expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, let binding, or negation
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trace (params<span class="symbol">:</span><span class="type-name">Params</span>) (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (initRay<span class="symbol">:</span><span class="type-name">Ray</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Color</span> <span class="symbol">=</span>
   noFilter <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0]
   snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
@@ -244,7 +305,7 @@ expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, l
         <span class="keyword">case</span> raymarch scene <span class="symbol">$</span> get ray <span class="keyword">of</span>
           <span class="type-name">HitNothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> ()
           <span class="type-name">HitLight</span> intensity <span class="symbol">-&gt;</span>
-            when (i <span class="symbol">==</span> 0) do radiance <span class="symbol">+=</span> intensity   <span class="comment">-- TODO: scale etc
+            when (i <span class="symbol">==</span> 0) <span class="keyword">do</span> radiance <span class="symbol">+=</span> intensity   <span class="comment">-- TODO: scale etc
 </span>            <span class="type-name">Done</span> ()
           <span class="type-name">HitObj</span> incidentRay osurf <span class="symbol">-&gt;</span>
             [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey <span class="symbol">$</span> hash k i
@@ -253,10 +314,6 @@ expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, l
             filter <span class="symbol">:=</span> surfaceFilter (get filter) (snd osurf)
             radiance <span class="symbol">+=</span> applyFilter (get filter) lightRadiance
             <span class="type-name">Continue</span>
-</div><div class="err-block">Error: variable not in scope: boundedIter
-
-      boundedIter (getAt #maxBounces params) () \i.
-      ^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Assumes we&#39;re looking towards -z.
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Camera</span> <span class="symbol">=</span>
@@ -291,10 +348,6 @@ expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, l
       trace params scene (rays<span class="symbol">.</span>i<span class="symbol">.</span>j k1) k2
     sampleAveraged sampleRayColor (getAt <span class="iso-sugar">#numSamples</span> params) pixKey
   <span class="type-name">MkImage</span> _ _ <span class="symbol">$</span> image <span class="symbol">/</span> mean (<span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> image<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k)
-</div><div class="err-block">Error: variable not in scope: trace
-
-      trace params scene (rays.i.j k1) k2
-      ^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Define the scene and render it</h3>
 </div></div><div class="cell"><div class="code-block">lightColor <span class="symbol">=</span> [0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>2]
@@ -330,28 +383,12 @@ expecting &quot;..&quot;, &quot;..&lt;&quot;, expression, function definition, l
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- %time
 </span></div></div><div class="cell"><div class="code-block">(<span class="type-name">MkImage</span> _ _ image) <span class="symbol">=</span> takePicture params theScene camera
-</div><div class="err-block">Error: variable not in scope: takePicture
-
-(MkImage _ _ image) = takePicture params theScene camera
-                      ^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imshow image
-</div><div class="err-block">Error: variable not in scope: image
-
-:html imshow image
-             ^^^^^
-</div></div><div class="cell"><div class="code-block">
+</div><img class="plot-img" src="data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAAXNSR0IArs4c6QAAAS5JREFUGJUFwU1LwmAAB/D/87K3Nhea1DysSEHRghCCIrp0iIK+RLcuQX2AunbrS3TuA9StYyftLqglOGS+rOlecnNPvx+5klh1L3+5vekrfCQ4MbMgjNwsmcvspzvlBUaPu6FNPPvMNp4/AQB4vSi/FNKOljCL0WtVqUuy3GzAayH4wrDdWImPEz50PW4SsgKBpqNZxvkhjBrgDJXRWvwtqYxuEDrIMlAgASY+RA9wzGqu3/NTmVIuxExkWITddj+YjzEbpP5vf7zEn7RKU3KjygecCyLeitrW0e7D7en93Tsx9JYxStUFJwRCCK1ohMuITr0d247iOPJnoRllSsqJQK1uZ/vW03rOrpfQiSs6DQRjTHHmK/JYscxayVK5m2Gi8bzOEwWKThR36Szif8k9gLEBaeERAAAAAElFTkSuQmCC"></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)</p>
 </div></div><div class="cell"><div class="code-block">params2 <span class="symbol">=</span> defaultParams <span class="symbol">|&gt;</span> setAt <span class="iso-sugar">#numSamples</span> 1
 </div></div><div class="cell"><div class="code-block">(<span class="type-name">MkImage</span> _ _ image2) <span class="symbol">=</span> takePicture params2 theScene camera
-</div><div class="err-block">Error: variable not in scope: takePicture
-
-(MkImage _ _ image2) = takePicture params2 theScene camera
-                       ^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imshow image2
-</div><div class="err-block">Error: variable not in scope: image2
-
-:html imshow image2
-             ^^^^^^
-</div></div></div></body></html>
+</div><img class="plot-img" src="data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAAXNSR0IArs4c6QAAARZJREFUGJU1zDsvQ2EcwOHf/3Vu7TmnLkkrR5NuRCREiNAQSdN0kG5EiMVgsEjsEovYDP0EGE02icEHqBiEhMFkqVhEW71fXwvPB3hkzzAzxsBWp03IYdDHd/HChBxsC9vk2LL00LCenFoUFoRlyAo6lXkbiSbv5owxpbAs4on7ox3W07izUIRgAhJsqlERlEJgbQV3CRwIoMT0eI4NFRNBhGadZguq/Pnm4uS0d6liIgD1GvkX8Og/0Xjg9Zn3Qi1fpux5OggAHfF3HVvrWz2f1sms1oXrqxkV+e/kp/LRbR9wRrVItQTx5PahaN/Hdfm8gShEwIIuVOArmlqVc9/Xj/vhkGNbpmkYIqL7utPttZrtRqP1Cw3DVv8NylNJAAAAAElFTkSuQmCC"></div></div></body></html>
