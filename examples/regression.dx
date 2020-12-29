@@ -62,7 +62,7 @@ def rmsErr (truth:n=>Float) (pred:n=>Float) : Float =
   sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)
-> 0.25269496
+> 0.252695
 
 
 def tabCat (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =

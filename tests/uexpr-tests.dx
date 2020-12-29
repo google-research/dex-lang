@@ -13,12 +13,12 @@ def returnFirstArg (a:Type) (b:Type) (x:a) (y:b) : a = x
 > 1
 
 :p 1.0 + 2.0
-> 3.0
+> 3.
 
 def triple (x:Float) : Float = x + x + x
 
 :p triple 1.0
-> 3.0
+> 3.
 
 def idExplicit (a:Type) (x:a) : a = x
 
@@ -39,7 +39,7 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 > 1
 
 :p (\x y. x + y) 1.0 2.0
-> 3.0
+> 3.
 
 :p 1.0 + 1
 > Type error:
@@ -137,8 +137,8 @@ myPair = (1, 2.3)
 > [1, 2, 3, 4]@(Fin 2 & Fin 2)
 
 
-:p sin 1.0
-> 0.84147096
+:p sin 1.01
+> 0.846832
 
 :p
   (x,y) = (1,2)
@@ -198,7 +198,7 @@ def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 > (((), 2), 1)
 
 :p (\f x y. f x y) (+) 1.0 2.0
-> 3.0
+> 3.
 
 :p
   myId = fst (\x. x, 2)
@@ -220,23 +220,23 @@ def myOtherFst ((x, _):(a&b)) : a = x
 > 1
 
 :p sum [1.,2.]
-> 3.0
+> 3.
 
 :p
   xs = fanout _ 1.0
   for i:(Fin 3). xs.i + xs.i
-> [2.0, 2.0, 2.0]
+> [2., 2., 2.]
 
 :p
    f = \x. x * x * x
    jvp f 2.0 1.5
-> 18.0
+> 18.
 
 :p
    f : Float --o Float =
      \x. 2.0 * (x + x)
    transposeLinear f 1.0
-> 4.0
+> 4.
 
 -- FIXME: This fails due to shadowing!
 --def transpose' (x:n=>m=>Float) --o : m=>n=>Float = for i j. x.j.i
@@ -248,7 +248,7 @@ def myOtherFst ((x, _):(a&b)) : a = x
    f : Float --o (Fin 3=>Float) =
      \x. for i. x * 2.0
    transposeLinear f [1.0, 2.0, 3.0]
-> 12.0
+> 12.
 
 id'' : b -> b = id
 

@@ -16,21 +16,21 @@ cycleThree : Iso (a & b & c) (b & c & a) =
 and flipped with `flipIso`
 
 :p appIso cycleThree (1, 2.0, 3)
-> (2.0, (3, 1))
+> (2., (3, 1))
 
 :p revIso cycleThree (1, 2.0, 3)
-> (3, (1, 2.0))
+> (3, (1, 2.))
 
 :p appIso (flipIso cycleThree) (1, 2.0, 3)
-> (3, (1, 2.0))
+> (3, (1, 2.))
 
 'They can also be composed with `&>>`:
 
 :p appIso (cycleThree &>> cycleThree) (1, 2.0, 3)
-> (3, (1, 2.0))
+> (3, (1, 2.))
 
 :p appIso (cycleThree &>> cycleThree &>> cycleThree) (1, 2.0, 3)
-> (1, (2.0, 3))
+> (1, (2., 3))
 
 'Note that we assume but do not check that the isomorphism is lawful (i.e.
 `appIso iso $ revIso iso x == x` for all `x`, or equivalently
@@ -88,13 +88,13 @@ Record accessor isomorphisms can be passed into the helper function `getAt`:
 'We can also do other types of things:
 
 :p popAt #foo {foo=1, bar=2.0}
-> {bar = 2.0}
+> {bar = 2.}
 
 :p pushAt #foo 3.0 {foo=1, bar=2.0}
-> {bar = 2.0, foo = 3.0, foo = 1}
+> {bar = 2., foo = 3., foo = 1}
 
 :p setAt #foo 2 {foo=1, bar=2.0}
-> {bar = 2.0, foo = 2}
+> {bar = 2., foo = 2}
 
 'These helper functions work with any "lens-like" isomorphism. For instance,
 we can select everything except for a particular field:
@@ -103,7 +103,7 @@ we can select everything except for a particular field:
 > ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> Iso a (c & b))
 
 :p getAt (exceptLens #foo) {foo=1, bar=2.0, baz=3}
-> {bar = 2.0, baz = 3}
+> {bar = 2., baz = 3}
 
 
 '## Variant accessors and prism-like helpers
@@ -127,7 +127,7 @@ Similarly, there are prism-like helpers
 > {| foo = 3 |}
 
 :p matchWith (exceptPrism #?foo) $  {|bar = 1.0|}:{foo:Int | bar:Float}
-> (Just {| bar = 1.0 |})
+> (Just {| bar = 1. |})
 
 '## Record zipper isomorphisms
 The isomorphisms shown above are specialized for removing a single field from
@@ -200,7 +200,7 @@ ordinary record accessor lens.
 '`splitR` can be used if you want to process multiple fields at once:
 
 :p pushAt (splitR &>> #&a &>> #&b) {a=1, b=2.0} {c=3, d=4.0}
-> {a = 1, b = 2.0, c = 3, d = 4.0}
+> {a = 1, b = 2., c = 3, d = 4.}
 
 '## Variant zipper isomorphisms
 Just as there are record zipper isomorphisms, there are also variant

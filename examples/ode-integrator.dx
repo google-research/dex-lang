@@ -160,12 +160,12 @@ t1 = [1.0]
 
 approx_e = odeint myDyn z0 t0 t1
 :p approx_e
-> [[2.7201762]]
+> [[2.720176]]
 
 exact_e = [[exp 1.0]]
 
 :p (approx_e - exact_e) -- amount of numerical error
-> [[1.894474e-3]]
+> [[0.001894]]
 
 times = linspace (Fin 100) 0.00001 1.0
 ys = odeint myDyn z0 t0 times

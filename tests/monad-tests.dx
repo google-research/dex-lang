@@ -22,7 +22,7 @@
      ref := (z * 3.0)
 
   withState 1.0 stateAction
-> ((), 9.0)
+> ((), 9.)
 
 :p
   def rwsAction
@@ -40,7 +40,7 @@
     withState True \s.
       withAccum \w.
         rwsAction r w s
-> ((4, 6.0), False)
+> ((4, 6.), False)
 
 :p
    def m (h:Type) ?-> (s:Ref h (Fin 3=>Int)) : {State h} Unit =
@@ -61,7 +61,7 @@
     x = get s
     w += x
   withState 1.0 \s. withAccum \w . m w s
-> (((), 1.0), 1.0)
+> (((), 1.), 1.)
 
 def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
   x = ask r
@@ -79,7 +79,7 @@ def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
     w2 += 3.0
     w1 += 1.0
   withAccum \w1. withAccum \w2. m w1 w2
-> (((), 3.0), 2.0)
+> (((), 3.), 2.)
 
 def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
   s!(fromOrdinal _ 0) := 1
@@ -134,7 +134,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
           w' += x + x
           s := 4
           (x, y)
-> ((((2.0, 3), 4), 4.0), 2.0)
+> ((((2., 3), 4), 4.), 2.)
 
 def symmetrizeInPlace (mat:n=>n=>Float) : n=>n=>Float =
   snd $ withState mat \ref.
@@ -146,7 +146,7 @@ def symmetrizeInPlace (mat:n=>n=>Float) : n=>n=>Float =
        ref!j!i := avg
 
 symmetrizeInPlace [[1.,2.],[3.,4.]]
-> [[1.0, 2.5], [2.5, 4.0]]
+> [[1., 2.5], [2.5, 4.]]
 
 :p withReader 5 \r. ()
 > ()
@@ -155,15 +155,15 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
   for i:(Fin 2).
     w += 1.0
     w += 1.0
-> 4.0
+> 4.
 
 :p snd $ withAccum \w.
   for i:(Fin 2).
     w += 1.0
   w += 1.0
-> 3.0
+> 3.
 
 :p snd $ withAccum \ref.
      ref += [1.,2.,3.]
      ref += [2.,4.,5.]
-> [3.0, 6.0, 8.0]
+> [3., 6., 8.]
