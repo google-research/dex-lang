@@ -308,8 +308,10 @@ defaultCamera = { numPix     = 250
                 , sensorDist = 1.0 }
 
 -- We change to a small num pix here to reduce the compute needed for tests
-camera = defaultCamera |> setAt #numPix 10
 params = defaultParams
+camera = if dex_test_mode ()
+           then defaultCamera |> setAt #numPix 10
+           else defaultCamera
 
 -- %time
 (MkImage _ _ image) = takePicture params theScene camera

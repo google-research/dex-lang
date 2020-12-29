@@ -205,6 +205,8 @@ def isNothing (x:Maybe a) : Bool = case x of
   Nothing -> True
   Just _ -> False
 
+def isJust (x:Maybe a) : Bool = not $ isNothing x
+
 data (|) a:Type b:Type =
   Left  a
   Right b
@@ -1079,6 +1081,13 @@ def getEnv (name:String) : {State World} Maybe String =
   withCString name \(MkCString ptr).
     fromCString $ MkCString $ %ffi getenv RawPtr ptr
 
+def checkEnv (name:String) : {State World} Bool =
+  -- This should be just `isJust $ getEnv name` but that sefaults (only if the
+  -- env var *is* defined), possibly related to bug #348.
+  withCString name \(MkCString ptr).
+    resultPtr = %ffi getenv RawPtr ptr
+    not $ resultPtr == nullRawPtr
+
 def fread (stream:Stream ReadMode) : {State World} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
@@ -1510,3 +1519,5 @@ def softmax (x: n=>Float) : n=>Float =
 def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
+
+def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
