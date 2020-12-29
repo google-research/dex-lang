@@ -174,7 +174,10 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
     Text content ->
       textEle = tagBracketsAttr "text" $
         ("x" <=> x <.>
-         "y" <=> y)
+         "y" <=> y <.>
+         "text-anchor" <=> "middle" <.>    -- horizontal center
+         "dominant-baseline" <=> "middle"  -- vertical center
+        )
       groupEle solidAttr $ textEle content
 
 BoundingBox : Type = (Point & Point)
@@ -209,4 +212,3 @@ moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 --    )
 
 -- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
-
