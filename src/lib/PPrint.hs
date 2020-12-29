@@ -134,12 +134,16 @@ instance PrettyPrec ScalarBaseType where
 printDouble :: Double -> Doc ann
 printDouble x = p (double2Float x)
 
+printFloat :: Float -> Doc ann
+printFloat x = p $ reverse $ dropWhile (=='0') $ reverse $
+  showFFloat (Just 6) x ""
+
 instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
   prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
-  prettyPrec (Float32Lit x) = atPrec ArgPrec $ p x
+  prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l

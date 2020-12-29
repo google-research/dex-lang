@@ -1,11 +1,11 @@
 :p complex_floor $ MkComplex 0.3 0.6
-> (MkComplex 0.0 0.0)
+> (MkComplex 0. 0.)
 :p complex_floor $ MkComplex 0.6 0.8
-> (MkComplex 0.0 1.0)
+> (MkComplex 0. 1.)
 :p complex_floor $ MkComplex 0.8 0.6
-> (MkComplex 1.0 0.0)
+> (MkComplex 1. 0.)
 :p complex_floor $ MkComplex 0.6 0.3
-> (MkComplex 0.0 0.0)
+> (MkComplex 0. 0.)
 
 a = MkComplex 2.1 0.4
 b = MkComplex (-1.1) 1.3
@@ -48,10 +48,10 @@ b = MkComplex (-1.1) 1.3
 > True
 
 :p sinh (MkComplex 1.2 3.2)
-> (MkComplex -1.5068874 -0.10569556)
+> (MkComplex -1.506887 -0.105696)
 :p cosh (MkComplex 1.2 3.2)
-> (MkComplex -1.807568 8.811359e-2)
+> (MkComplex -1.807568 0.088114)
 :p tanh (MkComplex 1.1 0.1)
-> (MkComplex 0.80337524 3.5809334e-2)
+> (MkComplex 0.803375 0.035809)
 :p tan (MkComplex 1.2 3.2)
-> (MkComplex 2.2501666e-3 1.002451)
+> (MkComplex 0.00225 1.002451)

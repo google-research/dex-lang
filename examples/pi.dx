@@ -18,7 +18,7 @@ def meanAndStdDev (n:Int) (f: Key -> Float) (key:Key) : (Float & Float) =
 numSamps = 1000000
 
 :p meanAndStdDev numSamps estimatePiArea (newKey 0)
-> (3.143452, 1.6408892)
+> (3.143452, 1.640889)
 
 :p meanAndStdDev numSamps estimatePiAvgVal (newKey 0)
-> (3.1437902, 0.88649935)
+> (3.14379, 0.886499)

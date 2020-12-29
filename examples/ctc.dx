@@ -118,7 +118,7 @@ labels = for i:position. randIdxNoZero Vocab (newKey (ordinal i))
 
 -- Evaluate marginal probability of labels given logits
 :p exp $ ctc blank logits labels
-> 1.0398488e-3
+> 0.00104
 
 
 
@@ -132,12 +132,12 @@ labels = for i:position. randIdxNoZero Vocab (newKey (ordinal i))
 
 :p sum for i:Vocab.
   exp $ ctc blank logits [i]
-> 0.14146839
+> 0.141468
 
 :p sum for (i, j):(Vocab & Vocab).
   exp $ ctc blank logits [i, j]
-> 0.7091234
+> 0.709123
 
 :p sum for (i, j, k):(Vocab & Vocab & Vocab).
   exp $ ctc blank logits [i, j, k]
-> 0.9251011
+> 0.925101
