@@ -12,7 +12,6 @@ module RenderHtml (pprintHtml, progHtml, ToMarkup) where
 import Text.Blaze.Html5 as H  hiding (map)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
-import Data.Char (isSpace)
 import Data.Text (pack)
 import CMark (commonmarkToHtml)
 
@@ -33,15 +32,10 @@ progHtml :: LitProg -> String
 progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
   where toHtmlBlock (block,result) = toMarkup block <> toMarkup result
 
--- Minifies the given CSS snippet.
--- Currently, this simply removes all whitespace.
-minifyCSS :: String -> String
-minifyCSS = filter (not . isSpace)
-
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do
   H.head $ do
-    H.style ! type_ "text/css" $ toHtml $ minifyCSS cssSource
+    H.style ! type_ "text/css" $ toHtml cssSource
     H.meta ! charset "UTF-8"
   H.body $ H.div inner ! At.id "main-output"
   where inner = foldMap (cdiv "cell") blocks
