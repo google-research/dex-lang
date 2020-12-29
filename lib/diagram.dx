@@ -181,6 +181,27 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
 
 BoundingBox : Type = (Point & Point)
 
+def computeBounds (d:Diagram) : BoundingBox =
+  computeSubBound = \sel op (_, p, geom).
+    sel p + case geom of
+      PointGeom     -> 0.0
+      Circle r      -> op r
+      Rectangle w h -> op $ (sel (w,h))/2.0
+      Line q        -> op $ max 0.0 $ op $ sel q  -- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
+      Text _        -> 0.0  -- no size info possible as it is scale invariant
+
+  (MkDiagram (AsList _ objs)) = d
+  (
+    (
+      minimum $ map (computeSubBound fst neg) objs,
+      minimum $ map (computeSubBound snd neg) objs
+    ),
+    (
+      maximum $ map (computeSubBound fst id)  objs,
+      maximum $ map (computeSubBound snd id)  objs
+    )
+  )
+
 def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   ((xmin, ymin), (xmax, ymax)) = bounds
   imgWidth = 400.0
@@ -197,6 +218,8 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
       (attr, pos, geom) = objs.i
       renderGeom attr pos geom
 
+renderScaledSVG = \d. renderSVG d (computeBounds d)
+
 '## Derived convenience methods and combinators
 
 moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
@@ -206,12 +229,12 @@ moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 ```
 mydiagram : Diagram =
     (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
-    <> (circle 5.0 |> moveXY (40.0, 40.0))
+    <> (circle 5.0 |> moveXY (40.0, 41.0))
     <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
     <> (text "DexLang"  |> moveXY (30.0, 10.0) |> setStrokeColor green)
     <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
     )
-:html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+:html renderScaledSVG mydiagram
 ```
 
 ' Another demo that shows things are all center aligned:
@@ -221,5 +244,5 @@ concentricDiagram : Diagram = (
   <> (circle 1.0 |> setFillColor blue)
   <> (text "DexLang" |> setStrokeColor white)
 ) |> moveXY (5.0, 5.0)
-:html renderSVG concentricDiagram ((0.0, 0.0), (10.0, 10.0))
+:html renderScaledSVG concentricDiagram
 ```
