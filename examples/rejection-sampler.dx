@@ -3,11 +3,9 @@
 'We implement rejection sampling from a Binomial distribution using a uniform proposal.
 
 def rejectionSample (try: Key -> Maybe a) (k:Key) : a =
-  fromJust $ fst $ withState 0 \i.
-    snd $ withState Nothing \sample.
-      while (do isNothing (get sample)) do
-        i := get i + 1
-        sample := try $ hash k (get i)
+  iter \i. case try $ hash k i of
+    Nothing -> Continue
+    Just x  -> Done x
 
 Prob    = Float
 LogProb = Float
@@ -51,7 +49,7 @@ rejectionSamples = randVec numSamples (rejectionSample $ trySampleBinomial n p) 
 def meanAndVariance (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
 
 :p meanAndVariance $ map IToF rejectionSamples
-> (3.9933999, 2.3585567)
+> (3.9984, 2.361596)
 
 '## Alternative: Inversion sampling
 
@@ -68,7 +66,7 @@ inversionSamples = randVec numSamples (binomialSample n p) k0
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
 
 :p meanAndVariance $ map IToF inversionSamples
-> (3.9977999, 2.4097958)
+> (3.9978, 2.409796)
 
 'The following variant is guaranteed to evaluate the CDF only once.
 
@@ -83,4 +81,4 @@ inversionBatchSamples = (binomialBatch n p k0) : Fin numSamples => Int
 > [6, 7, 6, 5, 3, 2, 4, 4, 3, 4]
 
 :p meanAndVariance $ map IToF inversionBatchSamples
-> (3.9977999, 2.4097958)
+> (3.9978, 2.409796)
