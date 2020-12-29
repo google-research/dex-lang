@@ -1,0 +1,122 @@
+'# The Relational Algebra
+Unlike other languages which have bespoke "table" datatypes, in principle
+Dex's record system should natively allow the manipulation of tables of records
+to do the sorts of data-munging usually done by packages such as pandas.
+
+'This is an attempt to express the basic operations on datasets
+described by the relational algebra,
+roughly following [Wikipedia](https://en.wikipedia.org/wiki/Relational_algebra).
+
+'Right now there are two major differences from the standard relational algebra:
+1. We're not using sets of records, but rather tables.  I'm not sure which is better.
+2. Pretty much all the output types of these functions need to be flattened in order to match their standard defintions, but I don't know how to type this.
+
+'### Cartesian Product
+
+def cartesian_product (r:n=>a) (s:m=>b) : (n & m)=>(a & b) =
+  -- Follows the set theory defintion, not the relational
+  -- algebra definition, which would flatten a & b.
+  for (i, j). (r.i, s.j)
+
+'#### Cartesian Product Example
+
+table1 = [{name = "Bob",  age = 32, size = 3.3},
+          {name = "Finn", age = 0,  size = 1.1},
+          {name = "Bea",  age = 2,  size = 2.2}]
+
+table2 = [{name = "Bob", bool = True},
+          {name = "Bea", bool = False},
+          {name = "Qi",  bool = True}]
+
+cartesian_product table1 table2
+
+
+'### Projection
+
+def project (field: Iso ({&} & a) (b & c)) (table:n=>a) : n=>b =
+  for i. fst $ appIso (splitR &>> field) table.i
+
+'#### Projection Example
+
+project (#&name &>> #&size) table1
+
+
+'### Rename
+Todo: Consider doing this in-place.
+
+def rename (oldFieldIso: Iso ({&} & a) (b & c))
+           (renameIso: Iso b d) (table:n=>a) : n=>(d & c) =
+  for i.
+    (old_name_field, rest_fields) = appIso (splitR &>> oldFieldIso) table.i
+    renamed_field = appIso renameIso old_name_field
+    (renamed_field, rest_fields)
+
+'#### Rename Example
+Awkwardly, we need to construct our own isomorphism to wrap
+ the renaming function.
+
+myRenameIso : Iso {name:a} {newname:a} =
+  MkIso {fwd = \x. {newname = (getAt #name x)},
+         bwd = \x. {name = (getAt #newname x)}}
+
+rename #&name myRenameIso table1
+
+
+
+'## Inner Join
+There are a couple of awkward things about this implementation of inner join:
+1. We need to repeat the name isomorphism twice to call it.
+This is necessary because the type of the other fields in the record
+are different for the two tables being joined, even if it's on the
+same record name.  There might a way to generate the second isomorphism
+automatically, but I don't know what it is.
+2. You need to write your own equality instance for the field being
+ joined on.
+3. As in the other examples, the resulting records should be flattened.
+
+
+def inner_join_one (_: Eq b) ?=>
+  -- Would rather have an Eq instance for just the inner
+  -- type of b, not its named type.
+  (left_iso : Iso ({&} & a1) (b & c1))
+  (right_iso: Iso ({&} & a2) (b & c2))
+  (left:a1) (right:a2) : Maybe (b & c1 & c2) =
+  (left_b,  left_c)  = appIso (splitR &>> left_iso) left
+  (right_b, right_c) = appIso (splitR &>> right_iso) right
+  if left_b == right_b
+  	-- Can we unpack left_b and right_b to compare only
+  	-- their contents and not their names?
+    then Just (left_b, left_c, right_c)
+    else Nothing
+
+def inner_join (_: Eq b) ?=>
+  (left_iso : Iso ({&} & a1) (b & c1))
+  (right_iso: Iso ({&} & a2) (b & c2))
+  (left_tab:n=>a1) (right_tab:m=>a2) : List (b & c1 & c2) =
+  concat for (i, j).
+    case inner_join_one left_iso right_iso left_tab.i right_tab.j of
+      Nothing -> AsList 0 []
+      Just ans -> AsList 1 [ans]
+
+
+'#### Inner Join Example
+Right now we have to manually make an equality instance
+for the field we want to join on.  This can be avoided either
+by automatically generating equality instances for records,
+or by somehow allowing an unpack operation to directly access
+the data held by any field.
+
+-- This general List equality instance should probably go in the prelude.
+@instance
+def listEq (_: Eq a)?=> : Eq (List a) =
+  MkEq \(AsList n1 xs) (AsList n2 ys).
+    if n1 == n2
+      then all for i. xs.i == ys.((ordinal i)@_)
+      else False
+
+-- This bespoke equality instance should be automatically generated.
+@instance
+def nameEq (_: Eq a)?=> : Eq {name: a} =
+  MkEq $ \r1 r2. (getAt #name r1) == (getAt #name r2)
+
+inner_join #&name #&name table1 table2
