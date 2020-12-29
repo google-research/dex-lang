@@ -203,12 +203,24 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
 moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
 moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 
--- mydiagram : Diagram =
---    (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
---    <> (circle 5.0 |> moveXY (40.0, 40.0))
---    <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
---    <> (text "DexLang"  |> moveXY (30.0, 10.0) |> setStrokeColor green)
---    <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
---    )
+' A Demo showing all kind of features
+```
+mydiagram : Diagram =
+    (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
+    <> (circle 5.0 |> moveXY (40.0, 40.0))
+    <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
+    <> (text "DexLang"  |> moveXY (30.0, 10.0) |> setStrokeColor green)
+    <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
+    )
+:html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+```
 
--- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+' Another demo that shows things are all center aligned:
+```
+concentricDiagram : Diagram = (
+     (rect 2.0 2.0 |> setFillColor red)
+  <> (circle 1.0 |> setFillColor blue)
+  <> (text "DexLang" |> setStrokeColor white)
+) |> moveXY (5.0, 5.0)
+:html renderSVG concentricDiagram ((0.0, 0.0), (10.0, 10.0))
+```
