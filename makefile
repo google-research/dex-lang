@@ -111,6 +111,8 @@ quine-tests: $(quine-test-targets)
 quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
+run-%: export DEX_TEST_MODE=t
+
 run-tests/%: tests/%.dx build
 	misc/check-quine $< $(dex) script --allow-errors
 run-examples/%: examples/%.dx build

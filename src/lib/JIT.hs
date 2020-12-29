@@ -304,6 +304,9 @@ compileInstr instr = case instr of
       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
       (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
+      (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
+        emitInstr ptrTy $ L.IntToPtr x ptrTy []
+      (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
       _ -> error $ "Unsupported cast"
   ICall f@(fname:> IFunType cc argTys resultTys) args -> do
     -- TODO: consider having a separate calling convention specification rather

@@ -18,6 +18,8 @@ Word8 = %Word8
 Byte = Word8
 Char = Byte
 
+RawPtr : Type = %Word8Ptr
+
 Int = Int32
 Float = Float32
 
@@ -35,6 +37,8 @@ def IToI32 (x : Int)     : Int32   = internalCast _ x
 def IToW8  (x : Int)     : Word8   = internalCast _ x
 def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
+def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
+def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
 
 interface Add a:Type where
   add : a -> a -> a
@@ -274,6 +278,7 @@ def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 @instance word8Eq   : Eq Word8   = MkEq \x:Word8   y:Word8.   W8ToB $ %ieq x y
 @instance boolEq    : Eq Bool    = MkEq \x y. BToW8 x == BToW8 y
 @instance unitEq    : Eq Unit    = MkEq \x y. True
+@instance rawPtrEq  : Eq RawPtr  = MkEq \x y. RawPtrToI64 x == RawPtrToI64 y
 
 @instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. W8ToB $ %fgt x y)
                                                       (\x y. W8ToB $ %flt x y))
@@ -401,8 +406,6 @@ def finOrd (n:Int) ?-> : Ord (Fin n) =
   MkOrd finEq (\x y. ordinal x > ordinal y) (\x y. ordinal x < ordinal y)
 
 '## Raw pointer operations
-
-RawPtr : Type = %Word8Ptr
 
 data Ptr a:Type = MkPtr RawPtr
 
@@ -903,6 +906,9 @@ def loadDynBuffer (_:Storable a) ?=>
   (size, _, bufPtr) = load dbPtr
   AsList size $ tabFromPtr _ bufPtr
 
+def pushDynBuffer (_:Storable a) ?=>
+      (buf: DynBuffer a) (x:a) : {State World} Unit =
+  extendDynBuffer buf $ AsList _ [x]
 
 '## Strings and Characters
 
@@ -975,6 +981,17 @@ def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 FilePath : Type = String
 data CString = MkCString RawPtr
 
+def nullRawPtr : RawPtr = I64ToRawPtr $ IToI64 0
+
+def fromNullableRawPtr (ptr:RawPtr) : Maybe (Ptr a) =
+  if ptr == nullRawPtr
+    then Nothing
+    else Just $ MkPtr ptr
+
+def cStringPtr (s:CString) : Maybe (Ptr Char) =
+  (MkCString ptr) = s
+  fromNullableRawPtr ptr
+
 data StreamMode =
   ReadMode
   WriteMode
@@ -1045,6 +1062,22 @@ def boundedIter (maxIters:Int) (fallback:a)
     if i >= maxIters
       then Done fallback
       else body i
+
+def fromCString (s:CString) : {State World} (Maybe String) =
+  case cStringPtr s of
+    Nothing -> Nothing
+    Just ptr ->
+      Just $ withDynamicBuffer \buf. iter \i.
+        c = load $ ptr +>> i
+        if c == '\NUL'
+          then Done $ loadDynBuffer buf
+          else
+            pushDynBuffer buf c
+            Continue
+
+def getEnv (name:String) : {State World} Maybe String =
+  withCString name \(MkCString ptr).
+    fromCString $ MkCString $ %ffi getenv RawPtr ptr
 
 def fread (stream:Stream ReadMode) : {State World} String =
   (MkStream stream') = stream

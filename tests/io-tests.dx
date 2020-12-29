@@ -69,3 +69,9 @@ unsafeIO \().
     (AsList _ s') = readFile fname
     sum (for i. W8ToI s.i) == sum (for i. W8ToI s'.i)
 > True
+
+:p unsafeIO do getEnv "NOT_AN_ENV_VAR"
+> Nothing
+
+:p unafeIO do getEnv "DEX_TEST_MODE"
+> (Just (AsList 1 "t"))
