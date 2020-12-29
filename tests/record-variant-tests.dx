@@ -48,7 +48,7 @@ Syntax for records, variants, and their types.
   x = {a=5.0, b=2}
   y : {a:Int & b:Int & ..._} = {a=3, a=4, ...x}
   y
-> {a = 3, a = 4, a = 5.0, b = 2}
+> {a = 3, a = 4, a = 5., b = 2}
 
 'Variant (enum) types
 
@@ -72,7 +72,7 @@ Syntax for records, variants, and their types.
 > {| a = 3 |}
 
 :p {| a | a = 3.0 |} : {a:Int | a:Float | a:Int}
-> {|a| a = 3.0 |}
+> {|a| a = 3. |}
 
 :t {| a | a = 3.0 |} : {a:Int | a:Float | a:Int}
 > {a: Int32 | a: Float32 | a: Int32}
@@ -148,7 +148,7 @@ def getTwoFoosAndABar (rest : Fields)?->
   (f1, f2, b)
 
 :p getTwoFoosAndABar {foo=1, bar=2, foo=0.0, foo=4, baz=3.0, bar=7}
-> (1, (0.0, 2))
+> (1, (0., 2))
 
 :p
   ({b=b, a=a1, a=a2}) = {a=1, b=2}
@@ -183,7 +183,7 @@ x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   foo = 1
   bar = 2.0
   {foo, bar}
-> {bar = 2.0, foo = 1}
+> {bar = 2., foo = 1}
 
 :p
   ({foo, ...}) = {foo=1, bar=2.0}
@@ -207,7 +207,7 @@ x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
     {| a = x |} -> IToF x
     {| a | a = x |} -> x
     {| b = x |} -> IToF x
-> 3.0
+> 3.
 
 'Table values and imp lowering
 
@@ -215,23 +215,23 @@ myRecordTable : (Fin 2)=>{a:Int & b:Float} =
   [{a=1, b=2.0}, {a=3, b=4.0}]
 
 :p myRecordTable
-> [{a = 1, b = 2.0}, {a = 3, b = 4.0}]
+> [{a = 1, b = 2.}, {a = 3, b = 4.}]
 
 :p for i:(Fin 2).
     ({a=a, b=b}) = myRecordTable.i
     {a=b, b=a}
-> [{a = 2.0, b = 1}, {a = 4.0, b = 3}]
+> [{a = 2., b = 1}, {a = 4., b = 3}]
 
 myVariantTable : (Fin 2)=>{a:Int | b:Float} = [{| a=1 |}, {| b=2.0 |}]
 :p myVariantTable
-> [{| a = 1 |}, {| b = 2.0 |}]
+> [{| a = 1 |}, {| b = 2. |}]
 
 :p for i:(Fin 2).
     v : {a:_ | b:_} = case myVariantTable.i of
       {| a=a |} -> {| b=a |}
       {| b=b |} -> {| a=b |}
     v
-> [{| b = 1 |}, {| a = 2.0 |}]
+> [{| b = 1 |}, {| a = 2. |}]
 
 -- Known variant, unused tail pattern
 :p
@@ -240,7 +240,7 @@ myVariantTable : (Fin 2)=>{a:Int | b:Float} = [{| a=1 |}, {| b=2.0 |}]
     {| a = x |} -> 1.0
     {| a | a = x |} -> x
     {|a|a| ..._ |} -> 5.0
-> 3.0
+> 3.
 
 -- Known variant, missing pattern
 :p
@@ -248,7 +248,7 @@ myVariantTable : (Fin 2)=>{a:Int | b:Float} = [{| a=1 |}, {| b=2.0 |}]
   case x of
     {| a = x |} -> 1.0
     {| a | a = x |} -> x
-> 3.0
+> 3.
 
 -- Known variant, used tail pattern
 myVal =

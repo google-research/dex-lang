@@ -152,7 +152,7 @@ MyPair : Type -> Type =
     ((1, 2), (1.0, 2.0))
 
   pairs
-> ((1, 2), (1.0, 2.0))
+> ((1, 2), (1., 2.))
 
 
 -- TODO: put source annotation on effect for a better message here
@@ -367,7 +367,7 @@ def triRefIndex (ref:Ref h (i':n=>(..i')=>Float)) (i:n) : Ref h ((..i)=>Float) =
 -- There was a time when this wasn't possible, because checking mode would unify the
 -- input type with a non-dependent function type, leading to a later unification errors.
 id (for i:(Fin 2). for j:(..i). 1.0)
-> [[1.0]@(..(0@Fin 2)), [1.0, 1.0]@(..(1@Fin 2))]
+> [[1.]@(..(0@Fin 2)), [1., 1.]@(..(1@Fin 2))]
 
 def weakerInferenceReduction (l : i:n=>(..i)=>Float) (j:n): Unit =
   for i:(..j).

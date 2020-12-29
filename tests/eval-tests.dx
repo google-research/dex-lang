@@ -1,10 +1,10 @@
 :p 1.0 + 2.0
-> 3.0
+> 3.
 
 :p
    double = \x. x * 2.0
    double 10.0
-> 20.0
+> 20.
 
 :p sum (iota (Fin 10))
 > 45
@@ -25,14 +25,14 @@
    x = iota (Fin 3)
    y = map IToF x
    vdot' y y
-> 10.0
+> 10.
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
    z = for i j. IToF x.i * IToF y.j
    sum (for i. sum z.i)
-> 18.0
+> 18.
 
 -- :p randint (hash 0 0) 10
 -- :p let x = unpack range 10000
@@ -51,7 +51,7 @@ arr = iota NArr
 fun = \y. sum (map IToF arr) + y
 
 :p fun 3.0
-> 24.0
+> 24.
 
 :p arr
 > [0, 1, 2, 3, 4, 5, 6]
@@ -60,10 +60,10 @@ fun = \y. sum (map IToF arr) + y
 > 21
 
 :p 6.0 - 10.0
-> -4.0
+> -4.
 
 :p (\(x, y). x + y) (1.0, 2.0)
-> 3.0
+> 3.
 
 :p
    f : a:Type ?-> b:Type ?-> (a -> b & a) -> b =
@@ -75,40 +75,40 @@ fun = \y. sum (map IToF arr) + y
    (x,y) = ((1.0,2.0),3.0)
    (x1, x2) = x
    x1 + x2 + y
-> 6.0
+> 6.
 
 :p
    x = (1.0,2.0)
    (y,z) = x
    y + z
-> 3.0
+> 3.
 
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)
 --    in sum (for i. f z.i)
 :p exp 1.0
-> 2.7182817
+> 2.718282
 
 :p exp2 3.0
-> 8.0
+> 8.
 
 :p log 1.0
-> 0.0
+> 0.
 
 :p log2 8.0
-> 3.0
+> 3.
 
 :p log10 100.0
-> 2.0
+> 2.
 
 :p sqrt 2.0
-> 1.4142135
+> 1.414214
 
 :p sin 3.14159
-> 2.5351817e-6
+> 0.000003
 
 :p cos 0.0
-> 1.0
+> 1.
 
 :p tan 1.57079
 > 159378.27
@@ -125,7 +125,7 @@ fun = \y. sum (map IToF arr) + y
 s = 1.0
 
 :p s
-> 1.0
+> 1.
 
 :p [2, 4, 8]
 > [2, 4, 8]
@@ -141,7 +141,7 @@ cumsumplus : n=>Float -> n=>Float =
    (ans, 1.0 + ans)
 
 :p cumsumplus [1.0, 2.0, 3.0]
-> [2.0, 4.0, 7.0]
+> [2., 4., 7.]
 
 :p [False, False, True]
 > [False, False, True]
@@ -213,15 +213,15 @@ litArr = [10, 5, 3]
 :p
    k = newKey 0
    mean for i:(Fin 100). randn (ixkey k i)
-> -0.1157995
+> -0.1158
 
 :p
    k = newKey 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
-> 1.2581898
+> 1.25819
 
 :p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (newKey 11) i j
-> [[0.47415292, 0.9145164], [0.7944602, 0.27679908], [0.58958626, 0.7116251]]
+> [[0.474153, 0.914516], [0.79446, 0.276799], [0.589586, 0.711625]]
 
 :p
   x = for i:(Fin 3). 0
@@ -234,7 +234,7 @@ litArr = [10, 5, 3]
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
 :p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + IToF (ordinal j))
-> [0.0, 2.0, 4.0]
+> [0., 2., 4.]
 
 :p
    mat2 = for i:(Fin 4) j:(Fin 4) . ordinal i
@@ -275,7 +275,7 @@ litArr = [10, 5, 3]
 > 1
 
 :p select False 1.0 2.0
-> 2.0
+> 2.
 
 :p select True [1,2,3] [10,20,30]
 > [1, 2, 3]
@@ -296,7 +296,7 @@ litArr = [10, 5, 3]
 > (False, (True, (True, True)))
 
 :p [(for i:(Fin 1). (False, for j:(Fin 2). 1.0)), [(True, for k:(Fin 2) . 2.0)]]
-> [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]
+> [[(False, [1., 1.])], [(True, [2., 2.])]]
 
 -- TODO: parse negative integer literals
 -- :p (mod 5 3, mod 7 3, mod (-1) 3, mod -5 3)
@@ -324,15 +324,15 @@ litArr = [10, 5, 3]
 > 2
 
 :p fold (1.0, 2.0) \i:(Fin 2) (x, y). (y, x)
-> (1.0, 2.0)
+> (1., 2.)
 
 :p fold (1.0, 2.0) \i:(Fin 3) (x, y). (y, x)
-> (2.0, 1.0)
+> (2., 1.)
 
 :p id 2
 > 2
 :p min 2.0 3.0
-> 2.0
+> 2.
 
 :p minBy sq 0.5 (-2.0)
 > 0.5
@@ -344,16 +344,16 @@ litArr = [10, 5, 3]
 > (1.5, 15)
 
 :p max 2.0 3.0
-> 3.0
+> 3.
 
 :p maxBy sq 0.5 (-2.0)
-> -2.0
+> -2.
 
 :p maximum [2.0, 4.0, 1.5, 7.0]
-> 7.0
+> 7.
 
 :p maximumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
-> (10.0, 100)
+> (10., 100)
 
 :p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
 > (False, (True, (True, (True, False))))
@@ -367,7 +367,7 @@ litArr = [10, 5, 3]
 σ = 1.0 + 2.0
 
 :p σ
-> 3.0
+> 3.
 
 δ : Int -> Int = \x. x
 
@@ -399,59 +399,59 @@ litArr = [10, 5, 3]
      -- line comment should be ok here
      2.0 * x
    f 1.0
-> 2.0
+> 2.
 
 -- Not sure why the ordinary `sum/for` version doesn't work anymore
 :p
     n = 3 + 7
     fsum \i:(Fin n). 1.0
-> 10.0
+> 10.
 
 :p
     n = 4
     fsum \i:(Fin n). 1.0
-> 4.0
+> 4.
 
 :p
   one = fromOrdinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one..i). 1.0
-> [0.0, 1.0, 2.0, 3.0]
+> [0., 1., 2., 3.]
 
 :p
   one = fromOrdinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one<..i). 1.0
-> [0.0, 0.0, 1.0, 2.0]
+> [0., 0., 1., 2.]
 
 :p
   one = fromOrdinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one<..i). 1.0
-> [0.0, 0.0, 1.0, 2.0]
+> [0., 0., 1., 2.]
 
 :p
   one = fromOrdinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one..<i). 1.0
-> [0.0, 0.0, 1.0, 2.0]
+> [0., 0., 1., 2.]
 
 :p
   one = fromOrdinal (Fin 4) 1
   for i:(Fin 4). sum for j:(one<..<i). 1.0
-> [0.0, 0.0, 0.0, 1.0]
+> [0., 0., 0., 1.]
 
 :p
   for i:(Fin 4). sum for j:(..i). 1.0
-> [1.0, 2.0, 3.0, 4.0]
+> [1., 2., 3., 4.]
 
 :p
   for i:(Fin 4). sum for j:(..<i). 1.0
-> [0.0, 1.0, 2.0, 3.0]
+> [0., 1., 2., 3.]
 
 :p
   for i:(Fin 4). sum for j:(i..). 1.0
-> [4.0, 3.0, 2.0, 1.0]
+> [4., 3., 2., 1.]
 
 :p
   for i:(Fin 4). sum for j:(i<..). 1.0
-> [3.0, 2.0, 1.0, 0.0]
+> [3., 2., 1., 0.]
 
 :p idiv 10 3
 > 3
@@ -464,7 +464,7 @@ litArr = [10, 5, 3]
   ys = [1.,2.,3.]
   xys = for (i,j). xs.i + ys.j
   sum xys
-> 102.0
+> 102.
 
 :p
   xs = [10.,20.]
@@ -472,7 +472,7 @@ litArr = [10, 5, 3]
   zs = [1.]
   xys = for (i,(j,k)). xs.i + ys.j + zs.k
   sum xys
-> 108.0
+> 108.
 
 :p
   xs = [[1,2],[3,4]]
@@ -506,14 +506,14 @@ litArr = [10, 5, 3]
       c = get ref
       ref := c + 1.0
       c
-> ([0.0, 1.0, 2.0, 3.0], 4.0)
+> ([0., 1., 2., 3.], 4.)
 
 :p
   withState 0.0 \ref. rof i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
-> ([3.0, 2.0, 1.0, 0.0], 4.0)
+> ([3., 2., 1., 0.], 4.)
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left i  -> i
@@ -582,7 +582,7 @@ def unflatten (params:Params n m) : (Weights n m & Biases n) =
 -- TODO: within-module version of this (currently fails in Imp checking)
 upperBound = sum $ for i:(Fin 4). 1
 :p for j:(Fin upperBound). 1.0
-> [1.0, 1.0, 1.0, 1.0]
+> [1., 1., 1., 1.]
 
 :p (for i:(Fin upperBound). 1, for j:(Fin 2). 2)
 > ([1, 1, 1, 1], [2, 2])
@@ -609,7 +609,7 @@ for i:(Range 0 x). 1.0
 
 -- Make sure that we can construct and print an array using a pair index set
 for i:(Fin 2 & Fin 2). 1.0
-> [1.0, 1.0, 1.0, 1.0]@(Fin 2 & Fin 2)
+> [1., 1., 1., 1.]@(Fin 2 & Fin 2)
 
 1@(Fin 2 & Fin 2)
 > ((0@Fin 2), (1@Fin 2))
@@ -618,11 +618,11 @@ for i:(Fin 5). for j:(..i).
   ir = IToF $ ordinal i
   jr = IToF $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
-> [ [0.0]@(..(0@Fin 5))
-> , [1.0, 2.0]@(..(1@Fin 5))
-> , [3.0, 4.0, 5.0]@(..(2@Fin 5))
-> , [6.0, 7.0, 8.0, 9.0]@(..(3@Fin 5))
-> , [10.0, 11.0, 12.0, 13.0, 14.0]@(..(4@Fin 5)) ]
+> [ [0.]@(..(0@Fin 5))
+> , [1., 2.]@(..(1@Fin 5))
+> , [3., 4., 5.]@(..(2@Fin 5))
+> , [6., 7., 8., 9.]@(..(3@Fin 5))
+> , [10., 11., 12., 13., 14.]@(..(4@Fin 5)) ]
 
 -- TODO: fix!
 -- -- Exercise the use of free variables in the sum solver
@@ -640,7 +640,7 @@ for i:(Fin 5). for j:(..i).
 > [-1, -8]
 
 :p 2.0 .* [[1.0, 2.0], [3.0, 4.0]]
-> [[2.0, 4.0], [6.0, 8.0]]
+> [[2., 4.], [6., 8.]]
 
 def newtonIter (f: Float -> Float) (x:Float) : Float =
   x - (f x / deriv f x)
@@ -651,7 +651,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
       x := newtonIter f $ get x
 
 :p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
-> 1.4142157
+> 1.414216
 
 -- :p
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
@@ -699,7 +699,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
     w = 2
     \z. z + w
   (f 5, w)
-> (7, 2.0)
+> (7, 2.)
 
 -- def add (n : Type) ?-> (a : n=>Float) (b : n=>Float) : n=>Float =
 --   (tile (\t:(Tile n (Fin VectorWidth)). storeVector $ loadTile t a + loadTile t b)
@@ -744,22 +744,22 @@ easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
 hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 
 :p logsumexp easy - (log $ sum for j. exp easy.j)
-> 0.0
+> 0.
 
 :p sum $ softmax hard
-> 1.0
+> 1.
 
 :p all for i. ((softmax hard).i >= 0.0)
 > True
 
 :p sum for i. exp $ (logsoftmax hard).i
-> 0.9999709
+> 0.999971
 
 :p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0001
 > True
 
 :p evalpoly [2.0, 3.0, 4.0] 10.0
-> 234.0
+> 234.
 
 str = ['x', 'y']
 

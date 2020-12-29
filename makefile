@@ -95,7 +95,8 @@ all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
 
 quine-test-targets = $(all-names:%=run-%)
 
-update-targets = $(example-names:%=update-%)
+update-test-targets    = $(test-names:%=update-tests-%)
+update-example-targets = $(example-names:%=update-examples-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
@@ -115,10 +116,15 @@ run-examples/%: examples/%.dx build
 prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
 
-update-all: $(update-targets)
-
 update-%: export DEX_ALLOW_CONTRACTIONS=0
-update-%: tests/%.dx build
+
+update-all: $(update-test-targets) $(update-example-targets)
+
+update-tests-%: tests/%.dx build
+	$(dex) script --allow-errors $< > $<.tmp
+	mv $<.tmp $<
+
+update-examples-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 

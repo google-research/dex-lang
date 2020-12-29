@@ -243,7 +243,7 @@ def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
   for i:(Fin $ listLength l). 0.0
 
 :p zerosLikeList l2
-> [0.0, 0.0, 0.0]
+> [0., 0., 0.]
 
 data Graph a:Type =
   MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
