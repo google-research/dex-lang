@@ -404,12 +404,12 @@ litArr = [10, 5, 3]
 -- Not sure why the ordinary `sum/for` version doesn't work anymore
 :p
     n = 3 + 7
-    fsum \i:(Fin n). 1.0
+    fsum view i:(Fin n). 1.0
 > 10.
 
 :p
     n = 4
-    fsum \i:(Fin n). 1.0
+    fsum view i:(Fin n). 1.0
 > 4.
 
 :p
