@@ -14,6 +14,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Writer.Class (MonadWriter)
 import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
@@ -31,7 +32,9 @@ import PPrint
 import Cat
 import Util
 
-type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((BuilderT (SolverT (Either Err)))))
+-- === type inference ===
+
+type UInferM = ReaderT SubstEnv (ReaderT SrcCtx (BuilderT (SolverT ExceptWithOutputs)))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -46,7 +49,7 @@ pattern Check t <-
 
 {-# COMPLETE Infer, Check #-}
 
-inferModule :: Bindings -> UModule -> Except Module
+inferModule :: Bindings -> UModule -> ExceptWithOutputs Module
 inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls
@@ -57,7 +60,8 @@ inferModule scope (UModule decls) = do
   return $ Module Typed decls' bindings'
 
 runUInferM :: (Subst a, Pretty a)
-           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
+           => SubstEnv -> Scope -> UInferM a
+           -> ExceptWithOutputs (a, (Scope, Nest Decl))
 runUInferM env scope m = runSolverT $
   runBuilderT (runReaderT (runReaderT m env) Nothing) scope
 
@@ -879,7 +883,7 @@ getBinding = do
 inferToSynth :: (Pretty a, Subst a) => UInferM a -> SynthDictM a
 inferToSynth m = do
   scope <- getScope
-  case runUInferM mempty scope m of
+  case fst $ runExceptWithOutputs $ runUInferM mempty scope m of
     Left _ -> empty
     Right (x, (_, decls)) -> do
       mapM_ emitDecl decls
@@ -904,7 +908,7 @@ data SolverEnv = SolverEnv { solverVars :: Env Kind
                            , solverSub  :: Env Type }
 type SolverT m = CatT SolverEnv m
 
-runSolverT :: (MonadError Err m, Subst a, Pretty a)
+runSolverT :: (MonadError Err m, MonadWriter [Output] m, Subst a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m >>= zonk

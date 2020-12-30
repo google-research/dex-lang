@@ -33,8 +33,9 @@ module Syntax (
     prefixExtLabeledItems, getLabels, ModuleName,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..),
-    Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
-    addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
+    Err (..), ErrType (..), Except, ExceptWithOutputs, runExceptWithOutputs,
+    throw, throwIf, modifyErr, addContext, addSrcContext, catchIOExcept,
+    liftEitherIO, liftExceptWithOutputsIO, logInfo, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
@@ -724,6 +725,25 @@ liftEitherIO (Right x ) = return x
 
 instance MonadFail (Either Err) where
   fail s = Left $ Err CompilerErr Nothing s
+
+newtype ExceptWithOutputs f = ExceptWithOutputs (ExceptT Err (Writer [Output]) f)
+  deriving (Functor, Applicative, Monad, MonadWriter [Output], MonadError Err)
+
+instance MonadFail ExceptWithOutputs where
+  fail s = throwError $ Err CompilerErr Nothing s
+
+runExceptWithOutputs :: ExceptWithOutputs a -> (Either Err a, [Output])
+runExceptWithOutputs (ExceptWithOutputs m) = runWriter $ runExceptT m
+
+liftExceptWithOutputsIO :: MonadIO m
+                        => (Output -> m ()) -> ExceptWithOutputs a -> m a
+liftExceptWithOutputsIO logFn m = do
+  let (result, outputs) = runExceptWithOutputs m
+  mapM_ logFn outputs
+  liftEitherIO result
+
+logInfo :: (MonadWriter [Output] m) => PassName -> String -> m ()
+logInfo name s = tell [PassInfo name s]
 
 -- === UExpr free variables ===
 
