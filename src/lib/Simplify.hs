@@ -9,7 +9,6 @@
 module Simplify (simplifyModule, simplifyCase, splitSimpModule) where
 
 import Control.Monad
-import Control.Monad.Identity
 import Control.Monad.Reader
 import Data.Maybe
 import Data.Foldable (toList)
@@ -17,6 +16,7 @@ import Data.Functor
 import Data.List (partition, elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
 import Autodiff
 import Env
@@ -27,7 +27,7 @@ import Type
 import PPrint
 import Util
 
-type SimplifyM = SubstEmbedT Identity
+type SimplifyM = SubstEmbed
 
 simplifyModule :: TopEnv -> Module -> Module
 simplifyModule scope (Module Core decls bindings) = do
@@ -479,6 +479,49 @@ simplifyHof hof = case hof of
     ~(lam', recon) <- simplifyLam lam
     ans <- emit $ Hof $ RunIO lam'
     applyRecon recon ans
+  CatchException lam -> do
+    ~(Lam (Abs _ (_, body)), Nothing) <- simplifyLam lam
+    dropSub $ exceptToMaybeBlock body
   where
     applyRecon Nothing x = return x
     applyRecon (Just f) x = f x
+
+exceptToMaybeBlock :: Block -> SubstEmbed Atom
+exceptToMaybeBlock (Block Empty result) = exceptToMaybeExpr result
+exceptToMaybeBlock (Block (Nest (Let _ b expr) decls) result) = do
+  maybeResult <- exceptToMaybeExpr expr
+  case maybeResult of
+    -- These two cases are just an optimization
+    JustAtom _ x  -> extendR (b@>x) $ exceptToMaybeBlock $ Block decls result
+    NothingAtom a -> return $ NothingAtom a
+    _ -> do
+      blockTy <- substEmbedR $ getType result
+      let nothingPath = Abs Empty $ Block Empty $ Atom $ NothingAtom blockTy
+      b' <- mapM substEmbedR b
+      justPath <- buildNAbs (Nest b' Empty) $ \[x] ->
+          extendR (b@>x) $ exceptToMaybeBlock $ Block decls result
+      emit $ Case maybeResult [nothingPath, justPath] (MaybeTy blockTy)
+
+exceptToMaybeExpr :: Expr -> SubstEmbed Atom
+exceptToMaybeExpr expr = do
+  case expr of
+    Case e alts resultTy -> do
+      e' <- substEmbedR e
+      resultTy' <- substEmbedR $ MaybeTy resultTy
+      alts' <- forM alts $ \(Abs bs body) -> do
+        bs' <-  mapM (mapM substEmbedR) bs
+        buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ exceptToMaybeBlock body
+      emit $ Case e' alts' resultTy'
+    Atom x -> substEmbedR $ JustAtom (getType x) x
+    Op (ThrowException a) -> substEmbedR $ NothingAtom a
+    _ | not (hasExceptions expr) -> do
+          x <- substEmbedR expr >>= emit
+          return $ JustAtom (getType x) x
+      | otherwise ->
+          error $ "Unexpected exception-throwing expression: " ++ pprint expr
+
+hasExceptions :: Expr -> Bool
+hasExceptions expr = case t of
+  Nothing -> ExceptionEffect `S.member` effs
+  Just _  -> error "Shouldn't have tail left"
+  where (EffectRow effs t) = exprEffs expr

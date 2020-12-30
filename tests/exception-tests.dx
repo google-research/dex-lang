@@ -1,0 +1,35 @@
+
+
+def checkFloatInUnitInterval (x:Float) : {Except} Float =
+  assert $ x >= 0.0
+  assert $ x <= 1.0
+  x
+
+:p catch do assert False
+> Nothing
+
+:p catch do assert True
+> (Just ())
+
+:p catch do checkFloatInUnitInterval 1.2
+> Nothing
+
+:p catch do checkFloatInUnitInterval (-1.2)
+> Nothing
+
+:p catch do checkFloatInUnitInterval 0.2
+> (Just 0.2)
+
+:p snd $ withState 0 \ref.
+     catch do
+       ref := 1
+       assert False
+       ref := 2
+> 1
+
+-- Doesn't work yet
+-- :p catch do
+--      withState 0 \ref.
+--        ref := 1
+--        assert False
+--        ref := 2

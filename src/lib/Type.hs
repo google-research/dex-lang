@@ -276,6 +276,7 @@ exprEffs expr = case expr of
       MAsk    -> oneEffect (RWSEffect Reader h)
       MTell _ -> oneEffect (RWSEffect Writer h)
       where RefTy (Var (h:>_)) _ = getType ref
+    ThrowException _ -> oneEffect ExceptionEffect
     IOAlloc  _ _  -> oneEffect ioEffect
     IOFree   _    -> oneEffect ioEffect
     PtrLoad  _    -> oneEffect ioEffect
@@ -427,6 +428,7 @@ instance CoreVariant (PrimTC a) where
 
 instance CoreVariant (PrimOp a) where
   checkVariant e = case e of
+    ThrowException _ -> goneBy Simp
     Select _ _ _       -> alwaysAllowed  -- TODO: only scalar select after Simp
     _ -> alwaysAllowed
 
@@ -447,6 +449,7 @@ instance CoreVariant (PrimHof a) where
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
     PTileReduce _ _ -> absentUntil Simp -- really absent until parallelization
+    CatchException _ -> goneBy Simp
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -758,7 +761,9 @@ typeCheckOp op = case op of
     i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
-  -- TODO: this should really be a 32 bit integer for unicode code point: but for now is 8 bit ASCII code point
+  ThrowException ty -> do
+    declareEff ExceptionEffect
+    ty|:TyKind $> ty
   CastOp t@(Var _) _ -> t |: TyKind $> t
   CastOp destTy e -> do
     sourceTy <- typeCheck e
@@ -882,9 +887,15 @@ typeCheckHof hof = case hof of
     s |: stateTy
     return $ PairTy resultTy stateTy
   RunIO f -> do
-    FunTy _ eff resultTy <- typeCheck f
+    FunTy b eff resultTy <- typeCheck f
+    checkEq (binderAnn b) UnitTy
     extendAllowedEffect ioEffect $ declareEffs eff
     return resultTy
+  CatchException f -> do
+    FunTy b eff resultTy <- typeCheck f
+    checkEq (binderAnn b) UnitTy
+    extendAllowedEffect ExceptionEffect $ declareEffs eff
+    return $ MaybeTy resultTy
 
 checkRWSAction :: RWS -> Atom -> TypeM (Type, Type)
 checkRWSAction rws f = do

@@ -1524,3 +1524,16 @@ def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
   fold zero \i c. coefficients.i + x .* c
 
 def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
+
+'## Exception effect
+
+def catch (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
+  %catchException f
+
+def throw (_:Unit) : {Except} a =
+  %throwException a
+
+def assert (b:Bool) : {Except} Unit =
+  if b
+   then ()
+   else throw ()

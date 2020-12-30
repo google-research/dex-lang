@@ -49,6 +49,7 @@ module Syntax (
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
+    pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
@@ -340,6 +341,7 @@ data PrimOp e =
       | ToOrdinal e
       | IdxSetSize e
       | ThrowError e
+      | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
       -- Extensible record and variant operations:
       -- Add fields to a record (on the left). Left arg contains values to add.
@@ -368,6 +370,7 @@ data PrimHof e =
       | RunWriter e
       | RunState  e e
       | RunIO e
+      | CatchException e
       | Linearize e
       | Transpose e
       | PTileReduce e e       -- index set, thread body
@@ -1489,7 +1492,25 @@ pattern Unlabeled as <- (_getUnlabeled -> Just as)
           Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
           Nothing -> NoLabeledItems
 
-  -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
+maybeDataDef :: DataDef
+maybeDataDef = DataDef (GlobalName "Maybe") (Nest (Bind ("a":>TyKind)) Empty)
+  [ DataConDef (GlobalName "Nothing") Empty
+  , DataConDef (GlobalName "Just"   ) (Nest (Ignore (Var ("a":>TyKind))) Empty)]
+
+pattern MaybeTy :: Type -> Type
+pattern MaybeTy a = TypeCon MaybeDataDef [a]
+
+pattern MaybeDataDef :: DataDef
+pattern MaybeDataDef <- ((\def -> def == maybeDataDef) -> True)
+  where MaybeDataDef = maybeDataDef
+
+pattern NothingAtom :: Type -> Atom
+pattern NothingAtom ty = DataCon MaybeDataDef [ty] 0 []
+
+pattern JustAtom :: Type -> Atom -> Atom
+pattern JustAtom ty x = DataCon MaybeDataDef [ty] 1 [x]
+
+-- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
 
 -- TODO: Can we derive these generically? Or use Show/Read?
@@ -1518,7 +1539,8 @@ builtinNames = M.fromList
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
   , ("toOrdinal"        , OpExpr $ ToOrdinal ())
-  , ("throwError" , OpExpr $ ThrowError ())
+  , ("throwError"     , OpExpr $ ThrowError ())
+  , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
@@ -1533,6 +1555,7 @@ builtinNames = M.fromList
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("runIO"           , HofExpr $ RunIO ())
+  , ("catchException"  , HofExpr $ CatchException ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("TyKind"  , TCExpr $ TypeKind)
