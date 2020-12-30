@@ -496,11 +496,8 @@ exceptToMaybeBlock (Block (Nest (Let _ b expr) decls) result) = do
     NothingAtom a -> return $ NothingAtom a
     _ -> do
       blockTy <- substEmbedR $ getType result
-      let nothingPath = Abs Empty $ Block Empty $ Atom $ NothingAtom blockTy
-      b' <- mapM substEmbedR b
-      justPath <- buildNAbs (Nest b' Empty) $ \[x] ->
-          extendR (b@>x) $ exceptToMaybeBlock $ Block decls result
-      emit $ Case maybeResult [nothingPath, justPath] (MaybeTy blockTy)
+      emitMaybeCase maybeResult (return $ NothingAtom blockTy) $ \x -> do
+        extendR (b@>x) $ exceptToMaybeBlock $ Block decls result
 
 exceptToMaybeExpr :: Expr -> SubstEmbed Atom
 exceptToMaybeExpr expr = do

@@ -24,7 +24,8 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildFor, buildForAux, buildForAnn, buildForAnnAux,
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, unpackConsList, emitRunWriter, emitRunState,
+              embedExtend, unpackConsList, emitRunWriter,
+              emitRunState,  emitMaybeCase,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
               evalBlockE, substTraversalDef,
@@ -344,6 +345,15 @@ unpackConsList xs = case getType xs of
     (x, rest) <- fromPair xs
     liftM (x:) $ unpackConsList rest
   _ -> error $ "Not a cons list: " ++ pprint (getType xs)
+
+emitMaybeCase :: MonadEmbed m => Atom -> (m Atom) -> (Atom -> m Atom) -> m Atom
+emitMaybeCase scrut nothingCase justCase = do
+  let (MaybeTy a) = getType scrut
+  nothingAlt <- buildNAbs Empty                        $ \[]  -> nothingCase
+  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) $ \[x] -> justCase x
+  let (Abs _ nothingBody) = nothingAlt
+  let resultTy = getType nothingBody
+  emit $ Case scrut [nothingAlt, justAlt] resultTy
 
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do
