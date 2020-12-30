@@ -1,16 +1,34 @@
 
-def ParserHandle (h:Type) : Type = (String & Ref h Int)
 
-def Parser (a:Type) : Type = h:Type ?-> ParserHandle h -> {Except, State h} a
+'Utilities unrelated to parsing
 
 def fromOrdinalExc (n:Type) (i:Int) : {Except} n =
   if (0 <= i) && (i < size n)
     then unsafeFromOrdinal _ i
     else throw ()
 
+-- TODO: allow this to happen in-place
+-- TODO: if it takes too long to make that possible, start with a bounded version
+def push (ref:Ref h (List a)) (x:a) : {State h} Unit =
+  l = get ref
+  ref := l <> AsList _ [x]
+
 def indexList (l:List a) (i:Int) : {Except} a =
   (AsList n xs) = l
   xs.(fromOrdinalExc _ i)
+
+'The Parser type
+
+def ParserHandle (h:Type) : Type = (String & Ref h Int)
+
+def Parser (a:Type) : Type = h:Type ?-> ParserHandle h -> {Except, State h} a
+
+def runParser (s:String) (parser:Parser a) : Maybe a =
+  fst $ withState 0 \pos.
+    catch $ do
+      parser (s, pos)
+
+'Primitive combinators
 
 def pChar (c:Char) : Parser Unit = \(s, posRef).
   i = get posRef
@@ -21,7 +39,39 @@ def pChar (c:Char) : Parser Unit = \(s, posRef).
 def pEOF : Parser Unit = \(s, posRef).
   assert $ get posRef >= listLength s
 
-def runParser (s:String) (parser:Parser a) : Maybe a =
-  fst $ withState 0 \pos.
-    catch $ do
-      parser (s, pos)
+def (<|>) (p1:Parser a) (p2:Parser a) : Parser a = \h.
+  (s, posRef) = h
+  curPos = get posRef
+  case catch do p1 h of
+    Nothing ->
+      assert $ curPos == get posRef
+      p2 h
+    Just ans -> ans
+
+def return (x:a) : Parser a = \_. x
+
+'Derived combinators
+
+def optional (parser:Parser a) : Parser (Maybe a) =
+  (\h. Just (parser h)) <|> return Nothing
+
+def parseMany (parser:Parser a) : Parser (List a) = \h.
+  snd $ withState (AsList _ []) \results.
+    iter \_.
+      maybeVal = optional parser h
+      case maybeVal of
+        Nothing -> Done ()
+        Just x ->
+          push results x
+          Continue
+
+def bracketed (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a = \h.
+  l          h
+  ans = body h
+  r          h
+  ans
+
+-- This fails. Type inference is unable to unify two region variables. I think
+-- it's to do with implicit type application.
+-- def parens (parser:Parser Unit) : Parser a =
+--   bracketed (pChar '(') (pChar ')') parser

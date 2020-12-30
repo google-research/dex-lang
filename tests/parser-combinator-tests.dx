@@ -18,3 +18,23 @@ parseABC : Parser Unit = \h.
 
 :p runParser "ABC" parseABC
 > (Just ())
+
+def parseTF : Parser Bool =
+  (\h.
+    pChar 'T' h
+    True) <|> (\h.
+      pChar 'F' h
+      False)
+
+def parserTFTriple : Parser (Fin 3=>Bool) =
+  \h.
+    ans = for i. parseTF h
+    pEOF h
+    ans
+
+:p runParser "TTF" parserTFTriple
+> (Just [True, True, False])
+
+:p runParser "TTFX" parserTFTriple
+> Nothing
+
