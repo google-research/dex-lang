@@ -1,0 +1,20 @@
+
+include "parser.dx"
+
+parseABC : Parser Unit = \h.
+  pChar 'A' h
+  pChar 'B' h
+  pChar 'C' h
+  pEOF      h
+
+:p runParser "AAA" parseABC
+> Nothing
+
+:p runParser "ABCABC" parseABC
+> Nothing
+
+:p runParser "AB" parseABC
+> Nothing
+
+:p runParser "ABC" parseABC
+> (Just ())

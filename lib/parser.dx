@@ -1,0 +1,27 @@
+
+def ParserHandle (h:Type) : Type = (String & Ref h Int)
+
+def Parser (a:Type) : Type = h:Type ?-> ParserHandle h -> {Except, State h} a
+
+def fromOrdinalExc (n:Type) (i:Int) : {Except} n =
+  if (0 <= i) && (i < size n)
+    then unsafeFromOrdinal _ i
+    else throw ()
+
+def indexList (l:List a) (i:Int) : {Except} a =
+  (AsList n xs) = l
+  xs.(fromOrdinalExc _ i)
+
+def pChar (c:Char) : Parser Unit = \(s, posRef).
+  i = get posRef
+  c' = indexList s i
+  assert (c == c')
+  posRef := i + 1
+
+def pEOF : Parser Unit = \(s, posRef).
+  assert $ get posRef >= listLength s
+
+def runParser (s:String) (parser:Parser a) : Maybe a =
+  fst $ withState 0 \pos.
+    catch $ do
+      parser (s, pos)

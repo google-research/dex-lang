@@ -87,7 +87,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests \
-             ad-tests parser-tests serialize-tests \
+             ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests
 
 lib-names = diagram plot png
