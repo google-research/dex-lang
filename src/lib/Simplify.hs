@@ -506,11 +506,15 @@ exceptToMaybeExpr expr = do
       e' <- substEmbedR e
       resultTy' <- substEmbedR $ MaybeTy resultTy
       alts' <- forM alts $ \(Abs bs body) -> do
-        bs' <-  mapM (mapM substEmbedR) bs
+        bs' <-  substEmbedR bs
         buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ exceptToMaybeBlock body
       emit $ Case e' alts' resultTy'
     Atom x -> substEmbedR $ JustAtom (getType x) x
     Op (ThrowException a) -> substEmbedR $ NothingAtom a
+    Hof (For ann ~(Lam (Abs b (_, body)))) -> do
+      b' <- substEmbedR b
+      maybes <- buildForAnn ann b' $ \i -> extendR (b@>i) $ exceptToMaybeBlock body
+      catMaybesE maybes
     _ | not (hasExceptions expr) -> do
           x <- substEmbedR expr >>= emit
           return $ JustAtom (getType x) x
@@ -522,3 +526,13 @@ hasExceptions expr = case t of
   Nothing -> ExceptionEffect `S.member` effs
   Just _  -> error "Shouldn't have tail left"
   where (EffectRow effs t) = exprEffs expr
+
+catMaybesE :: MonadEmbed m => Atom -> m Atom
+catMaybesE maybes = simplifyEmbed $ do
+  let (TabTy b (MaybeTy a)) = getType maybes
+  applyPreludeFunction "seqMaybes" [binderAnn b, a, maybes]
+
+simplifyEmbed :: MonadEmbed m => m Atom -> m Atom
+simplifyEmbed m = do
+  block <- buildScoped m
+  liftEmbed $ runReaderT (simplifyBlock block) mempty

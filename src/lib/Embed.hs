@@ -13,7 +13,7 @@
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
-              runSubstEmbed, runEmbed, getScope, embedLook,
+              runSubstEmbed, runEmbed, getScope, embedLook, liftEmbed,
               app,
               add, mul, sub, neg, div',
               iadd, imul, isub, idiv, ilt, ieq,
@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildFor, buildForAux, buildForAnn, buildForAnnAux,
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, unpackConsList, emitRunWriter,
+              embedExtend, unpackConsList, emitRunWriter, applyPreludeFunction,
               emitRunState,  emitMaybeCase,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
@@ -42,6 +42,7 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
+import Data.String (fromString)
 import Data.Tuple (swap)
 import GHC.Stack
 
@@ -322,6 +323,15 @@ appReduce (Lam (Abs v (_, b))) a =
   runReaderT (evalBlockE substTraversalDef b) (v @> a)
 appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
+-- TODO: this would be more convenient if we could add type inference too
+applyPreludeFunction :: MonadEmbed m => String -> [Atom] -> m Atom
+applyPreludeFunction s xs = do
+  scope <- getScope
+  case envLookup scope fname of
+    Nothing -> error $ "Function not defined yet: " ++ s
+    Just (ty, _) -> naryApp (Var (fname:>ty)) xs
+  where fname = GlobalName (fromString s)
+
 appTryReduce :: MonadEmbed m => Atom -> Atom -> m Atom
 appTryReduce f x = case f of
   Lam _ -> appReduce f x
@@ -387,6 +397,7 @@ buildForAnn ann i body = fst <$> buildForAnnAux ann i (\x -> (,()) <$> body x)
 buildForAux :: MonadEmbed m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildForAux = buildForAnnAux . RegularFor
 
+-- Do we need this variant?
 buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
 buildFor = buildForAnn . RegularFor
 
@@ -587,6 +598,14 @@ scopedDecls :: MonadEmbed m => m a -> m (a, Nest Decl)
 scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
+
+liftEmbed :: MonadEmbed m => Embed a -> m a
+liftEmbed action = do
+  envR <- embedAsk
+  envC <- embedLook
+  let (ans, envC') = runIdentity $ runEmbedT' action (envR, envC)
+  embedExtend envC'
+  return ans
 
 -- === generic traversal ===
 

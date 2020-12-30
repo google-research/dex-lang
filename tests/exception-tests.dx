@@ -27,9 +27,34 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
        ref := 2
 > 1
 
+:p catch do
+  for i:(Fin 5).
+    if ordinal i > 3
+      then throw ()
+      else 23
+> Nothing
+
+:p catch do
+  for i:(Fin 3).
+    if ordinal i > 3
+      then throw ()
+      else 23
+> (Just [23, 23, 23])
+
+-- Is this the result we want?
+:p snd $ withState zero \ref.
+     catch do
+       for i:(Fin 6).
+         if (ordinal i `rem` 2) == 0
+           then throw ()
+           else ()
+         ref!i := 1
+> [0, 1, 0, 1, 0, 1]
+
 -- Doesn't work yet
 -- :p catch do
 --      withState 0 \ref.
 --        ref := 1
 --        assert False
 --        ref := 2
+
