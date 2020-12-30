@@ -397,7 +397,7 @@ def Fin (n:Int) : Type = Range 0 n
 def ordinal (i:a) : Int = %toOrdinal i
 def size (n:Type) : Int = %idxSetSize n
 def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
-def iota (n:Type) : n=>Int = for i. ordinal i
+def iota (n:Type) : n=>Int = view i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
 @instance
@@ -529,9 +529,9 @@ pi : Float = 3.141592653589793
 def id (x:a) : a = x
 def dup (x:a) : (a & a) = (x, x)
 def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
-def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
+def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = view i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
-def fanout (n:Type) (x:a) : n=>a = for i. x
+def fanout (n:Type) (x:a) : n=>a = view i. x
 def sq (d:Mul a) ?=> (x:a) : a = x * x
 def abs (_:Add a) ?=> (_:Ord a) ?=> (x:a) : a = select (x > zero) x (zero - x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
@@ -555,7 +555,7 @@ def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
-def fsum (xs:n->Float) : Float = snd $ withAccum \ref. for i. ref += xs i
+def fsum (xs:n=>Float) : Float = snd $ withAccum \ref. for i. ref += xs i
 def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
 def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
 def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / IToF (size n)
@@ -571,20 +571,19 @@ def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
   dx = (high - low) / IToF (size n)
   for i:n. low + IToF (ordinal i) * dx
 
-def transpose (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
-def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
+def transpose (x:n=>m=>a) : m=>n=>a = view i j. x.j.i
+def vdot (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
 def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
 (**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
-  y' = transpose y
-  for i k. fsum \j. x.i.j * y'.k.j
+  for i k. fsum view j. x.i.j * y.j.k
 
 (**.) : (n=>m=>Float) -> (m=>Float) -> (n=>Float) = \mat v. for i. vdot mat.i v
 (.**) : (m=>Float) -> (n=>m=>Float) -> (n=>Float) = flip (**.)
 
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
-  fsum \(i,j). x.i * mat.i.j * y.j
+  fsum view (i,j). x.i * mat.i.j * y.j
 
 def eye (_:Eq n) ?=> : n=>n=>Float =
   for i j. select (i == j) 1.0 0.0

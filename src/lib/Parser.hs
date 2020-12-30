@@ -168,6 +168,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> uLit
          <|> uPiType
          <|> uLamExpr
+         <|> uViewExpr
          <|> uForExpr
          <|> caseExpr
          <|> ifExpr
@@ -497,6 +498,14 @@ buildFor :: SrcPos -> Direction -> [UPatAnn] -> UExpr -> UExpr
 buildFor pos dir binders body = case binders of
   [] -> body
   b:bs -> WithSrc (Just pos) $ UFor dir b $ buildFor pos dir bs body
+
+uViewExpr :: Parser UExpr
+uViewExpr = do
+  keyWord ViewKW
+  bs <- some patAnn
+  argTerm
+  body <- blockOrExpr
+  return $ buildLam (zip bs (repeat TabArrow)) body
 
 uForExpr :: Parser UExpr
 uForExpr = do
@@ -997,7 +1006,7 @@ type Lexer = Parser
 
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
-             | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
+             | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW | ViewKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -1034,12 +1043,13 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       InterfaceKW -> "interface"
       InstanceKW -> "instance"
       WhereKW -> "where"
-      DoKW  -> "do"
+      DoKW   -> "do"
+      ViewKW -> "view"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "data", "interface",
-               "instance", "where", "if", "then", "else", "do"]
+               "instance", "where", "if", "then", "else", "do", "view"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $
