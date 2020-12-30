@@ -357,11 +357,11 @@ emitRunState :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
 emitRunState v x0 body = do
   emit . Hof . RunState x0 =<< mkBinaryEffFun State v (getType x0) body
 
-mkBinaryEffFun :: MonadEmbed m => EffectName -> Name -> Type -> (Atom -> m Atom) -> m Atom
-mkBinaryEffFun newEff v ty body = do
+mkBinaryEffFun :: MonadEmbed m => RWS -> Name -> Type -> (Atom -> m Atom) -> m Atom
+mkBinaryEffFun rws v ty body = do
   eff <- getAllowedEffects
   buildLam (Bind ("h":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
-    let arr = PlainArrow $ extendEffect (newEff, rName) eff
+    let arr = PlainArrow $ extendEffect (RWSEffect rws rName) eff
     buildLam (Bind (v:> RefTy r ty)) arr body
 
 buildForAnnAux :: MonadEmbed m => ForAnn -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)

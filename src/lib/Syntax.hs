@@ -16,7 +16,7 @@
 
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
-    Effect, EffectName (..), EffectRow (..),
+    Effect (..), RWS (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
@@ -422,10 +422,11 @@ showPrimName prim = primNameToStr $ fmap (const ()) prim
 
 -- === effects ===
 
-type Effect = (EffectName, Name)
 data EffectRow = EffectRow (S.Set Effect) (Maybe Name)
                  deriving (Show, Eq, Generic)
-data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
+
+data RWS = Reader | Writer | State               deriving (Show, Eq, Ord, Generic)
+data Effect = RWSEffect RWS Name | ExceptionEffect  deriving (Show, Eq, Ord, Generic)
 
 pattern Pure :: EffectRow
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
@@ -808,7 +809,11 @@ instance BindsUVars SourceBlock where
 
 instance HasUVars EffectRow where
   freeUVars (EffectRow effs tailVar) =
-    foldMap (nameAsEnv . snd) effs <> foldMap nameAsEnv tailVar
+    foldMap freeUVars effs <> foldMap nameAsEnv tailVar
+
+instance HasUVars Effect where
+  freeUVars (RWSEffect _ h) = nameAsEnv h
+  freeUVars (ExceptionEffect) = mempty
 
 instance HasUVars a => HasUVars (LabeledItems a) where
   freeUVars (LabeledItems items) = foldMap freeUVars items
@@ -1124,13 +1129,22 @@ instance Subst Module where
     where Abs decls' bindings' = subst env $ Abs decls bindings
 
 instance HasVars EffectRow where
-  freeVars (EffectRow row t) =
-       foldMap (\(_,v) -> v@>(TyKind , UnknownBinder)) row
-    <> foldMap (\v     -> v@>(EffKind, UnknownBinder)) t
+  freeVars (EffectRow row t) = foldMap freeVars row
+                            <> foldMap (\v -> v@>(EffKind, UnknownBinder)) t
 instance Subst EffectRow where
-  subst (env, _) (EffectRow row t) = extendEffRow
-    (S.map (\(effName, v) -> (effName, substName env v)) row)
-    (substEffTail env t)
+  subst env (EffectRow row t) = extendEffRow row' t'
+   where
+     row' = S.map (subst env) row
+     t' = substEffTail (fst env) t
+
+instance HasVars Effect where
+  freeVars eff = case eff of
+    RWSEffect _ v -> v@>(TyKind , UnknownBinder)
+    ExceptionEffect -> mempty
+instance Subst Effect where
+  subst (env,_) eff = case eff of
+    RWSEffect rws v -> RWSEffect rws (substName env v)
+    ExceptionEffect -> ExceptionEffect
 
 instance HasVars BinderInfo where
   freeVars binfo = case binfo of
@@ -1577,7 +1591,8 @@ instance Store Atom
 instance Store Expr
 instance Store Block
 instance Store Decl
-instance Store EffectName
+instance Store RWS
+instance Store Effect
 instance Store EffectRow
 instance Store Direction
 instance Store UnOp

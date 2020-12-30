@@ -158,14 +158,14 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     kind' <- checkUType kind
     piTy <- case pat of
       Just pat' -> withNameHint ("pat" :: Name) $ buildPi b $ \x ->
-        withBindPat pat' x $ (,) <$> mapM checkUEff arr <*> checkUType ty
+        withBindPat pat' x $ (,) <$> mapM checkUEffRow arr <*> checkUType ty
         where b = case pat' of
                     -- Note: The binder name becomes part of the type, so we
                     -- need to keep the same name used in the pattern.
                     WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>kind')
                     _ -> Ignore kind'
       Nothing -> buildPi (Ignore kind') $ const $
-        (,) <$> mapM checkUEff arr <*> checkUType ty
+        (,) <$> mapM checkUEffRow arr <*> checkUType ty
     matchRequirement piTy
   UDecl decl body -> do
     env <- inferUDecl False decl
@@ -393,11 +393,9 @@ checkULam (p, ann) body piTy = do
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
                       checkSigma body Suggest $ snd $ applyAbs piTy x
 
-checkUEff :: EffectRow -> UInferM EffectRow
-checkUEff (EffectRow effs t) = do
-   effs' <- liftM S.fromList $ forM (toList effs) $ \(effName, region) -> do
-     (Var (v:>TyKind)) <- lookupSourceVar (region:>())
-     return (effName, v)
+checkUEffRow :: EffectRow -> UInferM EffectRow
+checkUEffRow (EffectRow effs t) = do
+   effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
    t'    <- forM t $ \tv -> lookupVarName EffKind tv
    return $ EffectRow effs' t'
    where
@@ -407,6 +405,13 @@ checkUEff (EffectRow effs t) = do
        Var (v':>ty') <- asks (!(v:>()))
        constrainEq ty ty'
        return v'
+
+checkUEff :: Effect -> UInferM Effect
+checkUEff eff = case eff of
+  RWSEffect rws region -> do
+    (Var (v:>TyKind)) <- lookupSourceVar (region:>())
+    return $ RWSEffect rws v
+  ExceptionEffect -> return ExceptionEffect
 
 data CaseAltIndex = ConAlt Int
                   | VariantAlt Label Int

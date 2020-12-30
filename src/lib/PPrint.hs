@@ -665,14 +665,18 @@ spaced xs = hsep $ map p $ toList xs
 instance Pretty EffectRow where
   pretty Pure = mempty
   pretty (EffectRow effs tailVar) =
-    braces $ hsep (punctuate "," (fmap prettyEff (toList effs))) <> tailStr
+    braces $ hsep (punctuate "," (map p (toList effs))) <> tailStr
     where
-      prettyEff (effName, region) = p effName <+> p region
       tailStr = case tailVar of
         Nothing -> mempty
         Just v  -> "|" <> p v
 
-instance Pretty EffectName where
+instance Pretty Effect where
+  pretty eff = case eff of
+    RWSEffect rws h -> p rws <+> p h
+    ExceptionEffect -> "Except"
+
+instance Pretty RWS where
   pretty eff = case eff of
     Reader -> "Read"
     Writer -> "Accum"

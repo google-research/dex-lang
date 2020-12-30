@@ -461,15 +461,19 @@ effects :: Parser EffectRow
 effects = braces someEffects <|> return Pure
   where
     someEffects = do
-      effs <- liftM2 (,) effectName (lowerName <|> upperName) `sepBy` sym ","
+      effs <- effect `sepBy` sym ","
       v <- optional $ symbol "|" >> lowerName
       return $ EffectRow (S.fromList effs) v
 
-effectName :: Parser EffectName
-effectName =     (keyWord WriteKW $> Writer)
-             <|> (keyWord ReadKW  $> Reader)
-             <|> (keyWord StateKW $> State)
-             <?> "effect name (Accum|Read|State)"
+effect :: Parser Effect
+effect =   (RWSEffect <$> rwsName <*> anyCaseName)
+       <|> (keyWord ExceptKW $> ExceptionEffect)
+       <?> "effect (Accum h | Read h | State h | Except)"
+
+rwsName :: Parser RWS
+rwsName =   (keyWord WriteKW $> Writer)
+        <|> (keyWord ReadKW  $> Reader)
+        <|> (keyWord StateKW $> State)
 
 uLamExpr :: Parser UExpr
 uLamExpr = do
@@ -998,6 +1002,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
+             | ExceptKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -1006,6 +1011,9 @@ upperName = liftM mkName $ label "upper-case name" $ lexeme $
 lowerName  :: Lexer Name
 lowerName = liftM mkName $ label "lower-case name" $ lexeme $
   checkNotKeyword $ (:) <$> lowerChar <*> many nameTailChar
+
+anyCaseName  :: Lexer Name
+anyCaseName = lowerName <|> upperName
 
 checkNotKeyword :: Parser String -> Parser String
 checkNotKeyword p = try $ do
@@ -1030,6 +1038,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ReadKW  -> "Read"
       WriteKW -> "Accum"
       StateKW -> "State"
+      ExceptKW -> "Except"
       DataKW -> "data"
       InterfaceKW -> "interface"
       InstanceKW -> "instance"
@@ -1038,7 +1047,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
-               "Read", "Write", "Accum", "data", "interface",
+               "Read", "Write", "Accum", "Except", "data", "interface",
                "instance", "where", "if", "then", "else", "do"]
 
 fieldLabel :: Lexer Label
