@@ -911,14 +911,12 @@ def maybeIncreaseBufferSize (_:Storable a) ?=>
   (MkDynBuffer dbPtr) = buf
   (size, maxSize, bufPtr) = load dbPtr
   newSize = sizeDelta + size
-  if newSize > maxSize
-    then
-      -- TODO: maybe this should use integer arithmetic?
-      newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ IToF newSize)
-      newBufPtr = malloc newMaxSize
-      memcpy newBufPtr bufPtr size
-      store dbPtr (size, newMaxSize, newBufPtr)
-    else ()
+  if newSize > maxSize then
+    -- TODO: maybe this should use integer arithmetic?
+    newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ IToF newSize)
+    newBufPtr = malloc newMaxSize
+    memcpy newBufPtr bufPtr size
+    store dbPtr (size, newMaxSize, newBufPtr)
 
 def extendDynBuffer (_:Storable a) ?=>
     (buf: DynBuffer a) (new:List a) : {State World} Unit =
@@ -1062,11 +1060,6 @@ data IterResult a:Type =
   Continue
   Done a
 
-def when (cond:Bool) (f:Unit -> {|eff} Unit) : {|eff} Unit =
-  if cond
-    then f ()
-    else ()
-
 -- TODO: can we improve effect inference so we don't need this?
 def liftState (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
   f x
@@ -1076,11 +1069,10 @@ def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
   result = yieldState Nothing \resultRef. withState 0 \i.
     while do
       continue = isNothing $ get resultRef
-      if continue
-        then case liftState resultRef (liftState i body) (get i) of
+      if continue then
+        case liftState resultRef (liftState i body) (get i) of
           Continue -> i := get i + 1
           Done result -> resultRef := Just result
-        else ()
       continue
 
   case result of
@@ -1578,6 +1570,4 @@ def throw (_:Unit) : {Except} a =
   %throwException a
 
 def assert (b:Bool) : {Except} Unit =
-  if b
-   then ()
-   else throw ()
+  if not b then throw ()

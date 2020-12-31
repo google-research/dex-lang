@@ -520,14 +520,14 @@ uForExpr = do
       <|> (keyWord Rof_KW $> (Rev, True ))
   e <- buildFor pos dir <$> (some patAnn <* argTerm) <*> blockOrExpr
   if trailingUnit
-    then return $ noSrc $ UDecl (ULet PlainLet underscorePat e) unit
+    then return $ noSrc $ UDecl (ULet PlainLet underscorePat e) $ noSrc unitExpr
     else return e
   where
     underscorePat :: UPatAnn
     underscorePat = (noSrc $ UPatBinder $ Ignore (), Nothing)
 
-    unit :: UExpr
-    unit = noSrc $ UPrimExpr $ ConExpr UnitCon
+unitExpr :: UExpr'
+unitExpr = UPrimExpr $ ConExpr UnitCon
 
 noSrc :: a -> WithSrc a
 noSrc = WithSrc Nothing
@@ -536,7 +536,7 @@ blockOrExpr :: Parser UExpr
 blockOrExpr =  block <|> expr
 
 unitCon :: Parser UExpr
-unitCon = withSrc $ symbol "()" $> (UPrimExpr $ ConExpr $ UnitCon)
+unitCon = withSrc $ symbol "()" $> unitExpr
 
 uTabCon :: Parser UExpr
 uTabCon = withSrc $ do
@@ -608,13 +608,31 @@ ifExpr :: Parser UExpr
 ifExpr = withSrc $ do
   keyWord IfKW
   e <- expr
-  withIndent $ mayNotBreak $ do
-    alt1 <- keyWord ThenKW >> blockOrExpr
-    nextLine
-    alt2 <- keyWord ElseKW >> blockOrExpr
-    return $ UCase e
-      [ UAlt (globalEnumPat "True") alt1
+  (alt1, maybeAlt2) <- oneLineThenElse <|> blockThenElse
+  let alt2 = case maybeAlt2 of
+        Nothing  -> noSrc unitExpr
+        Just alt -> alt
+  return $ UCase e
+      [ UAlt (globalEnumPat "True" ) alt1
       , UAlt (globalEnumPat "False") alt2]
+
+oneLineThenElse :: Parser (UExpr, Maybe UExpr)
+oneLineThenElse = do
+  keyWord ThenKW
+  alt1 <- eitherP block expr
+  case alt1 of
+    Left  e -> return (e, Nothing)
+    Right e -> do
+      alt2 <- optional $ keyWord ElseKW >> blockOrExpr
+      return (e, alt2)
+
+blockThenElse :: Parser (UExpr, Maybe UExpr)
+blockThenElse = withIndent $ mayNotBreak $ do
+  alt1 <- keyWord ThenKW >> blockOrExpr
+  alt2 <- optional $ do
+    try $ nextLine >> keyWord ElseKW
+    blockOrExpr
+  return (alt1, alt2)
 
 globalEnumPat :: Tag -> UPat
 globalEnumPat s = noSrc $ UPatCon (GlobalName s) Empty
