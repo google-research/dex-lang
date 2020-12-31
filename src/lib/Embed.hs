@@ -25,7 +25,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, unpackConsList, emitRunWriter, applyPreludeFunction,
-              emitRunState,  emitMaybeCase,
+              emitRunState,  emitMaybeCase, emitWhile,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
               evalBlockE, substTraversalDef,
@@ -356,7 +356,13 @@ unpackConsList xs = case getType xs of
     liftM (x:) $ unpackConsList rest
   _ -> error $ "Not a cons list: " ++ pprint (getType xs)
 
-emitMaybeCase :: MonadEmbed m => Atom -> (m Atom) -> (Atom -> m Atom) -> m Atom
+emitWhile :: MonadEmbed m => m Atom -> m ()
+emitWhile body = do
+  eff <- getAllowedEffects
+  lam <- buildLam (Ignore UnitTy) (PlainArrow eff) $ \_ -> body
+  void $ emit $ Hof $ While lam
+
+emitMaybeCase :: MonadEmbed m => Atom -> m Atom -> (Atom -> m Atom) -> m Atom
 emitMaybeCase scrut nothingCase justCase = do
   let (MaybeTy a) = getType scrut
   nothingAlt <- buildNAbs Empty                        $ \[]  -> nothingCase
