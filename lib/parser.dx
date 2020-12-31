@@ -62,7 +62,30 @@ def runParser (s:String) (parser:Parser a) : Maybe a =
     _   = parse h pEOF
     ans
 
+def parseAny : Parser Char = MkParser \h.
+  (s, posRef) = h
+  i = get posRef
+  c' = indexList s i
+  posRef := i + 1
+  c'
+
+def try (parser:Parser a) : Parser a = MkParser \h.
+  (s, posRef) = h
+  savedPos = get posRef
+  ans = catch do parse h parser
+  case ans of
+    Nothing ->
+      posRef := savedPos
+      throw ()
+    Just x -> x
+
 'Derived combinators
+
+def parseDigit : Parser Int = try $ MkParser \h.
+  c = parse h $ parseAny
+  i = W8ToI c - 48
+  assert $ 0 <= i && i < 10
+  i
 
 def optional (p:Parser a) : Parser (Maybe a) =
   (MkParser \h. Just (parse h p)) <|> return Nothing
@@ -76,6 +99,19 @@ def parseMany (parser:Parser a) : Parser (List a) = MkParser \h.
         Just x ->
           push results x
           Continue
+
+def parseUnsignedInt : Parser Int = MkParser \h.
+  (AsList _ digits) = parse h $ parseMany parseDigit
+  snd $ withState 0 \ref.
+    for i.
+      ref := 10 * get ref + digits.i
+
+def parseInt : Parser Int = MkParser \h.
+  negSign = parse h $ optional $ pChar '-'
+  x       = parse h $ parseUnsignedInt
+  case negSign of
+    Nothing -> x
+    Just () -> (-1) * x
 
 def bracketed (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a =
   MkParser \h.
