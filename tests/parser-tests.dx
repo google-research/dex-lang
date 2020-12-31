@@ -111,3 +111,20 @@ def myInt : {State h} Int = 1
 > 107 | def myInt : {State h} Int = 1
 >     |                           ^
 > Nullary def can't have effects
+
+:p
+  yieldAccum \ref.
+    x = if True then 1. else 3.
+    if True then ref += x
+
+    if True then
+      ref += 1.
+      ref += 2.
+
+    if False then ref += 100. else
+      ref += 1.
+      ref += 2.
+
+    if True
+      then ref += 2.
+> 9.
