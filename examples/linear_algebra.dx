@@ -13,7 +13,7 @@ def lowerTriDiag (l:LowerTriMat n v) : n=>v = for i. l.i.((ordinal i)@_)
 
 def forward_substitute (_:VSpace v) ?=> (a:LowerTriMat n Float) (b:n=>v) : n=>v =
   -- Solves lower triangular linear system (inverse a) **. b
-  snd $ withState zero \sRef.
+  yieldState zero \sRef.
     for i:n.
       s = sum for k:(..<i).  -- dot product
         a.i.((ordinal k)@_) .* get sRef!(%inject k)
@@ -21,7 +21,7 @@ def forward_substitute (_:VSpace v) ?=> (a:LowerTriMat n Float) (b:n=>v) : n=>v 
 
 def backward_substitute (_:VSpace v) ?=> (a:UpperTriMat n Float) (b:n=>v) : n=>v =
   -- Solves upper triangular linear system (inverse a) **. b
-  snd $ withState zero \sRef.
+  yieldState zero \sRef.
     rof i:n.
       s = sum for k:(i..).  -- dot product
         a.i.((ordinal k)@_) .* get sRef!(%inject k)
@@ -63,7 +63,7 @@ def permSign   ((_, sign):Permutation n) : PermutationSign = sign
 
 def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
-  snd $ withState identity_permutation \permRef.
+  yieldState identity_permutation \permRef.
     for j:n.
       row_with_largest' = argmin for i:(j..). (-(abs a.(%inject i).j))
       row_with_largest = %inject row_with_largest'
@@ -82,7 +82,7 @@ def lu (_:Eq n) ?=> (a: n=>n=>Float) :
     select (i == (%inject j')) 1.0 0.0
   init_upper = for i:n. for j'':(i..). 0.0
 
-  (lower, upper) = snd $ withState (init_lower, init_upper) \stateRef.
+  (lower, upper) = yieldState (init_lower, init_upper) \stateRef.
     lRef = fstRef stateRef
     uRef = sndRef stateRef
 

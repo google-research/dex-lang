@@ -1,6 +1,6 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum'  (xs:n=>Float) : Float = snd $ withAccum \ref. for i. ref += xs.i
+def sum'  (xs:n=>Float) : Float = yieldAccum \ref. for i. ref += xs.i
 
 :p
    f : Float -> Float = \x. x
@@ -69,7 +69,7 @@ def sum'  (xs:n=>Float) : Float = snd $ withAccum \ref. for i. ref += xs.i
 :p jvp sum' [1., 2.] [10.0, 20.0]
 > 30.
 
-f : Float -> Float = \x. snd $ withAccum \ref. ref += x
+f : Float -> Float = \x. yieldAccum \ref. ref += x
 :p jvp f 1.0 1.0
 > 1.
 
@@ -167,7 +167,7 @@ tripleit : Float --o Float = \x. x + x + x
 > [2., 4.]
 
 myOtherSquare : Float -> Float =
-  \x. snd $ withAccum \w. w += x * x
+  \x. yieldAccum \w. w += x * x
 
 :p checkDeriv myOtherSquare 3.0
 > True
@@ -225,7 +225,7 @@ vec = [1.]
 :p
   f : Float -> Float = \x.
     y = x * 2.0
-    snd $ withAccum \a.
+    yieldAccum \a.
       a += x * 2.0
       a += y
   grad f 1.0
@@ -242,7 +242,7 @@ vec = [1.]
 
 :p
   f : Float -> Float = \x.
-    snd $ withState x \xr.
+    yieldState x \xr.
       for i:(Fin 2).
         xr := get xr * get xr
   checkDeriv f 2.0
@@ -297,7 +297,7 @@ vec = [1.]
 :p
   f = \c.
     v = for i:(Fin 2). 2.0
-    (c, v) = snd $ withState (c, v) \r. for i:(Fin 2).
+    (c, v) = yieldState (c, v) \r. for i:(Fin 2).
       (c, v) = get r
       r := (c + sum v, v)
     c

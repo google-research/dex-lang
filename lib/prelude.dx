@@ -229,27 +229,53 @@ def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
 def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
-def withReader
-      (eff:Effects) ?-> (a:Type) ?-> (r:Type) ?->
-      (init:r) (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
+def runReader
+      (eff:Effects) ?->
+      (init:r)
+      (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
     def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
     %runReader init explicitAction
 
-def withAccum
-      (eff:Effects) ?-> (a:Type) ?-> (w:Type) ?->
+def withReader
+      (eff:Effects) ?->
+      (init:r)
+      (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
+      : {|eff} a =
+    runReader init action
+
+def runAccum
+      (eff:Effects) ?->
       (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
       : {|eff} (a & w) =
     def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a = action ref
     %runWriter explicitAction
 
-def withState
-      (eff:Effects) ?-> (a:Type) ?-> (s:Type) ?->
+def yieldAccum
+      (eff:Effects) ?->
+      (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
+      : {|eff} w =
+  snd $ runAccum action
+
+def runState
+      (eff:Effects) ?->
       (init:s)
-      (action: (h:Type ?-> Ref h s -> {State h |eff} a))
+      (action: h:Type ?-> Ref h s -> {State h |eff} a)
       : {|eff} (a & s) =
-    def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
-    %runState init explicitAction
+  def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
+  %runState init explicitAction
+
+def withState
+      (eff:Effects) ?->
+      (init:s)
+      (action: h:Type ?-> Ref h s -> {State h |eff} a)
+      : {|eff} a = fst $ runState init action
+
+def yieldState
+      (eff:Effects) ?->
+      (init:s)
+      (action: h:Type ?-> Ref h s -> {State h |eff} a)
+      : {|eff} s = snd $ runState init action
 
 def unsafeIO (f: Unit -> {State World|eff} a) : {|eff} a =
   %runIO f
@@ -310,7 +336,7 @@ def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
 def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
   \xs ys.
     numDifferent : Float =
-      snd $ withAccum \ref. for i.
+      yieldAccum \ref. for i.
         ref += (IToF (BToI (xs.i /= ys.i)))
     numDifferent == 0.0
 
@@ -539,7 +565,7 @@ def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
 
 def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
-  swap $ withState init \s. for i.
+  swap $ runState init \s. for i.
     c = get s
     (c', y) = body i c
     s := c'
@@ -555,7 +581,7 @@ def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
-def fsum (xs:n=>Float) : Float = snd $ withAccum \ref. for i. ref += xs i
+def fsum (xs:n=>Float) : Float = yieldAccum \ref. for i. ref += xs i
 def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
 def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
 def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / IToF (size n)
@@ -564,7 +590,7 @@ def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
 def applyN (n:Int) (x:a) (f:a -> a) : a =
-  snd $ withState x \ref. for _:(Fin n).
+  yieldState x \ref. for _:(Fin n).
     ref := f (get ref)
 
 def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
@@ -623,7 +649,7 @@ def randnVec (n:Type) ?-> (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
 def cumSum (xs: n=>Float) : n=>Float =
-  fst $ withState 0.0 \total.
+  withState 0.0 \total.
     for i.
       newTotal = get total + xs.i
       total := newTotal
@@ -1047,7 +1073,7 @@ def liftState (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
 
 -- A little iteration combinator
 def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
-  result = snd $ withState Nothing \resultRef. withState 0 \i.
+  result = yieldState Nothing \resultRef. withState 0 \i.
     while do
       continue = isNothing $ get resultRef
       if continue
@@ -1063,7 +1089,7 @@ def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
 
 -- XXX: used internally by compiler for exceptional while
 def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
-  hadError = snd $ withState False \ref.
+  hadError = yieldState False \ref.
     while do
       ans = liftState ref body ()
       case ans of
@@ -1233,7 +1259,7 @@ def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
     then Nothing
     else if x < xs.(fromOrdinal _ 0)
       then Nothing
-      else fst $ withState 0 \low. fst $ withState (size n) \high. iter \_.
+      else withState 0 \low. withState (size n) \high. iter \_.
         numLeft = get high - get low
         if numLeft == 1
           then Done $ Just $ fromOrdinal _ $ get low
@@ -1466,7 +1492,7 @@ def seqMaybes (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
     False -> Just $ map fromJust xs
 
 def linearSearch (_:Eq a) ?=> (xs:n=>a) (query:a) : Maybe n =
-  snd $ withState Nothing \ref. for i.
+  yieldState Nothing \ref. for i.
     case xs.i == query of
       True  -> ref := Just i
       False -> ()
@@ -1477,8 +1503,8 @@ def listLength ((AsList n _):List a) : Int = n
 -- TODO: we want this for any monoid but this implementation won't work.
 def concat (lists:n=>(List a)) : List a =
   totalSize = sum for i. listLength lists.i
-  AsList _ $ fst $ withState 0 \listIdx.
-    fst $ withState 0 \eltIdx.
+  AsList _ $ withState 0 \listIdx.
+    withState 0 \eltIdx.
       for i:(Fin totalSize).
         while do
           continue = get eltIdx >= listLength (lists.((get listIdx)@_))
@@ -1494,7 +1520,7 @@ def concat (lists:n=>(List a)) : List a =
         xs.(eltIdxVal@_)
 
 def cumSumLow (xs: n=>Float) : n=>Float =
-  fst $ withState 0.0 \total.
+  withState 0.0 \total.
     for i.
       oldTotal = get total
       total := oldTotal + xs.i

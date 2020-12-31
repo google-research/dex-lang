@@ -67,10 +67,10 @@ c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
 def runge_kutta_step (_:VSpace v) ?=> (func:v->Time->v)
     (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
 
-  evals_init = snd $ withState zero \r.
+  evals_init = yieldState zero \r.
     r!(0@_) := f0
 
-  evals_filled = snd $ withState evals_init \func_evals. for i:(Fin 6).
+  evals_filled = yieldState evals_init \func_evals. for i:(Fin 6).
     cur_evals = for j:(..i). get func_evals!((ordinal j)@_)
     ti = t0 + dt .* alpha.i
     zi = z0 + dt .* dot beta.i cur_evals
@@ -134,7 +134,7 @@ def odeint (func: d=>Float -> Time -> d=>Float)
       select (ratio <= 1.0) move_state stay_state
 
     -- Take steps until we pass target_t
-    new_state = snd $ withState init_carry \stateRef.
+    new_state = yieldState init_carry \stateRef.
       iter \_.
         state = get stateRef
         if continue_condition state

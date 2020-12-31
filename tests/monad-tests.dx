@@ -1,12 +1,12 @@
 
 :p
    def m (h:Type) ?-> (ref:Ref h Int) : {State h} Int = get ref
-   withState 2 m
+   runState 2 m
 > (2, 2)
 
 :p
    def m (h:Type) ?-> (ref:Ref h Int) : {State h} Unit = ref := 3
-   withState 0 m
+   runState 0 m
 > ((), 3)
 
 :p
@@ -21,7 +21,7 @@
      z = get ref
      ref := (z * 3.0)
 
-  withState 1.0 stateAction
+  runState 1.0 stateAction
 > ((), 9.)
 
 :p
@@ -37,8 +37,8 @@
     r + 2
 
   withReader 2 \r.
-    withState True \s.
-      withAccum \w.
+    runState True \s.
+      runAccum \w.
         rwsAction r w s
 > ((4, 6.), False)
 
@@ -48,7 +48,7 @@
      s!(fromOrdinal _ 2) := 20
      x = get (s!(fromOrdinal _ 0))
      s!(fromOrdinal _ 1) := x
-   withState [0,0,0] m
+   runState [0,0,0] m
 > ((), [10, 10, 20])
 
 :p withReader [1,2,3] \r . ask r!(fromOrdinal _ 1)
@@ -60,7 +60,7 @@
         : {Accum wh, State sh} Unit =
     x = get s
     w += x
-  withState 1.0 \s. withAccum \w . m w s
+  runState 1.0 \s. runAccum \w . m w s
 > (((), 1.), 1.)
 
 def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
@@ -68,7 +68,7 @@ def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
   w += x
   w += 2.0
 
-:p withReader 1.5 \r. withAccum \w. myAction w r
+:p withReader 1.5 \r. runAccum \w. myAction w r
 > ((), 3.5)
 
 :p
@@ -78,14 +78,14 @@ def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
     w1 += 1.0
     w2 += 3.0
     w1 += 1.0
-  withAccum \w1. withAccum \w2. m w1 w2
+  runAccum \w1. runAccum \w2. m w1 w2
 > (((), 3.), 2.)
 
 def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
   s!(fromOrdinal _ 0) := 1
   s!(fromOrdinal _ 2) := 2
 
-:p withState [0,0,0] foom
+:p runState [0,0,0] foom
 > ((), [1, 0, 2])
 
 -- TODO: handle effects returning functions
@@ -102,7 +102,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 -- :p
 --   foo : Float -> (Float, Float)
 --   foo x =
---      (f, ans) = withState x \s.
+--      (f, ans) = runState x \s.
 --          y = get s
 --          \z. 100.0 * x + 10.0 * y + z
 --      (f 1.0, ans)
@@ -113,7 +113,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 -- :p
 --   foo : Float -> (Float, Float)
 --   foo x =
---      (f, ans) = withAccumulator \s.
+--      (f, ans) = runAccumulator \s.
 --         s += x
 --         \y. 10.0 * x + y
 --      (f 1.0, ans)
@@ -121,13 +121,13 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 --   foo 3.0
 -- > (31.0, 3.0)
 
--- TODO: some way to explicitly give type to `withAccum`
+-- TODO: some way to explicitly give type to `runAccum`
 --       (maybe just explicit implicit args)
 :p
   withReader 2.0 \r.
-    withAccum \w.
-      withAccum \w'.
-        withState 3 \s.
+    runAccum \w.
+      runAccum \w'.
+        runState 3 \s.
           x = ask r
           y = get s
           w += x
@@ -137,7 +137,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 > ((((2., 3), 4), 4.), 2.)
 
 def symmetrizeInPlace (mat:n=>n=>Float) : n=>n=>Float =
-  snd $ withState mat \ref.
+  yieldState mat \ref.
     for i j.
        x = get ref!i!j
        y = get ref!j!i
@@ -151,19 +151,19 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
 :p withReader 5 \r. ()
 > ()
 
-:p snd $ withAccum \w.
+:p yieldAccum \w.
   for i:(Fin 2).
     w += 1.0
     w += 1.0
 > 4.
 
-:p snd $ withAccum \w.
+:p yieldAccum \w.
   for i:(Fin 2).
     w += 1.0
   w += 1.0
 > 3.
 
-:p snd $ withAccum \ref.
+:p yieldAccum \ref.
      ref += [1.,2.,3.]
      ref += [2.,4.,5.]
 > [3., 6., 8.]
@@ -172,5 +172,5 @@ def effectsAtZero (eff:Effects)?-> (f: Int ->{|eff} Unit) : {|eff} Unit =
   f 0
   ()
 
-:p withState 0 \ref. effectsAtZero \_. ref := 1
+:p runState 0 \ref. effectsAtZero \_. ref := 1
 > ((), 1)

@@ -30,7 +30,7 @@ def parse (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a =
 
 def runParserPartial (s:String) (parser:Parser a) : Maybe a =
   (MkParser f) = parser
-  fst $ withState 0 \pos.
+  withState 0 \pos.
     catch $ do
       f (s, pos)
 
@@ -91,7 +91,7 @@ def optional (p:Parser a) : Parser (Maybe a) =
   (MkParser \h. Just (parse h p)) <|> return Nothing
 
 def parseMany (parser:Parser a) : Parser (List a) = MkParser \h.
-  snd $ withState (AsList _ []) \results.
+  yieldState (AsList _ []) \results.
     iter \_.
       maybeVal = parse h $ optional parser
       case maybeVal of
@@ -102,9 +102,8 @@ def parseMany (parser:Parser a) : Parser (List a) = MkParser \h.
 
 def parseUnsignedInt : Parser Int = MkParser \h.
   (AsList _ digits) = parse h $ parseMany parseDigit
-  snd $ withState 0 \ref.
-    for i.
-      ref := 10 * get ref + digits.i
+  yieldState 0 \ref.
+    for i. ref := 10 * get ref + digits.i
 
 def parseInt : Parser Int = MkParser \h.
   negSign = parse h $ optional $ pChar '-'

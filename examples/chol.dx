@@ -4,7 +4,7 @@ https://en.wikipedia.org/wiki/Cholesky_decomposition
 ' ## Cholesky Algorithm
 
 def chol (_:Eq n) ?=> (x:n=>n=>Float) : (n=>n=>Float) =
-  snd $ withState zero \buf.
+  yieldState zero \buf.
     for_ i. for j':(..i).
       j = %inject(j')
       row  = for k:(..<j). get buf!i!(%inject k)
@@ -20,13 +20,13 @@ def chol (_:Eq n) ?=> (x:n=>n=>Float) : (n=>n=>Float) =
 ' ## PSD solver based on Cholesky decomposition
 
 def trisolveL (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
-  snd $ withState zero \buf. for i.
+  yieldState zero \buf. for i.
     row   = for j:(..<i). mat.i.(%inject j)
     xPrev = for j:(..<i). get (buf!%inject j)
     buf!i := (b.i - vdot row xPrev) / mat.i.i
 
 def trisolveU (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
-  snd $ withState zero \buf. rof i.
+  yieldState zero \buf. rof i.
     row   = for j:(i..). mat.i.%inject(j)
     xPrev = for j:(i..). get (buf!%inject j)
     buf!i := (b.i - vdot row xPrev) / mat.i.i

@@ -502,14 +502,14 @@ litArr = [10, 5, 3]
 -- > [2.0, 2.0, 2.0]
 
 :p
-  withState 0.0 \ref. for i:(Fin 4).
+  runState 0.0 \ref. for i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
 > ([0., 1., 2., 3.], 4.)
 
 :p
-  withState 0.0 \ref. rof i:(Fin 4).
+  runState 0.0 \ref. rof i:(Fin 4).
       c = get ref
       ref := c + 1.0
       c
@@ -646,7 +646,7 @@ def newtonIter (f: Float -> Float) (x:Float) : Float =
   x - (f x / deriv f x)
 
 def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
-  snd $ withState x0 \x.
+  yieldState x0 \x.
     iter \i.
       if abs (f $ get x) <= tol
         then Done ()
@@ -661,7 +661,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
 --   -- Last dimension split to allow for vector loads
 --   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). IToF $ (iota _).(i,j,h)
---   z = snd $ withAccum \acc.
+--   z = yieldAccum \acc.
 --         for l.
 --           for i.
 --             xil = (broadcastVector x.i.l)
@@ -689,7 +689,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > [0, 2, 4, 6]
 
 :p
-  f = fst $ withState 1 \ref.
+  f = withState 1 \ref.
     x = get ref
     ref := 3 + x
     y = get ref
@@ -698,7 +698,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > 415
 
 :p
-  (f, w) = withAccum \ref.
+  (f, w) = runAccum \ref.
     ref += 2.0
     w = 2
     \z. z + w
@@ -717,7 +717,7 @@ arr2d.(1@_)
 > [2, 3]
 
 :p
-  withState (1,2) \ref.
+  runState (1,2) \ref.
     r1 = fstRef ref
     r2 = sndRef ref
     x = get r1

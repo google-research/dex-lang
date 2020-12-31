@@ -94,7 +94,7 @@ lam4 = \n m ?-> (0@n, 0@m)
 > [1, 0, 0]
 
 :p
-  withState 5 \ref.
+  runState 5 \ref.
     n = get ref
     for_ i:(Fin n).
       ref := get ref + 1

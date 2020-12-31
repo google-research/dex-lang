@@ -10,7 +10,7 @@ def sgd_step (dict: VSpace a) ?=> (step_size: Float) (decay: Float) (gradfunc: a
 -- In-place optimization loop.
 def sgd (dict: VSpace a) ?=> (step_size:Float) (decay:Float) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
   m0 = zero
-  (x_final, m_final) = snd $ withState (x0, m0) \state.
+  (x_final, m_final) = yieldState (x0, m0) \state.
     for i:(Fin num_steps).
       (x, m) = get state
       state := sgd_step step_size decay gradient x m (ordinal i)
