@@ -258,7 +258,7 @@ findImplicitImplicitArgNames typ = filter isLowerCaseName $ envNames $
     UFor _ _ _ -> error "Unexpected for in type annotation"
     UHole -> mempty
     UTypeAnn v ty -> findVarsInAppLHS v <> findVarsInAppLHS ty
-    UTabCon _ -> error "Unexpected table in type annotation"
+    UTabCon _ -> mempty
     UIndexRange low high ->
       foldMap findVarsInAppLHS low <> foldMap findVarsInAppLHS high
     UPrimExpr prim -> foldMap findVarsInAppLHS prim
@@ -329,7 +329,7 @@ interfaceDef = do
           ns $ UApp (PlainArrow ()) func (var typeVarName)
         recordStr = "recordVar"
         recordPat = ns $ UPatRecord $ Ext (labeledSingleton fLabel (patb
-          fLabel)) $ Just (ns (UPatBinder (Ignore ())))
+          fLabel)) $ Just underscorePat
         conPat = ns $ UPatCon (mkInterfaceConsName interfaceName)
           $ toNest [patb recordStr]
 
@@ -430,19 +430,30 @@ funDefLet :: Parser (UExpr -> UDecl)
 funDefLet = label "function definition" $ mayBreak $ do
   keyWord DefKW
   v <- letPat
-  bs <- many arg
+  cs <- defClassConstraints
+  argBinders <- many arg
   (eff, ty) <- label "result type annotation" $ annot effectiveType
-  when (null bs && eff /= Pure) $ fail "Nullary def can't have effects"
+  when (null argBinders && eff /= Pure) $ fail "Nullary def can't have effects"
+  let bs = map classAsBinder cs ++ argBinders
   let funTy = buildPiType bs eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
   return $ \body -> ULet PlainLet letBinder (buildLam lamBinders body)
   where
+    classAsBinder :: UType -> (UPat, UType, UArrow)
+    classAsBinder ty = (underscorePat, ty, ClassArrow)
+
     arg :: Parser (UPat, UType, UArrow)
     arg = label "def arg" $ do
       (p, ty) <-parens ((,) <$> pat <*> annot uType)
       arr <- arrow (return ()) <|> return (PlainArrow ())
       return (p, ty, arr)
+
+defClassConstraints :: Parser [UType]
+defClassConstraints =
+       (brackets $ mayNotPair $ uType `sepBy` sym ",")
+   <|> return []
+   <?> "class constraints"
 
 nameAsPat :: Parser Name -> Parser UPat
 nameAsPat p = withSrc $ (UPatBinder . Bind . (:>())) <$> p
@@ -520,11 +531,12 @@ uForExpr = do
       <|> (keyWord Rof_KW $> (Rev, True ))
   e <- buildFor pos dir <$> (some patAnn <* argTerm) <*> blockOrExpr
   if trailingUnit
-    then return $ noSrc $ UDecl (ULet PlainLet underscorePat e) $ noSrc unitExpr
+    then return $ noSrc $ UDecl (ULet PlainLet (underscorePat, Nothing) e) $
+                                noSrc unitExpr
     else return e
-  where
-    underscorePat :: UPatAnn
-    underscorePat = (noSrc $ UPatBinder $ Ignore (), Nothing)
+
+underscorePat :: UPat
+underscorePat = noSrc $ UPatBinder $ Ignore ()
 
 unitExpr :: UExpr'
 unitExpr = UPrimExpr $ ConExpr UnitCon
@@ -558,7 +570,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc (Just pos) $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet PlainLet (WithSrc (Just pos) (UPatBinder (Ignore ())), Nothing) e
+      where d = ULet PlainLet (underscorePat, Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement

@@ -45,8 +45,8 @@ interface Add a:Type where
   sub : a -> a -> a
   zero : a
 
-def (+)  (d:Add a) ?=> : a -> a -> a = add
-def (-)  (d:Add a) ?=> : a -> a -> a = sub
+def (+) [Add a] : a -> a -> a = add
+def (-) [Add a] : a -> a -> a = sub
 
 instance float64Add : Add Float64 where
   add = \x:Float64 y:Float64. %fadd x y
@@ -87,7 +87,7 @@ interface Mul a:Type where
   mul : a -> a -> a
   one : a
 
-def (*) (d:Mul a) ?=> : a -> a -> a = mul
+def (*) [Mul a] : a -> a -> a = mul
 
 instance float64Mul : Mul Float64 where
   mul = \x:Float64 y:Float64. %fmul x y
@@ -162,10 +162,10 @@ data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
 @superclass
 def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
 
-def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
-(*.)  : VSpace a ?=> a -> Float -> a = flip (.*)
-def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (divide 1.0 s) .* v
-def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
+def (.*) (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
+def (*.) [VSpace a]       : a -> Float -> a = flip (.*)
+def (/)  [VSpace a] (v:a) (s:Float) : a = divide 1.0 s .* v
+def neg  [VSpace a] (v:a) : a = (-1.0) .* v
 
 @instance floatVS : VSpace Float = MkVSpace float32Add (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
@@ -292,12 +292,12 @@ data Ord a:Type = MkOrd (Eq a) (a -> a -> Bool) (a -> a -> Bool)  -- eq, gt, lt
 def eqFromOrd (d:Ord a) : Eq a = case d of MkOrd eq _ _ -> eq
 
 def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = case d of MkEq eq -> eq x y
-def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
+def (/=) [Eq a] (x:a) (y:a) : Bool = not $ x == y
 
 def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ gt _  -> gt x y
 def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
-def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
-def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
+def (<=) [Ord a] (x:a) (y:a) : Bool = x<y || x==y
+def (>=) [Ord a] (x:a) (y:a) : Bool = x>y || x==y
 
 @instance float64Eq : Eq Float64 = MkEq \x:Float64 y:Float64. W8ToB $ %feq x y
 @instance float32Eq : Eq Float32 = MkEq \x:Float32 y:Float32. W8ToB $ %feq x y
@@ -321,19 +321,18 @@ def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 @instance unitOrd    : Ord Unit    = (MkOrd unitEq (\x y. False) (\x y. False))
 
 @instance
-def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
+def pairEq [Eq a, Eq b] : Eq (a & b) = MkEq $
   \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
 
 @instance
-def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
+def pairOrd [Ord a, Ord b] : Ord (a & b) =
   pairGt = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
   pairLt = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
   MkOrd pairEq pairGt pairLt
 
-
 -- TODO: accumulate using the True/&& monoid
 @instance
-def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
+def tabEq [Eq a] : Eq (n=>a) = MkEq $
   \xs ys.
     numDifferent : Float =
       yieldAccum \ref. for i.
@@ -362,7 +361,7 @@ interface Floating a:Type where
   pow    : a -> a -> a
   lgamma : a -> a
 
-def lbeta (_ : Add a) ?=> (_ : Floating a) ?=> : a -> a -> a = \x y. lgamma x + lgamma y - lgamma (x + y)
+def lbeta [Add a, Floating a] : a -> a -> a = \x y. lgamma x + lgamma y - lgamma (x + y)
 
 -- Todo: better numerics for very large and small values.
 -- Using %exp here to avoid circular definition problems.
@@ -468,28 +467,28 @@ instance int32Storable : Storable Int32 where
   load  = int32Load
   storageSize = const 4
 
-def unpackPairPtr (_:Storable a) ?=> (_:Storable b) ?=>
+def unpackPairPtr [Storable a, Storable b]
       (pairPtr: Ptr (a & b)) : (Ptr a & Ptr b) =
   (MkPtr rawPtrX) = pairPtr
   rawPtrY = %ptrOffset rawPtrX (storageSize (typeVehicle a))
   (MkPtr rawPtrX, MkPtr rawPtrY)
 
-def pairStore (_:Storable a) ?=> (_:Storable b) ?=>
+def pairStore [Storable a, Storable b]
       (pairPtr:Ptr (a & b)) ((x, y):(a & b)) : {State World} Unit  =
   (xPtr, yPtr) = unpackPairPtr pairPtr
   store xPtr x
   store yPtr y
 
-def pairLoad (_:Storable a) ?=> (_:Storable b) ?=>
+def pairLoad [Storable a, Storable b]
       (pairPtr:Ptr (a & b)) : {State World} (a & b) =
   (xPtr, yPtr) = unpackPairPtr pairPtr
   (load xPtr, load yPtr)
 
-def pairStorageSize (_:Storable a) ?=> (_:Storable b) ?=>
+def pairStorageSize [Storable a, Storable b]
     (_:TypeVehicle (a & b)) : Int =
   storageSize (typeVehicle a) + storageSize (typeVehicle b)
 
-instance pairStorable : Storable a ?=> Storable b ?=> Storable (a & b) where
+instance pairStorable : (Storable a) ?=> (Storable b) ?=> Storable (a & b) where
   store = pairStore
   load  = pairLoad
   storageSize = pairStorageSize
@@ -508,7 +507,7 @@ instance ptrStorable : Storable (Ptr a) where
 
 -- TODO: Storable instances for other types
 
-def malloc (_:Storable a) ?=> (n:Int) : {State World} (Ptr a) =
+def malloc [Storable a] (n:Int) : {State World} (Ptr a) =
   numBytes = storageSize (typeVehicle a) * n
   MkPtr $ %alloc numBytes
 
@@ -516,7 +515,7 @@ def free (ptr:Ptr a) : {State World} Unit =
   (MkPtr ptr') = ptr
   %free ptr'
 
-def (+>>) (_:Storable a) ?=> (ptr:Ptr a) (i:Int) : Ptr a =
+def (+>>) [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   (MkPtr ptr') = ptr
   i' = i * storageSize (typeVehicle a)
   MkPtr $ %ptrOffset ptr' i'
@@ -524,28 +523,28 @@ def (+>>) (_:Storable a) ?=> (ptr:Ptr a) (i:Int) : Ptr a =
 -- TODO: generalize these brackets to allow other effects
 
 -- TODO: consider making a Storable instance for tables instead
-def storeTab (_:Storable a) ?=> (ptr: Ptr a) (tab:n=>a) : {State World} Unit =
+def storeTab [Storable a] (ptr: Ptr a) (tab:n=>a) : {State World} Unit =
   for_ i. store (ptr +>> ordinal i) tab.i
 
-def memcpy (_:Storable a) ?=> (dest:Ptr a) (src:Ptr a) (n:Int) : {State World} Unit =
+def memcpy [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {State World} Unit =
   for_ i:(Fin n).
     i' = ordinal i
     store (dest +>> i') (load $ src +>> i')
 
-def withAlloc (_:Storable a) ?=>
+def withAlloc [Storable a]
       (n:Int) (action: Ptr a -> {State World} b) : {State World} b =
   ptr = malloc n
   result = action ptr
   free ptr
   result
 
-def withTabPtr (_:Storable a) ?=>
+def withTabPtr [Storable a]
       (xs:n=>a) (action : Ptr a -> {State World} b) : {State World} b =
   withAlloc (size n) \ptr.
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
-def tabFromPtr (_:Storable a) ?=> (n:Type) -> (ptr:Ptr a) : {State World} n=>a =
+def tabFromPtr [Storable a] (n:Type) -> (ptr:Ptr a) : {State World} n=>a =
   for i. load $ ptr +>> ordinal i
 
 '## Miscellaneous common utilities
@@ -558,8 +557,8 @@ def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
 def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = view i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
 def fanout (n:Type) (x:a) : n=>a = view i. x
-def sq (d:Mul a) ?=> (x:a) : a = x * x
-def abs (_:Add a) ?=> (_:Ord a) ?=> (x:a) : a = select (x > zero) x (zero - x)
+def sq  [Mul a] (x:a) : a = x * x
+def abs [Add a, Ord a] (x:a) : a = select (x > zero) x (zero - x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 
 def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
@@ -582,9 +581,9 @@ def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
 def fsum (xs:n=>Float) : Float = yieldAccum \ref. for i. ref += xs i
-def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
-def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
-def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / IToF (size n)
+def sum  [Add v] (xs:n=>v) : v = reduce zero (+) xs
+def prod [Mul v] (xs:n=>v) : v = reduce one  (*) xs
+def mean (xs:n=>Float) : Float = sum xs / IToF (size n)
 def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
@@ -599,7 +598,7 @@ def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
 
 def transpose (x:n=>m=>a) : m=>n=>a = view i j. x.j.i
 def vdot (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
-def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
+def dot [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
 (**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
@@ -611,7 +610,7 @@ def dot (_:VSpace v) ?=> (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum view (i,j). x.i * mat.i.j * y.j
 
-def eye (_:Eq n) ?=> : n=>n=>Float =
+def eye [Eq n] : n=>n=>Float =
   for i j. select (i == j) 1.0 0.0
 
 '## Pseudorandom number generator utilities
@@ -645,7 +644,7 @@ def randInt (k:Key) : Int = (I64ToI k) `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 
-def randnVec (n:Type) ?-> (k:Key) : n=>Float =
+def randnVec (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
 def cumSum (xs: n=>Float) : n=>Float =
@@ -679,7 +678,7 @@ interface HasDefaultTolerance a:Type where
   atol : a
   rtol : a
 
-def (~~) (_:HasAllClose a) ?=> (d:HasDefaultTolerance a) ?=> : a -> a -> Bool = allclose atol rtol
+def (~~) [HasAllClose a, HasDefaultTolerance a] : a -> a -> Bool = allclose atol rtol
 
 instance allCloseF32 : HasAllClose Float32 where
   allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
@@ -758,14 +757,12 @@ def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 -- elements of n. In this view (+>) is just function application, while ++>
 -- is currying followed by function application. We cannot represent currying
 -- in isolation, because `Tile n (Tile u v)` does not make sense, unlike `Tile n (u & v)`.
-def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
+def (+>)  (t:Tile n l) (i : l) : n = %sliceOffset t i
 def (++>) (t : Tile n (u & v)) (i : u) : Tile n v = %sliceCurry t i
 
-def tile  (l : Type) ?->
-          (fTile : (t:(Tile n l) -> {|eff} l=>a))
+def tile  (fTile : (t:(Tile n l) -> {|eff} l=>a))
           (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
-def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
-          (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
+def tile1 (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
           (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
 
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
@@ -783,7 +780,7 @@ interface Monoid a:Type where
   mempty : a
   mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
 
-(<>) : Monoid a ?=> a -> a -> a = mcombine
+def (<>) [Monoid a] : a -> a -> a = mcombine
 
 '## Length-erased lists
 
@@ -793,7 +790,7 @@ data List a:Type =
 def unsafeCastTable (m:Type) (xs:n=>a) : m=>a =
   for i. xs.(unsafeFromOrdinal _ (ordinal i))
 
-def toList (n:Type) ?-> (xs:n=>a) : List a =
+def toList (xs:n=>a) : List a =
   n' = size n
   AsList _ $ unsafeCastTable (Fin n') xs
 
@@ -895,7 +892,7 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 -- TODO: would be nice to be able to use records here
 data DynBuffer a:Type = MkDynBuffer (Ptr (Int & Int & Ptr a))  -- size, max size, buf ptr
 
-def withDynamicBuffer (_:Storable a) ?=>
+def withDynamicBuffer [Storable a]
       (action: DynBuffer a -> {State World} b) : {State World} b =
   initMaxSize = 256
   withAlloc 1 \dbPtr.
@@ -906,7 +903,7 @@ def withDynamicBuffer (_:Storable a) ?=>
     free bufPtr'
     result
 
-def maybeIncreaseBufferSize (_:Storable a) ?=>
+def maybeIncreaseBufferSize [Storable a]
     (buf: DynBuffer a) (sizeDelta:Int) : {State World} Unit =
   (MkDynBuffer dbPtr) = buf
   (size, maxSize, bufPtr) = load dbPtr
@@ -918,7 +915,7 @@ def maybeIncreaseBufferSize (_:Storable a) ?=>
     memcpy newBufPtr bufPtr size
     store dbPtr (size, newMaxSize, newBufPtr)
 
-def extendDynBuffer (_:Storable a) ?=>
+def extendDynBuffer [Storable a]
     (buf: DynBuffer a) (new:List a) : {State World} Unit =
   (AsList n xs) = new
   maybeIncreaseBufferSize buf n
@@ -928,13 +925,13 @@ def extendDynBuffer (_:Storable a) ?=>
   storeTab (bufPtr +>> size) xs
   store dbPtr (newSize, maxSize, bufPtr)
 
-def loadDynBuffer (_:Storable a) ?=>
+def loadDynBuffer [Storable a]
       (buf: DynBuffer a) : {State World} (List a) =
   (MkDynBuffer dbPtr) = buf
   (size, _, bufPtr) = load dbPtr
   AsList size $ tabFromPtr _ bufPtr
 
-def pushDynBuffer (_:Storable a) ?=>
+def pushDynBuffer [Storable a]
       (buf: DynBuffer a) (x:a) : {State World} Unit =
   extendDynBuffer buf $ AsList _ [x]
 
@@ -1194,7 +1191,7 @@ def error (s:String) : a = unsafeIO do
   print s
   %throwError a
 
-def todo (a:Type) ?-> : a = error "TODO: implement it!"
+def todo : a = error "TODO: implement it!"
 
 def fromOrdinal (n:Type) (i:Int) : n =
   case (0 <= i) && (i < size n) of
@@ -1210,7 +1207,7 @@ def castTable (m:Type) (xs:n=>a) : m=>a =
      False -> error $
        "Table size mismatch in cast: " <> show (size m) <> " vs " <> show (size n)
 
-def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
+def asidx (i:Int) : n = fromOrdinal n i
 def (@) (i:Int) (n:Type) : n = fromOrdinal n i
 
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
@@ -1218,11 +1215,11 @@ def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
 
 def head (xs:n=>a) : a = xs.(0@_)
 
-def tail (n:Type) ?-> (xs:n=>a) (start:Int) : List a =
+def tail (xs:n=>a) (start:Int) : List a =
   numElts = size n - start
   toList $ slice xs start (Fin numElts)
 
-def randIdx (n:Type) ?-> (k:Key) : n =
+def randIdx (k:Key) : n =
   unif = rand k
   fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
 
@@ -1246,7 +1243,7 @@ instance finArb : n:Int ?-> Arbitrary (Fin n) where
 'Control flow
 
 -- returns the highest index `i` such that `xs.i <= x`
-def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
+def searchSorted [Ord a] (xs:n=>a) (x:a) : Maybe n =
   if size n == 0
     then Nothing
     else if x < xs.(fromOrdinal _ 0)
@@ -1264,28 +1261,28 @@ def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
 
 'min / max etc
 
-def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
-def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
+def minBy [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def maxBy [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
 
-def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
-def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
+def min [Ord o] (x1: o) -> (x2: o) : o = minBy id x1 x2
+def max [Ord o] (x1: o) -> (x2: o) : o = maxBy id x1 x2
 
-def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+def minimumBy [Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (minBy f) xs
-def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+def maximumBy [Ord o] (f:a->o) (xs:n=>a) : a =
   reduce xs.(0@_) (maxBy f) xs
 
-def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
-def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
+def minimum [Ord o] (xs:n=>o) : o = minimumBy id xs
+def maximum [Ord o] (xs:n=>o) : o = maximumBy id xs
 
-def argmin (_:Ord o) ?=> (xs:n=>o) : n =
+def argmin [Ord o] (xs:n=>o) : n =
   zeroth = (0@_, xs.(0@_))
   compare = \(idx1, x1) (idx2, x2).
     select (x1 < x2) (idx1, x1) (idx2, x2)
   zipped = for i. (i, xs.i)
   fst $ reduce zeroth compare zipped
 
-def clip (_:Ord a) ?=> ((low,high):(a&a)) (x:a) : a =
+def clip [Ord a] ((low,high):(a&a)) (x:a) : a =
   min high $ max low x
 
 '## Trigonometric functions
@@ -1307,7 +1304,7 @@ def atan_inner (x:Float) : Float =
   r = r * s
   r * x + x
 
-def min_and_max (_: Ord a) ?=> (x:a) (y:a) : (a & a) =
+def min_and_max [Ord a] (x:a) (y:a) : (a & a) =
   select (x < y) (x, y) (y, x)  -- get both with one comparison.
 
 def atan2 (y:Float) (x:Float) : Float =
@@ -1461,7 +1458,7 @@ def reverse (x:n=>a) : n=>a =
   s = size n
   for i. x.((s - 1 - ordinal i)@_)
 
-def padTo (n:Type) ?-> (m:Type) (x:a) (xs:n=>a) : (m=>a) =
+def padTo (m:Type) (x:a) (xs:n=>a) : (m=>a) =
   n' = size n
   for i.
     i' = ordinal i
@@ -1483,7 +1480,7 @@ def seqMaybes (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
     True  -> Nothing
     False -> Just $ map fromJust xs
 
-def linearSearch (_:Eq a) ?=> (xs:n=>a) (query:a) : Maybe n =
+def linearSearch [Eq a] (xs:n=>a) (query:a) : Maybe n =
   yieldState Nothing \ref. for i.
     case xs.i == query of
       True  -> ref := Just i
@@ -1555,7 +1552,7 @@ def softmax (x: n=>Float) : n=>Float =
   s = sum e
   for i. e.i / s
 
-def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
+def evalpoly [VSpace v] (coefficients:n=>v) (x:Float) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
 

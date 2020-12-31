@@ -1,6 +1,6 @@
 '## LU Decomposition and Matrix Inversion
 
-def identity_matrix (_:Eq n) ?=> (_:Add a) ?=> (_:Mul a) ?=> : n=>n=>a =
+def identity_matrix [Eq n, Add a, Mul a] : n=>n=>a =
   for i j. select (i == j) one zero
 
 '### Triangular matrices
@@ -11,7 +11,7 @@ def UpperTriMat (n:Type) (v:Type) : Type = i:n=>(i..)=>v
 def upperTriDiag (u:UpperTriMat n v) : n=>v = for i. u.i.(0@_)
 def lowerTriDiag (l:LowerTriMat n v) : n=>v = for i. l.i.((ordinal i)@_)
 
-def forward_substitute (_:VSpace v) ?=> (a:LowerTriMat n Float) (b:n=>v) : n=>v =
+def forward_substitute [VSpace v] (a:LowerTriMat n Float) (b:n=>v) : n=>v =
   -- Solves lower triangular linear system (inverse a) **. b
   yieldState zero \sRef.
     for i:n.
@@ -19,7 +19,7 @@ def forward_substitute (_:VSpace v) ?=> (a:LowerTriMat n Float) (b:n=>v) : n=>v 
         a.i.((ordinal k)@_) .* get sRef!(%inject k)
       sRef!i := (b.i - s) / a.i.((ordinal i)@_)
 
-def backward_substitute (_:VSpace v) ?=> (a:UpperTriMat n Float) (b:n=>v) : n=>v =
+def backward_substitute [VSpace v] (a:UpperTriMat n Float) (b:n=>v) : n=>v =
   -- Solves upper triangular linear system (inverse a) **. b
   yieldState zero \sRef.
     rof i:n.
@@ -61,7 +61,7 @@ def permSign   ((_, sign):Permutation n) : PermutationSign = sign
 
 '### LU decomposition functions
 
-def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : Permutation n =
+def pivotize [Eq n] (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yieldState identity_permutation \permRef.
     for j:n.
@@ -71,7 +71,7 @@ def pivotize (_:Eq n) ?=> (a:n=>n=>Float) : Permutation n =
         True -> ()
         False -> swapInPlace permRef j row_with_largest
 
-def lu (_:Eq n) ?=> (a: n=>n=>Float) :
+def lu [Eq n] (a: n=>n=>Float) :
        (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
   -- Computes lower, upper, and permuntation matrices from a square matrix,
   -- such that apply_permutation permutation a == lower ** upper.
@@ -113,10 +113,10 @@ def lu (_:Eq n) ?=> (a: n=>n=>Float) :
           ukj = get (upperTriIndex uRef k')!(((ordinal j) - (ordinal k))@_)
           lik = get (lowerTriIndex lRef i')!((ordinal k)@_)
           ukj * lik
-          
+
         uijRef = (upperTriIndex uRef i')!(((ordinal j) - (ordinal i))@_)
         uijRef := a.(%inject i).j - s
-      
+
       for i:(j<..).
         i' = %inject i
         s = sum for k:(..j).
@@ -125,7 +125,7 @@ def lu (_:Eq n) ?=> (a: n=>n=>Float) :
           ukj = get (upperTriIndex uRef k')!i''
           lik = get (lowerTriIndex lRef i')!((ordinal k)@_)
           ukj * lik
-        
+
         i'' = ((ordinal i) + (ordinal j) + 1)@_
         ujj = get (upperTriIndex uRef j)!(0@_)
         lijRef = (lowerTriIndex lRef i'')!((ordinal j)@_)
@@ -135,7 +135,7 @@ def lu (_:Eq n) ?=> (a: n=>n=>Float) :
 
 '### General linear algebra functions.
 
-def solve (_:Eq n) ?=> (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
+def solve [Eq n, VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   -- There's a small speedup possible by exploiting the fact
   -- that l always has ones on the diagonal.  It would just require a
   -- custom forward_substitute routine that doesn't divide
@@ -145,18 +145,18 @@ def solve (_:Eq n) ?=> (_:VSpace v) ?=> (a:n=>n=>Float) (b:n=>v) : n=>v =
   y = forward_substitute l b'
   backward_substitute u y
 
-def invert (_:Eq n) ?=> (a:n=>n=>Float) : n=>n=>Float =
+def invert [Eq n] (a:n=>n=>Float) : n=>n=>Float =
   solve a identity_matrix
 
-def determinant (_:Eq n) ?=> (a:n=>n=>Float) : Float =
+def determinant [Eq n] (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
   prod (for i. (upperTriDiag u).i * (lowerTriDiag l).i) * permSign perm
 
-def sign_and_log_determinant (_:Eq n) ?=> (a:n=>n=>Float) : (Float & Float) =
+def sign_and_log_determinant [Eq n] (a:n=>n=>Float) : (Float & Float) =
   (l, u, perm) = lu a
   diags = for i. (upperTriDiag u).i * (lowerTriDiag l).i
   sign = (permSign perm) * prod for i. sign diags.i
-  sum_of_log_abs = sum for i. log (abs diags.i) 
+  sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
 

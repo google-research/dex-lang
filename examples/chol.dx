@@ -3,7 +3,7 @@ https://en.wikipedia.org/wiki/Cholesky_decomposition
 
 ' ## Cholesky Algorithm
 
-def chol (_:Eq n) ?=> (x:n=>n=>Float) : (n=>n=>Float) =
+def chol [Eq n] (x:n=>n=>Float) : (n=>n=>Float) =
   yieldState zero \buf.
     for_ i. for j':(..i).
       j = %inject(j')
@@ -31,7 +31,7 @@ def trisolveU (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
     xPrev = for j:(i..). get (buf!%inject j)
     buf!i := (b.i - vdot row xPrev) / mat.i.i
 
-def psdsolve (_:Eq n) ?=> (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+def psdsolve [Eq n] (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
   l = chol mat
   trisolveU (transpose l) $  trisolveL l b
 

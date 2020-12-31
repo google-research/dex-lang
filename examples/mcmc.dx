@@ -55,7 +55,7 @@ def mhStep
 HMCParams : Type = (Int & Float)  -- leapfrog steps, step size
 
 def leapfrogIntegrate
-      (_:VSpace a) ?=>
+      [VSpace a]
       ((nsteps, dt): HMCParams)
       (logProb: a -> LogProb)
       ((x, p): (a & a))
