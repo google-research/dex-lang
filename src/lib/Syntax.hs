@@ -365,7 +365,7 @@ data PrimOp e =
 data PrimHof e =
         For ForAnn e
       | Tile Int e e          -- dimension number, tiled body, scalar body
-      | While e e
+      | While e
       | RunReader e e
       | RunWriter e
       | RunState  e e
@@ -529,7 +529,7 @@ data ImpFunction = ImpFunction IFunVar [IBinder] ImpBlock
 data ImpBlock    = ImpBlock (Nest ImpDecl) [IExpr]    deriving (Show)
 data ImpDecl     = ImpLet [IBinder] ImpInstr deriving (Show)
 data ImpInstr = IFor Direction IBinder Size ImpBlock
-              | IWhile ImpBlock ImpBlock  -- cond block, body block
+              | IWhile ImpBlock
               | ICond IExpr ImpBlock ImpBlock
               | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
               | ISyncWorkgroup
@@ -1264,7 +1264,7 @@ instance HasIVars ImpBlock where
 instance HasIVars ImpInstr where
   freeIVars i = case i of
     IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
-    IWhile c p        -> freeIVars c <> freeIVars p
+    IWhile p          -> freeIVars p
     ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
     IQueryParallelism _ s -> freeIVars s
     ISyncWorkgroup      -> mempty
@@ -1548,7 +1548,7 @@ builtinNames = M.fromList
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
   , ("select"     , OpExpr $ Select () () ())
-  , ("while"           , HofExpr $ While () ())
+  , ("while"           , HofExpr $ While ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
   , ("runReader"       , HofExpr $ RunReader () ())

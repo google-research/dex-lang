@@ -447,10 +447,9 @@ simplifyHof hof = case hof of
     ~(fS', Nothing) <- simplifyLam fS
     emit $ Hof $ Tile d fT' fS'
   PTileReduce _ _ -> error "Unexpected PTileReduce"
-  While cond body -> do
-    ~(cond', Nothing) <- simplifyLam cond
+  While body -> do
     ~(body', Nothing) <- simplifyLam body
-    emit $ Hof $ While cond' body'
+    emit $ Hof $ While body'
   Linearize lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     scope <- getScope

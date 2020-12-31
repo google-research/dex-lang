@@ -112,15 +112,15 @@ def odeint (func: d=>Float -> Time -> d=>Float)
   atol = 1.4e-8 -- absolute local error tolerance for solver.
   max_iters = 10000
 
-  integrate_to_next_time = \iter init_carry.
-    target_t = times.iter
+  integrate_to_next_time = \i init_carry.
+    target_t = times.i
 
-    stopping_condition = \(_, _, t, dt, _, _).
+    continue_condition = \(_, _, t, dt, _, _).
       -- State of solver: (next state, next f, next time, dt, t, interp coeffs)
       -- def State (v:Type) : Type = (v & v & Time & Time & Time & (Fin 5)=>v)
       -- This ended up being unnecessary to spell anywhere, but was
       -- useful for debugging.
-      (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
+      (t < target_t) && (dt > 0.0) && (ordinal i < max_iters)
 
     possible_step = \(z, f, t, dt, last_t, interp_coeff).
       (next_z, next_f, next_z_error, k) = runge_kutta_step func z f t dt
@@ -134,9 +134,14 @@ def odeint (func: d=>Float -> Time -> d=>Float)
       select (ratio <= 1.0) move_state stay_state
 
     -- Take steps until we pass target_t
-    new_state = snd $ withState init_carry \state.
-      while (do stopping_condition (get state)) do
-        state := possible_step (get state)
+    new_state = snd $ withState init_carry \stateRef.
+      iter \_.
+        state = get stateRef
+        if continue_condition state
+          then
+            stateRef := possible_step state
+            Continue
+          else Done ()
     (_, _, t, _, last_t, interp_coeff) = new_state
 
     -- Interpolate to the target time.

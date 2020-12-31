@@ -1030,11 +1030,10 @@ def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
 
 def while
     (eff:Effects) ?->
-    (cond: Unit -> {|eff} Bool)
-    (body: Unit -> {|eff} Unit)
+    (body: Unit -> {|eff} Bool)
     : {|eff} Unit =
-  cond' : Unit -> {|eff} Word8 = \_. BToW8 $ cond ()
-  %while cond' body
+  body' : Unit -> {|eff} Word8 = \_. BToW8 $ body ()
+  %while body'
 
 data IterResult a:Type =
   Continue
@@ -1052,10 +1051,15 @@ def liftState (ref: Ref h c) (f:a -> {|eff} b) (x:a) : {State h|eff} b =
 -- A little iteration combinator
 def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
   result = snd $ withState Nothing \resultRef. withState 0 \i.
-    while (do isNothing $ get resultRef) do
-      case liftState resultRef (liftState i body) (get i) of
-        Continue -> i := get i + 1
-        Done result -> resultRef := Just result
+    while do
+      continue = isNothing $ get resultRef
+      if continue
+        then case liftState resultRef (liftState i body) (get i) of
+          Continue -> i := get i + 1
+          Done result -> resultRef := Just result
+        else ()
+      continue
+
   case result of
     Just ans -> ans
     Nothing -> unreachable ()
@@ -1465,9 +1469,14 @@ def concat (lists:n=>(List a)) : List a =
   AsList _ $ fst $ withState 0 \listIdx.
     fst $ withState 0 \eltIdx.
       for i:(Fin totalSize).
-        while (do get eltIdx >= listLength (lists.((get listIdx)@_))) do
-          eltIdx := 0
-          listIdx := get listIdx + 1
+        while do
+          continue = get eltIdx >= listLength (lists.((get listIdx)@_))
+          if continue
+            then
+              eltIdx := 0
+              listIdx := get listIdx + 1
+            else ()
+          continue
         (AsList _ xs) = lists.((get listIdx)@_)
         eltIdxVal = get eltIdx
         eltIdx := eltIdxVal + 1

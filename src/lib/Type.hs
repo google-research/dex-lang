@@ -286,7 +286,7 @@ exprEffs expr = case expr of
   Hof hof -> case hof of
     For _ f         -> functionEffs f
     Tile _ _ _      -> error "not implemented"
-    While cond body -> functionEffs cond <> functionEffs body
+    While body      -> functionEffs body
     Linearize _     -> mempty  -- Body has to be a pure function
     Transpose _     -> mempty  -- Body has to be a pure function
     RunReader _ f   -> handleRWSRunner Reader f
@@ -440,7 +440,7 @@ instance CoreVariant (PrimCon a) where
 instance CoreVariant (PrimHof a) where
   checkVariant e = case e of
     For _ _       -> alwaysAllowed
-    While _ _     -> alwaysAllowed
+    While _       -> alwaysAllowed
     RunReader _ _ -> alwaysAllowed
     RunWriter _   -> alwaysAllowed
     RunState  _ _ -> alwaysAllowed
@@ -863,13 +863,10 @@ typeCheckHof hof = case hof of
     checkEq threadRange (binderType threadRange')
     -- PTileReduce n mapping : (n=>a, ro)
     return $ PairTy (TabTy (Ignore n) tileElemTy) accTy
-  While cond body -> do
-    Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck cond
-    Pi (Abs (Ignore UnitTy) (arr', bodyTy)) <- typeCheck body
+  While body -> do
+    Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr
-    declareEffs $ arrowEff arr'
     checkEq (BaseTy $ Scalar Word8Type) condTy
-    checkEq UnitTy bodyTy
     return UnitTy
   Linearize f -> do
     Pi (Abs (Ignore a) (PlainArrow Pure, b)) <- typeCheck f

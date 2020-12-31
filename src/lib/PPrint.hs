@@ -478,9 +478,7 @@ instance Pretty ImpFunction where
 instance Pretty ImpInstr where
   pretty (IFor a i n block) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
                                 nest 4 (hardline <> p block)
-  pretty (IWhile cond body) = "while" <+>
-                                  nest 2 (p cond) <+> "do" <>
-                                  nest 4 (hardline <> p body)
+  pretty (IWhile body) = "while" <+> nest 2 (p body)
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)

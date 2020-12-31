@@ -647,8 +647,12 @@ def newtonIter (f: Float -> Float) (x:Float) : Float =
 
 def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
   snd $ withState x0 \x.
-    while (\(). abs (f $ get x) > tol) \().
-      x := newtonIter f $ get x
+    iter \i.
+      if abs (f $ get x) <= tol
+        then Done ()
+        else
+          x := newtonIter f $ get x
+          Continue
 
 :p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
 > 1.414216

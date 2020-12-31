@@ -147,8 +147,7 @@ traverseImpInstr def instr = case instr of
     b' <- freshIVar b
     IFor dir (Bind b') <$> traverseIExpr size
                        <*> (extendValSubst (b @> IVar b') $ traverseImpBlock def body)
-  IWhile cond body ->
-    IWhile <$> traverseImpBlock def cond <*> traverseImpBlock def body
+  IWhile body -> IWhile <$> traverseImpBlock def body
   ICond cond tb fb -> ICond <$> traverseIExpr cond
                             <*> traverseImpBlock def tb
                             <*> traverseImpBlock def fb

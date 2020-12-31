@@ -363,20 +363,20 @@ toImpHof env (maybeDest, hof) = do
                 let idx = Con $ ParIndexCon idxTy $ toScalarAtom i
                 ithDest <- destGet dest idx
                 void $ translateBlock (env <> b @> idx) (Just ithDest, body)
-            GPU -> do -- Grid stride loop
-              iPtr <- alloc IdxRepTy
-              copyAtom iPtr gtid
-              cond <- liftM snd $ scopedBlock $ do
-                i <- destToAtom iPtr
-                inRange <- (fromScalarAtom i) `iltI` n
-                return ((), [inRange])
-              wbody <- scopedErrBlock $ do
-                i <- destToAtom iPtr
-                let idx = Con $ ParIndexCon idxTy i
-                ithDest <- destGet dest idx
-                void $ translateBlock (env <> b @> idx) (Just ithDest, body)
-                copyAtom iPtr . toScalarAtom =<< iaddI (fromScalarAtom i) (fromScalarAtom numThreads)
-              emitStatement $ IWhile cond wbody
+            -- GPU -> do -- Grid stride loop
+            --   iPtr <- alloc IdxRepTy
+            --   copyAtom iPtr gtid
+            --   cond <- liftM snd $ scopedBlock $ do
+            --     i <- destToAtom iPtr
+            --     inRange <- (fromScalarAtom i) `iltI` n
+            --     return ((), [inRange])
+            --   wbody <- scopedErrBlock $ do
+            --     i <- destToAtom iPtr
+            --     let idx = Con $ ParIndexCon idxTy i
+            --     ithDest <- destGet dest idx
+            --     void $ translateBlock (env <> b @> idx) (Just ithDest, body)
+            --     copyAtom iPtr . toScalarAtom =<< iaddI (fromScalarAtom i) (fromScalarAtom numThreads)
+            --   emitStatement $ IWhile cond wbody
           destToAtom dest
         _ -> do
           n <- indexSetSize idxTy
@@ -418,86 +418,85 @@ toImpHof env (maybeDest, hof) = do
         sDest <- fromEmbed $ indexDestDim d dest idx
         void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
       destToAtom dest
-    PTileReduce idxTy' ~(BinaryFunVal gtidB nthrB _ body) -> do
-      idxTy <- impSubst env idxTy'
-      (mappingDest, finalAccDest) <- destPairUnpack <$> allocDest maybeDest resultTy
-      let PairTy _ accType = resultTy
-      (numTileWorkgroups, wgResArr, widIdxTy) <- buildKernel idxTy $ \LaunchInfo{..} buildBody -> do
-        let widIdxTy = Fin $ toScalarAtom numWorkgroups
-        let tidIdxTy = Fin $ toScalarAtom workgroupSize
-        wgResArr  <- alloc $ TabTy (Ignore widIdxTy) accType
-        thrAccArr <- alloc $ TabTy (Ignore widIdxTy) $ TabTy (Ignore tidIdxTy) accType
-        mappingKernelBody <- buildBody $ \ThreadInfo{..} -> do
-          let TC (ParIndexRange _ gtid nthr) = threadRange
-          let scope = freeVars mappingDest
-          let tileDest = Con $ TabRef $ fst $ flip runSubstEmbed scope $ do
-                buildLam (Bind $ "hwidx":>threadRange) TabArrow $ \hwidx -> do
-                  indexDest mappingDest =<< (emitOp $ Inject hwidx)
-          wgAccs <- destGet thrAccArr =<< intToIndex widIdxTy wid
-          thrAcc <- destGet wgAccs    =<< intToIndex tidIdxTy tid
-          let threadDest = Con $ ConRef $ PairCon tileDest thrAcc
-          void $ translateBlock (env <> gtidB @> gtid <> nthrB @> nthr) (Just threadDest, body)
-          wgRes <- destGet wgResArr =<< intToIndex widIdxTy wid
-          workgroupReduce tid wgRes wgAccs workgroupSize
-        return (mappingKernelBody, (numWorkgroups, wgResArr, widIdxTy))
-      -- TODO: Skip the reduction kernel if unnecessary?
-      -- TODO: Reduce sequentially in the CPU backend?
-      -- TODO: Actually we only need the previous-power-of-2 many threads
-      buildKernel widIdxTy $ \LaunchInfo{..} buildBody -> do
-        -- We only do a one-level reduciton in the workgroup, so it is correct
-        -- only if the end up scheduling a single workgroup.
-        moreThanOneGroup <- (IIdxRepVal 1) `iltI` numWorkgroups
-        guardBlock moreThanOneGroup $ emitStatement IThrowError
-        redKernelBody <- buildBody $ \ThreadInfo{..} ->
-          workgroupReduce tid finalAccDest wgResArr numTileWorkgroups
-        return (redKernelBody, ())
-      PairVal <$> destToAtom mappingDest <*> destToAtom finalAccDest
-      where
-        guardBlock cond m = do
-          block <- scopedErrBlock m
-          emitStatement $ ICond cond block (ImpBlock mempty mempty)
-        workgroupReduce tid resDest arrDest elemCount = do
-          elemCountDown2 <- prevPowerOf2 elemCount
-          let RawRefTy (TabTy arrIdxB _) = getType arrDest
-          let arrIdxTy = binderType arrIdxB
-          offPtr <- alloc IdxRepTy
-          copyAtom offPtr $ toScalarAtom elemCountDown2
-          cond <- liftM snd $ scopedBlock $ do
-            off  <- fromScalarAtom <$> destToAtom offPtr
-            cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Greater) off (IIdxRepVal 0)
-            return ((), [cond])
-          wbody <- scopedErrBlock $ do
-            off       <- fromScalarAtom <$> destToAtom offPtr
-            loadIdx   <- iaddI tid off
-            shouldAdd <- bindM2 bandI (tid `iltI` off) (loadIdx `iltI` elemCount)
-            guardBlock shouldAdd $ do
-              threadDest <- destGet arrDest =<< intToIndex arrIdxTy tid
-              addToAtom threadDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy loadIdx
-            emitStatement ISyncWorkgroup
-            copyAtom offPtr . toScalarAtom =<< off `idivI` (IIdxRepVal 2)
-          emitStatement $ IWhile cond wbody
-          firstThread <- tid `iltI` (IIdxRepVal 1)
-          guardBlock firstThread $
-            copyAtom resDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy tid
-        -- TODO: Do some popcount tricks?
-        prevPowerOf2 :: IExpr -> ImpM IExpr
-        prevPowerOf2 x = do
-          rPtr <- alloc IdxRepTy
-          copyAtom rPtr (IdxRepVal 1)
-          let getNext = imulI (IIdxRepVal 2) . fromScalarAtom =<< destToAtom rPtr
-          cond <- liftM snd $ scopedBlock $ do
-            canGrow <- getNext >>= (`iltI` x)
-            return ((), [canGrow])
-          wbody <- scopedErrBlock $ do
-            copyAtom rPtr . toScalarAtom =<< getNext
-          emitStatement $ IWhile cond wbody
-          fromScalarAtom <$> destToAtom rPtr
-    While ~(Lam (Abs _ (_, cond))) ~(Lam (Abs _ (_, body))) -> do
-      cond' <- liftM snd $ scopedBlock $ do
-                 ans <- translateBlock env (Nothing, cond)
+    -- PTileReduce idxTy' ~(BinaryFunVal gtidB nthrB _ body) -> do
+    --   idxTy <- impSubst env idxTy'
+    --   (mappingDest, finalAccDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+    --   let PairTy _ accType = resultTy
+    --   (numTileWorkgroups, wgResArr, widIdxTy) <- buildKernel idxTy $ \LaunchInfo{..} buildBody -> do
+    --     let widIdxTy = Fin $ toScalarAtom numWorkgroups
+    --     let tidIdxTy = Fin $ toScalarAtom workgroupSize
+    --     wgResArr  <- alloc $ TabTy (Ignore widIdxTy) accType
+    --     thrAccArr <- alloc $ TabTy (Ignore widIdxTy) $ TabTy (Ignore tidIdxTy) accType
+    --     mappingKernelBody <- buildBody $ \ThreadInfo{..} -> do
+    --       let TC (ParIndexRange _ gtid nthr) = threadRange
+    --       let scope = freeVars mappingDest
+    --       let tileDest = Con $ TabRef $ fst $ flip runSubstEmbed scope $ do
+    --             buildLam (Bind $ "hwidx":>threadRange) TabArrow $ \hwidx -> do
+    --               indexDest mappingDest =<< (emitOp $ Inject hwidx)
+    --       wgAccs <- destGet thrAccArr =<< intToIndex widIdxTy wid
+    --       thrAcc <- destGet wgAccs    =<< intToIndex tidIdxTy tid
+    --       let threadDest = Con $ ConRef $ PairCon tileDest thrAcc
+    --       void $ translateBlock (env <> gtidB @> gtid <> nthrB @> nthr) (Just threadDest, body)
+    --       wgRes <- destGet wgResArr =<< intToIndex widIdxTy wid
+    --       workgroupReduce tid wgRes wgAccs workgroupSize
+    --     return (mappingKernelBody, (numWorkgroups, wgResArr, widIdxTy))
+    --   -- TODO: Skip the reduction kernel if unnecessary?
+    --   -- TODO: Reduce sequentially in the CPU backend?
+    --   -- TODO: Actually we only need the previous-power-of-2 many threads
+    --   buildKernel widIdxTy $ \LaunchInfo{..} buildBody -> do
+    --     -- We only do a one-level reduciton in the workgroup, so it is correct
+    --     -- only if the end up scheduling a single workgroup.
+    --     moreThanOneGroup <- (IIdxRepVal 1) `iltI` numWorkgroups
+    --     guardBlock moreThanOneGroup $ emitStatement IThrowError
+    --     redKernelBody <- buildBody $ \ThreadInfo{..} ->
+    --       workgroupReduce tid finalAccDest wgResArr numTileWorkgroups
+    --     return (redKernelBody, ())
+    --   PairVal <$> destToAtom mappingDest <*> destToAtom finalAccDest
+    --   where
+    --     guardBlock cond m = do
+    --       block <- scopedErrBlock m
+    --       emitStatement $ ICond cond block (ImpBlock mempty mempty)
+    --     workgroupReduce tid resDest arrDest elemCount = do
+    --       elemCountDown2 <- prevPowerOf2 elemCount
+    --       let RawRefTy (TabTy arrIdxB _) = getType arrDest
+    --       let arrIdxTy = binderType arrIdxB
+    --       offPtr <- alloc IdxRepTy
+    --       copyAtom offPtr $ toScalarAtom elemCountDown2
+    --       cond <- liftM snd $ scopedBlock $ do
+    --         off  <- fromScalarAtom <$> destToAtom offPtr
+    --         cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Greater) off (IIdxRepVal 0)
+    --         return ((), [cond])
+    --       wbody <- scopedErrBlock $ do
+    --         off       <- fromScalarAtom <$> destToAtom offPtr
+    --         loadIdx   <- iaddI tid off
+    --         shouldAdd <- bindM2 bandI (tid `iltI` off) (loadIdx `iltI` elemCount)
+    --         guardBlock shouldAdd $ do
+    --           threadDest <- destGet arrDest =<< intToIndex arrIdxTy tid
+    --           addToAtom threadDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy loadIdx
+    --         emitStatement ISyncWorkgroup
+    --         copyAtom offPtr . toScalarAtom =<< off `idivI` (IIdxRepVal 2)
+    --       emitStatement $ IWhile cond wbody
+    --       firstThread <- tid `iltI` (IIdxRepVal 1)
+    --       guardBlock firstThread $
+    --         copyAtom resDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy tid
+    --     -- TODO: Do some popcount tricks?
+    --     prevPowerOf2 :: IExpr -> ImpM IExpr
+    --     prevPowerOf2 x = do
+    --       rPtr <- alloc IdxRepTy
+    --       copyAtom rPtr (IdxRepVal 1)
+    --       let getNext = imulI (IIdxRepVal 2) . fromScalarAtom =<< destToAtom rPtr
+    --       cond <- liftM snd $ scopedBlock $ do
+    --         canGrow <- getNext >>= (`iltI` x)
+    --         return ((), [canGrow])
+    --       wbody <- scopedErrBlock $ do
+    --         copyAtom rPtr . toScalarAtom =<< getNext
+    --       emitStatement $ IWhile cond wbody
+    --       fromScalarAtom <$> destToAtom rPtr
+    While ~(Lam (Abs _ (_, body))) -> do
+      body' <- liftM snd $ scopedBlock $ do
+                 ans <- translateBlock env (Nothing, body)
                  return ((), [fromScalarAtom ans])
-      body' <- scopedErrBlock $ void $ translateBlock env (Nothing, body)
-      emitStatement $ IWhile cond' body'
+      emitStatement $ IWhile body'
       return UnitVal
     RunReader r ~(BinaryFunVal _ ref _ body) -> do
       rDest <- alloc $ getType r
@@ -1193,10 +1192,9 @@ instrTypeChecked instr = case instr of
     assertEq (binderAnn i) (getIType size) $ "Mismatch between the loop iterator and upper bound type"
     [] <- withTypeEnv (i @> getIType size) $ checkBlock block
     return []
-  IWhile cond body -> do
-    [condTy] <- checkBlock cond
-    assertEq (Scalar Word8Type) condTy $ "Not a bool: " ++ pprint cond
-    [] <- checkBlock body
+  IWhile body -> do
+    [condTy] <- checkBlock body
+    assertEq (Scalar Word8Type) condTy $ "Not a bool: " ++ pprint body
     return []
   ICond predicate consequent alternative -> do
     predTy <- checkIExpr predicate
@@ -1331,7 +1329,7 @@ impInstrTypes instr = case instr of
   IThrowError     -> []
   MemCopy _ _ _   -> []
   IFor _ _ _ _    -> []
-  IWhile _ _      -> []
+  IWhile _        -> []
   ICond _ _ _     -> []
   ILaunch _ _ _   -> []
   ISyncWorkgroup  -> []

@@ -274,7 +274,7 @@ linearizeHof env hof = case hof of
   -- TODO: Consider providing an upper bound for the number of while iterations as a hint.
   --       In the current form the best we can do is try to use some dynamically growing lists,
   --       but that won't work on the GPU.
-  While _ _   -> notImplemented
+  While _     -> notImplemented
   Linearize _ -> error "Unexpected linearization"
   Transpose _ -> error "Unexpected transposition"
   PTileReduce _ _ -> error "Unexpected PTileReduce"
@@ -698,7 +698,7 @@ transposeHof hof ct = case hof of
     transposeAtom s cts
   RunIO _ -> error "Not implemented"
   Tile      _ _ _ -> notImplemented
-  While       _ _ -> notImplemented
+  While         _ -> notImplemented
   Linearize     _ -> error "Unexpected linearization"
   Transpose     _ -> error "Unexpected transposition"
   PTileReduce _ _ -> error "Unexpected PTileReduce"

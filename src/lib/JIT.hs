@@ -201,8 +201,8 @@ compileInstr instr = case instr of
   IFor d i n body  -> [] <$ do
     n' <- compileExpr n
     compileLoop d i n' $ compileVoidBlock body
-  IWhile cond body -> [] <$ do
-    compileWhile (head <$> compileBlock cond) (compileVoidBlock body)
+  IWhile body -> [] <$ do
+    compileWhile (head <$> compileBlock body)
   ICond p cons alt -> [] <$ do
     p' <- compileExpr p >>= (`asIntWidth` i1)
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
@@ -370,14 +370,13 @@ compileIf cond tb fb = do
   fb
   finishBlock (L.Br contName []) contName
 
-compileWhile :: Compile Operand -> Compile () -> Compile ()
-compileWhile compileCond compileBody = do
+compileWhile :: Compile Operand -> Compile ()
+compileWhile compileBody = do
   loopBlock <- freshName "whileLoop"
   nextBlock <- freshName "whileCont"
-  entryCond <- compileCond >>= (`asIntWidth` i1)
+  entryCond <- compileBody >>= (`asIntWidth` i1)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
-  compileBody
-  loopCond <- compileCond >>= (`asIntWidth` i1)
+  loopCond <- compileBody >>= (`asIntWidth` i1)
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 
 throwRuntimeError :: Compile ()
