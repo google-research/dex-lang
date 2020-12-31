@@ -1,11 +1,10 @@
 
 include "parser.dx"
 
-parseABC : Parser Unit = \h.
-  pChar 'A' h
-  pChar 'B' h
-  pChar 'C' h
-  pEOF      h
+parseABC : Parser Unit = MkParser \h.
+  parse h $ pChar 'A'
+  parse h $ pChar 'B'
+  parse h $ pChar 'C'
 
 :p runParser "AAA" parseABC
 > Nothing
@@ -19,18 +18,19 @@ parseABC : Parser Unit = \h.
 :p runParser "ABC" parseABC
 > (Just ())
 
-def parseTF : Parser Bool =
-  (\h.
-    pChar 'T' h
-    True) <|> (\h.
-      pChar 'F' h
-      False)
+def parseT : Parser Bool = MkParser \h.
+  parse h $ pChar 'T'
+  True
 
-def parserTFTriple : Parser (Fin 3=>Bool) =
-  \h.
-    ans = for i. parseTF h
-    pEOF h
-    ans
+def parseF : Parser Bool = MkParser \h.
+  parse h $ pChar 'F'
+  False
+
+def parseTF : Parser Bool =
+  parseT <|> parseF
+
+def parserTFTriple : Parser (Fin 3=>Bool) = MkParser \h.
+  for i. parse h parseTF
 
 :p runParser "TTF" parserTFTriple
 > (Just [True, True, False])
@@ -38,3 +38,5 @@ def parserTFTriple : Parser (Fin 3=>Bool) =
 :p runParser "TTFX" parserTFTriple
 > Nothing
 
+:p runParser "TTFFTT" $ parseMany parseTF
+> (Just (AsList 6 [True, True, False, False, True, True]))

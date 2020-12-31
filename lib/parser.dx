@@ -21,57 +21,68 @@ def indexList (l:List a) (i:Int) : {Except} a =
 
 def ParserHandle (h:Type) : Type = (String & Ref h Int)
 
-def Parser (a:Type) : Type = h:Type ?-> ParserHandle h -> {Except, State h} a
+data Parser a:Type =
+  MkParser (h:Type ?-> ParserHandle h -> {Except, State h} a)
 
-def runParser (s:String) (parser:Parser a) : Maybe a =
+def parse (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a =
+  (MkParser f) = parser
+  f handle
+
+def runParserPartial (s:String) (parser:Parser a) : Maybe a =
+  (MkParser f) = parser
   fst $ withState 0 \pos.
     catch $ do
-      parser (s, pos)
+      f (s, pos)
 
 'Primitive combinators
 
-def pChar (c:Char) : Parser Unit = \(s, posRef).
+def pChar (c:Char) : Parser Unit = MkParser \(s, posRef).
   i = get posRef
   c' = indexList s i
   assert (c == c')
   posRef := i + 1
 
-def pEOF : Parser Unit = \(s, posRef).
+def pEOF : Parser Unit = MkParser \(s, posRef).
   assert $ get posRef >= listLength s
 
-def (<|>) (p1:Parser a) (p2:Parser a) : Parser a = \h.
+def (<|>) (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
   (s, posRef) = h
   curPos = get posRef
-  case catch do p1 h of
+  case catch do parse h p1 of
     Nothing ->
       assert $ curPos == get posRef
-      p2 h
+      parse h p2
     Just ans -> ans
 
-def return (x:a) : Parser a = \_. x
+def return (x:a) : Parser a = MkParser \_. x
+
+def runParser (s:String) (parser:Parser a) : Maybe a =
+  runParserPartial s $ MkParser \h.
+    ans = parse h parser
+    _   = parse h pEOF
+    ans
 
 'Derived combinators
 
-def optional (parser:Parser a) : Parser (Maybe a) =
-  (\h. Just (parser h)) <|> return Nothing
+def optional (p:Parser a) : Parser (Maybe a) =
+  (MkParser \h. Just (parse h p)) <|> return Nothing
 
-def parseMany (parser:Parser a) : Parser (List a) = \h.
+def parseMany (parser:Parser a) : Parser (List a) = MkParser \h.
   snd $ withState (AsList _ []) \results.
     iter \_.
-      maybeVal = optional parser h
+      maybeVal = parse h $ optional parser
       case maybeVal of
         Nothing -> Done ()
         Just x ->
           push results x
           Continue
 
-def bracketed (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a = \h.
-  l          h
-  ans = body h
-  r          h
-  ans
+def bracketed (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a =
+  MkParser \h.
+    _   = parse h l
+    ans = parse h body
+    _   = parse h r
+    ans
 
--- This fails. Type inference is unable to unify two region variables. I think
--- it's to do with implicit type application.
--- def parens (parser:Parser Unit) : Parser a =
---   bracketed (pChar '(') (pChar ')') parser
+def parens (parser:Parser a) : Parser a =
+  bracketed (pChar '(') (pChar ')') parser
