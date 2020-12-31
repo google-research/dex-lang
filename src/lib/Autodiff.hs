@@ -31,7 +31,9 @@ import GHC.Stack
 
 -- `DerivWrt` holds the (out-expr) variables that we're differentiating with
 -- respect to (including refs but not regions).
-data DerivWrt = DerivWrt { activeVars :: Env Type, _activeEffs :: [Effect], rematVars :: Env Type }
+data DerivWrt = DerivWrt { activeVars  :: Env Type
+                         , _activeEffs :: [Effect]
+                         , rematVars   :: Env Type }
 -- `Tangents` holds the tangent values and the region variables that are
 -- arguments to the linearized function.
 data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name], rematVals :: SubstEnv }
@@ -301,15 +303,15 @@ linearizeHof env hof = case hof of
                       extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
 
-    linearizeEffectFun :: EffectName -> Atom -> PrimalM (Atom, Var)
-    linearizeEffectFun effName ~(BinaryFunVal h ref eff body) = do
+    linearizeEffectFun :: RWS -> Atom -> PrimalM (Atom, Var)
+    linearizeEffectFun rws ~(BinaryFunVal h ref eff body) = do
       h' <- mapM (substEmbed env) h
       buildLamAux h' (const $ return PureArrow) $ \h''@(Var hVar) -> do
         let env' = env <> h@>h''
         eff' <- substEmbed env' eff
         ref' <- mapM (substEmbed env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') $ \ref''@(Var refVar) ->
-          extendWrt [refVar] [(effName, varName hVar)] $
+          extendWrt [refVar] [RWSEffect rws (varName hVar)] $
             (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
 
 linearizePrimCon :: Con -> LinA Atom
@@ -417,15 +419,16 @@ tangentFunAsLambda :: LinA Atom -> PrimalM Atom
 tangentFunAsLambda m = do
   (ans, tanFun) <- runLinA m
   DerivWrt activeVars effs remats <- ask
-  let hs = map (Bind . (:>TyKind) . snd) effs
+  let hs = map (Bind . (:>TyKind) . effectRegion) effs
   let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
     tanLam <- makeLambdas rematList $ \rematArgs ->
       buildNestedLam PureArrow hs $ \hVals -> do
         let hVarNames = map (\(Var (v:>_)) -> v) hVals
-        let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
+        -- TODO: handle exception effect too
+        let effs' = zipWith (\(RWSEffect rws _) v -> RWSEffect rws v) effs hVarNames
         -- want to use tangents here, not the original binders
-        let regionMap = newEnv (map ((:>()) . snd) effs) hVals
+        let regionMap = newEnv (map ((:>()) . effectRegion) effs) hVals
         -- TODO: Only bind tangents for free variables?
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
         buildNestedLam PureArrow activeVarBinders $ \activeVarArgs ->
@@ -453,6 +456,10 @@ tangentFunAsLambda m = do
     tangentRefRegion regEnv ty = case ty of
       RefTy ~(Var h) a -> RefTy (regEnv ! h) $ tangentType a
       _ -> tangentType ty
+
+    effectRegion eff = case eff of
+      RWSEffect _ h -> h
+      ExceptionEffect -> error "TODO!"
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
 applyLinToTangents :: Atom -> TangentM Atom
@@ -759,7 +766,7 @@ isLinEff :: EffectRow -> TransposeM Bool
 isLinEff (EffectRow effs Nothing) = do
   regions <- asks linRegions
   return $ not $ null $ effRegions `envIntersect` regions
-  where effRegions = newEnv (S.map snd effs) (repeat ())
+  where effRegions = freeVars $ toList effs
 isLinEff _ = error "Can't transpose polymorphic effects"
 
 emitCTToRef :: Maybe Atom -> Atom -> TransposeM ()

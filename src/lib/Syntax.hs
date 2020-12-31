@@ -16,7 +16,7 @@
 
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
-    Effect, EffectName (..), EffectRow (..),
+    Effect (..), RWS (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
@@ -49,6 +49,7 @@ module Syntax (
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
+    pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
@@ -340,6 +341,7 @@ data PrimOp e =
       | ToOrdinal e
       | IdxSetSize e
       | ThrowError e
+      | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
       -- Extensible record and variant operations:
       -- Add fields to a record (on the left). Left arg contains values to add.
@@ -368,6 +370,7 @@ data PrimHof e =
       | RunWriter e
       | RunState  e e
       | RunIO e
+      | CatchException e
       | Linearize e
       | Transpose e
       | PTileReduce e e       -- index set, thread body
@@ -422,10 +425,11 @@ showPrimName prim = primNameToStr $ fmap (const ()) prim
 
 -- === effects ===
 
-type Effect = (EffectName, Name)
 data EffectRow = EffectRow (S.Set Effect) (Maybe Name)
                  deriving (Show, Eq, Generic)
-data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
+
+data RWS = Reader | Writer | State               deriving (Show, Eq, Ord, Generic)
+data Effect = RWSEffect RWS Name | ExceptionEffect  deriving (Show, Eq, Ord, Generic)
 
 pattern Pure :: EffectRow
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
@@ -808,7 +812,11 @@ instance BindsUVars SourceBlock where
 
 instance HasUVars EffectRow where
   freeUVars (EffectRow effs tailVar) =
-    foldMap (nameAsEnv . snd) effs <> foldMap nameAsEnv tailVar
+    foldMap freeUVars effs <> foldMap nameAsEnv tailVar
+
+instance HasUVars Effect where
+  freeUVars (RWSEffect _ h) = nameAsEnv h
+  freeUVars (ExceptionEffect) = mempty
 
 instance HasUVars a => HasUVars (LabeledItems a) where
   freeUVars (LabeledItems items) = foldMap freeUVars items
@@ -1124,13 +1132,22 @@ instance Subst Module where
     where Abs decls' bindings' = subst env $ Abs decls bindings
 
 instance HasVars EffectRow where
-  freeVars (EffectRow row t) =
-       foldMap (\(_,v) -> v@>(TyKind , UnknownBinder)) row
-    <> foldMap (\v     -> v@>(EffKind, UnknownBinder)) t
+  freeVars (EffectRow row t) = foldMap freeVars row
+                            <> foldMap (\v -> v@>(EffKind, UnknownBinder)) t
 instance Subst EffectRow where
-  subst (env, _) (EffectRow row t) = extendEffRow
-    (S.map (\(effName, v) -> (effName, substName env v)) row)
-    (substEffTail env t)
+  subst env (EffectRow row t) = extendEffRow row' t'
+   where
+     row' = S.map (subst env) row
+     t' = substEffTail (fst env) t
+
+instance HasVars Effect where
+  freeVars eff = case eff of
+    RWSEffect _ v -> v@>(TyKind , UnknownBinder)
+    ExceptionEffect -> mempty
+instance Subst Effect where
+  subst (env,_) eff = case eff of
+    RWSEffect rws v -> RWSEffect rws (substName env v)
+    ExceptionEffect -> ExceptionEffect
 
 instance HasVars BinderInfo where
   freeVars binfo = case binfo of
@@ -1475,7 +1492,25 @@ pattern Unlabeled as <- (_getUnlabeled -> Just as)
           Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
           Nothing -> NoLabeledItems
 
-  -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
+maybeDataDef :: DataDef
+maybeDataDef = DataDef (GlobalName "Maybe") (Nest (Bind ("a":>TyKind)) Empty)
+  [ DataConDef (GlobalName "Nothing") Empty
+  , DataConDef (GlobalName "Just"   ) (Nest (Ignore (Var ("a":>TyKind))) Empty)]
+
+pattern MaybeTy :: Type -> Type
+pattern MaybeTy a = TypeCon MaybeDataDef [a]
+
+pattern MaybeDataDef :: DataDef
+pattern MaybeDataDef <- ((\def -> def == maybeDataDef) -> True)
+  where MaybeDataDef = maybeDataDef
+
+pattern NothingAtom :: Type -> Atom
+pattern NothingAtom ty = DataCon MaybeDataDef [ty] 0 []
+
+pattern JustAtom :: Type -> Atom -> Atom
+pattern JustAtom ty x = DataCon MaybeDataDef [ty] 1 [x]
+
+-- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
 
 -- TODO: Can we derive these generically? Or use Show/Read?
@@ -1504,7 +1539,8 @@ builtinNames = M.fromList
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
   , ("toOrdinal"        , OpExpr $ ToOrdinal ())
-  , ("throwError" , OpExpr $ ThrowError ())
+  , ("throwError"     , OpExpr $ ThrowError ())
+  , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
@@ -1519,6 +1555,7 @@ builtinNames = M.fromList
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("runIO"           , HofExpr $ RunIO ())
+  , ("catchException"  , HofExpr $ CatchException ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("TyKind"  , TCExpr $ TypeKind)
@@ -1577,7 +1614,8 @@ instance Store Atom
 instance Store Expr
 instance Store Block
 instance Store Decl
-instance Store EffectName
+instance Store RWS
+instance Store Effect
 instance Store EffectRow
 instance Store Direction
 instance Store UnOp

@@ -1442,9 +1442,8 @@ def fromJust (x:Maybe a) : a = case x of Just x' -> x'
 
 def anySat (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 
--- In Haskell this would just be `mapM`. The equivalent for us would be having
--- an exception effect.
-def seqMaybes (xs : n=>Maybe a) : Maybe (n => a) =
+-- XXX: we use this internally so it's important to make the type args explicit
+def seqMaybes (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
   case anySat isNothing xs of
@@ -1523,3 +1522,16 @@ def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
   fold zero \i c. coefficients.i + x .* c
 
 def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
+
+'## Exception effect
+
+def catch (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
+  %catchException f
+
+def throw (_:Unit) : {Except} a =
+  %throwException a
+
+def assert (b:Bool) : {Except} Unit =
+  if b
+   then ()
+   else throw ()

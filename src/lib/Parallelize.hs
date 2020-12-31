@@ -71,8 +71,7 @@ parallelTraverseExpr expr = case expr of
     refs <- gets activeAccs
     let allowedRegions = foldMap (\(varType -> RefTy (Var reg) _) -> reg @> ()) refs
     (EffectRow bodyEffs t) <- substEmbedR $ functionEffs fbody
-    let onlyAllowedEffects =  flip all (toList bodyEffs) $ \(eff, reg) ->
-          eff == Writer && reg `isin` allowedRegions
+    let onlyAllowedEffects = all (parallelizableEffect allowedRegions) $ toList bodyEffs
     case t == Nothing && onlyAllowedEffects of
       True -> do
         b' <- substEmbedR b
@@ -97,6 +96,12 @@ parallelTraverseExpr expr = case expr of
     nothingSpecial = traverseExpr parallelTrav expr
     disallowRef ~(Var refVar) =
       modify $ \accEnv -> accEnv { activeAccs = activeAccs accEnv `envDiff` (refVar @> ()) }
+
+parallelizableEffect :: Env () -> Effect -> Bool
+parallelizableEffect allowedRegions effect = case effect of
+  RWSEffect Writer h | h `isin` allowedRegions -> True
+  -- TODO: we should be able to parallelize the exception effect too
+  _ -> False
 
 -- Precondition: This is never called with no binders in the loop env
 buildParallelBlock :: ABlock -> LoopM Atom

@@ -271,11 +271,12 @@ exprEffs expr = case expr of
   App f _ -> functionEffs f
   Op op   -> case op of
     PrimEffect ref m -> case m of
-      MGet    -> oneEffect (State,  h)
-      MPut  _ -> oneEffect (State,  h)
-      MAsk    -> oneEffect (Reader, h)
-      MTell _ -> oneEffect (Writer, h)
+      MGet    -> oneEffect (RWSEffect State  h)
+      MPut  _ -> oneEffect (RWSEffect State  h)
+      MAsk    -> oneEffect (RWSEffect Reader h)
+      MTell _ -> oneEffect (RWSEffect Writer h)
       where RefTy (Var (h:>_)) _ = getType ref
+    ThrowException _ -> oneEffect ExceptionEffect
     IOAlloc  _ _  -> oneEffect ioEffect
     IOFree   _    -> oneEffect ioEffect
     PtrLoad  _    -> oneEffect ioEffect
@@ -288,16 +289,16 @@ exprEffs expr = case expr of
     While cond body -> functionEffs cond <> functionEffs body
     Linearize _     -> mempty  -- Body has to be a pure function
     Transpose _     -> mempty  -- Body has to be a pure function
-    RunReader _ f   -> handleRunner Reader f
-    RunWriter   f   -> handleRunner Writer f
-    RunState  _ f   -> handleRunner State  f
+    RunReader _ f   -> handleRWSRunner Reader f
+    RunWriter   f   -> handleRWSRunner Writer f
+    RunState  _ f   -> handleRWSRunner State  f
     PTileReduce _ _ -> mempty
     RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
       EffectRow (S.delete ioEffect effs) t
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
-    handleRunner effName ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs t) _) =
-      EffectRow (S.delete (effName, h) effs) t
+    handleRWSRunner rws ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs t) _) =
+      EffectRow (S.delete (RWSEffect rws h) effs) t
 
 functionEffs :: Atom -> EffectRow
 functionEffs f = case getType f of
@@ -427,6 +428,7 @@ instance CoreVariant (PrimTC a) where
 
 instance CoreVariant (PrimOp a) where
   checkVariant e = case e of
+    ThrowException _ -> goneBy Simp
     Select _ _ _       -> alwaysAllowed  -- TODO: only scalar select after Simp
     _ -> alwaysAllowed
 
@@ -447,6 +449,7 @@ instance CoreVariant (PrimHof a) where
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
     PTileReduce _ _ -> absentUntil Simp -- really absent until parallelization
+    CatchException _ -> goneBy Simp
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -474,7 +477,9 @@ addExpr x m = modifyErr m $ \e -> case e of
 
 checkEffRow :: EffectRow -> TypeM ()
 checkEffRow (EffectRow effs effTail) = do
-  forM_ effs $ \(_, v) -> Var (v:>TyKind) |: TyKind
+  forM_ effs $ \eff -> case eff of
+    RWSEffect _ v -> Var (v:>TyKind) |: TyKind
+    ExceptionEffect -> return ()
   forM_ effTail $ \v -> do
     checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
@@ -504,7 +509,7 @@ oneEffect :: Effect -> EffectRow
 oneEffect eff = EffectRow (S.singleton eff) Nothing
 
 ioEffect :: Effect
-ioEffect = (State, theWorld)
+ioEffect = RWSEffect State theWorld
 
 -- === labeled row types ===
 
@@ -698,10 +703,10 @@ typeCheckOp op = case op of
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var (h':>TyKind))) s) <- typeCheck ref
     case m of
-      MGet    ->         declareEff (State , h') $> s
-      MPut  x -> x|:s >> declareEff (State , h') $> UnitTy
-      MAsk    ->         declareEff (Reader, h') $> s
-      MTell x -> x|:s >> declareEff (Writer, h') $> UnitTy
+      MGet    ->         declareEff (RWSEffect State  h') $> s
+      MPut  x -> x|:s >> declareEff (RWSEffect State  h') $> UnitTy
+      MAsk    ->         declareEff (RWSEffect Reader h') $> s
+      MTell x -> x|:s >> declareEff (RWSEffect Writer h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
     i |: absArgType a
@@ -756,7 +761,9 @@ typeCheckOp op = case op of
     i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
-  -- TODO: this should really be a 32 bit integer for unicode code point: but for now is 8 bit ASCII code point
+  ThrowException ty -> do
+    declareEff ExceptionEffect
+    ty|:TyKind $> ty
   CastOp t@(Var _) _ -> t |: TyKind $> t
   CastOp destTy e -> do
     sourceTy <- typeCheck e
@@ -871,25 +878,31 @@ typeCheckHof hof = case hof of
     Pi (Abs (Ignore a) (LinArrow, b)) <- typeCheck f
     return $ b --@ a
   RunReader r f -> do
-    (resultTy, readTy) <- checkAction Reader f
+    (resultTy, readTy) <- checkRWSAction Reader f
     r |: readTy
     return resultTy
-  RunWriter f -> uncurry PairTy <$> checkAction Writer f
+  RunWriter f -> uncurry PairTy <$> checkRWSAction Writer f
   RunState s f -> do
-    (resultTy, stateTy) <- checkAction State f
+    (resultTy, stateTy) <- checkRWSAction State f
     s |: stateTy
     return $ PairTy resultTy stateTy
   RunIO f -> do
-    FunTy _ eff resultTy <- typeCheck f
+    FunTy b eff resultTy <- typeCheck f
+    checkEq (binderAnn b) UnitTy
     extendAllowedEffect ioEffect $ declareEffs eff
     return resultTy
+  CatchException f -> do
+    FunTy b eff resultTy <- typeCheck f
+    checkEq (binderAnn b) UnitTy
+    extendAllowedEffect ExceptionEffect $ declareEffs eff
+    return $ MaybeTy resultTy
 
-checkAction :: EffectName -> Atom -> TypeM (Type, Type)
-checkAction effName f = do
+checkRWSAction :: RWS -> Atom -> TypeM (Type, Type)
+checkRWSAction rws f = do
   BinaryFunTy (Bind regionBinder) refBinder eff resultTy <- typeCheck f
   regionName:>_ <- return regionBinder
   let region = Var regionBinder
-  extendAllowedEffect (effName, regionName) $ declareEffs eff
+  extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff
   checkEq (varAnn regionBinder) TyKind
   RefTy region' referentTy <- return $ binderAnn refBinder
   checkEq region' region

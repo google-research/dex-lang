@@ -86,7 +86,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 sgd chol
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-             shadow-tests monad-tests io-tests \
+             shadow-tests monad-tests io-tests exception-tests \
              ad-tests parser-tests serialize-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests
 

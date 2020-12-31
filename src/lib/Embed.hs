@@ -13,7 +13,7 @@
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
-              runSubstEmbed, runEmbed, getScope, embedLook,
+              runSubstEmbed, runEmbed, getScope, embedLook, liftEmbed,
               app,
               add, mul, sub, neg, div',
               iadd, imul, isub, idiv, ilt, ieq,
@@ -24,7 +24,8 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildFor, buildForAux, buildForAnn, buildForAnnAux,
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, unpackConsList, emitRunWriter, emitRunState,
+              embedExtend, unpackConsList, emitRunWriter, applyPreludeFunction,
+              emitRunState,  emitMaybeCase,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
               evalBlockE, substTraversalDef,
@@ -41,6 +42,7 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
+import Data.String (fromString)
 import Data.Tuple (swap)
 import GHC.Stack
 
@@ -321,6 +323,15 @@ appReduce (Lam (Abs v (_, b))) a =
   runReaderT (evalBlockE substTraversalDef b) (v @> a)
 appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
+-- TODO: this would be more convenient if we could add type inference too
+applyPreludeFunction :: MonadEmbed m => String -> [Atom] -> m Atom
+applyPreludeFunction s xs = do
+  scope <- getScope
+  case envLookup scope fname of
+    Nothing -> error $ "Function not defined yet: " ++ s
+    Just (ty, _) -> naryApp (Var (fname:>ty)) xs
+  where fname = GlobalName (fromString s)
+
 appTryReduce :: MonadEmbed m => Atom -> Atom -> m Atom
 appTryReduce f x = case f of
   Lam _ -> appReduce f x
@@ -345,6 +356,15 @@ unpackConsList xs = case getType xs of
     liftM (x:) $ unpackConsList rest
   _ -> error $ "Not a cons list: " ++ pprint (getType xs)
 
+emitMaybeCase :: MonadEmbed m => Atom -> (m Atom) -> (Atom -> m Atom) -> m Atom
+emitMaybeCase scrut nothingCase justCase = do
+  let (MaybeTy a) = getType scrut
+  nothingAlt <- buildNAbs Empty                        $ \[]  -> nothingCase
+  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) $ \[x] -> justCase x
+  let (Abs _ nothingBody) = nothingAlt
+  let resultTy = getType nothingBody
+  emit $ Case scrut [nothingAlt, justAlt] resultTy
+
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do
   emit . Hof . RunWriter =<< mkBinaryEffFun Writer v ty body
@@ -357,11 +377,11 @@ emitRunState :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
 emitRunState v x0 body = do
   emit . Hof . RunState x0 =<< mkBinaryEffFun State v (getType x0) body
 
-mkBinaryEffFun :: MonadEmbed m => EffectName -> Name -> Type -> (Atom -> m Atom) -> m Atom
-mkBinaryEffFun newEff v ty body = do
+mkBinaryEffFun :: MonadEmbed m => RWS -> Name -> Type -> (Atom -> m Atom) -> m Atom
+mkBinaryEffFun rws v ty body = do
   eff <- getAllowedEffects
   buildLam (Bind ("h":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
-    let arr = PlainArrow $ extendEffect (newEff, rName) eff
+    let arr = PlainArrow $ extendEffect (RWSEffect rws rName) eff
     buildLam (Bind (v:> RefTy r ty)) arr body
 
 buildForAnnAux :: MonadEmbed m => ForAnn -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
@@ -377,6 +397,7 @@ buildForAnn ann i body = fst <$> buildForAnnAux ann i (\x -> (,()) <$> body x)
 buildForAux :: MonadEmbed m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildForAux = buildForAnnAux . RegularFor
 
+-- Do we need this variant?
 buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
 buildFor = buildForAnn . RegularFor
 
@@ -577,6 +598,14 @@ scopedDecls :: MonadEmbed m => m a -> m (a, Nest Decl)
 scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
+
+liftEmbed :: MonadEmbed m => Embed a -> m a
+liftEmbed action = do
+  envR <- embedAsk
+  envC <- embedLook
+  let (ans, envC') = runIdentity $ runEmbedT' action (envR, envC)
+  embedExtend envC'
+  return ans
 
 -- === generic traversal ===
 
