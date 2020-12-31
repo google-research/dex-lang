@@ -51,10 +51,9 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
          ref!i := 1
 > [0, 1, 0, 1, 0, 1]
 
--- Doesn't work yet
--- :p catch do
---      withState 0 \ref.
---        ref := 1
---        assert False
---        ref := 2
-
+:p catch do
+     withState 0 \ref.
+       ref := 1
+       assert False
+       ref := 2
+> Nothing
