@@ -24,7 +24,7 @@ def directionAndLength (x: d=>Float) : (d=>Float & Float) =
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
+def sampleAveraged [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
   yieldState zero \total.
     for i:(Fin n).
       total := get total + sample (ixkey k i) / IToF n

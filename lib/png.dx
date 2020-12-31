@@ -72,7 +72,7 @@ def decodeChunk (chunk : Fin 4 => Char) : Maybe (Fin 3 => Char) =
     Just base64s -> Just $ base64sToBytes base64s
 
 -- TODO: put this in prelude?
-def replace (_:Eq a) ?=> ((old,new):(a&a)) (x:a) : a =
+def replace [Eq a] ((old,new):(a&a)) (x:a) : a =
   case x == old of
     True  -> new
     False -> x

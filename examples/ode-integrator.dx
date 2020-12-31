@@ -12,7 +12,7 @@ Time = Float
 def length (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 def (./) (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
 
-def fit_4th_order_polynomial (_:VSpace v) ?=>
+def fit_4th_order_polynomial [VSpace v]
     (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =
   -- dz0 and dz1 are gradient evaluations.
   a = -2. * dt .* dz0 + 2. * dt .* dz1 -  8. .* z0 -  8. .* z1 + 16. .* z_mid
@@ -26,7 +26,7 @@ dps_c_mid = [6025192743. /30085553152. /2., 0., 51252292925. /65400821598. /2.,
             -2691868925. /45128329728. /2., 187940372067. /1594534317056. /2.,
             -1776094331. /19743644256. /2., 11237099. /235043384. /2.]
 
-def interp_fit_dopri (_:VSpace v) ?=>
+def interp_fit_dopri [VSpace v]
     (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time) : (Fin 5)=>v =
   -- Fit a polynomial to the results of a Runge-Kutta step.
   z_mid = z0 + dt .* (dot dps_c_mid k)
@@ -64,7 +64,7 @@ c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
            125. / 192. - 451. / 720., -2187. / 6784. + 12231. / 42400.,
            11. / 84. - 649. / 6300., -1. / 60.]
 
-def runge_kutta_step (_:VSpace v) ?=> (func:v->Time->v)
+def runge_kutta_step [VSpace v] (func:v->Time->v)
     (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
 
   evals_init = yieldState zero \r.

@@ -14,10 +14,10 @@ def incwrap (i:n) : n =  -- Increment index, wrapping around at ends.
 def decwrap (i:n) : n =  -- Decrement index, wrapping around at ends.
   asidx $ mod ((ordinal i) - 1) $ size n
 
-def finite_difference_neighbours (_:Add a) ?=> (x:n=>a) : n=>a =
+def finite_difference_neighbours [Add a] (x:n=>a) : n=>a =
   for i. x.(incwrap i) - x.(decwrap i)
 
-def add_neighbours (_:Add a) ?=> (x:n=>a) : n=>a =
+def add_neighbours [Add a] (x:n=>a) : n=>a =
   for i. x.(incwrap i) + x.(decwrap i)
 
 def apply_along_axis1 (f:b=>a -> b=>a) (x:b=>c=>a) : b=>c=>a =
@@ -26,21 +26,21 @@ def apply_along_axis1 (f:b=>a -> b=>a) (x:b=>c=>a) : b=>c=>a =
 def apply_along_axis2 (f:c=>a -> c=>a) (x:b=>c=>a) : b=>c=>a =
   for i. f x.i
 
-def fdx (_:Add a) ?=> (x:n=>m=>a) : (n=>m=>a) =
+def fdx [Add a] (x:n=>m=>a) : (n=>m=>a) =
   apply_along_axis1 finite_difference_neighbours x
 
-def fdy (_:Add a) ?=> (x:n=>m=>a) : (n=>m=>a) =
+def fdy [Add a] (x:n=>m=>a) : (n=>m=>a) =
   apply_along_axis2 finite_difference_neighbours x
 
-def divergence (_:Add a) ?=> (vx:n=>m=>a) (vy:n=>m=>a) : (n=>m=>a) =
+def divergence [Add a] (vx:n=>m=>a) (vy:n=>m=>a) : (n=>m=>a) =
   fdx vx + fdy vy
 
-def add_neighbours_2d (_:Add a) ?=> (x:n=>m=>a) : (n=>m=>a) =
+def add_neighbours_2d [Add a] (x:n=>m=>a) : (n=>m=>a) =
   ax1 = apply_along_axis1 add_neighbours x
   ax2 = apply_along_axis2 add_neighbours x
   ax1 + ax2
 
-def project (_:VSpace a) ?=> (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
+def project [VSpace a] (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
   -- Project the velocity field to be approximately mass-conserving,
   -- using a few iterations of Gauss-Seidel.
   h = 1.0 / IToF (size n)
@@ -60,13 +60,13 @@ def project (_:VSpace a) ?=> (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
 
   for i j. [vx.i.j, vy.i.j]  -- pack back into a table.
 
-def bilinear_interp (_:VSpace a) ?=> (right_weight:Float) (bottom_weight:Float)
+def bilinear_interp [VSpace a] (right_weight:Float) (bottom_weight:Float)
   (topleft: a) (bottomleft: a) (topright: a) (bottomright: a) : a =
   left  = (1.0 - right_weight) .* ((1.0 - bottom_weight) .* topleft  + bottom_weight .* bottomleft)
   right =        right_weight  .* ((1.0 - bottom_weight) .* topright + bottom_weight .* bottomright)
   left + right
 
-def advect (_:VSpace a) ?=> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
+def advect [VSpace a] (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   -- Move field f according to x and y velocities (u and v)
   -- using an implicit Euler integrator.
 
@@ -95,7 +95,7 @@ def advect (_:VSpace a) ?=> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
     -- A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
 
-def fluidsim (_: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
+def fluidsim [ VSpace a] (num_steps: Int) (color_init: n=>m=>a)
   (v: n=>m=>(Fin 2)=>Float) : (Fin num_steps)=>n=>m=>a =
   withState (color_init, v) \state.
     for i:(Fin num_steps).

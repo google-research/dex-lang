@@ -49,7 +49,7 @@ def getScaled (sd:ScaledData n a) (i:n) : Maybe Float =
 lowColor  = [1.0, 0.5, 0.0]
 highColor = [0.0, 0.5, 1.0]
 
-def interpolate (_:VSpace a) ?=> (low:a) (high:a) (x:Float) : a =
+def interpolate [VSpace a] (low:a) (high:a) (x:Float) : a =
   x' = clip (0.0, 1.0) x
   (x' .* low) + ((1.0 - x') .* high)
 

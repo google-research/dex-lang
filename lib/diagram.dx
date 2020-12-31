@@ -112,7 +112,7 @@ def quote (s:String) : String = "\"" <.> s <.> "\""
 def strSpaceCatUncurried ((s1,s2):(String & String)) : String =
   s1 <.> " " <.> s2
 
-def (<+>) (_:Show a) ?=> (_:Show b) ?=> (s1:a) (s2:b) : String =
+def (<+>) [Show a, Show b] (s1:a) (s2:b) : String =
   strSpaceCatUncurried ((show s1), (show s2))
 
 def selfClosingBrackets (s:String) : String = "<" <.> s <.> "/>"
@@ -127,7 +127,7 @@ def tagBracketsAttrUncurried ((tag, attr, s):(String & String & String)) : Strin
 def tagBracketsAttr (tag:String) (attr:String) (s:String) : String =
   tagBracketsAttrUncurried (tag, attr, s)
 
-def (<=>) (_:Show b) ?=> (attr:String) (val:b) : String =
+def (<=>) [Show b] (attr:String) (val:b) : String =
   attr <.> "=" <.> quote (show val)
 
 def htmlColor(cs:HtmlColor) : String =
