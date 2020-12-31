@@ -27,7 +27,7 @@ testNestedLoops.(4@_).(5@_)
 -- single GPU thread. It should get lifted to a top-level allocation instead.
 allocationLiftingTest =
   for i:(Fin 100).
-    snd $ withState (for j:(Fin 1000). ordinal i) $ \s.
+    yieldState (for j:(Fin 1000). ordinal i) $ \s.
       s!(0@_) := get s!(0@_) + 1
 (allocationLiftingTest.(4@_).(0@_), allocationLiftingTest.(4@_).(1@_))
 > (5, 4)

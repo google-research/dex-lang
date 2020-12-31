@@ -102,7 +102,7 @@ myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 456]
 > Runtime error
 
 :p
-  snd $ withAccum \ref.
+  yieldAccum \ref.
     for i. case myTab.i of
       MyLeft tmp -> ()
       MyRight val -> ref += 1.0 + val
@@ -110,7 +110,7 @@ myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 456]
 
 :p
   -- check that the order of the case alternatives doesn't matter
-  snd $ withAccum \ref.
+  yieldAccum \ref.
     for i. case myTab.i of
       MyRight val -> ref += 1.0 + val
       MyLeft tmp -> ()
@@ -128,7 +128,7 @@ threeCaseTab : (Fin 4)=>ThreeCases =
 > [(TheIntCase 3), TheEmptyCase, (ThePairCase 2 0.1), TheEmptyCase]
 
 :p
-  snd $ withAccum \ref.
+  yieldAccum \ref.
     for i. case threeCaseTab.i of
       TheEmptyCase    -> ref += 1000.0
       ThePairCase x y -> ref +=  100.0 + y + IToF x
@@ -250,7 +250,7 @@ data Graph a:Type =
 
 def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
   init = for i j. False
-  snd $ withState init \mRef.
+  yieldState init \mRef.
     for i:m.
       (from, to) = edges.i
       mRef!from!to := True

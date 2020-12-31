@@ -51,7 +51,7 @@ def project (_:VSpace a) ?=> (v: n=>m=>(Fin 2)=>a) : n=>m=>(Fin 2)=>a =
 
   div = -0.5 .* h .* (divergence vx vy)
 
-  p = snd $ withState zero \state.
+  p = yieldState zero \state.
     for i:(Fin 10).
       state := (1.0 / 4.0) .* (div + add_neighbours_2d (get state))
 
@@ -97,7 +97,7 @@ def advect (_:VSpace a) ?=> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
 
 def fluidsim (_: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
   (v: n=>m=>(Fin 2)=>Float) : (Fin num_steps)=>n=>m=>a =
-  fst $ withState (color_init, v) \state.
+  withState (color_init, v) \state.
     for i:(Fin num_steps).
       (color, v) = get state
       v = advect v v          -- Move velocities

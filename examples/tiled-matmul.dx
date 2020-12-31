@@ -16,7 +16,7 @@ def matmul (k : Type) ?-> (n : Type) ?-> (m : Type) ?->
   vectorTile = Fin VectorWidth
   colTile = (colVectors & vectorTile)
   (tile2d (\nt:(Tile n rowTile). \mt:(Tile m colTile).
-             ct = snd $ withAccum \acc.
+             ct = yieldAccum \acc.
                for l:k.
                  for i:rowTile.
                    ail = broadcastVector a.(nt +> i).l

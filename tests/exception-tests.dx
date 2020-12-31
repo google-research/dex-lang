@@ -20,7 +20,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 :p catch do checkFloatInUnitInterval 0.2
 > (Just 0.2)
 
-:p snd $ withState 0 \ref.
+:p yieldState 0 \ref.
      catch do
        ref := 1
        assert False
@@ -42,7 +42,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 > (Just [23, 23, 23])
 
 -- Is this the result we want?
-:p snd $ withState zero \ref.
+:p yieldState zero \ref.
      catch do
        for i:(Fin 6).
          if (ordinal i `rem` 2) == 0
@@ -52,7 +52,7 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 > [0, 1, 0, 1, 0, 1]
 
 :p catch do
-     withState 0 \ref.
+     runState 0 \ref.
        ref := 1
        assert False
        ref := 2

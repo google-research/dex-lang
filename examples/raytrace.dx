@@ -25,7 +25,7 @@ def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
 def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
-  snd $ withState zero \total.
+  yieldState zero \total.
     for i:(Fin n).
       total := get total + sample (ixkey k i) / IToF n
 
@@ -174,7 +174,7 @@ def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
   (rayOrigin, rayDir) = ray
-  fst $ withState (10.0 * tol) \rayLength.
+  withState (10.0 * tol) \rayLength.
     boundedIter maxIters HitNothing \_.
       rayPos = rayOrigin + get rayLength .* rayDir
       (obj, d) = sdScene scene $ rayPos
@@ -212,7 +212,7 @@ def sampleLightRadiance
   (surfNor, surf) = osurf
   (rayPos, _) = inRay
   (MkScene objs) = scene
-  snd $ withAccum \radiance.
+  yieldAccum \radiance.
     for i. case objs.i of
       PassiveObject _ _ -> ()
       Light lightPos hw _ ->
@@ -227,9 +227,9 @@ def sampleLightRadiance
 
 def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
-  snd $ withAccum \radiance.
-    withState  noFilter \filter.
-     withState initRay  \ray.
+  yieldAccum \radiance.
+    runState  noFilter \filter.
+     runState initRay  \ray.
       boundedIter (getAt #maxBounces params) () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()

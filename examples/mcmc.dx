@@ -13,7 +13,7 @@ def runChain
       (k:Key)
       : Fin numSamples => a =
   [k1, k2] = splitKey k
-  fst $ withState (initialize k1) \s.
+  withState (initialize k1) \s.
     for i:(Fin numSamples).
       x = step (ixkey k2 i) (get s)
       s := x
