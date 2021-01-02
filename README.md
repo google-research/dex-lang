@@ -33,7 +33,7 @@ development. Expect monstrous bugs and razor-sharp edges. Contributions welcome!
       * Make sure `llvm@9` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@9)/bin:$PATH"`
   * Install clang (may be installed together with llvm)
     * Ubuntu/Debian: `apt-get install clang`
-    * macOS: `installs with llvm`
+    * macOS: installs with llvm
   * Install libpng (often included by default in *nix platforms)
     * Ubuntu/Debian: `apt-get install libpng-dev`
     * macOS: `brew install libpng`
