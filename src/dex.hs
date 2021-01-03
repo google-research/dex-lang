@@ -39,7 +39,7 @@ data EvalMode = ReplMode String
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
 
-keywordList = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view"]
+keywordList = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view", "%bench \"", ":p", ":t", ":html", ":export"]
 filterKeywords :: String -> [Completion]
 filterKeywords str = map simpleCompletion $ filter (str `isPrefixOf`) keywordList
 
