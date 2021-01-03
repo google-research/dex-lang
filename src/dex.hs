@@ -39,12 +39,22 @@ data EvalMode = ReplMode String
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
 
-keywordList = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view", "%bench \"", ":p", ":t", ":html", ":export"]
-filterKeywords :: String -> [Completion]
-filterKeywords str = map simpleCompletion $ filter (str `isPrefixOf`) keywordList
 
-dexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles
-  $ completeWord Nothing " \t\n`@$><=;|&{(.:" $ return . filterKeywords
+filteredCompletions keywordList str = map simpleCompletion $
+  filter (str `isPrefixOf`) keywordList
+
+keywordCompletions :: Monad m => CompletionFunc m
+keywordCompletions (line, _) = do
+  -- note: line and thus word and rest have character order reversed
+  let (word, rest) = break (== ' ') line
+  let anywhereKeywords = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view"]
+  let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
+  let keywords = anywhereKeywords ++ if null rest
+                                        then startoflineKeywords
+                                        else []
+  return (rest, filteredCompletions keywords $ reverse word)
+
+dexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles keywordCompletions
 
 hasklineSettings = setComplete dexCompletions defaultSettings
 
