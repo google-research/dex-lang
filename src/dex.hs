@@ -15,6 +15,7 @@ import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
 import System.Exit
 import System.Directory
+import Data.List
 
 import Syntax
 import PPrint
@@ -37,6 +38,16 @@ data EvalMode = ReplMode String
 
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
+
+keywordList = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view"]
+filterKeywords :: String -> [Completion]
+filterKeywords str = map simpleCompletion $ filter (str `isPrefixOf`) keywordList
+
+dexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles
+  $ completeWord Nothing " \t\n`@$><=;|&{(.:" $ return . filterKeywords
+
+hasklineSettings = setComplete dexCompletions defaultSettings
+
 runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
 runMode evalMode preludeFile opts = do
   key <- case preludeFile of
@@ -46,7 +57,7 @@ runMode evalMode preludeFile opts = do
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
-      runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
+      runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile opts fname
       printLitProg fmt results
