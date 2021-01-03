@@ -17,7 +17,6 @@ import System.Exit
 import System.Directory
 import Data.List
 import Data.Text.Prettyprint.Doc
-import Debug.Trace
 
 import Syntax
 import PPrint
