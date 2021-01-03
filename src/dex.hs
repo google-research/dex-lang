@@ -16,6 +16,8 @@ import System.Posix.IO (stdOutput)
 import System.Exit
 import System.Directory
 import Data.List
+import Data.Text.Prettyprint.Doc
+import Debug.Trace
 
 import Syntax
 import PPrint
@@ -27,6 +29,7 @@ import TopLevel
 import Parser  hiding (Parser)
 import LiveOutput
 import Export
+import Env
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
@@ -40,22 +43,25 @@ data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
 
 
-filteredCompletions keywordList str = map simpleCompletion $
-  filter (str `isPrefixOf`) keywordList
+filteredCompletions candidates str = map simpleCompletion $
+  filter (str `isPrefixOf`) candidates
 
-keywordCompletions :: Monad m => CompletionFunc m
-keywordCompletions (line, _) = do
+completions :: CompletionFunc (StateT TopEnv IO)
+completions (line, _) = do
+  env <- get
+  let varNames = map (show . pretty) $ envNames env
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
   let anywhereKeywords = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view"]
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
-  let keywords = anywhereKeywords ++ if null rest
-                                        then startoflineKeywords
-                                        else []
-  return (rest, filteredCompletions keywords $ reverse word)
+  let candidates = varNames ++ anywhereKeywords ++ if null rest
+                                                    then startoflineKeywords
+                                                    else []
+  return (rest, filteredCompletions candidates $ reverse word)
 
-dexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles keywordCompletions
+dexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles completions
 
+hasklineSettings :: Settings (StateT TopEnv IO)
 hasklineSettings = setComplete dexCompletions defaultSettings
 
 runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
