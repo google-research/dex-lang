@@ -127,7 +127,7 @@ printLitProg TextDoc prog = do
   isatty <- queryTerminal stdOutput
   putStr $ foldMap (uncurry (printLitBlock isatty)) prog
 printLitProg JSONDoc prog =
-  forM_ prog $ \(_, result) -> case toJSONStr result of
+  forM_ prog \(_, result) -> case toJSONStr result of
     "{}" -> return ()
     s -> putStrLn s
 
@@ -164,7 +164,7 @@ parseMode = subparser $
     objectFileInfo = argument str (metavar "OBJFILE" <> help "Output path (.o file)")
 
 optionList :: [(String, a)] -> ReadM a
-optionList opts = eitherReader $ \s -> case lookup s opts of
+optionList opts = eitherReader \s -> case lookup s opts of
   Just x  -> Right x
   Nothing -> Left $ "Bad option. Expected one of: " ++ show (map fst opts)
 

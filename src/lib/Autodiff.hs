@@ -44,10 +44,10 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
 linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
-  buildLam b PureArrow $ \x@(Var v) -> do
+  buildLam b PureArrow \x@(Var v) -> do
     (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) [] mempty) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
-    fLin <- buildLam (fmap tangentType b) LinArrow $ \xt -> runReaderT yt $ TangentEnv (v @> xt) [] mempty
+    fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) [] mempty
     fLinChecked <- checkEmbed fLin
     return $ PairVal y fLinChecked
 
@@ -109,7 +109,7 @@ linearizeExpr env expr = case expr of
         return (ans, applyLinToTangents linLam)
     where
       linearizeInactiveAlt (Abs bs body) = do
-        buildNAbs bs $ \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
+        buildNAbs bs \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
   _ -> LinA $ do
     expr' <- substEmbed env expr
     runLinA $ case expr' of
@@ -255,10 +255,10 @@ linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
-    (ansWithLinTab, vi'') <- buildForAux d i' $ \i''@(Var vi'') ->
+    (ansWithLinTab, vi'') <- buildForAux d i' \i''@(Var vi'') ->
        (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
     (ans, linTab) <- unzipTab ansWithLinTab
-    return (ans, buildFor d i' $ \i'' -> provideRemat vi'' i'' $ app linTab i'' >>= applyLinToTangents)
+    return (ans, buildFor d i' \i'' -> provideRemat vi'' i'' $ app linTab i'' >>= applyLinToTangents)
   Tile _ _ _        -> notImplemented
   RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
   RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
@@ -266,7 +266,7 @@ linearizeHof env hof = case hof of
   RunIO ~(Lam (Abs _ (arrow, body))) -> LinA $ do
     arrow' <- substEmbed env arrow
     -- TODO: consider the possibility of other effects here besides IO
-    lam <- buildLam (Ignore UnitTy) arrow' $ \_ ->
+    lam <- buildLam (Ignore UnitTy) arrow' \_ ->
       tangentFunAsLambda $ linearizeBlock env body
     result <- emit $ Hof $ RunIO lam
     (ans, linLam) <- fromPair result
@@ -299,18 +299,18 @@ linearizeHof env hof = case hof of
                       let (BinaryFunTy _ b _ _) = getType lam'
                       let RefTy _ wTy = binderType b
                       return $ emitter $ tangentType wTy
-                  valEmitter $ \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
+                  valEmitter \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
                       extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
 
     linearizeEffectFun :: RWS -> Atom -> PrimalM (Atom, Var)
     linearizeEffectFun rws ~(BinaryFunVal h ref eff body) = do
       h' <- mapM (substEmbed env) h
-      buildLamAux h' (const $ return PureArrow) $ \h''@(Var hVar) -> do
+      buildLamAux h' (const $ return PureArrow) \h''@(Var hVar) -> do
         let env' = env <> h@>h''
         eff' <- substEmbed env' eff
         ref' <- mapM (substEmbed env') ref
-        buildLamAux ref' (const $ return $ PlainArrow eff') $ \ref''@(Var refVar) ->
+        buildLamAux ref' (const $ return $ PlainArrow eff') \ref''@(Var refVar) ->
           extendWrt [refVar] [RWSEffect rws (varName hVar)] $
             (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
 
@@ -341,7 +341,7 @@ linearizeAtom atom = case atom of
   Con con -> linearizePrimCon con
   Lam (Abs i (TabArrow, body)) -> LinA $ do
     wrt <- ask
-    return (atom, buildLam i TabArrow $ \i' ->
+    return (atom, buildLam i TabArrow \i' ->
                     rematPrimal wrt $ linearizeBlock (i@>i') body)
   DataCon _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   Record elems    -> Record <$> traverse linearizeAtom elems
@@ -394,7 +394,7 @@ addTangent x y = case getType x of
   RecordTy (NoExt tys) -> do
     elems <- bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
     return $ Record $ restructure elems tys
-  TabTy b _  -> buildFor Fwd b $ \i -> bindM2 addTangent (tabGet x i) (tabGet y i)
+  TabTy b _  -> buildFor Fwd b \i -> bindM2 addTangent (tabGet x i) (tabGet y i)
   TC con -> case con of
     BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
     BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
@@ -422,8 +422,8 @@ tangentFunAsLambda m = do
   let hs = map (Bind . (:>TyKind) . effectRegion) effs
   let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
-    tanLam <- makeLambdas rematList $ \rematArgs ->
-      buildNestedLam PureArrow hs $ \hVals -> do
+    tanLam <- makeLambdas rematList \rematArgs ->
+      buildNestedLam PureArrow hs \hVals -> do
         let hVarNames = map (\(Var (v:>_)) -> v) hVals
         -- TODO: handle exception effect too
         let effs' = zipWith (\(RWSEffect rws _) v -> RWSEffect rws v) effs hVarNames
@@ -431,8 +431,8 @@ tangentFunAsLambda m = do
         let regionMap = newEnv (map ((:>()) . effectRegion) effs) hVals
         -- TODO: Only bind tangents for free variables?
         let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-        buildNestedLam PureArrow activeVarBinders $ \activeVarArgs ->
-          buildLam (Ignore UnitTy) (PlainArrow $ EffectRow (S.fromList effs') Nothing) $ \_ ->
+        buildNestedLam PureArrow activeVarBinders \activeVarArgs ->
+          buildLam (Ignore UnitTy) (PlainArrow $ EffectRow (S.fromList effs') Nothing) \_ ->
             runReaderT tanFun $ TangentEnv
                  (newEnv (envNames activeVars) activeVarArgs) hVarNames
                  (newEnv rematList $ fmap Var rematArgs)
@@ -448,7 +448,7 @@ tangentFunAsLambda m = do
       return $ Lam $ makeAbs (Bind v) (PureArrow, block)
 
     makeLambdas [] f = f []
-    makeLambdas (v:vs) f = makeLambda v $ \x -> makeLambdas vs $ \xs -> f (x:xs)
+    makeLambdas (v:vs) f = makeLambda v \x -> makeLambdas vs \xs -> f (x:xs)
 
     -- This doesn't work if we have references inside pairs, tables etc.
     -- TODO: something more general and cleaner.
@@ -544,7 +544,7 @@ type TransposeM a = ReaderT TransposeEnv Embed a
 
 transpose :: Scope -> Atom -> Atom
 transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
-  buildLam (Bind $ "ct" :> getType block) LinArrow $ \ct -> do
+  buildLam (Bind $ "ct" :> getType block) LinArrow \ct -> do
     snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock block ct)
 
 transposeBlock :: Block -> Atom -> TransposeM ()
@@ -590,7 +590,7 @@ transposeExpr expr ct = case expr of
         void $ emit $ Case e' alts' UnitTy
   where
     transposeNonlinAlt (Abs bs body) =
-      buildNAbs bs $ \xs -> do
+      buildNAbs bs \xs -> do
         localNonlinSubst (newEnv bs xs) $ transposeBlock body ct
         return UnitVal
 
@@ -619,7 +619,7 @@ transposeOp op ct = case op of
       MPut  x -> do
         transposeAtom x =<< emitEff MGet
         void $ emitEff $ MPut $ zeroAt $ getType x
-  TabCon ~(TabTy b _) es -> forM_ (enumerate es) $ \(i, e) -> do
+  TabCon ~(TabTy b _) es -> forM_ (enumerate es) \(i, e) -> do
     transposeAtom e =<< tabGet ct =<< intToIndexE (binderType b) (IdxRepVal $ fromIntegral i)
   IndexRef     _ _      -> notImplemented
   FstRef       _        -> notImplemented
@@ -675,24 +675,24 @@ linAtomRef a = error $ "Not a linear var: " ++ pprint a
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
   For ~(RegularFor d) ~(Lam (Abs b (_, body))) ->
-    void $ buildFor (flipDir d) b $ \i -> do
+    void $ buildFor (flipDir d) b \i -> do
       ct' <- tabGet ct i
       localNonlinSubst (b@>i) $ transposeBlock body ct'
       return UnitVal
     where flipDir dir = case dir of Fwd -> Rev; Rev -> Fwd
   RunReader r ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
-    (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" (getType r) $ \ref -> do
+    (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" (getType r) \ref -> do
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ct
       return UnitVal
     transposeAtom r ctr
   RunWriter ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
     (ctBody, ctEff) <- fromPair ct
-    void $ emitRunReader "r" ctEff $ \ref -> do
+    void $ emitRunReader "r" ctEff \ref -> do
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
   RunState s ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
     (ctBody, ctState) <- fromPair ct
-    (_, cts) <- (fromPair =<<) $ emitRunState "s" ctState $ \ref -> do
+    (_, cts) <- (fromPair =<<) $ emitRunState "s" ctState \ref -> do
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
     transposeAtom s cts
@@ -715,7 +715,7 @@ transposeAtom atom ct = case atom of
   DataCon _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
   TabVal b body   ->
-    void $ buildFor Fwd b $ \i -> do
+    void $ buildFor Fwd b \i -> do
       ct' <- tabGet ct i
       localNonlinSubst (b@>i) $ transposeBlock body ct'
       return UnitVal
@@ -787,7 +787,7 @@ withLinVar :: Binder -> TransposeM a -> TransposeM (a, Atom)
 withLinVar b body = case
   singletonTypeVal (binderType b) of
     Nothing -> flip evalStateT Nothing $ do
-      ans <- emitRunWriter "ref" (binderType b) $ \ref -> do
+      ans <- emitRunWriter "ref" (binderType b) \ref -> do
         lift (localLinRef (b@>Just ref) body) >>= put . Just >> return UnitVal
       (,) <$> (fromJust <$> get) <*> (getSnd ans)
     Just x -> (,x) <$> (localLinRef (b@>Nothing) body)  -- optimization to avoid accumulating into unit

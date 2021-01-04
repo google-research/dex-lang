@@ -10,10 +10,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE LambdaCase #-}
 
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
@@ -189,14 +187,14 @@ labeledSingleton label value = LabeledItems $ M.singleton label (value NE.:|[])
 
 reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
 reflectLabels (LabeledItems items) = LabeledItems $
-  flip M.mapWithKey items $ \k xs -> fmap (\(i,_) -> (k,i)) (enumerate xs)
+  flip M.mapWithKey items \k xs -> fmap (\(i,_) -> (k,i)) (enumerate xs)
 
 getLabels :: LabeledItems a -> [Label]
 getLabels labeledItems = map fst $ toList $ reflectLabels labeledItems
 
 withLabels :: LabeledItems a -> LabeledItems (Label, Int, a)
 withLabels (LabeledItems items) = LabeledItems $
-  flip M.mapWithKey items $ \k xs -> fmap (\(i,a) -> (k,i,a)) (enumerate xs)
+  flip M.mapWithKey items \k xs -> fmap (\(i,a) -> (k,i,a)) (enumerate xs)
 
 lookupLabel :: LabeledItems a -> Label -> Maybe a
 lookupLabel (LabeledItems items) l = case M.lookup l items of
@@ -684,10 +682,10 @@ throwIf True  e s = throw e s
 throwIf False _ _ = return ()
 
 modifyErr :: MonadError e m => m a -> (e -> e) -> m a
-modifyErr m f = catchError m $ \e -> throwError (f e)
+modifyErr m f = catchError m \e -> throwError (f e)
 
 addContext :: MonadError Err m => String -> m a -> m a
-addContext s m = modifyErr m $ \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
+addContext s m = modifyErr m \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
 
 addSrcContext :: MonadError Err m => SrcCtx -> m a -> m a
 addSrcContext ctx m = modifyErr m updateErr
@@ -698,9 +696,9 @@ addSrcContext ctx m = modifyErr m updateErr
 
 catchIOExcept :: (MonadIO m , MonadError Err m) => IO a -> m a
 catchIOExcept m = (liftIO >=> liftEither) $ (liftM Right m) `catches`
-  [ Handler $ \(e::Err)           -> return $ Left e
-  , Handler $ \(e::IOError)       -> return $ Left $ Err DataIOErr   Nothing $ show e
-  , Handler $ \(e::SomeException) -> return $ Left $ Err CompilerErr Nothing $ show e
+  [ Handler \(e::Err)           -> return $ Left e
+  , Handler \(e::IOError)       -> return $ Left $ Err DataIOErr   Nothing $ show e
+  , Handler \(e::SomeException) -> return $ Left $ Err CompilerErr Nothing $ show e
   ]
 
 liftEitherIO :: (Exception e, MonadIO m) => Either e a -> m a

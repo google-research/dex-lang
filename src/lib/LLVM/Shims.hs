@@ -35,7 +35,7 @@ data SymbolResolver = SymbolResolver (FunPtr FFIResolver) (Ptr OrcJIT.FFI.Symbol
 -- | Create a `FFI.SymbolResolver` that can be used with the JIT.
 newSymbolResolver :: OrcJIT.ExecutionSession -> OrcJIT.SymbolResolver -> IO SymbolResolver
 newSymbolResolver (OrcJIT.ExecutionSession session) (OrcJIT.SymbolResolver resolverFn) = do
-  ffiResolverPtr <- wrapFFIResolver $ \sym res -> do
+  ffiResolverPtr <- wrapFFIResolver \sym res -> do
     f <- encodeM =<< resolverFn =<< decodeM sym
     f res
   lambdaResolver <- OrcJIT.FFI.createLambdaResolver session ffiResolverPtr
@@ -60,10 +60,10 @@ newTargetMachine :: Target.Target
 newTargetMachine (Target.Target targetFFI) triple cpu features
                  (Target.TargetOptions targetOptFFI)
                  relocModel codeModel cgoLevel = do
-  SBS.useAsCString triple $ \tripleFFI -> do
-    BS.useAsCString cpu $ \cpuFFI -> do
+  SBS.useAsCString triple \tripleFFI -> do
+    BS.useAsCString cpu \cpuFFI -> do
       let featuresStr = BS.intercalate "," $ fmap encodeFeature $ M.toList features
-      BS.useAsCString featuresStr $ \featuresFFI -> do
+      BS.useAsCString featuresStr \featuresFFI -> do
         relocModelFFI <- encodeM relocModel
         codeModelFFI <- encodeM codeModel
         cgoLevelFFI <- encodeM cgoLevel
@@ -79,7 +79,7 @@ newHostTargetMachine relocModel codeModel cgoLevel = do
   (target, _) <- Target.lookupTarget Nothing triple
   cpu <- Target.getHostCPUName
   features <- Target.getHostCPUFeatures
-  Target.withTargetOptions $ \targetOptions ->
+  Target.withTargetOptions \targetOptions ->
     newTargetMachine target triple cpu features targetOptions relocModel codeModel cgoLevel
 
 disposeTargetMachine :: Target.TargetMachine -> IO ()

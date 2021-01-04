@@ -20,7 +20,7 @@ data Logger l = Logger (MVar l) (Maybe Handle)
 runLogger :: (Monoid l, MonadIO m) => Maybe FilePath -> (Logger l -> m a) -> m (a, l)
 runLogger maybePath m = do
   log <- liftIO $ newMVar mempty
-  logFile <- liftIO $ forM maybePath $ \path -> openFile path WriteMode
+  logFile <- liftIO $ forM maybePath \path -> openFile path WriteMode
   ans <- m $ Logger log logFile
   logged <- liftIO $ readMVar log
   return (ans, logged)
@@ -30,10 +30,10 @@ execLogger maybePath m = fst <$> runLogger maybePath m
 
 logThis :: (Pretty l, Monoid l, MonadIO m) => Logger l -> l -> m ()
 logThis (Logger log maybeLogHandle) x = liftIO $ do
-  forM_ maybeLogHandle $ \h -> do
+  forM_ maybeLogHandle \h -> do
     hPutStrLn h $ pprint x
     hFlush h
-  modifyMVar_ log $ \cur -> return (cur <> x)
+  modifyMVar_ log \cur -> return (cur <> x)
 
 readLog :: MonadIO m => Logger l -> m l
 readLog (Logger log _) = liftIO $ readMVar log

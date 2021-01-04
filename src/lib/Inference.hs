@@ -50,7 +50,7 @@ inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls
-  let bindings' = envFilter bindings $ \(_, b) -> case b of
+  let bindings' = envFilter bindings \(_, b) -> case b of
                     DataBoundTypeCon _   -> True
                     DataBoundDataCon _ _ -> True
                     _ -> False
@@ -68,7 +68,7 @@ checkSigma expr reqCon sTy = case sTy of
         WithSrc _ (ULam b arrow' body) | arrow' == void arrow ->
           checkULam b body piTy
         _ -> do
-          buildLam (Bind ("a":> absArgType piTy)) arrow $ \x@(Var v) ->
+          buildLam (Bind ("a":> absArgType piTy)) arrow \x@(Var v) ->
             checkLeaks [v] $ checkSigma expr reqCon $ snd $ applyAbs piTy x
   _ -> checkOrInferRho expr (reqCon sTy)
 
@@ -157,7 +157,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     -- TODO: check leaks
     kind' <- checkUType kind
     piTy <- case pat of
-      Just pat' -> withNameHint ("pat" :: Name) $ buildPi b $ \x ->
+      Just pat' -> withNameHint ("pat" :: Name) $ buildPi b \x ->
         withBindPat pat' x $ (,) <$> mapM checkUEffRow arr <*> checkUType ty
         where b = case pat' of
                     -- Note: The binder name becomes part of the type, so we
@@ -182,7 +182,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     case scrutTy' of
       TypeCon def params -> do
         let conDefs = applyDataDefParams def params
-        altsSorted <- forM (enumerate conDefs) $ \(i, DataConDef _ bs) -> do
+        altsSorted <- forM (enumerate conDefs) \(i, DataConDef _ bs) -> do
           case lookup (ConAlt i) alts' of
             Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
                                   Block Empty $ Op $ ThrowError reqTy'
@@ -256,7 +256,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     val' <- checkSigma val reqCon ty'
     matchRequirement val'
   UPrimExpr prim -> do
-    prim' <- forM prim $ \e -> do
+    prim' <- forM prim \e -> do
       e' <- inferRho e
       scope <- getScope
       return $ typeReduceAtom scope e'
@@ -319,7 +319,7 @@ unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
 unpackTopPat letAnn pat expr = do
   atom <- emit expr
   bindings <- bindPat pat atom
-  void $ flip traverseNames bindings $ \name val -> do
+  void $ flip traverseNames bindings \name val -> do
     let name' = asGlobal name
     checkNotInScope name'
     emitTo name' letAnn $ Atom val
@@ -342,15 +342,15 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
     else bindPat p val
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
-  dataDef <- buildDataDef tc' paramBs $ \params -> do
-    extendR (newEnv paramBs params) $ forM dcs $ \dc ->
+  dataDef <- buildDataDef tc' paramBs \params -> do
+    extendR (newEnv paramBs params) $ forM dcs \dc ->
       uncurry DataConDef <$> inferUConDef dc
   checkDataDefShadows dataDef
   emitConstructors dataDef
   return mempty
 inferUDecl True (UInterface superclasses tc methods) = do
   (tc', paramBs) <- inferUConDef tc
-  dataDef <- buildDataDef tc' paramBs $ \params -> do
+  dataDef <- buildDataDef tc' paramBs \params -> do
     extendR (newEnv paramBs params) $ do
       conName <- freshClassGenName
       superclasses' <- mkLabeledItems <$> mapM mkSuperclass superclasses
@@ -403,16 +403,16 @@ emitConstructors def@(DataDef tyConName _ dataConDefs) = do
   let tyConTy = getType $ TypeCon def []
   checkNotInScope tyConName
   extendScope $ tyConName @> (tyConTy, DataBoundTypeCon def)
-  forM_ (zip [0..] dataConDefs) $ \(i, DataConDef dataConName _) -> do
+  forM_ (zip [0..] dataConDefs) \(i, DataConDef dataConName _) -> do
     let dataConTy = getType $ DataCon def [] i []
     checkNotInScope dataConName
     extendScope $ dataConName @> (dataConTy, DataBoundDataCon def i)
 
 emitMethodGetters :: DataDef -> UInferM ()
 emitMethodGetters def@(DataDef _ paramBs (ClassDictDef _ _ methodTys)) = do
-  forM_ (getLabels methodTys) $ \l -> do
-    f <- buildImplicitNaryLam paramBs $ \params -> do
-      buildLam (Bind ("d":> TypeCon def params)) ClassArrow $ \dict -> do
+  forM_ (getLabels methodTys) \l -> do
+    f <- buildImplicitNaryLam paramBs \params -> do
+      buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
         return $ recGet l $ getProjection [1] dict
     let methodName = GlobalName $ fromString l
     checkNotInScope methodName
@@ -421,9 +421,9 @@ emitMethodGetters (DataDef _ _ _) = error "Not a class dictionary"
 
 emitSuperclassGetters :: MonadEmbed m => DataDef -> m ()
 emitSuperclassGetters def@(DataDef _ paramBs (ClassDictDef _ superclassTys _)) = do
-  forM_ (getLabels superclassTys) $ \l -> do
-    f <- buildImplicitNaryLam paramBs $ \params -> do
-      buildLam (Bind ("d":> TypeCon def params)) PureArrow $ \dict -> do
+  forM_ (getLabels superclassTys) \l -> do
+    f <- buildImplicitNaryLam paramBs \params -> do
+      buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
         return $ recGet l $ getProjection [0] dict
     getterName <- freshClassGenName
     emitTo getterName SuperclassLet $ Atom f
@@ -468,7 +468,7 @@ inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
   buildLam (Bind $ patNameHint p :> argTy) arr
-    $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
+    \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
 
 checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
@@ -476,7 +476,7 @@ checkULam (p, ann) body piTy = do
   checkAnn ann >>= constrainEq argTy
   buildDepEffLam (Bind $ patNameHint p :> argTy)
     ( \x -> return $ fst $ applyAbs piTy x)
-    $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
+    \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
                       checkSigma body Suggest $ snd $ applyAbs piTy x
 
 checkInstance :: Type -> [(UVar, UExpr)] -> UInferM Atom
@@ -484,7 +484,7 @@ checkInstance ty methods = case ty of
   TypeCon def@(DataDef className _ _) params -> do
     case applyDataDefParams def params of
       ClassDictDef _ superclassTys methodTys -> do
-        methods' <- liftM mkLabeledItems $ forM methods $ \((v:>()), rhs) -> do
+        methods' <- liftM mkLabeledItems $ forM methods \((v:>()), rhs) -> do
           let v' = nameToLabel v
           case lookupLabel methodTys v' of
             Nothing -> throw TypeErr (pprint v ++ " is not a method of " ++ pprint className)
@@ -492,9 +492,9 @@ checkInstance ty methods = case ty of
               rhs' <- checkSigma rhs Suggest methodTy
               return (v', rhs')
         let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
-        forM_ (reflectLabels methods') $ \(l,i) ->
+        forM_ (reflectLabels methods') \(l,i) ->
           when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
-        forM_ (reflectLabels methodTys) $ \(l,_) ->
+        forM_ (reflectLabels methodTys) \(l,_) ->
           case lookupLabel methods' l of
             Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
             Just _  -> return ()
@@ -505,7 +505,7 @@ checkInstance ty methods = case ty of
       ImplicitArrow -> return ()
       ClassArrow    -> return ()
       _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
-    buildLam b arrow $ \x@(Var v) -> do
+    buildLam b arrow \x@(Var v) -> do
       bodyTy' <- substEmbed (b@>x) bodyTy
       checkLeaks [v] $ extendR (b@>x) $ checkInstance bodyTy' methods
   _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
@@ -513,7 +513,7 @@ checkInstance ty methods = case ty of
 checkUEffRow :: EffectRow -> UInferM EffectRow
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
-   t'    <- forM t $ \tv -> lookupVarName EffKind tv
+   t'    <- forM t \tv -> lookupVarName EffKind tv
    return $ EffectRow effs' t'
    where
      lookupVarName :: Type -> Name -> UInferM Name
@@ -540,7 +540,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   (conIdx, patTys) <- checkCasePat pat scrutineeTy
   let (subPats, subPatTys) = unzip patTys
   let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
-  alt <- buildNAbs (toNest bs) $ \xs ->
+  alt <- buildNAbs (toNest bs) \xs ->
            withBindPats (zip subPats xs) $ checkRho body reqTy
   return (conIdx, alt)
 
@@ -658,7 +658,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (length ps) <> " patterns."
-    flip foldMapM (zip ps idxs) $ \(p, i) -> do
+    flip foldMapM (zip ps idxs) \(p, i) -> do
       v <- lift $ emitZonked $ App val i
       bindPat' p v
 
@@ -883,7 +883,7 @@ runSolverT m = liftM fst $ flip runCatT mempty $ do
 applyDefaults :: MonadCat SolverEnv m => m ()
 applyDefaults = do
   vs <- looks unsolved
-  forM_ (envPairs vs) $ \(v, k) -> case k of
+  forM_ (envPairs vs) \(v, k) -> case k of
     EffKind -> addSub v $ Eff Pure
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty (v@>ty)
@@ -907,8 +907,8 @@ checkLeaks tvs m = do
   unless (null $ resultTypeLeaks) $
     throw TypeErr $ "Leaked local variable `" ++ pprint (head resultTypeLeaks) ++
                     "` in result type " ++ pprint (getType ans)
-  forM_ (solverSub env) $ \ty ->
-    forM_ tvs $ \tv ->
+  forM_ (solverSub env) \ty ->
+    forM_ tvs \tv ->
       throwIf (tv `occursIn` ty) TypeErr $ "Leaked type variable: " ++ pprint tv
   extend env
   return ans

@@ -78,7 +78,7 @@ evalSourceBlock opts env block = do
     Right env' -> return (env'  , Result outs' (Right ()))
 
 runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
-runTopPassM bench opts m = runLogger (logFile opts) $ \logger ->
+runTopPassM bench opts m = runLogger (logFile opts) \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
@@ -97,7 +97,7 @@ evalSourceBlockM env block = case sbContents block of
           logTop $ HtmlOut s
     ExportFun name -> do
       f <- evalUModuleVal env v m
-      void $ traverseLiterals f $ \val -> case val of
+      void $ traverseLiterals f \val -> case val of
         PtrLit _ _ -> liftEitherIO $ throw CompilerErr $
           "Can't export functions with captured pointers (not implemented)."
         _ -> return $ Con $ Lit val
@@ -119,7 +119,7 @@ processLogs :: LogLevel -> [Output] -> [Output]
 processLogs logLevel logs = case logLevel of
   LogAll -> logs
   LogNothing -> []
-  LogPasses passes -> flip filter logs $ \l -> case l of
+  LogPasses passes -> flip filter logs \l -> case l of
                         PassInfo pass _ | pass `elem` passes -> True
                                         | otherwise          -> False
                         _ -> False
@@ -249,7 +249,7 @@ logTop x = do
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do
-  block' <- traverseLiterals block $ \val -> case val of
+  block' <- traverseLiterals block \val -> case val of
     PtrLit ty ptr -> do
       ptrName <- gets $ M.lookup (ty, ptr) . fst
       case ptrName of

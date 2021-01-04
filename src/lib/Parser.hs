@@ -383,8 +383,8 @@ funDefLet = label "function definition" $ mayBreak $ do
   let bs = map classAsBinder cs ++ argBinders
   let funTy = buildPiType bs eff ty
   let letBinder = (v, Just funTy)
-  let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
-  return $ \body -> ULet PlainLet letBinder (buildLam lamBinders body)
+  let lamBinders = flip map bs \(p,_, arr) -> ((p,Nothing), arr)
+  return \body -> ULet PlainLet letBinder (buildLam lamBinders body)
   where
     classAsBinder :: UType -> (UPat, UType, UArrow)
     classAsBinder ty = (ns underscorePat, ty, ClassArrow)
@@ -892,7 +892,7 @@ prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ label "negation" $ do
   ((), pos) <- withPos $ sym "-"
   let f = WithSrc (Just pos) "neg"
-  return $ \case
+  return \case
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)
       -> WithSrc (joinPos (Just pos) litpos) (IntLitExpr (-i))
@@ -914,7 +914,7 @@ infixArrow :: Parser (UType -> UType -> UType)
 infixArrow = do
   notFollowedBy (sym "=>")  -- table arrows have special fixity
   (arr, pos) <- withPos $ arrow effects
-  return $ \a b -> WithSrc (Just pos) $ UPi (Nothing, a) arr b
+  return \a b -> WithSrc (Just pos) $ UPi (Nothing, a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
 mkArrow arr a b = joinSrc a b $ UPi (Nothing, a) arr b
@@ -959,7 +959,7 @@ inpostfix' :: Parser a -> Parser (a -> Maybe a -> a) -> Operator Parser a
 inpostfix' p op = Postfix $ do
   f <- op
   rest <- optional p
-  return $ \x -> f x rest
+  return \x -> f x rest
 
 mkName :: String -> Name
 mkName s = Name SourceName (fromString s) 0

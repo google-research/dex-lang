@@ -88,14 +88,14 @@ compileModule moduleJIT@JIT{..} ast compilationPipeline = do
   resolver <- newSymbolResolver execSession (makeResolver compileLayer)
   modifyIORef resolvers (M.insert moduleKey resolver)
   OrcJIT.addModule compileLayer moduleKey llvmModule
-  moduleDtors <- forM dtorNames $ \dtorName -> do
+  moduleDtors <- forM dtorNames \dtorName -> do
     dtorSymbol <- OrcJIT.mangleSymbol compileLayer (fromString dtorName)
     Right (OrcJIT.JITSymbol dtorAddr _) <- OrcJIT.findSymbol compileLayer dtorSymbol False
     return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
   return NativeModule{..}
   where
     makeResolver :: OrcJIT.IRCompileLayer OrcJIT.ObjectLinkingLayer -> OrcJIT.SymbolResolver
-    makeResolver cl = OrcJIT.SymbolResolver $ \sym -> do
+    makeResolver cl = OrcJIT.SymbolResolver \sym -> do
       rsym <- OrcJIT.findSymbol cl sym False
       -- We look up functions like malloc in the current process
       -- TODO: Use JITDylibs to avoid inlining addresses as constants:
@@ -116,7 +116,7 @@ compileModule moduleJIT@JIT{..} ast compilationPipeline = do
     -- Unfortunately the JIT layers we use here don't handle the destructors properly,
     -- so we have to find and call them ourselves.
     dtorNames = do
-      let dtorStructs = flip foldMap (LLVM.AST.moduleDefinitions ast) $ \case
+      let dtorStructs = flip foldMap (LLVM.AST.moduleDefinitions ast) \case
             LLVM.AST.GlobalDefinition
               LLVM.AST.GlobalVariable{
                 name="llvm.global_dtors",

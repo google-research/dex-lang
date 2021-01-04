@@ -94,11 +94,11 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     initializeOutputStream streamFDOperand
-    argOperands <- forM (zip [0..] argTys) $ \(i, ty) ->
+    argOperands <- forM (zip [0..] argTys) \(i, ty) ->
       gep argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load
     when (toBool requiresCUDA) ensureHasCUDAContext
     results <- extendOperands (newEnv bs argOperands) $ compileBlock body
-    forM_ (zip [0..] results) $ \(i, x) ->
+    forM_ (zip [0..] results) \(i, x) ->
       gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x
     mainFun <- makeFunction (asLLVMName name)
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
@@ -607,7 +607,7 @@ compileExpr expr = case expr of
 packArgs :: [Operand] -> Compile Operand
 packArgs elems = do
   arr <- alloca (length elems) hostVoidp
-  forM_ (zip [0..] elems) $ \(i, e) -> do
+  forM_ (zip [0..] elems) \(i, e) -> do
     eptr <- alloca 1 $ L.typeOf e
     store eptr e
     earr <- gep arr $ i32Lit i
@@ -616,7 +616,7 @@ packArgs elems = do
 
 unpackArgs :: Operand -> [L.Type] -> Compile [Operand]
 unpackArgs argArrayPtr types =
-  forM (zip [0..] types) $ \(i, ty) -> do
+  forM (zip [0..] types) \(i, ty) -> do
     argVoidPtr <- gep argArrayPtr $ i64Lit i
     argPtr <- castLPtr (hostPtrTy ty) argVoidPtr
     load =<< load argPtr
@@ -624,7 +624,7 @@ unpackArgs argArrayPtr types =
 makeMultiResultAlloc :: [L.Type] -> Compile Operand
 makeMultiResultAlloc tys = do
   resultsPtr <- alloca (length tys) hostVoidp
-  forM_ (zip [0..] tys) $ \(i, ty) -> do
+  forM_ (zip [0..] tys) \(i, ty) -> do
     ptr <- alloca 1 ty >>= castVoidPtr
     resultsPtrOffset <- gep resultsPtr $ i32Lit i
     store resultsPtrOffset ptr
@@ -632,7 +632,7 @@ makeMultiResultAlloc tys = do
 
 loadMultiResultAlloc :: [L.Type] -> Operand -> Compile [Operand]
 loadMultiResultAlloc tys ptr =
-  forM (zip [0..] tys) $ \(i, ty) ->
+  forM (zip [0..] tys) \(i, ty) ->
     gep ptr (i32Lit i) >>= load >>= castLPtr ty >>= load
 
 runMCKernel :: ExternFunSpec
@@ -894,7 +894,7 @@ runCompile dev m = evalState (runReaderT m env) initState
     initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnv -> Compile a -> Compile a
-extendOperands openv = local $ \env -> env { operandEnv = (operandEnv env) <> openv }
+extendOperands openv = local \env -> env { operandEnv = (operandEnv env) <> openv }
 
 lookupImpVar :: IVar -> Compile Operand
 lookupImpVar v = asks ((! v) . operandEnv)
@@ -912,7 +912,7 @@ freshName :: Name -> Compile L.Name
 freshName v = do
   used <- gets usedNames
   let v' = genFresh v used
-  modify $ \s -> s { usedNames = used <> v' @> () }
+  modify \s -> s { usedNames = used <> v' @> () }
   return $ nameToLName v'
   where
     nameToLName :: Name -> L.Name

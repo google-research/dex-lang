@@ -164,7 +164,7 @@ buildLam b arr body = buildDepEffLam b (const (return arr)) body
 
 buildDepEffLam :: MonadEmbed m
                => Binder -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
-buildDepEffLam b fArr fBody = liftM fst $ buildLamAux b fArr $ \x -> (,()) <$> fBody x
+buildDepEffLam b fArr fBody = liftM fst $ buildLamAux b fArr \x -> (,()) <$> fBody x
 
 buildLamAux :: MonadEmbed m
             => Binder -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
@@ -180,7 +180,7 @@ buildLamAux b fArr fBody = do
   return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
 
 buildNAbs :: MonadEmbed m => Nest Binder -> ([Atom] -> m Atom) -> m Alt
-buildNAbs bs body = liftM fst $ buildNAbsAux bs $ \xs -> (,()) <$> body xs
+buildNAbs bs body = liftM fst $ buildNAbsAux bs \xs -> (,()) <$> body xs
 
 buildNAbsAux :: MonadEmbed m => Nest Binder -> ([Atom] -> m (Atom, a)) -> m (Alt, a)
 buildNAbsAux bs body = do
@@ -202,9 +202,9 @@ buildDataDef tyConName paramBinders body = do
 buildImplicitNaryLam :: MonadEmbed m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
 buildImplicitNaryLam Empty body = body []
 buildImplicitNaryLam (Nest b bs) body =
-  buildLam b ImplicitArrow $ \x -> do
+  buildLam b ImplicitArrow \x -> do
     bs' <- substEmbed (b@>x) bs
-    buildImplicitNaryLam bs' $ \xs -> body $ x:xs
+    buildImplicitNaryLam bs' \xs -> body $ x:xs
 
 recGet :: Label -> Atom -> Atom
 recGet l x = do
@@ -383,14 +383,14 @@ unpackConsList xs = case getType xs of
 emitWhile :: MonadEmbed m => m Atom -> m ()
 emitWhile body = do
   eff <- getAllowedEffects
-  lam <- buildLam (Ignore UnitTy) (PlainArrow eff) $ \_ -> body
+  lam <- buildLam (Ignore UnitTy) (PlainArrow eff) \_ -> body
   void $ emit $ Hof $ While lam
 
 emitMaybeCase :: MonadEmbed m => Atom -> m Atom -> (Atom -> m Atom) -> m Atom
 emitMaybeCase scrut nothingCase justCase = do
   let (MaybeTy a) = getType scrut
-  nothingAlt <- buildNAbs Empty                        $ \[]  -> nothingCase
-  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) $ \[x] -> justCase x
+  nothingAlt <- buildNAbs Empty                        \[]  -> nothingCase
+  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) \[x] -> justCase x
   let (Abs _ nothingBody) = nothingAlt
   let resultTy = getType nothingBody
   emit $ Case scrut [nothingAlt, justAlt] resultTy
@@ -410,7 +410,7 @@ emitRunState v x0 body = do
 mkBinaryEffFun :: MonadEmbed m => RWS -> Name -> Type -> (Atom -> m Atom) -> m Atom
 mkBinaryEffFun rws v ty body = do
   eff <- getAllowedEffects
-  buildLam (Bind ("h":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
+  buildLam (Bind ("h":>TyKind)) PureArrow \r@(Var (rName:>_)) -> do
     let arr = PlainArrow $ extendEffect (RWSEffect rws rName) eff
     buildLam (Bind (v:> RefTy r ty)) arr body
 
@@ -434,16 +434,16 @@ buildFor = buildForAnn . RegularFor
 buildNestedLam :: MonadEmbed m => Arrow -> [Binder] -> ([Atom] -> m Atom) -> m Atom
 buildNestedLam _ [] f = f []
 buildNestedLam arr (b:bs) f =
-  buildLam b arr $ \x -> buildNestedLam arr bs $ \xs -> f (x:xs)
+  buildLam b arr \x -> buildNestedLam arr bs \xs -> f (x:xs)
 
 tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
 tabGet x i = emit $ App x i
 
 unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
-  fsts <- buildLam (Bind ("i":>binderType v)) TabArrow $ \i ->
+  fsts <- buildLam (Bind ("i":>binderType v)) TabArrow \i ->
             liftM fst $ app tab i >>= fromPair
-  snds <- buildLam (Bind ("i":>binderType v)) TabArrow $ \i ->
+  snds <- buildLam (Bind ("i":>binderType v)) TabArrow \i ->
             liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
   where TabTy v _ = getType tab
@@ -509,9 +509,9 @@ instance Monad m => MonadEmbed (EmbedT m) where
 instance MonadEmbed m => MonadEmbed (ReaderT r m) where
   embedLook = lift embedLook
   embedExtend x = lift $ embedExtend x
-  embedScoped m = ReaderT $ \r -> embedScoped $ runReaderT m r
+  embedScoped m = ReaderT \r -> embedScoped $ runReaderT m r
   embedAsk = lift embedAsk
-  embedLocal v m = ReaderT $ \r -> embedLocal v $ runReaderT m r
+  embedLocal v m = ReaderT \r -> embedLocal v $ runReaderT m r
 
 instance MonadEmbed m => MonadEmbed (StateT s m) where
   embedLook = lift embedLook
@@ -710,7 +710,7 @@ traverseExpr def@(_, _, fAtom) expr = case expr of
   where
     traverseAlt (Abs bs body) = do
       bs' <- mapM (mapM fAtom) bs
-      buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
+      buildNAbs bs' \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
 traverseAtom :: forall m . (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
@@ -747,7 +747,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
   BoxedRef b ptr size body -> do
     ptr'  <- fAtom ptr
     size' <- buildScoped $ evalBlockE def size
-    Abs b' (decls, body') <- buildAbs b $ \x ->
+    Abs b' (decls, body') <- buildAbs b \x ->
       extendR (b@>x) $ evalBlockE def (Block Empty $ Atom body)
     case decls of
       Empty -> return $ BoxedRef b' ptr' size' body'
@@ -765,7 +765,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
 
     traverseAAlt (Abs bs a) = do
       bs' <- mapM (mapM fAtom) bs
-      (Abs bs'' b) <- buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ fAtom a
+      (Abs bs'' b) <- buildNAbs bs' \xs -> extendR (newEnv bs' xs) $ fAtom a
       case b of
         Block Empty (Atom r) -> return $ Abs bs'' r
         _                    -> error "ACase alternative traversal has emitted decls or exprs!"
@@ -842,7 +842,7 @@ indexToIntE idx = case getType idx of
     (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
     -- Build and apply a case expression
     alts <- flip mapM (zip (toList offsets) (toList types)) $
-      \(offset, subty) -> buildNAbs (toNest [Ignore subty]) $ \[subix] -> do
+      \(offset, subty) -> buildNAbs (toNest [Ignore subty]) \[subix] -> do
         i <- indexToIntE subix
         iadd offset i
     emit $ Case idx alts IdxRepTy

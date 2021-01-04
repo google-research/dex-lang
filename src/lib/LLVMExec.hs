@@ -72,9 +72,9 @@ type DexExitCode = Int
 compileAndEval :: Logger [Output] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndEval logger ast fname args resultTypes = do
-  withPipeToLogger logger $ \fd ->
-    allocaBytes (length args * cellSize) $ \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+  withPipeToLogger logger \fd ->
+    allocaBytes (length args * cellSize) \argsPtr ->
+      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
         storeLitVals argsPtr args
         evalTime <- compileOneOff logger ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
@@ -84,11 +84,11 @@ compileAndEval logger ast fname args resultTypes = do
 compileAndBench :: Bool -> Logger [Output] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
-  withPipeToLogger logger $ \fd ->
-    allocaBytes (length args * cellSize) $ \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) $ \resultPtr -> do
+  withPipeToLogger logger \fd ->
+    allocaBytes (length args * cellSize) \argsPtr ->
+      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff logger ast fname $ \fPtr -> do
+        compileOneOff logger ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -112,7 +112,7 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
 withPipeToLogger :: Logger [Output] -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
   result <- snd <$> withPipe
-    (\h -> readStream h $ \s -> logThis logger [TextOut s])
+    (\h -> readStream h \s -> logThis logger [TextOut s])
     (\h -> handleToFd h >>= writeAction)
   case result of
     Left e -> E.throw e
@@ -129,9 +129,9 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
 
 compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
 compileOneOff logger ast name f = do
-  withHostTargetMachine $ \tm ->
-    withJIT tm $ \jit ->
-      withNativeModule jit ast (standardCompilationPipeline logger [name] tm) $ \compiled ->
+  withHostTargetMachine \tm ->
+    withJIT tm \jit ->
+      withNativeModule jit ast (standardCompilationPipeline logger [name] tm) \compiled ->
         f =<< getFunctionPtr compiled name
 
 standardCompilationPipeline :: Logger [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
@@ -151,12 +151,12 @@ standardCompilationPipeline logger exports tm m = do
 -- Each module comes with a list of exported functions
 exportObjectFile :: FilePath -> [(L.Module, [String])] -> IO ()
 exportObjectFile objFile modules = do
-  withContext $ \c -> do
-    withHostTargetMachine $ \tm ->
-      withBrackets (fmap (toLLVM c) modules) $ \mods -> do
-        Mod.withModuleFromAST c L.defaultModule $ \exportMod -> do
+  withContext \c -> do
+    withHostTargetMachine \tm ->
+      withBrackets (fmap (toLLVM c) modules) \mods -> do
+        Mod.withModuleFromAST c L.defaultModule \exportMod -> do
           void $ foldM linkModules exportMod mods
-          execLogger Nothing $ \logger ->
+          execLogger Nothing \logger ->
             standardCompilationPipeline logger allExports tm exportMod
           Mod.writeObjectToFile tm (Mod.File objFile) exportMod
   where
@@ -164,14 +164,14 @@ exportObjectFile objFile modules = do
 
     toLLVM :: Context -> (L.Module, [String]) -> (Mod.Module -> IO a) -> IO a
     toLLVM c (ast, exports) cont = do
-      Mod.withModuleFromAST c ast $ \m -> internalize exports m >> cont m
+      Mod.withModuleFromAST c ast \m -> internalize exports m >> cont m
 
     linkModules a b = a <$ Mod.linkModules a b
 
     withBrackets :: [(a -> IO b) -> IO b] -> ([a] -> IO b) -> IO b
     withBrackets brackets f = go brackets []
       where
-        go (h:t) args = h $ \arg -> go t (arg:args)
+        go (h:t) args = h \arg -> go t (arg:args)
         go []    args = f args
 
 
@@ -179,12 +179,12 @@ exportObjectFile objFile modules = do
 
 runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
 runDefaultPasses t m = do
-  P.withPassManager defaultPasses $ \pm -> void $ P.runPassManager pm m
+  P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
   -- We are highly dependent on LLVM when it comes to some optimizations such as
   -- turning a sequence of scalar stores into a vector store, so we execute some
   -- extra passes to make sure they get simplified correctly.
   runPasses extraPasses (Just t) m
-  P.withPassManager defaultPasses $ \pm -> void $ P.runPassManager pm m
+  P.withPassManager defaultPasses \pm -> void $ P.runPassManager pm m
   where
     defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
     extraPasses = [ P.SuperwordLevelParallelismVectorize
@@ -196,7 +196,7 @@ runPasses passes mt m = do
          Just t  -> Just <$> T.getTargetMachineDataLayout t
          Nothing -> return Nothing
   let passSpec = P.PassSetSpec passes dl Nothing mt
-  P.withPassManager passSpec $ \pm -> void $ P.runPassManager pm m
+  P.withPassManager passSpec \pm -> void $ P.runPassManager pm m
 
 internalize :: [String] -> Mod.Module -> IO ()
 internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeElimination] Nothing m
@@ -219,7 +219,7 @@ withHostTargetMachine f =
 withGPUTargetMachine :: B.ByteString -> (T.TargetMachine -> IO a) -> IO a
 withGPUTargetMachine computeCapability next = do
   (tripleTarget, _) <- T.lookupTarget Nothing ptxTargetTriple
-  T.withTargetOptions $ \topt ->
+  T.withTargetOptions \topt ->
     T.withTargetMachine
       tripleTarget
       ptxTargetTriple
@@ -241,8 +241,8 @@ showAsm :: T.TargetMachine -> Mod.Module -> IO String
 showAsm t m' = do
   ctx <- Mod.moduleContext m'
   -- Uncomment this to dump assembly to a file that can be linked to a C benchmark suite:
-  -- withModuleClone ctx m' $ \m -> Mod.writeObjectToFile t (Mod.File "asm.o") m
-  withModuleClone ctx m' $ \m -> unpack <$> Mod.moduleTargetAssembly t m
+  -- withModuleClone ctx m' \m -> Mod.writeObjectToFile t (Mod.File "asm.o") m
+  withModuleClone ctx m' \m -> unpack <$> Mod.moduleTargetAssembly t m
 
 withModuleClone :: Context -> Mod.Module -> (Mod.Module -> IO a) -> IO a
 withModuleClone ctx m f = do
@@ -291,8 +291,8 @@ ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
 {-# NOINLINE dexrtAST #-}
 dexrtAST :: L.Module
 dexrtAST = unsafePerformIO $ do
-  withContext $ \ctx -> do
-    Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) $ \m ->
+  withContext \ctx -> do
+    Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) \m ->
       stripFunctionAnnotations <$> Mod.moduleAST m
   where
     -- We strip the function annotations for dexrt functions, because clang
@@ -313,7 +313,7 @@ linkDexrt m = do
   targetTriple <- Mod.getTargetTriple =<< Mod.readModule m
   let dexrtTargetAST = dexrtAST { L.moduleDataLayout = dataLayout
                                 , L.moduleTargetTriple = targetTriple }
-  Mod.withModuleFromAST ctx dexrtTargetAST $ \dexrtm -> do
+  Mod.withModuleFromAST ctx dexrtTargetAST \dexrtm -> do
     Mod.linkModules m dexrtm
     runPasses [P.AlwaysInline True] Nothing m
 
@@ -325,21 +325,21 @@ data LLVMKernel = LLVMKernel L.Module
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) = do
   T.initializeAllTargets
-  withContext $ \ctx ->
-    Mod.withModuleFromAST ctx ast $ \m -> do
-      withGPUTargetMachine (pack arch) $ \tm -> do
+  withContext \ctx ->
+    Mod.withModuleFromAST ctx ast \m -> do
+      withGPUTargetMachine (pack arch) \tm -> do
         linkLibdevice m
         standardCompilationPipeline logger ["kernel"] tm m
         ptx <- Mod.moduleTargetAssembly tm m
         usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
           then do
-            withSystemTempFile "kernel.ptx" $ \ptxPath ptxH -> do
+            withSystemTempFile "kernel.ptx" \ptxPath ptxH -> do
               B.hPut ptxH ptx
               hClose ptxH
-              withSystemTempFile "kernel.sass" $ \sassPath sassH -> do
+              withSystemTempFile "kernel.sass" \sassPath sassH -> do
                 let cmd = proc ptxasPath [ptxPath, "-o", sassPath, "-arch=" ++ arch, "-O3"]
-                withCreateProcess cmd $ \_ _ _ ptxas -> do
+                withCreateProcess cmd \_ _ _ ptxas -> do
                   code <- waitForProcess ptxas
                   case code of
                     ExitSuccess   -> return ()
@@ -354,7 +354,7 @@ compileCUDAKernel logger (LLVMKernel ast) = do
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module
 libdevice = unsafePerformIO $ do
-  withContext $ \ctx -> do
+  withContext \ctx -> do
     let libdeviceDirectory = "/usr/local/cuda/nvvm/libdevice"
     [libdeviceFileName] <- listDirectory libdeviceDirectory
     let libdevicePath = libdeviceDirectory ++ "/" ++ libdeviceFileName
@@ -367,8 +367,8 @@ libdevice = unsafePerformIO $ do
 linkLibdevice :: Mod.Module -> IO ()
 linkLibdevice m = do
   ctx <- Mod.moduleContext m
-  Mod.withModuleFromAST ctx zeroNVVMReflect $ \reflectm ->
-    Mod.withModuleFromAST ctx libdevice $ \ldm -> do
+  Mod.withModuleFromAST ctx zeroNVVMReflect \reflectm ->
+    Mod.withModuleFromAST ctx libdevice \ldm -> do
       Mod.linkModules m ldm
       Mod.linkModules m reflectm
       runPasses [P.AlwaysInline True] Nothing m
