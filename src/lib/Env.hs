@@ -39,6 +39,7 @@ data NameSpace =
      | InferenceName
      | SumName
      | FFIName
+     | TypeClassGenName   -- names generated for type class dictionaries
      | AbstractedPtrName  -- used in `abstractPtrLiterals` in Imp lowering
      | TopFunctionName    -- top-level Imp functions
      | AllocPtrName       -- used for constructing dests in Imp lowering
@@ -163,6 +164,7 @@ env ! v = case envLookup env v of
 isGlobal :: VarP ann -> Bool
 isGlobal (GlobalName _ :> _) = True
 isGlobal (GlobalArrayName _ :> _) = True
+isGlobal (Name TypeClassGenName _ _ :> _) = True
 isGlobal _ = False
 
 isGlobalBinder :: BinderP ann -> Bool

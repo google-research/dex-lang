@@ -17,7 +17,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               app,
               add, mul, sub, neg, div',
               iadd, imul, isub, idiv, ilt, ieq,
-              fpow, flog, fLitLike,
+              fpow, flog, fLitLike, recGet, buildImplicitNaryLam,
               select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, getFstRef, getSndRef,
               naryApp, appReduce, appTryReduce, buildAbs,
@@ -25,7 +25,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, unpackConsList, emitRunWriter, applyPreludeFunction,
-              emitRunState,  emitMaybeCase, emitWhile,
+              emitRunState,  emitMaybeCase, emitWhile, buildDataDef,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
               evalBlockE, substTraversalDef,
@@ -42,6 +42,8 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
+import Data.List (elemIndex)
+import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Tuple (swap)
 import GHC.Stack
@@ -187,6 +189,28 @@ buildNAbsAux bs body = do
      result <- body $ map Var $ toList vs
      return (fmap Bind vs, result)
   return (Abs bs' $ wrapDecls decls ans, aux)
+
+buildDataDef :: MonadEmbed m
+             => Name -> Nest Binder -> ([Atom] -> m [DataConDef]) -> m DataDef
+buildDataDef tyConName paramBinders body = do
+  ((paramBinders', dataDefs), _) <- scopedDecls $ do
+     vs <- freshNestedBinders paramBinders
+     result <- body $ map Var $ toList vs
+     return (fmap Bind vs, result)
+  return $ DataDef tyConName paramBinders' dataDefs
+
+buildImplicitNaryLam :: MonadEmbed m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
+buildImplicitNaryLam Empty body = body []
+buildImplicitNaryLam (Nest b bs) body =
+  buildLam b ImplicitArrow $ \x -> do
+    bs' <- substEmbed (b@>x) bs
+    buildImplicitNaryLam bs' $ \xs -> body $ x:xs
+
+recGet :: Label -> Atom -> Atom
+recGet l x = do
+  let (RecordTy (Ext r _)) = getType x
+  let i = fromJust $ elemIndex l $ map fst $ toList $ reflectLabels r
+  getProjection [i] x
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do

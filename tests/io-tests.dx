@@ -38,7 +38,7 @@ unsafeIO \().
 > 9 is odd
 > [(), (), (), (), (), (), (), (), (), ()]
 
-:p storageSize (typeVehicle Int)
+:p storageSize Int
 > 4
 
 :p unsafeIO \().

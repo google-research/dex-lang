@@ -321,8 +321,7 @@ unpackTopPat letAnn pat expr = do
   bindings <- bindPat pat atom
   void $ flip traverseNames bindings $ \name val -> do
     let name' = asGlobal name
-    scope <- getScope
-    when (name' `isin` scope) $ throw RepeatedVarErr $ pprint $ name'
+    checkNotInScope name'
     emitTo name' letAnn $ Atom val
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
@@ -343,29 +342,116 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
     else bindPat p val
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
-  scope <- getScope
-  when (tc' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName tc'
-  let paramVars = map (\(Bind v) -> v) $ toList paramBs  -- TODO: refresh things properly
-  (dcs', _) <- embedScoped $
-    extendR (newEnv paramBs (map Var paramVars)) $ do
-      extendScope (foldMap boundVars paramBs)
-      mapM inferUConDef dcs
-  let dataDef = DataDef tc' paramBs $ map (uncurry DataConDef) dcs'
-  let tyConTy = getType $ TypeCon dataDef []
-  extendScope $ tc' @> (tyConTy, DataBoundTypeCon dataDef)
-  forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
-    -- Retrieving scope at every step to avoid duplicate constructor names
-    scope' <- getScope
-    when (dc `isin` scope') $ throw RepeatedVarErr $ pprint $ getName dc
-    let ty = getType $ DataCon dataDef [] i []
-    extendScope $ dc @> (ty, DataBoundDataCon dataDef i)
+  dataDef <- buildDataDef tc' paramBs $ \params -> do
+    extendR (newEnv paramBs params) $ forM dcs $ \dc ->
+      uncurry DataConDef <$> inferUConDef dc
+  checkDataDefShadows dataDef
+  emitConstructors dataDef
   return mempty
-inferUDecl False (UData _ _) = error "data definitions should be top-level"
+inferUDecl True (UInterface superclasses tc methods) = do
+  (tc', paramBs) <- inferUConDef tc
+  dataDef <- buildDataDef tc' paramBs $ \params -> do
+    extendR (newEnv paramBs params) $ do
+      conName <- freshClassGenName
+      superclasses' <- mkLabeledItems <$> mapM mkSuperclass superclasses
+      methods'      <- mkLabeledItems <$> mapM mkMethod     methods
+      return $ ClassDictDef conName superclasses' methods'
+  checkDataDefShadows dataDef
+  emitConstructors      dataDef
+  emitSuperclassGetters dataDef
+  emitMethodGetters     dataDef
+  return mempty
+inferUDecl True (UInstance instanceTy methods) = do
+   ty <- checkUType instanceTy
+   instanceDict <- checkInstance ty methods
+   let instanceName = Name TypeClassGenName "instance" 0
+   void $ emitTo instanceName InstanceLet $ Atom instanceDict
+   return mempty
+inferUDecl False (UData      _ _  ) = error "data definitions should be top-level"
+inferUDecl False (UInterface _ _ _) = error "interface definitions should be top-level"
+inferUDecl False (UInstance  _ _  ) = error "instance definitions should be top-level"
+
+freshClassGenName :: MonadEmbed m => m Name
+freshClassGenName = do
+  scope <- getScope
+  let v' = genFresh (Name TypeClassGenName "classgen" 0) scope
+  embedExtend $ asFst $ v' @> (UnitTy, UnknownBinder)
+  return v'
+
+mkMethod :: UAnnBinder -> UInferM (Label, Type)
+mkMethod (Ignore _) = error "Methods must have names"
+mkMethod (Bind (v:>ty)) = do
+  ty' <- checkUType ty
+  return (nameToLabel v, ty')
+
+mkSuperclass :: UType -> UInferM (Label, Type)
+mkSuperclass ty = do
+  ty' <- checkUType ty
+  -- TODO: think about the scope of these names
+  l <- freshClassGenName
+  return (nameToLabel l, ty')
+
+-- TODO: just make Name and Label the same thing
+nameToLabel :: Name -> Label
+nameToLabel = pprint
+
+mkLabeledItems :: [(Label, a)] -> LabeledItems a
+mkLabeledItems items = foldMap (uncurry labeledSingleton) items
+
+emitConstructors :: DataDef -> UInferM ()
+emitConstructors def@(DataDef tyConName _ dataConDefs) = do
+  let tyConTy = getType $ TypeCon def []
+  checkNotInScope tyConName
+  extendScope $ tyConName @> (tyConTy, DataBoundTypeCon def)
+  forM_ (zip [0..] dataConDefs) $ \(i, DataConDef dataConName _) -> do
+    let dataConTy = getType $ DataCon def [] i []
+    checkNotInScope dataConName
+    extendScope $ dataConName @> (dataConTy, DataBoundDataCon def i)
+
+emitMethodGetters :: DataDef -> UInferM ()
+emitMethodGetters def@(DataDef _ paramBs (ClassDictDef _ _ methodTys)) = do
+  forM_ (getLabels methodTys) $ \l -> do
+    f <- buildImplicitNaryLam paramBs $ \params -> do
+      buildLam (Bind ("d":> TypeCon def params)) ClassArrow $ \dict -> do
+        return $ recGet l $ getProjection [1] dict
+    let methodName = GlobalName $ fromString l
+    checkNotInScope methodName
+    emitTo methodName PlainLet $ Atom f
+emitMethodGetters (DataDef _ _ _) = error "Not a class dictionary"
+
+emitSuperclassGetters :: MonadEmbed m => DataDef -> m ()
+emitSuperclassGetters def@(DataDef _ paramBs (ClassDictDef _ superclassTys _)) = do
+  forM_ (getLabels superclassTys) $ \l -> do
+    f <- buildImplicitNaryLam paramBs $ \params -> do
+      buildLam (Bind ("d":> TypeCon def params)) PureArrow $ \dict -> do
+        return $ recGet l $ getProjection [0] dict
+    getterName <- freshClassGenName
+    emitTo getterName SuperclassLet $ Atom f
+emitSuperclassGetter (DataDef _ _ _) = error "Not a class dictionary"
+
+checkNotInScope :: Name -> UInferM ()
+checkNotInScope v = do
+  scope <- getScope
+  when (v `isin` scope) $ throw RepeatedVarErr $ pprint v
+
+checkDataDefShadows :: DataDef -> UInferM ()
+checkDataDefShadows (DataDef tc _ dataCons) = do
+  checkShadows $ tc:dcs
+  where dcs = [dc | DataConDef dc _ <- dataCons]
+
+checkShadows :: [Name] -> UInferM ()
+checkShadows vs = do
+  mapM_ checkNotInScope vs
+  case repeated vs of
+    [] -> return ()
+    (v:_) -> throw RepeatedVarErr $ pprint v
 
 inferUConDef :: UConDef -> UInferM (Name, Nest Binder)
 inferUConDef (UConDef v bs) = do
   (bs', _) <- embedScoped $ checkNestedBinders bs
-  return (asGlobal  v, bs')
+  let v' = asGlobal v
+  checkNotInScope v'
+  return (v', bs')
 
 checkNestedBinders :: Nest UAnnBinder -> UInferM (Nest Binder)
 checkNestedBinders Empty = return Empty
@@ -392,6 +478,37 @@ checkULam (p, ann) body piTy = do
     ( \x -> return $ fst $ applyAbs piTy x)
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
                       checkSigma body Suggest $ snd $ applyAbs piTy x
+
+checkInstance :: Type -> [(UVar, UExpr)] -> UInferM Atom
+checkInstance ty methods = case ty of
+  TypeCon def@(DataDef className _ _) params -> do
+    case applyDataDefParams def params of
+      ClassDictDef _ superclassTys methodTys -> do
+        methods' <- liftM mkLabeledItems $ forM methods $ \((v:>()), rhs) -> do
+          let v' = nameToLabel v
+          case lookupLabel methodTys v' of
+            Nothing -> throw TypeErr (pprint v ++ " is not a method of " ++ pprint className)
+            Just methodTy -> do
+              rhs' <- checkSigma rhs Suggest methodTy
+              return (v', rhs')
+        let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
+        forM_ (reflectLabels methods') $ \(l,i) ->
+          when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
+        forM_ (reflectLabels methodTys) $ \(l,_) ->
+          case lookupLabel methods' l of
+            Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
+            Just _  -> return ()
+        return $ ClassDictCon def params superclassHoles methods'
+      _ -> throw TypeErr $ "Not a valid instance: " ++ pprint ty
+  Pi (Abs b (arrow, bodyTy)) -> do
+    case arrow of
+      ImplicitArrow -> return ()
+      ClassArrow    -> return ()
+      _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
+    buildLam b arrow $ \x@(Var v) -> do
+      bodyTy' <- substEmbed (b@>x) bodyTy
+      checkLeaks [v] $ extendR (b@>x) $ checkInstance bodyTy' methods
+  _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
 
 checkUEffRow :: EffectRow -> UInferM EffectRow
 checkUEffRow (EffectRow effs t) = do

@@ -1,38 +1,43 @@
-interface InterfaceTest1 a:Type where
+
+
+interface InterfaceTest1 a
   InterfaceTest1 : a
 > Error: variable already defined: InterfaceTest1
 
-interface InterfaceTest2 typeName:Type where
-  typeName : typeName -> typeName
+interface InterfaceTest3 a
+  foo : a -> Int
+  foo : a -> Int
+> Error: variable already defined: foo
 
-interface InterfaceTest3 _:Type where
-  foo : Int32
-
-> Parse error:8:26:
->   |
-> 8 | interface InterfaceTest3 _:Type where
->   |                          ^^^^^
-> unexpected "_:Typ"
-> expecting "where" or named annoted binder
-interface InterfaceTest4 where
+interface InterfaceTest4 a
   foo : Int
+  bar : a -> Int
 
-instance instanceTest4 : InterfaceTest4 where
+instance InterfaceTest4 Float
   foo = 1
-
-instance instanceTest4 : InterfaceTest4 x -> InterfaceTest4 (n=>a) where
+  bar = \_. 1
   foo = 1
+> Type error:Duplicate method: foo
 
-> Parse error:23:68:
->    |
-> 23 | instance instanceTest4 : InterfaceTest4 x -> InterfaceTest4 (n=>a) where
->    |                                                                    ^
-> Met invalid arrow '->' in type annotation of instance. Only class arrows and implicit arrows are allowed.
-instance instanceTest5 : (..i) where
-  bar = bar
+instance InterfaceTest4 Float
+  foo = 1
+> Type error:Missing method: bar
 
-> Parse error:31:32:
->    |
-> 31 | instance instanceTest5 : (..i) where
->    |                                ^
-> Could not extract interface name from type annotation.
+instance InterfaceTest4 Float
+  baz = 1
+> Type error:baz is not a method of InterfaceTest4
+
+instance InterfaceTest4 Float
+  foo = 1
+  bar = \_. 'x'
+> Type error:
+> Expected: Int32
+>   Actual: Word8
+>
+>   bar = \_. 'x'
+>             ^^^
+
+instance InterfaceTest4 Float
+  foo = 1
+  bar = \_. 1
+
