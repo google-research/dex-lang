@@ -21,8 +21,10 @@ or these example programs:
   * [Basis function regression](https://google-research.github.io/dex-lang/examples/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/examples/brownian_motion.html)
 
-⚠️ Dex is an experimental research project at an early stage of
-development. Expect monstrous bugs and razor-sharp edges. Contributions welcome! ⚠️
+🚨 **Dex is an experimental research project at an early stage of
+development. Expect monstrous bugs and razor-sharp edges!**
+
+🤝 **Contributions welcome!** See our issue tracker for [good first issues](https://github.com/google-research/dex-lang/labels/good%20first%20issue), or browse by [tematic labels](https://github.com/google-research/dex-lang/labels).
 
 ## Dependencies
 
@@ -31,6 +33,9 @@ development. Expect monstrous bugs and razor-sharp edges. Contributions welcome!
     * Ubuntu/Debian: `apt-get install llvm-9-dev`
     * macOS: `brew install llvm@9`
       * Make sure `llvm@9` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@9)/bin:$PATH"`
+  * Install clang (may be installed together with llvm)
+    * Ubuntu/Debian: `apt-get install clang`
+    * macOS: installs with llvm
   * Install libpng (often included by default in *nix platforms)
     * Ubuntu/Debian: `apt-get install libpng-dev`
     * macOS: `brew install libpng`
