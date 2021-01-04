@@ -74,7 +74,7 @@ instance Checkable Module where
   checkValid m@(Module ir decls bindings) =
     addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
       let env = freeVars m
-      forM_ (envNames env) $ \v -> when (not $ isGlobal $ v:>()) $
+      forM_ (envNames env) \v -> when (not $ isGlobal $ v:>()) $
         throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
@@ -152,7 +152,7 @@ instance HasType Atom where
     ACase e alts resultTy -> checkCase e alts resultTy
     DataConRef ~def@(DataDef _ paramBs [DataConDef _ argBs]) params args -> do
       checkEq (length paramBs) (length params)
-      forM_ (zip (toList paramBs) (toList params)) $ \(b, param) ->
+      forM_ (zip (toList paramBs) (toList params)) \(b, param) ->
         param |: binderAnn b
       let argBs' = applyNaryAbs (Abs paramBs argBs) params
       checkDataConRefBindings argBs' args
@@ -203,7 +203,7 @@ typeCheckVar v@(name:>annTy) = do
   annTy |: TyKind
   when (annTy == EffKind) $
     throw CompilerErr "Effect variables should only occur in effect rows"
-  checkWithEnv $ \(env, _) -> case envLookup env v of
+  checkWithEnv \(env, _) -> case envLookup env v of
     Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
     Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
   return annTy
@@ -227,19 +227,19 @@ instance HasType Expr where
 
 checkCase :: HasType b => Atom -> [AltP b] -> Type -> TypeM Type
 checkCase e alts resultTy = do
-  checkWithEnv $ \_ -> do
+  checkWithEnv \_ -> do
     ety <- typeCheck e
     case ety of
       TypeCon def params -> do
         let cons = applyDataDefParams def params
         checkEq  (length cons) (length alts)
-        forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
+        forM_ (zip cons alts) \((DataConDef _ bs'), (Abs bs body)) -> do
           checkEq bs' bs
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
       VariantTy (NoExt types) -> do
         checkEq (length types) (length alts)
-        forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
+        forM_ (zip (toList types) alts) \(ty, (Abs bs body)) -> do
           [b] <- pure $ toList bs
           checkEq (getType b) ty
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
@@ -319,7 +319,7 @@ instance HasType Block where
 
 instance HasType Binder where
   typeCheck b = do
-    checkWithEnv $ \(env, _) -> checkNoShadow env b
+    checkWithEnv \(env, _) -> checkNoShadow env b
     let ty = binderType b
     ty |: TyKind
     return ty
@@ -344,7 +344,7 @@ infixr 7 |:
   checkEq reqTy ty
 
 checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
-checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
+checkEq reqTy ty = checkWithEnv \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
 withBinder b m = typeCheck b >> extendTypeEnv (boundVars b) m
@@ -407,7 +407,7 @@ instance CoreVariant Expr where
     Hof e   -> checkVariant e >> forM_ e checkVariant
     Case e alts _ -> do
       checkVariant e
-      forM_ alts $ \(Abs _ body) -> checkVariant body
+      forM_ alts \(Abs _ body) -> checkVariant body
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
@@ -470,7 +470,7 @@ goneBy ir = do
   when (curIR >= ir) $ throw IRVariantErr $ "shouldn't appear after " ++ show ir
 
 addExpr :: (Pretty e, MonadError Err m) => e -> m a -> m a
-addExpr x m = modifyErr m $ \e -> case e of
+addExpr x m = modifyErr m \e -> case e of
   Err IRVariantErr ctx s -> Err CompilerErr ctx (s ++ ": " ++ pprint x)
   _ -> e
 
@@ -478,11 +478,11 @@ addExpr x m = modifyErr m $ \e -> case e of
 
 checkEffRow :: EffectRow -> TypeM ()
 checkEffRow (EffectRow effs effTail) = do
-  forM_ effs $ \eff -> case eff of
+  forM_ effs \eff -> case eff of
     RWSEffect _ v -> Var (v:>TyKind) |: TyKind
     ExceptionEffect -> return ()
-  forM_ effTail $ \v -> do
-    checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
+  forM_ effTail \v -> do
+    checkWithEnv \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       Just (ty, _) -> assertEq EffKind ty "Effect var"
 
@@ -490,7 +490,7 @@ declareEff :: Effect -> TypeM ()
 declareEff eff = declareEffs $ oneEffect eff
 
 declareEffs :: EffectRow -> TypeM ()
-declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
+declareEffs effs = checkWithEnv \(_, allowedEffects) ->
   checkExtends allowedEffects effs
 
 checkExtends :: MonadError Err m => EffectRow -> EffectRow -> m ()
@@ -499,7 +499,7 @@ checkExtends allowed (EffectRow effs effTail) = do
   case effTail of
     Just _ -> assertEq allowedEffTail effTail ""
     Nothing -> return ()
-  forM_ effs $ \eff -> unless (eff `elem` allowedEffs) $
+  forM_ effs \eff -> unless (eff `elem` allowedEffs) $
     throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
                       "\nAllowed: " ++ pprint allowed
 
@@ -517,8 +517,8 @@ ioEffect = RWSEffect State theWorld
 checkLabeledRow :: ExtLabeledItems Type Name -> TypeM ()
 checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
-  forM_ rest $ \v -> do
-    checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
+  forM_ rest \v -> do
+    checkWithEnv \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       Just (ty, _) -> assertEq LabeledRowKind ty "Labeled row var"
 
@@ -528,7 +528,7 @@ labeledRowDifference :: ExtLabeledItems Type Name
 labeledRowDifference (Ext (LabeledItems items) rest)
                      (Ext (LabeledItems subitems) subrest) = do
   -- Check types in the right.
-  _ <- flip M.traverseWithKey subitems $ \label subtypes ->
+  _ <- flip M.traverseWithKey subitems \label subtypes ->
     case M.lookup label items of
       Just types -> assertEq subtypes
           (NE.fromList $ NE.take (length subtypes) types) $
@@ -556,7 +556,7 @@ checkWithEnv check = do
     CheckWith env -> check env
 
 updateTypeEnv :: (TypeEnv -> TypeEnv) -> TypeM a -> TypeM a
-updateTypeEnv f m = flip local m $ fmap $ \(env, eff) -> (f env, eff)
+updateTypeEnv f m = flip local m $ fmap \(env, eff) -> (f env, eff)
 
 extendTypeEnv :: TypeEnv -> TypeM a -> TypeM a
 extendTypeEnv new m = updateTypeEnv (<> new) m
@@ -568,7 +568,7 @@ extendAllowedEffect :: Effect -> TypeM () -> TypeM ()
 extendAllowedEffect eff m = updateAllowedEff (extendEffect eff) m
 
 updateAllowedEff :: (EffectRow -> EffectRow) -> TypeM a -> TypeM a
-updateAllowedEff f m = flip local m $ fmap $ \(env, eff) -> (env, f eff)
+updateAllowedEff f m = flip local m $ fmap \(env, eff) -> (env, f eff)
 
 withAllowedEff :: EffectRow -> TypeM a -> TypeM a
 withAllowedEff eff m = updateAllowedEff (const eff) m
@@ -687,7 +687,7 @@ typeCheckOp op = case op of
   ToOrdinal i -> typeCheck i $> IdxRepTy
   IdxSetSize i -> typeCheck i $> IdxRepTy
   FFICall _ ansTy args -> do
-    forM_ args $ \arg -> do
+    forM_ args \arg -> do
       argTy <- typeCheck arg
       case argTy of
         BaseTy _ -> return ()
@@ -815,7 +815,7 @@ typeCheckOp op = case op of
     t |: TyKind
     x |: Word8Ty
     (TypeCon (DataDef _ _ dataConDefs) _) <- return t
-    forM_ dataConDefs $ \(DataConDef _ binders) ->
+    forM_ dataConDefs \(DataConDef _ binders) ->
       assertEq binders Empty "Not an enum"
     return t
 

@@ -31,7 +31,7 @@ getDexString :: Val -> IO String
 getDexString (DataCon _ _ 0 [_, xs]) = do
   let (TabTy b _) = getType xs
   idxs <- indices $ getType b
-  forM idxs $ \i -> do
+  forM idxs \i -> do
     ~(Con (Lit (Word8Lit c))) <- evalBlock mempty (Block Empty (App xs i))
     return $ toEnum $ fromIntegral c
 getDexString x = error $ "Not a string: " ++ pprint x
@@ -49,7 +49,7 @@ prettyVal val = case val of
           _     -> "@" <> pretty idxSet -- Otherwise, show explicit index set
     -- Pretty-print elements.
     idxs <- indices idxSet
-    elems <- forM idxs $ \idx -> do
+    elems <- forM idxs \idx -> do
       atom <- evalBlock mempty $ snd $ applyAbs abs idx
       case atom of
         Con (Lit (Word8Lit c)) ->
