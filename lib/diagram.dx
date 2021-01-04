@@ -36,7 +36,7 @@ defaultGeomStyle : GeomStyle =
 -- TODO: consider sharing attributes among a set of objects for efficiency
 data Diagram = MkDiagram (List (GeomStyle & Point & Geom))
 
-instance monoidDiagram : Monoid Diagram where
+instance Monoid Diagram
   mempty = MkDiagram mempty
   mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
 

@@ -517,6 +517,7 @@ toImpHof env (maybeDest, hof) = do
       translateBlock env (maybeDest, body)
     Linearize _ -> error "Unexpected Linearize"
     Transpose _ -> error "Unexpected Transpose"
+    CatchException _ -> error "Unexpected CatchException"
 
 data LaunchInfo = LaunchInfo { numWorkgroups :: IExpr, workgroupSize :: IExpr }
 data ThreadInfo = ThreadInfo { tid :: IExpr, wid :: IExpr, threadRange :: Type }

@@ -92,7 +92,7 @@ checkBindings env ir bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
   mapM_ (checkBinding ir) $ envPairs bs
 
 checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
-checkBinding ir (GlobalName v, b@(ty, info)) =
+checkBinding ir (v, b@(ty, info)) | isGlobal (v:>()) =
   addContext ("binding: " ++ pprint (v, b)) $ do
     ty |: TyKind
     when (ir >= Evaluated && not (all isGlobal (envAsVars $ freeVars b))) $
@@ -165,8 +165,8 @@ instance HasType Atom where
       withBinder b $ typeCheck body
     ProjectElt (i NE.:| is) v -> do
       ty <- typeCheck $ case NE.nonEmpty is of
-            Nothing -> Var v
-            Just is' -> ProjectElt is' v
+              Nothing -> Var v
+              Just is' -> ProjectElt is' v
       case ty of
         TypeCon def params -> do
           [DataConDef _ bs'] <- return $ applyDataDefParams def params
@@ -184,7 +184,8 @@ instance HasType Atom where
         PairTy x _ | i == 0 -> return x
         PairTy _ y | i == 1 -> return y
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
-        _ -> throw TypeErr $ "Only single-member ADTs and record types can be projected. Got " <> pprint ty
+        _ -> throw TypeErr $
+              "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
 
 
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()

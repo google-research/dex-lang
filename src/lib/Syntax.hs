@@ -13,6 +13,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
@@ -29,8 +30,9 @@ module Syntax (
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
-    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
-    reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
+    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton, lookupLabel,
+    reflectLabels, withLabels, ExtLabeledItems (..),
+    prefixExtLabeledItems, getLabels,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -61,7 +63,9 @@ module Syntax (
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
     pattern Unlabeled, pattern NoExt, pattern LabeledRowKind,
-    pattern NoLabeledItems, pattern InternalSingletonLabel, pattern EffKind)
+    pattern NoLabeledItems, pattern InternalSingletonLabel, pattern EffKind,
+    pattern NestOne, pattern NewTypeCon, pattern BinderAnn,
+    pattern ClassDictDef, pattern ClassDictCon)
   where
 
 import qualified Data.Map.Strict as M
@@ -187,9 +191,17 @@ reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
 reflectLabels (LabeledItems items) = LabeledItems $
   flip M.mapWithKey items $ \k xs -> fmap (\(i,_) -> (k,i)) (enumerate xs)
 
+getLabels :: LabeledItems a -> [Label]
+getLabels labeledItems = map fst $ toList $ reflectLabels labeledItems
+
 withLabels :: LabeledItems a -> LabeledItems (Label, Int, a)
 withLabels (LabeledItems items) = LabeledItems $
   flip M.mapWithKey items $ \k xs -> fmap (\(i,a) -> (k,i,a)) (enumerate xs)
+
+lookupLabel :: LabeledItems a -> Label -> Maybe a
+lookupLabel (LabeledItems items) l = case M.lookup l items of
+  Nothing -> Nothing
+  Just (x NE.:| _) -> Just x
 
 instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
@@ -237,6 +249,8 @@ data UExpr' = UVar UVar
 data UConDef = UConDef Name (Nest UAnnBinder)  deriving (Show, Generic)
 data UDecl = ULet LetAnn UPatAnn UExpr
            | UData UConDef [UConDef]
+           | UInterface [UType] UConDef [UAnnBinder]
+           | UInstance UType [(UVar, UExpr)]
              deriving (Show, Generic)
 
 type UType  = UExpr
@@ -784,11 +798,15 @@ instance BindsUVars UPat' where
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
   freeUVars (UData (UConDef _ bs) dataCons) = freeUVars $ Abs bs dataCons
+  freeUVars (UInterface _ _ _) = mempty  -- TODO
+  freeUVars (UInstance _ _) = mempty     -- TODO
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
-   ULet _ (p,_) _ -> boundUVars p
-   UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
+    ULet _ (p,_) _ -> boundUVars p
+    UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
+    UInterface _ _ _ -> mempty
+    UInstance _ _    -> mempty
 
 instance HasUVars UModule where
   freeUVars (UModule decls) = freeUVars decls
@@ -1005,8 +1023,9 @@ applyNaryAbs (Abs (Nest b bs) body) (x:xs) = applyNaryAbs ab xs
 applyNaryAbs _ _ = error "wrong number of arguments"
 
 applyDataDefParams :: DataDef -> [Type] -> [DataConDef]
-applyDataDefParams (DataDef _ paramBs cons) params =
-  applyNaryAbs (Abs paramBs cons) params
+applyDataDefParams (DataDef _ bs cons) params
+  | length params == length (toList bs) = applyNaryAbs (Abs bs cons) params
+  | otherwise = error $ "Wrong number of parameters: " ++ show (length params)
 
 makeAbs :: HasVars a => Binder -> a -> Abs Binder a
 makeAbs b body | b `isin` freeVars body = Abs b body
@@ -1509,6 +1528,30 @@ pattern NothingAtom ty = DataCon MaybeDataDef [ty] 0 []
 
 pattern JustAtom :: Type -> Atom -> Atom
 pattern JustAtom ty x = DataCon MaybeDataDef [ty] 1 [x]
+
+pattern NestOne :: a -> Nest a
+pattern NestOne x = Nest x Empty
+
+pattern BinderAnn :: a -> BinderP a
+pattern BinderAnn x <- ((\case Ignore   ann  -> ann
+                               Bind (_:>ann) -> ann) -> x)
+  where BinderAnn x = Ignore x
+
+pattern NewTypeCon :: Name -> Type -> [DataConDef]
+pattern NewTypeCon con ty <- [DataConDef con (NestOne (BinderAnn ty))]
+  where NewTypeCon con ty =  [DataConDef con (NestOne (Ignore    ty))]
+
+pattern ClassDictDef :: Name
+                     -> LabeledItems Type -> LabeledItems Type -> [DataConDef]
+pattern ClassDictDef conName superclasses methods =
+  [DataConDef conName
+     (Nest (Ignore (RecordTy (NoExt superclasses)))
+     (Nest (Ignore (RecordTy (NoExt methods))) Empty))]
+
+pattern ClassDictCon :: DataDef -> [Type]
+                     -> LabeledItems Atom -> LabeledItems Atom -> Atom
+pattern ClassDictCon def params superclasses methods =
+  DataCon def params 0 [Record superclasses, Record methods]
 
 -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}

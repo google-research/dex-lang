@@ -40,7 +40,7 @@ def FToI (x:Float) : Int = internalCast _ x
 def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
 def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
 
-interface Add a:Type where
+interface Add a
   add : a -> a -> a
   sub : a -> a -> a
   zero : a
@@ -48,97 +48,97 @@ interface Add a:Type where
 def (+) [Add a] : a -> a -> a = add
 def (-) [Add a] : a -> a -> a = sub
 
-instance float64Add : Add Float64 where
-  add = \x:Float64 y:Float64. %fadd x y
-  sub = \x:Float64 y:Float64. %fsub x y
+instance Add Float64
+  add = \x y. %fadd x y
+  sub = \x y. %fsub x y
   zero = FToF64 0.0
 
-instance float32Add : Add Float32 where
-  add = \x:Float32 y:Float32. %fadd x y
-  sub = \x:Float32 y:Float32. %fsub x y
+instance Add Float32
+  add = \x y. %fadd x y
+  sub = \x y. %fsub x y
   zero = FToF32 0.0
 
-instance int64Add : Add Int64 where
-  add = \x:Int64 y:Int64. %iadd x y
-  sub = \x:Int64 y:Int64. %isub x y
+instance Add Int64
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
   zero = IToI64 0
 
-instance int32Add : Add Int32 where
-  add = \x:Int32 y:Int32. %iadd x y
-  sub = \x:Int32 y:Int32. %isub x y
+instance Add Int32
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
   zero = IToI32 0
 
-instance word8Add : Add Word8 where
-  add = \x:Word8 y:Word8. %iadd x y
-  sub = \x:Word8 y:Word8. %isub x y
+instance Add Word8
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
   zero = IToW8 0
 
-instance unitAdd : Add Unit where
+instance Add Unit
   add = \x y. ()
   sub = \x y. ()
   zero = ()
 
-instance tabAdd : Add a ?=> Add (n=>a) where
+instance [Add a] Add (n=>a)
   add = \xs ys. for i. xs.i + ys.i
   sub = \xs ys. for i. xs.i - ys.i
   zero = for _. zero
 
-interface Mul a:Type where
+interface Mul a
   mul : a -> a -> a
   one : a
 
 def (*) [Mul a] : a -> a -> a = mul
 
-instance float64Mul : Mul Float64 where
-  mul = \x:Float64 y:Float64. %fmul x y
+instance Mul Float64
+  mul = \x y. %fmul x y
   one = FToF64 1.0
 
-instance float32Mul : Mul Float32 where
-  mul = \x:Float32 y:Float32. %fmul x y
+instance Mul Float32
+  mul = \x y. %fmul x y
   one = FToF32 1.0
 
-instance int64Mul : Mul Int64 where
-  mul = \x:Int64 y:Int64. %imul x y
+instance Mul Int64
+  mul = \x y. %imul x y
   one = IToI64 1
 
-instance int32Mul : Mul Int32 where
-  mul = \x:Int32 y:Int32. %imul x y
+instance Mul Int32
+  mul = \x y. %imul x y
   one = IToI32 1
 
-instance word8Mul : Mul Word8 where
-  mul = \x:Word8 y:Word8. %imul x y
+instance Mul Word8
+  mul = \x y. %imul x y
   one = IToW8 1
 
-instance unitMul : Mul Unit where
+instance Mul Unit
   mul = \x y. ()
   one = ()
 
 
-interface Integral a:Type where
-  idiv: a->a->a
-  rem: a->a->a
+interface Integral a
+  idiv : a->a->a
+  rem  : a->a->a
 
-instance int64Integral : Integral Int64 where
-  idiv = \x:Int64 y:Int64. %idiv x y
-  rem  = \x:Int64 y:Int64. %irem x y
+instance Integral Int64
+  idiv = \x y. %idiv x y
+  rem  = \x y. %irem x y
 
-instance int32Integral : Integral Int32 where
-  idiv = \x:Int32 y:Int32. %idiv x y
-  rem  = \x:Int32 y:Int32. %irem x y
+instance Integral Int32
+  idiv = \x y. %idiv x y
+  rem  = \x y. %irem x y
 
-instance word8Integral  : Integral Word8  where
-  idiv = \x:Word8  y:Word8.  %idiv x y
-  rem  = \x:Word8  y:Word8.  %irem x y
+instance Integral Word8
+  idiv = \x y.  %idiv x y
+  rem  = \x y.  %irem x y
 
 
-interface Fractional a:Type where
+interface Fractional a
   divide : a -> a -> a
 
-instance float64Fractional : Fractional Float64 where
-  divide = \x:Float64 y:Float64. %fdiv x y
+instance Fractional Float64
+  divide = \x y. %fdiv x y
 
-instance float32Fractional : Fractional Float32 where
-  divide = \x:Float32 y:Float32. %fdiv x y
+instance Fractional Float32
+  divide = \x y. %fdiv x y
 
 '## Basic polymorphic functions and types
 
@@ -157,19 +157,22 @@ const : a -> b -> a = \x _. x
 
 '## Vector spaces
 
-data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
+interface [Add a] VSpace a
+  scaleVec : Float -> a -> a
 
-@superclass
-def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
-
-def (.*) (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
-def (*.) [VSpace a]       : a -> Float -> a = flip (.*)
+def (.*) [VSpace a] : Float -> a -> a = scaleVec
+def (*.) [VSpace a] : a -> Float -> a = flip scaleVec
 def (/)  [VSpace a] (v:a) (s:Float) : a = divide 1.0 s .* v
 def neg  [VSpace a] (v:a) : a = (-1.0) .* v
 
-@instance floatVS : VSpace Float = MkVSpace float32Add (*)
-@instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
-@instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
+instance VSpace Float
+  scaleVec = \x y. x * y
+
+instance [VSpace a] VSpace (n=>a)
+  scaleVec = \s xs. for i. s .* xs.i
+
+instance VSpace Unit
+  scaleVec = \_ _. ()
 
 '## Boolean type
 
@@ -197,7 +200,7 @@ def not  (x:Bool) : Bool =
 
 '## Sum types
 
-data Maybe a:Type =
+data Maybe a =
   Nothing
   Just a
 
@@ -207,7 +210,7 @@ def isNothing (x:Maybe a) : Bool = case x of
 
 def isJust (x:Maybe a) : Bool = not $ isNothing x
 
-data (|) a:Type b:Type =
+data (|) a b =
   Left  a
   Right b
 
@@ -285,55 +288,76 @@ def unreachable (():Unit) : a = unsafeIO do
 
 '## Type classes
 
-data Eq  a:Type = MkEq  (a -> a -> Bool)
-data Ord a:Type = MkOrd (Eq a) (a -> a -> Bool) (a -> a -> Bool)  -- eq, gt, lt
+interface Eq a
+  (==) : a -> a -> Bool
 
-@superclass
-def eqFromOrd (d:Ord a) : Eq a = case d of MkOrd eq _ _ -> eq
-
-def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = case d of MkEq eq -> eq x y
 def (/=) [Eq a] (x:a) (y:a) : Bool = not $ x == y
 
-def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ gt _  -> gt x y
-def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
+interface [Eq a] Ord a
+  (>) : a -> a -> Bool
+  (<) : a -> a -> Bool
+
 def (<=) [Ord a] (x:a) (y:a) : Bool = x<y || x==y
 def (>=) [Ord a] (x:a) (y:a) : Bool = x>y || x==y
 
-@instance float64Eq : Eq Float64 = MkEq \x:Float64 y:Float64. W8ToB $ %feq x y
-@instance float32Eq : Eq Float32 = MkEq \x:Float32 y:Float32. W8ToB $ %feq x y
-@instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   W8ToB $ %ieq x y
-@instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   W8ToB $ %ieq x y
-@instance word8Eq   : Eq Word8   = MkEq \x:Word8   y:Word8.   W8ToB $ %ieq x y
-@instance boolEq    : Eq Bool    = MkEq \x y. BToW8 x == BToW8 y
-@instance unitEq    : Eq Unit    = MkEq \x y. True
-@instance rawPtrEq  : Eq RawPtr  = MkEq \x y. RawPtrToI64 x == RawPtrToI64 y
+instance Eq Float64
+  (==) = \x y. W8ToB $ %feq x y
 
-@instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. W8ToB $ %fgt x y)
-                                                      (\x y. W8ToB $ %flt x y))
-@instance float32Ord : Ord Float32 = (MkOrd float32Eq (\x y. W8ToB $ %fgt x y)
-                                                      (\x y. W8ToB $ %flt x y))
-@instance int64Ord   : Ord Int64   = (MkOrd int64Eq   (\x y. W8ToB $ %igt x y)
-                                                      (\x y. W8ToB $ %ilt x y))
-@instance int32Ord   : Ord Int32   = (MkOrd int32Eq   (\x y. W8ToB $ %igt x y)
-                                                      (\x y. W8ToB $ %ilt x y))
-@instance word8Ord   : Ord Word8   = (MkOrd word8Eq   (\x y. W8ToB $ %igt x y)
-                                                      (\x y. W8ToB $ %ilt x y))
-@instance unitOrd    : Ord Unit    = (MkOrd unitEq (\x y. False) (\x y. False))
+instance Eq Float32
+  (==) = \x y. W8ToB $ %feq x y
 
-@instance
-def pairEq [Eq a, Eq b] : Eq (a & b) = MkEq $
-  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+instance Eq Int64
+  (==) = \x y. W8ToB $ %ieq x y
 
-@instance
-def pairOrd [Ord a, Ord b] : Ord (a & b) =
-  pairGt = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
-  pairLt = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
-  MkOrd pairEq pairGt pairLt
+instance Eq Int32
+  (==) = \x y. W8ToB $ %ieq x y
+
+instance Eq Word8
+  (==) = \x y. W8ToB $ %ieq x y
+
+instance Eq Bool
+  (==) = \x y. BToW8 x == BToW8 y
+
+instance Eq Unit
+  (==) = \x y. True
+
+instance Eq RawPtr
+  (==) = \x y. RawPtrToI64 x == RawPtrToI64 y
+
+instance Ord Float64
+  (>) = \x y. W8ToB $ %fgt x y
+  (<) = \x y. W8ToB $ %flt x y
+
+instance Ord Float32
+  (>) = \x y. W8ToB $ %fgt x y
+  (<) = \x y. W8ToB $ %flt x y
+
+instance Ord Int64
+  (>) = \x y. W8ToB $ %igt x y
+  (<) = \x y. W8ToB $ %ilt x y
+
+instance Ord Int32
+  (>) = \x y. W8ToB $ %igt x y
+  (<) = \x y. W8ToB $ %ilt x y
+
+instance Ord Word8
+  (>) = \x y. W8ToB $ %igt x y
+  (<) = \x y. W8ToB $ %ilt x y
+
+instance Ord Unit
+  (>) = \x y. False
+  (<) = \x y. False
+
+instance [Eq a, Eq b] Eq (a & b)
+  (==) = \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+
+instance [Ord a, Ord b] Ord (a & b)
+  (>) = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
+  (<) = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
 
 -- TODO: accumulate using the True/&& monoid
-@instance
-def tabEq [Eq a] : Eq (n=>a) = MkEq $
-  \xs ys.
+instance [Eq a] Eq (n=>a)
+  (==) = \xs ys.
     numDifferent : Float =
       yieldAccum \ref. for i.
         ref += (IToF (BToI (xs.i /= ys.i)))
@@ -341,7 +365,7 @@ def tabEq [Eq a] : Eq (n=>a) = MkEq $
 
 '## Transcencendental functions
 
-interface Floating a:Type where
+interface Floating a
   exp    : a -> a
   exp2   : a -> a
   log    : a -> a
@@ -375,45 +399,45 @@ def float64_cosh (x:Float64) : Float64 = %fdiv ((%exp x) + (%exp (%fsub (FToF64 
 def float64_tanh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) ((%exp x) + (%exp (%fsub (FToF64 0.0) x)))
 
 
-instance float64Floating : Floating Float64 where
-  exp    = \x:Float64. %exp x
-  exp2   = \x:Float64. %exp2   x
-  log    = \x:Float64. %log    x
-  log2   = \x:Float64. %log2   x
-  log10  = \x:Float64. %log10  x
-  log1p  = \x:Float64. %log1p  x
-  sin    = \x:Float64. %sin    x
-  cos    = \x:Float64. %cos    x
-  tan    = \x:Float64. %tan    x
+instance Floating Float64
+  exp    = \x. %exp x
+  exp2   = \x. %exp2   x
+  log    = \x. %log    x
+  log2   = \x. %log2   x
+  log10  = \x. %log10  x
+  log1p  = \x. %log1p  x
+  sin    = \x. %sin    x
+  cos    = \x. %cos    x
+  tan    = \x. %tan    x
   sinh   = float64_sinh
   cosh   = float64_cosh
   tanh   = float64_tanh
-  floor  = \x:Float64. %floor  x
-  ceil   = \x:Float64. %ceil   x
-  round  = \x:Float64. %round  x
-  sqrt   = \x:Float64. %sqrt   x
-  pow    = \x:Float64 y:Float64. %fpow x y
-  lgamma = \x:Float64. %lgamma x
+  floor  = \x. %floor  x
+  ceil   = \x. %ceil   x
+  round  = \x. %round  x
+  sqrt   = \x. %sqrt   x
+  pow    = \x y. %fpow x y
+  lgamma = \x. %lgamma x
 
-instance float32Floating : Floating Float32 where
-  exp    = \x:Float32. %exp x
-  exp2   = \x:Float32. %exp2   x
-  log    = \x:Float32. %log    x
-  log2   = \x:Float32. %log2   x
-  log10  = \x:Float32. %log10  x
-  log1p  = \x:Float32. %log1p  x
-  sin    = \x:Float32. %sin    x
-  cos    = \x:Float32. %cos    x
-  tan    = \x:Float32. %tan    x
+instance Floating Float32
+  exp    = \x. %exp x
+  exp2   = \x. %exp2   x
+  log    = \x. %log    x
+  log2   = \x. %log2   x
+  log10  = \x. %log10  x
+  log1p  = \x. %log1p  x
+  sin    = \x. %sin    x
+  cos    = \x. %cos    x
+  tan    = \x. %tan    x
   sinh   = float32_sinh
   cosh   = float32_cosh
   tanh   = float32_tanh
-  floor  = \x:Float32. %floor  x
-  ceil   = \x:Float32. %ceil   x
-  round  = \x:Float32. %round  x
-  sqrt   = \x:Float32. %sqrt   x
-  pow    = \x:Float32 y:Float32. %fpow x y
-  lgamma = \x:Float32. %lgamma x
+  floor  = \x. %floor  x
+  ceil   = \x. %ceil   x
+  round  = \x. %round  x
+  sqrt   = \x. %sqrt   x
+  pow    = \x y. %fpow x y
+  lgamma = \x. %lgamma x
 
 '## Index set utilities
 
@@ -425,90 +449,66 @@ def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
 def iota (n:Type) : n=>Int = view i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
-@instance
-def finEq (n:Int) ?-> : Eq (Fin n) = MkEq \x y. ordinal x == ordinal y
+instance (n:Int) ?-> Eq (Fin n)
+  (==) = \x y. ordinal x == ordinal y
 
-@instance
-def finOrd (n:Int) ?-> : Ord (Fin n) =
-  MkOrd finEq (\x y. ordinal x > ordinal y) (\x y. ordinal x < ordinal y)
+instance (n:Int) ?-> Ord (Fin n)
+  (>) = \x y. ordinal x > ordinal y
+  (<) = \x y. ordinal x < ordinal y
 
 '## Raw pointer operations
 
-data Ptr a:Type = MkPtr RawPtr
+data Ptr a = MkPtr RawPtr
 
 -- Is there a better way to select the right instance for `storageSize`??
-data TypeVehicle a:Type = MkTypeVehicle
+data TypeVehicle a = MkTypeVehicle
 def typeVehicle (a:Type) : TypeVehicle a = MkTypeVehicle
 
-interface Storable a:Type where
+interface Storable a
   store : Ptr a -> a -> {State World} Unit
   load  : Ptr a ->      {State World} a
-  storageSize : TypeVehicle a -> Int
+  storageSize_ : TypeVehicle a -> Int
 
--- TODO: we can't inline these into the instance definitions until we change
--- type inference to push types down into record constructors or allow `def` in
--- instance definitions.
-def word8Store ((MkPtr ptr): Ptr Word8) (x:Word8) : {State World} Unit  = %ptrStore ptr x
-def word8Load  ((MkPtr ptr): Ptr Word8)           : {State World} Word8 = %ptrLoad  ptr
+def storageSize (a:Type) -> (d:Storable a) ?=> : Int =
+  tv : TypeVehicle a = MkTypeVehicle
+  storageSize_ tv
 
-instance word8Storable : Storable Word8 where
-  store = word8Store
-  load  = word8Load
-  storageSize = const 1
+instance Storable Word8
+  store = \(MkPtr ptr) x. %ptrStore ptr x
+  load  = \(MkPtr ptr)  . %ptrLoad  ptr
+  storageSize_ = const 1
 
--- TODO: there's a bug preventing us inlining these definitions into the instance
-def int32Store ((MkPtr ptr): Ptr Int32) (x:Int32) : {State World} Unit  =
-  %ptrStore (internalCast %Int32Ptr ptr) x
-def int32Load  ((MkPtr ptr): Ptr Int32) : {State World} Int32 =
-  %ptrLoad (internalCast %Int32Ptr ptr)
-
-instance int32Storable : Storable Int32 where
-  store = int32Store
-  load  = int32Load
-  storageSize = const 4
+instance Storable Int32
+  store = \(MkPtr ptr) x. %ptrStore (internalCast %Int32Ptr ptr) x
+  load  = \(MkPtr ptr)  . %ptrLoad  (internalCast %Int32Ptr ptr)
+  storageSize_ = const 4
 
 def unpackPairPtr [Storable a, Storable b]
       (pairPtr: Ptr (a & b)) : (Ptr a & Ptr b) =
   (MkPtr rawPtrX) = pairPtr
-  rawPtrY = %ptrOffset rawPtrX (storageSize (typeVehicle a))
+  rawPtrY = %ptrOffset rawPtrX (storageSize a)
   (MkPtr rawPtrX, MkPtr rawPtrY)
 
-def pairStore [Storable a, Storable b]
-      (pairPtr:Ptr (a & b)) ((x, y):(a & b)) : {State World} Unit  =
-  (xPtr, yPtr) = unpackPairPtr pairPtr
-  store xPtr x
-  store yPtr y
+instance [Storable a, Storable b] Storable (a & b)
+  store = \pairPtr (x, y).
+    (xPtr, yPtr) = unpackPairPtr pairPtr
+    store xPtr x
+    store yPtr y
+  load = \pairPtr.
+    (xPtr, yPtr) = unpackPairPtr pairPtr
+    (load xPtr, load yPtr)
+  storageSize_ = \_.
+    storageSize a + storageSize b
 
-def pairLoad [Storable a, Storable b]
-      (pairPtr:Ptr (a & b)) : {State World} (a & b) =
-  (xPtr, yPtr) = unpackPairPtr pairPtr
-  (load xPtr, load yPtr)
-
-def pairStorageSize [Storable a, Storable b]
-    (_:TypeVehicle (a & b)) : Int =
-  storageSize (typeVehicle a) + storageSize (typeVehicle b)
-
-instance pairStorable : (Storable a) ?=> (Storable b) ?=> Storable (a & b) where
-  store = pairStore
-  load  = pairLoad
-  storageSize = pairStorageSize
-
-def ptrPtrStore ((MkPtr ptr): Ptr (Ptr a)) (x:(Ptr a)) : {State World} Unit  =
-  (MkPtr x') = x
-  %ptrStore (internalCast %PtrPtr ptr) x'
-
-def ptrPtrLoad  ((MkPtr ptr): Ptr (Ptr a)) : {State World} (Ptr a) =
-  MkPtr $ %ptrLoad (internalCast %PtrPtr ptr)
-
-instance ptrStorable : Storable (Ptr a) where
-  store = ptrPtrStore
-  load  = ptrPtrLoad
-  storageSize = const 8  -- TODO: something more portable?
+instance Storable (Ptr a)
+  store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internalCast %PtrPtr ptr) x
+  load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internalCast %PtrPtr ptr)
+  storageSize_ = const 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
 
 def malloc [Storable a] (n:Int) : {State World} (Ptr a) =
-  numBytes = storageSize (typeVehicle a) * n
+  numBytes = storageSize a * n
   MkPtr $ %alloc numBytes
 
 def free (ptr:Ptr a) : {State World} Unit =
@@ -517,7 +517,7 @@ def free (ptr:Ptr a) : {State World} Unit =
 
 def (+>>) [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   (MkPtr ptr') = ptr
-  i' = i * storageSize (typeVehicle a)
+  i' = i * storageSize a
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: generalize these brackets to allow other effects
@@ -601,7 +601,7 @@ def vdot (x:n=>Float) (y:n=>Float) : Float = fsum view i. x.i * y.i
 def dot [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 
 -- matmul. Better symbol to use? `@`?
-(**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
+(**) :  (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
   for i k. fsum view j. x.i.j * y.j.k
 
 (**.) : (n=>m=>Float) -> (m=>Float) -> (n=>Float) = \mat v. for i. vdot mat.i v
@@ -671,33 +671,33 @@ def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
-interface HasAllClose a:Type where
+interface HasAllClose a
   allclose : a -> a -> a -> a -> Bool
 
-interface HasDefaultTolerance a:Type where
+interface HasDefaultTolerance a
   atol : a
   rtol : a
 
 def (~~) [HasAllClose a, HasDefaultTolerance a] : a -> a -> Bool = allclose atol rtol
 
-instance allCloseF32 : HasAllClose Float32 where
+instance HasAllClose Float32
   allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
 
-instance allCloseF64 : HasAllClose Float64 where
+instance HasAllClose Float64
   allclose = \atol rtol x y. abs (x - y) <= (atol + rtol * abs y)
 
-instance defaultToleranceF32 : HasDefaultTolerance Float32 where
+instance HasDefaultTolerance Float32
   atol = FToF32 0.00001
   rtol = FToF32 0.0001
 
-instance defaultToleranceF64 : HasDefaultTolerance Float64 where
+instance HasDefaultTolerance Float64
   atol = FToF64 0.00000001
   rtol = FToF64 0.00001
 
-instance allCloseTable : HasAllClose t ?=> HasDefaultTolerance t ?=> HasAllClose (n=>t) where
+instance [HasAllClose t, HasDefaultTolerance t] HasAllClose (n=>t)
   allclose = \atol rtol a b. all for i:n. (a.i ~~ b.i)
 
-instance defaultToleranceTable : (HasDefaultTolerance t) ?=> HasDefaultTolerance (n=>t) where
+instance [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
   atol = for i. atol
   rtol = for i. rtol
 
@@ -776,7 +776,7 @@ def tile1 (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
 
 '## Monoid typeclass
 
-interface Monoid a:Type where
+interface Monoid a
   mempty : a
   mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
 
@@ -784,7 +784,7 @@ def (<>) [Monoid a] : a -> a -> a = mcombine
 
 '## Length-erased lists
 
-data List a:Type =
+data List a =
   AsList n:Int foo:(Fin n => a)
 
 def unsafeCastTable (m:Type) (xs:n=>a) : m=>a =
@@ -794,7 +794,7 @@ def toList (xs:n=>a) : List a =
   n' = size n
   AsList _ $ unsafeCastTable (Fin n') xs
 
-instance monoidList : Monoid (List a) where
+instance Monoid (List a)
   mempty = AsList _ []
   mcombine = \x y.
     (AsList nx xs) = x
@@ -808,7 +808,7 @@ instance monoidList : Monoid (List a) where
 
 '## Isomorphisms
 
-data Iso a:Type b:Type = MkIso { fwd: a -> b & bwd: b -> a }
+data Iso a b = MkIso { fwd: a -> b & bwd: b -> a }
 
 def appIso (iso: Iso a b) (x:a) : b =
   (MkIso {fwd, bwd}) = iso
@@ -890,7 +890,7 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 
 -- TODO: should we be able to use `Ref World Int` instead of `Ptr Int`?
 -- TODO: would be nice to be able to use records here
-data DynBuffer a:Type = MkDynBuffer (Ptr (Int & Int & Ptr a))  -- size, max size, buf ptr
+data DynBuffer a = MkDynBuffer (Ptr (Int & Int & Ptr a))  -- size, max size, buf ptr
 
 def withDynamicBuffer [Storable a]
       (action: DynBuffer a -> {State World} b) : {State World} b =
@@ -945,29 +945,29 @@ def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {State World} String =
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = W8ToI c
 
-interface Show a:Type where
+interface Show a
   show : a -> String
 
-instance showString : Show String where
+instance Show String
   show = id
 
-instance showInt32 : Show Int32 where
-  show = \x: Int32. unsafeIO do
+instance Show Int32
+  show = \x. unsafeIO do
     (n, ptr) = %ffi showInt32 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
-instance showInt64 : Show Int64 where
-  show = \x: Int64. unsafeIO do
+instance Show Int64
+  show = \x. unsafeIO do
     (n, ptr) = %ffi showInt64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
-instance showFloat32 : Show Float32 where
-  show = \x: Float32.unsafeIO do
+instance Show Float32
+  show = \x. unsafeIO do
     (n, ptr) = %ffi showFloat32 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
-instance showFloat64 : Show Float64 where
-  show = \x: Float64.unsafeIO do
+instance Show Float64
+  show = \x. unsafeIO do
     (n, ptr) = %ffi showFloat64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
@@ -1053,7 +1053,7 @@ def while (eff:Effects) ?-> (body: Unit -> {|eff} Bool) : {|eff} Unit =
   body' : Unit -> {|eff} Word8 = \_. BToW8 $ body ()
   %while body'
 
-data IterResult a:Type =
+data IterResult a =
   Continue
   Done a
 
@@ -1225,19 +1225,19 @@ def randIdx (k:Key) : n =
 
 'Type class for generating example values
 
-interface Arbitrary a:Type where
+interface Arbitrary a
   arb : Key -> a
 
-instance float32Arb : Arbitrary Float32 where
+instance Arbitrary Float32
   arb = randn
 
-instance in32Arb : Arbitrary Int32 where
+instance Arbitrary Int32
   arb = \key. FToI $ randn key * 5.0
 
-instance tabArb : Arbitrary a ?=> Arbitrary (n=>a) where
+instance [Arbitrary a] Arbitrary (n=>a)
   arb = \key. for i. arb $ ixkey key i
 
-instance finArb : n:Int ?-> Arbitrary (Fin n) where
+instance (n:Int) ?-> Arbitrary (Fin n)
   arb = randIdx
 
 'Control flow
@@ -1331,28 +1331,28 @@ def atan (x:Float) : Float = atan2 x 1.0
 
 data Complex = MkComplex Float Float  -- real, imaginary
 
-instance allCloseComplex : HasAllClose Complex where
+instance HasAllClose Complex
   allclose = \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
 
-instance defaultToleranceComplex : HasDefaultTolerance Complex where
+instance HasDefaultTolerance Complex
   atol = MkComplex atol atol
   rtol = MkComplex rtol rtol
 
-@instance ComplexEq : Eq Complex =
-  MkEq \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
+instance Eq Complex
+  (==) = \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
 
-instance ComplexAdd : Add Complex where
+instance Add Complex
   add = \(MkComplex a b) (MkComplex c d). MkComplex (a + c) (b + d)
   sub = \(MkComplex a b) (MkComplex c d). MkComplex (a - c) (b - d)
   zero = MkComplex 0.0 0.0
 
-instance ComplexMul : Mul Complex where
+instance Mul Complex
   mul = \(MkComplex a b) (MkComplex c d).
     MkComplex (a * c - b * d) (a * d + b * c)
   one = MkComplex 1.0 0.0
 
-@instance complexVS : VSpace Complex =
-  MkVSpace ComplexAdd \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+instance VSpace Complex
+  scaleVec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
 
 -- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
 def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
@@ -1391,7 +1391,7 @@ def complex_tanh (MkComplex a b:Complex) : Complex =
   den = MkComplex (cosh a * cos b) (sinh a * sin  b)
   complex_division num den
 
-instance ComplexFractional : Fractional Complex where
+instance Fractional Complex
   divide = complex_division
 
 def complex_floor (MkComplex re im:Complex) : Complex =
@@ -1424,7 +1424,7 @@ def complex_log1p (x:Complex) : Complex =
         True -> complex_log u
         False -> divide ((complex_log u) * x) x
 
-instance complexFloating : Floating Complex where
+instance Floating Complex
   exp    = complex_exp
   exp2   = complex_exp2
   log    = complex_log
