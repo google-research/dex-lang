@@ -15,6 +15,7 @@ import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
 import System.Exit
 import System.Directory
+import Data.List
 
 import Syntax
 import PPrint
@@ -25,6 +26,7 @@ import Resources
 import TopLevel
 import Parser  hiding (Parser)
 import LiveOutput
+import Env (envNames)
 import Export
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
@@ -45,8 +47,10 @@ runMode evalMode preludeFile opts = do
   env <- cached "prelude" key $ evalPrelude opts preludeFile
   let runEnv m = evalStateT m env
   case evalMode of
-    ReplMode prompt ->
-      runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
+    ReplMode prompt -> do
+      let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
+      let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
+      runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile opts fname
       printLitProg fmt results
@@ -80,6 +84,20 @@ replLoop prompt opts = do
   case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
+
+dexCompletions :: CompletionFunc (StateT TopEnv IO)
+dexCompletions (line, _) = do
+  env <- get
+  let varNames = map pprint $ envNames env
+  -- note: line and thus word and rest have character order reversed
+  let (word, rest) = break (== ' ') line
+  let anywhereKeywords = ["def", "for", "rof", "case", "data", "where", "of", "if",
+                          "then", "else", "interface", "instance", "do", "view"]
+  let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
+  let candidates = (if null rest then startoflineKeywords else []) ++
+                   anywhereKeywords ++ varNames
+  let completions = map simpleCompletion $ filter ((reverse word) `isPrefixOf`) candidates
+  return (rest, completions)
 
 liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
