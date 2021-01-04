@@ -91,10 +91,11 @@ dexCompletions (line, _) = do
   let varNames = map pprint $ envNames env
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
-  let anywhereKeywords = ["def", "for", "rof", "case", "data", "where", "of", "if", "then", "else", "interface", "instance", "do", "view"]
+  let anywhereKeywords = ["def", "for", "rof", "case", "data", "where", "of", "if",
+                          "then", "else", "interface", "instance", "do", "view"]
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
-  let candidates = varNames ++ anywhereKeywords ++
-                   if null rest then startoflineKeywords else []
+  let candidates = (if null rest then startoflineKeywords else []) ++
+                   anywhereKeywords ++ varNames
   let completions = map simpleCompletion $ filter ((reverse word) `isPrefixOf`) candidates
   return (rest, completions)
 
