@@ -251,7 +251,7 @@ findImplicitImplicitArgNames typ = filter isLowerCaseName $ envNames $
     -- recursive steps
     UVar _ -> mempty
     UPi (p, ann) _ ty ->
-      findVarsInAppLHS ann <> (findVarsInAppLHS ty `envDiff` boundUVars p)
+      foldMap findVarsInAppLHS ann <> (findVarsInAppLHS ty `envDiff` boundUVars p)
     UApp _ f x -> findVarsInAppLHS f <> findVarsInAppLHS x
     ULam (p, ann) _ x ->
       foldMap findVarsInAppLHS ann <> (findVarsInAppLHS x `envDiff` boundUVars p)
@@ -284,12 +284,9 @@ addImplicitImplicitArgs (Just typ) ex =
 
     addImplicitArg :: Name -> (UType, UExpr) -> (UType, UExpr)
     addImplicitArg v (ty, e) =
-      ( ns $ UPi (Just uPat, uTyKind) ImplicitArrow ty
-      , ns $ ULam (uPat, Just uTyKind) ImplicitArrow e)
-      where
-        uPat = ns $ nameToPat v
-        k = if v == mkName "eff" then EffectRowKind else TypeKind
-        uTyKind = ns $ UPrimExpr $ TCExpr k
+      ( ns $ UPi  (uPat, Nothing) ImplicitArrow ty
+      , ns $ ULam (uPat, Nothing) ImplicitArrow e)
+      where uPat = ns $ nameToPat v
 
 superclassConstraints :: Parser [UType]
 superclassConstraints = optionalMonoid $ brackets $ uType `sepBy` sym ","
@@ -349,12 +346,11 @@ instanceDef = do
   return $ UInstance ty' methods
   where
     addClassConstraint :: UType -> UType -> UType
-    addClassConstraint c ty = ns $ UPi (Nothing, c) ClassArrow ty
+    addClassConstraint c ty = ns $ UPi (UnderscoreUPat, Just c) ClassArrow ty
 
     addImplicitArg :: Name -> UType -> UType
     addImplicitArg v ty =
-      ns $ UPi (Just (ns $ nameToPat v), uTyKind) ImplicitArrow ty
-      where uTyKind = ns $ UPrimExpr $ TCExpr TypeKind
+      ns $ UPi (ns $ nameToPat v, Nothing) ImplicitArrow ty
 
 instanceMethod :: Parser (UVar, UExpr)
 instanceMethod = do
@@ -386,26 +382,25 @@ funDefLet = label "function definition" $ mayBreak $ do
   let lamBinders = flip map bs \(p,_, arr) -> ((p,Nothing), arr)
   return \body -> ULet PlainLet letBinder (buildLam lamBinders body)
   where
-    classAsBinder :: UType -> (UPat, UType, UArrow)
-    classAsBinder ty = (ns underscorePat, ty, ClassArrow)
+    classAsBinder :: UType -> (UPat, Maybe UType, UArrow)
+    classAsBinder ty = (UnderscoreUPat, Just ty, ClassArrow)
 
-defArg :: Parser (UPat, UType, UArrow)
+defArg :: Parser (UPat, Maybe UType, UArrow)
 defArg = label "def arg" $ do
   (p, ty) <-parens ((,) <$> pat <*> annot uType)
   arr <- arrow (return ()) <|> return (PlainArrow ())
-  return (p, ty, arr)
+  return (p, Just ty, arr)
 
 classConstraints :: Parser [UType]
 classConstraints = label "class constraints" $
   optionalMonoid $ brackets $ mayNotPair $ uType `sepBy` sym ","
 
-buildPiType :: [(UPat, UType, UArrow)] -> EffectRow -> UType -> UType
+buildPiType :: [(UPat, Maybe UType, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] Pure ty = ty
 buildPiType [] _ _ = error "shouldn't be possible"
-buildPiType ((p, patTy, arr):bs) eff resTy = WithSrc pos $ case bs of
-  [] -> UPi (Just p, patTy) (fmap (const eff ) arr) resTy
-  _  -> UPi (Just p, patTy) (fmap (const Pure) arr) $ buildPiType bs eff resTy
-  where WithSrc pos _ = patTy
+buildPiType ((p, patTy, arr):bs) eff resTy = ns case bs of
+  [] -> UPi (p, patTy) (fmap (const eff ) arr) resTy
+  _  -> UPi (p, patTy) (fmap (const Pure) arr) $ buildPiType bs eff resTy
 
 effectiveType :: Parser (EffectRow, UType)
 effectiveType = (,) <$> effects <*> uType
@@ -472,12 +467,9 @@ uForExpr = do
       <|> (keyWord Rof_KW $> (Rev, True ))
   e <- buildFor pos dir <$> (some patAnn <* argTerm) <*> blockOrExpr
   if trailingUnit
-    then return $ ns $ UDecl (ULet PlainLet (ns underscorePat, Nothing) e) $
+    then return $ ns $ UDecl (ULet PlainLet (UnderscoreUPat, Nothing) e) $
                                 ns unitExpr
     else return e
-
-underscorePat :: UPat'
-underscorePat = UPatBinder $ Ignore ()
 
 nameToPat :: Name -> UPat'
 nameToPat v = UPatBinder (Bind (v:>()))
@@ -514,7 +506,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc (Just pos) $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet PlainLet (ns underscorePat, Nothing) e
+      where d = ULet PlainLet (UnderscoreUPat, Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
@@ -528,8 +520,8 @@ uPiType = withSrc $ UPi <$> piBinderPat <*> arrow effects <*> uType
           b <- annBinder
           return $ case b of
             Bind (n:>a@(WithSrc pos _)) ->
-              (Just $ WithSrc pos $ nameToPat n, a)
-            Ignore a -> (Nothing, a)
+              (WithSrc pos $ nameToPat n, Just a)
+            Ignore a -> (UnderscoreUPat, Just a)
 
 annBinder :: Parser UAnnBinder
 annBinder = try $ namedBinder <|> anonBinder
@@ -613,7 +605,7 @@ leafPat =
       <|> brackets (UPatTable <$> leafPat `sepBy` sym ",")
   )
   where pun pos l = WithSrc (Just pos) $ nameToPat $ mkName l
-        def pos = WithSrc (Just pos) $ underscorePat
+        def pos = WithSrc (Just pos) $ UPatBinder (Ignore ())
         variantPat = parseVariant leafPat UPatVariant UPatVariantLift
         recordPat = UPatRecord <$> parseLabeledItems "," "=" leafPat
                                                      (Just pun) (Just def)
@@ -914,10 +906,10 @@ infixArrow :: Parser (UType -> UType -> UType)
 infixArrow = do
   notFollowedBy (sym "=>")  -- table arrows have special fixity
   (arr, pos) <- withPos $ arrow effects
-  return \a b -> WithSrc (Just pos) $ UPi (Nothing, a) arr b
+  return \a b -> WithSrc (Just pos) $ UPi (UnderscoreUPat, Just a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
-mkArrow arr a b = joinSrc a b $ UPi (Nothing, a) arr b
+mkArrow arr a b = joinSrc a b $ UPi (UnderscoreUPat, Just a) arr b
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do

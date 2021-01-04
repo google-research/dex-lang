@@ -39,7 +39,7 @@ module Syntax (
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
-    UExpr, UExpr' (..), UType, UPatAnn, UPiPatAnn, UAnnBinder, UVar,
+    UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
@@ -63,7 +63,7 @@ module Syntax (
     pattern Unlabeled, pattern NoExt, pattern LabeledRowKind,
     pattern NoLabeledItems, pattern InternalSingletonLabel, pattern EffKind,
     pattern NestOne, pattern NewTypeCon, pattern BinderAnn,
-    pattern ClassDictDef, pattern ClassDictCon)
+    pattern ClassDictDef, pattern ClassDictCon, pattern UnderscoreUPat)
   where
 
 import qualified Data.Map.Strict as M
@@ -225,7 +225,7 @@ prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
 type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
             | ULam UPatAnn UArrow UExpr
-            | UPi  UPiPatAnn Arrow UType
+            | UPi  UPatAnn  Arrow UType
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
             | UFor Direction UPatAnn UExpr
@@ -257,7 +257,6 @@ type UVar    = VarP ()
 type UBinder = BinderP ()
 
 type UPatAnn   = (UPat, Maybe UType)
-type UPiPatAnn   = (Maybe UPat, UType)
 type UAnnBinder = BinderP UType
 
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
@@ -284,6 +283,9 @@ srcPos (WithSrc pos _) = pos
 
 instance IsString UExpr' where
   fromString s = UVar $ Name SourceName (fromString s) 0 :> ()
+
+pattern UnderscoreUPat :: UPat
+pattern UnderscoreUPat = WithSrc Nothing (UPatBinder (Ignore ()))
 
 -- === primitive constructors and operators ===
 
