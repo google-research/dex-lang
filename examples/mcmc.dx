@@ -28,8 +28,7 @@ def propose
   accept = logDensity proposal > (logDensity cur + log (rand k))
   select accept proposal cur
 
-def meanAndCovariance (n:Type) ?-> (d:Type) ?->
-      (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
+def meanAndCovariance (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
    xsMean :    d=>Float = (for i. sum for j. xs.j.i) / IToF (size n)
    xsCov  : d=>d=>Float = (for i i'. sum for j.
                            (xs.j.i' - xsMean.i') *

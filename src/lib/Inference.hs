@@ -152,20 +152,20 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi (pat, kind) arr ty -> do
+  UPi (pat, ann) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
-    kind' <- checkUType kind
+    ann' <- checkAnn ann
     piTy <- case pat of
-      Just pat' -> withNameHint ("pat" :: Name) $ buildPi b \x ->
-        withBindPat pat' x $ (,) <$> mapM checkUEffRow arr <*> checkUType ty
-        where b = case pat' of
+      UnderscoreUPat -> buildPi (Ignore ann') $ const $
+                          (,) <$> mapM checkUEffRow arr <*> checkUType ty
+      _ -> withNameHint ("pat" :: Name) $ buildPi b \x ->
+        withBindPat pat x $ (,) <$> mapM checkUEffRow arr <*> checkUType ty
+        where b = case pat of
                     -- Note: The binder name becomes part of the type, so we
                     -- need to keep the same name used in the pattern.
-                    WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>kind')
-                    _ -> Ignore kind'
-      Nothing -> buildPi (Ignore kind') $ const $
-        (,) <$> mapM checkUEffRow arr <*> checkUType ty
+                    WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>ann')
+                    _ -> Ignore ann'
     matchRequirement piTy
   UDecl decl body -> do
     env <- inferUDecl False decl
@@ -526,7 +526,8 @@ checkUEffRow (EffectRow effs t) = do
 checkUEff :: Effect -> UInferM Effect
 checkUEff eff = case eff of
   RWSEffect rws region -> do
-    (Var (v:>TyKind)) <- lookupSourceVar (region:>())
+    (Var (v:>ty)) <- lookupSourceVar (region:>())
+    constrainEq TyKind ty
     return $ RWSEffect rws v
   ExceptionEffect -> return ExceptionEffect
 

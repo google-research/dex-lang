@@ -233,7 +233,6 @@ def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
 def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
 def runReader
-      (eff:Effects) ?->
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
@@ -241,27 +240,23 @@ def runReader
     %runReader init explicitAction
 
 def withReader
-      (eff:Effects) ?->
       (init:r)
       (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
       : {|eff} a =
     runReader init action
 
 def runAccum
-      (eff:Effects) ?->
       (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
       : {|eff} (a & w) =
     def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a = action ref
     %runWriter explicitAction
 
 def yieldAccum
-      (eff:Effects) ?->
       (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
       : {|eff} w =
   snd $ runAccum action
 
 def runState
-      (eff:Effects) ?->
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
       : {|eff} (a & s) =
@@ -269,13 +264,11 @@ def runState
   %runState init explicitAction
 
 def withState
-      (eff:Effects) ?->
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
       : {|eff} a = fst $ runState init action
 
 def yieldState
-      (eff:Effects) ?->
       (init:s)
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
       : {|eff} s = snd $ runState init action
@@ -449,10 +442,10 @@ def unsafeFromOrdinal (n : Type) (i : Int) : n = %unsafeFromOrdinal n i
 def iota (n:Type) : n=>Int = view i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
-instance (n:Int) ?-> Eq (Fin n)
+instance Eq (Fin n)
   (==) = \x y. ordinal x == ordinal y
 
-instance (n:Int) ?-> Ord (Fin n)
+instance Ord (Fin n)
   (>) = \x y. ordinal x > ordinal y
   (<) = \x y. ordinal x < ordinal y
 
@@ -625,7 +618,7 @@ def newKey (x:Int) : Key = hash (IToI64 0) x
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
-def splitKey (n:Int) ?-> (k:Key) : Fin n => Key = for i. ixkey k i
+def splitKey (k:Key) : Fin n => Key = for i. ixkey k i
 def rand (k:Key) : Float =  unsafeIO do F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
@@ -1036,7 +1029,7 @@ def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
     withCString modeStr \(MkCString modePtr).
       MkStream $ %ffi fopen RawPtr pathPtr modePtr
 
-def fclose (mode:StreamMode) ?-> (stream:Stream mode) : {State World} Unit =
+def fclose (stream:Stream mode) : {State World} Unit =
   (MkStream stream') = stream
   %ffi fclose Int64 stream'
   ()
@@ -1049,7 +1042,7 @@ def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
   %ffi fflush Int64 stream'
   ()
 
-def while (eff:Effects) ?-> (body: Unit -> {|eff} Bool) : {|eff} Unit =
+def while (body: Unit -> {|eff} Bool) : {|eff} Unit =
   body' : Unit -> {|eff} Word8 = \_. BToW8 $ body ()
   %while body'
 
@@ -1237,7 +1230,7 @@ instance Arbitrary Int32
 instance [Arbitrary a] Arbitrary (n=>a)
   arb = \key. for i. arb $ ixkey key i
 
-instance (n:Int) ?-> Arbitrary (Fin n)
+instance Arbitrary (Fin n)
   arb = randIdx
 
 'Control flow

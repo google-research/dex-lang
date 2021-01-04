@@ -158,11 +158,11 @@ MyPair : Type -> Type =
 -- TODO: put source annotation on effect for a better message here
 fEff : Unit -> {| a} a = todo
 > Type error:
-> Expected: EffKind
->   Actual: Type
+> Expected: Type
+>   Actual: EffKind
 >
 > fEff : Unit -> {| a} a = todo
->             ^^^^^^^^^
+>                      ^^
 
 :p
     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
