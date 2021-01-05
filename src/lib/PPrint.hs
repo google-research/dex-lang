@@ -631,8 +631,11 @@ instance Pretty UDecl where
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
   pretty (UInterface cs def methods) =
     "interface" <+> p cs <+> p def <> hardline <> prettyLines methods
-  pretty (UInstance ty methods) =
-    "instance" <+> p ty <> hardline <> prettyLines methods
+  pretty (UInstance bs ty methods) =
+    "instance" <+> p bs <+> p ty <> hardline <> prettyLines methods
+
+instance Pretty UMethodDef where
+  pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs
 
 instance Pretty UConDef where
   pretty (UConDef con bs) = p con <+> spaced bs
