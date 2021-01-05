@@ -413,7 +413,7 @@ emitMethodGetters def@(DataDef _ paramBs (ClassDictDef _ _ methodTys)) = do
   forM_ (getLabels methodTys) \l -> do
     f <- buildImplicitNaryLam paramBs \params -> do
       buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
-        return $ recGet l $ getProjection [1] dict
+        return $ recGetHead l $ getProjection [1] dict
     let methodName = GlobalName $ fromString l
     checkNotInScope methodName
     emitTo methodName PlainLet $ Atom f
@@ -424,10 +424,10 @@ emitSuperclassGetters def@(DataDef _ paramBs (ClassDictDef _ superclassTys _)) =
   forM_ (getLabels superclassTys) \l -> do
     f <- buildImplicitNaryLam paramBs \params -> do
       buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
-        return $ recGet l $ getProjection [0] dict
+        return $ recGetHead l $ getProjection [0] dict
     getterName <- freshClassGenName
     emitTo getterName SuperclassLet $ Atom f
-emitSuperclassGetter (DataDef _ _ _) = error "Not a class dictionary"
+emitSuperclassGetters (DataDef _ _ _) = error "Not a class dictionary"
 
 checkNotInScope :: Name -> UInferM ()
 checkNotInScope v = do
@@ -486,7 +486,7 @@ checkInstance ty methods = case ty of
       ClassDictDef _ superclassTys methodTys -> do
         methods' <- liftM mkLabeledItems $ forM methods \((v:>()), rhs) -> do
           let v' = nameToLabel v
-          case lookupLabel methodTys v' of
+          case lookupLabelHead methodTys v' of
             Nothing -> throw TypeErr (pprint v ++ " is not a method of " ++ pprint className)
             Just methodTy -> do
               rhs' <- checkSigma rhs Suggest methodTy
@@ -495,7 +495,7 @@ checkInstance ty methods = case ty of
         forM_ (reflectLabels methods') \(l,i) ->
           when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
         forM_ (reflectLabels methodTys) \(l,_) ->
-          case lookupLabel methods' l of
+          case lookupLabelHead methods' l of
             Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
             Just _  -> return ()
         return $ ClassDictCon def params superclassHoles methods'
