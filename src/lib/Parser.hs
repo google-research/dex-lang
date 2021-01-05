@@ -259,7 +259,7 @@ findImplicitImplicitArgNames typ = filter isLowerCaseName $ envNames $
     UFor _ _ _ -> error "Unexpected for in type annotation"
     UHole -> mempty
     UTypeAnn v ty -> findVarsInAppLHS v <> findVarsInAppLHS ty
-    UTabCon _ -> mempty
+    UTabCon _ -> error "Unexpected table constructor in type annotation"
     UIndexRange low high ->
       foldMap findVarsInAppLHS low <> foldMap findVarsInAppLHS high
     UPrimExpr prim -> foldMap findVarsInAppLHS prim
@@ -339,25 +339,25 @@ instanceDef = do
   explicitArgs <- many defArg
   constraints <- classConstraints
   classTy <- uType
-  let ty  = buildPiType explicitArgs Pure $
-              foldr addClassConstraint classTy constraints
-  let ty' = foldr addImplicitArg ty $ findImplicitImplicitArgNames ty
+  let implicitArgs = findImplicitImplicitArgNames $
+                       buildPiType explicitArgs Pure $
+                         foldr addClassConstraint classTy constraints
+  let argBinders =
+        [((ns (nameToPat v), Nothing), ImplicitArrow) | v <- implicitArgs] ++
+        explicitArgs                                                       ++
+        [((UnderscoreUPat, Just c)   , ClassArrow   ) | c <- constraints]
   methods <- onePerLine instanceMethod
-  return $ UInstance ty' methods
+  return $ UInstance (toNest argBinders) classTy methods
   where
     addClassConstraint :: UType -> UType -> UType
     addClassConstraint c ty = ns $ UPi (UnderscoreUPat, Just c) ClassArrow ty
 
-    addImplicitArg :: Name -> UType -> UType
-    addImplicitArg v ty =
-      ns $ UPi (ns $ nameToPat v, Nothing) ImplicitArrow ty
-
-instanceMethod :: Parser (UVar, UExpr)
+instanceMethod :: Parser UMethodDef
 instanceMethod = do
   v <- anyName
   sym "="
   rhs <- blockOrExpr
-  return (v:>(), rhs)
+  return $ UMethodDef (v:>()) rhs
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
@@ -379,26 +379,26 @@ funDefLet = label "function definition" $ mayBreak $ do
   let bs = map classAsBinder cs ++ argBinders
   let funTy = buildPiType bs eff ty
   let letBinder = (v, Just funTy)
-  let lamBinders = flip map bs \(p,_, arr) -> ((p,Nothing), arr)
+  let lamBinders = flip map bs \((p,_), arr) -> ((p,Nothing), arr)
   return \body -> ULet PlainLet letBinder (buildLam lamBinders body)
   where
-    classAsBinder :: UType -> (UPat, Maybe UType, UArrow)
-    classAsBinder ty = (UnderscoreUPat, Just ty, ClassArrow)
+    classAsBinder :: UType -> UPatAnnArrow
+    classAsBinder ty = ((UnderscoreUPat, Just ty), ClassArrow)
 
-defArg :: Parser (UPat, Maybe UType, UArrow)
+defArg :: Parser UPatAnnArrow
 defArg = label "def arg" $ do
   (p, ty) <-parens ((,) <$> pat <*> annot uType)
   arr <- arrow (return ()) <|> return (PlainArrow ())
-  return (p, Just ty, arr)
+  return ((p, Just ty), arr)
 
 classConstraints :: Parser [UType]
 classConstraints = label "class constraints" $
   optionalMonoid $ brackets $ mayNotPair $ uType `sepBy` sym ","
 
-buildPiType :: [(UPat, Maybe UType, UArrow)] -> EffectRow -> UType -> UType
+buildPiType :: [UPatAnnArrow] -> EffectRow -> UType -> UType
 buildPiType [] Pure ty = ty
 buildPiType [] _ _ = error "shouldn't be possible"
-buildPiType ((p, patTy, arr):bs) eff resTy = ns case bs of
+buildPiType (((p, patTy), arr):bs) eff resTy = ns case bs of
   [] -> UPi (p, patTy) (fmap (const eff ) arr) resTy
   _  -> UPi (p, patTy) (fmap (const Pure) arr) $ buildPiType bs eff resTy
 

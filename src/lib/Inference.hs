@@ -361,15 +361,14 @@ inferUDecl True (UInterface superclasses tc methods) = do
   emitSuperclassGetters dataDef
   emitMethodGetters     dataDef
   return mempty
-inferUDecl True (UInstance instanceTy methods) = do
-   ty <- checkUType instanceTy
-   instanceDict <- checkInstance ty methods
+inferUDecl True (UInstance argBinders instanceTy methods) = do
+   instanceDict <- checkInstance argBinders instanceTy methods
    let instanceName = Name TypeClassGenName "instance" 0
    void $ emitTo instanceName InstanceLet $ Atom instanceDict
    return mempty
 inferUDecl False (UData      _ _  ) = error "data definitions should be top-level"
 inferUDecl False (UInterface _ _ _) = error "interface definitions should be top-level"
-inferUDecl False (UInstance  _ _  ) = error "instance definitions should be top-level"
+inferUDecl False (UInstance  _ _ _) = error "instance definitions should be top-level"
 
 freshClassGenName :: MonadEmbed m => m Name
 freshClassGenName = do
@@ -479,36 +478,46 @@ checkULam (p, ann) body piTy = do
     \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
                       checkSigma body Suggest $ snd $ applyAbs piTy x
 
-checkInstance :: Type -> [(UVar, UExpr)] -> UInferM Atom
-checkInstance ty methods = case ty of
-  TypeCon def@(DataDef className _ _) params -> do
-    case applyDataDefParams def params of
-      ClassDictDef _ superclassTys methodTys -> do
-        methods' <- liftM mkLabeledItems $ forM methods \((v:>()), rhs) -> do
-          let v' = nameToLabel v
-          case lookupLabelHead methodTys v' of
-            Nothing -> throw TypeErr (pprint v ++ " is not a method of " ++ pprint className)
-            Just methodTy -> do
-              rhs' <- checkSigma rhs Suggest methodTy
-              return (v', rhs')
-        let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
-        forM_ (reflectLabels methods') \(l,i) ->
-          when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
-        forM_ (reflectLabels methodTys) \(l,_) ->
-          case lookupLabelHead methods' l of
-            Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
-            Just _  -> return ()
-        return $ ClassDictCon def params superclassHoles methods'
-      _ -> throw TypeErr $ "Not a valid instance: " ++ pprint ty
-  Pi (Abs b (arrow, bodyTy)) -> do
-    case arrow of
-      ImplicitArrow -> return ()
-      ClassArrow    -> return ()
-      _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
-    buildLam b arrow \x@(Var v) -> do
-      bodyTy' <- substEmbed (b@>x) bodyTy
-      checkLeaks [v] $ extendR (b@>x) $ checkInstance bodyTy' methods
-  _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
+checkInstance :: Nest UPatAnnArrow -> UType -> [UMethodDef] -> UInferM Atom
+checkInstance Empty ty methods = do
+  ty' <- checkUType ty
+  case ty' of
+    TypeCon def@(DataDef className _ _) params ->
+      case applyDataDefParams def params of
+        ClassDictDef _ superclassTys methodTys -> do
+          let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
+          methods' <- checkMethodDefs className methodTys methods
+          return $ ClassDictCon def params superclassHoles methods'
+        _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
+    _     -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
+checkInstance (Nest ((p, ann), arrow) rest) ty methods = do
+  case arrow of
+    ImplicitArrow -> return ()
+    ClassArrow    -> return ()
+    _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
+  argTy <- checkAnn ann
+  buildLam (Bind $ patNameHint p :> argTy) (fromUArrow arrow) \x@(Var v) ->
+    checkLeaks [v] $ withBindPat p x $ checkInstance rest ty methods
+
+
+checkMethodDefs :: Name ->  LabeledItems Type -> [UMethodDef]
+                -> UInferM (LabeledItems Atom)
+checkMethodDefs className methodTys methods = do
+  methods' <- liftM mkLabeledItems $ forM methods \(UMethodDef (v:>()) rhs) -> do
+    let v' = nameToLabel v
+    case lookupLabelHead methodTys v' of
+      Nothing -> throw TypeErr $
+        pprint v ++ " is not a method of " ++ pprint className
+      Just methodTy -> do
+        rhs' <- checkSigma rhs Suggest methodTy
+        return (v', rhs')
+  forM_ (reflectLabels methods') \(l,i) ->
+    when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
+  forM_ (reflectLabels methodTys) \(l,_) ->
+    case lookupLabelHead methods' l of
+      Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
+      Just _  -> return ()
+  return methods'
 
 checkUEffRow :: EffectRow -> UInferM EffectRow
 checkUEffRow (EffectRow effs t) = do
@@ -732,13 +741,16 @@ inferTabCon xs reqTy = do
       return (tabTy, xs')
   emitZonked $ Op $ TabCon tabTy xs'
 
+fromUArrow :: UArrow -> Arrow
+fromUArrow arr = fmap (const Pure) arr
+
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Bool -> UArrow -> Type -> UInferM PiType
 fromPiType _ _ (Pi piTy) = return piTy -- TODO: check arrow
 fromPiType expectPi arr ty = do
   a <- freshType TyKind
   b <- freshType TyKind
-  let piTy = Abs (Ignore a) (fmap (const Pure) arr, b)
+  let piTy = Abs (Ignore a) (fromUArrow arr, b)
   if expectPi then  constrainEq (Pi piTy) ty
               else  constrainEq ty (Pi piTy)
   return piTy

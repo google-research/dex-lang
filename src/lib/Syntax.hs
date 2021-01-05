@@ -40,6 +40,7 @@ module Syntax (
     AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
+    UMethodDef (..), UPatAnnArrow,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
@@ -245,18 +246,21 @@ data UExpr' = UVar UVar
               deriving (Show, Generic)
 
 data UConDef = UConDef Name (Nest UAnnBinder)  deriving (Show, Generic)
-data UDecl = ULet LetAnn UPatAnn UExpr
-           | UData UConDef [UConDef]
-           | UInterface [UType] UConDef [UAnnBinder]
-           | UInstance UType [(UVar, UExpr)]
-             deriving (Show, Generic)
+data UDecl =
+   ULet LetAnn UPatAnn UExpr
+ | UData UConDef [UConDef]
+ | UInterface [UType] UConDef [UAnnBinder] -- superclasses, constructor, methods
+ | UInstance (Nest UPatAnnArrow) UType [UMethodDef]  -- args, type, methods
+   deriving (Show, Generic)
 
 type UType  = UExpr
 type UArrow = ArrowP ()
 type UVar    = VarP ()
 type UBinder = BinderP ()
+data UMethodDef = UMethodDef UVar UExpr deriving (Show, Generic)
 
-type UPatAnn   = (UPat, Maybe UType)
+type UPatAnn      = (UPat, Maybe UType)
+type UPatAnnArrow = (UPatAnn, UArrow)
 type UAnnBinder = BinderP UType
 
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
@@ -800,14 +804,21 @@ instance HasUVars UDecl where
   freeUVars (UData (UConDef _ bs) dataCons) = freeUVars $ Abs bs dataCons
   freeUVars (UInterface superclasses tc methods) =
     freeUVars $ Abs tc (superclasses, methods)
-  freeUVars (UInstance ty methods) = mempty -- TODO
+  freeUVars (UInstance bsArrows ty methods) = freeUVars $ Abs bs (ty, methods)
+    where bs = fmap fst bsArrows
+
+instance HasUVars UMethodDef where
+  freeUVars (UMethodDef _ def) = freeUVars def
+
+instance BindsUVars UPatAnn where
+  boundUVars (p, _) = boundUVars p
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
     ULet _ (p,_) _ -> boundUVars p
     UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
     UInterface _ _ _ -> mempty
-    UInstance _ _    -> mempty
+    UInstance _ _ _  -> mempty
 
 instance HasUVars UModule where
   freeUVars (UModule decls) = freeUVars decls
