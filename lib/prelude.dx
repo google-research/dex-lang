@@ -1178,8 +1178,9 @@ def withTempFiles (action: (n=>FilePath) -> {State World} a) : {State World} a =
 def getOutputStream (_:Unit) : {State World} Stream WriteMode =
   MkStream $ %ptrLoad OUT_STREAM_PTR
 
-def print (s:String) : {State World} Unit =
-  fwrite (getOutputStream ()) (s <> "\n")
+def print (_:Show a) ?=> (s:a) : {State World} a =
+  fwrite (getOutputStream ()) ((show s) <> "\n")
+  s
 
 def shellOut (command:String) : {State World} String =
   modeStr = "r"
