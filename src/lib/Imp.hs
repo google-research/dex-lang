@@ -101,6 +101,8 @@ requiredFunctions scope expr =
   flip foldMap (transitiveClosure getParents immediateParents) \fname ->
     case scope ! fname of
        (_, LetBound _ (Atom f)) -> [(fname, f)]
+       -- we treat runtime-supplied global constants (e.g. the virtual stdout
+       -- channel) as lambda-bound. TODO: consider a new annotation.
        (_, LamBound _) -> []
        _ -> error "Shouldn't have other free variables left"
   where
@@ -119,6 +121,7 @@ translateTopLevel topEnv (maybeDest, block) = do
         Just dest -> return dest
   handleErrors $ void $ translateBlock mempty (Just outDest, block)
   resultAtom <- destToAtom outDest
+  -- Some names in topEnv refer to global constants, like the virtual stdout channel
   let vsOut = envAsVars $ freeVars resultAtom `envDiff` topEnv
   let reconAtom = Abs (toNest $ [Bind (v:>ty) | (v:>(ty, _)) <- vsOut]) resultAtom
   let resultIExprs = case maybeDest of
