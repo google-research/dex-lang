@@ -17,7 +17,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               app,
               add, mul, sub, neg, div',
               iadd, imul, isub, idiv, ilt, ieq,
-              fpow, flog, fLitLike, recGet, buildImplicitNaryLam,
+              fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam,
               select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, getFstRef, getSndRef,
               naryApp, appReduce, appTryReduce, buildAbs,
@@ -206,8 +206,8 @@ buildImplicitNaryLam (Nest b bs) body =
     bs' <- substEmbed (b@>x) bs
     buildImplicitNaryLam bs' \xs -> body $ x:xs
 
-recGet :: Label -> Atom -> Atom
-recGet l x = do
+recGetHead :: Label -> Atom -> Atom
+recGetHead l x = do
   let (RecordTy (Ext r _)) = getType x
   let i = fromJust $ elemIndex l $ map fst $ toList $ reflectLabels r
   getProjection [i] x

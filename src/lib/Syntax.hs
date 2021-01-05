@@ -28,8 +28,8 @@ module Syntax (
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
-    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton, lookupLabel,
-    reflectLabels, withLabels, ExtLabeledItems (..),
+    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
+    lookupLabelHead, reflectLabels, withLabels, ExtLabeledItems (..),
     prefixExtLabeledItems, getLabels,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..),
@@ -196,8 +196,8 @@ withLabels :: LabeledItems a -> LabeledItems (Label, Int, a)
 withLabels (LabeledItems items) = LabeledItems $
   flip M.mapWithKey items \k xs -> fmap (\(i,a) -> (k,i,a)) (enumerate xs)
 
-lookupLabel :: LabeledItems a -> Label -> Maybe a
-lookupLabel (LabeledItems items) l = case M.lookup l items of
+lookupLabelHead :: LabeledItems a -> Label -> Maybe a
+lookupLabelHead (LabeledItems items) l = case M.lookup l items of
   Nothing -> Nothing
   Just (x NE.:| _) -> Just x
 
@@ -798,8 +798,9 @@ instance BindsUVars UPat' where
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
   freeUVars (UData (UConDef _ bs) dataCons) = freeUVars $ Abs bs dataCons
-  freeUVars (UInterface _ _ _) = mempty  -- TODO
-  freeUVars (UInstance _ _) = mempty     -- TODO
+  freeUVars (UInterface superclasses tc methods) =
+    freeUVars $ Abs tc (superclasses, methods)
+  freeUVars (UInstance ty methods) = mempty -- TODO
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
@@ -1538,15 +1539,14 @@ pattern BinderAnn x <- ((\case Ignore   ann  -> ann
   where BinderAnn x = Ignore x
 
 pattern NewTypeCon :: Name -> Type -> [DataConDef]
-pattern NewTypeCon con ty <- [DataConDef con (NestOne (BinderAnn ty))]
-  where NewTypeCon con ty =  [DataConDef con (NestOne (Ignore    ty))]
+pattern NewTypeCon con ty = [DataConDef con (NestOne (BinderAnn ty))]
 
 pattern ClassDictDef :: Name
                      -> LabeledItems Type -> LabeledItems Type -> [DataConDef]
 pattern ClassDictDef conName superclasses methods =
   [DataConDef conName
-     (Nest (Ignore (RecordTy (NoExt superclasses)))
-     (Nest (Ignore (RecordTy (NoExt methods))) Empty))]
+     (Nest (BinderAnn (RecordTy (NoExt superclasses)))
+     (Nest (BinderAnn (RecordTy (NoExt methods))) Empty))]
 
 pattern ClassDictCon :: DataDef -> [Type]
                      -> LabeledItems Atom -> LabeledItems Atom -> Atom
