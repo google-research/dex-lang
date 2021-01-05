@@ -513,8 +513,6 @@ def (+>>) [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   i' = i * storageSize a
   MkPtr $ %ptrOffset ptr' i'
 
--- TODO: generalize these brackets to allow other effects
-
 -- TODO: consider making a Storable instance for tables instead
 def storeTab [Storable a] (ptr: Ptr a) (tab:n=>a) : {State World} Unit =
   for_ i. store (ptr +>> ordinal i) tab.i
@@ -524,6 +522,8 @@ def memcpy [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {State World} Unit =
     i' = ordinal i
     store (dest +>> i') (load $ src +>> i')
 
+-- TODO: generalize these brackets to allow other effects
+-- TODO: make sure that freeing happens even if there are run-time errors
 def withAlloc [Storable a]
       (n:Int) (action: Ptr a -> {State World} b) : {State World} b =
   ptr = malloc n
