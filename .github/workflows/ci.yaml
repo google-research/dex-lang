@@ -51,8 +51,12 @@ jobs:
       run: rm -rf ~/.stack/setup-exe-cache
       if: runner.os == 'macOS'
 
+    - name: Build, treating warnings as errors
+      run: make build-ci
+      if: runner.os == 'Linux'
+
     - name: Build
-      run: make
+      run: make build
 
     - name: Run tests
       run: make tests

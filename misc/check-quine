@@ -26,6 +26,7 @@ if ${@:2} $1 > $tmpout 2> $errout ; then
     misc/check-no-diff $1 $tmpout
     status=$?
 else
+    status=$?
     cat $tmpout
 fi
 

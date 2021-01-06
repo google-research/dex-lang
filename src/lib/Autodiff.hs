@@ -172,6 +172,7 @@ linearizeOp op = case op of
   VariantLift  ts v      -> (VariantLift  ts <$> la v) `bindLin` emitOp
   VariantSplit ts v      -> (VariantSplit ts <$> la v) `bindLin` emitOp
   FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
+  ThrowException _       -> notImplemented
   where
     emitDiscrete = if isTrivialForAD (Op op)
       then LinA $ withZeroTangent <$> emitOp op
@@ -274,7 +275,8 @@ linearizeHof env hof = case hof of
   -- TODO: Consider providing an upper bound for the number of while iterations as a hint.
   --       In the current form the best we can do is try to use some dynamically growing lists,
   --       but that won't work on the GPU.
-  While _     -> notImplemented
+  While _          -> notImplemented
+  CatchException _ -> notImplemented
   Linearize _ -> error "Unexpected linearization"
   Transpose _ -> error "Unexpected transposition"
   PTileReduce _ _ -> error "Unexpected PTileReduce"
@@ -649,6 +651,7 @@ transposeOp op ct = case op of
   FFICall _ _ _         -> notLinear
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
+  ThrowException _      -> notLinear
   where
     -- Both nonlinear operations and operations on discrete types, where linearity doesn't make sense
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
@@ -697,12 +700,13 @@ transposeHof hof ct = case hof of
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
       return UnitVal
     transposeAtom s cts
-  RunIO _ -> error "Not implemented"
-  Tile      _ _ _ -> notImplemented
-  While         _ -> notImplemented
-  Linearize     _ -> error "Unexpected linearization"
-  Transpose     _ -> error "Unexpected transposition"
-  PTileReduce _ _ -> error "Unexpected PTileReduce"
+  Tile      _ _ _  -> notImplemented
+  While         _  -> notImplemented
+  RunIO _          -> notImplemented
+  CatchException _ -> notImplemented
+  Linearize     _  -> error "Unexpected linearization"
+  Transpose     _  -> error "Unexpected transposition"
+  PTileReduce _ _  -> error "Unexpected PTileReduce"
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
