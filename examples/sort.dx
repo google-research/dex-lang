@@ -27,7 +27,6 @@ def empty (stack:Stack b h) : {State h} Bool =
 -- This will be a nice helper function, but for now it doesn't
 -- typecheck due to a unification bug.
 def withStack
-      (eff:Effects) ?->
       (init:t)
       (action: (Stack t h -> {State h |eff} Unit))
       : {|eff} Unit =
@@ -43,11 +42,6 @@ def swapInRef (xsRef: Ref h (n=>t)) (a:n) (b:n) : {State h} Unit =
   temp     = get xsRef!a
   xsRef!a := get xsRef!b
   xsRef!b := temp
-
-def fromJust (maybeA: Maybe a) : a =
-  case maybeA of
-    Just x -> x
-    Nothing -> throw
 
 def (-|) (i:n) (delta:Int) : n =
   i' = ordinal i - delta
@@ -70,7 +64,7 @@ def rangeSize (MkRange low high:MyRange a) : Int =
 
 '# Sort functions
 
-def partition (_:Ord a) ?=> (xsRef: Ref h (n=>a))
+def partition [Ord a] (xsRef: Ref h (n=>a))
   (MkRange low high:MyRange n) : {State h} n = 
   -- Chooses the last element as the pivot, then
   -- moves all elements smaller than the pivot to its left,
@@ -78,7 +72,7 @@ def partition (_:Ord a) ?=> (xsRef: Ref h (n=>a))
   -- and returns the final location of the pivot.
     pivotval = get xsRef!high
     
-    final_pivot_ix = snd $ withState low \pivotIxRef.
+    final_pivot_ix = yieldState low \pivotIxRef.
       for j':(low..<high).
         j = %inject j'
         case get xsRef!j < pivotval of
@@ -89,29 +83,32 @@ def partition (_:Ord a) ?=> (xsRef: Ref h (n=>a))
     swapInRef xsRef final_pivot_ix high 
     final_pivot_ix
 
-def quickSortInPlace (_:Ord a) ?=> (xsRef: Ref h (n=>a)) : {State h} Unit =
+def quickSortInPlace [Ord a] (xsRef: Ref h (n=>a)) : {State h} Unit =
   initrange = MkRange (firstIx n) (lastIx n)
-  withState (1, for i:(Fin bufsize). initrange) \pairref.
+  runState (1, for i:(Fin bufsize). initrange) \pairref.
     stack = AsStack (fstRef pairref) (sndRef pairref)
-    while (\(). not (empty stack)) \().
-      cur_range = fromJust $ pop stack
-      case rangeSize cur_range <= 1 of
-        True -> ()
-        False ->
-          pivot_ix = partition xsRef cur_range
-          (MkRange low high) = cur_range
+    while do 
+      case pop stack of
+        Nothing -> False
+        Just cur_range -> 
+          case rangeSize cur_range <= 1 of
+            True -> ()
+            False ->
+              pivot_ix = partition xsRef cur_range
+              (MkRange low high) = cur_range
 
-          left_range  = MkRange low (pivot_ix -| 1)
-          right_range = MkRange (pivot_ix +| 1) high
+              left_range  = MkRange low (pivot_ix -| 1)
+              right_range = MkRange (pivot_ix +| 1) high
 
-          push stack left_range
-          push stack right_range
+              push stack left_range
+              push stack right_range
+          True
   ()
 
-def sort (_:Ord a) ?=> (xs:n=>a) : n=>a =
-  snd $ withState xs quickSortInPlace
+def sort [Ord a] (xs:n=>a) : n=>a =
+  yieldState xs quickSortInPlace
 
-def isSorted (_:Ord a) ?=> (xs:n=>a) : Bool =
+def isSorted [Ord a] (xs:n=>a) : Bool =
   all for i. xs.i <= xs.(i +| 1)
 
 ---------- Tests -----------
