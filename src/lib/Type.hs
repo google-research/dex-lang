@@ -296,6 +296,8 @@ exprEffs expr = case expr of
     PTileReduce _ _ -> mempty
     RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
       EffectRow (S.delete IOEffect effs) t
+    CatchException ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
+      EffectRow (S.delete ExceptionEffect effs) t
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
     handleRWSRunner rws ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs t) _) =
