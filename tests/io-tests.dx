@@ -42,12 +42,6 @@ unsafeIO \().
 > 4
 
 :p unsafeIO \().
-  withAlloc 1 \ptr:(Ptr (Int & Int)).
-    store ptr (4, 3)
-    load ptr
-> (4, 3)
-
-:p unsafeIO \().
   withAlloc 1 \ptr:(Ptr Int).
     store ptr 3
     load ptr
@@ -73,8 +67,9 @@ unsafeIO \().
 :p unsafeIO do getEnv "NOT_AN_ENV_VAR"
 > Nothing
 
-:p unsafeIO do getEnv "DEX_TEST_MODE"
-> (Just (AsList 1 "t"))
+-- disabled because of bug #348
+-- :p unsafeIO do getEnv "DEX_TEST_MODE"
+-- > (Just (AsList 1 "t"))
 
 :p dex_test_mode ()
 > True
