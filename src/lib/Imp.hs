@@ -692,6 +692,11 @@ copyAtom (Con dest) src = case (dest, src) of
   (ConRef (SumAsProd _ tag payload), DataCon _ _ con x) -> do
     copyAtom tag (TagRepVal $ fromIntegral con)
     zipWithM_ copyAtom (payload !! con) x
+  (ConRef (SumAsProd _ tagDest payloadDest), Con (SumAsProd _ tag payload)) -> do
+    copyAtom tagDest tag
+    unless (all null payload) $ -- optimization
+      emitSwitch (fromScalarAtom tag) $
+        zipWith (zipWithM_ copyAtom) payloadDest payload
   (ConRef destCon, Con srcCon) -> zipWithRefConM copyAtom destCon srcCon
   (RecordRef refs, Record vals)
     | fmap (const ()) refs == fmap (const ()) vals -> do
@@ -832,6 +837,8 @@ splitDest (maybeDest, (Block decls ans)) = do
       (_, Con (Lit _)) -> tell [(dest, result)]
       -- This is conservative, in case the type is dependent. We could do better.
       (DataConRef _ _ _, DataCon _ _ _ _) -> tell [(dest, result)]
+      -- This is conservative. Without it, we hit bugs like #348
+      (Con (ConRef (SumAsProd _ _ _)), Con (SumAsProd _ _ _)) -> tell [(dest, result)]
       (Con (ConRef destCon), Con srcCon) ->
         zipWithRefConM gatherVarDests destCon srcCon
       (Con (RecordRef items), Record items')
@@ -952,8 +959,6 @@ zipWithRefConM :: Monad m => (Dest -> Atom -> m ()) -> Con -> Con -> m ()
 zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
   (PairCon d1 d2, PairCon s1 s2) -> f d1 s1 >> f d2 s2
   (UnitCon, UnitCon) -> return ()
-  (SumAsProd _ tagRef xssRef, SumAsProd _ tag xss) ->
-    f tagRef tag >> zipWithM_ (zipWithM f) xssRef xss
   (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> f iRef i
   (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> f iRef i
   _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
@@ -972,6 +977,10 @@ addToAtom dest src = case (dest, src) of
     updated <- emitInstr $ IPrimOp $ op FAdd cur x'
     storeAnywhere ptr' updated
   (Con (TabRef _), TabVal _ _) -> zipTabDestAtom addToAtom dest src
+  (Con (ConRef (SumAsProd _ _ payloadDest)), Con (SumAsProd _ tag payload)) -> do
+    unless (all null payload) $ -- optimization
+      emitSwitch (fromScalarAtom tag) $
+        zipWith (zipWithM_ addToAtom) payloadDest payload
   (Con (ConRef destCon), Con srcCon) -> zipWithRefConM addToAtom destCon srcCon
   (Con (RecordRef dests), Record srcs) ->
     zipWithM_ addToAtom (toList dests) (toList srcs)
