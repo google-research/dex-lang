@@ -27,9 +27,10 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               embedExtend, unpackConsList, emitRunWriter, applyPreludeFunction,
               emitRunState,  emitMaybeCase, emitWhile, buildDataDef,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
-              traverseAtom, ptrOffset, ptrLoad, unsafePtrLoad,
+              ptrOffset, ptrLoad, unsafePtrLoad,
               evalBlockE, substTraversalDef,
-              TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
+              TraversalDef, traverseDecls, traverseDecl, traverseDeclsOpen,
+              traverseBlock, traverseExpr, traverseAtom,
               clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
               transformModuleAsBlock, dropSub, appReduceTraversalDef,
               indexSetSizeE, indexToIntE, intToIndexE, freshVarE) where
