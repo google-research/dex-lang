@@ -46,7 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    getProjection, theWorld, outputStreamPtrName, initTopEnv,
+    getProjection, outputStreamPtrName, initTopEnv,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
@@ -447,22 +447,19 @@ data EffectRow = EffectRow (S.Set Effect) (Maybe Name)
                  deriving (Show, Eq, Generic)
 
 data RWS = Reader | Writer | State               deriving (Show, Eq, Ord, Generic)
-data Effect = RWSEffect RWS Name | ExceptionEffect  deriving (Show, Eq, Ord, Generic)
+data Effect = RWSEffect RWS Name | ExceptionEffect | IOEffect
+              deriving (Show, Eq, Ord, Generic)
 
 pattern Pure :: EffectRow
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
  where  Pure = mempty
-
-theWorld :: Name
-theWorld = GlobalName "World"
 
 outputStreamPtrName :: Name
 outputStreamPtrName = GlobalName "OUT_STREAM_PTR"
 
 initTopEnv :: TopEnv
 initTopEnv = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
-  [ (theWorld            , TyKind)
-  , (outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
+  [(outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
 
 hostPtrTy :: BaseType -> BaseType
 hostPtrTy ty = PtrType (Heap CPU, ty)
@@ -846,7 +843,8 @@ instance HasUVars EffectRow where
 
 instance HasUVars Effect where
   freeUVars (RWSEffect _ h) = nameAsEnv h
-  freeUVars (ExceptionEffect) = mempty
+  freeUVars ExceptionEffect = mempty
+  freeUVars IOEffect        = mempty
 
 instance HasUVars a => HasUVars (LabeledItems a) where
   freeUVars (LabeledItems items) = foldMap freeUVars items
@@ -1175,10 +1173,12 @@ instance HasVars Effect where
   freeVars eff = case eff of
     RWSEffect _ v -> v@>(TyKind , UnknownBinder)
     ExceptionEffect -> mempty
+    IOEffect        -> mempty
 instance Subst Effect where
   subst (env,_) eff = case eff of
     RWSEffect rws v -> RWSEffect rws (substName env v)
     ExceptionEffect -> ExceptionEffect
+    IOEffect        -> IOEffect
 
 instance HasVars BinderInfo where
   freeVars binfo = case binfo of

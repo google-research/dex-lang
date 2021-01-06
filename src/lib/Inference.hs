@@ -539,6 +539,7 @@ checkUEff eff = case eff of
     constrainEq TyKind ty
     return $ RWSEffect rws v
   ExceptionEffect -> return ExceptionEffect
+  IOEffect        -> return IOEffect
 
 data CaseAltIndex = ConAlt Int
                   | VariantAlt Label Int

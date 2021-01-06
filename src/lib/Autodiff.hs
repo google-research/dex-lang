@@ -460,6 +460,7 @@ tangentFunAsLambda m = do
     effectRegion eff = case eff of
       RWSEffect _ h -> h
       ExceptionEffect -> error "TODO!"
+      IOEffect        -> error "TODO!"
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
 applyLinToTangents :: Atom -> TangentM Atom

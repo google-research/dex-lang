@@ -366,7 +366,7 @@ ptrOffset x i = emitOp $ PtrOffset x i
 
 unsafePtrLoad :: MonadEmbed m => Atom -> m Atom
 unsafePtrLoad x = emit $ Hof $ RunIO $ Lam $ Abs (Ignore UnitTy) $
-  (PlainArrow (oneEffect ioEffect), Block Empty (Op (PtrLoad x)))
+  (PlainArrow (oneEffect IOEffect), Block Empty (Op (PtrLoad x)))
 
 ptrLoad :: MonadEmbed m => Atom -> m Atom
 ptrLoad x = emitOp $ PtrLoad x
