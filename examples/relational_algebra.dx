@@ -1,6 +1,6 @@
 '# The Relational Algebra
-Unlike other languages which have bespoke "table" datatypes, in principle
-Dex's record system should natively allow the manipulation of tables of records
+Unlike other languages which have bespoke "table" or "dataframe" datatypes,
+Dex's record system allows the manipulation of tables of records
 to do the sorts of data-munging usually done by packages such as pandas.
 
 'This is an attempt to express the basic operations on datasets
@@ -75,7 +75,7 @@ automatically, but I don't know what it is.
 3. As in the other examples, the resulting records should be flattened.
 
 
-def inner_join_one (_: Eq b) ?=>
+def inner_join_one [Eq b]
   -- Would rather have an Eq instance for just the inner
   -- type of b, not its named type.
   (left_iso : Iso ({&} & a1) (b & c1))
@@ -89,7 +89,7 @@ def inner_join_one (_: Eq b) ?=>
     then Just (left_b, left_c, right_c)
     else Nothing
 
-def inner_join (_: Eq b) ?=>
+def inner_join [Eq b]
   (left_iso : Iso ({&} & a1) (b & c1))
   (right_iso: Iso ({&} & a2) (b & c2))
   (left_tab:n=>a1) (right_tab:m=>a2) : List (b & c1 & c2) =
@@ -106,17 +106,15 @@ by automatically generating equality instances for records,
 or by somehow allowing an unpack operation to directly access
 the data held by any field.
 
--- This general List equality instance should probably go in the prelude.
-@instance
-def listEq (_: Eq a)?=> : Eq (List a) =
-  MkEq \(AsList n1 xs) (AsList n2 ys).
+-- This should probably go in the prelude.
+instance [Eq a] Eq (List a)
+  (==) = \(AsList n1 xs) (AsList n2 ys).
     if n1 == n2
-      then all for i. xs.i == ys.((ordinal i)@_)
+      then all for i. xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
       else False
 
 -- This bespoke equality instance should be automatically generated.
-@instance
-def nameEq (_: Eq a)?=> : Eq {name: a} =
-  MkEq $ \r1 r2. (getAt #name r1) == (getAt #name r2)
+instance [Eq a] Eq {name: a}
+  (==) = \r1 r2. (getAt #name r1) == (getAt #name r2)
 
 inner_join #&name #&name table1 table2
