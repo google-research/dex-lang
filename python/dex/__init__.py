@@ -56,7 +56,7 @@ def eval(expr: str, module=prelude, _env=None):
 
 
 class Atom:
-  __slots__ = ('_as_parameter_', 'module')
+  __slots__ = ('__weakref__', '_as_parameter_', 'module')
 
   def __init__(self, ptr, module):
     self._as_parameter_ = ptr

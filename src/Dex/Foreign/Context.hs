@@ -46,10 +46,10 @@ dexCreateContext = do
   maybePreludeEnv <- evalPrelude evalConfig preludeSource
   case maybePreludeEnv of
     Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
-    Left  _          -> setError "Failed to initialize standard library" $> nullPtr
+    Left  err        -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
   where
     evalPrelude :: EvalConfig -> String -> IO (Either Err TopEnv)
-    evalPrelude opts contents = flip evalStateT mempty $ do
+    evalPrelude opts contents = flip evalStateT initTopEnv $ do
       results <- fmap snd <$> evalSource opts contents
       env <- get
       return $ env `unlessError` results
@@ -83,11 +83,11 @@ dexInsert ctxPtr namePtr atomPtr = do
 dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
 dexEvalExpr ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
-  maybeExpr <- parseExpr <$> peekCString sourcePtr
-  case maybeExpr of
+  source <- peekCString sourcePtr
+  case parseExpr source of
     Right expr -> do
       let (v, m) = exprAsModule expr
-      let block = SourceBlock 0 0 LogNothing "" (RunModule m) Nothing
+      let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
       (resultEnv, Result [] maybeErr) <- evalSourceBlock evalConfig env block
       case maybeErr of
         Right () -> do

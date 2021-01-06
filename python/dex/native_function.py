@@ -57,7 +57,7 @@ class RectContArrayType:
 
   def to_ctype(self, array, name_cvalue):
     if not isinstance(array, np.ndarray):
-      raise TypeError("Expected a NumPy ndarray for an array argument")
+      array = np.asarray(array)
     if array.ndim != len(self.shape):
       raise ValueError(f"Expected a {len(self.shape)}D array, got {array.ndim}D")
     expected_dtype = np.dtype(self.ctype)

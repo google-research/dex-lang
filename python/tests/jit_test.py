@@ -25,7 +25,6 @@ def check_atom(dex_atom, reference, args_iter):
   ran_any_iter = False
   for args in args_iter:
     ran_any_iter = True
-    print(args)
     np.testing.assert_allclose(compiled(*args), reference(*args),
                                rtol=1e-4, atol=1e-6)
   assert ran_any_iter, "Empty argument iterator!"
