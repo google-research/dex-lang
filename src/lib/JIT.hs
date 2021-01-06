@@ -801,7 +801,7 @@ asIntWidth :: Operand -> L.Type -> Compile Operand
 asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
   LT -> emitInstr expTy $ L.Trunc op expTy []
   EQ -> return op
-  GT -> emitInstr expTy $ L.ZExt  op expTy []
+  GT -> emitInstr expTy $ L.SExt  op expTy []
   where ~(L.IntegerType opWidth) = L.typeOf op
 
 freshParamOpPair :: [L.ParameterAttribute] -> L.Type -> Compile (Parameter, Operand)

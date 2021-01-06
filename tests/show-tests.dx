@@ -20,10 +20,8 @@
 :p show (IToI64 1234: Int64)
 > (AsList 4 "1234")
 
--- FIXME(https://github.com/google-research/dex-lang/issues/317):
--- Unexpected zext from type conversion of negative Int32 to Int64.
 :p show (IToI64 (-1234): Int64)
-> (AsList 10 "4294966062")
+> (AsList 5 "-1234")
 
 -- Float32
 
