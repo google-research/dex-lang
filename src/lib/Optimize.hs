@@ -95,13 +95,22 @@ inlineModule m = transformModuleAsBlock inlineBlock (computeInlineHints m)
 
 inlineTraverseDecl :: Decl -> InlineM SubstEnv
 inlineTraverseDecl decl = case decl of
-  -- This is not a super safe condition for inlining, because it might still duplicate work
-  -- unexpectedly (consider an `arr` that's only used as `for i. 2.0 .* arr`). Still, this is not
-  -- the way arrays are usually used, so it should be good enough for now. In the future we should
-  -- strengthen this check to better ensure that each element of the array is used at most once.
   Let _ b@(BindWithHint CanInline _) expr@(Hof (For _ body)) | isPure expr -> do
     ~(LamVal ib block) <- traverseAtom inlineTraversalDef body
     return $ b @> TabVal ib block
+  -- If `f` turns out to be an inlined table lambda, we expand its block and
+  -- call ourselves recursively on the block's result expression. This makes
+  -- it possible for us to e.g. discover that the result is a `for` loop, and
+  -- match the case above, to continue the inlining process.
+  Let letAnn letBinder (App f' x') -> do
+    f <- traverseAtom inlineTraversalDef f'
+    x <- traverseAtom inlineTraversalDef x'
+    case f of
+      TabVal b (Block body result) -> do
+        dropSub $ extendR (b@>x) $ do
+          blockEnv <- traverseDeclsOpen substTraversalDef body
+          extendR blockEnv $ inlineTraverseDecl $ Let letAnn letBinder result
+      _ -> (letBinder@>) <$> emitTo (binderNameHint letBinder) letAnn (App f x)
   _ -> traverseDecl inlineTraversalDef decl
 
 -- TODO: This is a bit overeager. We should count under how many loops are we.
@@ -113,12 +122,9 @@ inlineTraverseExpr expr = case expr of
   Hof (For d body) -> do
     newBody <- traverseAtom inlineTraversalDef body
     case newBody of
-      -- Trivial bodies
       -- XXX: The trivial body might be a table lambda, and those could technically
       --      get quite expensive. But I think this should never be the case in practice.
-      -- XXX: This doesn't always have to end up being beneficial. If the result is
-      --      significantly smaller than the intermediates it refers to, then this
-      --      optimization will waste a bunch of memory by keeping the large intermediates alive.
+      -- Trivial bodies
       LamVal ib block@(Block Empty (Atom _)) -> return $ Atom $ TabVal ib block
       -- Pure broadcasts
       LamVal ib@(Ignore _) block | blockEffs block == Pure -> do
