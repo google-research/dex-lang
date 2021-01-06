@@ -476,23 +476,6 @@ instance Storable Int32
   load  = \(MkPtr ptr)  . %ptrLoad  (internalCast %Int32Ptr ptr)
   storageSize_ = const 4
 
-def unpackPairPtr [Storable a, Storable b]
-      (pairPtr: Ptr (a & b)) : (Ptr a & Ptr b) =
-  (MkPtr rawPtrX) = pairPtr
-  rawPtrY = %ptrOffset rawPtrX (storageSize a)
-  (MkPtr rawPtrX, MkPtr rawPtrY)
-
-instance [Storable a, Storable b] Storable (a & b)
-  store = \pairPtr (x, y).
-    (xPtr, yPtr) = unpackPairPtr pairPtr
-    store xPtr x
-    store yPtr y
-  load = \pairPtr.
-    (xPtr, yPtr) = unpackPairPtr pairPtr
-    (load xPtr, load yPtr)
-  storageSize_ = \_.
-    storageSize a + storageSize b
-
 instance Storable (Ptr a)
   store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internalCast %PtrPtr ptr) x
   load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internalCast %PtrPtr ptr)
@@ -883,45 +866,58 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 
 -- TODO: should we be able to use `Ref World Int` instead of `Ptr Int`?
 -- TODO: would be nice to be able to use records here
-data DynBuffer a = MkDynBuffer (Ptr (Int & Int & Ptr a))  -- size, max size, buf ptr
+data DynBuffer a =
+  MkDynBuffer { size    : Ptr Int
+              & maxSize : Ptr Int
+              & buffer  : Ptr (Ptr a) }
 
 def withDynamicBuffer [Storable a]
       (action: DynBuffer a -> {State World} b) : {State World} b =
   initMaxSize = 256
-  withAlloc 1 \dbPtr.
-    bufPtr = malloc initMaxSize
-    store dbPtr (0, initMaxSize, bufPtr)
-    result = action $ MkDynBuffer dbPtr
-    (_, _, bufPtr') = load dbPtr
-    free bufPtr'
+  withAlloc 1 \sizePtr. withAlloc 1 \maxSizePtr. withAlloc 1 \bufferPtr.
+    store sizePtr 0
+    store maxSizePtr initMaxSize
+    store bufferPtr $ malloc initMaxSize
+    result = action $ MkDynBuffer { size    = sizePtr
+                                  , maxSize = maxSizePtr
+                                  , buffer  = bufferPtr }
+
+    free $ load bufferPtr
     result
 
 def maybeIncreaseBufferSize [Storable a]
-    (buf: DynBuffer a) (sizeDelta:Int) : {State World} Unit =
-  (MkDynBuffer dbPtr) = buf
-  (size, maxSize, bufPtr) = load dbPtr
+    ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {State World} Unit =
+  size    = load $ getAt #size    db
+  maxSize = load $ getAt #maxSize db
+  bufPtr  = load $ getAt #buffer  db
   newSize = sizeDelta + size
   if newSize > maxSize then
     -- TODO: maybe this should use integer arithmetic?
     newMaxSize = FToI $ pow 2.0 (ceil $ log2 $ IToF newSize)
     newBufPtr = malloc newMaxSize
     memcpy newBufPtr bufPtr size
-    store dbPtr (size, newMaxSize, newBufPtr)
+    free bufPtr
+    store (getAt #maxSize db) newMaxSize
+    store (getAt #buffer  db) newBufPtr
+
+def addAtIntPtr (ptr: Ptr Int) (n:Int) : {State World} Unit =
+  store ptr (load ptr + n)
 
 def extendDynBuffer [Storable a]
     (buf: DynBuffer a) (new:List a) : {State World} Unit =
   (AsList n xs) = new
   maybeIncreaseBufferSize buf n
-  (MkDynBuffer dbPtr) = buf
-  (size, maxSize, bufPtr) = load dbPtr
-  newSize = n + size
+  (MkDynBuffer db) = buf
+  bufPtr = load $ getAt #buffer db
+  size   = load $ getAt #size db
   storeTab (bufPtr +>> size) xs
-  store dbPtr (newSize, maxSize, bufPtr)
+  addAtIntPtr (getAt #size db) n
 
 def loadDynBuffer [Storable a]
       (buf: DynBuffer a) : {State World} (List a) =
-  (MkDynBuffer dbPtr) = buf
-  (size, _, bufPtr) = load dbPtr
+  (MkDynBuffer db) = buf
+  bufPtr = load $ getAt #buffer db
+  size   = load $ getAt #size db
   AsList size $ tabFromPtr _ bufPtr
 
 def pushDynBuffer [Storable a]
