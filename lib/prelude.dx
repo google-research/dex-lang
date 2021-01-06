@@ -273,7 +273,7 @@ def yieldState
       (action: h:Type ?-> Ref h s -> {State h |eff} a)
       : {|eff} s = snd $ runState init action
 
-def unsafeIO (f: Unit -> {State World|eff} a) : {|eff} a =
+def unsafeIO (f: Unit -> {IO|eff} a) : {|eff} a =
   %runIO f
 
 def unreachable (():Unit) : a = unsafeIO do
@@ -458,8 +458,8 @@ data TypeVehicle a = MkTypeVehicle
 def typeVehicle (a:Type) : TypeVehicle a = MkTypeVehicle
 
 interface Storable a
-  store : Ptr a -> a -> {State World} Unit
-  load  : Ptr a ->      {State World} a
+  store : Ptr a -> a -> {IO} Unit
+  load  : Ptr a ->      {IO} a
   storageSize_ : TypeVehicle a -> Int
 
 def storageSize (a:Type) -> (d:Storable a) ?=> : Int =
@@ -483,11 +483,11 @@ instance Storable (Ptr a)
 
 -- TODO: Storable instances for other types
 
-def malloc [Storable a] (n:Int) : {State World} (Ptr a) =
+def malloc [Storable a] (n:Int) : {IO} (Ptr a) =
   numBytes = storageSize a * n
   MkPtr $ %alloc numBytes
 
-def free (ptr:Ptr a) : {State World} Unit =
+def free (ptr:Ptr a) : {IO} Unit =
   (MkPtr ptr') = ptr
   %free ptr'
 
@@ -497,10 +497,10 @@ def (+>>) [Storable a] (ptr:Ptr a) (i:Int) : Ptr a =
   MkPtr $ %ptrOffset ptr' i'
 
 -- TODO: consider making a Storable instance for tables instead
-def storeTab [Storable a] (ptr: Ptr a) (tab:n=>a) : {State World} Unit =
+def storeTab [Storable a] (ptr: Ptr a) (tab:n=>a) : {IO} Unit =
   for_ i. store (ptr +>> ordinal i) tab.i
 
-def memcpy [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {State World} Unit =
+def memcpy [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {IO} Unit =
   for_ i:(Fin n).
     i' = ordinal i
     store (dest +>> i') (load $ src +>> i')
@@ -508,19 +508,19 @@ def memcpy [Storable a] (dest:Ptr a) (src:Ptr a) (n:Int) : {State World} Unit =
 -- TODO: generalize these brackets to allow other effects
 -- TODO: make sure that freeing happens even if there are run-time errors
 def withAlloc [Storable a]
-      (n:Int) (action: Ptr a -> {State World} b) : {State World} b =
+      (n:Int) (action: Ptr a -> {IO} b) : {IO} b =
   ptr = malloc n
   result = action ptr
   free ptr
   result
 
 def withTabPtr [Storable a]
-      (xs:n=>a) (action : Ptr a -> {State World} b) : {State World} b =
+      (xs:n=>a) (action : Ptr a -> {IO} b) : {IO} b =
   withAlloc (size n) \ptr.
     for i. store (ptr +>> ordinal i) xs.i
     action ptr
 
-def tabFromPtr [Storable a] (n:Type) -> (ptr:Ptr a) : {State World} n=>a =
+def tabFromPtr [Storable a] (n:Type) -> (ptr:Ptr a) : {IO} n=>a =
   for i. load $ ptr +>> ordinal i
 
 '## Miscellaneous common utilities
@@ -864,7 +864,6 @@ def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
 
 'Dynamic buffer
 
--- TODO: should we be able to use `Ref World Int` instead of `Ptr Int`?
 -- TODO: would be nice to be able to use records here
 data DynBuffer a =
   MkDynBuffer { size    : Ptr Int
@@ -872,7 +871,7 @@ data DynBuffer a =
               & buffer  : Ptr (Ptr a) }
 
 def withDynamicBuffer [Storable a]
-      (action: DynBuffer a -> {State World} b) : {State World} b =
+      (action: DynBuffer a -> {IO} b) : {IO} b =
   initMaxSize = 256
   withAlloc 1 \sizePtr. withAlloc 1 \maxSizePtr. withAlloc 1 \bufferPtr.
     store sizePtr 0
@@ -886,7 +885,7 @@ def withDynamicBuffer [Storable a]
     result
 
 def maybeIncreaseBufferSize [Storable a]
-    ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {State World} Unit =
+    ((MkDynBuffer db): DynBuffer a) (sizeDelta:Int) : {IO} Unit =
   size    = load $ getAt #size    db
   maxSize = load $ getAt #maxSize db
   bufPtr  = load $ getAt #buffer  db
@@ -900,11 +899,11 @@ def maybeIncreaseBufferSize [Storable a]
     store (getAt #maxSize db) newMaxSize
     store (getAt #buffer  db) newBufPtr
 
-def addAtIntPtr (ptr: Ptr Int) (n:Int) : {State World} Unit =
+def addAtIntPtr (ptr: Ptr Int) (n:Int) : {IO} Unit =
   store ptr (load ptr + n)
 
 def extendDynBuffer [Storable a]
-    (buf: DynBuffer a) (new:List a) : {State World} Unit =
+    (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
   maybeIncreaseBufferSize buf n
   (MkDynBuffer db) = buf
@@ -914,21 +913,21 @@ def extendDynBuffer [Storable a]
   addAtIntPtr (getAt #size db) n
 
 def loadDynBuffer [Storable a]
-      (buf: DynBuffer a) : {State World} (List a) =
+      (buf: DynBuffer a) : {IO} (List a) =
   (MkDynBuffer db) = buf
   bufPtr = load $ getAt #buffer db
   size   = load $ getAt #size db
   AsList size $ tabFromPtr _ bufPtr
 
 def pushDynBuffer [Storable a]
-      (buf: DynBuffer a) (x:a) : {State World} Unit =
+      (buf: DynBuffer a) (x:a) : {IO} Unit =
   extendDynBuffer buf $ AsList _ [x]
 
 '## Strings and Characters
 
 String : Type = List Char
 
-def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {State World} String =
+def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {IO} String =
   AsList n $ tabFromPtr _ ptr
 
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
@@ -1013,11 +1012,11 @@ data StreamMode =
 data Stream mode:StreamMode = MkStream RawPtr
 
 -- TODO: check the string contains no nulls
-def withCString (s:String) (action: CString -> {State World} a) : {State World} a =
+def withCString (s:String) (action: CString -> {IO} a) : {IO} a =
   (AsList n s') = s <> "\NUL"
   withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
 
-def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
+def fopen (path:String) (mode:StreamMode) : {IO} (Stream mode) =
   modeStr = case mode of
     ReadMode  -> "r"
     WriteMode -> "w"
@@ -1025,12 +1024,12 @@ def fopen (path:String) (mode:StreamMode) : {State World} (Stream mode) =
     withCString modeStr \(MkCString modePtr).
       MkStream $ %ffi fopen RawPtr pathPtr modePtr
 
-def fclose (stream:Stream mode) : {State World} Unit =
+def fclose (stream:Stream mode) : {IO} Unit =
   (MkStream stream') = stream
   %ffi fclose Int64 stream'
   ()
 
-def fwrite (stream:Stream WriteMode) (s:String) : {State World} Unit =
+def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
   withTabPtr s' \(MkPtr ptr).
@@ -1086,7 +1085,7 @@ def boundedIter (maxIters:Int) (fallback:a)
       then Done fallback
       else body i
 
-def fromCString (s:CString) : {State World} (Maybe String) =
+def fromCString (s:CString) : {IO} (Maybe String) =
   case cStringPtr s of
     Nothing -> Nothing
     Just ptr ->
@@ -1098,18 +1097,18 @@ def fromCString (s:CString) : {State World} (Maybe String) =
             pushDynBuffer buf c
             Continue
 
-def getEnv (name:String) : {State World} Maybe String =
+def getEnv (name:String) : {IO} Maybe String =
   withCString name \(MkCString ptr).
     fromCString $ MkCString $ %ffi getenv RawPtr ptr
 
-def checkEnv (name:String) : {State World} Bool =
+def checkEnv (name:String) : {IO} Bool =
   -- This should be just `isJust $ getEnv name` but that segfaults (only if the
   -- env var *is* defined), possibly related to bug #348.
   withCString name \(MkCString ptr).
     resultPtr = %ffi getenv RawPtr ptr
     not $ resultPtr == nullRawPtr
 
-def fread (stream:Stream ReadMode) : {State World} String =
+def fread (stream:Stream ReadMode) : {IO} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
   n = 4096
@@ -1124,50 +1123,50 @@ def fread (stream:Stream ReadMode) : {State World} String =
           else Done ()
       loadDynBuffer buf
 
-def deleteFile (f:FilePath) : {State World} Unit =
+def deleteFile (f:FilePath) : {IO} Unit =
   withCString f \(MkCString ptr).
     %ffi remove Int64 ptr
   ()
 
 def withFile (f:FilePath) (mode:StreamMode)
-      (action: Stream mode -> {State World} a)
-      : {State World} a =
+      (action: Stream mode -> {IO} a)
+      : {IO} a =
   stream = fopen f mode
   result = action stream
   fclose stream
   result
 
-def writeFile (f:FilePath) (s:String) : {State World} Unit =
+def writeFile (f:FilePath) (s:String) : {IO} Unit =
   withFile f WriteMode \stream. fwrite stream s
 
-def readFile (f:FilePath) : {State World} String =
+def readFile (f:FilePath) : {IO} String =
   withFile f ReadMode \stream. fread stream
 
-def newTempFile (_:Unit) : {State World} FilePath =
+def newTempFile (_:Unit) : {IO} FilePath =
   withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
     fd = %ffi mkstemp Int32 ptr
     %ffi close Int32 fd
     stringFromCharPtr 15 (MkPtr ptr)
 
-def withTempFile (action: FilePath -> {State World} a) : {State World} a =
+def withTempFile (action: FilePath -> {IO} a) : {IO} a =
   tmpFile = newTempFile ()
   result = action tmpFile
   deleteFile tmpFile
   result
 
-def withTempFiles (action: (n=>FilePath) -> {State World} a) : {State World} a =
+def withTempFiles (action: (n=>FilePath) -> {IO} a) : {IO} a =
   tmpFiles = for i. newTempFile ()
   result = action tmpFiles
   for i. deleteFile tmpFiles.i
   result
 
-def getOutputStream (_:Unit) : {State World} Stream WriteMode =
+def getOutputStream (_:Unit) : {IO} Stream WriteMode =
   MkStream $ %ptrLoad OUT_STREAM_PTR
 
-def print (s:String) : {State World} Unit =
+def print (s:String) : {IO} Unit =
   fwrite (getOutputStream ()) (s <> "\n")
 
-def shellOut (command:String) : {State World} String =
+def shellOut (command:String) : {IO} String =
   modeStr = "r"
   withCString command \(MkCString commandPtr).
     withCString modeStr \(MkCString modePtr).

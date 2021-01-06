@@ -416,7 +416,8 @@ effects = braces someEffects <|> return Pure
 effect :: Parser Effect
 effect =   (RWSEffect <$> rwsName <*> anyCaseName)
        <|> (keyWord ExceptKW $> ExceptionEffect)
-       <?> "effect (Accum h | Read h | State h | Except)"
+       <|> (keyWord IOKW     $> IOEffect)
+       <?> "effect (Accum h | Read h | State h | Except | IO)"
 
 rwsName :: Parser RWS
 rwsName =   (keyWord WriteKW $> Writer)
@@ -964,7 +965,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
-             | ExceptKW | ViewKW
+             | ExceptKW | IOKW | ViewKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -1004,6 +1005,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       WriteKW -> "Accum"
       StateKW -> "State"
       ExceptKW -> "Except"
+      IOKW     -> "IO"
       DataKW -> "data"
       InterfaceKW -> "interface"
       InstanceKW -> "instance"
@@ -1013,7 +1015,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
-               "Read", "Write", "Accum", "Except", "data", "interface",
+               "Read", "Write", "Accum", "Except", "IO", "data", "interface",
                "instance", "where", "if", "then", "else", "do", "view"]
 
 fieldLabel :: Lexer Label

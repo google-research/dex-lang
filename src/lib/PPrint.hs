@@ -674,6 +674,7 @@ instance Pretty Effect where
   pretty eff = case eff of
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
+    IOEffect        -> "IO"
 
 instance Pretty RWS where
   pretty eff = case eff of

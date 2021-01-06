@@ -13,7 +13,7 @@ module Type (
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent, checkExtends,
   indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
-  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect, ioEffect) where
+  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -278,11 +278,11 @@ exprEffs expr = case expr of
       MTell _ -> oneEffect (RWSEffect Writer h)
       where RefTy (Var (h:>_)) _ = getType ref
     ThrowException _ -> oneEffect ExceptionEffect
-    IOAlloc  _ _  -> oneEffect ioEffect
-    IOFree   _    -> oneEffect ioEffect
-    PtrLoad  _    -> oneEffect ioEffect
-    PtrStore _ _  -> oneEffect ioEffect
-    FFICall _ _ _ -> oneEffect ioEffect
+    IOAlloc  _ _  -> oneEffect IOEffect
+    IOFree   _    -> oneEffect IOEffect
+    PtrLoad  _    -> oneEffect IOEffect
+    PtrStore _ _  -> oneEffect IOEffect
+    FFICall _ _ _ -> oneEffect IOEffect
     _ -> Pure
   Hof hof -> case hof of
     For _ f         -> functionEffs f
@@ -295,7 +295,7 @@ exprEffs expr = case expr of
     RunState  _ f   -> handleRWSRunner State  f
     PTileReduce _ _ -> mempty
     RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
-      EffectRow (S.delete ioEffect effs) t
+      EffectRow (S.delete IOEffect effs) t
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   where
     handleRWSRunner rws ~(BinaryFunVal (Bind (h:>_)) _ (EffectRow effs t) _) =
@@ -481,6 +481,7 @@ checkEffRow (EffectRow effs effTail) = do
   forM_ effs \eff -> case eff of
     RWSEffect _ v -> Var (v:>TyKind) |: TyKind
     ExceptionEffect -> return ()
+    IOEffect        -> return ()
   forM_ effTail \v -> do
     checkWithEnv \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
@@ -508,9 +509,6 @@ extendEffect eff (EffectRow effs t) = EffectRow (S.insert eff effs) t
 
 oneEffect :: Effect -> EffectRow
 oneEffect eff = EffectRow (S.singleton eff) Nothing
-
-ioEffect :: Effect
-ioEffect = RWSEffect State theWorld
 
 -- === labeled row types ===
 
@@ -693,7 +691,7 @@ typeCheckOp op = case op of
         BaseTy _ -> return ()
         _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
                                     "fixed-width base types, but got: " ++ pprint argTy
-    declareEff ioEffect
+    declareEff IOEffect
     return ansTy
   Inject i -> do
     TC tc <- typeCheck i
@@ -720,11 +718,11 @@ typeCheckOp op = case op of
     return $ RefTy h b
   IOAlloc t n -> do
     n |: IdxRepTy
-    declareEff ioEffect
+    declareEff IOEffect
     return $ PtrTy (Heap CPU, t)
   IOFree ptr -> do
     PtrTy _ <- typeCheck ptr
-    declareEff ioEffect
+    declareEff IOEffect
     return UnitTy
   PtrOffset arr off -> do
     PtrTy (a, b) <- typeCheck arr
@@ -732,12 +730,12 @@ typeCheckOp op = case op of
     return $ PtrTy (a, b)
   PtrLoad ptr -> do
     PtrTy (_, t) <- typeCheck ptr
-    declareEff ioEffect
+    declareEff IOEffect
     return $ BaseTy t
   PtrStore ptr val -> do
     PtrTy (_, t)  <- typeCheck ptr
     val |: BaseTy t
-    declareEff ioEffect
+    declareEff IOEffect
     return $ UnitTy
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
@@ -887,7 +885,7 @@ typeCheckHof hof = case hof of
   RunIO f -> do
     FunTy b eff resultTy <- typeCheck f
     checkEq (binderAnn b) UnitTy
-    extendAllowedEffect ioEffect $ declareEffs eff
+    extendAllowedEffect IOEffect $ declareEffs eff
     return resultTy
   CatchException f -> do
     FunTy b eff resultTy <- typeCheck f
