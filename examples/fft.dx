@@ -1,18 +1,42 @@
 '# Fast Fourier Transform
-Using a radix-2 algorithm as a base,
-then Bluestein on top of that.
+A basic implementation, which uses a radix-2 algorithm for FFT of arrays whose sizes are
+powers of two.
+For non-power-of-2 sized arrays, it uses
+[Bluestein's Algorithm](https://en.wikipedia.org/wiki/Chirp_Z-transform),
+which calls the power-of-2 FFT as a subroutine.
 
 
 '## General helper functions
 
--- Todo: Better algorithms exist for these.
-def intpow (base:Int) (power:Int) : Int =
-  reduce 1 (\i j. j * i) for a:(Fin power). base
-def intlog2 (x:Int) : Int = FToI $ floor (log2 (IToF x))
-def isPowerOf2 (x:Int) : Bool = x == intpow 2 (intlog2 x)
+
+def isPowerOf2 (x:Int) : Bool =
+  -- A fast trick based on bitwise AND.
+  if x == 0
+    then False
+    else 0 == %and x (x - 1)  -- Make (.&.) polymorphic?
+
+def intpow [Mul a] (base:a) (power:Int) : a =
+  -- Todo: Use Knuth's power trick inside of commutative reduce.
+  reduce one (*) (for a:(Fin power). base)
+
+def intlog2 (x:Int) : Int =
+  yieldState (-1) \ansRef.
+    runState 1 \cmpRef.
+      while do
+        if x >= (get cmpRef)
+          then 
+            ansRef := (get ansRef) + 1
+            cmpRef := %shl (get cmpRef) 1
+            True
+          else
+            False
+
+def intpow2 (power:Int) : Int = %shl 1 power
+
 def nextpow2 (x:Int) : Int = case isPowerOf2 x of
   True -> x
-  False -> intpow 2 (1 + intlog2 x)
+  False -> intpow2 (1 + intlog2 x)
+
 
 '## Inner FFT functions
 
@@ -38,7 +62,7 @@ def power_of_2_fft (direction: Direction) (x: n=>Complex) : n=>Complex =
   log2n = intlog2 (size n)
   halfn = idiv (size n) 2
   
-  ans = snd $ withState x \ref.
+  ans = yieldState x \ref.
     for i:(Fin log2n).
       pow2 = intpow 2 (ordinal i)
       copy = get ref
