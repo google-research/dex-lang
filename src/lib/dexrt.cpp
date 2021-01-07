@@ -148,9 +148,9 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-void showHex(char **resultPtr, int x) {
+void showHex(char **resultPtr, char x) {
   auto p = reinterpret_cast<char*>(malloc_dex(100));  // TODO: something better!
-  auto n = sprintf(p, "%02x", x);
+  auto n = sprintf(p, "%02hhX", x);
   auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
   auto result2Ptr = reinterpret_cast<char**>(  resultPtr[1]);
   *result1Ptr = n;

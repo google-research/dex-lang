@@ -10,7 +10,7 @@ data Geom =
 
 HtmlColor : Type = Fin 3 => Word8
 
-def showHex (x:Int32) : String = unsafeIO \().
+def showHex (x:Word8) : String = unsafeIO \().
   (n, ptr) = %ffi showHex (Int32 & RawPtr) x
   stringFromCharPtr n (MkPtr ptr)
 
@@ -125,7 +125,7 @@ def (<=>) [Show b] (attr:String) (val:b) : String =
   attr <.> "=" <.> quote (show val)
 
 def htmlColor(cs:HtmlColor) : String =
-  "#" <> (concat $ for i. showHex (W8ToI cs.i))
+  "#" <> (concat $ for i. showHex cs.i)
 
 def optionalHtmlColor(c: Maybe HtmlColor) : String =
   case c of
