@@ -1102,11 +1102,7 @@ def getEnv (name:String) : {IO} Maybe String =
     fromCString $ MkCString $ %ffi getenv RawPtr ptr
 
 def checkEnv (name:String) : {IO} Bool =
-  -- This should be just `isJust $ getEnv name` but that segfaults (only if the
-  -- env var *is* defined), possibly related to bug #348.
-  withCString name \(MkCString ptr).
-    resultPtr = %ffi getenv RawPtr ptr
-    not $ resultPtr == nullRawPtr
+  isJust $ getEnv name
 
 def fread (stream:Stream ReadMode) : {IO} String =
   (MkStream stream') = stream

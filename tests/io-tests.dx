@@ -67,9 +67,8 @@ unsafeIO \().
 :p unsafeIO do getEnv "NOT_AN_ENV_VAR"
 > Nothing
 
--- disabled because of bug #348
--- :p unsafeIO do getEnv "DEX_TEST_MODE"
--- > (Just (AsList 1 "t"))
+:p unsafeIO do getEnv "DEX_TEST_MODE"
+> (Just (AsList 1 "t"))
 
 :p dex_test_mode ()
 > True
