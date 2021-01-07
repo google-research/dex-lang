@@ -583,6 +583,21 @@ _gpuDebugPrint i32Val = do
     genericPtrTy ty = L.PointerType ty $ L.AddrSpace 0
     vprintfSpec = ExternFunSpec "vprintf" i32 [] [] [genericPtrTy i8, genericPtrTy i8]
 
+-- Takes a single int64 payload. TODO: implement a varargs version
+_debugPrintf :: String -> Operand -> Compile ()
+_debugPrintf fmtStr x = do
+  let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) fmtStr ++ [0]
+  let formatStrArr = L.ConstantOperand $ C.Array i8 chars
+  formatStrPtr <- alloca (length chars) i8
+  castLPtr (L.typeOf formatStrArr) formatStrPtr >>= (`store` formatStrArr)
+  void $ emitExternCall printfSpec [formatStrPtr, x]
+  where printfSpec = ExternFunSpec "printf" i32 [] [] [hostVoidp, i64]
+
+_debugPrintfPtr :: String -> Operand -> Compile ()
+_debugPrintfPtr s x = do
+  x' <- emitInstr i64 $ L.PtrToInt x i64 []
+  _debugPrintf s x'
+
 compileBlock :: ImpBlock -> Compile [Operand]
 compileBlock (ImpBlock Empty result) = traverse compileExpr result
 compileBlock (ImpBlock (Nest decl rest) result) = do
