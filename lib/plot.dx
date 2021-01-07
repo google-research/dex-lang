@@ -54,8 +54,7 @@ def interpolate [VSpace a] (low:a) (high:a) (x:Float) : a =
   (x' .* low) + ((1.0 - x') .* high)
 
 def makeRGBColor (c : Color) : HtmlColor =
-  [r, g, b] = for i. IToW8 $ FToI $ floor (255.0 * c.i)
-  (r, g, b)
+  for i. IToW8 $ FToI $ floor (255.0 * c.i)
 
 def colorScale (x:Float) : HtmlColor =
   makeRGBColor $ interpolate lowColor highColor x

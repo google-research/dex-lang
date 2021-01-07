@@ -8,19 +8,17 @@ data Geom =
   Rectangle Float Float  -- width, height
   Line Point
 
--- HTML color (no alpha)
--- TODO: replace with `Fin 3 => Word8` when we fix #348
-HtmlColor : Type = (Word8 & Word8 & Word8)
+HtmlColor : Type = Fin 3 => Word8
 
 def showHex (x:Int32) : String = unsafeIO \().
   (n, ptr) = %ffi showHex (Int32 & RawPtr) x
   stringFromCharPtr n (MkPtr ptr)
 
-black : HtmlColor = (IToW8   0, IToW8   0, IToW8   0)
-white : HtmlColor = (IToW8 255, IToW8 255, IToW8 255)
-red   : HtmlColor = (IToW8 255, IToW8   0, IToW8   0)
-green : HtmlColor = (IToW8   0, IToW8 255, IToW8   0)
-blue  : HtmlColor = (IToW8   0, IToW8   0, IToW8 255)
+black : HtmlColor = [IToW8   0, IToW8   0, IToW8   0]
+white : HtmlColor = [IToW8 255, IToW8 255, IToW8 255]
+red   : HtmlColor = [IToW8 255, IToW8   0, IToW8   0]
+green : HtmlColor = [IToW8   0, IToW8 255, IToW8   0]
+blue  : HtmlColor = [IToW8   0, IToW8   0, IToW8 255]
 
 GeomStyle : Type =
   { fillColor   : Maybe HtmlColor
@@ -127,8 +125,7 @@ def (<=>) [Show b] (attr:String) (val:b) : String =
   attr <.> "=" <.> quote (show val)
 
 def htmlColor(cs:HtmlColor) : String =
-  (r, g, b) = cs
-  "#" <> (showHex $ W8ToI r) <> (showHex $ W8ToI g) <> (showHex $ W8ToI b)
+  "#" <> (concat $ for i. showHex (W8ToI cs.i))
 
 def optionalHtmlColor(c: Maybe HtmlColor) : String =
   case c of
@@ -137,8 +134,8 @@ def optionalHtmlColor(c: Maybe HtmlColor) : String =
 
 @noinline
 def attrString (attr:GeomStyle) : String =
-  (  -- "stroke"      <=> (optionalHtmlColor $ getAt #strokeColor attr)
-      ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
+  (   ("stroke"       <=> (optionalHtmlColor $ getAt #strokeColor attr))
+  <+> ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
   <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
 
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
