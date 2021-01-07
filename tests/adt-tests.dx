@@ -289,3 +289,32 @@ def nestedUnpack (x:MyPair Int (MyPair (MyIntish & Int) Int)) : Int =
 
 :p nestedUnpack (MkMyPair 3 (MkMyPair (MkIntish 4, 5) 6))
 > 4
+
+data MySum =
+  Foo Float
+  Bar String
+
+-- bug #348
+:p
+  xs = for i:(Fin 3).
+    if ordinal i < 2
+      then Foo 2.0
+      else Foo 1.0
+  (xs, xs)
+> ([(Foo 2.), (Foo 2.), (Foo 1.)], [(Foo 2.), (Foo 2.), (Foo 1.)])
+
+data MySum2 =
+  Foo2
+  Bar2 (Fin 3 => Int)
+
+-- bug #348
+:p concat for i:(Fin 4). AsList _ [(Foo2, Foo2)]
+> (AsList 4 [(Foo2, Foo2), (Foo2, Foo2), (Foo2, Foo2), (Foo2, Foo2)])
+
+-- reproducer for a shadowing bug
+:p concat $ for i:(Fin 2). toList [(Just [0,0,0], Just [0,0,0]),
+                                   (Just [0,0,0], Just [0,0,0])]
+> (AsList 4 [ ((Just [0, 0, 0]), (Just [0, 0, 0]))
+>           , ((Just [0, 0, 0]), (Just [0, 0, 0]))
+>           , ((Just [0, 0, 0]), (Just [0, 0, 0]))
+>           , ((Just [0, 0, 0]), (Just [0, 0, 0])) ])
