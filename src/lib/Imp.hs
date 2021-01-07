@@ -282,6 +282,7 @@ toImpOp (maybeDest, op) = case op of
   IOFree ptr -> do
     emitStatement $ Free $ fromScalarAtom ptr
     return UnitVal
+  PtrOffset arr (IdxRepVal 0) -> returnVal arr
   PtrOffset arr off -> do
     buf <- impOffset (fromScalarAtom arr) (fromScalarAtom off)
     returnVal $ toScalarAtom buf
@@ -930,7 +931,8 @@ toScalarType b = BaseTy b
 fromEmbed :: Subst a => Embed a -> ImpM a
 fromEmbed m = do
   scope <- variableScope
-  let (ans, (_, decls)) = runEmbed m scope
+  let (ans, (scopeDelta, decls)) = runEmbed m scope
+  extend $ mempty { envScope = scopeDelta }
   env <- catFoldM translateDecl mempty $ fmap (Nothing,) decls
   impSubst env ans
 
@@ -1203,7 +1205,7 @@ checkDecl decl@(ImpLet bs instr) = addContext ctx $ do
 instrTypeChecked :: ImpInstr -> ImpCheckM [IType]
 instrTypeChecked instr = case instr of
   IFor _ i size block -> do
-    checkInt size
+    checkIdxRep size
     checkBinder i
     assertEq (binderAnn i) (getIType size) $ "Mismatch between the loop iterator and upper bound type"
     [] <- withTypeEnv (i @> getIType size) $ checkBlock block
@@ -1236,14 +1238,16 @@ instrTypeChecked instr = case instr of
       _ -> throw CompilerErr $
             "Can't cast " ++ pprint st ++ " to " ++ pprint dt
     return dt
-  Alloc a ty _ -> (:[]) <$> do
+
+  Alloc a ty n -> (:[]) <$> do
+    checkIdxRep n
     when (a /= Stack) assertHost
     return $ PtrType (a, ty)
   MemCopy dest src numel -> [] <$ do
     PtrType (_, destTy) <- checkIExpr dest
     PtrType (_, srcTy)  <- checkIExpr src
     assertEq destTy srcTy "pointer type mismatch"
-    checkInt numel
+    checkIdxRep numel
   Store dest val -> [] <$ do
     PtrType (addr, ty) <- checkIExpr dest
     checkAddrAccessible addr
@@ -1281,6 +1285,11 @@ checkIExpr expr = case expr of
     case envLookup env v of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       Just x -> return x
+
+checkIdxRep :: IExpr -> ImpCheckM ()
+checkIdxRep expr = do
+  t <- checkIExpr expr
+  assertEq IIdxRepTy t $ "Not an index rep tye: " ++ pprint t
 
 checkInt :: IExpr -> ImpCheckM ()
 checkInt expr = do
