@@ -2,12 +2,12 @@ packages:        dex.cabal
 
 source-repository-package
     type:       git
-    location:   https://github.com/apaszke/llvm-hs
-    tag:        a9a74be1a7c15f3d21b2fffd35a425002ae7736f
+    location:   https://github.com/llvm-hs/llvm-hs
+    tag:        llvm-9
     subdir:     llvm-hs
 
 source-repository-package
     type:       git
-    location:   https://github.com/apaszke/llvm-hs
-    tag:        a9a74be1a7c15f3d21b2fffd35a425002ae7736f
+    location:   https://github.com/llvm-hs/llvm-hs
+    tag:        llvm-9
     subdir:     llvm-hs-pure
