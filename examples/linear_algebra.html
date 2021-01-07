@@ -75,76 +75,86 @@ code {
   color: #25BBA7;
 }
 </style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>LU Decomposition and Matrix Inversion</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_matrix (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">Mul</span> a) <span class="symbol">?=&gt;</span> <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_matrix [<span class="type-name">Eq</span> n<span class="symbol">,</span> <span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">for</span> i j<span class="symbol">.</span> select (i <span class="symbol">==</span> j) one zero
 </div></div><div class="cell"><div class="code-block">
-
 </div></div><div class="cell"><div class="prose-block"><h3>Triangular matrices</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">LowerTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">UpperTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> i<span class="command">:n</span><span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">LowerTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> i<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span>v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">UpperTriMat</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> i<span class="command">:n</span><span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span>v
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> forward_substitute (_<span class="symbol">:</span><span class="type-name">VSpace</span> v) <span class="symbol">?=&gt;</span> (a<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upperTriDiag (u<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> u<span class="symbol">.</span>i<span class="symbol">.</span>(0<span class="symbol">@</span>_)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lowerTriDiag (l<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> l<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal i)<span class="symbol">@</span>_)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> forward_substitute [<span class="type-name">VSpace</span> v] (a<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
   <span class="comment">-- Solves lower triangular linear system (inverse a) **. b
-</span>  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>sRef<span class="symbol">.</span>
+</span>  yieldState zero <span class="symbol">\</span>sRef<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span>
       s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">.</span>  <span class="comment">-- dot product
-</span>        a<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal k)<span class="symbol">@</span>_) <span class="symbol">.*</span> (get sRef)<span class="symbol">.</span>(%inject k)
+</span>        a<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal k)<span class="symbol">@</span>_) <span class="symbol">.*</span> get sRef<span class="symbol">!</span>(%inject k)
       sRef<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> s) <span class="symbol">/</span> a<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal i)<span class="symbol">@</span>_)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> backward_substitute (_<span class="symbol">:</span><span class="type-name">VSpace</span> v) <span class="symbol">?=&gt;</span> (a<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> backward_substitute [<span class="type-name">VSpace</span> v] (a<span class="symbol">:</span><span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
   <span class="comment">-- Solves upper triangular linear system (inverse a) **. b
-</span>  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>sRef<span class="symbol">.</span>
+</span>  yieldState zero <span class="symbol">\</span>sRef<span class="symbol">.</span>
     <span class="keyword">rof</span> i<span class="command">:n</span><span class="symbol">.</span>
       s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span>  <span class="comment">-- dot product
-</span>        a<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal k)<span class="symbol">@</span>_) <span class="symbol">.*</span> (get sRef)<span class="symbol">.</span>(%inject k)
+</span>        a<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal k)<span class="symbol">@</span>_) <span class="symbol">.*</span> get sRef<span class="symbol">!</span>(%inject k)
       sRef<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> s) <span class="symbol">/</span> a<span class="symbol">.</span>i<span class="symbol">.</span>(0<span class="symbol">@</span>_) <span class="comment">-- 0 is the diagonal index
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: get rid of these by writing a dependent indexing (!) operator.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lowerTriIndex (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">LowerTriMat</span> n)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h ((<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lowerTriIndex (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">LowerTriMat</span> n v)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h ((<span class="symbol">..</span>i)<span class="symbol">=&gt;</span>v) <span class="symbol">=</span>
   %indexRef ref i
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upperTriIndex (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">UpperTriMat</span> n)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h ((i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> upperTriIndex (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">UpperTriMat</span> n v)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h ((i<span class="symbol">..</span>)<span class="symbol">=&gt;</span>v) <span class="symbol">=</span>
   %indexRef ref i
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Permutations</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Permutation</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> n<span class="symbol">=&gt;</span>n
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_permutation (permutation<span class="symbol">:</span> n<span class="symbol">=&gt;</span>n) (array<span class="symbol">:</span> n<span class="symbol">=&gt;</span>t) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>t <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> array<span class="symbol">.</span>(permutation<span class="symbol">.</span>i)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_permutation (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> <span class="type-name">Permutation</span> n <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> i
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- The sign of the determinant of a permutation is either 1.0 or -1.0
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">PermutationSign</span> <span class="symbol">=</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Permutation</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (perm<span class="command">:n</span><span class="symbol">=&gt;</span>n <span class="symbol">&amp;</span> <span class="type-name">PermutationSign</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_permutation ((perm<span class="symbol">,</span> _)<span class="symbol">:</span><span class="type-name">Permutation</span> n) (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>t) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>t <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(perm<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_permutation <span class="symbol">:</span> <span class="type-name">Permutation</span> n <span class="symbol">=</span>
+  (<span class="keyword">for</span> i<span class="symbol">.</span> i<span class="symbol">,</span> 1<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swapInPlace (pRef<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Permutation</span> n)) (i<span class="command">:n</span>) (j<span class="command">:n</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  (permRef<span class="symbol">,</span> signRef) <span class="symbol">=</span> (fstRef pRef<span class="symbol">,</span> sndRef pRef)
+  tempj <span class="symbol">=</span> get permRef<span class="symbol">!</span>j
+  permRef<span class="symbol">!</span>j <span class="symbol">:=</span> get permRef<span class="symbol">!</span>i
+  permRef<span class="symbol">!</span>i <span class="symbol">:=</span> tempj
+  signRef <span class="symbol">:=</span> <span class="symbol">-</span>(get signRef)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perToTable ((perm<span class="symbol">,</span> _)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n <span class="symbol">=</span> perm
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> permSign   ((_<span class="symbol">,</span> sign)<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">:</span> <span class="type-name">PermutationSign</span> <span class="symbol">=</span> sign
 </div></div><div class="cell"><div class="code-block">
 
+
 </div></div><div class="cell"><div class="prose-block"><h3>LU decomposition functions</h3>
-</div></div><div class="cell"><div class="code-block"><span class="type-name">Sign</span> <span class="symbol">=</span> <span class="type-name">Float</span>  <span class="comment">-- Either 1.0 or -1.0
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pivotize (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Permutation</span> n <span class="symbol">&amp;</span> <span class="type-name">Sign</span>) <span class="symbol">=</span>
-  <span class="comment">-- Permutes rows of a matrix to make Gaussian elimination more stable.
-</span>  <span class="comment">-- Returns permutation and the sign of its determinant.
-</span>  snd <span class="symbol">$</span> withState (identity_permutation<span class="symbol">,</span> 1<span class="symbol">.</span>0) <span class="symbol">\</span>stateRef<span class="symbol">.</span>
-    (pRef<span class="symbol">,</span> signRef) <span class="symbol">=</span> (fstRef stateRef<span class="symbol">,</span> sndRef stateRef)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pivotize [<span class="type-name">Eq</span> n] (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Permutation</span> n <span class="symbol">=</span>
+  <span class="comment">-- Gives a row permutation that makes Gaussian elimination more stable.
+</span>  yieldState identity_permutation <span class="symbol">\</span>permRef<span class="symbol">.</span>
     <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span>
-      row_with_largest <span class="symbol">=</span> argmin <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> (<span class="symbol">-</span>(abs a<span class="symbol">.</span>(%inject i)<span class="symbol">.</span>j))
-      row_with_largest <span class="symbol">=</span> %inject row_with_largest
+      row_with_largest&#39; <span class="symbol">=</span> argmin <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> (<span class="symbol">-</span>(abs a<span class="symbol">.</span>(%inject i)<span class="symbol">.</span>j))
+      row_with_largest <span class="symbol">=</span> %inject row_with_largest&#39;
       <span class="keyword">case</span> (j <span class="symbol">==</span> row_with_largest) <span class="keyword">of</span>
         <span class="type-name">True</span> <span class="symbol">-&gt;</span> ()
-        <span class="type-name">False</span> <span class="symbol">-&gt;</span> 
-          tempj <span class="symbol">=</span> get pRef<span class="symbol">!</span>j  <span class="comment">-- Is there a refSwap?
-</span>          pRef<span class="symbol">!</span>j <span class="symbol">:=</span> get pRef<span class="symbol">!</span>row_with_largest
-          pRef<span class="symbol">!</span>row_with_largest <span class="symbol">:=</span> tempj
-          signRef <span class="symbol">:=</span> <span class="symbol">-</span>(get signRef)
+        <span class="type-name">False</span> <span class="symbol">-&gt;</span> swapInPlace permRef j row_with_largest
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lu (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (a<span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span>
-       (<span class="type-name">LowerTriMat</span> n <span class="symbol">&amp;</span> <span class="type-name">UpperTriMat</span> n <span class="symbol">&amp;</span> <span class="type-name">Permutation</span> n <span class="symbol">&amp;</span> <span class="type-name">Sign</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lu [<span class="type-name">Eq</span> n] (a<span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span>
+       (<span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Permutation</span> n) <span class="symbol">=</span>
   <span class="comment">-- Computes lower, upper, and permuntation matrices from a square matrix,
 </span>  <span class="comment">-- such that apply_permutation permutation a == lower ** upper.
-</span>  (permutation<span class="symbol">,</span> swapcount) <span class="symbol">=</span> pivotize a
+</span>  permutation <span class="symbol">=</span> pivotize a
   a <span class="symbol">=</span> apply_permutation permutation a
 
   init_lower <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="keyword">for</span> j&#39;<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>
     select (i <span class="symbol">==</span> (%inject j&#39;)) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0
   init_upper <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="keyword">for</span> j&#39;&#39;<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span> 0<span class="symbol">.</span>0
 
-  (lower<span class="symbol">,</span> upper) <span class="symbol">=</span> snd <span class="symbol">$</span> withState (init_lower<span class="symbol">,</span> init_upper) <span class="symbol">\</span>stateRef<span class="symbol">.</span>
+  (lower<span class="symbol">,</span> upper) <span class="symbol">=</span> yieldState (init_lower<span class="symbol">,</span> init_upper) <span class="symbol">\</span>stateRef<span class="symbol">.</span>
     lRef <span class="symbol">=</span> fstRef stateRef
     uRef <span class="symbol">=</span> sndRef stateRef
 
@@ -175,10 +185,10 @@ code {
           ukj <span class="symbol">=</span> get (upperTriIndex uRef k&#39;)<span class="symbol">!</span>(((ordinal j) <span class="symbol">-</span> (ordinal k))<span class="symbol">@</span>_)
           lik <span class="symbol">=</span> get (lowerTriIndex lRef i&#39;)<span class="symbol">!</span>((ordinal k)<span class="symbol">@</span>_)
           ukj <span class="symbol">*</span> lik
-          
+
         uijRef <span class="symbol">=</span> (upperTriIndex uRef i&#39;)<span class="symbol">!</span>(((ordinal j) <span class="symbol">-</span> (ordinal i))<span class="symbol">@</span>_)
         uijRef <span class="symbol">:=</span> a<span class="symbol">.</span>(%inject i)<span class="symbol">.</span>j <span class="symbol">-</span> s
-      
+
       <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">&lt;..</span>)<span class="symbol">.</span>
         i&#39; <span class="symbol">=</span> %inject i
         s <span class="symbol">=</span> sum <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..</span>j)<span class="symbol">.</span>
@@ -187,39 +197,37 @@ code {
           ukj <span class="symbol">=</span> get (upperTriIndex uRef k&#39;)<span class="symbol">!</span>i&#39;&#39;
           lik <span class="symbol">=</span> get (lowerTriIndex lRef i&#39;)<span class="symbol">!</span>((ordinal k)<span class="symbol">@</span>_)
           ukj <span class="symbol">*</span> lik
-        
+
         i&#39;&#39; <span class="symbol">=</span> ((ordinal i) <span class="symbol">+</span> (ordinal j) <span class="symbol">+</span> 1)<span class="symbol">@</span>_
         ujj <span class="symbol">=</span> get (upperTriIndex uRef j)<span class="symbol">!</span>(0<span class="symbol">@</span>_)
         lijRef <span class="symbol">=</span> (lowerTriIndex lRef i&#39;&#39;)<span class="symbol">!</span>((ordinal j)<span class="symbol">@</span>_)
         lijRef <span class="symbol">:=</span> (a<span class="symbol">.</span>i&#39;<span class="symbol">.</span>j <span class="symbol">-</span> s) <span class="symbol">/</span> ujj
-  (lower<span class="symbol">,</span> upper<span class="symbol">,</span> permutation<span class="symbol">,</span> swapcount)
+  (lower<span class="symbol">,</span> upper<span class="symbol">,</span> permutation)
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>General linear algebra functions.</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> solve (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (_<span class="symbol">:</span><span class="type-name">VSpace</span> v) <span class="symbol">?=&gt;</span> (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> solve [<span class="type-name">Eq</span> n<span class="symbol">,</span> <span class="type-name">VSpace</span> v] (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
   <span class="comment">-- There&#39;s a small speedup possible by exploiting the fact
 </span>  <span class="comment">-- that l always has ones on the diagonal.  It would just require a
 </span>  <span class="comment">-- custom forward_substitute routine that doesn&#39;t divide
 </span>  <span class="comment">-- by the diagonal entries.
-</span>  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm<span class="symbol">,</span> _) <span class="symbol">=</span> lu a
+</span>  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
   b&#39; <span class="symbol">=</span> apply_permutation perm b
   y <span class="symbol">=</span> forward_substitute l b&#39;
   backward_substitute u y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> invert (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> invert [<span class="type-name">Eq</span> n] (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
   solve a identity_matrix
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> determinant (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm<span class="symbol">,</span> permutation_sign) <span class="symbol">=</span> lu a
-  <span class="comment">-- formerly u.i.i * l.i.i
-</span>  (prod <span class="keyword">for</span> i<span class="symbol">.</span> u<span class="symbol">.</span>i<span class="symbol">.</span>(0<span class="symbol">@</span>_) <span class="symbol">*</span> l<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal i)<span class="symbol">@</span>_)) <span class="symbol">*</span> permutation_sign
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> determinant [<span class="type-name">Eq</span> n] (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
+  prod (<span class="keyword">for</span> i<span class="symbol">.</span> (upperTriDiag u)<span class="symbol">.</span>i <span class="symbol">*</span> (lowerTriDiag l)<span class="symbol">.</span>i) <span class="symbol">*</span> permSign perm
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sign_and_log_determinant (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
-  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm<span class="symbol">,</span> permutation_sign) <span class="symbol">=</span> lu a
-  <span class="comment">-- formerly u.i.i * l.i.i
-</span>  diags <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> u<span class="symbol">.</span>i<span class="symbol">.</span>(0<span class="symbol">@</span>_) <span class="symbol">*</span> l<span class="symbol">.</span>i<span class="symbol">.</span>((ordinal i)<span class="symbol">@</span>_)
-  sign <span class="symbol">=</span> permutation_sign <span class="symbol">*</span> prod <span class="keyword">for</span> i<span class="symbol">.</span> sign diags<span class="symbol">.</span>i
-  sum_<span class="keyword">of</span>_log_abs <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> log (abs diags<span class="symbol">.</span>i) 
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sign_and_log_determinant [<span class="type-name">Eq</span> n] (a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+  (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
+  diags <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (upperTriDiag u)<span class="symbol">.</span>i <span class="symbol">*</span> (lowerTriDiag l)<span class="symbol">.</span>i
+  sign <span class="symbol">=</span> (permSign perm) <span class="symbol">*</span> prod <span class="keyword">for</span> i<span class="symbol">.</span> sign diags<span class="symbol">.</span>i
+  sum_<span class="keyword">of</span>_log_abs <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> log (abs diags<span class="symbol">.</span>i)
   (sign<span class="symbol">,</span> sum_<span class="keyword">of</span>_log_abs)
 </div></div><div class="cell"><div class="code-block">
 

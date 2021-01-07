@@ -89,10 +89,10 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> decwrap (i<span class="command">:n</span>) <span class="symbol">:</span> n <span class="symbol">=</span>  <span class="comment">-- Decrement index, wrapping around at ends.
 </span>  asidx <span class="symbol">$</span> mod ((ordinal i) <span class="symbol">-</span> 1) <span class="symbol">$</span> size n
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> finite_difference_neighbours (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> finite_difference_neighbours [<span class="type-name">Add</span> a] (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>(incwrap i) <span class="symbol">-</span> x<span class="symbol">.</span>(decwrap i)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> add_neighbours (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> add_neighbours [<span class="type-name">Add</span> a] (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>(incwrap i) <span class="symbol">+</span> x<span class="symbol">.</span>(decwrap i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_along_axis1 (f<span class="command">:b</span><span class="symbol">=&gt;</span>a <span class="symbol">-&gt;</span> b<span class="symbol">=&gt;</span>a) (x<span class="command">:b</span><span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
@@ -101,21 +101,21 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_along_axis2 (f<span class="command">:c</span><span class="symbol">=&gt;</span>a <span class="symbol">-&gt;</span> c<span class="symbol">=&gt;</span>a) (x<span class="command">:b</span><span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>c<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> f x<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fdx (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fdx [<span class="type-name">Add</span> a] (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
   apply_along_axis1 finite_difference_neighbours x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fdy (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fdy [<span class="type-name">Add</span> a] (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
   apply_along_axis2 finite_difference_neighbours x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> divergence (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (vx<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) (vy<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> divergence [<span class="type-name">Add</span> a] (vx<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) (vy<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
   fdx vx <span class="symbol">+</span> fdy vy
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> add_neighbours_2d (_<span class="symbol">:</span><span class="type-name">Add</span> a) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> add_neighbours_2d [<span class="type-name">Add</span> a] (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
   ax1 <span class="symbol">=</span> apply_along_axis1 add_neighbours x
   ax2 <span class="symbol">=</span> apply_along_axis2 add_neighbours x
   ax1 <span class="symbol">+</span> ax2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> project (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> project [<span class="type-name">VSpace</span> a] (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="comment">-- Project the velocity field to be approximately mass-conserving,
 </span>  <span class="comment">-- using a few iterations of Gauss-Seidel.
 </span>  h <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> <span class="type-name">IToF</span> (size n)
@@ -126,7 +126,7 @@ code {
 
   div <span class="symbol">=</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">.*</span> h <span class="symbol">.*</span> (divergence vx vy)
 
-  p <span class="symbol">=</span> snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>state<span class="symbol">.</span>
+  p <span class="symbol">=</span> yieldState zero <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span>
       state <span class="symbol">:=</span> (1<span class="symbol">.</span>0 <span class="symbol">/</span> 4<span class="symbol">.</span>0) <span class="symbol">.*</span> (div <span class="symbol">+</span> add_neighbours_2d (get state))
 
@@ -135,13 +135,13 @@ code {
 
   <span class="keyword">for</span> i j<span class="symbol">.</span> [vx<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">,</span> vy<span class="symbol">.</span>i<span class="symbol">.</span>j]  <span class="comment">-- pack back into a table.
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bilinear_interp (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (right_weight<span class="symbol">:</span><span class="type-name">Float</span>) (bottom_weight<span class="symbol">:</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bilinear_interp [<span class="type-name">VSpace</span> a] (right_weight<span class="symbol">:</span><span class="type-name">Float</span>) (bottom_weight<span class="symbol">:</span><span class="type-name">Float</span>)
   (topleft<span class="symbol">:</span> a) (bottomleft<span class="symbol">:</span> a) (topright<span class="symbol">:</span> a) (bottomright<span class="symbol">:</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
   left  <span class="symbol">=</span> (1<span class="symbol">.</span>0 <span class="symbol">-</span> right_weight) <span class="symbol">.*</span> ((1<span class="symbol">.</span>0 <span class="symbol">-</span> bottom_weight) <span class="symbol">.*</span> topleft  <span class="symbol">+</span> bottom_weight <span class="symbol">.*</span> bottomleft)
   right <span class="symbol">=</span>        right_weight  <span class="symbol">.*</span> ((1<span class="symbol">.</span>0 <span class="symbol">-</span> bottom_weight) <span class="symbol">.*</span> topright <span class="symbol">+</span> bottom_weight <span class="symbol">.*</span> bottomright)
   left <span class="symbol">+</span> right
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> advect (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (f<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> advect [<span class="type-name">VSpace</span> a] (f<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a) (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="comment">-- Move field f according to x and y velocities (u and v)
 </span>  <span class="comment">-- using an implicit Euler integrator.
 </span>
@@ -170,9 +170,9 @@ code {
     <span class="comment">-- A convex weighting of the 4 surrounding cells.
 </span>    bilinear_interp right_weight bottom_weight f<span class="symbol">.</span>l<span class="symbol">.</span>t f<span class="symbol">.</span>l<span class="symbol">.</span>b f<span class="symbol">.</span>r<span class="symbol">.</span>t f<span class="symbol">.</span>r<span class="symbol">.</span>b
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fluidsim (_<span class="symbol">:</span> <span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (num_steps<span class="symbol">:</span> <span class="type-name">Int</span>) (color_init<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fluidsim [ <span class="type-name">VSpace</span> a] (num_steps<span class="symbol">:</span> <span class="type-name">Int</span>) (color_init<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a)
   (v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Fin</span> num_steps)<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
-  fst <span class="symbol">$</span> withState (color_init<span class="symbol">,</span> v) <span class="symbol">\</span>state<span class="symbol">.</span>
+  withState (color_init<span class="symbol">,</span> v) <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_steps)<span class="symbol">.</span>
       (color<span class="symbol">,</span> v) <span class="symbol">=</span> get state
       v <span class="symbol">=</span> advect v v          <span class="comment">-- Move velocities

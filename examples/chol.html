@@ -77,8 +77,8 @@ code {
 </style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Cholesky Factorization</h1>
 <p>https://en.wikipedia.org/wiki/Cholesky_decomposition</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Cholesky Algorithm</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chol (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (x<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
-  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>buf<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chol [<span class="type-name">Eq</span> n] (x<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span>
+  yieldState zero <span class="symbol">\</span>buf<span class="symbol">.</span>
     <span class="keyword">for</span>_ i<span class="symbol">.</span> <span class="keyword">for</span> j&#39;<span class="symbol">:</span>(<span class="symbol">..</span>i)<span class="symbol">.</span>
       j <span class="symbol">=</span> %inject(j&#39;)
       row  <span class="symbol">=</span> <span class="keyword">for</span> k<span class="symbol">:</span>(<span class="symbol">..&lt;</span>j)<span class="symbol">.</span> get buf<span class="symbol">!</span>i<span class="symbol">!</span>(%inject k)
@@ -93,18 +93,18 @@ code {
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>PSD solver based on Cholesky decomposition</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trisolveL (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>buf<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+  yieldState zero <span class="symbol">\</span>buf<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span>
     row   <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">.</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>(%inject j)
     xPrev <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">.</span> get (buf<span class="symbol">!</span>%inject j)
     buf<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> vdot row xPrev) <span class="symbol">/</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trisolveU (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>buf<span class="symbol">.</span> <span class="keyword">rof</span> i<span class="symbol">.</span>
+  yieldState zero <span class="symbol">\</span>buf<span class="symbol">.</span> <span class="keyword">rof</span> i<span class="symbol">.</span>
     row   <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>%inject(j)
     xPrev <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">:</span>(i<span class="symbol">..</span>)<span class="symbol">.</span> get (buf<span class="symbol">!</span>%inject j)
     buf<span class="symbol">!</span>i <span class="symbol">:=</span> (b<span class="symbol">.</span>i <span class="symbol">-</span> vdot row xPrev) <span class="symbol">/</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> psdsolve (_<span class="symbol">:</span><span class="type-name">Eq</span> n) <span class="symbol">?=&gt;</span> (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> psdsolve [<span class="type-name">Eq</span> n] (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
   l <span class="symbol">=</span> chol mat
   trisolveU (transpose l) <span class="symbol">$</span>  trisolveL l b
 </div></div><div class="cell"><div class="code-block">

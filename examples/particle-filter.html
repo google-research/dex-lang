@@ -91,7 +91,7 @@ code {
   (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
   [key<span class="symbol">,</span> subkey] <span class="symbol">=</span> splitKey key
   s0 <span class="symbol">=</span> sample init subkey
-  fst <span class="symbol">$</span> withState s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
+  withState s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey (ixkey key i)
       s <span class="symbol">=</span> get s_ref
@@ -110,7 +110,7 @@ code {
   (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
   [key<span class="symbol">,</span> init_key] <span class="symbol">=</span> splitKey key
   init_particles <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles)<span class="symbol">.</span> sample init (ixkey init_key i)
-  fst <span class="symbol">$</span> withState init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
+  withState init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
     <span class="keyword">for</span> t<span class="symbol">:</span> (<span class="type-name">Fin</span> num_timesteps)<span class="symbol">.</span>
       p_prev <span class="symbol">=</span> get p_ref
       logLikelihoods <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> snd (observe p_prev<span class="symbol">.</span>i) obs<span class="symbol">.</span>t

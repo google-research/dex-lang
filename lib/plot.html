@@ -124,13 +124,12 @@ code {
 </div></div><div class="cell"><div class="code-block">lowColor  <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>0]
 </div></div><div class="cell"><div class="code-block">highColor <span class="symbol">=</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 1<span class="symbol">.</span>0]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> interpolate (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (low<span class="command">:a</span>) (high<span class="command">:a</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> interpolate [<span class="type-name">VSpace</span> a] (low<span class="command">:a</span>) (high<span class="command">:a</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   x&#39; <span class="symbol">=</span> clip (0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0) x
   (x&#39; <span class="symbol">.*</span> low) <span class="symbol">+</span> ((1<span class="symbol">.</span>0 <span class="symbol">-</span> x&#39;) <span class="symbol">.*</span> high)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> makeRGBColor (c <span class="symbol">:</span> <span class="type-name">Color</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
-  [r<span class="symbol">,</span> g<span class="symbol">,</span> b] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">IToW8</span> <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
-  (r<span class="symbol">,</span> g<span class="symbol">,</span> b)
+  <span class="keyword">for</span> i<span class="symbol">.</span> <span class="type-name">IToW8</span> <span class="symbol">$</span> <span class="type-name">FToI</span> <span class="symbol">$</span> floor (255<span class="symbol">.</span>0 <span class="symbol">*</span> c<span class="symbol">.</span>i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> colorScale (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span>
   makeRGBColor <span class="symbol">$</span> interpolate lowColor highColor x

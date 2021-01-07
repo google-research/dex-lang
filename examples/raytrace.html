@@ -97,8 +97,8 @@ described
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randuniform (lower<span class="symbol">:</span><span class="type-name">Float</span>) (upper<span class="symbol">:</span><span class="type-name">Float</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   lower <span class="symbol">+</span> (rand k) <span class="symbol">*</span> (upper <span class="symbol">-</span> lower)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleAveraged (_<span class="symbol">:</span><span class="type-name">VSpace</span> a) <span class="symbol">?=&gt;</span> (sample<span class="symbol">:</span><span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (n<span class="symbol">:</span><span class="type-name">Int</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
-  snd <span class="symbol">$</span> withState zero <span class="symbol">\</span>total<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sampleAveraged [<span class="type-name">VSpace</span> a] (sample<span class="symbol">:</span><span class="type-name">Key</span> <span class="symbol">-&gt;</span> a) (n<span class="symbol">:</span><span class="type-name">Int</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+  yieldState zero <span class="symbol">\</span>total<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span>
       total <span class="symbol">:=</span> get total <span class="symbol">+</span> sample (ixkey k i) <span class="symbol">/</span> <span class="type-name">IToF</span> n
 </div></div><div class="cell"><div class="code-block">
@@ -245,7 +245,7 @@ described
   tol <span class="symbol">=</span> 0<span class="symbol">.</span>01
   startLength <span class="symbol">=</span> 10<span class="symbol">.</span>0 <span class="symbol">*</span> tol  <span class="comment">-- trying to escape the current surface
 </span>  (rayOrigin<span class="symbol">,</span> rayDir) <span class="symbol">=</span> ray
-  fst <span class="symbol">$</span> withState (10<span class="symbol">.</span>0 <span class="symbol">*</span> tol) <span class="symbol">\</span>rayLength<span class="symbol">.</span>
+  withState (10<span class="symbol">.</span>0 <span class="symbol">*</span> tol) <span class="symbol">\</span>rayLength<span class="symbol">.</span>
     boundedIter maxIters <span class="type-name">HitNothing</span> <span class="symbol">\</span>_<span class="symbol">.</span>
       rayPos <span class="symbol">=</span> rayOrigin <span class="symbol">+</span> get rayLength <span class="symbol">.*</span> rayDir
       (obj<span class="symbol">,</span> d) <span class="symbol">=</span> sdScene scene <span class="symbol">$</span> rayPos
@@ -283,13 +283,13 @@ described
   (surfNor<span class="symbol">,</span> surf) <span class="symbol">=</span> osurf
   (rayPos<span class="symbol">,</span> _) <span class="symbol">=</span> inRay
   (<span class="type-name">MkScene</span> objs) <span class="symbol">=</span> scene
-  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
+  yieldAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> objs<span class="symbol">.</span>i <span class="keyword">of</span>
       <span class="type-name">PassiveObject</span> _ _ <span class="symbol">-&gt;</span> ()
       <span class="type-name">Light</span> lightPos hw _ <span class="symbol">-&gt;</span>
         (dirToLight<span class="symbol">,</span> distToLight) <span class="symbol">=</span> directionAndLength <span class="symbol">$</span>
                                       lightPos <span class="symbol">+</span> sampleSquare hw k <span class="symbol">-</span> rayPos
-        when (positiveProjection dirToLight surfNor) <span class="keyword">do</span>
+        <span class="keyword">if</span> positiveProjection dirToLight surfNor <span class="keyword">then</span>
           <span class="comment">-- light on this far side of current surface
 </span>          fracSolidAngle <span class="symbol">=</span> (relu <span class="symbol">$</span> dot dirToLight yHat) <span class="symbol">*</span> sq hw <span class="symbol">/</span> (pi <span class="symbol">*</span> sq distToLight)
           outRay <span class="symbol">=</span> (rayPos<span class="symbol">,</span> dirToLight)
@@ -298,14 +298,14 @@ described
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trace (params<span class="symbol">:</span><span class="type-name">Params</span>) (scene<span class="symbol">:</span><span class="type-name">Scene</span> n) (initRay<span class="symbol">:</span><span class="type-name">Ray</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Color</span> <span class="symbol">=</span>
   noFilter <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0]
-  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
-    withState  noFilter <span class="symbol">\</span>filter<span class="symbol">.</span>
-     withState initRay  <span class="symbol">\</span>ray<span class="symbol">.</span>
+  yieldAccum <span class="symbol">\</span>radiance<span class="symbol">.</span>
+    runState  noFilter <span class="symbol">\</span>filter<span class="symbol">.</span>
+     runState initRay  <span class="symbol">\</span>ray<span class="symbol">.</span>
       boundedIter (getAt <span class="iso-sugar">#maxBounces</span> params) () <span class="symbol">\</span>i<span class="symbol">.</span>
         <span class="keyword">case</span> raymarch scene <span class="symbol">$</span> get ray <span class="keyword">of</span>
           <span class="type-name">HitNothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> ()
           <span class="type-name">HitLight</span> intensity <span class="symbol">-&gt;</span>
-            when (i <span class="symbol">==</span> 0) <span class="keyword">do</span> radiance <span class="symbol">+=</span> intensity   <span class="comment">-- TODO: scale etc
+            <span class="keyword">if</span> i <span class="symbol">==</span> 0 <span class="keyword">then</span> radiance <span class="symbol">+=</span> intensity   <span class="comment">-- TODO: scale etc
 </span>            <span class="type-name">Done</span> ()
           <span class="type-name">HitObj</span> incidentRay osurf <span class="symbol">-&gt;</span>
             [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey <span class="symbol">$</span> hash k i

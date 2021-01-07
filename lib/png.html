@@ -147,7 +147,7 @@ code {
     <span class="type-name">Just</span> base64s <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> base64sToBytes base64s
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: put this in prelude?
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> replace (_<span class="symbol">:</span><span class="type-name">Eq</span> a) <span class="symbol">?=&gt;</span> ((old<span class="symbol">,</span>new)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>a)) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> replace [<span class="type-name">Eq</span> a] ((old<span class="symbol">,</span>new)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>a)) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   <span class="keyword">case</span> x <span class="symbol">==</span> old <span class="keyword">of</span>
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> new
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> x
