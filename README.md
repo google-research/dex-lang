@@ -24,7 +24,7 @@ or these example programs:
 🚨 **Dex is an experimental research project at an early stage of
 development. Expect monstrous bugs and razor-sharp edges!**
 
-🤝 **Contributions welcome!** See our issue tracker for [good first issues](https://github.com/google-research/dex-lang/labels/good%20first%20issue), or browse by [tematic labels](https://github.com/google-research/dex-lang/labels).
+🤝 **Contributions welcome!** See our issue tracker for [good first issues](https://github.com/google-research/dex-lang/labels/good%20first%20issue), or browse by [thematic labels](https://github.com/google-research/dex-lang/labels).
 
 ## Dependencies
 
