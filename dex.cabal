@@ -78,7 +78,8 @@ executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
   build-depends:       dex, base, haskeline, prettyprinter, mtl,
-                       optparse-applicative, unix, store, bytestring, directory
+                       optparse-applicative, ansi-wl-pprint,
+                       unix, store, bytestring, directory
   if os(darwin)
     build-depends:     dex-resources
   default-language:    Haskell2010

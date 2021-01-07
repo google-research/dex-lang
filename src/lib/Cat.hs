@@ -41,7 +41,7 @@ instance (Monoid env, Monad m) => MonadCat env (CatT env m) where
     put (fullState <> x, localState <> x)
   scoped (CatT m) = CatT $ do
     originalState <- get
-    put $ (fst originalState, mempty)
+    put (fst originalState, mempty)
     ans <- m
     newLocalState <- gets snd
     put originalState

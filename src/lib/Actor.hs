@@ -43,7 +43,7 @@ runActor (Actor m) = do
   linksRef   <- newIORef []
   chan <- newBackChan
   tid <- myThreadId
-  let p = (Proc Trap tid (asErrPChan chan))
+  let p = Proc Trap tid (asErrPChan chan)
   runReaderT m (ActorConfig p chan linksRef)
 
 subChan :: (a -> b) -> PChan b -> PChan a
@@ -123,7 +123,7 @@ receive :: MonadActor msg m => m msg
 receive = receiveF Just
 
 newBackChan :: IO (BackChan a)
-newBackChan = liftM2 BackChan (newIORef []) (newChan)
+newBackChan = liftM2 BackChan (newIORef []) newChan
 
 readBackChan :: BackChan a -> IO a
 readBackChan (BackChan ptr chan) = do xs <- readIORef ptr
@@ -173,6 +173,6 @@ logServer = flip evalStateT (mempty, []) $ forever $ do
     Push x -> do
       modify $ onFst (<> x)
       subscribers <- gets snd
-      mapM_ (flip send x) subscribers
+      mapM_ (`send` x) subscribers
 
 -- TODO: state machine?
