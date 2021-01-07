@@ -7,6 +7,7 @@ data Geom =
   Circle Float
   Rectangle Float Float  -- width, height
   Line Point
+  Text String
 
 HtmlColor : Type = Fin 3 => Word8
 
@@ -60,6 +61,7 @@ flipY : Diagram -> Diagram =
     Circle r      -> Circle r
     Rectangle w h -> Rectangle w h
     Line (x, y)   -> Line (x, -y)
+    Text x        -> Text x
 
 def scale (s:Float) : (Diagram -> Diagram) =
   applyTransformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
@@ -67,6 +69,7 @@ def scale (s:Float) : (Diagram -> Diagram) =
     Circle r      -> Circle (s * r)
     Rectangle w h -> Rectangle (s * w) (s * h)
     Line (x, y)   -> Line (s * x, s * y)
+    Text x        -> Text x
 
 def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
   applyTransformation (\(x,y). (x + offX, y + offY) ) id
@@ -78,6 +81,7 @@ def pointDiagram               : Diagram = singletonDefault PointGeom
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r
 def rect   (w:Float) (h:Float) : Diagram = singletonDefault $ Rectangle w h
 def line   (p:Point)           : Diagram = singletonDefault $ Line p
+def text   (x:String)          : Diagram = singletonDefault $ Text x
 
 def updateGeom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
   (MkDiagram (AsList _ objs)) = d
@@ -139,11 +143,14 @@ def attrString (attr:GeomStyle) : String =
   <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
 
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
+  -- For things that are solid. SVG says they have fill=stroke.
+  solidAttr = setAt #fillColor (getAt #strokeColor attr) attr
+
   groupEle = \attr. tagBracketsAttr "g" (attrString attr)
   case geom of
     PointGeom ->
       pointAttr = setAt #fillColor (getAt #strokeColor attr) attr
-      groupEle pointAttr $ selfClosingBrackets $
+      groupEle solidAttr $ selfClosingBrackets $
         ("circle" <+>
          "cx" <=> x <.>
          "cy" <=> y <.>
@@ -161,6 +168,14 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
          "height" <=> h <.>
          "x"      <=> (x - (w/2.0)) <.>
          "y"      <=> (y - (h/2.0)))
+    Text content ->
+      textEle = tagBracketsAttr "text" $
+        ("x" <=> x <.>
+         "y" <=> y <.>
+         "text-anchor" <=> "middle" <.>    -- horizontal center
+         "dominant-baseline" <=> "middle"  -- vertical center
+        )
+      groupEle solidAttr $ textEle content
 
 BoundingBox : Type = (Point & Point)
 
@@ -185,11 +200,24 @@ def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
 moveX : Float -> Diagram -> Diagram = \x. moveXY (x, 0.0)
 moveY : Float -> Diagram -> Diagram = \y. moveXY (0.0, y)
 
--- mydiagram : Diagram =
---   (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
---   <> (circle 5.0 |> moveXY (40.0, 40.0))
---   <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
---   <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
---   )
+' A Demo showing all kind of features
+```
+mydiagram : Diagram =
+    (  (circle 7.0 |> moveXY (20.0, 20.0) |> setFillColor blue |> setStrokeColor red)
+    <> (circle 5.0 |> moveXY (40.0, 40.0))
+    <> (rect  10.0 20.0 |> moveXY (5.0, 10.0) |> setStrokeColor red)
+    <> (text "DexLang"  |> moveXY (30.0, 10.0) |> setStrokeColor green)
+    <> (pointDiagram |> moveXY (15.0, 5.0) |> setStrokeColor red)
+    )
+:html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+```
 
--- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+' Another demo that shows things are all center aligned:
+```
+concentricDiagram : Diagram = (
+     (rect 2.0 2.0 |> setFillColor red)
+  <> (circle 1.0 |> setFillColor blue)
+  <> (text "DexLang" |> setStrokeColor white)
+) |> moveXY (5.0, 5.0)
+:html renderSVG concentricDiagram ((0.0, 0.0), (10.0, 10.0))
+```
