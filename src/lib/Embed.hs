@@ -109,13 +109,16 @@ emitOp op = emit $ Op op
 emitUnpack :: MonadEmbed m => Expr -> m [Atom]
 emitUnpack expr = getUnpacked =<< emit expr
 
--- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
-emitBlock (Block decls result) = do
-  mapM_ emitDecl decls
-  case result of
-    Atom x -> return x
-    _      -> emit result
+emitBlock block = emitBlockRec mempty block
+
+emitBlockRec :: MonadEmbed m => SubstEnv -> Block -> m Atom
+emitBlockRec env (Block (Nest (Let ann b expr) decls) result) = do
+  expr' <- substEmbed env expr
+  x <- emitTo (binderNameHint b) ann expr'
+  emitBlockRec (env <> b@>x) $ Block decls result
+emitBlockRec env (Block Empty (Atom atom)) = substEmbed env atom
+emitBlockRec env (Block Empty expr) = substEmbed env expr >>= emit
 
 freshVarE :: MonadEmbed m => BinderInfo -> Binder -> m Var
 freshVarE bInfo b = do
