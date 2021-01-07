@@ -180,9 +180,9 @@ parseEvalOpts = EvalConfig
          (optionList [ ("LLVM", LLVM)
                      , ("LLVM-CUDA", LLVMCUDA)
                      , ("LLVM-MC", LLVMMC)
-                     , ("interp", Interp)])
+                     , ("interpreter", Interpreter)])
          (long "backend" <> value LLVM <>
-          helpOption "Backend" "LLVM (default) | LLVM-CUDA | LLVM-MC | interp")
+          helpOption "Backend" "LLVM (default) | LLVM-CUDA | LLVM-MC | interpreter")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)

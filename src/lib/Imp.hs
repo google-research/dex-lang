@@ -866,10 +866,10 @@ chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
                                                   else Heap mainDev
           | otherwise -> Heap mainDev
   where mainDev = case backend of
-          LLVM     -> CPU
-          LLVMMC   -> CPU
-          LLVMCUDA -> GPU
-          Interp   -> error "Shouldn't be compiling with interpreter backend"
+          LLVM      -> CPU
+          LLVMMC    -> CPU
+          LLVMCUDA  -> GPU
+          Interpreter -> error "Shouldn't be compiling with interpreter backend"
 
 isSmall :: Block -> Bool
 isSmall numel = case numel of
