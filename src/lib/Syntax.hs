@@ -559,7 +559,7 @@ data ImpInstr = IFor Direction IBinder Size ImpBlock
               | IPrimOp IPrimOp
                 deriving (Show)
 
-data Backend = LLVM | LLVMCUDA | LLVMMC | Interp  deriving (Show, Eq)
+data Backend = LLVM | LLVMCUDA | LLVMMC | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
 -- === base types ===

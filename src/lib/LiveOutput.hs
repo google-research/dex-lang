@@ -92,7 +92,7 @@ sourceBlockToDag block = do
   -- TODO: Stop forcing dependencies on all preceding blocks. This will require
   --       an improvement of the analysis above, such that all blocks depend on those
   --       that contain interface instance definitions.
-  extend $ (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
+  extend (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
   case sbContents block of
     IncludeSourceFile _ -> extend $ asSnd [n]
     _ -> return ()
@@ -145,7 +145,7 @@ oneSourceBlock k b = RFragment mempty (M.singleton k b) mempty
 
 serveResults :: StreamingBody -> Application
 serveResults results request respond = do
-  putStrLn (show $ pathInfo request)
+  print (pathInfo request)
   case pathInfo request of
     []             -> respondWith "static/index.html" "text/html"
     ["style.css"]  -> respondWith "static/style.css"  "text/css"
@@ -204,7 +204,7 @@ displayResultsTerm reqChan =
      c <- myChan
      send reqChan $ subChan Left c
      void $ spawn Trap $ monitorKeyboard $ subChan Right c
-     forever $ termDisplayLoop
+     forever termDisplayLoop
 
 termDisplayLoop :: TermDisplayM ()
 termDisplayLoop = do
@@ -232,7 +232,7 @@ cropTrailingLines n s = unlines $ reverse $ drop n $ reverse $ lines s
 renderResults :: RFragment -> Maybe String
 renderResults (RFragment NotSet _ _) = Nothing
 renderResults (RFragment (Set ids) blocks results) =
-  liftM fold $ flip mapM ids $ \i -> do
+  liftM fold $ forM ids $ \i -> do
     b <- M.lookup i blocks
     r <- M.lookup i results
     return $ printLitBlock True b r
@@ -241,7 +241,7 @@ monitorKeyboard :: PChan KeyboardCommand -> Actor () ()
 monitorKeyboard chan = do
   liftIO $ hSetBuffering stdin NoBuffering
   forever $ do
-    c <- liftIO $ getChar
+    c <- liftIO getChar
     case c of
       'k' -> send chan ScrollUp
       'j' -> send chan ScrollDown
@@ -274,10 +274,15 @@ onmod fname action = do
 
 -- === DAG utils ===
 
+-- | A pair of an @a@ and a list of neighbor node ids.
 type Node a = (a, [NodeId])
-data Dag a = Dag (M.Map NodeId (Node a)) (M.Map (a, [NodeId]) NodeId)
 
--- returns the addition only, not the new DAG
+-- | A directed acyclic graph, represented as a bidirectional map from node ids
+-- to nodes.
+data Dag a = Dag (M.Map NodeId (Node a)) (M.Map (Node a) NodeId)
+
+-- | Adds a node to a DAG, if it does not already exist.
+-- Returns the added node id and a DAG representing the added node.
 addToDag :: Ord a => Dag a -> Node a -> (NodeId, Dag a)
 addToDag (Dag _ m) node =
   case M.lookup node m of

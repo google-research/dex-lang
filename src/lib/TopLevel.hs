@@ -14,7 +14,6 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Data.String
-import Data.Maybe
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 
@@ -119,7 +118,7 @@ processLogs :: LogLevel -> [Output] -> [Output]
 processLogs logLevel logs = case logLevel of
   LogAll -> logs
   LogNothing -> []
-  LogPasses passes -> flip filter logs \l -> case l of
+  LogPasses passes -> flip filter logs \case
                         PassInfo pass _ | pass `elem` passes -> True
                                         | otherwise          -> False
                         _ -> False
@@ -135,7 +134,7 @@ timesFromLogs logs = (totalTime - totalEvalTime, singleEvalTime, benchStats)
       case [(t, stats) | EvalTime t stats <- logs] of
         []           -> (0.0  , 0.0, Nothing)
         [(t, stats)] -> (total, t  , stats)
-          where total = fromMaybe t $ fmap snd stats
+          where total = maybe t snd stats
         _            -> error "Expect at most one result"
     totalTime = case [tTotal | TotalTime tTotal <- logs] of
         []  -> 0.0
@@ -221,7 +220,7 @@ evalBackend env block = do
 
 withCompileTime :: TopPassM a -> TopPassM a
 withCompileTime m = do
-  (ans, t) <- measureSeconds $ m
+  (ans, t) <- measureSeconds m
   logTop $ TotalTime t
   return ans
 

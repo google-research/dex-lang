@@ -1,0 +1,2 @@
+- arguments: [--color]
+- ignore: {name: "Use fmap"}

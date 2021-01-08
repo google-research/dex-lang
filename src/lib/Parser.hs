@@ -90,7 +90,7 @@ logLevel = do
   passes <- many passName
   eol
   case passes of
-    [] -> return $ LogAll
+    [] -> return LogAll
     _ -> return $ LogPasses passes
 
 logTime :: Parser LogLevel
@@ -131,7 +131,7 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
-      (liftM IncludeSourceFile includeSourceFile)
+      liftM IncludeSourceFile includeSourceFile
   <|> explicitCommand
   <?> "top-level command"
 
