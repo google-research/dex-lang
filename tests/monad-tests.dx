@@ -27,6 +27,7 @@
 :p
   def rwsAction
         (rh:Type) ?-> (wh:Type) ?-> (sh:Type) ?->
+        (_:AccumMonoid wh Float) ?=>
         (r:Ref rh Int) (w:Ref wh Float) (s:Ref sh Bool)
         : {Read rh, Accum wh, State sh} Int =
     x = get s
@@ -38,7 +39,7 @@
 
   withReader 2 \r.
     runState True \s.
-      runAccum \w.
+      runAccum (AddMonoid Float) \w.
         rwsAction r w s
 > ((4, 6.), False)
 
@@ -56,29 +57,31 @@
 
 :p
   def m (wh:Type) ?-> (sh:Type) ?->
+        (_:AccumMonoid wh Float) ?=>
         (w:Ref wh Float) (s:Ref sh Float)
         : {Accum wh, State sh} Unit =
     x = get s
     w += x
-  runState 1.0 \s. runAccum \w . m w s
+  runState 1.0 \s. runAccum (AddMonoid Float) \w . m w s
 > (((), 1.), 1.)
 
-def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
+def myAction [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
   x = ask r
   w += x
   w += 2.0
 
-:p withReader 1.5 \r. runAccum \w. myAction w r
+:p withReader 1.5 \r. runAccum (AddMonoid Float) \w. myAction w r
 > ((), 3.5)
 
 :p
   def m (h1:Type) ?-> (h2:Type) ?->
+        (_:AccumMonoid h1 Float) ?=> (_:AccumMonoid h2 Float) ?=>
         (w1:Ref h1 Float) (w2:Ref h2 Float)
         : {Accum h1, Accum h2} Unit =
     w1 += 1.0
     w2 += 3.0
     w1 += 1.0
-  runAccum \w1. runAccum \w2. m w1 w2
+  runAccum (AddMonoid Float) \w1. runAccum (AddMonoid Float) \w2. m w1 w2
 > (((), 3.), 2.)
 
 def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
@@ -125,8 +128,8 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 --       (maybe just explicit implicit args)
 :p
   withReader 2.0 \r.
-    runAccum \w.
-      runAccum \w'.
+    runAccum (AddMonoid Float) \w.
+      runAccum (AddMonoid Float) \w'.
         runState 3 \s.
           x = ask r
           y = get s
@@ -151,19 +154,19 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
 :p withReader 5 \r. ()
 > ()
 
-:p yieldAccum \w.
+:p yieldAccum (AddMonoid Float) \w.
   for i:(Fin 2).
     w += 1.0
     w += 1.0
 > 4.
 
-:p yieldAccum \w.
+:p yieldAccum (AddMonoid Float) \w.
   for i:(Fin 2).
     w += 1.0
   w += 1.0
 > 3.
 
-:p yieldAccum \ref.
+:p yieldAccum (AddMonoid Float) \ref.
      ref += [1.,2.,3.]
      ref += [2.,4.,5.]
 > [3., 6., 8.]

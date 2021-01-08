@@ -432,6 +432,9 @@ simplifyOp op = case op of
       -- Simplify the case away if we can.
       dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
     _ -> emitOp op
+  PrimEffect ref (MExtend f) -> dropSub $ do
+    ~(f', Nothing) <- simplifyLam f
+    emitOp $ PrimEffect ref $ MExtend f'
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom
@@ -446,7 +449,7 @@ simplifyHof hof = case hof of
     ~(fT', Nothing) <- simplifyLam fT
     ~(fS', Nothing) <- simplifyLam fS
     emit $ Hof $ Tile d fT' fS'
-  PTileReduce _ _ -> error "Unexpected PTileReduce"
+  PTileReduce _ _ _ -> error "Unexpected PTileReduce"
   While body -> do
     ~(body', Nothing) <- simplifyLam body
     emit $ Hof $ While body'
@@ -463,9 +466,11 @@ simplifyHof hof = case hof of
     r' <- simplifyAtom r
     ~(lam', recon) <- simplifyBinaryLam lam
     applyRecon recon =<< (emit $ Hof $ RunReader r' lam')
-  RunWriter lam -> do
+  RunWriter (BaseMonoid e combine) lam -> do
+    e' <- simplifyAtom e
+    ~(combine', Nothing) <- simplifyBinaryLam combine
     ~(lam', recon) <- simplifyBinaryLam lam
-    (ans, w) <- fromPair =<< (emit $ Hof $ RunWriter lam')
+    (ans, w) <- fromPair =<< (emit $ Hof $ RunWriter (BaseMonoid e' combine') lam')
     ans' <- applyRecon recon ans
     return $ PairVal ans' w
   RunState s lam -> do

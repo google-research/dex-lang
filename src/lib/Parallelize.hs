@@ -20,6 +20,7 @@ import Cat
 import Env
 import Type
 import PPrint
+import Util (for)
 
 -- TODO: extractParallelism can benefit a lot from horizontal fusion (can happen be after)
 -- TODO: Parallelism extraction can emit some really cheap (but not trivial)
@@ -45,7 +46,7 @@ data LoopEnv = LoopEnv
   , delayedApps :: Env (Atom, [Atom]) -- (n @> (arr, bs)), n and bs in scope of the original program
                                       --   arr in scope of the newly constructed program!
   }
-data AccEnv = AccEnv { activeAccs :: Env Var }
+data AccEnv = AccEnv { activeAccs :: Env (Var, BaseMonoid) } -- (reference, its base monoid)
 
 type TLParallelM = SubstEmbedT (State AccEnv)   -- Top-level non-parallel statements
 type LoopM       = ReaderT LoopEnv TLParallelM  -- Generation of (parallel) loop nests
@@ -69,7 +70,7 @@ parallelTraverseExpr expr = case expr of
   Hof (For (RegularFor _) fbody@(LamVal b body)) -> do
     -- TODO: functionEffs is an overapproximation of the effects that really appear inside
     refs <- gets activeAccs
-    let allowedRegions = foldMap (\(varType -> RefTy (Var reg) _) -> reg @> ()) refs
+    let allowedRegions = foldMap (\(varType . fst -> RefTy (Var reg) _) -> reg @> ()) refs
     (EffectRow bodyEffs t) <- substEmbedR $ functionEffs fbody
     let onlyAllowedEffects = all (parallelizableEffect allowedRegions) $ toList bodyEffs
     case t == Nothing && onlyAllowedEffects of
@@ -77,11 +78,11 @@ parallelTraverseExpr expr = case expr of
         b' <- substEmbedR b
         liftM Atom $ runLoopM $ withLoopBinder b' $ buildParallelBlock $ asABlock body
       False -> nothingSpecial
-  Hof (RunWriter (BinaryFunVal h b _ body)) -> do
+  Hof (RunWriter bm (BinaryFunVal h b _ body)) -> do
     ~(RefTy _ accTy) <- traverseAtom substTraversalDef $ binderType b
-    liftM Atom $ emitRunWriter (binderNameHint b) accTy \ref@(Var refVar) -> do
+    liftM Atom $ emitRunWriter (binderNameHint b) accTy bm \ref@(Var refVar) -> do
       let RefTy h' _ = varType refVar
-      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> refVar }
+      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (refVar, bm) }
       extendR (h @> h' <> b @> ref) $ evalBlockE parallelTrav body
   -- TODO: Do some alias analysis. This is not fundamentally hard, but it is a little annoying.
   --       We would have to track not only the base references, but also all the aliases, along
@@ -214,23 +215,16 @@ emitLoops buildPureLoop (ABlock decls result) = do
         buildLam (Bind $ "gtid" :> IdxRepTy) PureArrow \gtid -> do
           buildLam (Bind $ "nthr" :> IdxRepTy) PureArrow \nthr -> do
             let threadRange = TC $ ParIndexRange iterTy gtid nthr
-            let accTys = mkConsListTy $ fmap (derefType . varType) newRefs
-            emitRunWriter "refsList" accTys \localRefsList -> do
-              localRefs <- unpackRefConsList localRefsList
+            let writerSpecs = for newRefs \(ref, bm) -> (varName ref, derefType (varType ref), bm)
+            emitRunWriters writerSpecs $ \localRefs -> do
               buildFor Fwd (Bind $ "tidx" :> threadRange) \tidx -> do
                 pari <- emitOp $ Inject tidx
                 extendR (newEnv oldRefNames localRefs) $ buildBody pari
-      (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce iterTy body)
+      (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce (fmap snd newRefs) iterTy body)
       updates <- unpackConsList updateList
-      forM_ (zip newRefs updates) \(ref, update) ->
-        emitOp $ PrimEffect (Var ref) $ MTell update
+      forM_ (zip newRefs updates) $ \((ref, bm), update) -> do
+        updater <- mextendForRef (Var ref) bm update
+        emitOp $ PrimEffect (Var ref) $ MExtend updater
       return ans
-    where
-      derefType ~(RefTy _ accTy) = accTy
-      unpackRefConsList xs = case derefType $ getType xs of
-        UnitTy -> return []
-        PairTy _ _ -> do
-          x    <- getFstRef xs
-          rest <- getSndRef xs
-          (x:) <$> unpackRefConsList rest
-        _ -> error $ "Not a ref cons list: " ++ pprint (getType xs)
+  where
+    derefType ~(RefTy _ accTy) = accTy

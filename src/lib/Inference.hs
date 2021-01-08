@@ -865,8 +865,8 @@ synthDict ty = case ty of
 
 -- TODO: this doesn't de-dup, so we'll get multiple results if we have a
 -- diamond-shaped hierarchy.
-superclass :: Atom -> SynthDictM Atom
-superclass dict = return dict <|> do
+withSuperclasses :: Atom -> SynthDictM Atom
+withSuperclasses dict = return dict <|> do
   (f, LetBound SuperclassLet _) <- getBinding
   inferToSynth $ tryApply f dict
 

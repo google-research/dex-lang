@@ -1,4 +1,4 @@
--- Copyright 2019 Google LLC
+-- Copyright 2021 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -24,14 +24,16 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildFor, buildForAux, buildForAnn, buildForAnnAux,
               emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, unpackConsList, emitRunWriter, applyPreludeFunction,
-              emitRunState,  emitMaybeCase, emitWhile, buildDataDef,
+              embedExtend, applyPreludeFunction,
+              unpackConsList, unpackLeftLeaningConsList,
+              emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
+              emitRunState, emitMaybeCase, emitWhile, buildDataDef,
               emitRunReader, tabGet, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               ptrOffset, ptrLoad, unsafePtrLoad,
               evalBlockE, substTraversalDef,
               TraversalDef, traverseDecls, traverseDecl, traverseDeclsOpen,
               traverseBlock, traverseExpr, traverseAtom,
-              clampPositive, buildNAbs, buildNAbsAux, buildNestedLam, zeroAt,
+              clampPositive, buildNAbs, buildNAbsAux, buildNestedLam,
               transformModuleAsBlock, dropSub, appReduceTraversalDef,
               indexSetSizeE, indexToIntE, intToIndexE, freshVarE) where
 
@@ -231,22 +233,6 @@ inlineLastDecl block@(Block decls result) =
       Block (toNest (reverse rest)) expr
     _ -> block
 
-zeroAt :: Type -> Atom
-zeroAt ty = case ty of
-  BaseTy bt  -> Con $ Lit $ zeroLit bt
-  TabTy i a  -> TabValA i $ zeroAt a
-  UnitTy     -> UnitVal
-  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
-  RecordTy (Ext tys Nothing) -> Record $ fmap zeroAt tys
-  _          -> unreachable
-  where
-    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
-    zeroLit bt = case bt of
-      Scalar Float64Type -> Float64Lit 0.0
-      Scalar Float32Type -> Float32Lit 0.0
-      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
-      _                  -> unreachable
-
 fLitLike :: Double -> Atom -> Atom
 fLitLike x t = case getType t of
   BaseTy (Scalar Float64Type) -> Con $ Lit $ Float64Lit x
@@ -384,6 +370,17 @@ unpackConsList xs = case getType xs of
     liftM (x:) $ unpackConsList rest
   _ -> error $ "Not a cons list: " ++ pprint (getType xs)
 
+-- ((...((ans, x{n}), x{n-1})..., x2), x1) -> (ans, [x1, ..., x{n}])
+-- This is useful for unpacking results of stacked effect handlers (as produced
+-- by e.g. emitRunWriters).
+unpackLeftLeaningConsList :: MonadEmbed m => Int -> Atom -> m (Atom, [Atom])
+unpackLeftLeaningConsList depth atom = go depth atom []
+  where
+    go 0        curAtom xs = return (curAtom, reverse xs)
+    go remDepth curAtom xs = do
+      (consTail, x) <- fromPair curAtom
+      go (remDepth - 1) consTail (x : xs)
+
 emitWhile :: MonadEmbed m => m Atom -> m ()
 emitWhile body = do
   eff <- getAllowedEffects
@@ -399,9 +396,35 @@ emitMaybeCase scrut nothingCase justCase = do
   let resultTy = getType nothingBody
   emit $ Case scrut [nothingAlt, justAlt] resultTy
 
-emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
-emitRunWriter v ty body = do
-  emit . Hof . RunWriter =<< mkBinaryEffFun Writer v ty body
+monoidLift :: Type -> Type -> Nest Binder
+monoidLift baseTy accTy = case baseTy == accTy of
+  True  -> Empty
+  False -> case accTy of
+    TabTy n b -> Nest n $ monoidLift baseTy b
+    _         -> error $ "Base monoid type mismatch: can't lift " ++
+                         pprint baseTy ++ " to " ++ pprint accTy
+
+mextendForRef :: MonadEmbed m => Atom -> BaseMonoid -> Atom -> m Atom
+mextendForRef ref (BaseMonoid _ combine) update = do
+  buildLam (Bind $ "refVal":>accTy) PureArrow \refVal ->
+    buildNestedFor (fmap (Fwd,) $ toList liftIndices) $ \indices -> do
+      refElem <- tabGetNd refVal indices
+      updateElem <- tabGetNd update indices
+      bindM2 appTryReduce (appTryReduce combine refElem) (return updateElem)
+  where
+    TC (RefType _ accTy) = getType ref
+    FunTy (BinderAnn baseTy) _ _ = getType combine
+    liftIndices = monoidLift baseTy accTy
+
+emitRunWriter :: MonadEmbed m => Name -> Type -> BaseMonoid -> (Atom -> m Atom) -> m Atom
+emitRunWriter v accTy bm body = do
+  emit . Hof . RunWriter bm =<< mkBinaryEffFun Writer v accTy body
+
+emitRunWriters :: MonadEmbed m => [(Name, Type, BaseMonoid)] -> ([Atom] -> m Atom) -> m Atom
+emitRunWriters inits body = go inits []
+  where
+    go [] refs = body $ reverse refs
+    go ((v, accTy, bm):rest) refs = emitRunWriter v accTy bm $ \ref -> go rest (ref:refs)
 
 emitRunReader :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
 emitRunReader v x0 body = do
@@ -435,13 +458,23 @@ buildForAux = buildForAnnAux . RegularFor
 buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
 buildFor = buildForAnn . RegularFor
 
+buildNestedFor :: forall m. MonadEmbed m => [(Direction, Binder)] -> ([Atom] -> m Atom) -> m Atom
+buildNestedFor specs body = go specs []
+  where
+    go :: [(Direction, Binder)] -> [Atom] -> m Atom
+    go []        indices = body $ reverse indices
+    go ((d,b):t) indices = buildFor d b $ \i -> go t (i:indices)
+
 buildNestedLam :: MonadEmbed m => Arrow -> [Binder] -> ([Atom] -> m Atom) -> m Atom
 buildNestedLam _ [] f = f []
 buildNestedLam arr (b:bs) f =
   buildLam b arr \x -> buildNestedLam arr bs \xs -> f (x:xs)
 
 tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
-tabGet x i = emit $ App x i
+tabGet tab idx = emit $ App tab idx
+
+tabGetNd :: MonadEmbed m => Atom -> [Atom] -> m Atom
+tabGetNd tab idxs = foldM (flip tabGet) tab idxs
 
 unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
