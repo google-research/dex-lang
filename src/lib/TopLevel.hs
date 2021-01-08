@@ -18,7 +18,6 @@ import Data.Text.Prettyprint.Doc
 import Data.String
 import Data.List (partition)
 import qualified Data.Map.Strict as M
-import qualified Data.Set        as S
 import Data.Store (Store)
 import GHC.Generics (Generic)
 
@@ -55,8 +54,10 @@ type TopPassM a = ReaderT TopPassEnv IO a
 
 data TopEnv = TopEnv
   { topBindings     :: Bindings
-  , modulesImported :: S.Set ModuleName }
+  , modulesImported :: M.Map ModuleName ModuleImportStatus}
     deriving Generic
+
+data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
 initTopEnv :: TopEnv
 initTopEnv = TopEnv initBindings mempty
@@ -123,14 +124,17 @@ evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
     Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
     _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
   ImportModule moduleName ->
-    -- TODO: detect import cycles by distinguishing in-process from finished
-    if moduleName `S.member` modulesImported env
-      then return mempty
-      else do
+    case M.lookup moduleName $ modulesImported env of
+      Just CurrentlyImporting -> liftEitherIO $ throw MiscErr $
+        "Circular import detected: " ++ pprint moduleName
+      Just FullyImported -> return mempty
+      Nothing -> do
         fullPath <- liftIO $ findModulePath moduleName
         source <- liftIO $ readFile fullPath
-        newTopEnv <- evalSourceBlocks env $ parseProg source
-        return $ newTopEnv <> moduleImported moduleName
+        newTopEnv <- evalSourceBlocks
+                       (env <> moduleStatus moduleName CurrentlyImporting) $
+                       parseProg source
+        return $ newTopEnv <> moduleStatus moduleName FullyImported
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
@@ -308,15 +312,18 @@ findModulePath :: ModuleName -> IO FilePath
 findModulePath moduleName = return $ "lib/" ++ moduleName ++ ".dx"
 
 instance Semigroup TopEnv where
-  (TopEnv env ms) <> (TopEnv env' ms') = TopEnv (env <> env') (ms <> ms')
+  (TopEnv env ms) <> (TopEnv env' ms') =
+    -- Data.Map is left-biased so we flip the order
+    TopEnv (env <> env') (ms' <> ms)
 
 instance Monoid TopEnv where
   mempty = TopEnv mempty mempty
 
-moduleImported :: ModuleName -> TopEnv
-moduleImported moduleName = mempty { modulesImported = S.singleton moduleName }
+moduleStatus :: ModuleName -> ModuleImportStatus -> TopEnv
+moduleStatus name status = mempty { modulesImported = M.singleton name status}
 
 bindingsToTopEnv :: Bindings -> TopEnv
 bindingsToTopEnv bindings = mempty { topBindings = bindings }
 
 instance Store TopEnv
+instance Store ModuleImportStatus
