@@ -686,8 +686,7 @@ traverseDecl (_, fExpr, _) decl = case decl of
   Let letAnn b expr -> do
     expr' <- fExpr expr
     case expr' of
-      Atom a | not (isGlobalBinder b) -> return $ b @> a
-      -- TODO: Do we need to use the name hint here?
+      Atom a | not (isGlobalBinder b) && letAnn == PlainLet -> return $ b @> a
       _ -> (b@>) <$> emitTo (binderNameHint b) letAnn expr'
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)

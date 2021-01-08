@@ -14,7 +14,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Foldable (fold, toList, asum)
+import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -339,7 +339,14 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   expr <- zonk $ Atom val
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
-    else bindPat p val
+    else do
+      env <- bindPat p val
+      -- XXX: We have to preserve the non-standard let annotations
+      --      Ideally we would just put the annotations on the equations
+      --      elaborated during inference, but this approach is simpler.
+      case letAnn of
+        PlainLet -> return env
+        _        -> forM env $ emitAnn letAnn . Atom
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
   dataDef <- buildDataDef tc' paramBs \params -> do
@@ -831,16 +838,27 @@ traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
     recur = traverseHoles fillHole
 
 synthDict :: Type -> SynthDictM Atom
-synthDict ty = do
-  (d, bindingInfo) <- getBinding
-  case bindingInfo of
-    LetBound InstanceLet _ -> do
-      block <- buildScoped $ inferToSynth $ instantiateAndCheck ty d
+synthDict ty = case ty of
+  PiTy b arr body -> synthesizeNow <|> introFirst
+    where
+      introFirst = buildDepEffLam b
+                      (\x -> extendR (b @> x) $ substEmbedR arr)
+                      (\x -> extendR (b @> x) $ substEmbedR body >>= synthDict)
+  _ -> synthesizeNow
+  where
+    synthesizeNow = do
+      (d, bindingInfo) <- getBinding
+      case bindingInfo of
+        LetBound InstanceLet _ -> trySynth d
+        LamBound ClassArrow    -> withSuperclasses d >>= trySynth
+        _                      -> empty
+    trySynth step = do
+      block <- buildScoped $ inferToSynth $ instantiateAndCheck ty step
+      -- NOTE: It's ok to emit unconditionally here. It will only ever emit
+      --       blocks that fully resolved without any holes, and if we ever
+      --       end up with two results, we don't use the duplicate code because
+      --       it's an error!
       traverseBlock (traverseHoles (const synthDict)) block >>= emitBlock
-    LamBound ClassArrow -> do
-      d' <- superclass d
-      inferToSynth $ instantiateAndCheck ty d'
-    _ -> empty
 
 -- TODO: this doesn't de-dup, so we'll get multiple results if we have a
 -- diamond-shaped hierarchy.
@@ -852,7 +870,7 @@ superclass dict = return dict <|> do
 getBinding :: SynthDictM (Atom, BinderInfo)
 getBinding = do
   scope <- getScope
-  (v, (ty, bindingInfo)) <- asum $ map return $ envPairs scope
+  (v, (ty, bindingInfo)) <- lift $ lift $ envPairs scope
   return (Var (v:>ty), bindingInfo)
 
 inferToSynth :: (Pretty a, Subst a) => UInferM a -> SynthDictM a

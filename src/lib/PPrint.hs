@@ -287,10 +287,17 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let _ (Ignore _) bound -> pLowest bound
+    Let ann (Ignore _) bound -> p ann <+> pLowest bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+
+instance Pretty LetAnn where
+  pretty ann = case ann of
+    PlainLet      -> ""
+    InstanceLet   -> "%instance"
+    SuperclassLet -> "%superclass"
+    NoInlineLet   -> "%noinline"
 
 prettyPiTypeHelper :: PiType -> Doc ann
 prettyPiTypeHelper (Abs binder (arr, body)) = let
@@ -625,8 +632,8 @@ instance Pretty a => Pretty (Limit a) where
   pretty (InclusiveLim x) = "incLim" <+> p x
 
 instance Pretty UDecl where
-  pretty (ULet _ b rhs) =
-    align $ prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+  pretty (ULet ann b rhs) =
+    align $ p ann <+> prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
   pretty (UData tyCon dataCons) =
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
   pretty (UInterface cs def methods) =
