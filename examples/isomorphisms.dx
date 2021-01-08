@@ -46,7 +46,7 @@ that produce isos. We will start with the first two:
 :t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
 > === parse ===
-> _ans_ =
+>  _ans_ =
 >   MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = x, ...r}. (,) x r}
 >   : Iso {a: Int & b: Float & c: Unit} _
 
@@ -54,7 +54,7 @@ that produce isos. We will start with the first two:
 :t #?b : Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
 > === parse ===
-> _ans_ =
+>  _ans_ =
 >   MkIso
 >     { bwd = \v. case v
 >                 ((Left x)) -> {| b = x |}
@@ -142,7 +142,7 @@ another. For instance:
 >    ({ &} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
 > === parse ===
-> _ans_ =
+>  _ans_ =
 >   MkIso
 >     { bwd = \({a = x, ...l}, {, ...r}). (,) {, ...l} {a = x, ...r}
 >     , fwd = \({, ...l}, {a = x, ...r}). (,) {a = x, ...l} {, ...r}}
@@ -212,7 +212,7 @@ zipper isomorphisms:
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
 > === parse ===
-> _ans_ =
+>  _ans_ =
 >   MkIso
 >     { bwd = \v. case v
 >                 ((Left w)) -> (case w

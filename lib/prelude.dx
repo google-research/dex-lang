@@ -309,8 +309,23 @@ def MulMonoid (a:Type) -> (_:Mul a) ?=> : Monoid a =
 def Ref (r:Type) (a:Type) : Type = %Ref r a
 def get  (ref:Ref h s)       : {State h} s    = %get  ref
 def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
+
 def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
-def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
+
+data AccumMonoid h w = UnsafeMkAccumMonoid (Monoid w)
+
+@instance
+def tableAccumMonoid ((UnsafeMkAccumMonoid m):AccumMonoid h w) ?=> : AccumMonoid h (n=>w) =
+  %instance mHint = m
+  def liftTableMonoid (tm:Monoid (n=>w)) ?=> : Monoid (n=>w) = tm
+  UnsafeMkAccumMonoid liftTableMonoid
+
+def (+=) (am:AccumMonoid h w) ?=> (ref:Ref h w) (x:w) : {Accum h} Unit =
+  (UnsafeMkAccumMonoid m) = am
+  %instance mHint = m
+  updater = \v. mcombine v x
+  %mextend ref updater
+
 def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
 def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
@@ -328,16 +343,29 @@ def withReader
       : {|eff} a =
     runReader init action
 
+def MonoidLifter (b:Type) (w:Type) : Type = h:Type -> AccumMonoid h b ?=> AccumMonoid h w
+
 def runAccum
-      (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
+      (mlift:MonoidLifter b w) ?=>
+      (bm:Monoid b)
+      (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} (a & w) =
-    def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a = action ref
-    %runWriter explicitAction
+    -- Normally, only the ?=> lambda binders participate in dictionary synthesis,
+    -- so we need to explicitly declare `m` as a hint.
+    %instance bmHint = bm
+    empty : b = mempty
+    combine : b -> b -> b = mcombine
+    def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a =
+      %instance accumBaseMonoidHint : AccumMonoid h' b = UnsafeMkAccumMonoid bm
+      action ref
+    %runWriter empty combine explicitAction
 
 def yieldAccum
-      (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
+      (mlift:MonoidLifter b w) ?=>
+      (m:Monoid b)
+      (action: (h:Type ?-> AccumMonoid h b ?=> Ref h w -> {Accum h|eff} a))
       : {|eff} w =
-  snd $ runAccum action
+  snd $ runAccum m action
 
 def runState
       (init:s)
@@ -471,13 +499,10 @@ instance Monoid Ordering
       GT -> GT
       EQ -> y
 
--- TODO: accumulate using the True/&& monoid
 instance [Eq a] Eq (n=>a)
   (==) = \xs ys.
-    numDifferent : Float =
-      yieldAccum \ref. for i.
-        ref += (IToF (BToI (xs.i /= ys.i)))
-    numDifferent == 0.0
+    yieldAccum AndMonoid \ref.
+      for i. ref += xs.i == ys.i
 
 instance [Ord a] Ord (n=>a)
   (>) = \xs ys.
@@ -716,7 +741,7 @@ def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
-def fsum (xs:n=>Float) : Float = yieldAccum \ref. for i. ref += xs i
+def fsum (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs i
 def sum  [Add v] (xs:n=>v) : v = reduce zero (+) xs
 def prod [Mul v] (xs:n=>v) : v = reduce one  (*) xs
 def mean [VSpace v] (xs:n=>v) : v = sum xs / IToF (size n)

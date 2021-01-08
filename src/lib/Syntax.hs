@@ -45,9 +45,11 @@ module Syntax (
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
-    mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
+    mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
+    extendEffRow,
     getProjection, outputStreamPtrName, initBindings,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
+    BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
@@ -384,16 +386,20 @@ data PrimHof e =
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e
       | RunReader e e
-      | RunWriter e
+      | RunWriter (BaseMonoidP e) e
       | RunState  e e
       | RunIO e
       | CatchException e
       | Linearize e
       | Transpose e
-      | PTileReduce e e       -- index set, thread body
+      | PTileReduce [BaseMonoidP e] e e  -- accumulator monoids, index set, thread body
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data PrimEffect e = MAsk | MTell e | MGet | MPut e
+data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
+                     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+type BaseMonoid = BaseMonoidP Atom
+
+data PrimEffect e = MAsk | MExtend e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
@@ -439,6 +445,11 @@ primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 
 showPrimName :: PrimExpr e -> String
 showPrimName prim = primNameToStr $ fmap (const ()) prim
+
+getBaseMonoidType :: Type -> Type
+getBaseMonoidType ty = case ty of
+  TabTy _ b -> getBaseMonoidType b
+  _         -> ty
 
 -- === effects ===
 
@@ -1481,6 +1492,15 @@ fromConsListTy ty = case ty of
   PairTy t rest -> (t:) <$> fromConsListTy rest
   _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
 
+-- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
+fromLeftLeaningConsListTy :: MonadError Err m => Int -> Type -> m (Type, [Type])
+fromLeftLeaningConsListTy depth initTy = go depth initTy []
+  where
+    go 0        ty xs = return (ty, reverse xs)
+    go remDepth ty xs = case ty of
+      PairTy lt rt -> go (remDepth - 1) lt (rt : xs)
+      _ -> throw CompilerErr $ "Not a pair: " ++ show xs
+
 fromConsList :: MonadError Err m => Atom -> m [Atom]
 fromConsList xs = case xs of
   UnitVal        -> return []
@@ -1600,7 +1620,7 @@ builtinNames = M.fromList
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
-  , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
+  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
@@ -1610,7 +1630,7 @@ builtinNames = M.fromList
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
   , ("runReader"       , HofExpr $ RunReader () ())
-  , ("runWriter"       , HofExpr $ RunWriter    ())
+  , ("runWriter"       , HofExpr $ RunWriter (BaseMonoid () ()) ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("runIO"           , HofExpr $ RunIO ())
   , ("catchException"  , HofExpr $ CatchException ())
@@ -1665,6 +1685,7 @@ instance Store a => Store (Nest a)
 instance Store a => Store (ArrowP a)
 instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
+instance Store a => Store (BaseMonoidP a)
 instance Store a => Store (LabeledItems a)
 instance (Store a, Store b) => Store (ExtLabeledItems a b)
 instance Store ForAnn

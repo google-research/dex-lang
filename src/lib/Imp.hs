@@ -248,9 +248,14 @@ toImpOp (maybeDest, op) = case op of
     destToAtom dest
   PrimEffect refDest m -> do
     case m of
-      MAsk    -> returnVal =<< destToAtom refDest
-      MTell x -> addToAtom refDest x >> returnVal UnitVal
-      MPut x  -> copyAtom  refDest x >> returnVal UnitVal
+      MAsk      -> returnVal =<< destToAtom refDest
+      MExtend ~(Lam f) -> do
+        -- TODO: Update in-place?
+        refValue <- destToAtom refDest
+        result <- translateBlock mempty (Nothing, snd $ applyAbs f refValue)
+        copyAtom refDest result
+        returnVal UnitVal
+      MPut x    -> copyAtom  refDest x >> returnVal UnitVal
       MGet -> do
         dest <- allocDest maybeDest resultTy
         -- It might be more efficient to implement a specialized copy for dests
@@ -422,28 +427,29 @@ toImpHof env (maybeDest, hof) = do
         sDest <- fromEmbed $ indexDestDim d dest idx
         void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
       destToAtom dest
-    PTileReduce idxTy' ~(BinaryFunVal gtidB nthrB _ body) -> do
+    PTileReduce baseMonoids idxTy' ~(BinaryFunVal gtidB nthrB _ body) -> do
       idxTy <- impSubst env idxTy'
       (mappingDest, finalAccDest) <- destPairUnpack <$> allocDest maybeDest resultTy
-      let PairTy _ accType = resultTy
-      (numTileWorkgroups, wgResArr, widIdxTy) <- buildKernel idxTy \LaunchInfo{..} buildBody -> do
+      let PairTy _ accTypes = resultTy
+      (numTileWorkgroups, wgAccsArr, widIdxTy) <- buildKernel idxTy \LaunchInfo{..} buildBody -> do
         let widIdxTy = Fin $ toScalarAtom numWorkgroups
         let tidIdxTy = Fin $ toScalarAtom workgroupSize
-        wgResArr  <- alloc $ TabTy (Ignore widIdxTy) accType
-        thrAccArr <- alloc $ TabTy (Ignore widIdxTy) $ TabTy (Ignore tidIdxTy) accType
+        wgAccsArr  <- alloc $ TabTy (Ignore widIdxTy) accTypes
+        thrAccsArr <- alloc $ TabTy (Ignore widIdxTy) $ TabTy (Ignore tidIdxTy) accTypes
         mappingKernelBody <- buildBody \ThreadInfo{..} -> do
           let TC (ParIndexRange _ gtid nthr) = threadRange
-          let scope = freeVars mappingDest
-          let tileDest = Con $ TabRef $ fst $ flip runSubstEmbed scope $ do
+          let tileDest = Con $ TabRef $ fst $ flip runSubstEmbed (freeVars mappingDest) $ do
                 buildLam (Bind $ "hwidx":>threadRange) TabArrow \hwidx -> do
                   indexDest mappingDest =<< (emitOp $ Inject hwidx)
-          wgAccs <- destGet thrAccArr =<< intToIndex widIdxTy wid
-          thrAcc <- destGet wgAccs    =<< intToIndex tidIdxTy tid
-          let threadDest = Con $ ConRef $ PairCon tileDest thrAcc
+          wgThrAccs <- destGet thrAccsArr =<< intToIndex widIdxTy wid
+          thrAccs   <- destGet wgThrAccs  =<< intToIndex tidIdxTy tid
+          let thrAccsList = fromDestConsList thrAccs
+          let threadDest = foldr ((Con . ConRef) ... flip PairCon) tileDest thrAccsList
+          -- TODO: Make sure that threadDest has the right type
           void $ translateBlock (env <> gtidB @> gtid <> nthrB @> nthr) (Just threadDest, body)
-          wgRes <- destGet wgResArr =<< intToIndex widIdxTy wid
-          workgroupReduce tid wgRes wgAccs workgroupSize
-        return (mappingKernelBody, (numWorkgroups, wgResArr, widIdxTy))
+          wgAccs <- destGet wgAccsArr =<< intToIndex widIdxTy wid
+          workgroupReduce tid wgAccs wgThrAccs workgroupSize
+        return (mappingKernelBody, (numWorkgroups, wgAccsArr, widIdxTy))
       -- TODO: Skip the reduction kernel if unnecessary?
       -- TODO: Reduce sequentially in the CPU backend?
       -- TODO: Actually we only need the previous-power-of-2 many threads
@@ -453,13 +459,14 @@ toImpHof env (maybeDest, hof) = do
         moreThanOneGroup <- (IIdxRepVal 1) `iltI` numWorkgroups
         guardBlock moreThanOneGroup $ emitStatement IThrowError
         redKernelBody <- buildBody \ThreadInfo{..} ->
-          workgroupReduce tid finalAccDest wgResArr numTileWorkgroups
+          workgroupReduce tid finalAccDest wgAccsArr numTileWorkgroups
         return (redKernelBody, ())
       PairVal <$> destToAtom mappingDest <*> destToAtom finalAccDest
       where
         guardBlock cond m = do
           block <- scopedErrBlock m
           emitStatement $ ICond cond block (ImpBlock mempty mempty)
+        -- XXX: Overwrites the contents of arrDest, writes result in resDest
         workgroupReduce tid resDest arrDest elemCount = do
           elemCountDown2 <- prevPowerOf2 elemCount
           let RawRefTy (TabTy arrIdxB _) = getType arrDest
@@ -472,7 +479,7 @@ toImpHof env (maybeDest, hof) = do
                 shouldAdd <- bindM2 bandI (tid `iltI` off) (loadIdx `iltI` elemCount)
                 guardBlock shouldAdd $ do
                   threadDest <- destGet arrDest =<< intToIndex arrIdxTy tid
-                  addToAtom threadDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy loadIdx
+                  combineWithDest threadDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy loadIdx
                 emitStatement ISyncWorkgroup
                 copyAtom offPtr . toScalarAtom =<< off `idivI` (IIdxRepVal 2)
           cond <- liftM snd $ scopedBlock $ do
@@ -484,6 +491,13 @@ toImpHof env (maybeDest, hof) = do
           firstThread <- tid `iltI` (IIdxRepVal 1)
           guardBlock firstThread $
             copyAtom resDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy tid
+        combineWithDest :: Dest -> Atom -> ImpM ()
+        combineWithDest accsDest accsUpdates = do
+          let accsDestList = fromDestConsList accsDest
+          let Right accsUpdatesList = fromConsList accsUpdates
+          forM_ (zip3 accsDestList baseMonoids accsUpdatesList) $ \(dest, bm, update) -> do
+            extender <- fromEmbed $ mextendForRef dest bm update
+            void $ toImpOp (Nothing, PrimEffect dest $ MExtend extender)
         -- TODO: Do some popcount tricks?
         prevPowerOf2 :: IExpr -> ImpM IExpr
         prevPowerOf2 x = do
@@ -506,12 +520,13 @@ toImpHof env (maybeDest, hof) = do
       rDest <- alloc $ getType r
       copyAtom rDest =<< impSubst env r
       translateBlock (env <> ref @> rDest) (maybeDest, body)
-    RunWriter ~(BinaryFunVal _ ref _ body) -> do
+    RunWriter (BaseMonoid e' _) ~(BinaryFunVal _ ref _ body) -> do
+      let PairTy _ accTy = resultTy
       (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
-      let RefTy _ wTy = getType ref
-      copyAtom wDest (zeroAt wTy)
+      copyAtom wDest =<< (liftNeutral accTy <$> impSubst env e')
       void $ translateBlock (env <> ref @> wDest) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom wDest
+      where liftNeutral accTy e = foldr TabValA e $ monoidLift (getType e) accTy
     RunState s ~(BinaryFunVal _ ref _ body) -> do
       (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
       copyAtom sDest =<< impSubst env s
@@ -791,6 +806,12 @@ destPairUnpack :: Dest -> (Dest, Dest)
 destPairUnpack (Con (ConRef (PairCon l r))) = (l, r)
 destPairUnpack d = error $ "Not a pair destination: " ++ show d
 
+fromDestConsList :: Dest -> [Dest]
+fromDestConsList dest = case dest of
+  Con (ConRef (PairCon h t)) -> h : fromDestConsList t
+  Con (ConRef UnitCon)       -> []
+  _ -> error $ "Not a dest cons list: " ++ pprint dest
+
 makeAllocDest :: AllocType -> Type -> ImpM Dest
 makeAllocDest allocTy ty = fst <$> makeAllocDestWithPtrs allocTy ty
 
@@ -962,29 +983,6 @@ zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
   (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> f iRef i
   (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> f iRef i
   _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
-
--- TODO: put this in userspace using type classes
-addToAtom :: Dest -> Atom -> ImpM ()
-addToAtom dest src = case (dest, src) of
-  (Con (BaseTypeRef ptr), x) -> do
-    let ptr' = fromScalarAtom ptr
-    let x'   = fromScalarAtom x
-    cur <- loadAnywhere ptr'
-    let op = case getIType cur of
-               Scalar _ -> ScalarBinOp
-               Vector _ -> VectorBinOp
-               _ -> error $ "The result of load cannot be a reference"
-    updated <- emitInstr $ IPrimOp $ op FAdd cur x'
-    storeAnywhere ptr' updated
-  (Con (TabRef _), TabVal _ _) -> zipTabDestAtom addToAtom dest src
-  (Con (ConRef (SumAsProd _ _ payloadDest)), Con (SumAsProd _ tag payload)) -> do
-    unless (all null payload) $ -- optimization
-      emitSwitch (fromScalarAtom tag) $
-        zipWith (zipWithM_ addToAtom) payloadDest payload
-  (Con (ConRef destCon), Con srcCon) -> zipWithRefConM addToAtom destCon srcCon
-  (Con (RecordRef dests), Record srcs) ->
-    zipWithM_ addToAtom (toList dests) (toList srcs)
-  _ -> error $ "Not implemented " ++ pprint (dest, src)
 
 loadAnywhere :: IExpr -> ImpM IExpr
 loadAnywhere ptr = do

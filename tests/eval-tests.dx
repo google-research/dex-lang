@@ -698,7 +698,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 > 415
 
 :p
-  (f, w) = runAccum \ref.
+  (f, w) = runAccum (AddMonoid Float) \ref.
     ref += 2.0
     w = 2
     \z. z + w
@@ -715,17 +715,6 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 arr2d = for i:(Fin 2). for j:(Fin 2). (iota _).(i,j)
 arr2d.(1@_)
 > [2, 3]
-
-:p
-  runState (1,2) \ref.
-    r1 = fstRef ref
-    r2 = sndRef ref
-    x = get r1
-    y = get r2
-    r2 := x
-    r1 := y
-> ((), (2, 1))
-
 
 :p any [True, False]
 > True
