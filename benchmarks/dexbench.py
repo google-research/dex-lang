@@ -55,15 +55,15 @@ def restore_machine():
 def run_benches(lang, backend):
   if lang == "dex":
     if backend == "CPU":
-      backend_args = ["--backend", "LLVM-MC"]
+      backend_args = ["--backend", "llvm-mc"]
       env = {}
     elif backend == "GPU":
-      backend_args = ["--backend", "LLVM-CUDA"]
+      backend_args = ["--backend", "llvm-cuda"]
       env = {"CUDA_LAUNCH_BLOCKING":"1"}
     else:
       raise Exception
     command = (["stack", "exec", "dex", "--"] + backend_args +
-               ["script", "--outfmt", "JSON", dex_microbench_file])
+               ["script", "--outfmt", "json", dex_microbench_file])
   elif lang == "jax":
     if backend == "CPU":
       env = {"CUDA_VISIBLE_DEVICES":""}

@@ -158,10 +158,10 @@ parseMode = subparser $
   <*> option
         (optionList [ ("literate"   , TextDoc)
                     , ("result-only", ResultOnly)
-                    , ("HTML"       , HTMLDoc)
-                    , ("JSON"       , JSONDoc)])
+                    , ("html"       , HTMLDoc)
+                    , ("json"       , JSONDoc)])
         (long "outfmt" <> value TextDoc <>
-         helpOption "Output format" "literate (default) | result-only | HTML | JSON")
+         helpOption "Output format" "literate (default) | result-only | html | json")
   <*> flag HaltOnErr ContinueOnErr (
                 long "allow-errors"
              <> help "Evaluate programs containing non-fatal type errors")))
@@ -177,12 +177,12 @@ optionList opts = eitherReader \s -> case lookup s opts of
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
   <$> option
-         (optionList [ ("LLVM", LLVM)
-                     , ("LLVM-CUDA", LLVMCUDA)
-                     , ("LLVM-MC", LLVMMC)
+         (optionList [ ("llvm", LLVM)
+                     , ("llvm-cuda", LLVMCUDA)
+                     , ("llvm-mc", LLVMMC)
                      , ("interpreter", Interpreter)])
          (long "backend" <> value LLVM <>
-          helpOption "Backend" "LLVM (default) | LLVM-CUDA | LLVM-MC | interpreter")
+          helpOption "Backend" "llvm (default) | llvm-cuda | llvm-mc | interpreter")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)

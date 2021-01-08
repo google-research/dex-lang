@@ -137,11 +137,11 @@ update-examples-%: examples/%.dx build
 
 run-gpu-tests: export DEX_ALLOC_CONTRACTIONS=0
 run-gpu-tests: tests/gpu-tests.dx build
-	misc/check-quine $< $(dex) --backend LLVM-CUDA script --allow-errors
+	misc/check-quine $< $(dex) --backend llvm-cuda script --allow-errors
 
 update-gpu-tests: export DEX_ALLOW_CONTRACTIONS=0
 update-gpu-tests: tests/gpu-tests.dx build
-	$(dex) --backend LLVM-CUDA script --allow-errors $< > $<.tmp
+	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
 uexpr-tests:
@@ -175,15 +175,15 @@ docs: doc-prelude $(doc-example-names) $(doc-lib-names) $(slow-docs)
 
 doc-prelude: lib/prelude.dx
 	mkdir -p doc
-	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt HTML > doc/prelude.html
+	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > doc/prelude.html
 
 doc/examples/%.html: examples/%.dx
 	mkdir -p doc/examples
-	$(dex) script $^ --outfmt HTML > $@
+	$(dex) script $^ --outfmt html > $@
 
 doc/lib/%.html: lib/%.dx
 	mkdir -p doc/lib
-	$(dex) script $^ --outfmt HTML > $@
+	$(dex) script $^ --outfmt html > $@
 
 clean:
 	$(STACK) clean
