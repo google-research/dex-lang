@@ -60,6 +60,9 @@ tc: dexrt-llvm
 build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
 
+watch: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --file-watch
+
 install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
