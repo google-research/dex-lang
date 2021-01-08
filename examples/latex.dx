@@ -1,0 +1,41 @@
+'# $\href{https://katex.org/}{\KaTeX}$ rendering examples
+
+'This document demonstrates $\KaTeX$ rendering in literate Dex programs.
+
+'## Random examples
+
+'$$\text{This is a multiline equation:} \\\\ \textbf{A}\textbf{x} = \textbf{b}$$
+
+'$$f(\relax{x}) = \int_{-\infty}^\infty \hat{f}(\xi)\,e^{2 \pi i \xi x} \,d\xi$$
+
+'## [Environments](https://katex.org/docs/supported.html#environments)
+
+'$$\begin{matrix} a & b \\\\ c & d \end{matrix}$$
+
+'$$\begin{pmatrix} a & b \\\\ c & d \end{pmatrix}$$
+
+'$$\begin{bmatrix} a & b \\\\ c & d \end{bmatrix}$$
+
+'$$\def\arraystretch{1.5} \begin{array}{c:c:c} a & b & c \\\\ \hline d & e & f \\\\ \hdashline g & h & i \end{array}$$
+
+'$$\begin{aligned} a&=b+c \\\\ d+e&=f \end{aligned}$$
+
+'$$\begin{alignedat}{2} 10&x+ &3&y = 2 \\\\ 3&x+&13&y = 4 \end{alignedat}$$
+
+'$$\begin{gathered} a=b \\\\ e=b+c \end{gathered}$$
+
+'$$x = \begin{cases} a &\text{if } b \\\\ c &\text{if } d \end{cases}$$
+
+'$$\begin{rcases} a &\text{if } b \\\\ c &\text{if } d \end{rcases} \Rightarrow \dots$$
+
+'## [Layout annotation](https://katex.org/docs/supported.html#annotation)
+
+'$$\overbrace{a+b+c}^{\text{note}}$$
+
+'$$\underbrace{a+b+c}_{\text{note}}$$
+
+'$$\xcancel{\text{second-order array combinators}}$$
+
+'## [Logic and Set Theory](https://katex.org/docs/supported.html#logic-and-set-theory)
+
+'$$\begin{aligned} \forall \\; & \texttt{\textbackslash forall} & \complement \\; & \texttt{\textbackslash complement} & \therefore \\; & \texttt{\textbackslash therefore} & \emptyset \\; & \texttt{\textbackslash emptyset} \\\\ \exists \\; & \texttt{\textbackslash exists} & \subset \\; & \texttt{\textbackslash subset} & \because \\; & \texttt{\textbackslash because} & \empty \\; & \texttt{\textbackslash empty} \\\\ \exist \\; & \texttt{\textbackslash exist} & \supset \\; & \texttt{\textbackslash supset} & \mapsto \\; & \texttt{\textbackslash mapsto} & \varnothing \\; & \texttt{\textbackslash varnothing} \\\\ \nexists \\; & \texttt{\textbackslash nexists} & \mid \\; & \texttt{\textbackslash mid} & \to \\; & \texttt{\textbackslash to} & \implies \\; & \texttt{\textbackslash implies} \\\\ \in \\; & \texttt{\textbackslash in} & \land \\; & \texttt{\textbackslash land} & \gets \\; & \texttt{\textbackslash gets} & \impliedby \\; & \texttt{\textbackslash impliedby} \\\\ \isin \\; & \texttt{\textbackslash isin} & \lor \\; & \texttt{\textbackslash lor} & \leftrightarrow \\; & \texttt{\textbackslash leftrightarrow} & \iff \\; & \texttt{\textbackslash iff} \\\\ \notin \\; & \texttt{\textbackslash notin} & \ni \\; & \texttt{\textbackslash ni} & \notni \\; & \texttt{\textbackslash notni} & \neg \\; & \texttt{\textbackslash neg} \\\\ \lnot \\; & \texttt{\textbackslash lnot} \\\\ \end{aligned}$$
