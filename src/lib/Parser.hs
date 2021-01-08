@@ -365,9 +365,10 @@ instanceMethod = do
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
+  letAnn <- (InstanceLet <$ string "%instance" <* sc) <|> (pure PlainLet)
   p <- try $ (letPat <|> leafPat) <* lookAhead (sym "=" <|> sym ":")
-  ann <- optional $ annot uType
-  return $ ULet PlainLet (p, ann)
+  typeAnn <- optional $ annot uType
+  return $ ULet letAnn (p, typeAnn)
 
 letPat :: Parser UPat
 letPat = withSrc $ nameToPat <$> anyName
