@@ -839,13 +839,12 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- This is conservative, in case the type is dependent. We could do better.
       (DataConRef _ _ _, DataCon _ _ _ _) -> tell [(dest, result)]
       -- This is conservative. Without it, we hit bugs like #348
-      (Con (ConRef (SumAsProd _ _ _)), Con (SumAsProd _ _ _)) -> tell [(dest, result)]
+      (Con (ConRef (SumAsProd _ _ _)), _) -> tell [(dest, result)]
       (Con (ConRef destCon), Con srcCon) ->
         zipWithRefConM gatherVarDests destCon srcCon
       (Con (RecordRef items), Record items')
         | fmap (const ()) items == fmap (const ()) items' -> do
             zipWithM_ gatherVarDests (toList items) (toList items')
-      (Con (ConRef (SumAsProd _ _ _)), _) -> tell [(dest, result)]  -- TODO
       (_, ProjectElt _ _) -> tell [(dest, result)]  -- TODO: is this reasonable?
       _ -> unreachable
       where
@@ -931,8 +930,7 @@ toScalarType b = BaseTy b
 fromEmbed :: Subst a => Embed a -> ImpM a
 fromEmbed m = do
   scope <- variableScope
-  let (ans, (scopeDelta, decls)) = runEmbed m scope
-  extend $ mempty { envScope = scopeDelta }
+  let (ans, (_, decls)) = runEmbed m scope
   env <- catFoldM translateDecl mempty $ fmap (Nothing,) decls
   impSubst env ans
 
@@ -1238,7 +1236,6 @@ instrTypeChecked instr = case instr of
       _ -> throw CompilerErr $
             "Can't cast " ++ pprint st ++ " to " ++ pprint dt
     return dt
-
   Alloc a ty n -> (:[]) <$> do
     checkIdxRep n
     when (a /= Stack) assertHost
