@@ -59,8 +59,12 @@ mustParseit s p  = case parseit s p of
   Right ans -> ans
   Left e -> error $ "This shouldn't happen:\n" ++ pprint e
 
-includeSourceFile :: Parser String
-includeSourceFile = symbol "include" >> stringLiteral <* eol
+importModule :: Parser SourceBlock'
+importModule = ImportModule <$> do
+  keyWord ImportKW
+  s <- (:) <$> letterChar <*> many alphaNumChar
+  eol
+  return s
 
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
@@ -131,7 +135,7 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
-      liftM IncludeSourceFile includeSourceFile
+      importModule
   <|> explicitCommand
   <?> "top-level command"
 
@@ -965,7 +969,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
-             | ExceptKW | IOKW | ViewKW
+             | ExceptKW | IOKW | ViewKW | ImportKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -1012,11 +1016,12 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       WhereKW -> "where"
       DoKW   -> "do"
       ViewKW -> "view"
+      ImportKW -> "import"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
-               "instance", "where", "if", "then", "else", "do", "view"]
+               "instance", "where", "if", "then", "else", "do", "view", "import"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

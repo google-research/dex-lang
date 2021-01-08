@@ -94,7 +94,7 @@ sourceBlockToDag block = do
   --       that contain interface instance definitions.
   extend (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
   case sbContents block of
-    IncludeSourceFile _ -> extend $ asSnd [n]
+    ImportModule _ -> extend $ asSnd [n]
     _ -> return ()
   return n
 

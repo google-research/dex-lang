@@ -33,7 +33,7 @@ import PPrint
 
 import Dex.Foreign.Util
 
-data Context = Context EvalConfig TopEnv
+data Context = Context EvalConfig Bindings
 
 foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
 setError :: String -> IO ()
@@ -45,7 +45,7 @@ dexCreateContext = do
   let evalConfig = EvalConfig LLVM Nothing
   maybePreludeEnv <- evalPrelude evalConfig preludeSource
   case maybePreludeEnv of
-    Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
+    Right preludeEnv -> toStablePtr $ Context evalConfig (topBindings preludeEnv)
     Left  err        -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
   where
     evalPrelude :: EvalConfig -> String -> IO (Either Err TopEnv)
@@ -66,10 +66,10 @@ dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
-  (results, finalEnv) <- runStateT (evalSource evalConfig source) env
+  (results, finalEnv) <- runStateT (evalSource evalConfig source) (bindingsToTopEnv env)
   let anyError = asum $ fmap (\case (_, Result _ (Left err)) -> Just err; _ -> Nothing) results
   case anyError of
-    Nothing  -> toStablePtr $ Context evalConfig finalEnv
+    Nothing  -> toStablePtr $ Context evalConfig (topBindings finalEnv)
     Just err -> setError (pprint err) $> nullPtr
 
 dexInsert :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
@@ -88,10 +88,11 @@ dexEvalExpr ctxPtr sourcePtr = do
     Right expr -> do
       let (v, m) = exprAsModule expr
       let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
-      (resultEnv, Result [] maybeErr) <- evalSourceBlock evalConfig env block
+      (resultEnv, Result [] maybeErr) <-
+          evalSourceBlock evalConfig (bindingsToTopEnv env) block
       case maybeErr of
         Right () -> do
-          let (_, LetBound _ (Atom atom)) = resultEnv ! v
+          let (_, LetBound _ (Atom atom)) = topBindings resultEnv ! v
           toStablePtr atom
         Left err -> setError (pprint err) $> nullPtr
     Left err -> setError (pprint err) $> nullPtr

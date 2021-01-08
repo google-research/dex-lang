@@ -1,6 +1,6 @@
 '# Basis function regression
 
-include "plot.dx"
+import plot
 
 -- Conjugate gradients solver
 def solve (mat:m=>m=>Float) (b:m=>Float) : m=>Float =

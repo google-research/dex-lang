@@ -1,5 +1,5 @@
 
-include "parser.dx"
+import parser
 
 parseABC : Parser Unit = MkParser \h.
   parse h $ pChar 'A'

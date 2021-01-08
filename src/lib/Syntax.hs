@@ -23,14 +23,14 @@ module Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
     Scope, CmdName (..), HasIVars (..), ForAnn (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
+    Val, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     lookupLabelHead, reflectLabels, withLabels, ExtLabeledItems (..),
-    prefixExtLabeledItems, getLabels,
+    prefixExtLabeledItems, getLabels, ModuleName,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -46,7 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    getProjection, outputStreamPtrName, initTopEnv,
+    getProjection, outputStreamPtrName, initBindings,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, vectorWidth,
@@ -166,7 +166,6 @@ type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
 data Module = Module IRVariant (Nest Decl) Bindings  deriving Show
-type TopEnv = Scope
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
@@ -457,8 +456,8 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 outputStreamPtrName :: Name
 outputStreamPtrName = GlobalName "OUT_STREAM_PTR"
 
-initTopEnv :: TopEnv
-initTopEnv = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
+initBindings :: Bindings
+initBindings = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
   [(outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
 
 hostPtrTy :: BaseType -> BaseType
@@ -489,10 +488,11 @@ data SourceBlock = SourceBlock
 
 type BlockId = Int
 type ReachedEOF = Bool
+type ModuleName = String
 data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
                   | GetNameType Name
-                  | IncludeSourceFile String
+                  | ImportModule ModuleName
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines

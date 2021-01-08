@@ -2,7 +2,7 @@
 
 '## General MCMC utilities
 
-include "plot.dx"
+import plot
 
 LogProb : Type = Float
 

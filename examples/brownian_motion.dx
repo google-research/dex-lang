@@ -1,5 +1,5 @@
 
-include "plot.dx"
+import plot
 
 UnitInterval = Float
 

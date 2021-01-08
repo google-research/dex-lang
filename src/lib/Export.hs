@@ -33,7 +33,7 @@ import LLVMExec
 import PPrint
 import Optimize
 
-exportFunctions :: FilePath -> [(String, Atom)] -> TopEnv -> IO ()
+exportFunctions :: FilePath -> [(String, Atom)] -> Bindings -> IO ()
 exportFunctions objPath funcs env = do
   let names = fmap fst funcs
   unless (length (nub names) == length names) $ liftEitherIO $
@@ -61,7 +61,7 @@ runCArg :: CArgEnv -> CArgM a -> Embed (a, [IBinder], CArgEnv)
 runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
   where repack ((ans, cargs), env) = (ans, cargs, env)
 
-prepareFunctionForExport :: TopEnv -> String -> Atom -> (ImpModule, ExportedSignature)
+prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSignature)
 prepareFunctionForExport env nameStr func = do
   -- Create a module that simulates an application of arguments to the function
   -- TODO: Assert that the type of func is closed?
