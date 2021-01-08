@@ -6,8 +6,10 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric #-}
 
-module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile, EvalConfig (..)) where
+module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
+                 bindingsToTopEnv, initTopEnv, EvalConfig (..), TopEnv (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -16,6 +18,9 @@ import Data.Text.Prettyprint.Doc
 import Data.String
 import Data.List (partition)
 import qualified Data.Map.Strict as M
+import qualified Data.Set        as S
+import Data.Store (Store)
+import GHC.Generics (Generic)
 
 import Syntax
 import Embed
@@ -47,6 +52,14 @@ data TopPassEnv = TopPassEnv
   , benchmark  :: Bool
   , evalConfig :: EvalConfig }
 type TopPassM a = ReaderT TopPassEnv IO a
+
+data TopEnv = TopEnv
+  { topBindings     :: Bindings
+  , modulesImported :: S.Set ModuleName }
+    deriving Generic
+
+initTopEnv :: TopEnv
+initTopEnv = TopEnv initBindings mempty
 
 evalDecl :: EvalConfig -> SourceBlock -> StateT TopEnv IO Result
 evalDecl opts block = do
@@ -81,11 +94,13 @@ runTopPassM bench opts m = runLogger (logFile opts) \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlockM env block = case sbContents block of
-  RunModule m -> evalUModule env m
+evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
+  RunModule m -> do
+    newBindings <- evalUModule bindings m
+    return $ mempty { topBindings = newBindings }
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
-      val <- evalUModuleVal env v m
+      val <- evalUModuleVal bindings v m
       case fmt of
         Printed -> do
           s <- liftIO $ pprintVal val
@@ -95,22 +110,27 @@ evalSourceBlockM env block = case sbContents block of
           s <- liftIO $ getDexString val
           logTop $ HtmlOut s
     ExportFun name -> do
-      f <- evalUModuleVal env v m
+      f <- evalUModuleVal bindings v m
       void $ traverseLiterals f \val -> case val of
         PtrLit _ _ -> liftEitherIO $ throw CompilerErr $
           "Can't export functions with captured pointers (not implemented)."
         _ -> return $ Con $ Lit val
       logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalUModuleVal env v m
+      val <- evalUModuleVal bindings v m
       logTop $ TextOut $ pprint $ getType val
-  GetNameType v -> case envLookup env (v:>()) of
+  GetNameType v -> case envLookup bindings (v:>()) of
     Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
     _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
-  IncludeSourceFile fname -> do
-    fullPath <- liftIO $ findSourceFile fname
-    source <- liftIO $ readFile fullPath
-    evalSourceBlocks env $ parseProg source
+  ImportModule moduleName ->
+    -- TODO: detect import cycles by distinguishing in-process from finished
+    if moduleName `S.member` modulesImported env
+      then return mempty
+      else do
+        fullPath <- liftIO $ findModulePath moduleName
+        source <- liftIO $ readFile fullPath
+        newTopEnv <- evalSourceBlocks env $ parseProg source
+        return $ newTopEnv <> moduleImported moduleName
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
@@ -152,19 +172,19 @@ isLogInfo out = case out of
 evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
 evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
 
-evalUModuleVal :: TopEnv -> Name -> UModule -> TopPassM Val
+evalUModuleVal :: Bindings -> Name -> UModule -> TopPassM Val
 evalUModuleVal env v m = do
   env' <- evalUModule env m
   return $ lookupBindings (env <> env') (v:>())
 
-lookupBindings :: Scope -> VarP ann -> Atom
+lookupBindings :: Bindings -> VarP ann -> Atom
 lookupBindings scope v = x
   where (_, LetBound PlainLet (Atom x)) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
+evalUModule :: Bindings -> UModule -> TopPassM Bindings
 evalUModule env untyped = do
   logPass Parse untyped
   typed <- liftEitherIO $ inferModule env untyped
@@ -191,7 +211,7 @@ evalUModule env untyped = do
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
 
-evalBackend :: TopEnv -> Block -> TopPassM Atom
+evalBackend :: Bindings -> Block -> TopPassM Atom
 evalBackend env block = do
   backend <- asks (backendName . evalConfig)
   bench   <- asks benchmark
@@ -284,5 +304,19 @@ traverseLiterals block f =
       _ -> traverseAtom def atom
 
 -- TODO: use something like a `DEXPATH` env var for finding source files
-findSourceFile :: FilePath -> IO FilePath
-findSourceFile fpath = return $ "lib/" ++ fpath
+findModulePath :: ModuleName -> IO FilePath
+findModulePath moduleName = return $ "lib/" ++ moduleName ++ ".dx"
+
+instance Semigroup TopEnv where
+  (TopEnv env ms) <> (TopEnv env' ms') = TopEnv (env <> env') (ms <> ms')
+
+instance Monoid TopEnv where
+  mempty = TopEnv mempty mempty
+
+moduleImported :: ModuleName -> TopEnv
+moduleImported moduleName = mempty { modulesImported = S.singleton moduleName }
+
+bindingsToTopEnv :: Bindings -> TopEnv
+bindingsToTopEnv bindings = mempty { topBindings = bindings }
+
+instance Store TopEnv

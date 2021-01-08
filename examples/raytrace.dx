@@ -5,7 +5,7 @@
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 
-include "plot.dx"
+import plot
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.

@@ -29,7 +29,7 @@ import Util
 
 type SimplifyM = SubstEmbed
 
-simplifyModule :: TopEnv -> Module -> Module
+simplifyModule :: Bindings -> Module -> Module
 simplifyModule scope (Module Core decls bindings) = do
   let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
   -- We don't have to check that the binders are global here, since all local
@@ -40,7 +40,7 @@ simplifyModule scope (Module Core decls bindings) = do
   Module Simp (toNest declsNotDone) (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
-splitSimpModule :: TopEnv -> Module -> (Block, Abs Binder Module)
+splitSimpModule :: Bindings -> Module -> (Block, Abs Binder Module)
 splitSimpModule scope m = do
   let (Module Simp decls bindings) = hoistDepDataCons scope m
   let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
@@ -55,7 +55,7 @@ splitSimpModule scope m = do
 -- Bundling up the free vars in a result with a dependent constructor like
 -- `AsList n xs` doesn't give us a well typed term. This is a short-term
 -- workaround.
-hoistDepDataCons :: TopEnv -> Module -> Module
+hoistDepDataCons :: Bindings -> Module -> Module
 hoistDepDataCons scope (Module Simp decls bindings) =
   Module Simp decls' bindings'
   where

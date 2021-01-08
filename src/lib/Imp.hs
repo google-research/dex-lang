@@ -75,7 +75,7 @@ data ImpCatEnv = ImpCatEnv
 type ImpM = ExceptT () (ReaderT ImpCtx (Cat ImpCatEnv))
 type AtomRecon = Abs (Nest Binder) Atom
 
-toImpModule :: TopEnv -> Backend -> CallingConvention -> Name
+toImpModule :: Bindings -> Backend -> CallingConvention -> Name
             -> [IBinder] -> Maybe Dest -> Block
             -> (ImpFunction, ImpModule, AtomRecon)
 toImpModule env backend cc entryName argBinders maybeDest block = do
@@ -114,7 +114,7 @@ requiredFunctions scope expr =
 
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
-translateTopLevel :: TopEnv -> WithDest Block -> ImpM (AtomRecon, [IExpr])
+translateTopLevel :: Bindings -> WithDest Block -> ImpM (AtomRecon, [IExpr])
 translateTopLevel topEnv (maybeDest, block) = do
   outDest <- case maybeDest of
         Nothing   -> makeAllocDest Unmanaged $ getType block
@@ -1180,7 +1180,7 @@ instance Checkable ImpFunction where
   checkValid f@(ImpFunction (_:> IFunType cc _ _) bs block) = addContext ctx $ do
     let scope = foldMap (binderAsEnv . fmap (const ())) bs
     let env   = foldMap (binderAsEnv                  ) bs
-             <> fmap (fromScalarType . fst) initTopEnv
+             <> fmap (fromScalarType . fst) initBindings
     void $ flip runReaderT (env, deviceFromCallingConvention cc) $
       flip runStateT scope $ checkBlock block
     where ctx = "Checking:\n" ++ pprint f

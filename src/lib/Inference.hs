@@ -46,7 +46,7 @@ pattern Check t <-
 
 {-# COMPLETE Infer, Check #-}
 
-inferModule :: TopEnv -> UModule -> Except Module
+inferModule :: Bindings -> UModule -> Except Module
 inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls

@@ -2,7 +2,7 @@
 Fluid simulation code based on
 [Real-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
 
-include "plot.dx"
+import plot
 
 def wrapidx (n:Type) -> (i:Int) : n =
   -- Index wrapping around at ends.

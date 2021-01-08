@@ -1,6 +1,6 @@
 '# Sierpinski triangle ("chaos game")
 
-include "plot.dx"
+import plot
 
 def update (points:n=>Point) (key:Key) ((x,y):Point) : Point =
   (x', y') = points.(randIdx key)
