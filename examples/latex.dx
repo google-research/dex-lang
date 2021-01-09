@@ -28,6 +28,17 @@
 
 '$$\begin{rcases} a &\text{if } b \\\\ c &\text{if } d \end{rcases} \Rightarrow \dots$$
 
+'## No LaTeX rendering in non-prose-blocks
+
+'LaTeX rendering should not occur in code blocks, not in error output cells.
+
+def arraySum (x:a=>Int32) : Int32 =
+  initAcc = 0
+  -- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
+  snd $ withState initAcc $ \acc.
+    for i.
+      acc := (get acc) + x.i
+
 '## [Layout annotation](https://katex.org/docs/supported.html#annotation)
 
 '$$\overbrace{a+b+c}^{\text{note}}$$
