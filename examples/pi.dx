@@ -1,5 +1,17 @@
 '# Monte Carlo estimates of pi
 
+'Consider the unit circle centered at the origin.
+
+'Consider the first quadrant: the unit circle quadrant and its $1 \times 1$ bounding unit square.
+
+'$$\text{Area of unit circle quadrant: } \\\\ A_{quadrant} = \frac{\pi r^2}{4} = \frac{\pi}{4}$$
+
+'$$\text{Area of unit square: } \\\\ A_{square} = 1$$
+
+'$$\text{Compute } \pi \text{ via ratios: } \\\\ \frac{A_{quadrant}}{A_{square}} = \frac{\pi}{4}, \\; \pi = 4 \thinspace \frac{A_{quadrant}}{A_{square}} $$
+
+'To compute $\pi$, randomly sample points in the first quadrant unit square to estimate the $\frac{A_{quadrant}}{A_{square}}$ ratio. Then, multiply by $4$.
+
 def estimatePiArea (key:Key) : Float =
   [k1, k2] = splitKey key
   x = rand k1

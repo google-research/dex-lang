@@ -4,6 +4,18 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+var katexOptions = {
+    delimiters: [
+        {left: "$$", right: "$$", display: true},
+        {left: "\\[", right: "\\]", display: true},
+        {left: "$", right: "$", display: false},
+        {left: "\\(", right: "\\)", display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
 var cells = {};
 
 function append_contents(key, contents) {
@@ -65,4 +77,6 @@ source.onmessage = function(event) {
         }
         Object.assign(cells, new_cells);
     }
+    // Render LaTeX equations via KaTeX.
+    renderMathInElement(body, katexOptions);
 };
