@@ -6,6 +6,10 @@
   simplicity benefits of high-level array processing languages, without
   requiring that users give up low-level control.
 
+
+include "plot.dx"
+
+
 '## Array comprehensions
 
 ' Before getting into language details, let us begin with the most useful
@@ -222,6 +226,8 @@ def arrAdd (x : m => n => Int32) (y : m => n => Int32) : m => n => Int32 =
 
 '      `acc = acc + x[i]`
 
+'   `return acc`
+
 ' In Dex, values are immutable, so we cannot directly perform mutation. But Dex
   includes algebraic effects, which are a purely-functional way to modeling
   side-effects like mutation. We can write code that looks like mutation using
@@ -233,13 +239,14 @@ def arrSum (x : n => Int32) : Int32 =
     init = 0
 
     -- (ignore for now)
-    snd $ withState init $ \acc.
-
+    withState init $ \acc.
          -- for i in range
          for i.
              -- acc = acc + x[i]
              acc := (get acc) + x.i
-
+         -- return acc
+         get acc
+             
 :p arrSum x2
 
 ' So, even though Dex is a functional language, it is possible to write loops
@@ -263,12 +270,6 @@ def arrSum (x : n => Int32) : Int32 =
   and returns the body, which is the expression following the `.` (a `for`
   constructor in this case).
 
-' Finally, the function `snd` is from the Dex Prelude. It simply returns the
-  second element of a pair - there is also `fst` for extracting the first
-  element.
-
-:p fst (1, 2)
-:p snd (1, 2)
 
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
@@ -278,7 +279,7 @@ def arrSum (x : n => Int32) : Int32 =
 
 :p withState 10 $ \ state.
      state := 30
-     20
+     get state
 
 ' The first element of the returned pair is the body function's result (`20`).
   The second element is the final value of the variable (`30`).
@@ -326,7 +327,7 @@ arrSum for i : (Fin 5). 10.0
   to be a type that works with `add`. We can do that! Let's define our own
   typeclass.
 
-interface MyAdd a:Type where
+interface MyAdd a:Type
   myAdd : a -> a -> a
   myZero : a
 
@@ -335,11 +336,11 @@ interface MyAdd a:Type where
   typeclass, a type `a` needs to define functions `myAdd` and `myZero` in a
   "typeclass instance", like so:
 
-instance int32MyAdd : MyAdd Int32 where
+instance MyAdd Int32
   myAdd = \x y. x + y
   myZero = 0
 
-instance float32MyAdd : MyAdd Float32 where
+instance MyAdd Float32
   myAdd = \x y. (x + y)
   myZero = 0.0
 
@@ -347,10 +348,11 @@ instance float32MyAdd : MyAdd Float32 where
   `MyAdd Float32`), we can revisit our array sum function and add a typeclass
   constraint:
 
-def arrSumGeneric (_:MyAdd v) ?=> (x : a => v) : v =
-    snd $ withState myZero $ \acc.
+def arrSumGeneric [MyAdd v] (x : a => v) : v =
+    withState myZero $ \acc.
         for i.
             acc := myAdd (get acc) x.i
+        get acc
 
 arrSumGeneric for i : (Fin 5). 10
 arrSumGeneric for i : (Fin 5). 10.0
@@ -367,7 +369,7 @@ arrSumGeneric $ for i : (Fin 5).
 ' One option is to directly satisfy the type checker and provide a specific
   `MyAdd ((Fin 10) => Float32)` instance:
 
-instance specMyAdd : MyAdd ((Fin 10) => Float32) where
+instance MyAdd ((Fin 10) => Float32)
   myAdd = \x y. for i: (Fin 10). (x.i + y.i)
   myZero = for i: (Fin 10). 0.0
 
@@ -379,7 +381,7 @@ arrSumGeneric $ for i : (Fin 5).
   `MyAdd` instance; this requirement is represented as a `(MyAdd v) ?=> ...`
   constraint.
 
-instance arrMyAdd : (MyAdd v) ?=> MyAdd (a => v) where
+instance [MyAdd v] MyAdd (a => v)
   myAdd = \x y. for i. (myAdd x.i y.i)
   myZero = for i. myZero
 
@@ -436,7 +438,8 @@ myzero2 : (Fin 20) => (Fin 10) => Float32 = zero
 :t randn
 
 key = newKey 0
-(key1, key2, key3) = splitKey3 key
+[key1, key2,  key3] = splitKey key
+
 
 :p randn key1
 
@@ -458,7 +461,7 @@ def ignore (y:a) (x : Maybe a) : a =
     Just x -> x
     Nothing -> y
 
-instance maybeAdd : (Add v) ?=> Add (Maybe v) where
+instance [Add v] Add (Maybe v)
   add = \x y. Just $ ignore zero x + ignore zero y
   sub = \x y. Just $ ignore zero x - ignore zero y
   zero = Just zero
@@ -475,12 +478,6 @@ prob1 = for i : (Fin 1000).
 
 ' ### Problem 2: By considering the terms in the Fibonacci sequence whose values do not exceed four million, find the sum of the even-valued terms.
 
-...
 
--- def maybeList (x : Maybe a) : List a =
---    case x of
---      Just a -> AsList 1 $ for i : (Fin 1). a
---      Nothing -> mempty
 
--- def remMaybe (x: n => Maybe a) : List a =
---      concat $ for i. maybeList x.i
+' TODO: Finish this part with some more examples
