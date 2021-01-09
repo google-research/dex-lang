@@ -126,7 +126,7 @@ x4 = for i:(Fin 5). for j:(Fin 10). (ordinal i) + (ordinal j)
 
 ' Many algorithms in Dex come down to being able to pack and unpack these
   indices. For example, we have seen that it is easy to sum over one dimension
-  of a 2-D array.  However, if we have a 1D array indexed by a pair, we can
+  of a 2D array.  However, if we have a 1D array indexed by a pair, we can
   easily turn it into a 2D array using two `for` constructors.
 
 x3 = for i. for j. x2.(i, j)
