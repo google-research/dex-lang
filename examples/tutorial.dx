@@ -1,104 +1,100 @@
 '# Dex Tutorial
 
+' Dex is a functional, statically typed language for array processing. There are
+  many tools for array processing, from high-level libraries like NumPy and
+  MATLAB to low-level languages like CUDA. Dex gives you many of the safety and
+  simplicity benefits of high-level array processing languages, without
+  requiring that users give up low-level control.
 
-'Dex is a functional, statically typed language for array processing.
-There are many tools for array processing from high-level libraries
-like NumPy / MATLAB to low-level languages like CUDA. Dex gives you
-many benefit of the safety and simplicity benefits of high-level array
-processing languages, without requiring that you give up low-level
-control.
+'## Array comprehensions
 
-'## Array Comprehensions
-
-
-' Before getting into the details of the language, let us begin with
-the most useful component of dex, the `for` builder. The best analogy
-for this construct is list comprehensions in Python. For instance, in
-Python we might write a list comprehension like:
+' Before getting into language details, let us begin with the most useful
+  component of Dex, the `for` builder. The best analogy for this construct is
+  list comprehensions in Python. For instance, in Python, we might write a
+  list comprehension like:
 
 ' `x = [[1 for j in range(10)] for i in range(5)]`
 
-' In Dex, this construct would be written as, 
+' In Dex, this construct would be written as:
 
 x = for i:(Fin 5). for j:(Fin 10). 1
 
-
-' Once we have an variable we can print it `:p` 
+' Once we have an variable, we can print it `:p`
 
 :p x
 
-' More interestingly, we can also see its type with `:t`. This type
-signature tells us that `x` is a two-dimensional array, with first
-dimension of size 5 and the second of size 10.
+' More interestingly, we can also see its type with `:t`. This type tells us
+  that `x` is a two-dimensional array, whose first dimension has size 5 and
+  second dimension has size 10.
 
 :t x
 
-' Once we have an array we can use it in new comprehensions. For example,
-  if say we want to add `5` to each element of the array. In Python,
-  you might write this as, 
+' Once we have an array, we can use it in new comprehensions. For example,
+  let's try to add `5` to each array element. In Python, one might write this as:
 
 ' `y = [[x[i][j] for j in range(10)] for i in range(5)]`
 
 ' Dex can do something similar. The main superficial difference is the
-  indexing syntax which uses `.` instead of brackets.
+  array indexing syntax, which uses `array.i` instead of square brackets for
+  subscripting.
 
-y = for i:(Fin 5). for j:(Fin 10). x.i.j + 5 
+y = for i:(Fin 5). for j:(Fin 10). x.i.j + 5
 
 :p y
 
-' However, we can make this expression nicer. Because `x` has a known type
+' However, we can make this expression nicer. Because `x` has a known array type
   and `i` and `j` index into that type, Dex can infer the range of the loop.
-  That means that we can safely remove `Fin` statements and get the same result.
+  That means that we can safely remove the explicit `Fin` type annotations and
+  get the same result.
 
-y' = for i. for j. x.i.j + 5 
+y' = for i. for j. x.i.j + 5
 
+' We can further reduce this array by applying array reduction functions like
+  `sum`:
 
-' We can further reduce this array by applying array functions such as `sum`. 
+z = for i. sum x.i
 
-z = for i. sum x.i  
+' This style of using `for` to construct type-inferred arrays is central to what
+  makes Dex powerful. Let's consider another example. This one produces a list of
+  length 50 in Python.
 
-' This style of using the `for` construct to infer the loop range is
-  central to what makes Dex powerful. Let's consider another example.
-  This one produces a list of length 50 in Python.
-  
 ' `x = [1 for j in range(10) for i in range(5)]`
 
-' The analogous array construct in Dex is written in
-  the following form. This produces a one dimension
-  array of 50 elements. 
+' The analogous array construct in Dex is written in the following form. It
+  produces a one-dimensional array of 50 elements.
 
-x2 = for (i, j): (Fin 5 & Fin 10). 1 
+x2 = for (i, j): (Fin 5 & Fin 10). 1
 
+' As before, we can implement "adding 5" to this array using a `for` constructor,
+  enumerating over each of its elements:
 
-' As before, we can modify this array through another `for` constructor,
-  which enumerates over each element of `x2`. Or by applying a function. 
-  
+y2 = for i. x2.i + 5
 
-y2 = for i. x2.i + 5 
+' And we can apply array functions to the array:
 
 :p sum x2
 
-' But things start to get interesting when we consider the type of this array.
-  Unlike the Python example that produces a list of length 50. The 
-  Dex array maintains the index type of its construction. In particular
-  the type of `x2` remembers the original ranges. 
+' But things start to get interesting when we consider the type of the array.
+  Unlike the Python example, which produces a list of length 50, the Dex array
+  Jmaintains the index type of its construction. In particular, the type of the
+  array remembers the original ranges.
 
 :t x2
 
+'## Typed indexing
 
-'## Typed Indexing  
-
-' The use of typed indices lets you do some really neat things, but it
-  also breaks some things in counterintuitive ways. Dex use the `.`
-  syntax for indexing. Critically though, cannot simply index with a
-  raw integer.
+' The use of typed indices lets you do really neat things, but it also breaks
+  other things in counterintuitive ways. Dex uses the `.` syntax for array
+  indexing. Critically though, one cannot simply index an array with an integer
+  literal.
 
 r = x.3
 
-' Instead you need to cast your integer into the index type of the current
-  shape. This is done with the `@` operator. (If it helps, you can think of `a.i`
-  as passing index `i` to array `a` the same way `f x` passes arg `x` to function
-  `f`.)
+' Instead, it is necessary to cast the integer into the index type of the
+  current shape. This type annotation is done with the `@` operator. (If it
+  helps, you can think of array indexing as function application: `a.i` applies
+  array `a` with index `i` just like how `f x` applies function `f` with
+  argument `x`.)
 
 :t x
 
@@ -108,63 +104,58 @@ row = x.(3 @ Fin 5)
 
 :t row.(5 @ Fin 10)
 
-' This is bit verbose, but you rarely need to do it in practice. Most of the
-  time, you index with the `for` construct which is able to infer the right indices.
+' This explicit annotation is a bit verbose, but it is rarely necessary in
+  practice. Most of the time, the `for` construct can infer index types.
   That's why we didn't have to use any `@` symbols when constructing `y2` above.
 
-' Similarly you can't use indices as integers as you might be used to. You need to
-  cast them out explicitly.
-
+' Similarly, you cannot use indices as integers as you might be used to. It is
+  necessary to explicitly annotate index types.
 
 x4 = for i:(Fin 5). for j:(Fin 10). i + j
 
+x4 = for i:(Fin 5). for j:(Fin 10). (ordinal i) + (ordinal j)
 
-x4 = for i:(Fin 5). for j:(Fin 10). (ordinal i) + (ordinal j) 
-
-  
-' As we have seen though, indices do not need to just be integers. We can index with
-  many different Dex type. For instance `x2` was indexed with a pair of integers (`&` means tuple)
-  so we need to build a tuple in order to index.
+' As we have seen, indices are not limited to only integers. Many different Dex
+  types are valid index types. For example, we declared array `x2` as having a
+  pair of integers as its index type (`a & b` means tuple type), so indexing
+  into `x2` requires creating a tuple value (via `(x, y)`).
 
 :t x2
 
 :t x2.(3@Fin 5, 5@Fin 10)
 
-' A lot of algorithms in Dex come down to being able to pack and
-  unpack these indices.  For example, we have seen that it is easy to
-  sum over one dimension of a 2D array.  However, if we have a 1D
-  array indexed by a pair, we can easily turn it into a 2D array by
-  constructing it.
+' Many algorithms in Dex come down to being able to pack and unpack these
+  indices. For example, we have seen that it is easy to sum over one dimension
+  of a 2-D array.  However, if we have a 1D array indexed by a pair, we can
+  easily turn it into a 2D array using two `for` constructors.
 
 x3 = for i. for j. x2.(i, j)
 
 :t x3
 
-' Again we rely on type inference in order to avoid explicitly giving
-the ranges.
+' Again, we rely on type inference in order to avoid explicitly spelling the
+  ranges.
 
-' ## Functions over Arrays
+' ## Defining functions over arrays
 
-' One use case of packing and unpacking array indices is that
-  it allows us to change the order of the axes. This is useful for
-  applying functions on arrays.
+' One use case of packing and unpacking array indices is that it allows us to
+  change the order of the axes. This is useful for applying functions on arrays.
 
-' For instance, we saw the `sum` function above which sums over an
-  axes. We can apply `sum` to `x2` to produce the sum over 50 elements.
+' For instance, we saw the `sum` function above which sums over the first axis
+  of an array. We can apply `sum` to `x2` to produce the sum over 50 elements:
 
 :t x2
 :p sum x2
 
-' Alternatively we can apply sum over `x3` to produce the sum over rows.
+' Alternatively, we can apply sum over `x3` to produce the sum over rows:
 
 :t x3
 :p sum x3
 
-' How do we sum over the columns? In systems like NumPy you would
-  do this by passing an axis argument to `sum`. Dex doesn't work this
-  way. To sum over columns, you need to move columns to the front
-  of the line. Luckily, you already know how to do this. 
-  
+' How do we sum over the columns of `x3`? In systems like NumPy, you would do
+  this by passing an axis argument to `sum`. Dex doesn't work this way. To sum
+  over columns, you need to move columns to the front of the line. Luckily, we
+  already know how to do this: using `for` constructors!
 
 :t x3
 
@@ -174,12 +165,11 @@ trans = for j. for i. x3.i.j
 
 :p sum trans
 
-' The `sum` function seems to work independently of the index type of the
-  array.
+' The `sum` function works independently of the index type of the array.
 
-' Let's see how we can do this with our own functions. To define a function in
-  Dex we use the following syntax (there are other ways to do it, but this
-  one looks pretty close to Python.) 
+' Let's see how we can define our own array functions. Defining a function in
+  Dex uses the following syntax. (There are other ways to do it, but this one
+  looks closest to Python.)
 
 def add5 (x:Int32) : Int32 = x + 5
 
@@ -187,27 +177,24 @@ def add5 (x:Int32) : Int32 = x + 5
 
 :t for i. add5 x2.i
 
-
-' We can also write functions with type variables over their inputs. For instance
-  we if we want to be able to `Add5` to any array. This function binds the type
-  variable `n` to the index type of the array.  
-
+' We can also write functions with type variables over their inputs. For
+  instance, we may want to be able to write a function that applies "adds 5"
+  to arrays with _any_ index type. This is possible by declaring an `n => Int32`
+  array argument type: this declares the type variable `n` as the index type of
+  the array argument.
 
 def arrAdd5 (x : n => Int32) : n => Int32 = for i. x.i + 5
-    
+
 :t arrAdd5 x2
 
+' But function types can help you out even more. For instance, since index types
+  are statically known, type checking can ensure that array arguments have valid
+  dimensions. This is "shape safety".
 
-' But the function types can help you out even more.
-  For instance, because index types are sized, you
-  can use type inference to ensure the arguments passed in
-  are valid.
-
-' For instance, let's say we want to add two array together.
+' For instance, let's write a function adding two 2D arrays with the same shape:
 
 :t x
 :t y
-
 
 def arrAdd (x : m => n => Int32) (y : m => n => Int32) : m => n => Int32 =
     for i. for j. x.i.j + y.i.j
@@ -216,192 +203,207 @@ def arrAdd (x : m => n => Int32) (y : m => n => Int32) : m => n => Int32 =
 
 :t arrAdd x (trans y)
 
-' Here the system type checked for us that they are the same size.
+' The type system checked for us that input arrays indeed have the same shape.
 
+'## Writing loops
 
-'## Writing Loops
+' Dex is a functional language - but when writing mathematical algorithms,
+  it is often convenient to temporarily put aside immutability and write
+  imperative code using mutation.
 
-' Dex is a functional language, but when writing mathematical algorithm
-  it is often convenient to ignore that fact and write imperative code.
+' For example, let's say we want to actually implement the `sum` function
+  ourselves by accumulating summed values in-place. In Python, implementing this
+  is not directly possible solely via list comprehensions, so we would write a
+  loop.
 
-' For example, lets say we now want to actually write the `sum` function
-  ourselves by accumulating summed values. In Python, We can't do this directly
-  with list comprehensions, so we would write a loop.
-  
 '  `acc = 0`
 
 '  `for i in range(10):`
 
-'      `acc = acc + x[i]` 
+'      `acc = acc + x[i]`
 
-' Variables are immutable in Dex, so we cannot do this directly. But we can
-  write very similar code using the `state` effect. Here's what it looks like
-  with the corresponding Python code.
-  
+' In Dex, values are immutable, so we cannot directly perform mutation. But Dex
+  includes algebraic effects, which are a purely-functional way to modeling
+  side-effects like mutation. We can write code that looks like mutation using
+  the `State` effect, which provides getter and setter functionality (via `get`
+  and `:=` assignment). Here's what it looks like:
 
-def arrSum (x : a => Int32) : Int32 =
+def arrSum (x : n => Int32) : Int32 =
     -- acc = 0
-    initAcc = 0
+    init = 0
 
     -- (ignore for now)
-    snd $ withState initAcc $ \acc.
+    snd $ withState init $ \acc.
 
          -- for i in range
          for i.
              -- acc = acc + x[i]
              acc := (get acc) + x.i
-  
+
 :p arrSum x2
 
+' So, even though Dex is a functional language, it is possible to write loops
+  that look similar to ones that truly perform mutation. However, there is one
+  line which is quite new and a bit scary. Let us look into that line in a bit
+  more detail.
 
-' So even though we are functional, the loop looks quite
-  similar to the imperative style. However there is one
-  line which is quite new and a bit scary. Let us look
-  into that line in a bit more detail.
-
-' First `$`. This symbol is used in Dex the same way it is
-  used in Haskell, but if you have haven't seen it before it
-  is a bit strange. It basically takes the place of parens `( )`
-  when you are too lazy to write them. For example, these two are the same:
+' First: `$`. This symbol is used in Dex just like it is used in Haskell, but
+  if you haven't seen it before, it seems a bit strange. `$` is the function
+  application operator: it basically replaces of expression-grouping parentheses
+  `(f x)` when it is inconvenient to write them. For example, the following two
+  expressions are identical:
 
 :t arrSum (x2 + x2)
 
 :t arrSum $ x2 + x2
 
-' Next `\`. This symbol is the lambda operator in Dex. It makes a function
-  that you can use right away, and behaves like `lambda` in python.
-  Here the function takes an argument `acc` and returns the expression below (a `for` constructor).
+' Next: `\`. This symbol is the lambda sigil in Dex. It is analogous to the
+  `lambda` keyword in Python, and starts the definition of a function value
+  (i.e. closure). In `arrSum` above: the lambda takes an argument named `acc`
+  and returns the body, which is the expression following the `.` (a `for`
+  constructor in this case).
 
-' Finally, the function `snd` is from the prelude. It returns the second  of a pair, nothing fancy.
+' Finally, the function `snd` is from the Dex Prelude. It simply returns the
+  second element of a pair - there is also `fst` for extracting the first
+  element.
 
 :p fst (1, 2)
 :p snd (1, 2)
 
-
-' That leaves `withState`. This function allows you to introduce imperative variables into the computation.
-  It takes a intial values `initAcc` and a function of a reference to that value `\acc.` It then returns
-  a pair of the result of that function and the final value. Here's a simple example
+' That leaves: `withState`. This function uses the `State` effect, enabling us
+  to introduce imperative variables into the computation.
+  `withState` takes an initial value `init` and a body function taking a
+  "mutable value" reference (`acc` here), and returns a pair of the body
+  function's result and the final value. Here's a simple example:
 
 :p withState 10 $ \ state.
      state := 30
      20
 
-' The first element in the pair is the function return (`20`) and the second is the final value of the variable (`30`).
+' The first element of the returned pair is the body function's result (`20`).
+  The second element is the final value of the variable (`30`).
 
-' Finally this is a good point to talk a bit about some of the other operators in Dex.
-  Here we see two types of equal signs `=` and `:=`. The first is the `let` operator that makes an
-  immutable assignment. This one is built into the language and can be used anywhere you want. 
-
+' Finally: this is a good point to talk a bit about some other operators in Dex.
+  In the examples above, we see two types of equal sign operators: `=` and `:=`.
+  The first is the `let` operator that creates an immutable assignment (a
+  "let-binding"). This one is built into the language and can be used anywhere.
 
 q = for i:(Fin 10).
-        -- Bind a temp variable for some reason
+        -- Bind a temporary variable `temp`, as an example.
         temp = (ordinal i) + 10
         for j:(Fin 5). temp
-         
-' The other is `:=` which can only be used inside of a `withState` block. It assigns
-  a value to a mutable reference. To read that value you need to use the `get` function.
-  or wait until the `withState` returns.
 
+' The other is `:=`, which is an assignment operator that can only be used
+  when a `State` effect is available (e.g. inside of a body function passed to
+  `withState`. `ref := x` assigns the value `x` to the mutable reference `ref`.
+  Reading the value in `ref` is possible via the `get` function. or via using
+  the final result returned by `withState`.
 
-'## Type Classes
+'## Typeclasses
 
-' Our arrSum function is pretty neat. It lets us work with any type index
-  to compute the sum. However, it annoyingly only works for integers.
+' Our `arrSum` function is pretty neat. It lets us work with arrays with any
+  index type and computes the sum. However, `arrSum` explicitly takes only
+  integer arrays (of type `n => Int32`).
 
 :t arrSum
 
-' If we apply it to floats we get the following error.
+' If we try to apply `arrSum` to float arrays, we get the following error:
 
 arrSum for i : (Fin 5). 10.0
 
-' We can compare the type of our sum to the built-in Dex `sum`.
+' We can compare the type of our `arrSum` function to the `sum` function found
+  in the Dex Prelude.
 
 :t sum
 
-' It has another type variable `v` for the output. It also has the extra annotation
-  `(Add v) ?=>`. This is a constraint that tells us that `v` can be any type in the
-  `Add` type class.
+' The Prelude-defined `sum` function also has an additional argument, spelled
+  like: `(Add v) ?=> ...`. This is a constraint telling us that the function
+  expects an `Add v` typeclass instance, where `v` is any type that implements
+  the `Add` typeclass.
 
-' If we wanted to, we could look in the Dex prelude to see what this looks like. But we can
-  probably guess what it means. `v` needs to be something where `add` works on it.
-  We can do that! Let's define our own type class.
+' We could look in the Dex Prelude to see exactly how `sum` is defined and what
+  `Add v` means. But we can guess what the `Add v` constraint  means: `v` needs
+  to be a type that works with `add`. We can do that! Let's define our own
+  typeclass.
 
 interface MyAdd a:Type where
   myAdd : a -> a -> a
   myZero : a
 
-' This tells us that to be in the `MyAdd` type class, a type `a` needs to have
-  a function `myAdd` and `myZero`. A type can then join the class like this.  
-
+' This declares a typeclass (i.e. interface or trait) called `MyAdd` with some
+  typeclass methods (interface requirements). To implement the `MyAdd`
+  typeclass, a type `a` needs to define functions `myAdd` and `myZero` in a
+  "typeclass instance", like so:
 
 instance int32MyAdd : MyAdd Int32 where
   myAdd = \x y. x + y
   myZero = 0
 
 instance float32MyAdd : MyAdd Float32 where
-  myAdd = \x y. (x + y) 
+  myAdd = \x y. (x + y)
   myZero = 0.0
 
-' Once we have these two definitions, we can revisit our sum function. Here is how we modify
-  the type.
+' Once we have these two instance definitions (`MyAdd Int32` and
+  `MyAdd Float32`), we can revisit our array sum function and add a typeclass
+  constraint:
 
-def arrSum2 (_:MyAdd v) ?=> (x : a => v) : v =
+def arrSumGeneric (_:MyAdd v) ?=> (x : a => v) : v =
     snd $ withState myZero $ \acc.
         for i.
             acc := myAdd (get acc) x.i
 
-arrSum2 for i : (Fin 5). 10
-arrSum2 for i : (Fin 5). 10.0
+arrSumGeneric for i : (Fin 5). 10
+arrSumGeneric for i : (Fin 5). 10.0
 
-arrSum2 $ for i : (Fin 5).
-           for j : (Fin 10). 10.0
+arrSumGeneric $ for i : (Fin 5).
+                  for j : (Fin 10). 10.0
 
-' So it works for ints and it works for floats. But it failed when we tried to
-  pass in a 2D array. What went wrong? The error tells us that it can't produce
-  a class dictionary for `MyAdd ((Fin 10) => Float32)`. This makes sense as
-  we have have not written one. We need to tell the system how to add columns.
+' This sum function works for any type that implements `MyAdd`, like `Int32` and
+  `Float32`. But it failed when we tried to pass in a 2D array. What went wrong?
+  The error tells us that the function could not find a `MyAdd` instance for
+  `MyAdd ((Fin 10) => Float32)`. This makes sense because we have have not
+  written one. We need to tell the system "how to add array columns".
 
-' If we want, we can take the type checker literally and make this instance :).
-
+' One option is to directly satisfy the type checker and provide a specific
+  `MyAdd ((Fin 10) => Float32)` instance:
 
 instance specMyAdd : MyAdd ((Fin 10) => Float32) where
-  myAdd = \x y. for i: (Fin 10). (x.i + y.i) 
+  myAdd = \x y. for i: (Fin 10). (x.i + y.i)
   myZero = for i: (Fin 10). 0.0
 
-arrSum2 $ for i : (Fin 5).
-           for j : (Fin 10). 10.0
+arrSumGeneric $ for i : (Fin 5).
+                  for j : (Fin 10). 10.0
 
-
-' Or we can treat it a more generally and extend to all 1D arrays.
+' To be more general, we can instead define a `MyAdd` instance for all array
+  types. This instance requires that the array element type `v` also has an
+  `MyAdd` instance; this requirement is represented as a `(MyAdd v) ?=> ...`
+  constraint.
 
 instance arrMyAdd : (MyAdd v) ?=> MyAdd (a => v) where
-  myAdd = \x y. for i. (myAdd x.i y.i) 
+  myAdd = \x y. for i. (myAdd x.i y.i)
   myZero = for i. myZero
 
-arrSum2 $ for i : (Fin 5).
-           for j : (Fin 9). 10.0
+arrSumGeneric $ for i : (Fin 5).
+                  for j : (Fin 9). 10.0
 
+' This instance not only works for 2D arrays, but also 3D and higher-dimensional
+  arrays:
 
-' This now works for 3D arrays too. 
-
-arrSum2 $ for i : (Fin 5).
+arrSumGeneric $ for i : (Fin 5).
            for j : (Fin 9).
              for k : (Fin 9). 10.0
-  
 
-' ## Prelude Practice
+' ## Learn the Prelude
 
+' The Prelude contains many handy functions. Since Dex types contain so much
+  information, it is possible to infer what many of these functions do just by
+  reading and understanding their type.
 
-' There are a bunch of goodies implemented in the prelude
-  that are worth knowing. It's good practice just to
-  infer what these functions do from their type.
-  
-'  Here are a couple that come up a lot.
-
+' Here are a few used, commonly-used Prelude functions.
 
 ' * `select` for filtering
 
-:t select 
+:t select
 
 select True 1 2
 select False 1 2
@@ -413,23 +415,21 @@ select False 1 2
 myzero1 : (Fin 20 & Fin 10) => Float32 = zero
 myzero2 : (Fin 20) => (Fin 10) => Float32 = zero
 
-' * `zip` for creating tables of pairs
+' * `zip` for creating arrays of pairs
 
 :t zip
 
 :t zip x x
 :t for i. zip x.i x.i
 
-
-' * `iota` for create aranges 
+' * `iota` for creating "aranges"
 
 :t iota
 
 :p (iota (Fin 10))
 :p for i. for j. (iota (Fin 4 & Fin 4)).(i, j)
 
-
-' * Random numbers
+' * Pseudorandom number generation
 
 :t newKey
 :t splitKey
@@ -440,50 +440,42 @@ key = newKey 0
 
 :p randn key1
 
-' * `randVec` creates a random vector
+' * `randVec` for creating a vector of random numbers
 
-
-randv = randVec 20 randn key2 
+randv = randVec 20 randn key2
 :t randv
 
 randv2 = randVec 20 randInt key3
 :t randv2
 
+'## Worked examples: Project Euler
 
-'## Worked Examples: Project Euler
+' To demonstrate Dex in practice, below are some examples of solving problems
+  from [Project Euler](https://projecteuler.net).
 
-' To demonstrate Dex in practice, here are some example
-  functions solving problems on https://projecteuler.net/
-
-  
 def ignore (y:a) (x : Maybe a) : a =
   case x of
     Just x -> x
     Nothing -> y
-    
+
 instance maybeAdd : (Add v) ?=> Add (Maybe v) where
   add = \x y. Just $ ignore zero x + ignore zero y
   sub = \x y. Just $ ignore zero x - ignore zero y
   zero = Just zero
 
-
 ' ### Problem 1: Find the sum of all the multiples of 3 or 5 below 1000.
-
-
 
 prob1 = for i : (Fin 1000).
           i' = ordinal i
           case ((i' `mod` 3) == 0 || (i' `mod` 5) == 0) of
             True ->  Just i'
             False -> Nothing
-            
+
 :p fromJust $ sum  prob1
 
 ' ### Problem 2: By considering the terms in the Fibonacci sequence whose values do not exceed four million, find the sum of the even-valued terms.
 
-
 ...
-
 
 -- def maybeList (x : Maybe a) : List a =
 --    case x of
