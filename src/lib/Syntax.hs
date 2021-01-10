@@ -49,7 +49,7 @@ module Syntax (
     getProjection, outputStreamPtrName, initBindings,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    getIntLit, getFloatLit, sizeOf, vectorWidth,
+    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
@@ -592,8 +592,11 @@ sizeOf t = case t of
   Scalar Word8Type   -> 1
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
-  PtrType _          -> 8
+  PtrType _          -> ptrSize
   Vector st          -> vectorWidth * sizeOf (Scalar st)
+
+ptrSize :: Int
+ptrSize = 8
 
 vectorWidth :: Int
 vectorWidth = 4
