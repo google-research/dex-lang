@@ -10,223 +10,312 @@
 include "plot.dx"
 
 
-'## Array comprehensions
+'## Table comprehensions
 
 ' Before getting into language details, let us begin with the most useful
   component of Dex, the `for` builder. The best analogy for this construct is
   list comprehensions in Python. For instance, in Python, we might write a
   list comprehension like:
 
-' `x = [[1 for j in range(10)] for i in range(5)]`
+' `x = [[1.0 for j in range(width)] for i in range(height)]`
 
 ' In Dex, this construct would be written as:
 
-x = for i:(Fin 5). for j:(Fin 10). 1
+Height = Fin 3
+Width = Fin 8
+
+x = for i:Height. for j:Width. 1.0
 
 ' Once we have an variable, we can print it `:p`
 
 :p x
 
 ' More interestingly, we can also see its type with `:t`. This type tells us
-  that `x` is a two-dimensional array, whose first dimension has size 5 and
-  second dimension has size 10.
+  that `x` is a two-dimensional table, whose first dimension has size `Height` and
+  second dimension has size `Width`.
 
 :t x
 
-' Once we have an array, we can use it in new comprehensions. For example,
-  let's try to add `5` to each array element. In Python, one might write this as:
+' We can also display it as html. Right now not so interesting :)
 
-' `y = [[x[i][j] for j in range(10)] for i in range(5)]`
+:html matshow x
+
+' Once we have an table, we can use it in new comprehensions. For example,
+  let's try to add `5` to each table element. In Python, one might write this as:
+
+' `x5 = [[x[i][j] + 5.0 for j in range(width)] for i in range(height)]`
 
 ' Dex can do something similar. The main superficial difference is the
-  array indexing syntax, which uses `array.i` instead of square brackets for
+  table indexing syntax, which uses `table.i` instead of square brackets for
   subscripting.
 
-y = for i:(Fin 5). for j:(Fin 10). x.i.j + 5
+x5 = for i:Height. for j:Width. x.i.j + 5.0
 
-:p y
+:p x5
 
-' However, we can make this expression nicer. Because `x` has a known array type
+' However, we can make this expression nicer. Because `x` has a known table type
   and `i` and `j` index into that type, Dex can infer the range of the loop.
   That means that we can safely remove the explicit `Fin` type annotations and
   get the same result.
 
-y' = for i. for j. x.i.j + 5
+x5' = for i. for j. x.i.j + 5.0
 
-' We can further reduce this array by applying array reduction functions like
-  `sum`:
+' We can further reduce this table by applying standard table reduction functions like
+  `mean` over each column:
 
-z = for i. sum x.i
+:t for i. mean x.i
 
-' This style of using `for` to construct type-inferred arrays is central to what
-  makes Dex powerful. Let's consider another example. This one produces a list of
+' This style of using `for` to construct type-inferred tables is central to what
+  makes Dex powerful.
+
+' Let's consider another example. This one produces a list of
   length 50 in Python.
 
-' `x = [1 for j in range(10) for i in range(5)]`
+' `y = [1.0 for j in range(width) for i in range(height)]`
 
-' The analogous array construct in Dex is written in the following form. It
-  produces a one-dimensional array of 50 elements.
+' The analogous table construct in Dex is written in the following form. It
+  produces a one-dimensional table of `Height x Width` elements.
 
-x2 = for (i, j): (Fin 5 & Fin 10). 1
+y = for  (i, j) : (Height & Width) . 1.0
 
-' As before, we can implement "adding 5" to this array using a `for` constructor,
+' As before, we can implement "adding 5" to this table using a `for` constructor,
   enumerating over each of its elements:
 
-y2 = for i. x2.i + 5
+y5 = for i. y.i + 5.0
 
-' And we can apply array functions to the array:
+' And we can apply table functions to the table:
 
-:p sum x2
+:t mean y
 
-' But things start to get interesting when we consider the type of the array.
-  Unlike the Python example, which produces a list of length 50, the Dex array
-  Jmaintains the index type of its construction. In particular, the type of the
-  array remembers the original ranges.
+' But things start to get interesting when we consider the type of the table.
+  Unlike the Python example, which produces a flat list, the Dex table
+  maintains the index type of its construction. In particular, the type of the
+  table remembers the original ranges.
 
-:t x2
+:t y
 
 '## Typed indexing
 
-' The use of typed indices lets you do really neat things, but it also breaks
-  other things in counterintuitive ways. Dex uses the `.` syntax for array
-  indexing. Critically though, one cannot simply index an array with an integer
-  literal.
+' The use of typed indices lets you do really neat things, but it
+  breaks things from other languages. Critically, one cannot
+  simply index an table with an integer.
 
 r = x.3
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator. (If it
-  helps, you can think of array indexing as function application: `a.i` applies
-  array `a` with index `i` just like how `f x` applies function `f` with
+  helps, you can think of table indexing as function application: `a.i` applies
+  table `a` with index `i` just like how `f x` applies function `f` with
   argument `x`.)
 
 :t x
 
-row = x.(3 @ Fin 5)
+row = x.(3 @ Height)
 
 :t row
 
-:t row.(5 @ Fin 10)
+:t row.(5 @ Width)
 
-' This explicit annotation is a bit verbose, but it is rarely necessary in
-  practice. Most of the time, the `for` construct can infer index types.
-  That's why we didn't have to use any `@` symbols when constructing `y2` above.
+' This explicit annotation is a bit verbose, but it is often not necessary in
+  practice. Constructs like `for` can infer index types,
+  which is why we didn't have to use any `@` symbols when constructing above.
 
 ' Similarly, you cannot use indices as integers as you might be used to. It is
   necessary to explicitly annotate index types.
 
-x4 = for i:(Fin 5). for j:(Fin 10). i + j
+:t for i:Height. for j:Width. i + j
 
-x4 = for i:(Fin 5). for j:(Fin 10). (ordinal i) + (ordinal j)
+:t for i:Height. for j:Width. (ordinal i) + (ordinal j)
+
+' If we want to convert these to floats we do it manually with the IToF function.
+  We can use to this to make a pretty gradient.
+
+gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
+:html matshow gradient
 
 ' As we have seen, indices are not limited to only integers. Many different Dex
-  types are valid index types. For example, we declared array `x2` as having a
+  types are valid index types. For example, we declared table `x2` as having a
   pair of integers as its index type (`a & b` means tuple type), so indexing
   into `x2` requires creating a tuple value (via `(x, y)`).
 
-:t x2
+:t y
 
-:t x2.(3@Fin 5, 5@Fin 10)
+:t y.(3 @ Height, 5 @ Width)
 
 ' Many algorithms in Dex come down to being able to pack and unpack these
   indices. For example, we have seen that it is easy to sum over one dimension
-  of a 2D array.  However, if we have a 1D array indexed by a pair, we can
-  easily turn it into a 2D array using two `for` constructors.
+  of a 2D table.  However, if we have a 1D table indexed by a pair, we can
+  easily turn it into a 2D table using two `for` constructors.
 
-x3 = for i. for j. x2.(i, j)
-
-:t x3
+:t for i. for j. y.(i, j)
 
 ' Again, we rely on type inference in order to avoid explicitly spelling the
   ranges.
 
-' ## Defining functions over arrays
 
-' One use case of packing and unpacking array indices is that it allows us to
-  change the order of the axes. This is useful for applying functions on arrays.
+' ## Defining functions over tables
 
-' For instance, we saw the `sum` function above which sums over the first axis
-  of an array. We can apply `sum` to `x2` to produce the sum over 50 elements:
+' One use case of packing and unpacking table indices is that it allows us to
+  change the order of the axes. This is useful for applying functions on tables.
 
-:t x2
-:p sum x2
+' For instance, we saw the `mean` function above which sums over the first axis
+  of an table. We can apply `mean` to `x2` to produce the sum over 50 elements:
 
-' Alternatively, we can apply sum over `x3` to produce the sum over rows:
+:t y
 
-:t x3
-:p sum x3
+:t mean y
 
-' How do we sum over the columns of `x3`? In systems like NumPy, you would do
-  this by passing an axis argument to `sum`. Dex doesn't work this way. To sum
-  over columns, you need to move columns to the front of the line. Luckily, we
-  already know how to do this: using `for` constructors!
 
-:t x3
+' The `mean` function works independently of the index type of the table.
 
-trans = for j. for i. x3.i.j
+' Let's see how we can define our own table functions. Defining a function in
+  Dex uses the following syntax. 
 
-:t trans
+def add5 (x:Float32) : Float32 =
+    x + 5.0
 
-:p sum trans
+:p add5 1.0
 
-' The `sum` function works independently of the index type of the array.
-
-' Let's see how we can define our own array functions. Defining a function in
-  Dex uses the following syntax. (There are other ways to do it, but this one
-  looks closest to Python.)
-
-def add5 (x:Int32) : Int32 = x + 5
-
-:p add5 1
-
-:t for i. add5 x2.i
+:t for i. add5 y.i
 
 ' We can also write functions with type variables over their inputs. For
   instance, we may want to be able to write a function that applies "adds 5"
-  to arrays with _any_ index type. This is possible by declaring an `n => Int32`
-  array argument type: this declares the type variable `n` as the index type of
-  the array argument.
+  to tables with _any_ index type. This is possible by declaring an `n => Int32`
+  table argument type: this declares the type variable `n` as the index type of
+  the table argument.
 
-def arrAdd5 (x : n => Int32) : n => Int32 = for i. x.i + 5
+def tabAdd5 (x : n => Float32) : n => Float32 =
+    for i. x.i + 5.0
 
-:t arrAdd5 x2
+:t tabAdd5 y
 
 ' But function types can help you out even more. For instance, since index types
-  are statically known, type checking can ensure that array arguments have valid
+  are statically known, type checking can ensure that table arguments have valid
   dimensions. This is "shape safety".
 
-' For instance, let's write a function adding two 2D arrays with the same shape:
+' Imagine we have `transpose` function. We can encode the shape change in the type. 
+
+def transFloat (x : m => n => Float32) : n => m => Float32 =
+    for i. for j. x.j.i
+
+' We can even make it more generic by abstracting over the value type. 
+
+def trans (x : m => n => v) : n => m => v =
+    for i. for j. x.j.i
+
+
+' We can also use this to check for shape errors:
 
 :t x
-:t y
 
-def arrAdd (x : m => n => Int32) (y : m => n => Int32) : m => n => Int32 =
+def tabAdd (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
     for i. for j. x.i.j + y.i.j
 
-:t arrAdd x y
+:t tabAdd x x
 
-:t arrAdd x (trans y)
+:t tabAdd x (trans x)
 
-' The type system checked for us that input arrays indeed have the same shape.
+' The type system checked for us that input tables indeed have the same shape.
 
-'## Writing loops
+
+'## Case Study: MNist
+
+' To make some of these concepts for tangible let us consider a real example
+  using MNist digits. For this example we will first read in a batch of images
+  each with a fixed size.
+
+Batch = Fin 10
+IHeight = Fin 28
+IWidth = Fin 28
+Channels = Fin 3 
+Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
+
+' To do this we will use Dex's IO to load some images from a file.
+  This part uses some features we have not yet covered, so you can
+  ignore it for now. 
+
+raw =
+    ls = unsafeIO $ \ _. readFile (AsList _ ['e', 'x', 'a', 'm', 'p', 'l', 'e', 's', '/', 'c', 'm', 'n'])
+    (AsList _ im) = ls
+    unsafeCastTable Full im
+
+def pixel (x:Char) : Float32 =
+     r = W8ToI x
+     IToF case r < 0 of
+             True -> (abs r) + 128
+             False -> r
+
+' Here we use comprehensions to create the full data table.
+
+
+ims =
+   for b: Batch.
+     for i:IWidth.
+       for j:IHeight.
+          pixel raw.((ordinal (b, i, j)) @ Full)
+
+' We can look at the images we have loaded now using `matshow` 
+
+:html matshow ims.(0 @ Batch)
+
+:html matshow ims.(1 @ Batch)
+
+' We might also use aggregation to compute image statistics.
+
+:html matshow (sum ims)
+
+' This example overplots three different handwritten images.
+
+imscolor = for i. for j. for c:Channels. ims.((ordinal c)@Batch).i.j
+
+:t imscolor
+
+:html imshow (imscolor / 255.0)
+
+' This one shows all the images on one channel over the base plot.
+
+imscolor2 = for b. for i. for j. for c:Channels.
+          case ordinal c == 0 of 
+             True -> (sum ims).i.j / (IToF (size Batch))
+             False -> ims.b.i.j 
+
+:html imseqshow (imscolor2 / 255.0)
+
+' Sum pooling downsamples the image as the max of each pixel in a tile grid pattern. 
+
+def split (x: m=>v) : n=>o=>v =
+    for i. for j. x.((ordinal (i,j))@m)
+            
+def imtile (x: a=>b=>v) : n =>o=>p=>q=>v =
+    for kw. for kh. for w. for h. (split (split x).w.kw).h.kh
+
+im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@Batch)
+
+:html matshow (sum (sum im1))
+
+im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@Batch)
+
+:html matshow (sum (sum im2))
+
+
+'## Writing Loops
 
 ' Dex is a functional language - but when writing mathematical algorithms,
   it is often convenient to temporarily put aside immutability and write
   imperative code using mutation.
 
-' For example, let's say we want to actually implement the `sum` function
+' For example, let's say we want to actually implement the `mean` function
   ourselves by accumulating summed values in-place. In Python, implementing this
   is not directly possible solely via list comprehensions, so we would write a
   loop.
 
 '  `acc = 0`
 
-'  `for i in range(10):`
+'  `for i in range(len(x)):`
 
 '      `acc = acc + x[i]`
 
-'   `return acc`
+'  `return acc / len(x)
 
 ' In Dex, values are immutable, so we cannot directly perform mutation. But Dex
   includes algebraic effects, which are a purely-functional way to modeling
@@ -234,20 +323,22 @@ def arrAdd (x : m => n => Int32) (y : m => n => Int32) : m => n => Int32 =
   the `State` effect, which provides getter and setter functionality (via `get`
   and `:=` assignment). Here's what it looks like:
 
-def arrSum (x : n => Int32) : Int32 =
+def tabMean (x : n => Float32) : Float32 =
     -- acc = 0
-    init = 0
+    init = 0.0
 
-    -- (ignore for now)
+    -- (New Line)
     withState init $ \acc.
-         -- for i in range
+    
+         -- for i in range(len(x))
          for i.
              -- acc = acc + x[i]
              acc := (get acc) + x.i
-         -- return acc
-         get acc
              
-:p arrSum x2
+         -- return acc / len(x)
+         (get acc) / (IToF (size n)) 
+             
+:p tabMean [0.0, 1.0, 0.5]
 
 ' So, even though Dex is a functional language, it is possible to write loops
   that look similar to ones that truly perform mutation. However, there is one
@@ -255,21 +346,24 @@ def arrSum (x : n => Int32) : Int32 =
   more detail.
 
 ' First: `$`. This symbol is used in Dex just like it is used in Haskell, but
-  if you haven't seen it before, it seems a bit strange. `$` is the function
+  if you haven't seen it before, it seems a bit strange. The symbol `$` is the function
   application operator: it basically replaces of expression-grouping parentheses
   `(f x)` when it is inconvenient to write them. For example, the following two
   expressions are identical:
 
-:t arrSum (x2 + x2)
+:t tabMean (y + y)
 
-:t arrSum $ x2 + x2
+:t tabMean $ y + y
 
 ' Next: `\`. This symbol is the lambda sigil in Dex. It is analogous to the
   `lambda` keyword in Python, and starts the definition of a function value
-  (i.e. closure). In `arrSum` above: the lambda takes an argument named `acc`
+  (i.e. closure). In `tabMean` above: the lambda takes an argument named `acc`
   and returns the body, which is the expression following the `.` (a `for`
   constructor in this case).
 
+:t \ x. x + 10
+
+:p (\ x. x + 10) 20  
 
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
@@ -279,6 +373,7 @@ def arrSum (x : n => Int32) : Int32 =
 
 :p withState 10 $ \ state.
      state := 30
+     state := 10
      get state
 
 ' The first element of the returned pair is the body function's result (`20`).
@@ -289,10 +384,11 @@ def arrSum (x : n => Int32) : Int32 =
   The first is the `let` operator that creates an immutable assignment (a
   "let-binding"). This one is built into the language and can be used anywhere.
 
-q = for i:(Fin 10).
+:t for i:Height.
         -- Bind a temporary variable `temp`, as an example.
         temp = (ordinal i) + 10
-        for j:(Fin 5). temp
+        for j:Width.
+            temp
 
 ' The other is `:=`, which is an assignment operator that can only be used
   when a `State` effect is available (e.g. inside of a body function passed to
@@ -302,154 +398,87 @@ q = for i:(Fin 10).
 
 '## Typeclasses
 
-' Our `arrSum` function is pretty neat. It lets us work with arrays with any
-  index type and computes the sum. However, `arrSum` explicitly takes only
-  integer arrays (of type `n => Int32`).
+' Our `tabMean` function is pretty neat. It lets us work with tables with any
+  index type and computes the sum. However, `tabMean` explicitly takes only
+  integer tables (of type `n => Float32`).
 
-:t arrSum
+:t tabMean
 
-' If we try to apply `arrSum` to float arrays, we get the following error:
+' If we try to apply `tabMean` to other types for get errors. For example, what if
+  we have a table of pairs of floats, the function does not work.
 
-arrSum for i : (Fin 5). 10.0
+:t (for (i, j). (x.i.j, x.i.j))
 
-' We can compare the type of our `arrSum` function to the `sum` function found
-  in the Dex Prelude.
+tabMean (for (i, j). (x.i.j, x.i.j))
 
-:t sum
+' Intuitively this seems like it could work. We just need to be able to
+  add and divide pairs. Let's look a bit close at the types of add and
+  divide.
 
-' The Prelude-defined `sum` function also has an additional argument, spelled
-  like: `(Add v) ?=> ...`. This is a constraint telling us that the function
-  expects an `Add v` typeclass instance, where `v` is any type that implements
-  the `Add` typeclass.
 
-' We could look in the Dex Prelude to see exactly how `sum` is defined and what
-  `Add v` means. But we can guess what the `Add v` constraint  means: `v` needs
-  to be a type that works with `add`. We can do that! Let's define our own
-  typeclass.
+:t (+)
 
-interface MyAdd a:Type
-  myAdd : a -> a -> a
-  myZero : a
+:t (/)
 
-' This declares a typeclass (i.e. interface or trait) called `MyAdd` with some
-  typeclass methods (interface requirements). To implement the `MyAdd`
-  typeclass, a type `a` needs to define functions `myAdd` and `myZero` in a
-  "typeclass instance", like so:
 
-instance MyAdd Int32
-  myAdd = \x y. x + y
-  myZero = 0
+' These types are a bit complex. Add maps `a -> a -> a` with a constraint that
+  `a` be in the type class `Add`. Whereas divide maps `a -> Float32 -> a`
+   where `a` is in the type class `VSpace`.
 
-instance MyAdd Float32
-  myAdd = \x y. (x + y)
-  myZero = 0.0
+' If we look in the prelude we can see that these type class interfaces are
+  defined as: 
+
+interface Add a
+  add : a -> a -> a
+  sub : a -> a -> a
+  zero : a
+
+
+interface [Add a] VSpace a
+  scaleVec : Float -> a -> a
+
+' They tell us which functions we need to define for a type to work with them. 
+  It it relatively straightforward to add a new instance. 
+
+' Here is an interface for adding float pairs.
+
+instance Add (Float32 & Float32)
+  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+  zero = (0.0, 0.0)
+
+' And dividing a float pair by a constant.
+
+instance VSpace (Float32 & Float32)
+  scaleVec = \s (x, y). (x / s, y / s)
 
 ' Once we have these two instance definitions (`MyAdd Int32` and
-  `MyAdd Float32`), we can revisit our array sum function and add a typeclass
+  `MyAdd Float32`), we can revisit our table sum function and add a typeclass
   constraint:
 
-def arrSumGeneric [MyAdd v] (x : a => v) : v =
-    withState myZero $ \acc.
+def tabMean2 [VSpace v] (x : n => v) : v =
+    withState zero $ \acc.
         for i.
-            acc := myAdd (get acc) x.i
-        get acc
+            acc := (get acc) + x.i
+        (get acc) / (IToF (size n))   
 
-arrSumGeneric for i : (Fin 5). 10
-arrSumGeneric for i : (Fin 5). 10.0
+tabMean2 [0.1, 0.5, 1.0]
 
-arrSumGeneric $ for i : (Fin 5).
-                  for j : (Fin 10). 10.0
-
-' This sum function works for any type that implements `MyAdd`, like `Int32` and
-  `Float32`. But it failed when we tried to pass in a 2D array. What went wrong?
-  The error tells us that the function could not find a `MyAdd` instance for
-  `MyAdd ((Fin 10) => Float32)`. This makes sense because we have have not
-  written one. We need to tell the system "how to add array columns".
-
-' One option is to directly satisfy the type checker and provide a specific
-  `MyAdd ((Fin 10) => Float32)` instance:
-
-instance MyAdd ((Fin 10) => Float32)
-  myAdd = \x y. for i: (Fin 10). (x.i + y.i)
-  myZero = for i: (Fin 10). 0.0
-
-arrSumGeneric $ for i : (Fin 5).
-                  for j : (Fin 10). 10.0
-
-' To be more general, we can instead define a `MyAdd` instance for all array
-  types. This instance requires that the array element type `v` also has an
-  `MyAdd` instance; this requirement is represented as a `(MyAdd v) ?=> ...`
-  constraint.
-
-instance [MyAdd v] MyAdd (a => v)
-  myAdd = \x y. for i. (myAdd x.i y.i)
-  myZero = for i. myZero
-
-arrSumGeneric $ for i : (Fin 5).
-                  for j : (Fin 9). 10.0
-
-' This instance not only works for 2D arrays, but also 3D and higher-dimensional
-  arrays:
-
-arrSumGeneric $ for i : (Fin 5).
-           for j : (Fin 9).
-             for k : (Fin 9). 10.0
-
-' ## Learn the Prelude
-
-' The Prelude contains many handy functions. Since Dex types contain so much
-  information, it is possible to infer what many of these functions do just by
-  reading and understanding their type.
-
-' Here are a few used, commonly-used Prelude functions.
-
-' * `select` for filtering
-
-:t select
-
-select True 1 2
-select False 1 2
-
-' * `zero` for creating empty arrays
-
-:t zero
-
-myzero1 : (Fin 20 & Fin 10) => Float32 = zero
-myzero2 : (Fin 20) => (Fin 10) => Float32 = zero
-
-' * `zip` for creating arrays of pairs
-
-:t zip
-
-:t zip x x
-:t for i. zip x.i x.i
-
-' * `iota` for creating "aranges"
-
-:t iota
-
-:p (iota (Fin 10))
-:p for i. for j. (iota (Fin 4 & Fin 4)).(i, j)
-
-' * Pseudorandom number generation
-
-:t newKey
-:t splitKey
-:t randn
-
-key = newKey 0
-[key1, key2,  key3] = splitKey key
+tabMean2 [(1.0, 0.5), (0.5, 0.8)]
 
 
-:p randn key1
+' To be more general, we could have also defined these instance for all tuple
+  types.
 
-' * `randVec` for creating a vector of random numbers
 
-randv = randVec 20 randn key2
-:t randv
+instance [Add v, Add w] Add (v & w)
+  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+  zero = (zero, zero)
 
-randv2 = randVec 20 randInt key3
-:t randv2
+instance [VSpace v, VSpace w] VSpace (v & w)
+  scaleVec = \s (x, y). (x / s, y / s)
+
 
 '## Worked examples: Project Euler
 
