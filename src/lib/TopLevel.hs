@@ -325,5 +325,9 @@ moduleStatus name status = mempty { modulesImported = M.singleton name status}
 bindingsToTopEnv :: Bindings -> TopEnv
 bindingsToTopEnv bindings = mempty { topBindings = bindings }
 
+instance HasPtrs TopEnv where
+  traversePtrs f (TopEnv bindings status) =
+    TopEnv <$> traverse (traversePtrs f) bindings <*> pure status
+
 instance Store TopEnv
 instance Store ModuleImportStatus

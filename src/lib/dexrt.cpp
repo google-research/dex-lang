@@ -23,19 +23,27 @@
 
 extern "C" {
 
+// XXX: Changes to this value might require additional changes to parameter attributes in LLVM
+const int64_t alignment = 64;
+
 char* malloc_dex(int64_t nbytes) {
-  // XXX: Changes to this value might require additional changes to parameter attributes in LLVM
-  static const int64_t alignment = 64;
+  // reserves `alignment` bytes before the data region to store the size of the allocation
+  int64_t nbytes_total = nbytes + alignment;
   char *ptr;
-  if (posix_memalign(reinterpret_cast<void**>(&ptr), alignment, nbytes)) {
+  if (posix_memalign(reinterpret_cast<void**>(&ptr), alignment, nbytes_total)) {
     fprintf(stderr, "Failed to allocate %ld bytes", (long)nbytes);
     std::abort();
   }
-  return ptr;
+  *(reinterpret_cast<int64_t*>(ptr)) = nbytes;
+  return ptr + alignment;
 }
 
 void free_dex(char* ptr) {
-  free(ptr);
+  free(ptr - alignment);
+}
+
+int64_t dex_allocation_size (char* ptr) {
+  return *(reinterpret_cast<int64_t*>(ptr - alignment));
 }
 
 void* fdopen_w(int fd) {
