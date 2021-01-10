@@ -224,7 +224,7 @@ def tabAdd (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
   using MNist digits. For this example we will first read in a batch of images
   each with a fixed size.
 
-Batch = Fin 10
+Batch = Fin 100
 IHeight = Fin 28
 IWidth = Fin 28
 Channels = Fin 3 
@@ -256,7 +256,8 @@ ims =
 
 ' We can look at the images we have loaded now using `matshow` 
 
-:html matshow ims.(0 @ Batch)
+im = ims.(0 @ Batch)
+:html matshow im
 
 :html matshow ims.(1 @ Batch)
 
@@ -480,33 +481,52 @@ instance [VSpace v, VSpace w] VSpace (v & w)
   scaleVec = \s (x, y). (x / s, y / s)
 
 
-'## Worked examples: Project Euler
-
-' To demonstrate Dex in practice, below are some examples of solving problems
-  from [Project Euler](https://projecteuler.net).
-
-def ignore (y:a) (x : Maybe a) : a =
-  case x of
-    Just x -> x
-    Nothing -> y
-
-instance [Add v] Add (Maybe v)
-  add = \x y. Just $ ignore zero x + ignore zero y
-  sub = \x y. Just $ ignore zero x - ignore zero y
-  zero = Just zero
-
-' ### Problem 1: Find the sum of all the multiples of 3 or 5 below 1000.
-
-prob1 = for i : (Fin 1000).
-          i' = ordinal i
-          case ((i' `mod` 3) == 0 || (i' `mod` 5) == 0) of
-            True ->  Just i'
-            False -> Nothing
-
-:p fromJust $ sum  prob1
-
-' ### Problem 2: By considering the terms in the Fibonacci sequence whose values do not exceed four million, find the sum of the even-valued terms.
+'## More MNist
 
 
+' Now that we has more functions we can revisit some of the MNist examples.
 
-' TODO: Finish this part with some more examples
+
+' Function that uses state to produce a histogram
+
+Pixels = Fin 256
+
+def bincount (inp : a => b) : b => Int =
+    withState zero \ acc .
+        for i.
+            v = acc!(inp.i)
+            v := (get v) + 1
+        get acc
+
+' Plot how many times each pixel value occurs in an image
+
+hist = bincount $ for (i,j). (FToI (ims.(0 @ Batch).i.j + 1.0) @Pixels)
+:t hist
+
+:html showPlot $ xyPlot (for i. ( (IToF $ ordinal i))) (for i. (IToF hist.i))
+
+' Find nearest images in the dataset.
+
+
+def imdot (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
+    sum for (i, j). x.i.j * y.i.j
+
+dist = for b1. for b2.
+        case b1 == b2 of
+             True -> 0.0
+             False -> -imdot ims.b1 ims.b2
+
+nearest = for i. argmin dist.i
+
+double = for b:Batch. for i. for j. for c:Channels.
+          case ordinal c == 0 of 
+             True -> ims.b.i.j
+             False -> ims.(nearest.b).i.j
+
+:html imseqshow double
+
+
+
+'## Conclusion
+
+
