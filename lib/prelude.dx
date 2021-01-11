@@ -113,6 +113,9 @@ instance Mul Unit
   mul = \x y. ()
   one = ()
 
+instance [Mul a] Mul (n=>a)
+  mul = \xs ys. for i. xs.i * ys.i
+  one = for _. one
 
 interface Integral a
   idiv : a->a->a
@@ -210,6 +213,11 @@ def isNothing (x:Maybe a) : Bool = case x of
 
 def isJust (x:Maybe a) : Bool = not $ isNothing x
 
+def maybe (d: b) (f : (a -> b)) (x: Maybe a) : b =
+  case x of
+    Nothing -> d
+    Just x' -> f x'
+
 data (|) a b =
   Left  a
   Right b
@@ -220,6 +228,7 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
 
 def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
 def BToF (x:Bool) : Float = IToF (BToI x)
+
 
 '## Effects
 
@@ -432,6 +441,7 @@ instance Floating Float32
   pow    = \x y. %fpow x y
   lgamma = \x. %lgamma x
 
+
 '## Index set utilities
 
 def Range (low:Int) (high:Int) : Type = %IntRange low high
@@ -537,6 +547,30 @@ def sq  [Mul a] (x:a) : a = x * x
 def abs [Add a, Ord a] (x:a) : a = select (x > zero) x (zero - x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 
+instance [Floating a] Floating (n=>a)
+  exp    = map exp
+  exp2   = map exp2
+  log    = map log
+  log2   = map log2
+  log10  = map log10
+  log1p  = map log1p
+  sin    = map sin
+  cos    = map cos
+  tan    = map tan
+  sinh   = map sinh
+  cosh   = map cosh
+  tanh   = map tanh
+  floor  = map floor
+  ceil   = map ceil
+  round  = map round
+  sqrt   = map sqrt
+  pow    = \x y. for i. pow x.i y.i
+  lgamma = map lgamma
+
+def axis1 (x : a => b => c) : b => a => c = for j. for i. x.i.j
+def axis2 (x : a => b => c => d) : c => a => b => d = for k. for i. for j. x.i.j.k
+
+
 def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
 
 def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
@@ -559,8 +593,8 @@ def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 def fsum (xs:n=>Float) : Float = yieldAccum \ref. for i. ref += xs i
 def sum  [Add v] (xs:n=>v) : v = reduce zero (+) xs
 def prod [Mul v] (xs:n=>v) : v = reduce one  (*) xs
-def mean (xs:n=>Float) : Float = sum xs / IToF (size n)
-def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
+def mean [VSpace v] (xs:n=>v) : v = sum xs / IToF (size n)
+def std [Mul v, VSpace v, Floating v] (xs:n=>v) : v = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
@@ -1221,6 +1255,11 @@ instance Arbitrary Int32
 instance [Arbitrary a] Arbitrary (n=>a)
   arb = \key. for i. arb $ ixkey key i
 
+instance [Arbitrary a, Arbitrary b] Arbitrary (a & b)
+  arb = \key.
+      [k1, k2] = splitKey key
+      (arb k1, arb k2)
+
 instance Arbitrary (Fin n)
   arb = randIdx
 
@@ -1259,12 +1298,15 @@ def maximumBy [Ord o] (f:a->o) (xs:n=>a) : a =
 def minimum [Ord o] (xs:n=>o) : o = minimumBy id xs
 def maximum [Ord o] (xs:n=>o) : o = maximumBy id xs
 
-def argmin [Ord o] (xs:n=>o) : n =
+def argscan (comp:o->o->Bool) (xs:n=>o) : n =
   zeroth = (0@_, xs.(0@_))
   compare = \(idx1, x1) (idx2, x2).
-    select (x1 < x2) (idx1, x1) (idx2, x2)
+    select (comp x1 x2) (idx1, x1) (idx2, x2)
   zipped = for i. (i, xs.i)
   fst $ reduce zeroth compare zipped
+
+def argmin [Ord o] (xs:n=>o) : n = argscan (<) xs
+def argmax [Ord o] (xs:n=>o) : n = argscan (>) xs
 
 def clip [Ord a] ((low,high):(a&a)) (x:a) : a =
   min high $ max low x
@@ -1521,6 +1563,9 @@ def categoricalBatch (logprobs: n=>Float) (key: Key) : m=>n =
   for i. categoricalFromCDF cdf $ ixkey key i
 
 'Numerical utilities
+
+def relu (x: Float) : Float =
+  select (input > 0.0) input 0.0
 
 def logsumexp (x: n=>Float) : Float =
   m = maximum x
