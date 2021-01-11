@@ -793,7 +793,7 @@ def (<>) [Monoid a] : a -> a -> a = mcombine
 '## Length-erased lists
 
 data List a =
-  AsList n:Int foo:(Fin n => a)
+  AsList n:Int elements:(Fin n => a)
 
 def unsafeCastTable (m:Type) (xs:n=>a) : m=>a =
   for i. xs.(unsafeFromOrdinal _ (ordinal i))
