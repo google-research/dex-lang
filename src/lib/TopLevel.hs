@@ -20,6 +20,9 @@ import Data.List (partition)
 import qualified Data.Map.Strict as M
 import Data.Store (Store)
 import GHC.Generics (Generic)
+import System.FilePath
+
+import Paths_dex  (getDataFileName)
 
 import Syntax
 import Embed
@@ -43,6 +46,7 @@ import Parallelize
 
 data EvalConfig = EvalConfig
   { backendName :: Backend
+  , libPath     :: Maybe FilePath
   , logFile     :: Maybe FilePath
   }
 
@@ -129,7 +133,7 @@ evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
         "Circular import detected: " ++ pprint moduleName
       Just FullyImported -> return mempty
       Nothing -> do
-        fullPath <- liftIO $ findModulePath moduleName
+        fullPath <- findModulePath moduleName
         source <- liftIO $ readFile fullPath
         newTopEnv <- evalSourceBlocks
                        (env <> moduleStatus moduleName CurrentlyImporting) $
@@ -307,9 +311,13 @@ traverseLiterals block f =
       Con (Lit x) -> lift $ lift $ f x
       _ -> traverseAtom def atom
 
--- TODO: use something like a `DEXPATH` env var for finding source files
-findModulePath :: ModuleName -> IO FilePath
-findModulePath moduleName = return $ "lib/" ++ moduleName ++ ".dx"
+findModulePath :: ModuleName -> TopPassM FilePath
+findModulePath moduleName = do
+  let fname = moduleName ++ ".dx"
+  specifiedPath <- asks (libPath . evalConfig)
+  case specifiedPath of
+    Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
+    Just path -> return $ path </> fname
 
 instance Semigroup TopEnv where
   (TopEnv env ms) <> (TopEnv env' ms') =

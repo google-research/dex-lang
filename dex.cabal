@@ -13,6 +13,8 @@ maintainer:          dougalm@google.com
 license-file:        LICENSE
 build-type:          Simple
 
+data-files:          lib/*.dx
+
 flag cuda
   description:         Enables building with CUDA support
   default:             False
@@ -49,6 +51,7 @@ library
                        store,
                        -- Notebook support
                        warp, wai, blaze-html, aeson, http-types, cmark, binary
+  other-modules:       Paths_dex
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources

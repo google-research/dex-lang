@@ -56,10 +56,10 @@ development mode:
 
 ```console
 # Linux:
-alias dex="stack exec dex --"
+alias dex="stack exec dex -- --lib-path lib"
 
 # macOS:
-alias dex="stack exec --stack-yaml=stack-macos.yaml dex --"
+alias dex="stack exec --stack-yaml=stack-macos.yaml dex -- --lib-path lib"
 ```
 
 ## Running
