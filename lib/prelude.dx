@@ -229,7 +229,6 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
 def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
 def BToF (x:Bool) : Float = IToF (BToI x)
 
-
 '## Effects
 
 def Ref (r:Type) (a:Type) : Type = %Ref r a
@@ -440,7 +439,6 @@ instance Floating Float32
   sqrt   = \x. %sqrt   x
   pow    = \x y. %fpow x y
   lgamma = \x. %lgamma x
-
 
 '## Index set utilities
 
