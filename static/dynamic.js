@@ -77,6 +77,9 @@ source.onmessage = function(event) {
         }
         Object.assign(cells, new_cells);
     }
-    // Render LaTeX equations via KaTeX.
-    renderMathInElement(body, katexOptions);
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(".prose-block");
+    Array.from(proseBlocks).map((proseBlock) =>
+        renderMathInElement(proseBlock, katexOptions)
+    );
 };
