@@ -235,7 +235,7 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
   ignore it for now. 
 
 raw =
-    ls = unsafeIO $ \ _. readFile (AsList _ ['e', 'x', 'a', 'm', 'p', 'l', 'e', 's', '/', 'c', 'm', 'n'])
+    ls = unsafeIO $ \ _. readFile "examples/mnist.5.bin"
     (AsList _ im) = ls
     unsafeCastTable Full im
 
