@@ -42,7 +42,7 @@ setError msg = withCStringLen msg $ \(ptr, len) ->
 
 dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do
-  let evalConfig = EvalConfig LLVM Nothing
+  let evalConfig = EvalConfig LLVM Nothing Nothing
   maybePreludeEnv <- evalPrelude evalConfig preludeSource
   case maybePreludeEnv of
     Right preludeEnv -> toStablePtr $ Context evalConfig (topBindings preludeEnv)

@@ -181,6 +181,7 @@ parseEvalOpts = EvalConfig
                      , ("interpreter", Interpreter)])
          (long "backend" <> value LLVM <>
           helpOption "Backend" "llvm (default) | llvm-cuda | llvm-mc | interpreter")
+  <*> optional (strOption $ long "lib-path" <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
