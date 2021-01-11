@@ -249,7 +249,7 @@ data UDecl =
    ULet LetAnn UPatAnn UExpr
  | UData UConDef [UConDef]
  | UInterface [UType] UConDef [UAnnBinder] -- superclasses, constructor, methods
- | UInstance (Nest UPatAnnArrow) UType [UMethodDef]  -- args, type, methods
+ | UInstance (Maybe UVar) (Nest UPatAnnArrow) UType [UMethodDef]  -- name, args, type, methods
    deriving (Show, Generic)
 
 type UType  = UExpr
@@ -804,7 +804,7 @@ instance HasUVars UDecl where
   freeUVars (UData (UConDef _ bs) dataCons) = freeUVars $ Abs bs dataCons
   freeUVars (UInterface superclasses tc methods) =
     freeUVars $ Abs tc (superclasses, methods)
-  freeUVars (UInstance bsArrows ty methods) = freeUVars $ Abs bs (ty, methods)
+  freeUVars (UInstance _ bsArrows ty methods) = freeUVars $ Abs bs (ty, methods)
     where bs = fmap fst bsArrows
 
 instance HasUVars UMethodDef where
@@ -815,10 +815,11 @@ instance BindsUVars UPatAnn where
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
-    ULet _ (p,_) _ -> boundUVars p
-    UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
-    UInterface _ _ _ -> mempty
-    UInstance _ _ _  -> mempty
+    ULet _ (p,_) _           -> boundUVars p
+    UData tyCon dataCons     -> boundUVars tyCon <> foldMap boundUVars dataCons
+    UInterface _ _ _         -> mempty
+    UInstance Nothing  _ _ _ -> mempty
+    UInstance (Just v) _ _ _ -> v @> ()
 
 instance HasUVars UModule where
   freeUVars (UModule decls) = freeUVars decls
