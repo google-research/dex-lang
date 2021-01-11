@@ -368,14 +368,17 @@ inferUDecl True (UInterface superclasses tc methods) = do
   emitSuperclassGetters dataDef
   emitMethodGetters     dataDef
   return mempty
-inferUDecl True (UInstance argBinders instanceTy methods) = do
-   instanceDict <- checkInstance argBinders instanceTy methods
-   let instanceName = Name TypeClassGenName "instance" 0
-   void $ emitTo instanceName InstanceLet $ Atom instanceDict
-   return mempty
+inferUDecl topLevel (UInstance maybeName argBinders instanceTy methods) = do
+  instanceDict <- checkInstance argBinders instanceTy methods
+  case (topLevel, maybeName) of
+    (False, Nothing) -> error "anonymous instance definitions should be top-level"
+    (False, Just n ) -> return $ n @> instanceDict
+    (True , Nothing) -> mempty <$ emitTo nameHint InstanceLet (Atom instanceDict)
+      where nameHint = Name TypeClassGenName "instance" 0
+    (True , Just n ) -> mempty <$ (checkNotInScope gn >> emitTo gn PlainLet (Atom instanceDict))
+      where gn = asGlobal $ varName n
 inferUDecl False (UData      _ _  ) = error "data definitions should be top-level"
 inferUDecl False (UInterface _ _ _) = error "interface definitions should be top-level"
-inferUDecl False (UInstance  _ _ _) = error "instance definitions should be top-level"
 
 freshClassGenName :: MonadEmbed m => m Name
 freshClassGenName = do

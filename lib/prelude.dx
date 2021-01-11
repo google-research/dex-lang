@@ -263,6 +263,47 @@ data Ordering =
 
 def OToW8 (x : Ordering) : Word8 = %dataConTag x
 
+'### Monoid
+A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
+This is a very useful and general calls of things.
+It includes:
+ - Addition and Multiplication of Numbers
+ - Boolean Logic
+ - Concatenation of Lists (including strings)
+Monoids support `fold` operations, and similar.
+
+interface Monoid a
+  mempty : a
+  mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
+
+def (<>) [Monoid a] : a -> a -> a = mcombine
+
+instance [Monoid a] Monoid (n=>a)
+  mempty = for i. mempty
+  mcombine = \x y. for i. mcombine x.i y.i
+
+named-instance AndMonoid : Monoid Bool
+  mempty = True
+  mcombine = (&&)
+
+named-instance OrMonoid : Monoid Bool
+  mempty = False
+  mcombine = (||)
+
+def AddMonoid (a:Type) -> (_:Add a) ?=> : Monoid a =
+  A = a -- XXX: Typing `Monoid a` below would quantify it over a, which we don't want
+  named-instance result : Monoid A
+    mempty = zero
+    mcombine = add
+  result
+
+def MulMonoid (a:Type) -> (_:Mul a) ?=> : Monoid a =
+  A = a -- XXX: Typing `Monoid a` below would quantify it over a, which we don't want
+  named-instance result : Monoid A
+    mempty = one
+    mcombine = mul
+  result
+
 '## Effects
 
 def Ref (r:Type) (a:Type) : Type = %Ref r a
@@ -405,21 +446,6 @@ instance [Ord a, Ord b] Ord (a & b)
 
 instance Eq Ordering
   (==) = \x y. OToW8 x == OToW8 y
-
-'### Monoid
-A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
-This is a very useful and general calls of things.
-It includes:
- - Addition and Multiplication of Numbers
- - Boolean Logic
- - Concatenation of Lists (including strings)
-Monoids support `fold` operations, and similar.
-
-interface Monoid a
-  mempty : a
-  mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
-
-def (<>) [Monoid a] : a -> a -> a = mcombine
 
 def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
   swap $ runState init \s. for i.
