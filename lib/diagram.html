@@ -12,7 +12,6 @@ body {
   font-family: Helvetica, sans-serif;
   font-size: 100%;
   color: #333;
-  padding-bottom: 500px;
 }
 
 .cell {
@@ -75,6 +74,8 @@ code {
   color: #25BBA7;
 }
 </style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Vector graphics library</h1>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Point</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Geom</span> <span class="symbol">=</span>
@@ -82,6 +83,7 @@ code {
   <span class="type-name">Circle</span> <span class="type-name">Float</span>
   <span class="type-name">Rectangle</span> <span class="type-name">Float</span> <span class="type-name">Float</span>  <span class="comment">-- width, height
 </span>  <span class="type-name">Line</span> <span class="type-name">Point</span>
+  <span class="type-name">Text</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">HtmlColor</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Word8</span>
 </div></div><div class="cell"><div class="code-block">
@@ -135,6 +137,7 @@ code {
     <span class="type-name">Circle</span> r      <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> r
     <span class="type-name">Rectangle</span> w h <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span> w h
     <span class="type-name">Line</span> (x<span class="symbol">,</span> y)   <span class="symbol">-&gt;</span> <span class="type-name">Line</span> (x<span class="symbol">,</span> <span class="symbol">-</span>y)
+    <span class="type-name">Text</span> x        <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scale (s<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span>) <span class="symbol">=</span>
   applyTransformation ( <span class="symbol">\</span>(x<span class="symbol">,</span>y)<span class="symbol">.</span> (s <span class="symbol">*</span> x<span class="symbol">,</span> s <span class="symbol">*</span> y) ) <span class="symbol">\</span>geom<span class="symbol">.</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
@@ -142,6 +145,7 @@ code {
     <span class="type-name">Circle</span> r      <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> (s <span class="symbol">*</span> r)
     <span class="type-name">Rectangle</span> w h <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span> (s <span class="symbol">*</span> w) (s <span class="symbol">*</span> h)
     <span class="type-name">Line</span> (x<span class="symbol">,</span> y)   <span class="symbol">-&gt;</span> <span class="type-name">Line</span> (s <span class="symbol">*</span> x<span class="symbol">,</span> s <span class="symbol">*</span> y)
+    <span class="type-name">Text</span> x        <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> moveXY ((offX<span class="symbol">,</span> offY) <span class="symbol">:</span> <span class="type-name">Point</span>) <span class="symbol">:</span> (<span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span>) <span class="symbol">=</span>
   applyTransformation (<span class="symbol">\</span>(x<span class="symbol">,</span>y)<span class="symbol">.</span> (x <span class="symbol">+</span> offX<span class="symbol">,</span> y <span class="symbol">+</span> offY) ) id
@@ -153,6 +157,7 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> circle (r<span class="symbol">:</span><span class="type-name">Float</span>)           <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singletonDefault <span class="symbol">$</span> <span class="type-name">Circle</span> r
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rect   (w<span class="symbol">:</span><span class="type-name">Float</span>) (h<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singletonDefault <span class="symbol">$</span> <span class="type-name">Rectangle</span> w h
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> line   (p<span class="symbol">:</span><span class="type-name">Point</span>)           <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singletonDefault <span class="symbol">$</span> <span class="type-name">Line</span> p
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> text   (x<span class="symbol">:</span><span class="type-name">String</span>)          <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singletonDefault <span class="symbol">$</span> <span class="type-name">Text</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> updateGeom (update<span class="symbol">:</span> <span class="type-name">GeomStyle</span> <span class="symbol">-&gt;</span> <span class="type-name">GeomStyle</span>) (d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
   (<span class="type-name">MkDiagram</span> (<span class="type-name">AsList</span> _ objs)) <span class="symbol">=</span> d
@@ -212,11 +217,14 @@ code {
   <span class="symbol">&lt;+&gt;</span> (&quot;stroke<span class="symbol">-</span>width&quot; <span class="symbol">&lt;=&gt;</span> (getAt <span class="iso-sugar">#strokeWidth</span> attr)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> renderGeom (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) ((x<span class="symbol">,</span>y)<span class="symbol">:</span><span class="type-name">Point</span>) (geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  <span class="comment">-- For things that are solid. SVG says they have fill=stroke.
+</span>  solidAttr <span class="symbol">=</span> setAt <span class="iso-sugar">#fillColor</span> (getAt <span class="iso-sugar">#strokeColor</span> attr) attr
+
   groupEle <span class="symbol">=</span> <span class="symbol">\</span>attr<span class="symbol">.</span> tagBracketsAttr &quot;g&quot; (attrString attr)
   <span class="keyword">case</span> geom <span class="keyword">of</span>
     <span class="type-name">PointGeom</span> <span class="symbol">-&gt;</span>
       pointAttr <span class="symbol">=</span> setAt <span class="iso-sugar">#fillColor</span> (getAt <span class="iso-sugar">#strokeColor</span> attr) attr
-      groupEle pointAttr <span class="symbol">$</span> selfClosingBrackets <span class="symbol">$</span>
+      groupEle solidAttr <span class="symbol">$</span> selfClosingBrackets <span class="symbol">$</span>
         (&quot;circle&quot; <span class="symbol">&lt;+&gt;</span>
          &quot;cx&quot; <span class="symbol">&lt;=&gt;</span> x <span class="symbol">&lt;.&gt;</span>
          &quot;cy&quot; <span class="symbol">&lt;=&gt;</span> y <span class="symbol">&lt;.&gt;</span>
@@ -234,6 +242,14 @@ code {
          &quot;height&quot; <span class="symbol">&lt;=&gt;</span> h <span class="symbol">&lt;.&gt;</span>
          &quot;x&quot;      <span class="symbol">&lt;=&gt;</span> (x <span class="symbol">-</span> (w<span class="symbol">/</span>2<span class="symbol">.</span>0)) <span class="symbol">&lt;.&gt;</span>
          &quot;y&quot;      <span class="symbol">&lt;=&gt;</span> (y <span class="symbol">-</span> (h<span class="symbol">/</span>2<span class="symbol">.</span>0)))
+    <span class="type-name">Text</span> content <span class="symbol">-&gt;</span>
+      textEle <span class="symbol">=</span> tagBracketsAttr &quot;text&quot; <span class="symbol">$</span>
+        (&quot;x&quot; <span class="symbol">&lt;=&gt;</span> x <span class="symbol">&lt;.&gt;</span>
+         &quot;y&quot; <span class="symbol">&lt;=&gt;</span> y <span class="symbol">&lt;.&gt;</span>
+         &quot;text<span class="symbol">-</span>anchor&quot; <span class="symbol">&lt;=&gt;</span> &quot;middle&quot; <span class="symbol">&lt;.&gt;</span>    <span class="comment">-- horizontal center
+</span>         &quot;dominant<span class="symbol">-</span>baseline&quot; <span class="symbol">&lt;=&gt;</span> &quot;middle&quot;  <span class="comment">-- vertical center
+</span>        )
+      groupEle solidAttr <span class="symbol">$</span> textEle content
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">BoundingBox</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Point</span> <span class="symbol">&amp;</span> <span class="type-name">Point</span>)
 </div></div><div class="cell"><div class="code-block">
@@ -257,12 +273,22 @@ code {
 </div></div><div class="cell"><div class="code-block">moveX <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> moveXY (x<span class="symbol">,</span> 0<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">moveY <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="symbol">\</span>y<span class="symbol">.</span> moveXY (0<span class="symbol">.</span>0<span class="symbol">,</span> y)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- mydiagram : Diagram =
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   (  (circle 7.0 |&gt; moveXY (20.0, 20.0) |&gt; setFillColor blue |&gt; setStrokeColor red)
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   &lt;&gt; (circle 5.0 |&gt; moveXY (40.0, 40.0))
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   &lt;&gt; (rect  10.0 20.0 |&gt; moveXY (5.0, 10.0) |&gt; setStrokeColor red)
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   &lt;&gt; (pointDiagram |&gt; moveXY (15.0, 5.0) |&gt; setStrokeColor red)
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   )
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- :html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
-</span></div></div></div></body></html>
+</div></div><div class="cell"><div class="prose-block"><p>A Demo showing all kind of features</p>
+<pre><code>mydiagram : Diagram =
+    (  (circle 7.0 |&gt; moveXY (20.0, 20.0) |&gt; setFillColor blue |&gt; setStrokeColor red)
+    &lt;&gt; (circle 5.0 |&gt; moveXY (40.0, 40.0))
+    &lt;&gt; (rect  10.0 20.0 |&gt; moveXY (5.0, 10.0) |&gt; setStrokeColor red)
+    &lt;&gt; (text &quot;DexLang&quot;  |&gt; moveXY (30.0, 10.0) |&gt; setStrokeColor green)
+    &lt;&gt; (pointDiagram |&gt; moveXY (15.0, 5.0) |&gt; setStrokeColor red)
+    )
+:html renderSVG mydiagram ((0.0, 0.0), (100.0, 50.0))
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p>Another demo that shows things are all center aligned:</p>
+<pre><code>concentricDiagram : Diagram = (
+     (rect 2.0 2.0 |&gt; setFillColor red)
+  &lt;&gt; (circle 1.0 |&gt; setFillColor blue)
+  &lt;&gt; (text &quot;DexLang&quot; |&gt; setStrokeColor white)
+) |&gt; moveXY (5.0, 5.0)
+:html renderSVG concentricDiagram ((0.0, 0.0), (10.0, 10.0))
+</code></pre>
+</div></div></div></body></html>

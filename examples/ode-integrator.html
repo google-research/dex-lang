@@ -12,7 +12,6 @@ body {
   font-family: Helvetica, sans-serif;
   font-size: 100%;
   color: #333;
-  padding-bottom: 500px;
 }
 
 .cell {
@@ -79,7 +78,7 @@ stepsize calculation.
 This version is a port of the <a href="https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py">Jax implementation</a>.
 One difference is that it uses a lower-triangular
 matrix type for the Butcher tableau, and so avoids zero-padding everywhere.</p>
-</div></div><div class="cell"><div class="code-block">include &quot;plot<span class="symbol">.</span>dx&quot;
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Time</span> <span class="symbol">=</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">

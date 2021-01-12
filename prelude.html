@@ -12,7 +12,6 @@ body {
   font-family: Helvetica, sans-serif;
   font-size: 100%;
   color: #333;
-  padding-bottom: 500px;
 }
 
 .cell {
@@ -186,7 +185,10 @@ code {
   mul <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> ()
   one <span class="symbol">=</span> ()
 </div></div><div class="cell"><div class="code-block">
-
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Mul</span> a] <span class="type-name">Mul</span> (n<span class="symbol">=&gt;</span>a)
+  mul <span class="symbol">=</span> <span class="symbol">\</span>xs ys<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">*</span> ys<span class="symbol">.</span>i
+  one <span class="symbol">=</span> <span class="keyword">for</span> _<span class="symbol">.</span> one
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Integral</span> a
   idiv <span class="symbol">:</span> a<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a
   rem  <span class="symbol">:</span> a<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a
@@ -278,6 +280,11 @@ code {
   <span class="type-name">Just</span> _ <span class="symbol">-&gt;</span> <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isJust (x<span class="symbol">:</span><span class="type-name">Maybe</span> a) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> not <span class="symbol">$</span> isNothing x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maybe (d<span class="symbol">:</span> b) (f <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> b)) (x<span class="symbol">:</span> <span class="type-name">Maybe</span> a) <span class="symbol">:</span> b <span class="symbol">=</span>
+  <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> d
+    <span class="type-name">Just</span> x&#39; <span class="symbol">-&gt;</span> f x&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> (<span class="symbol">|</span>) a b <span class="symbol">=</span>
   <span class="type-name">Left</span>  a
@@ -600,6 +607,30 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> abs [<span class="type-name">Add</span> a<span class="symbol">,</span> <span class="type-name">Ord</span> a] (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select (x <span class="symbol">&gt;</span> zero) x (zero <span class="symbol">-</span> x)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mod (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> rem (y <span class="symbol">+</span> rem x y) y
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Floating</span> a] <span class="type-name">Floating</span> (n<span class="symbol">=&gt;</span>a)
+  exp    <span class="symbol">=</span> map exp
+  exp2   <span class="symbol">=</span> map exp2
+  log    <span class="symbol">=</span> map log
+  log2   <span class="symbol">=</span> map log2
+  log10  <span class="symbol">=</span> map log10
+  log1p  <span class="symbol">=</span> map log1p
+  sin    <span class="symbol">=</span> map sin
+  cos    <span class="symbol">=</span> map cos
+  tan    <span class="symbol">=</span> map tan
+  sinh   <span class="symbol">=</span> map sinh
+  cosh   <span class="symbol">=</span> map cosh
+  tanh   <span class="symbol">=</span> map tanh
+  floor  <span class="symbol">=</span> map floor
+  ceil   <span class="symbol">=</span> map ceil
+  round  <span class="symbol">=</span> map round
+  sqrt   <span class="symbol">=</span> map sqrt
+  pow    <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> pow x<span class="symbol">.</span>i y<span class="symbol">.</span>i
+  lgamma <span class="symbol">=</span> map lgamma
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> axis1 (x <span class="symbol">:</span> a <span class="symbol">=&gt;</span> b <span class="symbol">=&gt;</span> c) <span class="symbol">:</span> b <span class="symbol">=&gt;</span> a <span class="symbol">=&gt;</span> c <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> axis2 (x <span class="symbol">:</span> a <span class="symbol">=&gt;</span> b <span class="symbol">=&gt;</span> c <span class="symbol">=&gt;</span> d) <span class="symbol">:</span> c <span class="symbol">=&gt;</span> a <span class="symbol">=&gt;</span> b <span class="symbol">=&gt;</span> d <span class="symbol">=</span> <span class="keyword">for</span> k<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+</div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reindex (ixr<span class="symbol">:</span> b <span class="symbol">-&gt;</span> a) (tab<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> b<span class="symbol">=&gt;</span>v <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> tab<span class="symbol">.</span>(ixr i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span>
@@ -622,8 +653,8 @@ code {
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fsum (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> yieldAccum <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs i
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sum  [<span class="type-name">Add</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> reduce zero (<span class="symbol">+</span>) xs
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> prod [<span class="type-name">Mul</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> reduce one  (<span class="symbol">*</span>) xs
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sum xs <span class="symbol">/</span> <span class="type-name">IToF</span> (size n)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> std (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> mean (map sq xs) <span class="symbol">-</span> sq (mean xs)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean [<span class="type-name">VSpace</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> sum xs <span class="symbol">/</span> <span class="type-name">IToF</span> (size n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> std [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">Floating</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> v <span class="symbol">=</span> sqrt <span class="symbol">$</span> mean (map sq xs) <span class="symbol">-</span> sq (mean xs)
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> any (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> reduce <span class="type-name">False</span> (<span class="symbol">||</span>) xs
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> all (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> reduce <span class="type-name">True</span>  (<span class="symbol">&amp;&amp;</span>) xs
 </div></div><div class="cell"><div class="code-block">
@@ -818,7 +849,7 @@ code {
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Length-erased lists</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">List</span> a <span class="symbol">=</span>
-  <span class="type-name">AsList</span> n<span class="symbol">:</span><span class="type-name">Int</span> foo<span class="symbol">:</span>(<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a)
+  <span class="type-name">AsList</span> n<span class="symbol">:</span><span class="type-name">Int</span> elements<span class="symbol">:</span>(<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unsafeCastTable (m<span class="symbol">:</span><span class="type-name">Type</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
   <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(unsafeFromOrdinal _ (ordinal i))
@@ -1271,6 +1302,11 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Arbitrary</span> a] <span class="type-name">Arbitrary</span> (n<span class="symbol">=&gt;</span>a)
   arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> arb <span class="symbol">$</span> ixkey key i
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Arbitrary</span> a<span class="symbol">,</span> <span class="type-name">Arbitrary</span> b] <span class="type-name">Arbitrary</span> (a <span class="symbol">&amp;</span> b)
+  arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
+      [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> splitKey key
+      (arb k1<span class="symbol">,</span> arb k2)
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">Fin</span> n)
   arb <span class="symbol">=</span> randIdx
 </div></div><div class="cell"><div class="code-block">
@@ -1307,12 +1343,15 @@ code {
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> minimumBy id xs
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximum [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> o <span class="symbol">=</span> maximumBy id xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmin [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argscan (comp<span class="command">:o</span><span class="symbol">-&gt;</span>o<span class="symbol">-&gt;</span><span class="type-name">Bool</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span>
   zeroth <span class="symbol">=</span> (0<span class="symbol">@</span>_<span class="symbol">,</span> xs<span class="symbol">.</span>(0<span class="symbol">@</span>_))
   compare <span class="symbol">=</span> <span class="symbol">\</span>(idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)<span class="symbol">.</span>
-    select (x1 <span class="symbol">&lt;</span> x2) (idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)
+    select (comp x1 x2) (idx1<span class="symbol">,</span> x1) (idx2<span class="symbol">,</span> x2)
   zipped <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (i<span class="symbol">,</span> xs<span class="symbol">.</span>i)
   fst <span class="symbol">$</span> reduce zeroth compare zipped
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmin [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span> argscan (<span class="symbol">&lt;</span>) xs
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmax [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) <span class="symbol">:</span> n <span class="symbol">=</span> argscan (<span class="symbol">&gt;</span>) xs
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> clip [<span class="type-name">Ord</span> a] ((low<span class="symbol">,</span>high)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>a)) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
   min high <span class="symbol">$</span> max low x
@@ -1594,4 +1633,11 @@ code {
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> assert (b<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> {<span class="type-name">Except</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   <span class="keyword">if</span> not b <span class="keyword">then</span> throw ()
-</div></div></div></body></html>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- -- Reliably causes a segfault if pointers aren&#39;t initialized to zero.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- -- TODO: add this test when we cache modules
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- justSomeDataToTestCaching = toList for i:(Fin 100).
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   if ordinal i == 0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     then Left (toList [1,2,3])
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     else Right 1
+</span></div></div></div></body></html>
