@@ -9,7 +9,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 bindingsToTopEnv, initTopEnv, EvalConfig (..), TopEnv (..)) where
+                 initTopEnv, EvalConfig (..), TopEnv (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -329,9 +329,6 @@ instance Monoid TopEnv where
 
 moduleStatus :: ModuleName -> ModuleImportStatus -> TopEnv
 moduleStatus name status = mempty { modulesImported = M.singleton name status}
-
-bindingsToTopEnv :: Bindings -> TopEnv
-bindingsToTopEnv bindings = mempty { topBindings = bindings }
 
 instance HasPtrs TopEnv where
   traversePtrs f (TopEnv bindings status) =

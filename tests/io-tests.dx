@@ -72,6 +72,3 @@ unsafeIO \().
 
 :p dex_test_mode ()
 > True
-
-:p justSomeDataToTestCaching
-> [(AsList 3 [1, 2, 3]), (AsList 0 []), (AsList 2 [1, 2])]

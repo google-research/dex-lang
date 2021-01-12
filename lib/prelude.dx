@@ -1592,6 +1592,3 @@ def throw (_:Unit) : {Except} a =
 
 def assert (b:Bool) : {Except} Unit =
   if not b then throw ()
-
--- TODO: remove this when we have modules that exercise the data-caching path
-justSomeDataToTestCaching = [toList [1,2,3], toList [], toList [1,2]]
