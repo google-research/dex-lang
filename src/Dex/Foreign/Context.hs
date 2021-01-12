@@ -33,7 +33,7 @@ import PPrint
 
 import Dex.Foreign.Util
 
-data Context = Context EvalConfig Bindings
+data Context = Context EvalConfig TopEnv
 
 foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
 setError :: String -> IO ()
@@ -45,7 +45,7 @@ dexCreateContext = do
   let evalConfig = EvalConfig LLVM Nothing Nothing
   maybePreludeEnv <- evalPrelude evalConfig preludeSource
   case maybePreludeEnv of
-    Right preludeEnv -> toStablePtr $ Context evalConfig (topBindings preludeEnv)
+    Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
     Left  err        -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
   where
     evalPrelude :: EvalConfig -> String -> IO (Either Err TopEnv)
@@ -66,10 +66,10 @@ dexEval :: Ptr Context -> CString -> IO (Ptr Context)
 dexEval ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
-  (results, finalEnv) <- runStateT (evalSource evalConfig source) (bindingsToTopEnv env)
+  (results, finalEnv) <- runStateT (evalSource evalConfig source) env
   let anyError = asum $ fmap (\case (_, Result _ (Left err)) -> Just err; _ -> Nothing) results
   case anyError of
-    Nothing  -> toStablePtr $ Context evalConfig (topBindings finalEnv)
+    Nothing  -> toStablePtr $ Context evalConfig finalEnv
     Just err -> setError (pprint err) $> nullPtr
 
 dexInsert :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
@@ -77,8 +77,8 @@ dexInsert ctxPtr namePtr atomPtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   name <- GlobalName . fromString <$> peekCString namePtr
   atom <- fromStablePtr atomPtr
-  let env' = env <> name @> (getType atom, LetBound PlainLet (Atom atom))
-  toStablePtr $ Context evalConfig env'
+  let newBinding = name @> (getType atom, LetBound PlainLet (Atom atom))
+  toStablePtr $ Context evalConfig $ env <> TopEnv newBinding mempty
 
 dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
 dexEvalExpr ctxPtr sourcePtr = do
@@ -89,7 +89,7 @@ dexEvalExpr ctxPtr sourcePtr = do
       let (v, m) = exprAsModule expr
       let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
       (resultEnv, Result [] maybeErr) <-
-          evalSourceBlock evalConfig (bindingsToTopEnv env) block
+          evalSourceBlock evalConfig env block
       case maybeErr of
         Right () -> do
           let (_, LetBound _ (Atom atom)) = topBindings resultEnv ! v
@@ -101,7 +101,7 @@ dexLookup :: Ptr Context -> CString -> IO (Ptr Atom)
 dexLookup ctxPtr namePtr = do
   Context _ env <- fromStablePtr ctxPtr
   name <- peekCString namePtr
-  case envLookup env (GlobalName $ fromString name) of
+  case envLookup (topBindings env) (GlobalName $ fromString name) of
     Just (_, LetBound _ (Atom atom)) -> toStablePtr atom
     Just _                           -> setError "Looking up an expression" $> nullPtr
     Nothing                          -> setError "Unbound name" $> nullPtr

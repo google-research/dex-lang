@@ -14,6 +14,8 @@ module Serialize (pprintVal, cached, getDexString, cachedWithSnapshot,
 import Prelude hiding (pi, abs)
 import Control.Monad
 import qualified Data.ByteString as BS
+import Data.ByteString.Internal (memcpy)
+import Data.ByteString.Unsafe (unsafeUseAsCString)
 import System.Directory
 import System.FilePath
 import Control.Monad.Writer
@@ -131,10 +133,32 @@ class HasPtrs a where
 
 takeSnapshot :: HasPtrs a => a -> IO (WithSnapshot a)
 takeSnapshot x =
+  -- TODO: we're using `Writer []` (as we do elsewhere) which has bad
+  -- asymptotics. We should switch all of these uses to use snoc lists instead.
   liftM (WithSnapshot x) $ execWriterT $ flip traversePtrs x \ptrTy ptrVal -> do
     snapshot <- lift $ takePtrSnapshot ptrTy ptrVal
     tell [snapshot]
     return ptrVal
+
+takePtrSnapshot :: PtrType -> RawPtr -> IO PtrSnapshot
+takePtrSnapshot _ ptrVal | ptrVal == nullPtr = return NullPtr
+takePtrSnapshot (Heap CPU, ptrTy) ptrVal = case ptrTy of
+  PtrType eltTy -> do
+    childPtrs <- loadPtrPtrs ptrVal
+    PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
+  _ -> ByteArray <$> loadPtrBytes ptrVal
+takePtrSnapshot (Heap GPU, _) _ = error "Snapshots of GPU memory not implemented"
+takePtrSnapshot (Stack   , _) _ = error "Can't take snapshots of stack memory"
+
+loadPtrBytes :: RawPtr -> IO BS.ByteString
+loadPtrBytes ptr = do
+  numBytes <- fromIntegral <$> dexAllocSize ptr
+  liftM BS.pack $ peekArray numBytes $ castPtr ptr
+
+loadPtrPtrs :: RawPtr -> IO [RawPtr]
+loadPtrPtrs ptr = do
+  numBytes <- fromIntegral <$> dexAllocSize ptr
+  peekArray (numBytes `div` ptrSize) $ castPtr ptr
 
 restoreSnapshot :: HasPtrs a => WithSnapshot a -> IO a
 restoreSnapshot (WithSnapshot x snapshots) =
@@ -143,36 +167,20 @@ restoreSnapshot (WithSnapshot x snapshots) =
     put ss
     lift $ restorePtrSnapshot s
 
-takePtrSnapshot :: PtrType -> RawPtr -> IO PtrSnapshot
-takePtrSnapshot _ ptrVal | ptrVal == nullPtr = return NullPtr
-takePtrSnapshot (_, ptrTy) ptrVal = case ptrTy of
-  PtrType eltTy -> do
-    childPtrs <- loadPtrPtrs ptrVal
-    PtrArray <$> mapM (takePtrSnapshot eltTy) childPtrs
-  _ -> ByteArray <$> loadPtrBytes ptrVal
-
 restorePtrSnapshot :: PtrSnapshot -> IO RawPtr
 restorePtrSnapshot snapshot = case snapshot of
   PtrArray  children -> storePtrPtrs =<< mapM restorePtrSnapshot children
   ByteArray bytes    -> storePtrBytes bytes
   NullPtr            -> return nullPtr
 
-loadPtrBytes :: RawPtr -> IO BS.ByteString
-loadPtrBytes ptr = do
-  numBytes <- fromIntegral <$> dexAllocSize ptr
-  liftM BS.pack $ peekArray numBytes $ castPtr ptr
-
 storePtrBytes :: BS.ByteString -> IO RawPtr
 storePtrBytes xs = do
-  let xs' = BS.unpack xs
-  ptr <- dexMalloc $ fromIntegral $ length xs'
-  pokeArray (castPtr ptr) xs'
-  return ptr
-
-loadPtrPtrs :: RawPtr -> IO [RawPtr]
-loadPtrPtrs ptr = do
-  numBytes <- fromIntegral <$> dexAllocSize ptr
-  peekArray (numBytes `div` ptrSize) $ castPtr ptr
+  let numBytes = BS.length xs
+  destPtr <- dexMalloc $ fromIntegral numBytes
+  -- this is safe because we don't modify srcPtr's memory or let it escape
+  unsafeUseAsCString xs \srcPtr ->
+    memcpy (castPtr destPtr) (castPtr srcPtr) numBytes
+  return destPtr
 
 storePtrPtrs :: [RawPtr] -> IO RawPtr
 storePtrPtrs ptrs = do
