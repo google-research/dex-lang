@@ -1592,3 +1592,10 @@ def throw (_:Unit) : {Except} a =
 
 def assert (b:Bool) : {Except} Unit =
   if not b then throw ()
+
+-- -- Reliably causes a segfault if pointers aren't initialized to zero.
+-- -- TODO: add this test when we cache modules
+-- justSomeDataToTestCaching = toList for i:(Fin 100).
+--   if ordinal i == 0
+--     then Left (toList [1,2,3])
+--     else Right 1
