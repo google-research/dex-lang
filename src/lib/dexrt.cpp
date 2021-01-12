@@ -38,6 +38,12 @@ char* malloc_dex(int64_t nbytes) {
   return ptr + alignment;
 }
 
+char* dex_malloc_initialized(int64_t nbytes) {
+  char *ptr = malloc_dex(nbytes);
+  memset(ptr, 0, nbytes);
+  return ptr;
+}
+
 void free_dex(char* ptr) {
   free(ptr - alignment);
 }

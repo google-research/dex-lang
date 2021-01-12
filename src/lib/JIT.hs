@@ -262,7 +262,12 @@ compileInstr instr = case instr of
     Heap dev -> do
       numBytes <- mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s
       case dev of
-        CPU -> malloc     elemTy numBytes
+        CPU -> case t of
+          -- XXX: it's important to initialize pointers to zero so that we don't
+          --      try to dereference them when we serialize.
+          PtrType _ -> malloc True  elemTy numBytes
+          _         -> malloc False elemTy numBytes
+        -- TODO: initialize GPU pointers too, once we handle serialization
         GPU -> cuMemAlloc elemTy numBytes
     where elemTy = scalarTy t
   Free ptr -> [] <$ do
@@ -734,10 +739,13 @@ alloca elems ty = do
   return $ L.LocalReference (hostPtrTy ty) v
   where instr = L.Alloca ty (Just $ i32Lit elems) 0 []
 
-malloc :: L.Type -> Operand -> Compile Operand
-malloc ty bytes = do
+malloc :: Bool -> L.Type -> Operand -> Compile Operand
+malloc initialize ty bytes = do
   bytes64 <- asIntWidth bytes i64
-  castLPtr ty =<< emitExternCall mallocFun [bytes64]
+  ptr <- if initialize
+    then emitExternCall mallocInitializedFun [bytes64]
+    else emitExternCall mallocFun            [bytes64]
+  castLPtr ty ptr
 
 free :: Operand -> Compile ()
 free ptr = do
@@ -983,6 +991,10 @@ mathFlags = L.noFastMathFlags { L.allowContract = allowContractions }
 
 mallocFun :: ExternFunSpec
 mallocFun = ExternFunSpec "malloc_dex" (hostPtrTy i8) [L.NoAlias] [] [i64]
+
+mallocInitializedFun :: ExternFunSpec
+mallocInitializedFun =
+  ExternFunSpec "dex_malloc_initialized" (hostPtrTy i8) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]
