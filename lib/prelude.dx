@@ -229,6 +229,13 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
 def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
 def BToF (x:Bool) : Float = IToF (BToI x)
 
+data Ordering =
+  LT
+  EQ
+  GT
+
+def OToW8 (x : Ordering) : Word8 = %dataConTag x
+
 '## Effects
 
 def Ref (r:Type) (a:Type) : Type = %Ref r a
@@ -356,6 +363,39 @@ instance [Ord a, Ord b] Ord (a & b)
   (>) = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
   (<) = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
 
+instance Eq Ordering
+  (==) = \x y. OToW8 x == OToW8 y
+
+interface Monoid a
+  mempty : a
+  mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
+
+def (<>) [Monoid a] : a -> a -> a = mcombine
+
+def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
+  swap $ runState init \s. for i.
+    c = get s
+    (c', y) = body i c
+    s := c'
+    y
+
+def fold (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
+
+def compare [Ord a] (x:a) (y:a) : Ordering =
+  if x < y
+    then LT
+    else if x == y
+      then EQ
+      else GT
+
+instance Monoid Ordering
+  mempty = EQ
+  mcombine = \x y.
+    case x of
+      LT -> LT
+      GT -> GT
+      EQ -> y
+
 -- TODO: accumulate using the True/&& monoid
 instance [Eq a] Eq (n=>a)
   (==) = \xs ys.
@@ -363,6 +403,16 @@ instance [Eq a] Eq (n=>a)
       yieldAccum \ref. for i.
         ref += (IToF (BToI (xs.i /= ys.i)))
     numDifferent == 0.0
+
+instance [Ord a] Ord (n=>a)
+  (>) = \xs ys.
+    f: Ordering =
+        fold EQ $ \i c. c <> (compare xs.i ys.i)
+    f == GT
+  (<) = \xs ys.
+    f: Ordering =
+        fold EQ $ \i c. c <> (compare xs.i ys.i)
+    f == LT
 
 '## Transcencendental functions
 
@@ -571,14 +621,6 @@ def axis2 (x : a => b => c => d) : c => a => b => d = for k. for i. for j. x.i.j
 
 def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
 
-def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
-  swap $ runState init \s. for i.
-    c = get s
-    (c', y) = body i c
-    s := c'
-    y
-
-def fold (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
 def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
   -- `combine` should be a commutative and associative, and form a
   -- commutative monoid with `identity`
@@ -781,14 +823,6 @@ def tile1 (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
 --              arr.(t +> UNSAFEFromOrdinal idx 1)
 --              arr.(t +> UNSAFEFromOrdinal idx 2)
 --              arr.(t +> UNSAFEFromOrdinal idx 3))
-
-'## Monoid typeclass
-
-interface Monoid a
-  mempty : a
-  mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
-
-def (<>) [Monoid a] : a -> a -> a = mcombine
 
 '## Length-erased lists
 
