@@ -1,21 +1,24 @@
 '# Dex Tutorial
 
-' Dex is a functional, statically typed language for array processing. There are
-  many tools for array processing, from high-level libraries like NumPy and
-  MATLAB to low-level languages like CUDA. Dex gives you many of the safety and
-  simplicity benefits of high-level array processing languages, without
-  requiring that users give up low-level control.
+' Dex is a functional, statically typed language for array
+  processing. There are many tools for array processing, from
+  high-level libraries like NumPy and MATLAB to low-level languages
+  like CUDA. Dex is a new approach for high-level array processing
+  that aims for the clarity of high-level libraries while allowing for
+  more granular expressivity. In particular, Dex does not force you to
+  rewrite all operations in terms of batched tensor interactions, but
+  allows for a range of interactions. Put more simply, when learning
+  MATLAB students are told repeatedly to "avoid for loops". *Dex gives
+  for loops back*.
 
-
-include "plot.dx"
 
 
 '## Table comprehensions
 
-' Before getting into language details, let us begin with the most useful
-  component of Dex, the `for` builder. The best analogy for this construct is
-  list comprehensions in Python. For instance, in Python, we might write a
-  list comprehension like:
+' Let us begin with the most useful component of Dex, the `for`
+  builder. The best analogy for this construct is list comprehensions
+  in Python. For instance, in Python, we might write a list
+  comprehension like:
 
 ' `x = [[1.0 for j in range(width)] for i in range(height)]`
 
@@ -26,17 +29,25 @@ Width = Fin 8
 
 x = for i:Height. for j:Width. 1.0
 
-' Once we have an variable, we can print it `:p`
+' Once we have a variable, we can print it.
 
-:p x
+x
 
 ' More interestingly, we can also see its type with `:t`. This type tells us
-  that `x` is a two-dimensional table, whose first dimension has size `Height` and
-  second dimension has size `Width`.
+  that `x` is a two-dimensional table, whose first dimension has type `Height` and
+  second dimension has type `Width`.
 
 :t x
 
-' We can also display it as html. Right now not so interesting :)
+
+' Here `Fin` stands for `finite` represents the type of range from 0
+to the value given minus one. The `:` tells us the type of the
+enumeration variable.
+
+' We can also display it as html. To do this we include the plot library.
+  Right now our table is not so interesting :)
+
+include "plot.dx"
 
 :html matshow x
 
@@ -49,27 +60,30 @@ x = for i:Height. for j:Width. 1.0
   table indexing syntax, which uses `table.i` instead of square brackets for
   subscripting.
 
-x5 = for i:Height. for j:Width. x.i.j + 5.0
-
-:p x5
+:t for i:Height. for j:Width. x.i.j + 5.0
 
 ' However, we can make this expression nicer. Because `x` has a known table type
   and `i` and `j` index into that type, Dex can infer the range of the loop.
   That means that we can safely remove the explicit `Fin` type annotations and
   get the same result.
 
-x5' = for i. for j. x.i.j + 5.0
+:t for i. for j. x.i.j + 5.0
 
-' We can further reduce this table by applying standard table reduction functions like
+' Dex also lets you reduce this expression to include multiple variables
+  in the same `for`.
+
+:t for i j. x.i.j + 5.0
+
+' Standard functions can be  applied as well. Here we take the
   `mean` over each column:
 
 :t for i. mean x.i
 
 ' This style of using `for` to construct type-inferred tables is central to what
-  makes Dex powerful.
+  makes Dex powerful. Tables do not only need to have `Fin` types.
 
 ' Let's consider another example. This one produces a list of
-  length 50 in Python.
+  in Python.
 
 ' `y = [1.0 for j in range(width) for i in range(height)]`
 
@@ -85,28 +99,26 @@ y5 = for i. y.i + 5.0
 
 ' And we can apply table functions to the table:
 
-:t mean y
+mean y
 
-' But things start to get interesting when we consider the type of the table.
-  Unlike the Python example, which produces a flat list, the Dex table
-  maintains the index type of its construction. In particular, the type of the
-  table remembers the original ranges.
+' But things start to get interesting when we consider the type of the
+  table.  Unlike the Python example, which produces a flat list (or
+  other examples like NumPy arrays), the Dex table maintains the index
+  type of its construction. In particular, the type of the table
+  remembers the original ranges.
 
 :t y
 
 '## Typed indexing
 
-' The use of typed indices lets you do really neat things, but it
-  breaks things from other languages. Critically, one cannot
+' The use of typed indices lets you do really neat things, but
+  lets consider how it works. Critically, one cannot
   simply index an table with an integer.
 
 r = x.3
 
 ' Instead, it is necessary to cast the integer into the index type of the
-  current shape. This type annotation is done with the `@` operator. (If it
-  helps, you can think of table indexing as function application: `a.i` applies
-  table `a` with index `i` just like how `f x` applies function `f` with
-  argument `x`.)
+  current shape. This type annotation is done with the `@` operator. 
 
 :t x
 
@@ -116,31 +128,42 @@ row = x.(3 @ Height)
 
 :t row.(5 @ Width)
 
-' This explicit annotation is a bit verbose, but it is often not necessary in
-  practice. Constructs like `for` can infer index types,
-  which is why we didn't have to use any `@` symbols when constructing above.
+' If you are feeling lazy and sure of yourself, you can also let Dex infer
+  the type for you. This is also how `for` works in the examples above that
+  did not provide and explicit type annotation. 
 
-' Similarly, you cannot use indices as integers as you might be used to. It is
-  necessary to explicitly annotate index types.
+:t row.(5 @ _)
+
+' If it helps, you can think of table indexing as function application: `a.i` applies
+  table `a` with index `i` just like how `f x` applies function `f` with
+  argument `x`.
+
+' Another consequence is that you cannot use indices as integers. It
+  is necessary to explicitly annotate index types with `ordinal`.
 
 :t for i:Height. for j:Width. i + j
 
 :t for i:Height. for j:Width. (ordinal i) + (ordinal j)
 
 ' If we want to convert these to floats we do it manually with the IToF function.
-  We can use to this to make a pretty gradient.
+  We can use to this to make an image gradient.
 
 gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
 :html matshow gradient
 
 ' As we have seen, indices are not limited to only integers. Many different Dex
-  types are valid index types. For example, we declared table `x2` as having a
+  types are valid index types. For example, we declared table `y` as having a
   pair of integers as its index type (`a & b` means tuple type), so indexing
-  into `x2` requires creating a tuple value (via `(x, y)`).
+  into `y` requires creating a tuple value.
 
 :t y
 
 :t y.(3 @ Height, 5 @ Width)
+
+' Tuple indices also provide an ordinal value. 
+
+for pair:(Fin 2 & Fin 3). ordinal pair
+
 
 ' Many algorithms in Dex come down to being able to pack and unpack these
   indices. For example, we have seen that it is easy to sum over one dimension
@@ -174,9 +197,15 @@ gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
 def add5 (x:Float32) : Float32 =
     x + 5.0
 
-:p add5 1.0
+add5 1.0
 
 :t for i. add5 y.i
+
+' Functions also have types. Note that that function types in Dex
+  use the `->` symbol whereas tables use `=>`.
+
+:t add5
+
 
 ' We can also write functions with type variables over their inputs. For
   instance, we may want to be able to write a function that applies "adds 5"
@@ -215,29 +244,34 @@ def tabAdd (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
 
 :t tabAdd x (trans x)
 
-' The type system checked for us that input tables indeed have the same shape.
+' The type system checked for us that the input tables indeed have the same shape.
 
 
 '## Case Study: MNist
+
+' To run this section, move the following binary files to examples:
+
+' `wget https://github.com/srush/learns-dex/raw/main/mnist.bin`
+
+' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
+
 
 ' To make some of these concepts for tangible let us consider a real example
   using MNist digits. For this example we will first read in a batch of images
   each with a fixed size.
 
-Batch = Fin 100
+Batch = Fin 5000
 IHeight = Fin 28
 IWidth = Fin 28
-Channels = Fin 3 
+Channels = Fin 3
+Class = Fin 10
+Image = (IHeight => IWidth => Float)
+
 Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
 
 ' To do this we will use Dex's IO to load some images from a file.
-  This part uses some features we have not yet covered, so you can
+  This section uses features outside the scope of the tutorial, so you can
   ignore it for now. 
-
-raw =
-    ls = unsafeIO $ \ _. readFile "examples/mnist.5.bin"
-    (AsList _ im) = ls
-    unsafeCastTable Full im
 
 def pixel (x:Char) : Float32 =
      r = W8ToI x
@@ -245,29 +279,37 @@ def pixel (x:Char) : Float32 =
              True -> (abs r) + 128
              False -> r
 
-' Here we use comprehensions to create the full data table.
+def getIm : Batch => Image = 
+    (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
+    raw = unsafeCastTable Full im
+    for b: Batch i j.
+        pixel raw.((ordinal (b, i, j)) @ Full)
 
+def getLabel : Batch => Class =
+    (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
+    r = unsafeCastTable Batch im2
+    for i. (W8ToI r.i @ Class)
 
-ims =
-   for b: Batch.
-     for i:IWidth.
-       for j:IHeight.
-          pixel raw.((ordinal (b, i, j)) @ Full)
+' Once you have downloaded the files, uncomment these lines to
+  see the images of below.
 
-' We can look at the images we have loaded now using `matshow` 
+all_ims = getIm
+all_labels = getLabel
 
-im = ims.(0 @ Batch)
+ims = for i : (Fin 100). all_ims.(ordinal i@_)
+
+im = ims.(0 @ _)
 :html matshow im
 
-:html matshow ims.(1 @ Batch)
+:html matshow ims.(1 @ _)
 
-' We might also use aggregation to compute image statistics.
+' This show the mean pixel value aggregation over all images.
 
 :html matshow (sum ims)
 
 ' This example overplots three different handwritten images.
 
-imscolor = for i. for j. for c:Channels. ims.((ordinal c)@Batch).i.j
+imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
 :t imscolor
 
@@ -282,19 +324,22 @@ imscolor2 = for b. for i. for j. for c:Channels.
 
 :html imseqshow (imscolor2 / 255.0)
 
-' Sum pooling downsamples the image as the max of each pixel in a tile grid pattern. 
+' This example utilizes the type system to help manipulate the shape
+  of an image. Sum pooling downsamples the image as the max of each
+  pixel in a tile grid pattern. See if you can figure out the other
+  types.
 
 def split (x: m=>v) : n=>o=>v =
-    for i. for j. x.((ordinal (i,j))@m)
+    for i j. x.(ordinal (i,j)@_)
             
-def imtile (x: a=>b=>v) : n =>o=>p=>q=>v =
-    for kw. for kh. for w. for h. (split (split x).w.kw).h.kh
+def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
+    for kh kw h w. (split (split x).h.kh).w.kw
 
-im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@Batch)
+im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@_)
 
 :html matshow (sum (sum im1))
 
-im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@Batch)
+im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 :html matshow (sum (sum im2))
 
@@ -310,13 +355,13 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@Batch)
   is not directly possible solely via list comprehensions, so we would write a
   loop.
 
-'  `acc = 0`
+'  `acc = 0.0`
 
 '  `for i in range(len(x)):`
 
 '      `acc = acc + x[i]`
 
-'  `return acc / len(x)
+'  `return acc / len(x)`
 
 ' In Dex, values are immutable, so we cannot directly perform mutation. But Dex
   includes algebraic effects, which are a purely-functional way to modeling
@@ -325,11 +370,9 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@Batch)
   and `:=` assignment). Here's what it looks like:
 
 def tabMean (x : n => Float32) : Float32 =
-    -- acc = 0
-    init = 0.0
 
-    -- (New Line)
-    withState init $ \acc.
+    -- acc = 0 
+    withState 0.0 $ \acc.
     
          -- for i in range(len(x))
          for i.
@@ -339,7 +382,7 @@ def tabMean (x : n => Float32) : Float32 =
          -- return acc / len(x)
          (get acc) / (IToF (size n)) 
              
-:p tabMean [0.0, 1.0, 0.5]
+tabMean [0.0, 1.0, 0.5]
 
 ' So, even though Dex is a functional language, it is possible to write loops
   that look similar to ones that truly perform mutation. However, there is one
@@ -364,7 +407,8 @@ def tabMean (x : n => Float32) : Float32 =
 
 :t \ x. x + 10
 
-:p (\ x. x + 10) 20  
+(\ x. x + 10) 20  
+
 
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
@@ -372,13 +416,12 @@ def tabMean (x : n => Float32) : Float32 =
   "mutable value" reference (`acc` here), and returns a pair of the body
   function's result and the final value. Here's a simple example:
 
-:p withState 10 $ \ state.
+withState 10 $ \ state.
      state := 30
      state := 10
      get state
 
-' The first element of the returned pair is the body function's result (`20`).
-  The second element is the final value of the variable (`30`).
+' The element returned pair is the body function's result (`10`)
 
 ' Finally: this is a good point to talk a bit about some other operators in Dex.
   In the examples above, we see two types of equal sign operators: `=` and `:=`.
@@ -393,7 +436,7 @@ def tabMean (x : n => Float32) : Float32 =
 
 ' The other is `:=`, which is an assignment operator that can only be used
   when a `State` effect is available (e.g. inside of a body function passed to
-  `withState`. `ref := x` assigns the value `x` to the mutable reference `ref`.
+  `withState`). `ref := x` assigns the value `x` to the mutable reference `ref`.
   Reading the value in `ref` is possible via the `get` function. or via using
   the final result returned by `withState`.
 
@@ -487,7 +530,7 @@ instance [VSpace v, VSpace w] VSpace (v & w)
 ' Now that we has more functions we can revisit some of the MNist examples.
 
 
-' Function that uses state to produce a histogram
+' Function that uses state to produce a histogram:
 
 Pixels = Fin 256
 
@@ -500,10 +543,10 @@ def bincount (inp : a => b) : b => Int =
 
 ' Plot how many times each pixel value occurs in an image
 
-hist = bincount $ for (i,j). (FToI (ims.(0 @ Batch).i.j + 1.0) @Pixels)
+hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j + 1.0) @Pixels)
 :t hist
 
-:html showPlot $ xyPlot (for i. ( (IToF $ ordinal i))) (for i. (IToF hist.i))
+:html showPlot $ yPlot (for i. (IToF hist.i))
 
 ' Find nearest images in the dataset.
 
@@ -518,15 +561,86 @@ dist = for b1. for b2.
 
 nearest = for i. argmin dist.i
 
-double = for b:Batch. for i. for j. for c:Channels.
-          case ordinal c == 0 of 
-             True -> ims.b.i.j
-             False -> ims.(nearest.b).i.j
+double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 
 :html imseqshow double
 
+
+'## Variable Length Lists
+
+
+' So far all the examples have assumed that we
+  know the exact size of our tables. This is a
+  common assumption in array languages, but
+  it makes some operations surprisingly difficult
+  to do. 
+
+' For instance, we might want to filter our set of
+  images to only allow for images of 5's. But what is
+  the type of this table?
+
+' Dex allows for tables with an unknown and varying length
+  using the `List` construct. You can think of list as
+  hiding one finite dimension of a table.
+
+:t for i:Height. 0.0
+
+AsList _ $ for i:Height. 0.0
+
+:t AsList _ $ for i:Height. 0.0
+
+' Tables of lists can be concatenated down to
+  single lists. 
+
+z = concat [AsList _ [3.0],
+        AsList _ [1.0, 2.0 ]] 
+z
+
+' And they can be deconstructed to fetch a new table.
+
+(AsList _ temptab) = z
+temptab
+
+' Using this construct we can return to extracting
+  the 5's from the image set. Here `mempty` is
+  synonymous with `AsList _ []`. 
+
+def findFives (x : a=>b) (y : a=>Class) : List b =
+    concat for i. case (y.i == (5 @ _)) of
+            True -> AsList _ [x.i]
+            False -> mempty
+
+
+' Note though that the type here does not tell us
+  how many 5's there are. The type system cannot know this.
+  To figure it out we need to unpack the list. 
+
+temp = findFives all_ims all_labels 
+(AsList nFives fives) = temp
+
+nFives
+
+' However we can still utilize the table. For instance
+  if we are summing over the hidden dimension, we never
+  need to know how big it is.
+
+:html matshow (sum fives)
 
 
 '## Conclusion
 
 
+' We hope this gives you enough information to start playing with Dex.
+  This is just a start though of the different functionality available
+  in the language. If you are interested in continuing to learn, we recommend
+  you look at the examples in the `examples/` directory, check out the prelude
+  in `lib/prelude.dx`, and file issues on the GitHub repo. We have a welcoming
+  and excited community, and we hope you are interested enough to join us.
+
+' Here are some topics to check out in the Prelude:
+
+' * Randomness and Keys
+  * Laziness of For Comprehensions 
+  * Records and Variant Types
+  * File IO
+  * Effects Beyond State
