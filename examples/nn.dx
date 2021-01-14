@@ -109,11 +109,16 @@ simple = \h1.
   }
 
 
-def train_class [VSpace p] (model: Layer a (b=>Float) p)
+
+' Train a multiclass classifier with minibatch SGD
+' `minibatch * minibatches = batch`
+
+def trainClass [VSpace p] (model: Layer a (b=>Float) p)
                            (x: batch=>a)
                            (y: batch=>b)
                            (epochs : Type)
-                           (minibatch : Type)  (minibatches : Type) :
+                           (minibatch : Type)
+                           (minibatches : Type) :
     (epochs => p & epochs => Float ) =
   xs : minibatches => minibatch => a = split x
   ys : minibatches => minibatch => b = split y
@@ -131,7 +136,7 @@ def train_class [VSpace p] (model: Layer a (b=>Float) p)
 
 -- todo : Do I have to give minibatches as a param?
 simple_model = simple (Fin 10)
-(all_params,losses) = train_class simple_model xs (for i. (y.i @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
+(all_params,losses) = trainClass simple_model xs (for i. (y.i @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
 
 span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
@@ -233,7 +238,7 @@ init_param = (init model  $ newKey 0)
 
 :t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param
 
-(all_params', losses') = train_class model small_ims small_labels Epochs Minibatch Minibatches
+(all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
 
 :p losses'
 
