@@ -88,7 +88,8 @@ include "plot.dx"
 ' `y = [1.0 for j in range(width) for i in range(height)]`
 
 ' The analogous table construct in Dex is written in the following form. It
-  produces a one-dimensional table of `Height x Width` elements.
+  produces a one-dimensional table of `Height x Width` elements. Here `&`
+  indicates a tuple constructor. 
 
 y = for  (i, j) : (Height & Width) . 1.0
 
@@ -140,6 +141,7 @@ row = x.(3 @ Height)
 
 ' Another consequence is that you cannot use indices as integers. It
   is necessary to explicitly annotate index types with `ordinal`.
+  This is because finite sets i.e. `Fin` are not closed under addition.
 
 :t for i:Height. for j:Width. i + j
 
