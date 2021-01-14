@@ -95,12 +95,11 @@ xs = for i. [x1.i, x2.i]
 
 :html showPlot $ xycPlot x1 x2 $ for i. IToF y.i
 
-simple =
-  ndense1 = dense (Fin 2) (Fin 10)
-  ndense2 = dense (Fin 10) (Fin 2)
+simple = \h1.
+  ndense1 = dense (Fin 2) h1
+  ndense2 = dense h1 (Fin 2)
   {
-    forward = (\ param x.
-         (dense1, dense2) = param
+    forward = (\ (dense1, dense2) x.
          x1' = forward ndense1 dense1 x
          x1 = for i. relu x1'.i
          logsoftmax $ forward ndense2 dense2 x1),
@@ -131,11 +130,12 @@ def train_class [VSpace p] (model: Layer a (b=>Float) p)
        (get params, loss)
 
 -- todo : Do I have to give minibatches as a param?
-(all_params,losses) = train_class simple xs (for i. (y.i @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
+simple_model = simple (Fin 10)
+(all_params,losses) = train_class simple_model xs (for i. (y.i @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
 
 span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
-        r = forward simple all_params.((ordinal h * 10)@_) [span.i, span.j]
+        r = forward simple_model all_params.((ordinal h * 10)@_) [span.i, span.j]
         [exp r.(1@_), exp r.(0@_), 0.0]
         
 
@@ -148,16 +148,12 @@ W = 28
 Image = Fin 1 => Fin H => Fin W => Float 
 Class = Fin 10
 
-
-lenet =
-  H1 = Fin 4
-  H2 = Fin 8
-  H3 = Fin 64
-  ncnn1 = cnn (Fin 1) H1 3 3
-  ncnn2 = cnn H1 H2 3 3
-  Pooled = (H2 & Fin 7 & Fin 7)
-  ndense1 = dense Pooled H3
-  ndense2 = dense H3 Class
+lenet = \h1 h2 h3 .
+  ncnn1 = cnn (Fin 1) h1 3 3
+  ncnn2 = cnn h1 h2 3 3
+  Pooled = (h2 & Fin 7 & Fin 7)
+  ndense1 = dense Pooled h3
+  ndense2 = dense h3 Class
   {
     forward = (\ (cnn1, cnn2, dense1, dense2) inp.
          x:Image = inp
@@ -165,8 +161,8 @@ lenet =
          x1 = for i j k. relu x1'.i.j.k
          x2' = forward ncnn2 cnn2 x1
          x2 = for i j k. relu x2'.i.j.k
-         x3 : (H2 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
-         x4' = forward ndense1 dense1 for (i,j,k). x3.i.j.k
+         x3 : (h2 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
+         x4' = forward ndense1 dense1 for (i,j,k). x3.i.j.k     
          x4 = for i. relu x4'.i
          logsoftmax $ forward ndense2 dense2 x4),
     init = (\key.
@@ -204,7 +200,6 @@ def getLabel : Batch => Class =
     for i. (W8ToI r.i @ Class)
 
 
-
 ' ## Training loop
 
 
@@ -219,27 +214,28 @@ def getLabel : Batch => Class =
 ims = getIm
 labels = getLabel
 
-
-small_ims = for i: (Fin 100). ims.((ordinal i)@_)
-small_labels = for i: (Fin 100). labels.((ordinal i)@_)
+small_ims = for i: (Fin 10). ims.((ordinal i)@_)
+small_labels = for i: (Fin 10). labels.((ordinal i)@_)
 
 :p small_labels
 
-Epochs = (Fin 1)
-Minibatches = (Fin 100)
-Minibatch = (Fin 50)
+Epochs = (Fin 5)
+Minibatches = (Fin 1)
+Minibatch = (Fin 10)
 
-(all_params', losses') = train_class lenet ims labels Epochs Minibatch Minibatches
+:t ims.(2@_)
+
+model = lenet (Fin 1) (Fin 1) (Fin 20) 
+init_param = (init model  $ newKey 0)
+:p forward model init_param (ims.(2@Batch))
+
+' Sanity check
+
+:t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param
+
+(all_params', losses') = train_class model small_ims small_labels Epochs Minibatch Minibatches
 
 :p losses'
 
-
--- dist = forward lenet (all_params'.(0@_)) (ims.(2@_))
-
--- :p for i . exp dist.i
-
--- :p labels.(2@_)
-
--- :html matshow ims.(2@_)
 
 
