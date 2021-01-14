@@ -1,6 +1,8 @@
-' # Neural Networks in Dex
+' # Neural Networks
+
 
 ' ## NN Prelude
+
 
 def relu (input : Float) : Float =
   select (input > 0.0) input 0.0
@@ -149,16 +151,16 @@ ims' =
 
 ' ## Training loop
 
-Epochs = (Fin 3)
+Epochs = (Fin 2)
 Minibatches = (Fin 250)
 Minibatch = (Fin 20)
-ims : Minitbatches=>Minibatch=>Image = split ims'
-labels : Minitbatches=>Minibatch=>Int = split labels'
+ims : Minibatches=>Minibatch=>Image = split ims'
+labels : Minibatches=>Minibatch=>Int = split labels'
 
 
 (losses, params) = runState (init lenet $ newKey 0) $ \params .
   for e : Epochs.
-    for i : Minitbatches.
+    for i : Minibatches.
        (loss, gradfn) =  vjp (\ params.
                      -sum for j : Minibatch.
                          result = forward lenet params (for c. ims.i.j)
