@@ -1,0 +1,181 @@
+' # Neural Networks in Dex
+
+' ## NN Prelude
+
+def relu (input : Float) : Float =
+  select (input > 0.0) input 0.0
+
+instance [Add a, Add b] Add (a & b)
+  add = \(a, b) (c, d). ( (a + c), (b + d))
+  sub = \(a, b) (c, d). ( (a - c), (b - d))
+  zero = (zero, zero)
+
+instance [VSpace a, VSpace b] VSpace (a & b)
+  scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
+
+def Layer (inp:Type) (out:Type) (param:Type) : Type=
+  {forward:(param -> inp -> out) &
+   init: Key -> param
+  }
+
+def forward (l:Layer i o p) (p : p) (x : i): o =
+  (getAt #forward l) p x
+
+def init (l:Layer i o p) (k:Key)  : p  =
+  (getAt #init l) k
+
+
+' ## Layers 
+
+' Dense layer
+
+def Dense (a:Type) (b:Type) : Type =
+  Layer (a=>Float) (b=>Float) ((a=>b=>Float) & (b=>Float))
+
+def dense (a:Type) (b:Type) : Dense a b =
+  {
+   forward = (\(weight, bias) x .
+               for j:b. (bias.j + sum for i :a. weight.i.j * x.i)),
+   init = arb
+  }
+
+' CNN layer
+
+def CNN (h:Int) (w:Int) (inc:Type) (outc:Type) (kw:Int) (kh:Int) : Type =
+  (Layer (inc=>Fin h=>Fin w=>Float)
+         (outc=>Fin h=>Fin w=>Float)
+         ((outc=>inc=>Fin kh=>Fin kw=>Float) &
+          (outc=>Float)))
+
+def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
+           (kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float) :
+     outc=>(Fin h)=>(Fin w)=>Float =
+     for o. for i.for j.
+         (i', j') = (ordinal i, ordinal j)
+         case (i' + kh) < h && (j' + kw) < w of
+          True ->
+              sum for ki. sum for kj.
+                  (di, dj) = (unsafeFromOrdinal (Fin h) (i' + (ordinal ki)),
+                              unsafeFromOrdinal (Fin w) (j' + (ordinal kj)))
+                  sum for inp. x.inp.di.dj * kernel.o.inp.ki.kj
+          False -> zero
+
+'TODO -> Figure out how to hide the h and w
+
+def cnn (h:Int) (w:Int) (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
+    CNN h w inc outc kw kh =
+  {
+    forward = \(weight, bias) x. conv2d x weight,
+    init = arb
+  }
+
+' Pooling 
+
+def split (x: m=>v) : n=>o=>v =
+    for i. for j. x.((ordinal (i,j))@m)
+            
+def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
+    for kw. for kh. for w. for h. (split (split x).w.kw).h.kh
+
+def meanpool (kh: Type) (kw: Type) (x : m=>n=> Float) : ( h=>w=> Float) =
+    out : (kh => kw => h => w => Float) = imtile x
+    mean $ mean out
+
+
+
+' ## LeNet for image classification
+
+H = 28
+W = 28
+Image = Fin H => Fin W => Float 
+Class = Fin 10
+
+
+lenet =
+  ncnn1 = cnn H W (Fin 1) (Fin 4) 3 3
+  ncnn2 = cnn H W (Fin 4) (Fin 8) 3 3
+  ndense1 = dense (Fin 392) (Fin 64)
+  ndense2 = dense (Fin 64) Class
+  {
+    forward = (\ param x.
+         (cnn1, cnn2, dense1, dense2) = param
+         x1' = forward ncnn1 cnn1 x
+         x1 = for i. for j. for k. relu x1'.i.j.k
+         x2' = forward ncnn2 cnn2 (for i. for j. for k. relu x1.i.j.k)
+         x2 = for i. for j. for k. relu x2'.i.j.k
+         x3 : (Fin 8 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
+         x3' = castTable (Fin 392) (for (i, j, k). x3.i.j.k)
+         x4' = forward ndense1 dense1 x3'
+         x4 = for i. relu x4'.i
+         logsoftmax $ forward ndense2 dense2 x4),
+    init = (\key.
+         [k1, k2, k3, k4] = splitKey key
+         (init ncnn1 k1, init ncnn2 k2,
+         init ndense1 k3, init ndense2 k4))
+  }
+
+
+
+
+' ## Data Loading
+
+  
+Batch = Fin 5000
+Full = Fin ((size Batch) * H * W)
+
+raw =
+    ls = unsafeIO $ \ _. readFile "examples/mnist.bin"
+    (AsList _ im) = ls
+    unsafeCastTable Full im
+
+def pixel (x:Char) : Float32 =
+     r = W8ToI x
+     IToF case r < 0 of
+             True -> (abs r) + 128
+             False -> r
+labels' =
+    ls = unsafeIO $ \ _. readFile "examples/labels.bin"
+    (AsList _ im) = ls
+    r = unsafeCastTable Batch im
+    for i. W8ToI r.i
+
+
+ims' =
+   for b: Batch.
+     for i:(Fin W).
+       for j:(Fin H).
+          pixel raw.((ordinal (b, i, j)) @ Full)
+
+
+' ## Training loop
+
+Epochs = (Fin 3)
+Minibatches = (Fin 250)
+Minibatch = (Fin 20)
+ims : Minitbatches=>Minibatch=>Image = split ims'
+labels : Minitbatches=>Minibatch=>Int = split labels'
+
+
+(losses, params) = runState (init lenet $ newKey 0) $ \params .
+  for e : Epochs.
+    for i : Minitbatches.
+       (loss, gradfn) =  vjp (\ params.
+                     -sum for j : Minibatch.
+                         result = forward lenet params (for c. ims.i.j)
+                         result.((labels.i.j)@Class)) (get params)
+       gparams = gradfn 1.0
+       params := (get params) - scaleVec (0.01 / (IToF (size Batch)))  gparams
+       loss
+
+:p losses
+
+
+dist = forward lenet params (for c.ims.(2@_))
+:p for i . exp dist.i
+:p labels.(2@_)
+
+include "plot.dx"
+
+:html matshow ims.(2@_)
+
+
