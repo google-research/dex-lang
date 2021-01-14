@@ -17,7 +17,7 @@ instance [VSpace a, VSpace b] VSpace (a & b)
   scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
 
 def Layer (inp:Type) (out:Type) (param:Type) : Type=
-  {forward:(param -> inp -> out) &
+  {forward: param -> inp -> out &
    init: Key -> param
   }
 
@@ -38,7 +38,7 @@ def Dense (a:Type) (b:Type) : Type =
 def dense (a:Type) (b:Type) : Dense a b =
   {
    forward = (\(weight, bias) x .
-               for j:b. (bias.j + sum for i :a. weight.i.j * x.i)),
+               for j. (bias.j + sum for i. weight.i.j * x.i)),
    init = arb
   }
 
@@ -53,19 +53,17 @@ def CNN (h:Int) (w:Int) (inc:Type) (outc:Type) (kw:Int) (kh:Int) : Type =
 def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
            (kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float) :
      outc=>(Fin h)=>(Fin w)=>Float =
-     for o. for i.for j.
+     for o i j.
          (i', j') = (ordinal i, ordinal j)
          case (i' + kh) < h && (j' + kw) < w of
           True ->
-              sum for ki:(Fin kh). sum for kj:(Fin kw).
+              sum for (ki, kj, inp).
                   (di, dj) = (unsafeFromOrdinal (Fin h) (i' + (ordinal ki)),
                               unsafeFromOrdinal (Fin w) (j' + (ordinal kj)))
-                  sum for inp. x.inp.di.dj * kernel.o.inp.ki.kj
+                  x.inp.di.dj * kernel.o.inp.ki.kj
           False -> zero
 
-'TODO -> Figure out how to hide the h and w
-
-def cnn (h:Int) (w:Int) (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
+def cnn (h:Int) ?-> (w:Int) ?-> (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
     CNN h w inc outc kw kh =
   {
     forward = \(weight, bias) x. conv2d x weight,
@@ -75,14 +73,14 @@ def cnn (h:Int) (w:Int) (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
 ' Pooling 
 
 def split (x: m=>v) : n=>o=>v =
-    for i. for j. x.((ordinal (i,j))@m)
+    for i j. x.((ordinal (i,j))@m)
             
 def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
-    for kw. for kh. for w. for h. (split (split x).w.kw).h.kh
+    for kw kh w h. (split (split x).w.kw).h.kh
 
 def meanpool (kh: Type) (kw: Type) (x : m=>n=> Float) : ( h=>w=> Float) =
     out : (kh => kw => h => w => Float) = imtile x
-    mean $ mean out
+    mean for (i,j). out.i.j
 
 ' ## Simple point classifier
 
@@ -92,9 +90,8 @@ x2 : Fin 100 => Float = arb k2
 y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0)) of
   True -> 1
   False -> 0
-xs = for i. for j : (Fin 2).
-     select (j == (0@(Fin 2))) x1.i x2.i
-    
+xs = for i. [x1.i, x2.i]
+
 
 :html showPlot $ xycPlot x1 x2 $ for i. IToF y.i
 
@@ -112,22 +109,35 @@ simple =
          (init ndense1 k1, init ndense2 k2))
   }
 
-(all_params, fparams) = runState (init simple $ newKey 0) $ \params .
-  for _ : (Fin 500).
-       (loss, gradfn) =  vjp (\ params.
-                     -sum for j.
-                         result = forward simple params xs.j
-                         result.((y.j)@(Fin 2))) (get params)
-       gparams = gradfn 1.0
-       params := (get params) - scaleVec (0.05 / (IToF 100))  gparams
-       get params
+
+def train_class [VSpace p] (model: Layer a (b=>Float) p)
+                           (x: batch=>a)
+                           (y: batch=>b)
+                           (epochs : Type)
+                           (minibatch : Type)  (minibatches : Type) :
+    (epochs => p & epochs => Float ) =
+  xs : minibatches => minibatch => a = split x
+  ys : minibatches => minibatch => b = split y
+  unzip $ withState (init model $ newKey 0) $ \params .
+     for _ : epochs.
+       loss = sum $ for b : minibatches. 
+              (loss, gradfn) =  vjp (\ params.
+                            -sum for j.
+                                       result = forward model params xs.b.j
+                                       result.(ys.b.j)) (get params)
+              gparams = gradfn 1.0
+              params := (get params) - scaleVec (0.05 / (IToF 100)) gparams
+              loss
+       (get params, loss)
+
+-- todo : Do I have to give minibatches as a param?
+(all_params,losses) = train_class simple xs (for i. (y.i @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
 
 span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
         r = forward simple all_params.((ordinal h * 10)@_) [span.i, span.j]
         [exp r.(1@_), exp r.(0@_), 0.0]
         
-:t tests
 
 :html imseqshow tests
 
@@ -140,17 +150,17 @@ Class = Fin 10
 
 
 lenet =
-  ncnn1 = cnn H W (Fin 1) (Fin 4) 3 3
-  ncnn2 = cnn H W (Fin 4) (Fin 8) 3 3
+  ncnn1 = cnn (Fin 1) (Fin 4) 3 3
+  ncnn2 = cnn (Fin 4) (Fin 8) 3 3
   ndense1 = dense (Fin 392) (Fin 64)
   ndense2 = dense (Fin 64) Class
   {
-    forward = (\ param x.
-         (cnn1, cnn2, dense1, dense2) = param
+    forward = (\ (cnn1, cnn2, dense1, dense2) inp.
+         x:(Fin 1)=>Image = inp
          x1' = forward ncnn1 cnn1 x
-         x1 = for i. for j. for k. relu x1'.i.j.k
+         x1 = for i j k. relu x1'.i.j.k
          x2' = forward ncnn2 cnn2 x1
-         x2 = for i. for j. for k. relu x2'.i.j.k
+         x2 = for i j k. relu x2'.i.j.k
          x3 : (Fin 8 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
          x3' = castTable (Fin 392) (for (i, j, k). x3.i.j.k)
          x4' = forward ndense1 dense1 x3'
@@ -164,62 +174,67 @@ lenet =
 
 
 
-
 ' ## Data Loading
 
-  
+
+
+
+
 Batch = Fin 5000
 Full = Fin ((size Batch) * H * W)
-
-raw =
-    ls = unsafeIO $ \ _. readFile "examples/mnist.bin"
-    (AsList _ im) = ls
-    unsafeCastTable Full im
 
 def pixel (x:Char) : Float32 =
      r = W8ToI x
      IToF case r < 0 of
              True -> (abs r) + 128
              False -> r
-labels' =
-    ls = unsafeIO $ \ _. readFile "examples/labels.bin"
-    (AsList _ im) = ls
-    r = unsafeCastTable Batch im
-    for i. W8ToI r.i
+
+def getIm : Batch => (Fin 1) => Image = 
+    (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
+    raw = unsafeCastTable Full im
+    for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
+        pixel raw.((ordinal (b, i, j)) @ Full)
+def getLabel : Batch => Class =
+    (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
+    r = unsafeCastTable Batch im2
+    for i. (W8ToI r.i @ Class)
 
 
-ims' =
-   for b: Batch.
-     for i:(Fin W).
-       for j:(Fin H).
-          pixel raw.((ordinal (b, i, j)) @ Full)
+
 
 
 ' ## Training loop
 
-Epochs = (Fin 1)
-Minibatches = (Fin 250)
+
+' Get binary files from:
+
+' `wget https://github.com/srush/learns-dex/raw/main/mnist.bin`
+
+' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
+
+' Comment out these lines
+
+-- ims = getIm
+-- labels = getLabel
+
+
+small_ims = for i: (Fin 100). ims.((ordinal i)@_)
+small_labels = for i: (Fin 100). labels.((ordinal i)@_)
+
+Epochs = (Fin 5)
+Minibatches = (Fin 5)
 Minibatch = (Fin 20)
-ims : Minibatches=>Minibatch=>Image = split ims'
-labels : Minibatches=>Minibatch=>Int = split labels'
+
+(all_params', losses') = train_class lenet ims labels Epochs Minibatch Minibatches
 
 
-(losses, params) = runState (init lenet $ newKey 0) $ \params .
-  for _ : Epochs.
-    for i : Minibatches.
-       (loss, gradfn) =  vjp (\ params.
-                     -sum for j : Minibatch.
-                         result = forward lenet params (for c. ims.i.j)
-                         result.((labels.i.j)@Class)) (get params)
-       gparams = gradfn 1.0
-       params := (get params) - scaleVec (0.01 / (IToF (size Minibatch)))  gparams
-       loss
-
-:p losses
+:p losses'
 
 
-dist = forward lenet params (for c.ims.(2@_))
+dist = forward lenet (all_params'.(0@_)) (ims.(2@_))
+
 :p for i . exp dist.i
+
 :p labels.(2@_)
 
 :html matshow ims.(2@_)
