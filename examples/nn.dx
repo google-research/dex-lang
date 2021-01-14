@@ -1,5 +1,6 @@
 ' # Neural Networks
 
+include "plot.dx"
 
 ' ## NN Prelude
 
@@ -56,7 +57,7 @@ def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
          (i', j') = (ordinal i, ordinal j)
          case (i' + kh) < h && (j' + kw) < w of
           True ->
-              sum for ki. sum for kj.
+              sum for ki:(Fin kh). sum for kj:(Fin kw).
                   (di, dj) = (unsafeFromOrdinal (Fin h) (i' + (ordinal ki)),
                               unsafeFromOrdinal (Fin w) (j' + (ordinal kj)))
                   sum for inp. x.inp.di.dj * kernel.o.inp.ki.kj
@@ -83,7 +84,52 @@ def meanpool (kh: Type) (kw: Type) (x : m=>n=> Float) : ( h=>w=> Float) =
     out : (kh => kw => h => w => Float) = imtile x
     mean $ mean out
 
+' ## Simple point classifier
 
+[k1, k2] = splitKey $ newKey 1
+x1 : Fin 100 => Float = arb k1
+x2 : Fin 100 => Float = arb k2
+y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0)) of
+  True -> 1
+  False -> 0
+xs = for i. for j : (Fin 2).
+     select (j == (0@(Fin 2))) x1.i x2.i
+    
+
+:html showPlot $ xycPlot x1 x2 $ for i. IToF y.i
+
+simple =
+  ndense1 = dense (Fin 2) (Fin 10)
+  ndense2 = dense (Fin 10) (Fin 2)
+  {
+    forward = (\ param x.
+         (dense1, dense2) = param
+         x1' = forward ndense1 dense1 x
+         x1 = for i. relu x1'.i
+         logsoftmax $ forward ndense2 dense2 x1),
+    init = (\key.
+         [k1, k2] = splitKey key
+         (init ndense1 k1, init ndense2 k2))
+  }
+
+(all_params, fparams) = runState (init simple $ newKey 0) $ \params .
+  for _ : (Fin 500).
+       (loss, gradfn) =  vjp (\ params.
+                     -sum for j.
+                         result = forward simple params xs.j
+                         result.((y.j)@(Fin 2))) (get params)
+       gparams = gradfn 1.0
+       params := (get params) - scaleVec (0.05 / (IToF 100))  gparams
+       get params
+
+span = linspace (Fin 10) (-1.0) (1.0)
+tests = for h : (Fin 50). for i . for j.
+        r = forward simple all_params.((ordinal h * 10)@_) [span.i, span.j]
+        [exp r.(1@_), exp r.(0@_), 0.0]
+        
+:t tests
+
+:html imseqshow tests
 
 ' ## LeNet for image classification
 
@@ -103,7 +149,7 @@ lenet =
          (cnn1, cnn2, dense1, dense2) = param
          x1' = forward ncnn1 cnn1 x
          x1 = for i. for j. for k. relu x1'.i.j.k
-         x2' = forward ncnn2 cnn2 (for i. for j. for k. relu x1.i.j.k)
+         x2' = forward ncnn2 cnn2 x1
          x2 = for i. for j. for k. relu x2'.i.j.k
          x3 : (Fin 8 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
          x3' = castTable (Fin 392) (for (i, j, k). x3.i.j.k)
@@ -151,7 +197,7 @@ ims' =
 
 ' ## Training loop
 
-Epochs = (Fin 2)
+Epochs = (Fin 1)
 Minibatches = (Fin 250)
 Minibatch = (Fin 20)
 ims : Minibatches=>Minibatch=>Image = split ims'
@@ -159,14 +205,14 @@ labels : Minibatches=>Minibatch=>Int = split labels'
 
 
 (losses, params) = runState (init lenet $ newKey 0) $ \params .
-  for e : Epochs.
+  for _ : Epochs.
     for i : Minibatches.
        (loss, gradfn) =  vjp (\ params.
                      -sum for j : Minibatch.
                          result = forward lenet params (for c. ims.i.j)
                          result.((labels.i.j)@Class)) (get params)
        gparams = gradfn 1.0
-       params := (get params) - scaleVec (0.01 / (IToF (size Batch)))  gparams
+       params := (get params) - scaleVec (0.01 / (IToF (size Minibatch)))  gparams
        loss
 
 :p losses
@@ -175,8 +221,6 @@ labels : Minibatches=>Minibatch=>Int = split labels'
 dist = forward lenet params (for c.ims.(2@_))
 :p for i . exp dist.i
 :p labels.(2@_)
-
-include "plot.dx"
 
 :html matshow ims.(2@_)
 
