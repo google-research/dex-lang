@@ -36,7 +36,7 @@ import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
-import Embed
+import Builder
 import Syntax
 import Env
 import Type
@@ -140,7 +140,7 @@ toImpStandalone fname ~(LamVal b body) = do
   let outTy = getType body
   backend <- asks impBackend
   curDev <- asks curDevice
-  (ptrSizes, ~(Con (ConRef (PairCon outDest argDest)))) <- fromEmbed $
+  (ptrSizes, ~(Con (ConRef (PairCon outDest argDest)))) <- fromBuilder $
     makeDest (backend, curDev, Unmanaged) (PairTy outTy argTy)
   impBlock <- scopedErrBlock $ do
     arg <- destToAtom argDest
@@ -400,10 +400,10 @@ toImpHof env (maybeDest, hof) = do
       dest <- allocDest maybeDest resultTy
       buildKernel idxTy \LaunchInfo{..} buildBody -> do
         liftM (,()) $ buildBody \ThreadInfo{..} -> do
-          let threadBody = fst $ flip runSubstEmbed (freeVars fbody) $
+          let threadBody = fst $ flip runSubstBuilder (freeVars fbody) $
                 buildLam (Bind $ "hwidx" :> threadRange) PureArrow \hwidx ->
                   appReduce fbody =<< (emitOp $ Inject hwidx)
-          let threadDest = Con $ TabRef $ fst $ flip runSubstEmbed (freeVars dest) $
+          let threadDest = Con $ TabRef $ fst $ flip runSubstBuilder (freeVars dest) $
                 buildLam (Bind $ "hwidx" :> threadRange) TabArrow \hwidx ->
                   indexDest dest =<< (emitOp $ Inject hwidx)
           void $ toImpHof env (Just threadDest, For (RegularFor Fwd) threadBody)
@@ -419,12 +419,12 @@ toImpHof env (maybeDest, hof) = do
       emitLoop (binderNameHint tb) Fwd nTiles \iTile -> do
         tileOffset <- toScalarAtom <$> iTile `imulI` tileLen
         let tileAtom = Con $ IndexSliceVal idxTy tileIdxTy tileOffset
-        tileDest <- fromEmbed $ sliceDestDim d dest tileOffset tileIdxTy
+        tileDest <- fromBuilder $ sliceDestDim d dest tileOffset tileIdxTy
         void $ translateBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
       emitLoop (binderNameHint sb) Fwd nEpilogue \iEpi -> do
         i <- iEpi `iaddI` epilogueOff
         idx <- intToIndex idxTy i
-        sDest <- fromEmbed $ indexDestDim d dest idx
+        sDest <- fromBuilder $ indexDestDim d dest idx
         void $ translateBlock (env <> sb @> idx) (Just sDest, sBody)
       destToAtom dest
     PTileReduce baseMonoids idxTy' ~(BinaryFunVal gtidB nthrB _ body) -> do
@@ -438,7 +438,7 @@ toImpHof env (maybeDest, hof) = do
         thrAccsArr <- alloc $ TabTy (Ignore widIdxTy) $ TabTy (Ignore tidIdxTy) accTypes
         mappingKernelBody <- buildBody \ThreadInfo{..} -> do
           let TC (ParIndexRange _ gtid nthr) = threadRange
-          let tileDest = Con $ TabRef $ fst $ flip runSubstEmbed (freeVars mappingDest) $ do
+          let tileDest = Con $ TabRef $ fst $ flip runSubstBuilder (freeVars mappingDest) $ do
                 buildLam (Bind $ "hwidx":>threadRange) TabArrow \hwidx -> do
                   indexDest mappingDest =<< (emitOp $ Inject hwidx)
           wgThrAccs <- destGet thrAccsArr =<< intToIndex widIdxTy wid
@@ -496,7 +496,7 @@ toImpHof env (maybeDest, hof) = do
           let accsDestList = fromDestConsList accsDest
           let Right accsUpdatesList = fromConsList accsUpdates
           forM_ (zip3 accsDestList baseMonoids accsUpdatesList) $ \(dest, bm, update) -> do
-            extender <- fromEmbed $ mextendForRef dest bm update
+            extender <- fromBuilder $ mextendForRef dest bm update
             void $ toImpOp (Nothing, PrimEffect dest $ MExtend extender)
         -- TODO: Do some popcount tricks?
         prevPowerOf2 :: IExpr -> ImpM IExpr
@@ -594,10 +594,10 @@ data DestEnv = DestEnv
 
 -- The Cat env carries names for the pointers needed, along with their types and
 -- blocks that compute allocation sizes needed
-type DestM = ReaderT DestEnv (CatT (Env (Type, Block)) Embed)
+type DestM = ReaderT DestEnv (CatT (Env (Type, Block)) Builder)
 
 -- builds a dest and a list of pointer binders along with their required allocation sizes
-makeDest :: AllocInfo -> Type -> Embed ([(Binder, Atom)], Dest)
+makeDest :: AllocInfo -> Type -> Builder ([(Binder, Atom)], Dest)
 makeDest allocInfo ty = do
   (dest, ptrs) <- flip runCatT mempty $ flip runReaderT env $ makeDestRec ty
   ptrs' <- forM (envPairs ptrs) \(v, (ptrTy, numel)) -> do
@@ -618,7 +618,7 @@ makeDestRec ty = case ty of
         makeBoxes (envPairs ptrs) dest
       else do
         lam <- buildLam (Bind ("i":> binderAnn b)) TabArrow \(Var i) -> do
-          bodyTy' <- substEmbed (b@>Var i) bodyTy
+          bodyTy' <- substBuilder (b@>Var i) bodyTy
           withEnclosingIdxs (Bind i) $ makeDestRec bodyTy'
         return $ Con $ TabRef lam
   TypeCon def params -> do
@@ -688,7 +688,7 @@ makeDataConDest (Nest b rest) = do
   let ty = binderAnn b
   dest <- makeDestRec ty
   v <- freshVarE UnknownBinder b  -- TODO: scope names more carefully
-  rest'  <- substEmbed (b @> Var v) rest
+  rest'  <- substBuilder (b @> Var v) rest
   rest'' <- withDepVar (Bind v) $ makeDataConDest rest'
   return $ Nest (DataConRefBinding (Bind v) dest) rest''
 
@@ -734,10 +734,10 @@ copyDataConArgs (Nest (DataConRefBinding b ref) rest) (x:xs) = do
 copyDataConArgs bindings args =
   error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
 
-loadDest :: MonadEmbed m => Dest -> m Atom
+loadDest :: MonadBuilder m => Dest -> m Atom
 loadDest (BoxedRef b ptrPtr _ body) = do
   ptr <- unsafePtrLoad ptrPtr
-  body' <- substEmbed (b@>ptr) body
+  body' <- substBuilder (b@>ptr) body
   loadDest body'
 loadDest (DataConRef def params bs) = do
   DataCon def params 0 <$> loadDataConArgs bs
@@ -745,7 +745,7 @@ loadDest (Con dest) = do
  case dest of
   BaseTypeRef ptr -> unsafePtrLoad ptr
   TabRef (TabVal b body) -> buildLam b TabArrow \i -> do
-    body' <- substEmbed (b@>i) body
+    body' <- substBuilder (b@>i) body
     result <- emitBlock body'
     loadDest result
   RecordRef xs -> Record <$> traverse loadDest xs
@@ -759,14 +759,14 @@ loadDest (Con dest) = do
   _          -> error $ "Not a valid dest: " ++ pprint dest
 loadDest dest = error $ "Not a valid dest: " ++ pprint dest
 
-loadDataConArgs :: MonadEmbed m => Nest DataConRefBinding -> m [Atom]
+loadDataConArgs :: MonadBuilder m => Nest DataConRefBinding -> m [Atom]
 loadDataConArgs Empty = return []
 loadDataConArgs (Nest (DataConRefBinding b ref) rest) = do
   val <- loadDest ref
-  rest' <- substEmbed (b@>val) rest
+  rest' <- substBuilder (b@>val) rest
   (val:) <$> loadDataConArgs rest'
 
-indexDestDim :: MonadEmbed m => Int->Dest -> Atom -> m Dest
+indexDestDim :: MonadBuilder m => Int->Dest -> Atom -> m Dest
 indexDestDim 0 dest i = indexDest dest i
 indexDestDim d dest i = buildFor Fwd (Bind ("i":>idxTy)) \j -> do
   dest' <- indexDest dest j
@@ -775,11 +775,11 @@ indexDestDim d dest i = buildFor Fwd (Bind ("i":>idxTy)) \j -> do
     RawRefTy (TabTy idxBinder _) = dest
     idxTy = binderType idxBinder
 
-indexDest :: MonadEmbed m => Dest -> Atom -> m Dest
+indexDest :: MonadBuilder m => Dest -> Atom -> m Dest
 indexDest (Con (TabRef tabVal)) i = appReduce tabVal i
 indexDest dest _ = error $ pprint dest
 
-sliceDestDim :: MonadEmbed m => Int -> Dest -> Atom -> Type -> m Dest
+sliceDestDim :: MonadBuilder m => Int -> Dest -> Atom -> Type -> m Dest
 sliceDestDim 0 dest i sliceIdxTy = sliceDest dest i sliceIdxTy
 sliceDestDim d dest i sliceIdxTy = buildFor Fwd (Bind ("i":>idxTy)) \j -> do
   dest' <- indexDest dest j
@@ -788,7 +788,7 @@ sliceDestDim d dest i sliceIdxTy = buildFor Fwd (Bind ("i":>idxTy)) \j -> do
     RawRefTy (TabTy idxBinder _) = dest
     idxTy = binderType idxBinder
 
-sliceDest :: MonadEmbed m => Dest -> Atom -> Type -> m Dest
+sliceDest :: MonadBuilder m => Dest -> Atom -> Type -> m Dest
 sliceDest ~(Con (TabRef tab@(TabVal b _))) i sliceIdxTy = (Con . TabRef) <$> do
   buildFor Fwd (Bind ("j" :> sliceIdxTy)) \j -> do
     j' <- indexToIntE j
@@ -797,10 +797,10 @@ sliceDest ~(Con (TabRef tab@(TabVal b _))) i sliceIdxTy = (Con . TabRef) <$> do
     appReduce tab vidx
 
 destToAtom :: Dest -> ImpM Atom
-destToAtom dest = fromEmbed $ loadDest dest
+destToAtom dest = fromBuilder $ loadDest dest
 
 destGet :: Dest -> Atom -> ImpM Dest
-destGet dest i = fromEmbed $ indexDest dest i
+destGet dest i = fromBuilder $ indexDest dest i
 
 destPairUnpack :: Dest -> (Dest, Dest)
 destPairUnpack (Con (ConRef (PairCon l r))) = (l, r)
@@ -819,7 +819,7 @@ makeAllocDestWithPtrs :: AllocType -> Type -> ImpM (Dest, [IExpr])
 makeAllocDestWithPtrs allocTy ty = do
   backend <- asks impBackend
   curDev <- asks curDevice
-  (ptrsSizes, dest) <- fromEmbed $ makeDest (backend, curDev, allocTy) ty
+  (ptrsSizes, dest) <- fromBuilder $ makeDest (backend, curDev, allocTy) ty
   (env, ptrs) <- flip foldMapM ptrsSizes \(Bind (ptr:>PtrTy ptrTy), size) -> do
     ptr' <- emitAlloc ptrTy $ fromScalarAtom size
     case ptrTy of
@@ -948,21 +948,21 @@ toScalarType b = BaseTy b
 
 -- === Type classes ===
 
-fromEmbed :: Subst a => Embed a -> ImpM a
-fromEmbed m = do
+fromBuilder :: Subst a => Builder a -> ImpM a
+fromBuilder m = do
   scope <- variableScope
-  let (ans, (_, decls)) = runEmbed m scope
+  let (ans, (_, decls)) = runBuilder m scope
   env <- catFoldM translateDecl mempty $ fmap (Nothing,) decls
   impSubst env ans
 
 intToIndex :: Type -> IExpr -> ImpM Atom
-intToIndex ty i = fromEmbed (intToIndexE ty (toScalarAtom i))
+intToIndex ty i = fromBuilder (intToIndexE ty (toScalarAtom i))
 
 indexToInt :: Atom -> ImpM IExpr
-indexToInt idx = fromScalarAtom <$> fromEmbed (indexToIntE idx)
+indexToInt idx = fromScalarAtom <$> fromBuilder (indexToIntE idx)
 
 indexSetSize :: Type -> ImpM IExpr
-indexSetSize ty = fromScalarAtom <$> fromEmbed (indexSetSizeE ty)
+indexSetSize ty = fromScalarAtom <$> fromBuilder (indexSetSizeE ty)
 
 zipTabDestAtom :: HasCallStack => (Dest -> Atom -> ImpM ()) -> Dest -> Atom -> ImpM ()
 zipTabDestAtom f ~dest@(Con (TabRef (TabVal b _))) ~src@(TabVal b' _) = do
@@ -1009,29 +1009,29 @@ storeAnywhere ptr val = do
 allocateStackSingleton :: IType -> ImpM IExpr
 allocateStackSingleton ty = allocateBuffer Stack False ty (IIdxRepVal 1)
 
--- === Imp embedding ===
+-- === Imp IR builders ===
 
-embedBinOp :: (Atom -> Atom -> Embed Atom) -> (IExpr -> IExpr -> ImpM IExpr)
-embedBinOp f x y =
-  fromScalarAtom <$> fromEmbed (f (toScalarAtom x) (toScalarAtom y))
+buildBinOp :: (Atom -> Atom -> Builder Atom) -> (IExpr -> IExpr -> ImpM IExpr)
+buildBinOp f x y =
+  fromScalarAtom <$> fromBuilder (f (toScalarAtom x) (toScalarAtom y))
 
 iaddI :: IExpr -> IExpr -> ImpM IExpr
-iaddI = embedBinOp iadd
+iaddI = buildBinOp iadd
 
 isubI :: IExpr -> IExpr -> ImpM IExpr
-isubI = embedBinOp isub
+isubI = buildBinOp isub
 
 imulI :: IExpr -> IExpr -> ImpM IExpr
-imulI = embedBinOp imul
+imulI = buildBinOp imul
 
 idivI :: IExpr -> IExpr -> ImpM IExpr
-idivI = embedBinOp idiv
+idivI = buildBinOp idiv
 
 iltI :: IExpr -> IExpr -> ImpM IExpr
-iltI = embedBinOp ilt
+iltI = buildBinOp ilt
 
 ieqI :: IExpr -> IExpr -> ImpM IExpr
-ieqI = embedBinOp ieq
+ieqI = buildBinOp ieq
 
 bandI :: IExpr -> IExpr -> ImpM IExpr
 bandI x y = emitInstr $ IPrimOp $ ScalarBinOp BAnd x y

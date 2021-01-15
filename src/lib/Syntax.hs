@@ -112,7 +112,7 @@ data Atom = Var Var
           -- XXX: Variable name must not be an alias for another name or for
           -- a statically-known atom. This is because the variable name used
           -- here may also appear in the type of the atom. (We maintain this
-          -- invariant during substitution and in Embed.hs.)
+          -- invariant during substitution and in Builder.hs.)
           | ProjectElt (NE.NonEmpty Int) Var
             deriving (Show, Generic)
 

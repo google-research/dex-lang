@@ -25,7 +25,7 @@ import System.FilePath
 import Paths_dex  (getDataFileName)
 
 import Syntax
-import Embed
+import Builder
 import Cat
 import Env
 import Type
@@ -294,7 +294,7 @@ abstractPtrLiterals block = flip evalState mempty $ do
   return (impBinders, vals, block')
 
 class HasTraversal a where
-  traverseCore :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m -> a -> m a
+  traverseCore :: (MonadBuilder m, MonadReader SubstEnv m) => TraversalDef m -> a -> m a
 
 instance HasTraversal Block where
   traverseCore = traverseBlock
@@ -304,7 +304,7 @@ instance HasTraversal Atom where
 
 traverseLiterals :: (HasTraversal e, Monad m) => e -> (LitVal -> m Atom) -> m e
 traverseLiterals block f =
-    liftM fst $ flip runSubstEmbedT mempty $ traverseCore def block
+    liftM fst $ flip runSubstBuilderT mempty $ traverseCore def block
   where
     def = (traverseDecl def, traverseExpr def, traverseAtomLiterals)
     traverseAtomLiterals atom = case atom of

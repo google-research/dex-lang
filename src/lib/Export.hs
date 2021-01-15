@@ -21,7 +21,7 @@ import Data.List (nub, intercalate)
 
 import Algebra
 import Syntax
-import Embed
+import Builder
 import Cat
 import Env
 import Type
@@ -47,9 +47,9 @@ exportFunctions objPath funcs env = do
 type CArgList = [IBinder] -- ^ List of arguments to the C call
 data CArgEnv = CArgEnv { -- | Maps scalar atom binders to their CArgs. All atoms are Vars.
                          cargScalarScope :: Env Atom
-                         -- | Tracks the CArg names used so far (globally scoped, unlike Embed)
+                         -- | Tracks the CArg names used so far (globally scoped, unlike Builder)
                        , cargScope :: Env () }
-type CArgM = WriterT CArgList (CatT CArgEnv Embed)
+type CArgM = WriterT CArgList (CatT CArgEnv Builder)
 
 instance Semigroup CArgEnv where
   (CArgEnv a1 a2) <> (CArgEnv b1 b2) = CArgEnv (a1 <> b1) (a2 <> b2)
@@ -57,7 +57,7 @@ instance Semigroup CArgEnv where
 instance Monoid CArgEnv where
   mempty = CArgEnv mempty mempty
 
-runCArg :: CArgEnv -> CArgM a -> Embed (a, [IBinder], CArgEnv)
+runCArg :: CArgEnv -> CArgM a -> Builder (a, [IBinder], CArgEnv)
 runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
   where repack ((ans, cargs), env) = (ans, cargs, env)
 
@@ -65,7 +65,7 @@ prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSi
 prepareFunctionForExport env nameStr func = do
   -- Create a module that simulates an application of arguments to the function
   -- TODO: Assert that the type of func is closed?
-  let ((dest, cargs, apiDesc), (_, decls)) = flip runEmbed (freeVars func) $ do
+  let ((dest, cargs, apiDesc), (_, decls)) = flip runBuilder (freeVars func) $ do
         (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
         let (atomArgs, exportedArgSig) = unzip args
         resultAtom <- naryApp func atomArgs
@@ -121,7 +121,7 @@ prepareFunctionForExport env nameStr func = do
         return (destAtom, exportArg)
       TabTy b elemTy -> do
         buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substEmbed (b@>Var i) elemTy
+          elemTy' <- substBuilder (b@>Var i) elemTy
           createTabArg vis (idx <> Nest (Bind i) Empty) elemTy'
       _ -> unsupported
       where unsupported = error $ "Unsupported table type suffix: " ++ pprint ty
@@ -140,7 +140,7 @@ prepareFunctionForExport env nameStr func = do
         return (dest, exportResult)
       TabTy b elemTy -> do
         (destTab, exportResult) <- buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substEmbed (b@>Var i) elemTy
+          elemTy' <- substBuilder (b@>Var i) elemTy
           createDest (idx <> Nest (Bind i) Empty) elemTy'
         return (Con $ TabRef destTab, exportResult)
       _ -> unsupported
