@@ -20,8 +20,8 @@ import Data.Coerce
 import Env
 import Syntax
 import PPrint
-import Embed ( MonadEmbed, iadd, imul, idiv, clampPositive, ptrOffset
-             , indexToIntE, indexSetSizeE )
+import Builder ( MonadBuilder, iadd, imul, idiv, clampPositive, ptrOffset
+               , indexToIntE, indexSetSizeE )
 
 -- MVar is like Var, but it additionally defines Ord. The invariant here is that the variables
 -- should never be shadowing, and so it is sufficient to only use the name for equality and
@@ -50,7 +50,7 @@ type ClampPolynomial  = PolynomialP ClampMonomial
 data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
 data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
 
-applyIdxs :: MonadEmbed m => Atom -> IndexStructure -> m Atom
+applyIdxs :: MonadBuilder m => Atom -> IndexStructure -> m Atom
 applyIdxs ptr Empty = return ptr
 applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
   ordinal <- indexToIntE $ Var i
@@ -58,10 +58,10 @@ applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
   ptr' <- ptrOffset ptr offset
   applyIdxs ptr' rest
 
-offsetToE :: MonadEmbed m => IndexStructure -> Atom -> m Atom
+offsetToE :: MonadBuilder m => IndexStructure -> Atom -> m Atom
 offsetToE idxs i = evalSumClampPolynomial (offsets idxs) i
 
-elemCountE :: MonadEmbed m => IndexStructure -> m Atom
+elemCountE :: MonadBuilder m => IndexStructure -> m Atom
 elemCountE idxs = case idxs of
   Empty    -> return $ IdxRepVal 1
   Nest b _ -> offsetToE idxs =<< indexSetSizeE (binderType b)
@@ -124,12 +124,12 @@ toPolynomial atom = case atom of
     fromInt i = poly [((fromIntegral i) % 1, mono [])]
     unreachable = error $ "Unsupported or invalid atom in index set: " ++ pprint atom
 
--- === Embedding ===
+-- === Building ===
 
-_evalClampPolynomial :: MonadEmbed m => ClampPolynomial -> m Atom
+_evalClampPolynomial :: MonadBuilder m => ClampPolynomial -> m Atom
 _evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
 
-evalSumClampPolynomial :: MonadEmbed m => SumClampPolynomial -> Atom -> m Atom
+evalSumClampPolynomial :: MonadBuilder m => SumClampPolynomial -> Atom -> m Atom
 evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
   evalPolynomialP (evalClampMonomial varVal) cp
   where varVal v = if MVar v == sumVar summedVar then a else Var v
@@ -139,7 +139,7 @@ evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
 -- coefficients. This is why we have to find the least common multiples and do the
 -- accumulation over numbers multiplied by that LCM. We essentially do fixed point
 -- fractional math here.
-evalPolynomialP :: MonadEmbed m => (mono -> m Atom) -> PolynomialP mono -> m Atom
+evalPolynomialP :: MonadBuilder m => (mono -> m Atom) -> PolynomialP mono -> m Atom
 evalPolynomialP evalMono p = do
   let constLCM = asAtom $ foldl lcm 1 $ fmap (denominator . snd) $ toList p
   monoAtoms <- flip traverse (toList p) $ \(m, c) -> do
@@ -153,19 +153,19 @@ evalPolynomialP evalMono p = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-evalMonomial :: MonadEmbed m => (Var -> Atom) -> Monomial -> m Atom
+evalMonomial :: MonadBuilder m => (Var -> Atom) -> Monomial -> m Atom
 evalMonomial varVal m = do
   varAtoms <- traverse (\(MVar v, e) -> ipow (varVal v) e) $ toList m
   foldM imul (IdxRepVal 1) varAtoms
 
-evalClampMonomial :: MonadEmbed m => (Var -> Atom) -> ClampMonomial -> m Atom
+evalClampMonomial :: MonadBuilder m => (Var -> Atom) -> ClampMonomial -> m Atom
 evalClampMonomial varVal (ClampMonomial clamps m) = do
   valuesToClamp <- traverse (evalPolynomialP (evalMonomial varVal) . coerce) clamps
   clampsProduct <- foldM imul (IdxRepVal 1) =<< traverse clampPositive valuesToClamp
   mval <- evalMonomial varVal m
   imul clampsProduct mval
 
-ipow :: MonadEmbed m => Atom -> Int -> m Atom
+ipow :: MonadBuilder m => Atom -> Int -> m Atom
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 
 -- === Polynomial math ===

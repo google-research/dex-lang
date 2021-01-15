@@ -24,14 +24,14 @@ import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Interpreter (indicesNoIO)
-import Embed  hiding (sub)
+import Builder  hiding (sub)
 import Env
 import Type
 import PPrint
 import Cat
 import Util
 
-type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((EmbedT (SolverT (Either Err)))))
+type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((BuilderT (SolverT (Either Err)))))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -59,7 +59,7 @@ inferModule scope (UModule decls) = do
 runUInferM :: (Subst a, Pretty a)
            => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
 runUInferM env scope m = runSolverT $
-  runEmbedT (runReaderT (runReaderT m env) Nothing) scope
+  runBuilderT (runReaderT (runReaderT m env) Nothing) scope
 
 checkSigma :: UExpr -> (Type -> RequiredTy Type) -> SigmaType -> UInferM Atom
 checkSigma expr reqCon sTy = case sTy of
@@ -137,10 +137,10 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     --     is safe and doesn't make the type checking depend on the program order.
     infTy <- getType <$> zonk fVal
     piTy  <- addSrcContext' (srcPos f) $ fromPiType True arr infTy
-    (xVal, embedEnv@(_, xDecls)) <- embedScoped $ checkSigma x Suggest (absArgType piTy)
+    (xVal, builderEnv@(_, xDecls)) <- builderScoped $ checkSigma x Suggest (absArgType piTy)
     (xVal', arr') <- case piTy of
       Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
-        False -> embedExtend embedEnv $> (xVal, arr')
+        False -> builderExtend builderEnv $> (xVal, arr')
         True  -> do
           xValMaybeRed <- flip typeReduceBlock (Block xDecls (Atom xVal)) <$> getScope
           case xValMaybeRed of
@@ -380,11 +380,11 @@ inferUDecl topLevel (UInstance maybeName argBinders instanceTy methods) = do
 inferUDecl False (UData      _ _  ) = error "data definitions should be top-level"
 inferUDecl False (UInterface _ _ _) = error "interface definitions should be top-level"
 
-freshClassGenName :: MonadEmbed m => m Name
+freshClassGenName :: MonadBuilder m => m Name
 freshClassGenName = do
   scope <- getScope
   let v' = genFresh (Name TypeClassGenName "classgen" 0) scope
-  embedExtend $ asFst $ v' @> (UnitTy, UnknownBinder)
+  builderExtend $ asFst $ v' @> (UnitTy, UnknownBinder)
   return v'
 
 mkMethod :: UAnnBinder -> UInferM (Label, Type)
@@ -428,7 +428,7 @@ emitMethodGetters def@(DataDef _ paramBs (ClassDictDef _ _ methodTys)) = do
     emitTo methodName PlainLet $ Atom f
 emitMethodGetters (DataDef _ _ _) = error "Not a class dictionary"
 
-emitSuperclassGetters :: MonadEmbed m => DataDef -> m ()
+emitSuperclassGetters :: MonadBuilder m => DataDef -> m ()
 emitSuperclassGetters def@(DataDef _ paramBs (ClassDictDef _ superclassTys _)) = do
   forM_ (getLabels superclassTys) \l -> do
     f <- buildImplicitNaryLam paramBs \params -> do
@@ -457,7 +457,7 @@ checkShadows vs = do
 
 inferUConDef :: UConDef -> UInferM (Name, Nest Binder)
 inferUConDef (UConDef v bs) = do
-  (bs', _) <- embedScoped $ checkNestedBinders bs
+  (bs', _) <- builderScoped $ checkNestedBinders bs
   let v' = asGlobal v
   checkNotInScope v'
   return (v', bs')
@@ -811,12 +811,12 @@ getSrcCtx = lift ask
 
 -- We have two variants here because at the top level we want error messages and
 -- internally we want to consider all alternatives.
-type SynthPassM = SubstEmbedT (Either Err)
-type SynthDictM = SubstEmbedT []
+type SynthPassM = SubstBuilderT (Either Err)
+type SynthDictM = SubstBuilderT []
 
 synthModule :: Scope -> Module -> Except Module
 synthModule scope (Module Typed decls bindings) = do
-  decls' <- fst . fst <$> runSubstEmbedT
+  decls' <- fst . fst <$> runSubstBuilderT
               (traverseDecls (traverseHoles synthDictTop) decls) scope
   return $ Module Core decls' bindings
 synthModule _ _ = error $ "Unexpected IR variant"
@@ -824,19 +824,19 @@ synthModule _ _ = error $ "Unexpected IR variant"
 synthDictTop :: SrcCtx -> Type -> SynthPassM Atom
 synthDictTop ctx ty = do
   scope <- getScope
-  let solutions = runSubstEmbedT (synthDict ty) scope
+  let solutions = runSubstBuilderT (synthDict ty) scope
   addSrcContext ctx $ case solutions of
     [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-    [(ans, env)] -> embedExtend env $> ans
+    [(ans, env)] -> builderExtend env $> ans
     _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
            ++ "\n" ++ pprint solutions
 
-traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
+traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
               => (SrcCtx -> Type -> m Atom) -> TraversalDef m
 traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
-      Con (ClassDictHole ctx ty) -> fillHole ctx =<< substEmbedR ty
+      Con (ClassDictHole ctx ty) -> fillHole ctx =<< substBuilderR ty
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
@@ -845,8 +845,8 @@ synthDict ty = case ty of
   PiTy b arr body -> synthesizeNow <|> introFirst
     where
       introFirst = buildDepEffLam b
-                      (\x -> extendR (b @> x) $ substEmbedR arr)
-                      (\x -> extendR (b @> x) $ substEmbedR body >>= synthDict)
+                      (\x -> extendR (b @> x) $ substBuilderR arr)
+                      (\x -> extendR (b @> x) $ substBuilderR body >>= synthDict)
   _ -> synthesizeNow
   where
     synthesizeNow = do
@@ -927,8 +927,8 @@ solveLocal :: Subst a => UInferM a -> UInferM a
 solveLocal m = do
   (ans, env@(SolverEnv freshVars sub)) <- scoped $ do
     -- This might get expensive. TODO: revisit once we can measure performance.
-    (ans, embedEnv) <- zonk =<< embedScoped m
-    embedExtend embedEnv
+    (ans, builderEnv) <- zonk =<< builderScoped m
+    builderExtend builderEnv
     return ans
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
@@ -1088,7 +1088,7 @@ instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
 
-typeReduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
+typeReduceScoped :: MonadBuilder m => m Atom -> m (Maybe Atom)
 typeReduceScoped m = do
   block <- buildScoped m
   scope <- getScope

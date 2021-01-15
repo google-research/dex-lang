@@ -22,7 +22,7 @@ import Type
 import Env
 import Syntax
 import PPrint
-import Embed
+import Builder
 import Cat
 import Util (bindM2, zipWithT, enumerate, restructure)
 import GHC.Stack
@@ -38,17 +38,17 @@ data DerivWrt = DerivWrt { activeVars  :: Env Type
 -- arguments to the linearized function.
 data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name], rematVals :: SubstEnv }
 
-type PrimalM  = ReaderT DerivWrt   Embed
-type TangentM = ReaderT TangentEnv Embed
+type PrimalM  = ReaderT DerivWrt   Builder
+type TangentM = ReaderT TangentEnv Builder
 newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
-linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
   buildLam b PureArrow \x@(Var v) -> do
     (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) [] mempty) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
     fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) [] mempty
-    fLinChecked <- checkEmbed fLin
+    fLinChecked <- checkBuilder fLin
     return $ PairVal y fLinChecked
 
 linearizeBlock :: SubstEnv -> Block -> LinA Atom
@@ -64,7 +64,7 @@ linearizeBlock env (Block decls result) = case decls of
         -- Technically, we could do this and later run the code through a simplification
         -- pass that would eliminate a bunch of multiplications with zeros, but this seems
         -- simpler to do for now.
-        freeAtoms <- traverse (substEmbed env . Var) $ bindingsAsVars $ freeVars expr
+        freeAtoms <- traverse (substBuilder env . Var) $ bindingsAsVars $ freeVars expr
         varsAreActive <- traverse isActive $ bindingsAsVars $ freeVars freeAtoms
         if any id varsAreActive
           then do
@@ -90,7 +90,7 @@ linearizeBlock env (Block decls result) = case decls of
               let nontrivialTs = if vIsTrivial then [] else [t]
               extendTangentEnv (newEnv nontrivialVs nontrivialTs) [] bodyLin)
           else do
-            expr' <- substEmbed env expr
+            expr' <- substBuilder env expr
             x <- emit expr'
             runLinA $ linearizeBlock (env <> b @> x) body
 
@@ -98,7 +98,7 @@ linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
   Hof  e        -> linearizeHof env e
   Case e alts _ -> LinA $ do
-    e'   <- substEmbed env e
+    e'   <- substBuilder env e
     hasActiveScrutinee <- any id <$> (mapM isActive $ bindingsAsVars $ freeVars e')
     case hasActiveScrutinee of
       True  -> notImplemented
@@ -111,7 +111,7 @@ linearizeExpr env expr = case expr of
       linearizeInactiveAlt (Abs bs body) = do
         buildNAbs bs \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
   _ -> LinA $ do
-    expr' <- substEmbed env expr
+    expr' <- substBuilder env expr
     runLinA $ case expr' of
       App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x) `bindLin` emit
       Op   e     -> linearizeOp   e
@@ -194,7 +194,7 @@ linearizeOp op = case op of
     emitWithZero :: LinA Atom
     emitWithZero = LinA $ withZeroTangent <$> emitOp op
 
-emitUnOp :: MonadEmbed m => UnOp -> Atom -> m Atom
+emitUnOp :: MonadBuilder m => UnOp -> Atom -> m Atom
 emitUnOp op x = emitOp $ ScalarUnOp op x
 
 linearizeUnOp :: UnOp -> Atom -> LinA Atom
@@ -268,7 +268,7 @@ linearizeBinOp op x' y' = LinA $ do
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
-    i' <- mapM (substEmbed env) i
+    i' <- mapM (substBuilder env) i
     (ansWithLinTab, vi'') <- buildForAux d i' \i''@(Var vi'') ->
        (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
     (ans, linTab) <- unzipTab ansWithLinTab
@@ -280,13 +280,13 @@ linearizeHof env hof = case hof of
     let RefTy _ accTy = binderType refBinder
     linearizeEff lam Writer (RunWriter bm) (emitRunWriter "r" accTy bm)
   RunReader val lam -> LinA $ do
-    (val', mkLinInit) <- runLinA <$> linearizeAtom =<< substEmbed env val
+    (val', mkLinInit) <- runLinA <$> linearizeAtom =<< substBuilder env val
     linearizeEff lam Reader (RunReader val') \f -> mkLinInit >>= emitRunReader "r" `flip` f
   RunState val lam -> LinA $ do
-    (val', mkLinInit) <- runLinA <$> linearizeAtom =<< substEmbed env val
+    (val', mkLinInit) <- runLinA <$> linearizeAtom =<< substBuilder env val
     linearizeEff lam State (RunState val') \f -> mkLinInit >>= emitRunState "r" `flip` f
   RunIO ~(Lam (Abs _ (arrow, body))) -> LinA $ do
-    arrow' <- substEmbed env arrow
+    arrow' <- substBuilder env arrow
     -- TODO: consider the possibility of other effects here besides IO
     lam <- buildLam (Ignore UnitTy) arrow' \_ ->
       tangentFunAsLambda $ linearizeBlock env body
@@ -317,11 +317,11 @@ linearizeHof env hof = case hof of
 
     linearizeEffectFun :: RWS -> Atom -> PrimalM (Atom, Var)
     linearizeEffectFun rws ~(BinaryFunVal h ref eff body) = do
-      h' <- mapM (substEmbed env) h
+      h' <- mapM (substBuilder env) h
       buildLamAux h' (const $ return PureArrow) \h''@(Var hVar) -> do
         let env' = env <> h@>h''
-        eff' <- substEmbed env' eff
-        ref' <- mapM (substEmbed env') ref
+        eff' <- substBuilder env' eff
+        ref' <- mapM (substBuilder env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') \ref''@(Var refVar) ->
           extendWrt [refVar] [RWSEffect rws (varName hVar)] $
             (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
@@ -437,7 +437,7 @@ tangentFunAsLambda m = do
     -- Like buildLam, but doesn't try to deshadow the binder.
     makeLambda v f = do
       block <- buildScoped $ do
-        embedExtend $ asFst $ v @> (varType v, LamBound (void PureArrow))
+        builderExtend $ asFst $ v @> (varType v, LamBound (void PureArrow))
         f v
       return $ Lam $ makeAbs (Bind v) (PureArrow, block)
 
@@ -465,7 +465,7 @@ applyLinToTangents f = do
   let args = (toList rematVals) ++ hs' ++ tangents ++ [UnitVal]
   naryApp f args
 
-bindLin :: LinA a -> (a -> Embed b) -> LinA b
+bindLin :: LinA a -> (a -> Builder b) -> LinA b
 bindLin (LinA m) f = LinA $ do
   (e, t) <- m
   x <- lift $ f e
@@ -535,10 +535,10 @@ instance Semigroup TransposeEnv where
 instance Monoid TransposeEnv where
   mempty = TransposeEnv mempty mempty mempty mempty
 
-type TransposeM a = ReaderT TransposeEnv Embed a
+type TransposeM a = ReaderT TransposeEnv Builder a
 
 transpose :: Scope -> Atom -> Atom
-transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
   buildLam (Bind $ "ct" :> getType block) LinArrow \ct -> do
     snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock block ct)
 
@@ -830,10 +830,10 @@ zeroAt ty = case ty of
       Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
       _                  -> unreachable
 
-updateAddAt :: MonadEmbed m => Atom -> m Atom
+updateAddAt :: MonadBuilder m => Atom -> m Atom
 updateAddAt x = buildLam (Bind ("t":>getType x)) PureArrow $ addTangent x
 
-addTangent :: MonadEmbed m => Atom -> Atom -> m Atom
+addTangent :: MonadBuilder m => Atom -> Atom -> m Atom
 addTangent x y = case getType x of
   RecordTy (NoExt tys) -> do
     elems <- bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
@@ -851,7 +851,7 @@ addTangent x y = case getType x of
   _ -> notTangent
   where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
 
-tangentBaseMonoidFor :: MonadEmbed m => Type -> m BaseMonoid
+tangentBaseMonoidFor :: MonadBuilder m => Type -> m BaseMonoid
 tangentBaseMonoidFor ty = BaseMonoid (zeroAt ty) <$> buildLam (Bind ("t":>ty)) PureArrow updateAddAt
 
 checkZeroPlusFloatMonoid :: BaseMonoid -> Bool

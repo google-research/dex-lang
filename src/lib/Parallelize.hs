@@ -15,7 +15,7 @@ import Data.Foldable
 
 import Optimize
 import Syntax
-import Embed
+import Builder
 import Cat
 import Env
 import Type
@@ -38,7 +38,7 @@ asABlock :: Block -> ABlock
 asABlock block = ABlock decls result
   where
     scope = freeVars block
-    ((result, decls), _) = flip runEmbed scope $ scopedDecls $ emitBlock block
+    ((result, decls), _) = flip runBuilder scope $ scopedDecls $ emitBlock block
 
 
 data LoopEnv = LoopEnv
@@ -48,7 +48,7 @@ data LoopEnv = LoopEnv
   }
 data AccEnv = AccEnv { activeAccs :: Env (Var, BaseMonoid) } -- (reference, its base monoid)
 
-type TLParallelM = SubstEmbedT (State AccEnv)   -- Top-level non-parallel statements
+type TLParallelM = SubstBuilderT (State AccEnv)   -- Top-level non-parallel statements
 type LoopM       = ReaderT LoopEnv TLParallelM  -- Generation of (parallel) loop nests
 
 runLoopM :: LoopM a -> TLParallelM a
@@ -56,7 +56,7 @@ runLoopM m = runReaderT m $ LoopEnv mempty mempty
 
 extractParallelism :: Module -> Module
 extractParallelism = transformModuleAsBlock go
-  where go block = fst $ evalState (runSubstEmbedT (traverseBlock parallelTrav block) mempty) $ AccEnv mempty
+  where go block = fst $ evalState (runSubstBuilderT (traverseBlock parallelTrav block) mempty) $ AccEnv mempty
 
 parallelTrav :: TraversalDef TLParallelM
 parallelTrav = ( traverseDecl parallelTrav
@@ -71,11 +71,11 @@ parallelTraverseExpr expr = case expr of
     -- TODO: functionEffs is an overapproximation of the effects that really appear inside
     refs <- gets activeAccs
     let allowedRegions = foldMap (\(varType . fst -> RefTy (Var reg) _) -> reg @> ()) refs
-    (EffectRow bodyEffs t) <- substEmbedR $ functionEffs fbody
+    (EffectRow bodyEffs t) <- substBuilderR $ functionEffs fbody
     let onlyAllowedEffects = all (parallelizableEffect allowedRegions) $ toList bodyEffs
     case t == Nothing && onlyAllowedEffects of
       True -> do
-        b' <- substEmbedR b
+        b' <- substBuilderR b
         liftM Atom $ runLoopM $ withLoopBinder b' $ buildParallelBlock $ asABlock body
       False -> nothingSpecial
   Hof (RunWriter bm (BinaryFunVal h b _ body)) -> do
@@ -88,7 +88,7 @@ parallelTraverseExpr expr = case expr of
   --       We would have to track not only the base references, but also all the aliases, along
   --       with their relationships. Then, when we emit local effects in emitLoops, we would have
   --       to recreate all the aliases. We could do that by carrying around a block and using
-  --       SubstEmbed to take care of renaming for us.
+  --       SubstBuilder to take care of renaming for us.
   Op (IndexRef ref _) -> disallowRef ref >> nothingSpecial
   Op (FstRef   ref  ) -> disallowRef ref >> nothingSpecial
   Op (SndRef   ref  ) -> disallowRef ref >> nothingSpecial
@@ -130,12 +130,12 @@ buildParallelBlock ablock@(ABlock decls result) = do
               prologueCtxArrs <- mapM (unflattenConsTab lbs) =<< unzipConsListTab prologueCtxAtom
               return $ foldMap (\(v, arr) -> v @> (arr, loopVars)) $ zip prologueCtxVars prologueCtxArrs
       delayApps prologueApps $ do
-        i' <- lift $ substEmbedR i
+        i' <- lift $ substBuilderR i
         loopAtom <- withLoopBinder i' $ buildParallelBlock $ asABlock lbody
         delayApps (arrb @> (loopAtom, loopVars)) $
           buildParallelBlock $ ABlock epilogue result
 
-unzipConsListTab :: MonadEmbed m => Atom -> m [Atom]
+unzipConsListTab :: MonadBuilder m => Atom -> m [Atom]
 unzipConsListTab tab = case getType tab of
   TabTy _ UnitTy -> return []
   TabTy _ (PairTy _ _) -> do
@@ -143,7 +143,7 @@ unzipConsListTab tab = case getType tab of
     (x:) <$> unzipConsListTab t
   _ -> error $ "Expected a table cons list, got: " ++ pprint (getType tab)
 
-unflattenConsTab :: MonadEmbed m => [Var] -> Atom -> m Atom
+unflattenConsTab :: MonadBuilder m => [Var] -> Atom -> m Atom
 unflattenConsTab ivs arr = buildNestedLam TabArrow (fmap Bind ivs) $ app arr . mkConsList
 
 type Loop = Abs Binder Block
@@ -206,7 +206,7 @@ emitLoops buildPureLoop (ABlock decls result) = do
         extendR (newEnv lbs is) $ do
           ctxEnv <- flip traverseNames dapps \_ (arr, idx) ->
             -- XXX: arr is namespaced in the new program
-            foldM appTryReduce arr =<< substEmbedR idx
+            foldM appTryReduce arr =<< substBuilderR idx
           extendR ctxEnv $ evalBlockE appReduceTraversalDef $ Block decls $ Atom result
   lift $ case null refs of
     True -> buildPureLoop (Bind $ "pari" :> iterTy) buildBody

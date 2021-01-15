@@ -4,20 +4,20 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Imp.Embed ( ISubstEmbedT, ISubstEnv (..)
-                 , runISubstEmbedT, liftSE
-                 , emit, freshIVar, extendValSubst
-                 , buildScoped
-                 -- embedding
-                 , iadd, imul
-                 , alloc, ptrOffset
-                 -- traversal
-                 , traverseImpModule, traverseImpFunction
-                 , traverseImpBlock, evalImpBlock
-                 , traverseImpDecl, traverseImpInstr
-                 , traverseIExpr, traverseIFunVar
-                 , ITraversalDef, substTraversalDef
-                 ) where
+module Imp.Builder ( ISubstBuilderT, ISubstEnv (..)
+                   , runISubstBuilderT, liftSE
+                   , emit, freshIVar, extendValSubst
+                   , buildScoped
+                   -- IR builders
+                   , iadd, imul
+                   , alloc, ptrOffset
+                   -- traversal
+                   , traverseImpModule, traverseImpFunction
+                   , traverseImpBlock, evalImpBlock
+                   , traverseImpDecl, traverseImpInstr
+                   , traverseIExpr, traverseIFunVar
+                   , ITraversalDef, substTraversalDef
+                   ) where
 
 import Control.Monad.Reader
 
@@ -28,7 +28,7 @@ import Imp
 import Util (bindM2)
 
 -- XXX: Scope is actually global within each function
-data IEmbedEnv = IEmbedEnv
+data IBuilderEnv = IBuilderEnv
   { scope :: Env ()
   , blockDecls :: Nest ImpDecl
   }
@@ -37,40 +37,40 @@ data ISubstEnv = ISubstEnv
   , funcSubst :: Env IFunVar
   }
 
-type IEmbedT      m = CatT IEmbedEnv m
+type IBuilderT      m = CatT IBuilderEnv m
 type ISubstT      m = ReaderT ISubstEnv m
-type ISubstEmbedT m = IEmbedT (ISubstT m)
+type ISubstBuilderT m = IBuilderT (ISubstT m)
 
-runIEmbedT :: Monad m => IEmbedT m a -> m a
-runIEmbedT m = fst <$> runCatT m mempty
+runIBuilderT :: Monad m => IBuilderT m a -> m a
+runIBuilderT m = fst <$> runCatT m mempty
 
 runISubstT :: Monad m => ISubstEnv -> ISubstT m a -> m a
 runISubstT env m = runReaderT m env
 
-runISubstEmbedT :: Monad m => ISubstEnv -> ISubstEmbedT m a -> m a
-runISubstEmbedT env = (runISubstT env) . runIEmbedT
+runISubstBuilderT :: Monad m => ISubstEnv -> ISubstBuilderT m a -> m a
+runISubstBuilderT env = (runISubstT env) . runIBuilderT
 
-liftSE :: Monad m => m a -> ISubstEmbedT m a
+liftSE :: Monad m => m a -> ISubstBuilderT m a
 liftSE = lift . lift
 
-extendScope :: Monad m => Env a -> IEmbedT m ()
-extendScope s = extend $ IEmbedEnv (fmap (const ()) s) mempty
+extendScope :: Monad m => Env a -> IBuilderT m ()
+extendScope s = extend $ IBuilderEnv (fmap (const ()) s) mempty
 
-emit :: Monad m => ImpInstr -> IEmbedT m [IExpr]
+emit :: Monad m => ImpInstr -> IBuilderT m [IExpr]
 emit instr = do
   vs <- traverse (freshIVar . Ignore) $ impInstrTypes instr
   emitTo vs instr
 
-emitTo :: Monad m => [IVar] -> ImpInstr -> IEmbedT m [IExpr]
+emitTo :: Monad m => [IVar] -> ImpInstr -> IBuilderT m [IExpr]
 emitTo bs instr = do
   extend $ mempty { blockDecls = (Nest (ImpLet (fmap Bind bs) instr) Empty) }
   return $ fmap IVar bs
 
-instance Semigroup IEmbedEnv where
-  (IEmbedEnv s d) <> (IEmbedEnv s' d') = IEmbedEnv (s <> s') (d <> d')
+instance Semigroup IBuilderEnv where
+  (IBuilderEnv s d) <> (IBuilderEnv s' d') = IBuilderEnv (s <> s') (d <> d')
 
-instance Monoid IEmbedEnv where
-  mempty = IEmbedEnv mempty mempty
+instance Monoid IBuilderEnv where
+  mempty = IBuilderEnv mempty mempty
 
 instance Semigroup ISubstEnv where
   (ISubstEnv v f) <> (ISubstEnv v' f') = ISubstEnv (v <> v') (f <> f')
@@ -78,24 +78,24 @@ instance Semigroup ISubstEnv where
 instance Monoid ISubstEnv where
   mempty = ISubstEnv mempty mempty
 
--- === Imp embedding ===
+-- === Imp IR builders ===
 
-ptrOffset :: Monad m => IExpr -> IExpr -> IEmbedT m IExpr
+ptrOffset :: Monad m => IExpr -> IExpr -> IBuilderT m IExpr
 ptrOffset ptr off = liftM head $ emit $ IPrimOp $ PtrOffset ptr off
 
-imul :: Monad m => IExpr -> IExpr -> IEmbedT m IExpr
+imul :: Monad m => IExpr -> IExpr -> IBuilderT m IExpr
 imul x y = liftM head $ emit $ IPrimOp $ ScalarBinOp IMul x y
 
-iadd :: Monad m => IExpr -> IExpr -> IEmbedT m IExpr
+iadd :: Monad m => IExpr -> IExpr -> IBuilderT m IExpr
 iadd x y = liftM head $ emit $ IPrimOp $ ScalarBinOp IAdd x y
 
-alloc :: Monad m => AddressSpace -> IType -> IExpr -> IEmbedT m IExpr
+alloc :: Monad m => AddressSpace -> IType -> IExpr -> IBuilderT m IExpr
 alloc addrSpc ty size = liftM head $ emit $ Alloc addrSpc ty size
 
 -- === Imp IR traversal ===
 
-type ITraversalDef m = ( ImpDecl  -> ISubstEmbedT m (Env IExpr)
-                       , ImpInstr -> ISubstEmbedT m ImpInstr
+type ITraversalDef m = ( ImpDecl  -> ISubstBuilderT m (Env IExpr)
+                       , ImpInstr -> ISubstBuilderT m ImpInstr
                        )
 
 substTraversalDef :: Monad m => ITraversalDef m
@@ -115,7 +115,7 @@ traverseImpModule fTrav (ImpModule funcs) = ImpModule . fst <$> runCatT (travers
 
 traverseImpFunction :: Monad m => ITraversalDef m -> Env IFunVar -> ImpFunction -> m ImpFunction
 traverseImpFunction _   _    (FFIFunction f             ) = return $ FFIFunction f
-traverseImpFunction def fenv (ImpFunction name args body) = runISubstEmbedT env $ do
+traverseImpFunction def fenv (ImpFunction name args body) = runISubstBuilderT env $ do
   extendScope $ foldMap binderAsEnv args
   body' <- extendValSubst (foldMap argSub args) $ traverseImpBlock def body
   return $ ImpFunction name args body'
@@ -125,10 +125,10 @@ traverseImpFunction def fenv (ImpFunction name args body) = runISubstEmbedT env 
       Bind   v -> v @> IVar v
     env = ISubstEnv mempty fenv
 
-traverseImpBlock :: Monad m => ITraversalDef m -> ImpBlock -> ISubstEmbedT m ImpBlock
+traverseImpBlock :: Monad m => ITraversalDef m -> ImpBlock -> ISubstBuilderT m ImpBlock
 traverseImpBlock def block = buildScoped $ evalImpBlock def block
 
-evalImpBlock :: Monad m => ITraversalDef m -> ImpBlock -> ISubstEmbedT m [IExpr]
+evalImpBlock :: Monad m => ITraversalDef m -> ImpBlock -> ISubstBuilderT m [IExpr]
 evalImpBlock def@(fDecl, _) (ImpBlock decls results) = do
   case decls of
     Nest decl rest -> do
@@ -136,12 +136,12 @@ evalImpBlock def@(fDecl, _) (ImpBlock decls results) = do
       extendValSubst env' $ evalImpBlock def $ ImpBlock rest results
     Empty -> traverse traverseIExpr results
 
-traverseImpDecl :: Monad m => ITraversalDef m -> ImpDecl -> ISubstEmbedT m (Env IExpr)
+traverseImpDecl :: Monad m => ITraversalDef m -> ImpDecl -> ISubstBuilderT m (Env IExpr)
 traverseImpDecl (_, fInstr) (ImpLet bs instr) = do
   vs <- bindM2 emitTo (traverse freshIVar bs) (fInstr instr)
   return $ newEnv bs vs
 
-traverseImpInstr :: Monad m => ITraversalDef m -> ImpInstr -> ISubstEmbedT m ImpInstr
+traverseImpInstr :: Monad m => ITraversalDef m -> ImpInstr -> ISubstBuilderT m ImpInstr
 traverseImpInstr def instr = case instr of
   IFor dir b size body -> do
     b' <- freshIVar b
@@ -168,14 +168,14 @@ traverseImpInstr def instr = case instr of
   ICastOp ty val -> ICastOp ty <$> traverseIExpr val
   IPrimOp op     -> IPrimOp <$> traverse traverseIExpr op
 
-traverseIExpr :: Monad m => IExpr -> ISubstEmbedT m IExpr
+traverseIExpr :: Monad m => IExpr -> ISubstBuilderT m IExpr
 traverseIExpr (ILit l) = return $ ILit l
 traverseIExpr (IVar v) = (!v) <$> asks valSubst
 
-traverseIFunVar :: Monad m => IFunVar -> ISubstEmbedT m IFunVar
+traverseIFunVar :: Monad m => IFunVar -> ISubstBuilderT m IFunVar
 traverseIFunVar fv = (!fv) <$> asks funcSubst
 
-freshIVar :: Monad m => IBinder -> IEmbedT m IVar
+freshIVar :: Monad m => IBinder -> IBuilderT m IVar
 freshIVar b = do
   let nameHint = case b of
                    Bind (name:>_) -> name
@@ -184,11 +184,11 @@ freshIVar b = do
   extendScope $ name @> ()
   return $ name :> binderAnn b
 
-buildScoped :: Monad m => IEmbedT m [IExpr] -> IEmbedT m ImpBlock
+buildScoped :: Monad m => IBuilderT m [IExpr] -> IBuilderT m ImpBlock
 buildScoped m = do
-  (results, IEmbedEnv scopeExt decls) <- scoped m
-  extend $ IEmbedEnv scopeExt mempty  -- Names are global in Imp IR
+  (results, IBuilderEnv scopeExt decls) <- scoped m
+  extend $ IBuilderEnv scopeExt mempty  -- Names are global in Imp IR
   return $ ImpBlock decls results
 
-extendValSubst :: Monad m => Env IExpr -> ISubstEmbedT m a -> ISubstEmbedT m a
+extendValSubst :: Monad m => Env IExpr -> ISubstBuilderT m a -> ISubstBuilderT m a
 extendValSubst s = local (\env -> env { valSubst = valSubst env <> s })

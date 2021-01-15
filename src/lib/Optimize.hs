@@ -13,7 +13,7 @@ import Data.Foldable
 import Data.Maybe
 
 import Syntax
-import Embed
+import Builder
 import Cat
 import Env
 import Type
@@ -83,7 +83,7 @@ dceAtom atom = case atom of
 
 -- === For inlining ===
 
-type InlineM = SubstEmbed
+type InlineM = SubstBuilder
 
 inlineTraversalDef :: TraversalDef InlineM
 inlineTraversalDef = (inlineTraverseDecl, inlineTraverseExpr, traverseAtom inlineTraversalDef)
@@ -91,7 +91,7 @@ inlineTraversalDef = (inlineTraverseDecl, inlineTraverseExpr, traverseAtom inlin
 inlineModule :: Module -> Module
 inlineModule m = transformModuleAsBlock inlineBlock (computeInlineHints m)
   where
-    inlineBlock block = fst $ runSubstEmbed (traverseBlock inlineTraversalDef block) mempty
+    inlineBlock block = fst $ runSubstBuilder (traverseBlock inlineTraversalDef block) mempty
 
 inlineTraverseDecl :: Decl -> InlineM SubstEnv
 inlineTraverseDecl decl = case decl of
