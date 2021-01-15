@@ -1,4 +1,4 @@
-'# Dex Tutorial
+'# Introduction to Dex
 
 ' Dex is a functional, statically typed language for array
   processing. There are many tools for array processing, from
@@ -10,8 +10,6 @@
   allows for a range of interactions. Put more simply, when learning
   MATLAB students are told repeatedly to "avoid for loops". *Dex gives
   for loops back*.
-
-
 
 '## Table comprehensions
 
@@ -38,7 +36,6 @@ x
   second dimension has type `Width`.
 
 :t x
-
 
 ' Here `Fin` stands for `finite` represents the type of range from 0
 to the value given minus one. The `:` tells us the type of the
@@ -147,8 +144,8 @@ row = x.(3 @ Height)
 
 :t for i:Height. for j:Width. (ordinal i) + (ordinal j)
 
-' If we want to convert these to floats we do it manually with the IToF function.
-  We can use to this to make an image gradient.
+' If we want to convert these values to floats, we do it manually with the `IToF`
+  function. We can use this to make an image gradient.
 
 gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
 :html matshow gradient
@@ -177,7 +174,6 @@ for pair:(Fin 2 & Fin 3). ordinal pair
 ' Again, we rely on type inference in order to avoid explicitly spelling the
   ranges.
 
-
 ' ## Defining functions over tables
 
 ' One use case of packing and unpacking table indices is that it allows us to
@@ -189,7 +185,6 @@ for pair:(Fin 2 & Fin 3). ordinal pair
 :t y
 
 :t mean y
-
 
 ' The `mean` function works independently of the index type of the table.
 
@@ -208,17 +203,16 @@ add5 1.0
 
 :t add5
 
-
 ' We can also write functions with type variables over their inputs. For
   instance, we may want to be able to write a function that applies "adds 5"
   to tables with _any_ index type. This is possible by declaring an `n => Int32`
   table argument type: this declares the type variable `n` as the index type of
   the table argument.
 
-def tabAdd5 (x : n => Float32) : n => Float32 =
+def tableAdd5' (x : n => Float32) : n => Float32 =
     for i. x.i + 5.0
 
-:t tabAdd5 y
+:t tableAdd5' y
 
 ' But function types can help you out even more. For instance, since index types
   are statically known, type checking can ensure that table arguments have valid
@@ -234,20 +228,18 @@ def transFloat (x : m => n => Float32) : n => m => Float32 =
 def trans (x : m => n => v) : n => m => v =
     for i. for j. x.j.i
 
-
 ' We can also use this to check for shape errors:
 
 :t x
 
-def tabAdd (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
+def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
     for i. for j. x.i.j + y.i.j
 
-:t tabAdd x x
+:t tableAdd' x x
 
-:t tabAdd x (trans x)
+:t tableAdd' x (trans x)
 
 ' The type system checked for us that the input tables indeed have the same shape.
-
 
 '## Case Study: MNist
 
@@ -256,7 +248,6 @@ def tabAdd (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
 ' `wget https://github.com/srush/learns-dex/raw/main/mnist.bin`
 
 ' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
-
 
 ' To make some of these concepts for tangible let us consider a real example
   using MNist digits. For this example we will first read in a batch of images
@@ -345,7 +336,6 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 :html matshow (sum (sum im2))
 
-
 '## Writing Loops
 
 ' Dex is a functional language - but when writing mathematical algorithms,
@@ -371,20 +361,17 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
   the `State` effect, which provides getter and setter functionality (via `get`
   and `:=` assignment). Here's what it looks like:
 
-def tabMean (x : n => Float32) : Float32 =
-
+def tableMean (x : n => Float32) : Float32 =
     -- acc = 0 
     withState 0.0 $ \acc.
-    
          -- for i in range(len(x))
          for i.
              -- acc = acc + x[i]
              acc := (get acc) + x.i
-             
          -- return acc / len(x)
          (get acc) / (IToF (size n)) 
              
-tabMean [0.0, 1.0, 0.5]
+:p tableMean [0.0, 1.0, 0.5]
 
 ' So, even though Dex is a functional language, it is possible to write loops
   that look similar to ones that truly perform mutation. However, there is one
@@ -397,20 +384,19 @@ tabMean [0.0, 1.0, 0.5]
   `(f x)` when it is inconvenient to write them. For example, the following two
   expressions are identical:
 
-:t tabMean (y + y)
+:t tableMean (y + y)
 
-:t tabMean $ y + y
+:t tableMean $ y + y
 
 ' Next: `\`. This symbol is the lambda sigil in Dex. It is analogous to the
   `lambda` keyword in Python, and starts the definition of a function value
-  (i.e. closure). In `tabMean` above: the lambda takes an argument named `acc`
+  (i.e. closure). In `tableMean` above: the lambda takes an argument named `acc`
   and returns the body, which is the expression following the `.` (a `for`
   constructor in this case).
 
 :t \ x. x + 10
 
 (\ x. x + 10) 20  
-
 
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
@@ -442,116 +428,108 @@ withState 10 $ \ state.
   Reading the value in `ref` is possible via the `get` function. or via using
   the final result returned by `withState`.
 
-'## Typeclasses
+'## Interfaces
 
-' Our `tabMean` function is pretty neat. It lets us work with tables with any
-  index type and computes the sum. However, `tabMean` explicitly takes only
+' Our `tableMean` function is pretty neat. It lets us work with tables with any
+  index type and computes the sum. However, `tableMean` explicitly takes only
   integer tables (of type `n => Float32`).
 
-:t tabMean
+:t tableMean
 
-' If we try to apply `tabMean` to other types for get errors. For example, what if
-  we have a table of pairs of floats, the function does not work.
+' If we try to apply `tableMean` to other types for get errors. For example,
+  `tableMean` does not work when applied to a table of *pairs* of floats.
 
 :t (for (i, j). (x.i.j, x.i.j))
 
-tabMean (for (i, j). (x.i.j, x.i.j))
+tableMean (for (i, j). (x.i.j, x.i.j))
 
-' Intuitively this seems like it could work. We just need to be able to
-  add and divide pairs. Let's look a bit close at the types of add and
-  divide.
-
+' Intuitively, supporting this seems possible. We just need to be able to
+  add and divide pair types. Let's look closer at the exact types of the
+  addition and division operators.
 
 :t (+)
 
 :t (/)
 
+' These function types are a bit complex.
+  `(+)` maps `a -> a -> a` with a constraint that `a` implements the `Add'`
+  interface. Whereas `(/)` maps `a -> Float32 -> a` where `a` implements the
+  `VSpace'` interface.
 
-' These types are a bit complex. Add maps `a -> a -> a` with a constraint that
-  `a` be in the type class `Add`. Whereas divide maps `a -> Float32 -> a`
-   where `a` is in the type class `VSpace`.
+' If we look in the Prelude, we can see that these interfaces are defined as: 
 
-' If we look in the prelude we can see that these type class interfaces are
-  defined as: 
+interface Add' a
+  add' : a -> a -> a
+  sub' : a -> a -> a
+  zero' : a
 
-interface Add a
-  add : a -> a -> a
-  sub : a -> a -> a
-  zero : a
+interface [Add' a] VSpace' a
+  scaleVec' : Float -> a -> a
 
+' *Interfaces* define *requirements*: the functions needed for a type to
+  implement the interface (via an *instance*).
 
-interface [Add a] VSpace a
-  scaleVec : Float -> a -> a
+' Here is an `Add'` instance for the float pair type:
 
-' They tell us which functions we need to define for a type to work with them. 
-  It it relatively straightforward to add a new instance. 
+instance Add' (Float32 & Float32)
+  add' = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+  sub' = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+  zero' = (0.0, 0.0)
 
-' Here is an interface for adding float pairs.
+' And here is a `VSpace'` instance for the float pair type:
 
-instance Add (Float32 & Float32)
-  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
-  zero = (0.0, 0.0)
+instance VSpace' (Float32 & Float32)
+  scaleVec' = \s (x, y). (x / s, y / s)
 
-' And dividing a float pair by a constant.
+' Once we have these two instance definitions, we can revisit our table sum
+  function using them:
 
-instance VSpace (Float32 & Float32)
-  scaleVec = \s (x, y). (x / s, y / s)
-
-' Once we have these two instance definitions (`MyAdd Int32` and
-  `MyAdd Float32`), we can revisit our table sum function and add a typeclass
-  constraint:
-
-def tabMean2 [VSpace v] (x : n => v) : v =
-    withState zero $ \acc.
+def tableMean' [Add' v, VSpace' v] (x : n => v) : v =
+    z: v = zero'
+    yieldState z $ \acc: (Ref _ v).
         for i.
-            acc := (get acc) + x.i
-        (get acc) / (IToF (size n))   
+            acc := add' (get acc) x.i           -- `Add'` requirement
+            scaleVec' (IToF (size n)) (get acc) -- `VSpace'` requirement
 
-tabMean2 [0.1, 0.5, 1.0]
+tableMean' [0.1, 0.5, 1.0]
 
-tabMean2 [(1.0, 0.5), (0.5, 0.8)]
+tableMean' [(1.0, 0.5), (0.5, 0.8)]
 
+' The instance values are hardcoded for the float pair type. To be more general,
+  we can and should instead define `Add'` and `VSpace'` instances for generic
+' tuple types.
 
-' To be more general, we could have also defined these instance for all tuple
-  types.
+instance [Add' v, Add' w] Add' (v & w)
+  add' = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+  sub' = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+  zero' = (zero, zero)
 
-
-instance [Add v, Add w] Add (v & w)
-  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
-  zero = (zero, zero)
-
-instance [VSpace v, VSpace w] VSpace (v & w)
-  scaleVec = \s (x, y). (x / s, y / s)
-
+instance [VSpace' v, VSpace' w] VSpace' (v & w)
+  scaleVec' = \s (x, y). (x / s, y / s)
 
 '## More MNist
 
-
 ' Now that we has more functions we can revisit some of the MNist examples.
-
 
 ' Function that uses state to produce a histogram:
 
 Pixels = Fin 256
 
 def bincount (inp : a => b) : b => Int =
-    withState zero \ acc .
+    withState zero' \acc .
         for i.
             v = acc!(inp.i)
             v := (get v) + 1
         get acc
 
-' Plot how many times each pixel value occurs in an image
+' Plot how many times each pixel value occurs in an image:
 
 hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j + 1.0) @Pixels)
 :t hist
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
 
-' Find nearest images in the dataset.
-
+' Find nearest images in the dataset:
 
 def imdot (x : m=>n=>Float32) (y : m=>n=>Float32) : Float32 =
     sum for (i, j). x.i.j * y.i.j
@@ -567,9 +545,7 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 
 :html imseqshow double
 
-
 '## Variable Length Lists
-
 
 ' So far all the examples have assumed that we
   know the exact size of our tables. This is a
@@ -612,7 +588,6 @@ def findFives (x : a=>b) (y : a=>Class) : List b =
             True -> AsList _ [x.i]
             False -> mempty
 
-
 ' Note though that the type here does not tell us
   how many 5's there are. The type system cannot know this.
   To figure it out we need to unpack the list. 
@@ -628,9 +603,7 @@ nFives
 
 :html matshow (sum fives)
 
-
 '## Conclusion
-
 
 ' We hope this gives you enough information to start playing with Dex.
   This is just a start though of the different functionality available
