@@ -16,39 +16,39 @@ instance [Add a, Add b] Add (a & b)
 instance [VSpace a, VSpace b] VSpace (a & b)
   scaleVec = \ s (a, b) . (scaleVec s a, scaleVec s b)
 
-def Layer (inp:Type) (out:Type) (param:Type) : Type=
-  {forward: param -> inp -> out &
-   init: Key -> param
-  }
+data Layer inp:Type out:Type params:Type =
+  AsLayer {forward:(params -> inp -> out) & init:(Key -> params)}
+  
 
 def forward (l:Layer i o p) (p : p) (x : i): o =
-  (getAt #forward l) p x
+  (AsLayer l' ) = l
+  (getAt #forward l') p x
 
 def init (l:Layer i o p) (k:Key)  : p  =
-  (getAt #init l) k
+  (AsLayer l') = l
+  (getAt #init l') k
 
 
 ' ## Layers 
 
 ' Dense layer
 
-def Dense (a:Type) (b:Type) : Type =
-  Layer (a=>Float) (b=>Float) ((a=>b=>Float) & (b=>Float))
+def DenseParams (a:Type) (b:Type) : Type =
+   ((a=>b=>Float) & (b=>Float))
 
-def dense (a:Type) (b:Type) : Dense a b =
-  {
-   forward = (\(weight, bias) x .
+def dense (a:Type) (b:Type) : Layer (a=>Float) (b=>Float) (DenseParams a b) =
+  AsLayer {
+    forward = (\ ((weight, bias)) x .
                for j. (bias.j + sum for i. weight.i.j * x.i)),
-   init = arb
-  }
+    init = arb
+   }
+  
 
 ' CNN layer
 
-def CNN (h:Int) (w:Int) (inc:Type) (outc:Type) (kw:Int) (kh:Int) : Type =
-  (Layer (inc=>Fin h=>Fin w=>Float)
-         (outc=>Fin h=>Fin w=>Float)
-         ((outc=>inc=>Fin kh=>Fin kw=>Float) &
-          (outc=>Float)))
+def CNNParams (inc:Type) (outc:Type) (kw:Int) (kh:Int) : Type =
+  ((outc=>inc=>Fin kh=>Fin kw=>Float) &
+   (outc=>Float))
 
 def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
            (kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float) :
@@ -64,9 +64,11 @@ def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
           False -> zero
 
 def cnn (h:Int) ?-> (w:Int) ?-> (inc:Type) (outc:Type) (kw:Int) (kh:Int) :
-    CNN h w inc outc kw kh =
-  {
-    forward = \(weight, bias) x. for o i j . (conv2d x weight).o.i.j + bias.o,
+    Layer (inc=>(Fin h)=>(Fin w)=>Float)
+          (outc=>(Fin h)=>(Fin w)=>Float)
+          (CNNParams inc outc kw kh) =
+  AsLayer {
+    forward = (\ (weight, bias) x. for o i j . (conv2d x weight).o.i.j + bias.o),
     init = arb
   }
 
@@ -98,7 +100,7 @@ xs = for i. [x1.i, x2.i]
 simple = \h1.
   ndense1 = dense (Fin 2) h1
   ndense2 = dense h1 (Fin 2)
-  {
+  AsLayer {
     forward = (\ (dense1, dense2) x.
          x1' = forward ndense1 dense1 x
          x1 = for i. relu x1'.i
@@ -108,7 +110,7 @@ simple = \h1.
          (init ndense1 k1, init ndense2 k2))
   }
 
-
+:t simple
 
 ' Train a multiclass classifier with minibatch SGD
 ' `minibatch * minibatches = batch`
@@ -159,7 +161,7 @@ lenet = \h1 h2 h3 .
   Pooled = (h2 & Fin 7 & Fin 7)
   ndense1 = dense Pooled h3
   ndense2 = dense h3 Class
-  {
+  AsLayer {
     forward = (\ (cnn1, cnn2, dense1, dense2) inp.
          x:Image = inp
          x1' = forward ncnn1 cnn1 x
@@ -176,6 +178,7 @@ lenet = \h1 h2 h3 .
          init ndense1 k3, init ndense2 k4))
   }
 
+:t lenet
 
 
 ' ## Data Loading
