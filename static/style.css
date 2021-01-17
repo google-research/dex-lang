@@ -13,6 +13,23 @@ body {
   color: #333;
 }
 
+nav {
+  position: fixed;
+  right: 0.5rem;
+  top: 15%;
+  border-left: 1px solid firebrick;
+  padding-left: 0.5rem;
+  padding-right: 1rem;
+}
+nav:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
 .cell {
 }
 
