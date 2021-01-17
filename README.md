@@ -68,6 +68,19 @@ alias dex="stack exec --stack-yaml=stack-macos.yaml dex -- --lib-path lib"
   * Execute script: `dex script examples/pi.dx`
   * Live-updated notebook display `dex web examples/pi.dx` (html) or `dex watch
     examples/pi.dx` (terminal).
+    
+### Command-line Flags:
+Listed here are some commonly used flags and examples.
+For a full list run `dex -h`.
+
+ - `--prelude [file]` start by loading the given file instead of the normal prelude.
+     - e.g. `dex --prelude=myprelude.dx repl` starts the dex repl with `myprelude.dx` loaded.
+     - e.g. `dex --prelude=/dev/null web lib/prelude.dx` starts dex without any prelude loaded, so you can edit the `prelude.dx` file and view it in the web notebook.
+
+#### REPL only:
+ - `--prompt [string]` use the given string as the prompt instead of `>=> `
+    - e.g. `dex repl --prompt dex:` starts the REPL with the prompt being `dex:`
+    - e.g. `dex repl --prompt "$(printf '\x1B[32m\x02>=> \x1B[m\x02')"` starts the REPL with the prompt being `>=> ` in green text
 
 ## License
 
