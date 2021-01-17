@@ -1014,7 +1014,7 @@ splitR : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
   overLens (splitR &>> iso) tab
 
-Convert a variant zipper isomorphism to a normal prism-like isomorphism
+'Convert a variant zipper isomorphism to a normal prism-like isomorphism
 by using `splitV &>> iso`
 
 splitV : Iso a ({|} | a) =
