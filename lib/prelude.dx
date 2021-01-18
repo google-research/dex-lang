@@ -2,7 +2,8 @@
 
 'Runs before every Dex program unless an alternative is provided with `--prelude`.
 
-'## Wrappers around primitives
+'## Essentials
+### Primitive Types
 
 Unit = %UnitType
 Type = %TyKind
@@ -23,6 +24,8 @@ RawPtr : Type = %Word8Ptr
 Int = Int32
 Float = Float32
 
+'### Casting
+
 def internalCast (b:Type) (x:a) : b = %cast b x
 
 def F64ToF (x : Float64) : Float   = internalCast _ x
@@ -39,6 +42,11 @@ def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
 def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
 def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
+
+'### Basic Arithmetic
+#### Add
+Things that can be added.
+This defines the `Add` [group](https://en.wikipedia.org/wiki/Group_(mathematics)) and its operators.
 
 interface Add a
   add : a -> a -> a
@@ -83,6 +91,10 @@ instance [Add a] Add (n=>a)
   sub = \xs ys. for i. xs.i - ys.i
   zero = for _. zero
 
+'#### Mul
+Things that can be multiplied.
+This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
+
 interface Mul a
   mul : a -> a -> a
   one : a
@@ -117,6 +129,9 @@ instance [Mul a] Mul (n=>a)
   mul = \xs ys. for i. xs.i * ys.i
   one = for _. one
 
+'#### Integral
+Integer-like things.
+
 interface Integral a
   idiv : a->a->a
   rem  : a->a->a
@@ -133,6 +148,9 @@ instance Integral Word8
   idiv = \x y.  %idiv x y
   rem  = \x y.  %irem x y
 
+'#### Fractional
+Rational-like things.
+Includes floating point and two field rational representations.
 
 interface Fractional a
   divide : a -> a -> a
@@ -202,6 +220,9 @@ def not  (x:Bool) : Bool =
   W8ToB $ %not x'
 
 '## Sum types
+A [sum type, or tagged union](https://en.wikipedia.org/wiki/Tagged_union) can hold values from a fixed set of types, distinguished by tags.
+For those familiar with the C language, they can be though of as a combination of an `enum` with a `union`.
+Here we define several basic kinds, and some operators on them.
 
 data Maybe a =
   Nothing
@@ -222,12 +243,18 @@ data (|) a b =
   Left  a
   Right b
 
+'## More Boolean operations
+TODO: move these with the others?
+
 def select (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
 def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
 def BToF (x:Bool) : Float = IToF (BToI x)
+
+'## Ordering
+TODO: move this down to with `Ord`?
 
 data Ordering =
   LT
@@ -296,10 +323,23 @@ def unreachable (():Unit) : a = unsafeIO do
 
 '## Type classes
 
+'### Eq and Ord
+
+'#### Eq
+Equatable.
+Things that we can tell if they are equal or not to other things.
+
 interface Eq a
   (==) : a -> a -> Bool
 
 def (/=) [Eq a] (x:a) (y:a) : Bool = not $ x == y
+
+'#### Ord
+Orderable / Comparable.
+Things that can be place in a total order.
+i.e. things that can be compared to other things to find if larger, smaller or equal in value.
+
+'We take the standard false-hood and pretend that this applies to Floats, even though strictly speaking this not true as our floats follow [IEEE754](https://en.wikipedia.org/wiki/IEEE_754), and thus have `NaN < 1.0 == false` and `1.0 < NaN == false`.
 
 interface [Eq a] Ord a
   (>) : a -> a -> Bool
@@ -366,6 +406,15 @@ instance [Ord a, Ord b] Ord (a & b)
 instance Eq Ordering
   (==) = \x y. OToW8 x == OToW8 y
 
+'### Monoid
+A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
+This is a very useful and general calls of things.
+It includes:
+ - Addition and Multiplication of Numbers
+ - Boolean Logic
+ - Concatenation of Lists (including strings)
+Monoids support `fold` operations, and similar.
+
 interface Monoid a
   mempty : a
   mcombine : a -> a -> a  -- can't use `<>` just for parser reasons?
@@ -414,7 +463,11 @@ instance [Ord a] Ord (n=>a)
         fold EQ $ \i c. c <> (compare xs.i ys.i)
     f == LT
 
-'## Transcencendental functions
+'## Elementary/Special Functions
+This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).
+Roughly it lines up with some definitions of the set of [Elementary](https://en.wikipedia.org/wiki/Elementary_function) and/or [Special](https://en.wikipedia.org/wiki/Special_functions).
+In truth, nothing is elementary or special except that we humans have decided it is.
+Many, but not all of these functions are [Transcendental](https://en.wikipedia.org/wiki/Transcendental_function).
 
 interface Floating a
   exp    : a -> a
@@ -595,6 +648,8 @@ def sq  [Mul a] (x:a) : a = x * x
 def abs [Add a, Ord a] (x:a) : a = select (x > zero) x (zero - x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 
+'## Table Operations
+
 instance [Floating a] Floating (n=>a)
   exp    = map exp
   exp2   = map exp2
@@ -615,11 +670,16 @@ instance [Floating a] Floating (n=>a)
   pow    = \x y. for i. pow x.i y.i
   lgamma = map lgamma
 
+'### Axis Restructuring
+
 def axis1 (x : a => b => c) : b => a => c = for j. for i. x.i.j
 def axis2 (x : a => b => c => d) : c => a => b => d = for k. for i. for j. x.i.j.k
 
 
 def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
+
+
+'### Reductions
 
 def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
   -- `combine` should be a commutative and associative, and form a
@@ -638,9 +698,13 @@ def std [Mul v, VSpace v, Floating v] (xs:n=>v) : v = sqrt $ mean (map sq xs) - 
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
+'### ApplyN
+
 def applyN (n:Int) (x:a) (f:a -> a) : a =
   yieldState x \ref. for _:(Fin n).
     ref := f (get ref)
+
+'### Linear Algebra
 
 def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
   dx = (high - low) / IToF (size n)
@@ -664,6 +728,11 @@ def eye [Eq n] : n=>n=>Float =
   for i j. select (i == j) 1.0 0.0
 
 '## Pseudorandom number generator utilities
+Dex does not use a stateful random number generator.
+Rather it uses what is known as a split-able random number generator, which is based on a hash function.
+Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/jax/blob/master/design_notes/prng.md), which is based on a well established but shockingly underused idea from the functional programming community: the splittable PRNG. It's a good idea for many reasons, but it's especially helpful in a parallel setting. If you want to read more, [Splittable pseudorandom number generators using cryptographic hashing](http://publications.lib.chalmers.se/records/fulltext/183348/local_183348.pdf) describes the splitting model itself and [D.E. Shaw Research's counter-based PRNG](http://www.thesalmons.org/john/random123/papers/random123sc11.pdf) proposes the particular hash function we use.
+
+'### Key functions
 
 -- TODO: newtype
 Key = Int64
@@ -676,6 +745,11 @@ def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
 def splitKey (k:Key) : Fin n => Key = for i. ixkey k i
+
+'### Sample Generators
+These functions generate samples taken from, different distributions.
+Such as `randMat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
+
 def rand (k:Key) : Float =  unsafeIO do F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
@@ -697,6 +771,10 @@ def bern (p:Float) (k:Key) : Bool = rand k < p
 def randnVec (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
+'## cumSum
+TODO: Move this to be with reductions?
+It's a kind of `scan`.
+
 def cumSum (xs: n=>Float) : n=>Float =
   withState 0.0 \total.
     for i.
@@ -705,6 +783,8 @@ def cumSum (xs: n=>Float) : n=>Float =
       newTotal
 
 '## Automatic differentiation
+
+'### AD operations
 
 -- TODO: add vector space constraints
 def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
@@ -720,6 +800,9 @@ def grad (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
+
+'### Approximate Equality
+TODO: move this outside the AD section to be with equality?
 
 interface HasAllClose a
   allclose : a -> a -> a -> a -> Bool
@@ -751,6 +834,7 @@ instance [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
   atol = for i. atol
   rtol = for i. rtol
 
+'### AD Checking tools
 
 def checkDerivBase (f:Float->Float) (x:Float) : Bool =
   eps = 0.01
@@ -871,16 +955,18 @@ def (&>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
 
 def (<<&) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
 
--- Lens-like accessors
--- (note: #foo is an Iso {foo: a & ...b} (a & {&...b}))
+'### Lens-like accessors
+note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
+
 def getAt  (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
 def popAt  (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
 def pushAt (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
 def setAt  (iso: Iso a (b & c)) (x:b) (r:a) : a =
   pushAt iso x $ popAt iso r
 
--- Prism-like accessors
--- (note: #?foo is an Iso {foo: a | ...b} (a | {|...b}))
+'### Prism-like accessors
+note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
+
 def matchWith (iso: Iso a (b | c)) (x: a) : Maybe b =
   case appIso iso x of
     Left x -> Just x
@@ -890,7 +976,9 @@ def buildWith (iso: Iso a (b | c)) (x: b) : a = revIso iso $ Left x
 swapPairIso : Iso (a & b) (b & a) =
   MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
 
--- Complement the focus of a lens-like isomorphism
+'### Complement lens
+Complement the focus of a lens-like isomorphism
+
 exceptLens : Iso a (b & c) -> Iso a (c & b) = \iso. iso &>> swapPairIso
 
 swapEitherIso : Iso (a | b) (b | a) =
@@ -902,33 +990,40 @@ swapEitherIso : Iso (a | b) (b | a) =
     Right l -> Left l
   MkIso {fwd, bwd}
 
--- Complement the focus of a prism-like isomorphism
+'### Complement prism
+Complement the focus of a prism-like isomorphism
+
 exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swapEitherIso
 
 -- Use a lens-like iso to split a 1d table into a 2d table
 def overLens (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
   for i j. tab.(revIso iso (i, j))
 
--- Zipper isomorphisms to easily specify many record/variant fields:
--- #&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
--- #|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
+'### Zipper
+Zipper isomorphisms to easily specify many record/variant fields:
+```
+#&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
+#|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
+```
 
--- Convert a record zipper isomorphism to a normal lens-like isomorphism
--- by using splitR &>> iso
+' Convert a record zipper isomorphism to a normal lens-like isomorphism
+by using `splitR &>> iso`
+
 splitR : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
 def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
   overLens (splitR &>> iso) tab
 
--- Convert a variant zipper isomorphism to a normal prism-like isomorphism
--- by using splitV &>> iso
+'Convert a variant zipper isomorphism to a normal prism-like isomorphism
+by using `splitV &>> iso`
+
 splitV : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
 
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
   reindex (buildWith $ splitV &>> iso) tab
 
-'Dynamic buffer
+'## Dynamic buffer
 
 -- TODO: would be nice to be able to use records here
 data DynBuffer a =
@@ -999,6 +1094,13 @@ def stringFromCharPtr (n:Int) (ptr:Ptr Char) : {IO} String =
 -- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint (c:Char) : Int = W8ToI c
 
+'### Show interface
+For things that can be shown.
+`show` gives a string representation of its input.
+No particular promises are made to exactly what that representation will contain.
+In particular it is **not** promised to be parseable.
+Nor does it promise a particular level of precision for numeric values.
+
 interface Show a
   show : a -> String
 
@@ -1025,10 +1127,13 @@ instance Show Float64
     (n, ptr) = %ffi showFloat64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
--- pipe-like reverse function application
+'## pipe-like reverse function application
+TODO: move this
+
 def (|>) (x:a) (f: a -> b) : b = f x
 
 '## Floating-point helper functions
+TODO: Move these to be with Elementary/Special functions. Or move those to be here.
 
 def sign (x:Float) : Float =
   case x > 0.0 of
@@ -1055,7 +1160,7 @@ def isnan (x:Float) : Bool = not (x >= x && x <= x)
 -- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
 def either_is_nan (x:Float) (y:Float) : Bool = (isnan x) || (isnan y)
 
-'File system operations
+'## File system operations
 
 FilePath : Type = String
 data CString = MkCString RawPtr
@@ -1082,6 +1187,8 @@ def withCString (s:String) (action: CString -> {IO} a) : {IO} a =
   (AsList n s') = s <> "\NUL"
   withTabPtr s' \(MkPtr ptr). action $ MkCString ptr
 
+'### Stream IO
+
 def fopen (path:String) (mode:StreamMode) : {IO} (Stream mode) =
   modeStr = case mode of
     ReadMode  -> "r"
@@ -1102,6 +1209,9 @@ def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
     %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
   %ffi fflush Int64 stream'
   ()
+
+'### Iteration
+TODO: move this out of the file-system section
 
 def while (body: Unit -> {|eff} Bool) : {|eff} Unit =
   body' : Unit -> {|eff} Word8 = \_. BToW8 $ body ()
@@ -1151,6 +1261,8 @@ def boundedIter (maxIters:Int) (fallback:a)
       then Done fallback
       else body i
 
+'### Environment Variables
+
 def fromCString (s:CString) : {IO} (Maybe String) =
   case cStringPtr s of
     Nothing -> Nothing
@@ -1170,6 +1282,8 @@ def getEnv (name:String) : {IO} Maybe String =
 def checkEnv (name:String) : {IO} Bool =
   isJust $ getEnv name
 
+'### More Stream IO
+
 def fread (stream:Stream ReadMode) : {IO} String =
   (MkStream stream') = stream
   -- TODO: allow reading longer files!
@@ -1184,6 +1298,8 @@ def fread (stream:Stream ReadMode) : {IO} String =
           then Continue
           else Done ()
       loadDynBuffer buf
+
+'### File Operations
 
 def deleteFile (f:FilePath) : {IO} Unit =
   withCString f \(MkCString ptr).
@@ -1204,6 +1320,9 @@ def writeFile (f:FilePath) (s:String) : {IO} Unit =
 def readFile (f:FilePath) : {IO} String =
   withFile f ReadMode \stream. fread stream
 
+
+'### Temporary Files
+
 def newTempFile (_:Unit) : {IO} FilePath =
   withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
     fd = %ffi mkstemp Int32 ptr
@@ -1222,11 +1341,15 @@ def withTempFiles (action: (n=>FilePath) -> {IO} a) : {IO} a =
   for i. deleteFile tmpFiles.i
   result
 
+'### Print
+
 def getOutputStream (_:Unit) : {IO} Stream WriteMode =
   MkStream $ %ptrLoad OUT_STREAM_PTR
 
 def print (s:String) : {IO} Unit =
   fwrite (getOutputStream ()) (s <> "\n")
+
+'### Shelling Out
 
 def shellOut (command:String) : {IO} String =
   modeStr = "r"
@@ -1235,13 +1358,20 @@ def shellOut (command:String) : {IO} String =
       pipe = MkStream %ffi popen RawPtr commandPtr modePtr
       fread pipe
 
-'Partial functions
+'## Partial functions
+A partial function in this context is a function that can error.
+i.e. a function that is not actually defined for all of its supposed domain.
+Not to be confused with a partially applied function
+
+'### Error throwing
 
 def error (s:String) : a = unsafeIO do
   print s
   %throwError a
 
 def todo : a = error "TODO: implement it!"
+
+'### Table operations
 
 def fromOrdinal (n:Type) (i:Int) : n =
   case (0 <= i) && (i < size n) of
@@ -1269,11 +1399,13 @@ def tail (xs:n=>a) (start:Int) : List a =
   numElts = size n - start
   toList $ slice xs start (Fin numElts)
 
+--TODO: move this to be with other random number functions
 def randIdx (k:Key) : n =
   unif = rand k
   fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
 
-'Type class for generating example values
+'## Arbitrary
+Type class for generating example values
 
 interface Arbitrary a
   arb : Key -> a
@@ -1295,9 +1427,12 @@ instance [Arbitrary a, Arbitrary b] Arbitrary (a & b)
 instance Arbitrary (Fin n)
   arb = randIdx
 
-'Control flow
+'## Ord on Arrays
 
--- returns the highest index `i` such that `xs.i <= x`
+'### Searching
+
+'returns the highest index `i` such that `xs.i <= x`
+
 def searchSorted [Ord a] (xs:n=>a) (x:a) : Maybe n =
   if size n == 0
     then Nothing
@@ -1314,7 +1449,7 @@ def searchSorted [Ord a] (xs:n=>a) (x:a) : Maybe n =
               else low  := centerIx
             Continue
 
-'min / max etc
+'### min / max etc
 
 def minBy [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
 def maxBy [Ord o] (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
@@ -1330,6 +1465,9 @@ def maximumBy [Ord o] (f:a->o) (xs:n=>a) : a =
 def minimum [Ord o] (xs:n=>o) : o = minimumBy id xs
 def maximum [Ord o] (xs:n=>o) : o = maximumBy id xs
 
+'### argmin/argmax
+TODO: put in same section as `searchsorted`
+
 def argscan (comp:o->o->Bool) (xs:n=>o) : n =
   zeroth = (0@_, xs.(0@_))
   compare = \(idx1, x1) (idx2, x2).
@@ -1340,10 +1478,14 @@ def argscan (comp:o->o->Bool) (xs:n=>o) : n =
 def argmin [Ord o] (xs:n=>o) : n = argscan (<) xs
 def argmax [Ord o] (xs:n=>o) : n = argscan (>) xs
 
+'### clip
+
 def clip [Ord a] ((low,high):(a&a)) (x:a) : a =
   min high $ max low x
 
 '## Trigonometric functions
+TODO: these should be with the other Elementary/Special Functions
+### atan/atan2
 
 def atan_inner (x:Float) : Float =
   -- From "Computing accurate Horner form approximations to
@@ -1511,6 +1653,7 @@ def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
 def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
 
 '## Miscellaneous utilities
+TODO: all of these should be in some other section
 
 def reverse (x:n=>a) : n=>a =
   s = size n
@@ -1566,6 +1709,9 @@ def concat (lists:n=>(List a)) : List a =
         eltIdx := eltIdxVal + 1
         xs.(eltIdxVal@_)
 
+
+'## Probability
+
 def cumSumLow (xs: n=>Float) : n=>Float =
   withState 0.0 \total.
     for i.
@@ -1594,8 +1740,6 @@ def categoricalBatch (logprobs: n=>Float) (key: Key) : m=>n =
   cdf = cdfForCategorical logprobs
   for i. categoricalFromCDF cdf $ ixkey key i
 
-'Numerical utilities
-
 def logsumexp (x: n=>Float) : Float =
   m = maximum x
   m + (log $ sum for i. exp (x.i - m))
@@ -1610,13 +1754,20 @@ def softmax (x: n=>Float) : n=>Float =
   s = sum e
   for i. e.i / s
 
+'## Polynomials
+TODO: Move this somewhere else
+
 def evalpoly [VSpace v] (coefficients:n=>v) (x:Float) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
 
+'## TestMode
+TODO: move this to be in Testing Helpers
+
 def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
 
 '## Exception effect
+TODO: move `error` and `todo` to here.
 
 def catch (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
   %catchException f
@@ -1626,6 +1777,9 @@ def throw (_:Unit) : {Except} a =
 
 def assert (b:Bool) : {Except} Unit =
   if not b then throw ()
+
+
+'## Testing Helpers
 
 -- -- Reliably causes a segfault if pointers aren't initialized to zero.
 -- -- TODO: add this test when we cache modules
