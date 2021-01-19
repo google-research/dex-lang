@@ -86,7 +86,7 @@ include "plot.dx"
 
 ' The analogous table construct in Dex is written in the following form. It
   produces a one-dimensional table of `Height x Width` elements. Here `&`
-  indicates a tuple constructor. 
+  indicates a tuple constructor.
 
 y = for  (i, j) : (Height & Width) . 1.0
 
@@ -116,7 +116,7 @@ mean y
 r = x.3
 
 ' Instead, it is necessary to cast the integer into the index type of the
-  current shape. This type annotation is done with the `@` operator. 
+  current shape. This type annotation is done with the `@` operator.
 
 :t x
 
@@ -128,7 +128,7 @@ row = x.(3 @ Height)
 
 ' If you are feeling lazy and sure of yourself, you can also let Dex infer
   the type for you. This is also how `for` works in the examples above that
-  did not provide and explicit type annotation. 
+  did not provide and explicit type annotation.
 
 :t row.(5 @ _)
 
@@ -159,7 +159,7 @@ gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
 
 :t y.(3 @ Height, 5 @ Width)
 
-' Tuple indices also provide an ordinal value. 
+' Tuple indices also provide an ordinal value.
 
 for pair:(Fin 2 & Fin 3). ordinal pair
 
@@ -189,7 +189,7 @@ for pair:(Fin 2 & Fin 3). ordinal pair
 ' The `mean` function works independently of the index type of the table.
 
 ' Let's see how we can define our own table functions. Defining a function in
-  Dex uses the following syntax. 
+  Dex uses the following syntax.
 
 def add5 (x:Float32) : Float32 =
     x + 5.0
@@ -218,12 +218,12 @@ def tableAdd5' (x : n => Float32) : n => Float32 =
   are statically known, type checking can ensure that table arguments have valid
   dimensions. This is "shape safety".
 
-' Imagine we have `transpose` function. We can encode the shape change in the type. 
+' Imagine we have `transpose` function. We can encode the shape change in the type.
 
 def transFloat (x : m => n => Float32) : n => m => Float32 =
     for i. for j. x.j.i
 
-' We can even make it more generic by abstracting over the value type. 
+' We can even make it more generic by abstracting over the value type.
 
 def trans (x : m => n => v) : n => m => v =
     for i. for j. x.j.i
@@ -264,7 +264,7 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
 
 ' To do this we will use Dex's IO to load some images from a file.
   This section uses features outside the scope of the tutorial, so you can
-  ignore it for now. 
+  ignore it for now.
 
 def pixel (x:Char) : Float32 =
      r = W8ToI x
@@ -272,7 +272,7 @@ def pixel (x:Char) : Float32 =
              True -> (abs r) + 128
              False -> r
 
-def getIm : Batch => Image = 
+def getIm : Batch => Image =
     (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
     raw = unsafeCastTable Full im
     for b: Batch i j.
@@ -311,9 +311,9 @@ imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 ' This one shows all the images on one channel over the base plot.
 
 imscolor2 = for b. for i. for j. for c:Channels.
-          case ordinal c == 0 of 
+          case ordinal c == 0 of
              True -> (sum ims).i.j / (IToF (size Batch))
-             False -> ims.b.i.j 
+             False -> ims.b.i.j
 
 :html imseqshow (imscolor2 / 255.0)
 
@@ -324,7 +324,7 @@ imscolor2 = for b. for i. for j. for c:Channels.
 
 def split (x: m=>v) : n=>o=>v =
     for i j. x.(ordinal (i,j)@_)
-            
+
 def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
     for kh kw h w. (split (split x).h.kh).w.kw
 
@@ -362,15 +362,15 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
   and `:=` assignment). Here's what it looks like:
 
 def tableMean (x : n => Float32) : Float32 =
-    -- acc = 0 
+    -- acc = 0
     withState 0.0 $ \acc.
          -- for i in range(len(x))
          for i.
              -- acc = acc + x[i]
              acc := (get acc) + x.i
          -- return acc / len(x)
-         (get acc) / (IToF (size n)) 
-             
+         (get acc) / (IToF (size n))
+
 :p tableMean [0.0, 1.0, 0.5]
 
 ' So, even though Dex is a functional language, it is possible to write loops
@@ -396,7 +396,7 @@ def tableMean (x : n => Float32) : Float32 =
 
 :t \ x. x + 10
 
-(\ x. x + 10) 20  
+(\ x. x + 10) 20
 
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
@@ -456,7 +456,7 @@ tableMean (for (i, j). (x.i.j, x.i.j))
   interface. Whereas `(/)` maps `a -> Float32 -> a` where `a` implements the
   `VSpace'` interface.
 
-' If we look in the Prelude, we can see that these interfaces are defined as: 
+' If we look in the Prelude, we can see that these interfaces are defined as:
 
 interface Add' a
   add' : a -> a -> a
@@ -551,7 +551,7 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
   know the exact size of our tables. This is a
   common assumption in array languages, but
   it makes some operations surprisingly difficult
-  to do. 
+  to do.
 
 ' For instance, we might want to filter our set of
   images to only allow for images of 5's. But what is
@@ -568,10 +568,10 @@ AsList _ $ for i:Height. 0.0
 :t AsList _ $ for i:Height. 0.0
 
 ' Tables of lists can be concatenated down to
-  single lists. 
+  single lists.
 
 z = concat [AsList _ [3.0],
-        AsList _ [1.0, 2.0 ]] 
+        AsList _ [1.0, 2.0 ]]
 z
 
 ' And they can be deconstructed to fetch a new table.
@@ -581,7 +581,7 @@ temptab
 
 ' Using this construct we can return to extracting
   the 5's from the image set. Here `mempty` is
-  synonymous with `AsList _ []`. 
+  synonymous with `AsList _ []`.
 
 def findFives (x : a=>b) (y : a=>Class) : List b =
     concat for i. case (y.i == (5 @ _)) of
@@ -590,9 +590,9 @@ def findFives (x : a=>b) (y : a=>Class) : List b =
 
 ' Note though that the type here does not tell us
   how many 5's there are. The type system cannot know this.
-  To figure it out we need to unpack the list. 
+  To figure it out we need to unpack the list.
 
-temp = findFives all_ims all_labels 
+temp = findFives all_ims all_labels
 (AsList nFives fives) = temp
 
 nFives
@@ -615,7 +615,7 @@ nFives
 ' Here are some topics to check out in the Prelude:
 
 ' * Randomness and Keys
-  * Laziness of For Comprehensions 
+  * Laziness of For Comprehensions
   * Records and Variant Types
   * File IO
   * Effects Beyond State
