@@ -272,10 +272,10 @@ exprEffs expr = case expr of
   App f _ -> functionEffs f
   Op op   -> case op of
     PrimEffect ref m -> case m of
-      MGet    -> oneEffect (RWSEffect State  h)
-      MPut  _ -> oneEffect (RWSEffect State  h)
-      MAsk    -> oneEffect (RWSEffect Reader h)
-      MTell _ -> oneEffect (RWSEffect Writer h)
+      MGet      -> oneEffect (RWSEffect State  h)
+      MPut    _ -> oneEffect (RWSEffect State  h)
+      MAsk      -> oneEffect (RWSEffect Reader h)
+      MExtend _ -> oneEffect (RWSEffect Writer h)
       where RefTy (Var (h:>_)) _ = getType ref
     ThrowException _ -> oneEffect ExceptionEffect
     IOAlloc  _ _  -> oneEffect IOEffect
@@ -291,9 +291,9 @@ exprEffs expr = case expr of
     Linearize _     -> mempty  -- Body has to be a pure function
     Transpose _     -> mempty  -- Body has to be a pure function
     RunReader _ f   -> handleRWSRunner Reader f
-    RunWriter   f   -> handleRWSRunner Writer f
+    RunWriter _ f   -> handleRWSRunner Writer f
     RunState  _ f   -> handleRWSRunner State  f
-    PTileReduce _ _ -> mempty
+    PTileReduce _ _ _ -> mempty
     RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
       EffectRow (S.delete IOEffect effs) t
     CatchException ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
@@ -445,14 +445,14 @@ instance CoreVariant (PrimHof a) where
     For _ _       -> alwaysAllowed
     While _       -> alwaysAllowed
     RunReader _ _ -> alwaysAllowed
-    RunWriter _   -> alwaysAllowed
+    RunWriter _ _ -> alwaysAllowed
     RunState  _ _ -> alwaysAllowed
     RunIO     _   -> alwaysAllowed
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
-    PTileReduce _ _ -> absentUntil Simp -- really absent until parallelization
-    CatchException _ -> goneBy Simp
+    PTileReduce _ _ _ -> absentUntil Simp -- really absent until parallelization
+    CatchException _  -> goneBy Simp
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -704,10 +704,10 @@ typeCheckOp op = case op of
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var (h':>TyKind))) s) <- typeCheck ref
     case m of
-      MGet    ->         declareEff (RWSEffect State  h') $> s
-      MPut  x -> x|:s >> declareEff (RWSEffect State  h') $> UnitTy
-      MAsk    ->         declareEff (RWSEffect Reader h') $> s
-      MTell x -> x|:s >> declareEff (RWSEffect Writer h') $> UnitTy
+      MGet      ->                 declareEff (RWSEffect State  h') $> s
+      MPut  x   -> x|:s         >> declareEff (RWSEffect State  h') $> UnitTy
+      MAsk      ->                 declareEff (RWSEffect Reader h') $> s
+      MExtend x -> x|:(s --> s) >> declareEff (RWSEffect Writer h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (TabTyAbs a) <- typeCheck ref
     i |: absArgType a
@@ -855,15 +855,16 @@ typeCheckHof hof = case hof of
       replaceDim 0 (TabTy _ b) n  = TabTy (Ignore n) b
       replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
       replaceDim _ _ _ = error "This should be checked before"
-  PTileReduce n mapping -> do
-    -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> ((ParIndexRange n gtid nthr)=>a, r)
+  PTileReduce baseMonoids n mapping -> do
+    -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
     BinaryFunTy (Bind gtid) (Bind nthr) Pure mapResultTy <- typeCheck mapping
-    PairTy tiledArrTy accTy <- return mapResultTy
+    (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
     let threadRange = TC $ ParIndexRange n (Var gtid) (Var nthr)
     TabTy threadRange' tileElemTy <- return tiledArrTy
     checkEq threadRange (binderType threadRange')
-    -- PTileReduce n mapping : (n=>a, ro)
-    return $ PairTy (TabTy (Ignore n) tileElemTy) accTy
+    -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
+    -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
+    return $ PairTy (TabTy (Ignore n) tileElemTy) $ mkConsListTy accTys
   While body -> do
     Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr
@@ -879,7 +880,14 @@ typeCheckHof hof = case hof of
     (resultTy, readTy) <- checkRWSAction Reader f
     r |: readTy
     return resultTy
-  RunWriter f -> uncurry PairTy <$> checkRWSAction Writer f
+  RunWriter _ f -> do
+    -- XXX: We can't verify compatibility between the base monoid and f, because
+    --      the only way in which they are related in the runAccum definition is via
+    --      the AccumMonoid typeclass. The frontend constraints should be sufficient
+    --      to ensure that only well typed programs are accepted, but it is a bit
+    --      disappointing that we cannot verify that internally. We might want to consider
+    --      e.g. only disabling this check for prelude.
+    uncurry PairTy <$> checkRWSAction Writer f
   RunState s f -> do
     (resultTy, stateTy) <- checkRWSAction State f
     s |: stateTy

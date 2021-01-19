@@ -252,8 +252,8 @@ prettyPrecPrimCon con = case con of
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
-    PrimEffect ref (MPut val ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
-    PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
+    PrimEffect ref (MPut    val   ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
+    PrimEffect ref (MExtend update) -> atPrec LowestPrec $ "extend" <+> pApp ref <+> "using" <+> pLowest update
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
     RecordCons items rest ->
@@ -287,10 +287,17 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let _ (Ignore _) bound -> pLowest bound
+    Let ann (Ignore _) bound -> p ann <+> pLowest bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+
+instance Pretty LetAnn where
+  pretty ann = case ann of
+    PlainLet      -> ""
+    InstanceLet   -> "%instance"
+    SuperclassLet -> "%superclass"
+    NoInlineLet   -> "%noinline"
 
 prettyPiTypeHelper :: PiType -> Doc ann
 prettyPiTypeHelper (Abs binder (arr, body)) = let
@@ -625,14 +632,16 @@ instance Pretty a => Pretty (Limit a) where
   pretty (InclusiveLim x) = "incLim" <+> p x
 
 instance Pretty UDecl where
-  pretty (ULet _ b rhs) =
-    align $ prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+  pretty (ULet ann b rhs) =
+    align $ p ann <+> prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
   pretty (UData tyCon dataCons) =
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
   pretty (UInterface cs def methods) =
     "interface" <+> p cs <+> p def <> hardline <> prettyLines methods
-  pretty (UInstance bs ty methods) =
+  pretty (UInstance Nothing bs ty methods) =
     "instance" <+> p bs <+> p ty <> hardline <> prettyLines methods
+  pretty (UInstance (Just v) bs ty methods) =
+    "named-instance" <+> p v <+> ":" <+> p bs <+> p ty <> hardline <> prettyLines methods
 
 instance Pretty UMethodDef where
   pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs

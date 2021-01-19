@@ -42,7 +42,7 @@ setError msg = withCStringLen msg $ \(ptr, len) ->
 
 dexCreateContext :: IO (Ptr Context)
 dexCreateContext = do
-  let evalConfig = EvalConfig LLVM Nothing
+  let evalConfig = EvalConfig LLVM Nothing Nothing
   maybePreludeEnv <- evalPrelude evalConfig preludeSource
   case maybePreludeEnv of
     Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
@@ -77,8 +77,8 @@ dexInsert ctxPtr namePtr atomPtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   name <- GlobalName . fromString <$> peekCString namePtr
   atom <- fromStablePtr atomPtr
-  let env' = env <> name @> (getType atom, LetBound PlainLet (Atom atom))
-  toStablePtr $ Context evalConfig env'
+  let newBinding = name @> (getType atom, LetBound PlainLet (Atom atom))
+  toStablePtr $ Context evalConfig $ env <> TopEnv newBinding mempty
 
 dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
 dexEvalExpr ctxPtr sourcePtr = do
@@ -88,10 +88,11 @@ dexEvalExpr ctxPtr sourcePtr = do
     Right expr -> do
       let (v, m) = exprAsModule expr
       let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
-      (resultEnv, Result [] maybeErr) <- evalSourceBlock evalConfig env block
+      (resultEnv, Result [] maybeErr) <-
+          evalSourceBlock evalConfig env block
       case maybeErr of
         Right () -> do
-          let (_, LetBound _ (Atom atom)) = resultEnv ! v
+          let (_, LetBound _ (Atom atom)) = topBindings resultEnv ! v
           toStablePtr atom
         Left err -> setError (pprint err) $> nullPtr
     Left err -> setError (pprint err) $> nullPtr
@@ -100,7 +101,7 @@ dexLookup :: Ptr Context -> CString -> IO (Ptr Atom)
 dexLookup ctxPtr namePtr = do
   Context _ env <- fromStablePtr ctxPtr
   name <- peekCString namePtr
-  case envLookup env (GlobalName $ fromString name) of
+  case envLookup (topBindings env) (GlobalName $ fromString name) of
     Just (_, LetBound _ (Atom atom)) -> toStablePtr atom
     Just _                           -> setError "Looking up an expression" $> nullPtr
     Nothing                          -> setError "Unbound name" $> nullPtr

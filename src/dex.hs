@@ -45,7 +45,7 @@ runMode evalMode preludeFile opts = do
   key <- case preludeFile of
            Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
            Just path -> show <$> getModificationTime path
-  env <- cached "prelude" key $ evalPrelude opts preludeFile
+  env <- cachedWithSnapshot "prelude" key $ evalPrelude opts preludeFile
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt -> do
@@ -67,7 +67,7 @@ runMode evalMode preludeFile opts = do
       let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
       unless (backendName opts == LLVM) $ liftEitherIO $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
-      exportFunctions objPath exportedFuns env
+      exportFunctions objPath exportedFuns $ topBindings env
 
 evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
 evalPrelude opts fname = flip execStateT initTopEnv $ do
@@ -89,14 +89,12 @@ replLoop prompt opts = do
 dexCompletions :: CompletionFunc (StateT TopEnv IO)
 dexCompletions (line, _) = do
   env <- get
-  let varNames = map pprint $ envNames env
+  let varNames = map pprint $ envNames $ topBindings env
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
-  let anywhereKeywords = ["def", "for", "rof", "case", "data", "where", "of", "if",
-                          "then", "else", "interface", "instance", "do", "view"]
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
   let candidates = (if null rest then startoflineKeywords else []) ++
-                   anywhereKeywords ++ varNames
+                   keyWordStrs ++ varNames
   let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
   return (rest, completions)
 
@@ -183,6 +181,7 @@ parseEvalOpts = EvalConfig
                      , ("interpreter", Interpreter)])
          (long "backend" <> value LLVM <>
           helpOption "Backend" "llvm (default) | llvm-cuda | llvm-mc | interpreter")
+  <*> optional (strOption $ long "lib-path" <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)

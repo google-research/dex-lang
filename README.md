@@ -16,7 +16,7 @@ or these example programs:
   * [Ray tracer](https://google-research.github.io/dex-lang/examples/raytrace.html)
   * [Estimating pi](https://google-research.github.io/dex-lang/examples/pi.html)
   * [Hamiltonian Monte Carlo](https://google-research.github.io/dex-lang/examples/mcmc.html)
-  * [ODE integrator](https://google-research.github.io/dex-lang/oexamples/de-integrator.html)
+  * [ODE integrator](https://google-research.github.io/dex-lang/examples/ode-integrator.html)
   * [Sierpinski triangle](https://google-research.github.io/dex-lang/examples/sierpinski.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/examples/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/examples/brownian_motion.html)
@@ -56,10 +56,10 @@ development mode:
 
 ```console
 # Linux:
-alias dex="stack exec dex --"
+alias dex="stack exec dex -- --lib-path lib"
 
 # macOS:
-alias dex="stack exec --stack-yaml=stack-macos.yaml dex --"
+alias dex="stack exec --stack-yaml=stack-macos.yaml dex -- --lib-path lib"
 ```
 
 ## Running

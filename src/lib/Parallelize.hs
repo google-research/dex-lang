@@ -15,11 +15,12 @@ import Data.Foldable
 
 import Optimize
 import Syntax
-import Embed
+import Builder
 import Cat
 import Env
 import Type
 import PPrint
+import Util (for)
 
 -- TODO: extractParallelism can benefit a lot from horizontal fusion (can happen be after)
 -- TODO: Parallelism extraction can emit some really cheap (but not trivial)
@@ -37,7 +38,7 @@ asABlock :: Block -> ABlock
 asABlock block = ABlock decls result
   where
     scope = freeVars block
-    ((result, decls), _) = flip runEmbed scope $ scopedDecls $ emitBlock block
+    ((result, decls), _) = flip runBuilder scope $ scopedDecls $ emitBlock block
 
 
 data LoopEnv = LoopEnv
@@ -45,9 +46,9 @@ data LoopEnv = LoopEnv
   , delayedApps :: Env (Atom, [Atom]) -- (n @> (arr, bs)), n and bs in scope of the original program
                                       --   arr in scope of the newly constructed program!
   }
-data AccEnv = AccEnv { activeAccs :: Env Var }
+data AccEnv = AccEnv { activeAccs :: Env (Var, BaseMonoid) } -- (reference, its base monoid)
 
-type TLParallelM = SubstEmbedT (State AccEnv)   -- Top-level non-parallel statements
+type TLParallelM = SubstBuilderT (State AccEnv)   -- Top-level non-parallel statements
 type LoopM       = ReaderT LoopEnv TLParallelM  -- Generation of (parallel) loop nests
 
 runLoopM :: LoopM a -> TLParallelM a
@@ -55,7 +56,7 @@ runLoopM m = runReaderT m $ LoopEnv mempty mempty
 
 extractParallelism :: Module -> Module
 extractParallelism = transformModuleAsBlock go
-  where go block = fst $ evalState (runSubstEmbedT (traverseBlock parallelTrav block) mempty) $ AccEnv mempty
+  where go block = fst $ evalState (runSubstBuilderT (traverseBlock parallelTrav block) mempty) $ AccEnv mempty
 
 parallelTrav :: TraversalDef TLParallelM
 parallelTrav = ( traverseDecl parallelTrav
@@ -69,25 +70,25 @@ parallelTraverseExpr expr = case expr of
   Hof (For (RegularFor _) fbody@(LamVal b body)) -> do
     -- TODO: functionEffs is an overapproximation of the effects that really appear inside
     refs <- gets activeAccs
-    let allowedRegions = foldMap (\(varType -> RefTy (Var reg) _) -> reg @> ()) refs
-    (EffectRow bodyEffs t) <- substEmbedR $ functionEffs fbody
+    let allowedRegions = foldMap (\(varType . fst -> RefTy (Var reg) _) -> reg @> ()) refs
+    (EffectRow bodyEffs t) <- substBuilderR $ functionEffs fbody
     let onlyAllowedEffects = all (parallelizableEffect allowedRegions) $ toList bodyEffs
     case t == Nothing && onlyAllowedEffects of
       True -> do
-        b' <- substEmbedR b
+        b' <- substBuilderR b
         liftM Atom $ runLoopM $ withLoopBinder b' $ buildParallelBlock $ asABlock body
       False -> nothingSpecial
-  Hof (RunWriter (BinaryFunVal h b _ body)) -> do
+  Hof (RunWriter bm (BinaryFunVal h b _ body)) -> do
     ~(RefTy _ accTy) <- traverseAtom substTraversalDef $ binderType b
-    liftM Atom $ emitRunWriter (binderNameHint b) accTy \ref@(Var refVar) -> do
+    liftM Atom $ emitRunWriter (binderNameHint b) accTy bm \ref@(Var refVar) -> do
       let RefTy h' _ = varType refVar
-      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> refVar }
+      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (refVar, bm) }
       extendR (h @> h' <> b @> ref) $ evalBlockE parallelTrav body
   -- TODO: Do some alias analysis. This is not fundamentally hard, but it is a little annoying.
   --       We would have to track not only the base references, but also all the aliases, along
   --       with their relationships. Then, when we emit local effects in emitLoops, we would have
   --       to recreate all the aliases. We could do that by carrying around a block and using
-  --       SubstEmbed to take care of renaming for us.
+  --       SubstBuilder to take care of renaming for us.
   Op (IndexRef ref _) -> disallowRef ref >> nothingSpecial
   Op (FstRef   ref  ) -> disallowRef ref >> nothingSpecial
   Op (SndRef   ref  ) -> disallowRef ref >> nothingSpecial
@@ -129,12 +130,12 @@ buildParallelBlock ablock@(ABlock decls result) = do
               prologueCtxArrs <- mapM (unflattenConsTab lbs) =<< unzipConsListTab prologueCtxAtom
               return $ foldMap (\(v, arr) -> v @> (arr, loopVars)) $ zip prologueCtxVars prologueCtxArrs
       delayApps prologueApps $ do
-        i' <- lift $ substEmbedR i
+        i' <- lift $ substBuilderR i
         loopAtom <- withLoopBinder i' $ buildParallelBlock $ asABlock lbody
         delayApps (arrb @> (loopAtom, loopVars)) $
           buildParallelBlock $ ABlock epilogue result
 
-unzipConsListTab :: MonadEmbed m => Atom -> m [Atom]
+unzipConsListTab :: MonadBuilder m => Atom -> m [Atom]
 unzipConsListTab tab = case getType tab of
   TabTy _ UnitTy -> return []
   TabTy _ (PairTy _ _) -> do
@@ -142,7 +143,7 @@ unzipConsListTab tab = case getType tab of
     (x:) <$> unzipConsListTab t
   _ -> error $ "Expected a table cons list, got: " ++ pprint (getType tab)
 
-unflattenConsTab :: MonadEmbed m => [Var] -> Atom -> m Atom
+unflattenConsTab :: MonadBuilder m => [Var] -> Atom -> m Atom
 unflattenConsTab ivs arr = buildNestedLam TabArrow (fmap Bind ivs) $ app arr . mkConsList
 
 type Loop = Abs Binder Block
@@ -205,7 +206,7 @@ emitLoops buildPureLoop (ABlock decls result) = do
         extendR (newEnv lbs is) $ do
           ctxEnv <- flip traverseNames dapps \_ (arr, idx) ->
             -- XXX: arr is namespaced in the new program
-            foldM appTryReduce arr =<< substEmbedR idx
+            foldM appTryReduce arr =<< substBuilderR idx
           extendR ctxEnv $ evalBlockE appReduceTraversalDef $ Block decls $ Atom result
   lift $ case null refs of
     True -> buildPureLoop (Bind $ "pari" :> iterTy) buildBody
@@ -214,23 +215,16 @@ emitLoops buildPureLoop (ABlock decls result) = do
         buildLam (Bind $ "gtid" :> IdxRepTy) PureArrow \gtid -> do
           buildLam (Bind $ "nthr" :> IdxRepTy) PureArrow \nthr -> do
             let threadRange = TC $ ParIndexRange iterTy gtid nthr
-            let accTys = mkConsListTy $ fmap (derefType . varType) newRefs
-            emitRunWriter "refsList" accTys \localRefsList -> do
-              localRefs <- unpackRefConsList localRefsList
+            let writerSpecs = for newRefs \(ref, bm) -> (varName ref, derefType (varType ref), bm)
+            emitRunWriters writerSpecs $ \localRefs -> do
               buildFor Fwd (Bind $ "tidx" :> threadRange) \tidx -> do
                 pari <- emitOp $ Inject tidx
                 extendR (newEnv oldRefNames localRefs) $ buildBody pari
-      (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce iterTy body)
+      (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce (fmap snd newRefs) iterTy body)
       updates <- unpackConsList updateList
-      forM_ (zip newRefs updates) \(ref, update) ->
-        emitOp $ PrimEffect (Var ref) $ MTell update
+      forM_ (zip newRefs updates) $ \((ref, bm), update) -> do
+        updater <- mextendForRef (Var ref) bm update
+        emitOp $ PrimEffect (Var ref) $ MExtend updater
       return ans
-    where
-      derefType ~(RefTy _ accTy) = accTy
-      unpackRefConsList xs = case derefType $ getType xs of
-        UnitTy -> return []
-        PairTy _ _ -> do
-          x    <- getFstRef xs
-          rest <- getSndRef xs
-          (x:) <$> unpackRefConsList rest
-        _ -> error $ "Not a ref cons list: " ++ pprint (getType xs)
+  where
+    derefType ~(RefTy _ accTy) = accTy

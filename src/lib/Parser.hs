@@ -59,8 +59,12 @@ mustParseit s p  = case parseit s p of
   Right ans -> ans
   Left e -> error $ "This shouldn't happen:\n" ++ pprint e
 
-includeSourceFile :: Parser String
-includeSourceFile = symbol "include" >> stringLiteral <* eol
+importModule :: Parser SourceBlock'
+importModule = ImportModule <$> do
+  keyWord ImportKW
+  s <- (:) <$> letterChar <*> many alphaNumChar
+  eol
+  return s
 
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
@@ -117,7 +121,8 @@ sourceBlock' =
       proseBlock
   <|> topLevelCommand
   <|> liftM declToModule (topDecl <* eolf)
-  <|> liftM declToModule (instanceDef  <* eolf)
+  <|> liftM declToModule (instanceDef True  <* eolf)
+  <|> liftM declToModule (instanceDef False <* eolf)
   <|> liftM declToModule (interfaceDef <* eolf)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
@@ -131,7 +136,7 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
-      liftM IncludeSourceFile includeSourceFile
+      importModule
   <|> explicitCommand
   <?> "top-level command"
 
@@ -333,9 +338,11 @@ decl = do
   rhs <- sym "=" >> blockOrExpr
   return $ lhs rhs
 
-instanceDef :: Parser UDecl
-instanceDef = do
-  keyWord InstanceKW
+instanceDef :: Bool -> Parser UDecl
+instanceDef isNamed = do
+  name <- case isNamed of
+    False -> keyWord InstanceKW $> Nothing
+    True  -> keyWord NamedInstanceKW *> (Just . (:>()) <$> anyName) <* sym ":"
   explicitArgs <- many defArg
   constraints <- classConstraints
   classTy <- uType
@@ -347,7 +354,7 @@ instanceDef = do
         explicitArgs                                                       ++
         [((UnderscoreUPat, Just c)   , ClassArrow   ) | c <- constraints]
   methods <- onePerLine instanceMethod
-  return $ UInstance (toNest argBinders) classTy methods
+  return $ UInstance name (toNest argBinders) classTy methods
   where
     addClassConstraint :: UType -> UType -> UType
     addClassConstraint c ty = ns $ UPi (UnderscoreUPat, Just c) ClassArrow ty
@@ -361,9 +368,10 @@ instanceMethod = do
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
+  letAnn <- (InstanceLet <$ string "%instance" <* sc) <|> (pure PlainLet)
   p <- try $ (letPat <|> leafPat) <* lookAhead (sym "=" <|> sym ":")
-  ann <- optional $ annot uType
-  return $ ULet PlainLet (p, ann)
+  typeAnn <- optional $ annot uType
+  return $ ULet letAnn (p, typeAnn)
 
 letPat :: Parser UPat
 letPat = withSrc $ nameToPat <$> anyName
@@ -511,7 +519,7 @@ wrapUStatements statements = case statements of
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
-uStatement = withPos $   liftM Left  decl
+uStatement = withPos $   liftM Left  (instanceDef True <|> decl)
                      <|> liftM Right expr
 
 -- TODO: put the `try` only around the `x:` not the annotation itself
@@ -965,7 +973,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
-             | ExceptKW | IOKW | ViewKW
+             | ExceptKW | IOKW | ViewKW | ImportKW | NamedInstanceKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -1009,14 +1017,16 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       DataKW -> "data"
       InterfaceKW -> "interface"
       InstanceKW -> "instance"
+      NamedInstanceKW -> "named-instance"
       WhereKW -> "where"
       DoKW   -> "do"
       ViewKW -> "view"
+      ImportKW -> "import"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
-               "instance", "where", "if", "then", "else", "do", "view"]
+               "instance", "named-instance", "where", "if", "then", "else", "do", "view", "import"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

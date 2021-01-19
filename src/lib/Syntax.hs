@@ -23,14 +23,14 @@ module Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv,
     Scope, CmdName (..), HasIVars (..), ForAnn (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
+    Val, Op, Con, Hof, TC, Module (..), DataConRefBinding (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
     UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
     lookupLabelHead, reflectLabels, withLabels, ExtLabeledItems (..),
-    prefixExtLabeledItems, getLabels,
+    prefixExtLabeledItems, getLabels, ModuleName,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -45,11 +45,13 @@ module Syntax (
     DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
-    mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    getProjection, outputStreamPtrName, initTopEnv,
+    mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
+    extendEffRow,
+    getProjection, outputStreamPtrName, initBindings,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
+    BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    getIntLit, getFloatLit, sizeOf, vectorWidth,
+    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
@@ -110,7 +112,7 @@ data Atom = Var Var
           -- XXX: Variable name must not be an alias for another name or for
           -- a statically-known atom. This is because the variable name used
           -- here may also appear in the type of the atom. (We maintain this
-          -- invariant during substitution and in Embed.hs.)
+          -- invariant during substitution and in Builder.hs.)
           | ProjectElt (NE.NonEmpty Int) Var
             deriving (Show, Generic)
 
@@ -166,7 +168,6 @@ type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
 data Module = Module IRVariant (Nest Decl) Bindings  deriving Show
-type TopEnv = Scope
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
@@ -250,7 +251,7 @@ data UDecl =
    ULet LetAnn UPatAnn UExpr
  | UData UConDef [UConDef]
  | UInterface [UType] UConDef [UAnnBinder] -- superclasses, constructor, methods
- | UInstance (Nest UPatAnnArrow) UType [UMethodDef]  -- args, type, methods
+ | UInstance (Maybe UVar) (Nest UPatAnnArrow) UType [UMethodDef]  -- name, args, type, methods
    deriving (Show, Generic)
 
 type UType  = UExpr
@@ -385,16 +386,20 @@ data PrimHof e =
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e
       | RunReader e e
-      | RunWriter e
+      | RunWriter (BaseMonoidP e) e
       | RunState  e e
       | RunIO e
       | CatchException e
       | Linearize e
       | Transpose e
-      | PTileReduce e e       -- index set, thread body
+      | PTileReduce [BaseMonoidP e] e e  -- accumulator monoids, index set, thread body
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data PrimEffect e = MAsk | MTell e | MGet | MPut e
+data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
+                     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+type BaseMonoid = BaseMonoidP Atom
+
+data PrimEffect e = MAsk | MExtend e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
@@ -441,6 +446,11 @@ primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 showPrimName :: PrimExpr e -> String
 showPrimName prim = primNameToStr $ fmap (const ()) prim
 
+getBaseMonoidType :: Type -> Type
+getBaseMonoidType ty = case ty of
+  TabTy _ b -> getBaseMonoidType b
+  _         -> ty
+
 -- === effects ===
 
 data EffectRow = EffectRow (S.Set Effect) (Maybe Name)
@@ -457,8 +467,8 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 outputStreamPtrName :: Name
 outputStreamPtrName = GlobalName "OUT_STREAM_PTR"
 
-initTopEnv :: TopEnv
-initTopEnv = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
+initBindings :: Bindings
+initBindings = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
   [(outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
 
 hostPtrTy :: BaseType -> BaseType
@@ -489,10 +499,11 @@ data SourceBlock = SourceBlock
 
 type BlockId = Int
 type ReachedEOF = Bool
+type ModuleName = String
 data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
                   | GetNameType Name
-                  | IncludeSourceFile String
+                  | ImportModule ModuleName
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -592,8 +603,11 @@ sizeOf t = case t of
   Scalar Word8Type   -> 1
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
-  PtrType _          -> 8
+  PtrType _          -> ptrSize
   Vector st          -> vectorWidth * sizeOf (Scalar st)
+
+ptrSize :: Int
+ptrSize = 8
 
 vectorWidth :: Int
 vectorWidth = 4
@@ -801,7 +815,7 @@ instance HasUVars UDecl where
   freeUVars (UData (UConDef _ bs) dataCons) = freeUVars $ Abs bs dataCons
   freeUVars (UInterface superclasses tc methods) =
     freeUVars $ Abs tc (superclasses, methods)
-  freeUVars (UInstance bsArrows ty methods) = freeUVars $ Abs bs (ty, methods)
+  freeUVars (UInstance _ bsArrows ty methods) = freeUVars $ Abs bs (ty, methods)
     where bs = fmap fst bsArrows
 
 instance HasUVars UMethodDef where
@@ -812,10 +826,11 @@ instance BindsUVars UPatAnn where
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
-    ULet _ (p,_) _ -> boundUVars p
-    UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
-    UInterface _ _ _ -> mempty
-    UInstance _ _ _  -> mempty
+    ULet _ (p,_) _           -> boundUVars p
+    UData tyCon dataCons     -> boundUVars tyCon <> foldMap boundUVars dataCons
+    UInterface _ _ _         -> mempty
+    UInstance Nothing  _ _ _ -> mempty
+    UInstance (Just v) _ _ _ -> v @> ()
 
 instance HasUVars UModule where
   freeUVars (UModule decls) = freeUVars decls
@@ -1477,6 +1492,15 @@ fromConsListTy ty = case ty of
   PairTy t rest -> (t:) <$> fromConsListTy rest
   _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
 
+-- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
+fromLeftLeaningConsListTy :: MonadError Err m => Int -> Type -> m (Type, [Type])
+fromLeftLeaningConsListTy depth initTy = go depth initTy []
+  where
+    go 0        ty xs = return (ty, reverse xs)
+    go remDepth ty xs = case ty of
+      PairTy lt rt -> go (remDepth - 1) lt (rt : xs)
+      _ -> throw CompilerErr $ "Not a pair: " ++ show xs
+
 fromConsList :: MonadError Err m => Atom -> m [Atom]
 fromConsList xs = case xs of
   UnitVal        -> return []
@@ -1596,7 +1620,7 @@ builtinNames = M.fromList
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
-  , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
+  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
@@ -1606,7 +1630,7 @@ builtinNames = M.fromList
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
   , ("runReader"       , HofExpr $ RunReader () ())
-  , ("runWriter"       , HofExpr $ RunWriter    ())
+  , ("runWriter"       , HofExpr $ RunWriter (BaseMonoid () ()) ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("runIO"           , HofExpr $ RunIO ())
   , ("catchException"  , HofExpr $ CatchException ())
@@ -1661,6 +1685,7 @@ instance Store a => Store (Nest a)
 instance Store a => Store (ArrowP a)
 instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
+instance Store a => Store (BaseMonoidP a)
 instance Store a => Store (LabeledItems a)
 instance (Store a, Store b) => Store (ExtLabeledItems a b)
 instance Store ForAnn

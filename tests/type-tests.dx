@@ -376,3 +376,16 @@ def weakerInferenceReduction (l : i:n=>(..i)=>Float) (j:n): Unit =
       l.i'.k
     ()
   ()
+
+-- Tests for table
+
+a = [0, 1]
+b = [0, 1]
+
+:p a == b
+> True
+
+c = [1, 2]
+
+:p a < c
+> True

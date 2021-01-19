@@ -12,7 +12,7 @@ import PPrint
 import Env
 import Cat
 import Syntax
-import Imp.Embed
+import Imp.Builder
 
 -- TODO: DCE!
 
@@ -30,7 +30,7 @@ liftCUDAAllocations m =
       ImpFunction (fname:>IFunType cc argTys retTys) argBs' body' -> case cc of
         CUDAKernelLaunch -> do
           let ((argBs, body), fAllocEnv) =
-                flip runCat mempty $ runISubstEmbedT (ISubstEnv mempty fenv) $ do
+                flip runCat mempty $ runISubstBuilderT (ISubstEnv mempty fenv) $ do
                   ~args@(tid:wid:wsz:_) <- traverse freshIVar argBs'
                   newBody <- extendValSubst (newEnv argBs' $ fmap IVar args) $ buildScoped $ do
                     gtid <- iadd (IVar tid) =<< imul (IVar wid) (IVar wsz)
@@ -64,7 +64,7 @@ liftCUDAAllocations m =
     amendLaunch :: ITraversalDef (Cat ModAllocEnv)
     amendLaunch = (traverseImpDecl amendLaunch, amendLaunchInstr)
       where
-        amendLaunchInstr :: ImpInstr -> ISubstEmbedT (Cat ModAllocEnv) ImpInstr
+        amendLaunchInstr :: ImpInstr -> ISubstBuilderT (Cat ModAllocEnv) ImpInstr
         amendLaunchInstr instr = case instr of
           ILaunch f' s' args' -> do
             s <- traverseIExpr s'

@@ -5,7 +5,7 @@
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
 
-include "plot.dx"
+import plot
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
@@ -212,7 +212,7 @@ def sampleLightRadiance
   (surfNor, surf) = osurf
   (rayPos, _) = inRay
   (MkScene objs) = scene
-  yieldAccum \radiance.
+  yieldAccum (AddMonoid Float) \radiance.
     for i. case objs.i of
       PassiveObject _ _ -> ()
       Light lightPos hw _ ->
@@ -227,7 +227,7 @@ def sampleLightRadiance
 
 def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   noFilter = [1.0, 1.0, 1.0]
-  yieldAccum \radiance.
+  yieldAccum (AddMonoid Float) \radiance.
     runState  noFilter \filter.
      runState initRay  \ray.
       boundedIter (getAt #maxBounces params) () \i.

@@ -22,7 +22,7 @@ import Type
 import Env
 import Syntax
 import PPrint
-import Embed
+import Builder
 import Cat
 import Util (bindM2, zipWithT, enumerate, restructure)
 import GHC.Stack
@@ -38,17 +38,17 @@ data DerivWrt = DerivWrt { activeVars  :: Env Type
 -- arguments to the linearized function.
 data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name], rematVals :: SubstEnv }
 
-type PrimalM  = ReaderT DerivWrt   Embed
-type TangentM = ReaderT TangentEnv Embed
+type PrimalM  = ReaderT DerivWrt   Builder
+type TangentM = ReaderT TangentEnv Builder
 newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
-linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
   buildLam b PureArrow \x@(Var v) -> do
     (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) [] mempty) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
     fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) [] mempty
-    fLinChecked <- checkEmbed fLin
+    fLinChecked <- checkBuilder fLin
     return $ PairVal y fLinChecked
 
 linearizeBlock :: SubstEnv -> Block -> LinA Atom
@@ -64,7 +64,7 @@ linearizeBlock env (Block decls result) = case decls of
         -- Technically, we could do this and later run the code through a simplification
         -- pass that would eliminate a bunch of multiplications with zeros, but this seems
         -- simpler to do for now.
-        freeAtoms <- traverse (substEmbed env . Var) $ bindingsAsVars $ freeVars expr
+        freeAtoms <- traverse (substBuilder env . Var) $ bindingsAsVars $ freeVars expr
         varsAreActive <- traverse isActive $ bindingsAsVars $ freeVars freeAtoms
         if any id varsAreActive
           then do
@@ -90,7 +90,7 @@ linearizeBlock env (Block decls result) = case decls of
               let nontrivialTs = if vIsTrivial then [] else [t]
               extendTangentEnv (newEnv nontrivialVs nontrivialTs) [] bodyLin)
           else do
-            expr' <- substEmbed env expr
+            expr' <- substBuilder env expr
             x <- emit expr'
             runLinA $ linearizeBlock (env <> b @> x) body
 
@@ -98,7 +98,7 @@ linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
   Hof  e        -> linearizeHof env e
   Case e alts _ -> LinA $ do
-    e'   <- substEmbed env e
+    e'   <- substBuilder env e
     hasActiveScrutinee <- any id <$> (mapM isActive $ bindingsAsVars $ freeVars e')
     case hasActiveScrutinee of
       True  -> notImplemented
@@ -111,7 +111,7 @@ linearizeExpr env expr = case expr of
       linearizeInactiveAlt (Abs bs body) = do
         buildNAbs bs \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
   _ -> LinA $ do
-    expr' <- substEmbed env expr
+    expr' <- substBuilder env expr
     runLinA $ case expr' of
       App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x) `bindLin` emit
       Op   e     -> linearizeOp   e
@@ -124,13 +124,26 @@ linearizeOp :: Op -> LinA Atom
 linearizeOp op = case op of
   ScalarUnOp  uop x       -> linearizeUnOp  uop x
   ScalarBinOp bop x y     -> linearizeBinOp bop x y
+  PrimEffect refArg (MExtend ~(LamVal b body)) -> LinA $ do
+    (primalRef, mkTangentRef) <- runLinA $ la refArg
+    (primalUpdate, mkTangentUpdate) <-
+      buildLamAux b (const $ return PureArrow) \x@(Var v) ->
+        extendWrt [v] [] $ runLinA $ linearizeBlock (b @> x) body
+    let LamVal (Bind primalStateVar) _ = primalUpdate
+    ans <- emitOp $ PrimEffect primalRef $ MExtend primalUpdate
+    return (ans, do
+      tangentRef <- mkTangentRef
+      -- TODO: Assert that tangent update doesn't close over anything?
+      tangentUpdate <- buildLam (Bind $ "t":>tangentType (varType primalStateVar)) PureArrow \tx ->
+        extendTangentEnv (primalStateVar @> tx) [] $ mkTangentUpdate
+      emitOp $ PrimEffect tangentRef $ MExtend tangentUpdate)
   PrimEffect refArg m ->
     liftA2 PrimEffect (la refArg)
       (case m of
-         MAsk    -> pure MAsk
-         MTell x -> liftA MTell $ la x
-         MGet    -> pure MGet
-         MPut  x -> liftA MPut $ la x) `bindLin` emitOp
+         MAsk      -> pure MAsk
+         MExtend _ -> error "Unhandled MExtend"
+         MGet      -> pure MGet
+         MPut    x -> liftA MPut $ la x) `bindLin` emitOp
   IndexRef ref i         -> (IndexRef <$> la ref <*> pure i) `bindLin` emitOp
   FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
   SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
@@ -181,7 +194,7 @@ linearizeOp op = case op of
     emitWithZero :: LinA Atom
     emitWithZero = LinA $ withZeroTangent <$> emitOp op
 
-emitUnOp :: MonadEmbed m => UnOp -> Atom -> m Atom
+emitUnOp :: MonadBuilder m => UnOp -> Atom -> m Atom
 emitUnOp op x = emitOp $ ScalarUnOp op x
 
 linearizeUnOp :: UnOp -> Atom -> LinA Atom
@@ -255,17 +268,25 @@ linearizeBinOp op x' y' = LinA $ do
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
-    i' <- mapM (substEmbed env) i
+    i' <- mapM (substBuilder env) i
     (ansWithLinTab, vi'') <- buildForAux d i' \i''@(Var vi'') ->
        (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
     (ans, linTab) <- unzipTab ansWithLinTab
     return (ans, buildFor d i' \i'' -> provideRemat vi'' i'' $ app linTab i'' >>= applyLinToTangents)
   Tile _ _ _        -> notImplemented
-  RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
-  RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
-  RunState  val lam -> linearizeEff (Just val) lam True  RunState          (emitRunState  "r") State
+  RunWriter bm ~lam@(BinaryFunVal _ refBinder _ _) -> LinA $ do
+    unless (checkZeroPlusFloatMonoid bm) $
+      error "AD of Accum effect only supported when the base monoid is (0, +) on Float"
+    let RefTy _ accTy = binderType refBinder
+    linearizeEff lam Writer (RunWriter bm) (emitRunWriter "r" accTy bm)
+  RunReader val lam -> LinA $ do
+    (val', mkLinInit) <- runLinA <$> linearizeAtom =<< substBuilder env val
+    linearizeEff lam Reader (RunReader val') \f -> mkLinInit >>= emitRunReader "r" `flip` f
+  RunState val lam -> LinA $ do
+    (val', mkLinInit) <- runLinA <$> linearizeAtom =<< substBuilder env val
+    linearizeEff lam State (RunState val') \f -> mkLinInit >>= emitRunState "r" `flip` f
   RunIO ~(Lam (Abs _ (arrow, body))) -> LinA $ do
-    arrow' <- substEmbed env arrow
+    arrow' <- substBuilder env arrow
     -- TODO: consider the possibility of other effects here besides IO
     lam <- buildLam (Ignore UnitTy) arrow' \_ ->
       tangentFunAsLambda $ linearizeBlock env body
@@ -279,39 +300,28 @@ linearizeHof env hof = case hof of
   CatchException _ -> notImplemented
   Linearize _ -> error "Unexpected linearization"
   Transpose _ -> error "Unexpected transposition"
-  PTileReduce _ _ -> error "Unexpected PTileReduce"
+  PTileReduce _ _ _ -> error "Unexpected PTileReduce"
   where
-    linearizeEff maybeInit lam hasResult hofMaker emitter eff = LinA $ do
-      (valHofMaker, maybeLinInit) <- case maybeInit of
-          Just val -> do
-            (val', linVal) <- runLinA <$> linearizeAtom =<< substEmbed env val
-            return (hofMaker val', Just linVal)
-          Nothing -> return (hofMaker undefined, Nothing)
+    linearizeEff lam eff primalHofCon tangentEmitter = do
       (lam', ref)    <- linearizeEffectFun eff lam
-      (ans, linBody) <- case hasResult of
-          True -> do
-            (ansLin, w)    <- fromPair =<< emit (Hof $ valHofMaker lam')
+      -- The reader effect doesn't return any additional values
+      (ans, linBody) <- case eff of
+          Reader -> fromPair =<< emit (Hof $ primalHofCon lam')
+          _      -> do
+            (ansLin, w)    <- fromPair =<< emit (Hof $ primalHofCon lam')
             (ans, linBody) <- fromPair ansLin
             return (PairVal ans w, linBody)
-          False -> fromPair =<< emit (Hof $ valHofMaker lam')
-      let lin = do
-                  valEmitter <- case maybeLinInit of
-                    Just linVal -> emitter <$> linVal
-                    Nothing     -> do
-                      let (BinaryFunTy _ b _ _) = getType lam'
-                      let RefTy _ wTy = binderType b
-                      return $ emitter $ tangentType wTy
-                  valEmitter \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
-                      extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
+      let lin = tangentEmitter \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
+                  extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
 
     linearizeEffectFun :: RWS -> Atom -> PrimalM (Atom, Var)
     linearizeEffectFun rws ~(BinaryFunVal h ref eff body) = do
-      h' <- mapM (substEmbed env) h
+      h' <- mapM (substBuilder env) h
       buildLamAux h' (const $ return PureArrow) \h''@(Var hVar) -> do
         let env' = env <> h@>h''
-        eff' <- substEmbed env' eff
-        ref' <- mapM (substEmbed env') ref
+        eff' <- substBuilder env' eff
+        ref' <- mapM (substBuilder env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') \ref''@(Var refVar) ->
           extendWrt [refVar] [RWSEffect rws (varName hVar)] $
             (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
@@ -391,24 +401,6 @@ tangentType ty = case ty of
   _ -> unsupported
   where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
 
-addTangent :: MonadEmbed m => Atom -> Atom -> m Atom
-addTangent x y = case getType x of
-  RecordTy (NoExt tys) -> do
-    elems <- bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
-    return $ Record $ restructure elems tys
-  TabTy b _  -> buildFor Fwd b \i -> bindM2 addTangent (tabGet x i) (tabGet y i)
-  TC con -> case con of
-    BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
-    BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
-    UnitType            -> return UnitVal
-    PairType _ _        -> do
-      (xa, xb) <- fromPair x
-      (ya, yb) <- fromPair y
-      PairVal <$> addTangent xa ya <*> addTangent xb yb
-    _ -> notTangent
-  _ -> notTangent
-  where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
-
 isTrivialForAD :: Expr -> Bool
 isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
   where tangentTy = tangentType $ getType expr
@@ -445,7 +437,7 @@ tangentFunAsLambda m = do
     -- Like buildLam, but doesn't try to deshadow the binder.
     makeLambda v f = do
       block <- buildScoped $ do
-        embedExtend $ asFst $ v @> (varType v, LamBound (void PureArrow))
+        builderExtend $ asFst $ v @> (varType v, LamBound (void PureArrow))
         f v
       return $ Lam $ makeAbs (Bind v) (PureArrow, block)
 
@@ -473,7 +465,7 @@ applyLinToTangents f = do
   let args = (toList rematVals) ++ hs' ++ tangents ++ [UnitVal]
   naryApp f args
 
-bindLin :: LinA a -> (a -> Embed b) -> LinA b
+bindLin :: LinA a -> (a -> Builder b) -> LinA b
 bindLin (LinA m) f = LinA $ do
   (e, t) <- m
   x <- lift $ f e
@@ -543,10 +535,10 @@ instance Semigroup TransposeEnv where
 instance Monoid TransposeEnv where
   mempty = TransposeEnv mempty mempty mempty mempty
 
-type TransposeM a = ReaderT TransposeEnv Embed a
+type TransposeM a = ReaderT TransposeEnv Builder a
 
 transpose :: Scope -> Atom -> Atom
-transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
   buildLam (Bind $ "ct" :> getType block) LinArrow \ct -> do
     snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock block ct)
 
@@ -614,12 +606,16 @@ transposeOp op ct = case op of
     refArg' <- substTranspose linRefSubst refArg
     let emitEff = emitOp . PrimEffect refArg'
     case m of
-      MAsk    -> void $ emitEff $ MTell ct
-      MTell x -> transposeAtom x =<< emitEff MAsk
+      MAsk      -> void $ emitEff . MExtend =<< (updateAddAt ct)
+      -- XXX: This assumes that the update function uses a tangent (0, +) monoid,
+      --      which is why we can ignore the binder (we even can't; we only have a
+      --      reader reference!). This should have been checked in the transposeHof
+      --      rule for RunWriter.
+      MExtend ~(LamVal _ body) -> transposeBlock body =<< emitEff MAsk
       -- TODO: Do something more efficient for state. We should be able
       --       to do in-place addition, just like we do for the Writer effect.
-      MGet    -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
-      MPut  x -> do
+      MGet      -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
+      MPut  x   -> do
         transposeAtom x =<< emitEff MGet
         void $ emitEff $ MPut $ zeroAt $ getType x
   TabCon ~(TabTy b _) es -> forM_ (enumerate es) \(i, e) -> do
@@ -685,11 +681,16 @@ transposeHof hof ct = case hof of
       return UnitVal
     where flipDir dir = case dir of Fwd -> Rev; Rev -> Fwd
   RunReader r ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
-    (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" (getType r) \ref -> do
+    let RefTy _ valTy = binderType b
+    let baseTy = getBaseMonoidType valTy
+    baseMonoid <- tangentBaseMonoidFor baseTy
+    (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" valTy baseMonoid \ref -> do
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ct
       return UnitVal
     transposeAtom r ctr
-  RunWriter ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
+  RunWriter bm ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
+    unless (checkZeroPlusFloatMonoid bm) $
+      error "AD of Accum effect only supported when the base monoid is (0, +) on Float"
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader "r" ctEff \ref -> do
       localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
@@ -706,7 +707,7 @@ transposeHof hof ct = case hof of
   CatchException _ -> notImplemented
   Linearize     _  -> error "Unexpected linearization"
   Transpose     _  -> error "Unexpected transposition"
-  PTileReduce _ _  -> error "Unexpected PTileReduce"
+  PTileReduce _ _ _  -> error "Unexpected PTileReduce"
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
@@ -776,7 +777,7 @@ isLinEff _ = error "Can't transpose polymorphic effects"
 
 emitCTToRef :: Maybe Atom -> Atom -> TransposeM ()
 emitCTToRef mref ct = case mref of
-  Just ref -> void $ emitOp $ PrimEffect ref (MTell ct)
+  Just ref -> void . emitOp . PrimEffect ref . MExtend =<< updateAddAt ct
   Nothing  -> return ()
 
 substTranspose :: Subst a => (TransposeEnv -> SubstEnv) -> a -> TransposeM a
@@ -789,13 +790,15 @@ substNonlin :: Subst a => a -> TransposeM a
 substNonlin = substTranspose nonlinSubst
 
 withLinVar :: Binder -> TransposeM a -> TransposeM (a, Atom)
-withLinVar b body = case
-  singletonTypeVal (binderType b) of
-    Nothing -> flip evalStateT Nothing $ do
-      ans <- emitRunWriter "ref" (binderType b) \ref -> do
-        lift (localLinRef (b@>Just ref) body) >>= put . Just >> return UnitVal
-      (,) <$> (fromJust <$> get) <*> (getSnd ans)
-    Just x -> (,x) <$> (localLinRef (b@>Nothing) body)  -- optimization to avoid accumulating into unit
+withLinVar b body = case singletonTypeVal (binderType b) of
+  Nothing -> flip evalStateT Nothing $ do
+    let accTy = binderType b
+    let baseTy = getBaseMonoidType accTy
+    baseMonoid <- tangentBaseMonoidFor baseTy
+    ans <- emitRunWriter "ref" accTy baseMonoid \ref -> do
+      lift (localLinRef (b@>Just ref) body) >>= put . Just >> return UnitVal
+    (,) <$> (fromJust <$> get) <*> (getSnd ans)
+  Just x -> (,x) <$> (localLinRef (b@>Nothing) body)  -- optimization to avoid accumulating into unit
 
 localLinRef :: Env (Maybe Atom) -> TransposeM a -> TransposeM a
 localLinRef refs = local (<> mempty { linRefs = refs })
@@ -808,3 +811,54 @@ localLinRefSubst s = local (<> mempty { linRefSubst = s })
 
 localNonlinSubst :: SubstEnv -> TransposeM a -> TransposeM a
 localNonlinSubst s = local (<> mempty { nonlinSubst = s })
+
+-- === The (0, +) monoid for tangent types ===
+
+zeroAt :: Type -> Atom
+zeroAt ty = case ty of
+  BaseTy bt  -> Con $ Lit $ zeroLit bt
+  TabTy i a  -> TabValA i $ zeroAt a
+  UnitTy     -> UnitVal
+  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  RecordTy (Ext tys Nothing) -> Record $ fmap zeroAt tys
+  _          -> unreachable
+  where
+    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
+    zeroLit bt = case bt of
+      Scalar Float64Type -> Float64Lit 0.0
+      Scalar Float32Type -> Float32Lit 0.0
+      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
+      _                  -> unreachable
+
+updateAddAt :: MonadBuilder m => Atom -> m Atom
+updateAddAt x = buildLam (Bind ("t":>getType x)) PureArrow $ addTangent x
+
+addTangent :: MonadBuilder m => Atom -> Atom -> m Atom
+addTangent x y = case getType x of
+  RecordTy (NoExt tys) -> do
+    elems <- bindM2 (zipWithT addTangent) (getUnpacked x) (getUnpacked y)
+    return $ Record $ restructure elems tys
+  TabTy b _  -> buildFor Fwd b \i -> bindM2 addTangent (tabGet x i) (tabGet y i)
+  TC con -> case con of
+    BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
+    BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
+    UnitType            -> return UnitVal
+    PairType _ _        -> do
+      (xa, xb) <- fromPair x
+      (ya, yb) <- fromPair y
+      PairVal <$> addTangent xa ya <*> addTangent xb yb
+    _ -> notTangent
+  _ -> notTangent
+  where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
+
+tangentBaseMonoidFor :: MonadBuilder m => Type -> m BaseMonoid
+tangentBaseMonoidFor ty = BaseMonoid (zeroAt ty) <$> buildLam (Bind ("t":>ty)) PureArrow updateAddAt
+
+checkZeroPlusFloatMonoid :: BaseMonoid -> Bool
+checkZeroPlusFloatMonoid (BaseMonoid zero plus) = checkZero zero && checkPlus plus
+  where
+    checkZero z = z == (Con (Lit (Float32Lit 0.0)))
+    checkPlus f = case f of
+      BinaryFunVal (Bind x) (Bind y) Pure (Block Empty (Op (ScalarBinOp FAdd (Var x') (Var y')))) ->
+        (x == x' && y == y') || (x == y' && y == x')
+      _ -> False

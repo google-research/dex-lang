@@ -23,7 +23,7 @@ import Cat
 import Syntax
 import Env
 import PPrint
-import Embed
+import Builder
 import Util (enumerate, restructure)
 import LLVMExec
 
@@ -108,7 +108,7 @@ evalOp expr = case expr of
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
-    _ -> evalEmbed (indexToIntE idxArg)
+    _ -> evalBuilder (indexToIntE idxArg)
   _ -> error $ "Not implemented: " ++ pprint expr
 
 -- We can use this when we know we won't be dereferencing pointers. A better
@@ -147,12 +147,12 @@ indices ty = do
 
 indexSetSize :: Type -> InterpM Int
 indexSetSize ty = do
-  IdxRepVal l <- evalEmbed (indexSetSizeE ty)
+  IdxRepVal l <- evalBuilder (indexSetSizeE ty)
   return $ fromIntegral l
 
-evalEmbed :: EmbedT InterpM Atom -> InterpM Atom
-evalEmbed embed = do
-  (atom, (_, decls)) <- runEmbedT embed mempty
+evalBuilder :: BuilderT InterpM Atom -> InterpM Atom
+evalBuilder builder = do
+  (atom, (_, decls)) <- runBuilderT builder mempty
   evalBlock mempty $ Block decls (Atom atom)
 
 pattern Int64Val :: Int64 -> Atom

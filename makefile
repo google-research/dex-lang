@@ -72,7 +72,7 @@ build-prof: dexrt-llvm
 # For some reason stack fails to detect modifications to foreign library files
 build-python: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty
-	$(eval STACK_INSTALL_DIR=$(shell stack path --local-install-root))
+	$(eval STACK_INSTALL_DIR=$(shell stack $(STACK_FLAGS) path --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
 
 build-ci: dexrt-llvm

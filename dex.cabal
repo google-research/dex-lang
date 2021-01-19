@@ -13,6 +13,8 @@ maintainer:          dougalm@google.com
 license-file:        LICENSE
 build-type:          Simple
 
+data-files:          lib/*.dx
+
 flag cuda
   description:         Enables building with CUDA support
   default:             False
@@ -31,9 +33,9 @@ library dex-resources
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, Imp.Embed, Imp.Optimize,
+                       Parser, Util, Imp, Imp.Builder, Imp.Optimize,
                        PPrint, Algebra, Parallelize, Optimize, Serialize
-                       Actor, Cat, Embed, Export,
+                       Actor, Builder, Cat, Export,
                        RenderHtml, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims
@@ -49,6 +51,7 @@ library
                        store,
                        -- Notebook support
                        warp, wai, blaze-html, aeson, http-types, cmark, binary
+  other-modules:       Paths_dex
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources

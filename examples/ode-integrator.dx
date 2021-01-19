@@ -4,7 +4,7 @@ This version is a port of the [Jax implementation](https://github.com/google/jax
 One difference is that it uses a lower-triangular
 matrix type for the Butcher tableau, and so avoids zero-padding everywhere.
 
-include "plot.dx"
+import plot
 
 Time = Float
 
