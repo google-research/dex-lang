@@ -586,7 +586,7 @@ temptab
 def findFives (x : a=>b) (y : a=>Class) : List b =
     concat for i. case (y.i == (5 @ _)) of
             True -> AsList _ [x.i]
-            False -> mempty
+            False -> nil
 
 ' Note though that the type here does not tell us
   how many 5's there are. The type system cannot know this.
