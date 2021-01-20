@@ -40,46 +40,45 @@ def nextpow2 (x:Int) : Int = case isPowerOf2 x of
 
 '## Inner FFT functions
 
--- FFT can be called in either forwards mode (for FFT),
--- or backwards mode (for inverse FFT).
-data Direction =
-  Forward
-  Backward
+data FTDirection =
+  ForwardFT
+  InverseFT
 
 -- Todo: Replace with reshaping.
 def butterfly_ixs (j:Int) (pow2:Int) : (n & n) =
   k = ((idiv j pow2) * pow2 * 2) + mod j pow2
   (k@n, (k + pow2)@n)
 
-def power_of_2_fft (direction: Direction) (x: n=>Complex) : n=>Complex =
+def power_of_2_fft (direction: FTDirection) (x: n=>Complex) : n=>Complex =
   -- Input size must be a power of 2.
   -- Could enforce this with tables-as-index-sets like:
   -- (x: (log2n=>(Fin 2))=>Complex)).
   dir_const = case direction of
-    Forward -> -pi
-    Backward -> pi
+    ForwardFT -> -pi
+    InverseFT -> pi
 
   log2n = intlog2 (size n)
   halfn = idiv (size n) 2
   
-  ans = yieldState x \ref.
+  ans = yieldState x \refOuter.
     for i:(Fin log2n).
       pow2 = intpow 2 (ordinal i)
-      copy = get ref
-      for j:(Fin halfn).  -- Todo: Parallelize this loop.
-        j' = ordinal j
+      copy = get refOuter
+      refOuter := yieldAccum (AddMonoid Complex) \ref.
+        for j:(Fin halfn).  -- Executes in parallel.
+          j' = ordinal j
 
-        angle = dir_const * (IToF $ mod j' pow2) / IToF pow2
-        h = (j' + halfn)@n
-        v = copy.h * (MkComplex (cos angle) (sin angle))
-        (a, b) = butterfly_ixs j' pow2
+          angle = dir_const * (IToF $ mod j' pow2) / IToF pow2
+          h = (j' + halfn)@n
+          v = copy.h * (MkComplex (cos angle) (sin angle))
+          (a, b) = butterfly_ixs j' pow2
 
-        ref!a := copy.(j'@n) + v
-        ref!b := copy.(j'@n) - v
+          ref!a += copy.(j'@n) + v
+          ref!b += copy.(j'@n) - v
 
   case direction of
-    Forward -> ans
-    Backward -> ans / (IToF (size n))
+    ForwardFT -> ans
+    InverseFT -> ans / (IToF (size n))
 
 def convolve_complex (u:n=>Complex) (v:m=>Complex) : ({ovals:n | padding:m }=>Complex) =
   -- Convolve by pointwise multiplication in the Fourier domain.
@@ -87,25 +86,40 @@ def convolve_complex (u:n=>Complex) (v:m=>Complex) : ({ovals:n | padding:m }=>Co
   working_size = nextpow2 convolved_size
   u_padded = padTo (Fin working_size) zero u
   v_padded = padTo (Fin working_size) zero v
-  spectral_u = power_of_2_fft Forward u_padded
-  spectral_v = power_of_2_fft Forward v_padded
+  spectral_u = power_of_2_fft ForwardFT u_padded
+  spectral_v = power_of_2_fft ForwardFT v_padded
   spectral_conv = for i. spectral_u.i * spectral_v.i
-  padded_conv = power_of_2_fft Backward spectral_conv
+  padded_conv = power_of_2_fft InverseFT spectral_conv
   slice padded_conv 0 {ovals:n | padding:m }
 
-def convolve (u:n=>Float) (v:m=>Float) : ({ovals:n | padding:m }=>Float)  =
+def convolve (u:n=>Float) (v:m=>Float) : ({ovals:n | padding:m }=>Float) =
   u' = for i. MkComplex u.i 0.0
   v' = for i. MkComplex v.i 0.0
   ans = convolve_complex u' v'
   for i.
-    (MkComplex re im) = ans.i
-    re
+    (MkComplex real imag) = ans.i
+    real
+
 
 '## FFT Interface
 
+def reflect (i:n) : n =
+  s = size n
+  (s - 1 - ordinal i)@n
+
+def backwards_and_forwards (mid:a) (seq:n=>a) : ({back:n | mid:Unit | zforward:n}=>a) =
+  -- Turns sequence 12345 into 543212345.
+  for i.
+    case i of
+      {|back=i|} -> seq.(reflect i)
+      {|mid=i|} -> mid
+      {|zforward=i|} -> seq.i
+
+def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
+
 def fft (x: n=>Complex): n=>Complex =
   if isPowerOf2 (size n)
-    then power_of_2_fft Forward x
+    then power_of_2_fft ForwardFT x
     else
       -- Bluestein's algorithm for FFT on any size of array.
       im = MkComplex 0.0 1.0
@@ -113,15 +127,8 @@ def fft (x: n=>Complex): n=>Complex =
         i_squared = IToF $ sq $ ordinal i
         exp $ (-im) * (MkComplex (pi * i_squared / (IToF (size n))) 0.0)
 
-      -- Turns sequence 12345 into 543212345.
-      -- I would break this into a helper function, but I don't know
-      -- how to type it.
-      backwards_and_forwards = Fin (2 * (size n) - 1)
-      baf = for i:backwards_and_forwards.
-        case ordinal i < size n of
-          True  -> wks.(((size n) - 1 - ordinal i)@n)
-          False -> wks.(((ordinal i) - (size n) + 1)@n)
-
+      tailList = tail wks 1
+      baf = backwards_and_forwards (head wks) (listToTable tailList)
       xq = for i. x.i * wks.i
       baf_conj = for i. complex_conj baf.i
       conved = convolve_complex xq baf_conj
@@ -130,7 +137,7 @@ def fft (x: n=>Complex): n=>Complex =
 
 def ifft (xs: n=>Complex): n=>Complex =
   if isPowerOf2 (size n)
-    then power_of_2_fft Backward xs
+    then power_of_2_fft InverseFT xs
     else
       fo = fft (for i. complex_conj xs.i)
       for i. (complex_conj fo.i) / (IToF (size n))
