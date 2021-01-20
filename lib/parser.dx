@@ -91,7 +91,7 @@ def optional (p:Parser a) : Parser (Maybe a) =
   (MkParser \h. Just (parse h p)) <|> return Nothing
 
 def parseMany (parser:Parser a) : Parser (List a) = MkParser \h.
-  yieldState (AsList _ []) \results.
+  yieldState nil \results.
     iter \_.
       maybeVal = parse h $ optional parser
       case maybeVal of
