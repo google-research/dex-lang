@@ -30,12 +30,16 @@ x = for i:Height. for j:Width. 1.0
 ' Once we have a variable, we can print it.
 
 x
+> [ [1., 1., 1., 1., 1., 1., 1., 1.]
+> , [1., 1., 1., 1., 1., 1., 1., 1.]
+> , [1., 1., 1., 1., 1., 1., 1., 1.] ]
 
 ' More interestingly, we can also see its type with `:t`. This type tells us
   that `x` is a two-dimensional table, whose first dimension has type `Height` and
   second dimension has type `Width`.
 
 :t x
+> ((Fin 3) => (Fin 8) => Float32)
 
 ' Here `Fin` stands for `finite` represents the type of range from 0
 to the value given minus one. The `:` tells us the type of the
@@ -47,6 +51,7 @@ enumeration variable.
 import plot
 
 :html matshow x
+> <html output>
 
 ' Once we have an table, we can use it in new comprehensions. For example,
   let's try to add `5` to each table element. In Python, one might write this as:
@@ -58,6 +63,7 @@ import plot
   subscripting.
 
 :t for i:Height. for j:Width. x.i.j + 5.0
+> ((Fin 3) => (Fin 8) => Float32)
 
 ' However, we can make this expression nicer. Because `x` has a known table type
   and `i` and `j` index into that type, Dex can infer the range of the loop.
@@ -65,16 +71,19 @@ import plot
   get the same result.
 
 :t for i. for j. x.i.j + 5.0
+> ((Fin 3) => (Fin 8) => Float32)
 
 ' Dex also lets you reduce this expression to include multiple variables
   in the same `for`.
 
 :t for i j. x.i.j + 5.0
+> ((Fin 3) => (Fin 8) => Float32)
 
 ' Standard functions can be  applied as well. Here we take the
   `mean` over each column:
 
 :t for i. mean x.i
+> ((Fin 3) => Float32)
 
 ' This style of using `for` to construct type-inferred tables is central to what
   makes Dex powerful. Tables do not only need to have `Fin` types.
@@ -98,6 +107,7 @@ y5 = for i. y.i + 5.0
 ' And we can apply table functions to the table:
 
 mean y
+> 1.
 
 ' But things start to get interesting when we consider the type of the
   table.  Unlike the Python example, which produces a flat list (or
@@ -106,6 +116,7 @@ mean y
   remembers the original ranges.
 
 :t y
+> ((Fin 3 & Fin 8) => Float32)
 
 '## Typed indexing
 
@@ -114,23 +125,33 @@ mean y
   simply index an table with an integer.
 
 r = x.2
+> Type error:
+> Expected: (Fin 3)
+>   Actual: Int32
+>
+> r = x.2
+>       ^
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator.
 
 :t x
+> ((Fin 3) => (Fin 8) => Float32)
 
 row = x.(2 @ Height)
 
 :t row
+> ((Fin 8) => Float32)
 
 :t row.(5 @ Width)
+> Float32
 
 ' If you are feeling lazy and sure of yourself, you can also let Dex infer
   the type for you. This is also how `for` works in the examples above that
   did not provide and explicit type annotation.
 
 :t row.(5 @ _)
+> Float32
 
 ' If it helps, you can think of table indexing as function application: `a.i` applies
   table `a` with index `i` just like how `f x` applies function `f` with
@@ -141,14 +162,22 @@ row = x.(2 @ Height)
   This is because finite sets i.e. `Fin` are not closed under addition.
 
 :t for i:Height. for j:Width. i + j
+> Type error:
+> Expected: (Fin 3)
+>   Actual: (Fin 8)
+>
+> :t for i:Height. for j:Width. i + j
+>                                   ^
 
 :t for i:Height. for j:Width. (ordinal i) + (ordinal j)
+> ((Fin 3) => (Fin 8) => Int32)
 
 ' If we want to convert these values to floats, we do it manually with the `IToF`
   function. We can use this to make an image gradient.
 
 gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
 :html matshow gradient
+> <html output>
 
 ' As we have seen, indices are not limited to only integers. Many different Dex
   types are valid index types. For example, we declared table `y` as having a
@@ -156,12 +185,15 @@ gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
   into `y` requires creating a tuple value.
 
 :t y
+> ((Fin 3 & Fin 8) => Float32)
 
 :t y.(2 @ Height, 5 @ Width)
+> Float32
 
 ' Tuple indices also provide an ordinal value.
 
 for pair:(Fin 2 & Fin 3). ordinal pair
+> [0, 1, 2, 3, 4, 5]@(Fin 2 & Fin 3)
 
 
 ' Many algorithms in Dex come down to being able to pack and unpack these
@@ -170,6 +202,7 @@ for pair:(Fin 2 & Fin 3). ordinal pair
   easily turn it into a 2D table using two `for` constructors.
 
 :t for i. for j. y.(i, j)
+> ((Fin 3) => (Fin 8) => Float32)
 
 ' Again, we rely on type inference in order to avoid explicitly spelling the
   ranges.
@@ -183,8 +216,10 @@ for pair:(Fin 2 & Fin 3). ordinal pair
   of an table. We can apply `mean` to `x2` to produce the sum over 50 elements:
 
 :t y
+> ((Fin 3 & Fin 8) => Float32)
 
 :t mean y
+> Float32
 
 ' The `mean` function works independently of the index type of the table.
 
@@ -195,13 +230,16 @@ def add5 (x:Float32) : Float32 =
     x + 5.0
 
 add5 1.0
+> 6.
 
 :t for i. add5 y.i
+> ((Fin 3 & Fin 8) => Float32)
 
 ' Functions also have types. Note that that function types in Dex
   use the `->` symbol whereas tables use `=>`.
 
 :t add5
+> (Float32 -> Float32)
 
 ' We can also write functions with type variables over their inputs. For
   instance, we may want to be able to write a function that applies "adds 5"
@@ -213,6 +251,7 @@ def tableAdd5' (x : n => Float32) : n => Float32 =
     for i. x.i + 5.0
 
 :t tableAdd5' y
+> ((Fin 3 & Fin 8) => Float32)
 
 ' But function types can help you out even more. For instance, since index types
   are statically known, type checking can ensure that table arguments have valid
@@ -231,13 +270,21 @@ def trans (x : m => n => v) : n => m => v =
 ' We can also use this to check for shape errors:
 
 :t x
+> ((Fin 3) => (Fin 8) => Float32)
 
 def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float32 =
     for i. for j. x.i.j + y.i.j
 
 :t tableAdd' x x
+> ((Fin 3) => (Fin 8) => Float32)
 
 :t tableAdd' x (trans x)
+> Type error:
+> Expected: ((Fin 3) => (Fin 8) => Float32)
+>   Actual: ((Fin 8) => (Fin 3) => Float32)
+>
+> :t tableAdd' x (trans x)
+>                 ^^^^^^^
 
 ' The type system checked for us that the input tables indeed have the same shape.
 
@@ -293,20 +340,25 @@ ims = for i : (Fin 100). all_ims.(ordinal i@_)
 
 im = ims.(0 @ _)
 :html matshow im
+> <html output>
 
 :html matshow ims.(1 @ _)
+> <html output>
 
 ' This show the mean pixel value aggregation over all images.
 
 :html matshow (sum ims)
+> <html output>
 
 ' This example overplots three different handwritten images.
 
 imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
 :t imscolor
+> ((Fin 28) => (Fin 28) => (Fin 3) => Float32)
 
 :html imshow (imscolor / 255.0)
+> <html output>
 
 ' This one shows all the images on one channel over the base plot.
 
@@ -316,6 +368,7 @@ imscolor2 = for b. for i. for j. for c:Channels.
              False -> ims.b.i.j
 
 :html imseqshow (imscolor2 / 255.0)
+> <html output>
 
 ' This example utilizes the type system to help manipulate the shape
   of an image. Sum pooling downsamples the image as the max of each
@@ -331,10 +384,12 @@ def imtile (x: a=>b=>v) : n=>o=>p=>q=>v =
 im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@_)
 
 :html matshow (sum (sum im1))
+> <html output>
 
 im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 :html matshow (sum (sum im2))
+> <html output>
 
 '## Writing Loops
 
@@ -363,7 +418,7 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 def tableMean (x : n => Float32) : Float32 =
     -- acc = 0
-    runState 0.0 $ \acc.
+    withState 0.0 $ \acc.
          -- for i in range(len(x))
          for i.
              -- acc = acc + x[i]
@@ -371,7 +426,9 @@ def tableMean (x : n => Float32) : Float32 =
          -- return acc / len(x)
          (get acc) / (IToF (size n))
 
-:p tableMean [0.0, 1.0, 0.5]
+
+tableMean [0.0, 1.0, 0.5]
+> 0.5
 
 ' So, even though Dex is a functional language, it is possible to write loops
   that look similar to ones that truly perform mutation. However, there is one
@@ -385,8 +442,10 @@ def tableMean (x : n => Float32) : Float32 =
   expressions are identical:
 
 :t tableMean (y + y)
+> Float32
 
 :t tableMean $ y + y
+> Float32
 
 ' Next: `\`. This symbol is the lambda sigil in Dex. It is analogous to the
   `lambda` keyword in Python, and starts the definition of a function value
@@ -395,8 +454,10 @@ def tableMean (x : n => Float32) : Float32 =
   constructor in this case).
 
 :t \ x. x + 10
+> (Int32 -> Int32)
 
 (\ x. x + 10) 20
+> 30
 
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
@@ -408,6 +469,7 @@ withState 10 $ \ state.
      state := 30
      state := 10
      get state
+> 10
 
 ' The element returned pair is the body function's result (`10`)
 
@@ -421,6 +483,7 @@ withState 10 $ \ state.
         temp = (ordinal i) + 10
         for j:Width.
             temp
+> ((Fin 3) => (Fin 8) => Int32)
 
 ' The other is `:=`, which is an assignment operator that can only be used
   when a `State` effect is available (e.g. inside of a body function passed to
@@ -435,21 +498,31 @@ withState 10 $ \ state.
   integer tables (of type `n => Float32`).
 
 :t tableMean
+> ((n:Type) ?-> (n => Float32) -> Float32)
 
 ' If we try to apply `tableMean` to other types for get errors. For example,
   `tableMean` does not work when applied to a table of *pairs* of floats.
 
 :t (for (i, j). (x.i.j, x.i.j))
+> ((Fin 3 & Fin 8) => (Float32 & Float32))
 
 tableMean (for (i, j). (x.i.j, x.i.j))
+> Type error:
+> Expected: Float32
+>   Actual: (Float32 & Float32)
+>
+> tableMean (for (i, j). (x.i.j, x.i.j))
+>                         ^^^^^^^^^^^^
 
 ' Intuitively, supporting this seems possible. We just need to be able to
   add and divide pair types. Let's look closer at the exact types of the
   addition and division operators.
 
 :t (+)
+> ((a:Type) ?-> (Add a) ?=> a -> a -> a)
 
 :t (/)
+> ((a:Type) ?-> (VSpace a) ?=> a -> Float32 -> a)
 
 ' These function types are a bit complex.
   `(+)` maps `a -> a -> a` with a constraint that `a` implements the `Add'`
@@ -463,9 +536,11 @@ interface Add a
   add : a -> a -> a
   sub : a -> a -> a
   zero : a
+> Error: variable already defined: Add
 
 interface [Add a] VSpace a
   scaleVec : Float -> a -> a
+> Error: variable already defined: VSpace
 
 ' *Interfaces* define *requirements*: the functions needed for a type to
   implement the interface (via an *instance*).
@@ -492,8 +567,10 @@ def tableMean' [VSpace v] (x : n => v) : v =
         (get acc) / (IToF (size n))  -- `VSpace` requirement
 
 tableMean' [0.1, 0.5, 0.9]
+> 0.5
 
 tableMean' [(1.0, 0.5), (0.5, 0.8)]
+> (0.75, 0.65)
 
 ' The instance values are hardcoded for the float pair type. To be more general,
   we can and should instead define `Add` and `VSpace` instances for generic
@@ -526,8 +603,10 @@ def bincount (inp : a => b) : b => Int =
 
 hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j + 1.0) @Pixels)
 :t hist
+> ((Fin 256) => Int32)
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
+> <html output>
 
 ' Find nearest images in the dataset:
 
@@ -544,6 +623,7 @@ nearest = for i. argmin dist.i
 double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 
 :html imseqshow double
+> <html output>
 
 '## Variable Length Lists
 
@@ -562,10 +642,13 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
   hiding one finite dimension of a table.
 
 :t for i:Height. 0.0
+> ((Fin 3) => Float32)
 
 toList for i:Height. 0.0
+> (AsList 3 [0., 0., 0.])
 
 :t toList for i:Height. 0.0
+> (List Float32)
 
 ' Tables of lists can be concatenated down to
   single lists.
@@ -573,11 +656,13 @@ toList for i:Height. 0.0
 z = concat [toList [3.0],
             toList [1.0, 2.0 ]]
 z
+> (AsList 3 [3., 1., 2.])
 
 ' And they can be deconstructed to fetch a new table.
 
 (AsList _ temptab) = z
 temptab
+> [3., 1., 2.]
 
 ' Using this construct we can return to extracting
   the 5's from the image set.
@@ -595,12 +680,14 @@ temp = findFives all_ims all_labels
 (AsList nFives fives) = temp
 
 nFives
+> 434
 
 ' However we can still utilize the table. For instance
   if we are summing over the hidden dimension, we never
   need to know how big it is.
 
 :html matshow (sum fives)
+> <html output>
 
 '## Conclusion
 
