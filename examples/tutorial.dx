@@ -44,7 +44,7 @@ enumeration variable.
 ' We can also display it as html. To do this we include the plot library.
   Right now our table is not so interesting :)
 
-include "plot.dx"
+import "plot.dx"
 
 :html matshow x
 
@@ -113,14 +113,14 @@ mean y
   lets consider how it works. Critically, one cannot
   simply index an table with an integer.
 
-r = x.3
+r = x.2
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator.
 
 :t x
 
-row = x.(3 @ Height)
+row = x.(2 @ Height)
 
 :t row
 
@@ -157,7 +157,7 @@ gradient = for i:Height. for j:Width. IToF ((ordinal i) + (ordinal j))
 
 :t y
 
-:t y.(3 @ Height, 5 @ Width)
+:t y.(2 @ Height, 5 @ Width)
 
 ' Tuple indices also provide an ordinal value.
 
