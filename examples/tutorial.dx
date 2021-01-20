@@ -44,7 +44,7 @@ enumeration variable.
 ' We can also display it as html. To do this we include the plot library.
   Right now our table is not so interesting :)
 
-import "plot.dx"
+import plot
 
 :html matshow x
 
@@ -363,7 +363,7 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile ims.(0@_)
 
 def tableMean (x : n => Float32) : Float32 =
     -- acc = 0
-    withState 0.0 $ \acc.
+    runState 0.0 $ \acc.
          -- for i in range(len(x))
          for i.
              -- acc = acc + x[i]
@@ -456,56 +456,56 @@ tableMean (for (i, j). (x.i.j, x.i.j))
   interface. Whereas `(/)` maps `a -> Float32 -> a` where `a` implements the
   `VSpace'` interface.
 
-' If we look in the Prelude, we can see that these interfaces are defined as:
+' If we look in the Prelude, we can see that these interfaces are defined as
+ (This will throw error because it mirrors the prelude, but we are just repeating it here.):
 
-interface Add' a
-  add' : a -> a -> a
-  sub' : a -> a -> a
-  zero' : a
+interface Add a
+  add : a -> a -> a
+  sub : a -> a -> a
+  zero : a
 
-interface [Add' a] VSpace' a
-  scaleVec' : Float -> a -> a
+interface [Add a] VSpace a
+  scaleVec : Float -> a -> a
 
 ' *Interfaces* define *requirements*: the functions needed for a type to
   implement the interface (via an *instance*).
 
-' Here is an `Add'` instance for the float pair type:
+' Here is an `Add` instance for the float pair type.
 
-instance Add' (Float32 & Float32)
-  add' = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub' = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
-  zero' = (0.0, 0.0)
+instance Add (Float32 & Float32)
+  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+  zero = (0.0, 0.0)
 
-' And here is a `VSpace'` instance for the float pair type:
+' And here is a `VSpace` instance for the float pair type:
 
-instance VSpace' (Float32 & Float32)
-  scaleVec' = \s (x, y). (x / s, y / s)
+instance VSpace (Float32 & Float32)
+  scaleVec = \s (x, y). (x * s, y * s)
 
 ' Once we have these two instance definitions, we can revisit our table sum
   function using them:
 
-def tableMean' [Add' v, VSpace' v] (x : n => v) : v =
-    z: v = zero'
-    yieldState z $ \acc: (Ref _ v).
+def tableMean' [VSpace v] (x : n => v) : v =
+   withState zero $ \acc: (Ref _ v).
         for i.
-            acc := add' (get acc) x.i           -- `Add'` requirement
-            scaleVec' (IToF (size n)) (get acc) -- `VSpace'` requirement
+            acc := add (get acc) x.i       -- `Add` requirement
+        (get acc) / (IToF (size n))  -- `VSpace` requirement
 
-tableMean' [0.1, 0.5, 1.0]
+tableMean' [0.1, 0.5, 0.9]
 
 tableMean' [(1.0, 0.5), (0.5, 0.8)]
 
 ' The instance values are hardcoded for the float pair type. To be more general,
-  we can and should instead define `Add'` and `VSpace'` instances for generic
+  we can and should instead define `Add` and `VSpace` instances for generic
 ' tuple types.
 
-instance [Add' v, Add' w] Add' (v & w)
-  add' = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
-  sub' = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
-  zero' = (zero, zero)
+instance [Add v, Add w] Add (v & w)
+  add = \(x1,x2) (y1, y2). (x1 + y1, x2 + y2)
+  sub = \(x1,x2) (y1, y2). (x1 - y1, x2 - y2)
+  zero = (zero, zero)
 
-instance [VSpace' v, VSpace' w] VSpace' (v & w)
-  scaleVec' = \s (x, y). (x / s, y / s)
+instance [VSpace v, VSpace w] VSpace (v & w)
+  scaleVec = \s (x, y). (scaleVec s x, scaleVec s y)
 
 '## More MNist
 
@@ -516,7 +516,7 @@ instance [VSpace' v, VSpace' w] VSpace' (v & w)
 Pixels = Fin 256
 
 def bincount (inp : a => b) : b => Int =
-    withState zero' \acc .
+    withState zero \acc .
         for i.
             v = acc!(inp.i)
             v := (get v) + 1
@@ -563,15 +563,15 @@ double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
 
 :t for i:Height. 0.0
 
-AsList _ $ for i:Height. 0.0
+toList for i:Height. 0.0
 
-:t AsList _ $ for i:Height. 0.0
+:t toList for i:Height. 0.0
 
 ' Tables of lists can be concatenated down to
   single lists.
 
-z = concat [AsList _ [3.0],
-        AsList _ [1.0, 2.0 ]]
+z = concat [toList [3.0],
+            toList [1.0, 2.0 ]]
 z
 
 ' And they can be deconstructed to fetch a new table.
@@ -580,13 +580,12 @@ z
 temptab
 
 ' Using this construct we can return to extracting
-  the 5's from the image set. Here `mempty` is
-  synonymous with `AsList _ []`.
+  the 5's from the image set.
 
 def findFives (x : a=>b) (y : a=>Class) : List b =
     concat for i. case (y.i == (5 @ _)) of
-            True -> AsList _ [x.i]
-            False -> mempty
+            True -> toList [x.i]
+            False -> toList []
 
 ' Note though that the type here does not tell us
   how many 5's there are. The type system cannot know this.
