@@ -58,5 +58,18 @@ jobs:
     - name: Build
       run: make build
 
+    - name: Download MNist files
+      uses: suisei-cn/actions-download-file@v1
+      id: mnist 
+      with:
+          url: "https://github.com/srush/learns-dex/raw/main/mnist.bin"
+          target: examples/
+    - name: Download MNist labels file
+      uses: suisei-cn/actions-download-file@v1
+      id: labels 
+      with:
+          url: "https://github.com/srush/learns-dex/raw/main/labels.bin"
+          target: examples/
+      
     - name: Run tests
       run: make tests
