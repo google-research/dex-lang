@@ -1,6 +1,6 @@
 ' # Neural Networks
 
-include "plot.dx"
+import plot
 
 ' ## NN Prelude
 
@@ -196,28 +196,28 @@ def pixel (x:Char) : Float32 =
              True -> (abs r) + 128
              False -> r
 
-def getIm : Batch => Image = 
-    (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
-    raw = unsafeCastTable Full im
-    for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
+def getIm : Batch => Image =
+    -- File is unsigned bytes offset with 16 starting bytes
+    (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
+    raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
+    for b: Batch c i j.
         pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
-    (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
-    r = unsafeCastTable Batch im2
+    -- File is unsigned bytes offset with 8 starting bytes
+    (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
+    r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
     for i. (W8ToI r.i @ Class)
-
 
 ' ## Training loop
 
 
 ' Get binary files from:
 
-' `wget https://github.com/srush/learns-dex/raw/main/mnist.bin`
+' `wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
 
-' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
+' `wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
 
-' Comment out these lines
 
 ims = getIm
 labels = getLabel
