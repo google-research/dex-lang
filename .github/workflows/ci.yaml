@@ -67,6 +67,6 @@ jobs:
 
     - name: Build
       run: make build
-      
+
     - name: Run tests
       run: make tests
