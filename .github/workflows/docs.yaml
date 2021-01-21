@@ -1,25 +1,19 @@
-name: Tests
+name: Update HTML docs
 
 on:
   push:
-    branches: [ main, dev ]
-  pull_request:
-    branches: [ main, dev ]
+    branches:
+      - main
 
 jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-18.04, macos-latest]
+        os: [ubuntu-18.04]
         include:
-          - os: macos-latest
-            install_deps: brew install llvm@9 pkg-config
-            path_extension: $(brew --prefix llvm@9)/bin
           - os: ubuntu-18.04
             install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config
             path_extension: /usr/lib/llvm-9/bin
-
-    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Check out the repository
@@ -46,17 +40,16 @@ jobs:
         key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-
 
-    # See issue: https://github.com/actions/cache/issues/445
-    - name: Remove cached Setup executables
-      run: rm -rf ~/.stack/setup-exe-cache
-      if: runner.os == 'macOS'
-
-    - name: Build, treating warnings as errors
-      run: make build-ci
-      if: runner.os == 'Linux'
-
     - name: Build
       run: make build
 
-    - name: Run tests
-      run: make tests
+    - name: Generate docs
+      run: make docs
+
+    - name: Deploy
+      uses: "JamesIves/github-pages-deploy-action@3.7.1"
+      with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: gh-pages # The branch the action should deploy to.
+          FOLDER: docs/build/html/ # The folder the action should deploy.
+          CLEAN: true
