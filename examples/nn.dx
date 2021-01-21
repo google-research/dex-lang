@@ -96,6 +96,7 @@ xs = for i. [x1.i, x2.i]
 
 
 :html showPlot $ xycPlot x1 x2 $ for i. IToF y.i
+> <html output>
 
 simple = \h1.
   ndense1 = dense (Fin 2) h1
@@ -111,6 +112,12 @@ simple = \h1.
   }
 
 :t simple
+> ((h1:Type)
+>  -> Layer
+>       ((Fin 2) => Float32)
+>       ((Fin 2) => Float32)
+>       ( (((Fin 2) => h1 => Float32) & (h1 => Float32))
+>       & ((h1 => (Fin 2) => Float32) & ((Fin 2) => Float32))))
 
 ' Train a multiclass classifier with minibatch SGD
 ' `minibatch * minibatches = batch`
@@ -147,6 +154,7 @@ tests = for h : (Fin 50). for i . for j.
         
 
 :html imseqshow tests
+> <html output>
 
 ' ## LeNet for image classification
 
@@ -179,6 +187,16 @@ lenet = \h1 h2 h3 .
   }
 
 :t lenet
+> ((h1:Type)
+>  -> (h2:Type)
+>  -> (h3:Type)
+>  -> Layer
+>       ((Fin 1) => (Fin 28) => (Fin 28) => Float32)
+>       ((Fin 10) => Float32)
+>       ( ((h1 => (Fin 1) => (Fin 3) => (Fin 3) => Float32) & (h1 => Float32))
+>       & ( ((h2 => h1 => (Fin 3) => (Fin 3) => Float32) & (h2 => Float32))
+>         & ( (((h2 & (Fin 7 & Fin 7)) => h3 => Float32) & (h3 => Float32))
+>           & ((h3 => (Fin 10) => Float32) & ((Fin 10) => Float32))))))
 
 
 ' ## Data Loading
@@ -226,24 +244,49 @@ small_ims = for i: (Fin 10). ims.((ordinal i)@_)
 small_labels = for i: (Fin 10). labels.((ordinal i)@_)
 
 :p small_labels
+> [ (7@Fin 10)
+> , (2@Fin 10)
+> , (1@Fin 10)
+> , (0@Fin 10)
+> , (4@Fin 10)
+> , (1@Fin 10)
+> , (4@Fin 10)
+> , (9@Fin 10)
+> , (5@Fin 10)
+> , (9@Fin 10) ]
 
-Epochs = (Fin 5)
+Epochs = (Fin 1)
 Minibatches = (Fin 1)
 Minibatch = (Fin 10)
 
 :t ims.(2@_)
+> ((Fin 1) => (Fin 28) => (Fin 28) => Float32)
 
-model = lenet (Fin 1) (Fin 1) (Fin 20) 
+model = lenet (Fin 1) (Fin 1) (Fin 10) 
 init_param = (init model  $ newKey 0)
 :p forward model init_param (ims.(2@Batch))
+> [ -884.3887
+> , 0.
+> , -467.9934
+> , -805.0871
+> , -854.81555
+> , -507.84982
+> , -784.0084
+> , -316.6146
+> , -1435.0095
+> , -716.61194 ]
 
 ' Sanity check
 
 :t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param
+> ( (((Fin 1) => (Fin 1) => (Fin 3) => (Fin 3) => Float32) & ((Fin 1) => Float32))
+> & ( ( ((Fin 1) => (Fin 1) => (Fin 3) => (Fin 3) => Float32)
+>     & ((Fin 1) => Float32))
+>   & ( ( ((Fin 1 & (Fin 7 & Fin 7)) => (Fin 10) => Float32)
+>       & ((Fin 10) => Float32))
+>     & (((Fin 10) => (Fin 10) => Float32) & ((Fin 10) => Float32)))))
 
 (all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
 
 :p losses'
-
-
-
+> [11910.807]
