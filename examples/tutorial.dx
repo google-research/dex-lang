@@ -292,9 +292,9 @@ def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float3
 
 ' To run this section, move the following binary files to examples:
 
-' `wget https://github.com/srush/learns-dex/raw/main/mnist.bin`
+' `wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
 
-' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
+' `wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
 
 ' To make some of these concepts for tangible let us consider a real example
   using MNist digits. For this example we will first read in a batch of images
@@ -320,14 +320,16 @@ def pixel (x:Char) : Float32 =
              False -> r
 
 def getIm : Batch => Image =
-    (AsList _ im) = unsafeIO do readFile "examples/mnist.bin"
-    raw = unsafeCastTable Full im
+    -- File is unsigned bytes offset with 16 starting bytes
+    (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
+    raw = unsafeCastTable Full (for i:Batch. im.((ordinal i + 16) @ _))
     for b: Batch i j.
         pixel raw.((ordinal (b, i, j)) @ Full)
 
 def getLabel : Batch => Class =
-    (AsList _ im2) = unsafeIO do readFile "examples/labels.bin"
-    r = unsafeCastTable Batch im2
+    -- File is unsigned bytes offset with 8 starting bytes
+    (AsList _ lab) = unsafeIO do readFile "examples/t10k-labels-idx1-ubyte"
+    r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
     for i. (W8ToI r.i @ Class)
 
 ' Once you have downloaded the files, uncomment these lines to
