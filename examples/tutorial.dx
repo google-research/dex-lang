@@ -322,7 +322,7 @@ def pixel (x:Char) : Float32 =
 def getIm : Batch => Image =
     -- File is unsigned bytes offset with 16 starting bytes
     (AsList _ im) = unsafeIO do readFile "examples/t10k-images-idx3-ubyte"
-    raw = unsafeCastTable Full (for i:Batch. im.((ordinal i + 16) @ _))
+    raw = unsafeCastTable Full (for i:Full. im.((ordinal i + 16) @ _))
     for b: Batch i j.
         pixel raw.((ordinal (b, i, j)) @ Full)
 
@@ -604,11 +604,16 @@ def bincount (inp : a => b) : b => Int =
 ' Plot how many times each pixel value occurs in an image:
 
 hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j + 1.0) @Pixels)
+> Ordinal index out of range:256 >= 256
+> Runtime error
 :t hist
-> ((Fin 256) => Int32)
+> Error: variable not in scope: hist
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
-> <html output>
+> Error: variable not in scope: hist
+>
+> :html showPlot $ yPlot (for i. (IToF hist.i))
+>                                      ^^^^
 
 ' Find nearest images in the dataset:
 
@@ -682,7 +687,7 @@ temp = findFives all_ims all_labels
 (AsList nFives fives) = temp
 
 nFives
-> 434
+> 456
 
 ' However we can still utilize the table. For instance
   if we are summing over the hidden dimension, we never
