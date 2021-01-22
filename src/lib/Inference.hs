@@ -845,11 +845,9 @@ synthesize ctx ty = do
   substEnv <- ask 
   let solutions = synthDict scope ty
   addSrcContext ctx $ do
-    build <- case solutions of
+    (name, build) <- case solutions of
       [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-      [(name, build)] -> do
-        logInfo SynthPass $ "Synthesizing " ++ pprint ty ++ " using " ++ name
-        return build
+      [solution] -> return solution
       _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
             ++ concatMap (\(name, _) -> "\n  - " ++ name) solutions
     let (res, out) = runExceptWithOutputs $
@@ -858,7 +856,9 @@ synthesize ctx ty = do
     case res of
       Left err -> throwError err
       Right (block, _) -> do
-          emitBlock =<< dropSub (traverseBlock (traverseHoles synthesize) block)
+          logInfo SynthPass $ "Synthesizing " ++ pprint ty ++ " using " ++ name
+          addContext ("While synthesizing " ++ pprint ty ++ " using " ++ name) do
+            emitBlock =<< dropSub (traverseBlock (traverseHoles synthesize) block)
 
 traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
               => (SrcCtx -> Type -> m Atom) -> TraversalDef m

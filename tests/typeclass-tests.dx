@@ -41,3 +41,81 @@ instance InterfaceTest4 Float
   foo = 1
   bar = \_. 1
 
+
+'# Synthesis errors
+
+'## Duplicate instances
+
+interface InterfaceSynthesisTest a
+  runTest : a
+
+instance InterfaceSynthesisTest Float
+  runTest = 1.0
+
+instance InterfaceSynthesisTest Float
+  runTest = 2.0
+
+:p 
+  x : Float = runTest
+  x
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Float32)
+>   - (instance77 : (InterfaceSynthesisTest Float32))
+>   - (instance78 : (InterfaceSynthesisTest Float32))
+>
+>   x : Float = runTest
+>               ^^^^^^^
+
+instance [InterfaceSynthesisTest Float] InterfaceSynthesisTest Int
+  runTest = 2
+
+-- error shows Float32, since that is where the duplicate instance arises
+:p 
+  x : Int = runTest
+  x
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Float32)
+>   - (instance77 : (InterfaceSynthesisTest Float32))
+>   - (instance78 : (InterfaceSynthesisTest Float32))
+> While synthesizing (InterfaceSynthesisTest Int32) using (instance79 : ((InterfaceSynthesisTest Float32) ?=> InterfaceSynthesisTest Int32))
+>
+>   x : Int = runTest
+>             ^^^^^^^
+
+data Foo = MkFoo Int
+data Bar = MkBar Int
+
+instance InterfaceSynthesisTest Foo
+  runTest = MkFoo 1
+
+instance [InterfaceSynthesisTest Bar] InterfaceSynthesisTest Foo
+  runTest = MkFoo 2
+
+
+-- we should still have a duplicate interface error here, even though the
+-- `InterfaceSynthesisTest Bar` constraint can't be solved
+:p 
+  x : Foo = runTest
+  x
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Foo)
+>   - (instance80 : (InterfaceSynthesisTest Foo))
+>   - (instance81 : ((InterfaceSynthesisTest Bar) ?=> InterfaceSynthesisTest Foo))
+>
+>   x : Foo = runTest
+>             ^^^^^^^
+
+'## Missing instances
+
+data Baz = MkBaz Int
+data Qux = MkQux Int
+
+instance [InterfaceSynthesisTest Baz] InterfaceSynthesisTest Qux
+  runTest = MkQux 1
+
+-- missing an instance for Baz, not Qux
+:p 
+  x : Qux = runTest
+  x
+> Type error:Couldn't synthesize a class dictionary for: (InterfaceSynthesisTest Baz)
+> While synthesizing (InterfaceSynthesisTest Qux) using (instance82 : ((InterfaceSynthesisTest Baz) ?=> InterfaceSynthesisTest Qux))
+>
+>   x : Qux = runTest
+>             ^^^^^^^
