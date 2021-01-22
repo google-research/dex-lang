@@ -8,17 +8,18 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Inference (inferModule, synthModule) where
+module Inference (inferModule, synthModule, synthesize) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Control.Monad.Writer.Class (MonadWriter)
+import Control.Monad.Writer (MonadWriter, tell)
 import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Maybe (isNothing)
 import Data.String (fromString)
 import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
@@ -64,6 +65,16 @@ runUInferM :: (Subst a, Pretty a)
            -> ExceptWithOutputs (a, (Scope, Nest Decl))
 runUInferM env scope m = runSolverT $
   runBuilderT (runReaderT (runReaderT m env) Nothing) scope
+
+-- Execute a UInferM action without solving for all type variables or
+-- synthesizing any class dicts.
+execUnificationCheck :: (Subst a, Pretty a)
+           => SubstEnv -> Scope -> UInferM a
+           -> Maybe Err
+execUnificationCheck env scope m = let
+  (res, _) = runExceptWithOutputs $ flip runCatT mempty $
+                runBuilderT (runReaderT (runReaderT m env) Nothing) scope
+  in case res of Left err -> Just err; Right _ -> Nothing
 
 checkSigma :: UExpr -> (Type -> RequiredTy Type) -> SigmaType -> UInferM Atom
 checkSigma expr reqCon sTy = case sTy of
@@ -813,27 +824,41 @@ getSrcCtx = lift ask
 
 -- === typeclass dictionary synthesizer ===
 
--- We have two variants here because at the top level we want error messages and
--- internally we want to consider all alternatives.
-type SynthPassM = SubstBuilderT (Either Err)
-type SynthDictM = SubstBuilderT []
-
-synthModule :: Scope -> Module -> Except Module
+synthModule :: Scope -> Module -> ExceptWithOutputs Module
 synthModule scope (Module Typed decls bindings) = do
   decls' <- fst . fst <$> runSubstBuilderT
-              (traverseDecls (traverseHoles synthDictTop) decls) scope
+              (traverseDecls (traverseHoles synthesize) decls) scope
   return $ Module Core decls' bindings
-synthModule _ _ = error $ "Unexpected IR variant"
+synthModule _ _ = error "Unexpected IR variant"
 
-synthDictTop :: SrcCtx -> Type -> SynthPassM Atom
-synthDictTop ctx ty = do
+-- Synthesis algorithm:
+-- 1. Run type inference for every possible instance, and filter out those
+--    that do not unify. At this point, do not recursively synthesize any
+--    dictionaries.
+-- 2. Check that we got exactly one instance.
+-- 3. Only now, actually run the full inference procedure and synthesize
+--    any remaining dictionaries.
+synthesize :: (MonadBuilder m, MonadReader SubstEnv m, MonadWriter [Output] m, MonadError Err m)
+           => SrcCtx -> Type -> m Atom
+synthesize ctx ty = do
   scope <- getScope
-  let solutions = runSubstBuilderT (synthDict ty) scope
-  addSrcContext ctx $ case solutions of
-    [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-    [(ans, env)] -> builderExtend env $> ans
-    _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
-           ++ "\n" ++ pprint solutions
+  substEnv <- ask 
+  let solutions = synthDict scope ty
+  addSrcContext ctx $ do
+    build <- case solutions of
+      [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+      [(name, build)] -> do
+        logInfo SynthPass $ "Synthesizing " ++ pprint ty ++ " using " ++ name
+        return build
+      _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+            ++ concatMap (\(name, _) -> "\n  - " ++ name) solutions
+    let (res, out) = runExceptWithOutputs $
+                        runUInferM substEnv scope (buildScoped build)
+    tell out
+    case res of
+      Left err -> throwError err
+      Right (block, _) -> do
+          emitBlock =<< dropSub (traverseBlock (traverseHoles synthesize) block)
 
 traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
               => (SrcCtx -> Type -> m Atom) -> TraversalDef m
@@ -844,50 +869,57 @@ traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
-synthDict :: Type -> SynthDictM Atom
-synthDict ty = case ty of
-  PiTy b arr body -> synthesizeNow <|> introFirst
-    where
-      introFirst = buildDepEffLam b
-                      (\x -> extendR (b @> x) $ substBuilderR arr)
-                      (\x -> extendR (b @> x) $ substBuilderR body >>= synthDict)
+synthDict :: Scope -> Type -> [(String, UInferM Atom)]
+synthDict scope ty = case ty of
+  PiTy b arr body -> synthesizeNow <|> introFirst b arr body
   _ -> synthesizeNow
   where
     synthesizeNow = do
-      (d, bindingInfo) <- getBinding
+      (d, bindingInfo) <- getBinding scope
       case bindingInfo of
-        LetBound InstanceLet _ -> trySynth d
-        LamBound ClassArrow    -> withSuperclasses d >>= trySynth
+        LetBound InstanceLet _ -> trySynth (describeDict d, return d)
+        LamBound ClassArrow    -> withSuperclasses scope d >>= trySynth
         _                      -> empty
-    trySynth step = do
-      block <- buildScoped $ inferToSynth $ instantiateAndCheck ty step
-      -- NOTE: It's ok to emit unconditionally here. It will only ever emit
-      --       blocks that fully resolved without any holes, and if we ever
-      --       end up with two results, we don't use the duplicate code because
-      --       it's an error!
-      traverseBlock (traverseHoles (const synthDict)) block >>= emitBlock
+
+    introFirst b arr body = do
+      let name = case b of
+                    Ignore _ -> genFresh "premise" scope
+                    Bind (n :> _) -> genFresh n scope
+          ann = binderAnn b
+      (desc, makeDict) <- synthDict
+                              (scope <> name @> (ann, LamBound $ void arr))
+                              body
+      let build = buildDepEffLam (Bind $ name :> ann)
+                    (\x -> extendR (name @> x) $ substBuilderR arr)
+                    (\x -> extendR (name @> x) makeDict)
+      return ( desc ++ "\n(after assuming " ++ pprint (name :> ann) ++ ")"
+             , build)
+
+    trySynth (name, step) = do
+      let m = do
+                ty' <- substBuilderR ty
+                inst <- step
+                instantiateAndCheck ty' inst
+      -- Discard any instances that fail to unify, but don't (yet) try to solve
+      -- new class dict holes.
+      guard $ isNothing $ execUnificationCheck mempty scope m
+      return (name, m)
 
 -- TODO: this doesn't de-dup, so we'll get multiple results if we have a
 -- diamond-shaped hierarchy.
-withSuperclasses :: Atom -> SynthDictM Atom
-withSuperclasses dict = return dict <|> do
-  (f, LetBound SuperclassLet _) <- getBinding
-  inferToSynth $ tryApply f dict
+withSuperclasses :: Scope -> Atom -> [(String, UInferM Atom)]
+withSuperclasses scope dict = return (describeDict dict, return dict) <|> do
+  (f, LetBound SuperclassLet _) <- getBinding scope
+  return ( "superclass " ++ describeDict f ++ " of " ++ describeDict dict
+         , tryApply f dict)
 
-getBinding :: SynthDictM (Atom, BinderInfo)
-getBinding = do
-  scope <- getScope
-  (v, (ty, bindingInfo)) <- lift $ lift $ envPairs scope
+describeDict :: Atom -> String
+describeDict a = "(" ++ pprint a ++ " : " ++ pprint (getType a) ++ ")"
+
+getBinding :: Scope -> [(Atom, BinderInfo)]
+getBinding scope = do
+  (v, (ty, bindingInfo)) <- envPairs scope
   return (Var (v:>ty), bindingInfo)
-
-inferToSynth :: (Pretty a, Subst a) => UInferM a -> SynthDictM a
-inferToSynth m = do
-  scope <- getScope
-  case fst $ runExceptWithOutputs $ runUInferM mempty scope m of
-    Left _ -> empty
-    Right (x, (_, decls)) -> do
-      mapM_ emitDecl decls
-      return x
 
 tryApply :: Atom -> Atom -> UInferM Atom
 tryApply f x = do
