@@ -1,0 +1,192 @@
+
+
+' ## Additional Prelude
+
+def join (extra: List a) (lists:n=>(List a)) : List a =
+    concat $ for i.
+        case ordinal i == (size n - 1) of
+             True -> lists.i
+             False -> lists.i <> extra
+
+interface Enum a
+         enum : List a
+
+
+' # JSON Implementation
+
+data JValue = AsJValue String
+-- TODO - once Dex supports recursive ADT JValue becomes Value.
+
+data Value = 
+     AsObject (List (String & JValue))
+     AsArray (List JValue)
+     AsString String
+     AsFloat Float
+     AsInt Int
+
+interface ToJSON a
+  toJSON : a -> Value
+
+
+-- These three are private methods. Users should use type classes.
+def escape (x:JValue) : String =
+    (AsJValue y) = x
+    y
+
+
+def collapse (x:Value) : JValue =
+    AsJValue $ case x of
+         AsString y ->  "\"" <> y <> "\""
+         AsFloat y -> show y
+         AsInt y -> show y
+         AsObject (AsList _ y) ->
+              ("{" <> (join ", " $ for i.
+                 (k, v) = y.i 
+                 "\"" <> k <> "\"" <> ":" <> (escape v)) <> "}")
+         AsArray (AsList _ y) -> ("[" <> (join ", " $ for i. escape y.i) <> "]")
+
+def hide [ToJSON a] (x:a) : JValue =
+    collapse $ toJSON x
+
+instance Show Value 
+  show = \x. escape $ collapse x
+
+instance ToJSON String
+  toJSON = AsString
+  
+instance ToJSON Int
+  toJSON = AsInt
+  
+instance ToJSON Float
+  toJSON = AsFloat
+  
+instance ToJSON Value
+  toJSON = id
+  
+instance [ToJSON v] ToJSON ((Fin n) => v)
+  toJSON = \x . AsArray $ AsList _ $ for i. hide x.i
+
+instance [ToJSON v] ToJSON ((Fin n) => (String & v))
+  toJSON = \x . AsObject $ AsList _ $ for i. (fst x.i, hide $ snd x.i)
+
+instance [ToJSON v] ToJSON (List (String & v))
+  toJSON = \(AsList _ x) . toJSON x
+
+
+' ## Data Frame
+
+data DataFrame key n value =
+     AsDataFrame (n => key => value) (key => String)
+
+a_data = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+b_data = [28, 55, 43, 91, 81, 53, 19, 87, 52]
+
+bar : DataFrame (Fin 2) (Fin 9) Value = 
+    AsDataFrame  (for i. [toJSON a_data.i, toJSON b_data.i]) (["a", "b"])
+
+' VEGA LITE
+
+Options = List (String & String)
+
+data Mark =
+     AsMark String Options
+
+data EncodingType =
+     Quantitative
+     Nominal
+     Ordinal
+
+instance Show EncodingType
+         show = (\ x.
+              case x of
+                   Quantitative -> "quantitative"
+                   Nominal -> "nominal"
+                   Ordinal -> "ordinal")
+                   
+data Channel =
+     Y
+     X
+     Color
+     
+instance Show Channel
+         show = (\ x.
+              case x of
+                   Y -> "y"
+                   X -> "x"
+                   Color -> "color")
+
+data Encoding key =
+     AsEncoding Channel key EncodingType Options
+
+def enc (c:Channel) (k:Int) (et: EncodingType) : Encoding key =
+    AsEncoding c (k@_) et mempty
+
+def mark (m:String) : Mark =
+    AsMark m mempty
+
+def chart [ToJSON v] (x: DataFrame (Fin key) (Fin n) v)
+                     (mark: Mark)
+                     (encs : (Fin m) => Encoding (Fin key))
+             : Value =
+    
+    (AsMark mtype options) = mark
+    jmark = ("mark", toJSON ((AsList _ [("type", mtype)]) <> options))
+    (AsDataFrame df names) = x
+    jdf = toJSON $ for i. toJSON $ for k.
+                   ("field" <> (show $ ordinal k), toJSON df.i.k)
+    jdata = ("data", toJSON [("values", jdf)])
+    jencodings = toJSON $ for i.
+        (AsEncoding channel key type encoptions) = encs.i
+        (show channel, toJSON ((AsList _ [
+              ("field", "field" <> (show $ ordinal key)),
+              ("type", show type),
+              ("title", names.key)
+              ])
+                               <> encoptions))
+    jencode = ("encoding", jencodings)
+    toJSON [jdata, jmark, jencode]
+    
+
+
+def showVega (x: Value) : String =
+    "<iframe style=\"border:0\" height=\"300px\" width=\"700px\" srcdoc='<html>  <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script> </head> <body> <div id=\"vis\"></div><script>vegaEmbed(\"#vis\"," <> (show x) <> ");</script></body></html>'</iframe>"
+
+c = chart bar (mark "bar") [enc X 0 Nominal,
+                            enc Y 1 Quantitative] 
+
+show c
+
+:html showVega $ c
+
+
+' ## More Examples
+
+data Class =
+     A
+     B
+     C
+
+instance Show Class
+         show = \x . case x of
+               A -> "Apples"
+               B -> "Bananas"
+               C -> "Cucumbers"
+
+keys : (Fin 5) => Key = splitKey $ newKey 1
+x1 : (Fin 100) => Float = arb $ keys.(0 @ _)
+x2 : (Fin 100) => Float = arb $ keys.(1 @ _)
+label : (Fin 100) => Class =
+      x = arb $ keys.(2 @ _)
+      for i. [A, B, C] (x.i)
+
+
+df = (AsDataFrame
+        (for i. [toJSON $ x1.i, toJSON $ x2.i, toJSON $ show label.i])
+        (["X1", "X2", "Label"]))
+
+
+:html showVega $ chart df (mark "point") [enc X 0 Quantitative,
+                                          enc Y 1 Quantitative,
+                                          enc Color 2 Nominal] 
+
+
