@@ -156,7 +156,7 @@ def chart [ToJSON v] (x: DataFrame (Fin key) n v)
     
 
 def showVega (x: Value) : String =
-    "<iframe style=\"border:0\" height=\"300px\" width=\"700px\" srcdoc='<html>  <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script> </head> <body> <div id=\"vis\"></div><script>vegaEmbed(\"#vis\"," <> (show x) <> ");</script></body></html>'</iframe>"
+    "<iframe style=\"border:0\" height=\"300px\" width=\"700px\" srcdoc='<html>  <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script> </head> <body> <div id=\"vis\"></div><script>vegaEmbed(\"#vis\"," <> (show x) <> ");</script></body></html>'></iframe>"
 
 ' ## Example: Bar Chart
 
@@ -228,7 +228,7 @@ df2 = (AsDataFrame
                 [enc Y 0 Quantitative,
                  enc Row 1 Nominal,
                  enc X 2 Quantitative]
-                 (toList [("title", "Area"), ("height", "100")]))
+                 (toList [("title", "Area"), ("height", "50")]))
 
 
 ' ## Example: Heatmap
@@ -253,6 +253,6 @@ df3 = (AsDataFrame
         enc X 2 Ordinal,
         enc Y 3 Ordinal,
         enc Tooltip 1 Nominal]
-       (toList [("title", "HeatMap"), ("height", "100")]))
+       (toList [("title", "HeatMap"), ("height", "200")]))
 
 
