@@ -14,12 +14,13 @@ import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
 import Data.Text (pack)
 import CMark (commonmarkToHtml)
+import GHC.Exts (IsString (..))
 
 import Control.Monad
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
-import Resources (cssSource)
+import Resources (cssSource, staticOnloadJavascriptSource)
 import Syntax
 import PPrint
 import Parser
@@ -35,8 +36,14 @@ progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do
   H.head $ do
-    H.style ! type_ "text/css" $ toHtml cssSource
     H.meta ! charset "UTF-8"
+    -- Base CSS stylesheet.
+    H.style ! type_ "text/css" $ toHtml cssSource
+    -- KaTeX CSS and JavaScript.
+    H.link ! rel "stylesheet" ! href "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"
+    H.script ! defer "" ! src "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js" $ mempty
+    H.script ! defer "" ! src "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js"
+             ! onload (fromString staticOnloadJavascriptSource) $ mempty
   H.body $ H.div inner ! At.id "main-output"
   where inner = foldMap (cdiv "cell") blocks
 
