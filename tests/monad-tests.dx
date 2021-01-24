@@ -177,3 +177,41 @@ def effectsAtZero (eff:Effects)?-> (f: Int ->{|eff} Unit) : {|eff} Unit =
 
 :p runState 0 \ref. effectsAtZero \_. ref := 1
 > ((), 1)
+
+:p filter (\x. x > 5) [0, 7, -1, 6]
+> (AsList 2 [7, 6])
+
+:p argFilter (\x. x > 5) [0, 7, -1, 6]
+> (AsList 2 [(1@Fin 4), (3@Fin 4)])
+
+-- Test list equality
+(AsList _ [1, 2]) == (AsList _ [1, 2])
+> True
+
+(AsList _ [1]) == (AsList _ [1, 2])
+> False
+
+(AsList _ [1, 2]) == (AsList _ [2, 2])
+> False
+
+-- Test custom list monoid with accum
+def adjacencyMatrixToEdgeList (mat: n=>n=>Bool) : List (n & n) =
+  yieldAccum (ListMonoid (n & n)) \list.
+    for (i, j).
+      if mat.i.j then
+        append list (i, j)
+
+test_edges = [[False, False, True, False],
+              [True, False, True, True],
+              [False, True, False, True],
+              [False, False, False, False]]
+
+edgelist = (AsList 6 [ ((0@Fin 4), (2@Fin 4))
+, ((1@Fin 4), (0@Fin 4))
+, ((1@Fin 4), (2@Fin 4))
+, ((1@Fin 4), (3@Fin 4))
+, ((2@Fin 4), (1@Fin 4))
+, ((2@Fin 4), (3@Fin 4)) ])
+
+:p edgelist == adjacencyMatrixToEdgeList test_edges
+> True
