@@ -775,8 +775,8 @@ def dot [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum view (i,j). x.i * mat.i.j * y.j
 
-def eye [Eq n] : n=>n=>Float =
-  for i j. select (i == j) 1.0 0.0
+def eye [Eq n, Add a, Mul a] : n=>n=>a =
+  for i j. select (i == j) one zero
 
 '## Pseudorandom number generator utilities
 Dex does not use a stateful random number generator.
@@ -964,6 +964,13 @@ def tile1 (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
 data List a =
   AsList n:Int elements:(Fin n => a)
 
+instance [Eq a] Eq (List a)
+  (==) = \(AsList nx xs) (AsList ny ys).
+    if nx /= ny
+      then False
+      else all for i:(Fin nx).
+        xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
+
 def unsafeCastTable (m:Type) (xs:n=>a) : m=>a =
   for i. xs.(unsafeFromOrdinal _ (ordinal i))
 
@@ -982,6 +989,32 @@ instance Monoid (List a)
       case i' < nx of
         True  -> xs.(unsafeFromOrdinal _ i')
         False -> ys.(unsafeFromOrdinal _ (i' - nx))
+
+def ListMonoid (a:Type) : Monoid (List a) =
+  A = a -- XXX: Typing `Monoid a` below would quantify it over a,
+        --      which we don't want.
+  named-instance result : Monoid (List A)
+    mempty = mempty
+    mcombine = mcombine
+  result
+
+def append [AccumMonoid h (List a)]
+  (list: Ref h (List a)) (x:a) : {Accum h} Unit =
+    list += AsList 1 [x]
+
+def filter (condition:a->Bool) (xs:n=>a) : List a =
+  yieldAccum (ListMonoid a) \list.
+    for i.
+      if condition xs.i
+        then append list xs.i
+
+def argFilter (condition:a->Bool) (xs:n=>a) : List n =
+  -- Returns all indices where the condition is true.
+  yieldAccum (ListMonoid n) \list.
+    for i.
+      if condition xs.i
+        then append list i
+
 
 '## Isomorphisms
 
