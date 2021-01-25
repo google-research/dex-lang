@@ -59,8 +59,8 @@ instance InterfaceSynthesisTest Float
   x : Float = runTest
   x
 > Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Float32)
->   - (instance77 : (InterfaceSynthesisTest Float32))
->   - (instance78 : (InterfaceSynthesisTest Float32))
+>   - an instance (InterfaceSynthesisTest Float32)
+>   - an instance (InterfaceSynthesisTest Float32)
 >
 >   x : Float = runTest
 >               ^^^^^^^
@@ -73,9 +73,9 @@ instance [InterfaceSynthesisTest Float] InterfaceSynthesisTest Int
   x : Int = runTest
   x
 > Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Float32)
->   - (instance77 : (InterfaceSynthesisTest Float32))
->   - (instance78 : (InterfaceSynthesisTest Float32))
-> While synthesizing (InterfaceSynthesisTest Int32) using (instance79 : ((InterfaceSynthesisTest Float32) ?=> InterfaceSynthesisTest Int32))
+>   - an instance (InterfaceSynthesisTest Float32)
+>   - an instance (InterfaceSynthesisTest Float32)
+> While synthesizing (InterfaceSynthesisTest Int32) using an instance ((InterfaceSynthesisTest Float32) ?=> InterfaceSynthesisTest Int32)
 >
 >   x : Int = runTest
 >             ^^^^^^^
@@ -96,8 +96,8 @@ instance [InterfaceSynthesisTest Bar] InterfaceSynthesisTest Foo
   x : Foo = runTest
   x
 > Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Foo)
->   - (instance80 : (InterfaceSynthesisTest Foo))
->   - (instance81 : ((InterfaceSynthesisTest Bar) ?=> InterfaceSynthesisTest Foo))
+>   - an instance (InterfaceSynthesisTest Foo)
+>   - an instance ((InterfaceSynthesisTest Bar) ?=> InterfaceSynthesisTest Foo)
 >
 >   x : Foo = runTest
 >             ^^^^^^^
@@ -115,7 +115,7 @@ instance [InterfaceSynthesisTest Baz] InterfaceSynthesisTest Qux
   x : Qux = runTest
   x
 > Type error:Couldn't synthesize a class dictionary for: (InterfaceSynthesisTest Baz)
-> While synthesizing (InterfaceSynthesisTest Qux) using (instance82 : ((InterfaceSynthesisTest Baz) ?=> InterfaceSynthesisTest Qux))
+> While synthesizing (InterfaceSynthesisTest Qux) using an instance ((InterfaceSynthesisTest Baz) ?=> InterfaceSynthesisTest Qux)
 >
 >   x : Qux = runTest
 >             ^^^^^^^

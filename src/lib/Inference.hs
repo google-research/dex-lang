@@ -880,7 +880,8 @@ synthDict scope ty = case ty of
     synthesizeNow = do
       (d, bindingInfo) <- getBinding scope
       case bindingInfo of
-        LetBound InstanceLet _ -> trySynth (describeDict d, return d)
+        LetBound InstanceLet _ ->
+          trySynth ("an instance " <> pprint (getType d), return d)
         LamBound ClassArrow    -> withSuperclasses scope d >>= trySynth
         _                      -> empty
 
@@ -915,13 +916,14 @@ synthDict scope ty = case ty of
 -- TODO: this doesn't de-dup, so we'll get multiple results if we have a
 -- diamond-shaped hierarchy.
 withSuperclasses :: Scope -> Atom -> [(String, UInferM Atom)]
-withSuperclasses scope dict = return (describeDict dict, return dict) <|> do
-  (f, LetBound SuperclassLet _) <- getBinding scope
-  return ( "superclass " ++ describeDict f ++ " of " ++ describeDict dict
-         , tryApply f dict)
-
-describeDict :: Atom -> String
-describeDict a = "(" ++ pprint a ++ " : " ++ pprint (getType a) ++ ")"
+withSuperclasses scope dict =
+  return ("a local constraint " <> pprint (getType dict), return dict)
+  <|> do
+    (f, LetBound SuperclassLet _) <- getBinding scope
+    return ( "superclass " ++ pprint (getType f)
+             ++ " of a local constraint " ++ pprint dict
+             ++ " : " ++ pprint (getType dict)
+           , tryApply f dict)
 
 getBinding :: Scope -> [(Atom, BinderInfo)]
 getBinding scope = do
