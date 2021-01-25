@@ -1,19 +1,26 @@
 
 
 ' # Declarative Graphing
-
+  This example shows how to use Dex to generate interactive
+  graphs using a declarative graph library known as Vega-Lite.
+  To do this we will first implement a small JSON serialization library
+  and then a Dex interface to produce graph outputs.
 
 ' ## JSON Implementation
 
-def join (extra: List a) (lists:n=>(List a)) : List a =
+def join (joiner: List a) (lists:n=>(List a)) : List a =
+    -- Join together lists with an intermediary joiner
     concat $ for i.
         case ordinal i == (size n - 1) of
              True -> lists.i
-             False -> lists.i <> extra
+             False -> lists.i <> joiner
 
+' A serialized JSON Value
 
-data JValue = AsJValue String
 -- TODO - once Dex supports recursive ADT JValue becomes Value.
+data JValue = AsJValue String
+
+' Simple JSON Data Type
 
 data Value = 
      AsObject (List (String & JValue))
@@ -21,18 +28,17 @@ data Value =
      AsString String
      AsFloat Float
      AsInt Int
-
+     AsNone
+     
 interface ToJSON a
   toJSON : a -> Value
 
+instance Show JValue
+  show = \ (AsJValue a). a
 
--- These three are private methods. Users should use type classes.
-def escape (x:JValue) : String =
-    (AsJValue y) = x
-    y
+' Serialization Methods
 
-
-def collapse (x:Value) : JValue =
+def toJValue (x:Value) : JValue =
     AsJValue $ case x of
          AsString y ->  "\"" <> y <> "\""
          AsFloat y -> show y
@@ -40,14 +46,17 @@ def collapse (x:Value) : JValue =
          AsObject (AsList _ y) ->
               ("{" <> (join ", " $ for i.
                  (k, v) = y.i 
-                 "\"" <> k <> "\"" <> ":" <> (escape v)) <> "}")
-         AsArray (AsList _ y) -> ("[" <> (join ", " $ for i. escape y.i) <> "]")
+                 "\"" <> k <> "\"" <> ":" <> (show v)) <> "}")
+         AsArray (AsList _ y) -> ("[" <> (join ", " $ for i. show y.i) <> "]")
+         AsNone -> ""
 
-def hide [ToJSON a] (x:a) : JValue =
-    collapse $ toJSON x
+def serialize [ToJSON a] (x:a) : JValue =
+    toJValue $ toJSON x
 
 instance Show Value 
-  show = \x. escape $ collapse x
+  show = \x. show $ toJValue x
+
+' Type classes for JSON conversion
 
 instance ToJSON String
   toJSON = AsString
@@ -62,21 +71,39 @@ instance ToJSON Value
   toJSON = id
   
 instance [ToJSON v] ToJSON ((Fin n) => v)
-  toJSON = \x . AsArray $ AsList _ $ for i. hide x.i
+  toJSON = \x . AsArray $ AsList _ $ for i. serialize x.i
+
+instance [ToJSON v] ToJSON (List v)
+  toJSON = \(AsList _ x) . toJSON x
 
 instance [ToJSON v] ToJSON ((Fin n) => (String & v))
-  toJSON = \x . AsObject $ AsList _ $ for i. (fst x.i, hide $ snd x.i)
+  toJSON = \x . AsObject $ AsList _ $ for i. (fst x.i, serialize $ snd x.i)
 
 instance [ToJSON v] ToJSON (List (String & v))
   toJSON = \(AsList _ x) . toJSON x
 
 
-' ## Graph Grammars (Vega-Lite Spec)
+' ## Declarative Graph Grammars
+Graph grammars are a style of graphing that aims to separate the data representation
+from the graph layout. The main idea is to represent the underlying data as a flat
+sequence of aligned rows (colloquially a `dataframe`) and separately describe the graph
+layout based on a grammar. 
 
-Options = List (String & String)
+' Here we implement a subset of the Vega-Lite (https://vega.github.io/vega-lite/) specification for
+  graphing. Vega-Lite lets you make a large set of charts using a very small grammar. 
+  
 
-data Mark =
-     AsMark String Options
+' Our Dataframe will be Table that associates meta data with columns. 
+
+data DataFrame row col value meta =
+     AsDataFrame  (col => meta) (row => col => value) 
+
+
+' We will have two pieces of metadata. A header string and an encoding type that
+  describes the role of the column.
+
+Header = String
+
 
 data EncodingType =
      Quantitative
@@ -84,12 +111,45 @@ data EncodingType =
      Ordinal
 
 instance Show EncodingType
+   show = (\ x.
+       case x of
+         Quantitative -> "quantitative"
+         Nominal -> "nominal"
+         Ordinal -> "ordinal")
+
+
+' The two main aspects of Vega-Lite are the Mark and the Channel.
+  The mark tells it what kind of graph to draw, and the channels
+  allow us to assign different columns to different roles.
+  We implement these as simple data types, ideally these would be
+  derived from the spec.
+
+
+data Mark =
+     Area
+     Bar
+     Circle
+     Line
+     Point
+     Rect
+     Rule
+     Square
+     Text
+     Tick
+     
+instance Show Mark
          show = (\ x.
               case x of
-                   Quantitative -> "quantitative"
-                   Nominal -> "nominal"
-                   Ordinal -> "ordinal")
-                   
+                   Area -> "area"
+                   Bar -> "bar"
+                   Circle -> "circle"
+                   Line -> "line"
+                   Point -> "point"
+                   Rect -> "rect"
+                   Rule-> "rule"
+                   Square -> "square"
+                   Tick -> "tick")
+
 data Channel =
      Y
      X
@@ -112,68 +172,100 @@ instance Show Channel
                    Row -> "row"
                    Col -> "col")
 
-data Encoding key =
-     AsEncoding Channel key EncodingType Options
+' Most things in VL can take in extra visual options.
+  To avoid specifying these, we will take in as
+  JSON.
 
-def enc (c:Channel) (k:Int) (et: EncodingType) : Encoding key =
-    AsEncoding c (k@_) et mempty
+data Opts a =
+     WithOpts a Value
 
-def mark (m:String) : Mark =
-    AsMark m mempty
-
-def optsList (x:Options) : List (String & Value) =
-    (AsList _  tab) = x
-    AsList _ $ for i. (fst tab.i, toJSON $ snd tab.i)
-
-
-data DataFrame key n value =
-     AsDataFrame (n => key => value) (key => String)
-
-
-def chart [ToJSON v] (x: DataFrame (Fin key) n v)
-                     (mark: Mark)
-                     (encs : (Fin m) => Encoding (Fin key))
-                     (opts : Options)
-             : Value =
+def pure (x:a) : Opts a =
+    WithOpts x AsNone
     
-    (AsMark mtype options) = mark
-    jmark = ("mark", toJSON ((AsList _ [("type", mtype)]) <> options))
-    (AsDataFrame df names) = x
-    finsize = (Fin $ size n)
-    jdf = toJSON $ unsafeCastTable finsize $ for i. toJSON $ for k.
-                   ("field" <> (show $ ordinal k), toJSON df.i.k)
+def pureLs (x:a) : List (Opts a) =
+   AsList 1 [WithOpts x AsNone]
+
+def mergeOpts [ToJSON a, ToJSON b] (x : a) (y : b) : Value =
+     case toJSON x of 
+         (AsObject x') -> case toJSON y of
+                  (AsObject y') -> AsObject $ x' <> y'
+                  (AsNone) -> AsObject x'
+         (AsNone) -> toJSON y
+ 
+def VLDataFrame (row:Type) (col:Type) (value:Type): Type =
+    DataFrame row col value (Header & EncodingType) 
+
+
+def chart [ToJSON v, ToJSON o] (x: VLDataFrame n (Fin key) v)
+                     (mark: Opts Mark)
+                     (encs : (Fin key) => List (Opts Channel))
+                     (opts : o)
+             : Value =
+
+    -- Make the mark
+    (WithOpts mtype options) = mark
+    jmark = ("mark", mergeOpts options [("type", show mtype)])
+
+    -- Make the data
+    (AsDataFrame meta df) = x
+    finsize = Fin $ size n
+    jdf = toJSON $ castTable finsize $ for i. toJSON $ for k.
+                   ("field" <> (show $ ordinal k),
+                   toJSON df.i.k)
     jdata = ("data", toJSON [("values", jdf)])
-    jencodings = toJSON $ for i.
-        (AsEncoding channel key type encoptions) = encs.i
-        (show channel, toJSON ((AsList _ [
-              ("field", "field" <> (show $ ordinal key)),
+
+    -- Make the encodings
+    jencodings = toJSON $ concat $ for i.
+        (AsList v encopts) = encs.i
+        AsList _ $ for c : (Fin v). 
+           (WithOpts channel encoptions) = encopts.c
+           (title, type):(String & EncodingType) = meta.i
+           (show channel,
+            mergeOpts encoptions 
+            [
+              ("field", "field" <> (show $ ordinal i)),
               ("type", show type),
-              ("title", names.key)
-              ])
-                               <> encoptions))
+              ("title", title)
+              ])           
     jencode = ("encoding", jencodings)
-    toJSON ((AsList _ [jdata, jmark, jencode]) <> optsList opts)
+    mergeOpts opts [jdata, jmark, jencode]
     
 
 def showVega (x: Value) : String =
-    "<iframe style=\"border:0\" height=\"300px\" width=\"700px\" srcdoc='<html>  <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>  <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script> </head> <body> <div id=\"vis\"></div><script>vegaEmbed(\"#vis\"," <> (show x) <> ");</script></body></html>'></iframe>"
+    "<iframe width=\"100%\" frameborder=\"0\" scrolling=\"no\" onload=\"resizeIframe(this)\" srcdoc='<html> 
+    <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>  
+          <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>  
+          <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script> 
+    </head> 
+    <body> 
+           <div id=\"vis\"></div>
+           <script>vegaEmbed(\"#vis\"," <> (show x) <> ");</script>
+    </body>
+    </html>'>
+    </iframe>"
 
 ' ## Example: Bar Chart
 
 a_data = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
 b_data = [28, 55, 43, 91, 81, 53, 19, 87, 52]
 
-df0 = AsDataFrame  (for i. [toJSON a_data.i, toJSON b_data.i]) (["a", "b"])
+df0 = (AsDataFrame [("a", Nominal), ("b", Quantitative)]
+                   (for i. [toJSON a_data.i, toJSON b_data.i]))
 
-c = (chart df0 (mark "bar")
-     [enc X 0 Nominal,
-      enc Y 1 Quantitative]
-      (toList [("title", "Bar Graph")]))
+
+c = (chart df0 (pure Bar)
+     [pureLs X, pureLs Y]
+     [("title", "Bar Graph")])
 
 :html showVega $ c
 
 
 ' ## Example: Scatter
+
+' This example constructs a scatter plot with several different variables. 
+
+
+' First we will construct a Nominal variable for a class.
 
 data Class =
      A
@@ -186,6 +278,8 @@ instance Show Class
                B -> "Bananas"
                C -> "Cucumbers"
 
+' Then we will generate some random data. 
+
 keys : (Fin 5) => Key = splitKey $ newKey 1
 x1 : (Fin 100) => Float = arb $ keys.(0 @ _)
 x2 : (Fin 100) => Float = arb $ keys.(1 @ _)
@@ -194,65 +288,77 @@ label : (Fin 100) => Class =
       x = arb $ keys.(3 @ _)
       for i. [A, B, C] (x.i)
 
+' The data frame has a mapping between the variable names and their encoding type.
 
 df = (AsDataFrame
-        (for i. [toJSON $ x1.i,
+        [("X1", Quantitative), ("X2", Quantitative), ("Weight", Quantitative), ("Label", Nominal)]
+         (for i. [toJSON $ x1.i,
                  toJSON $ x2.i,
                  toJSON $ weight.i,
-                 toJSON $ show label.i])
-        (["X1", "X2", "Weight", "Label"]))
+                 toJSON $ show label.i]))
 
 
-:html showVega (chart df (mark "point")
-      [enc X 0 Quantitative,
-       enc Y 1 Quantitative,
-       enc Size 2 Quantitative,
-       enc Color 3 Nominal,
-       enc Tooltip 3 Nominal]
-       (toList [("title", "Scatter")]))
+' We use a different mark `Bar` and pass in multiple Channels for some variables.
+
+:html showVega (chart df (pure Point)
+         [pureLs X, pureLs Y, pureLs Size,
+          AsList _ [pure Color, pure Tooltip]]
+          [("title", "Scatter")])
 
 ' ## Example: Faceted Area plot
+
+' This example show three different random walks. In particular in demonstrates how
+  VL can auto-facet the chart based on Nominal variables.
 
 y1 :  (Fin 3) => (Fin 10) => Float = arb $ keys.(0 @ _)
 y = for i. cumSum . for j. select (y1.i.j > 0.0) (-1.0) 1.0 
 
 df2 = (AsDataFrame
+    [("density", Quantitative), ("Runs", Nominal), ("Round", Ordinal)]
         (for (i,j). [toJSON $ y.i.j,
                      toJSON $ ["Run 1", "Run 2", "Run 3"].i,
-                     toJSON $ ordinal j])
-        (["density", "Runs", "Round"]))
+                     toJSON $ ordinal j]))
+     
 
-
-
-:html showVega (chart df2 (mark "area")
-                [enc Y 0 Quantitative,
-                 enc Row 1 Nominal,
-                 enc X 2 Quantitative]
-                 (toList [("title", "Area"), ("height", "50")]))
+:html showVega (chart df2 (pure Area)
+                [pureLs Y,
+                 pureLs Row,
+                 pureLs X]
+                 [("title", "Area"), ("height", "75")])
 
 
 ' ## Example: Heatmap
-
 
 words = ["the", "dog", "walked", "to", "the", "store"]
 
 z :  (Fin 6) => (Fin 6) => Float = arb $ keys.(0 @ _)
 
 df3 = (AsDataFrame
+        [("match", Quantitative) , ("words", Nominal), ("row", Ordinal), ("col", Ordinal)]
         (for (i,j). [toJSON $ z.i.j,
                      toJSON $ words.i <> " - " <> words.j,
                      toJSON $ ordinal i,
                      toJSON $ ordinal j
-                     ])
-        (["match", "words", "X", "Y"]))
+                     ]))
+
+' Default heat map
+
+:html showVega (chart df3 (pure Rect)
+       [pureLs Color,
+        pureLs Tooltip,
+        pureLs X,
+        pureLs Y] AsNone)
+
+' Customization through JSON options.
 
 
-
-:html showVega (chart df3 (mark "rect")
-       [enc Color 0 Quantitative,
-        enc X 2 Ordinal,
-        enc Y 3 Ordinal,
-        enc Tooltip 1 Nominal]
-       (toList [("title", "HeatMap"), ("height", "200")]))
-
-
+:html showVega (chart df3 (pure Rect)
+       [pureLs Color,
+        pureLs Tooltip,
+        pureLs X,
+        pureLs Y] $
+       mergeOpts [("title",  "HeatMap"), ("height",  "200"), ("width",  "200")]
+         [("config", toJSON [
+          ("axis", [("grid", toJSON  1), ("tickBand", toJSON  "extent")])
+          ])]
+       )
