@@ -44,8 +44,7 @@ def nextpow2 (x:Int) : Int = case isPowerOf2 x of
   False -> intpow2 (1 + intlog2 x)
 
 def reflect (i:n) : n =
-  s = size n
-  (s - 1 - ordinal i)@n
+  unsafeFromOrdinal n ((size n) - 1 - ordinal i)
 
 def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
 
@@ -65,12 +64,19 @@ data FTDirection =
   ForwardFT
   InverseFT
 
-def butterfly_ixs (j:Int) (pow2:Int) : (n & n) =
+def butterfly_ixs (j':halfn) (pow2:Int) : (n & n & n & n) =
   -- Re-index at a finer frequency.
+  -- halfn must have half the size of n.
   -- For explanation, see https://en.wikipedia.org/wiki/Butterfly_diagram
   -- Note: with fancier index sets, this might be replacable by reshapes.
+  j = ordinal j'
   k = ((idiv j pow2) * pow2 * 2) + mod j pow2
-  (k@n, (k + pow2)@n)
+  left_write_ix  = unsafeFromOrdinal n k
+  right_write_ix = unsafeFromOrdinal n (k + pow2)
+
+  left_read_ix  = unsafeFromOrdinal n j
+  right_read_ix = unsafeFromOrdinal n (j + size halfn)
+  (left_read_ix, right_read_ix, left_write_ix, right_write_ix)
 
 def power_of_2_fft (direction: FTDirection) (x: n=>Complex) : n=>Complex =
   -- Input size must be a power of 2.
@@ -83,23 +89,21 @@ def power_of_2_fft (direction: FTDirection) (x: n=>Complex) : n=>Complex =
   log2n = intlog2 (size n)
   halfn = idiv (size n) 2
   
-  ans = yieldState x \refOuter.
+  ans = yieldState x \xRef.
     for i:(Fin log2n).
       ipow2 = intpow 2 (ordinal i)
-      copy = get refOuter
-      refOuter := yieldAccum (AddMonoid Complex) \ref.
+      xRef := yieldAccum (AddMonoid Complex) \bufRef.
         for j:(Fin halfn).  -- Executes in parallel.
-          j' = ordinal j
+          (left_read_ix, right_read_ix,
+           left_write_ix, right_write_ix) = butterfly_ixs j ipow2
 
           -- Read one element from the last buffer, scaled.
-          ix = (j' + halfn)@n
-          angle = dir_const * (IToF $ mod j' ipow2) / IToF ipow2
-          v = copy.ix * (MkComplex (cos angle) (sin angle))
-          
+          angle = dir_const * (IToF $ mod (ordinal j) ipow2) / IToF ipow2
+          v = (get xRef!right_read_ix) * (MkComplex (cos angle) (sin angle))
+
           -- Add and subtract it to the relevant places in the new buffer.
-          (a, b) = butterfly_ixs j' ipow2
-          ref!a += copy.(j'@n) + v
-          ref!b += copy.(j'@n) - v
+          bufRef!left_write_ix  += (get (xRef!left_read_ix)) + v
+          bufRef!right_write_ix += (get (xRef!left_read_ix)) - v
 
   case direction of
     ForwardFT -> ans
