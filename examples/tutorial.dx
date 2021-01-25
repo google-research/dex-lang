@@ -56,7 +56,7 @@ import plot
 ' Once we have an table, we can use it in new comprehensions. For example,
   let's try to add `5` to each table element. In Python, one might write this as:
 
-' `x5 = [[x[i][j] + 5.0 for j in range(width)] for i in range(height)]`
+' ```x5 = [[x[i][j] + 5.0 for j in range(width)] for i in range(height)]```
 
 ' Dex can do something similar. The main superficial difference is the
   table indexing syntax, which uses `table.i` instead of square brackets for
@@ -534,15 +534,16 @@ tableMean (for (i, j). (x.i.j, x.i.j))
 ' If we look in the Prelude, we can see that these interfaces are defined as
  (This will throw error because it mirrors the prelude, but we are just repeating it here.):
 
+' ```
 interface Add a
   add : a -> a -> a
   sub : a -> a -> a
   zero : a
-> Error: variable already defined: Add
 
+' ```
 interface [Add a] VSpace a
   scaleVec : Float -> a -> a
-> Error: variable already defined: VSpace
+```
 
 ' *Interfaces* define *requirements*: the functions needed for a type to
   implement the interface (via an *instance*).
@@ -603,17 +604,12 @@ def bincount (inp : a => b) : b => Int =
 
 ' Plot how many times each pixel value occurs in an image:
 
-hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j + 1.0) @Pixels)
-> Ordinal index out of range:256 >= 256
-> Runtime error
+hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
 :t hist
-> Error: variable not in scope: hist
+> ((Fin 256) => Int32)
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
-> Error: variable not in scope: hist
->
-> :html showPlot $ yPlot (for i. (IToF hist.i))
->                                      ^^^^
+> <html output>
 
 ' Find nearest images in the dataset:
 
