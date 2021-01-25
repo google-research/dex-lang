@@ -32,13 +32,14 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
+  exposed-modules:     Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, Imp.Builder, Imp.Optimize,
-                       PPrint, Algebra, Parallelize, Optimize, Serialize
+                       Algebra, Parallelize, Optimize, Serialize
                        Actor, Builder, Cat, Export,
                        RenderHtml, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims
+                       LabeledItems, Naming, HigherKinded, Err,
+                       LLVM.JIT, LLVM.Shims, Base, Core, CoreTraversal, Preamble
   build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs,
                        -- Parsing
@@ -65,7 +66,8 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments
+                       BlockArguments, DeriveGeneric, ConstraintKinds, FlexibleContexts,
+                       MultiParamTypeClasses
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include

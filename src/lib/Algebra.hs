@@ -4,8 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Algebra (offsetToE, elemCountE, applyIdxs,
-                showPolyC, showSumPolyC) where
+module Algebra (offsetToE, elemCountE, applyIdxs, showPolyC, showSumPolyC) where
 
 import Prelude hiding (lookup, sum, pi)
 import Control.Monad
@@ -15,18 +14,9 @@ import Data.Map.Strict hiding (foldl, map)
 import Data.Text.Prettyprint.Doc
 import Data.List (intersperse)
 import Data.Tuple (swap)
-import Data.Coerce
 
-import Env
-import Syntax
-import PPrint
-import Builder ( MonadBuilder, iadd, imul, idiv, clampPositive, ptrOffset
-               , indexToIntE, indexSetSizeE )
-
--- MVar is like Var, but it additionally defines Ord. The invariant here is that the variables
--- should never be shadowing, and so it is sufficient to only use the name for equality and
--- order checks, as name equality should imply type equality.
-newtype MVar = MVar Var deriving Show
+import Base
+import Core  hiding (add, sub)
 
 -- Set of monomials, each multiplied by a constant.
 type Constant         = Rational
@@ -35,50 +25,54 @@ type PolynomialP mono = Map mono Constant
 -- Set of variables, each with its power.
 -- Note that some variables appearing in monomials will be index set variables, which
 -- we identify with their ordinals.
-type Monomial         = Map MVar Int
-type Polynomial       = PolynomialP Monomial
+type Monomial   n      = Map (Name n) Int
+type Polynomial n      = PolynomialP (Monomial n)
 
 -- Clamp represents the expression max(poly, 0).
-newtype Clamp         = Clamp Polynomial               deriving (Show, Eq, Ord)
+newtype Clamp n        = Clamp (Polynomial n)               deriving (Show, Eq, Ord)
 -- TODO: Make clamps a map of powers!
 -- A product of a number of clamps and a monomial.
-data ClampMonomial    = ClampMonomial [Clamp] Monomial deriving (Show, Eq, Ord)
-type ClampPolynomial  = PolynomialP ClampMonomial
+data ClampMonomial   n = ClampMonomial [Clamp n] (Monomial n) deriving (Show, Eq, Ord)
+type ClampPolynomial n = PolynomialP (ClampMonomial n)
 
 -- Polynomials that use the special singleton sumVar inside, with the type of sumVar
 -- given by Var bundled in this ADT.
-data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
-data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
+data SumPolynomial      n = SumPolynomial (Polynomial n) (Name n)           deriving (Show, Eq)
+data SumClampPolynomial n = SumClampPolynomial (ClampPolynomial n) (Name n) deriving (Show, Eq)
 
-applyIdxs :: MonadBuilder m => Atom -> IndexStructure -> m Atom
-applyIdxs ptr Empty = return ptr
-applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
-  ordinal <- indexToIntE $ Var i
-  offset <- offsetToE idxs ordinal
-  ptr' <- ptrOffset ptr offset
-  applyIdxs ptr' rest
+applyIdxs :: Builder n m => Atom n -> IndexStructure n -> m (Atom n)
+applyIdxs = undefined
+-- applyIdxs ptr Empty = return ptr
+-- applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
+--   ordinal <- indexToIntE $ Var i
+--   offset <- offsetToE idxs ordinal
+--   ptr' <- ptrOffset ptr offset
+--   applyIdxs ptr' rest
 
-offsetToE :: MonadBuilder m => IndexStructure -> Atom -> m Atom
+offsetToE :: Builder n m => IndexStructure n -> Atom n -> m (Atom n)
 offsetToE idxs i = evalSumClampPolynomial (offsets idxs) i
 
-elemCountE :: MonadBuilder m => IndexStructure -> m Atom
-elemCountE idxs = case idxs of
-  Empty    -> return $ IdxRepVal 1
-  Nest b _ -> offsetToE idxs =<< indexSetSizeE (binderType b)
+elemCountE :: Builder n m => IndexStructure n -> m (Atom n)
+elemCountE = undefined
+-- elemCountE idxs = case idxs of
+--   Empty    -> return $ IdxRepVal 1
+--   Nest b _ -> offsetToE idxs =<< indexSetSizeE (binderType b)
 
-elemCount :: IndexStructure -> ClampPolynomial
-elemCount idxs = case idxs of
-  Empty -> liftC $ poly [(1, mono [])]
-  Nest b _ -> (offsets idxs) `psubstSumVar` (indexSetSize $ binderType b)
+elemCount :: IndexStructure n -> ClampPolynomial n
+elemCount = undefined
+-- elemCount idxs = case idxs of
+--   Empty -> liftC $ poly [(1, mono [])]
+--   Nest b _ -> (offsets idxs) `psubstSumVar` (indexSetSize $ binderType b)
 
-offsets :: IndexStructure -> SumClampPolynomial
-offsets idxs = case idxs of
-  -- TODO: not sure about `fromBind` here`
-  Nest b body -> sumC (fromBind "_" b) $ elemCount body
-  _ -> error $ "Not a non-empty index structure " ++ pprint idxs
+offsets :: IndexStructure n -> SumClampPolynomial n
+offsets = undefined
+-- offsets idxs = case idxs of
+--   -- TODO: not sure about `fromBind` here`
+--   Nest b body -> sumC (fromBind "_" b) $ elemCount body
+--   _ -> error $ "Not a non-empty index structure " ++ pprint idxs
 
-indexSetSize :: Type -> ClampPolynomial
-indexSetSize (TC con) = case con of
+indexSetSize :: Type n -> ClampPolynomial n
+indexSetSize (PrimTC con) = case con of
   UnitType              -> liftC $ toPolynomial $ IdxRepVal 1
   IntRange low high     -> clamp $ toPolynomial high `sub` toPolynomial low
   IndexRange n low high -> case (low, high) of
@@ -101,23 +95,23 @@ indexSetSize (TC con) = case con of
         Unlimited      -> undefined
   PairType l r -> mulC (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
-indexSetSize (RecordTy (NoExt types)) = let
-  sizes = map indexSetSize (F.toList types)
-  one = liftC $ toPolynomial $ IdxRepVal 1
-  in foldl mulC one sizes
-indexSetSize (VariantTy (NoExt types)) = let
-  sizes = map indexSetSize (F.toList types)
-  zero = liftC $ toPolynomial $ IdxRepVal 0
-  in foldl add zero sizes
+-- indexSetSize (RecordTy (NoExt types)) = let
+--   sizes = map indexSetSize (F.toList types)
+--   one = liftC $ toPolynomial $ IdxRepVal 1
+--   in foldl mulC one sizes
+-- indexSetSize (VariantTy (NoExt types)) = let
+--   sizes = map indexSetSize (F.toList types)
+--   zero = liftC $ toPolynomial $ IdxRepVal 0
+--   in foldl add zero sizes
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
-toPolynomial :: Atom -> Polynomial
+toPolynomial :: Atom n -> Polynomial n
 toPolynomial atom = case atom of
   Var v                  -> poly [(1, mono [(v, 1)])]
-  Con (Lit (Int64Lit x)) -> fromInt x
-  Con (Lit (Int32Lit x)) -> fromInt x
-  Con (Lit (Word8Lit x)) -> fromInt x
-  Con (IntRangeVal _ _ i) -> toPolynomial i
+  PrimCon (Lit (Int64Lit x)) -> fromInt x
+  PrimCon (Lit (Int32Lit x)) -> fromInt x
+  PrimCon (Lit (Word8Lit x)) -> fromInt x
+  PrimCon (IntRangeVal _ _ i) -> toPolynomial i
   -- TODO: Coercions? Unit constructor?
   _ -> unreachable
   where
@@ -126,20 +120,23 @@ toPolynomial atom = case atom of
 
 -- === Building ===
 
-_evalClampPolynomial :: MonadBuilder m => ClampPolynomial -> m Atom
+_evalClampPolynomial :: Builder n m => ClampPolynomial n -> m (Atom n)
 _evalClampPolynomial cp = evalPolynomialP (evalClampMonomial Var) cp
 
-evalSumClampPolynomial :: MonadBuilder m => SumClampPolynomial -> Atom -> m Atom
-evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
-  evalPolynomialP (evalClampMonomial varVal) cp
-  where varVal v = if MVar v == sumVar summedVar then a else Var v
+evalSumClampPolynomial :: Builder n m
+                       => SumClampPolynomial n -> Atom n -> m (Atom n)
+evalSumClampPolynomial = undefined
+-- evalSumClampPolynomial (SumClampPolynomial cp summedVar) a =
+--   evalPolynomialP (evalClampMonomial varVal) cp
+--   where varVal v = if v == sumVar summedVar then a else v
 
 -- We have to be extra careful here, because we're evaluating a polynomial
 -- that we know is guaranteed to return an integral number, but it has rational
 -- coefficients. This is why we have to find the least common multiples and do the
 -- accumulation over numbers multiplied by that LCM. We essentially do fixed point
 -- fractional math here.
-evalPolynomialP :: MonadBuilder m => (mono -> m Atom) -> PolynomialP mono -> m Atom
+evalPolynomialP :: Builder n m
+                => (mono -> m (Atom n)) -> PolynomialP mono -> m (Atom n)
 evalPolynomialP evalMono p = do
   let constLCM = asAtom $ foldl lcm 1 $ fmap (denominator . snd) $ toList p
   monoAtoms <- flip traverse (toList p) $ \(m, c) -> do
@@ -153,24 +150,26 @@ evalPolynomialP evalMono p = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-evalMonomial :: MonadBuilder m => (Var -> Atom) -> Monomial -> m Atom
+evalMonomial :: Builder n m => (Name n -> Atom n) -> Monomial n -> m (Atom n)
 evalMonomial varVal m = do
-  varAtoms <- traverse (\(MVar v, e) -> ipow (varVal v) e) $ toList m
+  varAtoms <- traverse (\(v, e) -> ipow (varVal v) e) $ toList m
   foldM imul (IdxRepVal 1) varAtoms
 
-evalClampMonomial :: MonadBuilder m => (Var -> Atom) -> ClampMonomial -> m Atom
-evalClampMonomial varVal (ClampMonomial clamps m) = do
-  valuesToClamp <- traverse (evalPolynomialP (evalMonomial varVal) . coerce) clamps
-  clampsProduct <- foldM imul (IdxRepVal 1) =<< traverse clampPositive valuesToClamp
-  mval <- evalMonomial varVal m
-  imul clampsProduct mval
+evalClampMonomial :: Builder n m
+                  => (Name n -> Atom n) -> ClampMonomial n -> m (Atom n)
+evalClampMonomial = undefined
+-- evalClampMonomial varVal (ClampMonomial clamps m) = do
+--   valuesToClamp <- traverse (evalPolynomialP (evalMonomial varVal)) clamps
+--   clampsProduct <- foldM imul (IdxRepVal 1) =<< traverse clampPositive valuesToClamp
+--   mval <- evalMonomial varVal m
+--   imul clampsProduct mval
 
-ipow :: MonadBuilder m => Atom -> Int -> m Atom
+ipow :: Builder n m => Atom n -> Int -> m (Atom n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 
 -- === Polynomial math ===
 
-mulC :: ClampPolynomial -> ClampPolynomial -> ClampPolynomial
+mulC :: ClampPolynomial n -> ClampPolynomial n -> ClampPolynomial n
 mulC x y = cpoly [(cx * cy, mulMono mx my) | (mx, cx) <- toList x, (my, cy) <- toList y]
   where mulMono (ClampMonomial cx mx) (ClampMonomial cy my) = ClampMonomial (cx ++ cy) (unionWith (+) mx my)
 
@@ -190,123 +189,109 @@ mulConst c p = (*c) <$> p
 powersL :: (a -> a -> a) -> a -> a -> [a]
 powersL mult e p = e : fmap (mult p) (powersL mult e p)
 
-powersC :: ClampPolynomial -> [ClampPolynomial]
+powersC :: ClampPolynomial n -> [ClampPolynomial n]
 powersC = powersL mulC (liftC $ poly [(1, mono [])])
 
 -- Finds a closed form for (\sum_{name = 0}^{(sumVar name) - 1} poly) for given name and polynomial.
 -- This is the function that is meant to introduce the type SumPolynomial.
-sumC :: Var -> ClampPolynomial -> SumClampPolynomial
-sumC v p = SumClampPolynomial sp v
-  where
-    sp = sumPolys $ fmap (\(m, c) -> mulConst c $ sumMonoC m) $ toList p
-    sumMonoC :: ClampMonomial -> ClampPolynomial
-    sumMonoC (ClampMonomial clamps m) = if v `isin` foldMap freeVarsC clamps
-      then error $ "Summation of variables appearing under clamps not implemented yet"
-      else imapMonos (ClampMonomial clamps) sm
-        where (SumPolynomial sm _) = sumMono v m
+sumC :: forall n. Name n -> ClampPolynomial n -> SumClampPolynomial n
+sumC = undefined
+-- sumC v p = SumClampPolynomial sp v
+--   where
+--     sp = sumPolys $ fmap (\(m, c) -> mulConst c $ sumMonoC m) $ toList p
+--     sumMonoC :: ClampMonomial n -> ClampPolynomial n
+--     sumMonoC (ClampMonomial clamps m) = if v `isin` foldMap freeVarsC clamps
+--       then error $ "Summation of variables appearing under clamps not implemented yet"
+--       else imapMonos (ClampMonomial clamps) sm
+--         where (SumPolynomial sm _) = sumMono v m
 
-sumMono :: Var -> Monomial -> SumPolynomial
-sumMono v m = flip SumPolynomial v $ case lookup mv m of
-  -- TODO: Implement the formula for arbitrary order polynomials
-  Nothing -> poly [(1, insert sv 1 c)]
-  Just 0  -> error "Each variable appearing in a monomial should have a positive power"
-  Just 1  -> poly [(1/2, insert sv 2 c), (-1/2, insert sv 1 c)]
-  _       -> error "Not implemented yet!"
-  where
-    mv = MVar v
-    sv = sumVar v
-    c = delete mv m
+sumMono :: Name n -> Monomial n -> SumPolynomial n
+sumMono = undefined
+-- sumMono v m = flip SumPolynomial v $ case lookup v m of
+--   -- TODO: Implement the formula for arbitrary order polynomials
+--   Nothing -> poly [(1, insert sv 1 c)]
+--   Just 0  -> error "Each variable appearing in a monomial should have a positive power"
+--   Just 1  -> poly [(1/2, insert sv 2 c), (-1/2, insert sv 1 c)]
+--   _       -> error "Not implemented yet!"
+--   where
+--     sv = sumVar v
+--     c = delete v m
 
 -- Substitutes the sum variable for a given polynomial.
-psubstSumVar :: SumClampPolynomial -> ClampPolynomial -> ClampPolynomial
-psubstSumVar (SumClampPolynomial p v) sp =
-  sumPolys $ fmap (\(cm, c) -> mulConst c $ substNoClamp cm) $ toList p
-  where
-    substNoClamp (ClampMonomial clamps m) =
-      if (dropMVar $ sumVar v) `isin` foldMap freeVarsC clamps
-        then error "Sum variable should not appear under clamps"
-        else imapMonos (\(ClampMonomial clamps' m') -> ClampMonomial (clamps ++ clamps') m') mp
-          where mp = psubstSumVarMono m (coerce $ sumVar v, sp)
+psubstSumVar :: SumClampPolynomial n -> ClampPolynomial n -> ClampPolynomial n
+psubstSumVar = undefined
+-- psubstSumVar (SumClampPolynomial p v) sp =
+--   sumPolys $ fmap (\(cm, c) -> mulConst c $ substNoClamp cm) $ toList p
+--   where
+--     substNoClamp (ClampMonomial clamps m) =
+--       if sumVar v `isin` foldMap freeVarsC clamps
+--         then error "Sum variable should not appear under clamps"
+--         else imapMonos (\(ClampMonomial clamps' m') -> ClampMonomial (clamps ++ clamps') m') mp
+--           where mp = psubstSumVarMono m (sumVar v, sp)
 
 -- Substitutes v for sp in m
-psubstSumVarMono :: Monomial -> (Var, ClampPolynomial) -> ClampPolynomial
-psubstSumVarMono m (v, sp) = case lookup (MVar v) m of
+psubstSumVarMono :: Monomial n -> (Name n, ClampPolynomial n) -> ClampPolynomial n
+psubstSumVarMono m (v, sp) = case lookup v m of
   Nothing -> liftC $ poly [(1, m)]
   Just 0  -> error "Each variable appearing in a monomial should have a positive power"
-  Just n  -> mulC (liftC $ poly [(1, (delete (MVar v) m))]) (powersC sp !! n)
+  Just n  -> mulC (liftC $ poly [(1, (delete v m))]) (powersC sp !! n)
 
 -- === Constructors and singletons ===
 
-poly :: [(Constant, Monomial)] -> Polynomial
+poly :: [(Constant, Monomial n)] -> Polynomial n
 poly monos = fromListWith (+) $ fmap swap monos
 
-mono :: [(Var, Int)] -> Monomial
-mono vars = fromListWith (error "Duplicate entries for variable") $ coerce vars
+mono :: [(Name n, Int)] -> Monomial n
+mono vars = fromListWith (error "Duplicate entries for variable") vars
 
-cpoly :: [(Constant, ClampMonomial)] -> ClampPolynomial
+cpoly :: [(Constant, ClampMonomial n)] -> ClampPolynomial n
 cpoly cmonos = fromListWith (+) $ fmap swap cmonos
 
-cmono :: [Clamp] -> Monomial -> ClampMonomial
+cmono :: [Clamp n] -> Monomial n -> ClampMonomial n
 cmono = ClampMonomial
 
 -- === Type classes and helpers ===
 
-sumVar :: Var -> MVar
-sumVar (_ :> t) = MVar $ (Name SumName "s" 0) :> t
+sumVar :: NameStr -> Name n
+sumVar = undefined
+-- sumVar (Occ _ t) = Occ (Name SumName "s" 0) t
 
-showMono :: Monomial -> String
-showMono m = concat $ intersperse " " $ fmap (\(n, p) -> asStr $ pretty n <> "^" <> pretty p) $ toList m
+showMono :: Monomial n -> String
+showMono = undefined
+-- showMono m = concat $ intersperse " " $ fmap (\(n, p) -> asStr $ pretty n <> "^" <> pretty p) $ toList m
 
 showPolyP :: (mono -> String) -> PolynomialP mono -> String
 showPolyP mshow p = concat $ intersperse " + " $ fmap (\(m, c) -> show c ++ " " ++ mshow m) $ toList p
 
-showPoly :: Polynomial -> String
+showPoly :: Polynomial n -> String
 showPoly p = showPolyP showMono p
 
-showSumPolyC :: SumClampPolynomial -> String
+showSumPolyC :: SumClampPolynomial n -> String
 showSumPolyC (SumClampPolynomial cp _) = showPolyC cp
 
-showPolyC :: ClampPolynomial -> String
+showPolyC :: ClampPolynomial n -> String
 showPolyC cp = showPolyP showMonoC cp
 
-showMonoC :: ClampMonomial -> String
+showMonoC :: ClampMonomial n -> String
 showMonoC (ClampMonomial clamps m) =
   concat $ (fmap (\(Clamp p) -> "max(0, " ++ showPoly p ++ ")") clamps) ++ [showMono m]
 
-instance Eq MVar where
-  (MVar (n :> t)) == (MVar (n' :> t')) | n == n'   = if t == t' then True else mVarTypeErr
-                                       | otherwise = False
-
-mVarTypeErr :: a
-mVarTypeErr = error "MVars with equal names, but different types"
-
-instance Ord MVar where
-  (MVar (n :> t)) <= (MVar (n' :> t')) | n == n'   = if t == t' then True else mVarTypeErr
-                                       | otherwise = n <= n'
-
-instance Pretty MVar where
-  pretty (MVar v) = pretty v
-
-
 -- We deliberately skip the variables in the types, since we treat all variables
 -- with index set types as their ordinals.
-freeVarsM :: Monomial -> Env Type
-freeVarsM m = foldMap (varAsEnv . coerce) $ keys m
+freeVarsM :: Monomial n -> Env n (Type n)
+freeVarsM m = undefined -- foldMap varAsEnv $ keys m
 
-freeVarsP :: Polynomial -> Env Type
-freeVarsP p = foldMap freeVarsM $ keys p
+freeVarsP :: Polynomial n -> Env n (Type n)
+freeVarsP p = undefined -- foldMap freeVarsM $ keys p
 
-freeVarsC :: Clamp -> Env Type
+freeVarsC :: Clamp n -> Env n (Type n)
 freeVarsC (Clamp p) = freeVarsP p
 
 imapMonos :: (Ord mono, Ord mono') => (mono -> mono') -> PolynomialP mono -> PolynomialP mono'
 imapMonos = mapKeysWith (error "Expected an injective map")
 
-liftC :: Polynomial -> ClampPolynomial
+liftC :: Polynomial n -> ClampPolynomial n
 liftC = imapMonos $ cmono []
 
-clamp :: Polynomial -> ClampPolynomial
+clamp :: Polynomial n -> ClampPolynomial n
 clamp p = cpoly [(1, cmono [Clamp p] (mono []))]
-
-dropMVar :: MVar -> Var
-dropMVar = coerce

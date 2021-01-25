@@ -41,35 +41,36 @@ data EvalMode = ReplMode String
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
 runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
-runMode evalMode preludeFile opts = do
-  key <- case preludeFile of
-           Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
-           Just path -> show <$> getModificationTime path
-  env <- cachedWithSnapshot "prelude" key $ evalPrelude opts preludeFile
-  let runEnv m = evalStateT m env
-  case evalMode of
-    ReplMode prompt -> do
-      let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
-      let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-      runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
-    ScriptMode fname fmt _ -> do
-      results <- runEnv $ evalFile opts fname
-      printLitProg fmt results
-    -- These are broken if the prelude produces any arrays because the blockId
-    -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> runWeb      fname opts env
-    WatchMode  fname -> runTerminal fname opts env
-    ExportMode dexPath objPath -> do
-      results <- fmap snd <$> runEnv (evalFile opts dexPath)
-      let outputs = foldMap (\(Result outs _) -> outs) results
-      let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
-      putStr $ foldMap (nonEmptyNewline . pprint) errors
-      let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-      unless (backendName opts == LLVM) $ liftEitherIO $
-        throw CompilerErr "Export only supported with the LLVM CPU backend"
-      exportFunctions objPath exportedFuns $ topBindings env
+runMode = undefined
+-- runMode evalMode preludeFile opts = do
+--   key <- case preludeFile of
+--            Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
+--            Just path -> show <$> getModificationTime path
+--   env <- cachedWithSnapshot "prelude" key $ evalPrelude opts preludeFile
+--   let runEnv m = evalStateT m env
+--   case evalMode of
+--     ReplMode prompt -> do
+--       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
+--       let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
+--       runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
+--     ScriptMode fname fmt _ -> do
+--       results <- runEnv $ evalFile opts fname
+--       printLitProg fmt results
+--     -- These are broken if the prelude produces any arrays because the blockId
+--     -- counter restarts at zero. TODO: make prelude an implicit import block
+--     WebMode    fname -> runWeb      fname opts env
+--     WatchMode  fname -> runTerminal fname opts env
+    -- ExportMode dexPath objPath -> do
+    --   results <- fmap snd <$> runEnv (evalFile opts dexPath)
+    --   let outputs = foldMap (\(Result outs _) -> outs) results
+    --   let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
+    --   putStr $ foldMap (nonEmptyNewline . pprint) errors
+    --   let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
+    --   unless (backendName opts == LLVM) $ liftEitherIO $
+    --     throw CompilerErr "Export only supported with the LLVM CPU backend"
+    --   exportFunctions objPath exportedFuns $ topBindings env
 
-evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
+evalPrelude :: EvalConfig -> Maybe FilePath -> IO (TopEnv ())
 evalPrelude opts fname = flip execStateT initTopEnv $ do
   source <- case fname of
               Nothing   -> return preludeSource
@@ -77,7 +78,7 @@ evalPrelude opts fname = flip execStateT initTopEnv $ do
   result <- evalSource opts source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
+replLoop :: String -> EvalConfig -> InputT (StateT (TopEnv ()) IO) ()
 replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
@@ -86,17 +87,18 @@ replLoop prompt opts = do
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
 
-dexCompletions :: CompletionFunc (StateT TopEnv IO)
-dexCompletions (line, _) = do
-  env <- get
-  let varNames = map pprint $ envNames $ topBindings env
-  -- note: line and thus word and rest have character order reversed
-  let (word, rest) = break (== ' ') line
-  let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
-  let candidates = (if null rest then startoflineKeywords else []) ++
-                   keyWordStrs ++ varNames
-  let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
-  return (rest, completions)
+dexCompletions :: CompletionFunc (StateT (TopEnv ()) IO)
+dexCompletions = undefined
+-- dexCompletions (line, _) = do
+--   env <- get
+--   let varNames = map pprint $ envNames $ topBindings env
+--   -- note: line and thus word and rest have character order reversed
+--   let (word, rest) = break (== ' ') line
+--   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
+--   let candidates = (if null rest then startoflineKeywords else []) ++
+--                    keyWordStrs ++ varNames
+--   let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
+--   return (rest, completions)
 
 liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure

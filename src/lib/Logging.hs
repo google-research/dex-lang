@@ -13,7 +13,7 @@ import Control.Concurrent.MVar
 import Prelude hiding (log)
 import System.IO
 
-import PPrint
+import Util (pprint)
 
 data Logger l = Logger (MVar l) (Maybe Handle)
 

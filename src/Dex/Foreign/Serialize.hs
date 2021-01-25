@@ -23,8 +23,9 @@ import Dex.Foreign.Context (setError)
 import Dex.Foreign.Util
 
 -- TODO: Free!
-dexPrint :: Ptr Atom -> IO CString
-dexPrint atomPtr = newCString =<< pprintVal =<< fromStablePtr atomPtr
+dexPrint :: Ptr (Atom ()) -> IO CString
+dexPrint = undefined
+-- dexPrint atomPtr = newCString =<< pprintVal =<< fromStablePtr atomPtr
 
 data CAtom = CLit LitVal | CRectArray (Ptr ()) [Int] [Int]
 
@@ -64,7 +65,7 @@ instance Storable CAtom where
       val :: forall a. Storable a => Int -> a -> IO ()
       val i v = pokeByteOff (castPtr addr) (i * 8) v
 
-dexToCAtom :: Ptr Atom -> Ptr CAtom -> IO CInt
+dexToCAtom :: Ptr (Atom ()) -> Ptr CAtom -> IO CInt
 dexToCAtom atomPtr resultPtr = do
   atom <- fromStablePtr atomPtr
   case atom of

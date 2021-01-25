@@ -7,22 +7,32 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
-             insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
-             showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             measureSeconds,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
+module Util (
+  IsBool (..), mapFst, mapSnd, scan,
+  scanM, uncons, unsnoc, repeated, transitiveClosure,
+  showErr, enumerate, restructure,
+  onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
+  measureSeconds,
+  bindM2, foldMapM, (...), zipWithT, for,
+  docToStr, pprint,
+  SnocList, toSL, fromSL, singletonSL, (<$$>)
+  ) where
 
+import Control.Exception hiding (throw)
+import Control.Monad.Except hiding (Except)
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
 import Data.Foldable
+import qualified Data.Map.Strict as M
+import qualified Data.Text.Prettyprint.Doc             as P
+import qualified Data.Text.Prettyprint.Doc.Render.Text as P
+import Data.Text (unpack)
 import Prelude
 import qualified Data.Set as Set
-import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
 import System.CPUTime
+import System.IO.Unsafe
+import System.Environment
 
 import Cat
 
@@ -47,75 +57,24 @@ enumerate xs = evalState (traverse addCount xs) 0
                         put (n + 1)
                         return (n, x)
 
-splitMap :: Ord k => [k] -> M.Map k v -> (M.Map k v, M.Map k v)
-splitMap ks m = let ks' = Set.fromList ks
-                    pos = M.filterWithKey (\k _ -> k `Set.member` ks') m
-                in (pos, m M.\\ pos)
-
-listDiff :: Ord a => [a] -> [a] -> [a]
-listDiff xs ys = Set.toList $ Set.difference (Set.fromList xs) (Set.fromList ys)
-
 showErr :: Show e => Either e a -> Either String a
 showErr (Left e) = Left (show e)
 showErr (Right x) = Right x
 
-group :: (Ord a) => [(a,b)] -> [(a, [b])]
-group [] = []
-group ((k,v):xs) =
-  let (prefix, suffix) = span ((== k) . fst) xs
-      g = v:(map snd prefix)
-  in (k, g) : group suffix
+uncons :: [a] -> Maybe (a, [a])
+uncons (x:xs) = Just (x, xs)
+uncons [] = Nothing
 
-ungroup ::  [(a, [b])] -> [(a,b)]
-ungroup [] = []
-ungroup ((k,vs):xs) = (zip (repeat k) vs) ++ ungroup xs
-
-uncons :: [a] -> (a, [a])
-uncons (x:xs) = (x, xs)
-uncons [] = error "whoops! [uncons]"
-
-pad :: a -> Int -> [a] -> [a]
-pad v n xs = xs ++ replicate (n - length(xs)) v
-
-padLeft :: a -> Int -> [a] -> [a]
-padLeft v n xs = replicate (n - length(xs)) v ++ xs
-
-delIdx :: Int -> [a] -> [a]
-delIdx i xs = case splitAt i xs of
-  (prefix, _:suffix) -> prefix ++ suffix
-  (prefix, []) -> prefix -- Already not there
-
-replaceIdx :: Int -> a -> [a] -> [a]
-replaceIdx i x xs = case splitAt i xs of
-  (prefix, _:suffix) -> prefix ++ (x:suffix)
-  (prefix, []) -> prefix ++ [x]
-
-insertIdx :: Int -> a -> [a] -> [a]
-insertIdx i x xs = case splitAt i xs of
-  (prefix, suffix) -> prefix ++ (x:suffix)
-
-mvIdx :: Int -> Int -> [a] -> [a]
-mvIdx i j xs | j == i = xs
-             | j < i = let x = xs!!i
-                       in insertIdx j x . delIdx i $ xs
-             | otherwise = let x = xs!!i
-                           in  delIdx i . insertIdx j x $ xs
+unsnoc :: [a] -> Maybe ([a], a)
+unsnoc [] = Nothing
+unsnoc l = Just (reverse xs, x)
+  where (x:xs) = reverse l
 
 mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
 mapFst f zs = [(f x, y) | (x, y) <- zs]
 
 mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
 mapSnd f zs = [(x, f y) | (x, y) <- zs]
-
-mapMaybe :: (a -> Maybe b) -> [a] -> [b]
-mapMaybe _ [] = []
-mapMaybe f (x:xs) = let rest = mapMaybe f xs
-                    in case f x of
-                        Just y  -> y : rest
-                        Nothing -> rest
-
-composeN :: Int -> (a -> a) -> a -> a
-composeN n f = foldr (.) id (replicate n f)
 
 repeated :: Ord a => [a] -> [a]
 repeated = repeatedSorted . sort
@@ -125,12 +84,6 @@ repeatedSorted [] = []
 repeatedSorted [_] = []
 repeatedSorted (x:y:rest) | x == y = [x] ++ repeatedSorted (dropWhile (== x) rest)
                           | otherwise = repeatedSorted (y:rest)
-
-splitOn :: (a -> Bool) -> [a] -> [[a]]
-splitOn f s = let (prefix, suffix) = break f s
-              in case suffix of
-                   [] -> [prefix]
-                   _:xs -> prefix : splitOn f xs
 
 restructure :: Traversable f => [a] -> f b -> f a
 restructure xs structure = evalState (traverse procLeaf structure) xs
@@ -213,9 +166,6 @@ f ... g = \x y -> f $ g x y
 foldMapM :: (Monad m, Monoid w, Foldable t) => (a -> m w) -> t a -> m w
 foldMapM f xs = foldM (\acc x -> (acc<>) <$> f x ) mempty xs
 
-lookupWithIdx :: Eq a => a -> [(a, b)] -> Maybe (Int, b)
-lookupWithIdx k vals = lookup k $ [(x, (i, y)) | (i, (x, y)) <- zip [0..] vals]
-
 -- NOTE: (toList args) has to be at least as long as (toList trav)
 zipWithT :: (Traversable t, Monad h, Foldable f) => (a -> b -> h c) -> t a -> f b -> h (t c)
 zipWithT f trav args = flip evalStateT (toList args) $ flip traverse trav $ \e -> getNext >>= lift . f e
@@ -241,3 +191,59 @@ measureSeconds m = do
   ans <- m
   t2 <- liftIO $ getCPUTime
   return (ans, (fromIntegral $ t2 - t1) / 1e12)
+
+pprint :: P.Pretty a => a -> String
+pprint x = docToStr $ P.pretty x
+
+defaultLayout :: P.LayoutOptions
+defaultLayout =
+  if unbounded then P.LayoutOptions P.Unbounded else P.defaultLayoutOptions
+  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
+
+docToStr :: P.Doc ann -> String
+docToStr doc = unpack $ P.renderStrict $ P.layoutPretty defaultLayout $ doc
+
+newtype SnocList a = UnsafeMakeSnocList [a]
+
+fromSL :: SnocList a -> [a]
+fromSL (UnsafeMakeSnocList xs) = reverse xs
+
+toSL :: [a] -> SnocList a
+toSL xs = UnsafeMakeSnocList $ reverse xs
+
+singletonSL :: a -> SnocList a
+singletonSL x = UnsafeMakeSnocList [x]
+
+instance Semigroup (SnocList a) where
+  UnsafeMakeSnocList xs <> UnsafeMakeSnocList ys = UnsafeMakeSnocList $ ys <> xs
+
+instance Monoid (SnocList a) where
+  mempty = UnsafeMakeSnocList []
+
+-- === some handy monoids ===
+
+data SetVal a = Set a | NotSet
+newtype MonMap k v = MonMap (M.Map k v)  deriving (Show, Eq)
+
+instance Semigroup (SetVal a) where
+  x <> NotSet = x
+  _ <> Set x  = Set x
+
+instance Monoid (SetVal a) where
+  mempty = NotSet
+
+instance (Ord k, Semigroup v) => Semigroup (MonMap k v) where
+  MonMap m <> MonMap m' = MonMap $ M.unionWith (<>) m m'
+
+instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
+  mempty = MonMap mempty
+
+monMapSingle :: k -> v -> MonMap k v
+monMapSingle k v = MonMap (M.singleton k v)
+
+monMapLookup :: (Monoid v, Ord k) => MonMap k v -> k -> v
+monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
+                                                 Just v  -> v
+
+(<$$>) :: Functor f => f a -> (a -> b) -> f b
+(<$$>) = flip (<$>)

@@ -54,6 +54,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Control.Exception as E
 
+import Err
 import Logging
 import Syntax
 import Resources
@@ -144,7 +145,6 @@ standardCompilationPipeline logger exports tm m = do
   showModule                m >>= logPass LLVMOpt
   showAsm          tm       m >>= logPass AsmPass
   where logPass passName s = logThis logger [PassInfo passName s]
-
 
 -- === object file export ===
 

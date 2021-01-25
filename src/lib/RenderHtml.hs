@@ -19,9 +19,11 @@ import Control.Monad
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
+import Simplify -- TODO: remove
+
 import Resources (cssSource)
 import Syntax
-import PPrint
+import Util
 import Parser
 import Serialize ()
 
@@ -40,8 +42,8 @@ wrapBody blocks = docTypeHtml $ do
   H.body $ H.div inner ! At.id "main-output"
   where inner = foldMap (cdiv "cell") blocks
 
-instance ToMarkup Result where
-  toMarkup (Result outs err) = foldMap toMarkup outs <> err'
+instance ToMarkup TopResult where
+  toMarkup (TopResult outs err) = foldMap toMarkup outs <> err'
     where err' = case err of
                    Left e   -> cdiv "err-block" $ toHtml $ pprint e
                    Right () -> mempty
@@ -54,7 +56,7 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
     ProseBlock s -> cdiv "prose-block" $ mdToHtml s
-    _ -> cdiv "code-block" $ highlightSyntax (pprint block)
+    -- _ -> cdiv "code-block" $ highlightSyntax (pprint block)
 
 mdToHtml :: String -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] $ pack s
@@ -65,11 +67,12 @@ cdiv c inner = H.div inner ! class_ (stringValue c)
 -- === syntax highlighting ===
 
 highlightSyntax :: String -> Html
-highlightSyntax s = foldMap (uncurry syntaxSpan) classified
-  where
-    classified = case runTheParser s (many (withSource classify) <* eof) of
-                   Left e -> error $ errorBundlePretty e
-                   Right ans -> ans
+highlightSyntax = undefined
+-- highlightSyntax s = foldMap (uncurry syntaxSpan) classified
+--   where
+--     classified = case runTheParser s (many (withSource classify) <* eof) of
+--                    Left e -> error $ errorBundlePretty e
+--                    Right ans -> ans
 
 syntaxSpan :: String -> StrClass -> Html
 syntaxSpan s NormalStr = toHtml s
@@ -89,16 +92,17 @@ data StrClass = NormalStr
               | IsoSugarStr
 
 classify :: Parser StrClass
-classify =
-       (try (char ':' >> lowerWord) >> return CommandStr)
-   <|> (symbol "-- " >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
-   <|> (do s <- lowerWord
-           return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
-   <|> (upperWord >> return TypeNameStr)
-   <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
-        >> lowerWord >> return IsoSugarStr)
-   <|> (some symChar >> return SymbolStr)
-   <|> (anySingle >> return NormalStr)
+classify = undefined
+-- classify =
+--        (try (char ':' >> lowerWord) >> return CommandStr)
+--    <|> (symbol "-- " >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
+--    <|> (do s <- lowerWord
+--            return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
+--    <|> (upperWord >> return TypeNameStr)
+--    <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
+--         >> lowerWord >> return IsoSugarStr)
+--    <|> (some symChar >> return SymbolStr)
+--    <|> (anySingle >> return NormalStr)
 
 lowerWord :: Parser String
 lowerWord = (:) <$> lowerChar <*> many alphaNumChar

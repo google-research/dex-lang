@@ -78,20 +78,21 @@ dexDestroyJIT jitPtr = do
   LLVM.JIT.destroyJIT jit
   LLVM.Shims.disposeTargetMachine jitTargetMachine
 
-dexCompile :: Ptr JIT -> Ptr Context -> Ptr Atom -> IO NativeFunctionAddr
-dexCompile jitPtr ctxPtr funcAtomPtr = do
-  ForeignJIT{..} <- fromStablePtr jitPtr
-  Context _ env <- fromStablePtr ctxPtr
-  funcAtom <- fromStablePtr funcAtomPtr
-  let (impMod, nativeSignature) = prepareFunctionForExport
-                                    (topBindings env) "userFunc" funcAtom
-  nativeModule <- execLogger Nothing $ \logger -> do
-    llvmAST <- impToLLVM logger impMod
-    LLVM.JIT.compileModule jit llvmAST
-        (standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
-  funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
-  modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
-  return $ funcPtr
+dexCompile :: Ptr JIT -> Ptr Context -> Ptr (Atom ()) -> IO NativeFunctionAddr
+dexCompile = undefined
+-- dexCompile jitPtr ctxPtr funcAtomPtr = do
+--   ForeignJIT{..} <- fromStablePtr jitPtr
+--   Context _ env <- fromStablePtr ctxPtr
+--   funcAtom <- fromStablePtr funcAtomPtr
+--   let (impMod, nativeSignature) = prepareFunctionForExport
+--                                     (topBindings env) "userFunc" funcAtom
+--   nativeModule <- execLogger Nothing $ \logger -> do
+--     llvmAST <- impToLLVM logger impMod
+--     LLVM.JIT.compileModule jit llvmAST
+--         (standardCompilationPipeline logger ["userFunc"] jitTargetMachine)
+--   funcPtr <- castFunPtrToPtr <$> LLVM.JIT.getFunctionPtr nativeModule "userFunc"
+--   modifyIORef addrTableRef $ M.insert funcPtr NativeFunction{..}
+--   return $ funcPtr
 
 dexGetFunctionSignature :: Ptr JIT -> NativeFunctionAddr -> IO (Ptr ExportedSignature)
 dexGetFunctionSignature jitPtr funcPtr = do
