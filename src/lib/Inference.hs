@@ -869,6 +869,9 @@ traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
+-- Returns a list of (name, action) pairs, where the action constructs a
+-- candidate instance (but does not solve new constraints that instance
+-- introduces).
 synthDict :: Scope -> Type -> [(String, UInferM Atom)]
 synthDict scope ty = case ty of
   PiTy b arr body -> synthesizeNow <|> introFirst b arr body
@@ -898,7 +901,11 @@ synthDict scope ty = case ty of
     trySynth (name, step) = do
       let m = do
                 ty' <- substBuilderR ty
+                -- step is a UInferM action that obtains a candidate instance,
+                -- which may have implicit/class args (a sigma type).
                 inst <- step
+                -- Try to specialize the implicit/class args to the requested
+                -- instance.
                 instantiateAndCheck ty' inst
       -- Discard any instances that fail to unify, but don't (yet) try to solve
       -- new class dict holes.
