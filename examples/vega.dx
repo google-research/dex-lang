@@ -361,4 +361,4 @@ def showChart4 [ToJSON o] (opts:o) : Value  = toJSON (AsVLDescriptor (pure Rect)
 
 :html showVega $ showChart4 $ mergeOpts [("title",  "HeatMap"), ("height", "200"), ("width",  "200")] [("config", toJSON [
           ("axis", [("grid", "1"), ("tickBand",  "extent")])
-          ])]<
+          ])]
