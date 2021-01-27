@@ -265,6 +265,7 @@ chart1 = (AsVLDescriptor (pure Bar) [("title", "Bar Graph")]
 )
 
 :html showVega $ toJSON chart1
+> <html output>
 
 
 ' ## Example: Scatter
@@ -315,6 +316,7 @@ chart2 = (AsVLDescriptor (pure Point) [("title", "Scatter")]
 
                  
 :html showVega $ toJSON chart2
+> <html output>
 
 
 ' ## Example: Faceted Area plot
@@ -327,6 +329,7 @@ y1 :  (Fin 3) => (Fin 10) => Float = arb $ newKey 0
 df3 = for i. cumSum . for j. select (y1.i.j > 0.0) (-1.0) 1.0 
 
 :t df3
+> ((Fin 3) => (Fin 10) => Float32)
 
 chart3 = (AsVLDescriptor (pure Area) [("title", "Area"), ("height", "75")]
             [{title="density", encodings=pureLs Y, encType=Quantitative, rows=for (i,j). toJSON df3.i.j},
@@ -335,6 +338,7 @@ chart3 = (AsVLDescriptor (pure Area) [("title", "Area"), ("height", "75")]
 )
 
 :html showVega $ toJSON chart3
+> <html output>
 
 
 ' ## Example: Heatmap
@@ -352,6 +356,7 @@ def showChart4 [ToJSON o] (opts:o) : Value  = toJSON (AsVLDescriptor (pure Rect)
 ' Default heat map
 
 :html showVega $ showChart4 AsNone
+> <html output>
 
 ' Customization through JSON options.
 
@@ -359,3 +364,7 @@ def showChart4 [ToJSON o] (opts:o) : Value  = toJSON (AsVLDescriptor (pure Rect)
 :html showVega $ showChart4 $ mergeOpts [("title",  "HeatMap"), ("height", "200"), ("width",  "200")] [("config", toJSON [
           ("axis", [("grid", "1"), ("tickBand",  "extent")])
           ])]
+> <html output>
+
+
+' (end)
