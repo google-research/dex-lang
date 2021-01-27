@@ -24,7 +24,7 @@ def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
       s_ref := s_next
       (s, v)
 
-def filter
+def particleFilter
     (num_particles: Int) (num_timesteps: Int)
     (model: Model s v)
     (summarize: (Fin num_particles => s) -> a)
@@ -63,6 +63,6 @@ truth = for i:(Fin timesteps).
   s = IToF (ordinal i)
   (s, sample (normalDistn s 1.0) $ ixkey (newKey 0) i)
 
-filtered = filter num_particles _ gaussModel mean (map snd truth) (newKey 0)
+filtered = particleFilter num_particles _ gaussModel mean (map snd truth) (newKey 0)
 
 -- :p for i. (truth.i, filtered.i)
