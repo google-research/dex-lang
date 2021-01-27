@@ -90,10 +90,9 @@ instance [ToJSON v] ToJSON (List (String & v))
   toJSON = \(AsList _ x) . toJSON x
 
 
-def wrapCol [ToJSON d]  (iso: Iso a ((n=>d) & c)) (x:a) : n=> Value =
+def wrapCol [ToJSON d]  (iso: Iso a (d & c)) (x:n=>a) : n=> Value =
     -- Helper function. Returns JSON of a column of a record
-    y = getAt iso x
-    for i. toJSON y.i
+    for i. toJSON $ getAt iso x.i
 
 ' ## Declarative Graph Grammars
 Graph grammars are a style of graphing that aims to separate the data representation
@@ -254,8 +253,8 @@ def showVega (x: Value) : String =
 
 ' Start with a well type and useful Dex record
 
-df1 = {a = ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
-       b = [28, 55, 43, 91, 81, 53, 19, 87, 52]}
+df1 = for i. {a = ["A", "B", "C", "D", "E", "F", "G", "H", "I"].i,
+              b = [28, 55, 43, 91, 81, 53, 19, 87, 52].i}
 
 
 chart1 = (AsVLDescriptor (pure Bar) [("title", "Bar Graph")]
@@ -294,17 +293,15 @@ instance ToJSON Class
 
 ' Then we will generate some random data. 
 
-key : (Fin 5) => Key = splitKey $ newKey 1
+key : Key = newKey 1
 
-df2 : {x1: (Fin 100) => Float &
-       x2: (Fin 100) => Float &
-       weight: (Fin 100) => Float &
-       label : (Fin 100) => Class} =
-            [k1, k2, k3, k4] = splitKey $ newKey 1
-            {x1=arb k1,
-             x2=arb k2,
-             weight=arb k3,
-             label=arb k4}
+
+df2 :(Fin 100) => {x1:Float & x2:Float & weight:Float & label:Class}  =  for i: (Fin 100).
+              [k1, k2, k3, k4] = splitKey $ ixkey key i
+              {x1=(arb k1),
+               x2=arb k2,
+               weight=arb k3,
+               label=arb k4}
 
 ' The descriptor has a mapping between the variable names and their encoding type.
 
