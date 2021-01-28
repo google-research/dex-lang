@@ -1,0 +1,57 @@
+name: Update HTML docs
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-18.04]
+        include:
+          - os: ubuntu-18.04
+            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config
+            path_extension: /usr/lib/llvm-9/bin
+
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v2
+
+    - name: Setup Haskell Stack
+      uses: actions/setup-haskell@v1
+      with:
+        enable-stack: true
+        stack-no-global: true
+        stack-version: 'latest'
+
+    - name: Install system dependencies
+      run: |
+        ${{ matrix.install_deps }}
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+
+    - name: Cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.stack
+          $GITHUB_WORKSPACE/.stack-work
+        key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-
+
+    - name: Build
+      run: make build
+
+    - name: Generate docs
+      run: make docs
+
+    - name: Deploy to GitHub Pages
+      uses: "JamesIves/github-pages-deploy-action@3.7.1"
+      with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: gh-pages # The branch the action should deploy to.
+          FOLDER: doc      # The folder the action should deploy.
+          CLEAN: false     # If true, automatically remove deleted files from the deploy branch.
+          COMMIT_MESSAGE: Updating gh-pages from ${{ github.sha }}
