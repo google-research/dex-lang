@@ -147,13 +147,12 @@ serveResults :: StreamingBody -> Application
 serveResults results request respond = do
   print (pathInfo request)
   case pathInfo request of
-    []             -> respondWith "static/index.html" "text/html"
-    ["style.css"]  -> respondWith "static/style.css"  "text/css"
-    ["plot.js"]    -> respondWith "static/plot.js"    "text/javascript"
-    ["dynamic.js"] -> respondWith "static/dynamic.js" "text/javascript"
-    ["getnext"]    -> respond $ responseStream status200
-                         [ ("Content-Type", "text/event-stream")
-                         , ("Cache-Control", "no-cache")] results
+    []            -> respondWith "static/dynamic.html" "text/html"
+    ["style.css"] -> respondWith "static/style.css"  "text/css"
+    ["index.js"]  -> respondWith "static/index.js"   "text/javascript"
+    ["getnext"]   -> respond $ responseStream status200
+                       [ ("Content-Type", "text/event-stream")
+                       , ("Cache-Control", "no-cache")] results
     _ -> respond $ responseLBS status404
            [("Content-Type", "text/plain")] "404 - Not Found"
   where

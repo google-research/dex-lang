@@ -20,7 +20,7 @@ import Control.Monad
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
-import Resources (cssSource, staticOnloadJavascriptSource)
+import Resources (cssSource, javascriptSource)
 import Syntax
 import PPrint
 import Parser
@@ -43,9 +43,11 @@ wrapBody blocks = docTypeHtml $ do
     H.link ! rel "stylesheet" ! href "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"
     H.script ! defer "" ! src "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js" $ mempty
     H.script ! defer "" ! src "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js"
-             ! onload (fromString staticOnloadJavascriptSource) $ mempty
+             ! onload jsSource $ mempty
   H.body $ H.div inner ! At.id "main-output"
-  where inner = foldMap (cdiv "cell") blocks
+  where
+    inner = foldMap (cdiv "cell") blocks
+    jsSource = fromString (javascriptSource ++ "render(RENDER_MODE.STATIC);")
 
 instance ToMarkup Result where
   toMarkup (Result outs err) = foldMap toMarkup outs <> err'

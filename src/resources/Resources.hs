@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Resources (dexrtBC, preludeSource, cssSource, staticOnloadJavascriptSource, curResourceVersion) where
+module Resources (dexrtBC, preludeSource, cssSource, javascriptSource, curResourceVersion) where
 
 import qualified Data.ByteString.Char8 as B
 import Data.FileEmbed
@@ -15,10 +15,10 @@ dexrtBC = $(embedFile "src/lib/dexrt.bc")
 preludeSource :: String
 preludeSource = B.unpack $(embedFile "lib/prelude.dx")
 
--- The CSS source code used for rendering Dex programs as static HTML.
+-- The CSS source code used for rendering Dex programs as HTML.
 cssSource :: String
 cssSource = B.unpack $(embedFile "static/style.css")
 
--- The "document onload" JavaScript source code used for rendering Dex programs as static HTML.
-staticOnloadJavascriptSource :: String
-staticOnloadJavascriptSource = B.unpack $(embedFile "static/static-onload.js")
+-- The JavaScript source code used for rendering Dex programs as HTML.
+javascriptSource :: String
+javascriptSource = B.unpack $(embedFile "static/index.js")
