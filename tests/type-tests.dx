@@ -232,6 +232,9 @@ g1 : (a -> Int) -> (a -> Int) = \x. x
 
 g2 : a -> a = \x. idiv x x
 > Type error:Couldn't synthesize a class dictionary for: (Integral a)
+> Failed attempts:
+>
+>   Couldn't make progress on (Integral a)
 >
 > g2 : a -> a = \x. idiv x x
 >                   ^^^^^
@@ -243,6 +246,9 @@ h : (a -> b) -> (a -> b) = \x. x
 
 fun : a -> a = \x. sin x
 > Type error:Couldn't synthesize a class dictionary for: (Floating a)
+> Failed attempts:
+>
+>   Couldn't make progress on (Floating a)
 >
 > fun : a -> a = \x. sin x
 >                    ^^^^
@@ -328,6 +334,10 @@ bad_range : Int = (1@Fin 3)..(2@_)
 
 :p (\x:Int. x) == (\x:Int. x)
 > Type error:Couldn't synthesize a class dictionary for: (Eq (Int32 -> Int32))
+> Failed attempts:
+>
+>   Couldn't make progress on (Ord (Int32 -> Int32))
+>     after using a superclass ((a:Type) ?-> (Ord a) ?=> Eq a)
 >
 > :p (\x:Int. x) == (\x:Int. x)
 >                ^^^
