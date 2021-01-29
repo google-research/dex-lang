@@ -44,8 +44,6 @@ instance InterfaceTest4 Float
 
 '# Synthesis errors
 
-'## Duplicate instances
-
 interface InterfaceSynthesisTest a
   runTest : a
 
@@ -105,7 +103,6 @@ instance [InterfaceSynthesisTest Bar] InterfaceSynthesisTest Foo
   x
 > (MkFoo 1)
 
-'## Missing instances
 
 data Baz = MkBaz Int
 data Qux = MkQux Int
@@ -117,7 +114,7 @@ instance [InterfaceSynthesisTest Baz] InterfaceSynthesisTest Qux
 instance [InterfaceSynthesisTest Zzz] InterfaceSynthesisTest Qux
   runTest = MkQux 2
 
--- Synthesis here runs into three dead-ends, since neither Baz nor Zzz have an
+-- Synthesis here runs into two dead-ends, since neither Baz nor Zzz have an
 -- instance.
 :p
   x : Qux = runTest
@@ -134,11 +131,10 @@ instance [InterfaceSynthesisTest Zzz] InterfaceSynthesisTest Qux
 >   x : Qux = runTest
 >             ^^^^^^^
 
--- If we introduce a superclass, it tries to use it if it can
+-- Irrelevant superclass constraints aren't shown.
 
 interface [InterfaceSynthesisTest a] InterfaceSynthesisSuperclassTest a
   unused : Unit
-
 
 :p
   x : Qux = runTest
@@ -146,22 +142,17 @@ interface [InterfaceSynthesisTest a] InterfaceSynthesisSuperclassTest a
 > Type error:Couldn't synthesize a class dictionary for: (InterfaceSynthesisTest Qux)
 > Failed attempts:
 >
->   Couldn't make progress on (InterfaceSynthesisSuperclassTest Qux)
->     after using a superclass ((a:Type) ?-> (InterfaceSynthesisSuperclassTest a) ?=> InterfaceSynthesisTest a)
->
->   Couldn't make progress on (InterfaceSynthesisSuperclassTest Baz)
->     after using a superclass ((a:Type) ?-> (InterfaceSynthesisSuperclassTest a) ?=> InterfaceSynthesisTest a)
+>   Couldn't make progress on (InterfaceSynthesisTest Baz)
 >     after using an instance ((InterfaceSynthesisTest Baz) ?=> InterfaceSynthesisTest Qux)
 >
->   Couldn't make progress on (InterfaceSynthesisSuperclassTest Zzz)
->     after using a superclass ((a:Type) ?-> (InterfaceSynthesisSuperclassTest a) ?=> InterfaceSynthesisTest a)
+>   Couldn't make progress on (InterfaceSynthesisTest Zzz)
 >     after using an instance ((InterfaceSynthesisTest Zzz) ?=> InterfaceSynthesisTest Qux)
 >
 >   x : Qux = runTest
 >             ^^^^^^^
 
 
-'Superclass of a superclass
+-- Superclass of a superclass is OK
 
 interface [InterfaceSynthesisSuperclassTest a] InterfaceSynthesisSuperclassTest2 a
   unused2 : Unit
@@ -178,3 +169,15 @@ def go [InterfaceSynthesisSuperclassTest2 a] : a = runTest
   x : Foo = go
   x
 > (MkFoo 1)
+
+-- Superclasses show up in the error if there are multiple solutions.
+-- (TODO: should local superclasses take priority over global instances?)
+
+def go2 [InterfaceSynthesisSuperclassTest2 Foo] : Foo = runTest
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Foo)
+> Any of these steps lead to a dictionary:
+>   using a superclass ((a:Type) ?-> (InterfaceSynthesisSuperclassTest a) ?=> InterfaceSynthesisTest a)
+>   using an instance (InterfaceSynthesisTest Foo)
+>
+> def go2 [InterfaceSynthesisSuperclassTest2 Foo] : Foo = runTest
+>                                                         ^^^^^^^

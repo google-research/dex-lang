@@ -21,6 +21,7 @@ import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Either (partitionEithers)
+import Data.Maybe (catMaybes)
 import Data.String (fromString)
 import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
@@ -907,25 +908,28 @@ synthesizeBacktracking = go False []
         candidates =  byAssumption scope ty <|> bySuperclass scope ty
                       <|> if isSuperclass then []
                           else byDefinition scope ty <|> byIntro scope ty
-        in case candidates of
-          [] -> SynthNotFound [(ty, steps)]  -- dead end
-          _ -> let
-            -- Try to synthesize using each candidate step.
-            results = flip map candidates \(isSuper, desc, cand) ->
-              let info = PassInfo SynthPass $
-                            "Solving " ++ pprint ty ++ " by " ++ desc
-                  cand' = Free.liftF (SynthLog info ()) *> cand
-              in (desc, expandCandidate isSuper (desc:steps) cand')
-            -- Extract the steps that didn't produce anything.
-            splitDeadEnds v = case v of
-              (_, SynthNotFound deadEnd) -> Left deadEnd
-              _ -> Right v
-            (deadEnds, solutions) = partitionEithers (splitDeadEnds <$> results)
-            -- Make sure exactly one step produced an output.
-            in case solutions of
-              [] -> SynthNotFound (fold deadEnds)
-              [(_, soln)] -> soln
-              _ -> SynthMultiple steps ty (map fst solutions) 
+        -- Try to synthesize using each candidate step.
+        results = flip map candidates \(isSuper, desc, cand) ->
+          let info = PassInfo SynthPass $
+                        "Solving " ++ pprint ty ++ " by " ++ desc
+              cand' = Free.liftF (SynthLog info ()) *> cand
+          in (isSuper, desc, expandCandidate isSuper (desc:steps) cand')
+        -- Partition the solutions, failed superclass lookups, and other
+        -- failed attempts. Don't bother reporting failed superclass lookups
+        -- as dead ends, since they are usually irrelevant.
+        splitDeadEnds v = case v of
+          (False, _, SynthNotFound deadEnd) -> Left $ Just deadEnd
+          (True,  _, SynthNotFound _)       -> Left Nothing
+          _                                 -> Right v
+        (deadEnds, solutions) = partitionEithers (splitDeadEnds <$> results)
+        nonSuperclassDeadEnds = catMaybes deadEnds
+        -- Make sure exactly one step produced an output.
+        in case solutions of
+          [] -> case nonSuperclassDeadEnds of
+                  [] -> SynthNotFound [(ty, steps)]
+                  _  -> SynthNotFound (fold nonSuperclassDeadEnds)
+          [(_, _, soln)] -> soln
+          _ -> SynthMultiple steps ty (map (\(_, desc, _) -> desc) solutions) 
 
     expandCandidate :: Bool -> [DerivationStep] -> InstanceCandidate -> SynthResult
     expandCandidate isSuperclass steps candidate =

@@ -336,8 +336,7 @@ bad_range : Int = (1@Fin 3)..(2@_)
 > Type error:Couldn't synthesize a class dictionary for: (Eq (Int32 -> Int32))
 > Failed attempts:
 >
->   Couldn't make progress on (Ord (Int32 -> Int32))
->     after using a superclass ((a:Type) ?-> (Ord a) ?=> Eq a)
+>   Couldn't make progress on (Eq (Int32 -> Int32))
 >
 > :p (\x:Int. x) == (\x:Int. x)
 >                ^^^
