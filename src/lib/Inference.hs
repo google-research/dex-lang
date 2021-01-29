@@ -970,7 +970,7 @@ synthesize ctx ty = do
       "Multiple candidate class dictionaries for: " ++ pprint ty''
         ++ "\nAny of these steps lead to a dictionary:"
         ++ foldMap ("\n  " ++) choices
-        ++ if null steps then "" else (
+        ++ (if null steps then "" else
               "\n\nThis error occured while synthesizing a class dictionary for " ++ pprint ty
               ++ foldMap ("\n  after " ++) steps
            )

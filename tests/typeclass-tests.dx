@@ -61,6 +61,8 @@ instance [Add Float] InterfaceSynthesisTest Float
 >   using an instance (InterfaceSynthesisTest Float32)
 >   using an instance ((Add Float32) ?=> InterfaceSynthesisTest Float32)
 >
+> (there may be additional ambiguities as well)
+>
 >   x : Float = runTest
 >               ^^^^^^^
 
@@ -178,6 +180,8 @@ def go2 [InterfaceSynthesisSuperclassTest2 Foo] : Foo = runTest
 > Any of these steps lead to a dictionary:
 >   using a superclass ((a:Type) ?-> (InterfaceSynthesisSuperclassTest a) ?=> InterfaceSynthesisTest a)
 >   using an instance (InterfaceSynthesisTest Foo)
+>
+> (there may be additional ambiguities as well)
 >
 > def go2 [InterfaceSynthesisSuperclassTest2 Foo] : Foo = runTest
 >                                                         ^^^^^^^
