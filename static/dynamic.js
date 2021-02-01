@@ -83,9 +83,3 @@ source.onmessage = function(event) {
         renderMathInElement(proseBlock, katexOptions)
     );
 };
-
-
-// Needed to resize dynamic iframe heights.
-function resize_iframe(obj) {
-    obj.style.height = obj.contentWindow.document.documentElement.scrollHeight + 'px';
-}

@@ -22,14 +22,14 @@ data JValue = AsJValue String
 
 ' Simple JSON Data Type
 
-data Value = 
+data Value =
      AsObject (List (String & JValue))
      AsArray (List JValue)
      AsString String
      AsFloat Float
      AsInt Int
      AsNone
-     
+
 interface ToJSON a
   toJSON : a -> Value
 
@@ -45,7 +45,7 @@ def toJValue (x:Value) : JValue =
          AsInt y -> show y
          AsObject (AsList _ y) ->
               ("{" <> (join ", " $ for i.
-                 (k, v) = y.i 
+                 (k, v) = y.i
                  "\"" <> k <> "\"" <> ":" <> (show v)) <> "}")
          AsArray (AsList _ y) -> ("[" <> (join ", " $ for i. show y.i) <> "]")
          AsNone -> ""
@@ -53,23 +53,23 @@ def toJValue (x:Value) : JValue =
 def serialize [ToJSON a] (x:a) : JValue =
     toJValue $ toJSON x
 
-instance Show Value 
+instance Show Value
   show = \x. show $ toJValue x
 
 ' Type classes for JSON conversion
 
 instance ToJSON String
   toJSON = AsString
-  
+
 instance ToJSON Int
   toJSON = AsInt
-  
+
 instance ToJSON Float
   toJSON = AsFloat
-  
+
 instance ToJSON Value
   toJSON = id
-  
+
 instance [ToJSON v] ToJSON (n => v)
   toJSON = \x .
     sizen = (size n)
@@ -98,11 +98,11 @@ def wrapCol [ToJSON d]  (iso: Iso a (d & c)) (x:n=>a) : n=> Value =
 Graph grammars are a style of graphing that aims to separate the data representation
 from the graph layout. The main idea is to represent the underlying data as a flat
 sequence of aligned rows (colloquially a `dataframe`) and separately describe the graph
-layout based on a grammar. 
+layout based on a grammar.
 
 ' Here we implement a subset of the Vega-Lite (https://vega.github.io/vega-lite/) specification for
-  graphing. Vega-Lite lets you make a large set of charts using a very small grammar. 
-  
+  graphing. Vega-Lite lets you make a large set of charts using a very small grammar.
+
 
 ' We will have several pieces of metadata. A header string, encoding type, and the
   channels that the data is displayed with.
@@ -132,7 +132,7 @@ data Channel =
      Row
      Col
      Size
-     
+
 instance Show Channel
          show = (\ x.
               case x of
@@ -164,7 +164,7 @@ data Mark =
      Square
      Text
      Tick
-     
+
 instance Show Mark
          show = (\ x.
               case x of
@@ -187,12 +187,12 @@ data Opts a =
 
 def pure (x:a) : Opts a =
     WithOpts x AsNone
-    
+
 def pureLs (x:a) : List (Opts a) =
    AsList 1 [WithOpts x AsNone]
 
 def mergeOpts [ToJSON a, ToJSON b] (x : a) (y : b) : Value =
-     case toJSON x of 
+     case toJSON x of
          (AsObject x') -> case toJSON y of
                   (AsObject y') -> AsObject $ x' <> y'
                   (AsNone) -> AsObject x'
@@ -205,7 +205,7 @@ data VLChart row col v =
                               encType: EncodingType &
                               encodings: List (Opts Channel) &
                               rows: row => Value
-                              })) 
+                              }))
 
 instance [ToJSON v] ToJSON (VLChart r c v)
    toJSON = \ x.
@@ -223,10 +223,10 @@ instance [ToJSON v] ToJSON (VLChart r c v)
     -- Make the encodings
     jencodings = toJSON $ concat $ for col : c.
         (AsList v encopts) = getAt #encodings df.col
-        AsList v $ for f. 
+        AsList v $ for f.
            (WithOpts channel encoptions) = encopts.f
            (show channel,
-            mergeOpts encoptions 
+            mergeOpts encoptions
             [
               ("field", "col" <> (show $ ordinal col)),
               ("type",  show $ getAt #encType df.col),
@@ -234,15 +234,17 @@ instance [ToJSON v] ToJSON (VLChart r c v)
               ])
     jencode = ("encoding", jencodings)
     mergeOpts opts [jdata, jmark, jencode]
-    
+
 
 def showVega (x: Value) : String =
-    "<iframe width=\"100%\" frameborder=\"0\" scrolling=\"no\" onload=\"resize_iframe(this)\" srcdoc='<html> 
-    <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>  
-          <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>  
-          <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script> 
-    </head> 
-    <body> 
+    "<iframe width=\"100%\" frameborder=\"0\" scrolling=\"no\"
+             onload=\"this.style.height=this.contentWindow.document.body.scrollHeight+'px'\";
+             srcdoc='<html>
+    <head><script src=\"https://cdn.jsdelivr.net/npm/vega@5.17.0\"></script>
+          <script src=\"https://cdn.jsdelivr.net/npm/vega-lite@4.17.0\"></script>
+          <script src=\"https://cdn.jsdelivr.net/npm/vega-embed@6.12.2\"></script>
+    </head>
+    <body>
            <div id=\"vis\"></div>
            <script>vegaEmbed(\"#vis\"," <> (show x) <> ");</script>
     </body>
@@ -270,7 +272,7 @@ chart1 = (AsVLDescriptor (pure Bar) [("title", "Bar Graph")]
 
 ' ## Example: Scatter
 
-' This example constructs a scatter plot with several different variables. 
+' This example constructs a scatter plot with several different variables.
 
 
 ' First we will construct a Nominal variable for a class.
@@ -292,7 +294,7 @@ instance Arbitrary Class
 instance ToJSON Class
     toJSON = \x. AsString $ show x
 
-' Then we will generate some random data. 
+' Then we will generate some random data.
 
 key : Key = newKey 1
 
@@ -314,7 +316,7 @@ chart2 = (AsVLDescriptor (pure Point) [("title", "Scatter")]
              {title="Weight", encodings=pureLs Size, encType=Quantitative, rows=wrapCol #weight df2},
              {title="Label", encodings=toList [pure Color, pure Tooltip], encType=Nominal, rows=wrapCol #label df2}])
 
-                 
+
 :html showVega $ toJSON chart2
 > <html output>
 
@@ -326,7 +328,7 @@ chart2 = (AsVLDescriptor (pure Point) [("title", "Scatter")]
 
 
 y1 :  (Fin 3) => (Fin 10) => Float = arb $ newKey 0
-df3 = for i. cumSum . for j. select (y1.i.j > 0.0) (-1.0) 1.0 
+df3 = for i. cumSum . for j. select (y1.i.j > 0.0) (-1.0) 1.0
 
 :t df3
 > ((Fin 3) => (Fin 10) => Float32)
@@ -350,7 +352,7 @@ def showChart4 [ToJSON o] (opts:o) : Value  = toJSON (AsVLDescriptor (pure Rect)
             [{title="match", encodings=pureLs Color, encType=Quantitative, rows=for (i,j). toJSON z.i.j},
             {title="words", encodings=pureLs Tooltip, encType=Nominal, rows=for (i,j). toJSON (words.i <> " - " <> words.j)},
             {title="row", encodings=pureLs X, encType=Ordinal, rows=for (i,_). toJSON (ordinal i)},
-            {title="col", encodings=pureLs Y, encType=Ordinal, rows=for (_,j). toJSON (ordinal j)}]  
+            {title="col", encodings=pureLs Y, encType=Ordinal, rows=for (_,j). toJSON (ordinal j)}]
         )
 
 ' Default heat map
