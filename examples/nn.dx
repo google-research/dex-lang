@@ -300,7 +300,7 @@ labels = getLabel
 small_ims = for i: (Fin 10). ims.((ordinal i)@_)
 small_labels = for i: (Fin 10). labels.((ordinal i)@_)
 
-:p small_labels
+small_labels
 > [ (9@Fin 10)
 > , (2@Fin 10)
 > , (1@Fin 10)
@@ -321,7 +321,7 @@ Minibatch = (Fin 10)
 
 model = lenet (Fin 1) (Fin 1) (Fin 10) 
 init_param = (init model  $ newKey 0)
-:p forward model init_param (ims.(2@Batch))
+out = forward model init_param (ims.(2@Batch))
 
 ' Sanity check
 
@@ -335,5 +335,5 @@ init_param = (init model  $ newKey 0)
 
 (all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
 
-:p losses'
+losses'
 > [15243.2]
