@@ -288,16 +288,16 @@ def tableAdd' (x : m => n => Float32) (y : m => n => Float32) : m => n => Float3
 
 ' The type system checked for us that the input tables indeed have the same shape.
 
-'## Case Study: MNist
+'## Case Study: Fashion MNist
 
 ' To run this section, move the following binary files to examples:
 
-' `wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
+' `wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
 
-' `wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
+' `wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
 
 ' To make some of these concepts for tangible let us consider a real example
-  using MNist digits. For this example we will first read in a batch of images
+  using Fashion MNist clothing. For this example we will first read in a batch of images
   each with a fixed size.
 
 Batch = Fin 5000
@@ -352,7 +352,7 @@ im = ims.(0 @ _)
 :html matshow (sum ims)
 > <html output>
 
-' This example overplots three different handwritten images.
+' This example overplots three different pairs of closing.
 
 imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
@@ -587,9 +587,9 @@ instance [Add v, Add w] Add (v & w)
 instance [VSpace v, VSpace w] VSpace (v & w)
   scaleVec = \s (x, y). (scaleVec s x, scaleVec s y)
 
-'## More MNist
+'## More Fashion MNist
 
-' Now that we has more functions we can revisit some of the MNist examples.
+' Now that we has more functions we can revisit some of the Fashion MNist examples.
 
 ' Function that uses state to produce a histogram:
 
@@ -605,11 +605,16 @@ def bincount (inp : a => b) : b => Int =
 ' Plot how many times each pixel value occurs in an image:
 
 hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
+> Ordinal index out of range:256 >= 256
+> Runtime error
 :t hist
-> ((Fin 256) => Int32)
+> Error: variable not in scope: hist
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
-> <html output>
+> Error: variable not in scope: hist
+>
+> :html showPlot $ yPlot (for i. (IToF hist.i))
+>                                      ^^^^
 
 ' Find nearest images in the dataset:
 
@@ -668,28 +673,30 @@ temptab
 > [3., 1., 2.]
 
 ' Using this construct we can return to extracting
-  the 5's from the image set.
+  items with label of shoes (label 5) from the image set.
 
-def findFives (x : a=>b) (y : a=>Class) : List b =
+shoes = (5 @ Class)
+
+def findShoes (x : a=>b) (y : a=>Class) : List b =
     concat for i. case (y.i == (5 @ _)) of
             True -> toList [x.i]
             False -> toList []
 
 ' Note though that the type here does not tell us
-  how many 5's there are. The type system cannot know this.
+  how many there are. The type system cannot know this.
   To figure it out we need to unpack the list.
 
-temp = findFives all_ims all_labels
-(AsList nFives fives) = temp
+temp = findShoes all_ims all_labels
+(AsList nShoes allShoes) = temp
 
-nFives
-> 456
+nShoes
+> 485
 
 ' However we can still utilize the table. For instance
   if we are summing over the hidden dimension, we never
   need to know how big it is.
 
-:html matshow (sum fives)
+:html matshow (sum allShoes)
 > <html output>
 
 '## Conclusion
