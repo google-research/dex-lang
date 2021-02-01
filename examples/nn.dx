@@ -230,12 +230,11 @@ def getLabel : Batch => Class =
 ' ## Training loop
 
 
-' Get binary files from:
+' Get Fashion MNist binary files from:
 
-' `wget http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
+' `wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
 
-' `wget http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
-
+' `wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
 
 ims = getIm
 labels = getLabel
@@ -244,16 +243,16 @@ small_ims = for i: (Fin 10). ims.((ordinal i)@_)
 small_labels = for i: (Fin 10). labels.((ordinal i)@_)
 
 :p small_labels
-> [ (7@Fin 10)
+> [ (9@Fin 10)
 > , (2@Fin 10)
 > , (1@Fin 10)
-> , (0@Fin 10)
-> , (4@Fin 10)
+> , (1@Fin 10)
+> , (6@Fin 10)
 > , (1@Fin 10)
 > , (4@Fin 10)
-> , (9@Fin 10)
+> , (6@Fin 10)
 > , (5@Fin 10)
-> , (9@Fin 10) ]
+> , (7@Fin 10) ]
 
 Epochs = (Fin 1)
 Minibatches = (Fin 1)
@@ -265,16 +264,16 @@ Minibatch = (Fin 10)
 model = lenet (Fin 1) (Fin 1) (Fin 10) 
 init_param = (init model  $ newKey 0)
 :p forward model init_param (ims.(2@Batch))
-> [ -884.3887
+> [ -2139.577
+> , -708.1797
 > , 0.
-> , -467.9934
-> , -805.0871
-> , -854.81555
-> , -507.84982
-> , -784.0084
-> , -316.6146
-> , -1435.0095
-> , -716.61194 ]
+> , -1464.5243
+> , -2020.7612
+> , -356.19592
+> , -816.3495
+> , -1105.3662
+> , -1729.139
+> , -1461.0334 ]
 
 ' Sanity check
 
@@ -289,4 +288,4 @@ init_param = (init model  $ newKey 0)
 (all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
 
 :p losses'
-> [11910.807]
+> [15243.2]
