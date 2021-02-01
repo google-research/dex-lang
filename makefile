@@ -89,7 +89,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator linear_algebra fluidsim \
-                sgd chol tutorial
+                sgd chol fft tutorial
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests \
