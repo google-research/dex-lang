@@ -7,6 +7,7 @@ usable designs.
 ' Before running this example, get Fashion MNist binary files using the commands:
 
 ' `wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz`
+
 ' `wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz`
 
 
@@ -321,16 +322,6 @@ Minibatch = (Fin 10)
 model = lenet (Fin 1) (Fin 1) (Fin 10) 
 init_param = (init model  $ newKey 0)
 :p forward model init_param (ims.(2@Batch))
-> [ -2139.577
-> , -708.1797
-> , 0.
-> , -1464.5243
-> , -2020.7612
-> , -356.19592
-> , -816.3495
-> , -1105.3662
-> , -1729.139
-> , -1461.0334 ]
 
 ' Sanity check
 
