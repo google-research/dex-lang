@@ -9,7 +9,7 @@ processing. The goal of the project is to explore:
 
 To learn more, check out our
 [workshop paper](https://openreview.net/pdf?id=rJxd7vsWPS),
-our[tutorial](https://github.com/google-research/dex-lang/blob/main/examples/tutorial.dx)
+our [tutorial](https://github.com/google-research/dex-lang/blob/main/examples/tutorial.dx)
 or these example programs:
 
   * [Dex prelude](https://google-research.github.io/dex-lang/prelude.html)
