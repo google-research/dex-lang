@@ -88,7 +88,7 @@ import plot
 ' This style of using `for` to construct type-inferred tables is central to what
   makes Dex powerful. Tables do not only need to have `Fin` types.
 
-' Let's consider another example. This one produces a list of 1s
+' Let's consider another example. This one produces a list of ones
   in Python.
 
 ' `y = [1.0 for j in range(width) for i in range(height)]`
