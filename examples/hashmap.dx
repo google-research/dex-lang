@@ -26,8 +26,6 @@ Really we only need `isequal`, so perhaps that should be seperated out of `Hasha
 (The LittleDict design of pair of lists rather than list of pairs is probably faster as more SIMD friendly but causes weird errors)
 
 
--- Can't require type-classes in type definitions?
--- data ListDict : (_:Eq k) ?=> k:Type v:Type =
 data ListDict k:Type v:Type =
   AsListDict vals:(List (k&v))
 
@@ -42,7 +40,7 @@ def push (collectionL:List a) (datum:a) : List a =
         True -> collection.(ordinal i@(Fin n))
         False -> datum
 
-:p push (AsList _ "abc") 'x'
+:p push "abc" 'x'
 
 def tryGetListDict (_:Eq k) ?=> (dict:ListDict k v) (key:k) : Maybe v =
     (AsListDict (AsList _ vals)) = dict
@@ -55,7 +53,7 @@ def tryGetListDict (_:Eq k) ?=> (dict:ListDict k v) (key:k) : Maybe v =
 
 :p tryGetListDict eg_listdict 'x'
 
-'store dict key val
+'`store dict key val`   
 Stores the value in the dict at the key.
 Note that we never actually delete anything, and it grows without bounds
 This could be improved.
@@ -85,89 +83,79 @@ def emptyListDict (k:Type) (v:Type) : ListDict k v =
 ' ## Hash
 We need a hash function for everything
 
+interface [Eq a] Hashable a
+    ahash : a->Int->Int
 
-data Hashable a:Type = MkHashable (Eq a) (a->Int->Int) -- equals, hash
 
-@superclass
-def eqFromHashable (d:Hashable a) : Eq a = case d of MkHashable eqDict _ -> eqDict
-
-def ahash (d:Hashable a) ?=> (x:a) (seed:Int) : Int = case d of MkHashable _ hsh  -> hsh x seed
-
-thehash: Hashable a ?=> a->Int = \x. ahash x 0
+def thehash [Hashable a] : a->Int = \x. ahash x 0
 
 -- composition operator 1 arg and 2 arg forms (would be `of` but that is a reserved word)
 ov : (a->b)->(c->a)->(c->b) = \f g x. f(g x)
 ov2: (c->d)->(a->b->c)->(a->b->d) = \f g x y. f(g x y)
 
-@instance int32Hashable : Hashable Int32 = (MkHashable
-    int32Eq
-    (I64ToI `ov2` hash `ov` IToI64)
-)
+instance Hashable Int32
+    ahash = (I64ToI `ov2` hash `ov` IToI64)
 
 :p thehash 1
 
-@instance word8Hashable : Hashable Word8 = (MkHashable
-    word8Eq
-    (ahash `ov` W8ToI)
-)
+instance Hashable Word8
+    ahash = ahash `ov` W8ToI
 
 :p thehash 'a'
 
 
-@instance int64Hashable : Hashable Int64 = (MkHashable
-    int64Eq
-    (ahash `ov` I64ToI)
-)
+instance Hashable Int64
+    ahash = ahash `ov` I64ToI
 
 :p thehash $ IToI64 213
 
-@instance boolHashable : Hashable Bool = (MkHashable
-    boolEq
-    (ahash `ov` BToI)
-)
+instance Hashable Bool
+    ahash = ahash `ov` BToI
+
 :p thehash True
 :p thehash False
 
 
-@instance unitHashable : Hashable Unit = (MkHashable
-    unitEq
-    (\x seed. seed)
-)
+instance Hashable Unit
+    ahash = \x seed. seed
 
 :p thehash ()
 
 ' due to witchcraft defining a type-class on s 2-tuple defines it on all tuples
 
-@instance pairHashable : Hashable a ?=> Hashable b ?=>  Hashable (a & b) = (MkHashable
-    pairEq
-    (\(a,b). ahash a `ov` ahash b)
-)
+instance [Hashable a, Hashable b] Hashable (a & b)
+    ahash = \(a,b). ahash a `ov` ahash b
 
 :p thehash (1,2)
 
 :p thehash (1,2,3)
 
 
-
-@instance TblHashable : Hashable t ?=> Hashable (n=>t) = (MkHashable
-    tabEq
+instance [Hashable t] Hashable (n=>t)
     --TODO: should not hash all elements just a few at start end and middle
-    (\x seed. fold seed \i. ahash x.i)
-)
+    ahash = \x seed. fold seed \i. ahash x.i
 
-:p thehash "abcdef"
+:p thehash [1, 2, 3, 4]
 
+' TODO workout how to apply this more generally
 
-' # broken because https://github.com/google-research/dex-lang/issues/340
--- should be a fallback for anything that doesn't have a better definition of its own
+instance [Hashable t] Hashable (List t)
+    --TODO: should not hash all elements just a few at start end and middle
+    ahash = \(AsList _ x). ahash x
+
+:p thehash (AsList _ [10,20,20])
+
+:p thehash "abcd"
+
+' broken because   
+https://github.com/google-research/dex-lang/issues/340  
+should be a fallback for anything that doesn't have a better definition of its own
 ```
-@instance FallbackHashable : Eq t ?=> Hashable t = (MkHashable
-    (\a b. a==b)
-    (\seed x. 1)  -- performance degrades to O(n) search 🤷
-)
-```
-```
-:p thehash (1, 2)
+instance [Eq t] Hashable t
+    ahash = \x. ahash 1
+     -- performance degrades to O(n) search 🤷
+:p thehash 1.0
+:p thehash 2.0
 :p thehash (10, 20)
 ```
 
@@ -184,12 +172,12 @@ def emptyHashDict (n:Int) (k:Type) (v:Type) : HashDict k v =
 
 :p emptyHashDict 8 Int Char
 
-def storeHashDict (_:Hashable k) ?=> (dict:HashDict k v) (key:k) (val:v) : HashDict k v =
+def storeHashDict [Hashable k] (dict:HashDict k v) (key:k) (val:v) : HashDict k v =
     (HashDictBuckets nbuckets buckets) = dict
     keyhash = thehash key
     bucket_index = (keyhash `mod` nbuckets)@(Fin nbuckets)
     bucket = buckets.bucket_index
-    neo_buckets = snd $ withState buckets \bucketsRef.
+    neo_buckets = yieldState buckets \bucketsRef.
         bucketsRef!bucket_index := storeListDict bucket key val
     HashDictBuckets _ neo_buckets
 
@@ -240,25 +228,28 @@ See how annoying above was without a common interface that i could just pass in 
 TODO: once this is working remove stand-alone manually type-specied functions from the ListDict and the HashDict
 
 
-interface Associative dict:Type k:Type v:Type where
+interface Associative dict:Type k:Type v:Type
     tryGet : dict -> k -> Maybe v
-    store : dict -> k -> v -> dict
+    assoc : dict -> k -> v -> dict
 
 
-instance listDictAssociative : Hashable k ?=>  Associative (ListDict k v) k v where
-    store = storeListDict
+instance [Eq k] Associative (ListDict k v) k v
+    assoc = storeListDict
     tryGet = tryGetListDict
 
-instance HashDictAssociative : Hashable k ?=>  Associative (HashDict k v) k v where
-    store = storeHashDict
+
+instance [Hashable k] Associative (HashDict k v) k v
+    assoc = storeHashDict
     tryGet = tryGetHashDict
 
 
-' all of the following error except the first
+:p assoc hd5 'q' 200
 
-:p store hd5 'q' 200
+:p assoc eg_listdict 'q' 200
 
-:p store eg_listdict 'q' 200
+' These both error claiming:
+`Type error:Ambiguous type variables: [?2]`
+
 
 :p tryGet hd5 'a'
 
