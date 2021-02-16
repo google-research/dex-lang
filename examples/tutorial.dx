@@ -88,7 +88,7 @@ import plot
 ' This style of using `for` to construct type-inferred tables is central to what
   makes Dex powerful. Tables do not only need to have `Fin` types.
 
-' Let's consider another example. This one produces a list of
+' Let's consider another example. This one produces a list of ones
   in Python.
 
 ' `y = [1.0 for j in range(width) for i in range(height)]`
@@ -213,7 +213,7 @@ for pair:(Fin 2 & Fin 3). ordinal pair
   change the order of the axes. This is useful for applying functions on tables.
 
 ' For instance, we saw the `mean` function above which sums over the first axis
-  of an table. We can apply `mean` to `x2` to produce the sum over 50 elements:
+  of an table. We can apply `mean` to `y` to produce the sum over 24 elements:
 
 :t y
 > ((Fin 3 & Fin 8) => Float32)
@@ -332,9 +332,6 @@ def getLabel : Batch => Class =
     r = unsafeCastTable Batch (for i:Batch. lab.((ordinal i + 8) @ _))
     for i. (W8ToI r.i @ Class)
 
-' Once you have downloaded the files, uncomment these lines to
-  see the images of below.
-
 all_ims = getIm
 all_labels = getLabel
 
@@ -352,7 +349,7 @@ im = ims.(0 @ _)
 :html matshow (sum ims)
 > <html output>
 
-' This example overplots three different pairs of closing.
+' This example overplots three different pairs of clothing.
 
 imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
 
