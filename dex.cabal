@@ -50,7 +50,9 @@ library
                        -- Serialization
                        store,
                        -- Notebook support
-                       warp, wai, blaze-html, aeson, http-types, cmark, binary
+                       warp, wai, blaze-html, aeson, http-types, cmark, binary,
+                       -- Monad utilities
+                       free
   other-modules:       Paths_dex
   if !os(darwin)
     exposed-modules:   Resources

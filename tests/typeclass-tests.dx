@@ -41,3 +41,147 @@ instance InterfaceTest4 Float
   foo = 1
   bar = \_. 1
 
+
+'# Synthesis errors
+
+interface InterfaceSynthesisTest a
+  runTest : a
+
+instance InterfaceSynthesisTest Float
+  runTest = 1.0
+
+instance [Add Float] InterfaceSynthesisTest Float
+  runTest = 2.0
+
+:p 
+  x : Float = runTest
+  x
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Float32)
+> Any of these steps lead to a dictionary:
+>   using an instance (InterfaceSynthesisTest Float32)
+>   using an instance ((Add Float32) ?=> InterfaceSynthesisTest Float32)
+>
+> (there may be additional ambiguities as well)
+>
+>   x : Float = runTest
+>               ^^^^^^^
+
+instance [InterfaceSynthesisTest Float] InterfaceSynthesisTest Int
+  runTest = 2
+
+-- In this case, we have a single instance for `InterfaceSynthesisTest Int`
+-- but multiple for `InterfaceSynthesisTest Float32`, which is required by
+-- the original instance. The error shows both types:
+:p 
+  x : Int = runTest
+  x
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Float32)
+> Any of these steps lead to a dictionary:
+>   using an instance (InterfaceSynthesisTest Float32)
+>   using an instance ((Add Float32) ?=> InterfaceSynthesisTest Float32)
+>
+> This error occured while synthesizing a class dictionary for (InterfaceSynthesisTest Int32)
+>   after using an instance ((InterfaceSynthesisTest Float32) ?=> InterfaceSynthesisTest Int32)
+>
+> (there may be additional ambiguities as well)
+>
+>   x : Int = runTest
+>             ^^^^^^^
+
+data Foo = MkFoo Int
+data Bar = MkBar Int
+
+instance InterfaceSynthesisTest Foo
+  runTest = MkFoo 1
+
+instance [InterfaceSynthesisTest Bar] InterfaceSynthesisTest Foo
+  runTest = MkFoo 2
+
+
+-- This is NOT a duplicate instance, because we will backtrack after not
+-- finding an instance for `InterfaceSynthesisTest Bar`.
+:p 
+  x : Foo = runTest
+  x
+> (MkFoo 1)
+
+
+data Baz = MkBaz Int
+data Qux = MkQux Int
+data Zzz = MkZzz Int
+
+instance [InterfaceSynthesisTest Baz] InterfaceSynthesisTest Qux
+  runTest = MkQux 1
+
+instance [InterfaceSynthesisTest Zzz] InterfaceSynthesisTest Qux
+  runTest = MkQux 2
+
+-- Synthesis here runs into two dead-ends, since neither Baz nor Zzz have an
+-- instance.
+:p
+  x : Qux = runTest
+  x
+> Type error:Couldn't synthesize a class dictionary for: (InterfaceSynthesisTest Qux)
+> Failed attempts:
+>
+>   Couldn't make progress on (InterfaceSynthesisTest Baz)
+>     after using an instance ((InterfaceSynthesisTest Baz) ?=> InterfaceSynthesisTest Qux)
+>
+>   Couldn't make progress on (InterfaceSynthesisTest Zzz)
+>     after using an instance ((InterfaceSynthesisTest Zzz) ?=> InterfaceSynthesisTest Qux)
+>
+>   x : Qux = runTest
+>             ^^^^^^^
+
+-- Irrelevant superclass constraints aren't shown.
+
+interface [InterfaceSynthesisTest a] InterfaceSynthesisSuperclassTest a
+  unused : Unit
+
+:p
+  x : Qux = runTest
+  x
+> Type error:Couldn't synthesize a class dictionary for: (InterfaceSynthesisTest Qux)
+> Failed attempts:
+>
+>   Couldn't make progress on (InterfaceSynthesisTest Baz)
+>     after using an instance ((InterfaceSynthesisTest Baz) ?=> InterfaceSynthesisTest Qux)
+>
+>   Couldn't make progress on (InterfaceSynthesisTest Zzz)
+>     after using an instance ((InterfaceSynthesisTest Zzz) ?=> InterfaceSynthesisTest Qux)
+>
+>   x : Qux = runTest
+>             ^^^^^^^
+
+
+-- Superclass of a superclass is OK
+
+interface [InterfaceSynthesisSuperclassTest a] InterfaceSynthesisSuperclassTest2 a
+  unused2 : Unit
+
+instance InterfaceSynthesisSuperclassTest Foo
+  unused = ()
+
+instance InterfaceSynthesisSuperclassTest2 Foo
+  unused2 = ()
+
+def go [InterfaceSynthesisSuperclassTest2 a] : a = runTest
+
+:p
+  x : Foo = go
+  x
+> (MkFoo 1)
+
+-- Superclasses show up in the error if there are multiple solutions.
+-- (TODO: should local superclasses take priority over global instances?)
+
+def go2 [InterfaceSynthesisSuperclassTest2 Foo] : Foo = runTest
+> Type error:Multiple candidate class dictionaries for: (InterfaceSynthesisTest Foo)
+> Any of these steps lead to a dictionary:
+>   using a superclass ((a:Type) ?-> (InterfaceSynthesisSuperclassTest a) ?=> InterfaceSynthesisTest a)
+>   using an instance (InterfaceSynthesisTest Foo)
+>
+> (there may be additional ambiguities as well)
+>
+> def go2 [InterfaceSynthesisSuperclassTest2 Foo] : Foo = runTest
+>                                                         ^^^^^^^

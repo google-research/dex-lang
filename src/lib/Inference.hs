@@ -8,16 +8,20 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Inference (inferModule, synthModule) where
+module Inference (inferModule, synthModule, synthesize) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import qualified Control.Monad.Free as Free
+import Control.Monad.Writer (MonadWriter, tell)
 import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Either (partitionEithers)
+import Data.Maybe (catMaybes)
 import Data.String (fromString)
 import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
@@ -31,7 +35,9 @@ import PPrint
 import Cat
 import Util
 
-type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((BuilderT (SolverT (Either Err)))))
+-- === type inference ===
+
+type UInferM = ReaderT SubstEnv (ReaderT SrcCtx (BuilderT (SolverT ExceptWithOutputs)))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -46,7 +52,7 @@ pattern Check t <-
 
 {-# COMPLETE Infer, Check #-}
 
-inferModule :: Bindings -> UModule -> Except Module
+inferModule :: Bindings -> UModule -> ExceptWithOutputs Module
 inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls
@@ -57,7 +63,8 @@ inferModule scope (UModule decls) = do
   return $ Module Typed decls' bindings'
 
 runUInferM :: (Subst a, Pretty a)
-           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
+           => SubstEnv -> Scope -> UInferM a
+           -> ExceptWithOutputs (a, (Scope, Nest Decl))
 runUInferM env scope m = runSolverT $
   runBuilderT (runReaderT (runReaderT m env) Nothing) scope
 
@@ -432,7 +439,7 @@ emitSuperclassGetters :: MonadBuilder m => DataDef -> m ()
 emitSuperclassGetters def@(DataDef _ paramBs (ClassDictDef _ superclassTys _)) = do
   forM_ (getLabels superclassTys) \l -> do
     f <- buildImplicitNaryLam paramBs \params -> do
-      buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
+      buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
         return $ recGetHead l $ getProjection [0] dict
     getterName <- freshClassGenName
     emitTo getterName SuperclassLet $ Atom f
@@ -809,28 +816,166 @@ getSrcCtx = lift ask
 
 -- === typeclass dictionary synthesizer ===
 
--- We have two variants here because at the top level we want error messages and
--- internally we want to consider all alternatives.
-type SynthPassM = SubstBuilderT (Either Err)
-type SynthDictM = SubstBuilderT []
+-- A synthesis subproblem, which when solved produces a `b`.
+data SynthAction b = SynthSubproblem Scope Type (Block -> b)
+                   | SynthLog Output b
+  deriving Functor
 
-synthModule :: Scope -> Module -> Except Module
+-- An instance candidate is an action that either produces a Block (the instance
+-- dictionary) or a new subproblem that must be solved.
+type InstanceCandidate = Free.Free SynthAction Block
+
+-- requestSubproblem: Ask the synthesis algorithm for an instance.
+requestSubproblem :: Type -> SubstBuilderT (Free.Free SynthAction) Atom
+requestSubproblem ty' = do
+  scope' <- getScope
+  ty'' <- substBuilderR ty'
+  block <- lift $ lift $ Free.liftF $ SynthSubproblem scope' ty'' id
+  dropSub $ emitBlock block
+
+-- Try to instantiate implicit arguments to obtain a result of requested type.
+instantiateDict :: Scope -> Atom -> Type -> Maybe InstanceCandidate
+instantiateDict scope dict ty =
+  -- Unify the instance dictionary with the requested type.
+  let (res, outs) = runExceptWithOutputs $
+                        runUInferM mempty scope (buildScoped build)
+      build :: UInferM Atom
+      build = do
+          dict' <- instantiateSigma dict
+          constrainEq ty (getType dict')
+          return dict'
+  in case res of
+    Left _ -> Nothing
+    Right (block, _) -> Just $ do
+      -- Emit any logging statements as actions, so that the synthesis algorithm
+      -- can see them.
+      mapM_ (\l -> Free.liftF $ SynthLog l ()) outs
+      -- Walk through each hole and ask the synthesis algorithm for an atom
+      -- to fill it.
+      (block', _) <- runSubstBuilderT
+        (traverseBlock (traverseHoles $ const requestSubproblem) block) scope
+      return block'
+
+-- Solve an instance of (a ?=> b) by locally introducing a new premise `a`.
+introducePremise :: Scope -> PiType -> InstanceCandidate
+introducePremise scope (Abs b (arr, body)) = do
+  let name = case b of
+                Ignore _ -> genFresh "premise" scope
+                Bind (n :> _) -> genFresh n scope
+      ann = binderAnn b
+      build = buildScoped $ buildDepEffLam (Bind $ name :> ann)
+                    (\x -> extendR (name @> x) $ substBuilderR arr)
+                    (\x -> extendR (name @> x) $
+                      requestSubproblem =<< substBuilderR body)
+  fst <$> runSubstBuilderT build scope
+
+type DerivationStep = String
+data SynthResult = SynthFound [Output] Block
+                 | SynthNotFound [(Type, [DerivationStep])]
+                 | SynthMultiple [DerivationStep] Type [DerivationStep]
+
+synthesizeBacktracking :: Scope -> Type -> SynthResult
+synthesizeBacktracking = go False []
+  where
+    byAssumption :: Scope -> Type -> [(Bool, String, InstanceCandidate)]
+    byAssumption scope ty = do
+      (desc, inst) <- lookupInstancePremises scope
+      Just candidate <- return $ instantiateDict scope inst ty
+      return (False, "using " ++ desc, candidate)
+
+    -- TODO: this doesn't de-dup, so we'll get multiple results if we have a
+    -- diamond-shaped hierarchy.
+    bySuperclass :: Scope -> Type -> [(Bool, String, InstanceCandidate)]
+    bySuperclass scope ty = do
+      (desc, inst) <- lookupSuperclassGetters scope
+      Just candidate <- return $ instantiateDict scope inst ty
+      return (True, "using " ++ desc, candidate)
+
+    byDefinition :: Scope -> Type -> [(Bool, String, InstanceCandidate)]
+    byDefinition scope ty = do
+      (desc, inst) <- lookupInstanceDefinitions scope
+      Just candidate <- return $ instantiateDict scope inst ty
+      return (False, "using " ++ desc, candidate)
+
+    byIntro :: Scope -> Type -> [(Bool, String, InstanceCandidate)]
+    byIntro scope ty = do
+      Pi piTy@(Abs b _) <- return ty
+      let desc = "introducing a new assumption " ++ pprint (getType b)
+      return (False, desc, introducePremise scope piTy)
+
+    go :: Bool -> [DerivationStep] -> Scope -> Type -> SynthResult
+    go isSuperclass steps scope ty = let
+        candidates =  byAssumption scope ty <|> bySuperclass scope ty
+                      <|> if isSuperclass then []
+                          else byDefinition scope ty <|> byIntro scope ty
+        -- Try to synthesize using each candidate step.
+        results = flip map candidates \(isSuper, desc, cand) ->
+          let info = PassInfo SynthPass $
+                        "Solving " ++ pprint ty ++ " by " ++ desc
+              cand' = Free.liftF (SynthLog info ()) *> cand
+          in (isSuper, desc, expandCandidate isSuper (desc:steps) cand')
+        -- Partition the solutions, failed superclass lookups, and other
+        -- failed attempts. Don't bother reporting failed superclass lookups
+        -- as dead ends, since they are usually irrelevant.
+        splitDeadEnds v = case v of
+          (False, _, SynthNotFound deadEnd) -> Left $ Just deadEnd
+          (True,  _, SynthNotFound _)       -> Left Nothing
+          _                                 -> Right v
+        (deadEnds, solutions) = partitionEithers (splitDeadEnds <$> results)
+        nonSuperclassDeadEnds = catMaybes deadEnds
+        -- Make sure exactly one step produced an output.
+        in case solutions of
+          [] -> case nonSuperclassDeadEnds of
+                  [] -> SynthNotFound [(ty, steps)]
+                  _  -> SynthNotFound (fold nonSuperclassDeadEnds)
+          [(_, _, soln)] -> soln
+          _ -> SynthMultiple steps ty (map (\(_, desc, _) -> desc) solutions) 
+
+    expandCandidate :: Bool -> [DerivationStep] -> InstanceCandidate -> SynthResult
+    expandCandidate isSuperclass steps candidate =
+      flip Free.iter (fmap (SynthFound []) candidate) \case
+        SynthSubproblem scope ty' cont -> case go isSuperclass steps scope ty' of
+          SynthFound outs block -> case cont block of
+            SynthFound outs' block' -> SynthFound (outs <> outs') block'
+            failed -> failed
+          failed -> failed
+        SynthLog out cont -> case cont of
+          SynthFound outs block -> SynthFound (out:outs) block
+          failed -> failed
+
+synthModule :: Scope -> Module -> ExceptWithOutputs Module
 synthModule scope (Module Typed decls bindings) = do
   decls' <- fst . fst <$> runSubstBuilderT
-              (traverseDecls (traverseHoles synthDictTop) decls) scope
+              (traverseDecls (traverseHoles synthesize) decls) scope
   return $ Module Core decls' bindings
-synthModule _ _ = error $ "Unexpected IR variant"
+synthModule _ _ = error "Unexpected IR variant"
 
-synthDictTop :: SrcCtx -> Type -> SynthPassM Atom
-synthDictTop ctx ty = do
+synthesize :: (MonadBuilder m, MonadReader SubstEnv m, MonadWriter [Output] m, MonadError Err m)
+           => SrcCtx -> Type -> m Atom
+synthesize ctx ty = do
   scope <- getScope
-  let solutions = runSubstBuilderT (synthDict ty) scope
-  addSrcContext ctx $ case solutions of
-    [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-    [(ans, env)] -> builderExtend env $> ans
-    _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
-           ++ "\n" ++ pprint solutions
-
+  ty' <- substBuilderR ty
+  let result = synthesizeBacktracking scope ty'
+  addSrcContext ctx $ case result of
+    SynthFound outs block -> do
+      tell outs
+      dropSub $ emitBlock block
+    SynthNotFound deadEnds -> throw TypeErr $
+      "Couldn't synthesize a class dictionary for: " ++ pprint ty'
+        ++ "\nFailed attempts:" ++ foldMap showFailed deadEnds 
+        where
+          showFailed (ty'', steps) = "\n\n  Couldn't make progress on " ++ pprint ty''
+                                    ++ foldMap ("\n    after " ++) steps
+    SynthMultiple steps ty'' choices -> throw TypeErr $
+      "Multiple candidate class dictionaries for: " ++ pprint ty''
+        ++ "\nAny of these steps lead to a dictionary:"
+        ++ foldMap ("\n  " ++) choices
+        ++ (if null steps then "" else
+              "\n\nThis error occured while synthesizing a class dictionary for " ++ pprint ty
+              ++ foldMap ("\n  after " ++) steps
+           )
+        ++ "\n\n(there may be additional ambiguities as well)"
+  
 traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
               => (SrcCtx -> Type -> m Atom) -> TraversalDef m
 traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
@@ -840,63 +985,31 @@ traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
-synthDict :: Type -> SynthDictM Atom
-synthDict ty = case ty of
-  PiTy b arr body -> synthesizeNow <|> introFirst
-    where
-      introFirst = buildDepEffLam b
-                      (\x -> extendR (b @> x) $ substBuilderR arr)
-                      (\x -> extendR (b @> x) $ substBuilderR body >>= synthDict)
-  _ -> synthesizeNow
-  where
-    synthesizeNow = do
-      (d, bindingInfo) <- getBinding
-      case bindingInfo of
-        LetBound InstanceLet _ -> trySynth d
-        LamBound ClassArrow    -> withSuperclasses d >>= trySynth
-        _                      -> empty
-    trySynth step = do
-      block <- buildScoped $ inferToSynth $ instantiateAndCheck ty step
-      -- NOTE: It's ok to emit unconditionally here. It will only ever emit
-      --       blocks that fully resolved without any holes, and if we ever
-      --       end up with two results, we don't use the duplicate code because
-      --       it's an error!
-      traverseBlock (traverseHoles (const synthDict)) block >>= emitBlock
-
--- TODO: this doesn't de-dup, so we'll get multiple results if we have a
--- diamond-shaped hierarchy.
-withSuperclasses :: Atom -> SynthDictM Atom
-withSuperclasses dict = return dict <|> do
-  (f, LetBound SuperclassLet _) <- getBinding
-  inferToSynth $ tryApply f dict
-
-getBinding :: SynthDictM (Atom, BinderInfo)
-getBinding = do
-  scope <- getScope
-  (v, (ty, bindingInfo)) <- lift $ lift $ envPairs scope
+getBinding :: Scope -> [(Atom, BinderInfo)]
+getBinding scope = do
+  (v, (ty, bindingInfo)) <- envPairs scope
   return (Var (v:>ty), bindingInfo)
 
-inferToSynth :: (Pretty a, Subst a) => UInferM a -> SynthDictM a
-inferToSynth m = do
-  scope <- getScope
-  case runUInferM mempty scope m of
-    Left _ -> empty
-    Right (x, (_, decls)) -> do
-      mapM_ emitDecl decls
-      return x
+pprintTypeWithExplicitName :: Atom -> String
+pprintTypeWithExplicitName v = case v of
+  Var (Name SourceName _ _ :> _) -> pprint v ++ " : " ++ pprint (getType v)
+  Var (GlobalName _ :> _)        -> pprint v ++ " : " ++ pprint (getType v)
+  _ -> pprint (getType v)
 
-tryApply :: Atom -> Atom -> UInferM Atom
-tryApply f x = do
-  f' <- instantiateSigma f
-  Pi (Abs b _) <- return $ getType f'
-  constrainEq (binderType b) (getType x)
-  emitZonked $ App f' x
+lookupInstanceDefinitions :: Scope -> [(String, Atom)]
+lookupInstanceDefinitions scope = do
+  (d, LetBound InstanceLet _) <- getBinding scope
+  return ("an instance " ++ pprintTypeWithExplicitName d, d)
 
-instantiateAndCheck :: Type -> Atom -> UInferM Atom
-instantiateAndCheck ty x = do
-  x' <- instantiateSigma x
-  constrainEq ty (getType x')
-  return x'
+lookupInstancePremises :: Scope -> [(String, Atom)]
+lookupInstancePremises scope = do
+  (d, LamBound ClassArrow) <- getBinding scope
+  return ("a local assumption " ++ pprintTypeWithExplicitName d, d)
+
+lookupSuperclassGetters :: Scope -> [(String, Atom)]
+lookupSuperclassGetters scope = do
+  (d, LetBound SuperclassLet _) <- getBinding scope
+  return ("a superclass " ++ pprintTypeWithExplicitName d, d)
 
 -- === constraint solver ===
 
@@ -904,7 +1017,7 @@ data SolverEnv = SolverEnv { solverVars :: Env Kind
                            , solverSub  :: Env Type }
 type SolverT m = CatT SolverEnv m
 
-runSolverT :: (MonadError Err m, Subst a, Pretty a)
+runSolverT :: (MonadError Err m, MonadWriter [Output] m, Subst a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m >>= zonk
