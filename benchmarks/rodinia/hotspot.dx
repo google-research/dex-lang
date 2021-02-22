@@ -37,12 +37,12 @@ def hotspot (numIterations: Int)
   Rz = tChip / (kSI * gridHeight * gridWidth)
   maxSlope = maxPD / (factorChip * tChip * specHeatSI)
   step = precision / maxSlope
-  snd $ withState tsInit $ \ts.
+  yieldState tsInit $ \tsRef.
     for _:(Fin numIterations).
-      ts' = for r c.
-         t = get ts!r!c
-         dc = (get ts!r!(c +| 1) + get ts!r!(c -| 1) - 2.0 * t) / Rx
-         dr = (get ts!(r +| 1)!c + get ts!(r -| 1)!c - 2.0 * t) / Ry
+      ts = get tsRef
+      tsRef := for r c.
+         t = ts.r.c
+         dc = (ts.r.(c +| 1) + ts.r.(c -| 1) - 2.0 * t) / Rx
+         dr = (ts.(r +| 1).c + ts.(r -| 1).c - 2.0 * t) / Ry
          d = (step / cap) * (p.r.c + dc + dr + (tAmb - t) / Rz)
          t + d
-      ts := ts'
