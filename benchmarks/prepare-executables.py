@@ -68,15 +68,15 @@ def prepare_rodinia_hotspot():
     with open(case_exe_path, 'w') as f:
       emit_dex(f, 'rodinia', 'hotspot', [
           ('numIterations', 360),
-          ('T', format_matrix(ts)),
-          ('P', format_matrix(ps))
+          ('T', random_mat(f'(Fin {size})=>(Fin {size})=>Float')), # format_matrix(ts)),
+          ('P', random_mat(f'(Fin {size})=>(Fin {size})=>Float')), # format_matrix(ps))
         ])
       print(f'Created {case_exe_path}')
 
 def prepare_rodinia_backprop():
   exe_path = RODINIA_EXE_ROOT / 'backprop'
   exe_path.mkdir(parents=True, exist_ok=True)
-  exe_path_ad = RODINIA_EXE_ROOT / 'backprop-ad'
+  exe_path_ad = RODINIA_EXE_ROOT / 'backpropad'
   exe_path_ad.mkdir(parents=True, exist_ok=True)
   in_features = [128, 1048576]
 
@@ -85,7 +85,7 @@ def prepare_rodinia_backprop():
     hidf = 16
     case_exe_path = (exe_path_ad if use_ad else exe_path) / f'{inf}_{hidf}_{outf}.dx'
     with open(case_exe_path, 'w') as f:
-      emit_dex(f, 'rodinia', 'backprop', [
+      emit_dex(f, 'rodinia', ('backpropad' if use_ad else 'backprop'), [
           ('input', random_vec('in=>Float')),
           ('target', random_vec('out=>Float')),
           ('inputWeights', random_mat('{ b: Unit | w: in }=>hid=>Float')),
@@ -196,7 +196,7 @@ def emit_dex(f, suite, name, params, *, preamble=[]):
   for n, v in params:
     f.write(f'{n} = {v}\n')
   f.write('\n')
-  f.write(f'include "{suite}/{name}.dx"\n')
+  f.write(f'import {name}\n')
   f.write('\n')
   f.write(f'%bench "{name}"\n')
   f.write(f'result = {name} {(" ".join(n for n, v in params))}\n')

@@ -7,8 +7,7 @@ def layerForward (input : in=>Float)
                  (params : { b: Unit| w: in }=>out=>Float)
                    : out=>Float =
   bias = params.{| b=() |}
-  -- TODO: Push the j loop into the sum or not?
-  total = (for j:out. sum $ for i:in. params.{| w=i |}.j  * input.i) + bias
+  total = (sum $ for i:in j:out. params.{| w=i |}.j  * input.i) + bias
   for i. squash total.i
 
 def lossForward (input : n=>Float) (target : n=>Float) : Float =
@@ -22,14 +21,14 @@ def adjustWeights (gradWeight : { b: Unit | w: in }=>out=>Float)
     d = ETA * gradWeight.k.j + MOMENTUM * oldWeight.k.j
     weight.k.j + d
 
-def backprop (input : in=>Float)
-             (target : out=>Float)
-             (inputWeights : { b: Unit | w: in }=>hid=>Float)
-             (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
-             (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
-             (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
-               : ( { b: Unit | w: in }=>hid=>Float
-                 & { b: Unit | w: hid }=>out=>Float) =
+def backpropad (input : in=>Float)
+               (target : out=>Float)
+               (inputWeights : { b: Unit | w: in }=>hid=>Float)
+               (hiddenWeights : { b: Unit | w: hid }=>out=>Float)
+               (oldInputWeights : { b: Unit | w: in }=>hid=>Float)
+               (oldHiddenWeights : { b: Unit | w: hid }=>out=>Float)
+                 : ( { b: Unit | w: in }=>hid=>Float
+                   & { b: Unit | w: hid }=>out=>Float) =
   (gradInputWeights, gradHiddenWeights) =
     flip grad (inputWeights, hiddenWeights) \(iw, hw).
       hidden = layerForward input  inputWeights

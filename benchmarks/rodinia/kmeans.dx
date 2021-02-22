@@ -1,12 +1,11 @@
-
 def dist (x : d=>Float) (y : d=>Float) : Float =
   d = x - y
   sum $ for i. d.i * d.i
 
 def centroidsOf (points : n=>d=>Float) (membership : n=>k) : k=>d=>Float =
-  clusterSums = snd $ withAccum \clusterSums.
+  clusterSums = yieldAccum (AddMonoid Float) \clusterSums.
     for i. clusterSums!(membership.i) += points.i
-  clusterSizes = snd $ withAccum \clusterSizes.
+  clusterSizes = yieldAccum (AddMonoid Float) \clusterSizes.
     for i. clusterSizes!(membership.i) += 1.0
   for i. clusterSums.i / (max clusterSizes.i 1.0)
 
@@ -20,18 +19,13 @@ def kmeans (points : n=>d=>Float)
            : (Fin k)=>d=>Float =
   initCentroids = for i:(Fin k). points.(ordinal i@_)
   initMembership = for c:n. ((ordinal c `mod` k)@_)
-  initDelta = threshold + 1
-  final = snd $ withState (initMembership, initCentroids, initDelta, 0) \ref.
-    (while (\().
-            (_, _, delta, i) = get ref
-            delta > threshold && i < maxIterations)
-           (\().
-             (membership, centroids, _, i) = get ref
-             membership' = for i. argminBy (dist points.i) centroids
-             centroids' = centroidsOf points membership'
-             delta' = sum $ for i. BToI $ membership.i /= membership'.i
-             ref := (membership', centroids', delta', i + 1)
-             ()))
-    ()
-  (_, centroids, _, _) = final
+  final = yieldState (initMembership, initCentroids, 0) \ref.
+    while do
+      (membership, centroids, i) = get ref
+      membership' = for i. argminBy (dist points.i) centroids
+      centroids' = centroidsOf points membership'
+      delta = sum $ for i. BToI $ membership.i /= membership'.i
+      ref := (membership', centroids', i + 1)
+      delta > threshold && i < maxIterations
+  (_, centroids, _) = final
   centroids

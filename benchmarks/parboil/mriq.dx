@@ -13,12 +13,11 @@ def mriq (kx : ks=>Float) (ky : ks=>Float) (kz : ks=>Float)
          (phiR : ks=>Float) (phiI : ks=>Float)
            : (cs=>Float & cs=>Float) =
   unzip $ for i.
-    snd $ withAccum \ref.
-      qr = fstRef ref
-      qi = sndRef ref
-      for j.
-        phiMag = phiR.j * phiR.j + phiI.j * phiI.j
-        expArg = kx.j * x.i + ky.j * y.i + kz.j * z.i
-        x = 2.0 * pi * expArg * phiMag
-        qr += cos x
-        qi += sin x
+    runAccum (AddMonoid Float) \qi.
+      yieldAccum (AddMonoid Float) \qr.
+        for j.
+          phiMag = phiR.j * phiR.j + phiI.j * phiI.j
+          expArg = kx.j * x.i + ky.j * y.i + kz.j * z.i
+          t = 2.0 * pi * expArg * phiMag
+          qr += cos t
+          qi += sin t
