@@ -732,11 +732,15 @@ def reindex (ixr: b -> a) (tab: a=>v) : b=>v = for i. tab.(ixr i)
 
 '### Reductions
 
+-- `combine` should be a commutative and associative, and form a
+-- commutative monoid with `identity`
 def reduce (identity:a) (combine:(a->a->a)) (xs:n=>a) : a =
-  -- `combine` should be a commutative and associative, and form a
-  -- commutative monoid with `identity`
-  -- TODO: implement with a parallelizable monoid-parameterized writer
-  fold identity (\i c. combine c xs.i)
+  A = a -- XXX: Typing `Monoid a` below would quantify it over a,
+        --      which we don't want.
+  named-instance reduceMonoid : Monoid A
+    mempty = identity
+    mcombine = combine
+  yieldAccum reduceMonoid \total. for i. total += xs.i
 
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
