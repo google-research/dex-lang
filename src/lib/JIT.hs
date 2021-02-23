@@ -70,15 +70,30 @@ type Function = L.Global
 
 impToLLVM :: Logger [Output] -> ImpModule -> IO L.Module
 impToLLVM logger (ImpModule fs) = do
-  (defns, externSpecs) <- unzip <$> mapM (compileFunction logger) fs
+  (defns, externSpecs, globalDtors) <- unzip3 <$> mapM (compileFunction logger) fs
   let externDefns = map externDecl $ toList $ fold externSpecs
+  let dtorDef = defineGlobalDtors $ concat globalDtors
   return $ L.defaultModule
     { L.moduleName = "dexModule"
-    , L.moduleDefinitions = concat defns ++ externDefns }
+    , L.moduleDefinitions = dtorDef : concat defns ++ externDefns }
+  where
+    dtorType = L.FunctionType L.VoidType [] False
+    dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]
+    makeDtorRegEntry dtorName = C.Struct Nothing False
+                                         [ C.Int 32 1
+                                         , C.GlobalReference (hostPtrTy dtorType) dtorName
+                                         , C.Null hostVoidp ]
+    defineGlobalDtors globalDtors =
+      L.GlobalDefinition $ L.globalVariableDefaults
+        { L.name = "llvm.global_dtors"
+        , L.type' = L.ArrayType (fromIntegral $ length globalDtors) dtorRegEntryTy
+        , L.linkage = L.Appending
+        , L.initializer = Just $ C.Array dtorRegEntryTy (makeDtorRegEntry <$> globalDtors)
+        }
 
 compileFunction :: Logger [Output] -> ImpFunction
-                -> IO ([L.Definition], S.Set ExternFunSpec)
-compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f))
+                -> IO ([L.Definition], S.Set ExternFunSpec, [L.Name])
+compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f), [])
 compileFunction logger fun@(ImpFunction f bs body) = case cc of
   FFIFun            -> error "shouldn't be trying to compile an FFI function"
   FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
@@ -88,7 +103,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     void $ extendOperands (newEnv bs argOperands) $ compileBlock body
     mainFun <- makeFunction (asLLVMName name) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun], extraSpecs)
+    return ([L.GlobalDefinition mainFun], extraSpecs, [])
   EntryFun requiresCUDA -> return $ runCompile CPU $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -103,7 +118,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     mainFun <- makeFunction (asLLVMName name)
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs)
+    return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
     (CUDAKernel kernelText) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
@@ -142,27 +157,14 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
           kernelFunc <- load kernelFuncCache
           makeFunction (asLLVMName name) [] (Just kernelFunc)
     let dtorName = fromString $ pprint name ++ "#dtor"
-    let dtorType = L.FunctionType L.VoidType [] False
     let dtorDef = runCompile CPU $ do
           emitVoidExternCall kernelUnloaderSpec
             [ kernelModuleCache, kernelFuncCache ]
           makeFunction dtorName [] Nothing
-    let dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]
-    let dtorRegDef = L.globalVariableDefaults
-                         { L.name = "llvm.global_dtors"
-                         , L.type' = L.ArrayType 1 dtorRegEntryTy
-                         , L.linkage = L.Appending
-                         , L.initializer =
-                              Just $ C.Array dtorRegEntryTy [
-                                  C.Struct Nothing False
-                                           [ C.Int 32 1
-                                           , C.GlobalReference (hostPtrTy dtorType) dtorName
-                                           , C.Null hostVoidp ]
-                                ]
-                         }
-    let globals = [textArrDef, kernelModuleCacheDef, kernelFuncCacheDef, loaderDef, dtorDef, dtorRegDef]
+    let globals = [textArrDef, kernelModuleCacheDef, kernelFuncCacheDef, loaderDef, dtorDef]
     return ( L.GlobalDefinition <$> globals
-           , S.fromList [kernelLoaderSpec, kernelUnloaderSpec] )
+           , S.fromList [kernelLoaderSpec, kernelUnloaderSpec]
+           , [dtorName])
     where
       kernelLoaderSpec   = ExternFunSpec "dex_loadKernelCUDA" L.VoidType [] []
                                          [hostPtrTy i8, hostPtrTy hostVoidp, hostPtrTy hostVoidp]
@@ -188,7 +190,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     kernel <- makeFunction (asLLVMName name)
                 [threadIdParam, nThreadParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
-    return ([L.GlobalDefinition kernel], extraSpecs)
+    return ([L.GlobalDefinition kernel], extraSpecs, [])
     where
       idxRepTy = scalarTy $ IIdxRepTy
       (tidBinder:widBinder:wszBinder:nthrBinder:argBinders) = bs
