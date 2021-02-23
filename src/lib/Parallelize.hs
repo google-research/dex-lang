@@ -45,7 +45,7 @@ data LoopEnv = LoopEnv
   , delayedApps :: Env (Atom, [Atom]) -- (n @> (arr, bs)), n and bs in scope of the original program
                                       --   arr in scope of the newly constructed program!
   }
-data AccEnv = AccEnv { activeAccs :: Env (Var, BaseMonoid) } -- (reference, its base monoid)
+data AccEnv = AccEnv { activeAccs :: Env (Var, (Var, BaseMonoid)) } -- (original region, reference, its base monoid)
 
 type TLParallelM = SubstBuilderT (State AccEnv)   -- Top-level non-parallel statements
 type LoopM       = ReaderT LoopEnv TLParallelM  -- Generation of (parallel) loop nests
@@ -69,7 +69,7 @@ parallelTraverseExpr expr = case expr of
   Hof (For (RegularFor _) fbody@(LamVal b body)) -> do
     -- TODO: functionEffs is an overapproximation of the effects that really appear inside
     refs <- gets activeAccs
-    let allowedRegions = foldMap (\(varType . fst -> RefTy (Var reg) _) -> reg @> ()) refs
+    let allowedRegions = foldMap (\(varType . fst . snd -> RefTy (Var reg) _) -> reg @> ()) refs
     (EffectRow bodyEffs t) <- substBuilderR $ functionEffs fbody
     let onlyAllowedEffects = all (parallelizableEffect allowedRegions) $ toList bodyEffs
     case t == Nothing && onlyAllowedEffects of
@@ -77,11 +77,11 @@ parallelTraverseExpr expr = case expr of
         b' <- substBuilderR b
         liftM Atom $ runLoopM $ withLoopBinder b' $ buildParallelBlock $ asABlock body
       False -> nothingSpecial
-  Hof (RunWriter bm (BinaryFunVal h b _ body)) -> do
+  Hof (RunWriter bm (BinaryFunVal h@(Bind hName) b _ body)) -> do
     ~(RefTy _ accTy) <- traverseAtom substTraversalDef $ binderType b
     liftM Atom $ emitRunWriter (binderNameHint b) accTy bm \ref@(Var refVar) -> do
       let RefTy h' _ = varType refVar
-      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (refVar, bm) }
+      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (hName, (refVar, bm)) }
       extendR (h @> h' <> b @> ref) $ evalBlockE parallelTrav body
   -- TODO: Do some alias analysis. This is not fundamentally hard, but it is a little annoying.
   --       We would have to track not only the base references, but also all the aliases, along
@@ -194,7 +194,7 @@ emitLoops buildPureLoop (ABlock decls result) = do
   refs  <- gets activeAccs
   -- TODO: Filter out the refs that are unused in the body.
   let oldRefNames = envNames refs
-  let newRefs     = toList refs
+  let (oldRegionNames, newRefs) = unzip $ toList refs
   let (iterTy, iterBundleDesc) = mkBundleTy $ fmap varType lbs
   let buildBody pari = do
         is <- unpackBundle pari iterBundleDesc
@@ -214,7 +214,8 @@ emitLoops buildPureLoop (ABlock decls result) = do
             emitRunWriters writerSpecs $ \localRefs -> do
               buildFor Fwd (Bind $ "tidx" :> threadRange) \tidx -> do
                 pari <- emitOp $ Inject tidx
-                extendR (newEnv oldRefNames localRefs) $ buildBody pari
+                let regionEnv = newEnv oldRegionNames $ for localRefs \(getType -> RefTy h _) -> h
+                extendR (regionEnv <> newEnv oldRefNames localRefs) $ buildBody pari
       (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce (fmap snd newRefs) iterTy body)
       updates <- unpackConsList updateList
       forM_ (zip newRefs updates) $ \((ref, bm), update) -> do
