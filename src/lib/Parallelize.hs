@@ -19,7 +19,6 @@ import Builder
 import Cat
 import Env
 import Type
-import PPrint
 import Util (for)
 
 -- TODO: extractParallelism can benefit a lot from horizontal fusion (can happen be after)
@@ -115,9 +114,9 @@ buildParallelBlock ablock@(ABlock decls result) = do
     -- that have been gathered into arrays. Those things are really cheap though, and
     -- emitting a for in that case would only gather them into another table.
     Emit -> case decls of
-      Empty -> reduce =<< unflattenConsTab lbs =<< emitLoops (flip buildLam TabArrow) ablock
+      Empty -> reduce =<< unflattenIndexBundle lbs =<< emitLoops (flip buildLam TabArrow) ablock
         where reduce = lift . traverseAtom appReduceTraversalDef
-      _     -> unflattenConsTab lbs =<< emitLoops (buildForAnn ParallelFor) ablock
+      _     -> unflattenIndexBundle lbs =<< emitLoops (buildForAnn ParallelFor) ablock
     Split prologue (arrb, loop@(Abs i lbody)) epilogue -> do
       prologueApps <- case prologue of
             Empty -> return mempty
@@ -125,9 +124,11 @@ buildParallelBlock ablock@(ABlock decls result) = do
               -- TODO: This can break miserably with dependent values!
               let freeContVars = freeVars loop <> freeVars epilogue
               let prologueCtxVars = bindingsAsVars $ boundVars prologue `envIntersect` freeContVars
-              let prologueBlock = ABlock prologue $ mkConsList $ fmap Var prologueCtxVars
+              let (prologueResult, prologueBundleDesc) = mkBundle $ fmap Var prologueCtxVars
+              let prologueBlock = ABlock prologue prologueResult
               prologueCtxAtom <- emitLoops (buildForAnn ParallelFor) prologueBlock
-              prologueCtxArrs <- mapM (unflattenConsTab lbs) =<< unzipConsListTab prologueCtxAtom
+              prologueCtxArrs <- mapM (unflattenIndexBundle lbs) =<<
+                                    unpackBundleTab prologueCtxAtom prologueBundleDesc
               return $ foldMap (\(v, arr) -> v @> (arr, loopVars)) $ zip prologueCtxVars prologueCtxArrs
       delayApps prologueApps $ do
         i' <- lift $ substBuilderR i
@@ -135,16 +136,10 @@ buildParallelBlock ablock@(ABlock decls result) = do
         delayApps (arrb @> (loopAtom, loopVars)) $
           buildParallelBlock $ ABlock epilogue result
 
-unzipConsListTab :: MonadBuilder m => Atom -> m [Atom]
-unzipConsListTab tab = case getType tab of
-  TabTy _ UnitTy -> return []
-  TabTy _ (PairTy _ _) -> do
-    (x,t) <- unzipTab tab
-    (x:) <$> unzipConsListTab t
-  _ -> error $ "Expected a table cons list, got: " ++ pprint (getType tab)
-
-unflattenConsTab :: MonadBuilder m => [Var] -> Atom -> m Atom
-unflattenConsTab ivs arr = buildNestedLam TabArrow (fmap Bind ivs) $ app arr . mkConsList
+unflattenIndexBundle :: MonadBuilder m => [Var] -> Atom -> m Atom
+unflattenIndexBundle []  arr = return arr
+unflattenIndexBundle [_] arr = return arr
+unflattenIndexBundle ivs arr = buildNestedLam TabArrow (fmap Bind ivs) $ app arr . fst . mkBundle
 
 type Loop = Abs Binder Block
 data NestDecision = Emit | Split (Nest Decl) (Binder, Loop) (Nest Decl)
@@ -200,9 +195,9 @@ emitLoops buildPureLoop (ABlock decls result) = do
   -- TODO: Filter out the refs that are unused in the body.
   let oldRefNames = envNames refs
   let newRefs     = toList refs
-  let iterTy = mkConsListTy $ fmap varType lbs
+  let (iterTy, iterBundleDesc) = mkBundleTy $ fmap varType lbs
   let buildBody pari = do
-        is <- unpackConsList pari
+        is <- unpackBundle pari iterBundleDesc
         extendR (newEnv lbs is) $ do
           ctxEnv <- flip traverseNames dapps \_ (arr, idx) ->
             -- XXX: arr is namespaced in the new program

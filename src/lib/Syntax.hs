@@ -46,6 +46,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
+    mkBundle, mkBundleTy, BundleDesc,
     extendEffRow,
     getProjection, outputStreamPtrName, initBindings,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
@@ -1506,6 +1507,21 @@ fromConsList xs = case xs of
   UnitVal        -> return []
   PairVal x rest -> (x:) <$> fromConsList rest
   _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
+
+type BundleDesc = Int  -- length
+
+bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
+bundleFold empty pair els = case els of
+  []  -> (empty, 0)
+  [e] -> (e, 1)
+  h:t -> (pair h tb, td + 1)
+    where (tb, td) = bundleFold empty pair t
+
+mkBundleTy :: [Type] -> (Type, BundleDesc)
+mkBundleTy = bundleFold UnitTy PairTy
+
+mkBundle :: [Atom] -> (Atom, BundleDesc)
+mkBundle = bundleFold UnitVal PairVal
 
 pattern FunTy :: Binder -> EffectRow -> Type -> Type
 pattern FunTy b eff bodyTy = Pi (Abs b (PlainArrow eff, bodyTy))
