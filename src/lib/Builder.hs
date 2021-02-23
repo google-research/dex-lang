@@ -26,6 +26,7 @@ module Builder (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buil
                 singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
                 builderExtend, applyPreludeFunction,
                 unpackConsList, unpackLeftLeaningConsList,
+                unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, buildDataDef,
                 emitRunReader, tabGet, SubstBuilderT, SubstBuilder, runSubstBuilderT,
@@ -380,6 +381,22 @@ unpackLeftLeaningConsList depth atom = go depth atom []
     go remDepth curAtom xs = do
       (consTail, x) <- fromPair curAtom
       go (remDepth - 1) consTail (x : xs)
+
+unpackBundle :: MonadBuilder m => Atom -> BundleDesc -> m [Atom]
+unpackBundle b size = case size of
+  0 -> return []
+  1 -> return [b]
+  _ -> do
+    (h, t) <- fromPair b
+    (h:) <$> unpackBundle t (size - 1)
+
+unpackBundleTab :: MonadBuilder m => Atom -> BundleDesc -> m [Atom]
+unpackBundleTab tab size = case size of
+  0 -> return []
+  1 -> return [tab]
+  _ -> do
+    (h, t) <- unzipTab tab
+    (h:) <$> unpackBundleTab t (size - 1)
 
 emitWhile :: MonadBuilder m => m Atom -> m ()
 emitWhile body = do
