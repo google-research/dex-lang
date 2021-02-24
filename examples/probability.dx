@@ -1,0 +1,194 @@
+
+' ## A Mini Probabilistic Programming Language 
+
+' This example is a Dex-style implementation of discrete probability
+ monad presented in Probabilistic Functional Programming in Haskell
+ MARTIN ERWIG and STEVE KOLLMANSBERGER
+ (http://web.engr.oregonstate.edu/~erwig/papers/PFP_JFP06.pdf)
+
+
+' ### General Helper functions for printing
+
+def join (joiner: List a) (lists:n=>(List a)) : List a =
+    -- Join together lists with an intermediary joiner
+    concat $ for i.
+        case ordinal i == (size n - 1) of
+             True -> lists.i
+             False -> lists.i <> joiner
+
+instance Show (Fin a)
+  show = \ d. show $ ordinal d
+
+instance [Show a, Show b] Show (a & b)
+  show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
+
+' ### Distribution 
+
+' A distribution is a table in Dex from index to probability
+
+Prob = Float
+data Dist a =
+     AsDist (a => Prob)
+     AsSample a
+
+
+' Set of events, assumed to be unique.
+
+
+def Event (a:Type) : Type = a => Bool
+
+
+' Probability of an event occurring
+
+def (??) [Eq a] (e:Event a) (xdist:Dist a) : Prob =
+    case xdist of
+         AsDist x -> 
+             sum $ for i. select e.i x.i 0.0
+         AsSample x ->
+             select (e.x) 1.0 0.0
+
+' Uniform and weighted categorical distributions.
+
+uniform : Dist a =
+    AsDist $ for i. 1.0 / (IToF $ size a)
+
+def weighted (x : a => Float) : Dist a =
+    AsDist $ x
+
+
+
+' Main monadic operations. `just` produces a delta distribution.
+  `chain` produces a new distribution from the previous one.
+
+def just (x: a) : Dist a =
+    AsSample x
+
+def chain (xdist: Dist a) (f : a -> Dist b) : Dist b =
+    case xdist of
+         AsDist x ->
+             z = yieldState zero \ (counter) .
+               for i.
+                 ydist = f i
+                 case ydist of 
+                      AsDist y ->
+                             for j. 
+                                 (counter!j) := (get counter!j) + x.i * y.j
+                             ()
+                      AsSample j ->
+                             (counter!j) := (get counter!j) + x.i
+             AsDist z
+         AsSample x -> f x
+
+
+
+
+' Display the distribution
+
+instance [Show a] Show (Dist a)
+  show = \ d.
+       case d of 
+         AsDist d2 -> 
+                join "\n" $ for i.
+                   (show i <> " " <>  (concat $ for j: (Fin 50).
+                     select (((IToF (ordinal j)  + 1.0) / 50.0) < d2.i) "*" "" ))
+         AsSample d2 ->
+                  "Sample:" <> show d2
+                 
+
+def sample (k:Key) (xdist: Dist a) : Dist a =
+    case  xdist of
+         AsSample x -> xdist
+         AsDist x ->
+             r:Float = rand k         
+             (_, out) = yieldState (r, 0@a) \ refs .
+                   (r_ref, idx_ref) = (fstRef refs, sndRef refs) 
+                   for t.
+                       old = get r_ref
+                       r_ref := old - x.t
+                       new = get r_ref
+                       idx_ref := select (new < 0.0 && old > 0.0) t (get idx_ref)
+             AsSample out
+
+
+
+
+' Prod combines independent events
+
+def indep (xdist: Dist a) (ydist : Dist b) : Dist (a & b) =
+    chain xdist \ x.
+             chain  ydist \ y.
+                      just (x, y)
+
+
+'Selection, normalization and empirical distributions
+
+def normalize (xdist: Dist a) : Dist a =
+    case xdist of
+         AsDist x ->
+                norm = sum $ for i. x.i
+                AsDist for i. x.i / norm
+         AsSample _ -> xdist
+
+def remove (i:a) (xdist:Dist a) : Dist a =
+    case xdist of
+         AsDist x ->
+                normalize $ AsDist $ yieldState x \ xref. xref!i := 0.0
+
+def empirical (x : m => a) : Dist a =
+        normalize $ AsDist $ yieldState zero \countref.
+                  for j.
+                      countref!(x.j) := (get countref!(x.j)) + 1.0
+                  
+
+
+' ### Example 1: Fun with Dice
+
+Faces = Fin 6
+def val (x:Faces) : Int = (ordinal x) + 1
+
+dice : Dist Faces = uniform
+
+
+show dice
+
+two_dice : Dist (Faces & Faces) =
+      dice `indep` dice
+
+def total (x1 : Dist Faces) -> (x2 : Dist Faces) : Dist (Fin 12) =
+      chain (x1 `indep` x2) \(a, b). just $ ((val a) + (val b) - 1)@_
+
+
+show (total dice dice)
+
+show (total (sample (newKey 0) dice) (sample (newKey 1) dice) )
+
+
+' Mini query language for assessing probability of events.
+
+(for (i,j). ((val i > 2) && (val j > 5))) ?? two_dice
+
+
+' ### Example 2: Monty Hall
+
+
+Outcome = {win:Unit | lose:Unit}
+instance Show Outcome
+  show = \ d. case d of
+       {|win=()|} -> "Win"
+       {|lose=()|} -> "Lose" 
+
+
+firstChoice : Dist Outcome  =  empirical [{|win=()|}, {|lose=()|}, {|lose=()|}]
+
+def switch (x:Outcome) : Dist Outcome =
+    just $ case x of
+         {|win = ()|} -> {|lose = ()|}
+         {|lose = ()|} -> {|win = ()|}     
+
+
+show firstChoice
+
+show $ firstChoice `chain` switch
+
+
+
