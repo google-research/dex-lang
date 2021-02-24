@@ -1,0 +1,74 @@
+{
+    "fileTypes": [
+        "dx"
+    ],
+    "name": "dex",
+    "patterns": [
+        {
+            "include": "#main"
+        }
+    ],
+    "scopeName": "source.dex",
+    "uuid": "",
+    "repository": {
+        "main": {
+            "patterns": [
+                {
+                    "match": "(\\b(def|for|rof|case|of|llam|Read|Write|Accum|data|interface|instance|where)\\b)",
+                    "name": "keyword.other.dex"
+                },
+                {
+                    "match": "(\\b(\\d+\\.\\d+|\\d+))",
+                    "name": "constant.numeric.dex"
+                },
+                {
+                    "match": "(\\(|\\)|\\[|\\]|\\{|\\}|;)",
+                    "name": "punctuation.dex"
+                },
+                {
+                    "begin": "(\")",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "punctuation.dex"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#main__1"
+                        }
+                    ],
+                    "end": "(\")",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.dex"
+                        }
+                    }
+                },
+                {
+                    "match": "(--[^o].*)",
+                    "name": "comment.dex"
+                },
+                {
+                    "match": "(\\b[A-Z][a-zA-Z0-9]*)",
+                    "name": "entity.name.type.dex"
+                },
+                {
+                    "match": "(((\\.)|(,)|(!)|(\\$)|(\\^)|(&)|(\\*)|(:)|(-)|(~)|(\\+)|(\/)|(=)|(<)|(>)|(\\|)|(\\?)|(\\\\)|(@)))",
+                    "name": "keyword.operator.dex"
+                }
+            ]
+        },
+        "main__1": {
+            "patterns": [
+                {
+                    "match": "(\\\\(?:\\\\|\"))",
+                    "name": "constant.character.escape.dex"
+                },
+                {
+                    "match": "([^\\x{0022}\\x{005c}]+)",
+                    "name": "string.quoted.double.dex"
+                }
+            ]
+        }
+    }
+}

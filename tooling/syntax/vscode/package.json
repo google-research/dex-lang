@@ -1,0 +1,25 @@
+{
+    "name": "dex-lang",
+    "displayName": "dex-lang",
+    "description": "Syntax highlighting for dex",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.51.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [{
+            "id": "dex",
+            "aliases": ["Dex", "dex"],
+            "extensions": [".dx"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "dex",
+            "scopeName": "source.dex",
+            "path": "./syntaxes/dex.tmLanguage.json"
+        }]
+    }
+}

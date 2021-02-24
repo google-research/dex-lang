@@ -1,0 +1,91 @@
+name                   = dex
+file_extensions []     = dx;
+
+styles [] {
+  .comment : style {
+    color                 = light_green
+    italic                = true
+    textmate_scope        = comment
+    pygments_scope        = Comment
+  }
+  .keyword : style {
+    color     = cyan
+    textmate_scope        = keyword.other
+    pygments_scope        = Keyword.Reserved
+  }
+  .numeric : style {
+    color                 = gold
+    textmate_scope        = constant.numeric
+    pygments_scope        = Number
+  }
+  .punctuation : style {
+    color                 = red
+    textmate_scope        = punctuation
+    pygments_scope        = Punctuation
+  }
+  .quoted_text : style {
+    color                 = brown
+    textmate_scope        = string.quoted.double
+    pygments_scope        = String
+  }
+  .escaped_text : style {
+    color                 = green
+    textmate_scope        = constant.character.escape
+    pygments_scope        = String.Escape
+  }
+  .type : style {
+    color                 = blue
+    textmate_scope        = entity.name.type
+    pygments_scope        = Keyword.Type
+  }
+  .operator : style {
+    color                 = orange
+    textmate_scope        = keyword.operator
+    pygments_scope        = Operator
+  }
+}
+
+contexts [] {
+  main : context {
+    : pattern {
+       regex          \= (\b(def|for|rof|case|of|llam|Read|Write|Accum|data|interface|instance|where)\b)
+       styles []       = .keyword;
+    }
+    : pattern {
+       regex          \= (\b(\d+\.\d+|\d+))
+       styles []       = .numeric;
+    }
+    : pattern {
+       regex          \= (\(|\)|\[|\]|\{|\}|;)
+       styles []       = .punctuation;
+    }
+    : inline_push {
+       regex         \= (")
+       styles []      = .punctuation;
+       : pop {
+          regex      \= (")
+          styles []   = .punctuation;
+       }
+       : pattern {
+          regex      \= (\\(?:\\|"))
+          styles []   = .escaped_text;
+       }
+       : pattern {
+          regex      \= ([^"\\]+)
+          styles []   = .quoted_text;
+       }
+    }
+    : pattern {
+       regex          \= (--[^o].*)
+       styles []       = .comment;
+    }
+    : pattern {
+       regex          \= (\b[A-Z][a-zA-Z0-9]*)
+       styles []       = .type;
+    }
+    : pattern {
+       regex          \= (((\.)|(,)|(!)|(\$)|(\^)|(&)|(\*)|(:)|(-)|(~)|(\+)|(/)|(=)|(<)|(>)|(\|)|(\?)|(\\)|(@)))
+       styles []       = .operator;
+    }
+  }
+}
