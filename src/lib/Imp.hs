@@ -840,7 +840,6 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- as the destination.
       let closureCopies = fmap (\(n, (d, t)) -> (d, Var $ n :> t))
                                (envPairs $ varDests `envDiff` foldMap letBoundVars decls)
-
       let destDecls = flip fmap (toList decls) \d -> case d of
                         Let _ b _  -> (fst <$> varDests `envLookup` b, d)
       (destDecls, (Nothing, ans), gatherCopies ++ closureCopies)
@@ -854,8 +853,11 @@ splitDest (maybeDest, (Block decls ans)) = do
         case dests `envLookup` v of
           Nothing -> modify $ (<> (v @> (dest, varType v)))
           Just _  -> tell [(dest, result)]
-      -- If the result is a table lambda then there is nothing we can do, except for a copy.
-      (_, TabVal _ _)  -> tell [(dest, result)]
+      -- If the result is a table lambda then we can propagate the dest if and only if
+      -- it is an injective view on another array.
+      (_, TabVal _ _)  -> case adaptBijectiveTableView dest result of
+        Just (v, vDest) -> modify $ (<> (v @> (vDest, varType v)))
+        Nothing         -> tell [(dest, result)]
       (_, Con (Lit _)) -> tell [(dest, result)]
       -- This is conservative, in case the type is dependent. We could do better.
       (DataConRef _ _ _, DataCon _ _ _ _) -> tell [(dest, result)]
@@ -871,6 +873,61 @@ splitDest (maybeDest, (Block decls ans)) = do
       where
         unreachable = error $ "Invalid dest-result pair:\n"
                         ++ pprint dest ++ "\n  and:\n" ++ pprint result
+
+    -- This lets us propagate destinations upward for table views such as this one:
+    --  (\for pari:(Fin 128) j:(Fin 128) k:(Fin 32) => tmp (pari, (j, k)))
+    adaptBijectiveTableView :: Dest -> Atom -> Maybe (Var, Dest)
+    adaptBijectiveTableView dest result = do
+      (loopBinders, block) <- gatherLoopBinders [] result
+      let resultClosure = freeVars block `envDiff` foldMap binderAsEnv loopBinders
+      case bindingsAsVars resultClosure of
+        [array] -> do
+          indices <- getBodyExpr (Var array) block
+          arrayDest <- adaptDest loopBinders indices
+          -- traceCheckM arrayDest
+          -- error $ pprint arrayDest
+          return (array, arrayDest)
+        _ -> Nothing
+      where
+        gatherLoopBinders :: [Binder] -> Atom -> Maybe ([Binder], Block)
+        gatherLoopBinders bs res = case res of
+          TabVal b (Block Empty (Atom r)) -> gatherLoopBinders (b:bs) r
+          TabVal b block                  -> Just (reverse (b:bs), block)
+          _                               -> Nothing
+
+        getBodyExpr :: Atom -> Block -> Maybe [Atom]
+        getBodyExpr array block = go [] array block
+          where
+            go :: [Atom] -> Atom -> Block -> Maybe [Atom]
+            go idxs slice (Block Empty (App slice' idx))
+              | slice == slice' = return $ reverse $ idx:idxs
+            go idxs slice (Block (Nest (Let _ (Bind newSlice) (App slice' idx)) t) e)
+              | slice == slice' = go (idx:idxs) (Var newSlice) $ Block t e
+            go _ _ _ = Nothing
+
+        -- TODO: Think hard about scoping (in both runBuilder and buildLam)!!!
+        adaptDest :: [Binder] -> [Atom] -> Maybe Dest
+        adaptDest loopBinders indices = fst <$> runBuilderT (go mempty indices) mempty
+          where
+            go :: Env Atom -> [Atom] -> BuilderT Maybe Dest
+            go env [] = do
+              let reindexDest d b = indexDest d (env ! b)
+              foldM reindexDest dest loopBinders
+            go env (idx:idxs) = do
+              lam <- buildLam (Bind $ "q":>getType idx) TabArrow \newIdx -> do
+                env' <- lift $ idxProjectionEnv idx newIdx
+                -- TODO: What about indices with dependent types?
+                case null $ env `envIntersect` env' of
+                  True  -> go (env <> env') idxs
+                  False -> lift $ Nothing  -- Non-bijective indexing!
+              return $ Con $ TabRef lam
+
+            idxProjectionEnv :: Atom -> Atom -> Maybe (Env Atom)
+            idxProjectionEnv (Var v) newIdx = Just $ v @> newIdx
+            idxProjectionEnv (PairVal l r) newIdx =
+              (<>) <$> (idxProjectionEnv l (getProjection [0] newIdx))
+                   <*> (idxProjectionEnv r (getProjection [1] newIdx))
+            idxProjectionEnv _ _ = Nothing
 
 letBoundVars :: Decl -> Env ()
 letBoundVars (Let _ b _) = b @> ()
