@@ -19,7 +19,7 @@ import Env
 import Type
 
 optimizeModule :: Module -> Module
-optimizeModule = dceModule . inlineModule . dceModule
+optimizeModule = dceModule . inlineModule . narrowEffects . dceModule
 
 -- === DCE ===
 
@@ -207,3 +207,30 @@ computeInlineHints m@(Module _ _ bindings) =
 
     noInlineFree :: HasVars a => a -> InlineHintM a
     noInlineFree a = modify (<> (fmap (const NoInline) (freeVars a))) >> return a
+
+-- === effect narrowing ===
+-- We often annotate lambdas with way more effects than they really induce
+-- and this makes those annotations much more precise (but only on `for` expressions).
+
+narrowEffects :: Module -> Module
+narrowEffects m = transformModuleAsBlock narrowBlock m
+  where
+    narrowBlock block = fst $ runSubstBuilder (traverseBlock narrowingTraversalDef block) mempty
+
+    narrowingTraversalDef :: TraversalDef SubstBuilder
+    narrowingTraversalDef = ( traverseDecl narrowingTraversalDef
+                            , traverseExpr narrowingTraversalDef
+                            , narrowAtom )
+
+    narrowAtom :: Atom -> SubstBuilder Atom
+    narrowAtom atom = case atom of
+      Lam (Abs b (arr, body)) -> do
+          b' <- mapM (traverseAtom narrowingTraversalDef) b
+          ~lam@(Lam (Abs b'' (_, body''))) <-
+            buildDepEffLam b'
+              (\x -> extendR (b'@>x) (substBuilderR arr))
+              (\x -> extendR (b'@>x) (evalBlockE narrowingTraversalDef body))
+          return $ case arr of
+            PlainArrow _ -> Lam $ Abs b'' (PlainArrow (blockEffs body''), body'')
+            _            -> lam
+      _ -> traverseAtom narrowingTraversalDef atom
