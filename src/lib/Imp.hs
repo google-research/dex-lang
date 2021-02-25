@@ -693,37 +693,71 @@ makeDataConDest (Nest b rest) = do
   return $ Nest (DataConRefBinding (Bind v) dest) rest''
 
 copyAtom :: Dest -> Atom -> ImpM ()
-copyAtom (BoxedRef b ptrPtr size body) src = do
-  -- TODO: load old ptr and free (recursively)
-  let PtrTy ptrTy = binderAnn b
-  size' <- translateBlock mempty (Nothing, size)
-  ptr <- emitAlloc ptrTy $ fromScalarAtom size'
-  body' <- impSubst (b@>toScalarAtom ptr) body
-  copyAtom body' src
-  storeAnywhere (fromScalarAtom ptrPtr) ptr
-copyAtom (DataConRef _ _ refs) (DataCon _ _ _ vals) = copyDataConArgs refs vals
-copyAtom (Con dest) src = case (dest, src) of
-  (BaseTypeRef ptr, _) -> storeAnywhere (fromScalarAtom ptr) (fromScalarAtom src)
-  (TabRef _, TabVal _ _) -> zipTabDestAtom copyAtom (Con dest) src
-  (ConRef (SumAsProd _ tag payload), DataCon _ _ con x) -> do
-    copyAtom tag (TagRepVal $ fromIntegral con)
-    zipWithM_ copyAtom (payload !! con) x
-  (ConRef (SumAsProd _ tagDest payloadDest), Con (SumAsProd _ tag payload)) -> do
-    copyAtom tagDest tag
-    unless (all null payload) $ -- optimization
-      emitSwitch (fromScalarAtom tag) $
-        zipWith (zipWithM_ copyAtom) payloadDest payload
-  (ConRef destCon, Con srcCon) -> zipWithRefConM copyAtom destCon srcCon
-  (RecordRef refs, Record vals)
-    | fmap (const ()) refs == fmap (const ()) vals -> do
-        zipWithM_ copyAtom (toList refs) (toList vals)
-  (ConRef (SumAsProd _ tag payload), Variant (NoExt types) label i x) -> do
-    let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) NE.!! i
-    copyAtom tag (TagRepVal $ fromIntegral index)
-    zipWithM_ copyAtom (payload !! index) [x]
-  _ -> error $ "Not implemented: " ++ pprint (dest, src)
-copyAtom dest src = error $ "Not a valid dest-source pair: " ++ pprint (dest, src)
+copyAtom topDest topSrc = do
+  backend <- asks impBackend
+  device  <- asks curDevice
+  let optimizedCopy =
+        if backend == LLVMCUDA && device == CPU
+          then tryParallelCopy else Nothing
+  fromMaybe (serialCopy topDest topSrc) optimizedCopy
+  where
+    serialCopy dest src = case (dest, src) of
+      (BoxedRef b ptrPtr size body, _) -> do
+        -- TODO: load old ptr and free (recursively)
+        let PtrTy ptrTy = binderAnn b
+        size' <- translateBlock mempty (Nothing, size)
+        ptr <- emitAlloc ptrTy $ fromScalarAtom size'
+        body' <- impSubst (b@>toScalarAtom ptr) body
+        serialCopy body' src
+        storeAnywhere (fromScalarAtom ptrPtr) ptr
+      (DataConRef _ _ refs, DataCon _ _ _ vals) -> copyDataConArgs refs vals
+      (Con destRefCon, _) -> case (destRefCon, src) of
+        (BaseTypeRef ptr, _) -> storeAnywhere (fromScalarAtom ptr) (fromScalarAtom src)
+        (TabRef _, TabVal _ _) -> zipTabDestAtom serialCopy dest src
+        (ConRef (SumAsProd _ tag payload), DataCon _ _ con x) -> do
+          serialCopy tag (TagRepVal $ fromIntegral con)
+          zipWithM_ serialCopy (payload !! con) x
+        (ConRef (SumAsProd _ tagDest payloadDest), Con (SumAsProd _ tag payload)) -> do
+          serialCopy tagDest tag
+          unless (all null payload) $ -- optimization
+            emitSwitch (fromScalarAtom tag) $
+              zipWith (zipWithM_ serialCopy) payloadDest payload
+        (ConRef destCon, Con srcCon) -> zipWithRefConM serialCopy destCon srcCon
+        (RecordRef refs, Record vals)
+          | fmap (const ()) refs == fmap (const ()) vals -> do
+              zipWithM_ serialCopy (toList refs) (toList vals)
+        (ConRef (SumAsProd _ tag payload), Variant (NoExt types) label i x) -> do
+          let LabeledItems ixtypes = enumerate types
+          let index = fst $ (ixtypes M.! label) NE.!! i
+          serialCopy tag (TagRepVal $ fromIntegral index)
+          zipWithM_ serialCopy (payload !! index) [x]
+        _ -> error $ "Not implemented: " ++ pprint (dest, src)
+      _ -> error $ "Not a valid dest-source pair: " ++ pprint (dest, src)
+
+    tryParallelCopy :: Maybe (ImpM ())
+    tryParallelCopy =
+      case flattenIndexSet (getType topSrc) of
+        Nothing -> Nothing
+        Just [] -> Nothing  -- No point in parallelizing a scalar store
+        Just idxTys -> do
+          let (flatIndex, indexBundleDesc) = mkBundleTy idxTys
+          return $ void $ fromBuilder $ do
+            buildForAnn ParallelFor (Bind $ "pari" :> flatIndex) \pari -> do
+              indices <- unpackBundle pari indexBundleDesc
+              dest <- foldM indexDest topDest indices
+              src  <- foldM app topSrc indices
+              emitOp $ PrimEffect dest $ MPut src  -- XXX: Not sure if this is well typed?
+
+    -- TODO: We should really be able to do parallel copies on anything that doesn't
+    -- include boxed refs. We don't need to be quite as strict as asserting that the
+    -- table ends with a base type.
+    flattenIndexSet :: Type -> Maybe [Type]
+    flattenIndexSet ty = go [] ty
+      where
+        go idxs (TabTy (Ignore n) a) = go (n:idxs) a
+        go idxs (BaseTy _) = Just $ reverse idxs
+        go _ _ = Nothing
+
 
 copyDataConArgs :: Nest DataConRefBinding -> [Atom] -> ImpM ()
 copyDataConArgs Empty [] = return ()
