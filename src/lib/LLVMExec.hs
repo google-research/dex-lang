@@ -98,12 +98,14 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
                   exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
                   unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
                   -- TODO: Free results!
-            exampleDuration <- snd <$> measureSeconds run
+            let sync = when shouldSyncCUDA $ synchronizeCUDA
+            exampleDuration <- snd <$> measureSeconds (run >> sync)
             let timeBudget = 2 -- seconds
             let benchRuns = (ceiling $ timeBudget / exampleDuration) :: Int
+            sync
             totalTime <- liftM snd $ measureSeconds $ do
               forM_ [1..benchRuns] $ const run
-              when shouldSyncCUDA $ synchronizeCUDA
+              sync
             let avgTime = totalTime / (fromIntegral benchRuns)
             return (avgTime, benchRuns, results)
           logThis logger [EvalTime avgTime (Just (benchRuns, totalTime))]
