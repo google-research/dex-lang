@@ -82,7 +82,9 @@ parallelTraverseExpr expr = case expr of
     liftM Atom $ emitRunWriter (binderNameHint b) accTy bm \ref@(Var refVar) -> do
       let RefTy h' _ = varType refVar
       modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (hName, (refVar, bm)) }
-      extendR (h @> h' <> b @> ref) $ evalBlockE parallelTrav body
+      res <- extendR (h @> h' <> b @> ref) $ evalBlockE parallelTrav body
+      modify \accEnv -> accEnv { activeAccs = activeAccs accEnv `envDiff` (b @> ()) }
+      return res
   -- TODO: Do some alias analysis. This is not fundamentally hard, but it is a little annoying.
   --       We would have to track not only the base references, but also all the aliases, along
   --       with their relationships. Then, when we emit local effects in emitLoops, we would have
