@@ -350,13 +350,13 @@ void dex_cuLaunchKernel(char* kernel_func, int64_t iters, char** args) {
 char* dex_cuMemAlloc(int64_t size) {
   if (size == 0) return nullptr;
   CUdeviceptr ptr;
-  CHECK(cuMemAlloc, &ptr, size);
+  CHECK(cuMemAllocAsync, &ptr, size, CU_STREAM_LEGACY);
   return reinterpret_cast<char*>(ptr);
 }
 
 void dex_cuMemFree(char* ptr) {
   if (!ptr) return;
-  CHECK(cuMemFree, reinterpret_cast<CUdeviceptr>(ptr));
+  CHECK(cuMemFreeAsync, reinterpret_cast<CUdeviceptr>(ptr), CU_STREAM_LEGACY);
 }
 
 void dex_synchronizeCUDA() {
