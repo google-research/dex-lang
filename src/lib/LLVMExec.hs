@@ -97,7 +97,7 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
                   let (CInt fd') = fdFD fd
                   exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
                   unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
-                  -- TODO: Free results!
+                  freeLitVals resultPtr resultTypes
             let sync = when shouldSyncCUDA $ synchronizeCUDA
             exampleDuration <- snd <$> measureSeconds (run >> sync)
             let timeBudget = 2 -- seconds
@@ -258,6 +258,9 @@ withModuleClone ctx m f = do
 loadLitVals :: Ptr () -> [BaseType] -> IO [LitVal]
 loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
+freeLitVals :: Ptr () -> [BaseType] -> IO ()
+freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+
 storeLitVals :: Ptr () -> [LitVal] -> IO ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
 
@@ -280,6 +283,25 @@ storeLitVal ptr val = case val of
   Float32Lit x -> poke (castPtr ptr) x
   PtrLit _   x -> poke (castPtr ptr) x
   _ -> error "not implemented"
+
+foreign import ccall "free_dex"
+  free_cpu :: Ptr () -> IO ()
+#ifdef DEX_CUDA
+foreign import ccall "dex_cuMemFree"
+  free_gpu :: Ptr () -> IO ()
+#else
+free_gpu :: Ptr () -> IO ()
+free_gpu = error "Compiled without GPU support!"
+#endif
+
+freeLitVal :: Ptr () -> BaseType -> IO ()
+freeLitVal litValPtr ty = case ty of
+  Scalar  _ -> return ()
+  PtrType (Heap CPU, Scalar _) -> free_cpu =<< loadPtr
+  PtrType (Heap GPU, Scalar _) -> free_gpu =<< loadPtr
+  -- TODO: Handle pointers to pointers
+  _ -> error "not implemented"
+  where loadPtr = peek (castPtr litValPtr)
 
 cellSize :: Int
 cellSize = 8
