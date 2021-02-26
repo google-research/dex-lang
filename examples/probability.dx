@@ -1,13 +1,17 @@
 
-' ## A Mini Probabilistic Programming Language 
+' # Mini-PPL for Discrete variables in Dex
 
-' This example is a Dex-style implementation of discrete probability
- monad presented in Probabilistic Functional Programming in Haskell
- MARTIN ERWIG and STEVE KOLLMANSBERGER
- (http://web.engr.oregonstate.edu/~erwig/papers/PFP_JFP06.pdf)
+' This document is an example for creating a small PPL in Dex. This is
+inspired by PPL's written for Haskell that utilize monadic
+represtations of the chain rule for representing discrete
+variables. Notably though in Dex we aim for a non-monadic style that
+primarily uses tables and autodifferentiation. 
 
 
 ' ### General Helper functions for printing
+
+' These are some general functions to make printing easier
+ throughout the document. 
 
 def join (joiner: List a) (lists:n=>(List a)) : List a =
     -- Join together lists with an intermediary joiner
@@ -22,173 +26,272 @@ instance Show (Fin a)
 instance [Show a, Show b] Show (a & b)
   show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
 
-' ### Distribution 
-
-' A distribution is a table in Dex from index to probability
-
-Prob = Float
-data Dist a =
-     AsDist (a => Prob)
-     AsSample a
+instance [Mul a, Mul b] Mul (a & b)
+     mul = \ (a, b) (a', b').  (a * a', b * b')
+     one = (one, one)
 
 
-' Set of events, assumed to be unique.
+' ## Distributions
 
+' A simple representation of a (possibly unnormalized) probability
+  table. As well as a alias for a conditional distribution.
+  Probs are defined as `data` to allow for sparse representations.
 
-def Event (a:Type) : Type = a => Bool
+data Probs a = AsProbsTable (a => Float)
+def CDist (a:Type) (c:Type): Type =  c => Probs a
 
-
-' Probability of an event occurring
-
-def (??) [Eq a] (e:Event a) (xdist:Dist a) : Prob =
-    case xdist of
-         AsDist x -> 
-             sum $ for i. select e.i x.i 0.0
-         AsSample x ->
-             select (e.x) 1.0 0.0
-
-' Uniform and weighted categorical distributions.
-
-uniform : Dist a =
-    AsDist $ for i. 1.0 / (IToF $ size a)
-
-def weighted (x : a => Float) : Dist a =
-    AsDist $ x
-
-
-
-' Main monadic operations. `just` produces a delta distribution.
-  `chain` produces a new distribution from the previous one.
-
-def just (x: a) : Dist a =
-    AsSample x
-
-def chain (xdist: Dist a) (f : a -> Dist b) : Dist b =
-    case xdist of
-         AsDist x ->
-             z = yieldState zero \ (counter) .
-               for i.
-                 ydist = f i
-                 case ydist of 
-                      AsDist y ->
-                             for j. 
-                                 (counter!j) := (get counter!j) + x.i * y.j
-                             ()
-                      AsSample j ->
-                             (counter!j) := (get counter!j) + x.i
-             AsDist z
-         AsSample x -> f x
-
-
-
-
-' Display the distribution
-
-instance [Show a] Show (Dist a)
+instance [Show a] Show (Probs a)
   show = \ d.
        case d of 
-         AsDist d2 -> 
+         AsProbsTable d2 -> 
                 join "\n" $ for i.
                    (show i <> " " <>  (concat $ for j: (Fin 50).
-                     select (((IToF (ordinal j)  + 1.0) / 50.0) < d2.i) "*" "" ))
-         AsSample d2 ->
-                  "Sample:" <> show d2
-                 
+                     select (((IToF (ordinal j)  + 1.0) / 50.0) < d2.i) "*" "" ) <> " " <> show d2.i)
 
-def sample (k:Key) (xdist: Dist a) : Dist a =
-    case  xdist of
-         AsSample x -> xdist
-         AsDist x ->
-             r:Float = rand k         
-             (_, out) = yieldState (r, 0@a) \ refs .
-                   (r_ref, idx_ref) = (fstRef refs, sndRef refs) 
-                   for t.
-                       old = get r_ref
-                       r_ref := old - x.t
-                       new = get r_ref
-                       idx_ref := select (new < 0.0 && old > 0.0) t (get idx_ref)
-             AsSample out
+' Some useful distribution constructors
+
+(true, false) = (1@(Fin 2), 0@(Fin 2))
+Binary = Fin 2
+
+def bernoulli (p: Float) : Probs Binary = AsProbsTable [1.0 - p, p]
+
+def uniform : Probs m = AsProbsTable $ for i. 1.0 / (IToF (size m))
+
+def delta (x:m) : Probs m =
+    AsProbsTable $ yieldState zero $ \ aref.
+               aref!x := 1.0
+
+' ## Operations on probabilities
 
 
+' Construct a tuple from independent random variables -  $p(a, b) = p(a) p(b)$
+
+def (,,) (adist : Probs a) (bdist : Probs b) : Probs (a & b) =
+    (AsProbsTable a) = adist
+    (AsProbsTable b) = bdist 
+    AsProbsTable for (i,j). a.i * b.j
+
+' Apply the markov rule -  $p(a) = \sum_b p(a | b) p(b)$
+
+def (<|) (cond_dist : CDist a b) (prior : Probs b) : Probs a =
+    (AsProbsTable b) = prior
+    AsProbsTable $ for j. sum for i.
+               (AsProbsTable c) = cond_dist.i
+               b.i * c.j
+
+-- ' Apply the chain rule -  $p(a, b) = p(a | b) p(b)$
+
+-- def chain (cond_dist : CDist a b) (prior : Probs b) : Probs (a & b) =
+--     (AsProbsTable b) = prior
+--     AsProbsTable $ for (j,i).
+--                (AsProbsTable c) = cond_dist.i
+--                b.i * c.j
 
 
-' Prod combines independent events
 
-def indep (xdist: Dist a) (ydist : Dist b) : Dist (a & b) =
-    chain xdist \ x.
-             chain  ydist \ y.
-                      just (x, y)
+' Observe a variable 
 
+def obs (x: b) (zdist : Probs a) (x_z : CDist b a) : Probs a =
+    (AsProbsTable z) = zdist
+    AsProbsTable $ for i.
+        (AsProbsTable x') = x_z.i
+        z.i .* x'.x
+    
 
-'Selection, normalization and empirical distributions
+' ## Random Variables
 
-def normalize (xdist: Dist a) : Dist a =
-    case xdist of
-         AsDist x ->
-                norm = sum $ for i. x.i
-                AsDist for i. x.i / norm
-         AsSample _ -> xdist
+' We consider random variables of three different forms.
+  Latent, observed, sampled.
 
-def remove (i:a) (xdist:Dist a) : Dist a =
-    case xdist of
-         AsDist x ->
-                normalize $ AsDist $ yieldState x \ xref. xref!i := 0.0
-
-def empirical (x : m => a) : Dist a =
-        normalize $ AsDist $ yieldState zero \countref.
-                  for j.
-                      countref!(x.j) := (get countref!(x.j)) + 1.0
-                  
+' 
+  * Latent variables - Sum out explicitly
+  * Observed variables - Assume observed
+  * Sampled variables - Sample out in inference
 
 
-' ### Example 1: Fun with Dice
+' For latent and sampled variables `a=>Float` should be all 1.0s.
+  This vector is used to compute marginals through autodiff.
+
+def DVar (a:Type) : Type = {latent : (a => Float) |
+                            obs : a |
+                            sample : (a=>Float & Key)}
+
+def sample (var : DVar a) (dist : Probs a) : Probs a =
+    (AsProbsTable a) = dist
+    AsProbsTable $ case var of
+         {|latent=v|} -> 
+              for i. v.i * a.i
+         {|obs=v|} ->
+              for i. select ((ordinal v) == (ordinal i)) a.i 0.0
+         {|sample=(v, key)|} ->
+              n = sum $ for i. a.i
+              q = categorical (for i. log (a.i / n)) key
+              for i. select ((ordinal q) == (ordinal i)) (v.i * a.i) 0.0
+
+
+def cond_sample (var : DVar a) (dist : CDist a b) (prior : Probs b) : Probs (a & b) =
+    (AsProbsTable p) = prior
+    AsProbsTable $ case var of
+         {|latent=v|} -> 
+              for (i, j).
+                  (AsProbsTable a) = dist.j
+                  v.i * a.i * p.j
+         {|obs=v|} ->
+               for (i, j).
+                  (AsProbsTable a) = dist.j
+                  select ((ordinal v) == (ordinal i)) (a.i * p.j) 0.0
+         {|sample=(v, key)|} ->
+               v = for j.
+                   (AsProbsTable a) = dist.j
+                   n = sum $ for i. a.i * p.j
+                   q = categorical (for i. log ((a.i * p.j) / n)) key
+                   for i. select ((ordinal q) == (ordinal i)) (v.i * a.i * p.j) 0.0
+               for (i,j). v.j.i
+
+' Helper functions because variants are annoying to write.
+
+def var : DVar a = {|latent = for i. 1.0|}
+def lat (x:a=>Float) : DVar a = {|latent = x|}
+
+
+
+' Marginalization is done by differentiating the log-evidence.
+
+def marginalize [Mul a] (f : a -> Float) : a =
+    (grad (\ x. log $ f x)) one
+
+
+' `??` is a helper function for computing the probability of an event. 
+
+def (??) (dist: Probs a) (x: a=>Bool): Float =
+    (AsProbsTable d) = dist
+    sum $ for i. d.i * select x.i 1.0 0.0
+
+
+' ## Examples 1: Sprinkers
+
+' This is the famous sprinkler problem used to demonstrate Bayes' Nets.
+  This example implements https://en.wikipedia.org/wiki/Bayesian_network
+
+
+Rain = Binary
+Sprinkler = Binary
+Wet = Binary
+               
+
+' The model is a simple bayes' net over three latent variables
+  Rain (R), Sprinkler (S), and Wet grass (G).
+
+def wet ((rain_var, sprinkler_var, wet_var):
+            (DVar Rain & DVar Sprinkler & DVar Binary)) :
+        Probs Binary =
+    -- Rain is drawn from a bernoulli
+    rain  = sample rain_var $ bernoulli 0.2
+
+    -- Sprinkler is drawn conditional on rain. It is non-Markovian.
+    sprinkler_rain = cond_sample sprinkler_var [bernoulli 0.4, bernoulli 0.01] rain
+
+    -- CPT for producing wet grass conditioned on other variables
+    trans = for (s, r). [[bernoulli 0.0, bernoulli 0.8],
+                         [bernoulli 0.9, bernoulli 0.99]].s.r
+                         
+    -- Grass is draw conditional on Rain / Sprinkler
+    sample wet_var $ trans <| sprinkler_rain
+
+
+' Case where all the variables are True. $P(G=T, S=T, R=T)$
+
+show $ wet ({|obs=true|}, {|obs=true|}, {|obs=true|})
+
+(rain, sprinkle) = marginalize (\ (v2, v3). wet (lat v2, lat v3, var) ?? [False, True])
+
+
+' Marginal probability of rain given wet grass $P(R=T | G=T)$
+
+show $ AsProbsTable rain
+
+
+' This shows that we can sample from the distribution using the same code.
+
+[k1, k2] = splitKey $ newKey 0
+
+wet ({|sample=(one, k1)|}, {|sample=(one,k2)|}, var) 
+
+
+
+' ## Example 2: Dice
+
+' Dice values as represented by Fin
 
 Faces = Fin 6
-def val (x:Faces) : Int = (ordinal x) + 1
-
-dice : Dist Faces = uniform
+def diceval (x: Faces) : Int = (ordinal x) + 1
 
 
-show dice
+def dice ((dice_vars1, dice_vars2, sum_var): (DVar Faces & DVar Faces & DVar (Fin 13))) :
+      Probs (Fin 13) =
+    dice1  = sample dice_vars1 $ uniform
+    dice2  = sample dice_vars2 $ uniform
 
-two_dice : Dist (Faces & Faces) =
-      dice `indep` dice
+    -- Sum of dice rolls as a CPT table
+    sumdice = for (i, j). delta (((diceval i) + (diceval j))@_)
 
-def total (x1 : Dist Faces) -> (x2 : Dist Faces) : Dist (Fin 12) =
-      chain (x1 `indep` x2) \(a, b). just $ ((val a) + (val b) - 1)@_
+    -- Dice are independent
+    sample sum_var $ sumdice <| (dice1 ,, dice2)
 
+' Sum of two dice
 
-show (total dice dice)
+show $ dice (var, var, var)
 
-show (total (sample (newKey 0) dice) (sample (newKey 1) dice) )
+-- Sum of two dice with one fixed.
 
-
-' Mini query language for assessing probability of events.
-
-(for (i,j). ((val i > 2) && (val j > 5))) ?? two_dice
-
-
-' ### Example 2: Monty Hall
+dice (var, {|obs= (3@_)|}, var)
 
 
-Outcome = {win:Unit | lose:Unit}
-instance Show Outcome
-  show = \ d. case d of
-       {|win=()|} -> "Win"
-       {|lose=()|} -> "Lose" 
+-- Dice values conditioned on summing to 3
+marginalize (\ (d1, d2). dice (lat d1, lat d2, {|obs=(3@_)|} ) ?? for i. True)
+
+' Sample through
+
+dice ({|sample= (one, k1)|}, {|sample=(one, k2)|}, var)
 
 
-firstChoice : Dist Outcome  =  empirical [{|win=()|}, {|lose=()|}, {|lose=()|}]
 
-def switch (x:Outcome) : Dist Outcome =
-    just $ case x of
-         {|win = ()|} -> {|lose = ()|}
-         {|lose = ()|} -> {|win = ()|}     
+' ## Example 3: HMM
+
+' Let's us easily generate arbitrary probability distributions
+
+instance [Arbitrary a] Arbitrary (Probs a)
+  arb = \k .
+      x = arb k
+      n = sum for i. abs x.i 
+      AsProbsTable for i. (abs x.i) / n
 
 
-show firstChoice
+' Very concise implementation of an HMM
 
-show $ firstChoice `chain` switch
+Z = Fin 5
+X = Fin 10
 
 
+def hmm ((hidden_vars, init_var): (m => DVar Z & DVar Z)) (x: m => X)
+        (transition : CDist Z Z) (emission: CDist X Z)
+    : Probs Z =
+
+    -- Sample an initial state
+    yieldState (sample init_var uniform) \zref .
+       for i.
+           -- Sample next state
+           z' = sample hidden_vars.i $ transition <| (get zref)
+
+           -- Factor in evidence
+           zref := obs x.i z' emission    
+
+' Compute an HMM over a simple sequence
+
+show $ hmm (for i:(Fin 5). var, var) (for i. (0@_)) (arb k1) (arb k2)
+
+' Do marginalization using a autograd (Currently doesn't work yet)
+
+-- marginalize (\ (x0, x1, x2, x3, x4). hmm [Latent x0, Latent x1, Latent x2, Latent x3, Latent x4]
+--            (for i:(Fin 5). (0@_)))
 
