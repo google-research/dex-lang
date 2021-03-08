@@ -1408,6 +1408,13 @@ def writeFile (f:FilePath) (s:String) : {IO} Unit =
 def readFile (f:FilePath) : {IO} String =
   withFile f ReadMode \stream. fread stream
 
+def hasFile (f:FilePath) : {IO} Bool =
+  stream = fopen f ReadMode
+  (MkStream stream') = stream
+  result = stream' /= nullRawPtr
+  if result then fclose stream
+  result
+
 
 '### Temporary Files
 
