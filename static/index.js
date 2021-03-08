@@ -52,6 +52,76 @@ function renderLaTeX() {
 }
 
 /**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it's helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement('ol')
+        struct.children.forEach(childStruct=>
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement('a');
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = "#"+struct.id;
+
+        var ele = document.createElement('li')
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById("navbar")
+    navbarEle.innerHTML = ""
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = "s-" + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i < currentLevel; i++) {
+                var dummy = {id: "", text: "", children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
  * HTML rendering mode.
  * Static rendering is used for static HTML pages.
  * Dynamic rendering is used for dynamic HTML pages via `dex web`.
@@ -71,6 +141,7 @@ function render(renderMode) {
     if (renderMode == RENDER_MODE.STATIC) {
         // For static pages, simply call rendering functions once.
         renderLaTeX();
+        updateNavigation();
     } else {
         // For dynamic pages (via `dex web`), listen to update events.
         var source = new EventSource("/getnext");
@@ -108,6 +179,7 @@ function render(renderMode) {
                 Object.assign(cells, new_cells);
             }
             renderLaTeX();
+            updateNavigation();
         };
     }
 }
