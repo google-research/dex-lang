@@ -1398,9 +1398,14 @@ def withFile (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
       : {IO} a =
   stream = fopen f mode
-  result = action stream
-  fclose stream
-  result
+  (MkStream stream') = stream
+  if stream' == nullRawPtr
+    then
+      error $ "Unable to open file: " <> f
+    else
+      result = action stream
+      fclose stream
+      result
 
 def writeFile (f:FilePath) (s:String) : {IO} Unit =
   withFile f WriteMode \stream. fwrite stream s
