@@ -1387,48 +1387,6 @@ def fread (stream:Stream ReadMode) : {IO} String =
           else Done ()
       loadDynBuffer buf
 
-'### File Operations
-
-def deleteFile (f:FilePath) : {IO} Unit =
-  withCString f \(MkCString ptr).
-    %ffi remove Int64 ptr
-  ()
-
-def withFile (f:FilePath) (mode:StreamMode)
-      (action: Stream mode -> {IO} a)
-      : {IO} a =
-  stream = fopen f mode
-  result = action stream
-  fclose stream
-  result
-
-def writeFile (f:FilePath) (s:String) : {IO} Unit =
-  withFile f WriteMode \stream. fwrite stream s
-
-def readFile (f:FilePath) : {IO} String =
-  withFile f ReadMode \stream. fread stream
-
-
-'### Temporary Files
-
-def newTempFile (_:Unit) : {IO} FilePath =
-  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
-    fd = %ffi mkstemp Int32 ptr
-    %ffi close Int32 fd
-    stringFromCharPtr 15 (MkPtr ptr)
-
-def withTempFile (action: FilePath -> {IO} a) : {IO} a =
-  tmpFile = newTempFile ()
-  result = action tmpFile
-  deleteFile tmpFile
-  result
-
-def withTempFiles (action: (n=>FilePath) -> {IO} a) : {IO} a =
-  tmpFiles = for i. newTempFile ()
-  result = action tmpFiles
-  for i. deleteFile tmpFiles.i
-  result
-
 '### Print
 
 def getOutputStream (_:Unit) : {IO} Stream WriteMode =
@@ -1458,6 +1416,59 @@ def error (s:String) : a = unsafeIO do
   %throwError a
 
 def todo : a = error "TODO: implement it!"
+
+'### File Operations
+
+def deleteFile (f:FilePath) : {IO} Unit =
+  withCString f \(MkCString ptr).
+    %ffi remove Int64 ptr
+  ()
+
+def withFile (f:FilePath) (mode:StreamMode)
+      (action: Stream mode -> {IO} a)
+      : {IO} a =
+  stream = fopen f mode
+  (MkStream stream') = stream
+  if stream' == nullRawPtr
+    then
+      error $ "Unable to open file: " <> f
+    else
+      result = action stream
+      fclose stream
+      result
+
+def writeFile (f:FilePath) (s:String) : {IO} Unit =
+  withFile f WriteMode \stream. fwrite stream s
+
+def readFile (f:FilePath) : {IO} String =
+  withFile f ReadMode \stream. fread stream
+
+def hasFile (f:FilePath) : {IO} Bool =
+  stream = fopen f ReadMode
+  (MkStream stream') = stream
+  result = stream' /= nullRawPtr
+  if result then fclose stream
+  result
+
+'### Temporary Files
+
+def newTempFile (_:Unit) : {IO} FilePath =
+  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
+    fd = %ffi mkstemp Int32 ptr
+    %ffi close Int32 fd
+    stringFromCharPtr 15 (MkPtr ptr)
+
+def withTempFile (action: FilePath -> {IO} a) : {IO} a =
+  tmpFile = newTempFile ()
+  result = action tmpFile
+  deleteFile tmpFile
+  result
+
+def withTempFiles (action: (n=>FilePath) -> {IO} a) : {IO} a =
+  tmpFiles = for i. newTempFile ()
+  result = action tmpFiles
+  for i. deleteFile tmpFiles.i
+  result
 
 '### Table operations
 
