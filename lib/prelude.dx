@@ -1387,40 +1387,6 @@ def fread (stream:Stream ReadMode) : {IO} String =
           else Done ()
       loadDynBuffer buf
 
-'### File Operations
-
-def deleteFile (f:FilePath) : {IO} Unit =
-  withCString f \(MkCString ptr).
-    %ffi remove Int64 ptr
-  ()
-
-def hasFile (f:FilePath) : {IO} Bool =
-  stream = fopen f ReadMode
-  (MkStream stream') = stream
-  result = stream' /= nullRawPtr
-  if result then fclose stream
-  result
-
-'### Temporary Files
-
-def newTempFile (_:Unit) : {IO} FilePath =
-  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
-    fd = %ffi mkstemp Int32 ptr
-    %ffi close Int32 fd
-    stringFromCharPtr 15 (MkPtr ptr)
-
-def withTempFile (action: FilePath -> {IO} a) : {IO} a =
-  tmpFile = newTempFile ()
-  result = action tmpFile
-  deleteFile tmpFile
-  result
-
-def withTempFiles (action: (n=>FilePath) -> {IO} a) : {IO} a =
-  tmpFiles = for i. newTempFile ()
-  result = action tmpFiles
-  for i. deleteFile tmpFiles.i
-  result
-
 '### Print
 
 def getOutputStream (_:Unit) : {IO} Stream WriteMode =
@@ -1451,7 +1417,12 @@ def error (s:String) : a = unsafeIO do
 
 def todo : a = error "TODO: implement it!"
 
-'### File read/write
+'### File Operations
+
+def deleteFile (f:FilePath) : {IO} Unit =
+  withCString f \(MkCString ptr).
+    %ffi remove Int64 ptr
+  ()
 
 def withFile (f:FilePath) (mode:StreamMode)
       (action: Stream mode -> {IO} a)
@@ -1471,6 +1442,33 @@ def writeFile (f:FilePath) (s:String) : {IO} Unit =
 
 def readFile (f:FilePath) : {IO} String =
   withFile f ReadMode \stream. fread stream
+
+def hasFile (f:FilePath) : {IO} Bool =
+  stream = fopen f ReadMode
+  (MkStream stream') = stream
+  result = stream' /= nullRawPtr
+  if result then fclose stream
+  result
+
+'### Temporary Files
+
+def newTempFile (_:Unit) : {IO} FilePath =
+  withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
+    fd = %ffi mkstemp Int32 ptr
+    %ffi close Int32 fd
+    stringFromCharPtr 15 (MkPtr ptr)
+
+def withTempFile (action: FilePath -> {IO} a) : {IO} a =
+  tmpFile = newTempFile ()
+  result = action tmpFile
+  deleteFile tmpFile
+  result
+
+def withTempFiles (action: (n=>FilePath) -> {IO} a) : {IO} a =
+  tmpFiles = for i. newTempFile ()
+  result = action tmpFiles
+  for i. deleteFile tmpFiles.i
+  result
 
 '### Table operations
 
