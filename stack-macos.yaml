@@ -10,8 +10,8 @@ packages:
 - .
 
 extra-deps:
-  - github: apaszke/llvm-hs
-    commit: a9a74be1a7c15f3d21b2fffd35a425002ae7736f
+  - github: junjihashimoto/llvm-hs
+    commit: 7bf182ba66c1622779f7f0c424f13c07a06bf55a
     subdirs:
       - llvm-hs
       - llvm-hs-pure

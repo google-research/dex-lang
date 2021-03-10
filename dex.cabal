@@ -1,4 +1,4 @@
-cabal-version:       2.2
+cabal-version:       3.0
 
 -- Copyright 2019 Google LLC
 --
@@ -34,7 +34,7 @@ library dex-resources
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, Imp.Builder, Imp.Optimize,
-                       PPrint, Algebra, Parallelize, Optimize, Serialize
+                       PPrint, Algebra, Parallelize, Optimize, Serialize,
                        Actor, Builder, Cat, Export,
                        RenderHtml, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
