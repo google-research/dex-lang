@@ -48,10 +48,10 @@ jobs:
       run: make docs
 
     - name: Deploy to GitHub Pages
-      uses: "JamesIves/github-pages-deploy-action@3.7.1"
+      uses: "JamesIves/github-pages-deploy-action@3dbacc7e69578703f91f077118b3475862cb09b8" # 4.1.0
       with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: gh-pages # The branch the action should deploy to.
-          FOLDER: doc      # The folder the action should deploy.
-          CLEAN: false     # If true, automatically remove deleted files from the deploy branch.
-          COMMIT_MESSAGE: Updating gh-pages from ${{ github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: gh-pages # The branch the action should deploy to.
+          folder: doc      # The folder the action should deploy.
+          clean: false     # If true, automatically remove deleted files from the deploy branch.
+          commit-message: Updating gh-pages from ${{ github.sha }}
