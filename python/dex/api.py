@@ -7,11 +7,10 @@
 import ctypes
 import pathlib
 import atexit
+from pkg_resources import resource_filename
 from typing import List
 
-here = pathlib.Path(__file__).parent.absolute()
-
-lib = ctypes.cdll.LoadLibrary(here / 'libDex.so')
+lib = ctypes.cdll.LoadLibrary(resource_filename('dex', 'libDex.so'))
 
 def tagged_union(name: str, members: List[type]):
   named_members = [(f"t{i}", member) for i, member in enumerate(members)]

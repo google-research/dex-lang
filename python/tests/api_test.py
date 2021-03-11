@@ -9,11 +9,6 @@ import ctypes
 import numpy as np
 from textwrap import dedent
 
-# TODO: Write a proper setup.py instead of using this hack...
-from pathlib import Path
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-
 import dex
 
 def test_eval():
