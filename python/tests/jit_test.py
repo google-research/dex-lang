@@ -10,11 +10,6 @@ import numpy as np
 import itertools as it
 from textwrap import dedent
 
-# TODO: Write a proper setup.py instead of using this hack...
-from pathlib import Path
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-
 import dex
 
 example_floats = list(map(np.float32, (-1.0, -0.5, 0.0, 0.5, 1.0)))
