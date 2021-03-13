@@ -398,7 +398,7 @@ toImpHof env (maybeDest, hof) = do
     For ParallelFor ~fbody@(LamVal b _) -> do
       idxTy <- impSubst env $ binderType b
       dest <- allocDest maybeDest resultTy
-      buildKernel idxTy \LaunchInfo{..} buildBody -> do
+      buildKernel idxTy \LaunchInfo{} buildBody -> do
         liftM (,()) $ buildBody \ThreadInfo{..} -> do
           let threadBody = fst $ flip runSubstBuilder (freeVars fbody) $
                 buildLam (Bind $ "hwidx" :> threadRange) PureArrow \hwidx ->

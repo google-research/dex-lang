@@ -120,8 +120,8 @@ compileModule moduleJIT@JIT{..} ast compilationPipeline = do
             LLVM.AST.GlobalDefinition
               LLVM.AST.GlobalVariable{
                 name="llvm.global_dtors",
-                initializer=Just (C.Array _ elems),
-                ..} -> elems
+                initializer=Just (C.Array _ elems)
+                } -> elems
             _ -> []
       -- Sort in the order of decreasing priority!
       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $

@@ -7,6 +7,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 import System.Console.Haskeline
+import Control.Monad.Catch
 import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
@@ -102,7 +103,7 @@ liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
 liftErrIO (Right x) = return x
 
-readMultiline :: (MonadException m, MonadIO m) =>
+readMultiline :: (MonadMask m, MonadIO m) =>
                    String -> (String -> Maybe a) -> InputT m a
 readMultiline prompt parse = loop prompt ""
   where
