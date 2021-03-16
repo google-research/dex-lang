@@ -78,6 +78,9 @@ build-python: dexrt-llvm
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
 
+build-nolive: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --flag dex:-live
+
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp

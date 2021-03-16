@@ -23,6 +23,10 @@ flag optimized
   description:         Enables GHC optimizations
   default:             False
 
+flag live
+  description:         Enables live-editing environments (web notebook and terminal)
+  default:             True
+
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
@@ -35,10 +39,13 @@ library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, Imp.Builder, Imp.Optimize,
                        PPrint, Algebra, Parallelize, Optimize, Serialize
-                       Actor, Builder, Cat, Export,
-                       RenderHtml, LiveOutput, Simplify, TopLevel,
+                       Builder, Cat, Export,
+                       Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims
+  if flag(live)
+    exposed-modules:   Actor, RenderHtml, LiveOutput
+  other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs,
                        -- Parsing
@@ -48,10 +55,11 @@ library
                        -- Portable system utilities
                        filepath, directory, ansi-terminal, process, temporary,
                        -- Serialization
-                       store,
+                       store, aeson
+  if flag(live)
                        -- Notebook support
-                       warp, wai, blaze-html, aeson, http-types, cmark, binary
-  other-modules:       Paths_dex
+    build-depends:     warp, wai, blaze-html, http-types, cmark, binary
+    cpp-options:       -DDEX_LIVE
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources

@@ -20,23 +20,31 @@ import Data.List
 
 import Syntax
 import PPrint
-import RenderHtml
 import Serialize
 import Resources
-
 import TopLevel
 import Parser  hiding (Parser)
-import LiveOutput
 import Env (envNames)
 import Export
+#ifdef DEX_LIVE
+import RenderHtml
+import LiveOutput
+#endif
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
-data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
+data DocFmt = ResultOnly
+            | TextDoc
+            | JSONDoc
+#ifdef DEX_LIVE
+            | HTMLDoc
+#endif
 data EvalMode = ReplMode String
+              | ScriptMode FilePath DocFmt ErrorHandling
+              | ExportMode FilePath FilePath -- Dex path, .o path
+#ifdef DEX_LIVE
               | WebMode    FilePath
               | WatchMode  FilePath
-              | ExportMode FilePath FilePath -- Dex path, .o path
-              | ScriptMode FilePath DocFmt ErrorHandling
+#endif
 
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
@@ -55,10 +63,6 @@ runMode evalMode preludeFile opts = do
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile opts fname
       printLitProg fmt results
-    -- These are broken if the prelude produces any arrays because the blockId
-    -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> runWeb      fname opts env
-    WatchMode  fname -> runTerminal fname opts env
     ExportMode dexPath objPath -> do
       results <- fmap snd <$> runEnv (evalFile opts dexPath)
       let outputs = foldMap (\(Result outs _) -> outs) results
@@ -68,6 +72,12 @@ runMode evalMode preludeFile opts = do
       unless (backendName opts == LLVM) $ liftEitherIO $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
       exportFunctions objPath exportedFuns $ topBindings env
+#ifdef DEX_LIVE
+    -- These are broken if the prelude produces any arrays because the blockId
+    -- counter restarts at zero. TODO: make prelude an implicit import block
+    WebMode    fname -> runWeb      fname opts env
+    WatchMode  fname -> runTerminal fname opts env
+#endif
 
 evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
 evalPrelude opts fname = flip execStateT initTopEnv $ do
@@ -121,7 +131,9 @@ simpleInfo p = info (p <**> helper) mempty
 
 printLitProg :: DocFmt -> LitProg -> IO ()
 printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
+#ifdef DEX_LIVE
 printLitProg HTMLDoc prog = putStr $ progHtml prog
+#endif
 printLitProg TextDoc prog = do
   isatty <- queryTerminal stdOutput
   putStr $ foldMap (uncurry (printLitBlock isatty)) prog
@@ -149,14 +161,18 @@ parseMode = subparser $
      command "repl" (simpleInfo
          (ReplMode <$> strOption (long "prompt" <> value ">=> "
                          <> metavar "STRING" <> help "REPL prompt")))
+#ifdef DEX_LIVE
   <> command "web"    (simpleInfo (WebMode    <$> sourceFileInfo))
   <> command "watch"  (simpleInfo (WatchMode  <$> sourceFileInfo))
+#endif
   <> command "export" (simpleInfo (ExportMode <$> sourceFileInfo <*> objectFileInfo))
   <> command "script" (simpleInfo (ScriptMode <$> sourceFileInfo
   <*> option
         (optionList [ ("literate"   , TextDoc)
                     , ("result-only", ResultOnly)
+#ifdef DEX_LIVE
                     , ("html"       , HTMLDoc)
+#endif
                     , ("json"       , JSONDoc)])
         (long "outfmt" <> value TextDoc <>
          helpOption "Output format" "literate (default) | result-only | html | json")
