@@ -47,6 +47,10 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
+ifeq (1,$(LLVM_HEAD))
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
+endif
+
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
 

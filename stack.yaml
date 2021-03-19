@@ -4,17 +4,19 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-resolver: lts-16.26
+resolver: lts-16.31
 
 packages:
 - .
 
 extra-deps:
-  - github: apaszke/llvm-hs
-    commit: a9a74be1a7c15f3d21b2fffd35a425002ae7736f
-    subdirs:
-      - llvm-hs
-      - llvm-hs-pure
+  #- github: dan-zheng/llvm-hs
+    #commit: 15afd0cea13c628ddd498338db86d6a77df84bda
+    #subdirs:
+      #- llvm-hs
+      #- llvm-hs-pure
+  - ../llvm-hs/llvm-hs
+  - ../llvm-hs/llvm-hs-pure
   - megaparsec-8.0.0
   - prettyprinter-1.6.2
   - store-0.7.8@sha256:0b604101fd5053b6d7d56a4ef4c2addf97f4e08fe8cd06b87ef86f958afef3ae,8001
