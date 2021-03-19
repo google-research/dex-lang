@@ -27,6 +27,10 @@ flag live
   description:         Enables live-editing environments (web notebook and terminal)
   default:             True
 
+flag llvm-head
+  description:         Use the bleeding-edge version of LLVM
+  default:             False
+
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
@@ -84,6 +88,12 @@ library
     ghc-options:       -O3
   else
     ghc-options:       -O0
+  if flag(llvm-head)
+    cpp-options:       -DDEX_LLVM_VERSION=HEAD
+    exposed-modules:   LLVM.HEAD.JIT
+  else
+    cpp-options:       -DDEX_LLVM_VERSION=9
+    exposed-modules:   LLVM.V9.JIT, LLVM.V9.Shims
 
 executable dex
   main-is:             dex.hs

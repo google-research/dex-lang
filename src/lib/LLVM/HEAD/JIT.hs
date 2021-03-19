@@ -1,0 +1,114 @@
+-- Copyright 2021 Google LLC
+--
+-- Use of this source code is governed by a BSD-style
+-- license that can be found in the LICENSE file or at
+-- https://developers.google.com/open-source/licenses/bsd
+
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+-- NOTE: Use LLVM.JIT instead of this version-specific module!
+module LLVM.HEAD.JIT where
+
+import Control.Monad
+import Control.Exception
+import Foreign.Ptr
+import Data.IORef
+import Data.String
+import Data.List (sortBy)
+import qualified Data.ByteString.Char8 as C8BS
+import qualified Data.ByteString.Short as SBS
+
+import qualified LLVM.OrcJIT as OrcJIT
+import qualified LLVM.Target as T
+
+import qualified LLVM.AST
+import qualified LLVM.AST.Global as LLVM.AST
+import qualified LLVM.AST.Constant as C
+import qualified LLVM.Module as LLVM
+import qualified LLVM.Context as LLVM
+
+data JIT =
+    JIT { session      :: OrcJIT.ExecutionSession
+        , objectLayer  :: OrcJIT.RTDyldObjectLinkingLayer
+        , compileLayer :: OrcJIT.IRCompileLayer
+        , nextDylibId  :: IORef Int
+        }
+
+-- XXX: The target machine cannot be destroyed before JIT is destroyed
+createJIT :: T.TargetMachine -> IO JIT
+createJIT tm = do
+  session      <- OrcJIT.createExecutionSession
+  objectLayer  <- OrcJIT.createRTDyldObjectLinkingLayer session
+  compileLayer <- OrcJIT.createIRCompileLayer session objectLayer tm
+  nextDylibId  <- newIORef 0
+  return JIT{..}
+
+destroyJIT :: JIT -> IO ()
+destroyJIT JIT{..} =
+  OrcJIT.disposeExecutionSession session
+
+withJIT :: T.TargetMachine -> (JIT -> IO a) -> IO a
+withJIT tm = bracket (createJIT tm) destroyJIT
+
+data NativeModule =
+  NativeModule { moduleJIT      :: JIT
+               , moduleDylib    :: OrcJIT.JITDylib
+               , moduleDtors    :: [FunPtr (IO ())]
+               }
+
+type CompilationPipeline = LLVM.Module -> IO ()
+
+-- TODO: This leaks resources if we fail halfway
+compileModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> IO NativeModule
+compileModule moduleJIT@JIT{..} ast compilationPipeline = do
+  tsModule <- LLVM.withContext \c ->
+    LLVM.withModuleFromAST c ast \m -> do
+      compilationPipeline m
+      OrcJIT.cloneAsThreadSafeModule m
+
+  dylibId <- readIORef nextDylibId <* modifyIORef' nextDylibId (+1)
+  moduleDylib <- OrcJIT.createJITDylib session $ fromString $ "module" ++ show dylibId
+  OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer moduleDylib
+  OrcJIT.addModule tsModule moduleDylib compileLayer
+
+  moduleDtors <- forM dtorNames \dtorName -> do
+    Right (OrcJIT.JITSymbol dtorAddr _) <-
+      OrcJIT.lookupSymbol session compileLayer moduleDylib $ fromString dtorName
+    return $ castPtrToFunPtr $ wordPtrToPtr dtorAddr
+  return NativeModule{..}
+  where
+    -- Unfortunately the JIT layers we use here don't handle the destructors properly,
+    -- so we have to find and call them ourselves.
+    dtorNames = do
+      let dtorStructs = flip foldMap (LLVM.AST.moduleDefinitions ast) \case
+            LLVM.AST.GlobalDefinition
+              LLVM.AST.GlobalVariable{
+                name="llvm.global_dtors",
+                initializer=Just (C.Array _ elems),
+                ..} -> elems
+            _ -> []
+      -- Sort in the order of decreasing priority!
+      fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
+        \(C.Struct _ _ [C.Int _ n, C.GlobalReference _ (LLVM.AST.Name dname), _]) ->
+          (n, C8BS.unpack $ SBS.fromShort dname)
+
+foreign import ccall "dynamic"
+  callDtor :: FunPtr (IO ()) -> IO ()
+
+-- TODO: This might not release everything if it fails halfway
+unloadNativeModule :: NativeModule -> IO ()
+unloadNativeModule NativeModule{..} = do
+  -- TODO: Clear the dylib
+  forM_ moduleDtors callDtor
+
+withNativeModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
+withNativeModule jit m p = bracket (compileModule jit m p) unloadNativeModule
+
+getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
+getFunctionPtr NativeModule{..} funcName = do
+  let JIT{..} = moduleJIT
+  Right (OrcJIT.JITSymbol funcAddr _) <-
+    OrcJIT.lookupSymbol session compileLayer moduleDylib (fromString funcName)
+  return $ castPtrToFunPtr $ wordPtrToPtr funcAddr

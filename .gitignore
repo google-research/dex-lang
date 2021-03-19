@@ -5,10 +5,11 @@ test.db
 test-script.cd
 *.out
 *.so
+*.egg-info
 .stack-work
 .stack-work-prof
 garbage.hs
-stack.yaml.lock
+*.lock
 *.pyc
 doc/
 scratch*
