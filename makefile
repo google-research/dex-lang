@@ -47,6 +47,14 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
+ifeq (1,$(LLVM_HEAD))
+ifeq ($(PLATFORM),Darwin)
+	$(error LLVM head builds not supported on macOS!)
+endif
+STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
+STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
+endif
+
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
 
@@ -72,7 +80,7 @@ build-prof: dexrt-llvm
 # For some reason stack fails to detect modifications to foreign library files
 build-python: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty
-	$(eval STACK_INSTALL_DIR=$(shell stack $(STACK_FLAGS) path --local-install-root))
+	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
 
 build-ci: dexrt-llvm
