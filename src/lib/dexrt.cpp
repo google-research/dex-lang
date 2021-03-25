@@ -4,18 +4,17 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-#include <cfloat>
 #include <cinttypes>
 #include <cstdio>
-#include <cstdint>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <vector>
 
+#ifdef DEX_LIVE
 #include <png.h>
-#include <cstring>
-#include <fstream>
+#endif // DEX_LIVE
 
 #ifdef DEX_CUDA
 #include <cuda.h>
@@ -203,26 +202,32 @@ void doubleVec(char **resultPtr, int32_t n, float* xs) {
 }
 
 void encodePNG(char **resultPtr, int8_t* pixels, int32_t width, int32_t height) {
-    png_image img;
-    memset(&img, 0, sizeof(img));
-    img.version = PNG_IMAGE_VERSION;
-    img.opaque = NULL;
-    img.width = width;
-    img.height = height;
-    img.format = PNG_FORMAT_RGB;
-    img.flags = 0;
-    img.colormap_entries = 0;
+  auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
+  auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
+#ifdef DEX_LIVE
+  png_image img;
+  memset(&img, 0, sizeof(img));
+  img.version = PNG_IMAGE_VERSION;
+  img.opaque = NULL;
+  img.width = width;
+  img.height = height;
+  img.format = PNG_FORMAT_RGB;
+  img.flags = 0;
+  img.colormap_entries = 0;
 
-    const int num_pixels = width * height;
-    png_alloc_size_t num_bytes = 0;
-    png_image_write_to_memory(&img, NULL, &num_bytes, 0, (void*)pixels, 0, NULL);
-    void* out_buffer = malloc(num_bytes);
-    png_image_write_to_memory(&img, out_buffer, &num_bytes, 0, (void*)pixels, 0, NULL);
+  const int num_pixels = width * height;
+  png_alloc_size_t num_bytes = 0;
+  png_image_write_to_memory(&img, NULL, &num_bytes, 0, (void*)pixels, 0, NULL);
+  void* out_buffer = malloc_dex(num_bytes);
+  png_image_write_to_memory(&img, out_buffer, &num_bytes, 0, (void*)pixels, 0, NULL);
 
-    auto result1Ptr = reinterpret_cast<int32_t*>(resultPtr[0]);
-    auto result2Ptr = reinterpret_cast<void**>(  resultPtr[1]);
-    *result1Ptr = num_bytes;
-    *result2Ptr = out_buffer;
+  *result1Ptr = num_bytes;
+  *result2Ptr = out_buffer;
+#else
+  // It would be better to return a dummy empty PNG file, but this will have to do for now.
+  *result1Ptr = 0;
+  *result2Ptr = nullptr;
+#endif // DEX_LIVE
 }
 
 // The string buffer size used for converting integer and floating-point types.
