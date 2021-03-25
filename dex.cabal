@@ -14,6 +14,9 @@ license-file:        LICENSE
 build-type:          Simple
 
 data-files:          lib/*.dx
+extra-source-files:  lib/*.dx,
+                     src/lib/dexrt.bc,
+                     static/index.js, static/style.css
 
 flag cuda
   description:         Enables building with CUDA support
@@ -64,6 +67,7 @@ library
                        -- Notebook support
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE
+    cxx-options:       -DDEX_LIVE
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources
