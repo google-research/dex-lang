@@ -346,6 +346,9 @@ linkDexrt m = do
 
 data LLVMKernel = LLVMKernel L.Module
 
+cudaPath :: IO String
+cudaPath = maybe "/usr/local/cuda" id <$> lookupEnv "CUDA_PATH"
+
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) = do
   T.initializeAllTargets
@@ -358,6 +361,7 @@ compileCUDAKernel logger (LLVMKernel ast) = do
         usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
           then do
+            ptxasPath <- (++"/bin/ptxas") <$> cudaPath
             withSystemTempFile "kernel.ptx" \ptxPath ptxH -> do
               B.hPut ptxH ptx
               hClose ptxH
@@ -372,14 +376,13 @@ compileCUDAKernel logger (LLVMKernel ast) = do
                 CUDAKernel <$> B.hGetContents sassH
           else return $ CUDAKernel ptx
   where
-    ptxasPath = "/usr/local/cuda/bin/ptxas"
     arch = "sm_60"
 
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module
 libdevice = unsafePerformIO $ do
   withContext \ctx -> do
-    let libdeviceDirectory = "/usr/local/cuda/nvvm/libdevice"
+    libdeviceDirectory <- (flip (++) $ "/nvvm/libdevice") <$> cudaPath
     [libdeviceFileName] <- listDirectory libdeviceDirectory
     let libdevicePath = libdeviceDirectory ++ "/" ++ libdeviceFileName
     libdeviceBC <- B.readFile libdevicePath
