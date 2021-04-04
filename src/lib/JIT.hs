@@ -40,6 +40,7 @@ import GHC.Stack
 import qualified Data.Set as S
 import qualified Data.Text as T
 
+import CUDA (getCudaArchitecture)
 import Syntax
 import Env
 import PPrint
@@ -121,7 +122,8 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
-    (CUDAKernel kernelText) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
+    arch <- getCudaArchitecture 0
+    (CUDAKernel kernelText) <- compileCUDAKernel logger (impKernelToLLVMGPU fun) arch
     let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) (B.unpack kernelText) ++ [0]
     let textArr = C.Array i8 chars
     let textArrTy = L.typeOf textArr
