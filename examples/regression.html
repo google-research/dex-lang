@@ -1,17 +1,50 @@
 <!DOCTYPE HTML>
-<html><head><style type="text/css">/* Copyright 2019 Google LLC                              */
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
 /*                                                        */
 /* Use of this source code is governed by a BSD-style     */
 /* license that can be found in the LICENSE file or at    */
 /* https://developers.google.com/open-source/licenses/bsd */
 
 body {
-  margin: 1em auto 1em auto;
-  padding: 1em 1em 1em 1em;
-  max-width: 50em;
   font-family: Helvetica, sans-serif;
   font-size: 100%;
   color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+main {
+  max-width: var(--main-width);
 }
 
 .cell {
@@ -73,7 +106,192 @@ code {
 .iso-sugar {
   color: #25BBA7;
 }
-</style><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Basis function regression</h1>
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but ð¤·
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Basis function regression</h1>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Conjugate gradients solver
@@ -104,7 +322,7 @@ code {
 </div></div><div class="cell"><div class="code-block">ys <span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> trueFun xs<span class="symbol">.</span>i <span class="symbol">+</span> noise <span class="symbol">*</span> randn (ixkey k2 i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showPlot <span class="symbol">$</span> xyPlot xs ys
-</div><svg width="400" height="400" viewBox="0 -400 400 400"><g stroke="#000000" fill="none" stroke-width="1"><rect width="400"height="400"x="0"y="-400"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="157.230927"cy="-395.090302"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="291.67981"cy="-117.800835"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="40.3707199"cy="-167.602859"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="144.222061"cy="-390.36792"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="147.916153"cy="-333.076752"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="140.446884"cy="-366.735687"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="180.48938"cy="-326.534821"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="277.812897"cy="-138.288223"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="138.16011"cy="-363.42865"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="33.594532"cy="-160.998901"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="88.410614"cy="-312.396057"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="184.525116"cy="-340.66449"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="135.243088"cy="-393.328247"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="382.116638"cy="-40.6732559"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="186.016266"cy="-326.771149"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="50.6708336"cy="-182.070847"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="335.75412"cy="-18.402668"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="217.925476"cy="-273.196594"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="35.7698936"cy="-199.202179"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="159.304993"cy="-371.601044"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="338.88623"cy="-77.2339935"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="30.0971508"cy="-126.266708"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="280.505402"cy="-131.275955"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="131.341797"cy="-371.615173"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="365.542023"cy="-6.34013653"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="55.0494194"cy="-218.670517"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="97.1611252"cy="-327.340332"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="89.6414185"cy="-323.679169"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="328.67746"cy="-40.0136719"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="87.8798294"cy="-330.644348"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="144.38092"cy="-371.345825"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="387.127167"cy="-0"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="70.404007"cy="-260.989929"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="137.64743"cy="-383.356873"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="0"cy="-45.7801819"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="58.3276939"cy="-270.387756"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="153.435455"cy="-370.400269"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="231.096893"cy="-223.574921"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="106.697502"cy="-359.408813"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="266.762543"cy="-170.62355"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="297.920105"cy="-117.403778"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="229.735687"cy="-280.681763"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="219.792221"cy="-289.343262"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="98.0382919"cy="-322.026733"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="68.6723328"cy="-294.044037"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="300.532166"cy="-54.3011246"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="42.4374504"cy="-184.424561"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="203.516602"cy="-299.55957"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="261.17099"cy="-192.518204"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="59.9777756"cy="-221.788864"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="333.537598"cy="-12.8509741"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="82.6032486"cy="-286.895996"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="247.847961"cy="-255.595612"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="279.022003"cy="-127.471901"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="93.9025497"cy="-318.057922"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="207.878204"cy="-318.071136"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="226.490616"cy="-227.27916"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="313.067963"cy="-42.6364365"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="357.353699"cy="-31.5381699"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="277.686035"cy="-144.322632"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="137.784821"cy="-362.33963"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="121.760284"cy="-371.221283"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="273.687347"cy="-146.727036"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="398.190674"cy="-3.17610121"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="168.919342"cy="-358.548737"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="202.479843"cy="-294.639587"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="313.397064"cy="-78.0353165"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="139.862488"cy="-395.200745"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="56.2012749"cy="-220.067337"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="146.150085"cy="-399.999969"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="60.8696632"cy="-288.686981"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="299.180389"cy="-68.0047302"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="400"cy="-16.4585857"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="70.7724304"cy="-281.912262"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="205.085846"cy="-315.997314"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="297.687927"cy="-117.161346"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="167.859741"cy="-317.300354"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="100.375237"cy="-365.878021"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="367.193115"cy="-16.0984344"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="236.680344"cy="-229.91922"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="313.584534"cy="-76.099617"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="134.981888"cy="-340.79248"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="135.009583"cy="-366.531006"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="375.779236"cy="-23.0558014"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="249.141739"cy="-201.958496"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="279.883087"cy="-95.961586"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="212.728073"cy="-310.545471"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="163.623703"cy="-391.578674"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="78.8204269"cy="-311.861359"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="174.647476"cy="-344.46402"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="176.521225"cy="-339.375244"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="346.41745"cy="-41.8555489"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="196.71106"cy="-297.153564"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="348.981415"cy="-63.9676514"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="27.0031338"cy="-114.691078"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="120.757584"cy="-378.061798"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="74.4344406"cy="-292.152588"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="107.397758"cy="-301.358032"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="344.501953"cy="-8.07253551"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="279.985962"cy="-136.671967"r="1"/></g></svg></div><div class="cell"><div class="code-block">
+</div><svg width="400" height="400" viewBox="0 -400 400 400"><g stroke="#000000" fill="none" stroke-width="1"><rect width="400"height="400"x="0"y="-400"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="157.230927"cy="-395.090302"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="291.67981"cy="-117.800835"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="40.3707199"cy="-167.602875"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="144.222061"cy="-390.36792"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="147.916153"cy="-333.076752"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="140.446884"cy="-366.735687"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="180.48938"cy="-326.534821"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="277.812897"cy="-138.288223"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="138.16011"cy="-363.42865"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="33.594532"cy="-160.998901"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="88.410614"cy="-312.396057"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="184.525116"cy="-340.66449"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="135.243088"cy="-393.328247"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="382.116638"cy="-40.6732559"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="186.016266"cy="-326.771149"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="50.6708336"cy="-182.070847"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="335.75412"cy="-18.402668"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="217.925476"cy="-273.196594"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="35.7698936"cy="-199.202179"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="159.304993"cy="-371.601044"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="338.88623"cy="-77.2339935"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="30.0971508"cy="-126.266708"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="280.505402"cy="-131.275955"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="131.341797"cy="-371.615173"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="365.542023"cy="-6.34013653"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="55.0494194"cy="-218.670517"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="97.1611252"cy="-327.340332"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="89.6414185"cy="-323.679169"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="328.67746"cy="-40.0136719"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="87.8798294"cy="-330.644348"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="144.38092"cy="-371.345825"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="387.127167"cy="-0"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="70.404007"cy="-260.989929"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="137.64743"cy="-383.356873"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="0"cy="-45.7801819"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="58.3276939"cy="-270.387756"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="153.435455"cy="-370.400269"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="231.096893"cy="-223.574921"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="106.697502"cy="-359.408813"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="266.762543"cy="-170.62355"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="297.920105"cy="-117.403778"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="229.735687"cy="-280.681763"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="219.792221"cy="-289.343262"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="98.0382919"cy="-322.026733"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="68.6723328"cy="-294.044037"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="300.532166"cy="-54.3011246"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="42.4374504"cy="-184.424561"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="203.516602"cy="-299.55957"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="261.17099"cy="-192.518204"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="59.9777756"cy="-221.788864"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="333.537598"cy="-12.8509741"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="82.6032486"cy="-286.895996"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="247.847961"cy="-255.595612"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="279.022003"cy="-127.471901"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="93.9025497"cy="-318.057922"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="207.878204"cy="-318.071136"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="226.490616"cy="-227.27916"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="313.067963"cy="-42.6364365"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="357.353699"cy="-31.5381699"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="277.686035"cy="-144.322632"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="137.784821"cy="-362.33963"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="121.760284"cy="-371.221283"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="273.687347"cy="-146.727036"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="398.190674"cy="-3.17610121"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="168.919342"cy="-358.548737"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="202.479843"cy="-294.639587"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="313.397064"cy="-78.0353165"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="139.862488"cy="-395.200745"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="56.2012749"cy="-220.067337"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="146.150085"cy="-399.999969"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="60.8696632"cy="-288.686981"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="299.180389"cy="-68.0047302"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="400"cy="-16.4585857"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="70.7724304"cy="-281.912262"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="205.085846"cy="-315.997314"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="297.687927"cy="-117.161346"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="167.859741"cy="-317.300354"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="100.375237"cy="-365.878021"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="367.193115"cy="-16.0984344"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="236.680344"cy="-229.91922"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="313.584534"cy="-76.099617"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="134.981888"cy="-340.79248"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="135.009583"cy="-366.531006"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="375.779236"cy="-23.0558014"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="249.141739"cy="-201.958496"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="279.883087"cy="-95.961586"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="212.728073"cy="-310.545471"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="163.623703"cy="-391.578674"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="78.8204269"cy="-311.861359"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="174.647476"cy="-344.46402"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="176.521225"cy="-339.375244"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="346.41745"cy="-41.8555489"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="196.71106"cy="-297.153564"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="348.981415"cy="-63.9676514"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="27.0031338"cy="-114.691078"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="120.757584"cy="-378.061798"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="74.4344406"cy="-292.152588"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="107.397758"cy="-301.358032"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="344.501953"cy="-8.07253551"r="1"/></g><g stroke="#007FFF" fill="#007FFF" stroke-width="1"><circle cx="279.985962"cy="-136.671967"r="1"/></g></svg></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Implement basis function regression</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> regress (featurize<span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (xRaw<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> d<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
   x <span class="symbol">=</span> map featurize xRaw

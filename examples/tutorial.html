@@ -1,0 +1,947 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+main {
+  max-width: var(--main-width);
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but ð¤·
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Introduction to Dex</h1>
+</div></div><div class="cell"><div class="prose-block"><p>Dex is a functional, statically typed language for array
+processing. There are many tools for array processing, from
+high-level libraries like NumPy and MATLAB to low-level languages
+like CUDA. Dex is a new approach for high-level array processing
+that aims for the clarity of high-level libraries while allowing for
+more granular expressivity. In particular, Dex does not force you to
+rewrite all operations in terms of batched tensor interactions, but
+allows for a range of interactions. Put more simply, when learning
+MATLAB students are told repeatedly to &quot;avoid for loops&quot;. <em>Dex gives
+for loops back</em>.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Table comprehensions</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Let us begin with the most useful component of Dex, the <code>for</code>
+builder. The best analogy for this construct is list comprehensions
+in Python. For instance, in Python, we might write a list
+comprehension like:</p>
+</div></div><div class="cell"><div class="prose-block"><p><code>x = [[1.0 for j in range(width)] for i in range(height)]</code></p>
+</div></div><div class="cell"><div class="prose-block"><p>In Dex, this construct would be written as:</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Height</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Width</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 8
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span><span class="type-name">Width</span><span class="symbol">.</span> 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Once we have a variable, we can print it.</p>
+</div></div><div class="cell"><div class="code-block">x
+</div><div class="result-block">[ [1., 1., 1., 1., 1., 1., 1., 1.]
+, [1., 1., 1., 1., 1., 1., 1., 1.]
+, [1., 1., 1., 1., 1., 1., 1., 1.] ]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>More interestingly, we can also see its type with <code>:t</code>. This type tells us
+that <code>x</code> is a two-dimensional table, whose first dimension has type <code>Height</code> and
+second dimension has type <code>Width</code>.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> x
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Here <code>Fin</code> stands for <code>finite</code> represents the type of range from 0
+to the value given minus one. The <code>:</code> tells us the type of the
+enumeration variable.</p>
+</div></div><div class="cell"><div class="prose-block"><p>We can also display it as html. To do this we include the plot library.
+Right now our table is not so interesting :)</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow x
+</div><img class="plot-img" src="data:image/png;base64, "></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Once we have an table, we can use it in new comprehensions. For example,
+let's try to add <code>5</code> to each table element. In Python, one might write this as:</p>
+</div></div><div class="cell"><div class="prose-block"><p><code>x5 = [[x[i][j] + 5.0 for j in range(width)] for i in range(height)]</code></p>
+</div></div><div class="cell"><div class="prose-block"><p>Dex can do something similar. The main superficial difference is the
+table indexing syntax, which uses <code>table.i</code> instead of square brackets for
+subscripting.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span><span class="type-name">Width</span><span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> 5<span class="symbol">.</span>0
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>However, we can make this expression nicer. Because <code>x</code> has a known table type
+and <code>i</code> and <code>j</code> index into that type, Dex can infer the range of the loop.
+That means that we can safely remove the explicit <code>Fin</code> type annotations and
+get the same result.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> 5<span class="symbol">.</span>0
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Dex also lets you reduce this expression to include multiple variables
+in the same <code>for</code>.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> 5<span class="symbol">.</span>0
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Standard functions can be  applied as well. Here we take the
+<code>mean</code> over each column:</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">.</span> mean x<span class="symbol">.</span>i
+</div><div class="result-block">((Fin 3) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>This style of using <code>for</code> to construct type-inferred tables is central to what
+makes Dex powerful. Tables do not only need to have <code>Fin</code> types.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Let's consider another example. This one produces a list of ones
+in Python.</p>
+</div></div><div class="cell"><div class="prose-block"><p><code>y = [1.0 for j in range(width) for i in range(height)]</code></p>
+</div></div><div class="cell"><div class="prose-block"><p>The analogous table construct in Dex is written in the following form. It
+produces a one-dimensional table of <code>Height x Width</code> elements. Here <code>&amp;</code>
+indicates a tuple constructor.</p>
+</div></div><div class="cell"><div class="code-block">y <span class="symbol">=</span> <span class="keyword">for</span>  (i<span class="symbol">,</span> j) <span class="symbol">:</span> (<span class="type-name">Height</span> <span class="symbol">&amp;</span> <span class="type-name">Width</span>) <span class="symbol">.</span> 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>As before, we can implement &quot;adding 5&quot; to this table using a <code>for</code> constructor,
+enumerating over each of its elements:</p>
+</div></div><div class="cell"><div class="code-block">y5 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> y<span class="symbol">.</span>i <span class="symbol">+</span> 5<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>And we can apply table functions to the table:</p>
+</div></div><div class="cell"><div class="code-block">mean y
+</div><div class="result-block">1.</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>But things start to get interesting when we consider the type of the
+table.  Unlike the Python example, which produces a flat list (or
+other examples like NumPy arrays), the Dex table maintains the index
+type of its construction. In particular, the type of the table
+remembers the original ranges.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> y
+</div><div class="result-block">((Fin 3 &amp; Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Typed indexing</h2>
+</div></div><div class="cell"><div class="prose-block"><p>The use of typed indices lets you do really neat things, but
+lets consider how it works. Critically, one cannot
+simply index an table with an integer.</p>
+</div></div><div class="cell"><div class="code-block">r <span class="symbol">=</span> x<span class="symbol">.</span>2
+</div><div class="err-block">Type error:
+Expected: (Fin 3)
+  Actual: Int32
+
+r = x.2
+      ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Instead, it is necessary to cast the integer into the index type of the
+current shape. This type annotation is done with the <code>@</code> operator.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> x
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">row <span class="symbol">=</span> x<span class="symbol">.</span>(2 <span class="symbol">@</span> <span class="type-name">Height</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> row
+</div><div class="result-block">((Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> row<span class="symbol">.</span>(5 <span class="symbol">@</span> <span class="type-name">Width</span>)
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>If you are feeling lazy and sure of yourself, you can also let Dex infer
+the type for you. This is also how <code>for</code> works in the examples above that
+did not provide and explicit type annotation.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> row<span class="symbol">.</span>(5 <span class="symbol">@</span> _)
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>If it helps, you can think of table indexing as function application: <code>a.i</code> applies
+table <code>a</code> with index <code>i</code> just like how <code>f x</code> applies function <code>f</code> with
+argument <code>x</code>.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Another consequence is that you cannot use indices as integers. It
+is necessary to explicitly annotate index types with <code>ordinal</code>.
+This is because finite sets i.e. <code>Fin</code> are not closed under addition.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span><span class="type-name">Width</span><span class="symbol">.</span> i <span class="symbol">+</span> j
+</div><div class="err-block">Type error:
+Expected: (Fin 3)
+  Actual: (Fin 8)
+
+:t for i:Height. for j:Width. i + j
+                                  ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span><span class="type-name">Width</span><span class="symbol">.</span> (ordinal i) <span class="symbol">+</span> (ordinal j)
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Int32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>If we want to convert these values to floats, we do it manually with the <code>IToF</code>
+function. We can use this to make an image gradient.</p>
+</div></div><div class="cell"><div class="code-block">gradient <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span><span class="type-name">Width</span><span class="symbol">.</span> <span class="type-name">IToF</span> ((ordinal i) <span class="symbol">+</span> (ordinal j))
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow gradient
+</div><img class="plot-img" src="data:image/png;base64, "></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>As we have seen, indices are not limited to only integers. Many different Dex
+types are valid index types. For example, we declared table <code>y</code> as having a
+pair of integers as its index type (<code>a &amp; b</code> means tuple type), so indexing
+into <code>y</code> requires creating a tuple value.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> y
+</div><div class="result-block">((Fin 3 &amp; Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> y<span class="symbol">.</span>(2 <span class="symbol">@</span> <span class="type-name">Height</span><span class="symbol">,</span> 5 <span class="symbol">@</span> <span class="type-name">Width</span>)
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Tuple indices also provide an ordinal value.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">for</span> pair<span class="symbol">:</span>(<span class="type-name">Fin</span> 2 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 3)<span class="symbol">.</span> ordinal pair
+</div><div class="result-block">[0, 1, 2, 3, 4, 5]@(Fin 2 &amp; Fin 3)</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Many algorithms in Dex come down to being able to pack and unpack these
+indices. For example, we have seen that it is easy to sum over one dimension
+of a 2D table.  However, if we have a 1D table indexed by a pair, we can
+easily turn it into a 2D table using two <code>for</code> constructors.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> y<span class="symbol">.</span>(i<span class="symbol">,</span> j)
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Again, we rely on type inference in order to avoid explicitly spelling the
+ranges.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Defining functions over tables</h2>
+</div></div><div class="cell"><div class="prose-block"><p>One use case of packing and unpacking table indices is that it allows us to
+change the order of the axes. This is useful for applying functions on tables.</p>
+</div></div><div class="cell"><div class="prose-block"><p>For instance, we saw the <code>mean</code> function above which sums over the first axis
+of an table. We can apply <code>mean</code> to <code>y</code> to produce the sum over 24 elements:</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> y
+</div><div class="result-block">((Fin 3 &amp; Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> mean y
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The <code>mean</code> function works independently of the index type of the table.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Let's see how we can define our own table functions. Defining a function in
+Dex uses the following syntax.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> add5 (x<span class="symbol">:</span><span class="type-name">Float32</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+    x <span class="symbol">+</span> 5<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">add5 1<span class="symbol">.</span>0
+</div><div class="result-block">6.</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">.</span> add5 y<span class="symbol">.</span>i
+</div><div class="result-block">((Fin 3 &amp; Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Functions also have types. Note that that function types in Dex
+use the <code>-&gt;</code> symbol whereas tables use <code>=&gt;</code>.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> add5
+</div><div class="result-block">(Float32 -&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We can also write functions with type variables over their inputs. For
+instance, we may want to be able to write a function that applies &quot;adds 5&quot;
+to tables with <em>any</em> index type. This is possible by declaring an <code>n =&gt; Int32</code>
+table argument type: this declares the type variable <code>n</code> as the index type of
+the table argument.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tableAdd5&#39; (x <span class="symbol">:</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">+</span> 5<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableAdd5&#39; y
+</div><div class="result-block">((Fin 3 &amp; Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>But function types can help you out even more. For instance, since index types
+are statically known, type checking can ensure that table arguments have valid
+dimensions. This is &quot;shape safety&quot;.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Imagine we have <code>transpose</code> function. We can encode the shape change in the type.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transFloat (x <span class="symbol">:</span> m <span class="symbol">=&gt;</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> n <span class="symbol">=&gt;</span> m <span class="symbol">=&gt;</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We can even make it more generic by abstracting over the value type.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trans (x <span class="symbol">:</span> m <span class="symbol">=&gt;</span> n <span class="symbol">=&gt;</span> v) <span class="symbol">:</span> n <span class="symbol">=&gt;</span> m <span class="symbol">=&gt;</span> v <span class="symbol">=</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We can also use this to check for shape errors:</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> x
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tableAdd&#39; (x <span class="symbol">:</span> m <span class="symbol">=&gt;</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) (y <span class="symbol">:</span> m <span class="symbol">=&gt;</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> m <span class="symbol">=&gt;</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableAdd&#39; x x
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableAdd&#39; x (trans x)
+</div><div class="err-block">Type error:
+Expected: ((Fin 3) =&gt; (Fin 8) =&gt; Float32)
+  Actual: ((Fin 8) =&gt; (Fin 3) =&gt; Float32)
+
+:t tableAdd&#39; x (trans x)
+                ^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The type system checked for us that the input tables indeed have the same shape.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Case Study: Fashion MNist</h2>
+</div></div><div class="cell"><div class="prose-block"><p>To run this section, move the following binary files to examples:</p>
+</div></div><div class="cell"><div class="prose-block"><p><code>wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-images-idx3-ubyte.gz; gunzip t10k-images-idx3-ubyte.gz</code></p>
+</div></div><div class="cell"><div class="prose-block"><p><code>wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz; gunzip t10k-labels-idx1-ubyte.gz</code></p>
+</div></div><div class="cell"><div class="prose-block"><p>To make some of these concepts for tangible let us consider a real example
+using Fashion MNist clothing. For this example we will first read in a batch of images
+each with a fixed size.</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Batch</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 5000
+</div></div><div class="cell"><div class="code-block"><span class="type-name">IHeight</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 28
+</div></div><div class="cell"><div class="code-block"><span class="type-name">IWidth</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 28
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Channels</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Class</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 10
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Image</span> <span class="symbol">=</span> (<span class="type-name">IHeight</span> <span class="symbol">=&gt;</span> <span class="type-name">IWidth</span> <span class="symbol">=&gt;</span> <span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Full</span> <span class="symbol">=</span> <span class="type-name">Fin</span> ((size <span class="type-name">Batch</span>) <span class="symbol">*</span> (size <span class="type-name">IHeight</span>) <span class="symbol">*</span> (size <span class="type-name">IWidth</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>To do this we will use Dex's IO to load some images from a file.
+This section uses features outside the scope of the tutorial, so you can
+ignore it for now.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pixel (x<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+     r <span class="symbol">=</span> <span class="type-name">W8ToI</span> x
+     <span class="type-name">IToF</span> <span class="keyword">case</span> r <span class="symbol">&lt;</span> 0 <span class="keyword">of</span>
+             <span class="type-name">True</span> <span class="symbol">-&gt;</span> (abs r) <span class="symbol">+</span> 128
+             <span class="type-name">False</span> <span class="symbol">-&gt;</span> r
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getIm <span class="symbol">:</span> <span class="type-name">Batch</span> <span class="symbol">=&gt;</span> <span class="type-name">Image</span> <span class="symbol">=</span>
+    <span class="comment">-- File is unsigned bytes offset with 16 starting bytes
+</span>    (<span class="type-name">AsList</span> _ im) <span class="symbol">=</span> unsafeIO <span class="keyword">do</span> readFile &quot;examples<span class="symbol">/</span>t10k<span class="symbol">-</span>images<span class="symbol">-</span>idx3<span class="symbol">-</span>ubyte&quot;
+    raw <span class="symbol">=</span> unsafeCastTable <span class="type-name">Full</span> (<span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Full</span><span class="symbol">.</span> im<span class="symbol">.</span>((ordinal i <span class="symbol">+</span> 16) <span class="symbol">@</span> _))
+    <span class="keyword">for</span> b<span class="symbol">:</span> <span class="type-name">Batch</span> i j<span class="symbol">.</span>
+        pixel raw<span class="symbol">.</span>((ordinal (b<span class="symbol">,</span> i<span class="symbol">,</span> j)) <span class="symbol">@</span> <span class="type-name">Full</span>)
+</div><div class="result-block">Unable to open file: examples/t10k-images-idx3-ubyte</div><div class="err-block">Runtime error</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getLabel <span class="symbol">:</span> <span class="type-name">Batch</span> <span class="symbol">=&gt;</span> <span class="type-name">Class</span> <span class="symbol">=</span>
+    <span class="comment">-- File is unsigned bytes offset with 8 starting bytes
+</span>    (<span class="type-name">AsList</span> _ lab) <span class="symbol">=</span> unsafeIO <span class="keyword">do</span> readFile &quot;examples<span class="symbol">/</span>t10k<span class="symbol">-</span>labels<span class="symbol">-</span>idx1<span class="symbol">-</span>ubyte&quot;
+    r <span class="symbol">=</span> unsafeCastTable <span class="type-name">Batch</span> (<span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Batch</span><span class="symbol">.</span> lab<span class="symbol">.</span>((ordinal i <span class="symbol">+</span> 8) <span class="symbol">@</span> _))
+    <span class="keyword">for</span> i<span class="symbol">.</span> (<span class="type-name">W8ToI</span> r<span class="symbol">.</span>i <span class="symbol">@</span> <span class="type-name">Class</span>)
+</div><div class="result-block">Unable to open file: examples/t10k-labels-idx1-ubyte</div><div class="err-block">Runtime error</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">all_ims <span class="symbol">=</span> getIm
+</div><div class="err-block">Error: variable not in scope: getIm
+
+all_ims = getIm
+          ^^^^^
+</div></div><div class="cell"><div class="code-block">all_labels <span class="symbol">=</span> getLabel
+</div><div class="err-block">Error: variable not in scope: getLabel
+
+all_labels = getLabel
+             ^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">ims <span class="symbol">=</span> <span class="keyword">for</span> i <span class="symbol">:</span> (<span class="type-name">Fin</span> 100)<span class="symbol">.</span> all_ims<span class="symbol">.</span>(ordinal i<span class="symbol">@</span>_)
+</div><div class="err-block">Error: variable not in scope: all_ims
+
+ims = for i : (Fin 100). all_ims.(ordinal i@_)
+                         ^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">im <span class="symbol">=</span> ims<span class="symbol">.</span>(0 <span class="symbol">@</span> _)
+</div><div class="err-block">Error: variable not in scope: ims
+
+im = ims.(0 @ _)
+     ^^^
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow im
+</div><div class="err-block">Error: variable not in scope: im
+
+:html matshow im
+              ^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow ims<span class="symbol">.</span>(1 <span class="symbol">@</span> _)
+</div><div class="err-block">Error: variable not in scope: ims
+
+:html matshow ims.(1 @ _)
+              ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>This show the mean pixel value aggregation over all images.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow (sum ims)
+</div><div class="err-block">Error: variable not in scope: ims
+
+:html matshow (sum ims)
+                   ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>This example overplots three different pairs of clothing.</p>
+</div></div><div class="cell"><div class="code-block">imscolor <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">for</span> c<span class="symbol">:</span><span class="type-name">Channels</span><span class="symbol">.</span> ims<span class="symbol">.</span>((ordinal c)<span class="symbol">@</span>_)<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div><div class="err-block">Error: variable not in scope: ims
+
+imscolor = for i. for j. for c:Channels. ims.((ordinal c)@_).i.j
+                                         ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> imscolor
+</div><div class="err-block">Error: variable not in scope: imscolor</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imshow (imscolor <span class="symbol">/</span> 255<span class="symbol">.</span>0)
+</div><div class="err-block">Error: variable not in scope: imscolor
+
+:html imshow (imscolor / 255.0)
+              ^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>This one shows all the images on one channel over the base plot.</p>
+</div></div><div class="cell"><div class="code-block">imscolor2 <span class="symbol">=</span> <span class="keyword">for</span> b<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">for</span> c<span class="symbol">:</span><span class="type-name">Channels</span><span class="symbol">.</span>
+          <span class="keyword">case</span> ordinal c <span class="symbol">==</span> 0 <span class="keyword">of</span>
+             <span class="type-name">True</span> <span class="symbol">-&gt;</span> (sum ims)<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">/</span> (<span class="type-name">IToF</span> (size <span class="type-name">Batch</span>))
+             <span class="type-name">False</span> <span class="symbol">-&gt;</span> ims<span class="symbol">.</span>b<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div><div class="err-block">Error: variable not in scope: ims
+
+             True -&gt; (sum ims).i.j / (IToF (size Batch))
+                          ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imseqshow (imscolor2 <span class="symbol">/</span> 255<span class="symbol">.</span>0)
+</div><div class="err-block">Error: variable not in scope: imscolor2
+
+:html imseqshow (imscolor2 / 255.0)
+                 ^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>This example utilizes the type system to help manipulate the shape
+of an image. Sum pooling downsamples the image as the max of each
+pixel in a tile grid pattern. See if you can figure out the other
+types.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split (x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+    <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>(ordinal (i<span class="symbol">,</span>j)<span class="symbol">@</span>_)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imtile (x<span class="symbol">:</span> a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>p<span class="symbol">=&gt;</span>q<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+    <span class="keyword">for</span> kh kw h w<span class="symbol">.</span> (split (split x)<span class="symbol">.</span>h<span class="symbol">.</span>kh)<span class="symbol">.</span>w<span class="symbol">.</span>kw
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">im1 <span class="symbol">:</span> <span class="type-name">Fin</span> 2 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 2 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 14 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 14 <span class="symbol">=&gt;</span> <span class="type-name">Float32</span> <span class="symbol">=</span> imtile ims<span class="symbol">.</span>(0<span class="symbol">@</span>_)
+</div><div class="err-block">Error: variable not in scope: ims
+
+im1 : Fin 2 =&gt; Fin 2 =&gt; Fin 14 =&gt; Fin 14 =&gt; Float32 = imtile ims.(0@_)
+                                                             ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow (sum (sum im1))
+</div><div class="err-block">Error: variable not in scope: im1
+
+:html matshow (sum (sum im1))
+                        ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">im2 <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Float32</span> <span class="symbol">=</span> imtile ims<span class="symbol">.</span>(0<span class="symbol">@</span>_)
+</div><div class="err-block">Error: variable not in scope: ims
+
+im2 : Fin 4 =&gt; Fin 4 =&gt; Fin 7 =&gt; Fin 7 =&gt; Float32 = imtile ims.(0@_)
+                                                           ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow (sum (sum im2))
+</div><div class="err-block">Error: variable not in scope: im2
+
+:html matshow (sum (sum im2))
+                        ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Writing Loops</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Dex is a functional language - but when writing mathematical algorithms,
+it is often convenient to temporarily put aside immutability and write
+imperative code using mutation.</p>
+</div></div><div class="cell"><div class="prose-block"><p>For example, let's say we want to actually implement the <code>mean</code> function
+ourselves by accumulating summed values in-place. In Python, implementing this
+is not directly possible solely via list comprehensions, so we would write a
+loop.</p>
+</div></div><div class="cell"><div class="prose-block"><p><code>acc = 0.0</code></p>
+</div></div><div class="cell"><div class="prose-block"><p><code>for i in range(len(x)):</code></p>
+</div></div><div class="cell"><div class="prose-block"><pre><code>  `acc = acc + x[i]`
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p><code>return acc / len(x)</code></p>
+</div></div><div class="cell"><div class="prose-block"><p>In Dex, values are immutable, so we cannot directly perform mutation. But Dex
+includes algebraic effects, which are a purely-functional way to modeling
+side-effects like mutation. We can write code that looks like mutation using
+the <code>State</code> effect, which provides getter and setter functionality (via <code>get</code>
+and <code>:=</code> assignment). Here's what it looks like:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tableMean (x <span class="symbol">:</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+    <span class="comment">-- acc = 0
+</span>    withState 0<span class="symbol">.</span>0 <span class="symbol">$</span> <span class="symbol">\</span>acc<span class="symbol">.</span>
+         <span class="comment">-- for i in range(len(x))
+</span>         <span class="keyword">for</span> i<span class="symbol">.</span>
+             <span class="comment">-- acc = acc + x[i]
+</span>             acc <span class="symbol">:=</span> (get acc) <span class="symbol">+</span> x<span class="symbol">.</span>i
+         <span class="comment">-- return acc / len(x)
+</span>         (get acc) <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">tableMean [0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5]
+</div><div class="result-block">0.5</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>So, even though Dex is a functional language, it is possible to write loops
+that look similar to ones that truly perform mutation. However, there is one
+line which is quite new and a bit scary. Let us look into that line in a bit
+more detail.</p>
+</div></div><div class="cell"><div class="prose-block"><p>First: <code>$</code>. This symbol is used in Dex just like it is used in Haskell, but
+if you haven't seen it before, it seems a bit strange. The symbol <code>$</code> is the function
+application operator: it basically replaces of expression-grouping parentheses
+<code>(f x)</code> when it is inconvenient to write them. For example, the following two
+expressions are identical:</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableMean (y <span class="symbol">+</span> y)
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableMean <span class="symbol">$</span> y <span class="symbol">+</span> y
+</div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Next: <code>\</code>. This symbol is the lambda sigil in Dex. It is analogous to the
+<code>lambda</code> keyword in Python, and starts the definition of a function value
+(i.e. closure). In <code>tableMean</code> above: the lambda takes an argument named <code>acc</code>
+and returns the body, which is the expression following the <code>.</code> (a <code>for</code>
+constructor in this case).</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span> x<span class="symbol">.</span> x <span class="symbol">+</span> 10
+</div><div class="result-block">(Int32 -&gt; Int32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">(<span class="symbol">\</span> x<span class="symbol">.</span> x <span class="symbol">+</span> 10) 20
+</div><div class="result-block">30</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>That leaves: <code>withState</code>. This function uses the <code>State</code> effect, enabling us
+to introduce imperative variables into the computation.
+<code>withState</code> takes an initial value <code>init</code> and a body function taking a
+&quot;mutable value&quot; reference (<code>acc</code> here), and returns a pair of the body
+function's result and the final value. Here's a simple example:</p>
+</div></div><div class="cell"><div class="code-block">withState 10 <span class="symbol">$</span> <span class="symbol">\</span> state<span class="symbol">.</span>
+     state <span class="symbol">:=</span> 30
+     state <span class="symbol">:=</span> 10
+     get state
+</div><div class="result-block">10</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The element returned pair is the body function's result (<code>10</code>)</p>
+</div></div><div class="cell"><div class="prose-block"><p>Finally: this is a good point to talk a bit about some other operators in Dex.
+In the examples above, we see two types of equal sign operators: <code>=</code> and <code>:=</code>.
+The first is the <code>let</code> operator that creates an immutable assignment (a
+&quot;let-binding&quot;). This one is built into the language and can be used anywhere.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span>
+        <span class="comment">-- Bind a temporary variable `temp`, as an example.
+</span>        temp <span class="symbol">=</span> (ordinal i) <span class="symbol">+</span> 10
+        <span class="keyword">for</span> j<span class="symbol">:</span><span class="type-name">Width</span><span class="symbol">.</span>
+            temp
+</div><div class="result-block">((Fin 3) =&gt; (Fin 8) =&gt; Int32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The other is <code>:=</code>, which is an assignment operator that can only be used
+when a <code>State</code> effect is available (e.g. inside of a body function passed to
+<code>withState</code>). <code>ref := x</code> assigns the value <code>x</code> to the mutable reference <code>ref</code>.
+Reading the value in <code>ref</code> is possible via the <code>get</code> function. or via using
+the final result returned by <code>withState</code>.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Interfaces</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Our <code>tableMean</code> function is pretty neat. It lets us work with tables with any
+index type and computes the sum. However, <code>tableMean</code> explicitly takes only
+integer tables (of type <code>n =&gt; Float32</code>).</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> tableMean
+</div><div class="result-block">((n:Type) ?-&gt; (n =&gt; Float32) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>If we try to apply <code>tableMean</code> to other types for get errors. For example,
+<code>tableMean</code> does not work when applied to a table of <em>pairs</em> of floats.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> (x<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">,</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j))
+</div><div class="result-block">((Fin 3 &amp; Fin 8) =&gt; (Float32 &amp; Float32))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">tableMean (<span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> (x<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">,</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j))
+</div><div class="err-block">Type error:
+Expected: Float32
+  Actual: (Float32 &amp; Float32)
+
+tableMean (for (i, j). (x.i.j, x.i.j))
+                        ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Intuitively, supporting this seems possible. We just need to be able to
+add and divide pair types. Let's look closer at the exact types of the
+addition and division operators.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="symbol">+</span>)
+</div><div class="result-block">((a:Type) ?-&gt; (Add a) ?=&gt; a -&gt; a -&gt; a)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="symbol">/</span>)
+</div><div class="result-block">((a:Type) ?-&gt; (VSpace a) ?=&gt; a -&gt; Float32 -&gt; a)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>These function types are a bit complex.
+<code>(+)</code> maps <code>a -&gt; a -&gt; a</code> with a constraint that <code>a</code> implements the <code>Add'</code>
+interface. Whereas <code>(/)</code> maps <code>a -&gt; Float32 -&gt; a</code> where <code>a</code> implements the
+<code>VSpace'</code> interface.</p>
+</div></div><div class="cell"><div class="prose-block"><p>If we look in the Prelude, we can see that these interfaces are defined as
+(This will throw error because it mirrors the prelude, but we are just repeating it here.):</p>
+</div></div><div class="cell"><div class="prose-block"><pre><code>interface Add a
+ add : a -&gt; a -&gt; a
+ sub : a -&gt; a -&gt; a
+ zero : a
+
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><pre><code>interface [Add a] VSpace a
+ scaleVec : Float -&gt; a -&gt; a
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p><em>Interfaces</em> define <em>requirements</em>: the functions needed for a type to
+implement the interface (via an <em>instance</em>).</p>
+</div></div><div class="cell"><div class="prose-block"><p>Here is an <code>Add</code> instance for the float pair type.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (<span class="type-name">Float32</span> <span class="symbol">&amp;</span> <span class="type-name">Float32</span>)
+  add <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">+</span> y1<span class="symbol">,</span> x2 <span class="symbol">+</span> y2)
+  sub <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">-</span> y1<span class="symbol">,</span> x2 <span class="symbol">-</span> y2)
+  zero <span class="symbol">=</span> (0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>And here is a <code>VSpace</code> instance for the float pair type:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> (<span class="type-name">Float32</span> <span class="symbol">&amp;</span> <span class="type-name">Float32</span>)
+  scaleVec <span class="symbol">=</span> <span class="symbol">\</span>s (x<span class="symbol">,</span> y)<span class="symbol">.</span> (x <span class="symbol">*</span> s<span class="symbol">,</span> y <span class="symbol">*</span> s)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Once we have these two instance definitions, we can revisit our table sum
+function using them:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tableMean&#39; [<span class="type-name">VSpace</span> v] (x <span class="symbol">:</span> n <span class="symbol">=&gt;</span> v) <span class="symbol">:</span> v <span class="symbol">=</span>
+   withState zero <span class="symbol">$</span> <span class="symbol">\</span>acc<span class="symbol">:</span> (<span class="type-name">Ref</span> _ v)<span class="symbol">.</span>
+        <span class="keyword">for</span> i<span class="symbol">.</span>
+            acc <span class="symbol">:=</span> add (get acc) x<span class="symbol">.</span>i       <span class="comment">-- `Add` requirement
+</span>        (get acc) <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))  <span class="comment">-- `VSpace` requirement
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">tableMean&#39; [0<span class="symbol">.</span>1<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>9]
+</div><div class="result-block">0.5</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">tableMean&#39; [(1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5)<span class="symbol">,</span> (0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>8)]
+</div><div class="result-block">(0.75, 0.65)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The instance values are hardcoded for the float pair type. To be more general,
+we can and should instead define <code>Add</code> and <code>VSpace</code> instances for generic
+' tuple types.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Add</span> v<span class="symbol">,</span> <span class="type-name">Add</span> w] <span class="type-name">Add</span> (v <span class="symbol">&amp;</span> w)
+  add <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">+</span> y1<span class="symbol">,</span> x2 <span class="symbol">+</span> y2)
+  sub <span class="symbol">=</span> <span class="symbol">\</span>(x1<span class="symbol">,</span>x2) (y1<span class="symbol">,</span> y2)<span class="symbol">.</span> (x1 <span class="symbol">-</span> y1<span class="symbol">,</span> x2 <span class="symbol">-</span> y2)
+  zero <span class="symbol">=</span> (zero<span class="symbol">,</span> zero)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> w] <span class="type-name">VSpace</span> (v <span class="symbol">&amp;</span> w)
+  scaleVec <span class="symbol">=</span> <span class="symbol">\</span>s (x<span class="symbol">,</span> y)<span class="symbol">.</span> (scaleVec s x<span class="symbol">,</span> scaleVec s y)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>More Fashion MNist</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Now that we has more functions we can revisit some of the Fashion MNist examples.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Function that uses state to produce a histogram:</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Pixels</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 256
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bincount (inp <span class="symbol">:</span> a <span class="symbol">=&gt;</span> b) <span class="symbol">:</span> b <span class="symbol">=&gt;</span> <span class="type-name">Int</span> <span class="symbol">=</span>
+    withState zero <span class="symbol">\</span>acc <span class="symbol">.</span>
+        <span class="keyword">for</span> i<span class="symbol">.</span>
+            v <span class="symbol">=</span> acc<span class="symbol">!</span>(inp<span class="symbol">.</span>i)
+            v <span class="symbol">:=</span> (get v) <span class="symbol">+</span> 1
+        get acc
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Plot how many times each pixel value occurs in an image:</p>
+</div></div><div class="cell"><div class="code-block">hist <span class="symbol">=</span> bincount <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> (<span class="type-name">FToI</span> (ims<span class="symbol">.</span>(0 <span class="symbol">@</span> _)<span class="symbol">.</span>i<span class="symbol">.</span>j) <span class="symbol">@</span><span class="type-name">Pixels</span>)
+</div><div class="err-block">Error: variable not in scope: ims
+
+hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
+                                    ^^^
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> hist
+</div><div class="err-block">Error: variable not in scope: hist</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showPlot <span class="symbol">$</span> yPlot (<span class="keyword">for</span> i<span class="symbol">.</span> (<span class="type-name">IToF</span> hist<span class="symbol">.</span>i))
+</div><div class="err-block">Error: variable not in scope: hist
+
+:html showPlot $ yPlot (for i. (IToF hist.i))
+                                     ^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Find nearest images in the dataset:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imdot (x <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float32</span>) (y <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float32</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+    sum <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">dist <span class="symbol">=</span> <span class="keyword">for</span> b1<span class="symbol">.</span> <span class="keyword">for</span> b2<span class="symbol">.</span>
+        <span class="keyword">case</span> b1 <span class="symbol">==</span> b2 <span class="keyword">of</span>
+             <span class="type-name">True</span> <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
+             <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="symbol">-</span>imdot ims<span class="symbol">.</span>b1 ims<span class="symbol">.</span>b2
+</div><div class="err-block">Error: variable not in scope: ims
+
+             False -&gt; -imdot ims.b1 ims.b2
+                             ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">nearest <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> argmin dist<span class="symbol">.</span>i
+</div><div class="err-block">Error: variable not in scope: dist
+
+nearest = for i. argmin dist.i
+                        ^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">double <span class="symbol">=</span> <span class="keyword">for</span> b i j<span class="symbol">.</span> [ims<span class="symbol">.</span>b<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">,</span> ims<span class="symbol">.</span>(nearest<span class="symbol">.</span>b)<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+</div><div class="err-block">Error: variable not in scope: ims
+
+double = for b i j. [ims.b.i.j, ims.(nearest.b).i.j, 0.0]
+                     ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imseqshow double
+</div><div class="err-block">Error: variable not in scope: double
+
+:html imseqshow double
+                ^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Variable Length Lists</h2>
+</div></div><div class="cell"><div class="prose-block"><p>So far all the examples have assumed that we
+know the exact size of our tables. This is a
+common assumption in array languages, but
+it makes some operations surprisingly difficult
+to do.</p>
+</div></div><div class="cell"><div class="prose-block"><p>For instance, we might want to filter our set of
+images to only allow for images of 5's. But what is
+the type of this table?</p>
+</div></div><div class="cell"><div class="prose-block"><p>Dex allows for tables with an unknown and varying length
+using the <code>List</code> construct. You can think of list as
+hiding one finite dimension of a table.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> 0<span class="symbol">.</span>0
+</div><div class="result-block">((Fin 3) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">toList <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> 0<span class="symbol">.</span>0
+</div><div class="result-block">(AsList 3 [0., 0., 0.])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> toList <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Height</span><span class="symbol">.</span> 0<span class="symbol">.</span>0
+</div><div class="result-block">(List Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Tables of lists can be concatenated down to
+single lists.</p>
+</div></div><div class="cell"><div class="code-block">z <span class="symbol">=</span> concat [toList [3<span class="symbol">.</span>0]<span class="symbol">,</span>
+            toList [1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0 ]]
+</div></div><div class="cell"><div class="code-block">z
+</div><div class="result-block">(AsList 3 [3., 1., 2.])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>And they can be deconstructed to fetch a new table.</p>
+</div></div><div class="cell"><div class="code-block">(<span class="type-name">AsList</span> _ temptab) <span class="symbol">=</span> z
+</div></div><div class="cell"><div class="code-block">temptab
+</div><div class="result-block">[3., 1., 2.]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Using this construct we can return to extracting
+items with label of shoes (label 5) from the image set.</p>
+</div></div><div class="cell"><div class="code-block">shoes <span class="symbol">=</span> (5 <span class="symbol">@</span> <span class="type-name">Class</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> findShoes (x <span class="symbol">:</span> a<span class="symbol">=&gt;</span>b) (y <span class="symbol">:</span> a<span class="symbol">=&gt;</span><span class="type-name">Class</span>) <span class="symbol">:</span> <span class="type-name">List</span> b <span class="symbol">=</span>
+    concat <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> (y<span class="symbol">.</span>i <span class="symbol">==</span> (5 <span class="symbol">@</span> _)) <span class="keyword">of</span>
+            <span class="type-name">True</span> <span class="symbol">-&gt;</span> toList [x<span class="symbol">.</span>i]
+            <span class="type-name">False</span> <span class="symbol">-&gt;</span> toList []
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Note though that the type here does not tell us
+how many there are. The type system cannot know this.
+To figure it out we need to unpack the list.</p>
+</div></div><div class="cell"><div class="code-block">temp <span class="symbol">=</span> findShoes all_ims all_labels
+</div><div class="err-block">Error: variable not in scope: all_ims
+
+temp = findShoes all_ims all_labels
+                 ^^^^^^^^
+</div></div><div class="cell"><div class="code-block">(<span class="type-name">AsList</span> nShoes allShoes) <span class="symbol">=</span> temp
+</div><div class="err-block">Error: variable not in scope: temp
+
+(AsList nShoes allShoes) = temp
+                           ^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">nShoes
+</div><div class="err-block">Error: variable not in scope: nShoes
+
+nShoes
+^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>However we can still utilize the table. For instance
+if we are summing over the hidden dimension, we never
+need to know how big it is.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow (sum allShoes)
+</div><div class="err-block">Error: variable not in scope: allShoes
+
+:html matshow (sum allShoes)
+                   ^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Conclusion</h2>
+</div></div><div class="cell"><div class="prose-block"><p>We hope this gives you enough information to start playing with Dex.
+This is just a start though of the different functionality available
+in the language. If you are interested in continuing to learn, we recommend
+you look at the examples in the <code>examples/</code> directory, check out the prelude
+in <code>lib/prelude.dx</code>, and file issues on the GitHub repo. We have a welcoming
+and excited community, and we hope you are interested enough to join us.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Here are some topics to check out in the Prelude:</p>
+</div></div><div class="cell"><div class="prose-block"><ul>
+<li>Randomness and Keys</li>
+<li>Laziness of For Comprehensions</li>
+<li>Records and Variant Types</li>
+<li>File IO</li>
+<li>Effects Beyond State</li>
+</ul>
+</div></div></div></body></html>

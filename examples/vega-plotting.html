@@ -1,0 +1,696 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+main {
+  max-width: var(--main-width);
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but ð¤·
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h1>Declarative Graphing</h1>
+<p>This example shows how to use Dex to generate interactive
+graphs using a declarative graph library known as Vega-Lite.
+To do this we will first implement a small JSON serialization library
+and then a Dex interface to produce graph outputs.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>JSON Implementation</h2>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> join (joiner<span class="symbol">:</span> <span class="type-name">List</span> a) (lists<span class="command">:n</span><span class="symbol">=&gt;</span>(<span class="type-name">List</span> a)) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+    <span class="comment">-- Join together lists with an intermediary joiner
+</span>    concat <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+        <span class="keyword">case</span> ordinal i <span class="symbol">==</span> (size n <span class="symbol">-</span> 1) <span class="keyword">of</span>
+             <span class="type-name">True</span> <span class="symbol">-&gt;</span> lists<span class="symbol">.</span>i
+             <span class="type-name">False</span> <span class="symbol">-&gt;</span> lists<span class="symbol">.</span>i <span class="symbol">&lt;&gt;</span> joiner
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>A serialized JSON Value</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO - once Dex supports recursive ADT JValue becomes Value.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">JValue</span> <span class="symbol">=</span> <span class="type-name">AsJValue</span> <span class="type-name">String</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Simple JSON Data Type</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Value</span> <span class="symbol">=</span>
+     <span class="type-name">AsObject</span> (<span class="type-name">List</span> (<span class="type-name">String</span> <span class="symbol">&amp;</span> <span class="type-name">JValue</span>))
+     <span class="type-name">AsArray</span> (<span class="type-name">List</span> <span class="type-name">JValue</span>)
+     <span class="type-name">AsString</span> <span class="type-name">String</span>
+     <span class="type-name">AsFloat</span> <span class="type-name">Float</span>
+     <span class="type-name">AsInt</span> <span class="type-name">Int</span>
+     <span class="type-name">AsNone</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">ToJSON</span> a
+  toJSON <span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">Value</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">JValue</span>
+  show <span class="symbol">=</span> <span class="symbol">\</span> (<span class="type-name">AsJValue</span> a)<span class="symbol">.</span> a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Serialization Methods</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> toJValue (x<span class="symbol">:</span><span class="type-name">Value</span>) <span class="symbol">:</span> <span class="type-name">JValue</span> <span class="symbol">=</span>
+    <span class="type-name">AsJValue</span> <span class="symbol">$</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+         <span class="type-name">AsString</span> y <span class="symbol">-&gt;</span>  &quot;<span class="symbol">\</span>&quot;&quot; <span class="symbol">&lt;&gt;</span> y <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span>&quot;&quot;
+         <span class="type-name">AsFloat</span> y <span class="symbol">-&gt;</span> show y
+         <span class="type-name">AsInt</span> y <span class="symbol">-&gt;</span> show y
+         <span class="type-name">AsObject</span> (<span class="type-name">AsList</span> _ y) <span class="symbol">-&gt;</span>
+              (&quot;{&quot; <span class="symbol">&lt;&gt;</span> (join &quot;<span class="symbol">,</span> &quot; <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+                 (k<span class="symbol">,</span> v) <span class="symbol">=</span> y<span class="symbol">.</span>i
+                 &quot;<span class="symbol">\</span>&quot;&quot; <span class="symbol">&lt;&gt;</span> k <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span>&quot;&quot; <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> (show v)) <span class="symbol">&lt;&gt;</span> &quot;}&quot;)
+         <span class="type-name">AsArray</span> (<span class="type-name">AsList</span> _ y) <span class="symbol">-&gt;</span> (&quot;[&quot; <span class="symbol">&lt;&gt;</span> (join &quot;<span class="symbol">,</span> &quot; <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> show y<span class="symbol">.</span>i) <span class="symbol">&lt;&gt;</span> &quot;]&quot;)
+         <span class="type-name">AsNone</span> <span class="symbol">-&gt;</span> &quot;&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> serialize [<span class="type-name">ToJSON</span> a] (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">JValue</span> <span class="symbol">=</span>
+    toJValue <span class="symbol">$</span> toJSON x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Value</span>
+  show <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> show <span class="symbol">$</span> toJValue x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Type classes for JSON conversion</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">ToJSON</span> <span class="type-name">String</span>
+  toJSON <span class="symbol">=</span> <span class="type-name">AsString</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">ToJSON</span> <span class="type-name">Int</span>
+  toJSON <span class="symbol">=</span> <span class="type-name">AsInt</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">ToJSON</span> <span class="type-name">Float</span>
+  toJSON <span class="symbol">=</span> <span class="type-name">AsFloat</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">ToJSON</span> <span class="type-name">Value</span>
+  toJSON <span class="symbol">=</span> id
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">ToJSON</span> v] <span class="type-name">ToJSON</span> (n <span class="symbol">=&gt;</span> v)
+  toJSON <span class="symbol">=</span> <span class="symbol">\</span>x <span class="symbol">.</span>
+    sizen <span class="symbol">=</span> (size n)
+    tab <span class="symbol">=</span> castTable (<span class="type-name">Fin</span> sizen) <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> serialize x<span class="symbol">.</span>i
+    <span class="type-name">AsArray</span> <span class="symbol">$</span> <span class="type-name">AsList</span> sizen tab
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">ToJSON</span> v] <span class="type-name">ToJSON</span> (<span class="type-name">List</span> v)
+  toJSON <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">AsList</span> _ x) <span class="symbol">.</span> toJSON x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">ToJSON</span> v] <span class="type-name">ToJSON</span> (n <span class="symbol">=&gt;</span> (<span class="type-name">String</span> <span class="symbol">&amp;</span> v))
+
+  toJSON <span class="symbol">=</span> <span class="symbol">\</span>x <span class="symbol">.</span>
+     sizen <span class="symbol">=</span> (size n)
+     tab <span class="symbol">=</span> castTable (<span class="type-name">Fin</span> sizen) <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> (fst x<span class="symbol">.</span>i<span class="symbol">,</span> serialize <span class="symbol">$</span> snd x<span class="symbol">.</span>i)
+     <span class="type-name">AsObject</span> <span class="symbol">$</span> <span class="type-name">AsList</span> _ tab
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">ToJSON</span> v] <span class="type-name">ToJSON</span> (<span class="type-name">List</span> (<span class="type-name">String</span> <span class="symbol">&amp;</span> v))
+  toJSON <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">AsList</span> _ x) <span class="symbol">.</span> toJSON x
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> wrapCol [<span class="type-name">ToJSON</span> d]  (iso<span class="symbol">:</span> <span class="type-name">Iso</span> a (d <span class="symbol">&amp;</span> c)) (x<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span> <span class="type-name">Value</span> <span class="symbol">=</span>
+    <span class="comment">-- Helper function. Returns JSON of a column of a record
+</span>    <span class="keyword">for</span> i<span class="symbol">.</span> toJSON <span class="symbol">$</span> getAt iso x<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Declarative Graph Grammars</h2>
+<p>Graph grammars are a style of graphing that aims to separate the data representation
+from the graph layout. The main idea is to represent the underlying data as a flat
+sequence of aligned rows (colloquially a <code>dataframe</code>) and separately describe the graph
+layout based on a grammar.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Here we implement a subset of the Vega-Lite (https://vega.github.io/vega-lite/) specification for
+graphing. Vega-Lite lets you make a large set of charts using a very small grammar.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We will have several pieces of metadata. A header string, encoding type, and the
+channels that the data is displayed with.</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Header</span> <span class="symbol">=</span> <span class="type-name">String</span>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">EncodingType</span> <span class="symbol">=</span>
+     <span class="type-name">Quantitative</span>
+     <span class="type-name">Nominal</span>
+     <span class="type-name">Ordinal</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">EncodingType</span>
+   show <span class="symbol">=</span> (<span class="symbol">\</span> x<span class="symbol">.</span>
+       <span class="keyword">case</span> x <span class="keyword">of</span>
+         <span class="type-name">Quantitative</span> <span class="symbol">-&gt;</span> &quot;quantitative&quot;
+         <span class="type-name">Nominal</span> <span class="symbol">-&gt;</span> &quot;nominal&quot;
+         <span class="type-name">Ordinal</span> <span class="symbol">-&gt;</span> &quot;ordinal&quot;)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Channel</span> <span class="symbol">=</span>
+     <span class="type-name">Y</span>
+     <span class="type-name">X</span>
+     <span class="type-name">Color</span>
+     <span class="type-name">Tooltip</span>
+     <span class="type-name">HREF</span>
+     <span class="type-name">Row</span>
+     <span class="type-name">Col</span>
+     <span class="type-name">Size</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Channel</span>
+         show <span class="symbol">=</span> (<span class="symbol">\</span> x<span class="symbol">.</span>
+              <span class="keyword">case</span> x <span class="keyword">of</span>
+                   <span class="type-name">Y</span> <span class="symbol">-&gt;</span> &quot;y&quot;
+                   <span class="type-name">X</span> <span class="symbol">-&gt;</span> &quot;x&quot;
+                   <span class="type-name">Color</span> <span class="symbol">-&gt;</span> &quot;color&quot;
+                   <span class="type-name">Tooltip</span> <span class="symbol">-&gt;</span> &quot;tooltip&quot;
+                   <span class="type-name">HREF</span> <span class="symbol">-&gt;</span> &quot;href&quot;
+                   <span class="type-name">Size</span> <span class="symbol">-&gt;</span> &quot;size&quot;
+                   <span class="type-name">Row</span> <span class="symbol">-&gt;</span> &quot;row&quot;
+                   <span class="type-name">Col</span> <span class="symbol">-&gt;</span> &quot;col&quot;)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>The final aspect of Vega-Lite is the Mark.
+The mark tells it what kind of graph to draw, and the channels
+allow us to assign different columns to different roles.
+We implement these as simple data types, ideally these would be
+derived from the spec.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Mark</span> <span class="symbol">=</span>
+     <span class="type-name">Area</span>
+     <span class="type-name">Bar</span>
+     <span class="type-name">Circle</span>
+     <span class="type-name">Line</span>
+     <span class="type-name">Point</span>
+     <span class="type-name">Rect</span>
+     <span class="type-name">Rule</span>
+     <span class="type-name">Square</span>
+     <span class="type-name">Text</span>
+     <span class="type-name">Tick</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Mark</span>
+         show <span class="symbol">=</span> (<span class="symbol">\</span> x<span class="symbol">.</span>
+              <span class="keyword">case</span> x <span class="keyword">of</span>
+                   <span class="type-name">Area</span> <span class="symbol">-&gt;</span> &quot;area&quot;
+                   <span class="type-name">Bar</span> <span class="symbol">-&gt;</span> &quot;bar&quot;
+                   <span class="type-name">Circle</span> <span class="symbol">-&gt;</span> &quot;circle&quot;
+                   <span class="type-name">Line</span> <span class="symbol">-&gt;</span> &quot;line&quot;
+                   <span class="type-name">Point</span> <span class="symbol">-&gt;</span> &quot;point&quot;
+                   <span class="type-name">Rect</span> <span class="symbol">-&gt;</span> &quot;rect&quot;
+                   <span class="type-name">Rule</span><span class="symbol">-&gt;</span> &quot;rule&quot;
+                   <span class="type-name">Square</span> <span class="symbol">-&gt;</span> &quot;square&quot;
+                   <span class="type-name">Tick</span> <span class="symbol">-&gt;</span> &quot;tick&quot;)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Most things in VL can take in extra visual options.
+To avoid specifying these, we will take in as
+JSON.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Opts</span> a <span class="symbol">=</span>
+     <span class="type-name">WithOpts</span> a <span class="type-name">Value</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pure (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Opts</span> a <span class="symbol">=</span>
+    <span class="type-name">WithOpts</span> x <span class="type-name">AsNone</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pureLs (x<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">List</span> (<span class="type-name">Opts</span> a) <span class="symbol">=</span>
+   <span class="type-name">AsList</span> 1 [<span class="type-name">WithOpts</span> x <span class="type-name">AsNone</span>]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mergeOpts [<span class="type-name">ToJSON</span> a<span class="symbol">,</span> <span class="type-name">ToJSON</span> b] (x <span class="symbol">:</span> a) (y <span class="symbol">:</span> b) <span class="symbol">:</span> <span class="type-name">Value</span> <span class="symbol">=</span>
+     <span class="keyword">case</span> toJSON x <span class="keyword">of</span>
+         (<span class="type-name">AsObject</span> x&#39;) <span class="symbol">-&gt;</span> <span class="keyword">case</span> toJSON y <span class="keyword">of</span>
+                  (<span class="type-name">AsObject</span> y&#39;) <span class="symbol">-&gt;</span> <span class="type-name">AsObject</span> <span class="symbol">$</span> x&#39; <span class="symbol">&lt;&gt;</span> y&#39;
+                  (<span class="type-name">AsNone</span>) <span class="symbol">-&gt;</span> <span class="type-name">AsObject</span> x&#39;
+         (<span class="type-name">AsNone</span>) <span class="symbol">-&gt;</span> toJSON y
+</div></div><div class="cell"><div class="code-block">
+
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">VLChart</span> row col v <span class="symbol">=</span>
+     <span class="type-name">AsVLDescriptor</span> (<span class="type-name">Opts</span> <span class="type-name">Mark</span>) v (col <span class="symbol">=&gt;</span> ({title<span class="symbol">:</span> <span class="type-name">Header</span> <span class="symbol">&amp;</span>
+                              encType<span class="symbol">:</span> <span class="type-name">EncodingType</span> <span class="symbol">&amp;</span>
+                              encodings<span class="symbol">:</span> <span class="type-name">List</span> (<span class="type-name">Opts</span> <span class="type-name">Channel</span>) <span class="symbol">&amp;</span>
+                              rows<span class="symbol">:</span> row <span class="symbol">=&gt;</span> <span class="type-name">Value</span>
+                              }))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">ToJSON</span> v] <span class="type-name">ToJSON</span> (<span class="type-name">VLChart</span> r c v)
+   toJSON <span class="symbol">=</span> <span class="symbol">\</span> x<span class="symbol">.</span>
+    (<span class="type-name">AsVLDescriptor</span> mark opts df) <span class="symbol">=</span> x
+    <span class="comment">-- Make the mark
+</span>    (<span class="type-name">WithOpts</span> mtype options) <span class="symbol">=</span> mark
+    jmark <span class="symbol">=</span> (&quot;mark&quot;<span class="symbol">,</span> mergeOpts options [(&quot;type&quot;<span class="symbol">,</span> show mtype)])
+
+    <span class="comment">-- Make the data
+</span>    jdf <span class="symbol">=</span> toJSON <span class="symbol">$</span> <span class="keyword">for</span> row <span class="symbol">:</span> r<span class="symbol">.</span> toJSON <span class="symbol">$</span> <span class="keyword">for</span> col <span class="symbol">:</span> c<span class="symbol">.</span>
+                   (&quot;col&quot; <span class="symbol">&lt;&gt;</span> (show <span class="symbol">$</span> ordinal col)<span class="symbol">,</span>
+                    toJSON (getAt <span class="iso-sugar">#rows</span> df<span class="symbol">.</span>col)<span class="symbol">.</span>row)
+    jdata <span class="symbol">=</span> (&quot;<span class="keyword">data</span>&quot;<span class="symbol">,</span> toJSON [(&quot;values&quot;<span class="symbol">,</span> jdf)])
+
+    <span class="comment">-- Make the encodings
+</span>    jencodings <span class="symbol">=</span> toJSON <span class="symbol">$</span> concat <span class="symbol">$</span> <span class="keyword">for</span> col <span class="symbol">:</span> c<span class="symbol">.</span>
+        (<span class="type-name">AsList</span> v encopts) <span class="symbol">=</span> getAt <span class="iso-sugar">#encodings</span> df<span class="symbol">.</span>col
+        <span class="type-name">AsList</span> v <span class="symbol">$</span> <span class="keyword">for</span> f<span class="symbol">.</span>
+           (<span class="type-name">WithOpts</span> channel encoptions) <span class="symbol">=</span> encopts<span class="symbol">.</span>f
+           (show channel<span class="symbol">,</span>
+            mergeOpts encoptions
+            [
+              (&quot;field&quot;<span class="symbol">,</span> &quot;col&quot; <span class="symbol">&lt;&gt;</span> (show <span class="symbol">$</span> ordinal col))<span class="symbol">,</span>
+              (&quot;type&quot;<span class="symbol">,</span>  show <span class="symbol">$</span> getAt <span class="iso-sugar">#encType</span> df<span class="symbol">.</span>col)<span class="symbol">,</span>
+              (&quot;title&quot;<span class="symbol">,</span> getAt <span class="iso-sugar">#title</span> df<span class="symbol">.</span>col)
+              ])
+    jencode <span class="symbol">=</span> (&quot;encoding&quot;<span class="symbol">,</span> jencodings)
+    mergeOpts opts [jdata<span class="symbol">,</span> jmark<span class="symbol">,</span> jencode]
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showVega (x<span class="symbol">:</span> <span class="type-name">Value</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+    &quot;<span class="symbol">&lt;</span>iframe width<span class="symbol">=\</span>&quot;100%<span class="symbol">\</span>&quot; frameborder<span class="symbol">=\</span>&quot;0<span class="symbol">\</span>&quot; scrolling<span class="symbol">=\</span>&quot;no<span class="symbol">\</span>&quot;
+             onload<span class="symbol">=\</span>&quot;this<span class="symbol">.</span>style<span class="symbol">.</span>height<span class="symbol">=</span>this<span class="symbol">.</span>contentWindow<span class="symbol">.</span>document<span class="symbol">.</span>body<span class="symbol">.</span>scrollHeight<span class="symbol">+</span>&#39;px&#39;<span class="symbol">\</span>&quot;;
+             srcdoc<span class="symbol">=</span>&#39;<span class="symbol">&lt;</span>html<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;</span>head<span class="symbol">&gt;&lt;</span>script src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>cdn<span class="symbol">.</span>jsdelivr<span class="symbol">.</span>net<span class="symbol">/</span>npm<span class="symbol">/</span>vega<span class="symbol">@</span>5<span class="symbol">.</span>17<span class="symbol">.</span>0<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>script<span class="symbol">&gt;</span>
+          <span class="symbol">&lt;</span>script src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>cdn<span class="symbol">.</span>jsdelivr<span class="symbol">.</span>net<span class="symbol">/</span>npm<span class="symbol">/</span>vega<span class="symbol">-</span>lite<span class="symbol">@</span>4<span class="symbol">.</span>17<span class="symbol">.</span>0<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>script<span class="symbol">&gt;</span>
+          <span class="symbol">&lt;</span>script src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>cdn<span class="symbol">.</span>jsdelivr<span class="symbol">.</span>net<span class="symbol">/</span>npm<span class="symbol">/</span>vega<span class="symbol">-</span>embed<span class="symbol">@</span>6<span class="symbol">.</span>12<span class="symbol">.</span>2<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>script<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>head<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;</span>body<span class="symbol">&gt;</span>
+           <span class="symbol">&lt;</span>div id<span class="symbol">=\</span>&quot;vis<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>div<span class="symbol">&gt;</span>
+           <span class="symbol">&lt;</span>script<span class="symbol">&gt;</span>vegaEmbed(<span class="symbol">\</span>&quot;<span class="iso-sugar">#vis</span><span class="symbol">\</span>&quot;<span class="symbol">,</span>&quot; <span class="symbol">&lt;&gt;</span> (show x) <span class="symbol">&lt;&gt;</span> &quot;);<span class="symbol">&lt;/</span>script<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>body<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>html<span class="symbol">&gt;</span>&#39;<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>iframe<span class="symbol">&gt;</span>&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Example: Bar Chart</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Start with a well type and useful Dex record</p>
+</div></div><div class="cell"><div class="code-block">df1 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> {a <span class="symbol">=</span> [&quot;<span class="type-name">A</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">B</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">C</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">D</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">E</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">F</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">G</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">H</span>&quot;<span class="symbol">,</span> &quot;<span class="type-name">I</span>&quot;]<span class="symbol">.</span>i<span class="symbol">,</span>
+              b <span class="symbol">=</span> [28<span class="symbol">,</span> 55<span class="symbol">,</span> 43<span class="symbol">,</span> 91<span class="symbol">,</span> 81<span class="symbol">,</span> 53<span class="symbol">,</span> 19<span class="symbol">,</span> 87<span class="symbol">,</span> 52]<span class="symbol">.</span>i}
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">chart1 <span class="symbol">=</span> (<span class="type-name">AsVLDescriptor</span> (pure <span class="type-name">Bar</span>) [(&quot;title&quot;<span class="symbol">,</span> &quot;<span class="type-name">Bar</span> <span class="type-name">Graph</span>&quot;)]
+    [{title<span class="symbol">=</span>&quot;a axis&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">X</span><span class="symbol">,</span>
+      encType<span class="symbol">=</span><span class="type-name">Nominal</span><span class="symbol">,</span> rows<span class="symbol">=</span>wrapCol <span class="iso-sugar">#a</span> df1}<span class="symbol">,</span>
+     {title<span class="symbol">=</span>&quot;b axis&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Y</span><span class="symbol">,</span>
+     encType<span class="symbol">=</span><span class="type-name">Quantitative</span><span class="symbol">,</span> rows<span class="symbol">=</span>wrapCol <span class="iso-sugar">#b</span> df1}]
+)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showVega <span class="symbol">$</span> toJSON chart1
+</div><iframe width="100%" frameborder="0" scrolling="no"
+             onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+             srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/vega@5.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.12.2"></script>
+    </head>
+    <body>
+           <div id="vis"></div>
+           <script>vegaEmbed("#vis",{"title":"Bar Graph", "data":{"values":[{"col0":"A", "col1":28}, {"col0":"B", "col1":55}, {"col0":"C", "col1":43}, {"col0":"D", "col1":91}, {"col0":"E", "col1":81}, {"col0":"F", "col1":53}, {"col0":"G", "col1":19}, {"col0":"H", "col1":87}, {"col0":"I", "col1":52}]}, "mark":{"type":"bar"}, "encoding":{"x":{"field":"col0", "type":"nominal", "title":"a axis"}, "y":{"field":"col1", "type":"quantitative", "title":"b axis"}}});</script>
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Example: Scatter</h2>
+</div></div><div class="cell"><div class="prose-block"><p>This example constructs a scatter plot with several different variables.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>First we will construct a Nominal variable for a class.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Class</span> <span class="symbol">=</span>
+     <span class="type-name">A</span>
+     <span class="type-name">B</span>
+     <span class="type-name">C</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span> <span class="type-name">Class</span>
+    show <span class="symbol">=</span> <span class="symbol">\</span>x <span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+               <span class="type-name">A</span> <span class="symbol">-&gt;</span> &quot;<span class="type-name">Apples</span>&quot;
+               <span class="type-name">B</span> <span class="symbol">-&gt;</span> &quot;<span class="type-name">Bananas</span>&quot;
+               <span class="type-name">C</span> <span class="symbol">-&gt;</span> &quot;<span class="type-name">Cucumbers</span>&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">Class</span>
+    arb <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span> [<span class="type-name">A</span><span class="symbol">,</span> <span class="type-name">B</span><span class="symbol">,</span> <span class="type-name">C</span>]<span class="symbol">.</span>(arb key)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">ToJSON</span> <span class="type-name">Class</span>
+    toJSON <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="type-name">AsString</span> <span class="symbol">$</span> show x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Then we will generate some random data.</p>
+</div></div><div class="cell"><div class="code-block">key <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> newKey 1
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">df2 <span class="symbol">:</span>(<span class="type-name">Fin</span> 100) <span class="symbol">=&gt;</span> {x1<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> x2<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> weight<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> label<span class="symbol">:</span><span class="type-name">Class</span>}  <span class="symbol">=</span>  <span class="keyword">for</span> i<span class="symbol">:</span> (<span class="type-name">Fin</span> 100)<span class="symbol">.</span>
+              [k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3<span class="symbol">,</span> k4] <span class="symbol">=</span> splitKey <span class="symbol">$</span> ixkey key i
+              {x1<span class="symbol">=</span>(arb k1)<span class="symbol">,</span>
+               x2<span class="symbol">=</span>arb k2<span class="symbol">,</span>
+               weight<span class="symbol">=</span>arb k3<span class="symbol">,</span>
+               label<span class="symbol">=</span>arb k4}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The descriptor has a mapping between the variable names and their encoding type.</p>
+</div></div><div class="cell"><div class="prose-block"><p>We use a different mark <code>Point</code> and pass in multiple Channels for some variables.</p>
+</div></div><div class="cell"><div class="code-block">chart2 <span class="symbol">=</span> (<span class="type-name">AsVLDescriptor</span> (pure <span class="type-name">Point</span>) [(&quot;title&quot;<span class="symbol">,</span> &quot;<span class="type-name">Scatter</span>&quot;)]
+            [{title<span class="symbol">=</span>&quot;<span class="type-name">X1</span>&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">X</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Quantitative</span><span class="symbol">,</span> rows<span class="symbol">=</span>wrapCol <span class="iso-sugar">#x1</span> df2}<span class="symbol">,</span>
+             {title<span class="symbol">=</span>&quot;<span class="type-name">X2</span>&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Y</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Quantitative</span><span class="symbol">,</span> rows<span class="symbol">=</span>wrapCol <span class="iso-sugar">#x2</span> df2}<span class="symbol">,</span>
+             {title<span class="symbol">=</span>&quot;<span class="type-name">Weight</span>&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Size</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Quantitative</span><span class="symbol">,</span> rows<span class="symbol">=</span>wrapCol <span class="iso-sugar">#weight</span> df2}<span class="symbol">,</span>
+             {title<span class="symbol">=</span>&quot;<span class="type-name">Label</span>&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>toList [pure <span class="type-name">Color</span><span class="symbol">,</span> pure <span class="type-name">Tooltip</span>]<span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Nominal</span><span class="symbol">,</span> rows<span class="symbol">=</span>wrapCol <span class="iso-sugar">#label</span> df2}])
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showVega <span class="symbol">$</span> toJSON chart2
+</div><iframe width="100%" frameborder="0" scrolling="no"
+             onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+             srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/vega@5.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.12.2"></script>
+    </head>
+    <body>
+           <div id="vis"></div>
+           <script>vegaEmbed("#vis",{"title":"Scatter", "data":{"values":[{"col0":0.00111498893, "col1":0.139302969, "col2":0.378523082, "col3":"Cucumbers"}, {"col0":1.51853418, "col1":0.757679403, "col2":0.408158094, "col3":"Bananas"}, {"col0":0.176117927, "col1":1.11011362, "col2":-1.05090833, "col3":"Apples"}, {"col0":-1.82915032, "col1":0.853383601, "col2":1.41573584, "col3":"Bananas"}, {"col0":-0.289659768, "col1":-0.29858616, "col2":-1.80150533, "col3":"Cucumbers"}, {"col0":0.723925114, "col1":1.59666228, "col2":0.465925902, "col3":"Apples"}, {"col0":0.0298347417, "col1":-2.01448369, "col2":1.23918688, "col3":"Apples"}, {"col0":1.6102854, "col1":-0.423012078, "col2":2.69782138, "col3":"Bananas"}, {"col0":-0.263672054, "col1":1.20939744, "col2":-1.5712949, "col3":"Cucumbers"}, {"col0":0.421367496, "col1":0.47790575, "col2":0.769254982, "col3":"Apples"}, {"col0":-0.541137695, "col1":-0.388154805, "col2":-0.485970527, "col3":"Apples"}, {"col0":1.53182864, "col1":1.00702322, "col2":-1.02013886, "col3":"Cucumbers"}, {"col0":0.136132106, "col1":-1.44790339, "col2":1.48262691, "col3":"Apples"}, {"col0":1.71201015, "col1":1.19220126, "col2":1.18872368, "col3":"Bananas"}, {"col0":0.47177738, "col1":-0.522429347, "col2":-0.303254753, "col3":"Cucumbers"}, {"col0":0.367600292, "col1":-0.435061812, "col2":-0.343509465, "col3":"Apples"}, {"col0":-0.115037754, "col1":0.980583847, "col2":1.65721548, "col3":"Apples"}, {"col0":0.252852529, "col1":-1.40584326, "col2":2.8169589, "col3":"Apples"}, {"col0":-0.295276076, "col1":0.93771559, "col2":-0.63963449, "col3":"Apples"}, {"col0":0.911606908, "col1":2.15036464, "col2":-2.427284, "col3":"Cucumbers"}, {"col0":0.566098094, "col1":0.347379893, "col2":0.185839787, "col3":"Bananas"}, {"col0":-0.781061411, "col1":2.46080184, "col2":1.02488947, "col3":"Cucumbers"}, {"col0":2.0277617, "col1":-0.411489069, "col2":-0.671722174, "col3":"Apples"}, {"col0":-0.337535143, "col1":0.812460721, "col2":1.36038625, "col3":"Cucumbers"}, {"col0":0.957657278, "col1":0.00331091019, "col2":0.0125574674, "col3":"Bananas"}, {"col0":-0.898884892, "col1":-0.684651136, "col2":-0.198668525, "col3":"Cucumbers"}, {"col0":-0.557679713, "col1":0.935072362, "col2":1.00839591, "col3":"Bananas"}, {"col0":-0.599741638, "col1":-1.10240376, "col2":0.425546348, "col3":"Bananas"}, {"col0":1.66872704, "col1":-0.647065341, "col2":0.758707464, "col3":"Apples"}, {"col0":2.14058828, "col1":-0.461150318, "col2":-1.65378308, "col3":"Apples"}, {"col0":1.35778558, "col1":-1.08452845, "col2":0.19398424, "col3":"Bananas"}, {"col0":0.789465904, "col1":-0.718942344, "col2":-0.868534446, "col3":"Apples"}, {"col0":-0.621035337, "col1":-0.0959458575, "col2":-0.759767115, "col3":"Cucumbers"}, {"col0":-0.3129296, "col1":1.21895373, "col2":0.18624486, "col3":"Apples"}, {"col0":-1.69057643, "col1":1.92979825, "col2":1.08836269, "col3":"Apples"}, {"col0":1.28825927, "col1":1.62917387, "col2":0.776902258, "col3":"Apples"}, {"col0":-0.500706434, "col1":-0.532741129, "col2":-1.02626836, "col3":"Cucumbers"}, {"col0":-0.85857904, "col1":-0.942546964, "col2":-1.00501585, "col3":"Apples"}, {"col0":-0.885294139, "col1":-1.14640594, "col2":0.167181149, "col3":"Apples"}, {"col0":0.737017453, "col1":-0.553220689, "col2":-0.14349395, "col3":"Apples"}, {"col0":-1.34679472, "col1":0.767850041, "col2":1.13844788, "col3":"Apples"}, {"col0":0.224363327, "col1":-0.100951776, "col2":-1.64641023, "col3":"Bananas"}, {"col0":-0.503104389, "col1":0.0291211363, "col2":-2.30107999, "col3":"Cucumbers"}, {"col0":1.02562332, "col1":-0.825592875, "col2":-0.00529770087, "col3":"Cucumbers"}, {"col0":-1.50894487, "col1":0.727649271, "col2":0.494943082, "col3":"Apples"}, {"col0":-0.434433132, "col1":-1.3271879, "col2":-2.15182757, "col3":"Apples"}, {"col0":1.22005033, "col1":0.755801558, "col2":-1.67349708, "col3":"Cucumbers"}, {"col0":-2.09718585, "col1":1.32814336, "col2":0.216017336, "col3":"Apples"}, {"col0":-0.15126133, "col1":0.633645236, "col2":0.239083931, "col3":"Cucumbers"}, {"col0":-0.485832274, "col1":0.383301795, "col2":1.17413139, "col3":"Apples"}, {"col0":-0.796930075, "col1":1.27380145, "col2":0.351050228, "col3":"Bananas"}, {"col0":-1.08893776, "col1":-1.59018612, "col2":1.8484422, "col3":"Apples"}, {"col0":-0.780906439, "col1":0.70861429, "col2":0.134393513, "col3":"Apples"}, {"col0":-0.667463779, "col1":0.546014845, "col2":-0.404862434, "col3":"Apples"}, {"col0":-0.0693809763, "col1":-1.53984475, "col2":-1.4372021, "col3":"Bananas"}, {"col0":0.853852451, "col1":0.906464159, "col2":0.724542856, "col3":"Bananas"}, {"col0":-2.37631392, "col1":0.679097295, "col2":-1.26143706, "col3":"Bananas"}, {"col0":-0.240285143, "col1":-2.04659224, "col2":-0.397884548, "col3":"Apples"}, {"col0":-1.12077224, "col1":-0.345927984, "col2":1.80471718, "col3":"Cucumbers"}, {"col0":0.586421192, "col1":2.0021193, "col2":-1.14690447, "col3":"Apples"}, {"col0":-0.252741218, "col1":0.714034438, "col2":-0.719253004, "col3":"Cucumbers"}, {"col0":0.381879866, "col1":1.13080704, "col2":-1.33315599, "col3":"Bananas"}, {"col0":-1.37985444, "col1":1.74358571, "col2":0.235032901, "col3":"Apples"}, {"col0":0.452850521, "col1":0.0138735129, "col2":0.320342481, "col3":"Cucumbers"}, {"col0":-0.402791262, "col1":0.646920204, "col2":-1.78016138, "col3":"Bananas"}, {"col0":-0.0162458271, "col1":-0.364296943, "col2":-1.16839075, "col3":"Apples"}, {"col0":-0.380248904, "col1":0.632296264, "col2":1.55236626, "col3":"Apples"}, {"col0":-0.102362141, "col1":-0.160158783, "col2":-1.10648787, "col3":"Apples"}, {"col0":0.125620872, "col1":1.12499404, "col2":2.25818324, "col3":"Cucumbers"}, {"col0":0.194875121, "col1":0.671409428, "col2":-0.643754542, "col3":"Cucumbers"}, {"col0":0.536372423, "col1":-1.34087443, "col2":0.734999716, "col3":"Apples"}, {"col0":-0.0306982826, "col1":-1.10632646, "col2":-0.292435288, "col3":"Bananas"}, {"col0":-1.91014099, "col1":-0.304243654, "col2":-1.29927361, "col3":"Apples"}, {"col0":-0.716346443, "col1":-1.32878506, "col2":0.547039628, "col3":"Cucumbers"}, {"col0":-0.726060092, "col1":-0.476059616, "col2":0.155834511, "col3":"Apples"}, {"col0":-0.91305846, "col1":-0.347747713, "col2":1.08865392, "col3":"Bananas"}, {"col0":2.29452968, "col1":-0.238462731, "col2":0.529262602, "col3":"Bananas"}, {"col0":1.547755, "col1":0.268394828, "col2":-1.59741223, "col3":"Apples"}, {"col0":0.157684073, "col1":-1.2534349, "col2":-0.47327745, "col3":"Cucumbers"}, {"col0":0.436121881, "col1":-0.512197733, "col2":-0.912388563, "col3":"Bananas"}, {"col0":-1.44654846, "col1":0.918573618, "col2":1.0456562, "col3":"Bananas"}, {"col0":-0.386709183, "col1":-0.0893614963, "col2":-1.06756592, "col3":"Cucumbers"}, {"col0":0.0165107567, "col1":-0.899044573, "col2":-3.52653098, "col3":"Apples"}, {"col0":1.0873673, "col1":1.02736187, "col2":0.272972882, "col3":"Cucumbers"}, {"col0":-2.05794072, "col1":1.08719671, "col2":0.367435545, "col3":"Apples"}, {"col0":-0.0127187073, "col1":-1.0068841, "col2":-0.732713819, "col3":"Cucumbers"}, {"col0":-0.948605478, "col1":0.260427445, "col2":0.417626262, "col3":"Cucumbers"}, {"col0":2.17199135, "col1":-0.545526385, "col2":-0.317496777, "col3":"Cucumbers"}, {"col0":0.437788397, "col1":-0.908377349, "col2":1.0243448, "col3":"Apples"}, {"col0":0.430841327, "col1":-1.61108315, "col2":0.125080556, "col3":"Bananas"}, {"col0":-0.596515119, "col1":0.284536004, "col2":-0.30401212, "col3":"Cucumbers"}, {"col0":-0.737476289, "col1":1.06883323, "col2":0.173585966, "col3":"Cucumbers"}, {"col0":-0.554035962, "col1":-1.88356662, "col2":-0.929151833, "col3":"Cucumbers"}, {"col0":0.106113918, "col1":0.972496092, "col2":0.346727163, "col3":"Cucumbers"}, {"col0":-2.06690168, "col1":1.38962615, "col2":-0.254312873, "col3":"Cucumbers"}, {"col0":-0.25164023, "col1":0.0762551427, "col2":0.365030527, "col3":"Bananas"}, {"col0":1.53482509, "col1":-0.70823133, "col2":-0.53576088, "col3":"Bananas"}, {"col0":0.394558907, "col1":-1.11762011, "col2":-1.26012146, "col3":"Bananas"}, {"col0":0.921376169, "col1":0.692061961, "col2":-0.278840929, "col3":"Cucumbers"}, {"col0":1.41662645, "col1":-1.95174909, "col2":0.187304944, "col3":"Apples"}]}, "mark":{"type":"point"}, "encoding":{"x":{"field":"col0", "type":"quantitative", "title":"X1"}, "y":{"field":"col1", "type":"quantitative", "title":"X2"}, "size":{"field":"col2", "type":"quantitative", "title":"Weight"}, "color":{"field":"col3", "type":"nominal", "title":"Label"}, "tooltip":{"field":"col3", "type":"nominal", "title":"Label"}}});</script>
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Example: Faceted Area plot</h2>
+</div></div><div class="cell"><div class="prose-block"><p>This example show three different random walks. In particular in demonstrates how
+VL can auto-facet the chart based on Nominal variables.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">y1 <span class="symbol">:</span>  (<span class="type-name">Fin</span> 3) <span class="symbol">=&gt;</span> (<span class="type-name">Fin</span> 10) <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb <span class="symbol">$</span> newKey 0
+</div></div><div class="cell"><div class="code-block">df3 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> cumSum <span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> select (y1<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) (<span class="symbol">-</span>1<span class="symbol">.</span>0) 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> df3
+</div><div class="result-block">((Fin 3) =&gt; (Fin 10) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">chart3 <span class="symbol">=</span> (<span class="type-name">AsVLDescriptor</span> (pure <span class="type-name">Area</span>) [(&quot;title&quot;<span class="symbol">,</span> &quot;<span class="type-name">Area</span>&quot;)<span class="symbol">,</span> (&quot;height&quot;<span class="symbol">,</span> &quot;75&quot;)]
+            [{title<span class="symbol">=</span>&quot;density&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Y</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Quantitative</span><span class="symbol">,</span> rows<span class="symbol">=</span><span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> toJSON df3<span class="symbol">.</span>i<span class="symbol">.</span>j}<span class="symbol">,</span>
+             {title<span class="symbol">=</span>&quot;<span class="type-name">Runs</span>&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Row</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Nominal</span><span class="symbol">,</span> rows<span class="symbol">=</span> <span class="keyword">for</span> (i<span class="symbol">,</span>_)<span class="symbol">.</span> toJSON <span class="symbol">$</span> [&quot;<span class="type-name">Run</span> 1&quot;<span class="symbol">,</span> &quot;<span class="type-name">Run</span> 2&quot;<span class="symbol">,</span> &quot;<span class="type-name">Run</span> 3&quot;]<span class="symbol">.</span>i}<span class="symbol">,</span>
+             {title<span class="symbol">=</span>&quot;<span class="type-name">Round</span>&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">X</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Ordinal</span><span class="symbol">,</span> rows<span class="symbol">=</span><span class="keyword">for</span> (_<span class="symbol">,</span>j)<span class="symbol">.</span> toJSON <span class="symbol">$</span> ordinal j}]
+)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showVega <span class="symbol">$</span> toJSON chart3
+</div><iframe width="100%" frameborder="0" scrolling="no"
+             onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+             srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/vega@5.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.12.2"></script>
+    </head>
+    <body>
+           <div id="vis"></div>
+           <script>vegaEmbed("#vis",{"title":"Area", "height":"75", "data":{"values":[{"col0":-1, "col1":"Run 1", "col2":0}, {"col0":-2, "col1":"Run 1", "col2":1}, {"col0":-1, "col1":"Run 1", "col2":2}, {"col0":0, "col1":"Run 1", "col2":3}, {"col0":1, "col1":"Run 1", "col2":4}, {"col0":2, "col1":"Run 1", "col2":5}, {"col0":1, "col1":"Run 1", "col2":6}, {"col0":2, "col1":"Run 1", "col2":7}, {"col0":1, "col1":"Run 1", "col2":8}, {"col0":0, "col1":"Run 1", "col2":9}, {"col0":-1, "col1":"Run 2", "col2":0}, {"col0":-2, "col1":"Run 2", "col2":1}, {"col0":-1, "col1":"Run 2", "col2":2}, {"col0":-2, "col1":"Run 2", "col2":3}, {"col0":-1, "col1":"Run 2", "col2":4}, {"col0":0, "col1":"Run 2", "col2":5}, {"col0":1, "col1":"Run 2", "col2":6}, {"col0":2, "col1":"Run 2", "col2":7}, {"col0":3, "col1":"Run 2", "col2":8}, {"col0":4, "col1":"Run 2", "col2":9}, {"col0":1, "col1":"Run 3", "col2":0}, {"col0":2, "col1":"Run 3", "col2":1}, {"col0":1, "col1":"Run 3", "col2":2}, {"col0":0, "col1":"Run 3", "col2":3}, {"col0":1, "col1":"Run 3", "col2":4}, {"col0":2, "col1":"Run 3", "col2":5}, {"col0":3, "col1":"Run 3", "col2":6}, {"col0":2, "col1":"Run 3", "col2":7}, {"col0":3, "col1":"Run 3", "col2":8}, {"col0":2, "col1":"Run 3", "col2":9}]}, "mark":{"type":"area"}, "encoding":{"y":{"field":"col0", "type":"quantitative", "title":"density"}, "row":{"field":"col1", "type":"nominal", "title":"Runs"}, "x":{"field":"col2", "type":"ordinal", "title":"Round"}}});</script>
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Example: Heatmap</h2>
+</div></div><div class="cell"><div class="code-block">words <span class="symbol">=</span> [&quot;the&quot;<span class="symbol">,</span> &quot;dog&quot;<span class="symbol">,</span> &quot;walked&quot;<span class="symbol">,</span> &quot;to&quot;<span class="symbol">,</span> &quot;the&quot;<span class="symbol">,</span> &quot;store&quot;]
+</div></div><div class="cell"><div class="code-block">z <span class="symbol">:</span>  (<span class="type-name">Fin</span> 6) <span class="symbol">=&gt;</span> (<span class="type-name">Fin</span> 6) <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb <span class="symbol">$</span> newKey 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showChart4 [<span class="type-name">ToJSON</span> o] (opts<span class="command">:o</span>) <span class="symbol">:</span> <span class="type-name">Value</span>  <span class="symbol">=</span> toJSON (<span class="type-name">AsVLDescriptor</span> (pure <span class="type-name">Rect</span>) opts
+            [{title<span class="symbol">=</span>&quot;match&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Color</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Quantitative</span><span class="symbol">,</span> rows<span class="symbol">=</span><span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> toJSON z<span class="symbol">.</span>i<span class="symbol">.</span>j}<span class="symbol">,</span>
+            {title<span class="symbol">=</span>&quot;words&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Tooltip</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Nominal</span><span class="symbol">,</span> rows<span class="symbol">=</span><span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> toJSON (words<span class="symbol">.</span>i <span class="symbol">&lt;&gt;</span> &quot; <span class="symbol">-</span> &quot; <span class="symbol">&lt;&gt;</span> words<span class="symbol">.</span>j)}<span class="symbol">,</span>
+            {title<span class="symbol">=</span>&quot;row&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">X</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Ordinal</span><span class="symbol">,</span> rows<span class="symbol">=</span><span class="keyword">for</span> (i<span class="symbol">,</span>_)<span class="symbol">.</span> toJSON (ordinal i)}<span class="symbol">,</span>
+            {title<span class="symbol">=</span>&quot;col&quot;<span class="symbol">,</span> encodings<span class="symbol">=</span>pureLs <span class="type-name">Y</span><span class="symbol">,</span> encType<span class="symbol">=</span><span class="type-name">Ordinal</span><span class="symbol">,</span> rows<span class="symbol">=</span><span class="keyword">for</span> (_<span class="symbol">,</span>j)<span class="symbol">.</span> toJSON (ordinal j)}]
+        )
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Default heat map</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showVega <span class="symbol">$</span> showChart4 <span class="type-name">AsNone</span>
+</div><iframe width="100%" frameborder="0" scrolling="no"
+             onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+             srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/vega@5.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.12.2"></script>
+    </head>
+    <body>
+           <div id="vis"></div>
+           <script>vegaEmbed("#vis",{"data":{"values":[{"col0":1.33158469, "col1":"the - the", "col2":0, "col3":0}, {"col0":0.712532997, "col1":"the - dog", "col2":0, "col3":1}, {"col0":-0.273933589, "col1":"the - walked", "col2":0, "col3":2}, {"col0":-1.84602892, "col1":"the - to", "col2":0, "col3":3}, {"col0":-1.02319884, "col1":"the - the", "col2":0, "col3":4}, {"col0":-0.127477944, "col1":"the - store", "col2":0, "col3":5}, {"col0":1.21127701, "col1":"dog - the", "col2":1, "col3":0}, {"col0":0.232849702, "col1":"dog - dog", "col2":1, "col3":1}, {"col0":-0.741910636, "col1":"dog - walked", "col2":1, "col3":2}, {"col0":0.883350849, "col1":"dog - to", "col2":1, "col3":3}, {"col0":-1.44288516, "col1":"dog - the", "col2":1, "col3":4}, {"col0":-0.0748549849, "col1":"dog - store", "col2":1, "col3":5}, {"col0":-0.195076555, "col1":"walked - the", "col2":2, "col3":0}, {"col0":-0.787112653, "col1":"walked - dog", "col2":2, "col3":1}, {"col0":0.625113308, "col1":"walked - walked", "col2":2, "col3":2}, {"col0":0.60825187, "col1":"walked - to", "col2":2, "col3":3}, {"col0":-1.09104478, "col1":"walked - the", "col2":2, "col3":4}, {"col0":-0.870851219, "col1":"walked - store", "col2":2, "col3":5}, {"col0":0.245456219, "col1":"to - the", "col2":3, "col3":0}, {"col0":-0.156876549, "col1":"to - dog", "col2":3, "col3":1}, {"col0":-0.823616683, "col1":"to - walked", "col2":3, "col3":2}, {"col0":0.732750118, "col1":"to - to", "col2":3, "col3":3}, {"col0":0.617756605, "col1":"to - the", "col2":3, "col3":4}, {"col0":0.855774045, "col1":"to - store", "col2":3, "col3":5}, {"col0":0.426452518, "col1":"the - the", "col2":4, "col3":0}, {"col0":0.99648428, "col1":"the - dog", "col2":4, "col3":1}, {"col0":0.712362528, "col1":"the - walked", "col2":4, "col3":2}, {"col0":0.891714513, "col1":"the - to", "col2":4, "col3":3}, {"col0":-0.444938958, "col1":"the - the", "col2":4, "col3":4}, {"col0":-0.853898823, "col1":"the - store", "col2":4, "col3":5}, {"col0":-1.13921142, "col1":"store - the", "col2":5, "col3":0}, {"col0":0.791242182, "col1":"store - dog", "col2":5, "col3":1}, {"col0":1.14246678, "col1":"store - walked", "col2":5, "col3":2}, {"col0":-1.06166565, "col1":"store - to", "col2":5, "col3":3}, {"col0":-0.375341982, "col1":"store - the", "col2":5, "col3":4}, {"col0":0.440465569, "col1":"store - store", "col2":5, "col3":5}]}, "mark":{"type":"rect"}, "encoding":{"color":{"field":"col0", "type":"quantitative", "title":"match"}, "tooltip":{"field":"col1", "type":"nominal", "title":"words"}, "x":{"field":"col2", "type":"ordinal", "title":"row"}, "y":{"field":"col3", "type":"ordinal", "title":"col"}}});</script>
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Customization through JSON options.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> showVega <span class="symbol">$</span> showChart4 <span class="symbol">$</span> mergeOpts [(&quot;title&quot;<span class="symbol">,</span>  &quot;<span class="type-name">HeatMap</span>&quot;)<span class="symbol">,</span> (&quot;height&quot;<span class="symbol">,</span> &quot;200&quot;)<span class="symbol">,</span> (&quot;width&quot;<span class="symbol">,</span>  &quot;200&quot;)] [(&quot;config&quot;<span class="symbol">,</span> toJSON [
+          (&quot;axis&quot;<span class="symbol">,</span> [(&quot;grid&quot;<span class="symbol">,</span> &quot;1&quot;)<span class="symbol">,</span> (&quot;tickBand&quot;<span class="symbol">,</span>  &quot;extent&quot;)])
+          ])]
+</div><iframe width="100%" frameborder="0" scrolling="no"
+             onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+             srcdoc='<html>
+    <head><script src="https://cdn.jsdelivr.net/npm/vega@5.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-lite@4.17.0"></script>
+          <script src="https://cdn.jsdelivr.net/npm/vega-embed@6.12.2"></script>
+    </head>
+    <body>
+           <div id="vis"></div>
+           <script>vegaEmbed("#vis",{"title":"HeatMap", "height":"200", "width":"200", "config":{"axis":{"grid":"1", "tickBand":"extent"}}, "data":{"values":[{"col0":1.33158469, "col1":"the - the", "col2":0, "col3":0}, {"col0":0.712532997, "col1":"the - dog", "col2":0, "col3":1}, {"col0":-0.273933589, "col1":"the - walked", "col2":0, "col3":2}, {"col0":-1.84602892, "col1":"the - to", "col2":0, "col3":3}, {"col0":-1.02319884, "col1":"the - the", "col2":0, "col3":4}, {"col0":-0.127477944, "col1":"the - store", "col2":0, "col3":5}, {"col0":1.21127701, "col1":"dog - the", "col2":1, "col3":0}, {"col0":0.232849702, "col1":"dog - dog", "col2":1, "col3":1}, {"col0":-0.741910636, "col1":"dog - walked", "col2":1, "col3":2}, {"col0":0.883350849, "col1":"dog - to", "col2":1, "col3":3}, {"col0":-1.44288516, "col1":"dog - the", "col2":1, "col3":4}, {"col0":-0.0748549849, "col1":"dog - store", "col2":1, "col3":5}, {"col0":-0.195076555, "col1":"walked - the", "col2":2, "col3":0}, {"col0":-0.787112653, "col1":"walked - dog", "col2":2, "col3":1}, {"col0":0.625113308, "col1":"walked - walked", "col2":2, "col3":2}, {"col0":0.60825187, "col1":"walked - to", "col2":2, "col3":3}, {"col0":-1.09104478, "col1":"walked - the", "col2":2, "col3":4}, {"col0":-0.870851219, "col1":"walked - store", "col2":2, "col3":5}, {"col0":0.245456219, "col1":"to - the", "col2":3, "col3":0}, {"col0":-0.156876549, "col1":"to - dog", "col2":3, "col3":1}, {"col0":-0.823616683, "col1":"to - walked", "col2":3, "col3":2}, {"col0":0.732750118, "col1":"to - to", "col2":3, "col3":3}, {"col0":0.617756605, "col1":"to - the", "col2":3, "col3":4}, {"col0":0.855774045, "col1":"to - store", "col2":3, "col3":5}, {"col0":0.426452518, "col1":"the - the", "col2":4, "col3":0}, {"col0":0.99648428, "col1":"the - dog", "col2":4, "col3":1}, {"col0":0.712362528, "col1":"the - walked", "col2":4, "col3":2}, {"col0":0.891714513, "col1":"the - to", "col2":4, "col3":3}, {"col0":-0.444938958, "col1":"the - the", "col2":4, "col3":4}, {"col0":-0.853898823, "col1":"the - store", "col2":4, "col3":5}, {"col0":-1.13921142, "col1":"store - the", "col2":5, "col3":0}, {"col0":0.791242182, "col1":"store - dog", "col2":5, "col3":1}, {"col0":1.14246678, "col1":"store - walked", "col2":5, "col3":2}, {"col0":-1.06166565, "col1":"store - to", "col2":5, "col3":3}, {"col0":-0.375341982, "col1":"store - the", "col2":5, "col3":4}, {"col0":0.440465569, "col1":"store - store", "col2":5, "col3":5}]}, "mark":{"type":"rect"}, "encoding":{"color":{"field":"col0", "type":"quantitative", "title":"match"}, "tooltip":{"field":"col1", "type":"nominal", "title":"words"}, "x":{"field":"col2", "type":"ordinal", "title":"row"}, "y":{"field":"col3", "type":"ordinal", "title":"col"}}});</script>
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>(end)</p>
+</div></div></div></body></html>
