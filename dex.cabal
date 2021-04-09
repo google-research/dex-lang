@@ -64,7 +64,6 @@ library
                        -- Serialization
                        store, aeson
   if flag(live)
-                       -- Notebook support
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE
     cxx-options:       -DDEX_LIVE
@@ -111,6 +110,8 @@ executable dex
   hs-source-dirs:      src
   default-extensions:  CPP, LambdaCase, BlockArguments
   ghc-options:         -optP-Wno-nonportable-include-path
+  if flag(live)
+    cpp-options:       -DDEX_LIVE
   if flag(optimized)
     ghc-options:       -O3
   else
