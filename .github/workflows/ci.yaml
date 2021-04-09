@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-18.04, macos-latest]
@@ -18,8 +19,6 @@ jobs:
           - os: ubuntu-18.04
             install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config wget gzip
             path_extension: /usr/lib/llvm-9/bin
-
-    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout the repository
@@ -56,7 +55,8 @@ jobs:
         key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-
 
-      # See https://github.com/actions/cache/issues/445
+    # This step is a workaround.
+    # See issue for context: https://github.com/actions/cache/issues/445
     - name: Remove cached Setup executables
       run: rm -rf ~/.stack/setup-exe-cache
       if: runner.os == 'macOS'

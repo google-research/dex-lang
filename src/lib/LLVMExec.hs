@@ -346,6 +346,9 @@ linkDexrt m = do
 
 data LLVMKernel = LLVMKernel L.Module
 
+cudaPath :: IO String
+cudaPath = maybe "/usr/local/cuda" id <$> lookupEnv "CUDA_PATH"
+
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> String -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) arch = do
   T.initializeAllTargets
@@ -358,6 +361,7 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
         usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
           then do
+            ptxasPath <- (++"/bin/ptxas") <$> cudaPath
             withSystemTempFile "kernel.ptx" \ptxPath ptxH -> do
               B.hPut ptxH ptx
               hClose ptxH
@@ -371,14 +375,12 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
                 -- TODO: B.readFile might be faster, but withSystemTempFile seems to lock the file...
                 CUDAKernel <$> B.hGetContents sassH
           else return $ CUDAKernel ptx
-  where
-    ptxasPath = "/usr/local/cuda/bin/ptxas"
 
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module
 libdevice = unsafePerformIO $ do
   withContext \ctx -> do
-    let libdeviceDirectory = "/usr/local/cuda/nvvm/libdevice"
+    libdeviceDirectory <- (flip (++) $ "/nvvm/libdevice") <$> cudaPath
     [libdeviceFileName] <- listDirectory libdeviceDirectory
     let libdevicePath = libdeviceDirectory ++ "/" ++ libdeviceFileName
     libdeviceBC <- B.readFile libdevicePath
