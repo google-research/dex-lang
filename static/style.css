@@ -42,7 +42,7 @@ nav ol {
   padding-left: 1rem;
 }
 
-main {
+#main-output {
   max-width: var(--main-width);
 }
 
