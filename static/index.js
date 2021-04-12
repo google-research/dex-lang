@@ -79,6 +79,14 @@ function updateNavigation() {
     }
 
     var navbarEle = document.getElementById("navbar")
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement("div");
+        navbarEle.id="navbar";
+        navOuterEle = document.createElement("nav")
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
     navbarEle.innerHTML = ""
     var structure = extractStructure()
     navbarEle.appendChild(navItemList(structure));
