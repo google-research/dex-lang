@@ -349,8 +349,8 @@ data LLVMKernel = LLVMKernel L.Module
 cudaPath :: IO String
 cudaPath = maybe "/usr/local/cuda" id <$> lookupEnv "CUDA_PATH"
 
-compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
-compileCUDAKernel logger (LLVMKernel ast) = do
+compileCUDAKernel :: Logger [Output] -> LLVMKernel -> String -> IO CUDAKernel
+compileCUDAKernel logger (LLVMKernel ast) arch = do
   T.initializeAllTargets
   withContext \ctx ->
     Mod.withModuleFromAST ctx ast \m -> do
@@ -375,8 +375,6 @@ compileCUDAKernel logger (LLVMKernel ast) = do
                 -- TODO: B.readFile might be faster, but withSystemTempFile seems to lock the file...
                 CUDAKernel <$> B.hGetContents sassH
           else return $ CUDAKernel ptx
-  where
-    arch = "sm_60"
 
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module

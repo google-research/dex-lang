@@ -380,6 +380,20 @@ void dex_ensure_has_cuda_context() {
   }
 }
 
+void dex_get_cuda_architecture(int device, char* arch) {
+  int majorVersion, minorVersion;
+  cuInit(0);
+  CUdevice dev;
+  CHECK(cuDeviceGet, &dev, device);
+  cuDeviceGetAttribute(&majorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+  cuDeviceGetAttribute(&minorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+  if (majorVersion > 9 || majorVersion < 0 || minorVersion > 9 || minorVersion < 0) {
+    printf("Invalid CUDA architecture version: %d.%d", majorVersion, minorVersion);
+    std::abort();
+  }
+  snprintf(arch, 5, "sm_%d%d", majorVersion, minorVersion);
+}
+
 #undef CHECK
 
 #endif // DEX_CUDA
