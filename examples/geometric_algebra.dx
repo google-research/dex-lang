@@ -1,0 +1,205 @@
+'# Geometric Algebra
+Inspired by [All Hail Geometric Algebra!](https://crypto.stanford.edu/~blynn/haskell/ga.html)
+which uses String as its index set.
+and [ganja.js - Geometric Algebra for javascript](https://github.com/enkimute/ganja.js/)
+which uses code generation.
+See [Grassmanian.jl](https://github.com/chakravala/Grassmann.jl/) too.
+
+'### Generic helpers
+
+def isEven (n:Int) : Bool = mod n 2 == 0
+def isOdd  (n:Int) : Bool = mod n 2 == 1
+
+
+'### Types
+
+'#### Blades
+Loosely speaking, a blade is a product of basis vectors.
+We store them in a canonical order, as a table
+from the index set of bases to `Bool`.
+
+def Blade (d:Type) : Type = d=>Bool
+
+-- A multivector is just a linear combination of blades.
+def Multivector (d:Type) : Type = List (Blade d & Float)  -- Todo: use a map.
+
+
+--def Rotor
+
+'### Multivector Helper functions
+
+def pseudoscalar : Blade d = for i. True
+
+def MkVector [Eq d] (v:d=>Float) : Multivector d =
+  sized = (size d)
+  AsList sized $ for i.
+    i' = ordinal i@d
+    basis = for j. select (i' == j) True False
+    (basis, v.i')
+
+-- Todo: K-Vectors.
+
+
+'#### Example:
+
+MkVector [2.0, 3.0, 4.0]
+
+
+
+
+'### Geometric Product Implementation
+
+def insertFromLeft (ysRef: Ref h (Blade d)) (i:d) : {State h} Float =
+  ysRef!i := not (get ysRef!i)  -- Add to basis or cancel out of basis.
+  num_bases_passed = sum for j:(..<i). BToI (get ysRef!(%inject j))
+  if isEven num_bases_passed
+    then 1.0
+    else -1.0
+
+def basisMul ((xs, xScale): (Blade d & Float))
+             ((ys, yScale): (Blade d & Float)) : (Blade d & Float) =
+  -- This implementation is O(d^2).  It could probably be O(d log d).
+  -- But honestly how many dimensions do you need?
+  (signflip, zs) = runState ys \yRef.
+    prod rof i. if xs.i  -- rof is reverse for.
+      then insertFromLeft yRef i
+      else 1.0
+  (zs, signflip * xScale * yScale)
+
+def geometric_product ((AsList _ xs): Multivector d)
+                      ((AsList _ ys): Multivector d) : Multivector d =
+  -- Could also be written as a filter on the Cartesian product.
+  -- Todo: use an associative map to add duplicate entries together.
+  -- Todo: Remove zero entries.
+  yieldAccum (ListMonoid (Blade d & Float)) \list.
+    for i j.
+      (new_els, scale) = basisMul xs.i ys.j
+      if any new_els  -- skip empty bases.
+        then append list (new_els, scale)
+
+
+def addMultivecs (x: Multivector d)
+                 (y: Multivector d) : Multivector d =
+  x <> y
+
+def negateMultivec ((AsList _ xs): Multivector d) : Multivector d =
+  AsList _ for i.
+    (basis, val) = xs.i
+    (basis, -val)
+
+def subMultivecs (x: Multivector d)
+                 (y: Multivector d) : Multivector d =
+  addMultivecs x (negateMultivec y)
+
+
+'## Typeclass Instances
+
+instance HasAllClose (Multivector d)
+  allclose = \atol rtol x y.
+    todo  -- This will be easier with a hashmap.
+
+--instance HasDefaultTolerance (Multivector d)
+--  atol = atol
+--  rtol = rtol
+
+instance Add (Multivector d)
+  add = addMultivecs
+  sub = subMultivecs
+  zero = AsList 0 []
+
+instance Mul (Multivector d)
+  mul = geometric_product
+  one = AsList 1 [(for i. False, 1.0)]
+
+instance VSpace (Multivector d)
+  scaleVec = \a:Float x. x * AsList 1 [(for i. False, a)]
+
+
+'## Geometric helper functions
+
+def rotate (u:Multivector d) (axis:Multivector d) (angle:Float) : Multivector d =
+  rotor1 = gpexp (- n * pseudoscalar * angle / 2.0)
+  rotor2 = gpexp (  n * pseudoscalar * angle / 2.0)
+  rotor1 * u * rotor2
+
+def reflect (a:Multivector d) (v:Multivector d) : Multivector d =
+  -- a is a unit vector.
+  -a * v * a
+
+------- Tests -------
+
+x = (AsList _ [([False, True, False], 2.0),
+               ([True, True, False], 5.0)])
+y = (AsList _ [([False, False, True], 3.0)])
+
+:p x * y
+
+:p x - y
+
+-- x ~~ y  Todo:  Some more ~~ instances
+
+:p x == x
+
+:p geometric_product (MkVector [2.0, 3.0, 4.0]) (MkVector [2.0, 3.0, 4.0])
+
+
+--def Scalar    (d:Int) = KVector d 0
+--def Vector    (d:Int) = KVector d 1
+--def Bivector  (d:Int) = KVector d 2
+--def TriVector (d:Int) = KVector d 3
+
+--def Multivector (d:Int) : Type = (k:(Fin (d + 1)))=>(KVector d k)
+
+def inner_product (a: KVector d k) (b: KVector d k) : Float =
+  sum for i. a.i b.i
+
+def exp_map
+
+
+'var binops = [
+      { name:"Mul",   symbol:"*", desc:"The geometric product." },
+      { name:"Wedge", symbol:"^", desc:"The outer product. (MEET)" },
+      { name:"Vee",   symbol:"&", desc:"The regressive product. (JOIN)" },
+      { name:"Dot",   symbol:"|", desc:"The inner product."},
+      { name:"Add",   symbol:"+", desc:"Multivector addition" },
+      { name:"Sub",   symbol:"-", desc:"Multivector subtraction" },
+      { name:"smul",  symbol:"*", classname_a:"float", desc:"scalar/multivector multiplication" },
+      { name:"muls",  symbol:"*", classname_b:"float", desc:"multivector/scalar multiplication" },
+      { name:"sadd",  symbol:"+", classname_a:"float", desc:"scalar/multivector addition" },
+      { name:"adds",  symbol:"+", classname_b:"float", desc:"multivector/scalar addition" },
+      { name:"ssub",  symbol:"-", classname_a:"float", desc:"scalar/multivector subtraction" },
+      { name:"subs",  symbol:"-", classname_b:"float", desc:"multivector/scalar subtraction" },
+    ];
+
+'var unops = [
+      { name:"Reverse",   symbol:"~", desc:"Reverse the order of the basis blades." },
+      { name:"Dual",      symbol:"!", desc:"Poincare duality operator." },
+      { name:"Conjugate", desc:"Clifford Conjugation" },
+      { name:"Involute",  desc:"Main involution" }
+    ];
+
+
+def line_from_points (p1:?) (p2:?) : ? = p1 & p2
+def line_from_point_and_dir (p:?) (d:?) = p & (p+d)
+
+def plane_from_points (p1:?) (p2:?) (p3:?) = p1 & p2 & p3
+def plane_from_point_and_dirs (p:?) (d1:?) (d2:?) = p1 & (p + d1) & (p + d2)
+def plane_from_point_and_dirs (p1:?) (p2:?) (d:?) = p1 & p2 & (p1 + d)
+def plane_from_point_and_line (p:?) (l:?) = p & l
+--plane_from_equation
+
+
+--"CGA":[4,1,0],
+--"MINK":[1,1,0],
+--"R3":[3,0,0],
+--"R2":[2,0,0],
+--"C":[0,1,0],
+--"QUAT":[0,2,0],
+--"SPACETIME":[3,1,0],
+--"HYPERBOLIC":[1,0,0],
+--"DUAL":[0,0,1]
+
+:p runState [False, True, False] \xRef.
+  insertFromLeft xRef (1@_)
+
+:p basisMul ([False, True, False], 2.0) ([False, False, True], 3.0)
