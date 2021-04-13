@@ -43,7 +43,7 @@ nav ol {
   padding-left: 1rem;
 }
 
-main {
+#main-output {
   max-width: var(--main-width);
 }
 
@@ -187,6 +187,14 @@ function updateNavigation() {
     }
 
     var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
     navbarEle.innerHTML = &quot;&quot;
     var structure = extractStructure()
     navbarEle.appendChild(navItemList(structure));
