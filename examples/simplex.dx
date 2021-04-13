@@ -1,0 +1,764 @@
+'# Simplex Method
+The goal of this demo is to show off Dex's ability to work with
+structured matrices without using integers to denote slices.
+This is done using records to construct index sets.  It's currently halfway through a refactor.
+
+'Follows [these notes](http://web.mit.edu/15.053/www/AMP-Chapter-02.pdf)
+and [these notes](http://www.eng.uwaterloo.ca/~syde05/phase1.pdf)
+
+'TODO:
+ - Allow equality constraints
+ - Allow bounded variables
+
+'Notes:
+ - I ended up using some of the record manipulation functions
+   defined in the prelude.  But I'm not a fan of the special
+   escaping syntax of #&foo, #?foo and #|foo, which I think
+   could be removed if Dex could refer to record field names
+    explicitly.
+ - I suffered from not having filter, but even if I had had it,
+  I would often have needed a proof that the resulting array
+  would have a certain size.  I think what would make this code
+  a lot nicer would be a function like:
+  removeset (xs: (Fin (size n))=>a)
+            (ys: (Fin (size m))=>a)
+            (proof_that_all_ys_are_unique)
+            (proof_that_all_ys_are_in_xs) :
+            (Fin ((size n) - (size m)))=>a
+   Although carrying these proofs around would be annoying too.
+
+import plot
+
+
+'# General utility functions.
+
+
+-- TODO: automatically create equality instances for record types.
+instance [Eq cons, Eq a] Eq {constraints: cons | objective: Unit | extra:a}
+  (==) = \r1 r2.
+    case r1 of
+      {|objective=r1|} ->
+        case r2 of
+          {|objective=r2|} -> True
+          {|extra=r2|} -> False
+          {|constraints=r2|} -> False
+      {|extra=r1|} ->
+        case r2 of
+          {|objective=r2|} -> False
+          {|extra=r2|} -> r1 == r2
+          {|constraints=r2|} -> False
+      {|constraints=r1|} ->
+        case r2 of
+          {|objective=r2|} -> False
+          {|extra=r2|} -> False
+          {|constraints=r2|} -> r1 == r2
+
+
+def maybeArgmin [Ord o] (xs:n=>o) : Maybe n =
+  if size n == 0
+    then Nothing
+    else Just $ argmin xs
+
+def maybeArgmax [Ord o] (xs:n=>o) : Maybe n = 
+  if size n == 0
+    then Nothing
+    else Just $ argmax xs
+
+def argmin_suchthat2 (_:Ord o) ?=> (xs:n=>o) (cond:n=>Bool): Maybe n =
+  -- Difference is that cond takes an n instead of an o.
+  def compare (maybepair1: Maybe (n & o))
+              (maybepair2: Maybe (n & o)) :
+              Maybe (n & o) =
+    case maybepair1 of
+      Nothing -> case maybepair2 of
+        Nothing -> Nothing
+        Just pair2 -> Just pair2
+      Just pair1 -> case maybepair2 of
+        Nothing -> Just pair1
+        Just pair2 -> Just $ select ((snd pair1) < (snd pair2)) pair1 pair2
+  zipped = for i. case cond i of
+    True -> Just (i, xs.i)
+    False -> Nothing
+  case reduce Nothing compare zipped of
+    Nothing -> Nothing
+    Just pair -> Just $ fst pair
+
+def argmax_suchthat (_:Ord o) ?=> (xs:n=>o) (cond:o->Bool): Maybe n =
+  -- This function could maybe be replaced with filter.
+  def compare (maybepair1: Maybe (n & o))
+              (maybepair2: Maybe (n & o)) :
+              Maybe (n & o) =
+    case maybepair1 of
+      Nothing -> case maybepair2 of
+        Nothing -> Nothing
+        Just pair2 -> Just pair2
+      Just pair1 -> case maybepair2 of
+        Nothing -> Just pair1
+        Just pair2 -> Just $ select ((snd pair1) > (snd pair2)) pair1 pair2
+  zipped = for i. case cond xs.i of
+    True -> Just (i, xs.i)
+    False -> Nothing
+  case reduce Nothing compare zipped of
+    Nothing -> Nothing
+    Just pair -> Just $ fst pair
+
+
+
+'### Plotting routines
+
+def float2pix (v:Fin 2=>Float) : (n & m) =
+  x = (FToI ((v.(0@_) * (IToF (size n)))))@n
+  y = (FToI ((v.(1@_) * (IToF (size m)))))@m
+  (x, y)
+
+def pixToReal (px:n) (py:m): (Fin 2)=>Float =
+  x = ((IToF ((ordinal px)))) / (IToF (size n))
+  y = ((IToF ((ordinal py)))) / (IToF (size m))
+  [x, y]
+
+def draw_point (_:Eq n) ?=> (_:Eq m) ?=>
+  (image: n=>m=>(Fin 3)=>Float) (row:n) (col:m) : n=>m=>(Fin 3)=>Float = 
+  -- todo: in-place drawing
+  for j:n. case row == j of
+    True -> for k:m. case col == k of
+      True  -> [1.0, 0.0, 0.0]
+      False -> image.j.k
+    False -> image.j
+
+
+'### Simplex data types
+
+data SimplexResult n:Type =
+  Infeasible
+  Unbounded
+  Solution (n=>Float)
+
+data ConstraintType =
+  LessThan
+  GreaterThan
+  -- Todo: Add equality constraints
+
+data ObjectiveType =
+  Maximize
+  Minimize
+
+def Constraint (n:Type) : Type =
+  {coeffs:n=>Float & offset:Float & conType:ConstraintType}
+
+-- Todo: Use (Fin size cons)=>coltype and (Fin size vars)=>coltype instead,
+-- when type reduction supports it. 
+def ColIx (cons:Type) (vars:Type) : Type =
+  {variables:vars | slacks:cons | value: Unit}
+
+--def RowIx (cons:Type) : Type =
+--  {constraints:cons | objective:Unit | extra:Unit}
+
+Void : Type = Fin 0
+
+def RowIx (cons:Type) (a:Type) : Type =
+  {constraints:cons | objective:Unit | extra:a}
+
+def Tableau (cons:Type) (vars:Type) : Type =
+  coltype = ColIx cons vars
+  tableType = (RowIx cons Void)=>coltype=>Float
+  (cons=>coltype & vars=>coltype & tableType) -- basics, nonbasics and table.
+
+def FeasibilityTableau (cons:Type) (vars:Type) : Type =
+  -- The feasibility tableau has extra columns for the artificial variables.
+  -- Todo: use a List of artificial variables, since not each constraint
+  -- actually requires an artificial variable.
+  --Tableau cons {realvars: vars | artificials: cons}
+  coltype = ColIx cons vars
+  tableType = (RowIx cons)=>coltype=>Float
+  (cons=>coltype & vars=>coltype & tableType) -- basics, nonbasics and table.
+
+
+'### Simplex method functions
+
+def eval_objective (coeffs: n=>Float) (x: n=>Float) : Float = dot coeffs x
+
+def constraints_satisfied (constraints: m=>Constraint n) (x: n=>Float) : Bool =
+  constraints_ok = all for c.
+    ({offset=offset, coeffs=coeffs, conType=conType}) = constraints.c
+    case conType of
+      LessThan    -> dot coeffs x <= offset
+      GreaterThan -> dot coeffs x >= offset
+  constraints_ok && all for i:n. x.i >= 0.0
+
+def cononicalize_constraint (inequality: Constraint vars):
+  (vars=>Float & Float) =
+  -- Turn all constraints into less-than inequalities,
+  -- so after this step we don't have to track which direction
+  -- the inequality was originallly.
+  ({coeffs=coeffs, offset=offset, conType=conType}) = inequality
+  case conType of
+    LessThan    ->  (coeffs,  offset)
+    GreaterThan -> (-coeffs, -offset)
+
+def build_tableau (_:Eq cons) ?=>
+    (ineqs: cons=>Constraint vars)
+    (objective: vars=>Float)
+    (objType:ObjectiveType) : Tableau cons vars =
+
+  table = for i. case i of
+    {|constraints=i|} ->
+      (coeffs, offset) = cononicalize_constraint ineqs.i
+      for j. case j of  
+        {|variables=j|} -> coeffs.j
+        {|slacks=j|}    -> select (i == j) 1.0 0.0  -- identity matrix.
+        {|value=j|}     -> offset
+    {|objective=()|} -> for j. case j of
+      {|variables=j|} -> case objType of
+        Maximize ->  objective.j
+        Minimize -> -objective.j
+      {|slacks=j|} -> 0.0  -- slack variables never contribute to loss.
+      {|value=j|}  -> 0.0
+    {|extra=()|} -> for j. 0.0
+
+  basics    = for r:cons. {|slacks=r|}
+  nonbasics = for r:vars. {|variables=r|}
+  (basics, nonbasics, table)
+
+
+
+def negate_constraints_with_negative_offsets (_:Eq cons) ?=>
+  (tableau: (Tableau cons vars)): Tableau cons vars =
+  (basics, nonbasics, table) = tableau
+  table' = yieldState table \tableRef.
+    for i:cons.
+      cur_constraint = tableRef!{|constraints=i|}
+      if (get cur_constraint!{|value=()|}) < 0.0
+        then for_ j. cur_constraint!j := -(get cur_constraint!j)
+        else ()
+  (basics, nonbasics, table')
+
+def build_feasibility_tableau (_:Eq cons) ?=>
+  (tableau: (Tableau cons vars)):
+  FeasibilityTableau cons vars =
+  -- We make a new variable for each constraint.
+  -- If these new variables can be driven to zero,
+  -- while satisfying all constrains,
+  -- then the original problem is feasible.
+  tableau' = negate_constraints_with_negative_offsets tableau
+  (basics, nonbasics, table) = tableau'
+  --sum_constraints = for j.
+  --  sum for r:cons. table.{|constraints=r|}.j
+
+  ftable = for i. case i of
+    {|constraints=i|} -> for j. case j of
+      {|slacks=j|}    -> table.{|constraints=i|}.{|slacks=j|}
+      {|value=j|}     -> table.{|constraints=i|}.{|value=()|}
+      {|variables=j|} -> case j of
+        {|realvars=j|} -> table.{|constraints=i|}.{|variables=j|}
+        {|artificials=j|} -> select (i == j) (-1.0) 0.0
+    {|objective=()|} -> for j. case j of
+      {|slacks=j|} -> 0.0 --sum_constraints.{|slacks=j|}
+      {|value=j|}  -> 0.0 --sum_constraints.{|value=j|}
+      {|variables=j|} ->
+        case j of
+          {|realvars=j|} -> 0.0 --sum_constraints.{|variables=j|}
+          {|artificials=j|} -> -1.0
+    {|extra=()|} -> for j. case j of
+      {|slacks=j|}    -> table.{|objective=()|}.{|slacks=j|}
+      {|value=j|}     -> table.{|objective=()|}.{|value=()|}
+      {|variables=j|} -> case j of
+        {|realvars=j|} -> table.{|objective=()|}.{|variables=j|}
+        {|artificials=j|} -> 0.0
+  
+  fbasics = for r:cons. {|slacks=r|}
+  fnonbasics = for r. case r of
+    {|artificials=r|} -> {|variables={|artificials=r|}|}
+    {|realvars=r|} -> {|variables={|realvars=r|}|}
+  (fbasics, fnonbasics, ftable)
+
+def isOptimal (tableau: Tableau cons vars) : Bool =
+  (basics, nonbasics, table) = tableau
+  all for c:vars. table.{|objective=()|}.(nonbasics.c) <= 0.0
+
+def extractSolution (tableau: Tableau cons vars) : vars=>Float =
+  (basics, nonbasics, table) = tableau  
+  init_sol = (for i:vars. 0.0)  -- Original variables not in the basis are 0.
+  yieldState init_sol \varRef.
+    for v:cons.
+      var = basics.v
+      case var of  -- If this basic variable is an original variable, write it.
+        {|variables=var|} ->
+          varRef!var := table.{|constraints=v|}.{|value=()|}
+        {|slacks=var|} -> ()
+
+def extractAll (tableau: Tableau cons vars) : (ColIx cons vars=>Float) =
+  (basics, nonbasics, table) = tableau  
+  init_sol = (for i:(ColIx cons vars). 0.0)  -- Original variables not in the basis are 0.
+  yieldState init_sol \varRef.
+    for v:cons.
+      varRef!(basics.v) := table.{|constraints=v|}.{|value=()|}
+
+def chooseColumn (tableau: (Tableau cons vars)) : ColIx cons vars =
+  -- An unchecked assumption is that there exists
+  -- at least one nonbasic variable with a positive objective coefficient.
+  (basics, nonbasics, table) = tableau
+  objective_coeffs = for c:vars.
+    table.{|objective=()|}.(nonbasics.c)
+  maybec = argmax_suchthat objective_coeffs \x. x > 0.0
+  col = fromJust maybec
+  nonbasics.col
+
+def findPivotIndex (tableau: (Tableau cons vars))
+ : Maybe (RowIx cons & ColIx cons vars) =
+  -- Chooses row and column to pivot around next.
+  (basics, nonbasics, table) = tableau
+  pivotcol = chooseColumn tableau  
+  unbounded = all for r. table.{|objective|...r|}.pivotcol <= 0.0
+  case unbounded of
+    True -> Nothing
+    False ->
+      -- pick row index minimizing the quotient amongst positive quotients
+      quotients = for r. table.{|objective|...r|}.{|value=()|} /
+                         table.{|objective|...r|}.pivotcol
+      cond = for r. table.{|objective|...r|}.pivotcol > 0.0
+      case argmin_suchthat2 quotients cond of
+        Nothing -> todo  -- throw
+        Just pivotrow -> Just ({|objective|...pivotrow|}, pivotcol)
+
+
+-- make this more polymorphic
+def pivot (_:Eq cons) ?=> (tableau: (Tableau cons vars))
+          (pivotrow:RowIx cons rest) (pivotcol:ColIx cons vars) :
+          (Tableau cons vars) =
+  (basics, nonbasics, table) = tableau
+
+  newTable = for row.
+    case row == pivotrow of
+      True  -> for col. table.row.col / table.row.pivotcol
+      False -> for col. table.row.col - table.row.pivotcol * table.pivotrow.col / table.pivotrow.pivotcol
+
+  -- Swap in new basic variable.
+  newBasics = yieldState basics \ref.
+    i' = fromJust $ (matchWith #?constraints) pivotrow
+    ref!i' := pivotcol
+
+  -- Move old basic variable to nonbasics.
+  newNonbasics = yieldState nonbasics \ref.
+    j' = fromJust $ (matchWith #?variables) pivotcol
+    i' = fromJust $ (matchWith #?constraints) pivotrow
+    ref!j' := basics.i'
+
+  (newBasics, newNonbasics, newTable)
+
+def computeCost (tableau: (Tableau cons vars)) : Float =
+  (_, _, table) = tableau
+  vars = extractAll tableau
+  sum for v. vars.v * table.{|objective=()|}.v
+
+def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
+  (computeCost tableau) ~~ 0.0
+
+
+def pivot_artificials (_:Eq cons) ?=>
+  (tableau: FeasibilityTableau cons vars) : (FeasibilityTableau cons vars) =
+  -- Pivot out all the artificial variables out of the basis
+  yieldState tableau \tRef.
+    (basics, nonbasics, table) = get tRef  -- todo: less copying
+    for v:(RowIx cons).
+      v' = v
+      case v of
+        {|constraints=v|} ->
+          var = basics.v
+          case var of
+            {|variables=var|} -> case var of
+              {|artificials=var|} ->
+                pivrow = v'
+                pivcol = basics.v  -- TODO: check this rule is correct.
+                tRef := pivot (get tRef) pivrow pivcol
+            {|slacks=var|} -> ()
+        {|objective=()|} -> ()
+        {|extra=()|} -> ()
+
+  -- have: {realvars: vars | artificials: cons}=>ColIx
+  -- need : vars=>ColIx
+
+  --newNonbasics : vars=>(ColIx cons vars) = --sliceFields #|realvars nonbasics
+  --(basics, nonbasics, table) = tableau  
+  --init_sol = (for i:vars. 0.0)  -- Original variables not in the basis are 0.
+  --yieldState init_sol \varRef.
+  --  for v:cons.
+  --    var = basics.v
+  --    case var of  -- If this basic variable is an original variable, write it.
+  --      {|variables=var|} ->
+  --        varRef!var := table.{|constraints=v|}.{|value=()|}
+  --      {|slacks=var|} -> ()
+
+def eliminate_artificials (_:Eq cons) ?=>
+  (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
+   -- copy to new tableau without the artificial columns
+  (basics, nonbasics, table) = tableau
+ 
+  newBasics = for r:cons. {|slacks=r|}
+  newNonbasics : vars=>(ColIx cons vars) =
+    for r:vars. {|variables=r|}
+
+  t = for i. for j:(ColIx cons vars). case j of
+      {|slacks=j|}    -> table.i.{|slacks=j|}
+      {|value=j|}     -> table.i.{|value=()|}
+      {|variables=j|} -> table.i.{|variables={|realvars=j|}|}
+
+  (newBasics, newNonbasics, t)
+
+def replace_objective (tableau: Tableau cons vars) : (Tableau cons vars) = 
+  (basics, nonbasics, table) = tableau
+
+  t = for i. case i of 
+    {|constraints=i|} -> table.{|constraints=i|}
+    {|objective=()|} -> table.{|objective=()|}  -- todo: should be extra!!
+    {|extra=()|} -> table.{|extra=()|}
+
+  (basics, nonbasics, t)
+    
+--2. replacing the equation for w with the original objective z expressed in terms of the nonbasic variables
+--identified in the isOptimal artificial Phase 1 dictionary (ie. x1, x5 and x6).
+
+
+def feas_to_normal (_:Eq cons) ?=>
+  (tableau: FeasibilityTableau cons vars)
+  : (Tableau cons vars) =
+  tableau = pivot_artificials tableau
+  tableau = eliminate_artificials tableau
+  replace_objective tableau
+
+def simplex (_:Eq cons) ?=>
+  (ineqs: cons=>Constraint vars)
+  (objective: vars=>Float)
+  (objType:ObjectiveType) : SimplexResult vars =
+  -- Note: Also enforces that all vars are >= 0.0
+  -- Operates in two phases:
+  -- First, we find a feasible solution (or return)
+  -- Second, we optimize within the simplex.
+
+  -- First, find a feasible initial solution.
+  init_tableau = build_tableau ineqs objective objType
+  initFeasibilityTableau = build_feasibility_tableau init_tableau
+  feasibilityAns = yieldState initFeasibilityTableau \tableauRef. \iter i.
+    isopt = isOptimal (get tableauRef)
+    case isopt of
+      True -> Just tableau
+      False ->
+        piv = fromJust $ findPivotIndex (get tableauRef)
+        tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
+
+  case checkFeasible feasibilityAns of
+    False -> Infeasible
+    True -> -- Optimize within the simplex.
+      tf = feas_to_normal feasibilityAns
+      yieldState tf \tableauRef. \iter i.
+        isopt = isOptimal (get tableauRef)
+        case isopt of
+          True -> Just $ Solution $ extractSolution tableau
+          False -> case findPivotIndex tableau of
+            Nothing -> Just Unbounded
+            Just piv -> 
+              tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
+
+--=-=-=-=-=- Tests --=-=-=-=-=-
+-- An impossible problem.
+impossible_constraints : (Fin 3)=>Constraint (Fin 2) =
+  angles = linspace (Fin 3) 0.0 (2.0 * pi)
+  for i.
+    cs = [-(sin (angles.i)),
+          -(cos (angles.i))]
+    {coeffs=cs, offset=1.0, conType=GreaterThan}
+:p simplex impossible_constraints [1.0, 1.0] Maximize
+> Infeasible
+
+-- An unbounded problem.
+unbounded_constraints : (Fin 3)=>Constraint (Fin 2) =
+  angles = linspace (Fin 3) 0.0 1.0
+  for i.
+    cs = [-(sin (angles.i)),
+          -(cos (angles.i))]
+    {coeffs=cs, offset=-0.1, conType=LessThan}
+:p simplex unbounded_constraints [1.0, 1.0] Maximize
+> Unbounded
+
+-- A feasible problem: Example 3.5 in
+-- Introduction to Linear Optimization
+-- by D. Bertsimas and J. Tsitsiklis
+obj = [10.0, 12.0, 12.0]
+a = [[1., 2., 2.],
+     [2., 1., 2.],
+     [2., 2., 1.]]
+textbook_constraints : (Fin 3)=>Constraint (Fin 3) =
+  for i. {coeffs=a.i, offset=20.0, conType=LessThan}
+:p simplex textbook_constraints obj Maximize
+> (Solution [4.0, 4.0, 4.0])
+
+
+-- A feasible problem from Waterloo notes
+obj' = [1., -1.,  1.]
+a' = [[ 2., -1.,  2.],
+     [ 2., -3.,  1.],
+     [-1.,  1., -2.]]
+b' = [4., -5., -1.]
+textbook_constraints' : (Fin 3)=>Constraint (Fin 3) =
+  for i. {coeffs=a'.i, offset=b'.i, conType=LessThan}
+:p simplex textbook_constraints' obj' Maximize
+
+
+
+--=-=-=-=-=- Visual Example --=-=-=-=-=-
+
+-- Example problem, expressed in terms of inequalities.
+def polygon_constraints (num_sides: Int) (radius:Float)
+  (center:(Fin 2)=>Float) : (Fin num_sides)=>Constraint (Fin 2) =
+  angles = linspace (Fin num_sides) 0.0 (2.0 * pi)
+  for i.
+    cs = [-(sin (0.23 + angles.i)),
+          -(cos (0.23 + angles.i))]
+    {coeffs=cs,
+     offset=radius + (dot cs center),
+     conType=LessThan}
+
+pentagon = polygon_constraints 5 0.2 [0.5, 0.5]
+objective = [1.1, 1.2]
+
+image = for i:(Fin 100). for j:(Fin 100).
+  cur_point = pixToReal i j
+  case constraints_satisfied pentagon cur_point of
+    True -> [1.0, 1.0, (-0.5) + eval_objective objective cur_point]
+    False -> [0.0, 0.0, 0.0]
+
+-- Find optimum by brute force.
+best_ix = argmax for (i, j). image.i.j.(2@_)
+:p best_ix
+image2 = draw_point image (fst best_ix) (snd best_ix)
+:html imshow image2
+bfa = pixToReal (fst best_ix) (snd best_ix)
+:p eval_objective objective bfa
+
+-- Now find optimum by simplex method
+maybeanswer = simplex pentagon objective Maximize
+:p maybeanswer
+
+-- Plot location of answer.
+answer = case maybeanswer of
+  Solution ans -> ans
+(x, y) : (Fin 100 & Fin 100) = float2pix answer
+image3 = draw_point image x y
+:html imshow image3
+
+
+
+--=-=-=-=-=-=-=-=-=-=-= Debugging -=--=-==-=-==-
+
+example_tableau = build_tableau pentagon objective Maximize
+:p example_tableau
+piv1 = fromJust $ findPivotIndex example_tableau
+:p piv1
+:p isOptimal example_tableau
+:p computeCost example_tableau
+sol = extractSolution example_tableau
+:p sol
+:p dot sol objective
+:p constraints_satisfied pentagon sol
+
+
+-- Feasibility debugging
+
+
+
+
+
+ft1 = build_feasibility_tableau example_tableau
+:p ft1
+:p isOptimal ft1  -- should be false
+:p computeCost ft1  -- should be nonzero
+
+:p extractSolution ft1
+
+fpiv1 = fromJust $ findPivotIndex ft1
+:p fpiv1
+ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
+:p ft2
+:p extractSolution ft2
+:p isOptimal         ft2
+:p computeCost ft2
+
+fpiv3 = fromJust $ findPivotIndex ft2
+:p fpiv3
+
+--ft3 = pivot ft2 (fst fpiv3) (snd fpiv3)
+--:p ft3
+--:p extractSolution ft3
+--:p isOptimal         ft3
+
+
+-- Feasibility debugging 2
+-- ==========================================================
+
+-- et' = build_tableau textbook_constraints' obj' Maximize
+-- :p et'
+
+-- fet' = build_feasibility_tableau et'
+-- :p fet'
+-- :p isOptimal fet'
+-- :p computeCost fet'
+
+-- :p pivot fet' (0@_) (0@_)
+
+-- t' = translate_tableau example_tableau for v:(Fin 2). 50.5
+-- sol' = extractSolution example_tableau
+-- (x', y') : (Fin 100 & Fin 100) = float2pix sol'
+-- image3' = draw_point image x' y'
+-- :plotmatcolor image3'
+
+
+-- ft1 = build_feasibility_tableau example_tableau
+-- :p ft1
+-- :p isOptimal ft1
+-- :p computeCost ft1
+
+-- fpiv1 = unMaybe $ findPivotIndex ft1
+-- :p fpiv1
+-- ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
+-- :p ft2
+-- :p extractSolution ft2
+-- :p isOptimal         ft2
+-- :p computeCost ft2
+
+-- fpiv3 = unMaybe $ findPivotIndex ft2
+-- :p fpiv3
+
+
+
+------ Cutting room floor ------
+
+def argmin_suchthat (_:Ord o) ?=> (xs:n=>o) (cond:o->Bool): Maybe n =
+  -- This function would be mostly obsolete if filter existed.
+  def compare (maybepair1: Maybe (n & o))
+              (maybepair2: Maybe (n & o)) :
+              Maybe (n & o) =
+    case maybepair1 of
+      Nothing -> case maybepair2 of
+        Nothing -> Nothing
+        Just pair2 -> Just pair2
+      Just pair1 -> case maybepair2 of
+        Nothing -> Just pair1
+        Just pair2 -> Just $ select ((snd pair1) < (snd pair2)) pair1 pair2
+  zipped = for i. case cond xs.i of
+    True -> Just (i, xs.i)
+    False -> Nothing
+  case reduce Nothing compare zipped of
+    Nothing -> Nothing
+    Just pair -> Just $ fst pair
+
+
+
+def argmax_suchthat2 (_:Ord o) ?=> (xs:n=>o) (cond:n=>Bool): Maybe n =
+  -- Difference is that cond takes an n instead of an o.
+  def compare (maybepair1: Maybe (n & o))
+              (maybepair2: Maybe (n & o)) :
+              Maybe (n & o) =
+    case maybepair1 of
+      Nothing -> case maybepair2 of
+        Nothing -> Nothing
+        Just pair2 -> Just pair2
+      Just pair1 -> case maybepair2 of
+        Nothing -> Just pair1
+        Just pair2 -> Just $ select ((snd pair1) > (snd pair2)) pair1 pair2
+  zipped = for i. case cond i of
+    True -> Just (i, xs.i)
+    False -> Nothing
+  case reduce Nothing compare zipped of
+    Nothing -> Nothing
+    Just pair -> Just $ fst pair
+
+
+
+
+def simplex (_:Eq cons) ?=>
+  (ineqs: cons=>Constraint vars)
+  (objective: vars=>Float)
+  (objType:ObjectiveType) : SimplexResult vars =
+    -- Note: Also enforces that all vars are >= 0.0
+    -- Operates in two phases:
+    -- First, we find a feasible solution (or return)
+    -- Second, we optimize within the simplex.
+    init_tableau = build_tableau ineqs objective objType
+
+    feasibilityTableau = build_feasibility_tableau init_tableau
+    feasibilityAns = case myiter feasibilityTableau simplexStep of
+      Solution ans -> ans  -- Has to complete
+
+    --(feasbasics, feasnonbasics, feastable) = feasibilityTableau
+    --feasibility_objective = for i. feastable.{|objective=()|}.{|value|...i|}
+    --feasibility_solution = extractSolution feasibilityAns
+    
+    -- extract just the original variables
+    -- og_feasible = sliceFields (#|realvars) feasibilityAns
+    feas_vars = for i:vars. feasibilityAns.(ordinal i@_) --{realvars=i}
+    feasible = constraints_satisfied ineqs feas_vars  -- or look at w
+    --tableau = build_tableau ineqs w_obj Maximize
+    --first_ans = iter tableau simplexStep
+
+    feasible_init_tableau = translate_tableau init_tableau feas_vars
+
+    case feasible of
+      False -> Infeasible
+      True -> myiter feasible_init_tableau simplexStep
+        
+def old_negate_constraints_with_negative_offsets (_:Eq cons) ?=>
+  (tableau: (Tableau cons vars)): Tableau cons vars =
+  (basics, nonbasics, table) = tableau
+  -- todo: in-place update
+  table' = for i. case i of
+    {|constraints=i|} ->
+      case table.{|constraints=i|}.{|value=()|} >= 0.0 of
+        True  -> for j.  table.{|constraints=i|}.j
+        False -> for j. -table.{|constraints=i|}.j 
+    {|objective=()|} -> for j. table.{|objective=()|}.j
+    {|extra=()|}     -> for j. table.{|extra=()|}.j
+  (basics, nonbasics, table')
+
+
+def translate_tableau'' (_:Eq cons) ?=>
+  (tableau: Tableau cons vars)
+  (offset: vars=>Float) : (Tableau cons vars) =
+  
+  (basics, nonbasics, table) = tableau
+
+  yieldState tableau \tRef.
+    for v:vars.
+      cur_offset = offsets.(nonbasics.v)
+
+      --(basics, nonbasics, table) = get tRef
+      (basics', nonbasics', table') = pivot (0@_) v
+      ()
+
+    var_coeffs = for j. table.i.{|variables=j|}
+    offset = dot var_coeffs init_vars
+    for j. case j of
+      {|slacks=j|}    -> table.i.{|slacks=j|}
+      {|variables=j|} -> table.i.{|variables=j|}
+      {|value=j|}     -> table.i.{|value=()|} + offset
+  (basics, nonbasics, newTable)
+
+
+def translate_tableau (_:Eq cons) ?=>
+  (tableau: Tableau cons vars)
+  (init_vars: vars=>Float) : (Tableau cons vars) =
+  -- TODO: Allow this to work even if variables aren't in order.
+  (basics, nonbasics, table) = tableau
+  newTable = for i.
+    var_coeffs = for j. table.i.{|variables=j|}
+    offset = dot var_coeffs init_vars
+    for j. case j of
+      {|slacks=j|}    -> table.i.{|slacks=j|}
+      {|variables=j|} -> table.i.{|variables=j|}
+      {|value=j|}     -> table.i.{|value=()|} + offset
+  (basics, nonbasics, newTable)
+
+
+t' = translate_tableau example_tableau for v:(Fin 2). 50.5
+sol' = extractSolution example_tableau
+(x', y') : (Fin 100 & Fin 100) = float2pix sol'
+image3' = draw_point image x' y'
+:plotmatcolor image3'
