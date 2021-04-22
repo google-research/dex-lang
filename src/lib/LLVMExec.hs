@@ -10,7 +10,7 @@
 
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
-                 standardCompilationPipeline,
+                 standardCompilationPipeline, llvmMainFuncName,
                  compileCUDAKernel, loadLitVal) where
 
 import qualified LLVM.Analysis as L
@@ -68,6 +68,9 @@ foreign import ccall "dynamic"
 
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
+
+llvmMainFuncName :: String
+llvmMainFuncName = undefined
 
 compileAndEval :: Logger [Output] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]

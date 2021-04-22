@@ -43,15 +43,14 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
+  exposed-modules:     Name, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, Imp.Builder, Imp.Optimize,
                        PPrint, Algebra, Parallelize, Optimize, Serialize
-                       Builder, Cat, Export,
-                       Simplify, TopLevel,
+                       Builder, Cat, Simplify, TopLevel, LazyMap,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims
   if flag(live)
-    exposed-modules:   Actor, RenderHtml, LiveOutput
+    exposed-modules:   Actor, RenderHtml
   other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs,
@@ -62,7 +61,7 @@ library
                        -- Portable system utilities
                        filepath, directory, ansi-terminal, process, temporary,
                        -- Serialization
-                       store, aeson
+                       store, aeson, exceptions, haskeline
   if flag(live)
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE
@@ -80,7 +79,7 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments
+                       BlockArguments, GADTs, RankNTypes, DataKinds, TypeOperators
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
@@ -103,7 +102,7 @@ executable dex
   other-extensions:    OverloadedStrings
   build-depends:       dex, base, haskeline, prettyprinter, mtl,
                        optparse-applicative, ansi-wl-pprint,
-                       unix, store, bytestring, directory
+                       unix, store, bytestring, directory, containers
   if os(darwin)
     build-depends:     dex-resources
   default-language:    Haskell2010
@@ -117,21 +116,21 @@ executable dex
   else
     ghc-options:       -O0
 
-foreign-library Dex
-  type:                native-shared
-  other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
-                     , Dex.Foreign.Context, Dex.Foreign.Serialize
-  build-depends:       base, mtl, containers, llvm-hs, dex
-  if os(darwin)
-    build-depends:     dex-resources
-  hs-source-dirs:      src/
-  c-sources:           src/Dex/Foreign/rts.c
-  cc-options:          -std=c11 -fPIC
-  ghc-options:         -Wall -fPIC -optP-Wno-nonportable-include-path
-  default-language:    Haskell2010
-  default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase,
-                       BlockArguments
-  if flag(optimized)
-    ghc-options:       -O3
-  else
-    ghc-options:       -O0
+-- foreign-library Dex
+--   type:                native-shared
+--   other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
+--                      , Dex.Foreign.Context, Dex.Foreign.Serialize
+--   build-depends:       base, mtl, containers, llvm-hs, dex
+--   if os(darwin)
+--     build-depends:     dex-resources
+--   hs-source-dirs:      src/
+--   c-sources:           src/Dex/Foreign/rts.c
+--   cc-options:          -std=c11 -fPIC
+--   ghc-options:         -Wall -fPIC -optP-Wno-nonportable-include-path
+--   default-language:    Haskell2010
+--   default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase,
+--                        BlockArguments
+--   if flag(optimized)
+--     ghc-options:       -O3
+--   else
+--     ghc-options:       -O0
