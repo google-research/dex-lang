@@ -293,6 +293,7 @@ linearizeHof env hof = case hof of
     result <- emit $ Hof $ RunIO lam
     (ans, linLam) <- fromPair result
     return (ans, applyLinToTangents linLam)
+  ForceHost _      -> notImplemented
   -- TODO: Consider providing an upper bound for the number of while iterations as a hint.
   --       In the current form the best we can do is try to use some dynamically growing lists,
   --       but that won't work on the GPU.
@@ -688,6 +689,7 @@ transposeHof hof ct = case hof of
   Tile      _ _ _  -> notImplemented
   While         _  -> notImplemented
   RunIO _          -> notImplemented
+  ForceHost _      -> notImplemented
   CatchException _ -> notImplemented
   Linearize     _  -> error "Unexpected linearization"
   Transpose     _  -> error "Unexpected transposition"

@@ -311,6 +311,7 @@ exprEffs expr = case expr of
     RunWriter _ f   -> handleRWSRunner Writer f
     RunState  _ f   -> handleRWSRunner State  f
     PTileReduce _ _ _ -> mempty
+    ForceHost _ -> mempty
     RunIO ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
       EffectRow (S.delete IOEffect effs) t
     CatchException ~(Lam (Abs _ (PlainArrow (EffectRow effs t), _))) ->
@@ -469,6 +470,7 @@ instance CoreVariant (PrimHof a) where
     Transpose _   -> goneBy Simp
     Tile _ _ _    -> alwaysAllowed
     PTileReduce _ _ _ -> absentUntil Simp -- really absent until parallelization
+    ForceHost _ -> alwaysAllowed
     CatchException _  -> goneBy Simp
 
 -- TODO: namespace restrictions?
@@ -907,6 +909,10 @@ typeCheckHof hof = case hof of
     -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
     return $ PairTy (TabTy (Ignore n) tileElemTy) $ ProdTy accTys
+  ForceHost f -> do
+    FunTy b Pure resultTy <- typeCheck f
+    b |: UnitTy
+    return resultTy
   While body -> do
     Pi (Abs (BinderAnn UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr

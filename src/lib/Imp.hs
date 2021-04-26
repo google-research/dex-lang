@@ -545,6 +545,26 @@ toImpHof env (maybeDest, hof) = do
       PairVal <$> destToAtom aDest <*> destToAtom sDest
     RunIO ~(Lam (Abs _ (_, body))) ->
       translateBlock env (maybeDest, body)
+    ForceHost ~f@(Lam (Abs _ (_, body))) -> do
+      -- Should be no-op in host code
+      device <- asks curDevice
+      unless (device == CPU) $ error "ForceHost in GPU code"
+      let closure = freeVars f
+      --traceM $ "env: " ++ (pprint env)
+      --traceM $ "closure: " ++ (pprint closure)
+      local (\impCtx -> impCtx { impBackend = LLVM }) do
+        substEnv <- flip traverseNames closure $ \name (ty, _) -> 
+          case (ty, name) of
+            (_, Name AbstractedPtrName _ _) -> return $ Var $ name :> ty
+            (_, Name TopFunctionName _ _) -> return $ Var $ name :> ty
+            (_, GlobalName "OUT_STREAM_PTR") -> return $ Var $ name :> ty
+            (FunTy _ _ _, _) -> return $ Var $ name :> ty -- for no-inline functions
+            _ ->  do
+              traceM $ "name: " ++ show name
+              dest <- alloc ty
+              copyAtom dest (env ! name)
+              destToAtom dest
+        translateBlock substEnv (maybeDest, body)
     Linearize _ -> error "Unexpected Linearize"
     Transpose _ -> error "Unexpected Transpose"
     CatchException _ -> error "Unexpected CatchException"
@@ -608,7 +628,7 @@ data DestEnv = DestEnv
 type DestM = ReaderT DestEnv (CatT (Env (Type, Block)) Builder)
 
 -- builds a dest and a list of pointer binders along with their required allocation sizes
-makeDest :: AllocInfo -> Type -> Builder ([(Binder, Atom)], Dest)
+makeDest :: HasCallStack => AllocInfo -> Type -> Builder ([(Binder, Atom)], Dest)
 makeDest allocInfo ty = do
   (dest, ptrs) <- flip runCatT mempty $ flip runReaderT env $ makeDestRec ty
   ptrs' <- forM (envPairs ptrs) \(v, (ptrTy, numel)) -> do
@@ -617,7 +637,7 @@ makeDest allocInfo ty = do
   return (ptrs', dest)
   where env = DestEnv allocInfo mempty mempty
 
-makeDestRec :: Type -> DestM Dest
+makeDestRec :: HasCallStack => Type -> DestM Dest
 makeDestRec ty = case ty of
   TabTy b bodyTy -> do
     depVars <- asks destDepVars
@@ -876,10 +896,10 @@ fromDestConsList dest = case dest of
   Con (ConRef (ProdCon []))     -> []
   _ -> error $ "Not a dest cons list: " ++ pprint dest
 
-makeAllocDest :: AllocType -> Type -> ImpM Dest
+makeAllocDest :: HasCallStack => AllocType -> Type -> ImpM Dest
 makeAllocDest allocTy ty = fst <$> makeAllocDestWithPtrs allocTy ty
 
-makeAllocDestWithPtrs :: AllocType -> Type -> ImpM (Dest, [IExpr])
+makeAllocDestWithPtrs :: HasCallStack => AllocType -> Type -> ImpM (Dest, [IExpr])
 makeAllocDestWithPtrs allocTy ty = do
   backend <- asks impBackend
   curDev <- asks curDevice

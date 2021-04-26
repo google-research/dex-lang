@@ -104,6 +104,7 @@ library
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
+    extra-lib-dirs:      /usr/local/cuda/lib64
     extra-libraries:   cuda
     cxx-options:       -DDEX_CUDA
     cpp-options:       -DDEX_CUDA

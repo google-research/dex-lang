@@ -67,6 +67,7 @@ parallelTraverseExpr :: Expr -> TLParallelM Expr
 parallelTraverseExpr expr = case expr of
   Hof (For ParallelFor _) -> traverseExpr substTraversalDef expr
   Hof (For (RegularFor _) fbody@(LamVal b body)) -> do
+    -- TODO: ensure no unsafePerformIO and forceHost in body of loop
     -- TODO: functionEffs is an overapproximation of the effects that really appear inside
     refs <- gets activeAccs
     let allowedRegions = foldMap (\(varType . fst . snd -> RefTy (Var reg) _) -> reg @> ()) refs
@@ -90,6 +91,7 @@ parallelTraverseExpr expr = case expr of
   --       with their relationships. Then, when we emit local effects in emitLoops, we would have
   --       to recreate all the aliases. We could do that by carrying around a block and using
   --       SubstBuilder to take care of renaming for us.
+  Hof (ForceHost _) -> traverseExpr substTraversalDef expr
   Op (IndexRef ref _) -> disallowRef ref >> nothingSpecial
   Op (ProjRef  _ ref) -> disallowRef ref >> nothingSpecial
   _ -> nothingSpecial

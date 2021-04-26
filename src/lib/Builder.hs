@@ -105,6 +105,17 @@ emitAnn ann expr = do
   builderExtend $ asSnd $ Nest (Let ann (Bind v) expr) Empty
   return $ Var v
 
+-- Guarantees that the name will be used, possibly with a modified counter
+emitTo :: HasCallStack => MonadBuilder m => Name -> LetAnn -> Expr -> m Atom
+emitTo name ann expr = do
+  scope <- getScope
+  -- Deshadow type because types from DataDef may have binders that shadow local vars
+  let ty    = deShadow (getType expr) scope
+  let expr' = deShadow expr scope
+  v <- freshVarE (LetBound ann expr') $ Bind (name:>ty)
+  builderExtend $ asSnd $ Nest (Let ann (Bind v) expr') Empty
+  return $ Var v
+
 emitOp :: MonadBuilder m => Op -> m Atom
 emitOp op = emit $ Op op
 

@@ -34,13 +34,13 @@ CFLAGS := -fPIC
 
 # CUDA
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
-STACK_FLAGS = --flag dex:cuda
-CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
+STACK_FLAGS = --flag dex:cuda --flag dex:live --extra-include-dirs=/usr/local/cuda/include --extra-lib-dirs=/usr/local/cuda/lib64/stubs/
+CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA -DDEX_LIVE
 endif
 
 # libpng
-ifneq (,$(wildcard /usr/local/include/png.h))
-CFLAGS := $(CFLAGS) -I/usr/local/include
+ifneq (,$(wildcard /usr/include/libpng/png.h))
+CFLAGS := $(CFLAGS) -I/usr/local/include/libpng
 endif
 
 ifneq (,$(PREFIX))

@@ -523,6 +523,10 @@ simplifyHof hof = case hof of
     ~(lam', recon) <- simplifyLam lam
     ans <- emit $ Hof $ RunIO lam'
     applyRecon recon ans
+  ForceHost lam -> do
+    ~(lam', recon) <- simplifyLam lam
+    ans <- emit $ Hof $ ForceHost lam'
+    applyRecon recon ans
   CatchException lam -> do
     ~(Lam (Abs _ (_, body)), Nothing) <- simplifyLam lam
     dropSub $ exceptToMaybeBlock body

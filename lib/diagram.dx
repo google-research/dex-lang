@@ -77,7 +77,7 @@ def moveXY ((offX, offY) : Point) : (Diagram -> Diagram) =
   applyTransformation (\(x,y). (x + offX, y + offY) ) id
 
 def singletonDefault (geom:Geom) : Diagram =
-  MkDiagram $ toList [(defaultGeomStyle, (0.0, 0.0), geom)]
+  forceHost $ do MkDiagram $ toList [(defaultGeomStyle, (0.0, 0.0), geom)]
 
 def pointDiagram               : Diagram = singletonDefault PointGeom
 def circle (r:Float)           : Diagram = singletonDefault $ Circle r

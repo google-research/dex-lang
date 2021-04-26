@@ -443,6 +443,7 @@ data PrimHof e =
       | Linearize e
       | Transpose e
       | PTileReduce [BaseMonoidP e] e e  -- accumulator monoids, index set, thread body
+      | ForceHost e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
@@ -1793,6 +1794,7 @@ builtinNames = M.fromList
   , ("runReader"       , HofExpr $ RunReader () ())
   , ("runWriter"       , HofExpr $ RunWriter (BaseMonoid () ()) ())
   , ("runState"        , HofExpr $ RunState  () ())
+  , ("forceHost"       , HofExpr $ ForceHost ())
   , ("runIO"           , HofExpr $ RunIO ())
   , ("catchException"  , HofExpr $ CatchException ())
   , ("tiled"           , HofExpr $ Tile 0 () ())

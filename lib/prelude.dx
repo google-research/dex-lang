@@ -447,6 +447,10 @@ def unsafeIO (f: Unit -> {IO|eff} a) : {|eff} a =
 def unreachable (():Unit) : a = unsafeIO do
   %throwError a
 
+'### Force Host
+
+def forceHost (f:Unit->a) : a = %forceHost f
+
 '## Type classes
 
 '### Eq and Ord

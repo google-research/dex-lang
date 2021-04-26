@@ -33,8 +33,8 @@ def projectUnitInterval (x:Float) : Maybe Float =
     False -> Nothing
 
 unitIntervalScale : Scale Float =
-  { mapping = projectUnitInterval
-  , range   = AsList _ [Interval 0.0 1.0] }
+  forceHost do { mapping = projectUnitInterval
+               , range   = AsList _ [Interval 0.0 1.0] }
 
 def mapScale (s:Scale a) (f: b -> a) : Scale b =
   { mapping = \x. getAt #mapping s (f x)
@@ -77,13 +77,13 @@ def plotToDiagram (plot:Plot n a b c) : Diagram =
   boundingBox <> points
 
 def showPlot (plot:Plot n a b c) : String =
-  renderSVG (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
+  forceHost do renderSVG (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
 
-blankData : ScaledData n Unit = {scale = unitTypeScale, dat = for i. ()}
+blankData : ScaledData n Unit = forceHost do {scale = unitTypeScale, dat = for i. ()}
 
-blankPlot : Plot n Unit Unit Unit = { xs = blankData
-                                    , ys = blankData
-                                    , cs = blankData }
+blankPlot : Plot n Unit Unit Unit = forceHost do { xs = blankData
+                                                 , ys = blankData
+                                                 , cs = blankData }
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def autoScale (xs:n=>Float) : ScaledData n Float =
