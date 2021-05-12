@@ -1,7 +1,5 @@
 ' Adaptive-Step Stochastic Differential Equation Solvers
 
-' Todo: switch to new while syntax.
-
 import plot
 
 interface HasStandardNormal a:Type
@@ -39,10 +37,10 @@ def bbIter (_:VSpace v) ?=> (_: HasStandardNormal v) ?=>
   -- by Xuechen Li, Ting-Kam Leonard Wong, Ricky T. Q. Chen, David Duvenaud
   -- AISTATS 2020, https://arxiv.org/abs/2001.01328
   --\(key, y, sigma, t).
-    [kDraw, kL, kR] = splitKey key
+    [kDraw, key_left, key_right] = splitKey key
     t' = abs (t - 0.5)
     y' = sigma * (0.5 - t') .* randNormal kDraw
-    key' = select (t > 0.5) kL kR
+    key' = select (t > 0.5) key_left key_right
     (key', y + y', sigma / sqrt 2.0, t' * 2.0)
 
 def sampleUnitBM (_:VSpace v) ?=> (_: HasStandardNormal v) ?=>
@@ -93,7 +91,7 @@ def radonNikodym (drift1: Drift Float)
                  (diffusion: Diffusion Float)
                  (t0: Time) (t1:Time) : Drift Float =
   -- Dynamics of simple Monte Carlo estimatr of KL divergence between
-  -- two SDEs that share a diffusion function.
+  -- two SDEs that share a diffusion function. (If not, divergence is infinite)
   -- Todo: generalize to multivariate.
   \state t.
     (sq ((drift1 state t) - (drift2 state t))) / (diffusion state t)
@@ -121,7 +119,7 @@ def sdeint (sde: SDE (d=>Float))
   integrate_to_next_time = \iter init_carry.
     target_t = times.iter
 
-    stopping_condition = \(_, _, _, t, dt).
+    shouldContinue = \(_, _, _, t, dt).
       (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
 
     step = \(old_z, old_t, z, t, dt).
@@ -130,9 +128,11 @@ def sdeint (sde: SDE (d=>Float))
       (z, t, new_z, new_t, dt)
 
     -- Take steps until we pass target_t
-    new_state = snd $ withState init_carry \state.
-      while (\(). stopping_condition (get state)) \().
-        state := step (get state)
+    new_state = yieldState init_carry \state.
+      if shouldContinue (get state) then
+        while do
+          state := step (get state)
+          shouldContinue (get state)
     (old_z, old_t, cur_z, cur_t, _) = new_state
 
     -- Interpolate to the target time.
@@ -142,15 +142,12 @@ def sdeint (sde: SDE (d=>Float))
   init_carry = (z0, t0, z0, t0, dt)
   snd $ scan init_carry integrate_to_next_time
 
-
-def clamp_min (eps:Float) (x:Float) : Float = max x eps
-
 def error_ratio (z_full:d=>Float) (z_half:d=>Float) (rtol:Float) (atol:Float) : Float =
   -- z_full obtained with one full step.
   -- z_half obtained with two half steps.
   eps = 1.0e-7
-  tol = for i. clamp_min eps $ rtol * (max (abs z_full.i) (abs z_half.i)) + atol
-  clamp_min eps $ norm $ (z_full - z_half) ./ tol
+  tol = for i. max eps $ rtol * (max (abs z_full.i) (abs z_half.i)) + atol
+  max eps $ norm $ (z_full - z_half) ./ tol
 
 def step_size (error_estimate:Float)
               (prev_step_size:Time)
@@ -196,7 +193,7 @@ def adaptive_sdeint (sde: SDE (d=>Float))
   integrate_to_next_time = \iter init_carry.
     target_t = times.iter
 
-    stopping_condition = \(_, _, _, t, dt, _).
+    shouldContinue = \(_, _, _, t, dt, _).
       (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
 
     step = \(old_z, old_t, z, t, dt).
@@ -220,9 +217,11 @@ def adaptive_sdeint (sde: SDE (d=>Float))
       select (ratio <= 1.0) move_state stay_state
 
     -- Take steps until we pass target_t
-    new_state = snd $ withState init_carry \state.
-      while (\(). stopping_condition (get state)) \().
-        state := possibly_step (get state)
+    new_state = yieldState init_carry \state.
+      if shouldContinue (get state) then
+        while do
+          state := possibly_step (get state)
+          shouldContinue (get state)
     (old_z, old_t, cur_z, cur_t, _, _) = new_state
 
     -- Interpolate to the target time.
@@ -253,4 +252,3 @@ yout' = adaptive_sdeint (drift, diffprod) z0 t0 times key
 
 :html showPlot $ xyPlot times for i. yout.i.(0@(Fin 1))
 :html showPlot $ xyPlot times for i. yout'.i.(0@(Fin 1))
-
