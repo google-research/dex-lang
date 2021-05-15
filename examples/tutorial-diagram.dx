@@ -1,0 +1,122 @@
+'# How to use Dex's Diagram standard library
+Dex has a standard library for drawing figures.
+It is used to build Dex's plotting standard library.
+It is inspired by the [Haskell Diagram library](https://hackage.haskell.org/package/diagrams), though it is not identical.
+
+' The diagram standard library is defind in [del-lang/lib/diagram.dx](https://github.com/google-research/dex-lang/blob/main/lib/diagram.dx).
+It's not the nicest Dex code to read, but that is ok: we will talk you how to use it. 😊
+
+
+'---
+
+' Here is a quick demo of what code using diagram looks like, and what it outputs.
+
+import diagram
+
+concentricDiagram : Diagram = (
+     (rect 2.0 2.0 |> setFillColor red)
+  <> (circle 1.0 |> setFillColor blue)
+  <> ((text "The Diagram Standard Library") |> setStrokeColor white)
+) |> moveXY (5.0, 5.0)
+
+:html renderScaledSVG concentricDiagram
+
+' ## What is a `Diagram`?
+It is defined as `data Diagram = MkDiagram (List (GeomStyle & Point & Geom))`
+So it is a list of tuples made up of `GeoStyle`, `Point`, and `Geom`.
+In brief:
+ - `Geom` is the kind of thing being drawL `point`, `circle`, `rect`, `line`, `text`.
+ - `GeomStyle` controls variants of appearance: fill-color, stoke-color, stroke-width.
+ - `Point` is an alias for a tuple of 2 floats: the x and y coordinates of what is drawn.
+
+
+' ## `Geom`s
+All the `Geom`'s have helper functions that construct the diagram element that is a
+`(GeomStyle & Point & Geom)`.
+The `Point` is the things center and is defaulted to `(0.0, 0.0)`.
+The `GeomStyle` is defaulted to no fill, black stroke of unit width.
+As we will discuss later the `Point` and `GeomStyle` are tranformed by through composing functions.
+This may be unexpected if you are familiar with other drawing libraries which might take those as arguments directly when constructing the thing being drawn.
+
+'### Point
+The `pointDiagram` just draws a dot.
+It takes no arguments.
+
+:html renderScaledSVG pointDiagram
+
+'You will need to look closely to see it above as it is very small.
+
+'### Circle
+The `circle` `Geom` defines a [circle](https://en.wikipedia.org/wiki/Circle).
+It takes 1 argument: the radius.
+
+:html renderScaledSVG $ circle 10.0
+
+'You can see in the following diagram which contains 2 circles how radius works
+
+:html renderScaledSVG $ (circle 10.0 <> circle 5.0)
+
+'### Rectangle
+`rect` draws a [rectangle](https://en.wikipedia.org/wiki/Rectangle).
+It takes two arguments: width and height
+
+:html renderScaledSVG $ rect 2.0 1.0
+
+'### Line
+`line` is a convenient way to trigger a `Runtime Error`.  
+**TODO:** this seems like a bad feature.
+
+:html renderScaledSVG $ line (2.0, 1.0)
+
+'### Text
+
+:html renderScaledSVG (text "Hello World")
+
+'Note however that `renderedScaledSVG` considers `Text` to be 0 witdth 0 height, and so will not make space for it correctly if it is the only thing on the diagram.
+It works better if used to annotate another item.
+
+
+'## Transformations
+The way we influence the location and some of parameters of the geometry, is through transformations.
+There are 2 transformations in Diagram right now: move and scale.
+
+
+'### Move
+
+`move` comes in 3 varients.
+`moveXY`, `moveX` and `moveY`
+
+:html renderScaledSVG (
+       text "(0,0)"
+    <> (text "(1,1)" |> moveXY (1.0, 1.0))
+    <> (text "(1,2)" |> moveXY (1.0, 2.0))
+    <> (text "(0,-1)" |> moveXY (0.0, -1.0))
+    <> rect 5.0 5.0
+)
+
+'### Scale
+
+
+'## GeomStyle
+
+'### setStrokeWidth
+
+'### setStrokeColor
+
+'### setFillColor
+
+'## Demonstration
+
+
+:html renderScaledSVG (
+       (circle 5.0 <> text "WA"  |> moveXY (-10.0,   0.0) |> setFillColor blue)
+    <> (circle 5.0 <> text "NT"  |> moveXY (  0.0,   5.0) |> setFillColor white)
+    <> (circle 5.0 <> text "SA"  |> moveXY (  0.0,  -5.0) |> setFillColor green)
+    <> (circle 5.0 <> text "QLD" |> moveXY ( 10.0,   5.0) |> setFillColor blue)
+    <> (circle 3.7 <> text "NSW" |> moveXY ( 10.0,  -3.8) |> setFillColor red)
+    <> (circle 1.0 <> text "ACT" |> moveXY ( 12.0,  -5.5) |> setFillColor white)
+    <> (circle 2.0 <> text "TAS" |> moveXY (  7.5, -15.0) |> setFillColor green)
+    <> (circle 2.0 <> text "VIC" |> moveXY (  7.5,  -9.0) |> setFillColor blue)
+)
+
+:p 1
