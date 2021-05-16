@@ -21,8 +21,8 @@ def sgd [VSpace a] (step_size:Float) (decay:Float) (num_steps:Int) (gradient: a 
 
 D = Fin 4
 optimum = for i:D. 1.1
--- Hand-coded gradient until autodiff works
-def gradfunc (x:D=>Float) (iter:Int) : D=>Float = x - optimum
+def objective (x:D=>Float) : Float = 0.5 * sum for i. sq (optimum.i - x.i)
+def gradfunc (x:D=>Float) (iter:Int) : D=>Float = grad objective x
 
 '### Run optimizer
 
