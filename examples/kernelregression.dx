@@ -24,7 +24,7 @@ in kernel ridge regression the hypothesis takes the form
 $f(x)=\sum_{i=1}^N \alpha_i k(x_i, x)$,\
 where $k:\mathcal X \times \mathcal X \to \mathbb R$ is a positive semidefinite kernel function.\
 The optimal coefficients are found by solving a linear system $\alpha=G^{-1}y$,\
-where $G_{ij}:=k(x_i, x_j)$ and $y = (y_1,\dots,y_N)^\top\in\mathbb R^N$
+where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda>0$ and $y = (y_1,\dots,y_N)^\top\in\mathbb R^N$
 
 -- Synthetic data
 Nx = Fin 100
@@ -55,4 +55,7 @@ xtest : Nxtest=>Float = for i. rand (ixkey k1 i)
 preds = map predict xtest
 
 :html showPlot $ xyPlot xs ys
+> <html output>
+
 :html showPlot $ xyPlot xtest preds
+> <html output>
