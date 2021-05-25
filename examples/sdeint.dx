@@ -16,8 +16,8 @@ Time = Float
 -- def scale (a: n=>Float) (b: n=>Float) : (n=>Float) = for i. a.i * b.i 
 
 -- Should these go in the prelude?
-def linear_interp
-  (_: VSpace a) ?=> (z0: a) --o (z1: a) --o (t0: Time) (t1: Time) (t: Time) --o : a =
+def linear_interp [VSpace a]
+    (z0: a) --o (z1: a) --o (t0: Time) (t1: Time) (t: Time) --o : a =
   select (t1 == t0) z0 (z0 + ((t - t0) / (t1 - t0)) .* (z1 - z0))
 
 def norm (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
@@ -29,7 +29,7 @@ def prepend (first: v) (seq: m=>v) : ({head:Unit | tail:m }=>v) =
     {| head = () |} -> first
     {| tail = i  |} -> seq.i
 
-def bbIter (_:VSpace v) ?=> (_: HasStandardNormal v) ?=>
+def bbIter [VSpace v, HasStandardNormal v]
   ((key, y, sigma, t):(Key & v & Float & UnitInterval)) :
     (Key & v & Float & UnitInterval) =
   -- Descend one step in a virtual Brownian tree.
@@ -43,20 +43,19 @@ def bbIter (_:VSpace v) ?=> (_: HasStandardNormal v) ?=>
     key' = select (t > 0.5) key_left key_right
     (key', y + y', sigma / sqrt 2.0, t' * 2.0)
 
-def sampleUnitBM (_:VSpace v) ?=> (_: HasStandardNormal v) ?=>
+def sampleUnitBM [VSpace v, HasStandardNormal v]
   (key:Key) (t:UnitInterval) : v =
   -- Brownian motion in interval (0.0, 1.0), where y(0.0) = 0.0
     (_, y, _, _) = fold (key, zero, 1.0, t) \i:(Fin 14). bbIter
     y
 
-def scalefunc (_:VSpace v) ?=> (f:Time -> v) (t0:Time) (t1:Time) : (Time -> v) =
-  \t. (sqrt (t1 - t0)) .* (f ((t - t0) / (t1 - t0)))
+def scaleBM [VSpace v] (f:Time -> v) (t0:Time) (t1:Time) (t:Time) : v =
+  (sqrt (t1 - t0)) .* (f ((t - t0) / (t1 - t0)))
 
-def sampleBM (_:VSpace v) ?=> (_: HasStandardNormal v) ?=>
+def sampleBM [VSpace v, HasStandardNormal v]
   (key:Key) (t0:Time) (t1:Time) (t:Time) : v =
   curriedBM = sampleUnitBM key
-  sf = scalefunc curriedBM t0 t1
-  sf t
+  scaleBM curriedBM t0 t1 t
 
 xs = linspace (Fin 1000) 0.0 1.0
 ys:(Fin 1000)=>Float = for i. ((sampleUnitBM (newKey 0)) xs.i)
@@ -89,35 +88,56 @@ def SDE (v:Type) : Type = (Drift v & DiffusionProd v )
 def radonNikodym (drift1: Drift Float)
                  (drift2: Drift Float)
                  (diffusion: Diffusion Float)
-                 (t0: Time) (t1:Time) : Drift Float =
+                 (state: Float) (t: Time) : Float =
   -- Dynamics of simple Monte Carlo estimatr of KL divergence between
   -- two SDEs that share a diffusion function. (If not, divergence is infinite)
   -- Todo: generalize to multivariate.
-  \state t.
-    (sq ((drift1 state t) - (drift2 state t))) / (diffusion state t)
+  (sq ((drift1 state t) - (drift2 state t))) / (diffusion state t)
 
-def ito_euler_step (_:VSpace v) ?=> (sde: SDE v) (z:v)
+def ito_euler_step [VSpace v] (sde: SDE v) (z:v)
   (t:Time) (dt:Time) (noise:v) : (v & Time) =
   (drift, diffprod) = sde
   new_z = z + dt .* (drift z t) + (diffprod z noise t)
   (new_z, t + dt)
 
+def ito_euler_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod=None):
+    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise)
+
+def ito_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
+    # Equation 20 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf
+    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
+           + 0.5 * gdg_prod(y, t, args, noise**2 - t_delta)
+
+def ito_milstein_step [VSpace v] (sde: SDE v) (z:v)
+  (t:Time) (dt:Time) (noise:v) : (v & Time) =
+  (drift, diffprod) = sde
+  new_z = z + dt .* (drift z t) + (diffprod z noise t)
+  (new_z, t + dt)
+
+
+def strat_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
+    # Equation 21 from https://infoscience.epfl.ch/record/143450/files/sde_tutorial.pdf
+    return y + t_delta * f(y, t, args) + g_prod(y, t, args, noise) \
+           + 0.5 * gdg_prod(y, t, args, noise**2)
+
+
+
+
 def sdeint (sde: SDE (d=>Float))
-           (z0: d=>Float) (t0: Time) (times: n=>Time)
+           (initial_state: d=>Float) (t0: Time) (eval_times: n=>Time)
            (key: Key) : n=>d=>Float =
-  --  z0: the initial value for the state.
-  --  t: times for evaluation. values must be strictly increasing.
+  --  eval_times must be strictly increasing.  Todo: enforce / automate.
   --  Returns:
-  --    Values of the solution at each time point in times.
+  --    Values of a sampled trajectory at each time point in times.
   dt = 0.0001
   max_iters = 10000
 
-  lasttime = maximum (prepend t0 times)
+  lasttime = maximum (prepend t0 eval_times)
   -- Todo: think about how to extend the BM beyond this interval later.
   noisefunc = \t. sampleBM key t0 lasttime t
 
   integrate_to_next_time = \iter init_carry.
-    target_t = times.iter
+    target_t = eval_times.iter
 
     shouldContinue = \(_, _, _, t, dt).
       (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
@@ -139,7 +159,7 @@ def sdeint (sde: SDE (d=>Float))
     z_target = linear_interp old_z cur_z old_t cur_t target_t
     (new_state, z_target)
 
-  init_carry = (z0, t0, z0, t0, dt)
+  init_carry = (initial_state, t0, initial_state, t0, dt)
   snd $ scan init_carry integrate_to_next_time
 
 def error_ratio (z_full:d=>Float) (z_half:d=>Float) (rtol:Float) (atol:Float) : Float =
@@ -244,11 +264,16 @@ t0 = 0.1
 times = linspace (Fin 1000) 0.2 1.9
 key = newKey 0
 
+%time
 yout = sdeint (drift, diffprod) z0 t0 times key
+
+%time
 yout' = adaptive_sdeint (drift, diffprod) z0 t0 times key
 
 --:p yout - yout'
 
-
+%time
 :html showPlot $ xyPlot times for i. yout.i.(0@(Fin 1))
+
+%time
 :html showPlot $ xyPlot times for i. yout'.i.(0@(Fin 1))
