@@ -638,6 +638,11 @@ instance Storable Int32
   load  = \(MkPtr ptr)  . %ptrLoad  (internalCast %Int32Ptr ptr)
   storageSize_ = const 4
 
+instance Storable Float32
+  store = \(MkPtr ptr) x. %ptrStore (internalCast %Float32Ptr ptr) x
+  load = \(MkPtr ptr)   . %ptrLoad  (internalCast %Float32Ptr ptr)
+  storageSize_ = const 4
+
 instance Storable (Ptr a)
   store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internalCast %PtrPtr ptr) x
   load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internalCast %PtrPtr ptr)
