@@ -615,6 +615,10 @@ instance Ord (Fin n)
 
 data Ptr a = MkPtr RawPtr
 
+def castPtr (ptr: Ptr a) : Ptr b =
+  (MkPtr rawPtr) = ptr
+  MkPtr rawPtr
+
 -- Is there a better way to select the right instance for `storageSize`??
 data TypeVehicle a = MkTypeVehicle
 def typeVehicle (a:Type) : TypeVehicle a = MkTypeVehicle
