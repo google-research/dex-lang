@@ -18,6 +18,7 @@ data Quaternion = Q {x:Float & y:Float & z:Float & w:Float}
 
 q = Q {x=1.0, y=2.0, z=3.0, w=4.0}
 q
+> (Q {w = 4., x = 1., y = 2., z = 3.})
 
 ' ## Quaternion magnitude
  A quaternion is basically a 4 dimensional vector.
@@ -185,17 +186,22 @@ srcdoc='<html>
     </iframe>"
 
 :html show3D one
+> <html output>
 
 rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0]) 
 
 
 :html show3D $ one <> rot
+> <html output>
 
 :html show3D $ one <> rot <> rot
+> <html output>
 
 :html show3D $ one <> rot <> rot <> rot
+> <html output>
 
 :html show3D $ one <> rot <> rot <> rot <> rot
+> <html output>
 
 ' All the way around!
 
@@ -203,6 +209,7 @@ rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0])
 rot2 = euler_to_quat (E [pi / 16.0, pi/8.0, 0.0]) 
 
 :html show3D $ one * rot2
+> <html output>
 
 ' ## Quaternion Conjugate
 The *conjugate* of a quaternion \(q\) is:
@@ -236,12 +243,16 @@ q' = from_vec $ normalize $ as_vec $ Q { x=1.0, y=2.0, z=0.5, w=10.0}
 
 
 :html show3D $ one 
+> <html output>
 
 :html show3D $ one * q'
+> <html output>
 
 :html show3D $ one * (inv q')
+> <html output>
 
 :html show3D $ one * q' * (inv q')
+> <html output>
 
 
 
@@ -257,13 +268,16 @@ difference = \ a b . (inv a) * b
 
 rot_right = euler_to_quat (E [0.0, pi/8.0, 0.0])
 :html show3D $ rot_right
+> <html output>
 
 rot_right_down = euler_to_quat (E [pi/16.0, pi/8.0, 0.0]) 
 :html show3D $ rot_right_down
+> <html output>
 
 
 rot_down = difference rot_right_down rot_right
 :html show3D $ rot_down
+> <html output>
 
 
 ' ## Quaternion Exp and Log
@@ -347,8 +361,10 @@ def q_pow (q:Quaternion) (n:Float) : Quaternion =
 
 
 :html show3D (q_pow rot_right 5.0)
+> <html output>
 
 :html show3D (q_pow rot_right 15.0)
+> <html output>
 
 ' ## Quaternion slerping
 
@@ -361,21 +377,28 @@ def slerp (q1:Quaternion) (q2:Quaternion) (t:Float) : Quaternion =
 
 
 :html show3D one
+> <html output>
 
 goal = rot_right_down <> rot_right_down
 
 :html show3D goal
+> <html output>
 
 
 ' Here's what it looks like each step of the way
 
 :html show3D $ one
+> <html output>
 
 :html show3D $ slerp one goal 0.25
+> <html output>
 
 :html show3D $ slerp one goal 0.5
+> <html output>
 
 :html show3D $ slerp one goal 0.75
+> <html output>
 
 :html show3D $ slerp one goal 1.0
+> <html output>
 
