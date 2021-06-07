@@ -1,7 +1,7 @@
 ' # Rotations with quaternions
 
 
-' (This is a Dex reimplementation of the @imadr's lovely little blog post Rotation with Quaternions https://imadr.github.io/rotations-with-quaternions/ that includes an example front-end in three.js.)
+' (This is a Dex reimplementation of the @imadr's lovely little blog post [Rotation with Quaternions](https://imadr.github.io/rotations-with-quaternions/) that includes an example front-end in three.js.)
 
 ' A quaternion is a 4 dimensional complex-like number, it has four components, three of which are the "imaginary" part.
 
@@ -11,18 +11,13 @@
 
 ' We represent a quaternion with this data structure:
 
-
-data Quaternion = Q {
-     x:Float &
-     y:Float &
-     z:Float &
-     w:Float}
+data Quaternion = Q {x:Float & y:Float & z:Float & w:Float}
 
 ' The four components are usually ordered \(w,x,y,z\) but I like to put \(w\) at the end.
  Initializing a quaternion:
 
 q = Q {x=1.0, y=2.0, z=3.0, w=4.0}
-
+q
 
 ' ## Quaternion magnitude
  A quaternion is basically a 4 dimensional vector.
@@ -30,13 +25,7 @@ q = Q {x=1.0, y=2.0, z=3.0, w=4.0}
 as_vec = \ Q{x,y,z,w}. [x, y, z, w]
 from_vec = \ [x, y, z, w]. Q{x,y,z,w}
 
-instance Add Quaternion
-  add = \ x y. from_vec $ (as_vec x) + as_vec y
-  sub = \ x y. from_vec $ (as_vec x) - as_vec y
-  zero = from_vec $ zero
-
-
-' It has a magnitude (or norm, or length):</p>
+' It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
 
 
@@ -45,16 +34,19 @@ def magnitude (x:a=>Float) : Float = sqrt $ sum $ for i. x.i * x.i
 
 
 ' ## Quaternion normalization
-A quaternion can be normalized by dividing each component by the magnitude:
+Like vectors a quaternion can be normalized by dividing each component by the magnitude:
 
 def normalize (x:a=>Float) : a=> Float = 1.0 / (magnitude x) .* x
 
-' A special property of quaternions is that a unit quaternion (a quaternion with magnitude \(1\)) represents a rotation in 3D space
-
+' A special property of quaternions is that a unit quaternion (a quaternion with magnitude \(1\)) represents a rotation in 3D space.
 
 ' ## Scaling a quaternion
 Scaling a quaternion is multiplying each of its components by a real number (the scalar):
 
+instance Add Quaternion
+  add = \ x y. from_vec $ (as_vec x) + as_vec y
+  sub = \ x y. from_vec $ (as_vec x) - as_vec y
+  zero = from_vec $ zero
 
 instance VSpace Quaternion
   scaleVec = \ s x. from_vec (s .* as_vec x)
@@ -93,6 +85,13 @@ instance Mul Quaternion
   }
   one = ident
 
+' We will make this into a Monoid in Dex.
+
+instance Monoid Quaternion
+  mempty = one
+  mcombine = \a b. a * b
+
+
 ' ## Quaternion vs Euler angles
 
 ' We use quaternions instead of Euler angles to represent rotations for a couple of reasons:
@@ -101,7 +100,7 @@ instance Mul Quaternion
 
 ' We represent the orientation of an object using only a quaternion, then we multiply that orientation by another quaternion to rotate it.
 
-' However writing a rotation directly in quaternion form isn't really intuitive, what we do instead is <strong>convert an Euler angle to a quaternion then use it for rotating</strong>.
+' However writing a rotation directly in quaternion form isn't really intuitive, what we do instead is *convert an Euler angle to a quaternion then use it for rotating.
 
 ' If we have an Euler angle rotation in the order ZYX (Yaw -> Pitch -> Roll, we can chose any order but must stay consistent), we can convert it to a quaternion like this:
 
@@ -122,10 +121,10 @@ def euler_to_quat ((E v):Euler) : Quaternion =
     [sx, sy, sz] = for i. sin v.i
     [cx, cy, cz] = for i. cos v.i
     Q { 
-    x = sx*cy*cz - cx*sy*sz,
-    y = cx*sy*cz + sx*cy*sz,
-    z = cx*cy*sz - sx*sy*cz,
-    w = cx*cy*cz + sx*sy*sz
+        x = sx*cy*cz - cx*sy*sz,
+        y = cx*sy*cz + sx*cy*sz,
+        z = cx*cy*sz - sx*sy*cz,
+        w = cx*cy*cz + sx*sy*sz
     }   
 
 
@@ -190,13 +189,13 @@ srcdoc='<html>
 rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0]) 
 
 
-:html show3D $ one * rot
+:html show3D $ one <> rot
 
-:html show3D $ one * rot * rot
+:html show3D $ one <> rot <> rot
 
-:html show3D $ one * rot * rot * rot
+:html show3D $ one <> rot <> rot <> rot
 
-:html show3D $ one * rot * rot * rot * rot
+:html show3D $ one <> rot <> rot <> rot <> rot
 
 ' All the way around!
 
@@ -289,29 +288,25 @@ def q_exp (q:Quaternion) : Quaternion =
     sin_v = sin m
     exp_w = exp w
     Q {x = x' * sin_v * exp_w,
-      y = y' * sin_v * exp_w,
-      z = z' * sin_v * exp_w,
-      w = cos(m) * exp_w,
+       y = y' * sin_v * exp_w,
+       z = z' * sin_v * exp_w,
+       w = cos(m) * exp_w
     }
 
-' Tangeant: to implement quaternion logs we need arccos. We don't have this yet in Dex
+' Tangent: to implement quaternion logs we need arccos. We don't have this yet in Dex
   so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
+
+' NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit
 
 def acos (x:Float) : Float = 
   negate = select (x < 0.0) 1.0 0.0
   x = abs x
-  withState (-0.0187293) \ret .
-    ret := (get ret) * x
-    ret := (get ret) + 0.0742610
-    ret := (get ret) * x
-    ret := (get ret) - 0.2121144
-    ret := (get ret) * x
-    ret := (get ret) + 1.5707288
-    ret := (get ret) * (sqrt (1.0-x))
-    ret := (get ret) - 2.0 * negate * (get ret)
-    negate * 3.14159265358979 + (get ret)
-
-
+  ret1 = (-0.0187293 * x) + 0.0742610
+  ret2 = (ret1 * x) - 0.2121144
+  ret3 = (ret2 * x) + 1.5707288
+  ret4 = (ret3 * (sqrt (1.0-x))) - (2.0 * negate * ret3)
+  negate * 3.14159265358979 + ret4
+    
 
 ' The logarithm of a quaternion is also a quaternion and is given by this formula:
 
@@ -362,12 +357,12 @@ def q_pow (q:Quaternion) (n:Float) : Quaternion =
 ' $$\textrm{slerp}(q_{1}, q_{2}, t) = q_{1}(q_{1}^{-1}q_{2})^{t}$$
 
 def slerp (q1:Quaternion) (q2:Quaternion) (t:Float) : Quaternion =
-    q1 * q_pow ((inv q1) * q2) (min 1.0 (max 0.0 t))
+    q1 * q_pow ((inv q1) <> q2) (min 1.0 (max 0.0 t))
 
 
 :html show3D one
 
-goal = rot_right_down * rot_right_down
+goal = rot_right_down <> rot_right_down
 
 :html show3D goal
 
