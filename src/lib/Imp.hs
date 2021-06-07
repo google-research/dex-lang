@@ -517,6 +517,8 @@ toImpHof env (maybeDest, hof) = do
       emitStatement $ IWhile body'
       return UnitVal
     RunReader r ~(BinaryFunVal _ ref _ body) -> do
+      -- buggy: here and below we ignore the heap binder
+      -- buggy: we use `getType r` but `r` is pre-substitution
       rDest <- alloc $ getType r
       copyAtom rDest =<< impSubst env r
       translateBlock (env <> ref @> rDest) (maybeDest, body)
@@ -533,6 +535,7 @@ toImpHof env (maybeDest, hof) = do
       void $ translateBlock (env <> ref @> sDest) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom sDest
     RunIO ~(Lam (Abs _ (_, body))) ->
+      -- buggy: ignore (trivial) argument to abs
       translateBlock env (maybeDest, body)
     Linearize _ -> error "Unexpected Linearize"
     Transpose _ -> error "Unexpected Transpose"

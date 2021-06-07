@@ -122,6 +122,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
         unless (arr == TabArrow) $
           throw TypeErr $ "Not an table arrow type: " ++ pprint arr
         allowedEff <- getAllowedEffects
+        -- buggy: `allowedEff` may have free variables that get shadowed by `n`
         lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
         emitZonked $ Hof $ For (RegularFor dir) lam
       Check _ -> infer >>= matchRequirement
@@ -164,6 +165,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
         where b = case pat of
                     -- Note: The binder name becomes part of the type, so we
                     -- need to keep the same name used in the pattern.
+                    -- ^ This seems wrong? Alpha renaming should still be valid.
                     WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>ann')
                     _ -> Ignore ann'
     matchRequirement piTy
@@ -184,6 +186,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
         let conDefs = applyDataDefParams def params
         altsSorted <- forM (enumerate conDefs) \(i, DataConDef _ bs) -> do
           case lookup (ConAlt i) alts' of
+            -- buggy: data constructor might be dependent, so we can't just use `Ignore`
             Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
                                   Block Empty $ Op $ ThrowError reqTy'
             Just alt -> return alt

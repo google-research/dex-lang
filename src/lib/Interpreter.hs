@@ -45,6 +45,7 @@ evalBlock env (Block decls result) = do
 
 evalDecl :: SubstEnv -> Decl -> InterpM SubstEnv
 evalDecl env (Let _ v rhs) = liftM (v @>) $ evalExpr env rhs'
+  -- buggy: double substitution
   where rhs' = subst (env, mempty) rhs
 
 evalExpr :: SubstEnv -> Expr -> InterpM Atom

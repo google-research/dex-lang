@@ -111,6 +111,7 @@ instance HasType Atom where
     Lam (Abs b (arr, body)) -> withBinder b $ do
       checkArrow arr
       bodyTy <- withAllowedEff (arrowEff arr) $ typeCheck body
+      -- buggy: should make a fresh name here
       return $ Pi $ makeAbs b (arr, bodyTy)
     Pi (Abs b (arr, resultTy)) -> withBinder b $
       checkArrow arr >> resultTy|:TyKind $> TyKind
@@ -305,6 +306,7 @@ exprEffs expr = case expr of
 
 functionEffs :: Atom -> EffectRow
 functionEffs f = case getType f of
+  -- buggy: eff might have the pi binder in scope
   Pi (Abs _ (arr, _)) -> arrowEff arr
   _ -> error "Expected a function type"
 
@@ -895,6 +897,7 @@ typeCheckHof hof = case hof of
   RunIO f -> do
     FunTy b eff resultTy <- typeCheck f
     checkEq (binderAnn b) UnitTy
+    -- buggy: eff might have the binder `regionBinder` in scope
     extendAllowedEffect IOEffect $ declareEffs eff
     return resultTy
   CatchException f -> do
@@ -1043,6 +1046,9 @@ projectLength ty = case ty of
 typeReduceBlock :: Scope -> Block -> Maybe Atom
 typeReduceBlock scope (Block decls result) = do
   let localScope = foldMap boundVars decls
+  -- buggy: if decls aren't fresh wrt the scope (and they needn't be) then
+  -- `localScope` may shadow `scope` and shouldn't be allowed to extend it.
+  -- The subsequent subsitutions we do won't be valid.
   ans <- typeReduceExpr (scope <> localScope) result
   [] <- return $ toList $ localScope `envIntersect` freeVars ans
   return ans

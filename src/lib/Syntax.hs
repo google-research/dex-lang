@@ -449,6 +449,7 @@ showPrimName prim = primNameToStr $ fmap (const ()) prim
 
 getBaseMonoidType :: Type -> Type
 getBaseMonoidType ty = case ty of
+  -- buggy: `b` might use the name bound by the TabTy
   TabTy _ b -> getBaseMonoidType b
   _         -> ty
 
