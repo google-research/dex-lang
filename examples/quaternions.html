@@ -1,0 +1,1533 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but ð¤·
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Rotations with quaternions</h1>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>(This is a Dex reimplementation of the @imadr's lovely little blog post <a href="https://imadr.github.io/rotations-with-quaternions/">Rotation with Quaternions</a> that includes an example front-end in three.js.)</p>
+</div></div><div class="cell"><div class="prose-block"><p>A quaternion is a 4 dimensional complex-like number, it has four components, three of which are the &quot;imaginary&quot; part.</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$ q = a+b\textrm{i}+c\textrm{j}+d\textrm{k} $$
+$$ q = (b,c,d, a) $$
+$$ \textrm{i}^{2}=\textrm{j}^{2}=\textrm{k}^{2}=\textrm{i}\textrm{j}\textrm{k}=-1 $$</p>
+</div></div><div class="cell"><div class="prose-block"><p>We represent a quaternion with this data structure:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> <span class="type-name">Q</span> {x<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> y<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> z<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> w<span class="symbol">:</span><span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The four components are usually ordered (w,x,y,z) but I like to put (w) at the end.
+Initializing a quaternion:</p>
+</div></div><div class="cell"><div class="code-block">q <span class="symbol">=</span> <span class="type-name">Q</span> {x<span class="symbol">=</span>1<span class="symbol">.</span>0<span class="symbol">,</span> y<span class="symbol">=</span>2<span class="symbol">.</span>0<span class="symbol">,</span> z<span class="symbol">=</span>3<span class="symbol">.</span>0<span class="symbol">,</span> w<span class="symbol">=</span>4<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block">q
+</div><div class="result-block">(Q {w = 4., x = 1., y = 2., z = 3.})</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion magnitude</h2>
+<p>A quaternion is basically a 4 dimensional vector.</p>
+</div></div><div class="cell"><div class="code-block">as_vec <span class="symbol">=</span> <span class="symbol">\</span> <span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}<span class="symbol">.</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]
+</div></div><div class="cell"><div class="code-block">from_vec <span class="symbol">=</span> <span class="symbol">\</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]<span class="symbol">.</span> <span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>It has a vector magnitude (or norm, or length):
+$$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$</p>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> magnitude (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> x<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion normalization</h2>
+<p>Like vectors a quaternion can be normalized by dividing each component by the magnitude:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> a<span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> 1<span class="symbol">.</span>0 <span class="symbol">/</span> (magnitude x) <span class="symbol">.*</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>A special property of quaternions is that a unit quaternion (a quaternion with magnitude (1)) represents a rotation in 3D space.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Scaling a quaternion</h2>
+<p>Scaling a quaternion is multiplying each of its components by a real number (the scalar):</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Quaternion</span>
+  add <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> from_vec <span class="symbol">$</span> (as_vec x) <span class="symbol">+</span> as_vec y
+  sub <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> from_vec <span class="symbol">$</span> (as_vec x) <span class="symbol">-</span> as_vec y
+  zero <span class="symbol">=</span> from_vec <span class="symbol">$</span> zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> <span class="type-name">Quaternion</span>
+  scaleVec <span class="symbol">=</span> <span class="symbol">\</span> s x<span class="symbol">.</span> from_vec (s <span class="symbol">.*</span> as_vec x)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Identity quaternion</h2>
+</div></div><div class="cell"><div class="prose-block"><p>There is a special quaternion called the <em>identity quaternion</em> which corresponds to no rotation:</p>
+</div></div><div class="cell"><div class="code-block">ident <span class="symbol">=</span> <span class="type-name">Q</span>{x<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> y<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> z<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> w<span class="symbol">=</span>1<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Geometrically, we can also consider ((0, 0, 0, -1)) to be an identity quaternion since it corresponds to no rotation.</p>
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion multiplication</h2>
+<p>Multiplying two unit quaternions represents a <em>composition of two rotations</em>.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Quaternion multiplication isn't commutative . If we want to apply a rotation (q_{1}) then a rotation (q_{2}), the resulting rotation (q_{3}) is:
+$$q_{3}=q_{2}.q_{1}$$</p>
+</div></div><div class="cell"><div class="prose-block"><p>Quaternion multiplication looks like this:
+$$q_{1} = a+b\textrm{i}+c\textrm{j}+d\textrm{k}$$
+$$q_{2} = e+f\textrm{i}+g\textrm{j}+h\textrm{k}$$</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$
+q_{1}.q_{2} = (ae-bf-cg-dh)+(af+be+ch-dg)\textrm{i}+(ag-bh+ce+df)\textrm{j}+(ah+bg-cf+de)\textrm{k}
+$$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Quaternion</span>
+  mul <span class="symbol">=</span> <span class="symbol">\</span> (<span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}) (<span class="type-name">Q</span>{x<span class="symbol">=</span>x&#39;<span class="symbol">,</span>y<span class="symbol">=</span>y&#39;<span class="symbol">,</span>z<span class="symbol">=</span>z&#39;<span class="symbol">,</span>w<span class="symbol">=</span>w&#39;})<span class="symbol">.</span> <span class="type-name">Q</span> {
+        x <span class="symbol">=</span> w<span class="symbol">*</span>x&#39; <span class="symbol">+</span> x<span class="symbol">*</span>w&#39; <span class="symbol">+</span> y<span class="symbol">*</span>z&#39; <span class="symbol">-</span> z<span class="symbol">*</span>y&#39;<span class="symbol">,</span>
+        y <span class="symbol">=</span> w<span class="symbol">*</span>y&#39; <span class="symbol">-</span> x<span class="symbol">*</span>z&#39; <span class="symbol">+</span> y<span class="symbol">*</span>w&#39; <span class="symbol">+</span> z<span class="symbol">*</span>x&#39;<span class="symbol">,</span>
+        z <span class="symbol">=</span> w<span class="symbol">*</span>z&#39; <span class="symbol">+</span> x<span class="symbol">*</span>y&#39; <span class="symbol">-</span> y<span class="symbol">*</span>x&#39; <span class="symbol">+</span> z<span class="symbol">*</span>w&#39;<span class="symbol">,</span>
+        w <span class="symbol">=</span> w<span class="symbol">*</span>w&#39; <span class="symbol">-</span> x<span class="symbol">*</span>x&#39; <span class="symbol">-</span> y<span class="symbol">*</span>y&#39; <span class="symbol">-</span> z<span class="symbol">*</span>z&#39;
+  }
+  one <span class="symbol">=</span> ident
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We will make this into a Monoid in Dex.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> <span class="type-name">Quaternion</span>
+  mempty <span class="symbol">=</span> one
+  mcombine <span class="symbol">=</span> <span class="symbol">\</span>a b<span class="symbol">.</span> a <span class="symbol">*</span> b
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion vs Euler angles</h2>
+</div></div><div class="cell"><div class="prose-block"><p>We use quaternions instead of Euler angles to represent rotations for a couple of reasons:</p>
+<ul>
+<li>Euler angles suffer from gimbal lock</li>
+<li>Interpolating between two Euler angles lead to weird results</li>
+</ul>
+</div></div><div class="cell"><div class="prose-block"><p>We represent the orientation of an object using only a quaternion, then we multiply that orientation by another quaternion to rotate it.</p>
+</div></div><div class="cell"><div class="prose-block"><p>However writing a rotation directly in quaternion form isn't really intuitive, what we do instead is *convert an Euler angle to a quaternion then use it for rotating.</p>
+</div></div><div class="cell"><div class="prose-block"><p>If we have an Euler angle rotation in the order ZYX (Yaw -&gt; Pitch -&gt; Roll, we can chose any order but must stay consistent), we can convert it to a quaternion like this:</p>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>$$
+q = \begin{bmatrix}
+\sin(x/2)\cos(y/2)\cos(z/2)-\cos(x/2)\sin(y/2)\sin(z/2) \\
+\cos(x/2)\sin(y/2)\cos(z/2)+\sin(x/2)\cos(y/2)\sin(z/2) \\
+\cos(x/2)\cos(y/2)\sin(z/2)-\sin(x/2)\sin(y/2)\cos(z/2) \\
+\cos(x/2)\cos(y/2)\cos(z/2)+\sin(x/2)\sin(y/2)\sin(z/2) \\
+\end{bmatrix}
+$$</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Euler</span> <span class="symbol">=</span> <span class="type-name">E</span> (<span class="type-name">Fin</span> 3<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> euler_to_quat ((<span class="type-name">E</span> v)<span class="symbol">:</span><span class="type-name">Euler</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    [sx<span class="symbol">,</span> sy<span class="symbol">,</span> sz] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sin v<span class="symbol">.</span>i
+    [cx<span class="symbol">,</span> cy<span class="symbol">,</span> cz] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> cos v<span class="symbol">.</span>i
+    <span class="type-name">Q</span> { 
+        x <span class="symbol">=</span> sx<span class="symbol">*</span>cy<span class="symbol">*</span>cz <span class="symbol">-</span> cx<span class="symbol">*</span>sy<span class="symbol">*</span>sz<span class="symbol">,</span>
+        y <span class="symbol">=</span> cx<span class="symbol">*</span>sy<span class="symbol">*</span>cz <span class="symbol">+</span> sx<span class="symbol">*</span>cy<span class="symbol">*</span>sz<span class="symbol">,</span>
+        z <span class="symbol">=</span> cx<span class="symbol">*</span>cy<span class="symbol">*</span>sz <span class="symbol">-</span> sx<span class="symbol">*</span>sy<span class="symbol">*</span>cz<span class="symbol">,</span>
+        w <span class="symbol">=</span> cx<span class="symbol">*</span>cy<span class="symbol">*</span>cz <span class="symbol">+</span> sx<span class="symbol">*</span>sy<span class="symbol">*</span>sz
+    }   
+</div></div><div class="cell"><div class="code-block">
+
+
+</div></div><div class="cell"><div class="prose-block"><h2>Drawing with Quaternions</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Libraries like three.js allow us to use quaternions directly for rotations.</p>
+</div></div><div class="cell"><div class="prose-block"><p>This script implements a simple 3D box positioned based on a quaternion.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> show3D ((<span class="type-name">Q</span> {x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w})<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+    &quot;<span class="symbol">&lt;</span>iframe width<span class="symbol">=\</span>&quot;100%<span class="symbol">\</span>&quot; frameborder<span class="symbol">=\</span>&quot;0<span class="symbol">\</span>&quot; scrolling<span class="symbol">=\</span>&quot;no<span class="symbol">\</span>&quot;  onload<span class="symbol">=\</span>&quot;this<span class="symbol">.</span>style<span class="symbol">.</span>height<span class="symbol">=</span>this<span class="symbol">.</span>contentWindow<span class="symbol">.</span>document<span class="symbol">.</span>body<span class="symbol">.</span>scrollHeight<span class="symbol">+</span>&#39;px&#39;<span class="symbol">\</span>&quot;;
+srcdoc<span class="symbol">=</span>&#39;<span class="symbol">&lt;</span>html<span class="symbol">&gt;</span> 
+    <span class="symbol">&lt;</span>head<span class="symbol">&gt;&lt;</span>script src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>cdn<span class="symbol">.</span>jsdelivr<span class="symbol">.</span>net<span class="symbol">/</span>npm<span class="symbol">/</span>three<span class="symbol">-</span>js<span class="symbol">@</span>79<span class="symbol">.</span>0<span class="symbol">.</span>0<span class="symbol">/</span>three<span class="symbol">.</span>js<span class="symbol">\</span>&quot;<span class="symbol">&gt;&lt;/</span>script<span class="symbol">&gt;</span>  
+    <span class="symbol">&lt;/</span>head<span class="symbol">&gt;</span> 
+    <span class="symbol">&lt;</span>body<span class="symbol">&gt;</span> 
+           <span class="symbol">&lt;</span>script<span class="symbol">&gt;</span>const scene <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Scene</span>();
+                   <span class="symbol">//</span> <span class="type-name">Generic</span> scene construction
+                   const camera <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">PerspectiveCamera</span>( 75<span class="symbol">,</span> window<span class="symbol">.</span>innerWidth <span class="symbol">/</span> window<span class="symbol">.</span>innerHeight<span class="symbol">,</span> 0<span class="symbol">.</span>1<span class="symbol">,</span> 1000 );
+                   camera<span class="symbol">.</span>position<span class="symbol">.</span>z <span class="symbol">=</span> 2;
+                   const renderer <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">WebGLRenderer</span>();
+                   renderer<span class="symbol">.</span>setSize( window<span class="symbol">.</span>innerWidth<span class="symbol">,</span> window<span class="symbol">.</span>innerHeight );
+                   document<span class="symbol">.</span>body<span class="symbol">.</span>appendChild( renderer<span class="symbol">.</span>domElement );
+
+                   <span class="symbol">//</span> <span class="type-name">Create</span> a pretty box with lights<span class="symbol">.</span>
+                   const geometry <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">BoxGeometry</span>(1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0);
+                   red <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Color</span>(1<span class="symbol">,</span> 0<span class="symbol">,</span> 0);
+                   green <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Color</span>(0<span class="symbol">,</span> 1<span class="symbol">,</span> 0);
+                   blue <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Color</span>(0<span class="symbol">,</span> 0<span class="symbol">,</span> 1);
+                   var colors <span class="symbol">=</span> [red<span class="symbol">,</span> green<span class="symbol">,</span> blue];
+
+                   <span class="keyword">for</span> (var i <span class="symbol">=</span> 0; i <span class="symbol">&lt;</span> 3; i<span class="symbol">++</span>) {
+                       geometry<span class="symbol">.</span>faces[4 <span class="symbol">*</span> i]<span class="symbol">.</span>color <span class="symbol">=</span> colors[i];
+                       geometry<span class="symbol">.</span>faces[4 <span class="symbol">*</span> i <span class="symbol">+</span> 1]<span class="symbol">.</span>color <span class="symbol">=</span> colors[i];
+                       geometry<span class="symbol">.</span>faces[4 <span class="symbol">*</span> i <span class="symbol">+</span> 2]<span class="symbol">.</span>color <span class="symbol">=</span> colors[i];
+                       geometry<span class="symbol">.</span>faces[4 <span class="symbol">*</span> i <span class="symbol">+</span> 3]<span class="symbol">.</span>color <span class="symbol">=</span> colors[i];
+                   }
+                   var material <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">MeshBasicMaterial</span>( { color<span class="symbol">:</span> 0xffffff<span class="symbol">,</span> vertexColors<span class="symbol">:</span> true } );
+
+
+                   <span class="symbol">//</span> <span class="type-name">Add</span> the cube to the scene
+                   const cube <span class="symbol">=</span> new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Mesh</span>( geometry<span class="symbol">,</span> material );
+                   scene<span class="symbol">.</span>add( cube );
+
+                   <span class="symbol">//</span> <span class="type-name">Rotate</span> by our angles<span class="symbol">.</span>
+                   cube<span class="symbol">.</span>quaternion<span class="symbol">.</span>copy(new <span class="type-name">THREE</span><span class="symbol">.</span><span class="type-name">Quaternion</span>(&quot;<span class="symbol">&lt;&gt;</span>
+                   (show x) <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span>
+                   (show y) <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span>
+                   (show z) <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span>
+                   (show w) <span class="symbol">&lt;&gt;</span> &quot;));
+
+                   
+                   renderer<span class="symbol">.</span>render( scene<span class="symbol">,</span> camera );
+           <span class="symbol">&lt;/</span>script<span class="symbol">&gt;</span> 
+    <span class="symbol">&lt;/</span>body<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>html<span class="symbol">&gt;</span>&#39;<span class="symbol">&gt;</span>
+    <span class="symbol">&lt;/</span>iframe<span class="symbol">&gt;</span>&quot;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D one
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">rot <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi <span class="symbol">/</span> 16<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]) 
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.195090324, 0, 0, 0.980785251));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.382683426, 0, 0, 0.923879445));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.555570245, 0, 0, 0.831469476));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot <span class="symbol">&lt;&gt;</span> rot
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.707106769, 0, 0, 0.70710659));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>All the way around!</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">rot2 <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi <span class="symbol">/</span> 16<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]) 
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> rot2
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.180239946, 0.375330299, -0.0746578425, 0.906127393));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion Conjugate</h2>
+<p>The <em>conjugate</em> of a quaternion (q) is:</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$q^{*} = a-b\textrm{i}-c\textrm{j}-d\textrm{k}$$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> conj ((<span class="type-name">Q</span> {x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w})<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    <span class="type-name">Q</span> {x<span class="symbol">=-</span>x<span class="symbol">,</span> y<span class="symbol">=-</span>y<span class="symbol">,</span> z<span class="symbol">=-</span>z<span class="symbol">,</span> w<span class="symbol">=</span>w}
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion Inverse</h2>
+</div></div><div class="cell"><div class="prose-block"><p>The <em>inverse</em> of a quaternion (q), is the conjugate divided by the magnitude squared:
+$$q^{-1} = \frac{q^{*}}{||q||^{2}}$$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inv (q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    m <span class="symbol">=</span> magnitude <span class="symbol">$</span> as_vec q
+    1<span class="symbol">.</span>0 <span class="symbol">/</span> (m <span class="symbol">*</span> m) <span class="symbol">.*</span> conj q
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>For unit quaternions, the conjugate is equal to the inverse.
+Multiplying a quaternion by its inverse results in the identity quaternion:</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$q.q^{-1} = (0, 0, 0, 1)$$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Let's try it out</p>
+</div></div><div class="cell"><div class="code-block">q&#39; <span class="symbol">=</span> from_vec <span class="symbol">$</span> normalize <span class="symbol">$</span> as_vec <span class="symbol">$</span> <span class="type-name">Q</span> { x<span class="symbol">=</span>1<span class="symbol">.</span>0<span class="symbol">,</span> y<span class="symbol">=</span>2<span class="symbol">.</span>0<span class="symbol">,</span> z<span class="symbol">=</span>0<span class="symbol">.</span>5<span class="symbol">,</span> w<span class="symbol">=</span>10<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one 
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> q&#39;
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.0974740386, 0.194948077, 0.0487370193, 0.974740386));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> (inv q&#39;)
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(-0.0974740386, -0.194948077, -0.0487370193, 0.974740386));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one <span class="symbol">*</span> q&#39; <span class="symbol">*</span> (inv q&#39;)
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 4.65661287e-10, 3.7252903e-09, 1));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+
+
+
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion difference</h2>
+</div></div><div class="cell"><div class="prose-block"><p>The difference of two quaternions (q_{1}) and (q_{2}) is another quaternion (q_{3}) that rotates from (q_{1}) to (q_{2}):</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$q_{3} = q_{1}^{-1}.q_{2}$$</p>
+</div></div><div class="cell"><div class="code-block">difference <span class="symbol">=</span> <span class="symbol">\</span> a b <span class="symbol">.</span> (inv a) <span class="symbol">*</span> b
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">rot_right <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0])
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> rot_right
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0.382683456, 0, 0.923879504));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">rot_right_down <span class="symbol">=</span> euler_to_quat (<span class="type-name">E</span> [pi<span class="symbol">/</span>16<span class="symbol">.</span>0<span class="symbol">,</span> pi<span class="symbol">/</span>8<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]) 
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> rot_right_down
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.180239946, 0.375330299, -0.0746578425, 0.906127393));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">rot_down <span class="symbol">=</span> difference rot_right_down rot_right
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> rot_down
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(-0.195090324, -2.98023224e-08, 7.4505806e-09, 0.98078537));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion Exp and Log</h2>
+</div></div><div class="cell"><div class="prose-block"><p>The exponential and the logarithm of a quaternion won't be very useful by themselves, but we will use them to compute other functions later.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Given a quaternion (q = (x,y,z,w)) and its vector part (v = (x,y,z)), the exponential of that quaternion is also a quaternion, and it's given by this formula:</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$\exp(q) = \exp(w)\begin{pmatrix}
+\frac{v_{x}}{||v||}\sin(||v||)\\
+\frac{v_{y}}{||v||}\sin(||v||)\\
+\frac{v_{z}}{||v||}\sin(||v||)\\
+\cos(||v||)
+\end{pmatrix}$$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> q_exp (q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    (<span class="type-name">Q</span> {x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}) <span class="symbol">=</span> q
+    v <span class="symbol">=</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z]
+    m <span class="symbol">=</span> magnitude v
+    [x&#39;<span class="symbol">,</span> y&#39;<span class="symbol">,</span> z&#39;] <span class="symbol">=</span> normalize v
+    sin_v <span class="symbol">=</span> sin m
+    exp_w <span class="symbol">=</span> exp w
+    <span class="type-name">Q</span> {x <span class="symbol">=</span> x&#39; <span class="symbol">*</span> sin_v <span class="symbol">*</span> exp_w<span class="symbol">,</span>
+       y <span class="symbol">=</span> y&#39; <span class="symbol">*</span> sin_v <span class="symbol">*</span> exp_w<span class="symbol">,</span>
+       z <span class="symbol">=</span> z&#39; <span class="symbol">*</span> sin_v <span class="symbol">*</span> exp_w<span class="symbol">,</span>
+       w <span class="symbol">=</span> cos(m) <span class="symbol">*</span> exp_w
+    }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Tangent: to implement quaternion logs we need arccos. We don't have this yet in Dex
+so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)</p>
+</div></div><div class="cell"><div class="prose-block"><p>NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> acos (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+  negate <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0
+  x <span class="symbol">=</span> abs x
+  ret1 <span class="symbol">=</span> (<span class="symbol">-</span>0<span class="symbol">.</span>0187293 <span class="symbol">*</span> x) <span class="symbol">+</span> 0<span class="symbol">.</span>0742610
+  ret2 <span class="symbol">=</span> (ret1 <span class="symbol">*</span> x) <span class="symbol">-</span> 0<span class="symbol">.</span>2121144
+  ret3 <span class="symbol">=</span> (ret2 <span class="symbol">*</span> x) <span class="symbol">+</span> 1<span class="symbol">.</span>5707288
+  ret4 <span class="symbol">=</span> (ret3 <span class="symbol">*</span> (sqrt (1<span class="symbol">.</span>0<span class="symbol">-</span>x))) <span class="symbol">-</span> (2<span class="symbol">.</span>0 <span class="symbol">*</span> negate <span class="symbol">*</span> ret3)
+  negate <span class="symbol">*</span> 3<span class="symbol">.</span>14159265358979 <span class="symbol">+</span> ret4
+</div></div><div class="cell"><div class="code-block">    
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The logarithm of a quaternion is also a quaternion and is given by this formula:</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$\log(q) = \begin{pmatrix}
+\frac{v_{x}}{||v||}\arccos(\frac{w}{||q||})\\
+\frac{v_{y}}{||v||}\arccos(\frac{w}{||q||})\\
+\frac{v_{z}}{||v||}\arccos(\frac{w}{||q||})\\
+\log(||q||)
+\end{pmatrix}$$</p>
+</div></div><div class="cell"><div class="code-block">
+
+
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> q_log (q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    (<span class="type-name">Q</span> {x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}) <span class="symbol">=</span> q
+    v <span class="symbol">=</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z]
+    m <span class="symbol">=</span> magnitude <span class="symbol">$</span> as_vec q
+    [x&#39;<span class="symbol">,</span> y&#39;<span class="symbol">,</span> z&#39;] <span class="symbol">=</span> normalize v
+    a <span class="symbol">=</span> acos (w <span class="symbol">/</span> m)
+    <span class="type-name">Q</span> {x <span class="symbol">=</span> x&#39; <span class="symbol">*</span> a<span class="symbol">,</span>
+       y <span class="symbol">=</span> y&#39; <span class="symbol">*</span> a<span class="symbol">,</span>
+       z <span class="symbol">=</span> z&#39; <span class="symbol">*</span> a<span class="symbol">,</span>
+       w <span class="symbol">=</span> log(m)
+    }
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion exponentiation</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Raising a quaternion to a power results in either a fraction or a multiple of that quaternion. (q^{2}) represents twice the rotation of (q), and (q^{0.5}) represents half of that rotation.</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$q^{n} = \exp(n\log(q))$$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> q_pow (q<span class="symbol">:</span><span class="type-name">Quaternion</span>) (n<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    q_exp <span class="symbol">$</span> n <span class="symbol">.*</span> q_log q
+</div></div><div class="cell"><div class="code-block">
+
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D (q_pow rot_right 5<span class="symbol">.</span>0)
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0.923860788, 0, -0.382728666));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D (q_pow rot_right 15<span class="symbol">.</span>0)
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(-0, -0.382547736, -0, 0.923935711));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h2>Quaternion slerping</h2>
+</div></div><div class="cell"><div class="prose-block"><p>Arguably one of the most important advantages of quaternions, &quot;Slerp&quot; stands for spherical linear interpolation. It's a function thats takes three parameters: a quaternion (q_{1}), a quaternion (q_{2}) and an interpolation parameter (t) that goes from (0) to (1). It gives us an intermediate rotation depending on the value of (t).</p>
+</div></div><div class="cell"><div class="prose-block"><p>$$\textrm{slerp}(q_{1}, q_{2}, t) = q_{1}(q_{1}^{-1}q_{2})^{t}$$</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> slerp (q1<span class="symbol">:</span><span class="type-name">Quaternion</span>) (q2<span class="symbol">:</span><span class="type-name">Quaternion</span>) (t<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+    q1 <span class="symbol">*</span> q_pow ((inv q1) <span class="symbol">&lt;&gt;</span> q2) (min 1<span class="symbol">.</span>0 (max 0<span class="symbol">.</span>0 t))
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D one
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">goal <span class="symbol">=</span> rot_right_down <span class="symbol">&lt;&gt;</span> rot_right_down
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D goal
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.326640666, 0.680194139, -0.135299027, 0.642133772));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Here's what it looks like each step of the way</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0, 0, 1));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 0<span class="symbol">.</span>25
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.0923116133, 0.192229033, -0.0382367298, 0.976250172));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 0<span class="symbol">.</span>5
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.180238456, 0.375327259, -0.0746572316, 0.906128943));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 0<span class="symbol">.</span>75
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.259604067, 0.540597677, -0.107531548, 0.792966962));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> slerp one goal 1<span class="symbol">.</span>0
+</div><iframe width="100%" frameborder="0" scrolling="no"  onload="this.style.height=this.contentWindow.document.body.scrollHeight+'px'";
+srcdoc='<html> 
+    <head><script src="https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion(0.326638579, 0.680189848, -0.135298163, 0.642139494));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe></div><div class="cell"><div class="code-block">
+</div></div></div></body></html>
