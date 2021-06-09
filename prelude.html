@@ -895,6 +895,10 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="prose-block"><h2>Raw pointer operations</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Ptr</span> a <span class="symbol">=</span> <span class="type-name">MkPtr</span> <span class="type-name">RawPtr</span>
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> castPtr (ptr<span class="symbol">:</span> <span class="type-name">Ptr</span> a) <span class="symbol">:</span> <span class="type-name">Ptr</span> b <span class="symbol">=</span>
+  (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
+  <span class="type-name">MkPtr</span> rawPtr
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Is there a better way to select the right instance for `storageSize`??
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">TypeVehicle</span> a <span class="symbol">=</span> <span class="type-name">MkTypeVehicle</span>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> typeVehicle (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">TypeVehicle</span> a <span class="symbol">=</span> <span class="type-name">MkTypeVehicle</span>
@@ -916,6 +920,11 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Int32</span>
   store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internalCast %<span class="type-name">Int32Ptr</span> ptr) x
   load  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)  <span class="symbol">.</span> %ptrLoad  (internalCast %<span class="type-name">Int32Ptr</span> ptr)
+  storageSize_ <span class="symbol">=</span> const 4
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> <span class="type-name">Float32</span>
+  store <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr) x<span class="symbol">.</span> %ptrStore (internalCast %<span class="type-name">Float32Ptr</span> ptr) x
+  load <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkPtr</span> ptr)   <span class="symbol">.</span> %ptrLoad  (internalCast %<span class="type-name">Float32Ptr</span> ptr)
   storageSize_ <span class="symbol">=</span> const 4
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Storable</span> (<span class="type-name">Ptr</span> a)
