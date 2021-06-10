@@ -37,6 +37,7 @@ instance [Mul a, Mul b] Mul (a & b)
   table. As well as a alias for a conditional distribution.
   Probs are defined as `data` to allow for sparse representations.
 
+<<<<<<< HEAD
 Binary = Fin 2
 
 data Dist output cond =
@@ -141,6 +142,8 @@ def wet (rain_var:DVar Binary) (sprinkler_var:DVar Binary) (wet_var:DVar Binary)
 --         z.i .* x'.x
 
 
+=======
+>>>>>>> 25be0da7e04217ca4ac68eb5f0af9f4b4af25c3b
 data Probs a = AsProbsTable (a => Float)
 def CDist (a:Type) (c:Type): Type =  c => Probs a
 
@@ -152,6 +155,7 @@ instance [Show a] Show (Probs a)
                    (show i <> " " <>  (concat $ for j: (Fin 50).
                      select (((IToF (ordinal j)  + 1.0) / 50.0) < d2.i) "*" "" ) <> " " <> show d2.i)
 
+<<<<<<< HEAD
 
 
 
@@ -210,6 +214,8 @@ def cond_sample (var : DVar a) (dist : CDist a b) (prior : Probs b) : Probs (a &
 
 
 
+=======
+>>>>>>> 25be0da7e04217ca4ac68eb5f0af9f4b4af25c3b
 ' Some useful distribution constructors
 
 (true, false) = (1@(Fin 2), 0@(Fin 2))
@@ -223,11 +229,31 @@ def delta (x:m) : Probs m =
     AsProbsTable $ yieldState zero $ \ aref.
                aref!x := 1.0
 
+<<<<<<< HEAD
 
 ' ## Operations on probabilities
 
 
 
+=======
+' ## Operations on probabilities
+
+
+' Construct a tuple from independent random variables -  $p(a, b) = p(a) p(b)$
+
+def (,,) (adist : Probs a) (bdist : Probs b) : Probs (a & b) =
+    (AsProbsTable a) = adist
+    (AsProbsTable b) = bdist 
+    AsProbsTable for (i,j). a.i * b.j
+
+' Apply the markov rule -  $p(a) = \sum_b p(a | b) p(b)$
+
+def (<|) (cond_dist : CDist a b) (prior : Probs b) : Probs a =
+    (AsProbsTable b) = prior
+    AsProbsTable $ for j. sum for i.
+               (AsProbsTable c) = cond_dist.i
+               b.i * c.j
+>>>>>>> 25be0da7e04217ca4ac68eb5f0af9f4b4af25c3b
 
 -- ' Apply the chain rule -  $p(a, b) = p(a | b) p(b)$
 
@@ -239,6 +265,16 @@ def delta (x:m) : Probs m =
 
 
 
+<<<<<<< HEAD
+=======
+' Observe a variable 
+
+def obs (x: b) (zdist : Probs a) (x_z : CDist b a) : Probs a =
+    (AsProbsTable z) = zdist
+    AsProbsTable $ for i.
+        (AsProbsTable x') = x_z.i
+        z.i .* x'.x
+>>>>>>> 25be0da7e04217ca4ac68eb5f0af9f4b4af25c3b
     
 
 ' ## Random Variables
@@ -322,12 +358,40 @@ Sprinkler = Binary
 Wet = Binary
                
 
+<<<<<<< HEAD
 
 ' Case where all the variables are True. $P(G=T, S=T, R=T)$
 
 show $ wet {|obs=true|} {|obs=true|} {|obs=true|}
 
 (rain, sprinkle) = marginalize (\ (v2, v3). wet (lat v2) (lat v3) (var) ?? [False, True])
+=======
+' The model is a simple bayes' net over three latent variables
+  Rain (R), Sprinkler (S), and Wet grass (G).
+
+def wet ((rain_var, sprinkler_var, wet_var):
+            (DVar Rain & DVar Sprinkler & DVar Binary)) :
+        Probs Binary =
+    -- Rain is drawn from a bernoulli
+    rain  = sample rain_var $ bernoulli 0.2
+
+    -- Sprinkler is drawn conditional on rain. It is non-Markovian.
+    sprinkler_rain = cond_sample sprinkler_var [bernoulli 0.4, bernoulli 0.01] rain
+
+    -- CPT for producing wet grass conditioned on other variables
+    trans = for (s, r). [[bernoulli 0.0, bernoulli 0.8],
+                         [bernoulli 0.9, bernoulli 0.99]].s.r
+                         
+    -- Grass is draw conditional on Rain / Sprinkler
+    sample wet_var $ trans <| sprinkler_rain
+
+
+' Case where all the variables are True. $P(G=T, S=T, R=T)$
+
+show $ wet ({|obs=true|}, {|obs=true|}, {|obs=true|})
+
+(rain, sprinkle) = marginalize (\ (v2, v3). wet (lat v2, lat v3, var) ?? [False, True])
+>>>>>>> 25be0da7e04217ca4ac68eb5f0af9f4b4af25c3b
 
 
 ' Marginal probability of rain given wet grass $P(R=T | G=T)$
@@ -339,7 +403,11 @@ show $ AsProbsTable rain
 
 [k1, k2] = splitKey $ newKey 0
 
+<<<<<<< HEAD
 wet {|sample=(one, k1)|} {|sample=(one,k2)|} var 
+=======
+wet ({|sample=(one, k1)|}, {|sample=(one,k2)|}, var) 
+>>>>>>> 25be0da7e04217ca4ac68eb5f0af9f4b4af25c3b
 
 
 
