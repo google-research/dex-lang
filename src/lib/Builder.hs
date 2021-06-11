@@ -56,7 +56,8 @@ import Env
 import Syntax
 import Cat
 import Type
-import PPrint
+import Err
+import PPrint ()
 import Util (bindM2, scanM, restructure)
 
 newtype BuilderT m a = BuilderT (ReaderT BuilderEnvR (CatT BuilderEnvC m) a)

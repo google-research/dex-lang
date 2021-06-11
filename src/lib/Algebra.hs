@@ -255,7 +255,7 @@ sumVar :: Var -> MVar
 sumVar (_ :> t) = MVar $ (Name SumName "s" 0) :> t
 
 showMono :: Monomial -> String
-showMono m = concat $ intersperse " " $ fmap (\(n, p) -> asStr $ pretty n <> "^" <> pretty p) $ toList m
+showMono m = concat $ intersperse " " $ fmap (\(n, p) -> docAsStr $ pretty n <> "^" <> pretty p) $ toList m
 
 showPolyP :: (mono -> String) -> PolynomialP mono -> String
 showPolyP mshow p = concat $ intersperse " + " $ fmap (\(m, c) -> show c ++ " " ++ mshow m) $ toList p

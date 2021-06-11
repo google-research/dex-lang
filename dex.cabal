@@ -49,7 +49,7 @@ library
                        Builder, Cat, Export,
                        Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims
+                       LLVM.JIT, LLVM.Shims, Err
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

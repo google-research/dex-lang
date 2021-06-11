@@ -9,29 +9,24 @@
 {-# LANGUAGE IncoherentInstances #-}  -- due to `ConRef`
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, pprintList, printLitBlock, asStr,
-               assertEq, ignoreExcept, PrecedenceLevel(..), DocPrec,
+module PPrint (pprint, docAsStr, printLitBlock, PrecedenceLevel(..), DocPrec,
                PrettyPrec(..), atPrec, toJSONStr) where
 
 import Data.Aeson hiding (Result, Null, Value)
-import Control.Monad.Except hiding (Except)
 import GHC.Float
-import GHC.Stack
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.ByteString.Lazy.Char8 as B
 import Data.Maybe (fromMaybe)
 import Data.String (fromString)
-import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
-import Data.Text (Text, unpack, uncons, unsnoc)
+import Data.Text (Text, uncons, unsnoc)
 import System.Console.ANSI
-import System.IO.Unsafe
-import System.Environment
 import Numeric
 
 import Env
+import Err
 import Syntax
 import Util (enumerate)
 
@@ -54,19 +49,6 @@ atPrec :: PrecedenceLevel -> Doc ann -> DocPrec ann
 atPrec prec doc requestedPrec =
   if requestedPrec > prec then parens (align doc) else doc
 
-pprint :: Pretty a => a -> String
-pprint x = asStr $ pretty x
-
-pprintList :: Pretty a => [a] -> String
-pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
-
-layout :: LayoutOptions
-layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
-  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
-
-asStr :: Doc ann -> String
-asStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
-
 p :: Pretty a => a -> Doc ann
 p = pretty
 
@@ -84,29 +66,6 @@ prettyFromPrettyPrec = pArg
 
 pAppArg :: (PrettyPrec a, Foldable f) => Doc ann -> f a -> Doc ann
 pAppArg name as = align $ name <> group (nest 2 $ foldMap (\a -> line <> pArg a) as)
-
-instance Pretty Err where
-  pretty (Err e _ s) = p e <> p s
-
-instance Pretty ErrType where
-  pretty e = case e of
-    -- NoErr tags a chunk of output that was promoted into the Err ADT
-    -- by appending Results.
-    NoErr             -> ""
-    ParseErr          -> "Parse error:"
-    TypeErr           -> "Type error:"
-    KindErr           -> "Kind error:"
-    LinErr            -> "Linearity error: "
-    IRVariantErr      -> "Internal IR validation error: "
-    UnboundVarErr     -> "Error: variable not in scope: "
-    RepeatedVarErr    -> "Error: variable already defined: "
-    NotImplementedErr -> "Not implemented:"
-    CompilerErr       ->
-      "Compiler bug!" <> line <>
-      "Please report this at github.com/google-research/dex-lang/issues\n" <> line
-    DataIOErr         -> "IO error: "
-    MiscErr           -> "Error:"
-    RuntimeErr        -> "Runtime error"
 
 instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v
@@ -204,7 +163,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     PairType a b  -> atPrec ArgPrec $ align $ group $
       parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
-    IntRange a b -> if asStr (pArg a) == "0"
+    IntRange a b -> if docAsStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
       else prettyExprDefault $ TCExpr con
     IndexRange _ low high -> atPrec LowestPrec $ low' <> ".." <> high'
@@ -740,16 +699,6 @@ addColor False _ s = s
 addColor True c s =
   setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
   ++ s ++ setSGRCode [Reset]
-
-assertEq :: (MonadError Err m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
-assertEq x y s = if x == y then return ()
-                           else throw CompilerErr msg
-  where msg = "assertion failure (" ++ s ++ "):\n"
-              ++ pprint x ++ " != " ++ pprint y ++ "\n"
-
-ignoreExcept :: HasCallStack => Except a -> a
-ignoreExcept (Left e) = error $ pprint e
-ignoreExcept (Right x) = x
 
 toJSONStr :: ToJSON a => a -> String
 toJSONStr = B.unpack . encode

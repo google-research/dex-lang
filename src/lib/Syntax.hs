@@ -71,9 +71,6 @@ module Syntax (
   where
 
 import qualified Data.Map.Strict as M
-import Control.Exception hiding (throw)
-import Control.Monad.Identity
-import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List.NonEmpty as NE
@@ -87,6 +84,7 @@ import Data.String (IsString, fromString)
 import Foreign.Ptr
 import GHC.Generics
 
+import Err
 import Env
 import Util (IsBool (..), enumerate, (...))
 
@@ -268,7 +266,6 @@ type UAnnBinder = BinderP UType
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
 
 data UModule = UModule (Nest UDecl)  deriving (Show)
-type SrcPos = (Int, Int)
 
 type UPat  = WithSrc UPat'
 data UPat' = UPatBinder UBinder
@@ -656,7 +653,6 @@ instance Show PassName where
 -- === outputs ===
 
 type LitProg = [(SourceBlock, Result)]
-type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 type BenchStats = (Int, Double) -- number of runs, total benchmarking time
@@ -671,60 +667,6 @@ data Output = TextOut String
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
-
-data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
-instance Exception Err
-
-data ErrType = NoErr
-             | ParseErr
-             | TypeErr
-             | KindErr
-             | LinErr
-             | UnboundVarErr
-             | RepeatedVarErr
-             | CompilerErr
-             | IRVariantErr
-             | NotImplementedErr
-             | DataIOErr
-             | MiscErr
-             | RuntimeErr
-               deriving (Show, Eq)
-
-type Except = Either Err
-
-throw :: MonadError Err m => ErrType -> String -> m a
-throw e s = throwError $ Err e Nothing s
-
-throwIf :: MonadError Err m => Bool -> ErrType -> String -> m ()
-throwIf True  e s = throw e s
-throwIf False _ _ = return ()
-
-modifyErr :: MonadError e m => m a -> (e -> e) -> m a
-modifyErr m f = catchError m \e -> throwError (f e)
-
-addContext :: MonadError Err m => String -> m a -> m a
-addContext s m = modifyErr m \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
-
-addSrcContext :: MonadError Err m => SrcCtx -> m a -> m a
-addSrcContext ctx m = modifyErr m updateErr
-  where
-    updateErr :: Err -> Err
-    updateErr (Err e ctx' s) = case ctx' of Nothing -> Err e ctx  s
-                                            Just _  -> Err e ctx' s
-
-catchIOExcept :: (MonadIO m , MonadError Err m) => IO a -> m a
-catchIOExcept m = (liftIO >=> liftEither) $ (liftM Right m) `catches`
-  [ Handler \(e::Err)           -> return $ Left e
-  , Handler \(e::IOError)       -> return $ Left $ Err DataIOErr   Nothing $ show e
-  , Handler \(e::SomeException) -> return $ Left $ Err CompilerErr Nothing $ show e
-  ]
-
-liftEitherIO :: (Exception e, MonadIO m) => Either e a -> m a
-liftEitherIO (Left err) = liftIO $ throwIO err
-liftEitherIO (Right x ) = return x
-
-instance MonadFail (Either Err) where
-  fail s = Left $ Err CompilerErr Nothing s
 
 -- === UExpr free variables ===
 
