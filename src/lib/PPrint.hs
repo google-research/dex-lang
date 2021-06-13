@@ -27,6 +27,7 @@ import Numeric
 
 import Env
 import Err
+import LabeledItems
 import Syntax
 import Util (enumerate)
 

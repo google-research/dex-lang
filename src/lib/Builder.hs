@@ -54,6 +54,7 @@ import GHC.Stack
 
 import Env
 import Syntax
+import LabeledItems
 import Cat
 import Type
 import Err

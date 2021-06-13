@@ -30,6 +30,7 @@ import Foreign.Marshal.Array
 import GHC.Generics (Generic)
 
 import Interpreter
+import LabeledItems
 import Syntax
 import Type
 import PPrint

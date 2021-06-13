@@ -18,6 +18,7 @@ import Data.Tuple (swap)
 import Data.Coerce
 
 import Env
+import LabeledItems
 import Syntax
 import PPrint
 import Builder ( MonadBuilder, iadd, imul, idiv, clampPositive, ptrOffset

@@ -20,6 +20,7 @@ import qualified Data.Set as S
 
 import Type
 import Env
+import LabeledItems
 import Syntax
 import PPrint
 import Builder

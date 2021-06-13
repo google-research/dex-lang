@@ -22,6 +22,7 @@ import CUDA
 import Cat
 import Syntax
 import Env
+import LabeledItems
 import PPrint
 import Builder
 import Util (enumerate, restructure)

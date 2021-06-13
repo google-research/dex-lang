@@ -31,6 +31,7 @@ import {-# SOURCE #-} Interpreter (indicesNoIO)
 import Syntax
 import Env
 import Err
+import LabeledItems
 import PPrint ()
 import Cat
 import Util (bindM2)

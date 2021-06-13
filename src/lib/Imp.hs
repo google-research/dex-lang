@@ -37,6 +37,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
 import Builder
+import LabeledItems
 import Syntax
 import Env
 import Err
