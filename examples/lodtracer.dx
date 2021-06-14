@@ -1,0 +1,532 @@
+
+import plot
+
+'## General Utilies
+
+def pngsToSavedGif (delay:Int) (pngs:t=>Png) (outFileName:String) : Gif =
+  unsafeIO \().
+    withTempFiles \pngFiles.
+      for i.
+        writeFile pngFiles.i pngs.i
+      shellOut $
+        "convert" <> " -delay " <> show delay <> " " <>
+        concat (for i. "png:" <> pngFiles.i <> " ") <>
+        "gif:" <> outFileName <> ".gif"
+
+
+def hue2rgb (p:Float) (q:Float) (t:Float) : Float = 
+  t = t - floor t
+  if t < (1.0/6.0)
+    then p + (q - p) * 6.0 * t
+    else if t < (1.0/2.0)
+      then q
+      else if t < (2.0/3.0)
+        then p + (q - p) * (2.0/3.0 - t) * 6.0
+        else p
+
+def hslToRgb (h:Float) (s:Float) (l:Float) : (Fin 3)=>Float =
+  if s == 0.0
+    then [l, l, l] -- achromatic
+    else
+      q = select (l < 0.5) (l * (1.0 + s)) (l + s - l * s)
+      p = 2.0 * l - q
+      r = hue2rgb p q (h + 1.0/3.0)
+      g = hue2rgb p q h
+      b = hue2rgb p q (h - 1.0/3.0)
+      [r, g, b]
+
+
+def W8ToB' (x : Word8) : Bool = x > (IToW8 0)  -- Bug in prelude
+
+def firstbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 1)
+def secondbit (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 2)
+def thirdbit  (x:Word8) : Bool = W8ToB' $ x .&. (IToW8 4)
+
+def last : n = ((size n) - 1)@n
+def ixFraction (i:n) : Float = (IToF (ordinal i)) / (IToF ((size n) - 1))
+
+-- :p for i:(Fin 10). ixFraction i
+-- :p for i:(Fin 10). hslToRgb (ixFraction i) 1.0 0.5
+-- :p W8ToB (IToW8 4)
+
+def intpow2 (power:Int) : Int = %shl 1 power
+
+
+'## Types
+
+def Vec (n:Int) : Type = Fin n => Float
+
+Position  = Vec 3
+Direction = Vec 3  -- Should be normalized. TODO: use a newtype wrapper
+Distance = Float
+
+Ray = (Position & Direction)
+
+data Axis =
+  X
+  Y
+  Z
+
+--Octants = Directions=>Bool
+Octant = Fin 8 -- (Bool & Bool & Bool)  -- positive in x, y, or z
+
+LoD = Fin 5
+
+--def Voxel (lod:LoD) : Type =
+--  (Fin lod)=>Octants
+
+--def Voxel (numDivisions:Int) : Type =
+--  (Fin numDivisions & Fin numDivisions & Fin numDivisions)
+
+def Voxel : Type =
+  (Int & Int & Int)  -- Sad!
+
+def AABox : Type = (Position & Position)  -- opposite corners
+
+
+'## Bounding box utilities
+
+def voxelWidth (lod: LoD) : Float = 
+  -- voxels divide up cube in (-1, 1)
+  numDivisions = intpow2 $ ordinal lod
+  2.0 / (IToF numDivisions)
+
+def voxelToCentrePosition (lod: LoD) (voxel: Voxel) : Position =
+  divSize = voxelWidth lod
+  (xn, yn, zn) = voxel
+  [divSize * (0.5 + IToF xn) - 1.0,
+   divSize * (0.5 + IToF yn) - 1.0,
+   divSize * (0.5 + IToF zn) - 1.0]
+
+def voxeltoBB (voxel: Voxel) (lod:LoD) : AABox =
+  divSize = voxelWidth lod
+  (xn, yn, zn) = voxel
+  lower = [divSize * (IToF xn) - 1.0,
+           divSize * (IToF yn) - 1.0,
+           divSize * (IToF zn) - 1.0]
+  upper = [divSize * (IToF (xn + 1)) - 1.0,
+           divSize * (IToF (yn + 1)) - 1.0,
+           divSize * (IToF (zn + 1)) - 1.0]
+  (lower, upper)
+
+def rayAABBIntersection (ray:Ray) (box:AABox) : Bool =
+  ([pos_x, pos_y, pos_z], [dir_x,  dir_y,  dir_z ]) = ray
+  ([low_x, low_y, low_z], [high_x, high_y, high_z]) = box
+  (tx1, tx2) = ((low_x - pos_x) / dir_x, (high_x - pos_x) / dir_x)
+  (ty1, ty2) = ((low_y - pos_y) / dir_y, (high_y - pos_y) / dir_y)
+  (tz1, tz2) = ((low_z - pos_z) / dir_z, (high_z - pos_z) / dir_z)
+  txn = min tx1 tx2
+  txf = max tx1 tx2
+  tyn = min ty1 ty2
+  tyf = max ty1 ty2
+  tzn = min tz1 tz2
+  tzf = max tz1 tz2
+  tnear = max txn $ max tyn tzn
+  tfar  = min txf $ min tyf tzf
+  tfar > tnear
+
+def intersectsVoxel (lod: LoD) (ray:Ray) (voxel: Voxel) : Bool =
+  box = voxeltoBB voxel lod
+  rayAABBIntersection ray box
+
+
+--def decide (lod: LOD) (ray:Ray) (voxel: Voxel) : (Fin 8)=>Bool =
+  -- Returned voxels are of the next level of detail.
+--  if intersectsVoxel ray voxel then
+--    (True, True, True, True, True, True, True, True)
+--  else
+
+
+'## Octtree intersection
+
+octantBackToFrontTable : Octant=>Octant=>Octant =
+  intTable = [[ 0, 1, 2, 4, 3, 5, 6, 7 ],
+              [ 1, 0, 3, 5, 2, 4, 7, 6 ],
+              [ 2, 0, 3, 6, 1, 4, 7, 5 ],
+              [ 3, 1, 2, 7, 0, 5, 6, 4 ],
+              [ 4, 0, 5, 6, 1, 2, 7, 3 ],
+              [ 5, 1, 4, 7, 0, 3, 6, 2 ],
+              [ 6, 2, 4, 7, 0, 3, 5, 1 ],
+              [ 7, 3, 5, 6, 1, 2, 4, 0 ]]
+  for i j. (intTable.i.j@Octant)
+
+def childOctantToSubVoxel (lod: LoD) (voxel: Voxel) (oct:Octant) : Voxel =
+  oo = IToW8 $ ordinal oct
+  (x, y, z) = voxel
+  (2 * x + (BToI $ firstbit oo),
+   2 * y + (BToI $ secondbit oo),
+   2 * z + (BToI $ thirdbit oo))
+
+def subVoxelPosToChildOctant (lod: LoD) (voxel: Voxel) (pos:Position) : Octant =
+  [mid_x, mid_y, mid_z] = voxelToCentrePosition lod voxel
+  [pos_x, pos_y, pos_z] = pos 
+  bit1 = BToW8 $ pos_x > mid_x
+  bit2 = BToW8 $ pos_y > mid_y
+  bit3 = BToW8 $ pos_z > mid_z
+  bits = W8ToI $ bit1 .|. (bit2 << 1) .|. (bit3 << 2)
+  bits@Octant
+
+def orderedChildren (lod: LoD) (ray:Ray) (voxel: Voxel) : Octant=>Octant =
+  -- todo: return only those children that intersect
+  (pos, dir) = ray
+  oct = subVoxelPosToChildOctant lod voxel pos
+  octantBackToFrontTable oct
+
+def subdivide (ray:Ray) (lod: LoD) ((AsList _ voxels) : List Voxel) : List Voxel =
+  -- Returned voxels are of the next level of detail.
+  -- Todo: Encode this in the types.
+  yieldAccum (ListMonoid Voxel) \list.
+    for t.
+      if intersectsVoxel lod ray voxels.t then
+        childOcts = orderedChildren lod ray voxels.t
+        list += AsList 8 for i:(Fin 8). childOctantToSubVoxel lod voxels.t childOcts.i
+
+def rayTraceOctTree (ray: Ray) : List Voxel =
+  -- Returns a depth-ordered list of voxels intersecting a ray.
+  top_voxel = (0, 0, 0)
+  update = subdivide ray
+  init = AsList 1 [top_voxel]
+  fold init update
+
+
+rayvoxels = rayTraceOctTree ([0.1, 0.1, 0.1], [1.0, 1.0, 1.0])
+
+-- :p rayvoxels
+
+
+
+---- Tests
+
+--p = voxelToCentrePosition (2@LoD) (0, 2, 0)
+-- :p subVoxelPosToChildOctant (1@LoD) (0, 2, 0) p
+
+:p rayAABBIntersection ([0., 0., 0.], [0.1, 0.1, 0.1]) ([-0.1, -0.1, -0.1], [0.1, 0.1, 0.1])
+
+
+
+'## Raytracer for debugging
+
+
+
+
+' ### Generic Helper Functions
+Some of these should probably go in prelude.
+
+-- def Vec (n:Int) : Type = Fin n => Float
+def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Float
+
+def relu (x:Float) : Float = max x 0.0
+def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+-- TODO: make a newtype for normal vectors
+def normalize (x: d=>Float) : d=>Float = x / (length x)
+def directionAndLength (x: d=>Float) : (d=>Float & Float) =
+  l = length x
+  (x / (length x), l)
+
+def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
+  lower + (rand k) * (upper - lower)
+
+def sampleAveraged [VSpace a] (sample:Key -> a) (n:Int) (k:Key) : a =
+  yieldState zero \total.
+    for i:(Fin n).
+      total := get total + sample (ixkey k i) / IToF n
+
+def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
+
+' ### 3D Helper Functions
+
+def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
+  [a1, a2, a3] = a
+  [b1, b2, b3] = b
+  [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
+
+-- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
+data Image =
+ MkImage height:Int width:Int (Fin height => Fin width => Color)
+
+xHat : Vec 3 = [1., 0., 0.]
+yHat : Vec 3 = [0., 1., 0.]
+zHat : Vec 3 = [0., 0., 1.]
+
+Angle = Float  -- angle in radians
+
+def rotateX (p:Vec 3) (angle:Angle) : Vec 3 =
+  c = cos angle
+  s = sin angle
+  [px, py, pz] = p
+  [px, c*py - s*pz, s*py + c*pz]
+
+def rotateY (p:Vec 3) (angle:Angle) : Vec 3 =
+  c = cos angle
+  s = sin angle
+  [px, py, pz] = p
+  [c*px + s*pz, py, - s*px+ c*pz]
+
+def rotateZ (p:Vec 3) (angle:Angle) : Vec 3 =
+  c = cos angle
+  s = sin angle
+  [px, py, pz] = p
+  [c*px - s*py, s*px+c*py, pz]
+
+def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
+  [k1, k2] = splitKey k
+  u1 = rand k1
+  u2 = rand k2
+  uu = normalize $ cross normal [0.0, 1.1, 1.1]
+  vv = cross uu normal
+  ra = sqrt u2
+  rx = ra * cos (2.0 * pi * u1)
+  ry = ra * sin (2.0 * pi * u1)
+  rz = sqrt (1.0 - u2)
+  rr = (rx .* uu) + (ry .* vv) + (rz .* normal)
+  normalize rr
+
+' ### Raytracer
+
+BlockHalfWidths = Vec 3
+Radius = Float
+Radiance = Color
+
+data ObjectGeom =
+  Wall Direction Distance
+  Block Position BlockHalfWidths Angle
+  Sphere Position Radius
+
+data Surface =
+  Matte Color
+  Mirror
+
+OrientedSurface = (Direction & Surface)
+
+data Object =
+  PassiveObject ObjectGeom Surface
+  -- position, half-width, intensity (assumed to point down)
+  Light Position Float Radiance
+
+Filter   = Color
+
+-- TODO: use a record
+-- num samples, num bounces, share seed?
+Params = { numSamples : Int
+         & maxBounces : Int
+         & shareSeed  : Bool }
+
+-- TODO: use a list instead, once they work
+data Scene n:Type = MkScene (n=>Object)
+
+def sampleReflection ((nor, surf):OrientedSurface) ((pos, dir):Ray) (k:Key) : Ray =
+  newDir = case surf of
+    Matte _ -> sampleCosineWeightedHemisphere nor k
+    -- TODO: surely there's some change-of-solid-angle correction we need to
+    -- consider when reflecting off a curved surface.
+    Mirror  -> dir - (2.0 * dot dir nor) .* nor
+  (pos, newDir)
+
+def probReflection ((nor, surf):OrientedSurface) (_:Ray) ((_, outRayDir):Ray) : Float =
+  case surf of
+    Matte _ -> relu $ dot nor outRayDir
+    Mirror  -> 0.0  -- TODO: this should be a delta function of some sort
+
+def applyFilter (filter:Filter) (radiance:Radiance) : Radiance =
+  for i. filter.i * radiance.i
+
+def surfaceFilter (filter:Filter) (surf:Surface) : Filter =
+  case surf of
+    Matte color -> for i. filter.i * color.i
+    Mirror      -> filter
+
+def sdObject (pos:Position) (obj:Object) : Distance =
+  case obj of
+    PassiveObject geom _ -> case geom of
+      Wall nor d -> d + dot nor pos
+      Block blockPos halfWidths angle ->
+        pos' = rotateY (pos - blockPos) angle
+        length $ for i. max ((abs pos'.i) - halfWidths.i) 0.0
+      Sphere spherePos r ->
+        pos' = pos - spherePos
+        max (length pos' - r) 0.0
+    Light squarePos hw _ ->
+      pos' = pos - squarePos
+      halfWidths = [hw, 0.01, hw]
+      length $ for i. max ((abs pos'.i) - halfWidths.i) 0.0
+
+def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
+  (MkScene objs) = scene
+  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
+  (objs.i, d)
+
+def calcNormal (obj:Object) (pos:Position) : Direction =
+  normalize (grad (flip sdObject obj) pos)
+
+data RayMarchResult =
+  -- incident ray, surface normal, surface properties
+  HitObj Ray OrientedSurface
+  HitLight Radiance
+  -- Could refine with failure reason (beyond horizon, failed to converge etc)
+  HitNothing
+
+def raymarch (scene:Scene n) (ray:Ray) : RayMarchResult =
+  maxIters = 100
+  tol = 0.01
+  startLength = 10.0 * tol  -- trying to escape the current surface
+  (rayOrigin, rayDir) = ray
+  withState (10.0 * tol) \rayLength.
+    boundedIter maxIters HitNothing \_.
+      rayPos = rayOrigin + get rayLength .* rayDir
+      (obj, d) = sdScene scene $ rayPos
+      -- 0.9 ensures we come close to the surface but don't touch it
+      rayLength := get rayLength + 0.9 * d
+      case d < tol of
+        False -> Continue
+        True ->
+          surfNorm = calcNormal obj rayPos
+          case positiveProjection rayDir surfNorm of
+            True ->
+              -- Oops, we didn't escape the surface we're leaving..
+              -- (Is there a more standard way to do this?)
+              Continue
+            False ->
+              -- We made it!
+              Done $ case obj of
+                PassiveObject _ surf -> HitObj (rayPos, rayDir) (surfNorm, surf)
+                Light _ _ radiance   -> HitLight radiance
+
+def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
+  case raymarch scene ray of
+    HitLight intensity -> intensity
+    HitNothing -> zero
+    HitObj _ _ -> zero
+
+def sampleSquare (hw:Float) (k:Key) : Position =
+ [kx, kz] = splitKey k
+ x = randuniform (- hw) hw kx
+ z = randuniform (- hw) hw kz
+ [x, 0.0, z]
+
+def sampleLightRadiance
+      (scene:Scene n) (osurf:OrientedSurface) (inRay:Ray) (k:Key) : Radiance =
+  (surfNor, surf) = osurf
+  (rayPos, _) = inRay
+  (MkScene objs) = scene
+  yieldAccum (AddMonoid Float) \radiance.
+    for i. case objs.i of
+      PassiveObject _ _ -> ()
+      Light lightPos hw _ ->
+        (dirToLight, distToLight) = directionAndLength $
+                                      lightPos + sampleSquare hw k - rayPos
+        if positiveProjection dirToLight surfNor then
+          -- light on this far side of current surface
+          fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
+          outRay = (rayPos, dirToLight)
+          coeff = fracSolidAngle * probReflection osurf inRay outRay
+          radiance += coeff .* rayDirectRadiance scene outRay
+
+def trace (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
+  noFilter = [1.0, 1.0, 1.0]
+  yieldAccum (AddMonoid Float) \radiance.
+    runState  noFilter \filter.
+     runState initRay  \ray.
+      boundedIter (getAt #maxBounces params) () \i.
+        case raymarch scene $ get ray of
+          HitNothing -> Done ()
+          HitLight intensity ->
+            if i == 0 then radiance += intensity   -- TODO: scale etc
+            Done ()
+          HitObj incidentRay osurf ->
+            [k1, k2] = splitKey $ hash k i
+            lightRadiance = sampleLightRadiance scene osurf incidentRay k1
+            ray    := sampleReflection osurf incidentRay k2
+            filter := surfaceFilter (get filter) (snd osurf)
+            radiance += applyFilter (get filter) lightRadiance
+            Continue
+
+-- Assumes we're looking towards -z.
+Camera =
+  { numPix     : Int
+  & pos        : Position  -- pinhole position
+  & halfWidth  : Float     -- sensor half-width
+  & sensorDist : Float }   -- pinhole-sensor distance
+
+-- TODO: might be better with an anonymous dependent pair for the result
+def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
+  -- images indexed from top-left
+  halfWidth = getAt #halfWidth camera
+  pixHalfWidth = halfWidth / IToF n
+  ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
+  xs =           linspace (Fin n) (neg halfWidth) halfWidth
+  for i j. \key.
+    [kx, ky] = splitKey key
+    x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
+    y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
+    (getAt #pos camera, normalize [x, y, neg (getAt #sensorDist camera)])
+
+def takePicture (params:Params) (scene:Scene m) (camera:Camera) : Image =
+  n = getAt #numPix camera
+  rays = cameraRays n camera
+  rootKey = newKey 0
+  image = for i j.
+    pixKey = if getAt #shareSeed params
+      then rootKey
+      else ixkey (ixkey rootKey i) j
+    sampleRayColor : Key -> Color =  \k.
+      [k1, k2] = splitKey k
+      trace params scene (rays.i.j k1) k2
+    sampleAveraged sampleRayColor (getAt #numSamples params) pixKey
+  MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
+
+' ### Define the scene and render it
+
+lightColor = [0.2, 0.2, 0.2]
+leftWallColor  = 1.5 .* [0.611, 0.0555, 0.062]
+rightWallColor = 1.5 .* [0.117, 0.4125, 0.115]
+whiteWallColor = [255.0, 239.0, 196.0] / 255.0
+blockColor     = [200.0, 200.0, 255.0] / 255.0
+
+objs1 = [ Light (1.9 .* yHat) 0.5 lightColor
+    , PassiveObject (Wall      xHat  2.0) (Matte whiteWallColor)
+    , PassiveObject (Wall (neg xHat) 2.0) (Matte whiteWallColor)
+    , PassiveObject (Wall      yHat  2.0) (Matte whiteWallColor)
+    , PassiveObject (Wall (neg yHat) 2.0) (Matte whiteWallColor)
+    , PassiveObject (Wall      zHat  2.0) (Matte whiteWallColor)
+    -- , PassiveObject (Block  [ 1.0, -1.6,  1.2] [0.6, 0.8, 0.6] 0.5) (Matte blockColor)
+    -- , PassiveObject (Sphere [-1.0, -1.2,  0.2] 0.8) (Matte (0.7.* whiteWallColor))
+    -- , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
+    ]
+
+(AsList _ vl) = rayvoxels
+
+shrink = 0.45
+objs2 = for i.
+  cpos = shrink .* (voxelToCentrePosition last vl.i)
+  vw = shrink * (0.5 * voxelWidth last)
+  color = hslToRgb (ixFraction i) 1.0 0.5
+  PassiveObject (Block  cpos [vw, vw, vw] 0.0) (Matte color)
+
+combl = (AsList _ objs1) <> (AsList _ objs2)
+(AsList _ cot) = combl
+theScene = MkScene cot
+
+defaultParams = { numSamples = 1
+                , maxBounces = 2
+                , shareSeed  = True }
+
+defaultCamera = { numPix     = 400
+                , pos        = 10.0 .* zHat
+                , halfWidth  = 0.3
+                , sensorDist = 1.0 }
+
+-- We change to a small num pix here to reduce the compute needed for tests
+params = defaultParams
+camera = if dex_test_mode ()
+           then defaultCamera |> setAt #numPix 10
+           else defaultCamera
+
+%time
+(MkImage _ _ image) = takePicture params theScene camera
+:html imshow image
+
+
+-- :html imseqshow xmovieflat
+-- pngsToSavedGif 1 (map imgToPng xmovieflat) "gwg"
+
+
