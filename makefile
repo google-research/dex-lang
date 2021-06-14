@@ -92,7 +92,7 @@ build-nolive: dexrt-llvm
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp
-	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
+	clang++ $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
 
 # --- running tests ---
 
