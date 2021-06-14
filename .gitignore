@@ -25,3 +25,4 @@ benchmarks/parboil/data
 benchmarks/rodinia/rodinia
 examples/export/scalar
 examples/export/array
+*.bin
