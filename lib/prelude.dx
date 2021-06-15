@@ -1224,6 +1224,9 @@ instance Show Float64
     (n, ptr) = %ffi showFloat64 (Int32 & RawPtr) x
     stringFromCharPtr n $ MkPtr ptr
 
+instance [Show a, Show b] Show (a & b)
+  show = \(a, b). "(" <> show a <> ", " <> show b <> ")"
+
 '## pipe-like reverse function application
 TODO: move this
 
