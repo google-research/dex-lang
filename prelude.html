@@ -1020,12 +1020,8 @@ Many, but not all of these functions are <a href="https://en.wikipedia.org/wiki/
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- `combine` should be a commutative and associative, and form a
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- commutative monoid with `identity`
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reduce (identity<span class="command">:a</span>) (combine<span class="symbol">:</span>(a<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a)) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
-  <span class="type-name">A</span> <span class="symbol">=</span> a <span class="comment">-- XXX: Typing `Monoid a` below would quantify it over a,
-</span>        <span class="comment">--      which we don&#39;t want.
-</span>  named<span class="symbol">-</span><span class="keyword">instance</span> reduceMonoid <span class="symbol">:</span> <span class="type-name">Monoid</span> <span class="type-name">A</span>
-    mempty <span class="symbol">=</span> identity
-    mcombine <span class="symbol">=</span> combine
-  yieldAccum reduceMonoid <span class="symbol">\</span>total<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> total <span class="symbol">+=</span> xs<span class="symbol">.</span>i
+  <span class="comment">-- TODO: implement with the accumulator effect
+</span>  fold identity (<span class="symbol">\</span>i c<span class="symbol">.</span> combine c xs<span class="symbol">.</span>i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: call this `scan` and call the current `scan` something else
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan&#39; (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> snd <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> dup (body i x)
