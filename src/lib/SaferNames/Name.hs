@@ -24,7 +24,7 @@ module SaferNames.Name (
   E, B, HasNamesE (..), HasNamesB (..), unsafeCoerceE, unsafeCoerceB,
   NameSet, fmapNames, foldMapNames, freeNames, (@>), (@@>),
   freshenAbs, freshenBinder, extendRecEnv,
-  projectName, injectNameL, injectNameR, projectNamesL, injectNamesL,
+  projectName, injectNameL, injectNameR, projectNamesL, injectNamesL, injectEnvNamesL,
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
   AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
@@ -349,8 +349,11 @@ freshenBinder s b = runIdentity $ traverseNamesB s idNameTraversal b
 
 extendRecEnv :: HasNamesE e => FreshExt n l -> RecEnv e n -> RecEnvFrag e n l -> RecEnv e l
 extendRecEnv ext (RecEnv env) (RecEnvFrag frag) = let
-  EnvE env' = injectNamesL ext $ EnvE env
+  env' = injectEnvNamesL ext env
   in RecEnv $ env' <>> frag
+
+injectEnvNamesL :: HasNamesE e => FreshExt n l -> Env i (e n) -> Env i (e l)
+injectEnvNamesL ext env = fromEnvE $ injectNamesL ext $ EnvE env
 
 -- === instances ===
 
