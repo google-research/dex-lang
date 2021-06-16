@@ -1,6 +1,6 @@
 ' # Neural Networks
 
-include "plot.dx"
+import plot
 
 ' ## NN Prelude
 
