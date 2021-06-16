@@ -17,12 +17,13 @@
 
 module SaferNames.Name (
   S (..), Tag, RawName (..), Name (..), Env  (..), (<>>), (<.>),
-  emptyEnv, envLookup, envAsScope,
+  emptyEnv, envLookup, envAsScope, withFresh,
   PlainBinder (..), Scope, RenameEnv, FreshExt, NameTraversal (..),
   extendNameTraversal, injectNameTraversal, extendInjectNameTraversal,
-  RenameTraversal,
+  RenameTraversal, voidScopeEnv,
   E, B, HasNamesE (..), HasNamesB (..), unsafeCoerceE, unsafeCoerceB,
   NameSet, fmapNames, foldMapNames, freeNames, (@>), (@@>),
+  freshenAbs, freshenBinder, extendRecEnv,
   projectName, injectNameL, injectNameR, projectNamesL, injectNamesL,
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
@@ -59,6 +60,9 @@ type Scope n = Env n ()
 
 emptyEnv :: Env (n:-:n) a
 emptyEnv = UnsafeMakeEnv mempty
+
+voidScopeEnv :: Env VoidScope a
+voidScopeEnv = UnsafeMakeEnv mempty
 
 infixl 1 <.>
 (<.>) :: Env (n1:-:n2) a -> Env (n2:-:n3) a -> Env (n1:-:n3) a
@@ -120,21 +124,21 @@ class HasNamesE (e::E) where
 -- A fresh binder, hiding its new output scope and exposing a renaming
 -- env that can give you those names. Used mainly for the result of
 -- `traverseNamesB` and similar.
-data FreshBinder (i::S) (b::B) (n::S) where
+data FreshBinder (b::B) (n::S) (i::S) where
   FreshBinder :: FreshExt o o' -> b o o' -> RenameEnv i o'
-              -> FreshBinder i b o
+              -> FreshBinder b o i
 
 class HasNamesB (b::B) where
   traverseNamesB :: Monad m => Scope o -> RenameTraversal m i o
                        -> b i i'
-                       -> m (FreshBinder (i:-:i') b o )
+                       -> m (FreshBinder b o (i:-:i'))
   boundScope :: b n l -> Scope (n:-:l)
 
--- slightly safer than raw `unsafeCoerce` because it requires `HasNamesE`
-unsafeCoerceE :: HasNamesE e => e i -> e o
+-- slightly safer than raw `unsafeCoerce` because at least it checks the kind
+unsafeCoerceE :: forall (e::E) i o . e i -> e o
 unsafeCoerceE = unsafeCoerce
 
-unsafeCoerceB :: HasNamesB b => b n l -> b n' l'
+unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
 unsafeCoerceB = unsafeCoerce
 
 withFresh :: Scope n -> (forall l. FreshExt n l -> PlainBinder n l -> Name l -> a) -> a
@@ -163,6 +167,16 @@ unitScope = UnsafeMakeEnv $ LM.singleton unitRawName ()
 envMapWithKey :: (Name i -> a -> b) -> Env i a -> Env i b
 envMapWithKey f (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.mapWithKey f' m
   where f' rawName = f $ UnsafeMakeName rawName
+
+envPairs :: Env (n:-:l) a -> (PlainBinderList n l, [a])
+envPairs (UnsafeMakeEnv m) = do
+  let (names, vals) = unzip $ LM.assocs m
+  (unsafeMakePlainBinderList names, vals)
+
+unsafeMakePlainBinderList :: [RawName] -> PlainBinderList n l
+unsafeMakePlainBinderList names = case names of
+  [] -> unsafeCoerceB Empty
+  (name:rest) -> Nest (UnsafeMakeBinder name) $ unsafeMakePlainBinderList rest
 
 -- === specialized traversals ===
 
@@ -277,6 +291,9 @@ type EmptyNest (b::B) = Abs (Nest b) UnitE :: E
 newNameTraversal :: (Name i -> m (e o)) -> NameTraversal e m i o
 newNameTraversal f = NameTraversal f emptyEnv
 
+idNameTraversal :: Monad m => NameTraversal Name m n n
+idNameTraversal = newNameTraversal pure
+
 extendNameTraversal :: NameTraversal e m i o -> RenameEnv (i:-:i') o
                     -> NameTraversal e m i' o
 extendNameTraversal (NameTraversal f env) env' = NameTraversal f (env <.> env')
@@ -317,6 +334,23 @@ lookupNameTraversal (NameTraversal f env) name =
 
 extendScope :: HasNamesB b => Scope n -> b n l -> Scope l
 extendScope s b = s <>> boundScope b
+
+freshenAbs :: (HasNamesB b, HasNamesE e) => Scope n -> Abs b e n -> FreshAbs b e n
+freshenAbs s (Abs b body) =
+  case freshenBinder s b of
+    FreshBinder ext b' renamer -> do
+      let s' = extendScope s b'
+      let t = extendInjectNameTraversal ext renamer idNameTraversal
+      let body' = runIdentity $ traverseNamesE s' t body
+      FreshAbs ext b' body'
+
+freshenBinder :: HasNamesB b => Scope n -> b n l -> FreshBinder b n (n:-:l)
+freshenBinder s b = runIdentity $ traverseNamesB s idNameTraversal b
+
+extendRecEnv :: HasNamesE e => FreshExt n l -> RecEnv e n -> RecEnvFrag e n l -> RecEnv e l
+extendRecEnv ext (RecEnv env) (RecEnvFrag frag) = let
+  EnvE env' = injectNamesL ext $ EnvE env
+  in RecEnv $ env' <>> frag
 
 -- === instances ===
 
@@ -378,6 +412,19 @@ instance HasNamesB b => HasNamesB (Nest b) where
 
 instance HasNamesE e => HasNamesE (EnvE e i) where
   traverseNamesE s t (EnvE env) = EnvE <$> traverse (traverseNamesE s t) env
+
+instance HasNamesE e => HasNamesB (RecEnvFrag e) where
+  traverseNamesB s t (RecEnvFrag env) = do
+    let (bs, vals) = envPairs env
+    traverseNamesB s t bs >>= \case
+      FreshBinder ext bs' renamer -> do
+        let t' = extendInjectNameTraversal ext renamer t
+        let s' = extendScope s bs'
+        vals' <- mapM (traverseNamesE s' t') vals
+        let env' = RecEnvFrag $ bs' @@> vals'
+        return $ FreshBinder ext env' renamer
+
+  boundScope (RecEnvFrag env) = envAsScope env
 
 instance (HasNamesE e1, HasNamesE e2) => HasNamesE (PairE e1 e2) where
   traverseNamesE s env (PairE x y) =

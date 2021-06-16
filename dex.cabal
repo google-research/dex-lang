@@ -64,7 +64,7 @@ library
                        -- Portable system utilities
                        filepath, directory, ansi-terminal, process, temporary,
                        -- Serialization
-                       store, aeson
+                       store, aeson, haskeline
   if flag(live)
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE
@@ -83,7 +83,7 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments, GADTs, TypeOperators
+                       BlockArguments, GADTs, TypeOperators, DataKinds
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
@@ -104,7 +104,7 @@ library
 executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
-  build-depends:       dex, base, haskeline, prettyprinter, mtl,
+  build-depends:       dex, base, containers, haskeline, prettyprinter, mtl,
                        optparse-applicative, ansi-wl-pprint,
                        unix, store, bytestring, directory
   if os(darwin)

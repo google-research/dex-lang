@@ -6,9 +6,11 @@
 
 {-# LANGUAGE DeriveGeneric #-}
 
+import qualified Data.Map.Strict as M
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
+import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Options.Applicative
 import Text.PrettyPrint.ANSI.Leijen (text, hardline)
@@ -24,7 +26,10 @@ import Serialize
 import Resources
 import TopLevel
 import Parser  hiding (Parser)
-import Env (envNames)
+import SaferNames.Bridge
+import SaferNames.Name
+import SaferNames.Syntax (SourceNameMap (..))
+
 import Export
 #ifdef DEX_LIVE
 import RenderHtml
@@ -48,58 +53,64 @@ data EvalMode = ReplMode String
 
 data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
 
-runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
-runMode evalMode preludeFile opts = do
+runMode :: EvalMode -> Maybe FilePath -> TopLevel n ()
+runMode evalMode preludeFile = do
   key <- case preludeFile of
            Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
-           Just path -> show <$> getModificationTime path
-  env <- cachedWithSnapshot "prelude" key $ evalPrelude opts preludeFile
-  let runEnv m = evalStateT m env
+           Just path -> show <$> liftIO (getModificationTime path)
+  evalPrelude preludeFile
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
       let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-      runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
+      runInputT defaultSettings $ forever (replLoop prompt)
     ScriptMode fname fmt _ -> do
-      results <- runEnv $ evalFile opts fname
-      printLitProg fmt results
+      results <- evalFile fname
+      liftIO $ printLitProg fmt results
     ExportMode dexPath objPath -> do
-      results <- fmap snd <$> runEnv (evalFile opts dexPath)
+      results <- fmap snd <$> evalFile dexPath
       let outputs = foldMap (\(Result outs _) -> outs) results
       let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
-      putStr $ foldMap (nonEmptyNewline . pprint) errors
+      liftIO $ putStr $ foldMap (nonEmptyNewline . pprint) errors
       let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
+      opts <- ask
       unless (backendName opts == LLVM) $ liftEitherIO $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
-      exportFunctions objPath exportedFuns $ topBindings env
+      env <- unsafeGetTopBindings
+      liftIO $ exportFunctions objPath exportedFuns $ dBindings env
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> runWeb      fname opts env
-    WatchMode  fname -> runTerminal fname opts env
+    WebMode fname -> do
+      opts <- ask
+      env <- unsafeGetTopBindings
+      liftIO $ runWeb fname opts env
+    WatchMode  fname -> do
+      opts <- ask
+      env <- unsafeGetTopBindings
+      liftIO $ runTerminal fname opts env
 #endif
 
-evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
-evalPrelude opts fname = flip execStateT initTopEnv $ do
+evalPrelude :: Maybe FilePath -> TopLevel n ()
+evalPrelude fname = do
   source <- case fname of
               Nothing   -> return preludeSource
               Just path -> liftIO $ readFile path
-  result <- evalSource opts source
+  result <- evalSourceText source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
-replLoop prompt opts = do
+replLoop :: String -> InputT (TopLevel n) ()
+replLoop prompt = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
-  env <- lift get
-  result <- lift $ evalDecl opts sourceBlock
-  case result of Result _ (Left _) -> lift $ put env
-                 _ -> return ()
+  -- TODO: allow top-level shadowing in the repl
+  -- (especially necessary if you're trying to fix an error)
+  result <- lift $ evalSourceBlock sourceBlock
   liftIO $ putStrLn $ pprint result
 
-dexCompletions :: CompletionFunc (StateT TopEnv IO)
+dexCompletions :: CompletionFunc (TopLevel n)
 dexCompletions (line, _) = do
-  env <- get
-  let varNames = map pprint $ envNames $ topBindings env
+  SourceNameMap sourceMap <- getSourceNameMap
+  let varNames = map pprint $ M.keys sourceMap
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
@@ -205,4 +216,4 @@ parseEvalOpts = EvalConfig
 main :: IO ()
 main = do
   CmdOpts evalMode preludeFile opts <- execParser parseOpts
-  runMode evalMode preludeFile opts
+  runTopLevel opts $ runMode evalMode preludeFile

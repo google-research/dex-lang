@@ -38,6 +38,7 @@ import JIT
 import Syntax  hiding (sizeOf)
 import Export
 import TopLevel
+import SaferNames.Bridge
 
 import Dex.Foreign.Util
 import Dex.Foreign.Context
@@ -84,7 +85,7 @@ dexCompile jitPtr ctxPtr funcAtomPtr = do
   Context _ env <- fromStablePtr ctxPtr
   funcAtom <- fromStablePtr funcAtomPtr
   let (impMod, nativeSignature) = prepareFunctionForExport
-                                    (topBindings env) "userFunc" funcAtom
+                                    (dBindings env) "userFunc" funcAtom
   nativeModule <- execLogger Nothing $ \logger -> do
     llvmAST <- impToLLVM logger impMod
     LLVM.JIT.compileModule jit llvmAST

@@ -139,7 +139,7 @@ data Block n where Block :: Nest Decl n l -> Expr l -> Block n
 type LamExpr = Abs Binder (WithArrow Block)  :: E
 type PiType  = Abs Binder (WithArrow Type)   :: E
 
-data WithArrow e n = WithArrow (Arrow n) (e n)
+data WithArrow (e::E) (n::S) = WithArrow (Arrow n) (e n)
                      deriving Show
 
 withoutArrow :: WithArrow e n -> e n
@@ -249,7 +249,7 @@ class HasNamesB b => SubstB (b::B) where
     => Scope o
     -> CoreTraversal m i o
     -> b i i'
-    -> m (FreshBinder (i:-:i') b o )
+    -> m (FreshBinder b o (i:-:i') )
 
   asBindingsFrag :: b n l -> BindingsFrag n l
 
@@ -265,7 +265,7 @@ traverseNamesFromSubstE scope t e =
 
 traverseNamesFromSubstB
   :: (SubstB b, Monad m)
-  => Scope o -> RenameTraversal m i o -> b i i' -> m (FreshBinder (i:-:i') b o)
+  => Scope o -> RenameTraversal m i o -> b i i' -> m (FreshBinder b o (i:-:i'))
 traverseNamesFromSubstB s t b =
   traverseCoreB s (coreTraversalFromRenameTraversal t) b
 
@@ -559,3 +559,7 @@ instance SubstE Expr where
     Atom atom -> Atom <$> tce s t atom
     Op  op  -> Op  <$> traverse (tce s t) op
     Hof hof -> Hof <$> traverse (tce s t) hof
+
+instance HasNamesE SourceNameMap
+
+instance HasNamesE TypedBinderInfo
