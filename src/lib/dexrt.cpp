@@ -391,7 +391,13 @@ void dex_get_cuda_architecture(int device, char* arch) {
     printf("Invalid CUDA architecture version: %d.%d", majorVersion, minorVersion);
     std::abort();
   }
-  snprintf(arch, 5, "sm_%d%d", majorVersion, minorVersion);
+  if (majorVersion > 7 || (majorVersion == 7 && minorVersion > 5)) {
+    printf("CUDA architecture version (%d.%d) unsupported by LLVM 9, capping at 7.5",
+           majorVersion, minorVersion);
+    majorVersion = 7;
+    minorVersion = 5;
+  }
+  snprintf(arch, 6, "sm_%d%d", majorVersion, minorVersion);
 }
 
 #undef CHECK
