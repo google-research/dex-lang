@@ -74,3 +74,14 @@
 -- `:p nan` (Dex interpreter implementation).
 :p (FToF64 infinity)
 > Infinity
+
+-- Tuples
+
+:p show (123, 456)
+> (AsList 10 "(123, 456)")
+
+:p show ("abc", 123)
+> (AsList 10 "(abc, 123)")
+
+:p show ("abc", 123, ("def", 456))
+> (AsList 24 "(abc, (123, (def, 456)))")

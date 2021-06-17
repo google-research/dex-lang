@@ -21,7 +21,7 @@ else
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-	PROF := --profile --work-dir .stack-work-prof
+	PROF := --trace --work-dir .stack-work-prof
 
 	dex     := $(STACK) exec         dex --
 	dexprof := $(STACK) exec $(PROF) dex --
@@ -75,7 +75,7 @@ install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
-	$(STACK) build $(PROF)
+	$(STACK) build $(PROF) --flag dex:-foreign
 
 # For some reason stack fails to detect modifications to foreign library files
 build-python: dexrt-llvm

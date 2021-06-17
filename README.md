@@ -63,6 +63,28 @@ alias dex="stack exec dex -- --lib-path lib"
 alias dex="stack exec --stack-yaml=stack-macos.yaml dex -- --lib-path lib"
 ```
 
+### Haskell Language Server
+
+In order to use [HLS](https://github.com/haskell/haskell-language-server) with
+the Haskell code in this project:
+
+- Install [ghcup](https://www.haskell.org/ghcup/)
+- Run `ghcup install hls`
+- Create a file in the root `dex` directory called `hie.yaml` with the following
+contents:
+
+```yaml
+cradle:
+  stack:
+    stackYaml: "./stack-macos.yaml"  # Or stack.yaml if not on MacOS
+```
+
+Unfortunately one cannot dynamically select the `stack.yaml` file to use based
+on the environment, and so one has to create an appropriate `hie.yaml` file
+manually. This will be ignored by git.
+
+This should work out of the box with Emacs' `lsp-haskell` package.
+
 ## Running
 
   * Traditional REPL: `dex repl`

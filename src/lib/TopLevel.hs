@@ -11,6 +11,7 @@
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
                  initTopEnv, EvalConfig (..), TopEnv (..)) where
 
+import Control.Exception (throwIO)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -63,6 +64,10 @@ data TopEnv = TopEnv
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
+runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
+runTopPassM bench opts m = runLogger (logFile opts) \logger ->
+  runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
+
 initTopEnv :: TopEnv
 initTopEnv = TopEnv initBindings mempty
 
@@ -94,9 +99,16 @@ evalSourceBlock opts env block = do
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
     Right env' -> return (env'  , Result outs' (Right ()))
 
-runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
-runTopPassM bench opts m = runLogger (logFile opts) \logger ->
-  runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
+evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
+evalSourceBlocks = catFoldM (\env sb -> withCtx sb $ evalSourceBlockM env sb)
+  where
+    withCtx :: SourceBlock -> TopPassM a -> TopPassM a
+    withCtx sb m = do
+      topPassEnv <- ask
+      maybeResult <- runExceptT $ catchIOExcept $ runReaderT m topPassEnv
+      case maybeResult of
+        Left  err -> liftIO $ throwIO $ addCtx sb err
+        Right ans -> return ans
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
 evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
@@ -136,8 +148,8 @@ evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
         fullPath <- findModulePath moduleName
         source <- liftIO $ readFile fullPath
         newTopEnv <- evalSourceBlocks
-                       (env <> moduleStatus moduleName CurrentlyImporting) $
-                       parseProg source
+                       (env <> moduleStatus moduleName CurrentlyImporting)
+                       (parseProg source)
         return $ newTopEnv <> moduleStatus moduleName FullyImported
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
@@ -176,9 +188,6 @@ isLogInfo out = case out of
   EvalTime _ _ -> True
   TotalTime _  -> True
   _ -> False
-
-evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
-evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
 
 evalUModuleVal :: Bindings -> Name -> UModule -> TopPassM Val
 evalUModuleVal env v m = do

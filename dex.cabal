@@ -34,6 +34,10 @@ flag llvm-head
   description:         Use the bleeding-edge version of LLVM
   default:             False
 
+flag foreign
+  description:         Build the C interface to Dex
+  default:             True
+
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
@@ -118,6 +122,10 @@ executable dex
     ghc-options:       -O0
 
 foreign-library Dex
+  if flag(foreign)
+    buildable: True
+  else
+    buildable: False
   type:                native-shared
   other-modules:       Dex.Foreign.API, Dex.Foreign.Util, Dex.Foreign.JIT
                      , Dex.Foreign.Context, Dex.Foreign.Serialize
