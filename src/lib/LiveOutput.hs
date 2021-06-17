@@ -36,14 +36,11 @@ import Env
 import TopLevel hiding (evalSource)
 import RenderHtml
 import PPrint
-import SaferNames.Bridge
 
 type NodeId = Int
 data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
-
-type TopEnv = UnsafeTopBindings
 
 runWeb :: FilePath -> EvalConfig -> TopEnv -> IO ()
 runWeb fname opts env = do
@@ -116,7 +113,7 @@ blockEval :: (EvalConfig, TopEnv) -> SourceBlock
           -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()
 blockEval (opts, topEnv) block parentLocs loc resultChan = do
   parentEnv <- liftM fold $ mapM readMVar parentLocs
-  (env', ans) <- liftIO $ unsafeEvalSourceBlock opts (topEnv <> parentEnv) block
+  (env', ans) <- liftIO $ evalSourceBlock opts (topEnv <> parentEnv) block
   putMVar loc (parentEnv <> env')
   sendFromIO resultChan ans
 

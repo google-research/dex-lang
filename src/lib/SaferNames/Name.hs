@@ -16,7 +16,7 @@
 {-# LANGUAGE PolyKinds #-}
 
 module SaferNames.Name (
-  S (..), Tag, RawName (..), Name (..), Env  (..), (<>>), (<.>),
+  S (..), RawName (..), Name (..), Env  (..), (<>>), (<.>),
   emptyEnv, envLookup, envAsScope, withFresh,
   PlainBinder (..), Scope, RenameEnv, FreshExt, NameTraversal (..),
   extendNameTraversal, injectNameTraversal, extendInjectNameTraversal,
@@ -42,13 +42,19 @@ import GHC.Exts (Constraint)
 
 import qualified SaferNames.LazyMap as LM
 
+import qualified Env as D
+
 data S = (:=>:) S S
        | UnsafeMakeS
        | UnitScope
        | VoidScope
 
-type Tag = T.Text
-data RawName = RawName Tag Int deriving (Show, Eq, Ord)
+-- TODO: we reuse the old `Name` to make use of the GlobalName name space while
+-- we're using both the old and new systems together.
+-- TODO: something like this instead:
+--    type Tag = T.Text
+--    data RawName = RawName Tag Int deriving (Show, Eq, Ord)
+type RawName = D.Name
 
 -- invariant: the raw name in `Name s` is contained in the list in the `ScopeVal s`
 newtype Name (n::S) = UnsafeMakeName RawName
@@ -146,15 +152,15 @@ withFresh (UnsafeMakeEnv scope) cont =
   cont UnsafeMakeExt (UnsafeMakeBinder freshName) (UnsafeMakeName freshName)
   where freshName = freshRawName "v" (LM.keysSet scope)
 
-freshRawName :: Tag -> S.Set RawName -> RawName
-freshRawName tag usedNames = RawName tag nextNum
+freshRawName :: D.Tag -> S.Set RawName -> RawName
+freshRawName tag usedNames = D.Name D.GenName tag nextNum
   where
-    nextNum = case S.lookupLT (RawName tag bigInt) usedNames of
-                Just (RawName tag' i)
+    nextNum = case S.lookupLT (D.Name D.GenName tag bigInt) usedNames of
+                Just (D.Name D.GenName tag' i)
                   | tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
-                Nothing -> 0
+                _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
 unitName :: Name UnitScope
@@ -433,9 +439,6 @@ instance (HasNamesE e1, HasNamesE e2) => HasNamesE (PairE e1 e2) where
   traverseNamesE s env (PairE x y) =
     PairE <$> traverseNamesE s env x <*> traverseNamesE s env y
 
-instance IsString RawName where
-  fromString s = RawName (fromString s) 0
-
 instance Show (PlainBinder n l) where
   show Ignore = "_"
   show (UnsafeMakeBinder v) = show v
@@ -457,11 +460,6 @@ instance (HasNamesB b, HasNamesE ann) => HasNamesB (AnnBinderP b ann) where
 
 instance (BindsOneName b, HasNamesE ann) => BindsOneName (AnnBinderP b ann) where
   (b:>_) @> x = b @> x
-
-instance Pretty RawName where
-  pretty (RawName tag n) = pretty (T.unpack tag) <> suffix
-    where suffix = case n of 0 -> ""
-                             _ -> pretty n
 
 instance Pretty (Name n) where
   pretty (UnsafeMakeName name) = pretty name
