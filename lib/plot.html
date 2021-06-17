@@ -421,7 +421,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> matshow (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Html</span> <span class="symbol">=</span>
   low  <span class="symbol">=</span> minimum  <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j
   high <span class="symbol">=</span> maximum <span class="symbol">$</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j
+  range <span class="symbol">=</span> high <span class="symbol">-</span> low
   imgToHtml <span class="symbol">$</span> makePNG <span class="keyword">for</span> i j<span class="symbol">.</span>
-    x <span class="symbol">=</span> floatTo8Bit <span class="symbol">$</span> (img<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> low) <span class="symbol">/</span> (high <span class="symbol">-</span> low)
+    x <span class="symbol">=</span> <span class="keyword">if</span> range <span class="symbol">==</span> 0<span class="symbol">.</span>0
+      <span class="keyword">then</span> floatTo8Bit <span class="symbol">$</span> 0<span class="symbol">.</span>5
+      <span class="keyword">else</span> floatTo8Bit <span class="symbol">$</span> (img<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> low) <span class="symbol">/</span> range
     [x<span class="symbol">,</span> x<span class="symbol">,</span> x]
 </div></div></div></body></html>
