@@ -1,0 +1,363 @@
+' # Differential Probabilistic Inference
+
+' This notebook develops an unconventional approach to probabilistic
+inference using Dex tables and autodifferentiation. It is based
+loosely on the approach described in:
+
+' `A Differential Approach to Inference in Bayesian Networks, Adnan Darwiche (2003)`
+
+' This approach can be thought of as a probabilistic programming
+language (PPL) in the sense the inference is seperated from the
+modeling language.
+
+' ## Running Example 1: Coins and Dice
+
+' Let us start with a simple probabilistic modeling example to establish some notation.
+
+' We will assume that
+  we have a coin and two weighted dice. We first flip the coin, if it is heads we roll dice 1 and if it is tails we roll dice 2.
+
+Coin = Fin 2
+[tails, heads] = for i:Coin. i
+
+Dice = Fin 6
+roll = \i . (i - 1) @ Dice
+
+coin = [0.2, 0.8]
+dice_1 = for i : Dice. 1.0 / 6.0
+dice_2 = [0.5, 0.1, 0.1, 0.1, 0.1, 0.1]
+
+
+' This example defines a simple generative process over two random variables $\mathbf{X} = \{ A, B \} $, the coin flip and the dice roll respectively. We can write the process explicitly as,
+
+'
+  $$a \sim Pr(A)$$
+  $$ b \sim Pr(B\ |\ A=a) $$
+
+' ## Probabilities
+
+' To represent this process, we need to define some machinery. First
+we define a finite, discrete distribution and accessor.
+
+data Dist variables = AsDist (variables => Float)
+def (??) (y:m) (AsDist x: Dist m) : Float = x.y
+def normalize (x: m=>Float) : Dist m = AsDist for i. x.i / sum x
+
+' Two simple distributions are uniform and delta.
+
+def uniform : Dist m  = AsDist for i. 1.0 / (IToF (size m))
+def delta [Eq m] (x:m) : Dist m  = AsDist for i. select (x == i) 1.0 0.0
+def support (AsDist x: Dist m)  : List (m & Float) =
+    concat $ for i. select (x.i > 0.0) (AsList 1 [(i, x.i)]) mempty
+
+instance Arbitrary (Dist m)
+    arb = \key. normalize $ arb key
+
+' We can define some combinators for taking expectations.
+
+def expect [VSpace out] (AsDist x: Dist m) (y : m => out) : out =
+    sum for m'. x.m' .* y.m'
+
+' And for independent distributions.
+
+def (,,) (x: Dist m) (y: Dist n) : Dist (m & n) =
+    AsDist for (m',n'). (m' ?? x) * (n' ?? y)
+
+' To represent conditional probabilities such as $ Pr(B \ |\ A)$ we define a type alias.
+
+def Pr (b:Type) (a:Type): Type = a => Dist b
+
+
+' We can now define our distributions.
+
+None = Fin 1
+nil = 0@None
+p_A : Pr Coin None = [AsDist coin]
+p_B_A : Pr Dice Coin  = [AsDist dice_1, AsDist dice_2]
+
+
+' ## Observations and Marginalization
+
+' This allows us to compute the probability of any full observation
+  from our model.
+
+def p_AB (a:Coin) (b:Dice) : Float =
+    (a ?? p_A.nil) *
+    (b ?? p_B_A.a)
+
+p_AB heads (roll 6)
+
+
+' However, this assumes that we have full observation
+  of our variables. What if we want to compute the probability of
+  a dice roll without seeing the coin? This requires marginalization.
+  $$Pr(B) = \sum_a Pr(B\ | A=a) Pr(A=a) $$
+
+def p_B (b:Dice) : Float =
+    sum for a. (a ?? p_A.nil) *
+     (b ?? p_B_A.a)
+
+p_B (roll 6)
+
+
+' But now we have two seperate functions for the same model!
+  This feels unnecessary and bug-prone.
+
+' ## Indicator Variables and the Network Polynomial
+
+' In order to make things simpler we will introduce explicit *indicator variables* $\lambda$
+  to the modeling language.
+
+def Var (a:Type) : Type = a => Float
+
+' These can either be observed or latent.
+ If a random variable is observed then we use an indicator.
+ The expectation over the indicator gives,
+
+' $$ p(A=a) = E_{a' \sim p(A)} \lambda_{a'} $$
+
+' If it is latent the variable is one everywhere.
+
+def observed [Eq a] (x:a) : Var a = for i. select (i == x) 1.0 0.0
+def latent : Var a = one
+
+' The probability *chain rule* tells us that we can propagate conditioning.
+  $$\sum_{b} Pr(A,\ B = b)  = Pr(A) \sum_b Pr(B=b\ | A)$$
+
+' This implies that the expectation of these indicators factors as well.
+
+'  $$E_{a, b\sim Pr(A,\ B)} \lambda_a \lambda_b  = E_{a'\sim Pr(A)}\left[ \lambda_a   E_{b' \sim Pr(B | A=a)} [\lambda_b] \right] $$
+
+' We can write one step of this chain rule really cleanly in Dex.
+
+def (~) (lambda:Var a) (pr: Dist a) (fn_a : a => Float) : Float =
+    expect pr $ for a'. lambda.a' * fn_a.a'
+
+' This allows us to final write our model down in an extremely clean form.
+
+def coin_flip (a': Var Coin) (b': Var Dice) : Float =
+    (a' ~ p_A.nil) (for a.
+     (b' ~ p_B_A.a) one)
+
+' Now we can easily reproduce all the result above.
+
+coin_flip (observed heads) (observed (roll 6))
+coin_flip (latent) (observed (roll 6))
+coin_flip latent latent
+
+' This representation for joint distributions is known as the
+*network polynomial*. This is a *multi-linear* function that uses
+indicator variables to represent data observations.
+
+' $$ f(\lambda) = \sum_{\mathbf{x}} \prod_{x, \mathbf{u}\in \mathbf{x}} \lambda_x \theta_{x|\mathbf{u}} $$
+
+' Here $\theta$ is the model parameters. These play the same role as above.
+   The $\lambda$ are *evidence indicators* which indicate the states of
+  the variable instantiations.
+
+' The *network polynomial* can be used to compute *marginal* probabilities of any
+  subset of variables. Let $\mathbf{e}$ be the observations of some subset of $\mathbf{X}$.
+  Darwiche shows that -
+
+' $$f[\mathbf{e}] = p(\mathbf{E} = \mathbf{e})$$
+
+' Where $f[e]$ assigns 1 to any $\lambda$ term that is consistent
+(non-contradictory) with $\mathbf{e}$ and 0 otherwise. Let's look at an example.
+
+' ## Differential Posterior Inference
+
+
+' The network polynomial is a convenient method for computing probilities,
+  but what makes it particularly useful is that it allows us to compute
+  posterior probabilities simply using derivatives.
+
+' For example, consider the probability on the coin flip given an observation of a
+  dice roll. We can compute this using Bayes' Rule.
+
+' $$Pr(A | B=b) \propto Pr(B=b | A) Pr(A)$$
+
+normalize $ for a. coin_flip (observed a) (observed (roll 4))
+
+' However using the network polynomial we can compute this same term purely with
+  derivatives. The paper shows that computing partial derivatives directly yields joint terms.
+
+'  $$\frac{df[\mathbf{e}]}{dx} = Pr(\mathbf{e}, x)$$
+
+' This implies that the derivative of the log polynomial
+yields posterior terms.
+
+'  $$\frac{d\log f[\mathbf{e}]}{dx} = Pr(x\ |\ \mathbf{e})$$
+
+' Let us try this out. We can compute the posterior probabity of
+  the first coin after observing the second.
+
+def posterior (f : (Var a) -> Float) : Dist a =
+     AsDist $ (grad (\ x. log $ f x)) one
+
+' And this yields exactly the term above! This is really neat though because it
+  doesn't require any application of model specific inference.
+
+posterior (\ x . coin_flip x (observed (roll 4)) )
+
+' ## Example 2: Bayes Nets
+
+
+' A classic example in probalistic modeling is the Wet grass Bayes' net.
+  In this example we need to infer the factors that could have led to
+  the grass being wet. More details on the problem are given here:
+  https://en.wikipedia.org/wiki/Bayesian_network
+
+
+Rain = Fin 2
+Sprinkler = Fin 2
+Grass = Fin 2
+def bernoulli (p: Float) : Dist (Fin 2) =  AsDist [1.0 - p, p]
+
+' Define a bayes net.
+
+rain : Pr Rain (Fin 1) = [bernoulli 0.2]
+sprinkler : Pr Sprinkler Rain = for r. bernoulli [0.4, 0.01].r
+
+grass : Pr Grass (Sprinkler & Rain) = for (s, r). bernoulli $
+          select (s==(0@_)) [0.0, 0.8].r  [0.9, 0.99].r
+
+
+def wet_naive (r' : Var Rain)
+              (s' : Var Sprinkler)
+              (g' : Var Grass) : Float =
+    (r' ~ rain.nil) (for r.
+     (s' ~ sprinkler.r) (for s.
+      (g' ~ grass.(s,r)) one))
+
+wet_naive (latent) (latent) (observed (1@_))
+
+posterior (\x. wet_naive x (latent) (observed (1@_)))
+
+' ## Example 3: Dice Counting
+
+' Here's a classic elementary probability problem. Given two
+  standard dice rolls, what is the probability distribution
+  over their sum?
+
+DiceSum = Fin 11
+
+' Helper functions for Dice sum
+
+def (+@+) (a:a') (b:b') : c = (((ordinal a) + (ordinal b))@_)
+def roll_sum (x:Int) : DiceSum = (x - 2)@_
+
+def two_dice (dice : Var (Dice & Dice))  (dicesum : Var DiceSum) : Float =
+    (dice ~ uniform) (for (d1, d2).
+     (dicesum ~ delta (d1 +@+ d2)) one)
+
+' Here's the result.
+
+posterior (\m. two_dice latent m)
+
+' We might also ask what the probability of the dice rolls given on output value.
+
+support $ posterior (\m. two_dice m (observed (roll_sum 4)))
+
+' ## Conditional Independence
+
+' One tricky problem for discrete PPLs is modeling conditional independence.
+  Models can be very slow to compute if we are not careful to exploint
+  conditional independence properties such as Markov assumptions.
+
+' For example, let us consider a more complex version of the coin flip
+  example. We will flip three times. The choice of the second weighted coin
+  depends on the first. The choice of third weighted coin depends on the second.
+
+'
+  $$a \sim Pr(A)$$
+  $$ b \sim Pr(B\ |\ A=a) $$
+  $$ c \sim Pr(C\ |\ B=b) $$
+
+' In this example $C$ is conditionally independent of $A$ given $B$.
+
+' We can be lazy and create the distributions randomly.
+
+coin1 : Pr Coin None = arb $ newKey 1
+coin2 : Pr Coin Coin = arb $ newKey 2
+coin3 : Pr Coin Coin = arb $ newKey 3
+
+' Now here is the generative process.
+
+def coin_flip2 (a': Var Coin) (b': Var Coin) (c': Var Coin) : Float =
+    (a' ~ coin1.nil) (for a.
+     (b' ~ coin2.a) (for b.
+      (c' ~ coin3.b) one))
+
+' Note that as written this process looks like it does not take
+  advantage of the conditional independence property of the model.
+  The construction of the final coin is in a `for` constructor that
+  contains `a`. However, Dex knows that `a` is not used in the inner
+  most construct. In theory it can lift that out of the loop and exploit
+  the conditional independence.
+
+' Alternatively we can make this explicit and do the lifting ourselves.
+
+def coin_flip_opt2 (a': Var Coin) (b': Var Coin) (c': Var Coin) : Float =
+    final_flip = for b. (c' ~ coin3.b) one
+    (a' ~ coin1.nil) (for a.
+     (b' ~ coin2.a) final_flip)
+
+' ## Example 4: Monty Hall Problem
+
+' Perhaps the most celebrated elementary problem in conditional
+  probability is the Monty Hall problem.
+  https://en.wikipedia.org/wiki/Monty_Hall_problem
+
+' You are on a game show. The host asks you to pick a door at random to win a prize.
+  After selecting a door, one of the remaining doors (without the prize) is removed.
+  You are asked if you want to change your selection...
+
+Doors = Fin 3
+YesNo = Fin 2
+[no, yes] = for i :YesNo. i
+def yesno (x:Bool) : Dist YesNo = delta $ select x yes no
+
+' Method is pretty naive.
+  1. We will first sample our pick and the door.
+  1. Then we will consider changing our pick.
+  1. Finally we will see if we won.
+
+
+def monte_hall (change': Var YesNo) (win': Var YesNo) : Float =
+    (one ~ uniform) (for (pick, correct): (Doors & Doors).
+     (change' ~ uniform) (for change.
+        (win' ~ (select (change == yes)
+                        (yesno (pick /= correct))
+                        (yesno (pick == correct))
+           )) one))
+
+' To check the odds we will compute probabity of winning conditioned
+  on changing.
+
+yes ?? (posterior $ monte_hall (observed yes))
+
+
+' And compare to proability of winning with no change.
+
+yes ?? (posterior $ monte_hall (observed no))
+
+' Finally a neat trick is that we can get both these terms by taking a second derivative. (TODO: show this in Dex)
+
+
+' ## Example 5: Hidden Markov Models
+
+
+
+def hmm (hidden_vars : m => Var Z) (init_var: Var Z) (x_vars: m => Var X)
+        (transition : CDist Z Z) (emission: CDist X Z)
+    : Float =
+
+    -- Sample an initial state
+    initial = sample init_var uniform []
+    sum $ yieldState ( \zref .
+       for i.
+           -- Sample next state
+           z' = markov $ sample hidden_vars.i transition (get zref)
+
+           -- Factor in evidence
+           zref := sample x_vars.i emission z'')
