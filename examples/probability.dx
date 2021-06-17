@@ -51,17 +51,14 @@ def support (AsDist x: Dist m)  : List (m & Float) =
     concat $ for i. select (x.i > 0.0) (AsList 1 [(i, x.i)]) mempty
 
 instance Arbitrary (Dist m)
-    arb = \key. normalize $ arb key
+    arb = \key.
+        a = arb key
+        normalize $ for i. abs a.i
 
 ' We can define some combinators for taking expectations.
 
 def expect [VSpace out] (AsDist x: Dist m) (y : m => out) : out =
     sum for m'. x.m' .* y.m'
-
-' And for independent distributions.
-
-def (,,) (x: Dist m) (y: Dist n) : Dist (m & n) =
-    AsDist for (m',n'). (m' ?? x) * (n' ?? y)
 
 ' To represent conditional probabilities such as $ Pr(B \ |\ A)$ we define a type alias.
 
@@ -166,7 +163,6 @@ indicator variables to represent data observations.
 
 ' ## Differential Posterior Inference
 
-
 ' The network polynomial is a convenient method for computing probilities,
   but what makes it particularly useful is that it allows us to compute
   posterior probabilities simply using derivatives.
@@ -193,6 +189,9 @@ yields posterior terms.
 
 def posterior (f : (Var a) -> Float) : Dist a =
      AsDist $ (grad (\ x. log $ f x)) one
+def posteriorTab (f : m => (Var a) -> Float) : m => Dist a =
+     out =  (grad (\ x. log $ f x)) one
+     for i. AsDist $ out.i
 
 ' And this yields exactly the term above! This is really neat though because it
   doesn't require any application of model specific inference.
@@ -258,7 +257,7 @@ posterior (\m. two_dice latent m)
 
 support $ posterior (\m. two_dice m (observed (roll_sum 4)))
 
-' ## Conditional Independence
+' ## Discussion - Conditional Independence
 
 ' One tricky problem for discrete PPLs is modeling conditional independence.
   Models can be very slow to compute if we are not careful to exploint
@@ -323,7 +322,7 @@ def yesno (x:Bool) : Dist YesNo = delta $ select x yes no
   1. Finally we will see if we won.
 
 
-def monte_hall (change': Var YesNo) (win': Var YesNo) : Float =
+def monty_hall (change': Var YesNo) (win': Var YesNo) : Float =
     (one ~ uniform) (for (pick, correct): (Doors & Doors).
      (change' ~ uniform) (for change.
         (win' ~ (select (change == yes)
@@ -334,30 +333,53 @@ def monte_hall (change': Var YesNo) (win': Var YesNo) : Float =
 ' To check the odds we will compute probabity of winning conditioned
   on changing.
 
-yes ?? (posterior $ monte_hall (observed yes))
+yes ?? (posterior $ monty_hall (observed yes))
 
 
 ' And compare to proability of winning with no change.
 
-yes ?? (posterior $ monte_hall (observed no))
+yes ?? (posterior $ monty_hall (observed no))
 
 ' Finally a neat trick is that we can get both these terms by taking a second derivative. (TODO: show this in Dex)
 
 
 ' ## Example 5: Hidden Markov Models
 
+' Finally we conclude with a more complex example. A hidden Markov model is
+  one of the most widely used discrete time series models. It models the relationship between discrete hidden states $Z$ and emissions $X$.
+
+Z = Fin 5
+X = Fin 10
+
+' It consists of three distributions: initial, transition, and emission.
+
+initial : Pr Z nil = arb $ newKey 1
+emission : Pr X Z = arb $ newKey 2
+transition : Pr Z Z = arb $ newKey 3
+
+' The model itself takes the following form for $m$ steps.
+'
+  $$ z_0 \sim initial$$
+  $$ z_1 \sim transition(z_0)$$
+  $$ x_1 \sim emission(z_1)$$
+  $$ ...$$
+
+' This is implemented in reverse order for clarity (backward algorithm).
+
+def hmm (init': Var Z) (x': m => Var X) (z' : m => Var Z) : Float =
+    (init' ~ initial.nil) $ yieldState one ( \future .
+        for i:m.
+            j = ((size m) - (ordinal i) - 1)@_
+            future := for z.
+                (x'.j ~ emission.z) (for _.
+                 (z'.j ~ transition.z) (get future)))
 
 
-def hmm (hidden_vars : m => Var Z) (init_var: Var Z) (x_vars: m => Var X)
-        (transition : CDist Z Z) (emission: CDist X Z)
-    : Float =
+' We can marginalize out over latents.
 
-    -- Sample an initial state
-    initial = sample init_var uniform []
-    sum $ yieldState ( \zref .
-       for i.
-           -- Sample next state
-           z' = markov $ sample hidden_vars.i transition (get zref)
+hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) (for i. latent)
 
-           -- Factor in evidence
-           zref := sample x_vars.i emission z'')
+
+' Or we can compute the posterior probabilities of specific values.
+
+posteriorTab $ \z . hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) z
