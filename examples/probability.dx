@@ -432,4 +432,41 @@ hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) (for i. latent)
 posteriorTab $ \z . hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) z
 
 
+' ## Fancier Distributions
 
+
+def without_replacement (y: n=>m) (AsDist x: Dist m) : Dist m =
+    renorm = sum for n'. x.(y.n')
+    AsDist $ for m'.
+           case (any for n'. (ordinal (y.n')) == (ordinal m')) of
+                False -> (x.m' / (1.0 - renorm))
+                True -> 0.0
+                
+
+
+' ### Probability Exercises (Harvard Stat 110) 
+
+' A college has 10 (non-overlapping) time slots for its 10 courses, and blithely assigns
+courses to time slots randomly and independently. A student randomly chooses 3 of the
+courses to enroll in. What is the probability that there is a conflict in the student’s
+schedule?
+
+Slot = Fin 10
+def courses (conflict:Var YesNo): Float = 
+    (one ~ uniform) (for (i,j,k):(Slot& Slot& Slot).
+          (conflict ~ yesno ((i == j) || (j == k) || (i == k))) one)
+
+courses (observed {|yes=()|})
+
+' A certain family has 6 children, consisting of 3 boys and 3 girls. Assuming that all
+birth orders are equally likely, what is the probability that the 3 eldest children are the
+3 girls. 
+
+Children = Fin 6
+def birth (event:Var YesNo): Float = 
+    (one ~ uniform) (for i:Children.
+        (one ~ without_replacement [i] uniform) (for j:Children.
+            (one ~ without_replacement [i, j] uniform) (for k:Children.
+               (event ~ yesno ((ordinal i < 3) && (ordinal j < 3) && (ordinal k < 3))) one)))
+
+birth (observed {|yes=()|})
