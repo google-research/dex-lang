@@ -54,7 +54,7 @@ class HasSafeVersionE (e:: *) where
 class HasSafeVersionB (b:: *) where
   type SafeVersionB b :: S.B
   toSafeB   :: S.Scope n -> EnvDS n -> b -> FreshBinderD (SafeVersionB b) n
-  fromSafeB :: D.Scope -> EnvSD n -> SafeVersionB b n l -> (b, EnvSD (n:-:l))
+  fromSafeB :: D.Scope -> EnvSD n -> SafeVersionB b n l -> (b, EnvSD (n:=>:l))
 
 instance HasSafeVersionE D.Name where
   type SafeVersionE D.Name = S.Name

@@ -249,7 +249,7 @@ class HasNamesB b => SubstB (b::B) where
     => Scope o
     -> CoreTraversal m i o
     -> b i i'
-    -> m (FreshBinder b o (i:-:i') )
+    -> m (FreshBinder b o (i:=>:i') )
 
   asBindingsFrag :: b n l -> BindingsFrag n l
 
@@ -265,7 +265,7 @@ traverseNamesFromSubstE scope t e =
 
 traverseNamesFromSubstB
   :: (SubstB b, Monad m)
-  => Scope o -> RenameTraversal m i o -> b i i' -> m (FreshBinder b o (i:-:i'))
+  => Scope o -> RenameTraversal m i o -> b i i' -> m (FreshBinder b o (i:=>:i'))
 traverseNamesFromSubstB s t b =
   traverseCoreB s (coreTraversalFromRenameTraversal t) b
 

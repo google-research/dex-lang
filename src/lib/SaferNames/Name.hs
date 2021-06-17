@@ -42,7 +42,7 @@ import GHC.Exts (Constraint)
 
 import qualified SaferNames.LazyMap as LM
 
-data S = (:-:) S S
+data S = (:=>:) S S
        | UnsafeMakeS
        | UnitScope
        | VoidScope
@@ -58,18 +58,18 @@ newtype Env (n::S) (a:: *) = UnsafeMakeEnv (LM.LazyMap RawName a)
                              deriving (Functor, Foldable, Traversable)
 type Scope n = Env n ()
 
-emptyEnv :: Env (n:-:n) a
+emptyEnv :: Env (n:=>:n) a
 emptyEnv = UnsafeMakeEnv mempty
 
 voidScopeEnv :: Env VoidScope a
 voidScopeEnv = UnsafeMakeEnv mempty
 
 infixl 1 <.>
-(<.>) :: Env (n1:-:n2) a -> Env (n2:-:n3) a -> Env (n1:-:n3) a
+(<.>) :: Env (n1:=>:n2) a -> Env (n2:=>:n3) a -> Env (n1:=>:n3) a
 (<.>) (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) = UnsafeMakeEnv (m2 <> m1)
 
 infixl 1 <>>
-(<>>) :: Env n a -> Env (n:-:l) a -> Env l a
+(<>>) :: Env n a -> Env (n:=>:l) a -> Env l a
 (<>>) (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) = UnsafeMakeEnv (m2 <> m1)
 
 envLookup :: Env n a -> Name n -> a
@@ -81,7 +81,7 @@ envLookup (UnsafeMakeEnv m) (UnsafeMakeName name) =
 envAsScope :: Env n a -> Scope n
 envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.asUnitLazyMap m
 
-projectName :: Scope (n:-:l) -> Name l -> Either (Name n) (Name (n:-:l))
+projectName :: Scope (n:=>:l) -> Name l -> Either (Name n) (Name (n:=>:l))
 projectName (UnsafeMakeEnv m) (UnsafeMakeName name) =
   case LM.lookup name m of
     Nothing -> Left  $ UnsafeMakeName name
@@ -90,7 +90,7 @@ projectName (UnsafeMakeEnv m) (UnsafeMakeName name) =
 injectNameL :: FreshExt n l -> Name n -> Name l
 injectNameL _ (UnsafeMakeName name) = UnsafeMakeName name
 
-injectNameR :: Name (n:-:l) -> Name l
+injectNameR :: Name (n:=>:l) -> Name l
 injectNameR (UnsafeMakeName name) = UnsafeMakeName name
 
 data PlainBinder (n::S) (l::S) where
@@ -112,7 +112,7 @@ composeFreshExt _ _ = UnsafeMakeExt
 
 data NameTraversal (e::E) (m:: * -> *) (i::S) (o::S) where
   NameTraversal :: (Name i -> m (e o))
-                -> RenameEnv (i:-:i') o
+                -> RenameEnv (i:=>:i') o
                 -> NameTraversal e m i' o
 
 type RenameTraversal = NameTraversal Name
@@ -131,8 +131,8 @@ data FreshBinder (b::B) (n::S) (i::S) where
 class HasNamesB (b::B) where
   traverseNamesB :: Monad m => Scope o -> RenameTraversal m i o
                        -> b i i'
-                       -> m (FreshBinder b o (i:-:i'))
-  boundScope :: b n l -> Scope (n:-:l)
+                       -> m (FreshBinder b o (i:=>:i'))
+  boundScope :: b n l -> Scope (n:=>:l)
 
 -- slightly safer than raw `unsafeCoerce` because at least it checks the kind
 unsafeCoerceE :: forall (e::E) i o . e i -> e o
@@ -168,7 +168,7 @@ envMapWithKey :: (Name i -> a -> b) -> Env i a -> Env i b
 envMapWithKey f (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.mapWithKey f' m
   where f' rawName = f $ UnsafeMakeName rawName
 
-envPairs :: Env (n:-:l) a -> (PlainBinderList n l, [a])
+envPairs :: Env (n:=>:l) a -> (PlainBinderList n l, [a])
 envPairs (UnsafeMakeEnv m) = do
   let (names, vals) = unzip $ LM.assocs m
   (unsafeMakePlainBinderList names, vals)
@@ -198,7 +198,7 @@ freeNames e = foldMapNames S.singleton e
 injectNamesL :: HasNamesE e => FreshExt n l -> e n -> e l
 injectNamesL _ = unsafeCoerceE
 
-projectNamesL :: HasNamesE e => Scope n -> Scope (n:-:l) -> e l -> Maybe (e n)
+projectNamesL :: HasNamesE e => Scope n -> Scope (n:=>:l) -> e l -> Maybe (e n)
 projectNamesL scope scopeFragment e = traverseNamesE scope t e
   where t = newNameTraversal \name -> case projectName scopeFragment name of
                                         Left name' -> Just name'
@@ -241,7 +241,7 @@ newtype EnvE (e::E) (i::S) (o::S) = EnvE { fromEnvE :: Env i (e o) }
 newtype RecEnv (e::E) (n::S) = RecEnv { fromRecEnv :: Env n (e n) }
 
 -- covariant in `n`, contravariant in `l`
-newtype RecEnvFrag (e::E) (n::S) (l::S) = RecEnvFrag { fromRecEnvFrag :: Env (n:-:l) (e l)}
+newtype RecEnvFrag (e::E) (n::S) (l::S) = RecEnvFrag { fromRecEnvFrag :: Env (n:=>:l) (e l)}
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -280,11 +280,11 @@ class HasNamesE e => AlphaEq (e::E) where
 infixr 7 @>
 -- really, at most one name
 class HasNamesB b => BindsOneName (b::B) where
-  (@>) :: b n l -> a -> Env (n:-:l) a
+  (@>) :: b n l -> a -> Env (n:=>:l) a
 
 infixr 7 @@>
 class HasNamesB b => BindsNameList (b::B) where
-  (@@>) :: b n l -> [a] -> Env (n:-:l) a
+  (@@>) :: b n l -> [a] -> Env (n:=>:l) a
 
 type EmptyNest (b::B) = Abs (Nest b) UnitE :: E
 
@@ -294,7 +294,7 @@ newNameTraversal f = NameTraversal f emptyEnv
 idNameTraversal :: Monad m => NameTraversal Name m n n
 idNameTraversal = newNameTraversal pure
 
-extendNameTraversal :: NameTraversal e m i o -> RenameEnv (i:-:i') o
+extendNameTraversal :: NameTraversal e m i o -> RenameEnv (i:=>:i') o
                     -> NameTraversal e m i' o
 extendNameTraversal (NameTraversal f env) env' = NameTraversal f (env <.> env')
 
@@ -303,13 +303,13 @@ injectNameTraversal :: HasNamesE e => FreshExt o o' -> NameTraversal e m i o
 injectNameTraversal = unsafeCoerce
 
 extendInjectNameTraversal :: HasNamesE e
-                          => FreshExt o o' -> RenameEnv (i:-:i') o'
+                          => FreshExt o o' -> RenameEnv (i:=>:i') o'
                           -> NameTraversal e m i  o
                           -> NameTraversal e m i' o'
 extendInjectNameTraversal ext renamer t =
   extendNameTraversal (injectNameTraversal ext t) renamer
 
-idRenamer :: HasNamesB b => b n l -> RenameEnv (n:-:l) l
+idRenamer :: HasNamesB b => b n l -> RenameEnv (n:=>:l) l
 idRenamer b = envMapWithKey (\name _ -> injectNameR name) $ boundScope b
 
 -- variant with the common extension built in
@@ -344,7 +344,7 @@ freshenAbs s (Abs b body) =
       let body' = runIdentity $ traverseNamesE s' t body
       FreshAbs ext b' body'
 
-freshenBinder :: HasNamesB b => Scope n -> b n l -> FreshBinder b n (n:-:l)
+freshenBinder :: HasNamesB b => Scope n -> b n l -> FreshBinder b n (n:=>:l)
 freshenBinder s b = runIdentity $ traverseNamesB s idNameTraversal b
 
 extendRecEnv :: HasNamesE e => FreshExt n l -> RecEnv e n -> RecEnvFrag e n l -> RecEnv e l
