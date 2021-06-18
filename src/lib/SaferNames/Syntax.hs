@@ -19,7 +19,7 @@
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
     Effect (..), RWS (..), EffectRow (..),
-    SrcPos, Var, Binder, Block (..), Decl (..),
+    SrcPos, Var, Binder, BinderList, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, LetAnn (..),
@@ -90,8 +90,8 @@ data Atom n =
  | Eff (EffectRow n)
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
- | DataConRef (DataDef n) [Atom n] (EmptyNest DataConRefBinding n)
- | BoxedRef (Atom n) (Atom n) (Abs Binder Block n)  -- ptr, size, binder/body
+ | DataConRef (NamedDataDef n) [Atom n] (EmptyNest DataConRefBinding n)
+ | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
@@ -499,6 +499,8 @@ instance SubstB Decl where
     traverseCoreB s t b >>= \case
       FreshBinder ext b' renamer ->
         return $ FreshBinder ext (Let ann b' expr') renamer
+
+instance HasNamesB DataConRefBinding
 
 instance SubstB b => SubstB (Nest b) where
   traverseCoreB s t nest = case nest of
