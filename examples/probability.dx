@@ -431,9 +431,52 @@ hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) (for i. latent)
 
 posteriorTab $ \z . hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) z
 
+' ## Example 5a. HMM Monoid 
+
+' We can also write out an HMM using a Monoid. Here we define a monoid
+  for square matrix multiplication.
+
+def MarkovMonoid (a:Type) : Monoid (a => a => Float) =
+  M = a -- XXX: Typing `Monoid a` below would quantify it over a, which we don't want
+  named-instance result : Monoid (M => M => Float)
+     mempty = for m1 m2. select ((ordinal m1) == (ordinal m2)) 1.0 0.0
+     mcombine = \m1 m2. for i j. sum for k. m1.i.k * m2.k.j
+  result
+
+' We also define a Markov version of our sample function.
+  Instead of summing out over the usage of its result,
+  it constructs a matrix a vector.
+
+def markov (lambda:Var a) (pr: Dist a) : a => Float =
+    for a'. (a' ?? pr) * lambda.a'
+
+' Here we write out the HMM using a forward style approach.
+  Each time through the algorithm the accumulator represents
+  the matrix of the joint likelihood from position 1 to i.
+
+def hmm_monoid (init': Var Z) (x': m => Var X) (z' : m => Var Z) : Float =
+    scores = yieldAccum (MarkovMonoid Z) \ref .
+        for i:m.
+            ref += for z:Z.
+                emit = (x'.i ~ emission.z) one
+                emit .* (markov z'.i transition.z)
+    (init' ~ initial.nil) $ for j. sum scores.j
+
+' At first glance, this seems much less efficient. Above we
+  had an algorithm that only required $O(Z)$ storage whereas this
+  requires $O(Z^2)$. In theory this approach can be parallelized
+  over the intermediate size variable $m$. 
+
+' This should give the same result as before. 
+
+hmm_monoid (observed (1@_)) (for i:(Fin 2). observed (1@_)) (for i. latent)
+
+' Unfortunately though, the code for monoid's does not yet allow for
+auto-differentiation.
+
+posteriorTab $ \z . hmm (observed (1@_)) (for i:(Fin 2). observed (1@_)) z
 
 ' ## Fancier Distributions
-
 
 def without_replacement (y: n=>m) (AsDist x: Dist m) : Dist m =
     renorm = sum for n'. x.(y.n')
@@ -444,7 +487,7 @@ def without_replacement (y: n=>m) (AsDist x: Dist m) : Dist m =
                 
 
 
-' ### Probability Exercises (Harvard Stat 110) 
+' ### Probability Exercises (from Stat 110 textbook) 
 
 ' A college has 10 (non-overlapping) time slots for its 10 courses, and blithely assigns
 courses to time slots randomly and independently. A student randomly chooses 3 of the
@@ -470,3 +513,5 @@ def birth (event:Var YesNo): Float =
                (event ~ yesno ((ordinal i < 3) && (ordinal j < 3) && (ordinal k < 3))) one)))
 
 birth (observed {|yes=()|})
+
+
