@@ -14,9 +14,7 @@
 module SaferNames.Bridge (HasSafeVersionE (..), HasSafeVersionB (..))  where
 
 import Data.Foldable (toList)
-import Data.Maybe (fromJust)
 import qualified Data.Set as Set
-import Unsafe.Coerce
 
 import LabeledItems
 import Syntax
@@ -59,12 +57,12 @@ instance HasSafeVersionE D.Atom where
       S.DataCon (toSafeE dataDef) (map toSafeE params) con (map toSafeE args)
     D.TypeCon dataDef params ->
       S.TypeCon (toSafeE dataDef) (map toSafeE params)
-    D.LabeledRow (Ext items tail) -> S.LabeledRow $ Ext (fmap toSafeE items) (fmap toSafeE tail)
+    D.LabeledRow (Ext items t) -> S.LabeledRow $ Ext (fmap toSafeE items) (fmap toSafeE t)
     D.Record items -> S.Record $ fmap toSafeE items
-    D.RecordTy (Ext items tail) -> S.RecordTy $ Ext (fmap toSafeE items) (fmap toSafeE tail)
-    D.Variant (Ext items tail) label idx val ->
-      S.Variant (Ext (fmap toSafeE items) (fmap toSafeE tail)) label idx (toSafeE val)
-    D.VariantTy (Ext items tail) -> S.VariantTy $ Ext (fmap toSafeE items) (fmap toSafeE tail)
+    D.RecordTy (Ext items t) -> S.RecordTy $ Ext (fmap toSafeE items) (fmap toSafeE t)
+    D.Variant (Ext items t) label idx val ->
+      S.Variant (Ext (fmap toSafeE items) (fmap toSafeE t)) label idx (toSafeE val)
+    D.VariantTy (Ext items t) -> S.VariantTy $ Ext (fmap toSafeE items) (fmap toSafeE t)
     D.Con con -> S.Con $ fmap toSafeE con
     D.TC  tc  -> S.TC  $ fmap toSafeE tc
     D.Eff effs -> S.Eff $ toSafeE effs
@@ -84,12 +82,12 @@ instance HasSafeVersionE D.Atom where
       D.DataCon (fromSafeE dataDef) (map fromSafeE params) con (map fromSafeE args)
     S.TypeCon dataDef params ->
       D.TypeCon (fromSafeE dataDef) (map fromSafeE params)
-    S.LabeledRow (Ext items tail) -> D.LabeledRow $ Ext (fmap fromSafeE items) (fmap fromSafeE tail)
+    S.LabeledRow (Ext items t) -> D.LabeledRow $ Ext (fmap fromSafeE items) (fmap fromSafeE t)
     S.Record items -> D.Record $ fmap fromSafeE items
-    S.RecordTy (Ext items tail) -> D.RecordTy $ Ext (fmap fromSafeE items) (fmap fromSafeE tail)
-    S.Variant (Ext items tail) label idx val ->
-      D.Variant (Ext (fmap fromSafeE items) (fmap fromSafeE tail)) label idx (fromSafeE val)
-    S.VariantTy (Ext items tail) -> D.VariantTy $ Ext (fmap fromSafeE items) (fmap fromSafeE tail)
+    S.RecordTy (Ext items t) -> D.RecordTy $ Ext (fmap fromSafeE items) (fmap fromSafeE t)
+    S.Variant (Ext items t) label idx val ->
+      D.Variant (Ext (fmap fromSafeE items) (fmap fromSafeE t)) label idx (fromSafeE val)
+    S.VariantTy (Ext items t) -> D.VariantTy $ Ext (fmap fromSafeE items) (fmap fromSafeE t)
     S.Con con -> D.Con $ fmap fromSafeE con
     S.TC  tc  -> D.TC  $ fmap fromSafeE tc
     S.Eff effs -> D.Eff $ fromSafeE effs

@@ -462,7 +462,9 @@ withTraverseCoreB s t b cont = do
 tce :: SubstE e => Monad m => Scope o -> CoreTraversal m i o -> e i -> m (e o)
 tce = traverseCoreE
 
-instance SubstB PlainBinder
+instance SubstB PlainBinder where
+  traverseCoreB = undefined
+  asBindingsFrag = undefined
 
 instance (SubstB b, SubstE e) => SubstE (Abs b e) where
   traverseCoreE s t (Abs b body) = do
@@ -474,14 +476,18 @@ instance (SubstB b, SubstE e) => SubstB (AnnBinderP b e) where
     ann' <- traverseCoreE s t ann
     traverseCoreB s t b >>= \case
       FreshBinder ext b' renamer -> return $ FreshBinder ext (b':>ann') renamer
+  asBindingsFrag = undefined
 
 instance HasNamesE EffectRow where traverseNamesE = traverseNamesFromSubstE
-instance SubstE EffectRow
+instance SubstE EffectRow where
+  traverseCoreE = undefined
 
-instance HasNamesE e => HasNamesE (SubstVal e)
-instance SubstE e => SubstE (SubstVal e)
+instance SubstE e => HasNamesE (SubstVal e) where traverseNamesE = traverseNamesFromSubstE
+instance SubstE e => SubstE (SubstVal e) where
+  traverseCoreE = undefined
 
-instance HasNamesE e => HasNamesE (WithArrow e)
+instance SubstE e => HasNamesE (WithArrow e) where
+  traverseNamesE = traverseNamesFromSubstE
 instance SubstE e => SubstE (WithArrow e) where
   traverseCoreE s t (WithArrow arr e) =
     WithArrow <$> traverse (tce s t) arr <*> tce s t e
@@ -492,15 +498,20 @@ instance SubstE Block where
     traverseCoreE s t (Abs decls result) >>= \case
       Abs decls' result' -> return $ Block decls' result'
 
-instance HasNamesB Decl where traverseNamesB = traverseNamesFromSubstB
+instance HasNamesB Decl where
+  traverseNamesB = traverseNamesFromSubstB
+  boundScope = undefined
 instance SubstB Decl where
   traverseCoreB s t (Let ann b expr) = do
     expr' <- traverseCoreE s t expr
     traverseCoreB s t b >>= \case
       FreshBinder ext b' renamer ->
         return $ FreshBinder ext (Let ann b' expr') renamer
+  asBindingsFrag = undefined
 
-instance HasNamesB DataConRefBinding
+instance HasNamesB DataConRefBinding where
+  traverseNamesB = undefined
+  boundScope = undefined
 
 instance SubstB b => SubstB (Nest b) where
   traverseCoreB s t nest = case nest of
@@ -509,15 +520,19 @@ instance SubstB b => SubstB (Nest b) where
       traverseCoreB s t (NestPair b rest) >>= \case
         FreshBinder ext (NestPair b' rest') renamer ->
           return $ FreshBinder ext (Nest b' rest') renamer
+  asBindingsFrag = undefined
 
 instance (SubstB b1, SubstB b2) => SubstB (NestPair b1 b2) where
-  traverseCoreB s t nest = undefined
+  traverseCoreB = undefined
+  asBindingsFrag = undefined
 
 instance HasNamesE NamedDataDef where traverseNamesE = traverseNamesFromSubstE
-instance SubstE NamedDataDef
+instance SubstE NamedDataDef where
+  traverseCoreE = undefined
 
 instance HasNamesE DataDef where traverseNamesE = traverseNamesFromSubstE
-instance SubstE DataDef
+instance SubstE DataDef where
+  traverseCoreE = undefined
 
 instance HasNamesE Atom where traverseNamesE = traverseNamesFromSubstE
 instance SubstE Atom where
@@ -551,6 +566,7 @@ instance SubstE Atom where
     -- DataConRef (DataDef n) [Atom n] (EmptyNest DataConRefBinding n)
     -- BoxedRef (Atom n) (Atom n) (Abs Binder Block n)  -- ptr, size, binder/body
     -- ProjectElt (NE.NonEmpty Int) (Var n)
+    _ -> undefined
 
 instance HasNamesE Expr where traverseNamesE = traverseNamesFromSubstE
 instance SubstE Expr where
@@ -562,6 +578,8 @@ instance SubstE Expr where
     Op  op  -> Op  <$> traverse (tce s t) op
     Hof hof -> Hof <$> traverse (tce s t) hof
 
-instance HasNamesE SourceNameMap
+instance HasNamesE SourceNameMap where
+  traverseNamesE = undefined
 
-instance HasNamesE TypedBinderInfo
+instance HasNamesE TypedBinderInfo where
+  traverseNamesE = undefined

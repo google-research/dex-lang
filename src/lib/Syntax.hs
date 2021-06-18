@@ -1589,6 +1589,3 @@ instance Store BaseType
 instance Store AddressSpace
 instance Store Device
 instance Store DataConRefBinding
-
-instance Semigroup Result
-instance Monoid Result

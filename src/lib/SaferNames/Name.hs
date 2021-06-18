@@ -16,7 +16,7 @@
 {-# LANGUAGE PolyKinds #-}
 
 module SaferNames.Name (
-  S (..), RawName (..), Name (..), Env  (..), (<>>), (<.>),
+  S (..), RawName, Name (..), Env  (..), (<>>), (<.>),
   emptyEnv, envLookup, envAsScope, withFresh,
   PlainBinder (..), Scope, RenameEnv, FreshExt, NameTraversal (..),
   extendNameTraversal, injectNameTraversal, extendInjectNameTraversal,
@@ -34,8 +34,6 @@ module SaferNames.Name (
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import qualified Data.Set        as S
-import Data.String
-import qualified Data.Text as T
 import Unsafe.Coerce
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
