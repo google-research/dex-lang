@@ -11,7 +11,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SaferNames.Bridge (HasSafeVersionE (..), HasSafeVersionB (..))  where
+module SaferNames.Bridge (HasSafeVersionE (..), HasSafeVersionB (..),
+                          toSafeBindings)  where
 
 import Data.Foldable (toList)
 import qualified Data.Set as Set
@@ -28,6 +29,9 @@ import qualified Env    as D
 
 import qualified SaferNames.Syntax as S
 import qualified SaferNames.Name   as S
+
+toSafeBindings :: D.Bindings -> S.Bindings n
+toSafeBindings = undefined
 
 class HasSafeVersionE (e:: *) where
   type SafeVersionE e :: S.E

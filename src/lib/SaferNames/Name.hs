@@ -29,7 +29,8 @@ module SaferNames.Name (
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
   AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), emptyFreshExt, composeFreshExt, idRenamer,
-  EqE, EqB, FreshBinder (..), lookupNameTraversal, extendScope) where
+  EqE, EqB, FreshBinder (..), lookupNameTraversal, extendScope, envFragLookup,
+  PrettyE, PrettyB, ShowE, ShowB) where
 
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
@@ -81,6 +82,12 @@ envLookup (UnsafeMakeEnv m) (UnsafeMakeName name) =
   case LM.lookup name m of
     Just x -> x
     Nothing -> error "Env lookup should never fail"
+
+envFragLookup :: Env (i:=>:i') a -> Name i' -> Either (Name i) a
+envFragLookup env name =
+  case projectName (envAsScope env) name of
+    Left name' -> Left name'
+    Right name' -> Right $ envLookup env name'
 
 envAsScope :: Env n a -> Scope n
 envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.asUnitLazyMap m
@@ -476,3 +483,6 @@ instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
 
 instance (ShowB b, ShowE ann) => Show (AnnBinderListP b ann n l) where
   show _ = "TODO"
+
+instance Pretty a => Pretty (LiftE a n) where
+  pretty (LiftE x) = pretty x

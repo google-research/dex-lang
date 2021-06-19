@@ -29,7 +29,7 @@ module SaferNames.Syntax (
     emptyEvaluatedModule, DataConRefBinding (..),
     AltP, Alt, BinderInfo (..), TypedBinderInfo (..), Bindings, BindingsFrag,
     SubstE (..), SubstB (..), Ptr, PtrType,
-    AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
+    AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
     Direction (..), Limit (..),
     DataDef (..), NamedDataDef (..), DataConDef (..), Nest (..),
     AnnVarP (..), IndexStructure,
@@ -38,7 +38,11 @@ module SaferNames.Syntax (
     binderType, isTabTy, BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     WithArrow (..), withoutArrow, justArrow,
-    pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
+    IRVariant (..), SubstVal (..), applySubst,
+    applyAbs, applyNaryAbs, scopelessApplyAbs, scopelessApplyNaryAbs,
+    applyDataDefParams, absArgType, substEnvFragLookup, arrowEff,
+    pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
+    pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
@@ -49,8 +53,8 @@ module SaferNames.Syntax (
     pattern LabeledRowKind, pattern EffKind,
     (-->), (--@), (==>) ) where
 
-import Prelude hiding ((.), id)
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Identity
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -60,13 +64,13 @@ import Data.Word
 import Foreign.Ptr
 
 import Syntax
-  ( ArrowP (..), LetAnn (..), IRVariant
+  ( ArrowP (..), LetAnn (..), IRVariant (..)
   , PrimExpr (..), PrimTC (..), PrimCon (..), PrimOp (..), PrimHof (..)
   , BaseMonoid, BaseMonoidP (..), PrimEffect (..), BinOp (..), UnOp (..)
   , CmpOp (..), Direction (..)
   , ForAnn (..), Limit (..), strToPrimName, primNameToStr, showPrimName
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
-  , AddressSpace (..), PtrType, sizeOf, ptrSize, vectorWidth)
+  , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth)
 
 import SaferNames.Name
 import Err
@@ -191,7 +195,7 @@ getBaseMonoidType scope ty = case ty of
 -- === effects ===
 
 data EffectRow n = EffectRow (S.Set (Effect n)) (Maybe (Name n))
-                   deriving Show
+                   deriving (Show, Eq)
 
 data Effect n = RWSEffect RWS (Name n) | ExceptionEffect | IOEffect
                 deriving (Show, Eq, Ord)
@@ -269,6 +273,70 @@ traverseNamesFromSubstB
 traverseNamesFromSubstB s t b =
   traverseCoreB s (coreTraversalFromRenameTraversal t) b
 
+fmapAtomNames :: SubstE e => Scope o -> (Name i -> AtomSubstVal o) -> e i -> e o
+fmapAtomNames scope f e = runIdentity $ traverseCoreE scope t e
+  where t = NameTraversal (pure . f) emptyEnv
+
+applySubst :: SubstE e => Scope o -> SubstEnv i o -> e i -> e o
+applySubst scope env e = fmapAtomNames scope (envLookup env) e
+
+substEnvFragLookup :: SubstEnv (o:=>:i) o -> Name i -> AtomSubstVal o
+substEnvFragLookup substFrag name = case envFragLookup substFrag name of
+  Left name' -> Rename name'
+  Right val -> val
+
+applyAbs :: SubstE e => Scope n -> Abs Binder e n -> Atom n -> e n
+applyAbs scope (Abs b body) x =
+  fmapAtomNames scope (substEnvFragLookup (b@>SubstVal x)) body
+
+applyNaryAbs :: SubstE e => Scope n -> Abs (Nest Binder) e n -> [Atom n] -> e n
+applyNaryAbs _ (Abs Empty body) [] = body
+applyNaryAbs scope (Abs (Nest b bs) body) (x:xs) =
+  applyNaryAbs scope ab xs
+  where ab = applyAbs scope (Abs b (Abs bs body)) x
+applyNaryAbs _ _ _ = error "wrong number of arguments"
+
+-- TODO: see if we can avoid needing this version
+scopelessApplyAbs :: SubstE e => Abs Binder e n -> Atom n -> e n
+scopelessApplyAbs = undefined
+-- scopelessApplyAbs ab x = withTempScope (PairE ab x) \ext scope (PairE ab' x') ->
+--   injectNamesL ext $ applyAbs scope ab' x'
+
+scopelessApplyNaryAbs :: SubstE e => Abs (Nest Binder) e n -> [Atom n] -> e n
+scopelessApplyNaryAbs = undefined
+-- scopelessApplyNaryAbs ab xs =
+--   withTempScope (PairE ab (ListE xs)) \ext scope (PairE ab' (ListE xs')) ->
+--   injectNamesL ext $ applyNaryAbs scope ab' xs'
+
+applyDataDefParams :: DataDef n -> [Type n] -> [DataConDef n]
+applyDataDefParams = undefined
+-- applyDataDefParams (DataDef _ bs cons) params
+--   | length params == length (toList bs) = applyNaryAbs (Abs bs cons) params
+--   | otherwise = error $ "Wrong number of parameters: " ++ show (length params)
+
+-- makeAbs :: HasNames a => Binder -> a -> Abs Binder e n
+-- makeAbs b body | b `isin` freeVars body = Abs b body
+--                | otherwise = Abs (Ignore (binderType b)) body
+
+absArgType :: Abs Binder e n -> Type n
+absArgType (Abs b _) = binderType b
+
+-- toNest :: [a] -> Nest a
+-- toNest = foldr Nest Empty
+
+-- instance HasNames Arrow where
+--   freeVars arrow = case arrow of
+--     PlainArrow eff -> freeVars eff
+--     _ -> mempty
+-- instance Subst Arrow where
+--   subst env arrow = case arrow of
+--     PlainArrow eff -> PlainArrow $ subst env eff
+--     _ -> arrow
+
+arrowEff :: Arrow n -> EffectRow n
+arrowEff (PlainArrow eff) = eff
+arrowEff _ = Pure
+
 -- === Synonyms ===
 
 binderType :: Binder n l -> Type n
@@ -299,6 +367,10 @@ getFloatLit l = case l of
   Float64Lit f -> f
   Float32Lit f -> realToFrac f
   _ -> error $ "Expected a floating-point literal"
+
+-- Type used to represent indices at run-time
+pattern IdxRepTy :: Type n
+pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
 
 pattern IdxRepVal :: Int32 -> Atom n
 pattern IdxRepVal x = Con (Lit (Int32Lit x))
@@ -567,6 +639,8 @@ instance SubstE Atom where
     -- BoxedRef (Atom n) (Atom n) (Abs Binder Block n)  -- ptr, size, binder/body
     -- ProjectElt (NE.NonEmpty Int) (Var n)
     _ -> undefined
+
+instance AlphaEq Atom
 
 instance HasNamesE Expr where traverseNamesE = traverseNamesFromSubstE
 instance SubstE Expr where

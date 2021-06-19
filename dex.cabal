@@ -55,7 +55,8 @@ library
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, Err, LabeledItems,
                        SaferNames.Name, SaferNames.LazyMap,
-                       SaferNames.Syntax, SaferNames.Bridge
+                       SaferNames.Syntax, SaferNames.Bridge,
+                       SaferNames.PPrint
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
