@@ -1,3 +1,26 @@
+instance [Add a] Add (n->a)
+  add = \f g. \x. (f x) + (g x)
+  sub = \f g. \x. (f x) - (g x)
+  zero = \x. zero
+
+instance [Mul a] Mul (n->a)
+  mul = \f g. \x. (f x) * (g x)
+  one = \x. one
+
+instance [VSpace a] VSpace (n->a)
+  scaleVec = \s f. \x. s .* (f x)
+
+--instance [VSpace a] VSpace (n->m->o->a)
+--  scaleVec = \s f. \x y z. s .* (f x y z)
+
+instance [Arbitrary a, Hashable n] Arbitrary (n->a)
+  arb = \key. \i. arb $ hash key i
+
+:p (sin + cos) 5.0
+:p (sin * cos) 5.0
+:p (2.8 .* sin) 5.0
+
+
 ' Adaptive-Step Stochastic Differential Equation Solvers
 
 import plot
@@ -76,18 +99,36 @@ data GenDiffusionProd v:Type =
 --  case v of
 
 -- Drift and diffusion product.
--- Diffusion takes state and noise and returns dstate/dtime
+-- DiffusionProd takes state and noise and returns dstate/dtime
 def Drift (v:Type)     : Type = v->Time->v
-def Diffusion (v:Type) : Type = v->Time->v
-def DiffusionProd (v:Type) : Type = v->v->Time->v
+def DiagDiffusion (v:Type) : Type = v->Time->v
+def DiffusionProd (v:Type) : Type = v->Time->v->v
 def SDE (v:Type) : Type = (Drift v & DiffusionProd v )
 
+-- Idea: use typeclasses to automatically derive products?
 
+def SkewSymmetricProd (v:Type) : Type = v->Time->v->v  -- How to express matrix?
+def NegEnergyFunc (v:Type) : Type = v->Time->Float
+def StationarySDE (v:Type) : Type = (NegEnergyFunc v & SkewSymmetricProd v & DiffusionProd v)
 
+def stationarySDEPartsToSDE [Mul v, VSpace v] (sta:StationarySDE v) : SDE v =
+  -- From Section 2.1 of "A Complete Recipe for Stochastic Gradient MCMC"
+  -- https://arxiv.org/pdf/1506.04696.pdf
+  (negEnergyFunc, skewSymmetricProd, diffusionProd) = sta
+  varProd = \state time vec.
+    0.5 .* (diffusionProd state time $ diffusionProd state time vec)
+  drift = \state time.
+    curNE = \state. negEnergyFunc state time
+    negenergygrad = (grad curNE) state
+    t1 = (skewSymmetricProd + varProd) state time negenergygrad
+    gammapart = \state. (skewSymmetricProd + varProd) state time one
+    t3 = jvp gammapart state one
+    t1 + t3
+  (drift, diffusionProd)
 
 def radonNikodym (drift1: Drift Float)
                  (drift2: Drift Float)
-                 (diffusion: Diffusion Float)
+                 (diffusion: DiagDiffusion Float)
                  (state: Float) (t: Time) : Float =
   -- Dynamics of simple Monte Carlo estimatr of KL divergence between
   -- two SDEs that share a diffusion function. (If not, divergence is infinite)
@@ -97,7 +138,7 @@ def radonNikodym (drift1: Drift Float)
 def ito_euler_step [VSpace v] (sde: SDE v) (z:v)
   (t:Time) (dt:Time) (noise:v) : (v & Time) =
   (drift, diffprod) = sde
-  new_z = z + dt .* (drift z t) + (diffprod z noise t)
+  new_z = z + dt .* (drift z t) + (diffprod z t noise)
   (new_z, t + dt)
 
 def ito_euler_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod=None):
@@ -111,7 +152,7 @@ def ito_milstein_step(y, t, args, noise, t_delta, f, g_prod, gdg_prod):
 def ito_milstein_step [VSpace v] (sde: SDE v) (z:v)
   (t:Time) (dt:Time) (noise:v) : (v & Time) =
   (drift, diffprod) = sde
-  new_z = z + dt .* (drift z t) + (diffprod z noise t)
+  new_z = z + dt .* (drift z t) + (diffprod z t noise)
   (new_z, t + dt)
 
 
@@ -255,7 +296,7 @@ def adaptive_sdeint (sde: SDE (d=>Float))
 
 drift : v=>Float -> Time -> v=>Float = \z t. -z
 
-def diffprod (z:v=>Float) (noise:v=>Float) (t:Time) : v=>Float = for i. noise.i
+def diffprod (z:v=>Float) (t:Time) (noise:v=>Float): v=>Float = for i. noise.i
 
 --sde = (drift, diffprod)
 
