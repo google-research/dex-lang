@@ -433,3 +433,16 @@ def q (n : Int) : (Fin n)=>Int =
 
 q 5
 > [0, 2, 4, 6, 8]
+
+'### Tests for function VSpace
+
+:p (sin + cos) 5.0 ~~ (\x. sin x + cos x) 5.0
+> True
+:p (sin * cos) 5.0 ~~ (\x. sin x * cos x) 5.0
+> True
+:p (2.8 .* sin) 5.0 ~~ (\x. 2.8 * sin x) 5.0
+> True
+
+xbool : Bool = arb $ newKey 0
+:p xbool
+> True
