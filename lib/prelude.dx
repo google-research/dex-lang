@@ -152,6 +152,11 @@ instance Add Unit
   sub = \x y. ()
   zero = ()
 
+instance [Add a] Add (n->a)
+  add = \f g. \x. (f x) + (g x)
+  sub = \f g. \x. (f x) - (g x)
+  zero = \x. zero
+
 '#### Mul
 Things that can be multiplied.
 This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
@@ -185,6 +190,10 @@ instance Mul Word8
 instance Mul Unit
   mul = \x y. ()
   one = ()
+
+instance [Mul a] Mul (n->a)
+  mul = \f g. \x. (f x) * (g x)
+  one = \x. one
 
 '#### Integral
 Integer-like things.
@@ -347,6 +356,9 @@ instance VSpace Float
 
 instance {a n} [VSpace a] VSpace (n=>a)
   scaleVec = \s xs. for i. s .* xs.i
+
+instance [VSpace a] VSpace (n->a)
+  scaleVec = \s f. \x. s .* (f x)
 
 instance VSpace Unit
   scaleVec = \_ _. ()
@@ -1714,6 +1726,9 @@ Type class for generating example values
 
 interface Arbitrary a
   arb : Key -> a
+
+instance Arbitrary Bool
+  arb = \key. rand key < 0.5
 
 instance Arbitrary Float32
   arb = randn
