@@ -838,3 +838,7 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 -- This will compile extremely slowly if non-inlining is broken
 :p f6 0
 > 100000
+
+:p W8ToB (IToW8 100)
+> True
+

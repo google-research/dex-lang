@@ -203,21 +203,22 @@ data Bool =
 
 def BToW8 (x : Bool) : Word8 = %dataConTag x
 
-def W8ToB (x : Word8) : Bool = %toEnum Bool x
+def unsafeW8ToB (x : Word8) : Bool = %toEnum Bool x
+def W8ToB (x : Word8) : Bool = unsafeW8ToB $ %igt x (IToW8 0)
 
 def (&&) (x:Bool) (y:Bool) : Bool =
   x' = BToW8 x
   y' = BToW8 y
-  W8ToB $ %and x' y'
+  unsafeW8ToB $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
   x' = BToW8 x
   y' = BToW8 y
-  W8ToB $ %or x' y'
+  unsafeW8ToB $ %or x' y'
 
 def not  (x:Bool) : Bool =
   x' = BToW8 x
-  W8ToB $ %not x'
+  unsafeW8ToB $ %not x'
 
 '## Sum types
 A [sum type, or tagged union](https://en.wikipedia.org/wiki/Tagged_union) can hold values from a fixed set of types, distinguished by tags.
@@ -418,19 +419,19 @@ def (<=) [Ord a] (x:a) (y:a) : Bool = x<y || x==y
 def (>=) [Ord a] (x:a) (y:a) : Bool = x>y || x==y
 
 instance Eq Float64
-  (==) = \x y. W8ToB $ %feq x y
+  (==) = \x y. unsafeW8ToB $ %feq x y
 
 instance Eq Float32
-  (==) = \x y. W8ToB $ %feq x y
+  (==) = \x y. unsafeW8ToB $ %feq x y
 
 instance Eq Int64
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. unsafeW8ToB $ %ieq x y
 
 instance Eq Int32
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. unsafeW8ToB $ %ieq x y
 
 instance Eq Word8
-  (==) = \x y. W8ToB $ %ieq x y
+  (==) = \x y. unsafeW8ToB $ %ieq x y
 
 instance Eq Bool
   (==) = \x y. BToW8 x == BToW8 y
@@ -442,24 +443,24 @@ instance Eq RawPtr
   (==) = \x y. RawPtrToI64 x == RawPtrToI64 y
 
 instance Ord Float64
-  (>) = \x y. W8ToB $ %fgt x y
-  (<) = \x y. W8ToB $ %flt x y
+  (>) = \x y. unsafeW8ToB $ %fgt x y
+  (<) = \x y. unsafeW8ToB $ %flt x y
 
 instance Ord Float32
-  (>) = \x y. W8ToB $ %fgt x y
-  (<) = \x y. W8ToB $ %flt x y
+  (>) = \x y. unsafeW8ToB $ %fgt x y
+  (<) = \x y. unsafeW8ToB $ %flt x y
 
 instance Ord Int64
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. unsafeW8ToB $ %igt x y
+  (<) = \x y. unsafeW8ToB $ %ilt x y
 
 instance Ord Int32
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. unsafeW8ToB $ %igt x y
+  (<) = \x y. unsafeW8ToB $ %ilt x y
 
 instance Ord Word8
-  (>) = \x y. W8ToB $ %igt x y
-  (<) = \x y. W8ToB $ %ilt x y
+  (>) = \x y. unsafeW8ToB $ %igt x y
+  (<) = \x y. unsafeW8ToB $ %ilt x y
 
 instance Ord Unit
   (>) = \x y. False
@@ -1345,7 +1346,7 @@ def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Ma
         Nothing ->
           ref := True
           False
-        Just cond -> W8ToB cond
+        Just cond -> unsafeW8ToB cond
   if hadError
     then Nothing
     else Just ()
