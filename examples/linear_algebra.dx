@@ -1,7 +1,5 @@
 '## LU Decomposition and Matrix Inversion
 
-def identity_matrix [Eq n, Add a, Mul a] : n=>n=>a =
-  for i j. select (i == j) one zero
 
 '### Triangular matrices
 
@@ -54,8 +52,8 @@ def swapInPlace (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
   permRef!i := tempj
   signRef := -(get signRef)
 
-def perToTable ((perm, _):Permutation n) : n=>n = perm
-def permSign   ((_, sign):Permutation n) : PermutationSign = sign
+def permToTable ((perm, _):Permutation n) : n=>n = perm
+def permSign    ((_, sign):Permutation n) : PermutationSign = sign
 
 
 
@@ -80,7 +78,7 @@ def lu [Eq n] (a: n=>n=>Float) :
 
   init_lower = for i:n. for j':(..i).
     select (i == (%inject j')) 1.0 0.0
-  init_upper = for i:n. for j'':(i..). 0.0
+  init_upper = zero
 
   (lower, upper) = yieldState (init_lower, init_upper) \stateRef.
     lRef = fstRef stateRef
@@ -146,7 +144,7 @@ def solve [Eq n, VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   backward_substitute u y
 
 def invert [Eq n] (a:n=>n=>Float) : n=>n=>Float =
-  solve a identity_matrix
+  solve a eye
 
 def determinant [Eq n] (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
