@@ -99,14 +99,15 @@ dexrt-llvm: src/lib/dexrt.bc
 example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms ode-integrator linear_algebra fluidsim \
+                isomorphisms ode-integrator fluidsim \
                 sgd chol fft tutorial vega-plotting kernelregression \
                 quaternions
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
-             record-variant-tests typeclass-tests complex-tests trig-tests
+             record-variant-tests typeclass-tests complex-tests trig-tests \
+             linalg-tests
 
 lib-names = diagram plot png
 

@@ -91,6 +91,16 @@ instance [Add a] Add (n=>a)
   sub = \xs ys. for i. xs.i - ys.i
   zero = for _. zero
 
+instance [Add a] Add (i:n => (i..) => a)  -- Upper triangular tables
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance [Add a] Add (i:n => (..i) => a)  -- Lower triangular tables
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
 '#### Mul
 Things that can be multiplied.
 This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
