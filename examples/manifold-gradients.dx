@@ -19,26 +19,26 @@ are mapped to geodesics), and its inverse. Note that "exponential map" is a
 somewhat overloaded term, here we are talking about it in a Riemannian geometry
 sense.
 
-' In the `TangentSpace` interface, `a` is the type which can represent points
-on the manifold. `b` is the type which can represent points in a tangent space
-to the manifold.  Ideally `b` would be an associated type of `a` so that the
+' In the `TangentSpace` interface, `manifold` is the type which can represent points
+on the manifold. `tangent` is the type which can represent points in a tangent space
+to the manifold.  Ideally `tangent` would be an associated type of `manifold` so that the
 compiler is able to infer the tangent space type from the manifold type, but
 this feature is not yet available in Dex.
 
-interface [VSpace b] TangentSpace a b
+interface [VSpace tangent] TangentSpace manifold tangent
   -- Given a point p on the manifold M and a point v in its tangent space TpM,
   -- this returns another point q on the manifold.
   -- Must satisfy tangentExponentialMap p zero == p
   -- (tangentExponentialMap p) will be linearized around zero, so it is
   -- important that any operations used have well-defined derivatives for inputs
   -- p, zero.
-  tangentExponentialMap: a -> b -> a
+  tangentExponentialMap: manifold -> tangent -> manifold
   -- (tangentLogarithmMap p) is the pointwise inverse to
   -- (tangentExponentialMap p).
   -- Must satisfy tangentLogarithmMap p p == zero
   -- (tangentLogarithmMap p) will be linearized around p, so it is important
   -- that any operations used have well-defined derivatives for inputs p, p.
-  tangentLogarithmMap: a -> a -> b
+  tangentLogarithmMap: manifold -> manifold -> tangent
 
 
 '### Differentiation functions
@@ -53,12 +53,14 @@ bottom three sides of the square.
    "<img
      src=\"https://user-images.githubusercontent.com/33986545/122416078-5a23ef00-cf80-11eb-83d5-d0d5986e8d20.png\"
      width=\"100%\">"
+> <html output>
 
-
-def manifoldLinearize [TangentSpace a a', TangentSpace b b', Add a']
-    (f: a -> b) (x: a) : (b & a' --o b') = 
+def manifoldLinearize [TangentSpace manifoldA tangentA,
+                       TangentSpace manifoldB tangentB, Add tangentA]
+    (f: manifoldA -> manifoldB) (x: manifoldA) :
+    (manifoldB & tangentA --o tangentB) = 
   y = f x
-  tangentSpaceMapping : a' -> b' =
+  tangentSpaceMapping : tangentA -> tangentB =
     \ v . tangentLogarithmMap y $ f $ tangentExponentialMap x v
   rawLinearize = linearize tangentSpaceMapping zero
   (y, snd rawLinearize)
@@ -79,8 +81,9 @@ instance [VSpace a] TangentSpace a a
 ' Now we can define a version of the Dex `grad` function which works on
 manifolds.
 
-def manifoldGrad [TangentSpace a a', VSpace a'] (f: a -> Float) (x: a) : a' = 
-  linearized: (Float & (a' --o Float)) = manifoldLinearize f x
+def manifoldGrad [TangentSpace manifoldA tangentA, VSpace tangentA]
+  (f: manifoldA -> Float) (x: manifoldA) : tangentA = 
+  linearized: (Float & (tangentA --o Float)) = manifoldLinearize f x
   transposeLinear (snd linearized) 1.0
 
 
@@ -97,11 +100,11 @@ original = linearize myFunc x
 -- Need to explicitly set up the types here, due to missing associated types.
 new : (Float & ((Fin 10 => Float) --o Float)) = manifoldLinearize myFunc x
 
-fst original
-fst new
+fst original ~~ fst new
+> True
 
-snd original x
-snd new x
+snd original x ~~ snd new x
+> True
 
 
 ' ### Quaternions Example
@@ -151,6 +154,14 @@ useful for numerical computations.
 instance VSpace Quaternion
   scaleVec = \ s x. quatFromVec (s .* quatAsVec x)
 
+instance HasAllClose Quaternion
+  allclose = \atol rtol a b.
+    allclose (quatAsVec atol) (quatAsVec rtol) (quatAsVec a) (quatAsVec b)
+
+instance HasDefaultTolerance Quaternion
+  atol = quatFromVec atol
+  rtol = quatFromVec rtol
+
 ' Quaternion multiplication is composition of rotations. This formula can be
 derived from the relations that $ij = k$, $ji = -k$, $jk = i$, $kj = -i$,
 $ki = j$, $ik = -j$, $i^2 = j^2 = k^2 = -1$. These can also be used to derive
@@ -192,6 +203,8 @@ functions such as `sinc x = (sin x) / x` or
 `magnitude x = sqrt $ sum (for i. x.i * x.i)`. To get around this, we use some
 simple Taylor series expansions, noting that this will cause reduced precision,
 and running autodiff on the resulting linearizations may be inefficient.
+Taking higher-order deriviatives will also lose further precision as the number
+of approximation terms will be reduced by each successive differentiation.
 
 -- Convenience alias for an array of three floats.
 R3 = (Fin 3 => Float)
@@ -252,34 +265,39 @@ instance TangentSpace Quaternion R3
 
 
 ' Run some simple checks to make sure that the exponential and logarithm maps
-have the correct properties.
+have the correct properties. Use a looser tolerance for numerical innaccuracies.
+
+looseTolerance = 0.005
+quatLooseTolerance = quatFromVec $ for i. looseTolerance
+tangentLooseTolerance : R3 = for i. looseTolerance
 
 -- Just arbitrary quaternions.
 quatForTestOne = quatNormalize (Q{w=1.0, x=0.5, y=-0.2, z=0.4})
 quatForTestTwo = quatNormalize (Q{w=-0.4, x=0.5, y=0.8, z=-0.9})
 
--- Should be approximately equal to quatForTestOne.
-quatExpAtIdent $ quatExpAtIdentInv quatForTestOne
-quatForTestOne
+allclose quatLooseTolerance rtol (quatExpAtIdent $ quatExpAtIdentInv quatForTestOne) (quatForTestOne)
+> True
 
 -- Same, but taking the logarithm and exponential at a non-identity point.
 logOfQuatForTestOne : R3 = tangentLogarithmMap quatForTestTwo quatForTestOne
-tangentExponentialMap quatForTestTwo logOfQuatForTestOne
-quatForTestOne
+allclose quatLooseTolerance rtol (tangentExponentialMap quatForTestTwo logOfQuatForTestOne) quatForTestOne
+> True
 
 -- Should be equal to quatIdent
-quatExpAtIdent $ quatExpAtIdentInv quatIdent
-quatIdent
+allclose quatLooseTolerance rtol (quatExpAtIdent $ quatExpAtIdentInv quatIdent) quatIdent
+> True
 
 -- Now the other way around
 tangentVectorForTest = [0.1, -0.2, 0.3]
 
--- Should both be approximately equal to tangentVectorForTest
-quatExpAtIdentInv $ quatExpAtIdent tangentVectorForTest
+allclose tangentLooseTolerance rtol (quatExpAtIdentInv $ quatExpAtIdent tangentVectorForTest) tangentVectorForTest
+> True
+
 expOfTangentVectorForTest : Quaternion = tangentExponentialMap quatForTestOne tangentVectorForTest
 roundTripTangentVectorForTest : R3 =
   tangentLogarithmMap quatForTestOne expOfTangentVectorForTest
-roundTripTangentVectorForTest
+allclose tangentLooseTolerance rtol roundTripTangentVectorForTest tangentVectorForTest 
+> True
 
 
 ' To check the exponential map is doing what we think, take some arbitrary
@@ -291,14 +309,18 @@ We can do this in two ways, which should give the same result:
 initialRotation = quatNormalize $ quatFromVec [0.2, 0.4, -0.35, 0.7]
 perturbation = [0.01, -0.07, 0.04]
 
-tangentExponentialMap initialRotation perturbation
+perturbedRotationDirect = tangentExponentialMap initialRotation perturbation
 
 '2: Composing the initial rotatation with the quaternion associated to the
 axis-angle perturbation, i.e. the result of applying the exponential map at the
 identity to the perturbation. Note the ordering of the multiplication, which
 comes from our choice of right-multiplication to associate the tangent spaces.
 
-(tangentExponentialMap quatIdent perturbation) * initialRotation
+perturbedRotationComposed =
+  (tangentExponentialMap quatIdent perturbation) * initialRotation
+
+allclose quatLooseTolerance rtol perturbedRotationDirect perturbedRotationComposed
+> True
 
 
 ' Now we can test the linearization and gradient functions.
@@ -312,6 +334,7 @@ def quatRoll (Q{x, y, z, w} : Quaternion) : Float =
 -- A fixed quaternion with roll = 0.5.
 quatSomeRoll = Q{x=0.247, y=0., z=0., w=0.969}
 quatRoll quatSomeRoll
+> 0.49916
 
 -- A function to compose a given quaternion with fixed rotation.
 def quatAddSomeRoll (q: Quaternion) : Quaternion = q * quatSomeRoll
@@ -320,9 +343,12 @@ def quatAddSomeRoll (q: Quaternion) : Quaternion = q * quatSomeRoll
 the linearized version of `quatAddSomeRoll` should just be the identity map
 between tangent spaces.
 
+linearInput = [0.05, 0.1, 0.15]
 quatAddSomeRollLinearized: R3 --o R3 =
   snd $ manifoldLinearize quatAddSomeRoll quatForTestOne
-quatAddSomeRollLinearized [0.05, 0.1, 0.15]
+allclose tangentLooseTolerance rtol (quatAddSomeRollLinearized linearInput) linearInput
+> True
+
 
 ' Try taking the gradient of the `quatRoll` function, at various points.
 
@@ -334,9 +360,14 @@ def quatGrad (f: Quaternion -> Float) (x: Quaternion) : R3 = manifoldGrad f x
 -- see that the only way to modify the roll is by adding further rotation in the
 -- roll direction.
 quatGrad quatRoll quatSomeRoll
+> [0.999973, 0., 0.]
+
 
 -- However, at other points, we can also modify the roll of the rotation by
 -- moving in pitch and/or yaw directions. This demonstrates that the Euler
 -- angles are not independent.
 quatGrad quatRoll quatForTestOne
+> [1.041025, 0.594871, 0.]
+
 quatGrad quatRoll quatForTestTwo
+> [-0.570283, 0.83349, -0.]
