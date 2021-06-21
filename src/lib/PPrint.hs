@@ -90,6 +90,8 @@ instance PrettyPrec ScalarBaseType where
     Float64Type -> "Float64"
     Float32Type -> "Float32"
     Word8Type   -> "Word8"
+    Word32Type  -> "Word32"
+    Word64Type  -> "Word64"
 
 printDouble :: Double -> Doc ann
 printDouble x = p (double2Float x)
@@ -105,6 +107,8 @@ instance PrettyPrec LitVal where
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ printFloat  x
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
+  prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
+  prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 

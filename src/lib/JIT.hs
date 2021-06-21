@@ -432,6 +432,7 @@ compileBinOp op x y = case op of
   FDiv   -> emitInstr (L.typeOf x) $ L.FDiv mathFlags x y []
   BAnd   -> emitInstr (L.typeOf x) $ L.And x y []
   BOr    -> emitInstr (L.typeOf x) $ L.Or  x y []
+  BXor   -> emitInstr (L.typeOf x) $ L.Xor x y []
   BShL   -> emitInstr (L.typeOf x) $ L.Shl  False False x y []
   BShR   -> emitInstr (L.typeOf x) $ L.LShr False       x y []
   ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
@@ -672,6 +673,8 @@ litVal lit = case lit of
   Int64Lit x   -> i64Lit $ fromIntegral x
   Int32Lit x   -> i32Lit $ fromIntegral x
   Word8Lit x   -> i8Lit  $ fromIntegral x
+  Word32Lit x  -> i32Lit  $ fromIntegral x
+  Word64Lit x  -> i64Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
   VecLit l     -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
@@ -792,6 +795,8 @@ scalarTy b = case b of
     Int64Type   -> i64
     Int32Type   -> i32
     Word8Type   -> i8
+    Word32Type  -> i32
+    Word64Type  -> i64
     Float64Type -> fp64
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb

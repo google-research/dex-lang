@@ -15,7 +15,9 @@ Int32 = %Int32
 Float64 = %Float64
 Float32 = %Float32
 
-Word8 = %Word8
+Word8  = %Word8
+Word32 = %Word32
+Word64 = %Word64
 Byte = Word8
 Char = Byte
 
@@ -35,14 +37,49 @@ def FToF32 (x : Float)   : Float32 = internalCast _ x
 def I64ToI (x : Int64)   : Int     = internalCast _ x
 def I32ToI (x : Int32)   : Int     = internalCast _ x
 def W8ToI  (x : Word8)   : Int     = internalCast _ x
+def W32ToW64 (x : Word32): Word64  = internalCast _ x
+def W64ToW32 (x : Word64): Word32  = internalCast _ x
 def IToI64 (x : Int)     : Int64   = internalCast _ x
 def IToI32 (x : Int)     : Int32   = internalCast _ x
 def IToW8  (x : Int)     : Word8   = internalCast _ x
+def IToW32 (x : Int)     : Word32  = internalCast _ x
+def IToW64 (x : Int)     : Word64  = internalCast _ x
+def I64ToW64 (x : Int64) : Word64  = internalCast _ x
+def W64ToI64 (x : Word64) : Int64  = internalCast _ x
 def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
 def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
 def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
 
+'## Bitwise operations
+
+interface Bits a
+  (<<)  : a -> Int -> a
+  (>>)  : a -> Int -> a
+  (.|.) : a -> a -> a
+  (.&.) : a -> a -> a
+  (^)   : a -> a -> a
+
+instance Bits Word8
+  (<<)  = \x y. %shl x (IToW8 y)
+  (>>)  = \x y. %shr x (IToW8 y)
+  (.|.) = \x y. %or x y
+  (.&.) = \x y. %and x y
+  (^)   = \x y. %xor x y
+
+instance Bits Word32
+  (<<)  = \x y. %shl x (IToW32 y)
+  (>>)  = \x y. %shr x (IToW32 y)
+  (.|.) = \x y. %or x y
+  (.&.) = \x y. %and x y
+  (^)   = \x y. %xor x y
+
+instance Bits Word64
+  (<<)  = \x y. %shl x (IToW64 y)
+  (>>)  = \x y. %shr x (IToW64 y)
+  (.|.) = \x y. %or x y
+  (.&.) = \x y. %and x y
+  (^)   = \x y. %xor x y
 '### Basic Arithmetic
 #### Add
 Things that can be added.
@@ -80,6 +117,16 @@ instance Add Word8
   add = \x y. %iadd x y
   sub = \x y. %isub x y
   zero = IToW8 0
+
+instance Add Word32
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
+  zero = IToW32 0
+
+instance Add Word64
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
+  zero = IToW64 0
 
 instance Add Unit
   add = \x y. ()
@@ -807,9 +854,81 @@ Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/j
 -- TODO: newtype
 Key = Int64
 
-def hash (x:Key) (y:Int32) : Key = unsafeIO do
-  y64 = IToI64 y
-  %ffi threefry2x32 Int64 x y64
+def applyRound (x:Word32) (y:Word32) (rot:Int) : Word64 =
+  x = x + y
+  y = (y << rot) .|. (y >> (32 - rot))
+  y = x ^ y
+
+  out = (W32ToW64 x)
+  out = (out << 32) .|. (W32ToW64 y)
+  out
+
+def threeFry2x32C (k:Key) (count:Int64) : Key = unsafeIO do
+  %ffi threefry2x32 Int64 k count
+def threeFry2x32Dex (k:Word64) (count:Word64) : Word64 = 
+  rotations1 = [13, 15, 26, 6]
+  rotations2 = [17, 29, 16, 24]
+  k0 = W64ToW32 (k >> 32)
+  k1 = W64ToW32 k
+  k2 = k0 ^ k1
+  k2 = k2 ^ (IToW32 466688986) -- 0x1BD11BDA
+  x = W64ToW32 (count >> 32)
+  y = W64ToW32 count
+  
+  x = x + k0
+  y = y + k1
+
+  (x, y) = yieldState (x, y) \ref. for i.
+    (x, y) = get ref
+    count = applyRound x y rotations1.i
+    x = W64ToW32 (count >> 32)
+    y = W64ToW32 count
+    ref := (x, y)
+  x = x + k1
+  y = y + k2 + (IToW32 1)
+
+  (x, y) = yieldState (x, y) \ref. for i.
+    (x, y) = get ref
+    count = applyRound x y rotations2.i
+    x = W64ToW32 (count >> 32)
+    y = W64ToW32 count
+    ref := (x, y)
+  x = x + k2
+  y = y + k0 + (IToW32 2)
+
+  (x, y) = yieldState (x, y) \ref. for i.
+    (x, y) = get ref
+    count = applyRound x y rotations1.i
+    x = W64ToW32 (count >> 32)
+    y = W64ToW32 count
+    ref := (x, y)
+  x = x + k0
+  y = y + k1 + (IToW32 3)
+
+  (x, y) = yieldState (x, y) \ref. for i.
+    (x, y) = get ref
+    count = applyRound x y rotations2.i
+    x = W64ToW32 (count >> 32)
+    y = W64ToW32 count
+    ref := (x, y)
+  x = x + k1
+  y = y + k2 + (IToW32 4)
+  
+  (x, y) = yieldState (x, y) \ref. for i.
+    (x, y) = get ref
+    count = applyRound x y rotations2.i
+    x = W64ToW32 (count >> 32)
+    y = W64ToW32 count
+    ref := (x, y)
+  x = x + k2
+  y = y + k0 + (IToW32 5)
+
+  W32ToW64 $ (x << 32) .|. y
+
+def hash (x:Key) (y:Int32) : Key =
+  y64 = IToW64 y
+  xw64 = I64ToW64 x
+  W64ToI64 $ threeFry2x32Dex xw64 y64
 def newKey (x:Int) : Key = hash (IToI64 0) x
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
@@ -1761,13 +1880,6 @@ instance Floating Complex
   pow    = complex_pow
   lgamma = complex_lgamma
 
-'## Bitwise operations
-
--- TODO: type class like Haskell's `Bits`
-def (<<) (x:Byte) (y:Int) : Byte = %shl x (IToW8 y)
-def (>>) (x:Byte) (y:Int) : Byte = %shr x (IToW8 y)
-def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
-def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
 
 '## Miscellaneous utilities
 TODO: all of these should be in some other section

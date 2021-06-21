@@ -194,6 +194,8 @@ showExportSBT sbt = case sbt of
   Int64Type   -> "i64"
   Int32Type   -> "i32"
   Word8Type   -> "u8"
+  Word32Type  -> "u32"
+  Word64Type  -> "u64"
   Float64Type -> "f64"
   Float32Type -> "f32"
 
