@@ -1,4 +1,5 @@
 '## Monoidal Merge Sort
+Warning: Very slow for now!!
 Because merging sorted lists is associative, we can expose the
 parallelism of merge sort to the Dex compiler by making a monoid
 and using reduce or yieldAccum.
@@ -7,7 +8,7 @@ As noted on [StackOverflow](https://stackoverflow.com/questions/21877572/can-you
 if the compiler does the reduction one element at a time,
 it's doing bubble / insertion sort with quadratic time cost.
 However, if breaks the list in half recursively, it'll be doing parallel mergesort.
-
+Currently it'll do the quadratic time version.
 
 def concatTable (leftin: a=>v) (rightin: b=>v) : ({left:a | right:b }=>v) =
   -- Note: It'd be nicer to use (a | b)=>v but it's not currently supported.
@@ -15,7 +16,7 @@ def concatTable (leftin: a=>v) (rightin: b=>v) : ({left:a | right:b }=>v) =
     {| left = i  |} -> leftin.i
     {| right = i |} -> rightin.i
 
-def mergeTables [Ord a] (xs:m=>a) (ys:n=>a) : ({left:m | right:n }=>a) =
+def mergeSortedTables [Ord a] (xs:m=>a) (ys:n=>a) : ({left:m | right:n }=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
   --  2) Avoid initializing the return array.
@@ -40,15 +41,20 @@ def mergeTables [Ord a] (xs:m=>a) (ys:n=>a) : ({left:m | right:n }=>a) =
 def mergeSortedLists [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
   -- Need this wrapper because Dex can't automatically weaken
   -- (a | b)=>c to ((Fin d)=>c)
-  sorted = mergeTables xs ys
+  sorted = mergeSortedTables xs ys
   newsize = (Fin (nx + ny)) 
   AsList _ $ unsafeCastTable newsize sorted
 
 def sort [Ord a] (xs: n=>a) : n=>a =
+  -- Warning: Has quadratic runtime cost for now.
+
   xlists = for i:n. (AsList 1 [xs.i])
-  -- Merge sort monoid
+
+  -- Merge sort monoid:
   mempty = AsList 0 []
   mcombine = mergeSortedLists
+
+  -- reduce might someday recursively subdivide the problem.
   (AsList _ r) = reduce mempty mcombine xlists
   unsafeCastTable n r
 
