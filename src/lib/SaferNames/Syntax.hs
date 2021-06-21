@@ -280,7 +280,7 @@ fmapAtomNames scope f e = runIdentity $ traverseCoreE scope t e
   where t = NameTraversal (pure . f) emptyEnv
 
 applySubst :: SubstE e => Scope o -> SubstEnv i o -> e i -> e o
-applySubst scope env e = fmapAtomNames scope (envLookup env) e
+applySubst scope env e = fmapAtomNames scope (env !) e
 
 substEnvFragLookup :: SubstEnv (o:=>:i) o -> Name i -> AtomSubstVal o
 substEnvFragLookup substFrag name = case envFragLookup substFrag name of

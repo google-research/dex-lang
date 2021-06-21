@@ -16,8 +16,8 @@
 {-# LANGUAGE PolyKinds #-}
 
 module SaferNames.Name (
-  S (..), RawName, Name (..), Env  (..), (<>>), (<.>),
-  emptyEnv, envLookup, envAsScope, withFresh,
+  S (..), RawName, Name (..), Env  (..), (!), (<>>), (<.>),
+  emptyEnv, envAsScope, withFresh, ScopelessEnv, newScopelessEnv,
   PlainBinder (..), Scope, RenameEnv, FreshExt, NameTraversal (..),
   extendNameTraversal, injectNameTraversal, extendInjectNameTraversal,
   RenameTraversal, voidScopeEnv,
@@ -28,8 +28,8 @@ module SaferNames.Name (
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
   AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
-  EitherE (..), LiftE (..), idRenamer,
-  EqE, EqB, FreshBinder (..), lookupNameTraversal, extendScope, envFragLookup,
+  EitherE (..), LiftE (..), idRenamer, EqE, EqB, FreshBinder (..),
+  lookupNameTraversal, extendScope, envFragLookup,
   PrettyE, PrettyB, ShowE, ShowB) where
 
 import Prelude hiding (id, (.))
@@ -65,9 +65,6 @@ newtype Env (n::S) (a:: *) = UnsafeMakeEnv (LM.LazyMap RawName a)
                              deriving (Functor, Foldable, Traversable)
 type Scope n = Env n ()
 
-emptyEnv :: Env (n:=>:n) a
-emptyEnv = UnsafeMakeEnv mempty
-
 voidScopeEnv :: Env VoidScope a
 voidScopeEnv = UnsafeMakeEnv mempty
 
@@ -76,20 +73,19 @@ infixl 1 <.>
 (<.>) (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) = UnsafeMakeEnv (m2 <> m1)
 
 infixl 1 <>>
-(<>>) :: Env n a -> Env (n:=>:l) a -> Env l a
-(<>>) (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) = UnsafeMakeEnv (m2 <> m1)
 
-envLookup :: Env n a -> Name n -> a
-envLookup (UnsafeMakeEnv m) (UnsafeMakeName name) =
-  case LM.lookup name m of
-    Just x -> x
-    Nothing -> error "Env lookup should never fail"
+class EnvLike (env :: S -> * -> *) where
+  (<>>) :: env n a -> Env (n:=>:l) a -> env l a
+  (!) :: env n a -> Name n -> a
+  emptyEnv :: env (n:=>:n) a
 
-envFragLookup :: Env (i:=>:i') a -> Name i' -> Either (Name i) a
-envFragLookup env name =
-  case projectName (envAsScope env) name of
-    Left name' -> Left name'
-    Right name' -> Right $ envLookup env name'
+instance EnvLike Env where
+  (<>>) (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) = UnsafeMakeEnv (m2 <> m1)
+  (!) (UnsafeMakeEnv m) (UnsafeMakeName name) =
+    case LM.lookup name m of
+      Just x -> x
+      Nothing -> error "Env lookup should never fail"
+  emptyEnv = UnsafeMakeEnv mempty
 
 envAsScope :: Env n a -> Scope n
 envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.asUnitLazyMap m
@@ -120,13 +116,6 @@ data FreshExt (n::S) (l::S) = UnsafeMakeExt
 instance Category FreshExt where
   id = UnsafeMakeExt
   _ . _ = UnsafeMakeExt
-
-data NameTraversal (e::E) (m:: * -> *) (i::S) (o::S) where
-  NameTraversal :: (Name i -> m (e o))
-                -> RenameEnv (i:=>:i') o
-                -> NameTraversal e m i' o
-
-type RenameTraversal = NameTraversal Name
 
 -- traverses free names, possibly renaming bound ones as needed
 class HasNamesE (e::E) where
@@ -243,7 +232,20 @@ data AnnBinderListP (b::B) (ann::E) (n::S) (l::S) =
 
 -- === environment variants ===
 
+-- Unlike `Env`, we can create a `ScopelessEnv n a` from just a function `Name n
+-- -> a` without needing access to a `Scope n`. It mostly duck-types as Env
+-- through the `EnvLike` class. This should make it easy to swap out one for the
+-- other once we learn which one is actually more useful.
+data ScopelessEnv n a where
+  ScopelessEnv :: (Name n -> a) -> Env (n:=>:l) a -> ScopelessEnv l a
+
 type RenameEnv i o = Env i (Name o)
+
+data NameTraversal (e::E) (m:: * -> *) (i::S) (o::S) where
+  NameTraversal :: (Name i -> m (e o))
+                -> RenameEnv (i:=>:i') o
+                -> NameTraversal e m i' o
+type RenameTraversal = NameTraversal Name
 
 -- covariant in `o`, contravariant in `i`.
 newtype EnvE (e::E) (i::S) (o::S) = EnvE { fromEnvE :: Env i (e o) }
@@ -253,6 +255,17 @@ newtype RecEnv (e::E) (n::S) = RecEnv { fromRecEnv :: Env n (e n) }
 
 -- covariant in `n`, contravariant in `l`
 newtype RecEnvFrag (e::E) (n::S) (l::S) = RecEnvFrag { fromRecEnvFrag :: Env (n:=>:l) (e l)}
+
+instance EnvLike ScopelessEnv where
+  (<>>) (ScopelessEnv f env) env' = ScopelessEnv f (env <.> env')
+  (!) (ScopelessEnv f env) name =
+    case envFragLookup env name of
+      Left name' -> f name'
+      Right val -> val
+  emptyEnv = undefined
+
+newScopelessEnv :: (Name n -> a) -> ScopelessEnv n a
+newScopelessEnv f = ScopelessEnv f emptyEnv
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -341,7 +354,7 @@ lookupNameTraversal :: Monad m => NameTraversal e m i o -> Name i
 lookupNameTraversal (NameTraversal f env) name =
   case projectName (envAsScope env) name of
       Left  name' -> Left <$> f name'
-      Right name' -> return $ Right $ envLookup env name'
+      Right name' -> return $ Right $ env ! name'
 
 extendScope :: HasNamesB b => Scope n -> b n l -> Scope l
 extendScope s b = s <>> boundScope b
@@ -365,6 +378,12 @@ extendRecEnv ext (RecEnv env) (RecEnvFrag frag) = let
 
 injectEnvNamesL :: HasNamesE e => FreshExt n l -> Env i (e n) -> Env i (e l)
 injectEnvNamesL ext env = fromEnvE $ injectNamesL ext $ EnvE env
+
+envFragLookup :: Env (i:=>:i') a -> Name i' -> Either (Name i) a
+envFragLookup env name =
+  case projectName (envAsScope env) name of
+    Left name' -> Left name'
+    Right name' -> Right $ env ! name'
 
 -- === instances ===
 
