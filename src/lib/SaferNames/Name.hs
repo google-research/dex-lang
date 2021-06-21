@@ -28,10 +28,12 @@ module SaferNames.Name (
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
   AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
-  EitherE (..), LiftE (..), emptyFreshExt, composeFreshExt, idRenamer,
+  EitherE (..), LiftE (..), idRenamer,
   EqE, EqB, FreshBinder (..), lookupNameTraversal, extendScope, envFragLookup,
   PrettyE, PrettyB, ShowE, ShowB) where
 
+import Prelude hiding (id, (.))
+import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import qualified Data.Set        as S
@@ -115,11 +117,9 @@ type B = S -> S -> *  -- binder-y things, covariant in the first param and
 -- A `FreshExt n l` means that `l` extends `n` with only fresh names
 data FreshExt (n::S) (l::S) = UnsafeMakeExt
 
-emptyFreshExt :: FreshExt n n
-emptyFreshExt = UnsafeMakeExt
-
-composeFreshExt :: FreshExt n h -> FreshExt h l -> FreshExt n l
-composeFreshExt _ _ = UnsafeMakeExt
+instance Category FreshExt where
+  id = UnsafeMakeExt
+  _ . _ = UnsafeMakeExt
 
 data NameTraversal (e::E) (m:: * -> *) (i::S) (o::S) where
   NameTraversal :: (Name i -> m (e o))
@@ -381,7 +381,7 @@ instance (HasNamesB b, HasNamesE e) => HasNamesE (Abs b e) where
 
 instance HasNamesB PlainBinder where
   traverseNamesB s _ b = case b of
-    Ignore -> return $ FreshBinder emptyFreshExt Ignore emptyEnv
+    Ignore -> return $ FreshBinder id Ignore emptyEnv
     UnsafeMakeBinder _ ->
       withFresh s \ext b' name' ->
         return $ FreshBinder ext b' (b@>name')
@@ -405,7 +405,7 @@ instance (HasNamesB b1, HasNamesB b2) => HasNamesB (NestPair b1 b2) where
           let s' = extendScope s b1'
           traverseNamesB s' t' b2 >>= \case
             FreshBinder ext' b2' renamer' -> do
-              let ext'' = composeFreshExt ext ext'
+              let ext'' = ext >>> ext'
               let renamerInjected = fromEnvE $ injectNamesL ext' $ EnvE renamer
               let renamer'' = renamerInjected <.> renamer'
               return $ FreshBinder ext'' (NestPair b1' b2') renamer''
@@ -414,7 +414,7 @@ instance (HasNamesB b1, HasNamesB b2) => HasNamesB (NestPair b1 b2) where
 
 instance HasNamesB b => HasNamesB (Nest b) where
   traverseNamesB s t nest = case nest of
-    Empty -> return $ FreshBinder emptyFreshExt Empty emptyEnv
+    Empty -> return $ FreshBinder id Empty emptyEnv
     Nest b rest ->
       traverseNamesB s t (NestPair b rest) >>= \case
         FreshBinder ext (NestPair b' rest') renamer ->
@@ -486,3 +486,8 @@ instance (ShowB b, ShowE ann) => Show (AnnBinderListP b ann n l) where
 
 instance Pretty a => Pretty (LiftE a n) where
   pretty (LiftE x) = pretty x
+
+instance Category (Nest b) where
+  id = Empty
+  nest . Empty = nest
+  nest . Nest b rest = Nest b $ rest >>> nest

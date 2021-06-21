@@ -72,6 +72,8 @@ import Syntax
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth)
 
+import Prelude hiding (id, (.))
+import Control.Category
 import SaferNames.Name
 import Err
 import LabeledItems
@@ -587,7 +589,7 @@ instance HasNamesB DataConRefBinding where
 
 instance SubstB b => SubstB (Nest b) where
   traverseCoreB s t nest = case nest of
-    Empty -> do return $ FreshBinder emptyFreshExt Empty emptyEnv
+    Empty -> do return $ FreshBinder id Empty emptyEnv
     Nest b rest ->
       traverseCoreB s t (NestPair b rest) >>= \case
         FreshBinder ext (NestPair b' rest') renamer ->
