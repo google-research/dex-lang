@@ -1772,9 +1772,11 @@ def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
 '## Miscellaneous utilities
 TODO: all of these should be in some other section
 
+def reflect (i:n) : n =
+  unsafeFromOrdinal n ((size n) - 1 - ordinal i)
+
 def reverse (x:n=>a) : n=>a =
-  s = size n
-  for i. x.((s - 1 - ordinal i)@_)
+  for i. x.(reflect i)
 
 def padTo (m:Type) (x:a) (xs:n=>a) : (m=>a) =
   n' = size n
@@ -1785,6 +1787,57 @@ def padTo (m:Type) (x:a) (xs:n=>a) : (m=>a) =
       False -> x
 
 def idivCeil (x:Int) (y:Int) : Int = idiv x y + BToI (rem x y /= 0)
+def intdiv2 (x:Int) : Int = %shr x 1
+def intpow2 (power:Int) : Int = %shl 1 power
+def isOdd  (x:Int) : Bool = rem x 2 == 1
+def isEven (x:Int) : Bool = rem x 2 == 0
+
+def isPowerOf2 (x:Int) : Bool =
+  -- A fast trick based on bitwise AND.
+  -- This works on integer types larger than 8 bits.
+  -- Note: The bitwise and operator (.&.)
+  -- is only defined for Byte, which is why
+  -- we use %and here. TODO: Make (.&.) polymorphic.
+  if x == 0
+    then False
+    else 0 == %and x (x - 1)
+
+def intlog2 (x:Int) : Int =
+  yieldState (-1) \ansRef.
+    runState 1 \cmpRef.
+      while do
+        if x >= (get cmpRef)
+          then
+            ansRef := (get ansRef) + 1
+            cmpRef := %shl (get cmpRef) 1
+            True
+          else
+            False
+
+def nextpow2 (x:Int) : Int = case isPowerOf2 x of
+  True -> x
+  False -> intpow2 (1 + intlog2 x)
+
+def generalIntegerPower (times:a->a->a) (one:a) (base:a) (power:Int) : a =
+  -- Implements exponentiation by squaring.
+  -- Todo: Make power a Nat when it's available.
+  -- This could be nicer if there were a way to explicitly
+  -- specify which typelcass instance to use for Mul.
+  yieldState one \ans.
+    withState power \pow. withState base \z.
+      while do
+        if get pow > 0
+          then
+            if isOdd (get pow)
+              then ans := times (get ans) (get z)
+            z := times (get z) (get z)
+            pow := intdiv2 (get pow)
+            True
+          else
+            False
+
+def intpow [Mul a] (base:a) (power:Int) : a =
+  generalIntegerPower (*) one base power
 
 def fromJust (x:Maybe a) : a = case x of Just x' -> x'
 

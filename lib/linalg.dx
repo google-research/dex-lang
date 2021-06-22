@@ -157,3 +157,8 @@ def sign_and_log_determinant [Eq n] (a:n=>n=>Float) : (Float & Float) =
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
+def matrix_power [Eq n] (base:n=>n=>Float) (power:Int) : n=>n=>Float =
+  generalIntegerPower (**) eye base power
+
+def trace [Add a] (x:n=>n=>a) : a =
+  sum for i. x.i.i
