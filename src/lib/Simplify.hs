@@ -20,6 +20,7 @@ import qualified Data.Set as S
 
 import Autodiff
 import Env
+import LabeledItems
 import Syntax
 import Cat
 import Builder

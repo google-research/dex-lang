@@ -30,7 +30,9 @@ import GHC.Stack
 import {-# SOURCE #-} Interpreter (indicesNoIO)
 import Syntax
 import Env
-import PPrint
+import Err
+import LabeledItems
+import PPrint ()
 import Cat
 import Util (bindM2)
 import Data.Maybe (fromMaybe)

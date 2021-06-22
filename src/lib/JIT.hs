@@ -821,7 +821,7 @@ asLLVMName (GlobalName tag) = fromString $ "__" ++ pprint tag
 asLLVMName name = error $ "Expected a top function name: " ++ show name
 
 showName :: Name -> String
-showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counter
+showName (Name GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
 showName _ = error $ "All names in JIT should be from the GenName namespace"
 
 asIntWidth :: Operand -> L.Type -> Compile Operand

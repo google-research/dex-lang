@@ -24,6 +24,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Text.Megaparsec.Debug
 
 import Env
+import LabeledItems
 import Syntax
 import PPrint
 

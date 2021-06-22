@@ -22,6 +22,7 @@ import Data.String (fromString)
 import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
 
+import LabeledItems
 import Syntax
 import Interpreter (indicesNoIO)
 import Builder  hiding (sub)

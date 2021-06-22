@@ -30,6 +30,7 @@ import Foreign.Marshal.Array
 import GHC.Generics (Generic)
 
 import Interpreter
+import LabeledItems
 import Syntax
 import Type
 import PPrint
@@ -39,7 +40,7 @@ foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ()
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
 
 pprintVal :: Val -> IO String
-pprintVal val = asStr <$> prettyVal val
+pprintVal val = docAsStr <$> prettyVal val
 
 -- TODO: get the pointer rather than reading char by char
 getDexString :: Val -> IO String
