@@ -307,47 +307,7 @@ For non-power-of-2 sized arrays, it uses
 <a href="https://en.wikipedia.org/wiki/Chirp_Z-transform">Bluestein's Algorithm</a>,
 which calls the power-of-2 FFT as a subroutine.</p>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><h2>General helper functions</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isPowerOf2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
-  <span class="comment">-- A fast trick based on bitwise AND.
-</span>  <span class="comment">-- Note: The bitwise and operator (.&amp;.)
-</span>  <span class="comment">-- is only defined for Byte, which is why
-</span>  <span class="comment">-- I use %and here.
-</span>  <span class="comment">-- A test below verifies that this works on
-</span>  <span class="comment">-- more than 8 bit integers.
-</span>  <span class="comment">-- TODO: Make (.&amp;.) polymorphic.
-</span>  <span class="keyword">if</span> x <span class="symbol">==</span> 0
-    <span class="keyword">then</span> <span class="type-name">False</span>
-    <span class="keyword">else</span> 0 <span class="symbol">==</span> %and x (x <span class="symbol">-</span> 1)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow [<span class="type-name">Mul</span> a] (base<span class="command">:a</span>) (power<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
-  <span class="comment">-- Todo: Use Knuth&#39;s power trick,
-</span>  <span class="comment">-- which can give an asymptotic speedup.
-</span>  reduce one (<span class="symbol">*</span>) (<span class="keyword">for</span> a<span class="symbol">:</span>(<span class="type-name">Fin</span> power)<span class="symbol">.</span> base)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intlog2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span>
-  yieldState (<span class="symbol">-</span>1) <span class="symbol">\</span>ansRef<span class="symbol">.</span>
-    runState 1 <span class="symbol">\</span>cmpRef<span class="symbol">.</span>
-      while <span class="keyword">do</span>
-        <span class="keyword">if</span> x <span class="symbol">&gt;=</span> (get cmpRef)
-          <span class="keyword">then</span> 
-            ansRef <span class="symbol">:=</span> (get ansRef) <span class="symbol">+</span> 1
-            cmpRef <span class="symbol">:=</span> %shl (get cmpRef) 1
-            <span class="type-name">True</span>
-          <span class="keyword">else</span>
-            <span class="type-name">False</span>
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow2 (power<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %shl 1 power
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> nextpow2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">case</span> isPowerOf2 x <span class="keyword">of</span>
-  <span class="type-name">True</span> <span class="symbol">-&gt;</span> x
-  <span class="type-name">False</span> <span class="symbol">-&gt;</span> intpow2 (1 <span class="symbol">+</span> intlog2 x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> reflect (i<span class="command">:n</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
-  unsafeFromOrdinal n ((size n) <span class="symbol">-</span> 1 <span class="symbol">-</span> ordinal i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> listToTable ((<span class="type-name">AsList</span> n xs)<span class="symbol">:</span> <span class="type-name">List</span> a) <span class="symbol">:</span> (<span class="type-name">Fin</span> n)<span class="symbol">=&gt;</span>a <span class="symbol">=</span> xs
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h3>Helper functions</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> odd_sized_palindrome (mid<span class="command">:a</span>) (seq<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span>
   ({backward<span class="command">:n</span> <span class="symbol">|</span> mid<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">|</span> zforward<span class="command">:n</span>}<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>  <span class="comment">-- Alphabetical order matters here.
 </span>  <span class="comment">-- Turns sequence 12345 into 543212345.
@@ -443,8 +403,8 @@ which calls the power-of-2 FFT as a subroutine.</p>
         i_squared <span class="symbol">=</span> <span class="type-name">IToF</span> <span class="symbol">$</span> sq <span class="symbol">$</span> ordinal i
         exp <span class="symbol">$</span> (<span class="symbol">-</span>im) <span class="symbol">*</span> (<span class="type-name">MkComplex</span> (pi <span class="symbol">*</span> i_squared <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))) 0<span class="symbol">.</span>0)
 
-      tailList <span class="symbol">=</span> tail wks 1
-      back_and_forth <span class="symbol">=</span> odd_sized_palindrome (head wks) (listToTable tailList)
+      (<span class="type-name">AsList</span> _ tailTable) <span class="symbol">=</span> tail wks 1
+      back_and_forth <span class="symbol">=</span> odd_sized_palindrome (head wks) tailTable
       xq <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> wks<span class="symbol">.</span>i
       back_and_forth_conj <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> complex_conj back_and_forth<span class="symbol">.</span>i
       convolution <span class="symbol">=</span> convolve_complex xq back_and_forth_conj
@@ -482,24 +442,4 @@ which calls the power-of-2 FFT as a subroutine.</p>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> a <span class="symbol">~~</span> (fft <span class="symbol">$</span> ifft a)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> b <span class="symbol">~~</span> (ifft2 <span class="symbol">$</span> fft2 b)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> b <span class="symbol">~~</span> (fft2 <span class="symbol">$</span> ifft2 b)
-</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- Integer utility tests
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> map isPowerOf2 [0<span class="symbol">,</span> 1<span class="symbol">,</span> 2<span class="symbol">,</span> 3<span class="symbol">,</span> 256<span class="symbol">,</span> 1024<span class="symbol">,</span> 1024<span class="symbol">*</span>1024<span class="symbol">,</span> 1024<span class="symbol">*</span>1024 <span class="symbol">+</span> 1]
-</div><div class="result-block">[False, True, True, False, True, True, True, False]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> intpow 0 0
-</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> intpow 0 1
-</div><div class="result-block">0</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> intpow 1 0
-</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> intpow 1 1
-</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> intpow 2 1
-</div><div class="result-block">2</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> intpow 2 3
-</div><div class="result-block">8</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> map intlog2 [<span class="symbol">-</span>1<span class="symbol">,</span> 0<span class="symbol">,</span> 1<span class="symbol">,</span> 2<span class="symbol">,</span> 3<span class="symbol">,</span> 4<span class="symbol">,</span> 5<span class="symbol">,</span> 1023<span class="symbol">,</span> 1024<span class="symbol">,</span> 1025]
-</div><div class="result-block">[-1, -1, 0, 1, 1, 2, 2, 9, 10, 10]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> map nextpow2 [<span class="symbol">-</span>1<span class="symbol">,</span> 0<span class="symbol">,</span> 1<span class="symbol">,</span> 2<span class="symbol">,</span> 3<span class="symbol">,</span> 4<span class="symbol">,</span> 7<span class="symbol">,</span> 8<span class="symbol">,</span> 9<span class="symbol">,</span> 1023<span class="symbol">,</span> 1024<span class="symbol">,</span> 1025]
-</div><div class="result-block">[1, 1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048]</div></div></div></body></html>
+</div><div class="result-block">True</div></div></div></body></html>
