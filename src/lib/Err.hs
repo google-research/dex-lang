@@ -88,7 +88,7 @@ assertEq x y s = if x == y then return ()
               ++ pprint x ++ " != " ++ pprint y ++ "\n"
 
 -- === small pretty-printing utils ===
--- These are here instead of in PPrint.hs for import dependency reasons
+-- These are here instead of in PPrint.hs for import cycle reasons
 
 pprint :: Pretty a => a -> String
 pprint x = docAsStr $ pretty x

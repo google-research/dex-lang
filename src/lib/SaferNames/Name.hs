@@ -31,7 +31,7 @@ module SaferNames.Name (
   projectName, injectNameL, injectNameR, projectNamesL, injectNamesL, injectEnvNamesL,
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
-  AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
+  AlphaEq (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), idRenamer, EqE, EqB, FreshBinder (..),
   lookupNameTraversal, extendScope, envFragLookup, hoist,
   PrettyE, PrettyB, ShowE, ShowB,
@@ -53,8 +53,42 @@ import qualified SaferNames.LazyMap as LM
 import qualified Env as D
 import Err
 
+-- `S` is the kind of "scope parameters". It's only ever used as a phantom type.
+-- It represents a list of names, given by the value of the singleton type
+-- `Scope n` (`n::S`). Names are tagged with a scope parameter, and a name of
+-- type `Name n` has an underlying raw name that must occur in the corresponding
+-- `Scope n`. (A detail: `Scope n` actually only carries a *set* of names, not a
+-- list, because that's all we need at runtime. But it's important to remember
+-- that it conceptually represents a list. For example, a `Scope n` and a
+-- `Scope m` that happen to represent the same set of names can't necessarily be
+-- considered equal.) Types of kind `S` are mostly created existentially through
+-- rank-2 polymorphism, rather than using the constructors in the data
+-- definition. For example:
+--   magicallyCreateFreshS :: (forall (n::S). a) -> a
+--   magicallyCreateFreshS x = x   -- where does `n` come from? magic!
+
+-- We also have `:=>:` to represent differences between scopes with a common
+-- prefix. A `Scope (n:=>:l)` means that
+--   1. `Scope n` is a prefix of `Scope l`
+--   2. `Scope (n:=>:l)` is the list of names by which `l` extends `n`.
+
+--      x    y    z    x    w    x
+--     \-----------------/\--------/
+--              n           n:=>:l
+--     \---------------------------/
+--                    l
+
+-- Note that `l` is not necessarily a *fresh* extension: in the example above, x
+-- appears in `n:=>:l` even though it already appeared, twice, in `n`. We have a
+-- separate type `FreshExt n l` values of which prove that `l` is a fresh
+-- extension of `n`. Without a `FreshExt n l` we merely know that `n` is a
+-- prefix of `l.
+
+-- There are also special scopes, `VoidScope` and `UnitScope`, representing the
+-- empty list and a singleton list with a particular special name. These are
+-- useful in the same way that the ordinary types `Void` and `()` are useful.
+
 data S = (:=>:) S S
-       | UnsafeMakeS
        | UnitScope
        | VoidScope
 
@@ -65,7 +99,7 @@ data S = (:=>:) S S
 --    data RawName = RawName Tag Int deriving (Show, Eq, Ord)
 type RawName = D.Name
 
--- invariant: the raw name in `Name s` is contained in the list in the `ScopeVal s`
+-- invariant: the raw name in `Name s` is contained in the list in the `Scope s`
 newtype Name (n::S) = UnsafeMakeName RawName
                       deriving (Show, Eq, Ord)
 
@@ -96,7 +130,7 @@ instance EnvLike Env where
   emptyEnv = UnsafeMakeEnv mempty
 
 envAsScope :: Env n a -> Scope n
-envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.asUnitLazyMap m
+envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.constLazyMap (LM.keysSet m) ()
 
 projectName :: Scope (n:=>:l) -> Name l -> Either (Name n) (Name (n:=>:l))
 projectName (UnsafeMakeEnv m) (UnsafeMakeName name) =
@@ -116,7 +150,11 @@ data PlainBinder (n::S) (l::S) where
 
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
-                      -- contravariant in the second
+                      -- contravariant in the second. These are things like
+                      -- `Binder n l` or `Decl n l`, that bind the names in
+                      -- `Scope (n:=>:l)`, extending `n` to `l`. Their free name
+                      -- are in `Scope n`. We sometimes call `n` the "outside
+                      -- scope" and "l" the "inside scope".
 
 -- A `FreshExt n l` means that `l` extends `n` with only fresh names
 data FreshExt (n::S) (l::S) = UnsafeMakeExt
@@ -131,7 +169,8 @@ class HasNamesE (e::E) where
 
 -- A fresh binder, hiding its new output scope and exposing a renaming
 -- env that can give you those names. Used mainly for the result of
--- `traverseNamesB` and similar.
+-- `traverseNamesB` and similar. Given a `b i i' `, and a substitution
+-- `Name i -> Name o`, you can produce a `FreshBinder b o i' `.
 data FreshBinder (b::B) (n::S) (i::S) where
   FreshBinder :: FreshExt o o' -> b o o' -> RenameEnvFrag i o'
               -> FreshBinder b o i
@@ -206,6 +245,8 @@ freeNames e = foldMapNames S.singleton e
 injectNamesL :: HasNamesE e => FreshExt n l -> e n -> e l
 injectNamesL _ = unsafeCoerceE
 
+-- TODO: consider returning one of the `Name (n:=>:l)` names found in the
+-- `Nothing` case, or even the full set.
 projectNamesL :: HasNamesE e => Scope n -> Scope (n:=>:l) -> e l -> Maybe (e n)
 projectNamesL scope scopeFragment e = traverseNamesE scope t e
   where t = newNameTraversal \name -> case projectName scopeFragment name of
@@ -238,6 +279,7 @@ data AnnBinderP (b::B) (ann ::E) (n::S) (l::S) =
   deriving (Show)
 
 infixl 7 :>>
+-- The length of the annotation list should match the depth of the nest
 data AnnBinderListP (b::B) (ann::E) (n::S) (l::S) =
   (:>>) (Nest b n l) [ann n]
 
@@ -293,7 +335,7 @@ type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
-data UnitE (n::S) = UnitH deriving (Show, Eq)
+data UnitE (n::S) = UnitE deriving (Show, Eq)
 data VoidE (n::S)
 
 data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
@@ -325,15 +367,13 @@ infixr 7 @@>
 class HasNamesB b => BindsNameList (b::B) where
   (@@>) :: b n l -> [a] -> Env (n:=>:l) a
 
-type EmptyNest (b::B) = Abs (Nest b) UnitE :: E
-
 newNameTraversal :: (Name i -> m (e o)) -> NameTraversal e m i o
 newNameTraversal f = NameTraversal f emptyEnv
 
 idNameTraversal :: Monad m => NameTraversal Name m n n
 idNameTraversal = newNameTraversal pure
 
-extendNameTraversal :: NameTraversal e m i o -> RenameEnvFrag (i:=>:i') o
+extendNameTraversal :: NameTraversal e m i o -> Env (i:=>:i') (Name o)
                     -> NameTraversal e m i' o
 extendNameTraversal (NameTraversal f env) env' = NameTraversal f (env <.> env')
 
@@ -342,13 +382,13 @@ injectNameTraversal :: HasNamesE e => FreshExt o o' -> NameTraversal e m i o
 injectNameTraversal = unsafeCoerce
 
 extendInjectNameTraversal :: HasNamesE e
-                          => FreshExt o o' -> RenameEnvFrag (i:=>:i') o'
+                          => FreshExt o o' -> Env (i:=>:i') (Name o')
                           -> NameTraversal e m i  o
                           -> NameTraversal e m i' o'
 extendInjectNameTraversal ext renamer t =
   extendNameTraversal (injectNameTraversal ext t) renamer
 
-idRenamer :: HasNamesB b => b n l -> RenameEnvFrag (n:=>:l) l
+idRenamer :: HasNamesB b => b n l -> Env (n:=>:l) (Name l)
 idRenamer b = envMapWithKey (\name _ -> injectNameR name) $ boundScope b
 
 -- variant with the common extension built in

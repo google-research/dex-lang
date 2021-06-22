@@ -72,7 +72,7 @@ instance HasSafeVersionE D.Atom where
     D.Eff effs -> S.Eff $ toSafeE effs
     D.ACase scrut alts ty -> S.ACase (toSafeE scrut) (map toSafeE alts) (toSafeE ty)
     D.DataConRef dataDef params args ->
-      S.DataConRef (toSafeE dataDef) (map toSafeE params) (S.Abs (toSafeB args) S.UnitH)
+      S.DataConRef (toSafeE dataDef) (map toSafeE params) (S.Abs (toSafeB args) S.UnitE)
     D.BoxedRef b ptr size body ->
       S.BoxedRef (toSafeE ptr) (toSafeE size) (S.Abs (toSafeB b) (toSafeE body))
     D.ProjectElt idxs (v D.:> ty) -> S.ProjectElt idxs $ S.AnnVar (S.UnsafeMakeName v) (toSafeE ty)
@@ -96,7 +96,7 @@ instance HasSafeVersionE D.Atom where
     S.TC  tc  -> D.TC  $ fmap fromSafeE tc
     S.Eff effs -> D.Eff $ fromSafeE effs
     S.ACase scrut alts ty -> D.ACase (fromSafeE scrut) (map fromSafeE alts) (fromSafeE ty)
-    S.DataConRef dataDef params (S.Abs args S.UnitH) ->
+    S.DataConRef dataDef params (S.Abs args S.UnitE) ->
       D.DataConRef (fromSafeE dataDef) (map fromSafeE params) (fromSafeB args)
     S.BoxedRef ptr size (S.Abs b body) ->
       D.BoxedRef (fromSafeB b) (fromSafeE ptr) (fromSafeE size) (fromSafeE body)
@@ -136,8 +136,8 @@ sBinderListToDBinderList (vs S.:> ListE tys) =
 
 instance HasSafeVersionE D.DataConDef where
   type SafeVersionE D.DataConDef = S.DataConDef
-  toSafeE (D.DataConDef name bs) = S.DataConDef name $ S.Abs (toSafeB bs) S.UnitH
-  fromSafeE (S.DataConDef name (S.Abs bs S.UnitH)) = D.DataConDef name $ fromSafeB bs
+  toSafeE (D.DataConDef name bs) = S.DataConDef name $ S.Abs (toSafeB bs) S.UnitE
+  fromSafeE (S.DataConDef name (S.Abs bs S.UnitE)) = D.DataConDef name $ fromSafeB bs
 
 instance HasSafeVersionB D.DataConRefBinding where
   type SafeVersionB D.DataConRefBinding = S.DataConRefBinding
