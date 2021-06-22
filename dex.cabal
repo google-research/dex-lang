@@ -88,7 +88,8 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments, GADTs, TypeOperators, DataKinds
+                       BlockArguments, GADTs, TypeOperators, DataKinds, KindSignatures
+                       ConstraintKinds, FlexibleContexts
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include

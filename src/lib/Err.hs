@@ -6,9 +6,10 @@
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Err (Err (..), ErrType (..), Except, SrcPos, SrcCtx,
-            throw, throwIf, modifyErr,
+            throw, throwIf, modifyErr, MonadErr,
             addContext, addSrcContext, catchIOExcept, liftEitherIO,
             assertEq, ignoreExcept, pprint, docAsStr) where
 
@@ -43,27 +44,29 @@ type Except = Either Err
 type SrcPos = (Int, Int)
 type SrcCtx = Maybe SrcPos
 
-throw :: MonadError Err m => ErrType -> String -> m a
+type MonadErr = MonadError Err
+
+throw :: MonadErr m => ErrType -> String -> m a
 throw e s = throwError $ Err e Nothing s
 
-throwIf :: MonadError Err m => Bool -> ErrType -> String -> m ()
+throwIf :: MonadErr m => Bool -> ErrType -> String -> m ()
 throwIf True  e s = throw e s
 throwIf False _ _ = return ()
 
 modifyErr :: MonadError e m => m a -> (e -> e) -> m a
 modifyErr m f = catchError m \e -> throwError (f e)
 
-addContext :: MonadError Err m => String -> m a -> m a
+addContext :: MonadErr m => String -> m a -> m a
 addContext s m = modifyErr m \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
 
-addSrcContext :: MonadError Err m => SrcCtx -> m a -> m a
+addSrcContext :: MonadErr m => SrcCtx -> m a -> m a
 addSrcContext ctx m = modifyErr m updateErr
   where
     updateErr :: Err -> Err
     updateErr (Err e ctx' s) = case ctx' of Nothing -> Err e ctx  s
                                             Just _  -> Err e ctx' s
 
-catchIOExcept :: (MonadIO m , MonadError Err m) => IO a -> m a
+catchIOExcept :: (MonadIO m , MonadErr m) => IO a -> m a
 catchIOExcept m = (liftIO >=> liftEither) $ (liftM Right m) `catches`
   [ Handler \(e::Err)           -> return $ Left e
   , Handler \(e::IOError)       -> return $ Left $ Err DataIOErr   Nothing $ show e
@@ -78,7 +81,7 @@ ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
 
-assertEq :: (MonadError Err m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
+assertEq :: (MonadErr m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = "assertion failure (" ++ s ++ "):\n"

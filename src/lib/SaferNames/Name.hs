@@ -9,18 +9,22 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module SaferNames.Name (
   S (..), RawName, Name (..), Env  (..), (!), (<>>), (<.>),
   emptyEnv, envAsScope, withFresh, ScopelessEnv, newScopelessEnv,
-  PlainBinder (..), Scope, RenameEnv, FreshExt, NameTraversal (..),
+  PlainBinder (..), Scope, RenameEnv, RenameEnvFrag, FreshExt, NameTraversal (..),
   extendNameTraversal, injectNameTraversal, extendInjectNameTraversal,
-  RenameTraversal, voidScopeEnv,
+  RenameTraversal, voidScopeEnv, idRenameEnv,
   E, B, HasNamesE (..), HasNamesB (..), unsafeCoerceE, unsafeCoerceB,
   NameSet, fmapNames, foldMapNames, freeNames, (@>), (@@>),
   freshenAbs, freshenBinder, extendRecEnv,
@@ -29,11 +33,14 @@ module SaferNames.Name (
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
   AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), idRenamer, EqE, EqB, FreshBinder (..),
-  lookupNameTraversal, extendScope, envFragLookup,
-  PrettyE, PrettyB, ShowE, ShowB) where
+  lookupNameTraversal, extendScope, envFragLookup, hoist,
+  PrettyE, PrettyB, ShowE, ShowB,
+  MP, MB, MonadMP, BindingsReader (..), SubstReader (..),
+  extendSubst, MonadErrMB, MonadErrMP, BindingsReaderMP) where
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Control.Monad.Reader
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import qualified Data.Set        as S
@@ -44,6 +51,7 @@ import GHC.Exts (Constraint)
 import qualified SaferNames.LazyMap as LM
 
 import qualified Env as D
+import Err
 
 data S = (:=>:) S S
        | UnsafeMakeS
@@ -125,7 +133,7 @@ class HasNamesE (e::E) where
 -- env that can give you those names. Used mainly for the result of
 -- `traverseNamesB` and similar.
 data FreshBinder (b::B) (n::S) (i::S) where
-  FreshBinder :: FreshExt o o' -> b o o' -> RenameEnv i o'
+  FreshBinder :: FreshExt o o' -> b o o' -> RenameEnvFrag i o'
               -> FreshBinder b o i
 
 class HasNamesB (b::B) where
@@ -204,6 +212,9 @@ projectNamesL scope scopeFragment e = traverseNamesE scope t e
                                         Left name' -> Just name'
                                         Right _    -> Nothing
 
+hoist :: MonadErr m => HasNamesE e => Scope (n:=>:l) -> e l -> m (e n)
+hoist = undefined
+
 -- === common scoping patterns ===
 
 data Abs (binder::B) (body::E) (n::S) where
@@ -239,11 +250,15 @@ data AnnBinderListP (b::B) (ann::E) (n::S) (l::S) =
 data ScopelessEnv n a where
   ScopelessEnv :: (Name n -> a) -> Env (n:=>:l) a -> ScopelessEnv l a
 
-type RenameEnv i o = Env i (Name o)
+type RenameEnv     i o = ScopelessEnv i (Name o)
+type RenameEnvFrag i o =          Env i (Name o)
+
+idRenameEnv :: RenameEnv n n
+idRenameEnv = newScopelessEnv id
 
 data NameTraversal (e::E) (m:: * -> *) (i::S) (o::S) where
   NameTraversal :: (Name i -> m (e o))
-                -> RenameEnv (i:=>:i') o
+                -> RenameEnvFrag (i:=>:i') o
                 -> NameTraversal e m i' o
 type RenameTraversal = NameTraversal Name
 
@@ -318,7 +333,7 @@ newNameTraversal f = NameTraversal f emptyEnv
 idNameTraversal :: Monad m => NameTraversal Name m n n
 idNameTraversal = newNameTraversal pure
 
-extendNameTraversal :: NameTraversal e m i o -> RenameEnv (i:=>:i') o
+extendNameTraversal :: NameTraversal e m i o -> RenameEnvFrag (i:=>:i') o
                     -> NameTraversal e m i' o
 extendNameTraversal (NameTraversal f env) env' = NameTraversal f (env <.> env')
 
@@ -327,13 +342,13 @@ injectNameTraversal :: HasNamesE e => FreshExt o o' -> NameTraversal e m i o
 injectNameTraversal = unsafeCoerce
 
 extendInjectNameTraversal :: HasNamesE e
-                          => FreshExt o o' -> RenameEnv (i:=>:i') o'
+                          => FreshExt o o' -> RenameEnvFrag (i:=>:i') o'
                           -> NameTraversal e m i  o
                           -> NameTraversal e m i' o'
 extendInjectNameTraversal ext renamer t =
   extendNameTraversal (injectNameTraversal ext t) renamer
 
-idRenamer :: HasNamesB b => b n l -> RenameEnv (n:=>:l) l
+idRenamer :: HasNamesB b => b n l -> RenameEnvFrag (n:=>:l) l
 idRenamer b = envMapWithKey (\name _ -> injectNameR name) $ boundScope b
 
 -- variant with the common extension built in
@@ -384,6 +399,64 @@ envFragLookup env name =
   case projectName (envAsScope env) name of
     Left name' -> Left name'
     Right name' -> Right $ env ! name'
+
+-- === patterns for monadic passes ===
+
+-- "MP" for "monadic pass", parameterized by the input and output name spaces
+type MP = S -> S -> * -> *
+
+-- "MP" for "monadic builder", parameterized by the output name space
+type MB = S -> * -> *
+
+type MonadMB (m :: MB) = forall (n::S)        . Monad (m n  )
+type MonadMP (m :: MP) = forall (n::S) (l::S) . Monad (m n l)
+
+
+class MonadMB m => BindingsReader (e::E) (m::MB) | m -> e where
+  lookupName :: Name n -> m n (e n)
+  withFreshMP :: e n
+              -> (forall l. FreshExt n l -> PlainBinder n l -> Name l -> m l a)
+              -> m n a
+
+-- similar to MonadReader (Env i (e o)) m
+class BindingsReaderMP eb m => SubstReader (eb::E) (es::E) (m::MP) | m -> eb, m -> es where
+  askSubst :: m i o (ScopelessEnv i (e o))
+  localSubst :: ScopelessEnv i' (e o) -> m i' o a -> m i o a
+
+extendSubst :: SubstReader eb es m => Env (i:=>:i') (es o) -> m i' o a -> m i o a
+extendSubst envFrag cont = do
+  env <- askSubst
+  localSubst (env <>> envFrag) cont
+
+type BindingsReaderMP (e::E) (m::MP) = forall (n::S). BindingsReader e (m n)
+
+type MonadErrMB (m :: MB) = forall (n::S)        . MonadErr (m n  )
+type MonadErrMP (m :: MP) = forall (n::S) (l::S) . MonadErr (m n l)
+
+newtype BindingsReaderT (m:: * -> *) (e::E) (n::S) (a:: *) =
+  BindingsReaderT { runBindingsReaderT :: ReaderT (RecEnv e n) m a}
+  deriving (Functor, Applicative, Monad)
+
+instance Monad m => BindingsReader e (BindingsReaderT m e) where
+  -- lookupName name = BindingsReaderT do
+  --   RecEnv bindings <- ask
+  --   return $ bindings ! name
+  -- withFreshMP _ _ = undefined
+
+-- we could have `m::MP` but it's more work and we don't need it
+newtype SubstReaderT (m:: * -> *) (eb::E) (es::E) (i::S) (o::S) (a:: *) =
+  SubstReaderT { runSubstReaderT :: ReaderT (ScopelessEnv i (es o))
+                                      (BindingsReaderT m eb o) a }
+  deriving (Functor, Applicative, Monad)
+
+instance Monad m => BindingsReader eb (SubstReaderT m eb es i) where
+
+instance Monad m => SubstReader eb es (SubstReaderT m eb es) where
+  -- lookupName name = SubstReaderT $ lift $ lookupName name
+  -- withFreshMP _ _ = undefined
+  -- askSubst = SubstReaderT ask
+  -- localSubst env (SubstReaderT m) =
+  --   SubstReaderT $ ReaderT $ const $ runReaderT m env
 
 -- === instances ===
 

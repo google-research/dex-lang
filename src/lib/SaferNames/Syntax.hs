@@ -24,7 +24,7 @@ module SaferNames.Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceNameMap (..),
-    SubstEnv, ForAnn (..),
+    SubstEnv, ForAnn (..), MonadAtomSubst, substM,
     Val, Op, Con, Hof, TC, Module (..), EvaluatedModule, WithBindings,
     emptyEvaluatedModule, DataConRefBinding (..),
     AltP, Alt, BinderInfo (..), TypedBinderInfo (..), Bindings, BindingsFrag,
@@ -38,7 +38,7 @@ module SaferNames.Syntax (
     binderType, isTabTy, BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     WithArrow (..), withoutArrow, justArrow,
-    IRVariant (..), SubstVal (..), applySubst,
+    IRVariant (..), SubstVal (..), applySubst, withAtomBinder,
     applyAbs, applyNaryAbs, scopelessApplyAbs, scopelessApplyNaryAbs,
     applyDataDefParams, absArgType, substEnvFragLookup, arrowEff,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
@@ -229,6 +229,15 @@ data TypedBinderInfo n = TypedBinderInfo (Maybe (Type n)) (BinderInfo n)
 
 type Bindings     = RecEnv     TypedBinderInfo
 type BindingsFrag = RecEnvFrag TypedBinderInfo
+
+type MonadAtomSubst m = SubstReader TypedBinderInfo (SubstVal Atom) m
+
+withAtomBinder :: MonadAtomSubst m => b i i'
+               -> (forall o'. b o o' -> m i' o' a) -> m i o a
+withAtomBinder _ _ = undefined
+
+substM :: SubstE e => MonadAtomSubst m => e i -> m i o (e o)
+substM = undefined
 
 -- === traversals with atom substitutions ===
 
