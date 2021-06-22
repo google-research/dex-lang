@@ -18,7 +18,7 @@
 module SaferNames.Name (
   S (..), RawName, Name (..), Env  (..), (<>>), (<.>),
   emptyEnv, envLookup, envAsScope, withFresh,
-  PlainBinder (..), Scope, RenameEnv, FreshExt, NameTraversal (..),
+  PlainBinder (..), Scope, FreshExt, NameTraversal (..),
   extendNameTraversal, injectNameTraversal, extendInjectNameTraversal,
   RenameTraversal, voidScopeEnv,
   E, B, HasNamesE (..), HasNamesB (..), unsafeCoerceE, unsafeCoerceB,
@@ -27,7 +27,7 @@ module SaferNames.Name (
   projectName, injectNameL, injectNameR, projectNamesL, injectNamesL, injectEnvNamesL,
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
-  AlphaEq (..), UnitE (..), VoidE, EmptyNest, PairE (..), MaybeE (..), ListE (..),
+  AlphaEq (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), emptyFreshExt, composeFreshExt, idRenamer,
   EqE, EqB, FreshBinder (..), lookupNameTraversal, extendScope) where
 
@@ -54,7 +54,7 @@ data S = (:=>:) S S
 --    data RawName = RawName Tag Int deriving (Show, Eq, Ord)
 type RawName = D.Name
 
--- invariant: the raw name in `Name s` is contained in the list in the `ScopeVal s`
+-- invariant: the raw name in `Name s` is contained in the list in the `Scope s`
 newtype Name (n::S) = UnsafeMakeName RawName
                       deriving (Show, Eq, Ord)
 
@@ -83,7 +83,7 @@ envLookup (UnsafeMakeEnv m) (UnsafeMakeName name) =
     Nothing -> error "Env lookup should never fail"
 
 envAsScope :: Env n a -> Scope n
-envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.asUnitLazyMap m
+envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.constLazyMap (LM.keysSet m) ()
 
 projectName :: Scope (n:=>:l) -> Name l -> Either (Name n) (Name (n:=>:l))
 projectName (UnsafeMakeEnv m) (UnsafeMakeName name) =
@@ -116,7 +116,7 @@ composeFreshExt _ _ = UnsafeMakeExt
 
 data NameTraversal (e::E) (m:: * -> *) (i::S) (o::S) where
   NameTraversal :: (Name i -> m (e o))
-                -> RenameEnv (i:=>:i') o
+                -> Env (i:=>:i') (Name o)
                 -> NameTraversal e m i' o
 
 type RenameTraversal = NameTraversal Name
@@ -127,10 +127,11 @@ class HasNamesE (e::E) where
 
 -- A fresh binder, hiding its new output scope and exposing a renaming
 -- env that can give you those names. Used mainly for the result of
--- `traverseNamesB` and similar.
-data FreshBinder (b::B) (n::S) (i::S) where
-  FreshBinder :: FreshExt o o' -> b o o' -> RenameEnv i o'
-              -> FreshBinder b o i
+-- `traverseNamesB` and similar. Given a `b i i' `, and a substitution
+-- `Name i -> Name o`, you can produce a `FreshBinder b o i' `.
+data FreshBinder (b::B) (o::S) (i'::S) where
+  FreshBinder :: FreshExt o o' -> b o o' -> Env i' (Name o')
+              -> FreshBinder b o i'
 
 class HasNamesB (b::B) where
   traverseNamesB :: Monad m => Scope o -> RenameTraversal m i o
@@ -202,6 +203,8 @@ freeNames e = foldMapNames S.singleton e
 injectNamesL :: HasNamesE e => FreshExt n l -> e n -> e l
 injectNamesL _ = unsafeCoerceE
 
+-- TODO: consider returning one of the `Name (n:=>:l)` names found in the
+-- `Nothing` case, or even the full set.
 projectNamesL :: HasNamesE e => Scope n -> Scope (n:=>:l) -> e l -> Maybe (e n)
 projectNamesL scope scopeFragment e = traverseNamesE scope t e
   where t = newNameTraversal \name -> case projectName scopeFragment name of
@@ -231,12 +234,11 @@ data AnnBinderP (b::B) (ann ::E) (n::S) (l::S) =
   deriving (Show)
 
 infixl 7 :>>
+-- The length of the annotation list should match the depth of the nest
 data AnnBinderListP (b::B) (ann::E) (n::S) (l::S) =
   (:>>) (Nest b n l) [ann n]
 
 -- === environment variants ===
-
-type RenameEnv i o = Env i (Name o)
 
 -- covariant in `o`, contravariant in `i`.
 newtype EnvE (e::E) (i::S) (o::S) = EnvE { fromEnvE :: Env i (e o) }
@@ -258,7 +260,7 @@ type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
-data UnitE (n::S) = UnitH deriving (Show, Eq)
+data UnitE (n::S) = UnitE deriving (Show, Eq)
 data VoidE (n::S)
 
 data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
@@ -290,15 +292,13 @@ infixr 7 @@>
 class HasNamesB b => BindsNameList (b::B) where
   (@@>) :: b n l -> [a] -> Env (n:=>:l) a
 
-type EmptyNest (b::B) = Abs (Nest b) UnitE :: E
-
 newNameTraversal :: (Name i -> m (e o)) -> NameTraversal e m i o
 newNameTraversal f = NameTraversal f emptyEnv
 
 idNameTraversal :: Monad m => NameTraversal Name m n n
 idNameTraversal = newNameTraversal pure
 
-extendNameTraversal :: NameTraversal e m i o -> RenameEnv (i:=>:i') o
+extendNameTraversal :: NameTraversal e m i o -> Env (i:=>:i') (Name o)
                     -> NameTraversal e m i' o
 extendNameTraversal (NameTraversal f env) env' = NameTraversal f (env <.> env')
 
@@ -307,13 +307,13 @@ injectNameTraversal :: HasNamesE e => FreshExt o o' -> NameTraversal e m i o
 injectNameTraversal = unsafeCoerce
 
 extendInjectNameTraversal :: HasNamesE e
-                          => FreshExt o o' -> RenameEnv (i:=>:i') o'
+                          => FreshExt o o' -> Env (i:=>:i') (Name o')
                           -> NameTraversal e m i  o
                           -> NameTraversal e m i' o'
 extendInjectNameTraversal ext renamer t =
   extendNameTraversal (injectNameTraversal ext t) renamer
 
-idRenamer :: HasNamesB b => b n l -> RenameEnv (n:=>:l) l
+idRenamer :: HasNamesB b => b n l -> Env (n:=>:l) (Name l)
 idRenamer b = envMapWithKey (\name _ -> injectNameR name) $ boundScope b
 
 -- variant with the common extension built in

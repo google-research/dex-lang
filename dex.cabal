@@ -68,7 +68,7 @@ library
                        -- Portable system utilities
                        filepath, directory, ansi-terminal, process, temporary,
                        -- Serialization
-                       store, aeson, haskeline
+                       store, aeson
   if flag(live)
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE

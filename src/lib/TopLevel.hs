@@ -207,7 +207,9 @@ evalUModule :: Bindings -> UModule -> TopPassM Bindings
 evalUModule env untyped = do
   logPass Parse untyped
   typed <- liftEitherIO $ inferModule env untyped
-  let typed' = roundtripPass typed
+  -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
+  -- safer names system while we're staging it in.
+  let typed' = roundtripSaferNamesPass typed
   checkPass TypePass typed'
   synthed <- liftEitherIO $ synthModule env typed'
   -- TODO: check that the type of module exports doesn't change from here on
@@ -231,8 +233,8 @@ evalUModule env untyped = do
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
 
-roundtripPass :: Module -> Module
-roundtripPass (Module ir decls bindings) = Module ir decls' bindings
+roundtripSaferNamesPass :: Module -> Module
+roundtripSaferNamesPass (Module ir decls bindings) = Module ir decls' bindings
   where decls' = fromSafeB $ toSafeB decls
 
 evalBackend :: Bindings -> Block -> TopPassM Atom

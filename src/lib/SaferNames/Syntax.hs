@@ -36,8 +36,7 @@ module SaferNames.Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     binderType, isTabTy, BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
-    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    WithArrow (..), withoutArrow, justArrow,
+    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth, WithArrow (..),
     pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
@@ -90,7 +89,7 @@ data Atom n =
  | Eff (EffectRow n)
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
- | DataConRef (NamedDataDef n) [Atom n] (EmptyNest DataConRefBinding n)
+ | DataConRef (NamedDataDef n) [Atom n] (Abs (Nest DataConRefBinding) UnitE n)
  | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
@@ -126,9 +125,11 @@ type Binder     = AnnBinderP PlainBinder            Type  :: B
 type BinderList = AnnBinderP PlainBinderList (ListE Type) :: B
 
 data DataDef n where
+  -- The `RawName` is just for pretty-printing. The actual alpha-renamable binder name is in
+  -- UExpr and Bindings
   DataDef :: RawName -> BinderList n l -> ListE DataConDef l -> DataDef n
 
-data DataConDef n = DataConDef RawName (EmptyNest Binder n)
+data DataConDef n = DataConDef RawName (Abs (Nest Binder) UnitE n)
                     deriving Show
 
 data NamedDataDef n = NamedDataDef (Name n) (DataDef n)
@@ -139,14 +140,8 @@ data Block n where Block :: Nest Decl n l -> Expr l -> Block n
 type LamExpr = Abs Binder (WithArrow Block)  :: E
 type PiType  = Abs Binder (WithArrow Type)   :: E
 
-data WithArrow (e::E) (n::S) = WithArrow (Arrow n) (e n)
-                     deriving Show
-
-withoutArrow :: WithArrow e n -> e n
-withoutArrow (WithArrow _ x) = x
-
-justArrow :: WithArrow e n -> Arrow n
-justArrow (WithArrow arr _) = arr
+data WithArrow (e::E) (n::S) = WithArrow { justArrow :: Arrow n , withoutArrow :: e n }
+                               deriving Show
 
 type Arrow n = ArrowP (EffectRow n)
 
@@ -173,7 +168,7 @@ data Module n where
          -> SourceNameMap l'
          -> Module n
 
-type WithBindings = Abs BindingsFrag
+type WithBindings = Abs BindingsFrag :: E -> E
 type EvaluatedModule = WithBindings SourceNameMap  :: E
 
 emptyEvaluatedModule :: EvaluatedModule n
@@ -219,6 +214,8 @@ data BinderInfo n =
  -- version of BinderInfo
  | InferenceName
 
+-- The `Nothing` case is for things without types, like `DataDefName`. Everything
+-- that can have a type must have a type.
 data TypedBinderInfo n = TypedBinderInfo (Maybe (Type n)) (BinderInfo n)
 
 type Bindings     = RecEnv     TypedBinderInfo
