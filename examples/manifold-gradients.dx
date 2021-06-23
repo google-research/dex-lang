@@ -107,7 +107,135 @@ snd original x ~~ snd new x
 > True
 
 
-' ### Quaternions Example
+' ### Simple example: Circle
+For a simple demonstration of this framework, consider the manifold $S^1$, i.e.
+the circle. This can be defined as the set of points in $\mathbb{R}^2$ at unit
+distance from the origin:
+$S^1 = \lbrace \(x, y\) \in \mathbb{R}^2 : x^2 + y^2 = 1 \rbrace $.
+The metric can be induced from $\mathbb{R}^2$.
+
+' The standard 1-dimensional parameterization of the circle uses an angle
+$\theta$ to parameterize it, using the map
+$\theta \mapsto (\cos \theta, \sin \theta),\ \theta \in [0, 2\pi)$.
+This has nice properties, in particular it "preserves the metric", in the sense
+that increasing $\theta$ by $\Delta \theta$ moves a distance of $\Delta \theta$
+along the circle. However, the problem is that the inverse of this map has a
+discontinuity, jumping from $2 \pi$ to $0$ once a full rotation is completed, so
+we can't use it to globally identify $S^1$ with $[0, 2\pi) \subset \mathbb{R}$.
+
+' However, we can use the tangent space formalism to locally identify a subset
+of the circle with a subset of $\mathbb{R}$, which allows us to view derivatives
+of maps on $S^1$ as acting on $\mathbb{R}$.
+
+' First we define a data structure to represent a point on $S^1$.
+
+data S1 = S {x: Float & y: Float}
+
+' To make things simpler numerically, we will say that `x` and `y` can take any
+values, as long as they are not both zero, and we will identify `S{x, y}` with
+the point $(x, y)$ on $S^1$ given by normalizing the associated element of
+$\mathbb{R}^2$, that is $x$ = `x / sqrt(x*x + y*y)`, $y$ = `y / sqrt(x*x + y*y)`.
+
+-- Normalizes an S1 instance. Note this doesn't modify the point on the circle
+-- which it represents.
+def s1Normalize (S{x, y}: S1) : S1 = 
+  magnitude = sqrt $ x * x + y * y
+  (S{x = x / magnitude, y = y / magnitude})
+
+
+' Now we need to define the tangent space operations. First consider the
+exponential map. We will take the tangent space at a point $p = (x_0, y_0)$ to
+be the $\theta$ space as described above, but offset such that $\theta = 0$ is
+mapped to $p$, to satisfy the condition that `tangentExponentialMap p zero == p`.
+This means that for some $\theta_0$, the exponential map is
+$\theta \mapsto (\cos (\theta_0 + \theta), \sin (\theta_0 + \theta))$, and
+$x = \cos \theta_0, y = \sin \theta_0$.
+
+' As discussed previously, though, calculating $\theta_0$ from $(x_0, y_0)$
+could lead to discontinuities, if we're not careful. But in this case, we can
+use trigonometric identities to calculate the exponential map without requiring
+the value of $\theta_0$ at all.
+
+' $(\cos (\theta_0 + \theta), \sin (\theta_0 + \theta))$
+
+' $ = (\cos \theta_0 \cos \theta - \sin \theta_0 \sin \theta,
+       \sin \theta_0 \cos \theta + \cos \theta_0 \sin \theta)$
+
+' $ = (x \cos \theta - y \sin \theta, y \cos \theta + x \sin \theta)$
+
+
+' For the inverse of this, we could just write out the equations and try and
+invert them, or we can consider that for two points $(x, y)$ and $(s, t)$ on the
+unit circle, the angle $\theta$ between them (equal to the distance between then
+*on the circle*) is given by the cosine rule and the Euclidean distance $d$
+between them: $\cos \theta = (1 - d^2) / 2$.
+
+' Now we can define the tangent space structure on `S1`. There is no arccos
+function in Dex so we copy the numerical approximation from `quaterions.dx`.
+
+-- source: https://developer.nvidia.com/cg-toolkit
+def acos (x:Float) : Float = 
+  negate = select (x < 0.0) 1.0 0.0
+  x = abs x
+  ret1 = (-0.0187293 * x) + 0.0742610
+  ret2 = (ret1 * x) - 0.2121144
+  ret3 = (ret2 * x) + pi / 2.
+  ret4 = (ret3 * (sqrt (1.0-x)))
+  ret5 = ret4 - (2.0 * negate * ret4)
+  negate * pi + ret5
+
+instance TangentSpace S1 Float
+  tangentExponentialMap = \ (S{x=x, y=y}) theta.
+    (S{x=xn, y=yn}) = s1Normalize (S{x=x, y=y})
+    S{x = xn * cos theta - yn * sin theta,
+      y = yn * cos theta + xn * sin theta}
+  tangentLogarithmMap = \ (S{x=x, y=y}) (S{x=s, y=t}).
+    (S{x=xn, y=yn}) = s1Normalize (S{x=x, y=y})
+    (S{x=sn, y=tn}) = s1Normalize (S{x=s, y=t})
+    dSquared = (xn - sn) * (xn - sn) + (yn - tn) * (yn - tn)
+    -- Check if we're using positive or negative inverse cos solution. 
+    -- This is done by considering the sign of the cross product of the two
+    -- points in 3D space.
+    negate = select ((xn * tn - sn * yn) > 0.) 1.0 (-1.0)
+    negate * (acos $ (1. - dSquared / 2.))
+
+' Check that the tangent and logarithm are actually inverse to one another:
+
+-- Convenience function to help check for equality.
+def s1ToR2 (S{x=x, y=y}: S1) : (Fin 2 => Float) = 
+  [x, y]
+
+-- Two arbitrary points on the circle, not normalized.
+circlePointOne = S{x=3.4, y=0.2}
+circlePointTwo = S{x=-1.0, y=1.8}
+
+-- Applying tangent mappings at circlePointTwo, to circlePointOne
+intermediateLog: Float = tangentLogarithmMap circlePointTwo circlePointOne
+roundTrip = tangentExponentialMap circlePointTwo intermediateLog
+
+(s1ToR2 $ s1Normalize roundTrip) ~~ (s1ToR2 $ s1Normalize circlePointOne)
+> True
+
+
+' Now we can take gradients of maps on a circle. Consider a function which takes
+$(x, y) \mapsto x$. In $\theta$ space, this is equivalent to
+$\theta \mapsto \cos \theta$, so should have gradient given by
+$- \sin \theta = -y$.
+
+def getX (S{x=x, y=y}: S1) : Float = x
+
+-- Make types explicit
+s1ManifoldGrad : (S1 -> Float) -> S1 -> Float = manifoldGrad
+
+s1ManifoldGrad getX (S{x=0., y=1.}) ~~ -1.
+> True
+s1ManifoldGrad getX (S{x=1., y=0.}) ~~ 0.
+> True
+s1ManifoldGrad getX (S{x=sqrt 0.5, y=sqrt 0.5}) ~~ - (sqrt 0.5)
+> True
+
+
+' ### Further example: Quaternions
 For a more complex use-case, we consider the SO3 manifold of 3D rotations, with
 the usual 4D quaternion representation. Again, the full definition of
 quaternions has a few subtleties, but a simple intuition is that a rotation by
@@ -118,9 +246,9 @@ $x$ for the $\bold{i}$ component, $y$ for the $\bold{j}$ component and $z$ for
 the $\bold{k}$ component.
 
 ' Generally we use unit quaternions, i.e. those where
-$x^2 + y^2 + z^2 + w^2 = 1$, but any non-zero quaternion can also be considered
-as a valid rotation, by defining scalar multiples of the same quaternion to
-represent the same rotation.
+$x^2 + y^2 + z^2 + w^2 = 1$, but like for the $S^1$ example above, any non-zero
+quaternion can also be considered as a valid rotation by defining scalar
+multiples of the same quaternion to represent the same rotation.
 
 ' We re-use the data structures and some of the functions from the
 `quaternions.dx` example.
