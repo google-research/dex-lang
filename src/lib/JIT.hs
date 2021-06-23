@@ -36,7 +36,6 @@ import qualified Data.ByteString.Char8 as B
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
-import Debug.Trace
 import GHC.Stack
 import qualified Data.Set as S
 import qualified Data.Text as T
@@ -305,8 +304,9 @@ compileInstr instr = case instr of
   ICastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
     let (xt, dt) = (L.typeOf x, scalarTy idt)
-    case idt of
-      Scalar Word64Type -> x `zeroExtendTo` dt
+    case (xt, idt) of
+      -- if upcasting to unsigned int, use zext instruction
+      (L.IntegerType _, Scalar Word64Type) -> x `zeroExtendTo` dt
       _ -> case (xt, dt) of
        (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
        (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of

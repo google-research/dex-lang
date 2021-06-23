@@ -44,8 +44,6 @@ def IToI32 (x : Int)     : Int32   = internalCast _ x
 def IToW8  (x : Int)     : Word8   = internalCast _ x
 def IToW32 (x : Int)     : Word32  = internalCast _ x
 def IToW64 (x : Int)     : Word64  = internalCast _ x
-def I64ToW64 (x : Int64) : Word64  = internalCast _ x
-def W64ToI64 (x : Word64) : Int64  = internalCast _ x
 def W64ToI (x : Word64) : Int  = internalCast _ x
 def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
@@ -855,14 +853,15 @@ Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/j
 -- TODO: newtype
 Key = Word64
 
+def threeFry2x32C (k:Int64) (count:Int64) : Int64 = unsafeIO do
+  %ffi threefry2x32 Int64 k count
+
 def applyRound (x:Word32) (y:Word32) (rot:Int) : (Word32&Word32) =
   x = x + y
   y = (y << rot) .|. (y >> (32 - rot))
   y = x ^ y
   (x, y)
 
-def threeFry2x32C (k:Int64) (count:Int64) : Int64 = unsafeIO do
-  %ffi threefry2x32 Int64 k count
 def threeFry2x32Dex (k:Word64) (count:Word64) : Word64 = 
   -- Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
   rotations1 = [13, 15, 26, 6]
@@ -870,10 +869,11 @@ def threeFry2x32Dex (k:Word64) (count:Word64) : Word64 =
 
   k0 = W64ToW32 (k >> 32)
   k1 = W64ToW32 k
+  -- TODO: add a fromHex?
   k2 = k0 ^ k1 ^ (IToW32 466688986) -- 0x1BD11BDA
+
   x = W64ToW32 (count >> 32)
   y = W64ToW32 count
-  
   x = x + k0
   y = y + k1
 
