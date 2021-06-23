@@ -31,20 +31,24 @@ module SaferNames.Name (
   projectName, injectNameL, injectNameR, projectNamesL, injectNamesL, injectEnvNamesL,
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
-  AlphaEq (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
+  AlphaEqE (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), idRenamer, EqE, EqB, FreshBinder (..),
-  lookupNameTraversal, extendScope, envFragLookup, hoist,
+  lookupNameTraversal, extendScope, envFragLookup, fromConstAbs, askScope,
   PrettyE, PrettyB, ShowE, ShowB,
-  MP, MB, MonadMP, BindingsReader (..), SubstReader (..),
-  extendSubst, MonadErrMB, MonadErrMP, BindingsReaderMP) where
+  MP, MB, MonadMP, BindingsReader (..), SubstReader (..), runSubstReaderT,
+  extendSubst, MonadErrMB, MonadErrMP, BindingsReaderMP, SubstReaderT,
+  MonadFailMB, MonadFailMP
+  ) where
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import qualified Data.Set        as S
 import Unsafe.Coerce
+import Data.Maybe (isJust)
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
 
@@ -120,6 +124,7 @@ class EnvLike (env :: S -> * -> *) where
   (<>>) :: env n a -> Env (n:=>:l) a -> env l a
   (!) :: env n a -> Name n -> a
   emptyEnv :: env (n:=>:n) a
+  injectEnvNamesL :: HasNamesE e => FreshExt n l -> env i (e n) -> env i (e l)
 
 instance EnvLike Env where
   (<>>) (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) = UnsafeMakeEnv (m2 <> m1)
@@ -128,6 +133,7 @@ instance EnvLike Env where
       Just x -> x
       Nothing -> error "Env lookup should never fail"
   emptyEnv = UnsafeMakeEnv mempty
+  injectEnvNamesL = unsafeCoerce
 
 envAsScope :: Env n a -> Scope n
 envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.constLazyMap (LM.keysSet m) ()
@@ -253,8 +259,9 @@ projectNamesL scope scopeFragment e = traverseNamesE scope t e
                                         Left name' -> Just name'
                                         Right _    -> Nothing
 
-hoist :: MonadErr m => HasNamesE e => Scope (n:=>:l) -> e l -> m (e n)
-hoist = undefined
+fromConstAbs :: MonadErr m => HasNamesB b => HasNamesE e
+             => Abs b e n -> m (e n)
+fromConstAbs = undefined
 
 -- === common scoping patterns ===
 
@@ -320,6 +327,7 @@ instance EnvLike ScopelessEnv where
       Left name' -> f name'
       Right val -> val
   emptyEnv = undefined
+  injectEnvNamesL = unsafeCoerce
 
 newScopelessEnv :: (Name n -> a) -> ScopelessEnv n a
 newScopelessEnv f = ScopelessEnv f emptyEnv
@@ -354,9 +362,6 @@ data LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
      deriving (Show, Eq)
 
 -- === various convenience utilities ===
-
-class HasNamesE e => AlphaEq (e::E) where
-  alphaEq :: Scope n -> e n -> e n -> Bool
 
 infixr 7 @>
 -- really, at most one name
@@ -431,9 +436,6 @@ extendRecEnv ext (RecEnv env) (RecEnvFrag frag) = let
   env' = injectEnvNamesL ext env
   in RecEnv $ env' <>> frag
 
-injectEnvNamesL :: HasNamesE e => FreshExt n l -> Env i (e n) -> Env i (e l)
-injectEnvNamesL ext env = fromEnvE $ injectNamesL ext $ EnvE env
-
 envFragLookup :: Env (i:=>:i') a -> Name i' -> Either (Name i) a
 envFragLookup env name =
   case projectName (envAsScope env) name of
@@ -445,39 +447,45 @@ envFragLookup env name =
 -- "MP" for "monadic pass", parameterized by the input and output name spaces
 type MP = S -> S -> * -> *
 
--- "MP" for "monadic builder", parameterized by the output name space
+-- "MB" for "monadic builder", parameterized by the output name space
 type MB = S -> * -> *
 
 type MonadMB (m :: MB) = forall (n::S)        . Monad (m n  )
 type MonadMP (m :: MP) = forall (n::S) (l::S) . Monad (m n l)
 
 
-class MonadMB m => BindingsReader (e::E) (m::MB) | m -> e where
-  lookupName :: Name n -> m n (e n)
-  withFreshMP :: e n
-              -> (forall l. FreshExt n l -> PlainBinder n l -> Name l -> m l a)
-              -> m n a
+class (HasNamesE e, MonadMB m)
+      => BindingsReader (e::E) (m::MB) | m -> e where
+  askBindings :: m n (RecEnv e n)
+  updateBindings :: FreshExt n l -> RecEnvFrag e n l -> m l a -> m n a
 
 -- similar to MonadReader (Env i (e o)) m
-class BindingsReaderMP eb m => SubstReader (eb::E) (es::E) (m::MP) | m -> eb, m -> es where
-  askSubst :: m i o (ScopelessEnv i (e o))
-  localSubst :: ScopelessEnv i' (e o) -> m i' o a -> m i o a
+class (HasNamesE eb, HasNamesE es, BindingsReaderMP eb m)
+      => SubstReader (eb::E) (es::E) (m::MP) | m -> eb, m -> es where
+  askSubst :: m i o (ScopelessEnv i (es o))
+  updateSubst :: ScopelessEnv i' (es o) -> m i' o a -> m i o a
+
+askScope :: BindingsReader e m => m n (Scope n)
+askScope = envAsScope <$> fromRecEnv <$> askBindings
 
 extendSubst :: SubstReader eb es m => Env (i:=>:i') (es o) -> m i' o a -> m i o a
 extendSubst envFrag cont = do
   env <- askSubst
-  localSubst (env <>> envFrag) cont
+  updateSubst (env <>> envFrag) cont
 
 type BindingsReaderMP (e::E) (m::MP) = forall (n::S). BindingsReader e (m n)
 
 type MonadErrMB (m :: MB) = forall (n::S)        . MonadErr (m n  )
 type MonadErrMP (m :: MP) = forall (n::S) (l::S) . MonadErr (m n l)
 
+type MonadFailMB (m :: MB) = forall (n::S)        . MonadFail (m n  )
+type MonadFailMP (m :: MP) = forall (n::S) (l::S) . MonadFail (m n l)
+
 newtype BindingsReaderT (m:: * -> *) (e::E) (n::S) (a:: *) =
   BindingsReaderT { runBindingsReaderT :: ReaderT (RecEnv e n) m a}
   deriving (Functor, Applicative, Monad)
 
-instance Monad m => BindingsReader e (BindingsReaderT m e) where
+instance (HasNamesE e, Monad m) => BindingsReader e (BindingsReaderT m e) where
   -- lookupName name = BindingsReaderT do
   --   RecEnv bindings <- ask
   --   return $ bindings ! name
@@ -485,18 +493,99 @@ instance Monad m => BindingsReader e (BindingsReaderT m e) where
 
 -- we could have `m::MP` but it's more work and we don't need it
 newtype SubstReaderT (m:: * -> *) (eb::E) (es::E) (i::S) (o::S) (a:: *) =
-  SubstReaderT { runSubstReaderT :: ReaderT (ScopelessEnv i (es o))
-                                      (BindingsReaderT m eb o) a }
+  SubstReaderT (ReaderT (RecEnv eb o, ScopelessEnv i (es o)) m a)
   deriving (Functor, Applicative, Monad)
 
-instance Monad m => BindingsReader eb (SubstReaderT m eb es i) where
+runSubstReaderT :: RecEnv eb o -> ScopelessEnv i (es o) -> SubstReaderT m eb es i o a -> m a
+runSubstReaderT bindings env (SubstReaderT m) = runReaderT m (bindings, env)
 
-instance Monad m => SubstReader eb es (SubstReaderT m eb es) where
-  -- lookupName name = SubstReaderT $ lift $ lookupName name
-  -- withFreshMP _ _ = undefined
-  -- askSubst = SubstReaderT ask
-  -- localSubst env (SubstReaderT m) =
-  --   SubstReaderT $ ReaderT $ const $ runReaderT m env
+instance (HasNamesE eb, HasNamesE es, Monad m)
+         => BindingsReader eb (SubstReaderT m eb es i) where
+  askBindings = SubstReaderT $ asks fst
+  updateBindings ext scopeDelta (SubstReaderT m) = SubstReaderT do
+    (scope, env) <- ask
+    let scope' = extendRecEnv ext scope scopeDelta
+    let env' = injectEnvNamesL ext env
+    lift $ runReaderT m (scope', env')
+
+instance (HasNamesE eb, HasNamesE es, Monad m)
+         => SubstReader eb es (SubstReaderT m eb es) where
+  askSubst = SubstReaderT $ asks snd
+  updateSubst env (SubstReaderT m) = SubstReaderT do
+    scope <- asks fst
+    lift $ runReaderT m (scope, env)
+
+instance MonadError e m => MonadError e (SubstReaderT m eb es i o)
+
+instance MonadFail m => MonadFail (SubstReaderT m eb es i o)
+
+-- === alpha-renaming-invariant equality checking ===
+
+alphaEq :: AlphaEqE e => Scope n -> e n -> e n -> Bool
+alphaEq scope e1 e2 = isJust $ runZipM (idZipEnv scope) $ alphaEqE e1 e2
+
+data ZipEnv i1 i2 o = ZipEnv
+  { zSubst1 :: ScopelessEnv i1 (Name o)
+  , zSubst2 :: ScopelessEnv i2 (Name o)
+  , zScope  :: Scope o }
+
+class HasNamesE e => AlphaEqE (e::E) where
+  alphaEqE :: MonadZip m => e i1 -> e i2 -> m i1 i2 o ()
+
+class HasNamesB b => AlphaEqB (b::B) where
+  withAlphaEqB :: MonadZip m => b i1 i1' -> b i2 i2'
+               -> (forall o'. m i1' i2' o' a)
+               ->             m i1  i2  o  a
+
+-- TODO: consider generalizing this to something that can also handle e.g.
+-- unification and type checking with some light reduction
+class (forall i1 i2 o. Monad (m i1 i2 o))
+      => MonadZip (m :: S -> S -> S -> * -> *) where
+  mismatch  :: m i1 i2 o a
+  askZipEnv :: m i1 i2 o (ZipEnv i1 i2 o)
+  withZipEnv :: ZipEnv i1' i2' o'
+             -> m i1' i2' o' a
+             -> m i1  i2  o  a
+
+newtype ZipM i1 i2 o a =
+  ZipM (ReaderT (ZipEnv i1 i2 o) Maybe a)
+  deriving (Functor, Applicative, Monad)
+
+instance MonadZip ZipM where
+  mismatch = ZipM $ lift Nothing  -- use MonadPlus, MonadFail, or MonadError instead?
+  askZipEnv = ZipM ask
+  withZipEnv env (ZipM m) = ZipM $ lift $ runReaderT m env
+
+idZipEnv :: Scope n -> ZipEnv n n n
+idZipEnv scope = ZipEnv idRenameEnv idRenameEnv scope
+
+runZipM :: ZipEnv i1 i2 o -> ZipM i1 i2 o a -> Maybe a
+runZipM env (ZipM m) = runReaderT m env
+
+instance AlphaEqE Name where
+  alphaEqE v1 v2 = do
+    ZipEnv env1 env2 _ <- askZipEnv
+    if env1!v1 == env2!v2
+      then return ()
+      else mismatch
+
+instance AlphaEqB PlainBinder where
+  withAlphaEqB b1 b2 cont = do
+    ZipEnv env1 env2 scope <- askZipEnv
+    withFresh scope \ext bFresh name -> do
+      let env1'  = injectEnvNamesL ext env1  <>> b1@>name
+      let env2'  = injectEnvNamesL ext env2  <>> b2@>name
+      let scope' = scope <>> bFresh@>()
+      withZipEnv (ZipEnv env1' env2' scope') cont
+
+instance (AlphaEqB b, AlphaEqE e) => AlphaEqE (Abs b e) where
+  alphaEqE (Abs b1 e1) (Abs b2 e2) = withAlphaEqB b1 b2 $ alphaEqE e1 e2
+
+instance AlphaEqE UnitE where
+  alphaEqE UnitE UnitE = return ()
+
+instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
+  alphaEqE (PairE a1 b1) (PairE a2 b2) = alphaEqE a1 a2 >> alphaEqE b1 b2
 
 -- === instances ===
 
@@ -571,6 +660,9 @@ instance HasNamesE e => HasNamesB (RecEnvFrag e) where
         return $ FreshBinder ext env' renamer
 
   boundScope (RecEnvFrag env) = envAsScope env
+
+instance HasNamesE UnitE where
+  traverseNamesE _ _ UnitE = return UnitE
 
 instance (HasNamesE e1, HasNamesE e2) => HasNamesE (PairE e1 e2) where
   traverseNamesE s env (PairE x y) =
