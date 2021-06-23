@@ -215,6 +215,9 @@ litArr = [10, 5, 3]
    mean for i:(Fin 100). randn (ixkey k i)
 > -0.1158
 
+:p hash (IToW64 0) 0
+> 0x6b20015999ba4efe
+
 :p
    k = newKey 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)

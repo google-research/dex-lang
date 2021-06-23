@@ -36,6 +36,7 @@ import qualified Data.ByteString.Char8 as B
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
+import Debug.Trace
 import GHC.Stack
 import qualified Data.Set as S
 import qualified Data.Text as T
@@ -304,19 +305,21 @@ compileInstr instr = case instr of
   ICastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
     let (xt, dt) = (L.typeOf x, scalarTy idt)
-    case (xt, dt) of
-      (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
-      (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
-        LT -> emitInstr dt $ L.FPExt x dt []
-        EQ -> return x
-        GT -> emitInstr dt $ L.FPTrunc x dt []
-      (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
-      (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
-      (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
-      (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
-        emitInstr ptrTy $ L.IntToPtr x ptrTy []
-      (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
-      _ -> error $ "Unsupported cast"
+    case idt of
+      Scalar Word64Type -> x `zeroExtendTo` dt
+      _ -> case (xt, dt) of
+       (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
+       (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
+         LT -> emitInstr dt $ L.FPExt x dt []
+         EQ -> return x
+         GT -> emitInstr dt $ L.FPTrunc x dt []
+       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
+       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
+       (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
+       (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
+         emitInstr ptrTy $ L.IntToPtr x ptrTy []
+       (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
+       _ -> error $ "Unsupported cast"
   ICall f@(fname:> IFunType cc argTys resultTys) args -> do
     -- TODO: consider having a separate calling convention specification rather
     -- than switching on the number of results
