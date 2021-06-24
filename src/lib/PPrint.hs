@@ -14,7 +14,6 @@ module PPrint (pprint, docAsStr, printLitBlock, PrecedenceLevel(..), DocPrec,
 
 import Data.Aeson hiding (Result, Null, Value)
 import GHC.Float
-import GHC.Word
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
