@@ -71,21 +71,24 @@ def atBounds (i:n) (j:m) : Bool =
    || ordinal j == 0
    || ordinal j == (gridSize - 1))
 
+-- Operators for performing unsafe ordinal arithmetic
+def (+!) (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
+def (-!) (i:n) (off:Int) : n = i +! (-1 * off)
+
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
 def step (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
   for i j.
-    -- Consider the manhattan nearest neighbours
-    -- Safe at the bounds due to the runtime bounds-check below
-    psi_u = psi.(unsafeFromOrdinal _ $ ordinal i - 1).j
-    psi_d = psi.(unsafeFromOrdinal _ $ ordinal i + 1).j
-    psi_l = psi.i.(unsafeFromOrdinal _ $ ordinal j - 1)
-    psi_r = psi.i.(unsafeFromOrdinal _ $ ordinal j + 1)
     if atBounds i j
       then zero
-      else (psi.i.j
-            + ((i_ / 2.) * (fToC $ dt / pow dx 2.)
-               * (psi_l + psi_u + (fToC 4. * psi.i.j) + psi_r + psi_d))
-            - (i_ * (fToC $ dt * v.i.j) * psi.i.j))
+      else
+        psi_u = psi.(i -! 1).j
+        psi_d = psi.(i +! 1).j
+        psi_l = psi.i.(j -! 1)
+        psi_r = psi.i.(j +! 1)
+        (psi.i.j
+         + ((i_ / 2.) * (fToC $ dt / pow dx 2.)
+             * (psi_l + psi_u + (fToC 4. * psi.i.j) + psi_r + psi_d))
+         - (i_ * (fToC $ dt * v.i.j) * psi.i.j))
 
 -- Computes time evolution of wavefunction.
 def evolve (psi:m=>n=>Complex) (v:m=>n=>Float): Steps=>m=>n=>Complex =
