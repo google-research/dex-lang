@@ -81,6 +81,50 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(
         jax.jit(jax.vmap(add_two, in_axes=1, out_axes=1))(x), x + 2.0)
 
+  def test_vjp(self):
+    f_dex = primitive(dex.eval(
+        r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
+        'for i. x.i * x.i + 2.0 * y.i'))
+
+    def f_jax(x, y):
+      return x**2 + 2 * y
+
+    x  = jnp.arange(10.)
+    y = jnp.linspace(-0.2, 0.5, num=10)
+    u = jnp.linspace(0.1, 0.3, num=10)
+    v = jnp.linspace(2.0, -5.0, num=10)
+
+    output_dex, tangent_dex = jax.jvp(f_dex, (x, y), (u, v))
+    output_jax, tangent_jax = jax.jvp(f_jax, (x, y), (u, v))
+
+    np.testing.assert_allclose(output_dex, output_jax)
+    np.testing.assert_allclose(tangent_dex, tangent_jax)
+
+  def test_vjp_jit(self):
+    f_dex = primitive(dex.eval(
+        r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
+        'for i. x.i * x.i + 2.0 * y.i'))
+
+    def f_jax(x, y):
+      return x**2 + 2 * y
+
+    x  = jnp.arange(10.)
+    y = jnp.linspace(-0.2, 0.5, num=10)
+    u = jnp.linspace(0.1, 0.3, num=10)
+    v = jnp.linspace(2.0, -5.0, num=10)
+
+    def jvp_dex(args, tangents):
+      return jax.jvp(f_dex, args, tangents)
+
+    def jvp_jax(args, tangents):
+      return jax.jvp(f_jax, args, tangents)
+
+    output_dex, tangent_dex = jax.jit(jvp_dex)((x, y), (u, v))
+    output_jax, tangent_jax = jax.jit(jvp_jax)((x, y), (u, v))
+
+    np.testing.assert_allclose(output_dex, output_jax)
+    np.testing.assert_allclose(tangent_dex, tangent_jax)
+
 
 if __name__ == "__main__":
   unittest.main()
