@@ -13,9 +13,11 @@ import numpy as np
 import jax
 from jax.lib import xla_client as xc
 from jax.interpreters import xla
+from jax.interpreters import batching
 
-from .. import Atom
+from .. import Atom, eval
 from ..native_function import IdxRepTy, ScalarType, RectContArrayType
+from .. import api
 
 def primitive(f):
   if not isinstance(f, Atom):
@@ -140,7 +142,53 @@ def dex_call_cpu_translation(b, *args, func_atom):
 
 jax.interpreters.xla.backend_specific_translations['cpu'][dex_call_p] = dex_call_cpu_translation
 
+
+def dex_call_batched(batched_args, batched_dims, func_atom):
+  """Batching function for dex primitives.
+
+  Args:
+    batched_args: The possibly-batched arguments.
+    batched_dims: A sequence of the same length as `batched_args`, where each
+      entry indicates the batching axis of the corresponding entry to `args`,
+      or None if that argument should not be batched. Not all entries can be
+      None.
+
+  Returns:
+    2-tuple containing the result of the batched function, and the result axis
+    which was batched, which is always zero.
+  """
+  # Move axes so that we only have to deal with the zero axis being batched.
+  uniform_batched_args = [
+      batching.moveaxis(arg, bd, 0) if bd is not batching.not_mapped else arg
+      for arg, bd in zip(batched_args, batched_dims)
+  ]
+  
+  # This assumes not all entries in batched_dims are None.
+  batch_size = next(
+      arg.shape[0] for arg, bd in zip(uniform_batched_args, batched_dims) 
+      if bd is not batching.not_mapped)
+
+  # Add the current function atom as a variable in the context, so that we can
+  # use it to apply batching.
+  env = api.insert(func_atom.module, api.as_cstr("jax_batched_func"), func_atom)
+
+  # Only index into the arguments which are batched. `i` is the index used for
+  # the Dex for loop constructor.
+  batched_fn_params = [
+      f"x{param_idx}" if dim is batching.not_mapped else f"x{param_idx}.i"
+      for param_idx, dim in enumerate(batched_dims)]
+
+  # This is the actual batching expression
+  batched_fn = eval(
+      r"\ " + " ".join(f"x{i}" for i in range(len(batched_args))) + ". "
+      + f"for i:(Fin {batch_size}). jax_batched_func "
+      + " ".join(batched_fn_params), module=env)
+
+  return primitive(batched_fn)(*uniform_batched_args), 0
+
+
+batching.primitive_batchers[dex_call_p] = dex_call_batched
+
 # TODO
-# jax.interpreters.batching.primitive_batchers[self.primitive] = ...
 # jax.interpreters.ad.primitive_jvps[self.primitive] = ...
 # jax.interpreters.ad.primitive_transposes[self.primitive] = ...

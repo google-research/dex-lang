@@ -1,7 +1,5 @@
 '## LU Decomposition and Matrix Inversion
 
-def identity_matrix [Eq n, Add a, Mul a] : n=>n=>a =
-  for i j. select (i == j) one zero
 
 '### Triangular matrices
 
@@ -54,8 +52,8 @@ def swapInPlace (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
   permRef!i := tempj
   signRef := -(get signRef)
 
-def perToTable ((perm, _):Permutation n) : n=>n = perm
-def permSign   ((_, sign):Permutation n) : PermutationSign = sign
+def permToTable ((perm, _):Permutation n) : n=>n = perm
+def permSign    ((_, sign):Permutation n) : PermutationSign = sign
 
 
 
@@ -80,7 +78,7 @@ def lu [Eq n] (a: n=>n=>Float) :
 
   init_lower = for i:n. for j':(..i).
     select (i == (%inject j')) 1.0 0.0
-  init_upper = for i:n. for j'':(i..). 0.0
+  init_upper = zero
 
   (lower, upper) = yieldState (init_lower, init_upper) \stateRef.
     lRef = fstRef stateRef
@@ -146,7 +144,7 @@ def solve [Eq n, VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   backward_substitute u y
 
 def invert [Eq n] (a:n=>n=>Float) : n=>n=>Float =
-  solve a identity_matrix
+  solve a eye
 
 def determinant [Eq n] (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
@@ -159,20 +157,8 @@ def sign_and_log_determinant [Eq n] (a:n=>n=>Float) : (Float & Float) =
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
+def matrix_power [Eq n] (base:n=>n=>Float) (power:Int) : n=>n=>Float =
+  generalIntegerPower (**) eye base power
 
-'### Numerical Tests
-
--- Check that the inverse of the inverse is identity.
-mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
-:p mat ~~ (invert (invert mat))
-> True
-
--- Check that solving gives the inverse.
-v = [1., 2., 3., 4.]
-:p v ~~ (mat **. (solve mat v))
-> True
-
--- Check that det and exp(logdet) are the same.
-(s, logdet) = sign_and_log_determinant mat
-:p (determinant mat) ~~ (s * (exp logdet))
-> True
+def trace [Add a] (x:n=>n=>a) : a =
+  sum for i. x.i.i

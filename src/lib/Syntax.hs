@@ -28,9 +28,7 @@ module Syntax (
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
-    UAlt (..), AltP, Alt, Label, LabeledItems (..), labeledSingleton,
-    lookupLabelHead, reflectLabels, withLabels, ExtLabeledItems (..),
-    prefixExtLabeledItems, getLabels, ModuleName,
+    UAlt (..), AltP, Alt, ModuleName,
     IScope, BinderInfo (..), Bindings, CUDAKernel (..), BenchStats,
     SrcCtx, Result (..), Output (..), OutFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -64,16 +62,12 @@ module Syntax (
     pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
-    pattern Unlabeled, pattern NoExt, pattern LabeledRowKind,
-    pattern NoLabeledItems, pattern InternalSingletonLabel, pattern EffKind,
-    pattern NestOne, pattern NewTypeCon, pattern BinderAnn,
-    pattern ClassDictDef, pattern ClassDictCon, pattern UnderscoreUPat)
+    pattern EffKind, pattern NestOne, pattern NewTypeCon, pattern BinderAnn,
+    pattern ClassDictDef, pattern ClassDictCon, pattern UnderscoreUPat,
+    pattern LabeledRowKind)
   where
 
 import qualified Data.Map.Strict as M
-import Control.Exception hiding (throw)
-import Control.Monad.Identity
-import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List.NonEmpty as NE
@@ -87,8 +81,10 @@ import Data.String (IsString, fromString)
 import Foreign.Ptr
 import GHC.Generics
 
+import Err
+import LabeledItems
 import Env
-import Util (IsBool (..), enumerate, (...))
+import Util (IsBool (..), (...))
 
 -- === core IR ===
 
@@ -173,56 +169,6 @@ data Module = Module IRVariant (Nest Decl) Bindings  deriving Show
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
 
--- The label for a field in a record or variant.
-type Label = String
-
--- Collection of labeled values of type `a`. Each value has a field label, and
--- multiple values can share the same label. This is the canonical form for
--- the item types in record and variant types as well as for the values in
--- record objects; the order in the concrete syntax of items with different
--- fields is discarded (so both `{b:Z & a:X & a:Y}` and `{a:X & b:Z & a:Y}` map
--- to `M.fromList [("a", NE.fromList [X, Y]), ("b", NE.fromList [Z])]` )
-newtype LabeledItems a = LabeledItems (M.Map Label (NE.NonEmpty a))
-  deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
-
-labeledSingleton :: Label -> a -> LabeledItems a
-labeledSingleton label value = LabeledItems $ M.singleton label (value NE.:|[])
-
-reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
-reflectLabels (LabeledItems items) = LabeledItems $
-  flip M.mapWithKey items \k xs -> fmap (\(i,_) -> (k,i)) (enumerate xs)
-
-getLabels :: LabeledItems a -> [Label]
-getLabels labeledItems = map fst $ toList $ reflectLabels labeledItems
-
-withLabels :: LabeledItems a -> LabeledItems (Label, Int, a)
-withLabels (LabeledItems items) = LabeledItems $
-  flip M.mapWithKey items \k xs -> fmap (\(i,a) -> (k,i,a)) (enumerate xs)
-
-lookupLabelHead :: LabeledItems a -> Label -> Maybe a
-lookupLabelHead (LabeledItems items) l = case M.lookup l items of
-  Nothing -> Nothing
-  Just (x NE.:| _) -> Just x
-
-instance Semigroup (LabeledItems a) where
-  LabeledItems items <> LabeledItems items' =
-    LabeledItems $ M.unionWith (<>) items items'
-
-instance Monoid (LabeledItems a) where
-  mempty = NoLabeledItems
-
--- Extensible version of LabeledItems, which allows an optional object in tail
--- position. The items of the tail object will always be interpreted as a
--- "suffix" in the sense that for any field label, the object represented by
--- an ExtLabeledItems contains first the values in the (LabeledItems a) for that
--- field, followed by the values in the (Maybe b) for that field if they exist.
-data ExtLabeledItems a b = Ext (LabeledItems a) (Maybe b)
-  deriving (Eq, Show, Generic)
-
--- Adds more items to the front of an ExtLabeledItems.
-prefixExtLabeledItems :: LabeledItems a -> ExtLabeledItems a b -> ExtLabeledItems a b
-prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
-
 -- === front-end language AST ===
 
 type UExpr = WithSrc UExpr'
@@ -268,7 +214,6 @@ type UAnnBinder = BinderP UType
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
 
 data UModule = UModule (Nest UDecl)  deriving (Show)
-type SrcPos = (Int, Int)
 
 type UPat  = WithSrc UPat'
 data UPat' = UPatBinder UBinder
@@ -656,7 +601,6 @@ instance Show PassName where
 -- === outputs ===
 
 type LitProg = [(SourceBlock, Result)]
-type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 type BenchStats = (Int, Double) -- number of runs, total benchmarking time
@@ -671,60 +615,6 @@ data Output = TextOut String
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
-
-data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
-instance Exception Err
-
-data ErrType = NoErr
-             | ParseErr
-             | TypeErr
-             | KindErr
-             | LinErr
-             | UnboundVarErr
-             | RepeatedVarErr
-             | CompilerErr
-             | IRVariantErr
-             | NotImplementedErr
-             | DataIOErr
-             | MiscErr
-             | RuntimeErr
-               deriving (Show, Eq)
-
-type Except = Either Err
-
-throw :: MonadError Err m => ErrType -> String -> m a
-throw e s = throwError $ Err e Nothing s
-
-throwIf :: MonadError Err m => Bool -> ErrType -> String -> m ()
-throwIf True  e s = throw e s
-throwIf False _ _ = return ()
-
-modifyErr :: MonadError e m => m a -> (e -> e) -> m a
-modifyErr m f = catchError m \e -> throwError (f e)
-
-addContext :: MonadError Err m => String -> m a -> m a
-addContext s m = modifyErr m \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
-
-addSrcContext :: MonadError Err m => SrcCtx -> m a -> m a
-addSrcContext ctx m = modifyErr m updateErr
-  where
-    updateErr :: Err -> Err
-    updateErr (Err e ctx' s) = case ctx' of Nothing -> Err e ctx  s
-                                            Just _  -> Err e ctx' s
-
-catchIOExcept :: (MonadIO m , MonadError Err m) => IO a -> m a
-catchIOExcept m = (liftIO >=> liftEither) $ (liftM Right m) `catches`
-  [ Handler \(e::Err)           -> return $ Left e
-  , Handler \(e::IOError)       -> return $ Left $ Err DataIOErr   Nothing $ show e
-  , Handler \(e::SomeException) -> return $ Left $ Err CompilerErr Nothing $ show e
-  ]
-
-liftEitherIO :: (Exception e, MonadIO m) => Either e a -> m a
-liftEitherIO (Left err) = liftIO $ throwIO err
-liftEitherIO (Right x ) = return x
-
-instance MonadFail (Either Err) where
-  fail s = Left $ Err CompilerErr Nothing s
 
 -- === UExpr free variables ===
 
@@ -1537,32 +1427,6 @@ pattern BinaryFunVal b1 b2 eff body =
           Lam (Abs b1 (PureArrow, Block Empty (Atom (
           Lam (Abs b2 (PlainArrow eff, body))))))
 
-pattern NoLabeledItems :: LabeledItems a
-pattern NoLabeledItems <- ((\(LabeledItems items) -> M.null items) -> True)
-  where NoLabeledItems = LabeledItems M.empty
-
-pattern NoExt :: LabeledItems a -> ExtLabeledItems a b
-pattern NoExt a = Ext a Nothing
-
--- An internal label that we can use to treat records and variants as unlabeled
--- internal sum and product types. Note that this is not a valid label in the
--- concrete syntax and will be rejected by the parser (although there wouldn't
--- be any serious problems with overloading a user-written label).
-pattern InternalSingletonLabel :: Label
-pattern InternalSingletonLabel = "%UNLABELED%"
-
-_getUnlabeled :: LabeledItems a -> Maybe [a]
-_getUnlabeled (LabeledItems items) = case length items of
-  0 -> Just []
-  1 -> NE.toList <$> M.lookup InternalSingletonLabel items
-  _ -> Nothing
-
-pattern Unlabeled :: [a] -> LabeledItems a
-pattern Unlabeled as <- (_getUnlabeled -> Just as)
-  where Unlabeled as = case NE.nonEmpty as of
-          Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
-          Nothing -> NoLabeledItems
-
 maybeDataDef :: DataDef
 maybeDataDef = DataDef (GlobalName "Maybe") (Nest (Bind ("a":>TyKind)) Empty)
   [ DataConDef (GlobalName "Nothing") Empty
@@ -1703,8 +1567,6 @@ instance Store a => Store (ArrowP a)
 instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
 instance Store a => Store (BaseMonoidP a)
-instance Store a => Store (LabeledItems a)
-instance (Store a, Store b) => Store (ExtLabeledItems a b)
 instance Store ForAnn
 instance Store Atom
 instance Store Expr

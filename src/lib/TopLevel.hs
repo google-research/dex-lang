@@ -45,6 +45,8 @@ import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
+import SaferNames.Bridge
+
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , libPath     :: Maybe FilePath
@@ -205,8 +207,11 @@ evalUModule :: Bindings -> UModule -> TopPassM Bindings
 evalUModule env untyped = do
   logPass Parse untyped
   typed <- liftEitherIO $ inferModule env untyped
-  checkPass TypePass typed
-  synthed <- liftEitherIO $ synthModule env typed
+  -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
+  -- safer names system while we're staging it in.
+  let typed' = roundtripSaferNamesPass typed
+  checkPass TypePass typed'
+  synthed <- liftEitherIO $ synthModule env typed'
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
   let defunctionalized = simplifyModule env synthed
@@ -227,6 +232,10 @@ evalUModule env untyped = do
       newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
+
+roundtripSaferNamesPass :: Module -> Module
+roundtripSaferNamesPass (Module ir decls bindings) = Module ir decls' bindings
+  where decls' = fromSafeB $ toSafeB decls
 
 evalBackend :: Bindings -> Block -> TopPassM Atom
 evalBackend env block = do

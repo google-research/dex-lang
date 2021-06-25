@@ -1,0 +1,6 @@
+import sort
+
+:p isSorted $ sort []:((Fin 0)=>Int)
+> True
+:p isSorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
+> True

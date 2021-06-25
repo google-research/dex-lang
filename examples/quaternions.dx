@@ -317,9 +317,10 @@ def acos (x:Float) : Float =
   x = abs x
   ret1 = (-0.0187293 * x) + 0.0742610
   ret2 = (ret1 * x) - 0.2121144
-  ret3 = (ret2 * x) + 1.5707288
-  ret4 = (ret3 * (sqrt (1.0-x))) - (2.0 * negate * ret3)
-  negate * 3.14159265358979 + ret4
+  ret3 = (ret2 * x) + pi / 2.
+  ret4 = (ret3 * (sqrt (1.0-x)))
+  ret5 = ret4 - (2.0 * negate * ret4)
+  negate * pi + ret5
     
 
 ' The logarithm of a quaternion is also a quaternion and is given by this formula:

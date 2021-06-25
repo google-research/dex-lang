@@ -20,6 +20,7 @@ import qualified Data.Set as S
 
 import Type
 import Env
+import LabeledItems
 import Syntax
 import PPrint
 import Builder
@@ -823,6 +824,7 @@ zeroAt ty = case ty of
   RecordTy (Ext tys Nothing) -> Record $ fmap zeroAt tys
   _          -> unreachable
   where
+    unreachable :: a
     unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
     zeroLit bt = case bt of
       Scalar Float64Type -> Float64Lit 0.0

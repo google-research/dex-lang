@@ -54,9 +54,11 @@ import GHC.Stack
 
 import Env
 import Syntax
+import LabeledItems
 import Cat
 import Type
-import PPrint
+import Err
+import PPrint ()
 import Util (bindM2, scanM, restructure)
 
 newtype BuilderT m a = BuilderT (ReaderT BuilderEnvR (CatT BuilderEnvC m) a)
