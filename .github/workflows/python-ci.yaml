@@ -1,0 +1,61 @@
+name: Python tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-18.04]
+        include:
+          - os: ubuntu-18.04
+            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config wget gzip
+            path_extension: /usr/lib/llvm-9/bin
+
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v2
+
+    - name: Setup Haskell Stack
+      uses: actions/setup-haskell@v1
+      with:
+        enable-stack: true
+        stack-no-global: true
+        stack-version: 'latest'
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+
+    - name: Install system dependencies
+      run: |
+        pip install pytest jax jaxlib
+        ${{ matrix.install_deps }}
+        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+
+    - name: Cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.stack
+          ~/.cache/pip
+          $GITHUB_WORKSPACE/.stack-work
+        key: ${{ runner.os }}-python-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-python-
+          ${{ runner.os }}-
+
+    - name: Build
+      run: make build-python
+
+    - name: Install Python bindings
+      run: pip install -e $GITHUB_WORKSPACE/python
+
+    - name: Run tests
+      run: pytest python/tests
