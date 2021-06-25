@@ -56,7 +56,7 @@ library
                        LLVM.JIT, LLVM.Shims, Err, LabeledItems,
                        SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
-                       SaferNames.PPrint
+                       SaferNames.PPrint, SaferNames.Type
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

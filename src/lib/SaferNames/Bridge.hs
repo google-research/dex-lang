@@ -20,9 +20,14 @@ import qualified Data.Set as Set
 import LabeledItems
 import Syntax
 import Env
+import Type
+import Data.Maybe (fromJust)
+
+import qualified Data.Map.Strict as M
 
 import SaferNames.Name
 import SaferNames.Syntax
+import SaferNames.LazyMap as LM
 
 import qualified Syntax as D  -- D for Danger
 import qualified Env    as D
@@ -31,7 +36,12 @@ import qualified SaferNames.Syntax as S
 import qualified SaferNames.Name   as S
 
 toSafeBindings :: D.Bindings -> S.Bindings n
-toSafeBindings = undefined
+toSafeBindings (Env bindings) =
+  S.RecEnv $ S.UnsafeMakeEnv $ LM.newLazyMap (M.keysSet bindings) \v ->
+    toSafeBinderInfo $ fromJust (M.lookup v bindings)
+
+toSafeBinderInfo :: (D.Type, D.BinderInfo) -> S.TypedBinderInfo n
+toSafeBinderInfo (ty, info) = S.TypedBinderInfo (Just (toSafeE ty)) (toSafeE info)
 
 class HasSafeVersionE (e:: *) where
   type SafeVersionE e :: S.E
@@ -111,12 +121,16 @@ instance HasSafeVersionE D.DataDef where
   type SafeVersionE D.DataDef = S.NamedDataDef
   toSafeE (D.DataDef name paramBinders cons) =
     S.NamedDataDef (S.UnsafeMakeName name) $
-      S.DataDef name paramBinders' $ S.ListE $ map toSafeE cons
+      S.DataDef name paramBinders' $ map toSafeE cons
       where paramBinders' = dBinderListToSBinderList $ toList paramBinders
   fromSafeE (S.NamedDataDef (S.UnsafeMakeName name)
-              (S.DataDef _ paramBinders (ListE cons))) =
+              (S.DataDef _ paramBinders cons)) =
     D.DataDef name (D.toNest $ sBinderListToDBinderList paramBinders) (map fromSafeE cons)
 
+instance HasSafeVersionE D.BinderInfo where
+  type SafeVersionE D.BinderInfo = S.BinderInfo
+  toSafeE = undefined
+  fromSafeE = undefined
 
 unsafeToNest :: [b n' l'] -> S.Nest b n l
 unsafeToNest [] = unsafeCoerceB S.Empty
@@ -164,8 +178,8 @@ instance HasSafeVersionE D.Block where
   type SafeVersionE D.Block = S.Block
   toSafeE (D.Block decls result) =
     case toSafeE $ D.Abs decls result of
-      S.Abs decls' result' -> S.Block decls' result'
-  fromSafeE (S.Block decls result) =
+      S.Abs decls' result' -> S.Block (toSafeE (getType result)) decls' result'
+  fromSafeE (S.Block _ decls result) =
     case fromSafeE $ S.Abs decls result of
       D.Abs decls' result' -> D.Block decls' result'
 

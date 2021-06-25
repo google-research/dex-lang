@@ -31,13 +31,15 @@ module SaferNames.Name (
   projectName, injectNameL, injectNameR, projectNamesL, injectNamesL, injectEnvNamesL,
   Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList, envMapWithKey,
   AnnBinderP (..), AnnBinderListP (..), EnvE (..), RecEnv (..), RecEnvFrag (..),
-  AlphaEqE (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
+  alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB, UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), idRenamer, EqE, EqB, FreshBinder (..),
   lookupNameTraversal, extendScope, envFragLookup, fromConstAbs, askScope,
   PrettyE, PrettyB, ShowE, ShowB,
-  MP, MB, MonadMP, BindingsReader (..), SubstReader (..), runSubstReaderT,
-  extendSubst, MonadErrMB, MonadErrMP, BindingsReaderMP, SubstReaderT,
-  MonadFailMB, MonadFailMP
+  MP, MB, MonadMP, BindingsReader (..), HasScope (..), HasScopeMP,
+  SubstReader (..), runSubstReaderT,
+  extendSubst, lookupBindings, MonadErrMB, MonadErrMP, BindingsReaderMP, SubstReaderT,
+  MonadFailMB, MonadFailMP, ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
+  EmptyAbs, pattern EmptyAbs
   ) where
 
 import Prelude hiding (id, (.))
@@ -133,10 +135,10 @@ instance EnvLike Env where
       Just x -> x
       Nothing -> error "Env lookup should never fail"
   emptyEnv = UnsafeMakeEnv mempty
-  injectEnvNamesL = unsafeCoerce
+  injectEnvNamesL _ = unsafeCoerce
 
 envAsScope :: Env n a -> Scope n
-envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.constLazyMap (LM.keysSet m) ()
+envAsScope (UnsafeMakeEnv m) = UnsafeMakeEnv $ LM.newLazyMap (LM.keysSet m) (const ())
 
 projectName :: Scope (n:=>:l) -> Name l -> Either (Name n) (Name (n:=>:l))
 projectName (UnsafeMakeEnv m) (UnsafeMakeName name) =
@@ -280,6 +282,11 @@ data Nest (binder::B) (n::S) (l::S) where
 
 type PlainBinderList = Nest PlainBinder
 
+
+type EmptyAbs b = Abs b UnitE :: E
+pattern EmptyAbs :: b n l -> EmptyAbs b n
+pattern EmptyAbs bs = Abs bs UnitE
+
 infixl 7 :>
 data AnnBinderP (b::B) (ann ::E) (n::S) (l::S) =
   (:>) (b n l) (ann n)
@@ -327,7 +334,7 @@ instance EnvLike ScopelessEnv where
       Left name' -> f name'
       Right val -> val
   emptyEnv = undefined
-  injectEnvNamesL = unsafeCoerce
+  injectEnvNamesL _ = unsafeCoerce
 
 newScopelessEnv :: (Name n -> a) -> ScopelessEnv n a
 newScopelessEnv f = ScopelessEnv f emptyEnv
@@ -384,7 +391,7 @@ extendNameTraversal (NameTraversal f env) env' = NameTraversal f (env <.> env')
 
 injectNameTraversal :: HasNamesE e => FreshExt o o' -> NameTraversal e m i o
                     -> NameTraversal e m i o'
-injectNameTraversal = unsafeCoerce
+injectNameTraversal _ = unsafeCoerce
 
 extendInjectNameTraversal :: HasNamesE e
                           => FreshExt o o' -> Env (i:=>:i') (Name o')
@@ -453,8 +460,10 @@ type MB = S -> * -> *
 type MonadMB (m :: MB) = forall (n::S)        . Monad (m n  )
 type MonadMP (m :: MP) = forall (n::S) (l::S) . Monad (m n l)
 
+class MonadMB m => HasScope (m :: MB) where
+  askScope :: m n (Scope n)
 
-class (HasNamesE e, MonadMB m)
+class (HasNamesE e, MonadMB m, HasScope m)
       => BindingsReader (e::E) (m::MB) | m -> e where
   askBindings :: m n (RecEnv e n)
   updateBindings :: FreshExt n l -> RecEnvFrag e n l -> m l a -> m n a
@@ -465,15 +474,16 @@ class (HasNamesE eb, HasNamesE es, BindingsReaderMP eb m)
   askSubst :: m i o (ScopelessEnv i (es o))
   updateSubst :: ScopelessEnv i' (es o) -> m i' o a -> m i o a
 
-askScope :: BindingsReader e m => m n (Scope n)
-askScope = envAsScope <$> fromRecEnv <$> askBindings
-
 extendSubst :: SubstReader eb es m => Env (i:=>:i') (es o) -> m i' o a -> m i o a
 extendSubst envFrag cont = do
   env <- askSubst
   updateSubst (env <>> envFrag) cont
 
+lookupBindings :: BindingsReader e m => Name n -> m n (e n)
+lookupBindings v = (!v) <$> fromRecEnv <$> askBindings
+
 type BindingsReaderMP (e::E) (m::MP) = forall (n::S). BindingsReader e (m n)
+type HasScopeMP              (m::MP) = forall (n::S). HasScope         (m n)
 
 type MonadErrMB (m :: MB) = forall (n::S)        . MonadErr (m n  )
 type MonadErrMP (m :: MP) = forall (n::S) (l::S) . MonadErr (m n l)
@@ -484,6 +494,9 @@ type MonadFailMP (m :: MP) = forall (n::S) (l::S) . MonadFail (m n l)
 newtype BindingsReaderT (m:: * -> *) (e::E) (n::S) (a:: *) =
   BindingsReaderT { runBindingsReaderT :: ReaderT (RecEnv e n) m a}
   deriving (Functor, Applicative, Monad)
+
+instance (HasNamesE e, Monad m) => HasScope (BindingsReaderT m e) where
+  askScope = envAsScope <$> fromRecEnv <$> askBindings
 
 instance (HasNamesE e, Monad m) => BindingsReader e (BindingsReaderT m e) where
   -- lookupName name = BindingsReaderT do
@@ -498,6 +511,11 @@ newtype SubstReaderT (m:: * -> *) (eb::E) (es::E) (i::S) (o::S) (a:: *) =
 
 runSubstReaderT :: RecEnv eb o -> ScopelessEnv i (es o) -> SubstReaderT m eb es i o a -> m a
 runSubstReaderT bindings env (SubstReaderT m) = runReaderT m (bindings, env)
+
+
+instance (HasNamesE eb, HasNamesE es, Monad m)
+         => HasScope (SubstReaderT m eb es i) where
+  askScope = envAsScope <$> fromRecEnv <$> askBindings
 
 instance (HasNamesE eb, HasNamesE es, Monad m)
          => BindingsReader eb (SubstReaderT m eb es i) where
@@ -521,62 +539,87 @@ instance MonadFail m => MonadFail (SubstReaderT m eb es i o)
 
 -- === alpha-renaming-invariant equality checking ===
 
-alphaEq :: AlphaEqE e => Scope n -> e n -> e n -> Bool
-alphaEq scope e1 e2 = isJust $ runZipM (idZipEnv scope) $ alphaEqE e1 e2
+type AlphaEq e = AlphaEqE e  :: Constraint
 
-data ZipEnv i1 i2 o = ZipEnv
+alphaEq :: AlphaEqE e => Scope n -> e n -> e n -> Bool
+alphaEq scope e1 e2 = isJust $ runZipSubstM (idZipSubstEnv scope) $ alphaEqE e1 e2
+
+data ZipSubstEnv i1 i2 o = ZipSubstEnv
   { zSubst1 :: ScopelessEnv i1 (Name o)
   , zSubst2 :: ScopelessEnv i2 (Name o)
   , zScope  :: Scope o }
 
 class HasNamesE e => AlphaEqE (e::E) where
-  alphaEqE :: MonadZip m => e i1 -> e i2 -> m i1 i2 o ()
+  alphaEqE :: MonadZipSubst m => e i1 -> e i2 -> m i1 i2 o ()
 
 class HasNamesB b => AlphaEqB (b::B) where
-  withAlphaEqB :: MonadZip m => b i1 i1' -> b i2 i2'
+  withAlphaEqB :: MonadZipSubst m => b i1 i1' -> b i2 i2'
                -> (forall o'. m i1' i2' o' a)
                ->             m i1  i2  o  a
 
 -- TODO: consider generalizing this to something that can also handle e.g.
 -- unification and type checking with some light reduction
-class (forall i1 i2 o. Monad (m i1 i2 o))
-      => MonadZip (m :: S -> S -> S -> * -> *) where
-  mismatch  :: m i1 i2 o a
-  askZipEnv :: m i1 i2 o (ZipEnv i1 i2 o)
-  withZipEnv :: ZipEnv i1' i2' o'
+class (forall i1 i2 o. MonadErr (m i1 i2 o))
+      => MonadZipSubst (m :: S -> S -> S -> * -> *) where
+  askZipSubstEnv :: m i1 i2 o (ZipSubstEnv i1 i2 o)
+  withZipSubstEnv :: ZipSubstEnv i1' i2' o'
              -> m i1' i2' o' a
              -> m i1  i2  o  a
 
-newtype ZipM i1 i2 o a =
-  ZipM (ReaderT (ZipEnv i1 i2 o) Maybe a)
+newtype ZipSubstM i1 i2 o a =
+  ZipSubstM (ReaderT (ZipSubstEnv i1 i2 o) Maybe a)
   deriving (Functor, Applicative, Monad)
 
-instance MonadZip ZipM where
-  mismatch = ZipM $ lift Nothing  -- use MonadPlus, MonadFail, or MonadError instead?
-  askZipEnv = ZipM ask
-  withZipEnv env (ZipM m) = ZipM $ lift $ runReaderT m env
+instance MonadError Err (ZipSubstM i1 i2 o)
 
-idZipEnv :: Scope n -> ZipEnv n n n
-idZipEnv scope = ZipEnv idRenameEnv idRenameEnv scope
+instance MonadZipSubst ZipSubstM where
+  askZipSubstEnv = ZipSubstM ask
+  withZipSubstEnv env (ZipSubstM m) = ZipSubstM $ lift $ runReaderT m env
 
-runZipM :: ZipEnv i1 i2 o -> ZipM i1 i2 o a -> Maybe a
-runZipM env (ZipM m) = runReaderT m env
+idZipSubstEnv :: Scope n -> ZipSubstEnv n n n
+idZipSubstEnv scope = ZipSubstEnv idRenameEnv idRenameEnv scope
+
+runZipSubstM :: ZipSubstEnv i1 i2 o -> ZipSubstM i1 i2 o a -> Maybe a
+runZipSubstM env (ZipSubstM m) = runReaderT m env
+
+alphaEqTraversable :: (AlphaEqE e, Traversable f, Eq (f ()))
+                   => MonadZipSubst m
+                   => f (e i1) -> f (e i2) -> m i1 i2 o ()
+alphaEqTraversable f1 f2 = do
+  let (struct1, vals1) = splitTraversable f1
+  let (struct2, vals2) = splitTraversable f2
+  unless (struct1 == struct2) zipErr
+  zipWithM_ alphaEqE vals1 vals2
+  where
+    splitTraversable :: Traversable f => f a -> (f (), [a])
+    splitTraversable xs = runWriter $ forM xs \x -> tell [x]
 
 instance AlphaEqE Name where
   alphaEqE v1 v2 = do
-    ZipEnv env1 env2 _ <- askZipEnv
+    ZipSubstEnv env1 env2 _ <- askZipSubstEnv
     if env1!v1 == env2!v2
       then return ()
-      else mismatch
+      else zipErr
 
 instance AlphaEqB PlainBinder where
   withAlphaEqB b1 b2 cont = do
-    ZipEnv env1 env2 scope <- askZipEnv
+    ZipSubstEnv env1 env2 scope <- askZipSubstEnv
     withFresh scope \ext bFresh name -> do
       let env1'  = injectEnvNamesL ext env1  <>> b1@>name
       let env2'  = injectEnvNamesL ext env2  <>> b2@>name
       let scope' = scope <>> bFresh@>()
-      withZipEnv (ZipEnv env1' env2' scope') cont
+      withZipSubstEnv (ZipSubstEnv env1' env2' scope') cont
+
+instance (AlphaEqB b, AlphaEqE ann) => AlphaEqB (AnnBinderP b ann) where
+  withAlphaEqB (b1:>ann1) (b2:>ann2) cont =
+    alphaEqE ann1 ann2 >> withAlphaEqB b1 b2 cont
+
+instance AlphaEqB b => AlphaEqB (Nest b) where
+  withAlphaEqB _ _ _ = undefined
+
+instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (NestPair b1 b2) where
+  withAlphaEqB (NestPair a1 b1) (NestPair a2 b2) cont =
+    withAlphaEqB a1 a2 $ withAlphaEqB b1 b2 $ cont
 
 instance (AlphaEqB b, AlphaEqE e) => AlphaEqE (Abs b e) where
   alphaEqE (Abs b1 e1) (Abs b2 e2) = withAlphaEqB b1 b2 $ alphaEqE e1 e2

@@ -15,6 +15,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
@@ -28,7 +29,7 @@ module SaferNames.Syntax (
     Val, Op, Con, Hof, TC, Module (..), EvaluatedModule, WithBindings,
     emptyEvaluatedModule, DataConRefBinding (..),
     AltP, Alt, BinderInfo (..), TypedBinderInfo (..), Bindings, BindingsFrag,
-    SubstE (..), SubstB (..), Ptr, PtrType,
+    SubstE (..), SubstB (..), Ptr, PtrType, AtomSubstVal,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
     Direction (..), Limit (..),
     DataDef (..), NamedDataDef (..), DataConDef (..), Nest (..),
@@ -37,10 +38,9 @@ module SaferNames.Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     binderType, isTabTy, BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    WithArrow (..), withoutArrow, justArrow,
-    IRVariant (..), SubstVal (..), applySubst, withAtomBinder,
+    WithArrow (..), IRVariant (..), SubstVal (..), applySubst, withFreshAtomBinder, idAtomSubst,
     applyAbs, applyNaryAbs, scopelessApplyAbs, scopelessApplyNaryAbs,
-    applyDataDefParams, absArgType, substEnvFragLookup, arrowEff,
+    applyDataDefParams, absArgType, arrowEff,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
@@ -48,10 +48,10 @@ module SaferNames.Syntax (
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow,
     pattern TyKind, pattern LamVal,
-    pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
-    pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
+    pattern TabTy, pattern TabTyAbs, pattern TabVal,
+    pattern Pure, pattern BinaryFunTy,
     pattern LabeledRowKind, pattern EffKind,
-    (-->), (--@), (==>) ) where
+    (-->), (?-->), (--@), (==>) ) where
 
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
@@ -59,6 +59,7 @@ import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import qualified Data.Text             as T
+import Data.Kind (Constraint)
 import Data.Int
 import Data.Word
 import Foreign.Ptr
@@ -96,7 +97,7 @@ data Atom n =
  | Eff (EffectRow n)
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
- | DataConRef (NamedDataDef n) [Atom n] (Abs (Nest DataConRefBinding) UnitE n)
+ | DataConRef (NamedDataDef n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
  | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
@@ -132,17 +133,17 @@ type Binder     = AnnBinderP PlainBinder            Type  :: B
 type BinderList = AnnBinderP PlainBinderList (ListE Type) :: B
 
 data DataDef n where
-  -- The `RawName` is just for pretty-printing. The actual alpha-renamable binder name is in
-  -- UExpr and Bindings
-  DataDef :: RawName -> BinderList n l -> ListE DataConDef l -> DataDef n
+  -- The `RawName` is just for pretty-printing. The actual alpha-renamable
+  -- binder name is in UExpr and Bindings
+  DataDef :: RawName -> BinderList n l -> [DataConDef l] -> DataDef n
 
-data DataConDef n = DataConDef RawName (Abs (Nest Binder) UnitE n)
+data DataConDef n = DataConDef RawName (EmptyAbs (Nest Binder) n)
                     deriving Show
 
 data NamedDataDef n = NamedDataDef (Name n) (DataDef n)
                       deriving Show
 
-data Block n where Block :: Nest Decl n l -> Expr l -> Block n
+data Block n where Block :: Type n ->Nest Decl n l ->  Expr l -> Block n
 
 type LamExpr = Abs Binder (WithArrow Block)  :: E
 type PiType  = Abs Binder (WithArrow Type)   :: E
@@ -228,14 +229,21 @@ data TypedBinderInfo n = TypedBinderInfo (Maybe (Type n)) (BinderInfo n)
 type Bindings     = RecEnv     TypedBinderInfo
 type BindingsFrag = RecEnvFrag TypedBinderInfo
 
-type MonadAtomSubst m = SubstReader TypedBinderInfo (SubstVal Atom) m
+type MonadAtomSubst m = SubstReader TypedBinderInfo (SubstVal Atom) m :: Constraint
 
-withAtomBinder :: MonadAtomSubst m => b i i'
-               -> (forall o'. b o o' -> m i' o' a) -> m i o a
-withAtomBinder _ _ = undefined
+withFreshAtomBinder :: SubstB b => MonadAtomSubst m => b i i'
+                    -> (forall o'. FreshExt o o' -> b o o' -> m i' o' a) -> m i o a
+withFreshAtomBinder b cont = do
+  scope <- askScope
+  subst <- askSubst
+  case applySubstB scope subst b of
+    FreshBinder ext b' renamer ->
+      updateBindings ext (asBindingsFrag ext b') $
+        extendSubst (fmap Rename renamer) $
+          cont ext b'
 
-substM :: SubstE e => MonadAtomSubst m => e i -> m i o (e o)
-substM = undefined
+substM :: HasScopeMP m => SubstE e => MonadAtomSubst m => e i -> m i o (e o)
+substM x = applySubst <$> askScope <*> askSubst <*> pure x
 
 -- === traversals with atom substitutions ===
 
@@ -244,7 +252,7 @@ data SubstVal e n = SubstVal (e n) | Rename (Name n)
 -- TODO: make this just `Env (Atom o) i` if we remove type annotations from
 -- variable occurrences
 type AtomSubstVal = SubstVal Atom
-type SubstEnv i o = Env i (AtomSubstVal o)
+type SubstEnv i o = ScopelessEnv i (AtomSubstVal o)
 
 type CoreTraversal = NameTraversal AtomSubstVal
 
@@ -264,7 +272,12 @@ class HasNamesB b => SubstB (b::B) where
     -> b i i'
     -> m (FreshBinder b o (i:=>:i') )
 
-  asBindingsFrag :: b n l -> BindingsFrag n l
+  -- TODO: this is an optimization. We could implement `asBindingsFrag` in terms
+  -- of `traverseCoreB` but this way we can get binder information without
+  -- traversing/substituting the term itself (important for Decls and similar).
+  -- But maybe we should just rely on laziness to avoid unnecessary work? It
+  -- might require having a special value for the identity substitution.
+  asBindingsFrag :: FreshExt n l -> b n l -> BindingsFrag n l
 
 coreTraversalFromRenameTraversal :: Monad m => RenameTraversal m i o -> CoreTraversal m i o
 coreTraversalFromRenameTraversal (NameTraversal f renamer) =
@@ -282,21 +295,23 @@ traverseNamesFromSubstB
 traverseNamesFromSubstB s t b =
   traverseCoreB s (coreTraversalFromRenameTraversal t) b
 
-fmapAtomNames :: SubstE e => Scope o -> (Name i -> AtomSubstVal o) -> e i -> e o
-fmapAtomNames scope f e = runIdentity $ traverseCoreE scope t e
-  where t = NameTraversal (pure . f) emptyEnv
+idAtomSubst :: SubstEnv n n
+idAtomSubst = newScopelessEnv Rename
 
 applySubst :: SubstE e => Scope o -> SubstEnv i o -> e i -> e o
 applySubst scope env e = fmapAtomNames scope (env !) e
 
-substEnvFragLookup :: SubstEnv (o:=>:i) o -> Name i -> AtomSubstVal o
-substEnvFragLookup substFrag name = case envFragLookup substFrag name of
-  Left name' -> Rename name'
-  Right val -> val
+applySubstB :: SubstB b => Scope o -> SubstEnv i o -> b i i' -> FreshBinder b o (i:=>:i')
+applySubstB scope env b = runIdentity $ traverseCoreB scope t b
+   where t = NameTraversal (pure . (env!)) emptyEnv
+
+fmapAtomNames :: SubstE e => Scope o -> (Name i -> AtomSubstVal o) -> e i -> e o
+fmapAtomNames scope f e = runIdentity $ traverseCoreE scope t e
+  where t = NameTraversal (pure . f) emptyEnv
 
 applyAbs :: SubstE e => Scope n -> Abs Binder e n -> Atom n -> e n
 applyAbs scope (Abs b body) x =
-  fmapAtomNames scope (substEnvFragLookup (b@>SubstVal x)) body
+  applySubst scope (idAtomSubst <>> (b@>SubstVal x)) body
 
 applyNaryAbs :: SubstE e => Scope n -> Abs (Nest Binder) e n -> [Atom n] -> e n
 applyNaryAbs _ (Abs Empty body) [] = body
@@ -354,6 +369,9 @@ binderType (_:>ann) = ann
 infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
+
+(?-->) :: Type n -> Type n -> Type n
+a ?--> b = Pi (Abs (Ignore:>a) (WithArrow ImplicitArrow b))
 
 (-->) :: Type n -> Type n -> Type n
 a --> b = Pi (Abs (Ignore:>a) (WithArrow PureArrow b))
@@ -448,9 +466,6 @@ pattern LamVal v b <- Lam (Abs v (WithArrow _ b))
 pattern TabVal :: Binder n l -> Block l -> Atom n
 pattern TabVal v b = Lam (Abs v (WithArrow TabArrow b))
 
-pattern TabValA :: Binder n l -> Atom l -> Atom n
-pattern TabValA v a = Lam (Abs v (WithArrow TabArrow (Block Empty (Atom a))))
-
 isTabTy :: Type n -> Bool
 isTabTy (TabTy _ _) = True
 isTabTy _ = False
@@ -506,11 +521,6 @@ pattern PiTy b arr bodyTy = Pi (Abs b (WithArrow arr bodyTy))
 pattern BinaryFunTy :: Binder n l -> Binder l l' -> EffectRow l' -> Type l' -> Type n
 pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
-pattern BinaryFunVal :: Binder n l -> Binder l l' -> EffectRow l' -> Block l' -> Atom n
-pattern BinaryFunVal b1 b2 eff body =
-          Lam (Abs b1 (WithArrow PureArrow (Block Empty (Atom (
-          Lam (Abs b2 (WithArrow (PlainArrow eff) body)))))))
-
 -- === instances ===
 
 -- right-biased, unlike the underlying Map
@@ -543,21 +553,32 @@ withTraverseCoreB s t b cont = do
 tce :: SubstE e => Monad m => Scope o -> CoreTraversal m i o -> e i -> m (e o)
 tce = traverseCoreE
 
-instance SubstB PlainBinder where
-  traverseCoreB = undefined
-  asBindingsFrag = undefined
+-- instance SubstB PlainBinder where
+--   traverseCoreB s _ b = case b of
+--     Ignore -> return $ FreshBinder id Ignore emptyEnv
+--     UnsafeMakeBinder _ ->
+--       withFresh s \ext b' name' ->
+--         return $ FreshBinder ext b' (b@>name')
+
+--   asBindingsFrag = undefined
 
 instance (SubstB b, SubstE e) => SubstE (Abs b e) where
   traverseCoreE s t (Abs b body) = do
     withTraverseCoreB s t b \_ s' t' b' ->
       Abs b' <$> traverseCoreE s' t' body
 
-instance (SubstB b, SubstE e) => SubstB (AnnBinderP b e) where
-  traverseCoreB s t (b:>ann) = do
-    ann' <- traverseCoreE s t ann
-    traverseCoreB s t b >>= \case
-      FreshBinder ext b' renamer -> return $ FreshBinder ext (b':>ann') renamer
-  asBindingsFrag = undefined
+instance SubstB Binder where
+  traverseCoreB s t (b:>ty) = do
+    ty' <- traverseCoreE s t ty
+    case b of
+      Ignore -> return $ FreshBinder id (Ignore:>ty') emptyEnv
+      UnsafeMakeBinder _ ->
+        withFresh s \ext b' name' ->
+          return $ FreshBinder ext (b':>ty') (b@>name')
+
+  asBindingsFrag ext (b:>ty) =
+    let ty' = injectNamesL ext ty
+    in RecEnvFrag $ b @> TypedBinderInfo (Just ty') UnknownBinder
 
 instance HasNamesE EffectRow where traverseNamesE = traverseNamesFromSubstE
 instance SubstE EffectRow where
@@ -575,9 +596,10 @@ instance SubstE e => SubstE (WithArrow e) where
 
 instance HasNamesE Block where traverseNamesE = traverseNamesFromSubstE
 instance SubstE Block where
-  traverseCoreE s t (Block decls result) =
+  traverseCoreE s t (Block ty decls result) = do
+    ty' <- traverseCoreE s t ty
     traverseCoreE s t (Abs decls result) >>= \case
-      Abs decls' result' -> return $ Block decls' result'
+      Abs decls' result' -> return $ Block ty' decls' result'
 
 instance HasNamesB Decl where
   traverseNamesB = traverseNamesFromSubstB
@@ -649,7 +671,38 @@ instance SubstE Atom where
     -- ProjectElt (NE.NonEmpty Int) (Var n)
     _ -> undefined
 
-instance AlphaEq Atom
+instance AlphaEqE Atom where
+  alphaEqE atom1 atom2 = case (atom1, atom2) of
+    (Var (AnnVar v _), Var (AnnVar v' _)) -> alphaEqE v v'
+    (Pi ab, Pi ab') -> alphaEqE ab ab'
+  -- DataCon def params con args == DataCon def' params' con' args' =
+  --   def == def' && params == params' && con == con' && args == args'
+  -- TypeCon def params == TypeCon def' params' = def == def' && params == params'
+  -- Variant lr l i v == Variant lr' l' i' v' =
+  --   (lr, l, i, v) == (lr', l', i', v')
+  -- Record lr    == Record lr'      = lr == lr'
+  -- RecordTy lr  == RecordTy lr'    = lr == lr'
+  -- VariantTy lr == VariantTy lr'   = lr == lr'
+    (Con con, Con con') -> alphaEqTraversable con con'
+    (TC  con, TC  con') -> alphaEqTraversable con con'
+  -- Eff eff == Eff eff' = eff == eff'
+  -- ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
+    _ -> zipErr
+
+instance (SubstE e, AlphaEqE e) => AlphaEqE (WithArrow e) where
+  alphaEqE (WithArrow arr1 e1) (WithArrow arr2 e2) = do
+    zipWithZ_ alphaEqE arr1 arr2
+    alphaEqE e1 e2
+
+instance AlphaEqE EffectRow where
+
+instance Zippable ArrowP where
+  zipWithZ f arr1 arr2 = case (arr1, arr2) of
+    (PlainArrow e1, PlainArrow e2) -> PlainArrow <$> f e1 e2
+    (ImplicitArrow, ImplicitArrow) -> return ImplicitArrow
+    (ClassArrow   , ClassArrow   ) -> return ClassArrow
+    (TabArrow     , TabArrow     ) -> return TabArrow
+    (LinArrow     , LinArrow     ) -> return LinArrow
 
 instance HasNamesE Expr where traverseNamesE = traverseNamesFromSubstE
 instance SubstE Expr where
@@ -666,3 +719,6 @@ instance HasNamesE SourceNameMap where
 
 instance HasNamesE TypedBinderInfo where
   traverseNamesE = undefined
+
+instance SubstE UnitE where
+  traverseCoreE _ _ UnitE = return UnitE
