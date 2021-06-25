@@ -1164,8 +1164,9 @@ It's a kind of <code>scan</code>.</p>
   atol <span class="symbol">=</span> <span class="type-name">FToF64</span> 0<span class="symbol">.</span>00000001
   rtol <span class="symbol">=</span> <span class="type-name">FToF64</span> 0<span class="symbol">.</span>00001
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">HasAllClose</span> t<span class="symbol">,</span> <span class="type-name">HasDefaultTolerance</span> t] <span class="type-name">HasAllClose</span> (n<span class="symbol">=&gt;</span>t)
-  allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol a b<span class="symbol">.</span> all <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> (a<span class="symbol">.</span>i <span class="symbol">~~</span> b<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">HasAllClose</span> t] <span class="type-name">HasAllClose</span> (n<span class="symbol">=&gt;</span>t)
+  allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol a b<span class="symbol">.</span>
+    all <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> allclose atol<span class="symbol">.</span>i rtol<span class="symbol">.</span>i a<span class="symbol">.</span>i b<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">HasDefaultTolerance</span> t] <span class="type-name">HasDefaultTolerance</span> (n<span class="symbol">=&gt;</span>t)
   atol <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> atol

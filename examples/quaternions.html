@@ -1094,9 +1094,10 @@ so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
   x <span class="symbol">=</span> abs x
   ret1 <span class="symbol">=</span> (<span class="symbol">-</span>0<span class="symbol">.</span>0187293 <span class="symbol">*</span> x) <span class="symbol">+</span> 0<span class="symbol">.</span>0742610
   ret2 <span class="symbol">=</span> (ret1 <span class="symbol">*</span> x) <span class="symbol">-</span> 0<span class="symbol">.</span>2121144
-  ret3 <span class="symbol">=</span> (ret2 <span class="symbol">*</span> x) <span class="symbol">+</span> 1<span class="symbol">.</span>5707288
-  ret4 <span class="symbol">=</span> (ret3 <span class="symbol">*</span> (sqrt (1<span class="symbol">.</span>0<span class="symbol">-</span>x))) <span class="symbol">-</span> (2<span class="symbol">.</span>0 <span class="symbol">*</span> negate <span class="symbol">*</span> ret3)
-  negate <span class="symbol">*</span> 3<span class="symbol">.</span>14159265358979 <span class="symbol">+</span> ret4
+  ret3 <span class="symbol">=</span> (ret2 <span class="symbol">*</span> x) <span class="symbol">+</span> pi <span class="symbol">/</span> 2<span class="symbol">.</span>
+  ret4 <span class="symbol">=</span> (ret3 <span class="symbol">*</span> (sqrt (1<span class="symbol">.</span>0<span class="symbol">-</span>x)))
+  ret5 <span class="symbol">=</span> ret4 <span class="symbol">-</span> (2<span class="symbol">.</span>0 <span class="symbol">*</span> negate <span class="symbol">*</span> ret4)
+  negate <span class="symbol">*</span> pi <span class="symbol">+</span> ret5
 </div></div><div class="cell"><div class="code-block">    
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The logarithm of a quaternion is also a quaternion and is given by this formula:</p>
@@ -1167,7 +1168,7 @@ srcdoc='<html>
                    scene.add( cube );
 
                    // Rotate by our angles.
-                   cube.quaternion.copy(new THREE.Quaternion(0, 0.923860788, 0, -0.382728666));
+                   cube.quaternion.copy(new THREE.Quaternion(0, 0.923825026, 0, -0.382814795));
 
                    
                    renderer.render( scene, camera );
@@ -1210,7 +1211,7 @@ srcdoc='<html>
                    scene.add( cube );
 
                    // Rotate by our angles.
-                   cube.quaternion.copy(new THREE.Quaternion(-0, -0.382547736, -0, 0.923935711));
+                   cube.quaternion.copy(new THREE.Quaternion(-0, -0.382289112, -0, 0.924042761));
 
                    
                    renderer.render( scene, camera );
@@ -1393,7 +1394,7 @@ srcdoc='<html>
                    scene.add( cube );
 
                    // Rotate by our angles.
-                   cube.quaternion.copy(new THREE.Quaternion(0.0923116133, 0.192229033, -0.0382367298, 0.976250172));
+                   cube.quaternion.copy(new THREE.Quaternion(0.0923158228, 0.192237794, -0.0382384732, 0.976247966));
 
                    
                    renderer.render( scene, camera );
@@ -1436,7 +1437,7 @@ srcdoc='<html>
                    scene.add( cube );
 
                    // Rotate by our angles.
-                   cube.quaternion.copy(new THREE.Quaternion(0.180238456, 0.375327259, -0.0746572316, 0.906128943));
+                   cube.quaternion.copy(new THREE.Quaternion(0.180246279, 0.375343561, -0.0746604726, 0.90612042));
 
                    
                    renderer.render( scene, camera );
@@ -1479,7 +1480,7 @@ srcdoc='<html>
                    scene.add( cube );
 
                    // Rotate by our angles.
-                   cube.quaternion.copy(new THREE.Quaternion(0.259604067, 0.540597677, -0.107531548, 0.792966962));
+                   cube.quaternion.copy(new THREE.Quaternion(0.259614319, 0.540619016, -0.107535802, 0.792948484));
 
                    
                    renderer.render( scene, camera );
@@ -1522,7 +1523,7 @@ srcdoc='<html>
                    scene.add( cube );
 
                    // Rotate by our angles.
-                   cube.quaternion.copy(new THREE.Quaternion(0.326638579, 0.680189848, -0.135298163, 0.642139494));
+                   cube.quaternion.copy(new THREE.Quaternion(0.326649666, 0.680212915, -0.135302752, 0.6421085));
 
                    
                    renderer.render( scene, camera );

@@ -1,0 +1,748 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but ð¤·
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Gradients on manifolds</h2>
+<p>An example of how to generalize the Dex <code>linearize</code> and <code>grad</code> functions to take
+derivatives and gradients of functions on manifolds.</p>
+</div></div><div class="cell"><div class="prose-block"><h3>Tangent space</h3>
+<p>The difference between differentiating on $\mathbb{R}^n$ and on general
+manifolds is that in the general case, the manifold tangent space type may be
+different to the manifold representation type. The tangent space at a single
+point will always be isomorphic to $\mathbb{R}^n$ for some $n$, but here we
+allow any vector space type <code>b</code> for flexibility.</p>
+</div></div><div class="cell"><div class="prose-block"><p>The proper definition of a tangent space is quite abstract, so no further details will be provided here. Wikipedia has quite a good
+<a href="https://en.wikipedia.org/wiki/Tangent_space">article</a> for more information.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Practically, the two components required for defining the differentiable
+structure on the manifold are the exponential map (a mapping from the tangent
+space at p to the manifold, such that zero is mapped to $p$, and straight lines
+are mapped to geodesics), and its inverse. Note that &quot;exponential map&quot; is a
+somewhat overloaded term, here we are talking about it in a Riemannian geometry
+sense.</p>
+</div></div><div class="cell"><div class="prose-block"><p>In the <code>TangentSpace</code> interface, <code>manifold</code> is the type which can represent points
+on the manifold. <code>tangent</code> is the type which can represent points in a tangent space
+to the manifold.  Ideally <code>tangent</code> would be an associated type of <code>manifold</code> so that the
+compiler is able to infer the tangent space type from the manifold type, but
+this feature is not yet available in Dex.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">VSpace</span> tangent] <span class="type-name">TangentSpace</span> manifold tangent
+  <span class="comment">-- Given a point p on the manifold M and a point v in its tangent space TpM,
+</span>  <span class="comment">-- this returns another point q on the manifold.
+</span>  <span class="comment">-- Must satisfy tangentExponentialMap p zero == p
+</span>  <span class="comment">-- (tangentExponentialMap p) will be linearized around zero, so it is
+</span>  <span class="comment">-- important that any operations used have well-defined derivatives for inputs
+</span>  <span class="comment">-- p, zero.
+</span>  tangentExponentialMap<span class="symbol">:</span> manifold <span class="symbol">-&gt;</span> tangent <span class="symbol">-&gt;</span> manifold
+  <span class="comment">-- (tangentLogarithmMap p) is the pointwise inverse to
+</span>  <span class="comment">-- (tangentExponentialMap p).
+</span>  <span class="comment">-- Must satisfy tangentLogarithmMap p p == zero
+</span>  <span class="comment">-- (tangentLogarithmMap p) will be linearized around p, so it is important
+</span>  <span class="comment">-- that any operations used have well-defined derivatives for inputs p, p.
+</span>  tangentLogarithmMap<span class="symbol">:</span> manifold <span class="symbol">-&gt;</span> manifold <span class="symbol">-&gt;</span> tangent
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Differentiation functions</h3>
+</div></div><div class="cell"><div class="prose-block"><p>We can then define a version of the Dex <code>linearize</code> function which works on
+manifolds.  To see intuitively why this works, consider the following diagram.
+We would like to obtain a linearized version of the function &quot;across the top&quot; of
+the diagram, and we can form this by linearizing the function formed from the
+bottom three sides of the square.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span>
+   &quot;<span class="symbol">&lt;</span>img
+     src<span class="symbol">=\</span>&quot;https<span class="symbol">://</span>user<span class="symbol">-</span>images<span class="symbol">.</span>githubusercontent<span class="symbol">.</span>com<span class="symbol">/</span>33986545<span class="symbol">/</span>122416078<span class="symbol">-</span>5a23ef00<span class="symbol">-</span>cf80<span class="symbol">-</span>11eb<span class="symbol">-</span>83d5<span class="symbol">-</span>d0d5986e8d20<span class="symbol">.</span>png<span class="symbol">\</span>&quot;
+     width<span class="symbol">=\</span>&quot;100%<span class="symbol">\</span>&quot;<span class="symbol">&gt;</span>&quot;
+</div><img
+     src="https://user-images.githubusercontent.com/33986545/122416078-5a23ef00-cf80-11eb-83d5-d0d5986e8d20.png"
+     width="100%"></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> manifoldLinearize [<span class="type-name">TangentSpace</span> manifoldA tangentA<span class="symbol">,</span>
+                       <span class="type-name">TangentSpace</span> manifoldB tangentB<span class="symbol">,</span> <span class="type-name">Add</span> tangentA]
+    (f<span class="symbol">:</span> manifoldA <span class="symbol">-&gt;</span> manifoldB) (x<span class="symbol">:</span> manifoldA) <span class="symbol">:</span>
+    (manifoldB <span class="symbol">&amp;</span> tangentA <span class="symbol">--</span>o tangentB) <span class="symbol">=</span> 
+  y <span class="symbol">=</span> f x
+  tangentSpaceMapping <span class="symbol">:</span> tangentA <span class="symbol">-&gt;</span> tangentB <span class="symbol">=</span>
+    <span class="symbol">\</span> v <span class="symbol">.</span> tangentLogarithmMap y <span class="symbol">$</span> f <span class="symbol">$</span> tangentExponentialMap x v
+  rawLinearize <span class="symbol">=</span> linearize tangentSpaceMapping zero
+  (y<span class="symbol">,</span> snd rawLinearize)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>A full proof that this is in fact a correct formulation is a bit more
+involved, so we leave it out here. The general idea is to use the differentiable
+curves formulation of the tangent space, and to treat the tangent space at a
+point $x$ as both the tangent space, and as a local chart.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Before we can define <code>grad</code> for manifolds, we need to create the trivial
+instance of a TangentSpace for vector spaces. In this case, we view the tangent
+space at $x$ to be just a copy of the vector space, centred on $x$.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">VSpace</span> a] <span class="type-name">TangentSpace</span> a a
+  tangentExponentialMap <span class="symbol">=</span> <span class="symbol">\</span> p v <span class="symbol">.</span> p <span class="symbol">+</span> v
+  tangentLogarithmMap <span class="symbol">=</span> <span class="symbol">\</span> p q <span class="symbol">.</span> q <span class="symbol">-</span> p
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Now we can define a version of the Dex <code>grad</code> function which works on
+manifolds.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> manifoldGrad [<span class="type-name">TangentSpace</span> manifoldA tangentA<span class="symbol">,</span> <span class="type-name">VSpace</span> tangentA]
+  (f<span class="symbol">:</span> manifoldA <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) (x<span class="symbol">:</span> manifoldA) <span class="symbol">:</span> tangentA <span class="symbol">=</span> 
+  linearized<span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> (tangentA <span class="symbol">--</span>o <span class="type-name">Float</span>)) <span class="symbol">=</span> manifoldLinearize f x
+  transposeLinear (snd linearized) 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Equivalence to standard differentiation</h3>
+<p>As a sense check we make sure that these functions give the same output as the
+non-manifold versions on functions which are defined on $\mathbb{R}^n$.</p>
+</div></div><div class="cell"><div class="code-block">x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span> <span class="type-name">IToF</span> (ordinal i) <span class="symbol">/</span> 10<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> myFunc (x <span class="symbol">:</span> (n <span class="symbol">=&gt;</span> <span class="type-name">Float</span>)) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">if</span> (mod (ordinal i) 2 <span class="symbol">==</span> 0) <span class="keyword">then</span> (exp x<span class="symbol">.</span>i) <span class="keyword">else</span> (sin x<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">original <span class="symbol">=</span> linearize myFunc x
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Need to explicitly set up the types here, due to missing associated types.
+</span></div></div><div class="cell"><div class="code-block">new <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> ((<span class="type-name">Fin</span> 10 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">--</span>o <span class="type-name">Float</span>)) <span class="symbol">=</span> manifoldLinearize myFunc x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">fst original <span class="symbol">~~</span> fst new
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">snd original x <span class="symbol">~~</span> snd new x
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Simple example: Circle</h3>
+<p>For a simple demonstration of this framework, consider the manifold $S^1$, i.e.
+the circle. This can be defined as the set of points in $\mathbb{R}^2$ at unit
+distance from the origin:
+$S^1 = \lbrace (x, y) \in \mathbb{R}^2 : x^2 + y^2 = 1 \rbrace $.
+The metric can be induced from $\mathbb{R}^2$.</p>
+</div></div><div class="cell"><div class="prose-block"><p>The standard 1-dimensional parameterization of the circle uses an angle
+$\theta$ to parameterize it, using the map
+$\theta \mapsto (\cos \theta, \sin \theta),\ \theta \in [0, 2\pi)$.
+This has nice properties, in particular it &quot;preserves the metric&quot;, in the sense
+that increasing $\theta$ by $\Delta \theta$ moves a distance of $\Delta \theta$
+along the circle. However, the problem is that the inverse of this map has a
+discontinuity, jumping from $2 \pi$ to $0$ once a full rotation is completed, so
+we can't use it to globally identify $S^1$ with $[0, 2\pi) \subset \mathbb{R}$.</p>
+</div></div><div class="cell"><div class="prose-block"><p>However, we can use the tangent space formalism to locally identify a subset
+of the circle with a subset of $\mathbb{R}$, which allows us to view derivatives
+of maps on $S^1$ as acting on $\mathbb{R}$.</p>
+</div></div><div class="cell"><div class="prose-block"><p>First we define a data structure to represent a point on $S^1$.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">S1</span> <span class="symbol">=</span> <span class="type-name">S</span> {x<span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">&amp;</span> y<span class="symbol">:</span> <span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>To make things simpler numerically, we will say that <code>x</code> and <code>y</code> can take any
+values, as long as they are not both zero, and we will identify <code>S{x, y}</code> with
+the point $(x, y)$ on $S^1$ given by normalizing the associated element of
+$\mathbb{R}^2$, that is $x$ = <code>x / sqrt(x*x + y*y)</code>, $y$ = <code>y / sqrt(x*x + y*y)</code>.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Normalizes an S1 instance. Note this doesn&#39;t modify the point on the circle
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- which it represents.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> s1Normalize (<span class="type-name">S</span>{x<span class="symbol">,</span> y}<span class="symbol">:</span> <span class="type-name">S1</span>) <span class="symbol">:</span> <span class="type-name">S1</span> <span class="symbol">=</span> 
+  magnitude <span class="symbol">=</span> sqrt <span class="symbol">$</span> x <span class="symbol">*</span> x <span class="symbol">+</span> y <span class="symbol">*</span> y
+  (<span class="type-name">S</span>{x <span class="symbol">=</span> x <span class="symbol">/</span> magnitude<span class="symbol">,</span> y <span class="symbol">=</span> y <span class="symbol">/</span> magnitude})
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Now we need to define the tangent space operations. First consider the
+exponential map. We will take the tangent space at a point $p = (x_0, y_0)$ to
+be the $\theta$ space as described above, but offset such that $\theta = 0$ is
+mapped to $p$, to satisfy the condition that <code>tangentExponentialMap p zero == p</code>.
+This means that for some $\theta_0$, the exponential map is
+$\theta \mapsto (\cos (\theta_0 + \theta), \sin (\theta_0 + \theta))$, and
+$x = \cos \theta_0, y = \sin \theta_0$.</p>
+</div></div><div class="cell"><div class="prose-block"><p>As discussed previously, though, calculating $\theta_0$ from $(x_0, y_0)$
+could lead to discontinuities, if we're not careful. But in this case, we can
+use trigonometric identities to calculate the exponential map without requiring
+the value of $\theta_0$ at all.</p>
+</div></div><div class="cell"><div class="prose-block"><p>$(\cos (\theta_0 + \theta), \sin (\theta_0 + \theta))$</p>
+</div></div><div class="cell"><div class="prose-block"><p>$ = (\cos \theta_0 \cos \theta - \sin \theta_0 \sin \theta,
+\sin \theta_0 \cos \theta + \cos \theta_0 \sin \theta)$</p>
+</div></div><div class="cell"><div class="prose-block"><p>$ = (x \cos \theta - y \sin \theta, y \cos \theta + x \sin \theta)$</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>For the inverse of this, we could just write out the equations and try and
+invert them, or we can consider that for two points $(x, y)$ and $(s, t)$ on the
+unit circle, the angle $\theta$ between them (equal to the distance between then
+<em>on the circle</em>) is given by the cosine rule and the Euclidean distance $d$
+between them: $\cos \theta = (1 - d^2) / 2$.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Now we can define the tangent space structure on <code>S1</code>. There is no arccos
+function in Dex so we copy the numerical approximation from <code>quaterions.dx</code>.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- source: https://developer.nvidia.com/cg-toolkit
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> acos (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+  negate <span class="symbol">=</span> select (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0
+  x <span class="symbol">=</span> abs x
+  ret1 <span class="symbol">=</span> (<span class="symbol">-</span>0<span class="symbol">.</span>0187293 <span class="symbol">*</span> x) <span class="symbol">+</span> 0<span class="symbol">.</span>0742610
+  ret2 <span class="symbol">=</span> (ret1 <span class="symbol">*</span> x) <span class="symbol">-</span> 0<span class="symbol">.</span>2121144
+  ret3 <span class="symbol">=</span> (ret2 <span class="symbol">*</span> x) <span class="symbol">+</span> pi <span class="symbol">/</span> 2<span class="symbol">.</span>
+  ret4 <span class="symbol">=</span> (ret3 <span class="symbol">*</span> (sqrt (1<span class="symbol">.</span>0<span class="symbol">-</span>x)))
+  ret5 <span class="symbol">=</span> ret4 <span class="symbol">-</span> (2<span class="symbol">.</span>0 <span class="symbol">*</span> negate <span class="symbol">*</span> ret4)
+  negate <span class="symbol">*</span> pi <span class="symbol">+</span> ret5
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">TangentSpace</span> <span class="type-name">S1</span> <span class="type-name">Float</span>
+  tangentExponentialMap <span class="symbol">=</span> <span class="symbol">\</span> (<span class="type-name">S</span>{x<span class="symbol">=</span>x<span class="symbol">,</span> y<span class="symbol">=</span>y}) theta<span class="symbol">.</span>
+    (<span class="type-name">S</span>{x<span class="symbol">=</span>xn<span class="symbol">,</span> y<span class="symbol">=</span>yn}) <span class="symbol">=</span> s1Normalize (<span class="type-name">S</span>{x<span class="symbol">=</span>x<span class="symbol">,</span> y<span class="symbol">=</span>y})
+    <span class="type-name">S</span>{x <span class="symbol">=</span> xn <span class="symbol">*</span> cos theta <span class="symbol">-</span> yn <span class="symbol">*</span> sin theta<span class="symbol">,</span>
+      y <span class="symbol">=</span> yn <span class="symbol">*</span> cos theta <span class="symbol">+</span> xn <span class="symbol">*</span> sin theta}
+  tangentLogarithmMap <span class="symbol">=</span> <span class="symbol">\</span> (<span class="type-name">S</span>{x<span class="symbol">=</span>x<span class="symbol">,</span> y<span class="symbol">=</span>y}) (<span class="type-name">S</span>{x<span class="symbol">=</span>s<span class="symbol">,</span> y<span class="symbol">=</span>t})<span class="symbol">.</span>
+    (<span class="type-name">S</span>{x<span class="symbol">=</span>xn<span class="symbol">,</span> y<span class="symbol">=</span>yn}) <span class="symbol">=</span> s1Normalize (<span class="type-name">S</span>{x<span class="symbol">=</span>x<span class="symbol">,</span> y<span class="symbol">=</span>y})
+    (<span class="type-name">S</span>{x<span class="symbol">=</span>sn<span class="symbol">,</span> y<span class="symbol">=</span>tn}) <span class="symbol">=</span> s1Normalize (<span class="type-name">S</span>{x<span class="symbol">=</span>s<span class="symbol">,</span> y<span class="symbol">=</span>t})
+    dSquared <span class="symbol">=</span> (xn <span class="symbol">-</span> sn) <span class="symbol">*</span> (xn <span class="symbol">-</span> sn) <span class="symbol">+</span> (yn <span class="symbol">-</span> tn) <span class="symbol">*</span> (yn <span class="symbol">-</span> tn)
+    <span class="comment">-- Check if we&#39;re using positive or negative inverse cos solution. 
+</span>    <span class="comment">-- This is done by considering the sign of the cross product of the two
+</span>    <span class="comment">-- points in 3D space.
+</span>    negate <span class="symbol">=</span> select ((xn <span class="symbol">*</span> tn <span class="symbol">-</span> sn <span class="symbol">*</span> yn) <span class="symbol">&gt;</span> 0<span class="symbol">.</span>) 1<span class="symbol">.</span>0 (<span class="symbol">-</span>1<span class="symbol">.</span>0)
+    negate <span class="symbol">*</span> (acos <span class="symbol">$</span> (1<span class="symbol">.</span> <span class="symbol">-</span> dSquared <span class="symbol">/</span> 2<span class="symbol">.</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Check that the tangent and logarithm are actually inverse to one another:</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Convenience function to help check for equality.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> s1ToR2 (<span class="type-name">S</span>{x<span class="symbol">=</span>x<span class="symbol">,</span> y<span class="symbol">=</span>y}<span class="symbol">:</span> <span class="type-name">S1</span>) <span class="symbol">:</span> (<span class="type-name">Fin</span> 2 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> 
+  [x<span class="symbol">,</span> y]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Two arbitrary points on the circle, not normalized.
+</span></div></div><div class="cell"><div class="code-block">circlePointOne <span class="symbol">=</span> <span class="type-name">S</span>{x<span class="symbol">=</span>3<span class="symbol">.</span>4<span class="symbol">,</span> y<span class="symbol">=</span>0<span class="symbol">.</span>2}
+</div></div><div class="cell"><div class="code-block">circlePointTwo <span class="symbol">=</span> <span class="type-name">S</span>{x<span class="symbol">=-</span>1<span class="symbol">.</span>0<span class="symbol">,</span> y<span class="symbol">=</span>1<span class="symbol">.</span>8}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Applying tangent mappings at circlePointTwo, to circlePointOne
+</span></div></div><div class="cell"><div class="code-block">intermediateLog<span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> tangentLogarithmMap circlePointTwo circlePointOne
+</div></div><div class="cell"><div class="code-block">roundTrip <span class="symbol">=</span> tangentExponentialMap circlePointTwo intermediateLog
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">(s1ToR2 <span class="symbol">$</span> s1Normalize roundTrip) <span class="symbol">~~</span> (s1ToR2 <span class="symbol">$</span> s1Normalize circlePointOne)
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Now we can take gradients of maps on a circle. Consider a function which takes
+$(x, y) \mapsto x$. In $\theta$ space, this is equivalent to
+$\theta \mapsto \cos \theta$, so should have gradient given by
+$- \sin \theta = -y$.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getX (<span class="type-name">S</span>{x<span class="symbol">=</span>x<span class="symbol">,</span> y<span class="symbol">=</span>y}<span class="symbol">:</span> <span class="type-name">S1</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Make types explicit
+</span></div></div><div class="cell"><div class="code-block">s1ManifoldGrad <span class="symbol">:</span> (<span class="type-name">S1</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">S1</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> manifoldGrad
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">s1ManifoldGrad getX (<span class="type-name">S</span>{x<span class="symbol">=</span>0<span class="symbol">.,</span> y<span class="symbol">=</span>1<span class="symbol">.</span>}) <span class="symbol">~~</span> <span class="symbol">-</span>1<span class="symbol">.</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">s1ManifoldGrad getX (<span class="type-name">S</span>{x<span class="symbol">=</span>1<span class="symbol">.,</span> y<span class="symbol">=</span>0<span class="symbol">.</span>}) <span class="symbol">~~</span> 0<span class="symbol">.</span>
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">s1ManifoldGrad getX (<span class="type-name">S</span>{x<span class="symbol">=</span>sqrt 0<span class="symbol">.</span>5<span class="symbol">,</span> y<span class="symbol">=</span>sqrt 0<span class="symbol">.</span>5}) <span class="symbol">~~</span> <span class="symbol">-</span> (sqrt 0<span class="symbol">.</span>5)
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Further example: Quaternions</h3>
+<p>For a more complex use-case, we consider the SO3 manifold of 3D rotations, with
+the usual 4D quaternion representation. Again, the full definition of
+quaternions has a few subtleties, but a simple intuition is that a rotation by
+an angle $\theta$ about a unit-length axis $(u, v, w)$ is represented by the
+quaternion $ cos(\theta / 2) + \bold{i}\ u\ sin(\theta / 2) + \bold{j}\ v\ sin(\theta / 2) + \bold{k}\ w\ sin(\theta / 2)$.
+The components of a quaternion are often labelled $w$ for the real component,
+$x$ for the $\bold{i}$ component, $y$ for the $\bold{j}$ component and $z$ for
+the $\bold{k}$ component.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Generally we use unit quaternions, i.e. those where
+$x^2 + y^2 + z^2 + w^2 = 1$, but like for the $S^1$ example above, any non-zero
+quaternion can also be considered as a valid rotation by defining scalar
+multiples of the same quaternion to represent the same rotation.</p>
+</div></div><div class="cell"><div class="prose-block"><p>We re-use the data structures and some of the functions from the
+<code>quaternions.dx</code> example.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> <span class="type-name">Q</span> {x<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> y<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> z<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> w<span class="symbol">:</span><span class="type-name">Float</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Conversion functions from a quaternion to an array of four components.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatAsVec (<span class="type-name">Q</span>{x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w}<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> (<span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatFromVec ([x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w]<span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> <span class="type-name">Q</span>{x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- General normalization functions for arrays.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> squareMagnitude (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> x<span class="symbol">.</span>i 
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> magnitude (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> squareMagnitude x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> a<span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> (1<span class="symbol">.</span>0 <span class="symbol">/</span> (magnitude x)) <span class="symbol">.*</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Normalization for quaternions.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatNormalize (q<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+  quatFromVec <span class="symbol">$</span> normalize <span class="symbol">$</span> quatAsVec q
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- The identity quaternion, representing a no-op rotation.
+</span></div></div><div class="cell"><div class="code-block">quatIdent <span class="symbol">=</span> <span class="type-name">Q</span>{x<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> y<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> z<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> w<span class="symbol">=</span>1<span class="symbol">.</span>0}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> <span class="type-name">Quaternion</span>
+  add <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> quatFromVec <span class="symbol">$</span> (quatAsVec x) <span class="symbol">+</span> quatAsVec y
+  sub <span class="symbol">=</span> <span class="symbol">\</span> x y<span class="symbol">.</span> quatFromVec <span class="symbol">$</span> (quatAsVec x) <span class="symbol">-</span> quatAsVec y
+  zero <span class="symbol">=</span> quatFromVec <span class="symbol">$</span> zero
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Scaling a quaternion does not affect the rotation it represents, but is still
+useful for numerical computations.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span> <span class="type-name">Quaternion</span>
+  scaleVec <span class="symbol">=</span> <span class="symbol">\</span> s x<span class="symbol">.</span> quatFromVec (s <span class="symbol">.*</span> quatAsVec x)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasAllClose</span> <span class="type-name">Quaternion</span>
+  allclose <span class="symbol">=</span> <span class="symbol">\</span>atol rtol a b<span class="symbol">.</span>
+    allclose (quatAsVec atol) (quatAsVec rtol) (quatAsVec a) (quatAsVec b)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDefaultTolerance</span> <span class="type-name">Quaternion</span>
+  atol <span class="symbol">=</span> quatFromVec atol
+  rtol <span class="symbol">=</span> quatFromVec rtol
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Quaternion multiplication is composition of rotations. This formula can be
+derived from the relations that $ij = k$, $ji = -k$, $jk = i$, $kj = -i$,
+$ki = j$, $ik = -j$, $i^2 = j^2 = k^2 = -1$. These can also be used to derive
+the given expression for the quaternion inverse.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> <span class="type-name">Quaternion</span>
+  mul <span class="symbol">=</span> <span class="symbol">\</span> (<span class="type-name">Q</span>{x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w}) (<span class="type-name">Q</span>{x<span class="symbol">=</span>x&#39;<span class="symbol">,</span>y<span class="symbol">=</span>y&#39;<span class="symbol">,</span>z<span class="symbol">=</span>z&#39;<span class="symbol">,</span>w<span class="symbol">=</span>w&#39;})<span class="symbol">.</span> <span class="type-name">Q</span> {
+        x <span class="symbol">=</span> w<span class="symbol">*</span>x&#39; <span class="symbol">+</span> x<span class="symbol">*</span>w&#39; <span class="symbol">+</span> y<span class="symbol">*</span>z&#39; <span class="symbol">-</span> z<span class="symbol">*</span>y&#39;<span class="symbol">,</span>
+        y <span class="symbol">=</span> w<span class="symbol">*</span>y&#39; <span class="symbol">-</span> x<span class="symbol">*</span>z&#39; <span class="symbol">+</span> y<span class="symbol">*</span>w&#39; <span class="symbol">+</span> z<span class="symbol">*</span>x&#39;<span class="symbol">,</span>
+        z <span class="symbol">=</span> w<span class="symbol">*</span>z&#39; <span class="symbol">+</span> x<span class="symbol">*</span>y&#39; <span class="symbol">-</span> y<span class="symbol">*</span>x&#39; <span class="symbol">+</span> z<span class="symbol">*</span>w&#39;<span class="symbol">,</span>
+        w <span class="symbol">=</span> w<span class="symbol">*</span>w&#39; <span class="symbol">-</span> x<span class="symbol">*</span>x&#39; <span class="symbol">-</span> y<span class="symbol">*</span>y&#39; <span class="symbol">-</span> z<span class="symbol">*</span>z&#39;
+  }
+  one <span class="symbol">=</span> quatIdent
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatConj ((<span class="type-name">Q</span> {x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w})<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+  <span class="type-name">Q</span> {x<span class="symbol">=-</span>x<span class="symbol">,</span> y<span class="symbol">=-</span>y<span class="symbol">,</span> z<span class="symbol">=-</span>z<span class="symbol">,</span> w<span class="symbol">=</span>w}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatInv (q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
+  m <span class="symbol">=</span> magnitude <span class="symbol">$</span> quatAsVec q
+  1<span class="symbol">.</span>0 <span class="symbol">/</span> (m <span class="symbol">*</span> m) <span class="symbol">.*</span> quatConj q
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> <span class="type-name">Quaternion</span>
+  mempty <span class="symbol">=</span> one
+  mcombine <span class="symbol">=</span> <span class="symbol">\</span>a b<span class="symbol">.</span> a <span class="symbol">*</span> b
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Quaternions manifold structure</h3>
+</div></div><div class="cell"><div class="prose-block"><p>We now define the exponential and logarithm map for the quaternions. The
+exponential map at the identity is the well-known mapping from axis-angle to
+quaternions.  Away from the identity, we can use the fact that SO3 is a Lie
+group to transport the exponential map at the identity to the appropriate
+tangent space, by using simple right-multiplication by $q$ to associate the
+two tangent spaces.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Since we need to ensure that the exponential function is differentiable at
+zero (and similar for the logarithm), we can't use standard formulations of
+functions such as <code>sinc x = (sin x) / x</code> or
+<code>magnitude x = sqrt $ sum (for i. x.i * x.i)</code>. To get around this, we use some
+simple Taylor series expansions, noting that this will cause reduced precision,
+and running autodiff on the resulting linearizations may be inefficient.
+Taking higher-order deriviatives will also lose further precision as the number
+of approximation terms will be reduced by each successive differentiation.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Convenience alias for an array of three floats.
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">R3</span> <span class="symbol">=</span> (<span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Taylor expansion for sinc (sqrt x).
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sincSqrt (x <span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+ (1<span class="symbol">.</span>
+  <span class="symbol">-</span> (x  <span class="symbol">/</span> 6<span class="symbol">.</span>)
+  <span class="symbol">+</span> (x <span class="symbol">*</span> x <span class="symbol">/</span> 120<span class="symbol">.</span>)
+  <span class="symbol">-</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">/</span> 5040<span class="symbol">.</span>)
+  <span class="symbol">+</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">/</span> 362880<span class="symbol">.</span>)
+  <span class="symbol">-</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x<span class="symbol">/</span> 39916800<span class="symbol">.</span>)
+  <span class="symbol">+</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span>  x <span class="symbol">/</span> 6227020800<span class="symbol">.</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Taylor expansion for cos (sqrt x).
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cosSqrt (x<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+  (1<span class="symbol">.</span> 
+   <span class="symbol">-</span> (x <span class="symbol">/</span> 2<span class="symbol">.</span>)
+   <span class="symbol">+</span> (x <span class="symbol">*</span> x <span class="symbol">/</span> 24<span class="symbol">.</span>)
+   <span class="symbol">-</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">/</span> 720<span class="symbol">.</span>)
+   <span class="symbol">+</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">/</span> 40320<span class="symbol">.</span>) 
+   <span class="symbol">-</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">/</span> 3628800<span class="symbol">.</span>)
+   <span class="symbol">+</span> (x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">/</span> 479001600<span class="symbol">.</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Taylor expansion for sinc (arccos x)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sincAcos (x<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+  (2<span class="symbol">.</span> <span class="symbol">/</span> pi
+   <span class="symbol">+</span> x <span class="symbol">*</span> 4<span class="symbol">.</span> <span class="symbol">/</span> (pow pi 2<span class="symbol">.</span>)
+   <span class="symbol">+</span> x <span class="symbol">*</span> x <span class="symbol">*</span> (8<span class="symbol">.</span> <span class="symbol">-</span> pow pi 2<span class="symbol">.</span>) <span class="symbol">/</span> (pow pi 3<span class="symbol">.</span>)
+   <span class="symbol">-</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> 4<span class="symbol">.</span> <span class="symbol">*</span> (pow pi 2<span class="symbol">.</span> <span class="symbol">-</span> 12<span class="symbol">.</span>) <span class="symbol">/</span> (3<span class="symbol">.</span> <span class="symbol">*</span> pow pi 4<span class="symbol">.</span>)
+   <span class="symbol">+</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> (384<span class="symbol">.</span> <span class="symbol">-</span> 16<span class="symbol">.</span> <span class="symbol">*</span> pow pi 2<span class="symbol">.</span> <span class="symbol">-</span> 3<span class="symbol">.</span> <span class="symbol">*</span> pow pi 4<span class="symbol">.</span>) <span class="symbol">/</span> (12<span class="symbol">.</span> <span class="symbol">*</span> pow pi 5<span class="symbol">.</span>)
+   <span class="symbol">-</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> 8<span class="symbol">.</span> <span class="symbol">*</span> (pow pi 4<span class="symbol">.</span> <span class="symbol">-</span> 120<span class="symbol">.</span>) <span class="symbol">/</span> (15<span class="symbol">.</span> <span class="symbol">*</span> pow pi 6<span class="symbol">.</span>))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Exponential function at the identity.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatExpAtIdent (v <span class="symbol">:</span> <span class="type-name">R3</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> 
+  [x&#39;<span class="symbol">,</span> y&#39;<span class="symbol">,</span> z&#39;] <span class="symbol">=</span> v
+  m2 <span class="symbol">=</span> squareMagnitude v
+  <span class="comment">-- This is equal to sinc (m / 2) = 2 * sin (m / 2) / m
+</span>  sincHalfM <span class="symbol">=</span> sincSqrt <span class="symbol">$</span> m2 <span class="symbol">/</span> 4<span class="symbol">.</span>
+  <span class="type-name">Q</span> {x <span class="symbol">=</span> x&#39; <span class="symbol">*</span> sincHalfM <span class="symbol">/</span> 2<span class="symbol">.,</span>
+     y <span class="symbol">=</span> y&#39; <span class="symbol">*</span> sincHalfM <span class="symbol">/</span> 2<span class="symbol">.,</span>
+     z <span class="symbol">=</span> z&#39; <span class="symbol">*</span> sincHalfM <span class="symbol">/</span> 2<span class="symbol">.,</span>
+     w <span class="symbol">=</span> cosSqrt <span class="symbol">$</span> m2 <span class="symbol">/</span> 4<span class="symbol">.</span> }
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Inverse to exponential function at the identity.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatExpAtIdentInv (q<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">R3</span> <span class="symbol">=</span>
+  <span class="comment">-- Fine to use qNormalize here, since q should be approximately unit magnitude
+</span>  <span class="comment">-- (or at least non-zero), so the sqrt operation can be differentiated.
+</span>  (<span class="type-name">Q</span>{x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w}) <span class="symbol">=</span> quatNormalize q
+  2<span class="symbol">.</span> <span class="symbol">.*</span> [x<span class="symbol">,</span> y<span class="symbol">,</span> z] <span class="symbol">/</span> (sincAcos w)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">TangentSpace</span> <span class="type-name">Quaternion</span> <span class="type-name">R3</span>
+  tangentExponentialMap <span class="symbol">=</span>
+    <span class="symbol">\</span> q v <span class="symbol">.</span> quatExpAtIdent v <span class="symbol">*</span> q
+  tangentLogarithmMap <span class="symbol">=</span>
+    <span class="symbol">\</span> q p <span class="symbol">.</span> quatExpAtIdentInv (p <span class="symbol">*</span> quatInv q)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Run some simple checks to make sure that the exponential and logarithm maps
+have the correct properties. Use a looser tolerance for numerical innaccuracies.</p>
+</div></div><div class="cell"><div class="code-block">looseTolerance <span class="symbol">=</span> 0<span class="symbol">.</span>005
+</div></div><div class="cell"><div class="code-block">quatLooseTolerance <span class="symbol">=</span> quatFromVec <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> looseTolerance
+</div></div><div class="cell"><div class="code-block">tangentLooseTolerance <span class="symbol">:</span> <span class="type-name">R3</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> looseTolerance
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Just arbitrary quaternions.
+</span></div></div><div class="cell"><div class="code-block">quatForTestOne <span class="symbol">=</span> quatNormalize (<span class="type-name">Q</span>{w<span class="symbol">=</span>1<span class="symbol">.</span>0<span class="symbol">,</span> x<span class="symbol">=</span>0<span class="symbol">.</span>5<span class="symbol">,</span> y<span class="symbol">=-</span>0<span class="symbol">.</span>2<span class="symbol">,</span> z<span class="symbol">=</span>0<span class="symbol">.</span>4})
+</div></div><div class="cell"><div class="code-block">quatForTestTwo <span class="symbol">=</span> quatNormalize (<span class="type-name">Q</span>{w<span class="symbol">=-</span>0<span class="symbol">.</span>4<span class="symbol">,</span> x<span class="symbol">=</span>0<span class="symbol">.</span>5<span class="symbol">,</span> y<span class="symbol">=</span>0<span class="symbol">.</span>8<span class="symbol">,</span> z<span class="symbol">=-</span>0<span class="symbol">.</span>9})
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">allclose quatLooseTolerance rtol (quatExpAtIdent <span class="symbol">$</span> quatExpAtIdentInv quatForTestOne) (quatForTestOne)
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Same, but taking the logarithm and exponential at a non-identity point.
+</span></div></div><div class="cell"><div class="code-block">logOfQuatForTestOne <span class="symbol">:</span> <span class="type-name">R3</span> <span class="symbol">=</span> tangentLogarithmMap quatForTestTwo quatForTestOne
+</div></div><div class="cell"><div class="code-block">allclose quatLooseTolerance rtol (tangentExponentialMap quatForTestTwo logOfQuatForTestOne) quatForTestOne
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Should be equal to quatIdent
+</span></div></div><div class="cell"><div class="code-block">allclose quatLooseTolerance rtol (quatExpAtIdent <span class="symbol">$</span> quatExpAtIdentInv quatIdent) quatIdent
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Now the other way around
+</span></div></div><div class="cell"><div class="code-block">tangentVectorForTest <span class="symbol">=</span> [0<span class="symbol">.</span>1<span class="symbol">,</span> <span class="symbol">-</span>0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>3]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">allclose tangentLooseTolerance rtol (quatExpAtIdentInv <span class="symbol">$</span> quatExpAtIdent tangentVectorForTest) tangentVectorForTest
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">expOfTangentVectorForTest <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> tangentExponentialMap quatForTestOne tangentVectorForTest
+</div></div><div class="cell"><div class="code-block">roundTripTangentVectorForTest <span class="symbol">:</span> <span class="type-name">R3</span> <span class="symbol">=</span>
+  tangentLogarithmMap quatForTestOne expOfTangentVectorForTest
+</div></div><div class="cell"><div class="code-block">allclose tangentLooseTolerance rtol roundTripTangentVectorForTest tangentVectorForTest 
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>To check the exponential map is doing what we think, take some arbitrary
+initial rotation, and consider applying a small perturbation by some axis angle.
+We can do this in two ways, which should give the same result:</p>
+</div></div><div class="cell"><div class="prose-block"><p>1: Applying the exponential map directly:</p>
+</div></div><div class="cell"><div class="code-block">initialRotation <span class="symbol">=</span> quatNormalize <span class="symbol">$</span> quatFromVec [0<span class="symbol">.</span>2<span class="symbol">,</span> 0<span class="symbol">.</span>4<span class="symbol">,</span> <span class="symbol">-</span>0<span class="symbol">.</span>35<span class="symbol">,</span> 0<span class="symbol">.</span>7]
+</div></div><div class="cell"><div class="code-block">perturbation <span class="symbol">=</span> [0<span class="symbol">.</span>01<span class="symbol">,</span> <span class="symbol">-</span>0<span class="symbol">.</span>07<span class="symbol">,</span> 0<span class="symbol">.</span>04]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">perturbedRotationDirect <span class="symbol">=</span> tangentExponentialMap initialRotation perturbation
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>2: Composing the initial rotatation with the quaternion associated to the
+axis-angle perturbation, i.e. the result of applying the exponential map at the
+identity to the perturbation. Note the ordering of the multiplication, which
+comes from our choice of right-multiplication to associate the tangent spaces.</p>
+</div></div><div class="cell"><div class="code-block">perturbedRotationComposed <span class="symbol">=</span>
+  (tangentExponentialMap quatIdent perturbation) <span class="symbol">*</span> initialRotation
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">allclose quatLooseTolerance rtol perturbedRotationDirect perturbedRotationComposed
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Now we can test the linearization and gradient functions.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A function to get the Euler-angle roll from a quaternion.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatRoll (<span class="type-name">Q</span>{x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w} <span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 
+  sinrCosp <span class="symbol">=</span> 2<span class="symbol">.</span> <span class="symbol">*</span> (w <span class="symbol">*</span> x <span class="symbol">+</span> y <span class="symbol">*</span> z)
+  cosrCosp <span class="symbol">=</span> 1<span class="symbol">.</span> <span class="symbol">-</span> 2<span class="symbol">.</span> <span class="symbol">*</span> (x <span class="symbol">*</span> x <span class="symbol">+</span> y <span class="symbol">*</span> y)
+  atan2 sinrCosp cosrCosp
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A fixed quaternion with roll = 0.5.
+</span></div></div><div class="cell"><div class="code-block">quatSomeRoll <span class="symbol">=</span> <span class="type-name">Q</span>{x<span class="symbol">=</span>0<span class="symbol">.</span>247<span class="symbol">,</span> y<span class="symbol">=</span>0<span class="symbol">.,</span> z<span class="symbol">=</span>0<span class="symbol">.,</span> w<span class="symbol">=</span>0<span class="symbol">.</span>969}
+</div></div><div class="cell"><div class="code-block">quatRoll quatSomeRoll
+</div><div class="result-block">0.49916</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A function to compose a given quaternion with fixed rotation.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatAddSomeRoll (q<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> q <span class="symbol">*</span> quatSomeRoll
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>According to our right-multiplication definition of the tangent space mappings,
+the linearized version of <code>quatAddSomeRoll</code> should just be the identity map
+between tangent spaces.</p>
+</div></div><div class="cell"><div class="code-block">linearInput <span class="symbol">=</span> [0<span class="symbol">.</span>05<span class="symbol">,</span> 0<span class="symbol">.</span>1<span class="symbol">,</span> 0<span class="symbol">.</span>15]
+</div></div><div class="cell"><div class="code-block">quatAddSomeRollLinearized<span class="symbol">:</span> <span class="type-name">R3</span> <span class="symbol">--</span>o <span class="type-name">R3</span> <span class="symbol">=</span>
+  snd <span class="symbol">$</span> manifoldLinearize quatAddSomeRoll quatForTestOne
+</div></div><div class="cell"><div class="code-block">allclose tangentLooseTolerance rtol (quatAddSomeRollLinearized linearInput) linearInput
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><p>Try taking the gradient of the <code>quatRoll</code> function, at various points.</p>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Without associated types we have to define this, otherwise we get ambiguous
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- type variables.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quatGrad (f<span class="symbol">:</span> <span class="type-name">Quaternion</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) (x<span class="symbol">:</span> <span class="type-name">Quaternion</span>) <span class="symbol">:</span> <span class="type-name">R3</span> <span class="symbol">=</span> manifoldGrad f x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Applying the gradient at a quaternion representing a &quot;pure roll&quot; rotation, we
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- see that the only way to modify the roll is by adding further rotation in the
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- roll direction.
+</span></div></div><div class="cell"><div class="code-block">quatGrad quatRoll quatSomeRoll
+</div><div class="result-block">[0.999973, 0., 0.]</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- However, at other points, we can also modify the roll of the rotation by
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- moving in pitch and/or yaw directions. This demonstrates that the Euler
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- angles are not independent.
+</span></div></div><div class="cell"><div class="code-block">quatGrad quatRoll quatForTestOne
+</div><div class="result-block">[1.041025, 0.594871, 0.]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">quatGrad quatRoll quatForTestTwo
+</div><div class="result-block">[-0.570283, 0.83349, -0.]</div></div></div></body></html>
