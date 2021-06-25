@@ -271,5 +271,128 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
 
 jax.interpreters.ad.primitive_jvps[dex_call_p] = dex_call_jvp
 
-# TODO
-# jax.interpreters.ad.primitive_transposes[self.primitive] = ...
+# === transpose ===
+
+# alias to avoid confusion around overloading of "primal".
+_is_linear_input = jax.ad.is_undefined_primal
+
+
+def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
+  """Evaluates the transpose of a function atom.  """
+
+  # `func_atom` is assumed to be of the form of `evaluate_linearized` from
+  # `dex_call_jvp`, applied to a some function atom, called `f`, say.
+  # Concretely, if `f` has three primal arguments, `func_atom` should look like:
+  # ```
+  # \ x0 x1 x2 u0 u1 u2.
+  #   intermediate_linearized = linearize f (x0, x1, x2)
+  #   snd intermediate_linearized (u0 u1 u2)
+  # ```
+  # In particular, its arguments are assumed to be `num_primals` primal inputs,
+  # followed by `num_primals` tangent inputs.
+
+  assert len(args) % 2 == 0
+  num_primals = len(args) // 2
+
+  primals, tangents = args[:num_primals], args[num_primals:]
+
+  # Helper functions to build strings of primal and tangent inputs.
+  def arg_string(prefix, index_set):
+    return " ".join(f"{prefix}{i}" for i in index_set)
+
+  def tuple_string(prefix, index_set):
+    return "(" + ", ".join(f"{prefix}{i}" for i in index_set) + ")"
+
+  # JAX uses `UndefinedPrimal` instances to mark input variables which the
+  # function needs to be transposed with respect to, and (consequently) for
+  # which no concrete values are available. `_is_linear_input` tests if the
+  # input is such an instance.
+  #
+  # `func_atom` is only guaranteed to be linear in its tangent inputs, so we
+  # check here that we're not expected to tranpose it with respect to any primal
+  # inputs. JAX *should* take care of this automatically, but this mechanism is
+  # somewhat poorly documented so its worth double checking.
+  if any(_is_linear_input(p) for p in primals):
+    raise RuntimeError("Primal inputs to transpose primitive are undefined.")
+
+  # Add `func_atom` as a variable `linearized` in the context.
+  env = api.insert(func_atom.module, api.as_cstr("linearized"), func_atom)
+
+  # Form lists of the indices in `tangents` which correspond to linear inputs
+  # (which we are expected to transpose w.r.t.) and constant inputs (which we
+  # are not). The constant inputs will be exactly the arrays of zeros which are
+  # instantiated in the JVP in response to a `Zero` argument.
+  tangent_input_indices = [
+      i for i, t in enumerate(tangents) if _is_linear_input(t)
+  ]
+  tangent_constant_indices = [
+      i for i, t in enumerate(tangents) if not _is_linear_input(t)
+  ]
+
+  # In this case, there are no cotangents to output. Not sure if JAX would skip
+  # calling this function in this case or not.
+  if len(tangent_input_indices) == 0:
+    return (None,) * len(args)
+
+  # Form a lambda which partially evaluates `linearized` at the constant primal
+  # and constant tangent values, with the remaining arguments (i.e. the linear
+  # input tangents) combined into a tuple, and then transpose the lambda.
+  #
+  # For a three-input primal function with constant input for the tangent
+  # parameter at index 1, the evaluated string should look like:
+  # ```
+  # \ x0 x1 x2 u1 ct.
+  #   transposeLinear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
+  # ```
+  # - The `x` variables are the (constant) inputs to the primal function. These
+  #   should always be supplied by JAX.
+  # - The `u` variables are the constant tangent inputs, i.e. those which JAX
+  #   does not need us to include in the transpose.
+  # - The `t` variables are the linear inputs which we are transposing with
+  #   respect to. These are tangent inputs to `linearized`.
+
+  # x0 x1 x2 u1 ct
+  transposed_atom_params = (
+      arg_string("x", range(num_primals)) + " " +
+      arg_string("u", tangent_constant_indices) + " ct")
+
+  # (t0, t2)
+  linear_lambda_params = tuple_string("t", tangent_input_indices)
+
+  # t0 u1 t2
+  linearized_tangent_inputs = (" ".join(
+      f"t{i}" if jax.ad.is_undefined_primal(t) else f"u{i}"
+      for i, t in enumerate(tangents)))
+
+  # x0 x1 x2 t0 u1 t2
+  linearized_inputs = (
+      arg_string("x", range(num_primals)) + " " + linearized_tangent_inputs)
+
+  # \ x0 x1 x2 u1 ct.
+  #   transposeLinear (\(t0, t2). linearized x0 x1 x2 t0 u1 t2) ct
+  transposed = eval(
+      f"\\ {transposed_atom_params}. transposeLinear " +
+      f"(\ {linear_lambda_params}. linearized {linearized_inputs}) ct",
+      module=env
+  )
+
+  # Tuple of cotangents relating to linear tangent inputs. In the given
+  # example, this would be a tuple of the two cotangents relating to inputs 0
+  # and 2.
+  resulting_cotangents = primitive(transposed)(
+      *primals, *[tangents[i] for i in tangent_constant_indices], cotangents)
+
+  # If there is only one resulting cotangent, we need to make it into a tuple
+  # so we can still zip over it.
+  if len(tangent_input_indices) == 1:
+    resulting_cotangents = (resulting_cotangents,)
+
+  # Pack the output with `None`s where the inputs are constants, as required by
+  # JAX.
+  result = [None] * len(args)
+  for ct_idx, ct in zip(tangent_input_indices, resulting_cotangents):
+    result[num_primals + ct_idx] = ct
+
+  return tuple(result)
+
+jax.interpreters.ad.primitive_transposes[dex_call_p] = dex_call_evaluate_linearized_transpose
