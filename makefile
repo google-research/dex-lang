@@ -101,10 +101,10 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
                 sgd chol fft tutorial vega-plotting kernelregression \
-                quaternions schrodinger
+                quaternions manifold-gradients schrodinger
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-             shadow-tests monad-tests io-tests exception-tests \
+             shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
              linalg-tests
