@@ -72,6 +72,19 @@ class JITTest(unittest.TestCase):
                [(np.arange(a*b, dtype=np.float32).reshape((a, b)),)
                 for a, b in it.product((2, 5, 10), repeat=2)])
 
+  def test_tuple_return(self):
+    dex_func = dex.eval(r"\x: ((Fin 10) => Float). (x, 2. .* x, 3. .* x)")
+    reference = lambda x: (x, 2 * x, 3 * x)
+    
+    x = np.arange(10, dtype=np.float32)
+
+    dex_output = dex_func.compile()(x)
+    reference_output = reference(x)
+
+    self.assertEqual(len(dex_output), len(reference_output))
+    for dex_array, ref_array in zip(dex_output, reference_output):
+      np.testing.assert_allclose(dex_array, ref_array)
+
 
 if __name__ == "__main__":
   unittest.main()
