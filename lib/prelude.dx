@@ -897,8 +897,9 @@ instance HasDefaultTolerance Float64
   atol = FToF64 0.00000001
   rtol = FToF64 0.00001
 
-instance [HasAllClose t, HasDefaultTolerance t] HasAllClose (n=>t)
-  allclose = \atol rtol a b. all for i:n. (a.i ~~ b.i)
+instance [HasAllClose t] HasAllClose (n=>t)
+  allclose = \atol rtol a b.
+    all for i:n. allclose atol.i rtol.i a.i b.i
 
 instance [HasDefaultTolerance t] HasDefaultTolerance (n=>t)
   atol = for i. atol
