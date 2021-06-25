@@ -231,7 +231,7 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   # \ (x0, x1, x2). jax_func x0 x1 x2
   # ```
   uncurried = eval(
-      f"\\ {tuple_string('x')}. jax_func {arg_string('x')",
+      f"\\ {tuple_string('x')}. jax_func {arg_string('x')}",
       module=env)
   old_env, env = env, api.insert(env, api.as_cstr("jax_func_uncurried"),
                                  uncurried)

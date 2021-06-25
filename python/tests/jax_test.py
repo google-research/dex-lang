@@ -81,7 +81,7 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(
         jax.jit(jax.vmap(add_two, in_axes=1, out_axes=1))(x), x + 2.0)
 
-  def test_vjp(self):
+  def test_jvp(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
         'for i. x.i * x.i + 2.0 * y.i'))
@@ -100,7 +100,7 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(output_dex, output_jax)
     np.testing.assert_allclose(tangent_dex, tangent_jax)
 
-  def test_vjp_jit(self):
+  def test_jvp_jit(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
         'for i. x.i * x.i + 2.0 * y.i'))
