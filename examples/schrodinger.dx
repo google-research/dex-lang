@@ -121,18 +121,21 @@ def run (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
 :html (run
         ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
         (for i j. 0.))
+> <html output>
 
 ' Off-centre particle tunnelling through a high-potential barrier
 
 :html (run
         ((gaussian (0.25, 0.5) (0.1, 0.1)):(D=>D=>_))
         (for i j. if (ordinal j) == 20 then 1000. else 0.))
+> <html output>
 
 ' Ramp potential confining a particle to a corner over time
 
 :html (run
         ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
         (for i j. IToF $ ordinal i + ordinal j))
+> <html output>
 
 ' Square wavefunction
 
@@ -144,3 +147,4 @@ def run (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
                then fToC 0.01
                else fToC 0.0):(D=>D=>_))
         (for i j. 0.))
+> <html output>
