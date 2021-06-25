@@ -104,7 +104,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 quaternions manifold-gradients
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-             shadow-tests monad-tests io-tests exception-tests \
+             shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \
              linalg-tests
