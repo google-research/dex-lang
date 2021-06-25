@@ -143,7 +143,7 @@ prepareFunctionForExport env nameStr func = do
           elemTy' <- substBuilder (b@>Var i) elemTy
           createDest (idx <> Nest (Bind i) Empty) elemTy'
         return (Con $ TabRef destTab, exportResult)
-      PairTy a b -> do
+      PairTy a b | idx == Empty -> do
         (atom_a, res_a) <- createDest idx a
         (atom_b, res_b) <- createDest idx b
         return (Con $ ConRef $ PairCon atom_a atom_b, ExportPairResult res_a res_b)
