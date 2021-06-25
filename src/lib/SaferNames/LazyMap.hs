@@ -6,7 +6,7 @@
 
 module SaferNames.LazyMap (
   LazyMap, singleton, lookup, assocs, fromList, keysSet,
-  forceLazyMap, mapWithKey, constLazyMap) where
+  forceLazyMap, mapWithKey, newLazyMap) where
 
 import Prelude hiding (lookup)
 import qualified Data.Set as S
@@ -31,6 +31,9 @@ lookup k (LazyMap keys m f) =
     Nothing | k `S.member` keys -> Just $ f k
             | otherwise         -> Nothing
 
+newLazyMap :: Ord k => S.Set k -> (k -> a) -> LazyMap k a
+newLazyMap keys f = LazyMap keys mempty f
+
 singleton :: Ord k => k -> a -> LazyMap k a
 singleton k v = LazyMap (S.singleton k) (M.singleton k v) neverCalled
 
@@ -48,9 +51,6 @@ forceLazyMap m = M.fromList $ assocs m
 
 neverCalled :: k -> v
 neverCalled _ = error "This should never be called!"
-
-constLazyMap :: Ord k => S.Set k -> a -> LazyMap k a
-constLazyMap s v = LazyMap s mempty (const v)
 
 lookupNoFailOption :: Ord k => k -> LazyMap k v -> v
 lookupNoFailOption k m = case lookup k m of

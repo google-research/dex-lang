@@ -78,7 +78,7 @@ printFloat x = p $ reverse $ dropWhile (=='0') $ reverse $
   showFFloat (Just 6) x ""
 
 instance Pretty (Block n) where
-  pretty (Block Empty expr) = group $ line <> pLowest expr
+  pretty (Block _ Empty expr) = group $ line <> pLowest expr
   -- pretty (Block decls expr) = hardline <> prettyLines decls' <> pLowest expr
   --   where decls' = fromNest $ unsafeCoerceB decls
 
