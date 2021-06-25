@@ -143,6 +143,8 @@ def dex_call_cpu_translation(b, *args, func_atom):
 jax.interpreters.xla.backend_specific_translations['cpu'][dex_call_p] = dex_call_cpu_translation
 
 
+# === batching ===
+
 def dex_call_batched(batched_args, batched_dims, func_atom):
   """Batching function for dex primitives.
 
@@ -162,10 +164,10 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
       batching.moveaxis(arg, bd, 0) if bd is not batching.not_mapped else arg
       for arg, bd in zip(batched_args, batched_dims)
   ]
-  
+
   # This assumes not all entries in batched_dims are None.
   batch_size = next(
-      arg.shape[0] for arg, bd in zip(uniform_batched_args, batched_dims) 
+      arg.shape[0] for arg, bd in zip(uniform_batched_args, batched_dims)
       if bd is not batching.not_mapped)
 
   # Add the current function atom as a variable in the context, so that we can
@@ -176,7 +178,8 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
   # the Dex for loop constructor.
   batched_fn_params = [
       f"x{param_idx}" if dim is batching.not_mapped else f"x{param_idx}.i"
-      for param_idx, dim in enumerate(batched_dims)]
+      for param_idx, dim in enumerate(batched_dims)
+  ]
 
   # This is the actual batching expression
   batched_fn = eval(
@@ -189,6 +192,84 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
 
 batching.primitive_batchers[dex_call_p] = dex_call_batched
 
+
+# === jvp / linearize  ===
+
+def dex_call_jvp(arg_values, arg_tangents, func_atom):
+  """Evaluates the function output at arg_values, and the linearized function
+  (linearized about arg_values) at arg_tangents.
+
+  Args:
+    arg_values: A tuple of arguments.
+    arg_tangents: A tuple with the tangents of the arguments. The tuple has the
+      same length as the arg_values. Some of the tangents may also be the
+      special value ad.Zero to specify a zero tangent.
+    func_atom: Function atom to linearize. The result type of this function
+      atom must be a single array type.
+
+  Returns:
+     A pair of the primal output and the tangent.
+  """
+  assert len(func_atom.compile().result_signature) == 1
+  num_args = len(arg_values)
+
+  # Helper functions to build strings of primal and tangent inputs.
+  def arg_string(prefix):
+    return " ".join(f"{prefix}{i}" for i in range(num_args))
+
+  def tuple_string(prefix):
+    return "(" + ", ".join(f"{prefix}{i}" for i in range(num_args)) + ")"
+
+  # Add the current function atom as a variable in the context, so that we can
+  # use it to apply batching.
+  env = api.insert(func_atom.module, api.as_cstr("jax_func"), func_atom)
+
+  # `linearize` only seems to work properly for functions which take a single
+  # input argument, so we uncurry `func_atom` to make it into this form. The
+  # evaluated string for three function arguments should look like:
+  # ```
+  # \ (x0, x1, x2). jax_func x0 x1 x2
+  # ```
+  uncurried = eval(
+      f"\\ {tuple_string('x')}. jax_func {arg_string('x')}",
+      module=env)
+  old_env, env = env, api.insert(env, api.as_cstr("jax_func_uncurried"),
+                                 uncurried)
+  # Destroy the intermediate context.
+  api.destroyContext(old_env)
+
+  # We create separate primitives for the primal and tangent evaluations, since
+  # we only want to apply tranposition to the tangent evaluation function.
+  #
+  # Here we write out the tangent evaluation expression in pointful style.
+  # The evaluated string for three function arguments should look like:
+  # ```
+  # \ x0 x1 x2 u0 u1 u2.
+  #   linearized = linearize jax_func_uncurried (x0, x1, x2)
+  #   snd linearized (u0 u1 u2)
+  # ```
+  evaluate_linearized = eval(
+      f"\\ {arg_string('x')} {arg_string('u')}." +
+      f"\n  linearized = linearize jax_func_uncurried {tuple_string('x')}" +
+      f"\n  snd linearized {tuple_string('u')}",
+      module=env)
+
+  # Materialize jax.ad.Zero values into actual arrays of zeros.
+  # TODO: Make the handling of Zeros more efficient by omitting them from the
+  # linearize expression. This would avoid having to create these zero
+  # arguments, although it might make constructing the transpose expression
+  # more fiddly.
+  tangents_no_zeros = [
+      jax.lax.zeros_like_array(arg) if type(tan) is jax.ad.Zero else tan
+      for arg, tan in zip(arg_values, arg_tangents)
+  ]
+
+  return (
+      primitive(func_atom)(*arg_values),
+      primitive(evaluate_linearized)(*arg_values, *tangents_no_zeros),
+  )
+
+jax.interpreters.ad.primitive_jvps[dex_call_p] = dex_call_jvp
+
 # TODO
-# jax.interpreters.ad.primitive_jvps[self.primitive] = ...
 # jax.interpreters.ad.primitive_transposes[self.primitive] = ...
