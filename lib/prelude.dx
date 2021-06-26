@@ -794,8 +794,8 @@ def dot [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum view (i,j). x.i * mat.i.j * y.j
 
-def eye [Eq n, Add a, Mul a] : n=>n=>a =
-  for i j. select (i == j) one zero
+def eye [Add a, Mul a] : n=>n=>a =
+  for i j. select (ordinal i == ordinal j) one zero
 
 '## Pseudorandom number generator utilities
 Dex does not use a stateful random number generator.
