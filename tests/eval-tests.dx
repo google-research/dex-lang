@@ -218,6 +218,14 @@ litArr = [10, 5, 3]
 :p hash (IToW64 0) 0
 > 0x6b20015999ba4efe
 
+:p hash (IToW64 123) 456
+> 0x500945c565c98701
+
+key = (W32ToW64 (IToW32 320440878) .<<. 32) .|. (W32ToW64 (IToW32 57701188)) -- 0x13198a2e03707344
+count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355)) -- 0x243f6a8885a308d3
+:p threeFry2x32 key count
+> 0xc4923a9c483df7a0
+
 :p
    k = newKey 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
