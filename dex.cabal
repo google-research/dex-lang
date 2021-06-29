@@ -54,7 +54,7 @@ library
                        Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, Err, LabeledItems,
-                       SaferNames.Name, SaferNames.LazyMap,
+                       SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint
   if flag(live)
@@ -89,7 +89,8 @@ library
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
                        BlockArguments, GADTs, TypeOperators, DataKinds, KindSignatures
-                       ConstraintKinds, FlexibleContexts
+                       ConstraintKinds, FlexibleContexts, RankNTypes, QuantifiedConstraints,
+                       TypeOperators, MultiParamTypeClasses, FunctionalDependencies
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
