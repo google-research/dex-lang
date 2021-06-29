@@ -114,7 +114,7 @@ class Zippable f where
 zipWithZ_ :: Zippable f => MonadErr m => (a -> b -> m c) -> f a -> f b -> m ()
 zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
 
-zipErr :: MonadErr m => m ()
+zipErr :: MonadErr m => m a
 zipErr = throw ZipErr ""
 
 -- === instances ===

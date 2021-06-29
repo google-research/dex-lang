@@ -40,6 +40,7 @@ import LabeledItems
 import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
                prettyFromPrettyPrec, DocPrec (..))
 
+import SaferNames.NameCore (unsafeCoerceE)
 import SaferNames.Name
 import SaferNames.Syntax
 
@@ -142,9 +143,6 @@ prettyPrecPrimCon con = case con of
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
 
-instance PrettyE e => Pretty (AnnVarP e n) where
-  pretty (AnnVar v ann) = p v <> ":" <> p ann
-
 instance Pretty (Decl n l) where
   pretty decl = case decl of
     Let ann (Ignore:>_) bound -> p ann <+> pLowest bound
@@ -153,7 +151,7 @@ instance Pretty (Decl n l) where
     Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 prettyPiTypeHelper :: PiType n -> Doc ann
-prettyPiTypeHelper (Abs binder (WithArrow arr body)) = let
+prettyPiTypeHelper (Abs (PiBinder binder arr) body) = let
   prettyBinder = case binder of
     Ignore :> a -> pArg a
     _ -> parens $ p binder
@@ -170,11 +168,11 @@ prettyLamHelper = undefined
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
-    Var (AnnVar x _) -> atPrec ArgPrec $ p x
-    Lam lamExpr@(Abs _ (WithArrow TabArrow _)) ->
+    Var v -> atPrec ArgPrec $ p v
+    Lam lamExpr@(Abs (LamBinder _ TabArrow) _) ->
       atPrec LowestPrec $ "\\for"
       <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
-    Lam lamExpr@(Abs _ (WithArrow arr _)) ->
+    Lam lamExpr@(Abs (LamBinder _ arr) _) ->
       atPrec LowestPrec $ "\\"
       <> prettyLamHelper lamExpr (unsafeCoerceE (PrettyLam arr))
     Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
@@ -270,4 +268,4 @@ instance Pretty (Effect n) where
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
 
-instance PrettyPrec (Name n) where prettyPrec = atPrec ArgPrec . pretty
+instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
