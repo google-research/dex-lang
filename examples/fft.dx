@@ -6,47 +6,7 @@ For non-power-of-2 sized arrays, it uses
 which calls the power-of-2 FFT as a subroutine.
 
 
-'## General helper functions
-
-def isPowerOf2 (x:Int) : Bool =
-  -- A fast trick based on bitwise AND.
-  -- Note: The bitwise and operator (.&.)
-  -- is only defined for Byte, which is why
-  -- I use %and here.
-  -- A test below verifies that this works on
-  -- more than 8 bit integers.
-  -- TODO: Make (.&.) polymorphic.
-  if x == 0
-    then False
-    else 0 == %and x (x - 1)
-
-def intpow [Mul a] (base:a) (power:Int) : a =
-  -- Todo: Use Knuth's power trick,
-  -- which can give an asymptotic speedup.
-  reduce one (*) (for a:(Fin power). base)
-
-def intlog2 (x:Int) : Int =
-  yieldState (-1) \ansRef.
-    runState 1 \cmpRef.
-      while do
-        if x >= (get cmpRef)
-          then 
-            ansRef := (get ansRef) + 1
-            cmpRef := %shl (get cmpRef) 1
-            True
-          else
-            False
-
-def intpow2 (power:Int) : Int = %shl 1 power
-
-def nextpow2 (x:Int) : Int = case isPowerOf2 x of
-  True -> x
-  False -> intpow2 (1 + intlog2 x)
-
-def reflect (i:n) : n =
-  unsafeFromOrdinal n ((size n) - 1 - ordinal i)
-
-def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
+'### Helper functions
 
 def odd_sized_palindrome (mid:a) (seq:n=>a) :
   ({backward:n | mid:Unit | zforward:n}=>a) =  -- Alphabetical order matters here.
@@ -145,8 +105,8 @@ def fft (x: n=>Complex): n=>Complex =
         i_squared = IToF $ sq $ ordinal i
         exp $ (-im) * (MkComplex (pi * i_squared / (IToF (size n))) 0.0)
 
-      tailList = tail wks 1
-      back_and_forth = odd_sized_palindrome (head wks) (listToTable tailList)
+      (AsList _ tailTable) = tail wks 1
+      back_and_forth = odd_sized_palindrome (head wks) tailTable
       xq = for i. x.i * wks.i
       back_and_forth_conj = for i. complex_conj back_and_forth.i
       convolution = convolve_complex xq back_and_forth_conj
@@ -188,32 +148,3 @@ b = for i:(Fin 20) j:(Fin 70).
 > True
 :p b ~~ (fft2 $ ifft2 b)
 > True
-
--- Integer utility tests
-
-:p map isPowerOf2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
-> [False, True, True, False, True, True, True, False]
-
-:p intpow 0 0
-> 1
-
-:p intpow 0 1
-> 0
-
-:p intpow 1 0
-> 1
-
-:p intpow 1 1
-> 1
-
-:p intpow 2 1
-> 2
-
-:p intpow 2 3
-> 8
-
-:p map intlog2 [-1, 0, 1, 2, 3, 4, 5, 1023, 1024, 1025]
-> [-1, -1, 0, 1, 1, 2, 2, 9, 10, 10]
-
-:p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
-> [1, 1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048]

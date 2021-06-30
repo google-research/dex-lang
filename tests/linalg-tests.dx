@@ -14,3 +14,16 @@ v = [1., 2., 3., 4.]
 (s, logdet) = sign_and_log_determinant mat
 :p (determinant mat) ~~ (s * (exp logdet))
 > True
+
+-- Matrix integer powers.
+:p matrix_power mat 0 ~~ eye
+> True
+:p matrix_power mat 1 ~~ mat
+> True
+:p matrix_power mat 2 ~~ (mat ** mat)
+> True
+:p matrix_power mat 5 ~~ (mat ** mat ** mat ** mat ** mat)
+> True
+
+:p trace mat == (11. + 5. + 18. + 1.)
+> True
