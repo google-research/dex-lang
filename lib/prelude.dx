@@ -37,7 +37,6 @@ def FToF32 (x : Float)   : Float32 = internalCast _ x
 def I64ToI (x : Int64)   : Int     = internalCast _ x
 def I32ToI (x : Int32)   : Int     = internalCast _ x
 def W8ToI  (x : Word8)   : Int     = internalCast _ x
-def W64ToI (x : Word64)  : Int     = internalCast _ x
 def IToI64 (x : Int)     : Int64   = internalCast _ x
 def IToI32 (x : Int)     : Int32   = internalCast _ x
 def IToW8  (x : Int)     : Word8   = internalCast _ x
@@ -53,29 +52,29 @@ def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
 interface Bits a
   (.<<.)  : a -> Int -> a
   (.>>.)  : a -> Int -> a
-  (.|.) : a -> a -> a
-  (.&.) : a -> a -> a
+  (.|.)   : a -> a -> a
+  (.&.)   : a -> a -> a
   (.^.)   : a -> a -> a
 
 instance Bits Word8
   (.<<.)  = \x y. %shl x (IToW8 y)
   (.>>.)  = \x y. %shr x (IToW8 y)
-  (.|.) = \x y. %or x y
-  (.&.) = \x y. %and x y
+  (.|.)   = \x y. %or x y
+  (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
 instance Bits Word32
   (.<<.)  = \x y. %shl x (IToW32 y)
   (.>>.)  = \x y. %shr x (IToW32 y)
-  (.|.) = \x y. %or x y
-  (.&.) = \x y. %and x y
+  (.|.)   = \x y. %or x y
+  (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
 instance Bits Word64
   (.<<.)  = \x y. %shl x (IToW64 y)
   (.>>.)  = \x y. %shr x (IToW64 y)
-  (.|.) = \x y. %or x y
-  (.&.) = \x y. %and x y
+  (.|.)   = \x y. %or x y
+  (.&.)   = \x y. %and x y
   (.^.)   = \x y. %xor x y
 
 def lowWord  (x : Word64) : Word32 = internalCast _ (x .>>. 32)
@@ -1549,16 +1548,17 @@ def threeFry2x32 (k:Word64) (count:Word64) : Word64 =
   rotations = [rotations1, rotations2]
   ks = [k1, k2, k0]
   (x, y) = yieldState (x, y) \ref. for i:(Fin 5).
-    (x, y) = yieldState (get ref) \ref. for j.
-      rotationIndex = fromOrdinal _ (mod (ordinal i) 2)
-      rot = rotations.rotationIndex.j
+    for j.
       (x, y) = get ref
+      rotationIndex = unsafeFromOrdinal _ (mod (ordinal i) 2)
+      rot = rotations.rotationIndex.j
       x = x + y
       y = (y .<<. rot) .|. (y .>>. (32 - rot))
       y = x .^. y
       ref := (x, y)
-    x = x + ks.(fromOrdinal _ (mod (ordinal i) 3))
-    y = y + ks.(fromOrdinal _ (mod ((ordinal i)+1) 3)) + IToW32 ((ordinal i)+1)
+    (x, y) = get ref
+    x = x + ks.(unsafeFromOrdinal _ (mod (ordinal i) 3))
+    y = y + ks.(unsafeFromOrdinal _ (mod ((ordinal i)+1) 3)) + IToW32 ((ordinal i)+1)
     ref := (x, y)
 
   (W32ToW64 x .<<. 32) .|. (W32ToW64 y)
@@ -1590,7 +1590,7 @@ def randn (k:Key) : Float =
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
 -- TODO: Make this better...
-def randInt (k:Key) : Int = (W64ToI k) `mod` 2147483647
+def randInt (k:Key) : Int = (internalCast Int k) `mod` 2147483647
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 

@@ -306,8 +306,8 @@ compileInstr instr = case instr of
     let (xt, dt) = (L.typeOf x, scalarTy idt)
     case (xt, idt) of
       -- if upcasting to unsigned int, use zext instruction
-      (L.IntegerType _, Scalar Word64Type) -> x `zeroExtendTo` dt
-      (L.IntegerType 8, Scalar Word32Type) -> x `zeroExtendTo` dt
+      (L.IntegerType _,    Scalar Word64Type)             -> x `zeroExtendTo` dt
+      (L.IntegerType bits, Scalar Word32Type) | bits < 32 -> x `zeroExtendTo` dt
       _ -> case (xt, dt) of
        (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
        (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
