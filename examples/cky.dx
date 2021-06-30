@@ -1,0 +1,94 @@
+
+' Implementation of the CKY Algorithm
+
+length = 10 
+Label = Fin 20
+WordPos = Fin 10
+
+' ## Span manipulation
+
+' Shift an index x in space i... to an index in j... (assumed possinble) 
+
+def shift (i: a) ?-> (j: a) ?-> (x:(i<..)) : (j<..) =
+    ((ordinal x) - ((ordinal j) - (ordinal i)))@(j<..)
+
+' Shift an index x in space i...j to an index in i... (assumed possible) 
+
+def rmbound (i: a) ?-> (j: a) ?-> (x:(i<..<j)) : (i<..) =
+       (ordinal x) @ (i<..)
+
+def addbound (i: a) ?-> (x:a) : (i<..) =
+       (ordinal x - ordinal i) @ (i<..)
+
+
+def mkspan (i:a) ?-> (x: a) : (i<..) =
+    (ordinal x) @ (i<..)
+
+' Get the lowest and highest index of a set 
+
+def start : a =
+    0 @ a
+def end : a =
+    (size a - 1) @ a
+
+
+
+' ## Chart Manipulation
+
+' Dynamic Programming Chart maps spans (i,j) to log probs.
+
+def Chart (a:Type) :Type = i:a => (i<..) => Float
+
+
+' Lookup in the dynamic programming table by starting word position
+
+def (<|) (ref:Ref h (Chart a)) (i:a) : Ref h ((i<..)=>Float) =
+  %indexRef ref i
+
+
+def getChart (ref:Ref h (Chart a)) (i: a) (j: (i<..)) : {State h} Float =
+    get ((ref <| i)!j)
+def setChart (ref:Ref h (Chart a)) (i: a) (j: (i<..)) (v:Float): {State h} Unit =
+    ((ref <| i)!j) := v
+
+
+
+def cky (weights : i:pos => (i<..) => Float) : (Float & Chart pos) =
+    c_init : Chart pos = for i. zero
+    (first, last):(pos & pos) = (start, end)
+    
+    out = runState c_init $ \ c.
+      getC = getChart c
+      setC = setChart c
+        
+      -- Initialize (i, i+1) as 1
+      for_ i':(..<last).
+           i = %inject i'
+           setC i start one
+
+      -- Enumerate over all spans d
+      for_ d : (first<..).
+       d' = %inject d
+       boundary = (length - (ordinal d') - 1)@pos
+       for_ i' : (..<boundary).
+          -- Calculate span (i, j)
+          i = %inject i'
+          j':(i<..) = mkspan d'
+          j = %inject j'
+          
+          -- Fill (i, j)
+          setC i j' $ 
+                 sum for k' : (i<..<j).
+                          -- Get (i, k)
+                          k : (i<..) = rmbound k'
+                          -- Get (k, j)
+                          k2 : pos =  %inject k                
+                          (getC i k) * (getC k2 (shift j')) * weights.i.j'
+      getC first end
+    out
+
+key =  (newKey 0)
+param : i:WordPos => (i<..)  => Float = for i. for j. rand (ixkey2 key i j)
+cky param
+
+
