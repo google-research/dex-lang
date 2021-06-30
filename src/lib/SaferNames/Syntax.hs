@@ -20,7 +20,7 @@ module SaferNames.Syntax (
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, LetAnn (..),
-    LamBinder (..), PiBinder (..),
+    LamBinder (..), PiBinder (..), AltBinder (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceNameMap (..),
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), EvaluatedModule (..),
     DataConRefBinding (..),
@@ -49,7 +49,6 @@ import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import qualified Data.Text             as T
-import Data.Kind (Constraint)
 import Data.Int
 import Data.Word
 import Foreign.Ptr
@@ -133,11 +132,11 @@ data DataDef n where
 data DataConDef n = DataConDef RawName (EmptyAbs (Nest Binder) n)
                     deriving Show
 
-data Block n where Block :: Type n ->Nest Decl n l ->  Expr l -> Block n
+data Block n where Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
 
 data LamBinder (n::S) (l::S) = LamBinder (Binder n l) (Arrow l)  deriving (Show)
 data PiBinder  (n::S) (l::S) = PiBinder  (Binder n l) (Arrow l)  deriving (Show)
-data AltBinder (n::S) (l::S) = AltBinder (Binder n l)            deriving (Show)
+newtype AltBinder (n::S) (l::S) = AltBinder { fromAltBinder :: Binder n l }  deriving (Show)
 
 type LamExpr = Abs LamBinder Block  :: E
 type PiType  = Abs PiBinder  Type   :: E
@@ -358,8 +357,11 @@ instance Show (DataDef n) where
 tne :: HasNamesE e => Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
 tne = traverseNamesE
 
-instance HasNamesE DataDef
+instance HasNamesE DataDef where
+  traverseNamesE = undefined
+
 instance SubstE AtomSubstVal DataDef where
+  substE = undefined
 
 instance HasNamesE Atom where
   traverseNamesE s t atom = case atom of
@@ -388,10 +390,14 @@ instance HasNamesE Atom where
     -- DataConRef (DataDef n) [Atom n] (EmptyNest DataConRefBinding n)
     -- BoxedRef (Atom n) (Atom n) (Abs Binder Block n)  -- ptr, size, binder/body
     -- ProjectElt (NE.NonEmpty Int) (Var n)
+    _ -> undefined
 instance SubstE AtomSubstVal Atom where
+  substE = undefined
 
 instance AlphaEqE Atom where
-  alphaEqE atom1 atom2 = case (atom1, atom2) of
+  alphaEqE = undefined
+  -- alphaEqE atom1 atom2 = undefined
+  -- alphaEqE atom1 atom2 = case (atom1, atom2) of
     -- (Var v, Var v') -> alphaEqE v v'
     -- (Pi ab, Pi ab') -> alphaEqE ab ab'
   -- DataCon def params con args == DataCon def' params' con' args' =
@@ -402,8 +408,8 @@ instance AlphaEqE Atom where
   -- Record lr    == Record lr'      = lr == lr'
   -- RecordTy lr  == RecordTy lr'    = lr == lr'
   -- VariantTy lr == VariantTy lr'   = lr == lr'
-    (Con con, Con con') -> alphaEqTraversable con con'
-    (TC  con, TC  con') -> alphaEqTraversable con con'
+    -- (Con con, Con con') -> alphaEqTraversable con con'
+    -- (TC  con, TC  con') -> alphaEqTraversable con con'
   -- Eff eff == Eff eff' = eff == eff'
   -- ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
     -- _ -> zipErr
@@ -426,29 +432,41 @@ instance SubstE AtomSubstVal Expr where
     Op  op  -> Op  <$> traverse substE op
     Hof hof -> Hof <$> traverse substE hof
 
-instance HasNamesE Block
-instance SubstE AtomSubstVal Block
+instance HasNamesE Block where
+  traverseNamesE = undefined
 
-instance HasNamesE EffectRow
-instance SubstE AtomSubstVal EffectRow
-instance AlphaEqE EffectRow
+instance SubstE AtomSubstVal Block where
+  substE = undefined
 
-instance HasNamesB LamBinder
-instance SubstB AtomSubstVal LamBinder
+instance HasNamesE EffectRow where
+  traverseNamesE = undefined
 
-instance HasNamesB PiBinder
-instance SubstB AtomSubstVal PiBinder
+instance SubstE AtomSubstVal EffectRow where
+  substE = undefined
 
-instance HasNamesB AltBinder
-instance SubstB AtomSubstVal AltBinder
+instance AlphaEqE EffectRow where
+  alphaEqE _ _ = undefined
 
-instance HasNamesB Decl
-instance SubstB AtomSubstVal Decl
+instance HasNamesB LamBinder where
+  traverseNamesB _ _ _ _ = undefined
 
-instance Zippable ArrowP where
-  zipWithZ f arr1 arr2 = case (arr1, arr2) of
-    (PlainArrow e1, PlainArrow e2) -> PlainArrow <$> f e1 e2
-    (ImplicitArrow, ImplicitArrow) -> return ImplicitArrow
-    (ClassArrow   , ClassArrow   ) -> return ClassArrow
-    (TabArrow     , TabArrow     ) -> return TabArrow
-    (LinArrow     , LinArrow     ) -> return LinArrow
+instance SubstB AtomSubstVal LamBinder where
+  substB _ _ = undefined
+
+instance HasNamesB PiBinder where
+  traverseNamesB _ _ _ _ = undefined
+
+instance SubstB AtomSubstVal PiBinder where
+  substB _ _ = undefined
+
+instance HasNamesB AltBinder where
+  traverseNamesB _ _ _ _ = undefined
+
+instance SubstB AtomSubstVal AltBinder where
+  substB _ _ = undefined
+
+instance HasNamesB Decl where
+  traverseNamesB _ _ _ _ = undefined
+
+instance SubstB AtomSubstVal Decl where
+  substB _ _ = undefined

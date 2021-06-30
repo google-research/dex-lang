@@ -18,8 +18,9 @@ module SaferNames.Name (
   EitherE (..), LiftE (..), EqE, EqB, fromConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   SubstReader (..), SubstReaderT, SubstReaderM, runSubstReaderT, runSubstReaderM,
   ScopeReader (..), ScopeReaderT, ScopeReaderM, runScopeReaderT, runScopeReaderM,
-  MonadKind1, MonadKind2, Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
-  idSubst, applySubst, applyAbs, applyNaryAbs, extendSubst, lookupBinding,
+  MonadKind, MonadKind1, MonadKind2,
+  Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
+  idSubst, applySubst, applyAbs, applyNaryAbs, lookupBinding,
   ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB, IdE (..), ConstE (..),
   EmptyAbs, pattern EmptyAbs, SubstVal (..), SubstE (..), SubstB (..)) where
@@ -248,7 +249,8 @@ lookupBinding v = fromIdE <$> (!v) <$> askScope
 
 class ScopeReader2 m => SubstReader (v::E->E) (m::MonadKind2) | m -> v where
   askSubst :: m i o (Env v i o)
-  updateSubst :: Env v i' o -> m i' o a -> m i o a
+  extendSubst :: Env v (i:=>:i') o -> m i' o a -> m i o a
+  dropSubst   :: m o o a -> m i o a
 
 -- we could have `m::MP` but it's more work and we don't need it
 newtype SubstReaderT (m:: * -> *) (v::E -> E) (i::S) (o::S) (a:: *) =
@@ -270,14 +272,14 @@ instance MonadError e m => MonadError e (SubstReaderT m v i o) where
 instance MonadFail m => MonadFail (SubstReaderT m v i o) where
   fail s = SubstReaderT $ fail s
 
-instance Monad m => ScopeReader (SubstReaderT m v i)
+instance Monad m => ScopeReader (SubstReaderT m v i) where
+  askScope = undefined
+  extendScope = undefined
 
-instance Monad m => SubstReader v (SubstReaderT m v)
-
-extendSubst :: SubstReader v m => Env v (i:=>:i') o -> m i' o a -> m i o a
-extendSubst envFrag cont = do
-  env <- askSubst
-  updateSubst (env <>> envFrag) cont
+instance Monad m => SubstReader v (SubstReaderT m v) where
+  askSubst = undefined
+  dropSubst = undefined
+  extendSubst = undefined
 
 -- === alpha-renaming-invariant equality checking ===
 

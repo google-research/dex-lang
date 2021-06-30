@@ -1589,3 +1589,12 @@ instance Store BaseType
 instance Store AddressSpace
 instance Store Device
 instance Store DataConRefBinding
+
+instance Zippable ArrowP where
+  zipWithZ f arr1 arr2 = case (arr1, arr2) of
+    (PlainArrow e1, PlainArrow e2) -> PlainArrow <$> f e1 e2
+    (ImplicitArrow, ImplicitArrow) -> return ImplicitArrow
+    (ClassArrow   , ClassArrow   ) -> return ClassArrow
+    (TabArrow     , TabArrow     ) -> return TabArrow
+    (LinArrow     , LinArrow     ) -> return LinArrow
+    _ -> zipErr

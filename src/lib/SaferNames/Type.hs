@@ -13,25 +13,20 @@ module SaferNames.Type (
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
-import Control.Monad.Reader
 import Control.Monad.Identity
-import Data.Foldable (toList, traverse_)
+import Data.Foldable (toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
-import GHC.Stack
 
 import LabeledItems
 import Err
 import Type (litType)
-import Util (bindM2)
 
 import SaferNames.Syntax
 import SaferNames.Name
-import SaferNames.PPrint
-
+import SaferNames.PPrint ()
 
 -- === top-level API ===
 
@@ -49,14 +44,17 @@ getType = undefined
 class (MonadFail2 m, Monad2 m, MonadErr2 m, SubstReader AtomSubstVal m)
      => MonadTyper (m::MonadKind2)
 
-
 -- This fakes MonadErr by just throwing a hard error using `error`. We use it
 -- to skip the checks (via laziness) when we just querying types.
 newtype IgnoreChecks e a = IgnoreChecks (Identity a)
                            deriving (Functor, Applicative, Monad)
 
-instance MonadFail (IgnoreChecks e)
-instance Pretty e => MonadError e (IgnoreChecks e)
+instance MonadFail (IgnoreChecks e) where
+  fail = undefined
+
+instance Pretty e => MonadError e (IgnoreChecks e) where
+  throwError = undefined
+  catchError = undefined
 
 type CheckedTyper = SubstReaderT Except AtomSubstVal  :: S -> S -> * -> *
 instance MonadTyper CheckedTyper
