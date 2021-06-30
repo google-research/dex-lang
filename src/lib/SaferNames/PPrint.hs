@@ -16,29 +16,20 @@
 
 module SaferNames.PPrint ( pprint, pprintList, asStr , atPrec) where
 
-import Data.Aeson hiding (Result, Null, Value)
-import Control.Monad.Except hiding (Except)
-import GHC.Float
-import GHC.Stack
 import GHC.Exts (Constraint)
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import qualified Data.ByteString.Lazy.Char8 as B
--- import Data.Maybe (fromMaybe)
--- import Data.String (fromString)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
-import Data.Text (unpack, Text, unpack, uncons, unsnoc)
-import System.Console.ANSI
+import Data.Text (unpack)
 import System.IO.Unsafe
 import System.Environment
-import Numeric
 
 import LabeledItems
 
 import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
-               prettyFromPrettyPrec, DocPrec (..))
+               prettyFromPrettyPrec, DocPrec)
 
 import SaferNames.NameCore (unsafeCoerceE)
 import SaferNames.Name
@@ -68,20 +59,13 @@ pApp a = prettyPrec a AppPrec
 pArg :: PrettyPrec a => a -> Doc ann
 pArg a = prettyPrec a ArgPrec
 
-pAppArg :: (PrettyPrec a, Foldable f) => Doc ann -> f a -> Doc ann
-pAppArg name as = align $ name <> group (nest 2 $ foldMap (\a -> line <> pArg a) as)
-
-printDouble :: Double -> Doc ann
-printDouble x = p (double2Float x)
-
-printFloat :: Float -> Doc ann
-printFloat x = p $ reverse $ dropWhile (=='0') $ reverse $
-  showFFloat (Just 6) x ""
-
 instance Pretty (Block n) where
   pretty (Block _ Empty expr) = group $ line <> pLowest expr
-  -- pretty (Block decls expr) = hardline <> prettyLines decls' <> pLowest expr
-  --   where decls' = fromNest $ unsafeCoerceB decls
+  pretty (Block _ decls expr) = hardline <> prettyLines decls' <> pLowest expr
+    where decls' = fromNest decls
+
+fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
+fromNest = undefined
 
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
@@ -102,19 +86,11 @@ prettyPrecCase name e alts = atPrec LowestPrec $ name <+> p e <+> "of" <>
   nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
 
 prettyAlt :: PrettyE e => AltP e n -> Doc ann
-prettyAlt = undefined
--- prettyAlt (Abs bs body) = hsep (map prettyBinderNoAnn bs') <+> "->" <> nest 2 (p body)
---   where bs' = undefined -- fromNest $ coerceToSourceNS2 bs
+prettyAlt (Abs bs body) = hsep (map (prettyBinderNoAnn . fromAltBinder) bs') <+> "->" <> nest 2 (p body)
+  where bs' = fromNest bs
 
 prettyBinderNoAnn :: Show (b n l) => AnnBinderP b a n l -> Doc ann
 prettyBinderNoAnn (b:>_) = p $ show b
-
-prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
-prettyExprDefault expr =
-  case length expr of
-    0 -> atPrec ArgPrec primName
-    _ -> atPrec AppPrec $ pAppArg primName expr
-  where primName = p $ "%" ++ showPrimName expr
 
 instance PrettyPrecE e => Pretty     (Abs Binder e n) where pretty = prettyFromPrettyPrec
 instance PrettyPrecE e => PrettyPrec (Abs Binder e n) where
@@ -122,26 +98,6 @@ instance PrettyPrecE e => PrettyPrec (Abs Binder e n) where
 
 instance PrettyPrecE e => Pretty (PrimCon (e n)) where pretty = prettyFromPrettyPrec
 instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
-
-prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
-prettyPrecPrimCon con = case con of
-  Lit l       -> prettyPrec l
-  PairCon x y -> atPrec ArgPrec $ align $ group $
-    parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
-  UnitCon     -> atPrec ArgPrec "()"
-  SumAsProd ty tag payload -> atPrec LowestPrec $
-    "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-  ClassDictHole _ _ -> atPrec ArgPrec "_"
-  IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
-  IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
-  ParIndexCon ty i ->
-    atPrec LowestPrec $ pApp i <> "@" <> pApp ty
-  IndexSliceVal ty n i ->
-    atPrec LowestPrec $ "IndexSlice" <+> pApp ty <+> pApp n <+> pApp i
-  BaseTypeRef ptr -> atPrec ArgPrec $ "Ref" <+> pApp ptr
-  TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
-  ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
-  RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
 
 instance Pretty (Decl n l) where
   pretty decl = case decl of
@@ -194,14 +150,6 @@ instance PrettyPrec (Atom n) where
     BoxedRef ptr size (Abs b body) -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
     ProjectElt _ _ -> undefined
-    _ -> undefined
-
-fromInfix :: Text -> Maybe Text
-fromInfix t = do
-  ('(', t') <- uncons t
-  (t'', ')') <- unsnoc t'
-  return t''
-
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -232,27 +180,10 @@ prettyVariant labels label value = atPrec ArgPrec $
       where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
             plabel (l, _) = p l <> "|"
 
-prettyVariantLift :: PrettyPrec a
-  => LabeledItems () -> a -> DocPrec ann
-prettyVariantLift labels value = atPrec ArgPrec $
-      "{|" <> left <+> "..." <> pLowest value <+> "|}"
-      where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
-            plabel (l, _) = p l <> "|"
-
 forStr :: ForAnn -> Doc ann
 forStr (RegularFor Fwd) = "for"
 forStr (RegularFor Rev) = "rof"
 forStr ParallelFor      = "pfor"
-
-prettyDuration :: Double -> Doc ann
-prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
-  where (mult, unit) =      if d >= 1    then (1  , "s")
-                       else if d >= 1e-3 then (1e3, "ms")
-                       else if d >= 1e-6 then (1e6, "us")
-                       else                   (1e9, "ns")
-
-spaced :: (Foldable f, Pretty a) => f a -> Doc ann
-spaced xs = hsep $ map p $ toList xs
 
 instance Pretty (EffectRow n) where
   pretty (EffectRow effs tailVar) =

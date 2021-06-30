@@ -36,7 +36,6 @@ import qualified SaferNames.NameCore  as S
 import qualified SaferNames.Name      as S
 import qualified SaferNames.Syntax    as S
 import qualified SaferNames.Syntax    as S
-import qualified SaferNames.Type      as S
 
 toSafeBindings :: D.Bindings -> S.Scope n
 toSafeBindings (Env bindings) = undefined
