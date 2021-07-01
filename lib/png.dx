@@ -32,17 +32,17 @@ def getChunks
 
 def base64sToBytes (chunk : Fin 4 => Base64) : Fin 3 => Byte =
   [a, b, c, d] = chunk
-  [ (a << 2) .|. (b >> 4)
-  , (b << 4) .|. (c >> 2)
-  , (c << 6) .|.  d       ]
+  [ (a .<<. 2) .|. (b .>>. 4)
+  , (b .<<. 4) .|. (c .>>. 2)
+  , (c .<<. 6) .|.  d       ]
 
 def bytesToBase64s (chunk : Fin 3 => Byte) : Fin 4 => Base64 =
   [a, b, c] = chunk
   -- '?' is 00111111
   map ((.&.) '?') $
-    [               a >> 2
-    , (a << 4) .|. (b >> 4)
-    , (b << 2) .|. (c >> 6)
+    [                 a .>>. 2
+    , (a .<<. 4) .|. (b .>>. 4)
+    , (b .<<. 2) .|. (c .>>. 6)
     ,  c                    ]
 
 def base64ToAscii (x:Base64) : Char =

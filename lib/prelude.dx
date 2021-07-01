@@ -15,7 +15,9 @@ Int32 = %Int32
 Float64 = %Float64
 Float32 = %Float32
 
-Word8 = %Word8
+Word8  = %Word8
+Word32 = %Word32
+Word64 = %Word64
 Byte = Word8
 Char = Byte
 
@@ -38,10 +40,45 @@ def W8ToI  (x : Word8)   : Int     = internalCast _ x
 def IToI64 (x : Int)     : Int64   = internalCast _ x
 def IToI32 (x : Int)     : Int32   = internalCast _ x
 def IToW8  (x : Int)     : Word8   = internalCast _ x
+def IToW32 (x : Int)     : Word32  = internalCast _ x
+def IToW64 (x : Int)     : Word64  = internalCast _ x
+def W32ToW64 (x : Word32): Word64  = internalCast _ x
 def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
 def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
 def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
+'## Bitwise operations
+
+interface Bits a
+  (.<<.)  : a -> Int -> a
+  (.>>.)  : a -> Int -> a
+  (.|.)   : a -> a -> a
+  (.&.)   : a -> a -> a
+  (.^.)   : a -> a -> a
+
+instance Bits Word8
+  (.<<.)  = \x y. %shl x (IToW8 y)
+  (.>>.)  = \x y. %shr x (IToW8 y)
+  (.|.)   = \x y. %or x y
+  (.&.)   = \x y. %and x y
+  (.^.)   = \x y. %xor x y
+
+instance Bits Word32
+  (.<<.)  = \x y. %shl x (IToW32 y)
+  (.>>.)  = \x y. %shr x (IToW32 y)
+  (.|.)   = \x y. %or x y
+  (.&.)   = \x y. %and x y
+  (.^.)   = \x y. %xor x y
+
+instance Bits Word64
+  (.<<.)  = \x y. %shl x (IToW64 y)
+  (.>>.)  = \x y. %shr x (IToW64 y)
+  (.|.)   = \x y. %or x y
+  (.&.)   = \x y. %and x y
+  (.^.)   = \x y. %xor x y
+
+def lowWord  (x : Word64) : Word32 = internalCast _ (x .>>. 32)
+def highWord (x : Word64) : Word32 = internalCast _ x
 
 '### Basic Arithmetic
 #### Add
@@ -80,6 +117,16 @@ instance Add Word8
   add = \x y. %iadd x y
   sub = \x y. %isub x y
   zero = IToW8 0
+
+instance Add Word32
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
+  zero = IToW32 0
+
+instance Add Word64
+  add = \x y. %iadd x y
+  sub = \x y. %isub x y
+  zero = IToW64 0
 
 instance Add Unit
   add = \x y. ()
@@ -797,50 +844,6 @@ def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
 def eye [Add a, Mul a] : n=>n=>a =
   for i j. select (ordinal i == ordinal j) one zero
 
-'## Pseudorandom number generator utilities
-Dex does not use a stateful random number generator.
-Rather it uses what is known as a split-able random number generator, which is based on a hash function.
-Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/jax/blob/master/design_notes/prng.md), which is based on a well established but shockingly underused idea from the functional programming community: the splittable PRNG. It's a good idea for many reasons, but it's especially helpful in a parallel setting. If you want to read more, [Splittable pseudorandom number generators using cryptographic hashing](http://publications.lib.chalmers.se/records/fulltext/183348/local_183348.pdf) describes the splitting model itself and [D.E. Shaw Research's counter-based PRNG](http://www.thesalmons.org/john/random123/papers/random123sc11.pdf) proposes the particular hash function we use.
-
-'### Key functions
-
--- TODO: newtype
-Key = Int64
-
-def hash (x:Key) (y:Int32) : Key = unsafeIO do
-  y64 = IToI64 y
-  %ffi threefry2x32 Int64 x y64
-def newKey (x:Int) : Key = hash (IToI64 0) x
-def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
-def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
-def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
-def splitKey (k:Key) : Fin n => Key = for i. ixkey k i
-
-'### Sample Generators
-These functions generate samples taken from, different distributions.
-Such as `randMat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
-
-def rand (k:Key) : Float =  unsafeIO do F64ToF $ %ffi randunif Float64 k
-def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
-  for i:(Fin n). f (ixkey k i)
-
-def randMat (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
-  for i j. f (ixkey2 k i j)
-
-def randn (k:Key) : Float =
-  [k1, k2] = splitKey k
-  u1 = rand k1
-  u2 = rand k2
-  sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
-
--- TODO: Make this better...
-def randInt (k:Key) : Int = (I64ToI k) `mod` 2147483647
-
-def bern (p:Float) (k:Key) : Bool = rand k < p
-
-def randnVec (k:Key) : n=>Float =
-  for i. randn (ixkey k i)
-
 '## cumSum
 TODO: Move this to be with reductions?
 It's a kind of `scan`.
@@ -1517,7 +1520,84 @@ def tail (xs:n=>a) (start:Int) : List a =
   numElts = size n - start
   toList $ slice xs start (Fin numElts)
 
---TODO: move this to be with other random number functions
+
+'## Pseudorandom number generator utilities
+Dex does not use a stateful random number generator.
+Rather it uses what is known as a split-able random number generator, which is based on a hash function.
+Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/jax/blob/master/design_notes/prng.md), which is based on a well established but shockingly underused idea from the functional programming community: the splittable PRNG. It's a good idea for many reasons, but it's especially helpful in a parallel setting. If you want to read more, [Splittable pseudorandom number generators using cryptographic hashing](http://publications.lib.chalmers.se/records/fulltext/183348/local_183348.pdf) describes the splitting model itself and [D.E. Shaw Research's counter-based PRNG](http://www.thesalmons.org/john/random123/papers/random123sc11.pdf) proposes the particular hash function we use.
+
+'### Key functions
+
+-- TODO: newtype
+Key = Word64
+
+def threeFry2x32 (k:Word64) (count:Word64) : Word64 =
+  -- Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
+  rotations1 = [13, 15, 26, 6]
+  rotations2 = [17, 29, 16, 24]
+
+  k0 = lowWord k
+  k1 = highWord k
+  -- TODO: add a fromHex
+  k2 = k0 .^. k1 .^. (IToW32 466688986) -- 0x1BD11BDA
+
+  x = lowWord count
+  y = highWord count
+  x = x + k0
+  y = y + k1
+
+  rotations = [rotations1, rotations2]
+  ks = [k1, k2, k0]
+  (x, y) = yieldState (x, y) \ref. for i:(Fin 5).
+    for j.
+      (x, y) = get ref
+      rotationIndex = unsafeFromOrdinal _ (mod (ordinal i) 2)
+      rot = rotations.rotationIndex.j
+      x = x + y
+      y = (y .<<. rot) .|. (y .>>. (32 - rot))
+      y = x .^. y
+      ref := (x, y)
+    (x, y) = get ref
+    x = x + ks.(unsafeFromOrdinal _ (mod (ordinal i) 3))
+    y = y + ks.(unsafeFromOrdinal _ (mod ((ordinal i)+1) 3)) + IToW32 ((ordinal i)+1)
+    ref := (x, y)
+
+  (W32ToW64 x .<<. 32) .|. (W32ToW64 y)
+
+def hash (x:Key) (y:Int32) : Key =
+  y64 = IToW64 y
+  threeFry2x32 x y64
+def newKey (x:Int) : Key = hash (IToW64 0) x
+def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
+def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
+def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
+def splitKey (k:Key) : Fin n => Key = for i. ixkey k i
+
+'### Sample Generators
+These functions generate samples taken from, different distributions.
+Such as `randMat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
+
+def rand (k:Key) : Float =  unsafeIO do F64ToF $ %ffi randunif Float64 k
+def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
+  for i:(Fin n). f (ixkey k i)
+
+def randMat (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
+  for i j. f (ixkey2 k i j)
+
+def randn (k:Key) : Float =
+  [k1, k2] = splitKey k
+  u1 = rand k1
+  u2 = rand k2
+  sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
+
+-- TODO: Make this better...
+def randInt (k:Key) : Int = (internalCast Int k) `mod` 2147483647
+
+def bern (p:Float) (k:Key) : Bool = rand k < p
+
+def randnVec (k:Key) : n=>Float =
+  for i. randn (ixkey k i)
+
 def randIdx (k:Key) : n =
   unif = rand k
   fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
@@ -1762,13 +1842,6 @@ instance Floating Complex
   pow    = complex_pow
   lgamma = complex_lgamma
 
-'## Bitwise operations
-
--- TODO: type class like Haskell's `Bits`
-def (<<) (x:Byte) (y:Int) : Byte = %shl x (IToW8 y)
-def (>>) (x:Byte) (y:Int) : Byte = %shr x (IToW8 y)
-def (.|.) (x:Byte) (y:Byte) : Byte = %or x y
-def (.&.) (x:Byte) (y:Byte) : Byte = %and x y
 
 '## Miscellaneous utilities
 TODO: all of these should be in some other section
@@ -1879,7 +1952,6 @@ def concat (lists:n=>(List a)) : List a =
         eltIdxVal = get eltIdx
         eltIdx := eltIdxVal + 1
         xs.(eltIdxVal@_)
-
 
 '## Probability
 

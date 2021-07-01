@@ -28,6 +28,7 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Foreign.Ptr
 import Foreign.Marshal.Array
 import GHC.Generics (Generic)
+import Numeric (showHex)
 
 import Interpreter
 import LabeledItems
@@ -70,6 +71,8 @@ prettyVal val = case val of
       case atom of
         Con (Lit (Word8Lit c)) ->
           return $ showChar (toEnum @Char $ fromIntegral c) ""
+        Con (Lit (Word32Lit c)) -> return $ "0x" ++ showHex c ""
+        Con (Lit (Word64Lit c)) -> return $ "0x" ++ showHex c ""
         _ -> pprintVal atom
     let bodyType = getType body
     let elemsDoc = case bodyType of

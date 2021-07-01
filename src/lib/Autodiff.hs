@@ -255,6 +255,7 @@ linearizeBinOp op x' y' = LinA $ do
     FCmp _ -> emitDiscrete
     BAnd   -> emitDiscrete
     BOr    -> emitDiscrete
+    BXor   -> emitDiscrete
     BShL   -> emitDiscrete
     BShR   -> emitDiscrete
   where

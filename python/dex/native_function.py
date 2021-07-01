@@ -166,6 +166,8 @@ class _SignatureParser:
     b'i64': ScalarType(ctypes.c_int64, np.int64),
     b'i32': ScalarType(ctypes.c_int32, np.int32),
     b'u8': ScalarType(ctypes.c_uint8, np.uint8),
+    b'u32': ScalarType(ctypes.c_uint32, np.uint32),
+    b'u64': ScalarType(ctypes.c_uint64, np.uint64),
     b'f64': ScalarType(ctypes.c_double, np.float64),
     b'f32': ScalarType(ctypes.c_float, np.float32),
   }
