@@ -333,17 +333,17 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64sToBytes (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Base64</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Byte</span> <span class="symbol">=</span>
   [a<span class="symbol">,</span> b<span class="symbol">,</span> c<span class="symbol">,</span> d] <span class="symbol">=</span> chunk
-  [ (a <span class="symbol">&lt;&lt;</span> 2) <span class="symbol">.|.</span> (b <span class="symbol">&gt;&gt;</span> 4)
-  <span class="symbol">,</span> (b <span class="symbol">&lt;&lt;</span> 4) <span class="symbol">.|.</span> (c <span class="symbol">&gt;&gt;</span> 2)
-  <span class="symbol">,</span> (c <span class="symbol">&lt;&lt;</span> 6) <span class="symbol">.|.</span>  d       ]
+  [ (a <span class="symbol">.&lt;&lt;.</span> 2) <span class="symbol">.|.</span> (b <span class="symbol">.&gt;&gt;.</span> 4)
+  <span class="symbol">,</span> (b <span class="symbol">.&lt;&lt;.</span> 4) <span class="symbol">.|.</span> (c <span class="symbol">.&gt;&gt;.</span> 2)
+  <span class="symbol">,</span> (c <span class="symbol">.&lt;&lt;.</span> 6) <span class="symbol">.|.</span>  d       ]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bytesToBase64s (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Byte</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Base64</span> <span class="symbol">=</span>
   [a<span class="symbol">,</span> b<span class="symbol">,</span> c] <span class="symbol">=</span> chunk
   <span class="comment">-- &#39;?&#39; is 00111111
 </span>  map ((<span class="symbol">.&amp;.</span>) &#39;<span class="symbol">?</span>&#39;) <span class="symbol">$</span>
-    [               a <span class="symbol">&gt;&gt;</span> 2
-    <span class="symbol">,</span> (a <span class="symbol">&lt;&lt;</span> 4) <span class="symbol">.|.</span> (b <span class="symbol">&gt;&gt;</span> 4)
-    <span class="symbol">,</span> (b <span class="symbol">&lt;&lt;</span> 2) <span class="symbol">.|.</span> (c <span class="symbol">&gt;&gt;</span> 6)
+    [                 a <span class="symbol">.&gt;&gt;.</span> 2
+    <span class="symbol">,</span> (a <span class="symbol">.&lt;&lt;.</span> 4) <span class="symbol">.|.</span> (b <span class="symbol">.&gt;&gt;.</span> 4)
+    <span class="symbol">,</span> (b <span class="symbol">.&lt;&lt;.</span> 2) <span class="symbol">.|.</span> (c <span class="symbol">.&gt;&gt;.</span> 6)
     <span class="symbol">,</span>  c                    ]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64ToAscii (x<span class="symbol">:</span><span class="type-name">Base64</span>) <span class="symbol">:</span> <span class="type-name">Char</span> <span class="symbol">=</span>
