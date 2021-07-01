@@ -38,9 +38,10 @@ import qualified SaferNames.Syntax    as S
 import qualified SaferNames.Syntax    as S
 
 toSafeBindings :: D.Bindings -> S.Scope n
-toSafeBindings (Env bindings) = undefined
-  -- S.RecEnv $ S.UnsafeMakeEnv $ LM.newLazyMap (M.keysSet bindings) \v ->
-  --   toSafeBinderInfo $ fromJust (M.lookup v bindings)
+toSafeBindings = undefined
+-- toSafeBindings (Env bindings) = undefined
+--   S.RecEnv $ S.UnsafeMakeEnv $ LM.newLazyMap (M.keysSet bindings) \v ->
+--     toSafeBinderInfo $ fromJust (M.lookup v bindings)
 
 toSafeBinderInfo :: (D.Type, D.BinderInfo) -> S.TypedBinderInfo n
 toSafeBinderInfo (ty, info) = S.TypedBinderInfo (toSafeE ty) (toSafeE info)
@@ -191,7 +192,7 @@ instance HasSafeVersionB D.Decl where
   fromSafeB (S.Let ann b expr) = D.Let ann (fromSafeB b) (fromSafeE expr)
 
 instance HasSafeVersionE e => HasSafeVersionB (D.BinderP e) where
-  type SafeVersionB (D.BinderP e) = S.AnnBinderP (S.PlainBinder S.TypedBinderInfo) (SafeVersionE e)
+  type SafeVersionB (D.BinderP e) = S.AnnBinderP (S.NameBinder S.TypedBinderInfo) (SafeVersionE e)
   toSafeB b = case b of
     D.Ignore ann -> unsafeCoerceB S.Ignore S.:> toSafeE ann
     D.Bind (v D.:> ann) -> UnsafeMakeBinder v S.:> toSafeE ann

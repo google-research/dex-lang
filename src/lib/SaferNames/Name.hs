@@ -9,20 +9,21 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module SaferNames.Name (
-  Name (..), RawName, S (..), Env (..), (!), (<>>), (<.>), PlainBinder (..),
-  Scope, ScopeFrag, FreshExt, NameTraversal (..),
-  E, B, HasNamesE (..), HasNamesB (..), BindsOneName (..), (@@>), injectNames,
-  Abs (..), FreshAbs (..), Nest (..), NestPair (..),PlainBinderList,
-  AnnBinderP (..), AnnBinderListP (..), newNameTraversal, idNameTraversal,
+  Name (..), RawName, S (..), Env (..), (!), (<>>), (<.>), NameBinder (..),
+  Scope, ScopeFrag, NameTraversal (..), newEnv,
+  E, B, HasNamesE (..), HasNamesB (..), BindsOneName (..), (@@>),
+  Abs (..), Nest (..), NestPair (..),NameBinderList,
+  AnnBinderP (..), AnnBinderListP (..),
   UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), EqE, EqB, fromConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   SubstReader (..), SubstReaderT, SubstReaderM, runSubstReaderT, runSubstReaderM,
   ScopeReader (..), ScopeReaderT, ScopeReaderM, runScopeReaderT, runScopeReaderM,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
-  idSubst, applySubst, applyAbs, applyNaryAbs, lookupBinding,
+  idSubst, applySubst, applyAbs, applyNaryAbs,
   ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB, IdE (..), ConstE (..),
+  InjectableE (..), InjectableB (..),
   EmptyAbs, pattern EmptyAbs, SubstVal (..), SubstE (..), SubstB (..)) where
 
 import Control.Monad.Except hiding (Except)
@@ -36,17 +37,67 @@ import GHC.Exts (Constraint)
 import SaferNames.NameCore
 import Err
 
--- === common scoping patterns ===
+-- === environments and scopes ===
 
--- Env with the payload associated with the particular name
-type Scope     (n::S)        = Env IdE n n         :: *
-type ScopeFrag (n::S) (l::S) = Env IdE (n:=>:l) l  :: *
+-- Env is like `NameMap` but it doesn't hold the full set of names, so you can
+-- make one from an ordinary function. It's effcicently extensible using
+-- an `EnvFrag`.
+data Env (v::E->E) (i::S) (o::S) where
+  Env :: (forall s. Name s i -> v s o)  -- fallback function
+      -> NameMap v (i:=>:i') o          -- names first lookup up here
+      -> Env v i' o
+
+newtype EnvFrag (v::E->E) (i::S) (i'::S) (o::S) =
+  EnvFrag (NameMap v (i:=>:i') o)
+
+-- Scopes carry
+--    1. The full set of names (suitable for generating fresh names)
+--    2. A no-shadowing guarantee (via `Distinct`)
+--    3. The payload associated with each name's static data parameter
+data Scope (n::S) where
+  Scope :: Distinct n => NameMap IdE n n -> Scope n
+
+data ScopeFrag (n::S) (l::S) where
+  ScopeFrag :: Distinct l => NameMap IdE (n:=>:l) l -> ScopeFrag n l
+
+newEnv :: (forall s. Name s i -> v s o) -> Env v i o
+newEnv f = Env f emptyNameMap
+
+infixl 9 !
+(!) :: Env v i o -> Name s i -> v s o
+(!) (Env f frag) name =
+  case lookupEnvFrag (EnvFrag frag) name of
+    Left name' -> f name'
+    Right val -> val
+
+infixl 1 <>>
+(<>>) :: Env v i o -> EnvFrag v i i' o -> Env v i' o
+(<>>) (Env f frag) (EnvFrag frag') = Env f $ concatNameMaps frag frag'
+
+infixl 1 <.>
+(<.>) :: EnvFrag v i1 i2 o -> EnvFrag v i2 i3 o -> EnvFrag v i1 i3 o
+(<.>) (EnvFrag env) (EnvFrag env') = EnvFrag (concatNameMaps env env')
+
+emptyEnvFrag :: EnvFrag v i i o
+emptyEnvFrag = EnvFrag emptyNameMap
+
+lookupEnvFrag :: EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
+lookupEnvFrag (EnvFrag m) name =
+  case projectName (nameMapNames m) name of
+    Left  name' -> Left name'
+    Right name' -> Right $ lookupNameMap m name'
+
+lookupScope :: Scope n -> Name s n -> s n
+lookupScope (Scope m) v = fromIdE $ lookupNameMap m v
+
+appendScope :: Scope n -> ScopeFrag n l -> Scope l
+appendScope (Scope m1) s2@(ScopeFrag m2) =
+  Scope $ extendNameMap (injectNames s2 m1) m2
+
+-- === common scoping patterns ===
 
 data Abs (binder::B) (body::E) (n::S) where
   Abs :: binder n l -> body l -> Abs binder body n
-
-data FreshAbs (binder::B) (body::E) (n::S) where
-  FreshAbs :: FreshExt n l -> binder n l -> body l -> FreshAbs binder body n
 
 data NestPair (b1::B) (b2::B) (n::S) (l::S) where
   NestPair :: b1 n l -> b2 l l' -> NestPair b1 b2 n l'
@@ -55,7 +106,7 @@ data Nest (binder::B) (n::S) (l::S) where
   Nest  :: binder n h -> Nest binder h l -> Nest binder n l
   Empty ::                                  Nest binder n n
 
-type PlainBinderList s = Nest (PlainBinder s)
+type NameBinderList s = Nest (NameBinder s)
 
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
@@ -75,31 +126,28 @@ data AnnBinderListP (b::B) (ann::E) (n::S) (l::S) =
 
 data NameTraversal m i o where
   NameTraversal :: (forall s. Name s i -> m (Name s o)) -- monadic function for free vars
-                -> Env Name (i:=>:i') o                 -- renaming local vars
+                -> EnvFrag Name i i' o                  -- renaming local vars
                 -> NameTraversal m i' o
 
-class HasNamesE (e::E) where
+class InjectableE e => HasNamesE (e::E) where
   traverseNamesE :: Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
 
-class HasNamesB (b::B) where
+class InjectableB b => HasNamesB (b::B) where
   traverseNamesB :: Scope o
                  -> NameTraversal m i o
                  -> b i i'
                  -> (forall o'. Scope o' -> NameTraversal m i' o' -> b o o' -> m a)
                  -> m a
 
-newNameTraversal :: (forall s. Name s i -> m (Name s o)) -> NameTraversal  m i o
-newNameTraversal f = NameTraversal f emptyEnv
-
-idNameTraversal :: Monad m => NameTraversal m n n
-idNameTraversal = newNameTraversal pure
-
 lookupNameTraversal :: Typeable s => Monad m
                     => NameTraversal m i o -> Name s i -> m (Name s o)
 lookupNameTraversal (NameTraversal f env) name =
   case lookupEnvFrag env name of
-      Left  name' -> f name'
-      Right name' -> return name'
+    Left  name' -> f name'
+    Right name' -> return name'
+
+newNameTraversal :: (forall s. Name s i -> m (Name s o)) -> NameTraversal m i o
+newNameTraversal f = NameTraversal f emptyEnvFrag
 
 -- === type class for substitutions ===
 
@@ -118,9 +166,6 @@ class SubstB (v::E->E) (b::B) where
          => b i i'
          -> (forall o'. b o o' -> m i' o' a)
          -> m i o a
-
-idRenameEnv :: Scope n -> Env Name n n
-idRenameEnv scope = fmapEnv (\name _ -> name) scope
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -161,25 +206,39 @@ newtype ConstE (const::E) (ignored::E) (n::S) = ConstE (const n)
 
 infixr 7 @>
 class BindsOneName (b::B) (s::E) | b -> s where
-  (@>) :: b i i' -> v s o -> Env v (i:=>:i') o
+  (@>) :: b i i' -> v s o -> EnvFrag v i i' o
+
+instance BindsOneName (NameBinder s) s where
+  b @> x = EnvFrag (singletonNameMap b x)
 
 infixr 7 @@>
-(@@>) :: Typeable v => Typeable s
-      => PlainBinderList s i i' -> [v s o] -> Env v (i:=>:i') o
-(@@>) Empty [] = emptyEnv
-(@@>) (Nest b rest) (x:xs) = envSingleton b x <.> rest@@>xs
-(@@>) _ _ = error "length mismatch"
+class BindsNameList (b::B) (s::E) | b -> s where
+  (@@>) :: b i i' -> [v s o] -> EnvFrag v i i' o
 
--- should be equivalent to `\ext -> fmapNames (injectName ext)`
-injectNames :: HasNamesE e => FreshExt n l -> e n -> e l
-injectNames _ = unsafeCoerceE
+instance BindsNameList (NameBinderList s) s where
+  (@@>) Empty [] = emptyEnvFrag
+  (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
+  (@@>) _ _ = error "length mismatch"
 
-fromConstAbs :: ScopeReader m => MonadErr1 m
-             => HasNamesB b => HasNamesE e => Abs b e n -> m n (e n)
-fromConstAbs = undefined
+projectNames :: forall n l e m b. ScopeReader m => MonadErr1 m
+             => HasNamesB b => HasNamesE e
+             => b n l -> e l -> m n (e n)
+projectNames b e = fromConstAbs (Abs b e)
 
-idSubst :: Typeable e => Typeable s => Scope n -> Env (SubstVal s e) n n
-idSubst scope = fmapEnv (\name _ -> Rename name) scope
+fromConstAbs :: ScopeReader m => MonadErr1 m => HasNamesB b => HasNamesE e
+             => Abs b e n -> m n (e n)
+fromConstAbs (Abs b e) = do
+  scope <- askScope
+  let s = boundNames b
+  let t = newNameTraversal \name -> case projectName s name of
+                                      Left name' -> Just name'
+                                      Right _    -> Nothing
+  case traverseNamesE scope t e of
+    Nothing -> throw EscapedNameErr ""
+    Just e' -> return e'
+
+idSubst :: Typeable e => Typeable s => Env (SubstVal s e) n n
+idSubst = newEnv Rename
 
 applySubst :: ScopeReader m => SubstE v e => Env v i o -> e i -> m o (e o)
 applySubst env x = do
@@ -190,9 +249,7 @@ applyAbs :: Typeable s => Typeable val
          => ScopeReader m
          => BindsOneName b s => SubstE (SubstVal s val) e
          => Abs b e n -> val n -> m n (e n)
-applyAbs (Abs b body) x = do
-  scope <- askScope
-  applySubst (idSubst scope <>> (b@>SubstVal x)) body
+applyAbs (Abs b body) x = applySubst (idSubst <>> (b@>SubstVal x)) body
 
 -- TODO: do it more efficiently, without repeated passes via `applyAbs`
 applyNaryAbs :: Typeable s => Typeable val
@@ -243,14 +300,13 @@ runScopeReaderM :: Scope n -> ScopeReaderM n a -> a
 runScopeReaderM scope m = runIdentity $ runScopeReaderT scope m
 
 lookupBinding :: Typeable s => ScopeReader m => Name s n -> m n (s n)
-lookupBinding v = fromIdE <$> (!v) <$> askScope
+lookupBinding v = flip lookupScope v <$> askScope
 
 -- === subst monad ===
 
 class ScopeReader2 m => SubstReader (v::E->E) (m::MonadKind2) | m -> v where
   askSubst :: m i o (Env v i o)
-  extendSubst :: Env v (i:=>:i') o -> m i' o a -> m i o a
-  dropSubst   :: m o o a -> m i o a
+  withSubst :: Env v i' o -> m i' o a -> m i o a
 
 -- we could have `m::MP` but it's more work and we don't need it
 newtype SubstReaderT (m:: * -> *) (v::E -> E) (i::S) (o::S) (a:: *) =
@@ -273,13 +329,15 @@ instance MonadFail m => MonadFail (SubstReaderT m v i o) where
   fail s = SubstReaderT $ fail s
 
 instance Monad m => ScopeReader (SubstReaderT m v i) where
-  askScope = undefined
-  extendScope = undefined
+  askScope = SubstReaderT $ asks fst
+  extendScope scopeFrag@(ScopeFrag _) (SubstReaderT (ReaderT f)) =
+    SubstReaderT $ ReaderT \(scope, subst) ->
+    f (appendScope scope scopeFrag, injectNames scopeFrag subst)
 
 instance Monad m => SubstReader v (SubstReaderT m v) where
-  askSubst = undefined
-  dropSubst = undefined
-  extendSubst = undefined
+  askSubst = SubstReaderT $ asks snd
+  withSubst subst (SubstReaderT (ReaderT f)) =
+    SubstReaderT $ ReaderT \(scope, _) -> f (scope, subst)
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -326,8 +384,7 @@ instance MonadZipSubst ZipSubstM where
   withZipSubstEnv env (ZipSubstM m) = ZipSubstM $ lift $ runReaderT m env
 
 idZipSubstEnv :: Scope n -> ZipSubstEnv n n n
-idZipSubstEnv scope = ZipSubstEnv env env scope
-  where env = idRenameEnv scope
+idZipSubstEnv scope = ZipSubstEnv (newEnv id) (newEnv id) scope
 
 alphaEqTraversable :: (AlphaEqE e, Traversable f, Eq (f ()))
                    => MonadZipSubst m
@@ -369,8 +426,15 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
 
 -- === instances ===
 
+instance InjectableE (Env v i)
+
+instance InjectableB ScopeFrag
+
 instance Typeable s => HasNamesE (Name s) where
   traverseNamesE _ t name = lookupNameTraversal t name
+
+instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
+  injectionProofE = undefined
 
 instance (HasNamesB b, HasNamesE e) => HasNamesE (Abs b e) where
   traverseNamesE s t (Abs b body) = do
@@ -384,11 +448,18 @@ instance SubstB v b => SubstB v (Nest b) where
   substB Empty cont = cont Empty
   substB (Nest b r) cont = substB b \b' -> substB r \r' -> cont $ Nest b' r'
 
+instance (InjectableB b1, InjectableB b2) => InjectableB (NestPair b1 b2) where
+  injectionProofB _ _ _ = undefined
+
 instance (HasNamesB b1, HasNamesB b2) => HasNamesB (NestPair b1 b2) where
   traverseNamesB s t (NestPair b1 b2) cont =
     traverseNamesB s t b1 \s' t' b1' ->
       traverseNamesB s' t' b2 \s'' t'' b2' ->
         cont s'' t'' (NestPair b1' b2')
+
+
+instance InjectableB b => InjectableB (Nest b) where
+  injectionProofB _ _ _ = undefined
 
 instance HasNamesB b => HasNamesB (Nest b) where
   traverseNamesB s t nest cont = case nest of
@@ -398,8 +469,20 @@ instance HasNamesB b => HasNamesB (Nest b) where
         traverseNamesB s' t' rest \s'' t'' rest' ->
           cont s'' t'' $ Nest b' rest'
 
+instance InjectableE UnitE where
+  injectionProofE = undefined
+
 instance HasNamesE UnitE where
   traverseNamesE _ _ UnitE = return UnitE
+
+instance InjectableE e => InjectableE (IdE e) where
+  injectionProofE = undefined
+
+instance HasNamesE e => HasNamesE (IdE e) where
+  traverseNamesE = undefined
+
+instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
+  injectionProofE = undefined
 
 instance (HasNamesE e1, HasNamesE e2) => HasNamesE (PairE e1 e2) where
   traverseNamesE s env (PairE x y) =

@@ -39,6 +39,7 @@ data ErrType = NoErr
              | MiscErr
              | RuntimeErr
              | ZipErr
+             | EscapedNameErr
                deriving (Show, Eq)
 
 type Except = Either Err
@@ -147,3 +148,4 @@ instance Pretty ErrType where
     MiscErr           -> "Error:"
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
+    EscapedNameErr    -> "Escaped name"

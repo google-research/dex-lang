@@ -64,7 +64,7 @@ instance Pretty (Block n) where
   pretty (Block _ decls expr) = hardline <> prettyLines decls' <> pLowest expr
     where decls' = fromNest decls
 
-fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
+fromNest :: Nest b n l -> [b UnsafeMakeS UnsafeMakeS]
 fromNest = undefined
 
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
