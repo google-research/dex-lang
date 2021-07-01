@@ -1,0 +1,257 @@
+' # Associative Collections
+Secretly this is actually an example on type-classes
+
+'## How should I hash
+TODO: Check this again when `%bench` works
+
+threefryHash = \seed x. I64ToI $ hash (IToI64 seed) x
+def fnvhash (seed:Int32) (x:Int32) : Int32 = %ffi fasthash Int32 seed x
+knuthHash = \seed x. (seed + x)*(seed + x + 3) `mod` 33333331
+
+%time
+threefryHash 0 1
+
+%time
+fnvhash 0 1
+
+%time
+knuthHash 0 1
+
+
+' ## ListDict
+A fallback Associative Map, that performs end-to-end search.
+It's a good place to start, and we need it for the `HashDict` anyway for within the buckets.
+This is actually faster than the `HashDict` we will define lated for sufficiently small collections, where the hash time dominates over the equality check time.
+Really we only need `isequal`, so perhaps that should be seperated out of `Hashable`.
+(The LittleDict design of pair of lists rather than list of pairs is probably faster as more SIMD friendly but causes weird errors)
+
+
+data ListDict k:Type v:Type =
+  AsListDict vals:(List (k&v))
+
+eg_listdict = AsListDict $ AsList _ [('a', 10), ('b', 20), ('c', 30)]
+
+:p eg_listdict
+
+def push (collectionL:List a) (datum:a) : List a =
+    (AsList n collection) = collectionL
+    neo_n = Fin (n+1)
+    AsList _  $ for i:neo_n. case (ordinal i < n) of
+        True -> collection.(ordinal i@(Fin n))
+        False -> datum
+
+:p push "abc" 'x'
+
+def tryGetListDict (_:Eq k) ?=> (dict:ListDict k v) (key:k) : Maybe v =
+    (AsListDict (AsList _ vals)) = dict
+    fold Nothing \i state. 
+        case ((fst vals.i) == key) of
+            False -> state
+            True -> Just $ snd vals.i
+
+:p tryGetListDict eg_listdict 'a'
+
+:p tryGetListDict eg_listdict 'x'
+
+'`store dict key val`   
+Stores the value in the dict at the key.
+Note that we never actually delete anything, and it grows without bounds
+This could be improved.
+
+def storeListDict (dict:ListDict k v) (key:k) (val:v) : ListDict k v =
+    (AsListDict list) = dict
+    pair = (key, val)
+    AsListDict (push list pair)
+
+
+eg_listdict2 = storeListDict eg_listdict 'x' 40
+
+:p eg_listdict2
+
+
+:p tryGetListDict eg_listdict2 'x'
+
+
+def emptyListDict (k:Type) (v:Type) : ListDict k v =
+    empty_table : Fin 0 => (k&v) = []
+    AsListDict $ AsList _ empty_table
+
+:p emptyListDict Int Char
+
+:p storeListDict (emptyListDict Int Char) 100 'a'
+
+' ## Hash
+We need a hash function for everything
+
+interface [Eq a] Hashable a
+    ahash : a->Int->Int
+
+
+def thehash [Hashable a] : a->Int = \x. ahash x 0
+
+-- composition operator 1 arg and 2 arg forms (would be `of` but that is a reserved word)
+ov : (a->b)->(c->a)->(c->b) = \f g x. f(g x)
+ov2: (c->d)->(a->b->c)->(a->b->d) = \f g x y. f(g x y)
+
+instance Hashable Int32
+    ahash = (I64ToI `ov2` hash `ov` IToI64)
+
+:p thehash 1
+
+instance Hashable Word8
+    ahash = ahash `ov` W8ToI
+
+:p thehash 'a'
+
+
+instance Hashable Int64
+    ahash = ahash `ov` I64ToI
+
+:p thehash $ IToI64 213
+
+instance Hashable Bool
+    ahash = ahash `ov` BToI
+
+:p thehash True
+:p thehash False
+
+
+instance Hashable Unit
+    ahash = \x seed. seed
+
+:p thehash ()
+
+' due to witchcraft defining a type-class on s 2-tuple defines it on all tuples
+
+instance [Hashable a, Hashable b] Hashable (a & b)
+    ahash = \(a,b). ahash a `ov` ahash b
+
+:p thehash (1,2)
+
+:p thehash (1,2,3)
+
+
+instance [Hashable t] Hashable (n=>t)
+    --TODO: should not hash all elements just a few at start end and middle
+    ahash = \x seed. fold seed \i. ahash x.i
+
+:p thehash [1, 2, 3, 4]
+
+' TODO workout how to apply this more generally
+
+instance [Hashable t] Hashable (List t)
+    --TODO: should not hash all elements just a few at start end and middle
+    ahash = \(AsList _ x). ahash x
+
+:p thehash (AsList _ [10,20,20])
+
+:p thehash "abcd"
+
+' broken because   
+https://github.com/google-research/dex-lang/issues/340  
+should be a fallback for anything that doesn't have a better definition of its own
+```
+instance [Eq t] Hashable t
+    ahash = \x. ahash 1
+     -- performance degrades to O(n) search 🤷
+:p thehash 1.0
+:p thehash 2.0
+:p thehash (10, 20)
+```
+
+' ## HashDict
+Now we can build a HashMap on top of that ListDict.
+We are going to hard-code a bunch of buffer sizes for simplicity
+
+data HashDict k:Type v:Type =
+  HashDictBuckets n:Int buckets:(Fin n=>(ListDict k v))
+
+
+def emptyHashDict (n:Int) (k:Type) (v:Type) : HashDict k v =
+    HashDictBuckets n for i:(Fin n). emptyListDict k v
+
+:p emptyHashDict 8 Int Char
+
+def storeHashDict [Hashable k] (dict:HashDict k v) (key:k) (val:v) : HashDict k v =
+    (HashDictBuckets nbuckets buckets) = dict
+    keyhash = thehash key
+    bucket_index = (keyhash `mod` nbuckets)@(Fin nbuckets)
+    bucket = buckets.bucket_index
+    neo_buckets = yieldState buckets \bucketsRef.
+        bucketsRef!bucket_index := storeListDict bucket key val
+    HashDictBuckets _ neo_buckets
+
+hd = emptyHashDict 4 Char Int
+
+hd1 = storeHashDict hd 'a' 200
+hd2 = storeHashDict hd1 'b' 201
+hd3 = storeHashDict hd2 'c' 202
+hd4 = storeHashDict hd3 'd' 203
+hd5 = storeHashDict hd4 'e' 204
+
+:p hd5
+
+def tryGetHashDict (_:Hashable k) ?=> (dict:HashDict k v) (key:k) : Maybe v =
+    (HashDictBuckets nbuckets buckets) = dict
+    keyhash = thehash key
+    bucket_index = (keyhash `mod` nbuckets)@(Fin nbuckets)
+    bucket = buckets.bucket_index
+    tryGetListDict bucket key
+
+
+:p tryGetHashDict hd5 'b'
+:p tryGetHashDict hd5 'd'
+
+
+' Benchmarking
+https://github.com/google-research/dex-lang/issues/341
+
+full_data = for i:(Fin 256). ([10 * ordinal i, ordinal i], i)
+
+big_listdict = fold (emptyListDict _ _)  \i state. storeListDict state (fst full_data.i) (snd full_data.i)
+
+
+big_hashdict = fold (emptyHashDict 128 _ _) \i state. storeHashDict state (fst full_data.i) (snd full_data.i)
+
+%time
+tryGetHashDict big_hashdict [1280, 128]
+
+%time
+tryGetListDict big_listdict [1280, 128]
+
+%time
+thehash [1280, 128]
+
+
+' ## Wrap under a common interface
+See how annoying above was without a common interface that i could just pass in the initial value (with its type) and have it work out which store to read etc
+TODO: once this is working remove stand-alone manually type-specied functions from the ListDict and the HashDict
+
+
+interface Associative dict:Type k:Type v:Type
+    tryGet : dict -> k -> Maybe v
+    assoc : dict -> k -> v -> dict
+
+
+instance [Eq k] Associative (ListDict k v) k v
+    assoc = storeListDict
+    tryGet = tryGetListDict
+
+
+instance [Hashable k] Associative (HashDict k v) k v
+    assoc = storeHashDict
+    tryGet = tryGetHashDict
+
+
+:p assoc hd5 'q' 200
+
+:p assoc eg_listdict 'q' 200
+
+' These both error claiming:
+`Type error:Ambiguous type variables: [?2]`
+
+
+:p tryGet hd5 'a'
+
+:p tryGet eg_listdict 'a'
+

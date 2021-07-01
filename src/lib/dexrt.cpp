@@ -71,6 +71,29 @@ uint64_t apply_round(uint32_t x, uint32_t y, int rot) {
   return out;
 }
 
+uint32_t fnv1ahash(uint32_t x){
+  // Fowler–Noll–Vo Hash Function, for 32bits
+  // https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
+    uint32_t PRIME = 16777619;
+    uint32_t OFFSET = 2166136261;
+
+    uint32_t hash = OFFSET;
+    uint32_t the_byte;
+    for (int byte_i=0;byte_i<4;byte_i++) {
+      the_byte = (x >> (8 * byte_i)) & 0xFF;
+      hash ^= the_byte;
+      hash *= PRIME;
+    }
+    return hash;
+}
+uint32_t fasthash(uint32_t seed, uint32_t x){
+  // Currently uses Fowler–Noll–Vo Hash + the Boost hash_combine function:
+  // https://stackoverflow.com/questions/35985960/
+  seed^= fnv1ahash(x) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+  return seed;
+}
+
+
 uint64_t threefry2x32(uint64_t keypair, uint64_t count) {
   /* Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins */
 
