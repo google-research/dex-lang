@@ -115,8 +115,8 @@ data Decl n l = Let LetAnn (Binder n l) (Expr n)
                 deriving (Show)
 
 type AtomName   = Name TypedBinderInfo
-type Binder     = AnnBinderP (PlainBinder     TypedBinderInfo)        Type   :: B
-type BinderList = AnnBinderP (PlainBinderList TypedBinderInfo) (ListE Type)  :: B
+type Binder     = AnnBinderP (NameBinder     TypedBinderInfo)        Type   :: B
+type BinderList = AnnBinderP (NameBinderList TypedBinderInfo) (ListE Type)  :: B
 
 data DataConRefBinding n l = DataConRefBinding (Binder n l) (Atom n) deriving Show
 
@@ -357,12 +357,14 @@ instance Show (DataDef n) where
 tne :: HasNamesE e => Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
 tne = traverseNamesE
 
+instance InjectableE DataDef
 instance HasNamesE DataDef where
   traverseNamesE = undefined
 
 instance SubstE AtomSubstVal DataDef where
   substE = undefined
 
+instance InjectableE Atom
 instance HasNamesE Atom where
   traverseNamesE s t atom = case atom of
     -- Var v ->
@@ -414,6 +416,7 @@ instance AlphaEqE Atom where
   -- ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
     -- _ -> zipErr
 
+instance InjectableE Expr
 instance HasNamesE Expr where
   traverseNamesE s t expr = case expr of
     App e1 e2 -> App <$> tne s t e1 <*> tne s t e2
@@ -432,12 +435,14 @@ instance SubstE AtomSubstVal Expr where
     Op  op  -> Op  <$> traverse substE op
     Hof hof -> Hof <$> traverse substE hof
 
+instance InjectableE Block
 instance HasNamesE Block where
   traverseNamesE = undefined
 
 instance SubstE AtomSubstVal Block where
   substE = undefined
 
+instance InjectableE EffectRow
 instance HasNamesE EffectRow where
   traverseNamesE = undefined
 
@@ -447,24 +452,28 @@ instance SubstE AtomSubstVal EffectRow where
 instance AlphaEqE EffectRow where
   alphaEqE _ _ = undefined
 
+instance InjectableB LamBinder
 instance HasNamesB LamBinder where
   traverseNamesB _ _ _ _ = undefined
 
 instance SubstB AtomSubstVal LamBinder where
   substB _ _ = undefined
 
+instance InjectableB PiBinder
 instance HasNamesB PiBinder where
   traverseNamesB _ _ _ _ = undefined
 
 instance SubstB AtomSubstVal PiBinder where
   substB _ _ = undefined
 
+instance InjectableB AltBinder
 instance HasNamesB AltBinder where
   traverseNamesB _ _ _ _ = undefined
 
 instance SubstB AtomSubstVal AltBinder where
   substB _ _ = undefined
 
+instance InjectableB Decl
 instance HasNamesB Decl where
   traverseNamesB _ _ _ _ = undefined
 

@@ -30,8 +30,9 @@ import SaferNames.PPrint ()
 
 -- === top-level API ===
 
-checkTypes :: MonadErr m => CheckableE e => Scope n -> e n -> m ()
-checkTypes scope e = liftEither $ runSubstReaderT scope (idSubst scope) $ checkE e
+checkTypes :: forall n m e. MonadErr m => CheckableE e => Scope n -> e n -> m ()
+checkTypes scope e = liftEither $ runSubstReaderT scope (newEnv Rename) m
+  where m = checkE e :: CheckedTyperM n n ()
 
 getType :: HasType e => Scope n -> e n -> Type n
 getType = undefined
@@ -42,7 +43,7 @@ getType = undefined
 -- already be a superclass, transitively, through both MonadErrMP and
 -- MonadAtomSubst.
 class (MonadFail2 m, Monad2 m, MonadErr2 m, SubstReader AtomSubstVal m)
-     => MonadTyper (m::MonadKind2)
+     => Typer (m::MonadKind2)
 
 -- This fakes MonadErr by just throwing a hard error using `error`. We use it
 -- to skip the checks (via laziness) when we just querying types.
@@ -56,28 +57,28 @@ instance Pretty e => MonadError e (IgnoreChecks e) where
   throwError = undefined
   catchError = undefined
 
-type CheckedTyper = SubstReaderT Except AtomSubstVal  :: S -> S -> * -> *
-instance MonadTyper CheckedTyper
+type CheckedTyperM = SubstReaderT Except AtomSubstVal  :: S -> S -> * -> *
+instance Typer CheckedTyperM
 
 type UncheckedTyper = SubstReaderT (IgnoreChecks Err) AtomSubstVal  :: S -> S -> * -> *
-instance MonadTyper UncheckedTyper
+instance Typer UncheckedTyper
 
 -- === typeable things ===
 
 -- alias for legacy reason. We should probably just use `getTypeE`.
-typeCheck :: HasType e => MonadTyper m => e i -> m i o (Type o)
+typeCheck :: HasType e => Typer m => e i -> m i o (Type o)
 typeCheck = getTypeE
 
 -- TODO: these should all return the substituted terms too, so we don't have to
 -- traverse them twice (which might even bad asymptotics).
 class HasNamesE e => CheckableE (e::E) where
-  checkE :: MonadTyper m => e i -> m i o ()
+  checkE :: Typer m => e i -> m i o ()
 
 class CheckableE e => HasType (e::E) where
-  getTypeE :: MonadTyper m => e i -> m i o (Type o)
+  getTypeE :: Typer m => e i -> m i o (Type o)
 
 class HasNamesB b => CheckableB (b::B) where
-  checkB :: MonadTyper m
+  checkB :: Typer m
          => b i i'
          -> (forall o'. b o o' -> m i' o' a)
          -> m i o a
@@ -88,12 +89,12 @@ class HasNamesB b => CheckableB (b::B) where
 -- because otherwise we end up traversing things twice
 -- (usually just types though, not other terms).
 infixr 7 |:
-(|:) :: (MonadTyper m, HasType e) => e i -> Type o -> m i o ()
+(|:) :: (Typer m, HasType e) => e i -> Type o -> m i o ()
 (|:) x reqTy = do
   ty <- typeCheck x
   checkAlphaEq reqTy ty
 
-checkableFromHasType :: HasType e => MonadTyper m => e i -> m i o ()
+checkableFromHasType :: HasType e => Typer m => e i -> m i o ()
 checkableFromHasType e = void $ typeCheck e
 
 checkEq :: (MonadErr m, Show a, Pretty a, Eq a) => a -> a -> m ()
@@ -221,7 +222,7 @@ instance HasType Block where
   --   checkBlockRec ty' (Abs decls expr)
   --   return ty'
   --   where
-  --     checkBlockRec :: MonadTyper m => Type o -> Abs (Nest Decl) Expr i -> m i o ()
+  --     checkBlockRec :: Typer m => Type o -> Abs (Nest Decl) Expr i -> m i o ()
   --     checkBlockRec reqTy (Abs Empty result) = result |: reqTy
   --     checkBlockRec reqTy (Abs (Nest decl@(Let _ @(_:>tyAnn) rhs) rest) result) = do
   --       tyAnn' <- substE tyAnn
@@ -229,7 +230,7 @@ instance HasType Block where
   --       refreshBinders b \_ ->
   --         checkBlockRec (injectNamesL ext reqTy) $ Abs rest result
 
-typeCheckPrimTC :: MonadTyper m => PrimTC (Atom i) -> m i o (Type o)
+typeCheckPrimTC :: Typer m => PrimTC (Atom i) -> m i o (Type o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
@@ -245,7 +246,7 @@ typeCheckPrimTC tc = case tc of
   LabeledRowKindTC -> return TyKind
   ParIndexRange t gtid nthr -> gtid|:IdxRepTy >> nthr|:IdxRepTy >> t|:TyKind >> return TyKind
 
-typeCheckPrimCon :: MonadTyper m => PrimCon (Atom i) -> m i o (Type o)
+typeCheckPrimCon :: Typer m => PrimCon (Atom i) -> m i o (Type o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
@@ -282,7 +283,7 @@ typeCheckPrimCon con = case con of
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substE t
   RecordRef _ -> error "Not implemented"
 
-typeCheckPrimOp :: MonadTyper m => PrimOp (Atom i) -> m i o (Type o)
+typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
   -- TabCon ty xs -> do
   --   ty |: TyKind
@@ -446,7 +447,7 @@ typeCheckPrimOp op = case op of
   --   return t'
   _ -> undefined
 
-typeCheckPrimHof :: MonadTyper m => PrimHof (Atom i) -> m i o (Type o)
+typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof op = undefined
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
@@ -455,7 +456,7 @@ checkEmpty :: MonadErr m => Nest b n l -> m ()
 checkEmpty Empty = return ()
 checkEmpty _  = throw TypeErr "Not empty"
 
-checkCase :: MonadTyper m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
+checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase e alts resultTy = do
   resultTySubst <- substE resultTy
   ety <- typeCheck e
@@ -480,7 +481,7 @@ checkCase e alts resultTy = do
 typeAsBinderNest :: Type n -> Abs (Nest Binder) UnitE n
 typeAsBinderNest ty = Abs (Nest (Ignore :> ty) Empty) UnitE
 
-checkAlt :: HasType body => MonadTyper m
+checkAlt :: HasType body => Typer m
          => Type o -> EmptyAbs (Nest Binder) o -> AltP body i -> m i o ()
 checkAlt = undefined
 -- checkAlt resultTyReq reqBs (Abs bs body) = do
@@ -491,7 +492,7 @@ checkAlt = undefined
 --     let resultTyReq' = injectNamesL ext resultTyReq
 --     checkAlphaEq resultTyReq' resultTy
 
-checkApp :: MonadTyper m => Type o -> Atom i -> m i o (Type o)
+checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
 checkApp = undefined
 -- checkApp fTy x = do
 --   Pi piTy <- return fTy
@@ -501,10 +502,10 @@ checkApp = undefined
 --   declareEffs $ arrowEff arr
 --   return resultTy
 
-checkArrow :: MonadTyper m => Arrow i -> m i o ()
+checkArrow :: Typer m => Arrow i -> m i o ()
 checkArrow = mapM_ checkEffRow
 
-typeCheckRef :: MonadTyper m => HasType e => e i -> m i o (Type o)
+typeCheckRef :: Typer m => HasType e => e i -> m i o (Type o)
 typeCheckRef x = do
   TC (RefType _ a) <- typeCheck x
   return a
@@ -551,7 +552,7 @@ checkValidCast sourceTy destTy =
       Scalar Float32Type -> return ()
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
-typeCheckBaseType :: MonadTyper m => HasType e => e i -> m i o BaseType
+typeCheckBaseType :: Typer m => HasType e => e i -> m i o BaseType
 typeCheckBaseType e =
   typeCheck e >>= \case
     TC (BaseType b) -> return b
@@ -683,7 +684,7 @@ isTabTy _ = False
 
 -- === effects ===
 
-checkEffRow :: MonadTyper m => EffectRow i -> m i o ()
+checkEffRow :: Typer m => EffectRow i -> m i o ()
 checkEffRow _ = return ()
 -- checkEffRow (EffectRow effs effTail) = do
 --   forM_ effs \eff -> case eff of
@@ -695,10 +696,10 @@ checkEffRow _ = return ()
 --       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
 --       Just (ty, _) -> assertEq EffKind ty "Effect var"
 
-declareEff :: MonadTyper m => Effect o -> m i o ()
+declareEff :: Typer m => Effect o -> m i o ()
 declareEff eff = declareEffs $ oneEffect eff
 
-declareEffs :: MonadTyper m => EffectRow o -> m i o ()
+declareEffs :: Typer m => EffectRow o -> m i o ()
 declareEffs = undefined
 -- declareEffs effs = checkWithEnv \(_, allowedEffects) ->
 --   checkExtends allowedEffects effs
@@ -723,7 +724,7 @@ oneEffect eff = EffectRow (S.singleton eff) Nothing
 
 -- === labeled row types ===
 
-checkLabeledRow :: MonadTyper m => ExtLabeledItems (Type i) (AtomName i) -> m i o ()
+checkLabeledRow :: Typer m => ExtLabeledItems (Type i) (AtomName i) -> m i o ()
 checkLabeledRow (Ext items rest) = undefined
   -- mapM_ (|: TyKind) items
   -- forM_ rest \v -> do
@@ -731,7 +732,7 @@ checkLabeledRow (Ext items rest) = undefined
   --     Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
   --     Just (ty, _) -> assertEq LabeledRowKind ty "Labeled row var"
 
-labeledRowDifference :: MonadTyper m
+labeledRowDifference :: Typer m
                      => ExtLabeledItems (Type o) (AtomName o)
                      -> ExtLabeledItems (Type o) (AtomName o)
                      -> m i o (ExtLabeledItems (Type o) (AtomName o))
