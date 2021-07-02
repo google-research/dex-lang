@@ -1,0 +1,96 @@
+' # Clustering
+
+' ## Data
+Here we will generate some data.
+
+mix_of_isoguassians = for obs:(Fin 30). for feat:(Fin 2).
+  val = randn $ ixkey2 (newKey 42) obs feat
+  (select (ordinal obs <= 10)
+    (1.5 * val)
+    (select (ordinal obs <= 20)
+      (1.0 * val + [8.5, 0.0].feat)
+      (select (ordinal obs <= 30)
+        (0.5 * val + [10.0, 10.0].feat)
+        0.0 -- never used
+      )
+    )
+  )
+
+:plot for i. (mix_of_isoguassians.i.(0@_), mix_of_isoguassians.i.(1@_))
+
+' ## Helpers
+
+' `sse` sum of squared errors
+
+def sse (x:a=>Float) (y:a=>Float) : Float = sum for i. sq $ x.i - y.i
+
+:p sse [0.0, 0.0] [1.0, 1.0]
+
+:p sse [7.0, 8.0] [7.0, 8.0]
+
+
+' `ifnot cond value`
+' if the condition is not so return the value, else return zero
+' TODO: this should be generalizable to anything that has the Add interface.
+' TODO: this should be written point-free
+
+def ifnot (cond:Bool) (v:Float) : Float = select cond 0.0 v
+
+
+:p ifnot True 2.0
+
+:p ifnot False 3.0
+
+' ## Affinity Propagation
+https://en.wikipedia.org/wiki/Affinity_propagation
+Brendan J. Frey; Delbert Dueck (2007). "Clustering by passing messages between data points". Science. 315 (5814): 972–976. doi:10.1126/science.1136800. PMID 17218491.
+#### Arguments Types
+ - (v:Type) -- number of observations
+#### Key Variables
+ - (s: v=>v=>Float) -- affinity matrix
+ - (r: v=>v=>Float) -- responsibility matrix
+ - (a: v=>v=>Float) -- availability matrix
+
+
+def affprop
+  (d:Eq v) ?=>
+  (s: v=>v=>Float) -- affinity matrix
+  : v=>v =  -- really this should be v=e for some e<=v
+  -- TODO: old_r is never used, restructure this code?
+  updateStep = \(old_r, a).
+    r = for i. for k.
+      s.i.k - (maximum $ for k'. 
+        select (k == k') ( -1.0/0.0 ) (a.i.k' + s.i.k'))
+    new_a = for i. for k.
+      max_r_to_others = sum for i'.
+        ifnot (i' == i || i' == k) $ max 0.0 r.i'.k
+      r_to_self = r.k.k
+      (select (i ==k)
+        (min 0.0 $ r_to_self + max_r_to_others)
+        max_r_to_others
+      )
+    (r, new_a)
+  r_init = for i:v. for j:v. 0.0  -- never used
+  a_init = for i:v. for j:v. 0.0
+  -- TODO change this from a fixed number of steps to running to convergence
+  (r_final, a_final) = fold (r_init, a_init) (\iter:(Fin 10000). updateStep)
+  isExemplar = \i. (r_final.i.i + a_final.i.i) > 0.0
+  assignments = for i.
+    -- TODO: add argmax and then use that 
+    argmin $ neg $ for k. r_final.i.k + a_final.i.k
+  assignments
+
+
+mix_of_isoguassians_similarity = neg for obs1. for obs2.
+  sse mix_of_isoguassians.obs1 mix_of_isoguassians.obs2
+mix_of_isoguassians_preference =  minimum $ for i. minimum mix_of_isoguassians_similarity.i
+mix_of_isoguassians_affinity = for i. for j.
+  select (i==j) mix_of_isoguassians_preference mix_of_isoguassians_similarity.i.j
+
+:plotmat mix_of_isoguassians_affinity
+
+
+mix_of_isoguassians_assignments = affprop (mix_of_isoguassians_affinity)
+
+:p mix_of_isoguassians_assignments
+
