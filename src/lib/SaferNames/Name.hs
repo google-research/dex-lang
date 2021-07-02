@@ -11,11 +11,11 @@
 module SaferNames.Name (
   Name (..), RawName, S (..), Env (..), (!), (<>>), (<.>), NameBinder (..),
   Scope, ScopeFrag, NameTraversal (..), newEnv,
-  E, B, HasNamesE (..), HasNamesB (..), BindsOneName (..), (@@>),
+  E, B, HasNamesE (..), HasNamesB (..), BindsOneName (..), BindsNameList (..),
   Abs (..), Nest (..), NestPair (..),NameBinderList,
-  AnnBinderP (..), AnnBinderListP (..),
   UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
-  EitherE (..), LiftE (..), EqE, EqB, fromConstAbs, PrettyE, PrettyB, ShowE, ShowB,
+  EitherE (..), LiftE (..), EqE, EqB,
+  fromConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   SubstReader (..), SubstReaderT, SubstReaderM, runSubstReaderT, runSubstReaderM,
   ScopeReader (..), ScopeReaderT, ScopeReaderM, runScopeReaderT, runScopeReaderM,
   MonadKind, MonadKind1, MonadKind2,
@@ -23,7 +23,8 @@ module SaferNames.Name (
   idSubst, applySubst, applyAbs, applyNaryAbs,
   ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB, IdE (..), ConstE (..),
-  InjectableE (..), InjectableB (..),
+  InjectableE (..), InjectableB (..), dropSubst, lookupSubstM,
+  lookupScope, lookupScopeM, injectNames, injectNamesM, withFreshM,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), SubstE (..), SubstB (..)) where
 
 import Control.Monad.Except hiding (Except)
@@ -111,16 +112,6 @@ type NameBinderList s = Nest (NameBinder s)
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
-
-infixl 7 :>
-data AnnBinderP (b::B) (ann ::E) (n::S) (l::S) =
-  (:>) (b n l) (ann n)
-  deriving (Show)
-
-infixl 7 :>>
--- The length of the annotation list should match the depth of the nest
-data AnnBinderListP (b::B) (ann::E) (n::S) (l::S) =
-  (:>>) (Nest b n l) [ann n]
 
 -- === type classes for traversing names ===
 
@@ -220,11 +211,6 @@ instance BindsNameList (NameBinderList s) s where
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-projectNames :: forall n l e m b. ScopeReader m => MonadErr1 m
-             => HasNamesB b => HasNamesE e
-             => b n l -> e l -> m n (e n)
-projectNames b e = fromConstAbs (Abs b e)
-
 fromConstAbs :: ScopeReader m => MonadErr1 m => HasNamesB b => HasNamesE e
              => Abs b e n -> m n (e n)
 fromConstAbs (Abs b e) = do
@@ -251,18 +237,13 @@ applyAbs :: Typeable s => Typeable val
          => Abs b e n -> val n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (idSubst <>> (b@>SubstVal x)) body
 
--- TODO: do it more efficiently, without repeated passes via `applyAbs`
 applyNaryAbs :: Typeable s => Typeable val
              => ScopeReader m
-             => BindsOneName b s
+             => BindsNameList b s
              => SubstE (SubstVal s val) e
              => SubstB (SubstVal s val) b
-             => Abs (Nest b) e n -> [val n] -> m n (e n)
-applyNaryAbs (Abs Empty body) [] = return body
-applyNaryAbs (Abs (Nest b bs) body) (x:xs) = do
-  ab <- applyAbs (Abs b (Abs bs body)) x
-  applyNaryAbs ab xs
-applyNaryAbs _ _ = error "wrong number of arguments"
+             => Abs b e n -> [val n] -> m n (e n)
+applyNaryAbs (Abs bs body) xs = applySubst (idSubst <>> (bs @@> map SubstVal xs)) body
 
 -- === versions of monad constraints with scope params ===
 
@@ -299,8 +280,15 @@ runScopeReaderT scope m = runReaderT (runScopeReaderT' m) scope
 runScopeReaderM :: Scope n -> ScopeReaderM n a -> a
 runScopeReaderM scope m = runIdentity $ runScopeReaderT scope m
 
-lookupBinding :: Typeable s => ScopeReader m => Name s n -> m n (s n)
-lookupBinding v = flip lookupScope v <$> askScope
+lookupScopeM :: Typeable s => ScopeReader m => Name s n -> m n (s n)
+lookupScopeM v = flip lookupScope v <$> askScope
+
+injectNamesM :: InjectableB b => InjectableE e => ScopeReader m
+             => b n l -> e n -> m l (e l)
+injectNamesM scopeDelta x = do
+  scope <- askScope
+  case scope of
+    Scope _ -> return $ injectNames scopeDelta x
 
 -- === subst monad ===
 
@@ -338,6 +326,35 @@ instance Monad m => SubstReader v (SubstReaderT m v) where
   askSubst = SubstReaderT $ asks snd
   withSubst subst (SubstReaderT (ReaderT f)) =
     SubstReaderT $ ReaderT \(scope, _) -> f (scope, subst)
+
+extendSubst :: SubstReader v m
+            => EnvFrag v i i' o -> m i' o a -> m i o a
+extendSubst frag cont = do
+  env <- askSubst
+  withSubst (env <>> frag) cont
+
+dropSubst :: SubstReader (SubstVal sMatch atom) m => Typeable sMatch => Typeable atom
+          => m o o a
+          -> m i o a
+dropSubst cont = withSubst idSubst cont
+
+withFreshM :: SubstReader (SubstVal sMatch atom) m => Typeable s => InjectableE s
+           => NameBinder s i i'
+           -> s o
+           -> (forall o'. NameBinder s o o' -> m i' o' a)
+           -> m i o a
+withFreshM b ann cont = do
+  scope <- askScope
+  case scope of
+    Scope m ->
+      withFresh (nameMapNames m) \b' v -> do
+        let ann' = injectNames b' ann
+        extendScope (ScopeFrag (singletonNameMap b' (IdE ann'))) $
+          extendSubst (b@>Rename v) $
+            cont b'
+
+lookupSubstM :: SubstReader v m => Name s i -> m i o (v s o)
+lookupSubstM name = (!name) <$> askSubst
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -426,9 +443,12 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
 
 -- === instances ===
 
-instance InjectableE (Env v i)
+instance InjectableE (Env v i) where
+  injectionProofE = undefined
 
-instance InjectableB ScopeFrag
+instance InjectableB ScopeFrag where
+  injectionProofB _ _ _ = undefined
+  boundNames = undefined
 
 instance Typeable s => HasNamesE (Name s) where
   traverseNamesE _ t name = lookupNameTraversal t name
@@ -450,6 +470,7 @@ instance SubstB v b => SubstB v (Nest b) where
 
 instance (InjectableB b1, InjectableB b2) => InjectableB (NestPair b1 b2) where
   injectionProofB _ _ _ = undefined
+  boundNames = undefined
 
 instance (HasNamesB b1, HasNamesB b2) => HasNamesB (NestPair b1 b2) where
   traverseNamesB s t (NestPair b1 b2) cont =
@@ -460,6 +481,7 @@ instance (HasNamesB b1, HasNamesB b2) => HasNamesB (NestPair b1 b2) where
 
 instance InjectableB b => InjectableB (Nest b) where
   injectionProofB _ _ _ = undefined
+  boundNames = undefined
 
 instance HasNamesB b => HasNamesB (Nest b) where
   traverseNamesB s t nest cont = case nest of
@@ -474,6 +496,9 @@ instance InjectableE UnitE where
 
 instance HasNamesE UnitE where
   traverseNamesE _ _ UnitE = return UnitE
+
+instance SubstE v UnitE where
+  substE UnitE = return UnitE
 
 instance InjectableE e => InjectableE (IdE e) where
   injectionProofE = undefined
@@ -495,17 +520,11 @@ instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
   show Empty = ""
   show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
 
-instance (PrettyB b, PrettyE ann) => Pretty (AnnBinderP b ann n l) where
-  pretty _ = "TODO"
-
 instance (PrettyB b) => Pretty (Nest b n l) where
   pretty _ = "TODO"
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty _ = "TODO"
-
-instance (ShowB b, ShowE ann) => Show (AnnBinderListP b ann n l) where
-  show _ = "TODO"
 
 instance Pretty a => Pretty (LiftE a n) where
   pretty (LiftE x) = pretty x

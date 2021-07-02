@@ -70,6 +70,8 @@ fromNest = undefined
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 
+instance Pretty (Binder n l) where pretty = undefined
+
 instance Pretty (Expr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr n) where
   prettyPrec (App f x) =
@@ -86,10 +88,10 @@ prettyPrecCase name e alts = atPrec LowestPrec $ name <+> p e <+> "of" <>
   nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
 
 prettyAlt :: PrettyE e => AltP e n -> Doc ann
-prettyAlt (Abs bs body) = hsep (map (prettyBinderNoAnn . fromAltBinder) bs') <+> "->" <> nest 2 (p body)
+prettyAlt (Abs bs body) = hsep (map prettyBinderNoAnn  bs') <+> "->" <> nest 2 (p body)
   where bs' = fromNest bs
 
-prettyBinderNoAnn :: Show (b n l) => AnnBinderP b a n l -> Doc ann
+prettyBinderNoAnn :: Binder n l -> Doc ann
 prettyBinderNoAnn (b:>_) = p $ show b
 
 instance PrettyPrecE e => Pretty     (Abs Binder e n) where pretty = prettyFromPrettyPrec
