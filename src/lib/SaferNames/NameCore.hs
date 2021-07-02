@@ -19,7 +19,6 @@ module SaferNames.NameCore (
 import Prelude hiding (id, (.))
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import Data.Type.Equality
-import Control.Category
 import Type.Reflection
 import Unsafe.Coerce
 import qualified Data.Map  as M
@@ -195,9 +194,12 @@ instance InjectableE (Name s) where
 --       wrt n and thus also observably fresh wrt n++[x]
 instance InjectableB (NameBinder s) where
   injectionProofB  _ b cont = cont UnsafeMakeObservablyFresh $ unsafeCoerceB b
-  boundNames (UnsafeMakeBinder name) = UnsafeMakeNameSet (S.singleton name)
+  boundNames b = case b of
+    Ignore -> UnsafeMakeNameSet mempty
+    UnsafeMakeBinder name -> UnsafeMakeNameSet (S.singleton name)
 
 instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (NameMap v i) where
+  injectionProofE = undefined
 
 -- === environments ===
 
@@ -277,6 +279,7 @@ instance Eq (Name s n) where
   UnsafeMakeName rawName == UnsafeMakeName rawName' = rawName == rawName'
 
 instance Ord (Name s n) where
+  compare (UnsafeMakeName name) (UnsafeMakeName name')= compare name name'
 
 instance Show (Name s n) where
   show (UnsafeMakeName rawName) = show rawName

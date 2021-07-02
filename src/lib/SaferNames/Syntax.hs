@@ -16,11 +16,11 @@
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
     Effect (..), RWS (..), EffectRow (..),
-    SrcPos, Binder, BinderList, Block (..), Decl (..),
+    SrcPos, Binder (..), BinderList (..), Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, LetAnn (..),
-    LamBinder (..), PiBinder (..), AltBinder (..),
+    LamBinder (..), PiBinder (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceNameMap (..),
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), EvaluatedModule (..),
     DataConRefBinding (..),
@@ -115,12 +115,19 @@ data Decl n l = Let LetAnn (Binder n l) (Expr n)
                 deriving (Show)
 
 type AtomName   = Name TypedBinderInfo
-type Binder     = AnnBinderP (NameBinder     TypedBinderInfo)        Type   :: B
-type BinderList = AnnBinderP (NameBinderList TypedBinderInfo) (ListE Type)  :: B
+
+data Binder (n::S) (l::S) =
+  (:>) (NameBinder TypedBinderInfo n l) (Type n)  deriving Show
+
+data BinderList (n::S) (l::S) =
+  (:>>) (NameBinderList TypedBinderInfo n l) [Type n]  deriving Show
+
+data LamBinder (n::S) (l::S) = LamBinder (Binder n l) (Arrow l)  deriving Show
+data PiBinder  (n::S) (l::S) = PiBinder  (Binder n l) (Arrow l)  deriving Show
 
 data DataConRefBinding n l = DataConRefBinding (Binder n l) (Atom n) deriving Show
 
-type AltP (e::E) = Abs (Nest AltBinder) e :: E
+type AltP (e::E) = Abs (Nest Binder) e :: E
 type Alt = AltP Block                  :: E
 
 data DataDef n where
@@ -133,10 +140,6 @@ data DataConDef n = DataConDef RawName (EmptyAbs (Nest Binder) n)
                     deriving Show
 
 data Block n where Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
-
-data LamBinder (n::S) (l::S) = LamBinder (Binder n l) (Arrow l)  deriving (Show)
-data PiBinder  (n::S) (l::S) = PiBinder  (Binder n l) (Arrow l)  deriving (Show)
-newtype AltBinder (n::S) (l::S) = AltBinder { fromAltBinder :: Binder n l }  deriving (Show)
 
 type LamExpr = Abs LamBinder Block  :: E
 type PiType  = Abs PiBinder  Type   :: E
@@ -357,14 +360,24 @@ instance Show (DataDef n) where
 tne :: HasNamesE e => Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
 tne = traverseNamesE
 
-instance InjectableE DataDef
+instance InjectableE TypedBinderInfo where
+  injectionProofE = undefined
+
+instance InjectableE DataDef where
+  injectionProofE = undefined
+
 instance HasNamesE DataDef where
   traverseNamesE = undefined
+
+instance SubstE AtomSubstVal (Name DataDef) where
+  substE = undefined
 
 instance SubstE AtomSubstVal DataDef where
   substE = undefined
 
-instance InjectableE Atom
+instance InjectableE Atom where
+  injectionProofE = undefined
+
 instance HasNamesE Atom where
   traverseNamesE s t atom = case atom of
     -- Var v ->
@@ -416,7 +429,9 @@ instance AlphaEqE Atom where
   -- ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
     -- _ -> zipErr
 
-instance InjectableE Expr
+instance InjectableE Expr where
+  injectionProofE = undefined
+
 instance HasNamesE Expr where
   traverseNamesE s t expr = case expr of
     App e1 e2 -> App <$> tne s t e1 <*> tne s t e2
@@ -435,14 +450,18 @@ instance SubstE AtomSubstVal Expr where
     Op  op  -> Op  <$> traverse substE op
     Hof hof -> Hof <$> traverse substE hof
 
-instance InjectableE Block
+instance InjectableE Block where
+  injectionProofE = undefined
+
 instance HasNamesE Block where
   traverseNamesE = undefined
 
 instance SubstE AtomSubstVal Block where
   substE = undefined
 
-instance InjectableE EffectRow
+instance InjectableE EffectRow where
+  injectionProofE = undefined
+
 instance HasNamesE EffectRow where
   traverseNamesE = undefined
 
@@ -452,28 +471,62 @@ instance SubstE AtomSubstVal EffectRow where
 instance AlphaEqE EffectRow where
   alphaEqE _ _ = undefined
 
-instance InjectableB LamBinder
+instance InjectableB Binder where
+  injectionProofB  _ _ _ = undefined
+  boundNames _ = undefined
+
+instance HasNamesB Binder where
+  traverseNamesB _ _ _ _ = undefined
+
+instance SubstB AtomSubstVal Binder where
+  substB _ _ = undefined
+
+instance BindsOneName Binder TypedBinderInfo where
+  (@>) = undefined
+
+instance InjectableB BinderList where
+  injectionProofB  _ _ _ = undefined
+  boundNames _ = undefined
+
+instance HasNamesB BinderList where
+  traverseNamesB _ _ _ _ = undefined
+
+instance SubstB AtomSubstVal BinderList where
+  substB _ _ = undefined
+
+instance BindsNameList BinderList TypedBinderInfo where
+  (@@>) = undefined
+
+instance InjectableB LamBinder where
+  injectionProofB  _ _ _ = undefined
+  boundNames _ = undefined
+
 instance HasNamesB LamBinder where
   traverseNamesB _ _ _ _ = undefined
 
 instance SubstB AtomSubstVal LamBinder where
   substB _ _ = undefined
 
-instance InjectableB PiBinder
+instance BindsOneName LamBinder TypedBinderInfo where
+  (@>) = undefined
+
+instance InjectableB PiBinder where
+  injectionProofB  _ _ _ = undefined
+  boundNames _ = undefined
+
 instance HasNamesB PiBinder where
   traverseNamesB _ _ _ _ = undefined
+
+instance BindsOneName PiBinder TypedBinderInfo where
+  (@>) = undefined
 
 instance SubstB AtomSubstVal PiBinder where
   substB _ _ = undefined
 
-instance InjectableB AltBinder
-instance HasNamesB AltBinder where
-  traverseNamesB _ _ _ _ = undefined
+instance InjectableB Decl where
+  injectionProofB  _ _ _ = undefined
+  boundNames _ = undefined
 
-instance SubstB AtomSubstVal AltBinder where
-  substB _ _ = undefined
-
-instance InjectableB Decl
 instance HasNamesB Decl where
   traverseNamesB _ _ _ _ = undefined
 
