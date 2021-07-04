@@ -17,10 +17,9 @@ module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
     Effect (..), RWS (..), EffectRow (..),
     SrcPos, Binder (..), BinderList (..), Block (..), Decl (..),
-    Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
+    Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
-    PrimHof (..), LamExpr, PiType, LetAnn (..),
-    LamBinder (..), PiBinder (..),
+    PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceNameMap (..),
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), EvaluatedModule (..),
     DataConRefBinding (..),
@@ -34,14 +33,12 @@ module SaferNames.Syntax (
     IRVariant (..), SubstVal (..), AtomName, AtomSubstVal,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
-    pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
+    pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
-    pattern PairVal, pattern PureArrow,
-    pattern TyKind, pattern LamVal,
-    pattern TabTy, pattern TabTyAbs, pattern TabVal,
-    pattern Pure, pattern BinaryFunTy,
-    pattern LabeledRowKind, pattern EffKind,
+    pattern PairVal, pattern TyKind,
+    pattern Pure, pattern LabeledRowKind, pattern EffKind,
+    pattern FunTy, pattern BinaryFunTy,
     (-->), (?-->), (--@), (==>) ) where
 
 import Control.Monad.Except hiding (Except)
@@ -54,7 +51,7 @@ import Data.Word
 import Foreign.Ptr
 
 import Syntax
-  ( ArrowP (..), LetAnn (..), IRVariant (..)
+  ( LetAnn (..), IRVariant (..)
   , PrimExpr (..), PrimTC (..), PrimCon (..), PrimOp (..), PrimHof (..)
   , BaseMonoid, BaseMonoidP (..), PrimEffect (..), BinOp (..), UnOp (..)
   , CmpOp (..), Direction (..)
@@ -104,9 +101,9 @@ data Expr n =
 
 data AtomBinderInfo (n::S) =
    LetBound LetAnn (Expr n)
- | LamBound (ArrowP ())
+ | LamBound Arrow
  | PiBound
- | AltBound
+ | MiscBound
  | InferenceName
 
 data TypedBinderInfo (n::S) = TypedBinderInfo (Type n) (AtomBinderInfo n)
@@ -122,9 +119,6 @@ data Binder (n::S) (l::S) =
 data BinderList (n::S) (l::S) =
   (:>>) (NameBinderList TypedBinderInfo n l) [Type n]  deriving Show
 
-data LamBinder (n::S) (l::S) = LamBinder (Binder n l) (Arrow l)  deriving Show
-data PiBinder  (n::S) (l::S) = PiBinder  (Binder n l) (Arrow l)  deriving Show
-
 data DataConRefBinding n l = DataConRefBinding (Binder n l) (Atom n) deriving Show
 
 type AltP (e::E) = Abs (Nest Binder) e :: E
@@ -139,12 +133,22 @@ data DataDef n where
 data DataConDef n = DataConDef RawName (EmptyAbs (Nest Binder) n)
                     deriving Show
 
-data Block n where Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
+data Block n where
+  Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
 
-type LamExpr = Abs LamBinder Block  :: E
-type PiType  = Abs PiBinder  Type   :: E
+data LamExpr (n::S) where
+  LamExpr :: Arrow -> Binder n l -> EffectRow l -> Block l -> LamExpr n
 
-type Arrow n = ArrowP (EffectRow n)
+data PiType  (n::S) where
+  PiType :: Arrow -> Binder n l -> EffectRow l -> Type  l -> PiType n
+
+data Arrow =
+   PlainArrow
+ | ImplicitArrow
+ | ClassArrow
+ | TabArrow
+ | LinArrow
+   deriving (Show, Eq)
 
 type Val  = Atom
 type Type = Atom
@@ -195,16 +199,16 @@ infixr 1 --@
 infixr 2 ==>
 
 (?-->) :: Type n -> Type n -> Type n
-a ?--> b = Pi (Abs (PiBinder (Ignore:>a) ImplicitArrow) b)
+a ?--> b = Pi (PiType ImplicitArrow (Ignore:>a) Pure b)
 
 (-->) :: Type n -> Type n -> Type n
-a --> b = Pi (Abs (PiBinder (Ignore:>a) PureArrow) b)
+a --> b = Pi (PiType PlainArrow (Ignore:>a) Pure b)
 
 (--@) :: Type n -> Type n -> Type n
-a --@ b = Pi (Abs (PiBinder (Ignore:>a) LinArrow) b)
+a --@ b = Pi (PiType LinArrow  (Ignore:>a) Pure b)
 
 (==>) :: Type n -> Type n -> Type n
-a ==> b = Pi (Abs (PiBinder (Ignore:>a) TabArrow) b)
+a ==> b = Pi (PiType TabArrow (Ignore:>a) Pure b)
 
 getIntLit :: LitVal -> Int
 getIntLit l = case l of
@@ -275,21 +279,6 @@ pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 pattern Fin :: Atom n -> Type n
 pattern Fin n = TC (IntRange (IdxRepVal 0) n)
 
-pattern PureArrow :: Arrow n
-pattern PureArrow = PlainArrow Pure
-
-pattern TabTy :: Binder n l -> Type l -> Type n
-pattern TabTy v i = Pi (Abs (PiBinder v TabArrow) i)
-
-pattern TabTyAbs :: PiType n -> Type n
-pattern TabTyAbs a <- Pi a@(Abs (PiBinder _ TabArrow) _)
-
-pattern LamVal :: Binder n l -> Block l -> Atom n
-pattern LamVal v b <- Lam (Abs (LamBinder v _) b)
-
-pattern TabVal :: Binder n l -> Block l -> Atom n
-pattern TabVal v b = Lam (Abs (LamBinder v TabArrow) b)
-
 mkConsListTy :: [Type n] -> Type n
 mkConsListTy = foldr PairTy UnitTy
 
@@ -333,10 +322,7 @@ mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
 
 pattern FunTy :: Binder n l -> EffectRow l -> Type l -> Type n
-pattern FunTy b eff bodyTy = Pi (Abs (PiBinder b (PlainArrow eff)) bodyTy)
-
-pattern PiTy :: Binder n l -> Arrow l -> Type l -> Type n
-pattern PiTy b arr bodyTy = Pi (Abs (PiBinder b arr) bodyTy)
+pattern FunTy b eff bodyTy = Pi (PiType PlainArrow b eff bodyTy)
 
 pattern BinaryFunTy :: Binder n l -> Binder l l' -> EffectRow l' -> Type l' -> Type n
 pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
@@ -350,18 +336,15 @@ instance Semigroup (SourceNameMap n) where
 instance Monoid (SourceNameMap n) where
   mempty = SourceNameMap mempty
 
-instance Show (Block n) where
-  show _ = "TODO"
-
-instance Show (DataDef n) where
-  show _ = "TODO"
-
 -- shorthand to makes instance implementations easier
 tne :: HasNamesE e => Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
 tne = traverseNamesE
 
 instance InjectableE TypedBinderInfo where
   injectionProofE = undefined
+
+instance Show (DataDef n) where
+  show _ = "TODO"
 
 instance InjectableE DataDef where
   injectionProofE = undefined
@@ -450,6 +433,9 @@ instance SubstE AtomSubstVal Expr where
     Op  op  -> Op  <$> traverse substE op
     Hof hof -> Hof <$> traverse substE hof
 
+instance Show (Block n) where
+  show = undefined
+
 instance InjectableE Block where
   injectionProofE = undefined
 
@@ -457,6 +443,30 @@ instance HasNamesE Block where
   traverseNamesE = undefined
 
 instance SubstE AtomSubstVal Block where
+  substE = undefined
+
+instance Show (LamExpr n) where
+  show = undefined
+
+instance InjectableE LamExpr where
+  injectionProofE = undefined
+
+instance HasNamesE LamExpr where
+  traverseNamesE = undefined
+
+instance SubstE AtomSubstVal LamExpr where
+  substE = undefined
+
+instance Show (PiType n) where
+  show = undefined
+
+instance InjectableE PiType where
+  injectionProofE = undefined
+
+instance HasNamesE PiType where
+  traverseNamesE = undefined
+
+instance SubstE AtomSubstVal PiType where
   substE = undefined
 
 instance InjectableE EffectRow where
@@ -481,6 +491,9 @@ instance HasNamesB Binder where
 instance SubstB AtomSubstVal Binder where
   substB _ _ = undefined
 
+instance AlphaEqB Binder where
+  withAlphaEqB _ _ _ = undefined
+
 instance BindsOneName Binder TypedBinderInfo where
   (@>) = undefined
 
@@ -496,32 +509,6 @@ instance SubstB AtomSubstVal BinderList where
 
 instance BindsNameList BinderList TypedBinderInfo where
   (@@>) = undefined
-
-instance InjectableB LamBinder where
-  injectionProofB  _ _ _ = undefined
-  boundNames _ = undefined
-
-instance HasNamesB LamBinder where
-  traverseNamesB _ _ _ _ = undefined
-
-instance SubstB AtomSubstVal LamBinder where
-  substB _ _ = undefined
-
-instance BindsOneName LamBinder TypedBinderInfo where
-  (@>) = undefined
-
-instance InjectableB PiBinder where
-  injectionProofB  _ _ _ = undefined
-  boundNames _ = undefined
-
-instance HasNamesB PiBinder where
-  traverseNamesB _ _ _ _ = undefined
-
-instance BindsOneName PiBinder TypedBinderInfo where
-  (@>) = undefined
-
-instance SubstB AtomSubstVal PiBinder where
-  substB _ _ = undefined
 
 instance InjectableB Decl where
   injectionProofB  _ _ _ = undefined

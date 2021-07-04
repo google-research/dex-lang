@@ -9,7 +9,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module SaferNames.Type (
-  checkTypes, getType, litType) where
+  checkTypes, getType, litType, getBaseMonoidType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -113,14 +113,18 @@ instance HasType Atom where
           TypedBinderInfo ty _ <- lookupScopeM name'
           return ty
         SubstVal atom' -> dropSubst $ getTypeE atom'
-    -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
-    Lam (Abs b@(LamBinder _ arr) body) -> substB b \(LamBinder b' arr') -> do
-      checkArrow arr
-      -- TODO: effects
-      bodyTy <- getTypeE body
-      return $ Pi $ Abs (PiBinder b' arr') bodyTy
-    Pi (Abs b@(PiBinder _ arr) resultTy) -> substB b \_ ->
-      checkArrow arr >> resultTy|:TyKind $> TyKind
+    Lam (LamExpr arr b eff body) -> do
+      checkArrowAndEffects arr eff
+      checkB b \b' -> do
+        eff' <- checkEffRow eff
+        bodyTy <- getTypeE body
+        return $ Pi $ PiType arr b' eff' bodyTy
+    Pi (PiType arr b eff resultTy) -> do
+      checkArrowAndEffects arr eff
+      checkB b \_ -> do
+        void $ checkEffRow eff
+        resultTy|:TyKind
+      return TyKind
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkEffRow eff $> EffKind
@@ -193,6 +197,8 @@ instance HasType Atom where
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
 
+instance CheckableB Binder where
+
 instance HasType Expr where
   getTypeE expr = case expr of
     App f x -> do
@@ -216,8 +222,9 @@ instance CheckableB Decl where
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
     let declInfo = TypedBinderInfo ty' $ LetBound ann expr'
-    withFreshM b declInfo \b' ->
-      cont $ Let ann (b':>ty') expr'
+    withFreshM declInfo \b' v ->
+      extendSubst (b @> SubstVal (Var v)) $
+        cont $ Let ann (b':>ty') expr'
 
 instance CheckableB b => CheckableB (Nest b) where
   checkB nest cont = case nest of
@@ -253,9 +260,9 @@ typeCheckPrimCon con = case con of
   BaseTypeRef p -> do
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
-  TabRef tabTy -> do
-    TabTy b (RawRefTy a) <- getTypeE tabTy
-    return $ RawRefTy $ TabTy b a
+  -- TabRef tabTy -> do
+  --   TabTy b (RawRefTy a) <- getTypeE tabTy
+  --   return $ RawRefTy $ TabTy b a
   ConRef conRef -> case conRef of
     UnitCon -> return $ RawRefTy UnitTy
     PairCon x y ->
@@ -324,10 +331,10 @@ typeCheckPrimOp op = case op of
       MAsk      ->                 declareEff (RWSEffect Reader h') $> s
       MExtend x -> x|:(s --> s) >> declareEff (RWSEffect Writer h') $> UnitTy
   IndexRef ref i -> do
-    RefTy h (TabTyAbs a) <- getTypeE ref
-    i' <- checkTypeE (piArgType a) i
-    eltTy <- applyAbs a i'
-    return $ RefTy h eltTy
+    RefTy h (Pi (PiType TabArrow (b:>iTy) Pure eltTy)) <- getTypeE ref
+    i' <- checkTypeE iTy i
+    eltTy' <- applyAbs (Abs b eltTy) i'
+    return $ RefTy h eltTy'
   FstRef ref -> do
     RefTy h (PairTy a _) <- getTypeE ref
     return $ RefTy h a
@@ -439,7 +446,104 @@ typeCheckPrimOp op = case op of
     return $ TypeCon name []
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
-typeCheckPrimHof op = undefined
+typeCheckPrimHof hof = case hof of
+  For _ f -> do
+    Pi (PiType _ b eff eltTy) <- getTypeE f
+    eff' <- fromConstAbs $ Abs b eff
+    declareEffs eff'
+    return $ Pi $ PiType TabArrow b Pure eltTy
+  -- Tile dim fT fS -> do
+  --   FunTy tv eff  tr    <- typeCheck fT
+  --   FunTy sv eff' sr    <- typeCheck fS
+  --   TC (IndexSlice n l) <- return $ binderType tv
+  --   (dv, b, b')         <- zipExtractDim dim tr sr
+  --   checkEq l (binderType dv)
+  --   checkEq n (binderType sv)
+  --   when (dv `isin` freeVars b ) $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
+  --   when (sv `isin` freeVars b') $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
+  --   checkEq b b'
+  --   checkEq eff eff'
+  --   -- TODO: check `tv` and `sv` isn't free in `eff`
+  --   declareEffs eff
+  --   return $ replaceDim dim tr n
+  --   where
+  --     zipExtractDim 0 (TabTy dv b) b' = return (dv, b, b')
+  --     zipExtractDim d (TabTy dv b) (TabTy sv b') =
+  --       if binderType dv == binderType sv
+  --         then zipExtractDim (d-1) b b'
+  --         else throw TypeErr $ "Result type of tiled and non-tiled bodies differ along " ++
+  --                              "dimension " ++ show (dim - d + 1) ++ ": " ++
+  --                              pprint b ++ " and " ++ pprint b'
+  --     zipExtractDim d _ _ = throw TypeErr $
+  --       "Tiling over dimension " ++ show dim ++ " has to produce a result with at least " ++
+  --       show (dim + 1) ++ " dimensions, but it has only " ++ show (dim - d)
+
+  --     replaceDim 0 (TabTy _ b) n  = TabTy (Ignore n) b
+  --     replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
+  --     replaceDim _ _ _ = error "This should be checked before"
+  -- PTileReduce baseMonoids n mapping -> do
+  --   -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
+  --   BinaryFunTy (Bind gtid) (Bind nthr) Pure mapResultTy <- typeCheck mapping
+  --   (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
+  --   let threadRange = TC $ ParIndexRange n (Var gtid) (Var nthr)
+  --   TabTy threadRange' tileElemTy <- return tiledArrTy
+  --   checkEq threadRange (binderType threadRange')
+  --   -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
+  --   -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
+  --   return $ PairTy (TabTy (Ignore n) tileElemTy) $ mkConsListTy accTys
+  While body -> do
+    FunTy (b:>UnitTy) eff condTy <- getTypeE body
+    PairE eff' condTy' <- fromConstAbs $ Abs b $ PairE eff condTy
+    declareEffs eff'
+    checkAlphaEq (BaseTy $ Scalar Word8Type) condTy'
+    return UnitTy
+  Linearize f -> do
+    FunTy (binder:>a) Pure b <- getTypeE f
+    b' <- fromConstAbs $ Abs binder b
+    return $ a --> PairTy b' (a --@ b')
+  Transpose f -> do
+    Pi (PiType LinArrow (binder:>a) Pure b) <- getTypeE f
+    b' <- fromConstAbs $ Abs binder b
+    return $ b' --@ a
+  RunReader r f -> do
+    (resultTy, readTy) <- checkRWSAction Reader f
+    r |: readTy
+    return resultTy
+  RunWriter _ f -> do
+    -- XXX: We can't verify compatibility between the base monoid and f, because
+    --      the only way in which they are related in the runAccum definition is via
+    --      the AccumMonoid typeclass. The frontend constraints should be sufficient
+    --      to ensure that only well typed programs are accepted, but it is a bit
+    --      disappointing that we cannot verify that internally. We might want to consider
+    --      e.g. only disabling this check for prelude.
+    uncurry PairTy <$> checkRWSAction Writer f
+  RunState s f -> do
+    (resultTy, stateTy) <- checkRWSAction State f
+    s |: stateTy
+    return $ PairTy resultTy stateTy
+  RunIO f -> do
+    Pi (PiType PlainArrow (b:>UnitTy) eff resultTy) <- getTypeE f
+    PairE eff' resultTy' <- fromConstAbs $ Abs b $ PairE eff resultTy
+    extendAllowedEffect IOEffect $ declareEffs eff'
+    return resultTy'
+  CatchException f -> do
+    Pi (PiType PlainArrow (b:>UnitTy) eff resultTy) <- getTypeE f
+    PairE eff' resultTy' <- fromConstAbs $ Abs b $ PairE eff resultTy
+    extendAllowedEffect ExceptionEffect $ declareEffs eff'
+    return $ maybeTy resultTy'
+    where maybeTy :: Type n -> Type n
+          maybeTy _ = error "need to implement Maybe"
+
+checkRWSAction :: Typer m => RWS -> Atom i -> m i o (Type o, Type o)
+checkRWSAction rws f = undefined
+  -- BinaryFunTy regionBinde refBinder eff resultTy <- getTypeE f
+  -- regionName:>_ <- return regionBinder
+  -- let region = Var regionBinder
+  -- extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff
+  -- checkEq (varAnn regionBinder) TyKind
+  -- RefTy region' referentTy <- return $ binderAnn refBinder
+  -- checkEq region' region
+  -- return (resultTy, referentTy)
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
 -- from GADT+monad type inference.
@@ -494,28 +598,30 @@ typeAsBinderNest ty = Abs (Nest (Ignore :> ty) Empty) UnitE
 
 checkAlt :: HasType body => Typer m
          => Type o -> EmptyAbs (Nest Binder) o -> AltP body i -> m i o ()
-checkAlt = undefined
--- checkAlt resultTyReq reqBs (Abs bs body) = do
---   bs' <- substE (EmptyAbs bs)
---   checkAlphaEq reqBs bs'
---   withFreshAtomBinder bs \ext _ -> do
---     resultTy <- getTypeE body
---     let resultTyReq' = injectNamesL ext resultTyReq
---     checkAlphaEq resultTyReq' resultTy
+checkAlt resultTyReq reqBs (Abs bs body) = do
+  bs' <- substE (EmptyAbs bs)
+  checkAlphaEq reqBs bs'
+  substB bs \bs' -> do
+    resultTyReq' <- injectNamesM bs' resultTyReq
+    body |: resultTyReq'
 
 checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
 checkApp fTy x = do
-  Pi piTy <- return fTy
-  x' <- checkTypeE (piArgType piTy) x
-  applyAbs piTy x'
-
-checkArrow :: Typer m => Arrow i -> m i o ()
-checkArrow = mapM_ checkEffRow
+  Pi (PiType _ (b:>argTy) eff resultTy) <- return fTy
+  x' <- checkTypeE argTy x
+  PairE eff' resultTy' <- applyAbs (Abs b (PairE eff resultTy)) x'
+  declareEffs eff'
+  return resultTy'
 
 typeCheckRef :: Typer m => HasType e => e i -> m i o (Type o)
 typeCheckRef x = do
   TC (RefType _ a) <- getTypeE x
   return a
+
+checkArrowAndEffects :: MonadErr m => Arrow -> EffectRow n -> m ()
+checkArrowAndEffects PlainArrow _ = return ()
+checkArrowAndEffects _ Pure = return ()
+checkArrowAndEffects _ _ = throw TypeErr $ "Only plain arrows may have effects"
 
 checkIntBaseType :: MonadError Err m => Bool -> BaseType -> m ()
 checkIntBaseType allowVector t = case t of
@@ -632,11 +738,10 @@ indexSetConcreteSize ty = case ty of
 
 -- === various helpers for querying types ===
 
-getBaseMonoidType :: ScopeReader m => Type n -> m n (Type n)
-getBaseMonoidType = undefined
--- getBaseMonoidType scope ty = case ty of
---   Pi ab -> ignoreExcept $ runScopeReader scope $ fromConstAbs ab
---   _     -> return ty
+getBaseMonoidType :: MonadErr1 m => ScopeReader m => Type n -> m n (Type n)
+getBaseMonoidType ty = case ty of
+  Pi (PiType _ b _ ty) -> fromConstAbs (Abs b ty)
+  _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
 applyDataDefParams = undefined
@@ -644,13 +749,10 @@ applyDataDefParams = undefined
 --   | length params == length (toList bs) = applyNaryAbs (Abs bs cons) params
 --   | otherwise = error $ "Wrong number of parameters: " ++ show (length params)
 
-piArgType :: PiType n -> Type n
-piArgType (Abs (PiBinder (_:>ty) _) _) = ty
-
 -- === effects ===
 
-checkEffRow :: Typer m => EffectRow i -> m i o ()
-checkEffRow _ = return ()
+checkEffRow :: Typer m => EffectRow i -> m i o (EffectRow o)
+checkEffRow _ = undefined -- return ()
 -- checkEffRow (EffectRow effs effTail) = do
 --   forM_ effs \eff -> case eff of
 --     RWSEffect _ v -> Var (v:>TyKind) |: TyKind
@@ -668,6 +770,9 @@ declareEffs :: Typer m => EffectRow o -> m i o ()
 declareEffs = undefined
 -- declareEffs effs = checkWithEnv \(_, allowedEffects) ->
 --   checkExtends allowedEffects effs
+
+extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
+extendAllowedEffect eff m = undefined -- updateAllowedEff (extendEffect eff) m
 
 checkExtends :: MonadError Err m => EffectRow n -> EffectRow n -> m ()
 checkExtends = undefined

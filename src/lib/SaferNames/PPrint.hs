@@ -78,8 +78,8 @@ instance PrettyPrec (Expr n) where
     atPrec AppPrec $ pApp f <+> pArg x
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof (For ann (Lam lamExpr))) =
-    atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
+  -- prettyPrec (Hof (For ann (Lam lamExpr))) =
+  --   atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
 
@@ -108,32 +108,32 @@ instance Pretty (Decl n l) where
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
-prettyPiTypeHelper :: PiType n -> Doc ann
-prettyPiTypeHelper (Abs (PiBinder binder arr) body) = let
-  prettyBinder = case binder of
-    Ignore :> a -> pArg a
-    _ -> parens $ p binder
-  prettyBody = case body of
-    Pi subpi -> prettyPiTypeHelper subpi
-    _ -> pLowest body
-  in prettyBinder <> (group $ line <> p arr <+> prettyBody)
+-- prettyPiTypeHelper :: PiType n -> Doc ann
+-- prettyPiTypeHelper (Abs (PiBinder binder arr) body) = let
+--   prettyBinder = case binder of
+--     Ignore :> a -> pArg a
+--     _ -> parens $ p binder
+--   prettyBody = case body of
+--     Pi subpi -> prettyPiTypeHelper subpi
+--     _ -> pLowest body
+--   in prettyBinder <> (group $ line <> p arr <+> prettyBody)
 
-data PrettyLamType n = PrettyLam (Arrow n) | PrettyFor ForAnn
+-- data PrettyLamType n = PrettyLam (Arrow n) | PrettyFor ForAnn
 
-prettyLamHelper :: LamExpr n -> PrettyLamType n -> Doc ann
-prettyLamHelper = undefined
+-- prettyLamHelper :: LamExpr n -> PrettyLamType n -> Doc ann
+-- prettyLamHelper = undefined
 
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    Lam lamExpr@(Abs (LamBinder _ TabArrow) _) ->
-      atPrec LowestPrec $ "\\for"
-      <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
-    Lam lamExpr@(Abs (LamBinder _ arr) _) ->
-      atPrec LowestPrec $ "\\"
-      <> prettyLamHelper lamExpr (unsafeCoerceE (PrettyLam arr))
-    Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
+    -- Lam lamExpr@(Abs (LamBinder _ TabArrow) _) ->
+    --   atPrec LowestPrec $ "\\for"
+    --   <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
+    -- Lam lamExpr@(Abs (LamBinder _ arr) _) ->
+    --   atPrec LowestPrec $ "\\"
+    --   <> prettyLamHelper lamExpr (unsafeCoerceE (PrettyLam arr))
+    -- Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
