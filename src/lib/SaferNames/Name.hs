@@ -22,9 +22,9 @@ module SaferNames.Name (
   Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
   idSubst, applySubst, applyAbs, applyNaryAbs,
   ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
-  checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB, IdE (..), ConstE (..),
+  checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
   InjectableE (..), InjectableB (..), dropSubst, lookupSubstM,
-  lookupScope, lookupScopeM, injectNames, injectNamesM, withFreshM,
+  lookupScope, lookupScopeM, injectNames, injectNamesM, withFreshM, extendSubst,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), SubstE (..), SubstB (..)) where
 
 import Control.Monad.Except hiding (Except)
@@ -211,7 +211,7 @@ instance BindsNameList (NameBinderList s) s where
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-fromConstAbs :: ScopeReader m => MonadErr1 m => HasNamesB b => HasNamesE e
+fromConstAbs :: ScopeReader m => MonadErr1 m => InjectableB b => HasNamesE e
              => Abs b e n -> m n (e n)
 fromConstAbs (Abs b e) = do
   scope <- askScope
@@ -338,20 +338,18 @@ dropSubst :: SubstReader (SubstVal sMatch atom) m => Typeable sMatch => Typeable
           -> m i o a
 dropSubst cont = withSubst idSubst cont
 
-withFreshM :: SubstReader (SubstVal sMatch atom) m => Typeable s => InjectableE s
-           => NameBinder s i i'
-           -> s o
-           -> (forall o'. NameBinder s o o' -> m i' o' a)
-           -> m i o a
-withFreshM b ann cont = do
+withFreshM :: ScopeReader m => Typeable s => InjectableE s
+           => s o
+           -> (forall o'. NameBinder s o o' -> Name s o' -> m o' a)
+           -> m o a
+withFreshM ann cont = do
   scope <- askScope
   case scope of
     Scope m ->
       withFresh (nameMapNames m) \b' v -> do
         let ann' = injectNames b' ann
         extendScope (ScopeFrag (singletonNameMap b' (IdE ann'))) $
-          extendSubst (b@>Rename v) $
-            cont b'
+          cont b' v
 
 lookupSubstM :: SubstReader v m => Name s i -> m i o (v s o)
 lookupSubstM name = (!name) <$> askSubst
@@ -512,6 +510,9 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
 instance (HasNamesE e1, HasNamesE e2) => HasNamesE (PairE e1 e2) where
   traverseNamesE s env (PairE x y) =
     PairE <$> traverseNamesE s env x <*> traverseNamesE s env y
+
+instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
+  substE (PairE x y) = PairE <$> substE x <*> substE y
 
 instance (forall n' l. Show (b n' l), forall n'. Show (body n')) => Show (Abs b body n) where
   show (Abs b body) = "(Abs " <> show b <> " " <> show body <> ")"
