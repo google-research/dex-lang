@@ -53,7 +53,9 @@ library
                        Builder, Cat, Export,
                        Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims
+                       LLVM.JIT, LLVM.Shims, Err, LabeledItems,
+                       SaferNames.Name, SaferNames.LazyMap,
+                       SaferNames.Syntax, SaferNames.Bridge
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
@@ -80,11 +82,12 @@ library
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
   ghc-options:         -Wall -fPIC -threaded -optP-Wno-nonportable-include-path
+                       -Wno-unticked-promoted-constructors
   cxx-sources:         src/lib/dexrt.cpp
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments
+                       BlockArguments, GADTs, TypeOperators, DataKinds
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
@@ -105,7 +108,7 @@ library
 executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
-  build-depends:       dex, base, haskeline, prettyprinter, mtl,
+  build-depends:       dex, base, containers, haskeline, prettyprinter, mtl,
                        optparse-applicative, ansi-wl-pprint,
                        unix, store, bytestring, directory
   if os(darwin)

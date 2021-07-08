@@ -269,6 +269,8 @@ loadLitVal ptr (Scalar ty) = case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
+  Word32Type  -> Word32Lit  <$> peek (castPtr ptr)
+  Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
 loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)

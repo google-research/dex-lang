@@ -30,7 +30,9 @@ import GHC.Stack
 import {-# SOURCE #-} Interpreter (indicesNoIO)
 import Syntax
 import Env
-import PPrint
+import Err
+import LabeledItems
+import PPrint ()
 import Cat
 import Util (bindM2)
 import Data.Maybe (fromMaybe)
@@ -635,6 +637,8 @@ checkIntBaseType allowVector t = case t of
       Int64Type -> return ()
       Int32Type -> return ()
       Word8Type  -> return ()
+      Word32Type -> return ()
+      Word64Type -> return ()
       _         -> notInt
     notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                              "integer type, but found: " ++ pprint t
@@ -663,6 +667,8 @@ checkValidCast sourceTy destTy =
       BaseTy (Scalar Int64Type  ) -> return ()
       BaseTy (Scalar Int32Type  ) -> return ()
       BaseTy (Scalar Word8Type  ) -> return ()
+      BaseTy (Scalar Word32Type ) -> return ()
+      BaseTy (Scalar Word64Type ) -> return ()
       BaseTy (Scalar Float64Type) -> return ()
       BaseTy (Scalar Float32Type) -> return ()
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
@@ -919,6 +925,8 @@ litType v = case v of
   Int64Lit   _ -> Scalar Int64Type
   Int32Lit   _ -> Scalar Int32Type
   Word8Lit   _ -> Scalar Word8Type
+  Word32Lit  _ -> Scalar Word32Type
+  Word64Lit  _ -> Scalar Word64Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
   PtrLit t _   -> PtrType t
@@ -953,6 +961,7 @@ checkBinOp op x y = do
       FPow   -> (fa, sr)
       FCmp _ -> (fa, br)
       BAnd   -> (ia, sr);  BOr    -> (ia, sr)
+      BXor   -> (ia, sr)
       BShL   -> (ia, sr);  BShR   -> (ia, sr)
       where
         ia = SomeIntArg; fa = SomeFloatArg

@@ -1,0 +1,29 @@
+import linalg
+
+-- Check that the inverse of the inverse is identity.
+mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
+:p mat ~~ (invert (invert mat))
+> True
+
+-- Check that solving gives the inverse.
+v = [1., 2., 3., 4.]
+:p v ~~ (mat **. (solve mat v))
+> True
+
+-- Check that det and exp(logdet) are the same.
+(s, logdet) = sign_and_log_determinant mat
+:p (determinant mat) ~~ (s * (exp logdet))
+> True
+
+-- Matrix integer powers.
+:p matrix_power mat 0 ~~ eye
+> True
+:p matrix_power mat 1 ~~ mat
+> True
+:p matrix_power mat 2 ~~ (mat ** mat)
+> True
+:p matrix_power mat 5 ~~ (mat ** mat ** mat ** mat ** mat)
+> True
+
+:p trace mat == (11. + 5. + 18. + 1.)
+> True

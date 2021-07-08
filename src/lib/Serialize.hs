@@ -28,8 +28,10 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Foreign.Ptr
 import Foreign.Marshal.Array
 import GHC.Generics (Generic)
+import Numeric (showHex)
 
 import Interpreter
+import LabeledItems
 import Syntax
 import Type
 import PPrint
@@ -39,7 +41,7 @@ foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ()
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
 
 pprintVal :: Val -> IO String
-pprintVal val = asStr <$> prettyVal val
+pprintVal val = docAsStr <$> prettyVal val
 
 -- TODO: get the pointer rather than reading char by char
 getDexString :: Val -> IO String
@@ -69,6 +71,8 @@ prettyVal val = case val of
       case atom of
         Con (Lit (Word8Lit c)) ->
           return $ showChar (toEnum @Char $ fromIntegral c) ""
+        Con (Lit (Word32Lit c)) -> return $ "0x" ++ showHex c ""
+        Con (Lit (Word64Lit c)) -> return $ "0x" ++ showHex c ""
         _ -> pprintVal atom
     let bodyType = getType body
     let elemsDoc = case bodyType of

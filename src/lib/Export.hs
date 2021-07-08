@@ -143,6 +143,10 @@ prepareFunctionForExport env nameStr func = do
           elemTy' <- substBuilder (b@>Var i) elemTy
           createDest (idx <> Nest (Bind i) Empty) elemTy'
         return (Con $ TabRef destTab, exportResult)
+      PairTy a b | idx == Empty -> do
+        (atom_a, res_a) <- createDest idx a
+        (atom_b, res_b) <- createDest idx b
+        return (Con $ ConRef $ PairCon atom_a atom_b, ExportPairResult res_a res_b)
       _ -> unsupported
       where unsupported = error $ "Unsupported result type: " ++ pprint ty
 
@@ -174,6 +178,7 @@ data ExportArg = ExportArrayArg  ArgVisibility Name ExportArrayType
                | ExportScalarArg ArgVisibility Name ScalarBaseType
 data ExportResult = ExportArrayResult     Name ExportArrayType
                   | ExportScalarResultPtr Name ScalarBaseType
+                  | ExportPairResult      ExportResult ExportResult
 data ExportedSignature =
   ExportedSignature { exportedArgSig   :: [ExportArg]
                     , exportedResSig   :: ExportResult
@@ -194,6 +199,8 @@ showExportSBT sbt = case sbt of
   Int64Type   -> "i64"
   Int32Type   -> "i32"
   Word8Type   -> "u8"
+  Word32Type  -> "u32"
+  Word64Type  -> "u64"
   Float64Type -> "f64"
   Float32Type -> "f32"
 
@@ -222,5 +229,9 @@ instance Show ExportArg where
 
 instance Show ExportResult where
   show res = case res of
-    ExportArrayResult     name ty  -> showCArgName name <> ":" <> show ty
-    ExportScalarResultPtr name sbt -> showCArgName name <> ":" <> showExportSBT sbt
+    ExportArrayResult     name ty    -> showCArgName name <> ":" <> show ty
+    ExportScalarResultPtr name sbt   -> showCArgName name <> ":" <> showExportSBT sbt
+    -- Nested pairs / tuples are compiled down to a sequence of separate output
+    -- arguments, so a pair result is serialized to look like two separate
+    -- results.
+    ExportPairResult      left right -> show left <> "," <> show right

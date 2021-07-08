@@ -1,0 +1,66 @@
+'## Monoidal Merge Sort
+Warning: Very slow for now!!
+Because merging sorted lists is associative, we can expose the
+parallelism of merge sort to the Dex compiler by making a monoid
+and using reduce or yieldAccum.
+However, this approach puts a lot of pressure on the compiler.
+As noted on [StackOverflow](https://stackoverflow.com/questions/21877572/can-you-formulate-the-bubble-sort-as-a-monoid-or-semigroup),
+if the compiler does the reduction one element at a time,
+it's doing bubble / insertion sort with quadratic time cost.
+However, if breaks the list in half recursively, it'll be doing parallel mergesort.
+Currently it'll do the quadratic time version.
+
+def concatTable (leftin: a=>v) (rightin: b=>v) : ({left:a | right:b }=>v) =
+  -- Note: It'd be nicer to use (a | b)=>v but it's not currently supported.
+  for idx. case idx of
+    {| left = i  |} -> leftin.i
+    {| right = i |} -> rightin.i
+
+def mergeSortedTables [Ord a] (xs:m=>a) (ys:n=>a) : ({left:m | right:n }=>a) =
+  -- Possible improvements:
+  --  1) Using a SortedTable type.
+  --  2) Avoid initializing the return array.
+  init = concatTable xs ys
+  yieldState init \buf.
+    withState (0, 0) \countrefs.
+      for i.
+        (cur_x, cur_y) = get countrefs
+        noYsLeft = cur_y >= size n
+        stillXsLeft = cur_x < size m
+        cur_x_at_n = (unsafeFromOrdinal _ cur_x)
+        cur_y_at_n = (unsafeFromOrdinal _ cur_y)
+        xIsLess = xs.cur_x_at_n < ys.cur_y_at_n
+        if noYsLeft || (stillXsLeft && xIsLess)
+          then
+            countrefs := (cur_x + 1, cur_y)
+            buf!i := xs.cur_x_at_n
+          else
+            countrefs := (cur_x, cur_y + 1)
+            buf!i := ys.cur_y_at_n
+
+def mergeSortedLists [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : List a =
+  -- Need this wrapper because Dex can't automatically weaken
+  -- (a | b)=>c to ((Fin d)=>c)
+  sorted = mergeSortedTables xs ys
+  newsize = (Fin (nx + ny)) 
+  AsList _ $ unsafeCastTable newsize sorted
+
+def sort [Ord a] (xs: n=>a) : n=>a =
+  -- Warning: Has quadratic runtime cost for now.
+
+  xlists = for i:n. (AsList 1 [xs.i])
+
+  -- Merge sort monoid:
+  mempty = AsList 0 []
+  mcombine = mergeSortedLists
+
+  -- reduce might someday recursively subdivide the problem.
+  (AsList _ r) = reduce mempty mcombine xlists
+  unsafeCastTable n r
+
+def (+|) (i:n) (delta:Int) : n =
+  i' = ordinal i + delta
+  fromOrdinal _ $ select (i' >= size n) (size n - 1) i'
+
+def isSorted [Ord a] (xs:n=>a) : Bool =
+  all for i. xs.i <= xs.(i +| 1)

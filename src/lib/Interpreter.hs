@@ -22,6 +22,7 @@ import CUDA
 import Cat
 import Syntax
 import Env
+import LabeledItems
 import PPrint
 import Builder
 import Util (enumerate, restructure)
@@ -29,7 +30,6 @@ import LLVMExec
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
-foreign import ccall "threefry2x32"  c_threefry :: Int64 -> Int64 -> Int64
 
 type InterpM = IO
 
@@ -94,7 +94,6 @@ evalOp expr = case expr of
     _ -> error $ "Not implemented: " ++ pprint expr
   FFICall name _ args -> return $ case name of
     "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
-    "threefry2x32" -> Int64Val   $ c_threefry x y  where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)

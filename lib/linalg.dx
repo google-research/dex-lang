@@ -1,7 +1,5 @@
 '## LU Decomposition and Matrix Inversion
 
-def identity_matrix [Eq n, Add a, Mul a] : n=>n=>a =
-  for i j. select (i == j) one zero
 
 '### Triangular matrices
 
@@ -54,24 +52,23 @@ def swapInPlace (pRef: Ref h (Permutation n)) (i:n) (j:n) : {State h} Unit =
   permRef!i := tempj
   signRef := -(get signRef)
 
-def perToTable ((perm, _):Permutation n) : n=>n = perm
-def permSign   ((_, sign):Permutation n) : PermutationSign = sign
+def permToTable ((perm, _):Permutation n) : n=>n = perm
+def permSign    ((_, sign):Permutation n) : PermutationSign = sign
 
 
 
 '### LU decomposition functions
 
-def pivotize [Eq n] (a:n=>n=>Float) : Permutation n =
+def pivotize (a:n=>n=>Float) : Permutation n =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yieldState identity_permutation \permRef.
     for j:n.
-      row_with_largest' = argmin for i:(j..). (-(abs a.(%inject i).j))
-      row_with_largest = %inject row_with_largest'
-      case (j == row_with_largest) of
+      row_with_largest = argmin for i:(j..). (-(abs a.(%inject i).j))
+      case ordinal j == ordinal row_with_largest of
         True -> ()
-        False -> swapInPlace permRef j row_with_largest
+        False -> swapInPlace permRef j (%inject row_with_largest)
 
-def lu [Eq n] (a: n=>n=>Float) :
+def lu (a: n=>n=>Float) :
        (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
   -- Computes lower, upper, and permuntation matrices from a square matrix,
   -- such that apply_permutation permutation a == lower ** upper.
@@ -79,8 +76,8 @@ def lu [Eq n] (a: n=>n=>Float) :
   a = apply_permutation permutation a
 
   init_lower = for i:n. for j':(..i).
-    select (i == (%inject j')) 1.0 0.0
-  init_upper = for i:n. for j'':(i..). 0.0
+    select (ordinal i == (ordinal (%inject j'))) 1.0 0.0
+  init_upper = zero
 
   (lower, upper) = yieldState (init_lower, init_upper) \stateRef.
     lRef = fstRef stateRef
@@ -135,7 +132,7 @@ def lu [Eq n] (a: n=>n=>Float) :
 
 '### General linear algebra functions.
 
-def solve [Eq n, VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
+def solve [VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   -- There's a small speedup possible by exploiting the fact
   -- that l always has ones on the diagonal.  It would just require a
   -- custom forward_substitute routine that doesn't divide
@@ -145,34 +142,22 @@ def solve [Eq n, VSpace v] (a:n=>n=>Float) (b:n=>v) : n=>v =
   y = forward_substitute l b'
   backward_substitute u y
 
-def invert [Eq n] (a:n=>n=>Float) : n=>n=>Float =
-  solve a identity_matrix
+def invert (a:n=>n=>Float) : n=>n=>Float =
+  solve a eye
 
-def determinant [Eq n] (a:n=>n=>Float) : Float =
+def determinant (a:n=>n=>Float) : Float =
   (l, u, perm) = lu a
   prod (for i. (upperTriDiag u).i * (lowerTriDiag l).i) * permSign perm
 
-def sign_and_log_determinant [Eq n] (a:n=>n=>Float) : (Float & Float) =
+def sign_and_log_determinant (a:n=>n=>Float) : (Float & Float) =
   (l, u, perm) = lu a
   diags = for i. (upperTriDiag u).i * (lowerTriDiag l).i
   sign = (permSign perm) * prod for i. sign diags.i
   sum_of_log_abs = sum for i. log (abs diags.i)
   (sign, sum_of_log_abs)
 
+def matrix_power (base:n=>n=>Float) (power:Int) : n=>n=>Float =
+  generalIntegerPower (**) eye base power
 
-'### Numerical Tests
-
--- Check that the inverse of the inverse is identity.
-mat = [[11.,9.,24.,2.],[1.,5.,2.,6.],[3.,17.,18.,1.],[2.,5.,7.,1.]]
-:p mat ~~ (invert (invert mat))
-> True
-
--- Check that solving gives the inverse.
-v = [1., 2., 3., 4.]
-:p v ~~ (mat **. (solve mat v))
-> True
-
--- Check that det and exp(logdet) are the same.
-(s, logdet) = sign_and_log_determinant mat
-:p (determinant mat) ~~ (s * (exp logdet))
-> True
+def trace [Add a] (x:n=>n=>a) : a =
+  sum for i. x.i.i
