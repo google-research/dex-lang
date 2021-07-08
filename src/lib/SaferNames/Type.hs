@@ -11,6 +11,7 @@
 module SaferNames.Type (
   checkTypes, getType, litType, getBaseMonoidType) where
 
+import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
@@ -22,6 +23,7 @@ import qualified Data.Set        as S
 import Data.Text.Prettyprint.Doc
 
 import LabeledItems
+
 import Err
 import Type (litType)
 
@@ -129,12 +131,12 @@ instance HasType Atom where
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkEffRow eff $> EffKind
     DataCon name params con args -> do
-      def <- substE name >>= lookupScopeM
-      let funTy = dataConFunType def con
+      name' <- substE name
+      funTy <- dataConFunType name' con
       foldM checkApp funTy $ params ++ args
     TypeCon name params -> do
-      def <- substE name >>= lookupScopeM
-      let funTy = typeConFunType def
+      name' <- substE name
+      funTy <- typeConFunType name'
       foldM checkApp funTy $ params
     LabeledRow row -> checkLabeledRow row $> LabeledRowKind
     Record items -> do
@@ -157,7 +159,8 @@ instance HasType Atom where
     ACase e alts resultTy -> checkCase e alts resultTy
     DataConRef defName params args -> do
       defName' <- substE defName
-      def@(DataDef _ paramBs@(_:>>paramTys) [DataConDef _ argBs]) <- lookupScopeM defName'
+      DataDef _ paramBs [DataConDef _ argBs] <- lookupScopeM defName'
+      paramTys <- nonDepBinderNestTypes paramBs
       params' <- forMZipped paramTys params checkTypeE
       argBs' <- applyNaryAbs (Abs paramBs argBs) params'
       checkDataConRefBindings argBs' args
@@ -213,7 +216,7 @@ instance HasType Block where
   getTypeE (Block ty decls expr) = do
     tyReq <- substE ty
     checkB decls \decls' -> do
-      tyReq' <- injectNamesM decls' tyReq
+      tyReq' <- injectM decls' tyReq
       expr |: tyReq'
     return tyReq
 
@@ -222,8 +225,8 @@ instance CheckableB Decl where
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
     let declInfo = TypedBinderInfo ty' $ LetBound ann expr'
-    withFreshM declInfo \b' v ->
-      extendSubst (b @> SubstVal (Var v)) $
+    withFreshM declInfo \b' ->
+      extendSubst (b @> Rename (binderName b')) $
         cont $ Let ann (b':>ty') expr'
 
 instance CheckableB b => CheckableB (Nest b) where
@@ -329,7 +332,9 @@ typeCheckPrimOp op = case op of
       MGet      ->                 declareEff (RWSEffect State  h') $> s
       MPut  x   -> x|:s         >> declareEff (RWSEffect State  h') $> UnitTy
       MAsk      ->                 declareEff (RWSEffect Reader h') $> s
-      MExtend x -> x|:(s --> s) >> declareEff (RWSEffect Writer h') $> UnitTy
+      MExtend x -> do
+        updaterTy <- s --> s
+        x|:updaterTy >> declareEff (RWSEffect Writer h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (Pi (PiType TabArrow (b:>iTy) Pure eltTy)) <- getTypeE ref
     i' <- checkTypeE iTy i
@@ -500,11 +505,12 @@ typeCheckPrimHof hof = case hof of
   Linearize f -> do
     FunTy (binder:>a) Pure b <- getTypeE f
     b' <- fromConstAbs $ Abs binder b
-    return $ a --> PairTy b' (a --@ b')
+    fLinTy <- a --@ b'
+    a --> PairTy b' fLinTy
   Transpose f -> do
     Pi (PiType LinArrow (binder:>a) Pure b) <- getTypeE f
     b' <- fromConstAbs $ Abs binder b
-    return $ b' --@ a
+    b' --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f
     r |: readTy
@@ -535,15 +541,18 @@ typeCheckPrimHof hof = case hof of
           maybeTy _ = error "need to implement Maybe"
 
 checkRWSAction :: Typer m => RWS -> Atom i -> m i o (Type o, Type o)
-checkRWSAction rws f = undefined
-  -- BinaryFunTy regionBinde refBinder eff resultTy <- getTypeE f
-  -- regionName:>_ <- return regionBinder
-  -- let region = Var regionBinder
-  -- extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff
-  -- checkEq (varAnn regionBinder) TyKind
-  -- RefTy region' referentTy <- return $ binderAnn refBinder
-  -- checkEq region' region
-  -- return (resultTy, referentTy)
+checkRWSAction rws f = do
+  BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
+  dropSubst $
+    substB regionBinder \regionBinder' ->
+      substB refBinder \refBinder' -> do
+        eff' <- substE eff
+        regionName <- injectM refBinder' $ binderName regionBinder'
+        extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff'
+  _ :> RefTy _ referentTy <- return refBinder
+  referentTy' <- fromConstAbs $ Abs regionBinder referentTy
+  resultTy' <- fromConstAbs $ Abs (NestPair regionBinder refBinder) resultTy
+  return (resultTy', referentTy')
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
 -- from GADT+monad type inference.
@@ -551,16 +560,37 @@ checkEmpty :: MonadErr m => Nest b n l -> m ()
 checkEmpty Empty = return ()
 checkEmpty _  = throw TypeErr "Not empty"
 
-dataConFunType :: DataDef n -> Int -> Type n
-dataConFunType (DataDef _ (bs:>>paramTys) cons) con = undefined
-  -- let DataConDef _ argBinders = cons !! con
-  -- in foldr (\(arr, b) body -> Pi (Abs b (arr, body)))
-  --     (TypeCon def (map Var $ toList paramVars))
-  --     (      zip (repeat ImplicitArrow) (toList paramBs)
-  --         ++ zip (repeat PureArrow    ) (toList argBs))
+nonDepBinderNestTypes :: ScopeReader m => Nest Binder l l' -> m n [Type n]
+nonDepBinderNestTypes Empty = return []
+-- nonDepBinderNestTypes (Nest (b:>ty) rest) = do
+--   restTys <- nonDepBinderNestTypes rest
+--   return $ projectNames ty : restTys
 
-typeConFunType :: DataDef n -> Type n
-typeConFunType (DataDef _ (_:>> paramTys) _) = foldr (?-->) TyKind paramTys
+dataConFunType :: Typer m => Name DataDef o -> Int -> m i o (Type o)
+dataConFunType name con = do
+  DataDef _ paramBinders cons <- lookupScopeM name
+  let DataConDef _ argBinders = cons !! con
+  case argBinders of
+    EmptyAbs argBinders' ->
+      dropSubst $
+        buildNaryPiType ImplicitArrow paramBinders \ext params ->
+          buildNaryPiType PlainArrow argBinders' \ext' _ -> do
+            params' <-  mapM (injectM ext') params
+            name'   <-  injectM (ext >>> ext') name
+            return $ TypeCon name' params'
+
+typeConFunType :: Typer m => Name DataDef o -> m i o (Type o)
+typeConFunType name = do
+  DataDef _ paramBinders _ <- lookupScopeM name
+  dropSubst $ buildNaryPiType ImplicitArrow paramBinders \ext params -> return TyKind
+
+-- TODO: put this in Builder?
+buildNaryPiType :: SubstReader AtomSubstVal m
+                => Arrow
+                -> Nest Binder i i'
+                -> (forall o'. Ext o o' -> [Type o'] -> m i' o' (Type o'))
+                -> m i o (Type o)
+buildNaryPiType _ _ _ = undefined
 
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase e alts resultTy = do
@@ -584,17 +614,18 @@ checkDataConRefBindings :: Typer m
                         => EmptyAbs (Nest Binder) o
                         -> EmptyAbs (Nest DataConRefBinding) i
                         -> m i o ()
-checkDataConRefBindings (Abs Empty UnitE) (Abs Empty UnitE) = return ()
--- checkDataConRefBindings (Nest b restBs) (Nest refBinding restRefs) = do
---   let DataConRefBinding b'@(Bind v) ref = refBinding
+checkDataConRefBindings = undefined
+-- checkDataConRefBindings (EmptyAbs Empty) (Abs Empty UnitE) = return ()
+-- checkDataConRefBindings (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding restRefs)) = do
+--   let DataConRefBinding b' ref = refBinding
 --   ref |: RawRefTy (binderAnn b)
---   checkEq (binderAnn b) (binderAnn b')
---   let restBs' = scopelessSubst (b@>Var v) restBs
---   withBinder b' $ checkDataConRefBindings restBs' restRefs
+--   checkAlphaEq (binderAnn b) (binderAnn b')
+--   restBs' <- scopelessSubst (b@>Var (binderName b')) restBs
+--   checkB b' \_ -> checkDataConRefBindings restBs' restRefs
 -- checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
 
 typeAsBinderNest :: Type n -> Abs (Nest Binder) UnitE n
-typeAsBinderNest ty = Abs (Nest (Ignore :> ty) Empty) UnitE
+typeAsBinderNest ty = undefined --  Abs (Nest (Ignore :> ty) Empty) UnitE
 
 checkAlt :: HasType body => Typer m
          => Type o -> EmptyAbs (Nest Binder) o -> AltP body i -> m i o ()
@@ -602,7 +633,7 @@ checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substE (EmptyAbs bs)
   checkAlphaEq reqBs bs'
   substB bs \bs' -> do
-    resultTyReq' <- injectNamesM bs' resultTyReq
+    resultTyReq' <- injectM bs' resultTyReq
     body |: resultTyReq'
 
 checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
@@ -744,10 +775,8 @@ getBaseMonoidType ty = case ty of
   _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
-applyDataDefParams = undefined
--- applyDataDefParams (DataDef _ bs cons) params
---   | length params == length (toList bs) = applyNaryAbs (Abs bs cons) params
---   | otherwise = error $ "Wrong number of parameters: " ++ show (length params)
+applyDataDefParams (DataDef _ bs cons) params =
+  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) params
 
 -- === effects ===
 

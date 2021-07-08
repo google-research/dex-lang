@@ -237,11 +237,12 @@ evalUModule env untyped = do
       return newBindings
 
 roundtripSaferNamesPass :: MonadError Err m => Bindings -> Module -> m Module
-roundtripSaferNamesPass env (Module ir decls bindings) = do
-  let env' = toSafeBindings env
-  let decls' = toSafeB decls
-  _ <- liftEither $ S.checkTypes env' $ S.Block S.UnitTy decls' (S.Atom S.UnitVal)
-  return $ Module ir (fromSafeB decls') bindings
+roundtripSaferNamesPass _ m = return m
+-- roundtripSaferNamesPass env (Module ir decls bindings) = do
+--   let env' = toSafeBindings env
+--   let decls' = toSafeB decls
+--   _ <- liftEither $ S.checkTypes env' $ S.Block S.UnitTy decls' (S.Atom S.UnitVal)
+--   return $ Module ir (fromSafeB decls') bindings
 
 evalBackend :: Bindings -> Block -> TopPassM Atom
 evalBackend env block = do

@@ -87,8 +87,8 @@ instance HasSafeVersionE D.Atom where
     -- D.ACase scrut alts ty -> S.ACase (toSafeE scrut) (map toSafeE alts) (toSafeE ty)
     -- D.DataConRef dataDef params args ->
     --   S.DataConRef (toSafeE dataDef) (map toSafeE params) (S.Abs (toSafeB args) S.UnitE)
-    D.BoxedRef b ptr size body ->
-      S.BoxedRef (toSafeE ptr) (toSafeE size) (S.Abs (toSafeB b) (toSafeE body))
+    -- D.BoxedRef b ptr size body ->
+    --   S.BoxedRef (toSafeE ptr) (toSafeE size) (S.Abs (toSafeB b) (toSafeE body))
     D.ProjectElt idxs (v D.:> _) -> S.ProjectElt idxs $ (S.UnsafeMakeName v)
   fromSafeE atom = case atom of
     S.Var v -> D.Var $ fromSafeE v
@@ -112,8 +112,8 @@ instance HasSafeVersionE D.Atom where
     -- S.ACase scrut alts ty -> D.ACase (fromSafeE scrut) (map fromSafeE alts) (fromSafeE ty)
     -- S.DataConRef dataDef params (S.Abs args S.UnitE) ->
     --   D.DataConRef (fromSafeE dataDef) (map fromSafeE params) (fromSafeB args)
-    S.BoxedRef ptr size (S.Abs b body) ->
-      D.BoxedRef (fromSafeB b) (fromSafeE ptr) (fromSafeE size) (fromSafeE body)
+    -- S.BoxedRef ptr size (S.Abs b body) ->
+    --   D.BoxedRef (fromSafeB b) (fromSafeE ptr) (fromSafeE size) (fromSafeE body)
     S.ProjectElt idxs v -> D.ProjectElt idxs $ fromSafeE v
 
 instance HasSafeVersionE e => HasSafeVersionE (VarP e) where
@@ -123,11 +123,11 @@ instance HasSafeVersionE e => HasSafeVersionE (VarP e) where
 
 instance HasSafeVersionE D.DataDef where
   type SafeVersionE D.DataDef = S.DataDef
-  toSafeE (D.DataDef name paramBinders cons) =
-      S.DataDef name paramBinders' $ map toSafeE cons
-      where paramBinders' = dBinderListToSBinderList $ toList paramBinders
-  fromSafeE (S.DataDef name paramBinders cons) =
-    D.DataDef name (D.toNest $ sBinderListToDBinderList paramBinders) (map fromSafeE cons)
+  -- toSafeE (D.DataDef name paramBinders cons) =
+  --     S.DataDef name paramBinders' $ map toSafeE cons
+  --     where paramBinders' = dBinderListToSBinderList $ toList paramBinders
+  -- fromSafeE (S.DataDef name paramBinders cons) =
+  --   D.DataDef name (D.toNest $ sBinderListToDBinderList paramBinders) (map fromSafeE cons)
 
 instance HasSafeVersionE D.BinderInfo where
   type SafeVersionE D.BinderInfo = S.AtomBinderInfo
@@ -142,20 +142,20 @@ unsafeFromNest :: S.Nest b n l -> [b n' l']
 unsafeFromNest S.Empty = []
 unsafeFromNest (S.Nest b bs) = unsafeCoerceB b : unsafeFromNest (unsafeCoerceB bs)
 
-dBinderListToSBinderList :: [D.Binder] -> S.BinderList n l
-dBinderListToSBinderList = undefined
+-- dBinderListToSBinderList :: [D.Binder] -> S.BinderList n l
+-- dBinderListToSBinderList = undefined
 -- dBinderListToSBinderList bs = unsafeToNest vs S.:> ListE tys
 --   where (vs, tys) = unzip [ (v,ty) | (v S.:> ty) <- map toSafeB bs]
 
-sBinderListToDBinderList :: S.BinderList n l -> [D.Binder]
-sBinderListToDBinderList = undefined
+-- sBinderListToDBinderList :: S.BinderList n l -> [D.Binder]
+-- sBinderListToDBinderList = undefined
 -- sBinderListToDBinderList (vs S.:> ListE tys) =
 --   map fromSafeB $ zipWith (S.:>) (unsafeFromNest vs) tys
 
 instance HasSafeVersionE D.DataConDef where
   type SafeVersionE D.DataConDef = S.DataConDef
-  toSafeE (D.DataConDef name bs) = S.DataConDef name $ S.Abs (toSafeB bs) S.UnitE
-  fromSafeE (S.DataConDef name (S.Abs bs S.UnitE)) = D.DataConDef name $ fromSafeB bs
+  -- toSafeE (D.DataConDef name bs) = S.DataConDef name $ S.Abs (toSafeB bs) S.UnitE
+  -- fromSafeE (S.DataConDef name (S.Abs bs S.UnitE)) = D.DataConDef name $ fromSafeB bs
 
 instance HasSafeVersionB D.DataConRefBinding where
   type SafeVersionB D.DataConRefBinding = S.DataConRefBinding
@@ -189,17 +189,15 @@ instance HasSafeVersionE D.Block where
 
 instance HasSafeVersionB D.Decl where
   type SafeVersionB D.Decl = S.Decl
-  toSafeB   (D.Let ann b expr) = S.Let ann (toSafeB   b) (toSafeE   expr)
-  fromSafeB (S.Let ann b expr) = D.Let ann (fromSafeB b) (fromSafeE expr)
+  -- toSafeB   (D.Let ann b expr) = S.Let ann (toSafeB   b) (toSafeE   expr)
+  -- fromSafeB (S.Let ann b expr) = D.Let ann (fromSafeB b) (fromSafeE expr)
 
 instance HasSafeVersionE e => HasSafeVersionB (D.BinderP e) where
-  type SafeVersionB (D.BinderP e) = S.AnnBinderP (S.NameBinder S.TypedBinderInfo) (SafeVersionE e)
-  toSafeB b = case b of
-    D.Ignore ann -> unsafeCoerceB S.Ignore S.:> toSafeE ann
-    D.Bind (v D.:> ann) -> UnsafeMakeBinder v S.:> toSafeE ann
-  fromSafeB (b S.:> ann) = case b of
-    UnsafeMakeBinder v -> D.Bind (v D.:> fromSafeE ann)
-    S.Ignore -> D.Ignore $ fromSafeE ann
+  -- type SafeVersionB (D.BinderP e) = S.AnnBinderP (S.NameBinder S.TypedBinderInfo) (SafeVersionE e)
+  -- toSafeB b = case b of
+  --   D.Bind (v D.:> ann) -> UnsafeMakeBinder v S.:> toSafeE ann
+  -- fromSafeB (b S.:> ann) = case b of
+  --   UnsafeMakeBinder v -> D.Bind (v D.:> fromSafeE ann)
 
 instance HasSafeVersionE D.Effect where
   type SafeVersionE D.Effect = S.Effect
