@@ -9,11 +9,10 @@
 module SaferNames.NameCore (
   S (..), RawName, Name (..), withFresh, injectNames, projectName,
   NameBinder (..),
-  NameSet (..), emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
-  NameMap (..), emptyNameMap, nameMapNames,
-  singletonNameMap, lookupNameMap, extendNameMap,  concatNameMaps,
-  Distinct, E, B,
-  InjectableE (..), InjectableB (..),
+  NameSet (..), singletonNameSet, emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
+  NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
+  lookupNameMap, extendNameMap,  concatNameMaps,
+  Distinct, E, B, InjectableE (..), InjectableB (..),
   unsafeCoerceE, unsafeCoerceB) where
 
 import Prelude hiding (id, (.))
@@ -80,6 +79,10 @@ emptyNameSetFrag = UnsafeMakeNameSet mempty
 emptyNameSet :: NameSet VoidS
 emptyNameSet = UnsafeMakeNameSet mempty
 
+singletonNameSet :: NameBinder s i i' -> NameSet (i:=>:i')
+singletonNameSet (UnsafeMakeBinder (UnsafeMakeName v)) =
+  UnsafeMakeNameSet (S.singleton v)
+
 extendNameSet :: NameSet n -> NameSet (n:=>:l) -> NameSet l
 extendNameSet (UnsafeMakeNameSet s1) (UnsafeMakeNameSet s2) =
   UnsafeMakeNameSet (s1 <> s2)
@@ -101,19 +104,16 @@ data Name (s::E)  -- static information associated with name
     UnsafeMakeName :: Typeable s => RawName -> Name s n
 
 data NameBinder (s::E)  -- static information for the name this binds (note
-                         -- that `NameBinder` doesn't actually carry this data)
-                 (n::S)  -- scope the binder lives in
-                 (l::S)  -- scope within the binder's scope
-  where
-    UnsafeMakeBinder :: Typeable s => RawName -> NameBinder s n l
-    Ignore           :: NameBinder s n n
+                        -- that `NameBinder` doesn't actually carry this data)
+                (n::S)  -- scope the binder lives in
+                (l::S)  -- scope within the binder's scope
+  = UnsafeMakeBinder { nameBinderName :: Name s l }
 
 withFresh :: Typeable s => Distinct n => NameSet n
-         -> (forall l. Distinct l => NameBinder s n l -> Name s l -> a) -> a
+          -> (forall l. Distinct l => NameBinder s n l -> a) -> a
 withFresh (UnsafeMakeNameSet scope) cont =
-  cont @UnsafeMakeDistinctS (UnsafeMakeBinder freshName) (UnsafeMakeName freshName)
-  where
-    freshName = freshRawName "v" scope
+  cont @UnsafeMakeDistinctS $ UnsafeMakeBinder freshName
+  where freshName = UnsafeMakeName $ freshRawName "v" scope
 
 freshRawName :: D.Tag -> S.Set RawName -> RawName
 freshRawName tag usedNames = D.Name D.GenName tag nextNum
@@ -133,7 +133,6 @@ projectName (UnsafeMakeNameSet scope) (UnsafeMakeName rawName)
 
 -- proves that the names in n are distinct
 class Distinct (n::S)
-
 instance Distinct VoidS
 instance Distinct UnsafeMakeDistinctS
 
@@ -151,8 +150,7 @@ instance Distinct UnsafeMakeDistinctS
 -- (2) it extends the old scope. These are the `Distinct l` and
 -- `(InjectableB b, b)` conditions below.
 
-injectNames :: InjectableE e => InjectableB b
-            => Distinct l => b n l -> e n -> e l
+injectNames :: InjectableE e => Distinct l => NameSet (n:=>:l) -> e n -> e l
 injectNames _ x = unsafeCoerceE x
 
 -- `injectNames` is the only function we actualy use in practice. The rest of
@@ -172,10 +170,6 @@ class InjectableB (b::B) where
                   -> (forall l'. ObservablyFresh l l' -> b n' l' -> a)
                   -> a
 
-  -- Not sure if this belongs here, but it doesn't make sense in `HasNamesB`
-  -- either. Maybe we need a separate type class?
-  boundNames :: b n l -> NameSet (n:=>:l)
-
 -- an `ObservablyFresh n l` means that scope `l` is a superset of scope `n` that
 -- doesn't shadow any of the names exposed by `n`.
 data ObservablyFresh (n::S) (l::S) = UnsafeMakeObservablyFresh
@@ -194,9 +188,6 @@ instance InjectableE (Name s) where
 --       wrt n and thus also observably fresh wrt n++[x]
 instance InjectableB (NameBinder s) where
   injectionProofB  _ b cont = cont UnsafeMakeObservablyFresh $ unsafeCoerceB b
-  boundNames b = case b of
-    Ignore -> UnsafeMakeNameSet mempty
-    UnsafeMakeBinder name -> UnsafeMakeNameSet (S.singleton name)
 
 instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (NameMap v i) where
   injectionProofE = undefined
@@ -228,10 +219,8 @@ emptyNameMap :: NameMap v (i:=>:i) o
 emptyNameMap = UnsafeMakeNameMap mempty mempty
 
 singletonNameMap :: NameBinder s i i' -> v s o -> NameMap v (i:=>:i') o
-singletonNameMap b x = case b of
-  Ignore -> emptyNameMap
-  UnsafeMakeBinder name ->
-    UnsafeMakeNameMap (M.singleton name $ toEnvVal x) (S.singleton name)
+singletonNameMap (UnsafeMakeBinder (UnsafeMakeName name)) x =
+  UnsafeMakeNameMap (M.singleton name $ toEnvVal x) (S.singleton name)
 
 concatNameMaps :: NameMap v (i1:=>:i2) o
                -> NameMap v (i2:=>:i3) o
@@ -266,7 +255,6 @@ toEnvVal v = EnvVal typeRep v
 -- === instances ===
 
 instance Show (NameBinder s n l) where
-  show Ignore = "_"
   show (UnsafeMakeBinder v) = show v
 
 instance Pretty (Name s n) where
