@@ -254,7 +254,8 @@ instance Pretty Decl where
     Let ann (Ignore _) bound -> p ann <+> pLowest bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Let PlainLet b rhs ->           p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Let ann      b rhs -> p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 instance Pretty LetAnn where
   pretty ann = case ann of
