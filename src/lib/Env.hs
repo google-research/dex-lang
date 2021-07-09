@@ -165,6 +165,7 @@ isGlobal :: VarP ann -> Bool
 isGlobal (GlobalName _ :> _) = True
 isGlobal (GlobalArrayName _ :> _) = True
 isGlobal (Name TypeClassGenName _ _ :> _) = True
+isGlobal (Name CArgName _ _ :> _) = True
 isGlobal _ = False
 
 isGlobalBinder :: BinderP ann -> Bool
