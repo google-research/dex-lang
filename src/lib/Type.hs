@@ -44,6 +44,9 @@ type TypeM = ReaderT TypeCheckEnv Except
 class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
+-- This entire type checker is buggy because the expression we're checking may
+-- have internal shadows and we're not renaming things as we go.
+
 getType :: (HasCallStack, HasType a) => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
@@ -123,7 +126,10 @@ instance HasType Atom where
       let (DataConDef _ argBs) = cons !! con
       let funTy = foldr
             (\(arr, b) body -> Pi (Abs b (arr, body)))
+            -- buggy: these paramVars might be shadowed by the data constructor binders
             (TypeCon def (map Var $ toList paramVars))
+            -- buggy: what if the type annotations include names shadowed by the
+            -- binders once we start to nest them
             (   zip (repeat ImplicitArrow) (toList paramBs)
              ++ zip (repeat PureArrow    ) (toList argBs))
       foldM checkApp funTy $ params ++ args
@@ -163,6 +169,7 @@ instance HasType Atom where
       checkEq (binderAnn b) (BaseTy t)
       numel |: IdxRepTy
       void $ typeCheck b
+      -- buggy: what if `b` appears in the resulting type?
       withBinder b $ typeCheck body
     ProjectElt (i NE.:| is) v -> do
       ty <- typeCheck $ case NE.nonEmpty is of
@@ -868,14 +875,17 @@ typeCheckHof hof = case hof of
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
     return $ PairTy (TabTy (Ignore n) tileElemTy) $ mkConsListTy accTys
   While body -> do
+    -- buggy: Ignore isn't guaranteed
     Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     checkEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f -> do
+    -- buggy: Ignore isn't guaranteed
     Pi (Abs (Ignore a) (PlainArrow Pure, b)) <- typeCheck f
     return $ a --> PairTy b (a --@ b)
   Transpose f -> do
+    -- buggy: Ignore isn't guaranteed
     Pi (Abs (Ignore a) (LinArrow, b)) <- typeCheck f
     return $ b --@ a
   RunReader r f -> do
@@ -915,6 +925,7 @@ checkRWSAction rws f = do
   checkEq (varAnn regionBinder) TyKind
   RefTy region' referentTy <- return $ binderAnn refBinder
   checkEq region' region
+  -- buggy: resultTy and referentTy might mention the region binder
   return (resultTy, referentTy)
 
 litType :: LitVal -> BaseType
