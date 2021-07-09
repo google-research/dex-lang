@@ -113,7 +113,7 @@ prepareFunctionForExport env nameStr func = do
     createTabArg vis idx ty = case ty of
       BaseTy bt@(Scalar sbt) -> do
         ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
-        destAtom <- ptrLoad =<< applyIdxs v idx
+        destAtom <- unsafePtrLoad =<< applyIdxs v idx
         funcArgScope <- looks cargScope
         let exportArg = ExportArrayArg vis name $ case getRectShape funcArgScope idx of
               Just rectShape -> RectContArrayPtr sbt rectShape

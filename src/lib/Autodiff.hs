@@ -44,7 +44,7 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
 linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
-  buildLam b PureArrow \x@(Var v) -> do
+  checkBuilder =<< buildLam b PureArrow \x@(Var v) -> do
     (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
     fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) []
@@ -74,12 +74,10 @@ linearizeBlock env (Block decls result) = case decls of
             --     when multiple values are returned from a case statement).
             -- Don't mark variables with trivial tangent types as active. This lets us avoid
             -- pretending that we're differentiating wrt e.g. equality tests which yield discrete results.
-            -- TODO: This check might fail if the result type does not have a defined tangent type.
-            --       For example, what if it's a reference? Some of those should be marked as active
-            --       variables, but I don't think that we want to define them to have tangents.
-            --       We should delete this check, but to do that we would have to support differentiation
-            --       through case statements with active scrutinees.
-            let vIsTrivial = isSingletonType $ tangentType $ varType v
+            let vIsTrivial = case varType v of
+                  RefTy _ _ -> False  -- References can be active, but do not have a tangent type
+                                      -- This case is necessary for AD of IndexRef
+                  _         -> isSingletonType $ tangentType $ varType v
             let nontrivialVs = if vIsTrivial then [] else [v]
             (ans, bodyLin) <- extendWrt nontrivialVs [] $ runLinA $
               linearizeBlock (env <> b @> Var v) body
@@ -516,30 +514,37 @@ type TransposeM a = ReaderT TransposeEnv Builder a
 
 transpose :: Scope -> Atom -> Atom
 transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
-  buildLam (Bind $ "ct" :> getType block) LinArrow \ct -> do
+  checkBuilder =<< buildLam (Bind $ "ct" :> getType block) LinArrow \ct -> do
     snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock block ct)
 
 transposeBlock :: Block -> Atom -> TransposeM ()
 transposeBlock (Block decls result) ct = case decls of
   Empty -> transposeExpr result ct
   Nest decl rest -> case decl of
-    (Let _ b expr) -> transposeBinding b expr
-    where
-      body = Block rest result
-      transposeBinding b expr = do
+    (Let _ b expr) -> case expr of
+      -- IndexRef is a bit special in that it can be an expression we have to
+      -- transpose, but it doesn't yield any useful cotangent.
+      Op (IndexRef ~(Var ref) idx) -> do
+        linRefEnv <- asks linRefSubst
+        case envLookup linRefEnv ref of
+          Just ctRef -> do
+            idx'   <- substNonlin idx
+            ctRef' <- emitOp $ IndexRef ctRef idx'
+            localLinRefSubst (b@>ctRef') $ transposeBlock contBlock ct
+          Nothing    -> do
+            x <- emit =<< substNonlin expr
+            localNonlinSubst (b @> x) $ transposeBlock contBlock ct
+      _ -> do
         isLinearExpr <- (||) <$> isLinEff (exprEffs expr) <*> isLin expr
         if isLinearExpr
           then do
-            cts <- withLinVars [b] $ transposeBlock body ct
-            transposeExpr expr $ head cts
+            ((), ctExpr) <- withLinVar b $ transposeBlock contBlock ct
+            transposeExpr expr ctExpr
           else do
-            expr' <- substNonlin expr
-            x <- emit expr'
-            localNonlinSubst (b @> x) $ transposeBlock body ct
-
-      withLinVars :: [Binder] -> TransposeM () -> TransposeM [Atom]
-      withLinVars [] m     = m >> return []
-      withLinVars (b:bs) m = uncurry (flip (:)) <$> (withLinVar b $ withLinVars bs m)
+            x <- emit =<< substNonlin expr
+            localNonlinSubst (b @> x) $ transposeBlock contBlock ct
+    where
+      contBlock = Block rest result
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
@@ -737,13 +742,10 @@ transposeCon con ct = case con of
   RecordRef _    -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
-freeLinVars :: HasVars a => a -> TransposeM [Var]
-freeLinVars x = do
-  refs <- asks linRefs
-  return $ bindingsAsVars $ envIntersect refs (freeVars x)
-
 isLin :: HasVars a => a -> TransposeM Bool
-isLin x = not . null <$> freeLinVars x
+isLin x = not . null <$> do
+  nonRefLin <- return . ((const ()) <$>) =<< asks linRefs
+  return $ bindingsAsVars $ envIntersect nonRefLin (freeVars x)
 
 isLinEff :: EffectRow -> TransposeM Bool
 isLinEff (EffectRow effs Nothing) = do
@@ -763,6 +765,8 @@ substTranspose sel x = do
   scope <- getScope
   return $ subst (env, scope) x
 
+-- TODO: It would be a good idea to make sure that when we apply a non-linear
+-- substitution, then all of the free vars are inside it or the surrounding scope.
 substNonlin :: Subst a => a -> TransposeM a
 substNonlin = substTranspose nonlinSubst
 

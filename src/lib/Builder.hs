@@ -46,7 +46,7 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
-import Data.List (elemIndex)
+import Data.List (elemIndex, intercalate)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Tuple (swap)
@@ -520,8 +520,10 @@ checkBuilder :: (HasCallStack, MonadBuilder m, HasVars a, HasType a) => a -> m a
 checkBuilder x = do
   scope <- getScope
   let globals = freeVars x `envDiff` scope
-  unless (all (isGlobal . (:>())) $ envNames globals) $
-    error $ "Found a non-global free variable in " ++ pprint x
+  let freeLocals = filter (not . isGlobal . (:>())) $ envNames globals
+  unless (null freeLocals) $
+    error $ "Found a non-global free variable (" ++
+      (intercalate ", " $ fmap pprint $ toList freeLocals) ++ ") in " ++ pprint x
   eff <- getAllowedEffects
   case checkType (scope <> globals) eff x of
     Left e   -> error $ pprint e
