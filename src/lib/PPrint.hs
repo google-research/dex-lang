@@ -14,11 +14,11 @@ module PPrint (pprint, docAsStr, printLitBlock, PrecedenceLevel(..), DocPrec,
 
 import Data.Aeson hiding (Result, Null, Value)
 import GHC.Float
+import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.ByteString.Lazy.Char8 as B
-import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, uncons, unsnoc)
@@ -349,40 +349,42 @@ fromInfix t = do
   return t''
 
 prettyProjection :: NE.NonEmpty Int -> Var -> DocPrec ann
-prettyProjection idxs (name :> ty) = prettyPrec uproj where
+prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
   -- Builds a source expression that performs the given projection.
   uproj = UApp (PlainArrow ()) (nosrc ulam) (nosrc uvar)
   ulam = ULam (upat, Nothing) (PlainArrow ()) (nosrc $ UVar $ target :> ())
   uvar = UVar $ name :> ()
-  (_, upat, target) = buildProj idxs
+  (upat, target) = buildProj fullTy $ NE.reverse idxs
 
-  buildProj :: NE.NonEmpty Int -> (Type, UPat, Name)
-  buildProj (i NE.:| is) = let
-    -- Lazy Haskell trick: refer to `target` even though this function is
-    -- responsible for setting it!
-    (ty', pat', eltName) = case NE.nonEmpty is of
-      Just is' -> let (x, y, z) = buildProj is' in (x, y, Just z)
-      Nothing -> (ty, nosrc $ UPatBinder $ Bind $ target :> (), Nothing)
-    in case ty' of
-      TypeCon def params -> let
-        [DataConDef conName bs] = applyDataDefParams def params
-        b = toList bs !! i
-        pats = (\(j,_)-> if i == j then pat' else uignore) <$> enumerate bs
-        hint = case b of
-          Bind (n :> _) -> n
-          Ignore _ -> Name SourceName "elt" 0
-        in ( binderAnn b, nosrc $ UPatCon conName pats, fromMaybe hint eltName)
-      RecordTy (NoExt types) -> let
-        ty'' = toList types !! i
-        pats = (\(j,_)-> if i == j then pat' else uignore) <$> enumerate types
-        (fieldName, _) = toList (reflectLabels types) !! i
-        hint = Name SourceName (fromString fieldName) 0
-        in (ty'', nosrc $ UPatRecord $ NoExt pats, fromMaybe hint eltName)
-      PairTy x _ | i == 0 ->
-        (x, nosrc $ UPatPair pat' uignore, fromMaybe "a" eltName)
-      PairTy _ y | i == 1 ->
-        (y, nosrc $ UPatPair uignore pat', fromMaybe "b" eltName)
+  buildProj :: Type -> NE.NonEmpty Int -> (UPat, Name)
+  buildProj ty (i NE.:| is) = case ty of
+      TypeCon def params ->
+        rec subTy hint \pat ->
+          UPatCon conName $ enumerate bs <&> \(j, _) ->
+            if i == j then pat else uignore
+        where
+          [DataConDef conName bs] = applyDataDefParams def params
+          b = toList bs !! i
+          (hint, subTy) = case b of
+            Bind   (n :> t) -> (n, t)
+            Ignore t        -> (Name SourceName "elt" 0, t)
+      RecordTy (NoExt types) ->
+        rec subTy hint \pat ->
+          UPatRecord $ NoExt $ enumerate types <&> \(j, _) ->
+            if i == j then pat else uignore
+        where
+          subTy = toList types !! i
+          (fieldName, _) = toList (reflectLabels types) !! i
+          hint = Name SourceName (fromString fieldName) 0
+      PairTy x _ | i == 0 -> rec x "a" \pat -> UPatPair pat uignore
+      PairTy _ y | i == 1 -> rec y "b" \pat -> UPatPair uignore pat
       _ -> error "Bad projection"
+    where
+      rec :: Type -> Name -> (UPat -> UPat') -> (UPat, Name)
+      rec subTy nameHint patBuilder = case NE.nonEmpty is of
+        Just is' -> (nosrc $ patBuilder subpat, targetName)
+          where (subpat, targetName) = buildProj subTy is'
+        Nothing  -> (nosrc $ patBuilder $ nosrc $ UPatBinder $ Bind $ nameHint :> (), nameHint)
 
   nosrc = WithSrc Nothing
   uignore = nosrc $ UPatBinder $ Ignore ()
