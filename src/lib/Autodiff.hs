@@ -24,7 +24,6 @@ import LabeledItems
 import Syntax
 import PPrint
 import Builder
-import Cat
 import Util (bindM2, zipWithT, enumerate, restructure)
 import GHC.Stack
 
@@ -34,10 +33,10 @@ import GHC.Stack
 -- respect to (including refs but not regions).
 data DerivWrt = DerivWrt { activeVars  :: Env Type
                          , _activeEffs :: [Effect]
-                         , rematVars   :: Env Type }
+                         }
 -- `Tangents` holds the tangent values and the region variables that are
 -- arguments to the linearized function.
-data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name], rematVals :: SubstEnv }
+data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name] }
 
 type PrimalM  = ReaderT DerivWrt   Builder
 type TangentM = ReaderT TangentEnv Builder
@@ -46,9 +45,9 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 linearize :: Scope -> Atom -> Atom
 linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
   buildLam b PureArrow \x@(Var v) -> do
-    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) [] mempty) $ runLinA $ linearizeBlock (b@>x) block
+    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
-    fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) [] mempty
+    fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) []
     fLinChecked <- checkBuilder fLin
     return $ PairVal y fLinChecked
 
@@ -255,6 +254,7 @@ linearizeBinOp op x' y' = LinA $ do
     FCmp _ -> emitDiscrete
     BAnd   -> emitDiscrete
     BOr    -> emitDiscrete
+    BXor   -> emitDiscrete
     BShL   -> emitDiscrete
     BShR   -> emitDiscrete
   where
@@ -270,10 +270,10 @@ linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
     i' <- mapM (substBuilder env) i
-    (ansWithLinTab, vi'') <- buildForAux d i' \i''@(Var vi'') ->
-       (,vi'') <$> (willRemat vi'' $ tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body)
+    ansWithLinTab <- buildFor d i' \i'' ->
+       tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
     (ans, linTab) <- unzipTab ansWithLinTab
-    return (ans, buildFor d i' \i'' -> provideRemat vi'' i'' $ app linTab i'' >>= applyLinToTangents)
+    return (ans, buildFor d i' \i'' -> app linTab i'' >>= applyLinToTangents)
   Tile _ _ _        -> notImplemented
   RunWriter bm ~lam@(BinaryFunVal _ refBinder _ _) -> LinA $ do
     unless (checkZeroPlusFloatMonoid bm) $
@@ -413,38 +413,22 @@ isTrivialForAD expr = isSingletonType tangentTy && exprEffs expr == mempty
 tangentFunAsLambda :: LinA Atom -> PrimalM Atom
 tangentFunAsLambda m = do
   (ans, tanFun) <- runLinA m
-  DerivWrt activeVars effs remats <- ask
+  DerivWrt activeVars effs <- ask
   let hs = map (Bind . (:>TyKind) . effectRegion) effs
-  let rematList = envAsVars remats
   liftM (PairVal ans) $ lift $ do
-    tanLam <- makeLambdas rematList \rematArgs ->
-      buildNestedLam PureArrow hs \hVals -> do
-        let hVarNames = map (\(Var (v:>_)) -> v) hVals
-        -- TODO: handle exception effect too
-        let effs' = zipWith (\(RWSEffect rws _) v -> RWSEffect rws v) effs hVarNames
-        -- want to use tangents here, not the original binders
-        let regionMap = newEnv (map ((:>()) . effectRegion) effs) hVals
-        -- TODO: Only bind tangents for free variables?
-        let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-        buildNestedLam PureArrow activeVarBinders \activeVarArgs ->
-          buildLam (Ignore UnitTy) (PlainArrow $ EffectRow (S.fromList effs') Nothing) \_ ->
-            runReaderT tanFun $ TangentEnv
-                 (newEnv (envNames activeVars) activeVarArgs) hVarNames
-                 (newEnv rematList $ fmap Var rematArgs)
-    case rematList of
-      [] -> return tanLam
-      _  -> deShadow tanLam <$> getScope
+    buildNestedLam PureArrow hs \hVals -> do
+      let hVarNames = map (\(Var (v:>_)) -> v) hVals
+      -- TODO: handle exception effect too
+      let effs' = zipWith (\(RWSEffect rws _) v -> RWSEffect rws v) effs hVarNames
+      -- want to use tangents here, not the original binders
+      let regionMap = newEnv (map ((:>()) . effectRegion) effs) hVals
+      -- TODO: Only bind tangents for free variables?
+      let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
+      buildNestedLam PureArrow activeVarBinders \activeVarArgs ->
+        buildLam (Ignore UnitTy) (PlainArrow $ EffectRow (S.fromList effs') Nothing) \_ ->
+          runReaderT tanFun $ TangentEnv
+                (newEnv (envNames activeVars) activeVarArgs) hVarNames
   where
-    -- Like buildLam, but doesn't try to deshadow the binder.
-    makeLambda v f = do
-      block <- buildScoped $ do
-        builderExtend $ asFst $ v @> (varType v, LamBound (void PureArrow))
-        f v
-      return $ Lam $ makeAbs (Bind v) (PureArrow, block)
-
-    makeLambdas [] f = f []
-    makeLambdas (v:vs) f = makeLambda v \x -> makeLambdas vs \xs -> f (x:xs)
-
     -- This doesn't work if we have references inside pairs, tables etc.
     -- TODO: something more general and cleaner.
     tangentRefRegion :: Env Atom -> Type -> Type
@@ -463,7 +447,7 @@ applyLinToTangents f = do
   TangentEnv{..} <- ask
   let hs' = map (Var . (:>TyKind)) activeRefs
   let tangents = fmap snd $ envPairs $ tangentVals
-  let args = (toList rematVals) ++ hs' ++ tangents ++ [UnitVal]
+  let args = hs' ++ tangents ++ [UnitVal]
   naryApp f args
 
 bindLin :: LinA a -> (a -> Builder b) -> LinA b
@@ -487,19 +471,11 @@ isActive v = asks ((v `isin`) . activeVars)
 
 extendWrt :: [Var] -> [Effect] -> PrimalM a -> PrimalM a
 extendWrt active effs m = local update m
-  where update (DerivWrt active' effs' remats) = DerivWrt (active' <> foldMap varAsEnv active) (effs' <> effs) remats
-
-willRemat :: Var -> PrimalM a -> PrimalM a
-willRemat v = local update
-  where update wrt = wrt { rematVars = rematVars wrt <> varAsEnv v }
+  where update (DerivWrt active' effs') = DerivWrt (active' <> foldMap varAsEnv active) (effs' <> effs)
 
 extendTangentEnv :: SubstEnv -> [Name] -> TangentM a -> TangentM a
 extendTangentEnv tv effs m = local update m
-  where update (TangentEnv tv' effs' remats) = TangentEnv (tv' <> tv) (effs' <> effs) remats
-
-provideRemat :: Var -> Atom -> TangentM a -> TangentM a
-provideRemat v a = local update
-  where update env = env { rematVals = rematVals env <> (v @> a) }
+  where update (TangentEnv tv' effs') = TangentEnv (tv' <> tv) (effs' <> effs)
 
 (<$$>) :: Functor f => f a -> (a -> b) -> f b
 (<$$>) = flip (<$>)

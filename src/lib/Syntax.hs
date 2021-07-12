@@ -350,7 +350,7 @@ data PrimEffect e = MAsk | MExtend e | MGet | MPut e
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
            | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
-           | BAnd | BOr | BShL | BShR | IRem
+           | BAnd | BOr | BShL | BShR | IRem | BXor
              deriving (Show, Eq, Generic)
 
 data UnOp = Exp | Exp2
@@ -524,13 +524,16 @@ newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 data LitVal = Int64Lit   Int64
             | Int32Lit   Int32
             | Word8Lit   Word8
+            | Word32Lit  Word32
+            | Word64Lit  Word64
             | Float64Lit Double
             | Float32Lit Float
             | PtrLit PtrType (Ptr ())
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Ord, Generic)
 
-data ScalarBaseType = Int64Type | Int32Type | Word8Type
+data ScalarBaseType = Int64Type | Int32Type 
+                    | Word8Type | Word32Type | Word64Type
                     | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
 data BaseType = Scalar  ScalarBaseType
@@ -547,6 +550,8 @@ sizeOf t = case t of
   Scalar Int64Type   -> 8
   Scalar Int32Type   -> 4
   Scalar Word8Type   -> 1
+  Scalar Word32Type  -> 4
+  Scalar Word64Type  -> 8
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
   PtrType _          -> ptrSize
@@ -1230,6 +1235,8 @@ applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
   (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
   (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
+  (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
+  (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
   _ -> error "Expected integer atoms"
 
 applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom -> Atom -> Atom
@@ -1279,6 +1286,8 @@ getIntLit l = case l of
   Int64Lit i -> fromIntegral i
   Int32Lit i -> fromIntegral i
   Word8Lit  i -> fromIntegral i
+  Word32Lit  i -> fromIntegral i
+  Word64Lit  i -> fromIntegral i
   _ -> error $ "Expected an integer literal"
 
 getFloatLit :: LitVal -> Double
@@ -1481,7 +1490,7 @@ builtinNames = M.fromList
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
   , ("irem", binOp IRem)
   , ("fpow", binOp FPow)
-  , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot)
+  , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot), ("xor", binOp BXor)
   , ("shl" , binOp BShL), ("shr" , binOp BShR)
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
@@ -1522,6 +1531,8 @@ builtinNames = M.fromList
   , ("Int64"     , TCExpr $ BaseType $ Scalar Int64Type)
   , ("Int32"     , TCExpr $ BaseType $ Scalar Int32Type)
   , ("Word8"     , TCExpr $ BaseType $ Scalar Word8Type)
+  , ("Word32"    , TCExpr $ BaseType $ Scalar Word32Type)
+  , ("Word64"    , TCExpr $ BaseType $ Scalar Word64Type)
   , ("Int32Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Int32Type)
   , ("Word8Ptr"  , TCExpr $ BaseType $ ptrTy $ Scalar Word8Type)
   , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
