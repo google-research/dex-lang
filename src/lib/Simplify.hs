@@ -221,7 +221,7 @@ pattern RNil :: RTree a
 pattern RNil = RNode []
 
 -- Factorization of the atom into data and non-data components
--- TODO: Make the non-linear reconstruction take the scope instead of being monadic
+-- TODO: Make the non-data reconstruction take the scope instead of being monadic
 type DataA = Atom
 type NonDataA = Atom
 type CtxA = Atom
@@ -239,7 +239,12 @@ separateDataComponent localVars v = do
   (dat, (ctx, recon), atomf) <- rec v
   let (ctx', ctxRec) = dedup dat ctx
   let recon' = \dat'' ctx'' -> recon $ ctxRec dat'' (toList ctx'')
-  return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
+  let typeVars = foldMap (freeVars . getType) dat <> foldMap (freeVars . getType) ctx'
+  -- Make sure that we're not leaking any local variables in the type
+  case null $ typeVars `envIntersect` localVars of
+    True  -> return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
+    False -> error $ "Failed to simplify the program: packing of " ++
+                     "dependent local variables not implemented"
   where
     rec atom = do
       let atomTy = getType atom
