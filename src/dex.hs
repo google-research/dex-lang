@@ -191,16 +191,23 @@ optionList opts = eitherReader \s -> case lookup s opts of
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
   <$> option
-         (optionList [ ("llvm", LLVM)
-                     , ("llvm-cuda", LLVMCUDA)
-                     , ("llvm-mc", LLVMMC)
-                     , ("interpreter", Interpreter)])
+         (optionList backends)
          (long "backend" <> value LLVM <>
-          helpOption "Backend" "llvm (default) | llvm-cuda | llvm-mc | interpreter")
+          helpOption "Backend" (intercalate " | " $ fst <$> backends))
   <*> optional (strOption $ long "lib-path" <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
+  where
+    backends = [ ("llvm", LLVM)
+               , ("llvm-mc", LLVMMC)
+#ifdef DEX_CUDA
+               , ("llvm-cuda", LLVMCUDA)
+#endif
+#if DEX_LLVM_VERSION == HEAD
+               , ("mlir", MLIR)
+#endif
+               , ("interpreter", Interpreter)]
 
 main :: IO ()
 main = do
