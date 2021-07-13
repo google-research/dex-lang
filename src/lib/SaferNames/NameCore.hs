@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module SaferNames.NameCore (
   S (..), RawName, Name (..), withFresh, injectNames, projectName,
@@ -12,10 +13,12 @@ module SaferNames.NameCore (
   NameSet (..), singletonNameSet, emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
   NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
   lookupNameMap, extendNameMap,  concatNameMaps,
-  Distinct, E, B, InjectableE (..), InjectableB (..),
+  Distinct, E, B, InjectableE (..), InjectableB (..), Injection (..),
+  liftMutableScope, runMutableScopeT, MutableScopeMonadT,
   unsafeCoerceE, unsafeCoerceB) where
 
 import Prelude hiding (id, (.))
+import Control.Monad.State
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import Data.Type.Equality
 import Type.Reflection
@@ -135,6 +138,7 @@ projectName (UnsafeMakeNameSet scope) (UnsafeMakeName rawName)
 class Distinct (n::S)
 instance Distinct VoidS
 instance Distinct UnsafeMakeDistinctS
+instance Distinct (n:=>:UnsafeMakeDistinctS)
 
 -- === injections ===
 
@@ -150,7 +154,10 @@ instance Distinct UnsafeMakeDistinctS
 -- (2) it extends the old scope. These are the `Distinct l` and
 -- `(InjectableB b, b)` conditions below.
 
-injectNames :: InjectableE e => Distinct l => NameSet (n:=>:l) -> e n -> e l
+data Injection (n::S) (l::S) where
+  Injection :: Distinct l => NameSet (n:=>:l) -> Injection n l
+
+injectNames :: InjectableE e => Injection n l -> e n -> e l
 injectNames _ x = unsafeCoerceE x
 
 -- `injectNames` is the only function we actualy use in practice. The rest of
@@ -191,6 +198,65 @@ instance InjectableB (NameBinder s) where
 
 instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (NameMap v i) where
   injectionProofE = undefined
+
+-- === monad for updating scope parameters in-place ===
+
+-- This is the unsafe implementation underlying the Builder monad. We want to be
+-- able to emit decls without having to update the scope paramter. For example,
+-- we want a function like this:
+--
+--     emitMul :: Builder m => Atom n -> Atom n -> m n (Atom n)
+--
+-- Instead of this:
+--
+--     emitMulAwkwardly :: ScopeReader m => Atom n -> Atom n
+--                      -> (forall l. Distinct l => Atom l -> m a)
+--                      -> m a
+--
+-- The idea is to think of functions like `emitMul` as updating their scope
+-- parameter "in-place". After emitting the decl, the scope parameter `n`
+-- contains the newly created name, and all expressions like `Expr n` get
+-- implicitly injected into this new scope. But to ensure this is valid,
+-- we need to make sure that anything with the the `n` scope parameter is
+-- actually injectable. We can't allow access to a `NameMap v n o`, for example
+-- (Though we can have a `NameMap v i n`, since `n` is used positively.)
+-- The monad transformer in this section, `MutableScopeMonadT`, enforces that
+-- invariant. Scope-changing computations are lifted into the monad using
+-- higher-rank functions to ensure that values with the scope parameter `n`
+-- can't leak in either direction except through a channel guarded with a
+-- `InjectableE` constraint.
+
+
+newtype MutableScopeMonadT (stored :: S -> *) (m :: * -> *) (n :: S) (a :: *) =
+  UnsafeMutableScopeMonad (StateT (S.Set RawName, stored UnsafeMakeS) m a)
+  deriving (Functor, Applicative, Monad)
+
+data FreshStoreVal (stored :: S -> *) (e :: E) (n :: S) where
+  FreshStoreVal :: Injection n l -> stored l -> e l -> FreshStoreVal stored e n
+
+liftMutableScope
+  :: (InjectableE e, InjectableE e', Monad m)
+  => e n
+  -> (forall n'. stored n' -> e n' -> m (FreshStoreVal stored e' n'))
+  -> MutableScopeMonadT stored m n (e' n)
+liftMutableScope e cont =
+  UnsafeMutableScopeMonad $ StateT \(names, s) ->
+    cont (unsafeCoerceE s) (unsafeCoerceE e) >>= \case
+      FreshStoreVal (Injection (UnsafeMakeNameSet names')) s' e' ->
+        return (unsafeCoerceE e', (names <> names', unsafeCoerceE s'))
+
+runMutableScopeT
+  :: (InjectableE e, InjectableE e', Monad m)
+  => stored n
+  -> e n
+  -> (forall n'. e n' -> MutableScopeMonadT stored m n' (e' n'))
+  -> m (FreshStoreVal stored e' n)
+runMutableScopeT s e cont =
+  case cont (unsafeCoerceE e) of
+    UnsafeMutableScopeMonad (StateT f) -> do
+      (e', (names, s')) <- f (mempty, unsafeCoerceE s)
+      let inj = Injection (UnsafeMakeNameSet names)
+      return $ FreshStoreVal inj (unsafeCoerceE @UnsafeMakeDistinctS s') (unsafeCoerceE e')
 
 -- === environments ===
 
@@ -278,8 +344,8 @@ instance Show (Name s n) where
 -- Sometimes we need to break the glass. But at least these are slightly safer
 -- than raw `unsafeCoerce` because at the checks the kind
 
-unsafeCoerceE :: forall (e::E) i o . e i -> e o
+unsafeCoerceE :: forall o (e::E) i . e i -> e o
 unsafeCoerceE = unsafeCoerce
 
-unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
+unsafeCoerceB :: forall n' l' (b::B) n l . b n l -> b n' l'
 unsafeCoerceB = unsafeCoerce

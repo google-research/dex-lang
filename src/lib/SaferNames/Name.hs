@@ -96,7 +96,7 @@ lookupScope (Scope m) v = fromIdE $ lookupNameMap m v
 
 appendScope :: Scope n -> ScopeFrag n l -> Scope l
 appendScope (Scope m1) (ScopeFrag m2) =
-  Scope $ extendNameMap (injectNames (nameMapNames m2) m1) m2
+  Scope $ extendNameMap (injectNames (Injection $ nameMapNames m2) m1) m2
 
 -- === common scoping patterns ===
 
@@ -132,7 +132,7 @@ toNameSet :: BindsNames b => b n l -> NameSet (n:=>:l)
 toNameSet b = fromExtVal $ toExtVal b
 
 inject :: BindsNames b => InjectableE e => Distinct l => b n l -> e n -> e l
-inject ext x = injectNames (toNameSet ext) x
+inject ext x = injectNames (Injection $ toNameSet ext) x
 
 -- like inject, but uses the SopeReader monad for its `Distinct` proof
 injectM :: ScopeReader m => BindsNames b => InjectableE e => b n l -> e n -> m l (e l)
@@ -356,7 +356,7 @@ instance Monad m => ScopeReader (SubstReaderT m v i) where
   askScope = SubstReaderT $ asks fst
   extendScope scopeFrag@(ScopeFrag m) (SubstReaderT (ReaderT f)) =
     SubstReaderT $ ReaderT \(scope, subst) ->
-    f (appendScope scope scopeFrag, injectNames (nameMapNames m) subst)
+    f (appendScope scope scopeFrag, injectNames (Injection (nameMapNames m)) subst)
 
 instance Monad m => SubstReader v (SubstReaderT m v) where
   askSubst = SubstReaderT $ asks snd
