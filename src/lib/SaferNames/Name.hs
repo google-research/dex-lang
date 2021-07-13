@@ -134,21 +134,21 @@ toNameSet b = fromExtVal $ toExtVal b
 inject :: BindsNames b => InjectableE e => Distinct l => b n l -> e n -> e l
 inject ext x = injectNames (toNameSet ext) x
 
--- like inject, but uses the SopeReader monad for its `Distinct` proof
+-- like inject, but uses the ScopeReader monad for its `Distinct` proof
 injectM :: ScopeReader m => BindsNames b => InjectableE e => b n l -> e n -> m l (e l)
 injectM b e = withDistinct $ return $ inject b e
 
+-- This may become expensive. It traverses the body of the Abs to check for
+-- leaked variables.
 fromConstAbs :: ScopeReader m => MonadErr1 m => BindsNames b => HasNamesE e
              => Abs b e n -> m n (e n)
 fromConstAbs (Abs b e) = do
   let t = newNameTraversal \name ->
              case projectName (toNameSet b) name of
-               Left name' -> Just name'
-               Right _    -> Nothing
+               Left name' -> return name'
+               Right _    -> throw EscapedNameErr (pprint name)
   scope <- askScope
-  case traverseNamesE scope t e of
-    Nothing -> throw EscapedNameErr ""
-    Just e' -> return e'
+  liftEither $ traverseNamesE scope t e
 
 -- TODO: seems silly to have to have the static annotation here. I think we need
 -- to have a finer-grained scope reader class hierarchy so we're not forced to
@@ -162,10 +162,16 @@ toConstAbs ann body =
 
 -- === type classes for traversing names ===
 
+-- NameTraversal is logically equivalent to this:
+--    type NameTraversal m i o = forall s. Name s i -> m (Name s o)
+-- But, as an optimization, we represent it as a composition of an ordinary
+-- monadic function and a renaming env. This is just so that we can efficiently
+-- extend it. The composition hides the intermediate name space `hidded`,
+-- just as `(.) :: (b -> c) -> (a -> b) -> (a -> c)` hides `b`.
 data NameTraversal m i o where
-  NameTraversal :: (forall s. Name s i -> m (Name s o)) -- monadic function for free vars
-                -> EnvFrag Name i i' o                  -- renaming local vars
-                -> NameTraversal m i' o
+  NameTraversal :: (forall s. Name s hidden -> m (Name s o))
+                -> EnvFrag Name hidden i o
+                -> NameTraversal m i o
 
 class InjectableE e => HasNamesE (e::E) where
   traverseNamesE :: Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
@@ -328,6 +334,8 @@ withDistinct cont = askScope >>= \case Scope _ -> cont
 
 -- === subst monad ===
 
+-- `SubstReader m => m v i o a` gives you access to a substitution mapping
+-- input-names, `Name s i`, to result values, `v s o`.
 class ScopeReader2 m => SubstReader (v::E->E) (m::MonadKind2) | m -> v where
   askSubst :: m i o (Env v i o)
   withSubst :: Env v i' o -> m i' o a -> m i o a

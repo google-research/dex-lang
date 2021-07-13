@@ -131,6 +131,10 @@ data DataDef n where
 data DataConDef n = DataConDef RawName (EmptyAbs (Nest Binder) n)
                     deriving Show
 
+-- The Type is the type of the result expression (and thus the type of the
+-- block). It's given by querying the result expression's type, and checking
+-- that it doesn't have any free names bound by the decls in the block. We store
+-- it separately as an optimization, to avoid having to traverse the block.
 data Block n where
   Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
 
@@ -169,14 +173,18 @@ data SourceNameMap n = SourceNameMap
   { fromSourceNameMap :: M.Map SourceName (Name UnitE n)}
 
 data Module n where
-  Module :: IRVariant
-         -> Nest Decl n l
-         -> ScopeFrag l l'
-         -> SourceNameMap l'
-         -> Module n
+  Module
+    :: IRVariant
+    -> Nest Decl n l    -- Unevaluated decls representing runtime work to be done
+    -> ScopeFrag l l'   -- Evaluated bindings
+    -> SourceNameMap l' -- Mapping of module's source names to internal names
+    -> Module n
 
 data EvaluatedModule (n::S) where
-  EvaluatedModule :: ScopeFrag n l -> SourceNameMap l -> EvaluatedModule n
+  EvaluatedModule
+    :: ScopeFrag n l     -- Evaluated bindings
+    -> SourceNameMap l   -- Mapping of module's source names to internal names
+    -> EvaluatedModule n
 
 -- === effects ===
 

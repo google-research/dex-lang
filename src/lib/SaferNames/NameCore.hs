@@ -98,15 +98,20 @@ concatNameSets (UnsafeMakeNameSet s1) (UnsafeMakeNameSet s2) =
 --    data RawName = RawName Tag Int deriving (Show, Eq, Ord)
 type RawName = D.Name
 
-data Name (s::E)  -- static information associated with name
-          (n::S)  -- scope parameter
+data Name
+  (s::E)  -- Static information associated with the name. An example is
+          -- BinderInfo in Core, which includes type information, the flavor of
+          -- arrow if it's a lambda-bound variable, and the actual rhs of the
+          -- let binding if it's let-bound. These things may contain free
+          -- variables themselves, so `s` takes a scope parameter.
+  (n::S)  -- Scope parameter
   where
     UnsafeMakeName :: Typeable s => RawName -> Name s n
 
 data NameBinder (s::E)  -- static information for the name this binds (note
                         -- that `NameBinder` doesn't actually carry this data)
-                (n::S)  -- scope the binder lives in
-                (l::S)  -- scope within the binder's scope
+                (n::S)  -- scope above the binder
+                (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name s l }
 
 withFresh :: Typeable s => Distinct n => NameSet n
@@ -148,7 +153,7 @@ instance Distinct UnsafeMakeDistinctS
 -- the scope `[z, y]`. To prove that we can do the injection as an coercion,
 -- it's sufficient to know (1) that the new scope contains distinct names, and
 -- (2) it extends the old scope. These are the `Distinct l` and
--- `(InjectableB b, b)` conditions below.
+-- `NameSet (n:=>:l)` conditions below.
 
 injectNames :: InjectableE e => Distinct l => NameSet (n:=>:l) -> e n -> e l
 injectNames _ x = unsafeCoerceE x
@@ -162,6 +167,8 @@ injectNames _ x = unsafeCoerceE x
 -- called at run time, but it should still be implemented to prove that it's
 -- possible. This isn't watertight. For example, you could write
 -- `injectionProof = injectNames` and it'd still type check!
+-- In this module we only implement the base case instances (unsafely).
+-- See Name and Syntax for more interesting ones.
 class InjectableE (e::E) where
   injectionProofE :: ObservablyFresh n l -> e n -> e l
 
@@ -174,6 +181,8 @@ class InjectableB (b::B) where
 -- doesn't shadow any of the names exposed by `n`.
 data ObservablyFresh (n::S) (l::S) = UnsafeMakeObservablyFresh
 
+-- This is the unsafe base case. The instances defined in Syntax are the ones we
+-- actually implement safely.
 instance InjectableE (Name s) where
   injectionProofE _ name = unsafeCoerceE name
 
@@ -201,7 +210,7 @@ instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (NameMap 
 -- long chains of case analyses as we extend environments one name at a time.
 
 data NameMap
-  (v::E -> E)  -- env payload, as a function of the static data type
+  (v::E -> E)  -- env payload, as a function of the static data type (Note [NameMap payload])
   (i::S)       -- scope parameter for names we can look up in this env
   (o::S)       -- scope parameter for the values stored in the env
   = UnsafeMakeNameMap
@@ -261,7 +270,7 @@ instance Pretty (Name s n) where
   pretty (UnsafeMakeName name) = pretty name
 
 instance Pretty (NameBinder s n l) where
-  pretty _ = "TODO"
+  pretty (UnsafeMakeBinder (UnsafeMakeName name)) = pretty name
 
 instance Eq (Name s n) where
   UnsafeMakeName rawName == UnsafeMakeName rawName' = rawName == rawName'
@@ -283,3 +292,29 @@ unsafeCoerceE = unsafeCoerce
 
 unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
 unsafeCoerceB = unsafeCoerce
+
+
+-- === notes ===
+
+{-
+
+Note [NameMap payload]
+
+The "payload" parameter of a `NameMap` has kind `E->E`, making the payload a
+function of the queried name's static data parameter. Type-level functions are
+limited, and we really only care about only two instantiations of v:: E -> E.
+
+First, there's the identity map, `IdE :: E -> E``, which is used by Scope in
+Name.hs. It just says that if you have a Name s n you can query the scope to get
+a (newtype-wrapped) `s n`. For example, in the core IR we have
+`Name TypedBinderInfo n` for ordinary let/lambda-bound names, and
+`Name DataDef n` for data definitions. You can query a `Scope n` with a
+`Name TypedBinderInfo n` to get a `TypedBinderInfo n` or with a
+`Name DataDef n` to get a `DataDef n`.
+
+Second, there's SubstVal which plays a GADT trick to check whether a name's
+static data parameter matches a particular type, say, `TypedBinderInfo`, in
+which case you get, say, an Atom, or else it doesn't, in which case you merely
+get a new name.
+
+-}
