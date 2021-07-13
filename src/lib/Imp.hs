@@ -996,7 +996,8 @@ chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
           LLVM      -> CPU
           LLVMMC    -> CPU
           LLVMCUDA  -> GPU
-          Interpreter -> error "Shouldn't be compiling with interpreter backend"
+          MLIR      -> error "Shouldn't be compiling to Imp with MLIR backend"
+          Interpreter -> error "Shouldn't be compiling to Imp with interpreter backend"
 
 isSmall :: Block -> Bool
 isSmall numel = case numel of

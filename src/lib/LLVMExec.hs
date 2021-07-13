@@ -11,7 +11,8 @@
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
                  standardCompilationPipeline,
-                 compileCUDAKernel, loadLitVal) where
+                 compileCUDAKernel,
+                 storeLitVals, loadLitVals, allocaCells, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -73,8 +74,8 @@ compileAndEval :: Logger [Output] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndEval logger ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaBytes (length args * cellSize) \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
         evalTime <- compileOneOff logger ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
@@ -85,8 +86,8 @@ compileAndBench :: Bool -> Logger [Output] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaBytes (length args * cellSize) \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
         compileOneOff logger ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
@@ -310,6 +311,9 @@ cellSize = 8
 
 ptrArray :: Ptr () -> [Ptr ()]
 ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
+
+allocaCells :: Int -> (Ptr () -> IO a) -> IO a
+allocaCells n = allocaBytes (n * cellSize)
 
 
 -- === dex runtime ===

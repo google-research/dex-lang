@@ -47,7 +47,7 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
-ifeq (1,$(LLVM_HEAD))
+ifeq (1,$(DEX_LLVM_HEAD))
 ifeq ($(PLATFORM),Darwin)
 	$(error LLVM head builds not supported on macOS!)
 endif
