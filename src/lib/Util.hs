@@ -13,7 +13,8 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
              measureSeconds,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
+             Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
@@ -241,3 +242,22 @@ measureSeconds m = do
   ans <- m
   t2 <- liftIO $ getCPUTime
   return (ans, (fromIntegral $ t2 - t1) / 1e12)
+
+-- === zippable class ===
+
+class Zippable f where
+  zipWithZ :: MonadFail m => (a -> b -> m c) -> f a -> f b -> m (f c)
+
+zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
+zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
+
+zipErr :: MonadFail m => m a
+zipErr = fail "zip error"
+
+forMZipped :: MonadFail m => [a] -> [b] -> (a -> b -> m c) -> m [c]
+forMZipped xs ys f
+  | length xs == length ys = zipWithM f xs ys
+  | otherwise              = zipErr
+
+forMZipped_ :: MonadFail m => [a] -> [b] -> (a -> b -> m c) -> m ()
+forMZipped_ xs ys f = void $ forMZipped xs ys f

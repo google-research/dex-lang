@@ -11,9 +11,7 @@
 module Err (Err (..), ErrType (..), Except, SrcPos, SrcCtx,
             throw, throwIf, modifyErr, MonadErr,
             addContext, addSrcContext, catchIOExcept, liftEitherIO,
-            assertEq, ignoreExcept, pprint, docAsStr,
-            Zippable (..), zipWithZ_, zipErr,
-            forMZipped, forMZipped_) where
+            assertEq, ignoreExcept, pprint, docAsStr) where
 
 import Control.Exception hiding (throw)
 import Control.Monad
@@ -103,29 +101,6 @@ docAsStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
 layout :: LayoutOptions
 layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
   where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
-
--- === zippable class ===
-
--- These are in this module because they need a way to throw errors. Is there a
--- monad type class for the maybe-like things, with `throw :: m a` we could
--- use instead?
-
-class Zippable f where
-  zipWithZ :: MonadErr m => (a -> b -> m c) -> f a -> f b -> m (f c)
-
-zipWithZ_ :: Zippable f => MonadErr m => (a -> b -> m c) -> f a -> f b -> m ()
-zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
-
-zipErr :: MonadErr m => m a
-zipErr = throw ZipErr ""
-
-forMZipped :: MonadErr m => [a] -> [b] -> (a -> b -> m c) -> m [c]
-forMZipped xs ys f
-  | length xs == length ys = zipWithM f xs ys
-  | otherwise              = throw ZipErr ""
-
-forMZipped_ :: MonadErr m => [a] -> [b] -> (a -> b -> m c) -> m ()
-forMZipped_ xs ys f = void $ forMZipped xs ys f
 
 -- === instances ===
 

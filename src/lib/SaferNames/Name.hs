@@ -39,6 +39,7 @@ import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
 
 import SaferNames.NameCore
+import Util (zipErr)
 import Err
 
 -- === environments and scopes ===
@@ -423,7 +424,7 @@ class AlphaEqB (b::B) where
 
 -- TODO: consider generalizing this to something that can also handle e.g.
 -- unification and type checking with some light reduction
-class (forall i1 i2 o. MonadErr (m i1 i2 o))
+class (forall i1 i2 o. MonadErr (m i1 i2 o), forall i1 i2 o. MonadFail (m i1 i2 o))
       => MonadZipSubst (m :: S -> S -> S -> * -> *) where
   askZipSubstEnv :: m i1 i2 o (ZipSubstEnv i1 i2 o)
   withZipSubstEnv :: ZipSubstEnv i1' i2' o'
@@ -432,7 +433,7 @@ class (forall i1 i2 o. MonadErr (m i1 i2 o))
 
 newtype ZipSubstM i1 i2 o a =
   ZipSubstM { runZipSubstM :: (ReaderT (ZipSubstEnv i1 i2 o) Except a) }
-  deriving (Functor, Applicative, Monad)
+  deriving (Functor, Applicative, Monad, MonadFail)
 
 instance MonadError Err (ZipSubstM i1 i2 o) where
   throwError e = ZipSubstM $ throwError e

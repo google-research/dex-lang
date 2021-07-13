@@ -61,6 +61,7 @@ import Syntax
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth)
 
 import SaferNames.Name
+import Util (zipErr)
 import Err
 import LabeledItems
 

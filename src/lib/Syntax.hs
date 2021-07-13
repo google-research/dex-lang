@@ -84,7 +84,7 @@ import GHC.Generics
 import Err
 import LabeledItems
 import Env
-import Util (IsBool (..), (...))
+import Util (IsBool (..), (...), Zippable (..), zipErr)
 
 -- === core IR ===
 
