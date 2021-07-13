@@ -12,7 +12,7 @@ module SaferNames.NameCore (
   NameSet (..), singletonNameSet, emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
   NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
   lookupNameMap, extendNameMap,  concatNameMaps,
-  Distinct, E, B, InjectableE (..), InjectableB (..),
+  Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, ObservablyFresh,
   unsafeCoerceE, unsafeCoerceB) where
 
 import Prelude hiding (id, (.))
@@ -22,6 +22,7 @@ import Type.Reflection
 import Unsafe.Coerce
 import qualified Data.Map  as M
 import qualified Data.Set  as S
+import GHC.Exts (Constraint)
 
 import qualified Env as D
 
@@ -106,7 +107,7 @@ data Name
           -- variables themselves, so `s` takes a scope parameter.
   (n::S)  -- Scope parameter
   where
-    UnsafeMakeName :: Typeable s => RawName -> Name s n
+    UnsafeMakeName :: (InjectableE s, Typeable s) => RawName -> Name s n
 
 data NameBinder (s::E)  -- static information for the name this binds (note
                         -- that `NameBinder` doesn't actually carry this data)
@@ -114,7 +115,7 @@ data NameBinder (s::E)  -- static information for the name this binds (note
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name s l }
 
-withFresh :: Typeable s => Distinct n => NameSet n
+withFresh :: InjectableE s => Typeable s => Distinct n => NameSet n
           -> (forall l. Distinct l => NameBinder s n l -> a) -> a
 withFresh (UnsafeMakeNameSet scope) cont =
   cont @UnsafeMakeDistinctS $ UnsafeMakeBinder freshName
@@ -177,6 +178,8 @@ class InjectableB (b::B) where
                   -> (forall l'. ObservablyFresh l l' -> b n' l' -> a)
                   -> a
 
+type InjectableV v = (forall s. InjectableE s => InjectableE (v s)) :: Constraint
+
 -- an `ObservablyFresh n l` means that scope `l` is a superset of scope `n` that
 -- doesn't shadow any of the names exposed by `n`.
 data ObservablyFresh (n::S) (l::S) = UnsafeMakeObservablyFresh
@@ -198,8 +201,10 @@ instance InjectableE (Name s) where
 instance InjectableB (NameBinder s) where
   injectionProofB  _ b cont = cont UnsafeMakeObservablyFresh $ unsafeCoerceB b
 
-instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (NameMap v i) where
-  injectionProofE = undefined
+
+instance InjectableV v => InjectableE (NameMap v i) where
+  injectionProofE fresh m =
+    fmapNameMap (\(UnsafeMakeName _) v -> injectionProofE fresh v) m
 
 -- === environments ===
 
@@ -241,13 +246,18 @@ extendNameMap :: NameMap v i o -> NameMap v (i:=>:i') o -> NameMap v i' o
 extendNameMap (UnsafeMakeNameMap m1 s1) (UnsafeMakeNameMap m2 s2) =
   UnsafeMakeNameMap (m2 <> m1) (s2 <> s1)
 
+fmapNameMap :: (forall s. Name s i -> v s o -> v' s o') -> NameMap v i o -> NameMap v' i o'
+fmapNameMap f (UnsafeMakeNameMap m s) = UnsafeMakeNameMap m' s
+  where m' = flip M.mapWithKey m \k (EnvVal rep val) ->
+               withTypeable rep $ toEnvVal $ f (UnsafeMakeName k) val
+
 nameMapNames :: NameMap v i o -> NameSet i
 nameMapNames (UnsafeMakeNameMap _ s) = UnsafeMakeNameSet s
 
 -- === handling the dynamic/heterogeneous stuff for Env ===
 
 data EnvVal (v::E->E) (n::S) where
-  EnvVal :: TypeRep s -> v s n -> EnvVal v n
+  EnvVal :: InjectableE s => TypeRep s -> v s n -> EnvVal v n
 
 fromEnvVal :: forall s i v o. Typeable s => Name s i -> EnvVal v o -> v s o
 fromEnvVal name (EnvVal rep val) =
@@ -258,7 +268,7 @@ fromEnvVal name (EnvVal rep val) =
 repFromName :: Typeable s => Name s i -> TypeRep s
 repFromName _ = typeRep
 
-toEnvVal :: Typeable s => v s n -> EnvVal v n
+toEnvVal :: InjectableE s => Typeable s => v s n -> EnvVal v n
 toEnvVal v = EnvVal typeRep v
 
 -- === instances ===
@@ -292,7 +302,6 @@ unsafeCoerceE = unsafeCoerce
 
 unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
 unsafeCoerceB = unsafeCoerce
-
 
 -- === notes ===
 

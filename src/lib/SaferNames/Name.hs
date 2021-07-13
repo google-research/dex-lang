@@ -10,7 +10,7 @@
 
 module SaferNames.Name (
   Name (..), RawName, S (..), Env (..), (!), (<>>), (<.>), NameBinder (..),
-  Scope, ScopeFrag, NameTraversal (..), lookupNameTraversal, newEnv,
+  Scope, ScopeFrag, newEnv, NameTraversalT,
   E, B, HasNamesE (..), HasNamesB (..), BindsNames (..),
   BindsOneName (..), BindsNameList (..),
   Abs (..), Nest (..), NestPair (..),
@@ -24,7 +24,7 @@ module SaferNames.Name (
   idSubst, applySubst, applyAbs, applyNaryAbs,
   ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
-  InjectableE (..), InjectableB (..), dropSubst, lookupSubstM, Ext (..),
+  InjectableE (..), InjectableB (..), dropSubst, lookupSubstM, Ext (..), ObservablyFresh,
   lookupScope, lookupScopeM, withFreshM, extendSubst, inject, injectM, withDistinct,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), SubstE (..), SubstB (..)) where
 
@@ -144,17 +144,20 @@ injectM b e = withDistinct $ return $ inject b e
 fromConstAbs :: ScopeReader m => MonadErr1 m => BindsNames b => HasNamesE e
              => Abs b e n -> m n (e n)
 fromConstAbs (Abs b e) = do
-  let t = newNameTraversal \name ->
-             case projectName (toNameSet b) name of
-               Left name' -> return name'
-               Right _    -> throw EscapedNameErr (pprint name)
-  scope <- askScope
-  liftEither $ traverseNamesE scope t e
+  Scope scope <- askScope
+  liftEither $ runNameTraversal (nameMapNames scope) (tryProjectName (toNameSet b)) $
+    traverseNamesE e
+
+tryProjectName :: MonadErr m => NameSet (n:=>:l) -> Name s l -> m (Name s n)
+tryProjectName names name =
+  case projectName names name of
+    Left name' -> return name'
+    Right _    -> throw EscapedNameErr (pprint name)
 
 -- TODO: seems silly to have to have the static annotation here. I think we need
 -- to have a finer-grained scope reader class hierarchy so we're not forced to
 -- supply static information when it's not needed.
-toConstAbs :: InjectableE s => Typeable s => ScopeReader m => HasNamesE e
+toConstAbs :: InjectableE s => Typeable s => InjectableE e => ScopeReader m
            => s n -> e n -> m n (Abs (NameBinder s) e n)
 toConstAbs ann body =
   withFreshM ann \b -> do
@@ -163,8 +166,8 @@ toConstAbs ann body =
 
 -- === type classes for traversing names ===
 
--- NameTraversal is logically equivalent to this:
---    type NameTraversal m i o = forall s. Name s i -> m (Name s o)
+-- NameTraversalEnv is logically equivalent to this:
+--    type NameTraversalEnv m i o = forall s. Name s i -> m (Name s o)
 -- But, as an optimization, we represent it as a composition of an ordinary
 -- monadic function and a renaming env. This is just so that we can efficiently
 -- extend it. The composition hides the intermediate name space `hidded`,
@@ -174,25 +177,49 @@ data NameTraversal m i o where
                 -> EnvFrag Name hidden i o
                 -> NameTraversal m i o
 
-class InjectableE e => HasNamesE (e::E) where
-  traverseNamesE :: Monad m => Scope o -> NameTraversal m i o -> e i -> m (e o)
+-- scope without a payload
+data PlainScope n where
+  PlainScope :: Distinct n => NameSet n -> PlainScope n
+
+newtype NameTraversalT m i o a =
+  NameTraversalT { runNameTraversalT' :: ReaderT (PlainScope o, NameTraversal m i o) m a }
+  deriving (Functor, Applicative, Monad)
+
+class HasNamesE (e::E) where
+  traverseNamesE :: Monad m => e i -> NameTraversalT m i o (e o)
 
 class (BindsNames b, InjectableB b) => HasNamesB (b::B) where
-  traverseNamesB :: Scope o
-                 -> NameTraversal m i o
-                 -> b i i'
-                 -> (forall o'. Scope o' -> NameTraversal m i' o' -> b o o' -> m a)
+  traverseNamesB :: Monad m
+                 => b i i'
+                 -> (forall o'. b o o' -> NameTraversalT m i' o' r)
+                 -> NameTraversalT m i o r
+
+runNameTraversal :: (Distinct o, Monad m)
+                 => NameSet o
+                 -> (forall s. Name s i -> m (Name s o))
+                 -> NameTraversalT m i o a
                  -> m a
+runNameTraversal names f m =
+  runReaderT (runNameTraversalT' m) (PlainScope names, NameTraversal f emptyEnvFrag)
 
-lookupNameTraversal :: Typeable s => Monad m
-                    => NameTraversal m i o -> Name s i -> m (Name s o)
-lookupNameTraversal (NameTraversal f env) name =
-  case lookupEnvFrag env name of
-    Left  name' -> f name'
-    Right name' -> return name'
+instance Typeable s => HasNamesE (Name s) where
+  traverseNamesE name = NameTraversalT do
+    NameTraversal f env <- asks snd
+    case lookupEnvFrag env name of
+      Left  name' -> lift $ f name'
+      Right name' -> return name'
 
-newNameTraversal :: (forall s. Name s i -> m (Name s o)) -> NameTraversal m i o
-newNameTraversal f = NameTraversal f emptyEnvFrag
+instance (Typeable s, InjectableE s) => HasNamesB (NameBinder s) where
+  traverseNamesB b cont = NameTraversalT do
+    (PlainScope scope, env) <- ask
+    withFresh scope \b' -> do
+      let env' = case inject b' env of
+                   NameTraversal f frag -> NameTraversal f (frag <.> b@>binderName b')
+      let scope' = PlainScope $ extendNameSet scope (toNameSet b')
+      withReaderT (const (scope', env')) $ runNameTraversalT' $ cont b'
+
+instance InjectableE (NameTraversal m i) where
+  injectionProofE = undefined
 
 -- === type class for substitutions ===
 
@@ -273,7 +300,8 @@ instance BindsOneName b s => BindsNameList (Nest b) s where
 idSubst :: Typeable e => Typeable s => Env (SubstVal s e) n n
 idSubst = newEnv Rename
 
-applySubst :: ScopeReader m => SubstE v e => Env v i o -> e i -> m o (e o)
+applySubst :: ScopeReader m => InjectableV v => SubstE v e
+           => Env v i o -> e i -> m o (e o)
 applySubst env x = do
   scope <- askScope
   return $ runSubstReaderM scope env $ substE x
@@ -284,7 +312,7 @@ applyAbs :: Typeable s => Typeable val
          => Abs b e n -> val n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (idSubst <>> (b@>SubstVal x)) body
 
-applyNaryAbs :: Typeable s => Typeable val
+applyNaryAbs :: Typeable s => InjectableE s => Typeable val
              => ScopeReader m
              => BindsNameList b s
              => SubstE (SubstVal s val) e
@@ -361,18 +389,18 @@ instance MonadError e m => MonadError e (SubstReaderT m v i o) where
 instance MonadFail m => MonadFail (SubstReaderT m v i o) where
   fail s = SubstReaderT $ fail s
 
-instance Monad m => ScopeReader (SubstReaderT m v i) where
+instance (InjectableV v, Monad m) => ScopeReader (SubstReaderT m v i) where
   askScope = SubstReaderT $ asks fst
   extendScope scopeFrag@(ScopeFrag m) (SubstReaderT (ReaderT f)) =
     SubstReaderT $ ReaderT \(scope, subst) ->
     f (appendScope scope scopeFrag, injectNames (nameMapNames m) subst)
 
-instance Monad m => SubstReader v (SubstReaderT m v) where
+instance (InjectableV v, Monad m) => SubstReader v (SubstReaderT m v) where
   askSubst = SubstReaderT $ asks snd
   withSubst subst (SubstReaderT (ReaderT f)) =
     SubstReaderT $ ReaderT \(scope, _) -> f (scope, subst)
 
-extendSubst :: SubstReader v m
+extendSubst :: SubstReader v m => InjectableV v
             => EnvFrag v i i' o -> m i' o a -> m i o a
 extendSubst frag cont = do
   env <- askSubst
@@ -388,13 +416,11 @@ withFreshM :: ScopeReader m => Typeable s => InjectableE s
            -> (forall o'. NameBinder s o o' -> m o' a)
            -> m o a
 withFreshM ann cont = do
-  scope <- askScope
-  case scope of
-    Scope m ->
-      withFresh (nameMapNames m) \b' -> do
-        let ann' = inject b' ann
-        extendScope (ScopeFrag (singletonNameMap b' (IdE ann'))) $
-          cont b'
+  Scope m <- askScope
+  withFresh (nameMapNames m) \b' -> do
+    let ann' = inject b' ann
+    extendScope (ScopeFrag (singletonNameMap b' (IdE ann'))) $
+      cont b'
 
 lookupSubstM :: SubstReader v m => Name s i -> m i o (v s o)
 lookupSubstM name = (!name) <$> askSubst
@@ -486,22 +512,24 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
 
 -- === instances ===
 
-instance InjectableE (Env v i) where
-  injectionProofE = undefined
+instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (Env v i) where
+  injectionProofE fresh (Env f m) = undefined
+    -- Env (injectionProofE fresh . f) (injectionProofE fresh m)
 
 instance InjectableB ScopeFrag where
   injectionProofB _ _ _ = undefined
 
-instance Typeable s => HasNamesE (Name s) where
-  traverseNamesE _ t name = lookupNameTraversal t name
+instance InjectableE (SubstVal (sMatch::E) (atom::E) (s::E)) where
+  injectionProofE fresh _ = undefined
 
 instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
-  injectionProofE = undefined
+  injectionProofE fresh (Abs b body) =
+    injectionProofB fresh b \fresh' b' ->
+      Abs b' (injectionProofE fresh' body)
 
 instance (HasNamesB b, HasNamesE e) => HasNamesE (Abs b e) where
-  traverseNamesE s t (Abs b body) = do
-    traverseNamesB s t b \s' t' b' ->
-      Abs b' <$> traverseNamesE s' t' body
+  traverseNamesE (Abs b body) = do
+    traverseNamesB b \b' -> Abs b' <$> traverseNamesE body
 
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE (Abs b body) = substB b \b' -> Abs b' <$> substE body
@@ -514,13 +542,16 @@ instance (BindsNames b1, BindsNames b2) => BindsNames (NestPair b1 b2) where
   toExtVal (NestPair b1 b2) = toExtVal b1 >>> toExtVal b2
 
 instance (InjectableB b1, InjectableB b2) => InjectableB (NestPair b1 b2) where
-  injectionProofB _ _ _ = undefined
+  injectionProofB fresh (NestPair b1 b2) cont =
+    injectionProofB fresh b1 \fresh' b1' ->
+      injectionProofB fresh' b2 \fresh'' b2' ->
+        cont fresh'' (NestPair b1' b2')
 
 instance (HasNamesB b1, HasNamesB b2) => HasNamesB (NestPair b1 b2) where
-  traverseNamesB s t (NestPair b1 b2) cont =
-    traverseNamesB s t b1 \s' t' b1' ->
-      traverseNamesB s' t' b2 \s'' t'' b2' ->
-        cont s'' t'' (NestPair b1' b2')
+  traverseNamesB (NestPair b1 b2) cont =
+    traverseNamesB b1 \b1' ->
+      traverseNamesB b2 \b2' ->
+        cont (NestPair b1' b2')
 
 instance (SubstB v b1, SubstB v b2) => SubstB v (NestPair b1 b2) where
   substB (NestPair b1 b2) cont =
@@ -533,46 +564,51 @@ instance BindsNames b => BindsNames (Nest b) where
   toExtVal (Nest b rest) = toExtVal b >>> toExtVal rest
 
 instance InjectableB b => InjectableB (Nest b) where
-  injectionProofB _ _ _ = undefined
+  injectionProofB fresh Empty cont = cont fresh Empty
+  injectionProofB fresh (Nest b rest) cont =
+    injectionProofB fresh b \fresh' b' ->
+      injectionProofB fresh' rest \fresh'' rest' ->
+        cont fresh'' (Nest b' rest')
 
 instance HasNamesB b => HasNamesB (Nest b) where
-  traverseNamesB s t nest cont = case nest of
-    Empty -> cont s t Empty
+  traverseNamesB nest cont = case nest of
+    Empty -> cont Empty
     Nest b rest ->
-      traverseNamesB s t b \s' t' b' ->
-        traverseNamesB s' t' rest \s'' t'' rest' ->
-          cont s'' t'' $ Nest b' rest'
+      traverseNamesB b \b' ->
+        traverseNamesB rest \rest' ->
+          cont $ Nest b' rest'
 
 instance InjectableE UnitE where
-  injectionProofE = undefined
+  injectionProofE _ UnitE = UnitE
 
 instance HasNamesE UnitE where
-  traverseNamesE _ _ UnitE = return UnitE
+  traverseNamesE UnitE = return UnitE
 
 instance SubstE v UnitE where
   substE UnitE = return UnitE
 
 instance InjectableE e => InjectableE (IdE e) where
-  injectionProofE = undefined
+  injectionProofE fresh (IdE e) = IdE $ injectionProofE fresh e
 
 instance HasNamesE e => HasNamesE (IdE e) where
-  traverseNamesE = undefined
+  traverseNamesE (IdE e) = IdE <$> traverseNamesE e
 
 instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
-  injectionProofE = undefined
+  injectionProofE fresh (PairE e1 e2) =
+    PairE (injectionProofE fresh e1) (injectionProofE fresh e2)
 
 instance (HasNamesE e1, HasNamesE e2) => HasNamesE (PairE e1 e2) where
-  traverseNamesE s env (PairE x y) =
-    PairE <$> traverseNamesE s env x <*> traverseNamesE s env y
+  traverseNamesE (PairE x y) =
+    PairE <$> traverseNamesE x <*> traverseNamesE y
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE (PairE x y) = PairE <$> substE x <*> substE y
 
 instance InjectableE e => InjectableE (ListE e) where
-  injectionProofE = undefined
+  injectionProofE fresh (ListE xs) = ListE $ map (injectionProofE fresh) xs
 
 instance HasNamesE e => HasNamesE (ListE e) where
-  traverseNamesE s env (ListE xs) = ListE <$> mapM (traverseNamesE s env) xs
+  traverseNamesE (ListE xs) = ListE <$> mapM traverseNamesE xs
 
 instance SubstE v e => SubstE v (ListE e) where
   substE (ListE xs) = ListE <$> mapM substE xs
@@ -585,10 +621,11 @@ instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
   show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
 
 instance (PrettyB b) => Pretty (Nest b n l) where
-  pretty _ = "TODO"
+  pretty Empty = ""
+  pretty (Nest b rest) = "(Nest " <> pretty b <> " in " <> pretty rest <> ")"
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
-  pretty _ = "TODO"
+  pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"
 
 instance Pretty a => Pretty (LiftE a n) where
   pretty (LiftE x) = pretty x
