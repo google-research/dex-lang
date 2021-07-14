@@ -10,7 +10,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, docAsStr, printLitBlock, PrecedenceLevel(..), DocPrec,
-               PrettyPrec(..), atPrec, toJSONStr) where
+               PrettyPrec(..), atPrec, toJSONStr, prettyFromPrettyPrec,
+               pAppArg, fromInfix) where
 
 import Data.Aeson hiding (Result, Null, Value)
 import GHC.Float
@@ -188,8 +189,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
-instance Pretty (PrimCon Atom) where pretty = prettyFromPrettyPrec
-
 instance PrettyPrec e => PrettyPrec (PrimCon e) where
   prettyPrec = prettyPrecPrimCon
 
