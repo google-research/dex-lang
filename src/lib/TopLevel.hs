@@ -45,9 +45,9 @@ import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
-import qualified SaferNames.Syntax as S
+-- import qualified SaferNames.Syntax as S
 
-import SaferNames.Bridge
+-- import SaferNames.Bridge
 
 data EvalConfig = EvalConfig
   { backendName :: Backend

@@ -9,6 +9,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -w #-}
 
 module SaferNames.Bridge (HasSafeVersionE (..), HasSafeVersionB (..),
                           toSafeBindings)  where
@@ -34,7 +35,6 @@ import qualified Env    as D
 
 import qualified SaferNames.NameCore  as S
 import qualified SaferNames.Name      as S
-import qualified SaferNames.Syntax    as S
 import qualified SaferNames.Syntax    as S
 
 toSafeBindings :: D.Bindings -> S.Scope n
