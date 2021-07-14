@@ -24,7 +24,7 @@ module SaferNames.Name (
   idSubst, applySubst, applyAbs, applyNaryAbs,
   ZipSubstEnv (..), MonadZipSubst (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
-  InjectableE (..), InjectableB (..), dropSubst, lookupSubstM, Ext (..), ObservablyFresh,
+  InjectableE (..), InjectableB (..), dropSubst, lookupSubstM, Ext (..), InjectionCoercion,
   lookupScope, lookupScopeM, withFreshM, extendSubst, inject, injectM, withDistinct,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), SubstE (..), SubstB (..)) where
 

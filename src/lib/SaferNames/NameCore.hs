@@ -12,7 +12,7 @@ module SaferNames.NameCore (
   NameSet (..), singletonNameSet, emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
   NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
   lookupNameMap, extendNameMap,  concatNameMaps,
-  Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, ObservablyFresh,
+  Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName) where
 
 import Prelude hiding (id, (.))
@@ -151,67 +151,37 @@ getRawName (UnsafeMakeName rawName) = rawName
 
 -- === injections ===
 
--- When we inline an expression, we lift it into a larger (deeper) scope,
--- containing more in-scope variables. For example, when we turn this:
---   let foo = \x. x + z
---   in \y. foo y
--- into this:
---   \y. (\x. x + z) y
--- The expression `\x. x + z`, initially in the scope `[z]`, gets injected into
--- the scope `[z, y]`. To prove that we can do the injection as an coercion,
--- it's sufficient to know (1) that the new scope contains distinct names, and
--- (2) it extends the old scope. These are the `Distinct l` and
--- `NameSet (n:=>:l)` conditions below.
+-- Note [Injections]
 
 injectNames :: InjectableE e => Distinct l => NameSet (n:=>:l) -> e n -> e l
 injectNames _ x = unsafeCoerceE x
 
--- `injectNames` is the only function we actualy use in practice. The rest of
--- this section is just about proving that it's valid to use `injectNames`, by
--- offering tools to implement `Injectable` instances.
-
--- To prove that a data type is injectable by coercion, we have to show that
--- it's injectable without using coercion. `injectionProof` is never actually
--- called at run time, but it should still be implemented to prove that it's
--- possible. This isn't watertight. For example, you could write
--- `injectionProof = injectNames` and it'd still type check!
--- In this module we only implement the base case instances (unsafely).
--- See Name and Syntax for more interesting ones.
 class InjectableE (e::E) where
-  injectionProofE :: ObservablyFresh n l -> e n -> e l
+  injectionProofE :: InjectionCoercion n l -> e n -> e l
 
 class InjectableB (b::B) where
-  injectionProofB :: ObservablyFresh n n' -> b n l
-                  -> (forall l'. ObservablyFresh l l' -> b n' l' -> a)
+  injectionProofB :: InjectionCoercion n n' -> b n l
+                  -> (forall l'. InjectionCoercion l l' -> b n' l' -> a)
                   -> a
 
-type InjectableV v = (forall s. InjectableE s => InjectableE (v s)) :: Constraint
+data InjectionCoercion (n::S) (l::S) where
+  InjectionCoercion :: (forall s. Name s n -> Name s l) -> InjectionCoercion n l
 
--- an `ObservablyFresh n l` means that scope `l` is a superset of scope `n` that
--- doesn't shadow any of the names exposed by `n`.
-data ObservablyFresh (n::S) (l::S) = UnsafeMakeObservablyFresh
-
--- This is the unsafe base case. The instances defined in Syntax are the ones we
--- actually implement safely.
 instance InjectableE (Name s) where
-  injectionProofE _ name = unsafeCoerceE name
+  injectionProofE (InjectionCoercion f) name = f name
 
--- Here's the reasoning informally. Let's say `x` is the name of the binder.
--- The scopes are related like this:
+-- This is the unsafely-implemented base case. Here's why it's valid. Let's say
+-- the name of the binder is x. The scopes are related like this:
 --   l  = n  ++ [x]
 --   l' = n' ++ [x]
--- if n' is observably fresh wrt n then l' is observably fresh wrt l. This is because every
--- exposed name in l' is either
---   (1) x itself, which is exposed in both l and l', thus l' doesn't shadow it, or
---   (2) a name other than x exposed by n', which we know is observably fresh
---       wrt n and thus also observably fresh wrt n++[x]
+-- We're given an injection from n to n' and we want to produce an injection
+-- from l to l'. Any name in l must be either:
+--   (1) x itself, in which case it's also in l'
+--   (2) in n, in which case it can be injected to n'. The only issue would be
+--       if it were shadowed by x, but it can't be because then we'd be in case (1).
 instance InjectableB (NameBinder s) where
-  injectionProofB  _ b cont = cont UnsafeMakeObservablyFresh $ unsafeCoerceB b
-
-
-instance InjectableV v => InjectableE (NameMap v i) where
-  injectionProofE fresh m =
-    fmapNameMap (\(UnsafeMakeName _) v -> injectionProofE fresh v) m
+  injectionProofB  _ (UnsafeMakeBinder b) cont =
+    cont (InjectionCoercion unsafeCoerceE) (UnsafeMakeBinder b)
 
 -- === environments ===
 
@@ -298,6 +268,10 @@ instance Ord (Name s n) where
 instance Show (Name s n) where
   show (UnsafeMakeName rawName) = show rawName
 
+type InjectableV v = (forall s. InjectableE s => InjectableE (v s)) :: Constraint
+
+instance InjectableV v => InjectableE (NameMap v i) where
+  injectionProofE fresh m = fmapNameMap (\(UnsafeMakeName _) v -> injectionProofE fresh v) m
 
 -- === unsafe coercions ===
 
@@ -332,5 +306,40 @@ Second, there's SubstVal which plays a GADT trick to check whether a name's
 static data parameter matches a particular type, say, `TypedBinderInfo`, in
 which case you get, say, an Atom, or else it doesn't, in which case you merely
 get a new name.
+
+
+Note [Injections]
+
+When we inline an expression, we lift it into a larger (deeper) scope,
+containing more in-scope variables. For example, when we turn this:
+
+  let foo = \x. \y. x + y + z
+  in \y. foo y
+
+into this:
+
+  \y. (\x. \y. x + y + z) y
+
+
+The expression `\x. x + z + y`, initially in the scope `[z]`, gets injected into
+the scope `[z, y]`. For expression-like things, the injection is valid if we
+know that (1) that the new scope contains distinct names, and (2) it extends the
+old scope. These are the `Distinct l` and `NameSet (n:=>:l)` conditions below in
+`injectNames`. Note that the expression may end up with internal binders
+shadowing the new vars in scope, shadows, like the inner `y` above, and that's
+fine.
+
+But not everything with an expression-like kind `E` (`S -> *`) is injectable.
+For example, a type like `Name n -> Bool` can't be coerced to a `Name l -> Bool`
+when `l` is an extension of `n`. It's the usual covariance/contravariance issue
+with subtyping. So we have a further type class, `InjectableE`, which asserts
+that a type is covariant in the name space parameter. To prove it, we implement the
+`injectionProofE` method (which is never actually called at runtime), which
+must produce an injection `e n -> e l` given an injection
+`forall s. Name s n -> Name s l`.
+
+The typeclass should obey `injectionProofE (InjectionCoercion id) = id`
+Otherwise you could just give an `injectableE` instance for `Name n -> Bool`
+as `injectionProofE _ _ = const True`.
 
 -}

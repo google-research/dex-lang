@@ -359,7 +359,7 @@ instance Monoid (SourceNameMap n) where
 tne :: HasNamesE e => Monad m => e i -> NameTraversalT m i o (e o)
 tne = traverseNamesE
 
-ipe :: InjectableE e => ObservablyFresh n l -> e n -> e l
+ipe :: InjectableE e => InjectionCoercion n l -> e n -> e l
 ipe = injectionProofE
 
 (<++>) :: String -> String -> String
