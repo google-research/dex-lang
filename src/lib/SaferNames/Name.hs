@@ -647,3 +647,6 @@ instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
 
 instance Pretty a => Pretty (LiftE a n) where
   pretty (LiftE x) = pretty x
+
+instance Pretty (UnitE n) where
+  pretty UnitE = ""

@@ -73,7 +73,8 @@ data Atom n =
    Var (AtomName n)
  | Lam (LamExpr n)
  | Pi  (PiType  n)
- | DataCon (Name DataDef n) [Atom n] Int [Atom n]
+   -- RawName is purely for printing
+ | DataCon RawName (Name DataDef n) [Atom n] Int [Atom n]
  | TypeCon (Name DataDef n) [Atom n]
  | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
  | Record (LabeledItems (Atom n))
@@ -424,8 +425,8 @@ instance InjectableE Atom where
     Var name -> Var $ ipe f name
     Lam lam  -> Lam $ ipe f lam
     Pi  piTy -> Pi  $ ipe f piTy
-    DataCon defName params con args ->
-      DataCon (ipe f defName) (fmap (ipe f) params) con (fmap (ipe f) args)
+    DataCon printName defName params con args ->
+      DataCon printName (ipe f defName) (fmap (ipe f) params) con (fmap (ipe f) args)
     TypeCon defName params ->
       TypeCon (ipe f defName) (fmap (ipe f) params)
     LabeledRow (Ext items ext) -> LabeledRow $ Ext (fmap (ipe f) items) (fmap (ipe f) ext)
@@ -449,9 +450,9 @@ instance HasNamesE Atom where
     Var v -> Var <$> tne v
     Lam ab -> Lam <$> tne ab
     Pi  ab -> Pi  <$> tne ab
-    DataCon def params con args ->
-      DataCon <$> tne def <*> mapM tne params
-              <*> pure con <*> mapM tne args
+    DataCon printName def params con args ->
+      DataCon printName <$> tne def <*> mapM tne params
+                        <*> pure con <*> mapM tne args
     TypeCon def params -> TypeCon <$> tne def <*> mapM tne params
     LabeledRow (Ext items ext) -> (LabeledRow <$>) $
       Ext <$> mapM tne items <*> mapM tne ext
@@ -478,8 +479,9 @@ instance SubstE AtomSubstVal Atom where
         Rename v' -> return $ Var v'
     Lam ab -> Lam <$> substE ab
     Pi  ab -> Pi  <$> substE ab
-    DataCon def params con args ->
-      DataCon <$> substE def <*> mapM substE params <*> pure con <*> mapM substE args
+    DataCon printName def params con args ->
+      DataCon printName <$> substE def <*> mapM substE params
+                        <*> pure con <*> mapM substE args
     TypeCon def params -> TypeCon <$> substE def <*> mapM substE params
     LabeledRow (Ext items ext) -> (LabeledRow <$>) $
       prefixExtLabeledItems <$> mapM substE items <*> substTail ext
@@ -521,7 +523,7 @@ instance SubstE AtomSubstVal Atom where
       getProjection (i:is) a = case getProjection is a of
         Var v -> ProjectElt (NE.fromList [i]) v
         ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-        DataCon _ _ _ xs -> xs !! i
+        DataCon _ _ _ _ xs -> xs !! i
         Record items -> toList items !! i
         PairVal x _ | i == 0 -> x
         PairVal _ y | i == 1 -> y
@@ -531,7 +533,7 @@ instance AlphaEqE Atom where
   alphaEqE atom1 atom2 = case (atom1, atom2) of
     (Var v, Var v') -> alphaEqE v v'
     (Pi ab, Pi ab') -> alphaEqE ab ab'
-    (DataCon def params con args, DataCon def' params' con' args') -> do
+    (DataCon _ def params con args, DataCon _ def' params' con' args') -> do
       alphaEqE def def'
       alphaEqTraversable params params'
       assertEq con con' ""

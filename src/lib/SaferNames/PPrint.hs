@@ -29,9 +29,10 @@ import System.Environment
 import LabeledItems
 
 import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
-               prettyFromPrettyPrec, DocPrec)
+               prettyFromPrettyPrec, DocPrec, fromInfix, pAppArg)
+import Env (nameTag)
 
-import SaferNames.NameCore (unsafeCoerceE)
+import SaferNames.NameCore (unsafeCoerceE, unsafeCoerceB, getRawName)
 import SaferNames.Name
 import SaferNames.Syntax
 
@@ -65,12 +66,13 @@ instance Pretty (Block n) where
     where decls' = fromNest decls
 
 fromNest :: Nest b n l -> [b UnsafeMakeS UnsafeMakeS]
-fromNest = undefined
+fromNest Empty = []
+fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 
-instance Pretty (Binder n l) where pretty = undefined
+instance Pretty (Binder n l) where pretty (b:>_) = p b
 
 instance Pretty (Expr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr n) where
@@ -78,8 +80,8 @@ instance PrettyPrec (Expr n) where
     atPrec AppPrec $ pApp f <+> pArg x
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (Op  op ) = prettyPrec op
-  -- prettyPrec (Hof (For ann (Lam lamExpr))) =
-  --   atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
+  prettyPrec (Hof (For ann (Lam lamExpr))) =
+    atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
 
@@ -107,37 +109,31 @@ instance Pretty (Decl n l) where
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
--- prettyPiTypeHelper :: PiType n -> Doc ann
--- prettyPiTypeHelper (Abs (PiBinder binder arr) body) = let
---   prettyBinder = case binder of
---     Ignore :> a -> pArg a
---     _ -> parens $ p binder
---   prettyBody = case body of
---     Pi subpi -> prettyPiTypeHelper subpi
---     _ -> pLowest body
---   in prettyBinder <> (group $ line <> p arr <+> prettyBody)
-
--- data PrettyLamType n = PrettyLam (Arrow n) | PrettyFor ForAnn
-
--- prettyLamHelper :: LamExpr n -> PrettyLamType n -> Doc ann
--- prettyLamHelper = undefined
-
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    -- Lam lamExpr@(Abs (LamBinder _ TabArrow) _) ->
-    --   atPrec LowestPrec $ "\\for"
-    --   <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
-    -- Lam lamExpr@(Abs (LamBinder _ arr) _) ->
-    --   atPrec LowestPrec $ "\\"
-    --   <> prettyLamHelper lamExpr (unsafeCoerceE (PrettyLam arr))
-    -- Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
+    Lam lamExpr@(LamExpr TabArrow _ _ _) ->
+      atPrec LowestPrec $ "\\for"
+      <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
+    Lam lamExpr@(LamExpr arr _ _ _) ->
+      atPrec LowestPrec $ "\\"
+      <> prettyLamHelper lamExpr (PrettyLam arr)
+    Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
-    DataCon _ _ _ _ -> undefined
-    TypeCon _ _ -> undefined
+    DataCon name _ _ _ xs -> case xs of
+      [] -> atPrec ArgPrec $ p name
+      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
+      _ ->  atPrec LowestPrec $ pAppArg (p name) xs
+    TypeCon name params -> case params of
+      [] -> atPrec ArgPrec $ p name
+      [l, r] | Just sym <- fromInfix (nameTag (getRawName name)) ->
+        atPrec ArgPrec $ align $ group $
+          parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
+      _  -> atPrec LowestPrec $ pAppArg (p name) params
     LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
@@ -147,10 +143,16 @@ instance PrettyPrec (Atom n) where
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
-    DataConRef _ _ _ -> undefined
+    DataConRef _ params args -> atPrec AppPrec $
+      "DataConRef" <+> p params <+> p args
     BoxedRef ptr size (Abs b body) -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
-    ProjectElt _ _ -> undefined
+    ProjectElt idxs v ->
+      atPrec AppPrec $ "ProjectElt" <+> p idxs <+> p v
+
+instance Pretty (DataConRefBinding n l) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (DataConRefBinding n l) where
+  prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -185,6 +187,38 @@ forStr :: ForAnn -> Doc ann
 forStr (RegularFor Fwd) = "for"
 forStr (RegularFor Rev) = "rof"
 forStr ParallelFor      = "pfor"
+
+prettyPiTypeHelper :: PiType n -> Doc ann
+prettyPiTypeHelper (PiType arr binder _ body) = let
+  prettyBinder = parens $ p binder
+  prettyBody = case body of
+    Pi subpi -> prettyPiTypeHelper subpi
+    _ -> pLowest body
+  in prettyBinder <> (group $ line <> p arr <+> prettyBody)
+
+data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
+
+prettyLamHelper :: LamExpr n -> PrettyLamType -> Doc ann
+prettyLamHelper lamExpr lamType = let
+  rec :: LamExpr n -> Bool -> (Doc ann, Block n)
+  rec (LamExpr _ binder _ body') first =
+    let thisOne = (if first then "" else line) <> p binder
+    in case body' of
+      Block _ Empty (Atom (Lam next@(LamExpr arr' _ _ _)))
+        | lamType == PrettyLam arr' ->
+            let (binders', block) = rec next False
+            in (thisOne <> binders', unsafeCoerceE block)
+      Block _ Empty (Hof (For ann (Lam next)))
+        | lamType == PrettyFor ann ->
+            let (binders', block) = rec next False
+            in (thisOne <> binders', unsafeCoerceE block)
+      _ -> (thisOne <> punctuation, unsafeCoerceE body')
+        where punctuation = case lamType of
+                PrettyFor _ -> "."
+                PrettyLam PlainArrow -> "."
+                PrettyLam arr -> " " <> p arr
+  (binders, body) = rec lamExpr True
+  in align (group $ nest 4 $ binders) <> (group $ nest 2 $ p body)
 
 instance Pretty (EffectRow n) where
   pretty (EffectRow effs tailVar) =

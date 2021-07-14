@@ -13,7 +13,7 @@ module SaferNames.NameCore (
   NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
   lookupNameMap, extendNameMap,  concatNameMaps,
   Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, ObservablyFresh,
-  unsafeCoerceE, unsafeCoerceB, withNameClasses) where
+  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName) where
 
 import Prelude hiding (id, (.))
 import Data.Text.Prettyprint.Doc  hiding (nest)
@@ -144,6 +144,10 @@ instance Distinct UnsafeMakeDistinctS
 
 withNameClasses :: Name s n -> ((InjectableE s, Typeable s) => r) -> r
 withNameClasses (UnsafeMakeName _) cont = cont
+
+-- useful for printing etc.
+getRawName :: Name s n -> RawName
+getRawName (UnsafeMakeName rawName) = rawName
 
 -- === injections ===
 

@@ -10,7 +10,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, docAsStr, printLitBlock, PrecedenceLevel(..), DocPrec,
-               PrettyPrec(..), atPrec, toJSONStr, prettyFromPrettyPrec) where
+               PrettyPrec(..), atPrec, toJSONStr, prettyFromPrettyPrec,
+               pAppArg, fromInfix) where
 
 import Data.Aeson hiding (Result, Null, Value)
 import GHC.Float
