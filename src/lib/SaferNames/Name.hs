@@ -48,9 +48,9 @@ import Err
 -- make one from an ordinary function. It's effcicently extensible using
 -- an `EnvFrag`.
 data Env (v::E->E) (i::S) (o::S) where
-  Env :: (forall s. Name s i -> v s o)  -- fallback function
-      -> NameMap v (i:=>:i') o          -- names first lookup up here
-      -> Env v i' o
+  Env :: (forall s. Name s hidden -> v s o)  -- fallback function
+      -> NameMap v (hidden:=>:i) o           -- names first looked up here
+      -> Env v i o
 
 newtype EnvFrag (v::E->E) (i::S) (i'::S) (o::S) =
   EnvFrag (NameMap v (i:=>:i') o)
@@ -61,6 +61,9 @@ newtype EnvFrag (v::E->E) (i::S) (i'::S) (o::S) =
 --    3. The payload associated with each name's static data parameter
 data Scope (n::S) where
   Scope :: Distinct n => NameMap IdE n n -> Scope n
+
+data PlainScope (n::S) where
+  PlainScope :: Distinct n => NameSet n -> PlainScope n
 
 data ScopeFrag (n::S) (l::S) where
   ScopeFrag :: Distinct l => NameMap IdE (n:=>:l) l -> ScopeFrag n l
@@ -98,6 +101,9 @@ lookupScope (Scope m) v = fromIdE $ lookupNameMap m v
 appendScope :: Scope n -> ScopeFrag n l -> Scope l
 appendScope (Scope m1) (ScopeFrag m2) =
   Scope $ extendNameMap (injectNames (nameMapNames m2) m1) m2
+
+scopeAsPlainScope :: Scope n -> PlainScope n
+scopeAsPlainScope (Scope m) = PlainScope $ nameMapNames m
 
 -- === common scoping patterns ===
 
@@ -170,16 +176,12 @@ toConstAbs ann body =
 --    type NameTraversalEnv m i o = forall s. Name s i -> m (Name s o)
 -- But, as an optimization, we represent it as a composition of an ordinary
 -- monadic function and a renaming env. This is just so that we can efficiently
--- extend it. The composition hides the intermediate name space `hidded`,
+-- extend it. The composition hides the intermediate name space `hidden`,
 -- just as `(.) :: (b -> c) -> (a -> b) -> (a -> c)` hides `b`.
 data NameTraversal m i o where
   NameTraversal :: (forall s. Name s hidden -> m (Name s o))
                 -> EnvFrag Name hidden i o
                 -> NameTraversal m i o
-
--- scope without a payload
-data PlainScope n where
-  PlainScope :: Distinct n => NameSet n -> PlainScope n
 
 newtype NameTraversalT m i o a =
   NameTraversalT { runNameTraversalT' :: ReaderT (PlainScope o, NameTraversal m i o) m a }
@@ -218,8 +220,11 @@ instance (Typeable s, InjectableE s) => HasNamesB (NameBinder s) where
       let scope' = PlainScope $ extendNameSet scope (toNameSet b')
       withReaderT (const (scope', env')) $ runNameTraversalT' $ cont b'
 
-instance InjectableE (NameTraversal m i) where
-  injectionProofE = undefined
+instance Monad m => InjectableE (NameTraversal m i) where
+  injectionProofE fresh (NameTraversal f env) =
+    NameTraversal
+      (\name -> withNameClasses name $ injectionProofE fresh <$> f name)
+      (injectionProofE fresh env)
 
 -- === type class for substitutions ===
 
@@ -306,13 +311,13 @@ applySubst env x = do
   scope <- askScope
   return $ runSubstReaderM scope env $ substE x
 
-applyAbs :: Typeable s => Typeable val
+applyAbs :: (Typeable s, InjectableE s, Typeable val, InjectableE val)
          => ScopeReader m
          => BindsOneName b s => SubstE (SubstVal s val) e
          => Abs b e n -> val n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (idSubst <>> (b@>SubstVal x)) body
 
-applyNaryAbs :: Typeable s => InjectableE s => Typeable val
+applyNaryAbs :: (Typeable s, InjectableE s, Typeable val, InjectableE val)
              => ScopeReader m
              => BindsNameList b s
              => SubstE (SubstVal s val) e
@@ -438,7 +443,7 @@ checkAlphaEq e1 e2 = do
 data ZipSubstEnv i1 i2 o = ZipSubstEnv
   { zSubst1 :: Env Name i1 o
   , zSubst2 :: Env Name i2 o
-  , zScope  :: Scope o }
+  , zScope  :: PlainScope o }
 
 class AlphaEqE (e::E) where
   alphaEqE :: MonadZipSubst m => e i1 -> e i2 -> m i1 i2 o ()
@@ -470,7 +475,7 @@ instance MonadZipSubst ZipSubstM where
   withZipSubstEnv env (ZipSubstM m) = ZipSubstM $ lift $ runReaderT m env
 
 idZipSubstEnv :: Scope n -> ZipSubstEnv n n n
-idZipSubstEnv scope = ZipSubstEnv (newEnv id) (newEnv id) scope
+idZipSubstEnv scope = ZipSubstEnv (newEnv id) (newEnv id) (scopeAsPlainScope scope)
 
 alphaEqTraversable :: (AlphaEqE e, Traversable f, Eq (f ()))
                    => MonadZipSubst m
@@ -490,6 +495,16 @@ instance Typeable s => AlphaEqE (Name s) where
     if env1!v1 == env2!v2
       then return ()
       else zipErr
+
+instance (InjectableE s, Typeable s) => AlphaEqB (NameBinder s) where
+  withAlphaEqB b1 b2 cont = do
+    ZipSubstEnv env1 env2 (PlainScope scope) <- askZipSubstEnv
+    withFresh scope \b -> do
+      let v = binderName b
+      let env1' = inject b env1 <>> b1@>v
+      let env2' = inject b env2 <>> b2@>v
+      let scope' = PlainScope $ extendNameSet scope (toNameSet b)
+      withZipSubstEnv (ZipSubstEnv env1' env2' scope') cont
 
 instance AlphaEqB b => AlphaEqB (Nest b) where
   withAlphaEqB Empty Empty cont = cont
@@ -512,15 +527,18 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
 
 -- === instances ===
 
-instance (forall s. InjectableE s => InjectableE (v s)) => InjectableE (Env v i) where
-  injectionProofE fresh (Env f m) = undefined
-    -- Env (injectionProofE fresh . f) (injectionProofE fresh m)
+instance InjectableV v => InjectableE (Env v i) where
+  injectionProofE fresh (Env f m) =
+    Env (\name -> withNameClasses name $ injectionProofE fresh $ f name)
+        (injectionProofE fresh m)
 
-instance InjectableB ScopeFrag where
-  injectionProofB _ _ _ = undefined
+instance InjectableV v => InjectableE (EnvFrag v i i') where
+  injectionProofE fresh (EnvFrag m) = EnvFrag (injectionProofE fresh m)
 
-instance InjectableE (SubstVal (sMatch::E) (atom::E) (s::E)) where
-  injectionProofE fresh _ = undefined
+instance InjectableE atom => InjectableE (SubstVal (sMatch::E) (atom::E) (s::E)) where
+  injectionProofE fresh substVal = case substVal of
+    Rename name  -> Rename   $ injectionProofE fresh name
+    SubstVal val -> SubstVal $ injectionProofE fresh val
 
 instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
   injectionProofE fresh (Abs b body) =

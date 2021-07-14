@@ -41,6 +41,7 @@ module SaferNames.Syntax (
     pattern FunTy, pattern BinaryFunTy,
     (-->), (?-->), (--@), (==>) ) where
 
+import Data.Foldable (toList)
 import Control.Monad.Except hiding (Except)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
@@ -62,6 +63,7 @@ import Syntax
 
 import SaferNames.Name
 import Util (zipErr)
+import PPrint ()
 import Err
 import LabeledItems
 
@@ -198,6 +200,9 @@ data Effect n = RWSEffect RWS (AtomName n) | ExceptionEffect | IOEffect
 pattern Pure :: EffectRow n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
  where  Pure = EffectRow mempty Nothing
+
+extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
+extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
 -- === Synonyms ===
 
@@ -395,6 +400,25 @@ instance HasNamesE DataConDef where
 instance SubstE AtomSubstVal DataConDef where
   substE (DataConDef name ab) = DataConDef name <$> substE ab
 
+
+instance InjectableB DataConRefBinding where
+  injectionProofB f (DataConRefBinding b ref) cont = do
+    let ref' = ipe f ref
+    injectionProofB f b \f' b' -> cont f' $ DataConRefBinding b' ref'
+
+instance BindsNames DataConRefBinding where
+  toExtVal (DataConRefBinding b _) = toExtVal b
+
+instance HasNamesB DataConRefBinding where
+  traverseNamesB (DataConRefBinding b ref) cont = do
+    ref' <- traverseNamesE ref
+    traverseNamesB b \b' -> cont $ DataConRefBinding b' ref'
+
+instance SubstB AtomSubstVal DataConRefBinding where
+  substB (DataConRefBinding b ref) cont = do
+    ref' <- substE ref
+    substB b \b' -> cont $ DataConRefBinding b' ref'
+
 instance InjectableE Atom where
   injectionProofE f atom = case atom of
     Var name -> Var $ ipe f name
@@ -415,9 +439,9 @@ instance InjectableE Atom where
     Con con -> Con $ fmap (ipe f) con
     TC  tc  -> TC  $ fmap (ipe f) tc
     Eff eff -> Eff $ ipe f eff
- -- | ACase (Atom n) [AltP Atom n] (Type n)
- -- | DataConRef (Name DataDef n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
- -- | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
+    ACase scrut alts ty -> ACase (ipe f scrut) (fmap (ipe f) alts) (ipe f ty)
+    DataConRef def params bs -> DataConRef (ipe f def) (fmap (ipe f) params) (ipe f bs)
+    BoxedRef ptr size ab -> BoxedRef (ipe f ptr) (ipe f size) (ipe f ab)
     ProjectElt idxs x -> ProjectElt idxs $ ipe f x
 
 instance HasNamesE Atom where
@@ -432,8 +456,7 @@ instance HasNamesE Atom where
     LabeledRow (Ext items ext) -> (LabeledRow <$>) $
       Ext <$> mapM tne items <*> mapM tne ext
     Record items -> Record <$> mapM tne items
-    RecordTy (Ext items ext) -> (RecordTy <$>) $
-      Ext <$> mapM tne items <*> mapM tne ext
+    RecordTy (Ext items ext) -> (RecordTy <$>) $ Ext <$> mapM tne items <*> mapM tne ext
     Variant (Ext items ext) l con payload -> do
       extItems <- Ext <$> mapM tne items <*> mapM tne ext
       Variant extItems l con <$> tne payload
@@ -442,10 +465,9 @@ instance HasNamesE Atom where
     Con con -> Con <$> traverse tne con
     TC  con -> TC  <$> traverse tne con
     Eff effs -> Eff <$> tne effs
-    ACase scrut alts ty ->
-      ACase <$> tne scrut <*> traverse tne alts <*> tne ty
-    -- DataConRef (DataDef n) [Atom n] (EmptyNest DataConRefBinding n)
-    -- BoxedRef (Atom n) (Atom n) (Abs Binder Block n)  -- ptr, size, binder/body
+    ACase scrut alts ty -> ACase <$> tne scrut <*> traverse tne alts <*> tne ty
+    DataConRef def params bs -> DataConRef <$> tne def <*> mapM tne params <*> tne bs
+    BoxedRef ptr size ab -> BoxedRef <$> tne ptr <*> tne size <*> tne ab
     ProjectElt idxs v -> ProjectElt idxs <$> tne v
 
 instance SubstE AtomSubstVal Atom where
@@ -459,24 +481,51 @@ instance SubstE AtomSubstVal Atom where
     DataCon def params con args ->
       DataCon <$> substE def <*> mapM substE params <*> pure con <*> mapM substE args
     TypeCon def params -> TypeCon <$> substE def <*> mapM substE params
-    -- LabeledRow (Ext items ext) -> (LabeledRow <$>) $
-    --   Ext <$> mapM substE items <*> mapM substE ext
+    LabeledRow (Ext items ext) -> (LabeledRow <$>) $
+      prefixExtLabeledItems <$> mapM substE items <*> substTail ext
     Record items -> Record <$> mapM substE items
-    -- RecordTy (Ext items ext) -> (RecordTy <$>) $
-    --   Ext <$> mapM tne items <*> mapM tne ext
-    -- Variant (Ext items ext) l con payload -> do
-    --   extItems <- Ext <$> mapM tne items <*> mapM tne ext
-    --   Variant extItems l con <$> tne payload
-    -- VariantTy (Ext items ext) -> (VariantTy <$>) $
-    --   Ext <$> mapM tne items <*> mapM tne ext
+    RecordTy (Ext items ext) -> (RecordTy <$>) $
+      prefixExtLabeledItems <$> mapM substE items <*> substTail ext
+    Variant (Ext items ext) l con payload -> do
+      extItems <- prefixExtLabeledItems <$> mapM substE items <*> substTail ext
+      payload' <- substE payload
+      return $ Variant extItems l con payload'
+    VariantTy (Ext items ext) -> (VariantTy <$>) $
+      prefixExtLabeledItems <$> mapM substE items <*> substTail ext
     Con con -> Con <$> traverse substE con
     TC  con -> TC  <$> traverse substE con
     Eff effs -> Eff <$> substE effs
-    -- ACase scrut alts ty ->
-    --   ACase <$> tne scrut <*> traverse tne alts <*> tne ty
-    -- -- DataConRef (DataDef n) [Atom n] (EmptyNest DataConRefBinding n)
-    -- BoxedRef (Atom n) (Atom n) (Abs Binder Block n)  -- ptr, size, binder/body
-    ProjectElt idxs v -> undefined
+    ACase scrut alts ty -> ACase <$> substE scrut <*> traverse substE alts <*> substE ty
+    DataConRef def params bs -> DataConRef <$> substE def <*> mapM substE params <*> substE bs
+    BoxedRef ptr size ab -> BoxedRef <$> substE ptr <*> substE size <*> substE ab
+    ProjectElt idxs v -> do
+      v' <- lookupSubstM v >>= \case
+              SubstVal x -> return x
+              Rename v'  -> return $ Var v'
+      return $ getProjection (NE.toList idxs) v'
+    where
+      substTail
+        :: SubstReader AtomSubstVal m
+        => Maybe (AtomName i)
+        -> m i o (ExtLabeledItems (Atom o) (AtomName o))
+      substTail Nothing = return $ NoExt NoLabeledItems
+      substTail (Just v) =
+        lookupSubstM v >>= \case
+          Rename        v'  -> return $ Ext NoLabeledItems $ Just v'
+          SubstVal (Var v') -> return $ Ext NoLabeledItems $ Just v'
+          SubstVal (LabeledRow row) -> return row
+          _ -> error "Not a valid labeled row substitution"
+
+      getProjection :: [Int] -> Atom n -> Atom n
+      getProjection [] a = a
+      getProjection (i:is) a = case getProjection is a of
+        Var v -> ProjectElt (NE.fromList [i]) v
+        ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
+        DataCon _ _ _ xs -> xs !! i
+        Record items -> toList items !! i
+        PairVal x _ | i == 0 -> x
+        PairVal _ y | i == 1 -> y
+        _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
 instance AlphaEqE Atom where
   alphaEqE atom1 atom2 = case (atom1, atom2) of
@@ -551,6 +600,7 @@ instance AlphaEqE Expr where
     (Atom atom, Atom atom') -> alphaEqE atom atom'
     (Op op, Op op') -> alphaEqTraversable op op'
     (Hof hof, Hof hof') -> alphaEqTraversable hof hof'
+    _ -> zipErr
 
 instance Show (Block n) where
   show (Block ty decls result) =
@@ -632,23 +682,74 @@ instance SubstE AtomSubstVal PiType where
     Abs b' (PairE eff' bodyTy') <- substE $ Abs b (PairE eff bodyTy)
     return $ PiType arr b' eff' bodyTy'
 
+instance InjectableE Effect where
+  injectionProofE f eff = case eff of
+    RWSEffect rws v -> RWSEffect rws $ ipe f v
+    ExceptionEffect -> ExceptionEffect
+    IOEffect        -> IOEffect
+
+instance HasNamesE Effect where
+  traverseNamesE eff = case eff of
+    RWSEffect rws v -> RWSEffect rws <$> tne v
+    ExceptionEffect -> return ExceptionEffect
+    IOEffect        -> return IOEffect
+
+instance SubstE AtomSubstVal Effect where
+  substE eff = case eff of
+    RWSEffect rws v -> do
+      v' <- lookupSubstM v >>= \case
+              Rename        v'  -> return v'
+              SubstVal (Var v') -> return v'
+              SubstVal _ -> error "Heap parameter must be a name"
+      return $ RWSEffect rws v'
+    ExceptionEffect -> return ExceptionEffect
+    IOEffect        -> return IOEffect
+
+instance AlphaEqE Effect where
+  alphaEqE eff eff' = case (eff, eff') of
+    (RWSEffect rws v, RWSEffect rws' v') -> do
+      assertEq rws rws' ""
+      alphaEqE v v'
+    (ExceptionEffect, ExceptionEffect) -> return ()
+    (IOEffect       , IOEffect       ) -> return ()
+    _ -> zipErr
+
 instance InjectableE EffectRow where
-  injectionProofE = undefined
+  injectionProofE f (EffectRow effs tailVar) = do
+    let effs' = S.fromList $ fmap (ipe f) (S.toList effs)
+    let tailVar' = fmap (ipe f) tailVar
+    EffectRow effs' tailVar'
 
 instance HasNamesE EffectRow where
-  traverseNamesE = undefined
+  traverseNamesE (EffectRow effs tailVar) = do
+    effs' <- S.fromList <$> mapM tne (S.toList effs)
+    tailVar' <- mapM tne tailVar
+    return $ EffectRow effs' tailVar'
 
 instance SubstE AtomSubstVal EffectRow where
-  substE = undefined
+  substE (EffectRow effs tailVar) = do
+    effs' <- S.fromList <$> mapM substE (S.toList effs)
+    tailEffRow <- case tailVar of
+      Nothing -> return $ EffectRow mempty Nothing
+      Just v -> lookupSubstM v >>= \case
+        Rename        v'  -> return $ EffectRow mempty (Just v')
+        SubstVal (Var v') -> return $ EffectRow mempty (Just v')
+        SubstVal (Eff r)  -> return r
+        _ -> error "Not a valid effect substitution"
+    return $ extendEffRow effs' tailEffRow
 
 instance AlphaEqE EffectRow where
-  alphaEqE _ _ = undefined
+  alphaEqE (EffectRow effs tailVar) (EffectRow effs' tailVar') = do
+    alphaEqTraversable (S.toList effs) (S.toList effs')
+    alphaEqTraversable tailVar tailVar'
 
 instance BindsNames Binder where
   toExtVal (b:>_) = toExtVal b
 
 instance InjectableB Binder where
-  injectionProofB  _ _ _ = undefined
+  injectionProofB f (b:>ty) cont = do
+    let ty' = injectionProofE f ty
+    injectionProofB f b \f' b' -> cont f' (b':>ty')
 
 instance HasNamesB Binder where
   traverseNamesB (b:>ty) cont = do
@@ -663,10 +764,13 @@ instance SubstB AtomSubstVal Binder where
        extendSubst (b@>Rename (binderName b')) $ cont $ b':>ty'
 
 instance AlphaEqB Binder where
-  withAlphaEqB _ _ _ = undefined
+  withAlphaEqB (b1:>ty1) (b2:>ty2) cont = do
+    alphaEqE ty1 ty2
+    withAlphaEqB b1 b2 cont
 
 instance BindsOneName Binder TypedBinderInfo where
-  (@>) = undefined
+  (b:>_) @> x = b @> x
+  binderName (b:>_) = binderName b
 
 instance InjectableE AtomBinderInfo where
   injectionProofE f info = case info of
@@ -693,7 +797,15 @@ instance SubstE AtomSubstVal AtomBinderInfo where
     InferenceName -> return InferenceName
 
 instance AlphaEqE AtomBinderInfo where
-  alphaEqE _ _ = undefined
+  alphaEqE info1 info2 = case (info1, info2) of
+    (LetBound ann expr, LetBound ann' expr') -> do
+      assertEq ann ann' ""
+      alphaEqE expr expr'
+    (LamBound arr , LamBound arr') -> assertEq arr arr' ""
+    (PiBound      , PiBound      ) -> return ()
+    (InferenceName, InferenceName) -> return ()
+    (MiscBound    , MiscBound    ) -> return ()
+    _ -> zipErr
 
 instance InjectableE TypedBinderInfo where
   injectionProofE f (TypedBinderInfo ty info) =
@@ -708,16 +820,22 @@ instance SubstE AtomSubstVal TypedBinderInfo where
     TypedBinderInfo <$> substE ty <*> substE info
 
 instance AlphaEqE TypedBinderInfo where
-  alphaEqE _ _ = undefined
+  alphaEqE (TypedBinderInfo ty info) (TypedBinderInfo ty' info') = do
+    alphaEqE ty ty'
+    alphaEqE info info'
 
 instance InjectableB Decl where
-  injectionProofB _ _ _ = undefined
+  injectionProofB f (Let ann b expr) cont = do
+    let expr' = ipe f expr
+    injectionProofB f b \f' b' -> cont f' $ Let ann b' expr'
 
 instance HasNamesB Decl where
-  traverseNamesB _ _ = undefined
+  traverseNamesB (Let ann b expr) cont = do
+    expr' <- tne expr
+    traverseNamesB b \b' -> cont $ Let ann b' expr'
 
 instance BindsNames Decl where
-  toExtVal (Let ann b _) = toExtVal b
+  toExtVal (Let _ b _) = toExtVal b
 
 instance SubstB AtomSubstVal Decl where
   substB (Let ann (b:>ty) expr) cont = do
@@ -729,7 +847,10 @@ instance SubstB AtomSubstVal Decl where
         cont $ Let ann (b':>ty') expr'
 
 instance AlphaEqB Decl where
-  withAlphaEqB _ _ _ = undefined
+  withAlphaEqB (Let ann b expr) (Let ann' b' expr') cont = do
+    assertEq ann ann' ""
+    alphaEqE expr expr'
+    withAlphaEqB b b' cont
 
 instance Pretty Arrow where
   pretty arr = case arr of
