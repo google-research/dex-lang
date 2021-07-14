@@ -248,16 +248,19 @@ measureSeconds m = do
 class Zippable f where
   zipWithZ :: MonadFail m => (a -> b -> m c) -> f a -> f b -> m (f c)
 
+instance Zippable [] where
+  zipWithZ _ [] [] = return []
+  zipWithZ f (x:xs) (y:ys) = (:) <$> f x y <*> zipWithZ f xs ys
+  zipWithZ _ _ _ = zipErr
+
 zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
 zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
 
 zipErr :: MonadFail m => m a
 zipErr = fail "zip error"
 
-forMZipped :: MonadFail m => [a] -> [b] -> (a -> b -> m c) -> m [c]
-forMZipped xs ys f
-  | length xs == length ys = zipWithM f xs ys
-  | otherwise              = zipErr
+forMZipped :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m (f c)
+forMZipped xs ys f = zipWithZ f xs ys
 
-forMZipped_ :: MonadFail m => [a] -> [b] -> (a -> b -> m c) -> m ()
+forMZipped_ :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m ()
 forMZipped_ xs ys f = void $ forMZipped xs ys f
