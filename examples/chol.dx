@@ -1,9 +1,11 @@
 ' # Cholesky Factorization
 https://en.wikipedia.org/wiki/Cholesky_decomposition
 
+import linalg
+
 ' ## Cholesky Algorithm
 
-def chol [Eq n] (x:n=>n=>Float) : (n=>n=>Float) =
+def chol [Eq n] (x:n=>n=>Float) : LowerTriMat n Float =
   yieldState zero \buf.
     for_ i. for j':(..i).
       j = %inject(j')
