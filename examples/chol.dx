@@ -16,7 +16,7 @@ def lowerTriMat (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
     d = %indexRef ref i
     d!j
 
-def chol [Eq n] (x:n=>n=>Float) : LowerTriMat n Float =
+def chol (x:n=>n=>Float) : LowerTriMat n Float =
   yieldState zero \buf.
     mat = lowerTriMat buf
     for i:n. for j':(..i).
@@ -24,7 +24,7 @@ def chol [Eq n] (x:n=>n=>Float) : LowerTriMat n Float =
       row  = for k:(..<j). get $ mat i (cast k)
       row' = for k:(..<j). get $ mat j (cast k)
       a = x.i.j - vdot row row'
-      if (ordinal i)==(ordinal j)
+      if (ordinal i) == (ordinal j)
         then
           mat i j' := sqrt a
         else
