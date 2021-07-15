@@ -5,19 +5,26 @@ import linalg
 
 ' ## Cholesky Algorithm
 
+def lowerTriMat (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
+    d = %indexRef ref i
+    d!j
+
+def cast (d:a) : m = (ordinal d)@m
+
 def chol [Eq n] (x:n=>n=>Float) : LowerTriMat n Float =
   yieldState zero \buf.
-    for_ i. for j':(..i).
-      j = %inject(j')
-      row  = for k:(..<j). get buf!i!(%inject k)
-      row' = for k:(..<j). get buf!j!(%inject k)
+    mat = lowerTriMat buf
+    for i:n. for j':(..i).
+      j = %inject j'
+      row  = for k:(..<j). get $ mat i (cast k)
+      row' = for k:(..<j). get $ mat j (cast k)
       a = x.i.j - vdot row row'
-      if i==j
+      if (ordinal i)==(ordinal j)
         then
-          buf!i!j := sqrt a
+          mat i j' := sqrt a
         else
-          b = get buf!j!j
-          buf!i!j := a / b
+          b = get $ mat j (cast j')
+          mat i j' := a / b
 
 ' ## PSD solver based on Cholesky decomposition
 
@@ -47,7 +54,7 @@ psd : N=>N=>Float =
   x = a ** transpose a
   x + eye
 
-l : N=>N=>Float = chol psd
+l = chol psd
 
 :p l
 > [ [2.021765, 0., 0., 0.]
