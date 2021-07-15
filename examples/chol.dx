@@ -5,7 +5,7 @@ import linalg
 
 def cast (d:a) : m = (ordinal d)@m
 
-def transposeLowerToUpper (lower:LowerTriMat n v):UpperTriMat n v = 
+def transposeLowerToUpper (lower:LowerTriMat n v) : UpperTriMat n v = 
   for i:n. for j':(i..). 
     j = %inject j'
     lower.j.(cast i)
@@ -49,7 +49,7 @@ psd : N=>N=>Float =
   x = a ** transpose a
   x + eye
 
-def padLowerTriMat [Add v] (mat:LowerTriMat n v): n=>n=>v = 
+def padLowerTriMat [Add v] (mat:LowerTriMat n v) : n=>n=>v = 
   for i j.
     if (ordinal j)<=(ordinal i)
       then mat.i.(cast j)
