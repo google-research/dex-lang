@@ -33,7 +33,7 @@ def chol (x:n=>n=>Float) : LowerTriMat n Float =
 
 ' ## PSD solver based on Cholesky decomposition
 
-def psdsolve [Eq n] (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+def psdsolve (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
   l = chol mat
   b' = forward_substitute l b
   u = transposeLowerToUpper l
