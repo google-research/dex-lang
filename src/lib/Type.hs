@@ -831,6 +831,9 @@ typeCheckOp op = case op of
       VariantTy _ -> return ()  -- TODO: check empty payload
       _ -> throw TypeErr $ "Not an enum: " ++ pprint t
     return t
+  OutputStreamPtr ->
+    return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
+    where hostPtrTy ty = PtrType (Heap CPU, ty)
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

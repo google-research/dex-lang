@@ -413,6 +413,8 @@ compilePrimOp pop = case pop of
   VectorIndex v i    -> emitInstr resTy $ L.ExtractElement v i []
     where (L.VectorType _ resTy) = L.typeOf v
   PtrOffset ptr off -> gep ptr off
+  OutputStreamPtr -> return outputStreamPtr
+
   _ -> error $ "Can't JIT primop: " ++ pprint pop
 
 compileUnOp :: UnOp -> Operand -> Compile Operand
@@ -899,8 +901,10 @@ cpuBinaryIntrinsic op x y = case L.typeOf x of
 
 -- === Output stream ===
 
+-- TODO: replace all of this with a built-in print
+
 outputStreamPtrLName :: L.Name
-outputStreamPtrLName  = asLLVMName outputStreamPtrName
+outputStreamPtrLName  = "*OUT_STREAM_PTR*"
 
 outputStreamPtrDef :: L.Definition
 outputStreamPtrDef = L.GlobalDefinition $ L.globalVariableDefaults
@@ -918,15 +922,12 @@ initializeOutputStream streamFD = do
   streamPtr <- emitExternCall fdopenFun [streamFD]
   store outputStreamPtr streamPtr
 
-outputStreamEnv :: OperandEnv
-outputStreamEnv = outputStreamPtrName @> outputStreamPtr
-
 -- === Compile monad utilities ===
 
 runCompile :: Device -> Compile a -> a
 runCompile dev m = evalState (runReaderT m env) initState
   where
-    env = CompileEnv outputStreamEnv dev
+    env = CompileEnv mempty dev
     initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnv -> Compile a -> Compile a

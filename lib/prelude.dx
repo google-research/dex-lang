@@ -1398,7 +1398,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
 '### Print
 
 def getOutputStream (_:Unit) : {IO} Stream WriteMode =
-  MkStream $ %ptrLoad OUT_STREAM_PTR
+  MkStream $ %ptrLoad %outputStreamPtr
 
 def print (s:String) : {IO} Unit =
   fwrite (getOutputStream ()) (s <> "\n")

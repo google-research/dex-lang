@@ -184,6 +184,7 @@ linearizeOp op = case op of
   VariantSplit ts v      -> (VariantSplit ts <$> la v) `bindLin` emitOp
   FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
   ThrowException _       -> notImplemented
+  OutputStreamPtr        -> emitDiscrete
   where
     emitDiscrete = if isTrivialForAD (Op op)
       then LinA $ withZeroTangent <$> emitOp op
@@ -630,6 +631,7 @@ transposeOp op ct = case op of
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear
+  OutputStreamPtr       -> notLinear
   where
     -- Both nonlinear operations and operations on discrete types, where linearity doesn't make sense
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op

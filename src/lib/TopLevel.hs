@@ -73,7 +73,7 @@ runTopPassM bench opts m = runLogger (logFile opts) \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
 
 initTopEnv :: TopEnv
-initTopEnv = TopEnv initBindings mempty
+initTopEnv = TopEnv mempty mempty
 
 evalDecl :: EvalConfig -> SourceBlock -> StateT TopEnv IO Result
 evalDecl opts block = do

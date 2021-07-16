@@ -45,8 +45,7 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
-    extendEffRow,
-    getProjection, outputStreamPtrName, initBindings,
+    extendEffRow, getProjection,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
@@ -76,7 +75,7 @@ import qualified Data.Set as S
 import Data.List (elemIndex)
 import Data.Store (Store)
 import Data.Tuple (swap)
-import Data.Foldable (toList, fold)
+import Data.Foldable (toList)
 import Data.Int
 import Data.Word
 import Data.String (IsString, fromString)
@@ -327,6 +326,8 @@ data PrimOp e =
       | DataConTag e
       -- Create an enum (payload-free ADT) from a Word8
       | ToEnum e e
+      -- Pointer to the stdout-like output stream
+      | OutputStreamPtr
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -411,16 +412,6 @@ data Effect = RWSEffect RWS Name | ExceptionEffect | IOEffect
 pattern Pure :: EffectRow
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
  where  Pure = mempty
-
-outputStreamPtrName :: Name
-outputStreamPtrName = GlobalName "OUT_STREAM_PTR"
-
-initBindings :: Bindings
-initBindings = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
-  [(outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
-
-hostPtrTy :: BaseType -> BaseType
-hostPtrTy ty = PtrType (Heap CPU, ty)
 
 instance Semigroup EffectRow where
   EffectRow effs t <> EffectRow effs' t' =
@@ -1607,6 +1598,7 @@ builtinNames = M.fromList
   , ("ptrStore" , OpExpr $ PtrStore () ())
   , ("dataConTag", OpExpr $ DataConTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
+  , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
