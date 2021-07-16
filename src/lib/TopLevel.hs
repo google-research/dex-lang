@@ -45,7 +45,9 @@ import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
-import SaferNames.Bridge
+-- import qualified SaferNames.Syntax as S
+
+-- import SaferNames.Bridge
 
 data EvalConfig = EvalConfig
   { backendName :: Backend
@@ -71,7 +73,7 @@ runTopPassM bench opts m = runLogger (logFile opts) \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
 
 initTopEnv :: TopEnv
-initTopEnv = TopEnv initBindings mempty
+initTopEnv = TopEnv mempty mempty
 
 evalDecl :: EvalConfig -> SourceBlock -> StateT TopEnv IO Result
 evalDecl opts block = do
@@ -209,7 +211,7 @@ evalUModule env untyped = do
   typed <- liftEitherIO $ inferModule env untyped
   -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
   -- safer names system while we're staging it in.
-  let typed' = roundtripSaferNamesPass typed
+  typed' <- liftEitherIO $ roundtripSaferNamesPass env typed
   checkPass TypePass typed'
   synthed <- liftEitherIO $ synthModule env typed'
   -- TODO: check that the type of module exports doesn't change from here on
@@ -233,9 +235,13 @@ evalUModule env untyped = do
       checkPass ResultPass $ Module Evaluated Empty newBindings
       return newBindings
 
-roundtripSaferNamesPass :: Module -> Module
-roundtripSaferNamesPass (Module ir decls bindings) = Module ir decls' bindings
-  where decls' = fromSafeB $ toSafeB decls
+roundtripSaferNamesPass :: MonadError Err m => Bindings -> Module -> m Module
+roundtripSaferNamesPass _ m = return m
+-- roundtripSaferNamesPass env (Module ir decls bindings) = do
+--   let env' = toSafeBindings env
+--   let decls' = toSafeB decls
+--   _ <- liftEither $ S.checkTypes env' $ S.Block S.UnitTy decls' (S.Atom S.UnitVal)
+--   return $ Module ir (fromSafeB decls') bindings
 
 evalBackend :: Bindings -> Block -> TopPassM Atom
 evalBackend env block = do

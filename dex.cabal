@@ -54,13 +54,14 @@ library
                        Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, Err, LabeledItems,
-                       SaferNames.Name, SaferNames.LazyMap,
-                       SaferNames.Syntax, SaferNames.Bridge
+                       SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
+                       SaferNames.Syntax, SaferNames.Bridge,
+                       SaferNames.PPrint
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
-                       llvm-hs-pure, llvm-hs,
+                       llvm-hs-pure, llvm-hs, transformers,
                        -- Parsing
                        megaparsec, parser-combinators,
                        -- Text output
@@ -87,7 +88,9 @@ library
   cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
-                       BlockArguments, GADTs, TypeOperators, DataKinds
+                       BlockArguments, GADTs, TypeOperators, DataKinds, KindSignatures
+                       ConstraintKinds, FlexibleContexts, RankNTypes, QuantifiedConstraints,
+                       TypeOperators, MultiParamTypeClasses, FunctionalDependencies
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include

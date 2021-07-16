@@ -45,13 +45,13 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
-    extendEffRow,
-    getProjection, outputStreamPtrName, initBindings,
+    extendEffRow, getProjection,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
+    pattern SumTy, pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
+    pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
@@ -72,9 +72,10 @@ import Control.Monad.Except hiding (Except)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
+import Data.List (elemIndex)
 import Data.Store (Store)
 import Data.Tuple (swap)
-import Data.Foldable (toList, fold)
+import Data.Foldable (toList)
 import Data.Int
 import Data.Word
 import Data.String (IsString, fromString)
@@ -84,7 +85,7 @@ import GHC.Generics
 import Err
 import LabeledItems
 import Env
-import Util (IsBool (..), (...))
+import Util (IsBool (..), (...), Zippable (..), zipErr)
 
 -- === core IR ===
 
@@ -305,7 +306,7 @@ data PrimOp e =
       | UnsafeFromOrdinal e e   -- index set, ordinal index. XXX: doesn't check bounds
       | ToOrdinal e
       | IdxSetSize e
-      | ThrowError e
+      | ThrowError e                 -- Hard error (parameterized by result type)
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
       -- Extensible record and variant operations:
@@ -325,6 +326,8 @@ data PrimOp e =
       | DataConTag e
       -- Create an enum (payload-free ADT) from a Word8
       | ToEnum e e
+      -- Pointer to the stdout-like output stream
+      | OutputStreamPtr
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -409,16 +412,6 @@ data Effect = RWSEffect RWS Name | ExceptionEffect | IOEffect
 pattern Pure :: EffectRow
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
  where  Pure = mempty
-
-outputStreamPtrName :: Name
-outputStreamPtrName = GlobalName "OUT_STREAM_PTR"
-
-initBindings :: Bindings
-initBindings = fold [v @> (ty, LamBound ImplicitArrow) | (v, ty) <-
-  [(outputStreamPtrName , BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type)]]
-
-hostPtrTy :: BaseType -> BaseType
-hostPtrTy ty = PtrType (Heap CPU, ty)
 
 instance Semigroup EffectRow where
   EffectRow effs t <> EffectRow effs' t' =
@@ -1254,6 +1247,68 @@ applyFloatBinOp f x y = case (x, y) of
 applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom -> Atom
 applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
+-- === nary sum type ===
+
+-- Here we're using variants to simulate an nary sum type. The plan is to
+-- eventually go the other way: lower variants to built-in n-way sums.
+
+makeSumTy :: [Type] -> Type
+makeSumTy tys
+  | length tyLists <= 26 = VariantTy $ NoExt $ LabeledItems $ M.fromList $ zip labels tyLists
+  -- TODO: a built-in sum type without this restriction
+  -- (it's currently only used for internal Bool/Maybe so it's not important)
+  | otherwise = error "ran out of letters!"
+  where
+    tyLists = map (NE.:| []) tys
+    labels = map (:[]) ['a'..]
+
+matchSumTy :: Type -> Maybe [Type]
+matchSumTy variantTy = do
+  VariantTy (NoExt (LabeledItems items)) <- return variantTy
+  forM (M.assocs items) \(_, tys) -> do
+    ty NE.:| [] <- return tys
+    return ty
+
+pattern SumTy :: [Type] -> Type
+pattern SumTy tys <- (matchSumTy -> Just tys)
+  where SumTy tys = makeSumTy tys
+
+makeSumVal :: Type -> Int -> Atom -> Atom
+makeSumVal (VariantTy variantTy) con x = let
+  NoExt (LabeledItems m) = variantTy
+  label = M.keys m !! con
+  in Variant variantTy label 0 x
+makeSumVal _ _ _ = error "not a variant type"
+
+matchSumVal :: Atom -> Maybe (Type, Int, Atom)
+matchSumVal variant = do
+  Variant types label 0 x <- return variant
+  let NoExt (LabeledItems labeledTypes) = types
+  con <- elemIndex label (M.keys labeledTypes)
+  return (VariantTy types, con, x)
+
+pattern SumVal :: Type -> Int -> Atom -> Atom
+pattern SumVal ty con val <- (matchSumVal -> Just (ty, con, val))
+  where SumVal ty con val = makeSumVal ty con val
+
+pattern MaybeTy :: Type -> Type
+pattern MaybeTy a = SumTy [UnitTy, a]
+
+pattern NothingAtom :: Type -> Atom
+pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
+
+pattern JustAtom :: Type -> Atom -> Atom
+pattern JustAtom a x = SumVal (MaybeTy a) 1 x
+
+pattern BoolTy :: Type
+pattern BoolTy = Word8Ty
+
+pattern FalseAtom :: Atom
+pattern FalseAtom = Con (Lit (Word8Lit 0))
+
+pattern TrueAtom :: Atom
+pattern TrueAtom = Con (Lit (Word8Lit 1))
+
 -- === Synonyms ===
 
 varType :: Var -> Type
@@ -1436,24 +1491,6 @@ pattern BinaryFunVal b1 b2 eff body =
           Lam (Abs b1 (PureArrow, Block Empty (Atom (
           Lam (Abs b2 (PlainArrow eff, body))))))
 
-maybeDataDef :: DataDef
-maybeDataDef = DataDef (GlobalName "Maybe") (Nest (Bind ("a":>TyKind)) Empty)
-  [ DataConDef (GlobalName "Nothing") Empty
-  , DataConDef (GlobalName "Just"   ) (Nest (Ignore (Var ("a":>TyKind))) Empty)]
-
-pattern MaybeTy :: Type -> Type
-pattern MaybeTy a = TypeCon MaybeDataDef [a]
-
-pattern MaybeDataDef :: DataDef
-pattern MaybeDataDef <- ((\def -> def == maybeDataDef) -> True)
-  where MaybeDataDef = maybeDataDef
-
-pattern NothingAtom :: Type -> Atom
-pattern NothingAtom ty = DataCon MaybeDataDef [ty] 0 []
-
-pattern JustAtom :: Type -> Atom -> Atom
-pattern JustAtom ty x = DataCon MaybeDataDef [ty] 1 [x]
-
 pattern NestOne :: a -> Nest a
 pattern NestOne x = Nest x Empty
 
@@ -1561,6 +1598,7 @@ builtinNames = M.fromList
   , ("ptrStore" , OpExpr $ PtrStore () ())
   , ("dataConTag", OpExpr $ DataConTag ())
   , ("toEnum"    , OpExpr $ ToEnum () ())
+  , ("outputStreamPtr", OpExpr $ OutputStreamPtr)
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
@@ -1600,3 +1638,12 @@ instance Store BaseType
 instance Store AddressSpace
 instance Store Device
 instance Store DataConRefBinding
+
+instance Zippable ArrowP where
+  zipWithZ f arr1 arr2 = case (arr1, arr2) of
+    (PlainArrow e1, PlainArrow e2) -> PlainArrow <$> f e1 e2
+    (ImplicitArrow, ImplicitArrow) -> return ImplicitArrow
+    (ClassArrow   , ClassArrow   ) -> return ClassArrow
+    (TabArrow     , TabArrow     ) -> return TabArrow
+    (LinArrow     , LinArrow     ) -> return LinArrow
+    _ -> zipErr

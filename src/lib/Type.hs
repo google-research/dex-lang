@@ -815,15 +815,25 @@ typeCheckOp op = case op of
     return $ VariantTy $ NoExt $
       Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
   DataConTag x -> do
-    (TypeCon _ _) <- typeCheck x
+    ty <- typeCheck x
+    case ty of
+      TypeCon _ _ -> return ()
+      VariantTy _ -> return ()
+      _ -> throw TypeErr $ "Not a sum type: " ++ pprint ty
     return TagRepTy
   ToEnum t x -> do
     t |: TyKind
     x |: Word8Ty
-    (TypeCon (DataDef _ _ dataConDefs) _) <- return t
-    forM_ dataConDefs \(DataConDef _ binders) ->
-      assertEq binders Empty "Not an enum"
+    case t of
+      TypeCon (DataDef _ _ dataConDefs) _ ->
+        forM_ dataConDefs \(DataConDef _ binders) ->
+          assertEq binders Empty "Not an enum"
+      VariantTy _ -> return ()  -- TODO: check empty payload
+      _ -> throw TypeErr $ "Not an enum: " ++ pprint t
     return t
+  OutputStreamPtr ->
+    return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
+    where hostPtrTy ty = PtrType (Heap CPU, ty)
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
