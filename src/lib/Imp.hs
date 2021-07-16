@@ -1277,7 +1277,6 @@ instance Checkable ImpFunction where
   checkValid f@(ImpFunction (_:> IFunType cc _ _) bs block) = addContext ctx $ do
     let scope = foldMap (binderAsEnv . fmap (const ())) bs
     let env   = foldMap (binderAsEnv                  ) bs
-             <> fmap (fromScalarType . fst) initBindings
     void $ flip runReaderT (env, deviceFromCallingConvention cc) $
       flip runStateT scope $ checkBlock block
     where ctx = "Checking:\n" ++ pprint f
@@ -1415,6 +1414,8 @@ checkImpOp op = do
     PtrOffset ref _ -> do  -- TODO: check offset too
       PtrType (addr, ty) <- return ref
       return $ PtrType (addr, ty)
+    OutputStreamPtr -> return $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
+      where hostPtrTy ty = PtrType (Heap CPU, ty)
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
@@ -1480,6 +1481,8 @@ impOpType pop = case pop of
   VectorIndex x _    -> Scalar ty  where Vector ty = getIType x
   PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
   PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
+  OutputStreamPtr -> hostPtrTy $ hostPtrTy $ Scalar Word8Type
+    where hostPtrTy ty = PtrType (Heap CPU, ty)
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ pprint pop
 
