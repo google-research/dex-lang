@@ -330,8 +330,12 @@ toImpOp (maybeDest, op) = case op of
     (Con (SumAsProd _ tag _)) -> returnVal tag
     (DataCon _ _ i _) -> returnVal $ TagRepVal $ fromIntegral i
     _ -> error $ "Not a data constructor: " ++ pprint con
-  ToEnum ~ty@(TypeCon (DataDef _ _ cons) _) i ->
-    returnVal $ Con $ SumAsProd ty i (map (const []) cons)
+  ToEnum ty i -> case ty of
+    TypeCon (DataDef _ _ cons) _ ->
+      returnVal $ Con $ SumAsProd ty i (map (const []) cons)
+    VariantTy (NoExt labeledItems) ->
+      returnVal $ Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
+    _ -> error $ "Not an enum: " ++ pprint ty
   FFICall name returnTy xs -> do
     let returnTys = fromScalarOrPairType returnTy
     let xTys = map (fromScalarType . getType) xs

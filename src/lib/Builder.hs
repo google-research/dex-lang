@@ -24,8 +24,7 @@ module Builder (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buil
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
                 singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
-                builderExtend, applyPreludeFunction,
-                unpackConsList, unpackLeftLeaningConsList,
+                builderExtend, unpackConsList, unpackLeftLeaningConsList,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, buildDataDef,
@@ -36,7 +35,8 @@ module Builder (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buil
                 traverseBlock, traverseExpr, traverseAtom,
                 clampPositive, buildNAbs, buildNAbsAux, buildNestedLam,
                 transformModuleAsBlock, dropSub, appReduceTraversalDef,
-                indexSetSizeE, indexToIntE, intToIndexE, freshVarE) where
+                indexSetSizeE, indexToIntE, intToIndexE, freshVarE,
+                catMaybesE, runMaybeWhile) where
 
 import Control.Applicative
 import Control.Monad
@@ -48,7 +48,6 @@ import Control.Monad.State.Strict
 import Data.Foldable (toList)
 import Data.List (elemIndex, intercalate)
 import Data.Maybe (fromJust)
-import Data.String (fromString)
 import Data.Tuple (swap)
 import GHC.Stack
 
@@ -340,15 +339,6 @@ appReduce (Lam (Abs v (_, b))) a =
   runReaderT (evalBlockE substTraversalDef b) (v @> a)
 appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
--- TODO: this would be more convenient if we could add type inference too
-applyPreludeFunction :: MonadBuilder m => String -> [Atom] -> m Atom
-applyPreludeFunction s xs = do
-  scope <- getScope
-  case envLookup scope fname of
-    Nothing -> error $ "Function not defined yet: " ++ s
-    Just (ty, _) -> naryApp (Var (fname:>ty)) xs
-  where fname = GlobalName (fromString s)
-
 appTryReduce :: MonadBuilder m => Atom -> Atom -> m Atom
 appTryReduce f x = case f of
   Lam _ -> appReduce f x
@@ -405,15 +395,6 @@ emitWhile body = do
   eff <- getAllowedEffects
   lam <- buildLam (Ignore UnitTy) (PlainArrow eff) \_ -> body
   void $ emit $ Hof $ While lam
-
-emitMaybeCase :: MonadBuilder m => Atom -> m Atom -> (Atom -> m Atom) -> m Atom
-emitMaybeCase scrut nothingCase justCase = do
-  let (MaybeTy a) = getType scrut
-  nothingAlt <- buildNAbs Empty                        \[]  -> nothingCase
-  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) \[x] -> justCase x
-  let (Abs _ nothingBody) = nothingAlt
-  let resultTy = getType nothingBody
-  emit $ Case scrut [nothingAlt, justAlt] resultTy
 
 monoidLift :: Type -> Type -> Nest Binder
 monoidLift baseTy accTy = case baseTy == accTy of
@@ -943,3 +924,105 @@ intToIndexE (VariantTy (NoExt types)) i = do
   start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
+
+-- === pseudo-prelude ===
+
+-- Monoid a -> (n=>a) -> a
+reduceE :: MonadBuilder m => BaseMonoid -> Atom -> m Atom
+reduceE monoid xs = do
+  let TabTy n a = getType xs
+  getSnd =<< emitRunWriter "ref" a monoid \ref ->
+    buildFor Fwd n \i -> do
+      x <- emit $ App xs i
+      updater <- emit $ App (baseCombine monoid) x
+      emitOp $ PrimEffect ref $ MExtend updater
+
+-- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
+mapE :: MonadBuilder m => (Atom -> m Atom) -> Atom -> m Atom
+mapE f xs = do
+  let TabTy n _ = getType xs
+  buildFor Fwd n \i -> do
+    x <- emit $ App xs i
+    f x
+
+emitMaybeCase :: MonadBuilder m => Atom -> m Atom -> (Atom -> m Atom) -> m Atom
+emitMaybeCase scrut nothingCase justCase = do
+  let (MaybeTy a) = getType scrut
+  nothingAlt <- buildNAbs (Nest (Ignore UnitTy) Empty) \[_] -> nothingCase
+  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) \[x] -> justCase x
+  let (Abs _ nothingBody) = nothingAlt
+  let resultTy = getType nothingBody
+  emit $ Case scrut [nothingAlt, justAlt] resultTy
+
+-- Maybe a -> a
+fromJustE :: MonadBuilder m => Atom -> m Atom
+fromJustE x = do
+  let MaybeTy a = getType x
+  emitMaybeCase x
+    (emitOp $ ThrowError a)
+    return
+
+-- Maybe a -> Bool
+isJustE :: MonadBuilder m => Atom -> m Atom
+isJustE x = emitMaybeCase x (return FalseAtom) (\_ -> return TrueAtom)
+
+andMonoid :: MonadBuilder m => m BaseMonoid
+andMonoid = do
+  combiner <-
+    buildLam (Ignore BoolTy) PureArrow \x ->
+      buildLam (Ignore BoolTy) PureArrow \y -> do
+        emitOp $ ScalarBinOp BAnd x y
+  return $ BaseMonoid TrueAtom combiner
+
+-- Bool -> (Unit -> {|eff} a) -> (() -> {|eff} a) -> {|eff} a
+-- XXX: the first argument is the true case, following the
+-- surface-level `if ... then ... else ...`, but the order
+-- is flipped in the actual `Case`, because False acts like 0.
+emitIf :: MonadBuilder m => Atom -> m Atom -> m Atom -> m Atom
+emitIf predicate trueCase falseCase = do
+  predicate' <- emitOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
+  falseCaseAbs <- buildNAbs (Nest (Ignore UnitTy) Empty) \[_] -> falseCase
+  trueCaseAbs  <- buildNAbs (Nest (Ignore UnitTy) Empty) \[_] -> trueCase
+  let (Abs _ trueBody) = trueCaseAbs
+  let resultTy = getType trueBody
+  emit $ Case predicate' [falseCaseAbs, trueCaseAbs] resultTy
+
+-- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
+catMaybesE :: MonadBuilder m => Atom -> m Atom
+catMaybesE maybes = do
+  let TabTy n (MaybeTy a) = getType maybes
+  justs <- mapE isJustE maybes
+  monoid <- andMonoid
+  allJust <- reduceE monoid justs
+  emitIf allJust
+    (JustAtom (TabTy n a) <$> mapE fromJustE maybes)
+    (return (NothingAtom (TabTy n a)))
+
+-- Dex implementation, for reference
+-- def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
+--   hadError = yieldState False \ref.
+--     while do
+--       ans = liftState ref body ()
+--       case ans of
+--         Nothing ->
+--           ref := True
+--           False
+--         Just cond -> W8ToB cond
+--   if hadError
+--     then Nothing
+--     else Just ()
+
+runMaybeWhile :: MonadBuilder m => Atom -> m Atom
+runMaybeWhile lam = do
+  hadError <- getSnd =<< emitRunState "ref" FalseAtom \ref -> do
+    emitWhile do
+      ans <- emit $ App lam UnitVal
+      emitMaybeCase ans
+        (emitOp (PrimEffect ref $ MPut TrueAtom) >> return FalseAtom)
+        return
+    return UnitVal
+  emitIf hadError
+    (return $ NothingAtom UnitTy)
+    (return $ JustAtom    UnitTy UnitVal)
+
+
