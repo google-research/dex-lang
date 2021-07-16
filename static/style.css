@@ -81,6 +81,7 @@ code {
 
 .plot-img {
   width: 80%;
+  image-rendering: pixelated;
 }
 
 .comment {
