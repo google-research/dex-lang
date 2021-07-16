@@ -1350,20 +1350,6 @@ def iter (body: Int -> {|eff} IterResult a) : {|eff} a  =
     Just ans -> ans
     Nothing -> unreachable ()
 
--- XXX: used internally by compiler for exceptional while
-def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
-  hadError = yieldState False \ref.
-    while do
-      ans = liftState ref body ()
-      case ans of
-        Nothing ->
-          ref := True
-          False
-        Just cond -> W8ToB cond
-  if hadError
-    then Nothing
-    else Just ()
-
 def boundedIter (maxIters:Int) (fallback:a)
   (body: Int -> {|eff} IterResult a) : {|eff} a  =
   iter \i.
@@ -1917,7 +1903,6 @@ def fromJust (x:Maybe a) : a = case x of Just x' -> x'
 
 def anySat (f:a -> Bool) (xs:n=>a) : Bool = any (map f xs)
 
--- XXX: we use this internally so it's important to make the type args explicit
 def seqMaybes (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
@@ -2012,8 +1997,13 @@ def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
 '## Exception effect
 TODO: move `error` and `todo` to here.
 
+def internalMaybeToMaybe (maybeVal: {a:Unit|b:a}) : Maybe a =
+  case maybeVal of
+    {|a=() |} -> Nothing
+    {|b=val|} -> Just val
+
 def catch (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
-  %catchException f
+  internalMaybeToMaybe (%catchException f)
 
 def throw (_:Unit) : {Except} a =
   %throwException a

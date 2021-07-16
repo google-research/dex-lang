@@ -17,6 +17,7 @@ import Data.List (partition, elemIndex)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import GHC.Stack
 
 import Autodiff
 import Env
@@ -175,14 +176,14 @@ simplifyCase e alts = case e of
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)
 
-simplifyLam :: Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
+simplifyLam :: HasCallStack => Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLam = simplifyLams 1
 
-simplifyBinaryLam :: Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
+simplifyBinaryLam :: HasCallStack => Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyBinaryLam = simplifyLams 2
 
 -- Unlike `substBuilderR`, this simplifies under the binder too.
-simplifyLams :: Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
+simplifyLams :: HasCallStack => Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams numArgs lam = do
   lam' <- substBuilderR lam
   dropSub $ go numArgs mempty $ Block Empty $ Atom lam'
@@ -199,11 +200,13 @@ simplifyLams numArgs lam = do
              let ctx' = restructure ctxEls' ctx
              atomf dat' <$> recon dat' ctx'
           )
-    go n scope ~(Block Empty (Atom (Lam (Abs b (arr, body))))) = do
+    go n scope (Block Empty (Atom (Lam (Abs b (arr, body))))) = do
       b' <- mapM substBuilderR b
       buildLamAux b' (\x -> extendR (b@>x) $ substBuilderR arr) \x@(Var v) -> do
         let scope' = scope <> v @> (varType v, LamBound (void arr))
         extendR (b@>x) $ go (n-1) scope' body
+    go n _ lam' = error $
+      "Expected " <> show n <> "-arg lambda, got: " <> pprint lam'
 
 defunBlock :: Scope -> Block -> SimplifyM (Either Atom (AtomFac SimplifyM))
 defunBlock localScope block = do
@@ -525,7 +528,7 @@ exceptToMaybeExpr expr = do
     Hof (For ann ~(Lam (Abs b (_, body)))) -> do
       b' <- substBuilderR b
       maybes <- buildForAnn ann b' \i -> extendR (b@>i) $ exceptToMaybeBlock body
-      catMaybesE maybes
+      simplifyBuilder $ catMaybesE maybes
     Hof (RunState s lam) -> do
       s' <- substBuilderR s
       let BinaryFunVal _ b _ body = lam
@@ -538,7 +541,7 @@ exceptToMaybeExpr expr = do
       eff <- getAllowedEffects
       lam <- buildLam (Ignore UnitTy) (PlainArrow eff) \_ ->
                exceptToMaybeBlock body
-      runMaybeWhile lam
+      simplifyBuilder $ runMaybeWhile lam
     _ | not (hasExceptions expr) -> do
           x <- substBuilderR expr >>= emit
           return $ JustAtom (getType x) x
@@ -550,16 +553,6 @@ hasExceptions expr = case t of
   Nothing -> ExceptionEffect `S.member` effs
   Just _  -> error "Shouldn't have tail left"
   where (EffectRow effs t) = exprEffs expr
-
-catMaybesE :: MonadBuilder m => Atom -> m Atom
-catMaybesE maybes = simplifyBuilder $ do
-  let (TabTy b (MaybeTy a)) = getType maybes
-  applyPreludeFunction "seqMaybes" [binderAnn b, a, maybes]
-
-runMaybeWhile :: MonadBuilder m => Atom -> m Atom
-runMaybeWhile lam = simplifyBuilder $ do
-  let (Pi (Abs _ (PlainArrow eff, _))) = getType lam
-  applyPreludeFunction "whileMaybe" [Eff eff, lam]
 
 simplifyBuilder :: MonadBuilder m => m Atom -> m Atom
 simplifyBuilder m = do
