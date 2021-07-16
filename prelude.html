@@ -1643,7 +1643,7 @@ Nor does it promise a particular level of precision for numeric values.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Print</h3>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> getOutputStream (_<span class="symbol">:</span><span class="type-name">Unit</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Stream</span> <span class="type-name">WriteMode</span> <span class="symbol">=</span>
-  <span class="type-name">MkStream</span> <span class="symbol">$</span> %ptrLoad <span class="type-name">OUT</span>_<span class="type-name">STREAM</span>_<span class="type-name">PTR</span>
+  <span class="type-name">MkStream</span> <span class="symbol">$</span> %ptrLoad %outputStreamPtr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> print (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> {<span class="type-name">IO</span>} <span class="type-name">Unit</span> <span class="symbol">=</span>
   fwrite (getOutputStream ()) (s <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span>n&quot;)
