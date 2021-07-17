@@ -283,15 +283,15 @@ mel_to_hscale = for i: MelBins.
 :t fft_frames
 
 def triangle_window (mpt:m) (mlower:m) (mupper:m) (scale: ScaledRange m) : m => Float =
-    pt = scaled scale mpt
-    lower = scaled scale mlower
-    upper = scaled scale mupper
-    for i.
-        k = scaled scale i
-        if (k >= lower) && (k <= pt) 
-           then (k - lower) / (pt - lower)
-           else if (k <= upper) && (k >= pt) 
-             then (upper - k) / (upper - pt)
+    pt = IToF (ordinal mpt)
+    lower = IToF (ordinal mlower)
+    upper = IToF (ordinal mupper)
+    for i'.
+        i = IToF (ordinal i')
+        if (i >= lower) && (i <= pt) 
+           then (i - lower) / (pt - lower)
+           else if (i <= upper) && (i >= pt) 
+             then (upper - i) / (upper - pt)
              else 0.0
 
 ' The 25'th Mel bin is going to take in the mass from this range of hertz's bins.
