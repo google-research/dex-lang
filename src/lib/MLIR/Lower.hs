@@ -27,6 +27,7 @@ import Syntax
 import PPrint
 import Type
 import Util (bindM2)
+import Builder
 
 
 data MLIRAtomF a = Value a
@@ -39,13 +40,14 @@ type MonadLower m = (MonadReader (Env MLIRAtom) m, AST.MonadBlockBuilder m)
 
 
 coreToMLIR :: Block -> (AST.Operation, Abs (Nest Binder) Atom)
-coreToMLIR (Block decls resultExpr) = (moduleOp, resultRecon)
+coreToMLIR block@(Block decls resultExpr) = (moduleOp, resultRecon)
   where
     attrs = AST.namedAttribute "llvm.emit_c_interface" AST.UnitAttr
     (moduleOp, Just resultRecon) = flip runReader mempty $ flip runStateT Nothing $
       AST.buildModule $ do
         AST.buildSimpleFunction "entry" [] attrs $ do
           -- NB: All args are inlined in simplification for now
+          unless (null $ freeVars block) $ error "MLIR backend can't handle free variables"
           _rawArgsPtr   <- AST.blockArgument $ LLVM.Ptr i64
           rawResultsPtr <- AST.blockArgument $ LLVM.Ptr i64
           blockEnv <- lowerDecls decls
@@ -56,15 +58,15 @@ coreToMLIR (Block decls resultExpr) = (moduleOp, resultRecon)
             Atom a -> do
               let resultVars = bindingsAsVars $ freeVars a
               let resultMAtom = foldr Pair Unit $ (blockEnv !) <$> resultVars
-              let (resultMValues, Abs bs consList) =
+              (resultMValues, Abs bs consList) <-
                     toCoreAtom (mkConsListTy $ varType <$> resultVars) resultMAtom
               let Right resultAtoms = fromConsList consList
               return ( resultMValues
                      , Abs bs $ subst (newEnv resultVars resultAtoms, mempty) a)
-            _      -> toCoreAtom (getType resultExpr) <$> extendR blockEnv (lowerExpr resultExpr)
+            _ -> toCoreAtom (getType resultExpr) =<< extendR blockEnv (lowerExpr resultExpr)
           put $ Just recon  -- Smuggle the reconstruction out of this block
           forM_ (zip [0..] resultVals) \(i, result) -> do
-            iv <- Std.constant AST.IndexType $ AST.IntegerAttr (AST.IndexType) i
+            iv <- Std.constant i32 $ AST.IntegerAttr i32 i
             rawResultPtr <- LLVM.getelementptr (LLVM.Ptr i64) rawResultsPtr [iv]
             resultPtr    <- LLVM.bitcast (LLVM.Ptr (AST.typeOf result)) rawResultPtr
             LLVM.store result resultPtr
@@ -93,8 +95,10 @@ lowerExpr expr = case expr of
 
 lowerOp :: MonadLower m => Op -> m MLIRAtom
 lowerOp op = case op of
-  TabCon (TabTy _ elTy) els -> liftM Value . Tensor.from_elements tensorType =<< traverse lowerValue els
+  TabCon (TabTy _ elTy@(BaseTy _)) els ->
+    liftM Value . Tensor.from_elements tensorType =<< traverse lowerValue els
     where tensorType = AST.RankedTensorType [Just $ length els] (toMLIRType elTy) Nothing
+  TabCon _ _ -> error "Multi-dimensional array literals not supported in MLIR backend"
   ScalarBinOp bop x y -> liftM Value $ bindM2 (getBinOpLowering bop) (lowerValue x) (lowerValue y)
   ScalarUnOp  uop x   -> liftM Value $ getUnOpLowering uop =<< lowerValue x
   CastOp      ty  x   -> do
@@ -178,7 +182,11 @@ lowerValue atom = lowerAtom atom <&> \case Value v -> v
 
 toMLIRType :: HasCallStack => Type -> AST.Type
 toMLIRType ty = case ty of
-  TabTy  (Ignore n) elTy            -> scalarTable [n] elTy
+  TabTy  _ _ | Just (ns, elTy) <- rectScalarTable ty -> do
+    let shape = reverse ns <&> \case
+          FixedIntRange low high -> Just $ max 0 $ (fromIntegral high) - (fromIntegral low)
+          _                      -> Nothing
+    AST.RankedTensorType shape (toMLIRType elTy) Nothing
   BaseTy (Scalar Word8Type  )       -> AST.IntegerType AST.Signless 8
   BaseTy (Scalar Word32Type )       -> AST.IntegerType AST.Signless 32
   BaseTy (Scalar Word64Type )       -> AST.IntegerType AST.Signless 64
@@ -190,34 +198,104 @@ toMLIRType ty = case ty of
   _ -> unsupported
   where
     unsupported = error $ "Unsupported type in MLIR lowering: " ++ pprint ty
-    scalarTable :: [Type] -> Type -> AST.Type
-    scalarTable ns elTy = case elTy of
-      TabTy (Ignore n) a -> scalarTable (n : ns) a
-      BaseTy (Scalar _)  -> AST.RankedTensorType shape (toMLIRType elTy) Nothing
-      _                  -> unsupported
-      where
-        shape = reverse ns <&> \case IdxRepVal c -> Just $ fromIntegral c
-                                     _           -> Nothing
 
 
-toCoreAtom :: Type -> MLIRAtom -> ([AST.Value], Abs (Nest Binder) Atom)
-toCoreAtom fullTy matom = (fst <$> valsWithTys, reconAtom)
+rectScalarTable :: Type -> Maybe ([Type], Type)
+rectScalarTable ty = go [] ty
   where
-    (neededVals, atom) = go fullTy matom
-    valsWithTys = M.toList neededVals <&> \(name, (mty, ty)) -> (name AST.:> mty, ty)
-    reconAtom = Abs (toNest [Bind (valueName v :> ty) | (v, ty) <- valsWithTys]) atom
+    go ns elTy = case elTy of
+      TabTy  (Ignore n) a -> go (n : ns) a
+      BaseTy (Scalar _)   -> Just (reverse ns, elTy)
+      _                   -> Nothing
 
+
+toCoreAtom :: AST.MonadBlockBuilder m => Type -> MLIRAtom -> m ([AST.Value], Abs (Nest Binder) Atom)
+toCoreAtom fullTy matom = do
+  (neededVals, atom) <- go fullTy matom
+  let valsWithTys = M.toList neededVals <&> \(name, (mty, ty)) -> (name AST.:> mty, ty)
+      reconAtom = Abs (toNest [Bind (valueName v :> ty) | (v, ty) <- valsWithTys]) atom
+  return (fst <$> valsWithTys, reconAtom)
+  where
+    --go :: MonadBlockBuilder m => Type -> MLIRAtom -> m
     go ty ma = case (ty, ma) of
-      (BaseTy _    , Value v ) -> (singleton v ty, Var $ valueName v :> ty)
-      (PairTy lt rt, Pair l r) -> (lv <> rv, PairVal la ra)
-        where
-          (lv, la) = go lt l
-          (rv, ra) = go rt r
-      (UnitTy, Unit) -> (mempty, UnitVal)
+      (BaseTy _    , Value v ) -> return (singleton v ty, Var $ valueName v :> ty)
+      (TabTy  _ _  , Value v ) | Just (ns, BaseTy elTy) <- rectScalarTable ty -> do
+        ~[vMemref] <- AST.emitOp $ AST.Operation
+          { AST.opName = "memref.buffer_cast"
+          , AST.opLocation = AST.UnknownLocation
+          , AST.opResultTypes = AST.Explicit [bufferizeType $ AST.typeOf v]
+          , AST.opOperands = [AST.operand v]
+          , AST.opRegions = []
+          , AST.opSuccessors = []
+          , AST.opAttributes = AST.NoAttrs
+          }
+        vs <- LLVM.mlir_cast (llvmType $ AST.typeOf vMemref) vMemref
+        -- TODO: Assert that allocPtr and basePtr are equal, or else we will be leaking data!
+        ~[_allocPtr, basePtr, dataOff, _sizeArr, stridesArr] <- unpackStruct vs
+        -- TODO: Substitute into ns
+        unless (null $ freeVars ns) $ error "Unsupported dependent array result"
+        unless (toMLIRType IdxRepTy == i32) $ error "MLIR lowering assumes that indices are i32"
+        strides <- traverse (Std.trunci i32) =<< unpackArray stridesArr
+        dataOffI32 <- Std.trunci i32 dataOff
+        let arrayAtom = fst $ flip runBuilder mempty do
+              buildNaryLam TabArrow (toNest $ Ignore <$> ns) \idxs -> do
+                let strideAtoms = strides <&> \s -> Var $ valueName s :> IdxRepTy
+                let dataOffAtom = Var $ valueName dataOffI32 :> IdxRepTy
+                let basePtrAtom = Var $ valueName basePtr :> PtrTy (Heap CPU, elTy)
+                ordinals <- traverse indexToIntE idxs
+                offset   <- foldM iadd dataOffAtom =<< zipWithM imul ordinals strideAtoms
+                unsafePtrLoad =<< ptrOffset basePtrAtom offset
+        let mlirResults =
+              [ (basePtr   , PtrTy (Heap CPU, elTy))
+              , (dataOffI32, IdxRepTy              )
+              ] <> (strides <&> (,IdxRepTy))
+        return (results mlirResults, arrayAtom)
+      (PairTy lt rt, Pair l r) -> do
+        (lv, la) <- go lt l
+        (rv, ra) <- go rt r
+        return (lv <> rv, PairVal la ra)
+      (UnitTy, Unit) -> return (mempty, UnitVal)
       _    -> error $ "Unsupported output MLIR atom for type: " ++ pprint fullTy
     singleton v ty = M.singleton (AST.operand v) ((AST.typeOf v), ty)
+    results vtys = foldMap (uncurry singleton) vtys
     valueName = (\n -> Name GenName n 0) . T.decodeUtf8 . AST.operand
 
+
+bufferizeType :: AST.Type -> AST.Type
+bufferizeType ty = case ty of
+  AST.RankedTensorType shape elTy Nothing ->
+    AST.MemRefType shape elTy [] Nothing
+  _ -> error "Don't know how to bufferize a type"
+
+llvmType :: AST.Type -> AST.Type
+llvmType ty = case ty of
+  AST.MemRefType shape elTy [] Nothing ->
+    LLVM.LiteralStruct
+      [ LLVM.Ptr elTy                  -- allocated pointer
+      , LLVM.Ptr elTy                  -- aligned pointer
+      , i64                            -- offset between aligned pointer and data
+      , LLVM.Array (length shape) i64  -- array of sizes
+      , LLVM.Array (length shape) i64  -- array of strides
+      ]
+  _ -> error "Don't know how to get the llvm representation type"
+
+
+unpackElements :: AST.MonadBlockBuilder m => AST.Value -> [AST.Type] -> m [AST.Value]
+unpackElements val tys =
+  forM (zip [0..] tys) \(i, ty) -> LLVM.extractvalue ty val [AST.IntegerAttr i32 i]
+
+unpackStruct :: AST.MonadBlockBuilder m => AST.Value -> m [AST.Value]
+unpackStruct val = case AST.typeOf val of
+  LLVM.LiteralStruct tys -> unpackElements val tys
+  _ -> error "Not a struct"
+
+unpackArray :: AST.MonadBlockBuilder m => AST.Value -> m [AST.Value]
+unpackArray val = case AST.typeOf val of
+  LLVM.Array size ty -> unpackElements val $ replicate size ty
+  _ -> error "Not an array"
+
+i32 :: AST.Type
+i32 = AST.IntegerType AST.Signless 32
 
 i64 :: AST.Type
 i64 = AST.IntegerType AST.Signless 64

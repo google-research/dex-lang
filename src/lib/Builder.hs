@@ -17,7 +17,7 @@ module Builder (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buil
                 app,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
-                fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam,
+                fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
                 select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
                 fromPair, getFst, getSnd, getFstRef, getSndRef,
                 naryApp, appReduce, appTryReduce, buildAbs,
@@ -208,9 +208,12 @@ buildDataDef tyConName paramBinders body = do
   return $ DataDef tyConName paramBinders' dataDefs
 
 buildImplicitNaryLam :: MonadBuilder m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
-buildImplicitNaryLam Empty body = body []
-buildImplicitNaryLam (Nest b bs) body =
-  buildLam b ImplicitArrow \x -> do
+buildImplicitNaryLam bs body = buildNaryLam ImplicitArrow bs body
+
+buildNaryLam :: MonadBuilder m => Arrow -> (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
+buildNaryLam _   Empty       body = body []
+buildNaryLam arr (Nest b bs) body =
+  buildLam b arr \x -> do
     bs' <- substBuilder (b@>x) bs
     buildImplicitNaryLam bs' \xs -> body $ x:xs
 
