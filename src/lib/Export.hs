@@ -62,112 +62,114 @@ runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
   where repack ((ans, cargs), env) = (ans, cargs, env)
 
 prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSignature)
-prepareFunctionForExport env nameStr func = do
-  -- Create a module that simulates an application of arguments to the function
-  -- TODO: Assert that the type of func is closed?
-  let ((dest, cargs, apiDesc), (_, decls)) = flip runBuilder (freeVars func) $ do
-        (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
-        let (atomArgs, exportedArgSig) = unzip args
-        resultAtom <- naryApp func atomArgs
-        void $ emitTo outputName PlainLet $ Atom resultAtom
-        ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
-        let cargs' = cargArgs <> cdestArgs
-        let exportedCCallSig = fmap (\(Bind (v:>_)) -> v) cargs'
-        return (resultDest, cargs', ExportedSignature{..})
+prepareFunctionForExport = undefined
+-- prepareFunctionForExport env nameStr func = do
+--   -- Create a module that simulates an application of arguments to the function
+--   -- TODO: Assert that the type of func is closed?
+--   let ((dest, cargs, apiDesc), (_, decls)) = flip runBuilder (freeVars func) $ do
+--         (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
+--         let (atomArgs, exportedArgSig) = unzip args
+--         resultAtom <- naryApp func atomArgs
+--         void $ emitTo outputName PlainLet $ Atom resultAtom
+--         ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
+--         let cargs' = cargArgs <> cdestArgs
+--         let exportedCCallSig = fmap (\(Bind (v:>_)) -> v) cargs'
+--         return (resultDest, cargs', ExportedSignature{..})
 
-  let coreModule = Module Core decls mempty
-  let defunctionalized = simplifyModule env coreModule
-  let Module _ optDecls optBindings = optimizeModule defunctionalized
-  let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
-  let block = Block optDecls outputExpr
+--   let coreModule = Module Core decls mempty
+--   let defunctionalized = simplifyModule env coreModule
+--   let Module _ optDecls optBindings = optimizeModule defunctionalized
+--   let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
+--   let block = Block optDecls outputExpr
 
-  let name = Name TopFunctionName (fromString nameStr) 0
-  let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
-  (impModule, apiDesc)
-  where
-    outputName = GlobalName "_ans_"
+--   let name = Name TopFunctionName (fromString nameStr) 0
+--   let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
+--   (impModule, apiDesc)
+--   where
+--     outputName = undefined
+--     -- outputName = GlobalName "_ans_"
 
-    createArgs :: Type -> CArgM [(Atom, ExportArg)]
-    createArgs ty = case ty of
-      PiTy b arrow result | arrow /= TabArrow -> do
-        argSubst <- looks cargScalarScope
-        let visibility = case arrow of
-              PlainArrow Pure -> ExplicitArg
-              PlainArrow _    -> error $ "Effectful functions cannot be exported"
-              ImplicitArrow   -> ImplicitArg
-              _               -> error $ "Unexpected type for an exported function: " ++ pprint ty
-        (:) <$> createArg visibility (subst (argSubst, mempty) b) <*> createArgs result
-      _ -> return []
+--     createArgs :: Type -> CArgM [(Atom, ExportArg)]
+--     createArgs ty = case ty of
+--       PiTy b arrow result | arrow /= TabArrow -> do
+--         argSubst <- looks cargScalarScope
+--         let visibility = case arrow of
+--               PlainArrow Pure -> ExplicitArg
+--               PlainArrow _    -> error $ "Effectful functions cannot be exported"
+--               ImplicitArrow   -> ImplicitArg
+--               _               -> error $ "Unexpected type for an exported function: " ++ pprint ty
+--         (:) <$> createArg visibility (subst (argSubst, mempty) b) <*> createArgs result
+--       _ -> return []
 
-    createArg :: ArgVisibility -> Binder -> CArgM (Atom, ExportArg)
-    createArg vis b = case ty of
-      BaseTy bt@(Scalar sbt) -> do
-        ~v@(Var (name:>_)) <- newCVar bt
-        extend $ mempty { cargScalarScope = b @> (Var $ name :> BaseTy bt) }
-        return (v, ExportScalarArg vis name sbt)
-      TabTy _ _ -> createTabArg vis mempty ty
-      _ -> error $ "Unsupported arg type: " ++ pprint ty
-      where ty = binderType b
+--     createArg :: ArgVisibility -> Binder -> CArgM (Atom, ExportArg)
+--     createArg vis b = case ty of
+--       BaseTy bt@(Scalar sbt) -> do
+--         ~v@(Var (name:>_)) <- newCVar bt
+--         extend $ mempty { cargScalarScope = b @> (Var $ name :> BaseTy bt) }
+--         return (v, ExportScalarArg vis name sbt)
+--       TabTy _ _ -> createTabArg vis mempty ty
+--       _ -> error $ "Unsupported arg type: " ++ pprint ty
+--       where ty = binderType b
 
-    createTabArg :: ArgVisibility -> IndexStructure -> Type -> CArgM (Atom, ExportArg)
-    createTabArg vis idx ty = case ty of
-      BaseTy bt@(Scalar sbt) -> do
-        ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
-        destAtom <- unsafePtrLoad =<< applyIdxs v idx
-        funcArgScope <- looks cargScope
-        let exportArg = ExportArrayArg vis name $ case getRectShape funcArgScope idx of
-              Just rectShape -> RectContArrayPtr sbt rectShape
-              Nothing        -> GeneralArrayPtr  sbt
-        return (destAtom, exportArg)
-      TabTy b elemTy -> do
-        buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substBuilder (b@>Var i) elemTy
-          createTabArg vis (idx <> Nest (Bind i) Empty) elemTy'
-      _ -> unsupported
-      where unsupported = error $ "Unsupported table type suffix: " ++ pprint ty
+--     createTabArg :: ArgVisibility -> IndexStructure -> Type -> CArgM (Atom, ExportArg)
+--     createTabArg vis idx ty = case ty of
+--       BaseTy bt@(Scalar sbt) -> do
+--         ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
+--         destAtom <- unsafePtrLoad =<< applyIdxs v idx
+--         funcArgScope <- looks cargScope
+--         let exportArg = ExportArrayArg vis name $ case getRectShape funcArgScope idx of
+--               Just rectShape -> RectContArrayPtr sbt rectShape
+--               Nothing        -> GeneralArrayPtr  sbt
+--         return (destAtom, exportArg)
+--       TabTy b elemTy -> do
+--         buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
+--           elemTy' <- substBuilder (b@>Var i) elemTy
+--           createTabArg vis (idx <> Nest (Bind i) Empty) elemTy'
+--       _ -> unsupported
+--       where unsupported = error $ "Unsupported table type suffix: " ++ pprint ty
 
-    createDest :: IndexStructure -> Type -> CArgM (Atom, ExportResult)
-    createDest idx ty = case ty of
-      BaseTy bt@(Scalar sbt) -> do
-        ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
-        dest <- Con . BaseTypeRef <$> applyIdxs v idx
-        funcArgScope <- looks cargScope
-        let exportResult = case idx of
-              Empty -> ExportScalarResultPtr name sbt
-              _     -> ExportArrayResult name $ case getRectShape funcArgScope idx of
-                Just rectShape -> RectContArrayPtr sbt rectShape
-                Nothing        -> GeneralArrayPtr  sbt
-        return (dest, exportResult)
-      TabTy b elemTy -> do
-        (destTab, exportResult) <- buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substBuilder (b@>Var i) elemTy
-          createDest (idx <> Nest (Bind i) Empty) elemTy'
-        return (Con $ TabRef destTab, exportResult)
-      PairTy a b | idx == Empty -> do
-        (atom_a, res_a) <- createDest idx a
-        (atom_b, res_b) <- createDest idx b
-        return (Con $ ConRef $ PairCon atom_a atom_b, ExportPairResult res_a res_b)
-      _ -> unsupported
-      where unsupported = error $ "Unsupported result type: " ++ pprint ty
+--     createDest :: IndexStructure -> Type -> CArgM (Atom, ExportResult)
+--     createDest idx ty = case ty of
+--       BaseTy bt@(Scalar sbt) -> do
+--         ~v@(Var (name:>_)) <- newCVar (ptrTy bt)
+--         dest <- Con . BaseTypeRef <$> applyIdxs v idx
+--         funcArgScope <- looks cargScope
+--         let exportResult = case idx of
+--               Empty -> ExportScalarResultPtr name sbt
+--               _     -> ExportArrayResult name $ case getRectShape funcArgScope idx of
+--                 Just rectShape -> RectContArrayPtr sbt rectShape
+--                 Nothing        -> GeneralArrayPtr  sbt
+--         return (dest, exportResult)
+--       TabTy b elemTy -> do
+--         (destTab, exportResult) <- buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
+--           elemTy' <- substBuilder (b@>Var i) elemTy
+--           createDest (idx <> Nest (Bind i) Empty) elemTy'
+--         return (Con $ TabRef destTab, exportResult)
+--       PairTy a b | idx == Empty -> do
+--         (atom_a, res_a) <- createDest idx a
+--         (atom_b, res_b) <- createDest idx b
+--         return (Con $ ConRef $ PairCon atom_a atom_b, ExportPairResult res_a res_b)
+--       _ -> unsupported
+--       where unsupported = error $ "Unsupported result type: " ++ pprint ty
 
-    -- TODO: I guess that the address space depends on the backend?
-    -- TODO: Have an ExternalPtr tag?
-    ptrTy ty = PtrType (Heap CPU, ty)
+--     -- TODO: I guess that the address space depends on the backend?
+--     -- TODO: Have an ExternalPtr tag?
+--     ptrTy ty = PtrType (Heap CPU, ty)
 
-    getRectShape :: Env () -> IndexStructure -> Maybe [Either Name Int]
-    getRectShape scope idx = traverse (dimShape . binderType) $ toList idx
-      where
-        dimShape dimTy = case dimTy of
-          Fin (IdxRepVal n)                  -> Just $ Right $ fromIntegral n
-          Fin (Var v)       | v `isin` scope -> Just $ Left  $ varName v
-          _                                  -> Nothing
+--     getRectShape :: Env () -> IndexStructure -> Maybe [Either Name Int]
+--     getRectShape scope idx = traverse (dimShape . binderType) $ toList idx
+--       where
+--         dimShape dimTy = case dimTy of
+--           Fin (IdxRepVal n)                  -> Just $ Right $ fromIntegral n
+--           Fin (Var v)       | v `isin` scope -> Just $ Left  $ varName v
+--           _                                  -> Nothing
 
-    newCVar :: BaseType -> CArgM Atom
-    newCVar bt = do
-      name <- genFresh (Name CArgName "arg" 0) <$> looks cargScope
-      extend $ mempty { cargScope = name @> () }
-      tell [Bind $ name :> bt]
-      return $ Var $ name :> BaseTy bt
+--     newCVar :: BaseType -> CArgM Atom
+--     newCVar bt = do
+--       name <- genFresh (Name CArgName "arg" 0) <$> looks cargScope
+--       extend $ mempty { cargScope = name @> () }
+--       tell [Bind $ name :> bt]
+--       return $ Var $ name :> BaseTy bt
 
 -- === Exported function signature ===
 

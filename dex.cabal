@@ -53,7 +53,7 @@ library
                        Builder, Cat, Export,
                        Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims, Err, LabeledItems,
+                       LLVM.JIT, LLVM.Shims, Err, LabeledItems, SourceRename,
                        SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint

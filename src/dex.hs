@@ -80,7 +80,7 @@ runMode evalMode preludeFile opts = do
 #endif
 
 evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
-evalPrelude opts fname = flip execStateT initTopEnv $ do
+evalPrelude opts fname = flip execStateT mempty $ do
   source <- case fname of
               Nothing   -> return preludeSource
               Just path -> liftIO $ readFile path

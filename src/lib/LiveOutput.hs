@@ -84,19 +84,20 @@ evalSource source = do
   updateResultList nodes
 
 sourceBlockToDag :: SourceBlock -> CatT (Env NodeId, [NodeId]) DriverM NodeId
-sourceBlockToDag block = do
-  (varMap, alwaysInScope) <- look
-  let parents = sort $ nub $ toList $
-                  (boundUVars block <> freeUVars block) `envIntersect` varMap
-  n <- lift $ addToBlockDag (block, alwaysInScope <> parents)
-  -- TODO: Stop forcing dependencies on all preceding blocks. This will require
-  --       an improvement of the analysis above, such that all blocks depend on those
-  --       that contain interface instance definitions.
-  extend (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
-  case sbContents block of
-    ImportModule _ -> extend $ asSnd [n]
-    _ -> return ()
-  return n
+sourceBlockToDag = undefined
+-- sourceBlockToDag block = do
+--   (varMap, alwaysInScope) <- look
+--   let parents = sort $ nub $ toList $
+--                   (boundUVars block <> freeUVars block) `envIntersect` varMap
+--   n <- lift $ addToBlockDag (block, alwaysInScope <> parents)
+--   -- TODO: Stop forcing dependencies on all preceding blocks. This will require
+--   --       an improvement of the analysis above, such that all blocks depend on those
+--   --       that contain interface instance definitions.
+--   extend (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
+--   case sbContents block of
+--     ImportModule _ -> extend $ asSnd [n]
+--     _ -> return ()
+--   return n
 
 launchBlockEval :: NodeId -> DriverM ()
 launchBlockEval n = do
@@ -111,11 +112,12 @@ launchBlockEval n = do
 
 blockEval :: (EvalConfig, TopEnv) -> SourceBlock
           -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()
-blockEval (opts, topEnv) block parentLocs loc resultChan = do
-  parentEnv <- liftM fold $ mapM readMVar parentLocs
-  (env', ans) <- liftIO $ evalSourceBlock opts (topEnv <> parentEnv) block
-  putMVar loc (parentEnv <> env')
-  sendFromIO resultChan ans
+blockEval = undefined
+-- blockEval (opts, topEnv) block parentLocs loc resultChan = do
+--   parentEnv <- liftM fold $ mapM readMVar parentLocs
+--   (env', ans) <- liftIO $ evalSourceBlock opts (topEnv <> parentEnv) block
+--   putMVar loc (parentEnv <> env')
+--   sendFromIO resultChan ans
 
 addToBlockDag :: Node SourceBlock -> DriverM NodeId
 addToBlockDag node = do

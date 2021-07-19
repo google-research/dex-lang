@@ -31,6 +31,7 @@ data ErrType = NoErr
              | LinErr
              | UnboundVarErr
              | RepeatedVarErr
+             | InvalidPatternErr
              | CompilerErr
              | IRVariantErr
              | NotImplementedErr
@@ -124,6 +125,7 @@ instance Pretty ErrType where
     IRVariantErr      -> "Internal IR validation error: "
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
+    InvalidPatternErr -> "Error: not a valid pattern: "
     NotImplementedErr -> "Not implemented:"
     CompilerErr       ->
       "Compiler bug!" <> line <>
