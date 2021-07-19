@@ -184,6 +184,7 @@ linearizeOp op = case op of
   VariantSplit ts v      -> (VariantSplit ts <$> la v) `bindLin` emitOp
   FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
   ThrowException _       -> notImplemented
+  SumToVariant _         -> notImplemented
   OutputStreamPtr        -> emitDiscrete
   where
     emitDiscrete = if isTrivialForAD (Op op)
@@ -330,6 +331,7 @@ linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
   PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
+  SumCon  _ _ _         -> notImplemented
   UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
   IntRangeVal _ _ _     -> emitWithZero
@@ -615,6 +617,7 @@ transposeOp op ct = case op of
   RecordSplit  _ _      -> notImplemented
   VariantLift  _ _      -> notImplemented
   VariantSplit _ _      -> notImplemented
+  SumToVariant _        -> notImplemented
   PtrStore _ _          -> notLinear
   PtrLoad    _          -> notLinear
   PtrOffset _ _         -> notLinear
@@ -732,6 +735,7 @@ transposeCon con ct = case con of
   PairCon x y       -> do
     getFst ct >>= transposeAtom x
     getSnd ct >>= transposeAtom y
+  SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notTangent

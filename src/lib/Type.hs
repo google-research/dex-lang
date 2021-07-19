@@ -246,8 +246,13 @@ checkCase e alts resultTy = do
           checkEq (getType b) ty
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
-      VariantTy _ -> throw CompilerErr
-        "Can't pattern-match partially-known variants"
+      VariantTy _ -> throw CompilerErr "Can't pattern-match partially-known variants"
+      SumTy cases -> do
+        forM_ (zip cases alts) \(ty, (Abs bs body)) -> do
+          [b] <- pure $ toList bs
+          checkEq (getType b) ty
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
       _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
   return resultTy
 
@@ -584,6 +589,7 @@ typeCheckTyCon tc = case tc of
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
+  SumType  cs      -> mapM_ (|: TyKind) cs >> return TyKind
   UnitType         -> return TyKind
   RefType r a      -> mapM_ (|: TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
@@ -595,6 +601,11 @@ typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
+  SumCon ty tag payload -> do
+    SumTy caseTys <- return ty
+    unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
+    payload |: (caseTys !! tag)
+    return ty
   UnitCon -> return UnitTy
   SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
   ClassDictHole _ ty -> ty |: TyKind >> return ty
@@ -829,8 +840,12 @@ typeCheckOp op = case op of
         forM_ dataConDefs \(DataConDef _ binders) ->
           assertEq binders Empty "Not an enum"
       VariantTy _ -> return ()  -- TODO: check empty payload
+      SumTy cases -> forM_ cases \cty -> assertEq cty UnitTy "Not an enum"
       _ -> throw TypeErr $ "Not an enum: " ++ pprint t
     return t
+  SumToVariant x -> do
+    SumTy cases <- typeCheck x
+    return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
@@ -1020,6 +1035,7 @@ checkDataLike msg ty = case ty of
   TC con -> case con of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b
+    SumType  cases   -> traverse_ recur cases
     UnitType         -> return ()
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
