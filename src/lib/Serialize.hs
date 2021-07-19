@@ -300,6 +300,11 @@ instance HasPtrs a => HasPtrs [a]         where traversePtrs f xs = traverse (tp
 instance HasPtrs a => HasPtrs (Nest a)    where traversePtrs f xs = traverse (tp f) xs
 instance HasPtrs a => HasPtrs (BinderP a) where traversePtrs f xs = traverse (tp f) xs
 
+instance HasPtrs AnyBinderInfo where
+  traversePtrs f (AtomBinderInfo ty info) =
+    AtomBinderInfo <$> traversePtrs f ty <*> traversePtrs f info
+  traversePtrs _ info = pure info
+
 instance HasPtrs BinderInfo where
   traversePtrs f binfo = case binfo of
    LetBound ann expr -> LetBound ann <$> tp f expr

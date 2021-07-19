@@ -14,6 +14,7 @@ module Export (
 
 import Control.Monad.State.Strict
 import Control.Monad.Writer hiding (pass)
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Data.String
 import Data.Foldable
@@ -46,7 +47,7 @@ exportFunctions objPath funcs env = do
 
 type CArgList = [IBinder] -- ^ List of arguments to the C call
 data CArgEnv = CArgEnv { -- | Maps scalar atom binders to their CArgs. All atoms are Vars.
-                         cargScalarScope :: Env Atom
+                         cargScalarScope :: SubstEnv
                          -- | Tracks the CArg names used so far (globally scoped, unlike Builder)
                        , cargScope :: Env () }
 type CArgM = WriterT CArgList (CatT CArgEnv Builder)
@@ -65,27 +66,31 @@ prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSi
 prepareFunctionForExport env nameStr func = do
   -- Create a module that simulates an application of arguments to the function
   -- TODO: Assert that the type of func is closed?
-  let ((dest, cargs, apiDesc), (_, decls)) = flip runBuilder (freeVars func) $ do
+  let ((dest, cargs, apiDesc, resultName), (_, decls)) = runBuilder (freeVars func) mempty $ do
         (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
         let (atomArgs, exportedArgSig) = unzip args
         resultAtom <- naryApp func atomArgs
-        void $ emitTo outputName PlainLet $ Atom resultAtom
+        ~(Var (outputName:>_)) <- emit $ Atom resultAtom
         ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
         let cargs' = cargArgs <> cdestArgs
         let exportedCCallSig = fmap (\(Bind (v:>_)) -> v) cargs'
-        return (resultDest, cargs', ExportedSignature{..})
+        return (resultDest, cargs', ExportedSignature{..}, outputName)
 
-  let coreModule = Module Core decls mempty
+  let coreModule = Module Core decls $ EvaluatedModule mempty mempty $
+                     SourceMap $ M.singleton outputSourceName resultName
   let defunctionalized = simplifyModule env coreModule
-  let Module _ optDecls optBindings = optimizeModule defunctionalized
-  let (_, LetBound PlainLet outputExpr) = optBindings ! outputName
+  let Module _ optDecls (EvaluatedModule optBindings _ (SourceMap sourceMap)) =
+        optimizeModule defunctionalized
+
+  let Just outputName = M.lookup outputSourceName sourceMap
+  let AtomBinderInfo _ (LetBound PlainLet outputExpr) = optBindings ! outputName
   let block = Block optDecls outputExpr
 
   let name = Name TopFunctionName (fromString nameStr) 0
   let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
   (impModule, apiDesc)
   where
-    outputName = GlobalName "_ans_"
+    outputSourceName = "_ans_"
 
     createArgs :: Type -> CArgM [(Atom, ExportArg)]
     createArgs ty = case ty of
@@ -103,7 +108,7 @@ prepareFunctionForExport env nameStr func = do
     createArg vis b = case ty of
       BaseTy bt@(Scalar sbt) -> do
         ~v@(Var (name:>_)) <- newCVar bt
-        extend $ mempty { cargScalarScope = b @> (Var $ name :> BaseTy bt) }
+        extend $ mempty { cargScalarScope = b @> SubstVal (Var $ name :> BaseTy bt) }
         return (v, ExportScalarArg vis name sbt)
       TabTy _ _ -> createTabArg vis mempty ty
       _ -> error $ "Unsupported arg type: " ++ pprint ty
@@ -121,7 +126,7 @@ prepareFunctionForExport env nameStr func = do
         return (destAtom, exportArg)
       TabTy b elemTy -> do
         buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substBuilder (b@>Var i) elemTy
+          elemTy' <- substBuilder (b@>SubstVal (Var i)) elemTy
           createTabArg vis (idx <> Nest (Bind i) Empty) elemTy'
       _ -> unsupported
       where unsupported = error $ "Unsupported table type suffix: " ++ pprint ty
@@ -140,7 +145,7 @@ prepareFunctionForExport env nameStr func = do
         return (dest, exportResult)
       TabTy b elemTy -> do
         (destTab, exportResult) <- buildLamAux b (const $ return TabArrow) $ \(Var i) -> do
-          elemTy' <- substBuilder (b@>Var i) elemTy
+          elemTy' <- substBuilder (b@>SubstVal (Var i)) elemTy
           createDest (idx <> Nest (Bind i) Empty) elemTy'
         return (Con $ TabRef destTab, exportResult)
       PairTy a b | idx == Empty -> do

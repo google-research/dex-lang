@@ -260,7 +260,6 @@ instance Pretty LetAnn where
   pretty ann = case ann of
     PlainLet      -> ""
     InstanceLet   -> "%instance"
-    SuperclassLet -> "%superclass"
     NoInlineLet   -> "%noinline"
 
 prettyPiTypeHelper :: PiType -> Doc ann
@@ -313,13 +312,13 @@ instance PrettyPrec Atom where
     Eff e -> atPrec ArgPrec $ p e
     DataCon (DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
       where (DataConDef name _) = cons !! con
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) params
     LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
@@ -347,26 +346,30 @@ fromInfix t = do
   (t'', ')') <- unsnoc t'
   return t''
 
+-- TODO: we don't want to show `proj x [0,1]` etc to users, but this rewrite is
+-- bad for debugging the compiler because it obscures what's actually going on.
+-- We should just have a separate path for user-facing printing.
+-- prettyProjection idxs v = atPrec ArgPrec $ "proj" <+> p idxs <+> p v
 prettyProjection :: NE.NonEmpty Int -> Var -> DocPrec ann
 prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
   -- Builds a source expression that performs the given projection.
   uproj = UApp (PlainArrow ()) (nosrc ulam) (nosrc uvar)
-  ulam = ULam (upat, Nothing) (PlainArrow ()) (nosrc $ UVar $ target :> ())
-  uvar = UVar $ name :> ()
+  ulam = ULam (UPatAnn upat Nothing) (PlainArrow ()) (nosrc $ UVar target)
+  uvar = UVar $ UInternalVar name
   (upat, target) = buildProj fullTy $ NE.reverse idxs
 
-  buildProj :: Type -> NE.NonEmpty Int -> (UPat, Name)
+  buildProj :: Type -> NE.NonEmpty Int -> (UPat, UVar)
   buildProj ty (i NE.:| is) = case ty of
       TypeCon def params ->
-        rec subTy hint \pat ->
-          UPatCon conName $ enumerate bs <&> \(j, _) ->
+        rec subTy (UInternalVar hint) \pat ->
+          UPatCon (USourceVar conName) $ enumerate bs <&> \(j, _) ->
             if i == j then pat else uignore
         where
           [DataConDef conName bs] = applyDataDefParams def params
           b = toList bs !! i
           (hint, subTy) = case b of
             Bind   (n :> t) -> (n, t)
-            Ignore t        -> (Name SourceName "elt" 0, t)
+            Ignore t        -> ("elt", t)
       RecordTy (NoExt types) ->
         rec subTy hint \pat ->
           UPatRecord $ NoExt $ enumerate types <&> \(j, _) ->
@@ -374,19 +377,21 @@ prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
         where
           subTy = toList types !! i
           (fieldName, _) = toList (reflectLabels types) !! i
-          hint = Name SourceName (fromString fieldName) 0
+          hint = USourceVar fieldName
       PairTy x _ | i == 0 -> rec x "a" \pat -> UPatPair pat uignore
       PairTy _ y | i == 1 -> rec y "b" \pat -> UPatPair uignore pat
       _ -> error "Bad projection"
     where
-      rec :: Type -> Name -> (UPat -> UPat') -> (UPat, Name)
+      rec :: Type -> UVar -> (UPat -> UPat') -> (UPat, UVar)
       rec subTy nameHint patBuilder = case NE.nonEmpty is of
         Just is' -> (nosrc $ patBuilder subpat, targetName)
           where (subpat, targetName) = buildProj subTy is'
-        Nothing  -> (nosrc $ patBuilder $ nosrc $ UPatBinder $ Bind $ nameHint :> (), nameHint)
+        Nothing  -> (nosrc $ patBuilder $ nosrc $ UPatBinder pat, nameHint)
+          where pat = case nameHint of USourceVar v -> UBindSource v
+                                       UInternalVar v -> UBind v
 
   nosrc = WithSrc Nothing
-  uignore = nosrc $ UPatBinder $ Ignore ()
+  uignore = nosrc $ UPatIgnore
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -513,14 +518,29 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
+instance PrettyPrec Module where
+  prettyPrec m = atPrec ArgPrec $ pretty m
 instance Pretty Module where
-  pretty (Module variant decls bindings) =
+  pretty (Module variant decls result) =
     "Module" <+> parens (p (show variant)) <> nest 2 body
     where
       body = hardline <> "unevaluated decls:"
           <> hardline <> prettyLines decls
           <> hardline <> "evaluated bindings:"
-          <> hardline <> p bindings  -- TODO: print these like decls (need the type)
+          <> hardline <> p result
+
+instance Pretty EvaluatedModule where
+  pretty (EvaluatedModule bindings synthCandidates sourceMap) =
+     p bindings <> hardline <> p synthCandidates <> hardline <> p sourceMap
+
+instance Pretty SynthCandidates where
+  pretty scs =
+    "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline <>
+    "superclasses:"   <+> p (superclassGetters scs) <> hardline <>
+    "instance dicts:" <+> p (instanceDicts     scs)
+
+instance Pretty SourceMap where
+  pretty (SourceMap m) = pretty $ M.toList m
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
@@ -531,13 +551,36 @@ instance Pretty BinderInfo where
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
     PiBound       -> "<pi binder>"
-    DataBoundTypeCon _   -> "<type constructor>"
-    DataBoundDataCon _ _ -> "<data constructor>"
     UnknownBinder -> "<unknown binder>"
     PatBound      -> "<pattern binder>"
 
+instance Pretty AnyBinderInfo where
+  pretty info = case info of
+    AtomBinderInfo ty binfo -> "<atom binder>" <+> p ty <+> p binfo
+    DataDefName  dataDef -> "<data def>" <+> p dataDef
+    TyConName    dataDef -> "<type con name>" <+> p dataDef
+    DataConName  dataDef i -> "<data con name>" <+> parens ("idx:" <+> p i) <+> p dataDef
+    SuperclassName dataDef i getter ->
+      "<superclass name>" <+> parens ("idx:" <+> p i) <+> p dataDef <+> p getter
+    MethodName     dataDef i getter ->
+      "<method name>"     <+> parens ("idx:" <+> p i) <+> p dataDef <+> p getter
+    LocalUExprBound      -> "UExpr name"
+    ImpBound             -> "Imp name"
+    TrulyUnknownBinder   -> "<unknown binder (really)>"
+
+instance Pretty DataDef where
+  pretty (DataDef name bs cons) =
+    "data" <+> p name <+> p bs <> hardline <> prettyLines cons
+
+instance Pretty DataConDef where
+  pretty (DataConDef name bs) =
+    p name <+> ":" <+> p bs
+
+instance Pretty SourceUModule where
+  pretty (SourceUModule decl) = p decl
+
 instance Pretty UModule where
-  pretty (UModule decls) = prettyLines decls
+  pretty (UModule decl sourceMap) = p decl <> hardline <> p sourceMap
 
 instance Pretty a => Pretty (WithSrc a) where
   pretty (WithSrc _ x) = p x
@@ -545,12 +588,25 @@ instance Pretty a => Pretty (WithSrc a) where
 instance PrettyPrec a => PrettyPrec (WithSrc a) where
   prettyPrec (WithSrc _ x) = prettyPrec x
 
+instance Pretty UVar where pretty = prettyFromPrettyPrec
+instance PrettyPrec UVar where
+  prettyPrec uvar = atPrec ArgPrec case uvar of
+    USourceVar   v -> p v
+    UInternalVar v -> p v
+
+instance Pretty UBinder where pretty = prettyFromPrettyPrec
+instance PrettyPrec UBinder where
+  prettyPrec b = atPrec ArgPrec case b of
+   UBindSource v -> p v
+   UIgnore       -> "_"
+   UBind v       -> p v
+
 instance Pretty UExpr' where pretty = prettyFromPrettyPrec
 instance PrettyPrec UExpr' where
   prettyPrec expr = case expr of
-    UVar (v:>_) -> atPrec ArgPrec $ p v
+    UVar v -> atPrec ArgPrec $ p v
     ULam binder arr body ->
-      atPrec LowestPrec $ align $ "\\" <> prettyUBinder binder
+      atPrec LowestPrec $ align $ "\\" <> p binder
                                       <> punctuation <+> nest 2 (pLowest body)
       where punctuation = case arr of
                             PlainArrow () -> "."
@@ -558,12 +614,12 @@ instance PrettyPrec UExpr' where
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UFor dir binder body ->
-      atPrec LowestPrec $ kw <+> prettyUBinder binder <> "."
+      atPrec LowestPrec $ kw <+> p binder <> "."
                             <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi binder arr ty -> atPrec LowestPrec $
-      prettyUBinder binder <+> pretty arr <+> pLowest ty
+      p binder <+> pretty arr <+> pLowest ty
     UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
                                                          <> pLowest body
     UHole -> atPrec ArgPrec "_"
@@ -599,26 +655,33 @@ instance Pretty a => Pretty (Limit a) where
 
 instance Pretty UDecl where
   pretty (ULet ann b rhs) =
-    align $ p ann <+> prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-  pretty (UData tyCon dataCons) =
-    "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
-  pretty (UInterface cs def methods) =
-    "interface" <+> p cs <+> p def <> hardline <> prettyLines methods
-  pretty (UInstance Nothing bs ty methods) =
+    align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+  pretty (UDataDefDecl (UDataDef bParams dataCons) bTyCon bDataCons) =
+    "data" <+> p bTyCon <+> p bParams
+       <+> "where" <> nest 2 (hardline <> prettyLines (zip (toList bDataCons) dataCons))
+  pretty (UInterface params superclasses methodTys interfaceName methodNames) =
+     let methods = [UAnnBinder b ty | (b, ty) <- zip (toList methodNames) methodTys]
+     in "interface" <+> p params <+> p superclasses <+> p interfaceName
+         <> hardline <> prettyLines methods
+  pretty (UInstance bs ty methods Nothing) =
     "instance" <+> p bs <+> p ty <> hardline <> prettyLines methods
-  pretty (UInstance (Just v) bs ty methods) =
+  pretty (UInstance bs ty methods (Just v)) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p ty <> hardline <> prettyLines methods
+
+instance Pretty UPatAnnArrow where
+  pretty (UPatAnnArrow b arr) = p b <> ":" <> p arr
+
+instance Pretty UAnnBinder where
+  pretty (UAnnBinder b ty) = p b <> ":" <> p ty
 
 instance Pretty UMethodDef where
   pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs
 
-instance Pretty UConDef where
-  pretty (UConDef con bs) = p con <+> spaced bs
-
 instance Pretty UPat' where pretty = prettyFromPrettyPrec
 instance PrettyPrec UPat' where
   prettyPrec pat = case pat of
-    UPatBinder x -> atPrec ArgPrec $ prettyBinderNoAnn x
+    UPatBinder x -> atPrec ArgPrec $ p x
+    UPatIgnore -> atPrec ArgPrec "_"
     UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
@@ -627,16 +690,17 @@ instance PrettyPrec UPat' where
     UPatVariantLift labels value -> prettyVariantLift labels value
     UPatTable pats -> atPrec ArgPrec $ p pats
 
-prettyUBinder :: UPatAnn -> Doc ann
-prettyUBinder (pat, ann) = p pat <> annDoc where
-  annDoc = case ann of
-    Just ty -> ":" <> pApp ty
-    Nothing -> mempty
+
+instance Pretty UPatAnn where
+  pretty (UPatAnn pat ann) = p pat <> annDoc where
+    annDoc = case ann of
+      Just ty -> ":" <> pApp ty
+      Nothing -> mempty
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
 spaced xs = hsep $ map p $ toList xs
 
-instance Pretty EffectRow where
+instance (Ord name, Pretty name) => Pretty (EffectRowP name) where
   pretty Pure = mempty
   pretty (EffectRow effs tailVar) =
     braces $ hsep (punctuate "," (map p (toList effs))) <> tailStr
@@ -645,7 +709,7 @@ instance Pretty EffectRow where
         Nothing -> mempty
         Just v  -> "|" <> p v
 
-instance Pretty Effect where
+instance (Ord name, Pretty name) => Pretty (EffectP name) where
   pretty eff = case eff of
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"

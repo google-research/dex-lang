@@ -4,10 +4,16 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Logging (Logger, runLogger, execLogger, logThis, readLog) where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+
+module Logging (Logger, LoggerT (..), MonadLogger (..), logM, runLoggerT,
+                runLogger, execLogger, logThis, readLog) where
 
 import Control.Monad
-import Control.Monad.IO.Class
+import Control.Monad.Reader
 import Data.Text.Prettyprint.Doc
 import Control.Concurrent.MVar
 import Prelude hiding (log)
@@ -37,3 +43,23 @@ logThis (Logger log maybeLogHandle) x = liftIO $ do
 
 readLog :: MonadIO m => Logger l -> m l
 readLog (Logger log _) = liftIO $ readMVar log
+
+-- === monadic interface ===
+
+newtype LoggerT l m a = LoggerT (ReaderT (Logger l) m a)
+                        deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
+
+class (Pretty l, Monoid l, Monad m) => MonadLogger l m | m -> l where
+  getLogger :: m (Logger l)
+
+instance (MonadIO m, Pretty l, Monoid l) => MonadLogger l (LoggerT l m) where
+  getLogger = LoggerT ask
+
+logM :: MonadIO m => MonadLogger l m => l -> m ()
+logM val = do
+  logger <- getLogger
+  liftIO $ logThis logger val
+
+runLoggerT :: (Monoid l, MonadIO m) => Logger l -> LoggerT l m a -> m a
+runLoggerT l (LoggerT m) = runReaderT m l
+

@@ -73,6 +73,9 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 
 idiv = 1
 > Error: variable already defined: idiv
+>
+> idiv = 1
+> ^^^^^
 
 def TyId (a:Type) : Type = a
 :p

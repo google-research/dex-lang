@@ -31,6 +31,7 @@ data ErrType = NoErr
              | LinErr
              | UnboundVarErr
              | RepeatedVarErr
+             | InvalidPatternErr
              | CompilerErr
              | IRVariantErr
              | NotImplementedErr
@@ -39,6 +40,7 @@ data ErrType = NoErr
              | RuntimeErr
              | ZipErr
              | EscapedNameErr
+             | ModuleImportErr
                deriving (Show, Eq)
 
 type Except = Either Err
@@ -124,6 +126,7 @@ instance Pretty ErrType where
     IRVariantErr      -> "Internal IR validation error: "
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
+    InvalidPatternErr -> "Error: not a valid pattern: "
     NotImplementedErr -> "Not implemented:"
     CompilerErr       ->
       "Compiler bug!" <> line <>
@@ -133,3 +136,4 @@ instance Pretty ErrType where
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Escaped name"
+    ModuleImportErr   -> "Module import error"
