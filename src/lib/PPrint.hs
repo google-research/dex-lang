@@ -168,6 +168,8 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     BaseType b     -> prettyPrec b
     PairType a b  -> atPrec ArgPrec $ align $ group $
       parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
+    SumType  cs  -> atPrec ArgPrec $ align $ group $
+      encloseSep "(" ")" " | " $ fmap pApp cs
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if docAsStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
@@ -197,6 +199,7 @@ prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   PairCon x y -> atPrec ArgPrec $ align $ group $
     parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
+  SumCon _ tag payload -> atPrec LowestPrec $ "C" <> p tag <+> pApp payload
   UnitCon     -> atPrec ArgPrec "()"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
@@ -211,6 +214,7 @@ prettyPrecPrimCon con = case con of
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
+
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where

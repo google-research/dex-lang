@@ -330,11 +330,12 @@ toImpOp (maybeDest, op) = case op of
     (Con (SumAsProd _ tag _)) -> returnVal tag
     (DataCon _ _ i _) -> returnVal $ TagRepVal $ fromIntegral i
     _ -> error $ "Not a data constructor: " ++ pprint con
-  ToEnum ty i -> case ty of
+  ToEnum ty i -> returnVal $ case ty of
     TypeCon (DataDef _ _ cons) _ ->
-      returnVal $ Con $ SumAsProd ty i (map (const []) cons)
+      Con $ SumAsProd ty i (map (const []) cons)
     VariantTy (NoExt labeledItems) ->
-      returnVal $ Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
+      Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
+    SumTy cases -> Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
   FFICall name returnTy xs -> do
     let returnTys = fromScalarOrPairType returnTy
@@ -342,6 +343,11 @@ toImpOp (maybeDest, op) = case op of
     f <- emitFFIFunction name xTys returnTys
     results <- emitMultiReturnInstr $ ICall f $ map fromScalarAtom xs
     returnVal $ restructureScalarOrPairType returnTy results
+  SumToVariant ~(Con c) -> returnVal $ case c of
+    SumCon    _ tag payload -> Variant labs "c" tag payload
+    SumAsProd _ tag payload -> Con $ SumAsProd resultTy tag payload
+    _ -> error $ "Not a sum type: " ++ pprint (Con c)
+    where ~(VariantTy labs) = resultTy
   _ -> do
     returnVal . toScalarAtom =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -642,21 +648,24 @@ makeDestRec ty = case ty of
         contents <- forM dcs' \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
         return $ Con $ ConRef $ SumAsProd ty tag contents
   RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
-  VariantTy (NoExt types) -> do
-    tag <- rec TagRepTy
-    contents <- forM (toList types) rec
-    return $ Con $ ConRef $ SumAsProd ty tag $ map (\x->[x]) contents
+  VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr b
       return $ Con $ BaseTypeRef ptr
-    PairType a b -> (Con . ConRef) <$> (PairCon <$> rec a <*> rec b)
-    UnitType     -> (Con . ConRef) <$> return UnitCon
+    SumType cases -> recSumType cases
+    PairType a b  -> (Con . ConRef) <$> (PairCon <$> rec a <*> rec b)
+    UnitType      -> (Con . ConRef) <$> return UnitCon
     IntRange     l h -> (Con . ConRef . IntRangeVal     l h) <$> rec IdxRepTy
     IndexRange t l h -> (Con . ConRef . IndexRangeVal t l h) <$> rec IdxRepTy
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
-  where rec = makeDestRec
+  where
+    rec = makeDestRec
+    recSumType cases = do
+      tag <- rec TagRepTy
+      contents <- forM cases rec
+      return $ Con $ ConRef $ SumAsProd ty tag $ map (\x->[x]) contents
 
 makeBoxes :: [(Name, (Type, Block))] -> Dest -> DestM Dest
 makeBoxes [] dest = return dest
@@ -721,8 +730,13 @@ copyAtom topDest topSrc = do
           (True, Just parallelCopy) -> parallelCopy
           _ -> zipTabDestAtom rec dest src
         (ConRef (SumAsProd _ tag payload), DataCon _ _ con x) -> do
-          rec tag (TagRepVal $ fromIntegral con)
+          rec tag $ TagRepVal $ fromIntegral con
           zipWithM_ rec (payload !! con) x
+        (ConRef (SumAsProd _ tag payload), SumVal _ con x) -> do
+          rec tag $ TagRepVal $ fromIntegral con
+          case payload !! con of
+            [xDest] -> rec xDest x
+            _       -> error "Expected singleton payload in SumAsProd"
         (ConRef (SumAsProd _ tagDest payloadDest), Con (SumAsProd _ tag payload)) -> do
           rec tagDest tag
           unless (all null payload) $ -- optimization
@@ -905,7 +919,7 @@ splitDest (maybeDest, (Block decls ans)) = do
       (DataConRef _ _ _, DataCon _ _ _ _) -> tell [(dest, result)]
       -- This is conservative. Without it, we hit bugs like #348
       (Con (ConRef (SumAsProd _ _ _)), _) -> tell [(dest, result)]
-      (Con (ConRef destCon), Con srcCon) ->
+      (Con (ConRef destCon), Con srcCon) -> do
         zipWithRefConM gatherVarDests destCon srcCon
       (Con (RecordRef items), Record items')
         | fmap (const ()) items == fmap (const ()) items' -> do
@@ -1075,7 +1089,7 @@ zipTabDestAtom f ~dest@(Con (TabRef (TabVal b _))) ~src@(TabVal b' _) = do
     srcIndexed  <- translateExpr mempty (Nothing, App src idx)
     f destIndexed srcIndexed
 
-zipWithRefConM :: Monad m => (Dest -> Atom -> m ()) -> Con -> Con -> m ()
+zipWithRefConM :: HasCallStack => Monad m => (Dest -> Atom -> m ()) -> Con -> Con -> m ()
 zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
   (PairCon d1 d2, PairCon s1 s2) -> f d1 s1 >> f d2 s2
   (UnitCon, UnitCon) -> return ()

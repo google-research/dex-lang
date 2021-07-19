@@ -168,6 +168,9 @@ simplifyCase e alts = case e of
     let index = fst $ (ixtypes M.! label) NE.!! i
     let Abs bs result = alts !! index
     Just (newEnv bs [value], result)
+  SumVal _ i value -> do
+    let Abs bs result = alts !! i
+    Just (newEnv bs [value], result)
   Con (SumAsProd _ (TagRepVal tag) vals) -> do
     let Abs bs result = alts !! (fromIntegral tag)
     Just (newEnv bs (vals !! fromIntegral tag), result)
@@ -441,6 +444,19 @@ simplifyOp op = case op of
       -- Simplify the case away if we can.
       dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
     _ -> emitOp op
+  SumToVariant (ACase scrutinee alts _) -> do
+    scrutinee' <- substBuilderR scrutinee
+    alts' <- substBuilderR alts
+    ~resultTy'@(VariantTy labs) <- substBuilderR $ getType $ Op op
+    -- NB: Technically the alternative bodies can also be SumAsProd constructors,
+    -- but that should never happen. Those are only introduced during Imp lowering
+    -- and so the only way to introduce them here would via inlining of results of
+    -- another compilation unit. However, the builtin sum types are always internal
+    -- to the compilation units, because they are not exposed to the surface
+    -- language, so they cannot get introduced via inlining!
+    let variantAlts = alts' <&> \(Abs bs (SumVal _ i val)) ->
+          Abs bs $ Variant labs "c" i val
+    return $ ACase scrutinee' variantAlts resultTy'
   PrimEffect ref (MExtend f) -> dropSub $ do
     ~(f', Nothing) <- simplifyLam f
     emitOp $ PrimEffect ref $ MExtend f'

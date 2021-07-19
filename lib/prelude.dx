@@ -1997,13 +1997,11 @@ def dex_test_mode (():Unit) : Bool = unsafeIO do checkEnv "DEX_TEST_MODE"
 '## Exception effect
 TODO: move `error` and `todo` to here.
 
-def internalMaybeToMaybe (maybeVal: {a:Unit|b:a}) : Maybe a =
-  case maybeVal of
-    {|a=() |} -> Nothing
-    {|b=val|} -> Just val
-
 def catch (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
-  internalMaybeToMaybe (%catchException f)
+  ans = %catchException f
+  case %sumToVariant ans of
+    {|c=()   |} -> Nothing
+    {|c|c=val|} -> Just val
 
 def throw (_:Unit) : {Except} a =
   %throwException a

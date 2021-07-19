@@ -50,12 +50,13 @@ module Syntax (
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    pattern SumTy, pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
+    pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
-    pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
+    pattern UnitTy, pattern PairTy, pattern SumTy, pattern SumVal,
+    pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow,
@@ -72,7 +73,6 @@ import Control.Monad.Except hiding (Except)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
-import Data.List (elemIndex)
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
@@ -254,6 +254,7 @@ data PrimTC e =
       | IndexRange e (Limit e) (Limit e)
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
       | PairType e e
+      | SumType [e]
       | UnitType
       | RefType (Maybe e) e
       | TypeKind
@@ -265,6 +266,7 @@ data PrimTC e =
 data PrimCon e =
         Lit LitVal
       | PairCon e e
+      | SumCon e Int e  -- type, tag, payload
       | UnitCon
       | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
@@ -326,6 +328,9 @@ data PrimOp e =
       | DataConTag e
       -- Create an enum (payload-free ADT) from a Word8
       | ToEnum e e
+      -- Converts sum types returned by primitives to variant-types that
+      -- can be scrutinized in the surface language.
+      | SumToVariant e
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -525,7 +530,7 @@ data LitVal = Int64Lit   Int64
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Ord, Generic)
 
-data ScalarBaseType = Int64Type | Int32Type 
+data ScalarBaseType = Int64Type | Int32Type
                     | Word8Type | Word32Type | Word64Type
                     | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
@@ -1247,68 +1252,6 @@ applyFloatBinOp f x y = case (x, y) of
 applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom -> Atom
 applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
--- === nary sum type ===
-
--- Here we're using variants to simulate an nary sum type. The plan is to
--- eventually go the other way: lower variants to built-in n-way sums.
-
-makeSumTy :: [Type] -> Type
-makeSumTy tys
-  | length tyLists <= 26 = VariantTy $ NoExt $ LabeledItems $ M.fromList $ zip labels tyLists
-  -- TODO: a built-in sum type without this restriction
-  -- (it's currently only used for internal Bool/Maybe so it's not important)
-  | otherwise = error "ran out of letters!"
-  where
-    tyLists = map (NE.:| []) tys
-    labels = map (:[]) ['a'..]
-
-matchSumTy :: Type -> Maybe [Type]
-matchSumTy variantTy = do
-  VariantTy (NoExt (LabeledItems items)) <- return variantTy
-  forM (M.assocs items) \(_, tys) -> do
-    ty NE.:| [] <- return tys
-    return ty
-
-pattern SumTy :: [Type] -> Type
-pattern SumTy tys <- (matchSumTy -> Just tys)
-  where SumTy tys = makeSumTy tys
-
-makeSumVal :: Type -> Int -> Atom -> Atom
-makeSumVal (VariantTy variantTy) con x = let
-  NoExt (LabeledItems m) = variantTy
-  label = M.keys m !! con
-  in Variant variantTy label 0 x
-makeSumVal _ _ _ = error "not a variant type"
-
-matchSumVal :: Atom -> Maybe (Type, Int, Atom)
-matchSumVal variant = do
-  Variant types label 0 x <- return variant
-  let NoExt (LabeledItems labeledTypes) = types
-  con <- elemIndex label (M.keys labeledTypes)
-  return (VariantTy types, con, x)
-
-pattern SumVal :: Type -> Int -> Atom -> Atom
-pattern SumVal ty con val <- (matchSumVal -> Just (ty, con, val))
-  where SumVal ty con val = makeSumVal ty con val
-
-pattern MaybeTy :: Type -> Type
-pattern MaybeTy a = SumTy [UnitTy, a]
-
-pattern NothingAtom :: Type -> Atom
-pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
-
-pattern JustAtom :: Type -> Atom -> Atom
-pattern JustAtom a x = SumVal (MaybeTy a) 1 x
-
-pattern BoolTy :: Type
-pattern BoolTy = Word8Ty
-
-pattern FalseAtom :: Atom
-pattern FalseAtom = Con (Lit (Word8Lit 0))
-
-pattern TrueAtom :: Atom
-pattern TrueAtom = Con (Lit (Word8Lit 1))
-
 -- === Synonyms ===
 
 varType :: Var -> Type
@@ -1379,6 +1322,12 @@ pattern PairVal x y = Con (PairCon x y)
 
 pattern PairTy :: Type -> Type -> Type
 pattern PairTy x y = TC (PairType x y)
+
+pattern SumTy :: [Type] -> Type
+pattern SumTy cs = TC (SumType cs)
+
+pattern SumVal :: Type -> Int -> Atom -> Atom
+pattern SumVal ty tag payload = Con (SumCon ty tag payload)
 
 pattern UnitVal :: Atom
 pattern UnitVal = Con UnitCon
@@ -1514,6 +1463,24 @@ pattern ClassDictCon :: DataDef -> [Type]
 pattern ClassDictCon def params superclasses methods =
   DataCon def params 0 [Record superclasses, Record methods]
 
+pattern MaybeTy :: Type -> Type
+pattern MaybeTy a = SumTy [UnitTy, a]
+
+pattern NothingAtom :: Type -> Atom
+pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
+
+pattern JustAtom :: Type -> Atom -> Atom
+pattern JustAtom a x = SumVal (MaybeTy a) 1 x
+
+pattern BoolTy :: Type
+pattern BoolTy = Word8Ty
+
+pattern FalseAtom :: Atom
+pattern FalseAtom = Con (Lit (Word8Lit 0))
+
+pattern TrueAtom :: Atom
+pattern TrueAtom = Con (Lit (Word8Lit 1))
+
 -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
 
@@ -1543,6 +1510,7 @@ builtinNames = M.fromList
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
   , ("toOrdinal"        , OpExpr $ ToOrdinal ())
+  , ("sumToVariant"   , OpExpr $ SumToVariant ())
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
