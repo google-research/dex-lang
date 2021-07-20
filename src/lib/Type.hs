@@ -588,9 +588,8 @@ typeCheckTyCon tc = case tc of
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
-  PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
+  ProdType as      -> mapM_ (|: TyKind) as >> return TyKind
   SumType  cs      -> mapM_ (|: TyKind) cs >> return TyKind
-  UnitType         -> return TyKind
   RefType r a      -> mapM_ (|: TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
@@ -600,13 +599,12 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
+  ProdCon xs -> ProdTy <$> traverse typeCheck xs
   SumCon ty tag payload -> do
     SumTy caseTys <- return ty
     unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
     payload |: (caseTys !! tag)
     return ty
-  UnitCon -> return UnitTy
   SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
   ClassDictHole _ ty -> ty |: TyKind >> return ty
   IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
@@ -619,9 +617,8 @@ typeCheckCon con = case con of
     TabTy b (RawRefTy a) <- typeCheck tabTy
     return $ RawRefTy $ TabTy b a
   ConRef conRef -> case conRef of
-    UnitCon -> return $ RawRefTy UnitTy
-    PairCon x y ->
-      RawRefTy <$> (PairTy <$> typeCheckRef x <*> typeCheckRef y)
+    ProdCon xs ->
+      RawRefTy . ProdTy <$> traverse typeCheckRef xs
     IntRangeVal     l h i ->
       i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l h)
     IndexRangeVal t l h i ->
@@ -1034,9 +1031,8 @@ checkDataLike msg ty = case ty of
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
     BaseType _       -> return ()
-    PairType a b     -> recur a >> recur b
-    SumType  cases   -> traverse_ recur cases
-    UnitType         -> return ()
+    ProdType as      -> traverse_ recur as
+    SumType  cs      -> traverse_ recur cs
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
     IndexSlice _ _   -> return ()
@@ -1063,7 +1059,7 @@ projectLength ty = case ty of
     let [DataConDef _ bs] = applyDataDefParams def params
     in length bs
   RecordTy (NoExt types) -> length types
-  PairTy _ _ -> 2
+  ProdTy tys -> length tys
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
 

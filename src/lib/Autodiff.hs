@@ -330,9 +330,8 @@ linearizeHof env hof = case hof of
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
-  PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
+  ProdCon xs            -> ProdVal <$> traverse linearizeAtom xs
   SumCon  _ _ _         -> notImplemented
-  UnitCon               -> emitWithZero
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
   IntRangeVal _ _ _     -> emitWithZero
   IndexRangeVal _ _ _ _ -> emitWithZero
@@ -396,8 +395,7 @@ tangentType ty = case ty of
     IntRange   _ _                -> UnitTy
     IndexRange _ _ _              -> UnitTy
     IndexSlice _ _                -> UnitTy
-    UnitType                      -> UnitTy
-    PairType a b                  -> PairTy (tangentType a) (tangentType b)
+    ProdType   tys                -> ProdTy $ tangentType <$> tys
     -- XXX: This assumes that arrays are always constants.
     _ -> unsupported
   _ -> unsupported
@@ -731,10 +729,12 @@ transposeAtom atom ct = case atom of
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
   Lit _             -> return ()
-  UnitCon           -> return ()
-  PairCon x y       -> do
+  ProdCon []        -> return ()
+  ProdCon [x, y]    -> do
     getFst ct >>= transposeAtom x
     getSnd ct >>= transposeAtom y
+  -- XXX: We only have getFst and getSnd for references
+  ProdCon _         -> error "Unexpected generalized product"
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   ClassDictHole _ _ -> notTangent
@@ -830,11 +830,10 @@ addTangent x y = case getType x of
   TC con -> case con of
     BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
     BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
-    UnitType            -> return UnitVal
-    PairType _ _        -> do
-      (xa, xb) <- fromPair x
-      (ya, yb) <- fromPair y
-      PairVal <$> addTangent xa ya <*> addTangent xb yb
+    ProdType _          -> do
+      xs <- getUnpacked x
+      ys <- getUnpacked y
+      ProdVal <$> zipWithM addTangent xs ys
     _ -> notTangent
   _ -> notTangent
   where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
