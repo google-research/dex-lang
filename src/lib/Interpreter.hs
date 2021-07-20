@@ -122,11 +122,9 @@ indices ty = do
   case ty of
     TC (IntRange l h)      -> return $ fmap (Con . IntRangeVal     l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
     TC (IndexRange t l h)  -> return $ fmap (Con . IndexRangeVal t l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
-    TC (PairType lt rt)    -> do
-      lt' <- indices lt
-      rt' <- indices rt
-      return $ [PairVal l r | l <- lt', r <- rt']
-    TC UnitType            -> return [UnitVal]
+    -- NB: sequence below computes the cartesian product using the list monad
+    TC (ProdType [])       -> return [ProdVal []]
+    TC (ProdType tys)      -> fmap ProdVal . sequence <$> mapM indices tys
     RecordTy (NoExt types) -> do
       subindices <- mapM indices (toList types)
       -- Earlier indices change faster than later ones, so we need to first

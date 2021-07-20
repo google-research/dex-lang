@@ -165,12 +165,12 @@ instance PrettyPrec e => PrettyPrec (PrimExpr e) where
 instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
-    BaseType b     -> prettyPrec b
-    PairType a b  -> atPrec ArgPrec $ align $ group $
-      parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
+    BaseType b   -> prettyPrec b
+    ProdType []  -> atPrec ArgPrec $ "Unit"
+    ProdType as  -> atPrec ArgPrec $ align $ group $
+      encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
-      encloseSep "(" ")" " | " $ fmap pApp cs
-    UnitType       -> atPrec ArgPrec "Unit"
+      encloseSep "(|" "|)" " | " $ fmap pApp cs
     IntRange a b -> if docAsStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
       else prettyExprDefault $ TCExpr con
@@ -197,10 +197,10 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
-  PairCon x y -> atPrec ArgPrec $ align $ group $
-    parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
-  SumCon _ tag payload -> atPrec LowestPrec $ "C" <> p tag <+> pApp payload
-  UnitCon     -> atPrec ArgPrec "()"
+  ProdCon xs  -> atPrec ArgPrec $ align $ group $
+    encloseSep "(" ")" ", " $ fmap pLowest xs
+  SumCon _ tag payload -> atPrec ArgPrec $
+    "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"

@@ -55,7 +55,9 @@ module Syntax (
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
-    pattern UnitTy, pattern PairTy, pattern SumTy, pattern SumVal,
+    pattern UnitTy, pattern PairTy,
+    pattern ProdTy, pattern ProdVal,
+    pattern SumTy, pattern SumVal,
     pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
@@ -250,12 +252,11 @@ data PrimExpr e =
 
 data PrimTC e =
         BaseType BaseType
+      | ProdType [e]
+      | SumType [e]
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
-      | PairType e e
-      | SumType [e]
-      | UnitType
       | RefType (Maybe e) e
       | TypeKind
       | EffectRowKind
@@ -265,9 +266,8 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | PairCon e e
+      | ProdCon [e]
       | SumCon e Int e  -- type, tag, payload
-      | UnitCon
       | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
       -- These are just newtype wrappers. TODO: use ADTs instead
@@ -1171,10 +1171,9 @@ getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var v -> ProjectElt (NE.fromList [i]) v
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  DataCon _ _ _ xs -> xs !! i
-  Record items -> toList items !! i
-  PairVal x _ | i == 0 -> x
-  PairVal _ y | i == 1 -> y
+  DataCon _ _ _ xs    -> xs !! i
+  Record items        -> toList items !! i
+  ProdVal xs          -> xs !! i
   _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
 instance HasVars () where freeVars () = mempty
@@ -1339,10 +1338,16 @@ pattern Word8Ty :: Type
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
 pattern PairVal :: Atom -> Atom -> Atom
-pattern PairVal x y = Con (PairCon x y)
+pattern PairVal x y = Con (ProdCon [x, y])
 
 pattern PairTy :: Type -> Type -> Type
-pattern PairTy x y = TC (PairType x y)
+pattern PairTy x y = TC (ProdType [x, y])
+
+pattern ProdTy :: [Type] -> Type
+pattern ProdTy tys = TC (ProdType tys)
+
+pattern ProdVal :: [Atom] -> Atom
+pattern ProdVal xs = Con (ProdCon xs)
 
 pattern SumTy :: [Type] -> Type
 pattern SumTy cs = TC (SumType cs)
@@ -1351,10 +1356,10 @@ pattern SumVal :: Type -> Int -> Atom -> Atom
 pattern SumVal ty tag payload = Con (SumCon ty tag payload)
 
 pattern UnitVal :: Atom
-pattern UnitVal = Con UnitCon
+pattern UnitVal = Con (ProdCon [])
 
 pattern UnitTy :: Type
-pattern UnitTy = TC UnitType
+pattern UnitTy = TC (ProdType [])
 
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
@@ -1565,12 +1570,12 @@ builtinNames = M.fromList
   , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("IntRange"  , TCExpr $ IntRange () ())
   , ("Ref"       , TCExpr $ RefType (Just ()) ())
-  , ("PairType"  , TCExpr $ PairType () ())
-  , ("UnitType"  , TCExpr $ UnitType)
+  , ("PairType"  , TCExpr $ ProdType [(), ()])
+  , ("UnitType"  , TCExpr $ ProdType [])
   , ("EffKind"   , TCExpr $ EffectRowKind)
   , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
-  , ("pair", ConExpr $ PairCon () ())
+  , ("pair", ConExpr $ ProdCon [(), ()])
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
   -- TODO: Lift vectors to constructors
