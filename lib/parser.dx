@@ -42,6 +42,12 @@ def pChar (c:Char) : Parser Unit = MkParser \(s, posRef).
   assert (c == c')
   posRef := i + 1
 
+def pString (x:String) : Parser Unit = MkParser \h.
+  (AsList n ls) = x
+  for i : (Fin n).
+      parse h (pChar ls.i)
+  ()
+
 def pEOF : Parser Unit = MkParser \(s, posRef).
   assert $ get posRef >= listLength s
 
