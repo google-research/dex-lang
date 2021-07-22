@@ -33,8 +33,6 @@ import Data.Maybe
 import Data.Foldable (toList)
 import Data.String (fromString)
 import GHC.Stack
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
 
 import Builder
 import LabeledItems
@@ -200,10 +198,8 @@ translateExpr env (maybeDest, expr) = case expr of
       DataCon _ _ con args -> do
         let Abs bs body = alts !! con
         translateBlock (env <> newEnv bs args) (maybeDest, body)
-      Variant (NoExt types) label i x -> do
-        let LabeledItems ixtypes = enumerate types
-        let index = fst $ ixtypes M.! label NE.!! i
-        let Abs bs body = alts !! index
+      Con (SumCon _ tag x) -> do
+        let Abs bs body = alts !! tag
         translateBlock (env <> newEnv bs [x]) (maybeDest, body)
       Con (SumAsProd _ tag xss) -> do
         let tag' = fromScalarAtom tag
@@ -322,10 +318,6 @@ toImpOp (maybeDest, op) = case op of
         emitSwitch p' [copyAtom dest y, copyAtom dest x]
         destToAtom dest
         where (BaseTy tagBT) = TagRepTy
-  RecordCons   _ _ -> error "Unreachable: should have simplified away"
-  RecordSplit  _ _ -> error "Unreachable: should have simplified away"
-  VariantLift  _ _ -> error "Unreachable: should have simplified away"
-  VariantSplit _ _ -> error "Unreachable: should have simplified away"
   DataConTag con -> case con of
     (Con (SumAsProd _ tag _)) -> returnVal tag
     (DataCon _ _ i _) -> returnVal $ TagRepVal $ fromIntegral i
@@ -333,8 +325,6 @@ toImpOp (maybeDest, op) = case op of
   ToEnum ty i -> returnVal $ case ty of
     TypeCon (DataDef _ _ cons) _ ->
       Con $ SumAsProd ty i (map (const []) cons)
-    VariantTy (NoExt labeledItems) ->
-      Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
     SumTy cases -> Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
   FFICall name returnTy xs -> do
@@ -343,11 +333,11 @@ toImpOp (maybeDest, op) = case op of
     f <- emitFFIFunction name xTys returnTys
     results <- emitMultiReturnInstr $ ICall f $ map fromScalarAtom xs
     returnVal $ restructureScalarOrPairType returnTy results
-  SumToVariant ~(Con c) -> returnVal $ case c of
-    SumCon    _ tag payload -> Variant labs "c" tag payload
-    SumAsProd _ tag payload -> Con $ SumAsProd resultTy tag payload
-    _ -> error $ "Not a sum type: " ++ pprint (Con c)
-    where ~(VariantTy labs) = resultTy
+  SumToVariant _   -> error "Unreachable: should have been simplified away"
+  RecordCons   _ _ -> error "Unreachable: should have been simplified away"
+  RecordSplit  _ _ -> error "Unreachable: should have been simplified away"
+  VariantLift  _ _ -> error "Unreachable: should have been simplified away"
+  VariantSplit _ _ -> error "Unreachable: should have been simplified away"
   _ -> do
     returnVal . toScalarAtom =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -648,7 +638,6 @@ makeDestRec ty = case ty of
         contents <- forM dcs' \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
         return $ Con $ ConRef $ SumAsProd ty tag contents
   RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
-  VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr b
@@ -746,11 +735,6 @@ copyAtom topDest topSrc = do
         (RecordRef refs, Record vals)
           | fmap (const ()) refs == fmap (const ()) vals -> do
               zipWithM_ rec (toList refs) (toList vals)
-        (ConRef (SumAsProd _ tag payload), Variant (NoExt types) label i x) -> do
-          let LabeledItems ixtypes = enumerate types
-          let index = fst $ (ixtypes M.! label) NE.!! i
-          rec tag (TagRepVal $ fromIntegral index)
-          zipWithM_ rec (payload !! index) [x]
         _ -> error $ "Not implemented: " ++ pprint (dest, src)
       _ -> error $ "Not a valid dest-source pair: " ++ pprint (dest, src)
       where

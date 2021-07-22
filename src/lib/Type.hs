@@ -439,7 +439,10 @@ instance CoreVariant (PrimTC a) where
 instance CoreVariant (PrimOp a) where
   checkVariant e = case e of
     ThrowException _ -> goneBy Simp
-    Select _ _ _       -> alwaysAllowed  -- TODO: only scalar select after Simp
+    Select _ _ _     -> alwaysAllowed  -- TODO: only scalar select after Simp
+    VariantLift _ _  -> goneBy Simp
+    VariantSplit _ _ -> goneBy Simp
+    SumToVariant _   -> goneBy Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimCon a) where
