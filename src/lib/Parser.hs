@@ -485,7 +485,7 @@ nameToPat :: Name -> UPat'
 nameToPat v = UPatBinder (Bind (v:>()))
 
 unitExpr :: UExpr'
-unitExpr = UPrimExpr $ ConExpr UnitCon
+unitExpr = UPrimExpr $ ConExpr $ ProdCon []
 
 ns :: a -> WithSrc a
 ns = WithSrc Nothing

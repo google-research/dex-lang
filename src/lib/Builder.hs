@@ -530,8 +530,7 @@ singletonTypeVal :: Type -> Maybe Atom
 singletonTypeVal (TabTy v a) = TabValA v <$> singletonTypeVal a
 singletonTypeVal (RecordTy (NoExt items)) = Record <$> traverse singletonTypeVal items
 singletonTypeVal (TC con) = case con of
-  PairType a b -> PairVal <$> singletonTypeVal a <*> singletonTypeVal b
-  UnitType     -> return UnitVal
+  ProdType tys -> ProdVal <$> traverse singletonTypeVal tys
   _            -> Nothing
 singletonTypeVal _ = Nothing
 
@@ -834,7 +833,6 @@ dropSub m = local mempty m
 
 indexSetSizeE :: MonadBuilder m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
-  UnitType                   -> return $ IdxRepVal 1
   IntRange low high -> clampPositive =<< high `isub` low
   SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSizeE types
   IndexRange n low high -> do
@@ -847,7 +845,7 @@ indexSetSizeE (TC con) = case con of
       ExclusiveLim x -> indexToIntE x
       Unlimited      -> indexSetSizeE n
     clampPositive =<< high' `isub` low'
-  PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
+  ProdType tys -> foldM imul (IdxRepVal 1) =<< traverse indexSetSizeE tys
   ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSizeE (RecordTy (NoExt types)) = do
@@ -863,6 +861,8 @@ clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
+data IterOrder = MinorToMajor | MajorToMinor
+
 -- XXX: Be careful if you use this function as an interpretation for
 --      IndexAsInt instruction, as for Int and IndexRanges it will
 --      generate the same instruction again, potentially leading to an
@@ -871,28 +871,26 @@ indexToIntE :: MonadBuilder m => Atom -> m Atom
 indexToIntE (Con (IntRangeVal _ _ i))     = return i
 indexToIntE (Con (IndexRangeVal _ _ _ i)) = return i
 indexToIntE idx = case getType idx of
-  UnitTy  -> return $ IdxRepVal 0
-  PairTy _ rType -> do
-    (lVal, rVal) <- fromPair idx
-    lIdx  <- indexToIntE lVal
-    rIdx  <- indexToIntE rVal
-    rSize <- indexSetSizeE rType
-    imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
   TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
-  RecordTy (NoExt types) -> do
-    sizes <- traverse indexSetSizeE types
-    (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IdxRepVal 1)
-    -- Unpack and sum the strided contributions
-    subindices <- getUnpacked idx
-    subints <- traverse indexToIntE subindices
-    scaled <- mapM (uncurry imul) $ zip (toList strides) subints
-    foldM iadd (IdxRepVal 0) scaled
-  SumTy types -> sumToInt types
-  VariantTy (NoExt types) -> sumToInt types
+  ProdTy           types  -> prodToInt MajorToMinor types
+  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
+  SumTy            types  -> sumToInt  types
+  VariantTy (NoExt types) -> sumToInt  types
   ty -> error $ "Unexpected type " ++ pprint ty
   where
+    -- XXX: Assumes minor-to-major iteration order
+    prodToInt :: (MonadBuilder m, Traversable t) => IterOrder -> t Type -> m Atom
+    prodToInt order types = do
+      sizes <- toList <$> traverse indexSetSizeE types
+      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
+      strides <- rev . fst <$> scanM (\sz prev -> (prev,) <$> imul sz prev) (rev sizes) (IdxRepVal 1)
+      -- Unpack and sum the strided contributions
+      subindices <- getUnpacked idx
+      subints <- traverse indexToIntE subindices
+      scaled <- mapM (uncurry imul) $ zip strides subints
+      foldM iadd (IdxRepVal 0) scaled
     sumToInt :: (MonadBuilder m, Traversable t) => t Type -> m Atom
     sumToInt types = do
       sizes <- traverse indexSetSizeE types
@@ -908,28 +906,27 @@ intToIndexE ty i = case ty of
   TC con -> case con of
     IntRange        low high   -> return $ Con $ IntRangeVal        low high i
     IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
-    UnitType                   -> return $ UnitVal
-    SumType types              -> intToSum types [0..] $ SumVal ty
-    PairType a b -> do
-      bSize <- indexSetSizeE b
-      iA <- intToIndexE a =<< idiv i bSize
-      iB <- intToIndexE b =<< irem i bSize
-      return $ PairVal iA iB
+    -- Strategically placed reverses make intToProd major-to-minor
+    ProdType types             -> intToProd (reverse types) (ProdVal . reverse)
+    SumType  types             -> intToSum  types [0..] $ SumVal ty
     ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
     _ -> error $ "Unexpected type " ++ pprint ty
-  RecordTy (NoExt types) -> do
-    sizes <- traverse indexSetSizeE types
-    (strides, _) <- scanM
-      (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
-    offsets <- flip mapM (zip (toList types) (toList strides)) $
-      \(ety, (s1, s2)) -> do
-        x <- irem i s2
-        y <- idiv x s1
-        intToIndexE ety y
-    return $ Record (restructure offsets types)
-  VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)
+  RecordTy  (NoExt types) -> intToProd types Record
+  VariantTy (NoExt types) -> intToSum  types (reflectLabels types) $ uncurry $ Variant (NoExt types)
   _ -> error $ "Unexpected type " ++ pprint ty
   where
+    -- XXX: Expects that the types are in a minor-to-major order
+    intToProd :: (MonadBuilder m, Traversable t) => t Type -> (t Atom -> Atom) -> m Atom
+    intToProd types mkProd = do
+      sizes <- traverse indexSetSizeE types
+      (strides, _) <- scanM
+        (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
+      offsets <- flip mapM (zip (toList types) (toList strides)) $
+        \(ety, (s1, s2)) -> do
+          x <- irem i s2
+          y <- idiv x s1
+          intToIndexE ety y
+      return $ mkProd (restructure offsets types)
     intToSum :: (MonadBuilder m, Traversable t) => t Type -> t l -> (l -> Atom -> Atom) -> m Atom
     intToSum types labels mkSum = do
       sizes <- traverse indexSetSizeE types

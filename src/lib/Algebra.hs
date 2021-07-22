@@ -80,7 +80,8 @@ offsets idxs = case idxs of
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
-  UnitType              -> liftC $ toPolynomial $ IdxRepVal 1
+  ProdType tys          -> foldl mulC (liftC $ toPolynomial $ IdxRepVal 1) $
+    indexSetSize <$> F.toList tys
   IntRange low high     -> clamp $ toPolynomial high `sub` toPolynomial low
   IndexRange n low high -> case (low, high) of
     -- When one bound is left unspecified, the size expressions are guaranteed
@@ -100,7 +101,6 @@ indexSetSize (TC con) = case con of
         InclusiveLim h -> add1 $ toPolynomial h
         ExclusiveLim h -> toPolynomial h
         Unlimited      -> undefined
-  PairType l r -> mulC (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSize (RecordTy (NoExt types)) = let
   sizes = map indexSetSize (F.toList types)

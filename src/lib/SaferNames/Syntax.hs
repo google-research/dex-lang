@@ -260,16 +260,16 @@ pattern Word8Ty :: Type n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
 pattern PairVal :: Atom n -> Atom n -> Atom n
-pattern PairVal x y = Con (PairCon x y)
+pattern PairVal x y = Con (ProdCon [x, y])
 
 pattern PairTy :: Type n -> Type n -> Type n
-pattern PairTy x y = TC (PairType x y)
+pattern PairTy x y = TC (ProdType [x, y])
 
 pattern UnitVal :: Atom n
-pattern UnitVal = Con UnitCon
+pattern UnitVal = Con (ProdCon [])
 
 pattern UnitTy :: Type n
-pattern UnitTy = TC UnitType
+pattern UnitTy = TC (ProdType [])
 
 pattern BaseTy :: BaseType -> Type n
 pattern BaseTy b = TC (BaseType b)

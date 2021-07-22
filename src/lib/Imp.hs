@@ -142,7 +142,7 @@ toImpStandalone fname ~(LamVal b body) = do
   let outTy = getType body
   backend <- asks impBackend
   curDev <- asks curDevice
-  (ptrSizes, ~(Con (ConRef (PairCon outDest argDest)))) <- fromBuilder $
+  (ptrSizes, ~(Con (ConRef (ProdCon [outDest, argDest])))) <- fromBuilder $
     makeDest (backend, curDev, Unmanaged) (PairTy outTy argTy)
   impBlock <- scopedErrBlock $ do
     arg <- destToAtom argDest
@@ -281,8 +281,8 @@ toImpOp (maybeDest, op) = case op of
       returnVal =<< intToIndex realIdxTy (fromScalarAtom i)
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
-  FstRef ~(Con (ConRef (PairCon ref _  ))) -> returnVal ref
-  SndRef ~(Con (ConRef (PairCon _   ref))) -> returnVal ref
+  FstRef ~(Con (ConRef (ProdCon [ref, _  ]))) -> returnVal ref
+  SndRef ~(Con (ConRef (ProdCon [_  , ref]))) -> returnVal ref
   IOAlloc ty n -> do
     ptr <- emitAlloc (Heap CPU, ty) (fromScalarAtom n)
     returnVal $ toScalarAtom ptr
@@ -456,8 +456,11 @@ toImpHof env (maybeDest, hof) = do
           wgThrAccs <- destGet thrAccsArr =<< intToIndex widIdxTy wid
           thrAccs   <- destGet wgThrAccs  =<< intToIndex tidIdxTy tid
           let thrAccsList = fromDestConsList thrAccs
-          let threadDest = foldr ((Con . ConRef) ... flip PairCon) tileDest thrAccsList
-          -- TODO: Make sure that threadDest has the right type
+          let mkPair = \x y -> ProdCon [x, y]
+          let threadDest = foldr ((Con . ConRef) ... flip mkPair) tileDest thrAccsList
+          case (getType threadDest) == (RawRefTy $ getType body) of
+            True -> return ()
+            _    -> error "Invalid threadDest type"
           void $ translateBlock (env <> gtidB @> gtid <> nthrB @> nthr) (Just threadDest, body)
           wgAccs <- destGet wgAccsArr =<< intToIndex widIdxTy wid
           workgroupReduce tid wgAccs wgThrAccs workgroupSize
@@ -654,8 +657,7 @@ makeDestRec ty = case ty of
       ptr <- makeBaseTypePtr b
       return $ Con $ BaseTypeRef ptr
     SumType cases -> recSumType cases
-    PairType a b  -> (Con . ConRef) <$> (PairCon <$> rec a <*> rec b)
-    UnitType      -> (Con . ConRef) <$> return UnitCon
+    ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
     IntRange     l h -> (Con . ConRef . IntRangeVal     l h) <$> rec IdxRepTy
     IndexRange t l h -> (Con . ConRef . IndexRangeVal t l h) <$> rec IdxRepTy
     _ -> error $ "not implemented: " ++ pprint con
@@ -806,8 +808,7 @@ loadDest (Con dest) = do
     loadDest result
   RecordRef xs -> Record <$> traverse loadDest xs
   ConRef con -> Con <$> case con of
-    PairCon d1 d2 -> PairCon <$> loadDest d1 <*> loadDest d2
-    UnitCon -> return UnitCon
+    ProdCon ds -> ProdCon <$> traverse loadDest ds
     SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
     IntRangeVal     l h iRef -> IntRangeVal     l h <$> loadDest iRef
     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
@@ -859,13 +860,13 @@ destGet :: Dest -> Atom -> ImpM Dest
 destGet dest i = fromBuilder $ indexDest dest i
 
 destPairUnpack :: Dest -> (Dest, Dest)
-destPairUnpack (Con (ConRef (PairCon l r))) = (l, r)
+destPairUnpack (Con (ConRef (ProdCon [l, r]))) = (l, r)
 destPairUnpack d = error $ "Not a pair destination: " ++ show d
 
 fromDestConsList :: Dest -> [Dest]
 fromDestConsList dest = case dest of
-  Con (ConRef (PairCon h t)) -> h : fromDestConsList t
-  Con (ConRef UnitCon)       -> []
+  Con (ConRef (ProdCon [h, t])) -> h : fromDestConsList t
+  Con (ConRef (ProdCon []))     -> []
   _ -> error $ "Not a dest cons list: " ++ pprint dest
 
 makeAllocDest :: AllocType -> Type -> ImpM Dest
@@ -1092,8 +1093,7 @@ zipTabDestAtom f ~dest@(Con (TabRef (TabVal b _))) ~src@(TabVal b' _) = do
 
 zipWithRefConM :: HasCallStack => Monad m => (Dest -> Atom -> m ()) -> Con -> Con -> m ()
 zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
-  (PairCon d1 d2, PairCon s1 s2) -> f d1 s1 >> f d2 s2
-  (UnitCon, UnitCon) -> return ()
+  (ProdCon ds, ProdCon ss) -> zipWithM_ f ds ss
   (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> f iRef i
   (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> f iRef i
   _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)

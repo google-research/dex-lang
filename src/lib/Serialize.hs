@@ -88,10 +88,12 @@ prettyVal val = case val of
         return $ parens $ pretty conName <+> hsep ans
     where DataConDef conName _ = dataCons !! con
   Con con -> case con of
-    PairCon x y -> do
+    ProdCon [] -> return $ pretty ()
+    ProdCon [x, y] -> do
       xStr <- pprintVal x
       yStr <- pprintVal y
       return $ pretty (xStr, yStr)
+    ProdCon _ -> error "Unexpected product type: only binary products available in surface language."
     SumAsProd ty (TagRepVal trep) payload -> do
       let t = fromIntegral trep
       case ty of
