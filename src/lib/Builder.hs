@@ -836,6 +836,7 @@ indexSetSizeE :: MonadBuilder m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
   UnitType                   -> return $ IdxRepVal 1
   IntRange low high -> clampPositive =<< high `isub` low
+  SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSizeE types
   IndexRange n low high -> do
     low' <- case low of
       InclusiveLim x -> indexToIntE x
@@ -888,55 +889,62 @@ indexToIntE idx = case getType idx of
     subints <- traverse indexToIntE subindices
     scaled <- mapM (uncurry imul) $ zip (toList strides) subints
     foldM iadd (IdxRepVal 0) scaled
-  VariantTy (NoExt types) -> do
-    sizes <- traverse indexSetSizeE types
-    (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-    -- Build and apply a case expression
-    alts <- flip mapM (zip (toList offsets) (toList types)) $
-      \(offset, subty) -> buildNAbs (toNest [Ignore subty]) \[subix] -> do
-        i <- indexToIntE subix
-        iadd offset i
-    emit $ Case idx alts IdxRepTy
+  SumTy types -> sumToInt types
+  VariantTy (NoExt types) -> sumToInt types
   ty -> error $ "Unexpected type " ++ pprint ty
+  where
+    sumToInt :: (MonadBuilder m, Traversable t) => t Type -> m Atom
+    sumToInt types = do
+      sizes <- traverse indexSetSizeE types
+      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
+      alts <- flip mapM (zip (toList offsets) (toList types)) $
+        \(offset, subty) -> buildNAbs (toNest [Ignore subty]) \[subix] -> do
+          i <- indexToIntE subix
+          iadd offset i
+      emit $ Case idx alts IdxRepTy
 
 intToIndexE :: MonadBuilder m => Type -> Atom -> m Atom
-intToIndexE (TC con) i = case con of
-  IntRange        low high   -> return $ Con $ IntRangeVal        low high i
-  IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
-  UnitType                   -> return $ UnitVal
-  PairType a b -> do
-    bSize <- indexSetSizeE b
-    iA <- intToIndexE a =<< idiv i bSize
-    iB <- intToIndexE b =<< irem i bSize
-    return $ PairVal iA iB
-  ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
-  _ -> error $ "Unexpected type " ++ pprint con
-intToIndexE (RecordTy (NoExt types)) i = do
-  sizes <- traverse indexSetSizeE types
-  (strides, _) <- scanM
-    (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
-  offsets <- flip mapM (zip (toList types) (toList strides)) $
-    \(ty, (s1, s2)) -> do
-      x <- irem i s2
-      y <- idiv x s1
-      intToIndexE ty y
-  return $ Record (restructure offsets types)
-intToIndexE (VariantTy (NoExt types)) i = do
-  sizes <- traverse indexSetSizeE types
-  (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-  let
-    reflect = reflectLabels types
-    -- Find the right index by looping through the possible offsets
-    go prev ((label, repeatNum), ty, offset) = do
-      shifted <- isub i offset
-      -- TODO: This might run intToIndex on negative indices. Fix this!
-      index   <- intToIndexE ty shifted
-      beforeThis <- ilt i offset
-      select beforeThis prev $ Variant (NoExt types) label repeatNum index
-    ((l0, 0), ty0, _):zs = zip3 (toList reflect) (toList types) (toList offsets)
-  start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
-  foldM go start zs
-intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
+intToIndexE ty i = case ty of
+  TC con -> case con of
+    IntRange        low high   -> return $ Con $ IntRangeVal        low high i
+    IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
+    UnitType                   -> return $ UnitVal
+    SumType types              -> intToSum types [0..] $ SumVal ty
+    PairType a b -> do
+      bSize <- indexSetSizeE b
+      iA <- intToIndexE a =<< idiv i bSize
+      iB <- intToIndexE b =<< irem i bSize
+      return $ PairVal iA iB
+    ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
+    _ -> error $ "Unexpected type " ++ pprint ty
+  RecordTy (NoExt types) -> do
+    sizes <- traverse indexSetSizeE types
+    (strides, _) <- scanM
+      (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
+    offsets <- flip mapM (zip (toList types) (toList strides)) $
+      \(ety, (s1, s2)) -> do
+        x <- irem i s2
+        y <- idiv x s1
+        intToIndexE ety y
+    return $ Record (restructure offsets types)
+  VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)
+  _ -> error $ "Unexpected type " ++ pprint ty
+  where
+    intToSum :: (MonadBuilder m, Traversable t) => t Type -> t l -> (l -> Atom -> Atom) -> m Atom
+    intToSum types labels mkSum = do
+      sizes <- traverse indexSetSizeE types
+      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
+      let
+        -- Find the right index by looping through the possible offsets
+        go prev (label, cty, offset) = do
+          shifted <- isub i offset
+          -- TODO: This might run intToIndex on negative indices. Fix this!
+          index   <- intToIndexE cty shifted
+          beforeThis <- ilt i offset
+          select beforeThis prev $ mkSum label index
+        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
+      start <- mkSum l <$> intToIndexE ty0 i
+      foldM go start zs
 
 -- === pseudo-prelude ===
 
@@ -1037,5 +1045,3 @@ runMaybeWhile lam = do
   emitIf hadError
     (return $ NothingAtom UnitTy)
     (return $ JustAtom    UnitTy UnitVal)
-
-
