@@ -47,9 +47,13 @@ simplifyModule scope (Module Core decls bindings) = do
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 splitSimpModule :: Bindings -> Module -> (Block, Abs Binder Module)
-splitSimpModule scope m = do
-  let (Module Simp decls bindings) = hoistDepDataCons scope m
-  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
+splitSimpModule scope m@(Module _ _ initBindings) = do
+  let noDependentResults = null $ getLocalFV $ getType $
+        mkConsList $ Var <$> getLocalFV initBindings
+  let (Module Simp decls bindings) = case noDependentResults of
+        True  -> m
+        False -> hoistDepDataCons scope m
+  let localVars = getLocalFV bindings
   let block = Block decls $ Atom $ mkConsList $ map Var localVars
   let (Abs b (decls', bindings')) =
         fst $ flip runBuilder scope $ buildAbs (Bind ("result":>getType block)) $
@@ -57,22 +61,25 @@ splitSimpModule scope m = do
              results <- unpackConsList result
              substBuilder (newEnv localVars results) bindings
   (block, Abs b (Module Evaluated decls' bindings'))
+  where
+    getLocalFV :: HasVars a => a -> [Var]
+    getLocalFV = filter (not . isGlobal) . bindingsAsVars . freeVars
 
 -- Bundling up the free vars in a result with a dependent constructor like
 -- `AsList n xs` doesn't give us a well typed term. This is a short-term
 -- workaround.
 hoistDepDataCons :: Bindings -> Module -> Module
-hoistDepDataCons scope (Module Simp decls bindings) =
-  Module Simp decls' bindings'
+hoistDepDataCons scope (Module ir decls bindings) = case ir of
+  Simp -> Module Simp decls' bindings'
+  _    -> error "Should only be hoisting data cons on core-Simp IR"
   where
     (bindings', (_, decls')) = flip runBuilder scope $ do
       mapM_ emitDecl decls
       forM bindings \(ty, info) -> case info of
-        LetBound ann x | isData ty -> do x' <- emit x
-                                         return (ty, LetBound ann $ Atom x')
+        LetBound ann x | isData ty -> do
+          x' <- emit x
+          return (ty, LetBound ann $ Atom x')
         _ -> return (ty, info)
-hoistDepDataCons _ (Module _ _ _) =
-  error "Should only be hoisting data cons on core-Simp IR"
 
 simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
 simplifyDecls Empty = return mempty
