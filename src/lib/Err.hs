@@ -83,11 +83,12 @@ ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
 
-assertEq :: (MonadErr m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
+assertEq :: (HasCallStack, MonadErr m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = "assertion failure (" ++ s ++ "):\n"
-              ++ pprint x ++ " != " ++ pprint y ++ "\n"
+              ++ pprint x ++ " != " ++ pprint y ++ "\n\n"
+              ++ prettyCallStack callStack ++ "\n"
 
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
