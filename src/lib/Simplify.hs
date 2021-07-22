@@ -5,11 +5,13 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RecursiveDo #-}
 
 module Simplify (simplifyModule, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Reader
+import Control.Monad.Except()
 import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
@@ -18,7 +20,9 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import GHC.Stack
+import Debug.Trace
 
+import Err
 import Autodiff
 import Env
 import LabeledItems
@@ -39,7 +43,7 @@ simplifyModule scope (Module Core decls bindings) = do
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
   let (declsDone, declsNotDone) = partition isAtomDecl $ toList simpDecls
   let bindings' = foldMap boundVars declsDone
-  Module Simp (toNest declsNotDone) (bindings <> bindings')
+  simplifyDataTypes $ Module Simp (toNest declsNotDone) (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 splitSimpModule :: Bindings -> Module -> (Block, Abs Binder Module)
@@ -224,7 +228,7 @@ type AtomFac m =
 -- the supplied atom). The same guarantee doesn't apply to the non-data closures.
 separateDataComponent :: forall m. MonadBuilder m => Scope -> Atom -> m (AtomFac m)
 separateDataComponent localVars v = do
-  (dat, (ctx, recon), atomf) <- rec v
+  (dat, (ctx, recon), atomf) <- go v
   let (ctx', ctxRec) = dedup dat ctx
   let recon' = \dat'' ctx'' -> recon $ ctxRec dat'' (toList ctx'')
   let typeVars = foldMap (freeVars . getType) dat <> foldMap (freeVars . getType) ctx'
@@ -234,13 +238,13 @@ separateDataComponent localVars v = do
     False -> error $ "Failed to simplify the program: packing of " ++
                      "dependent local variables not implemented"
   where
-    rec atom = do
+    go atom = do
       let atomTy = getType atom
       case atomTy of
         PairTy _ _ -> do
           (x, y) <- fromPair atom
-          (xdat, (xctx, xrecon), xatomf) <- rec x
-          (ydat, (yctx, yrecon), yatomf) <- rec y
+          (xdat, (xctx, xrecon), xatomf) <- go x
+          (ydat, (yctx, yrecon), yatomf) <- go y
           let recon = \(RNode [xctx', yctx']) -> do
                 xnondat' <- xrecon xctx'
                 ynondat' <- yrecon yctx'
@@ -354,11 +358,11 @@ simplifyExpr expr = case expr of
             -- TODO: We're running the reconstructions multiple times, and always only selecting
             --       a single output. This can probably be made quite a bit faster.
             -- NB: All the non-data trees have the same structure, so we pick an arbitrary one.
-            nondatTree <- (\(_, (ctx, rec), _) -> rec dat ctx) $ head facs
+            nondatTree <- (\(_, (ctx, recon), _) -> recon dat ctx) $ head facs
             nondat <- forM (enumerate nondatTree) \(i, _) -> do
-              aalts <- forM facs \(_, (ctx, rec), _) -> do
+              aalts <- forM facs \(_, (ctx, recon), _) -> do
                 Abs bs' b <- buildNAbs (toNest $ toList $ fmap (Ignore . getType) ctx) \ctxVals ->
-                  ((!! i) . toList) <$> rec dat (restructure ctxVals ctx)
+                  ((!! i) . toList) <$> recon dat (restructure ctxVals ctx)
                 case b of
                   Block Empty (Atom r) -> return $ Abs bs' r
                   _ -> error $ "Reconstruction function emitted a nontrivial block: " ++ pprint b
@@ -403,7 +407,7 @@ simplifyOp op = case op of
       alts <- mapM liftAlt $ toList $ withLabels rightTys
       -- Simplify the case away if we can.
       dropSub $ simplifyExpr $ Case right alts $ VariantTy fullRow
-    _ -> emitOp op
+    _ -> error "Failed to simplify VariantLift"
   VariantSplit leftTys@(LabeledItems litems) full -> case getType full of
     VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
       -- Emit a case statement (ordered by the arg type) that splits into the
@@ -425,7 +429,7 @@ simplifyOp op = case op of
       alts <- mapM splitAlt $ toList $ withLabels fullTys
       -- Simplify the case away if we can.
       dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
-    _ -> emitOp op
+    _ -> error "Failed to simplify VariantLift"
   SumToVariant (ACase scrutinee alts _) -> do
     scrutinee' <- substBuilderR scrutinee
     alts' <- substBuilderR alts
@@ -556,3 +560,95 @@ simplifyBuilder :: MonadBuilder m => m Atom -> m Atom
 simplifyBuilder m = do
   block <- buildScoped m
   liftBuilder $ runReaderT (simplifyBlock block) mempty
+
+
+simplifyDataTypes :: Module -> Module
+simplifyDataTypes m@(Module ir decls bindings) = do
+  let bindingsVars = freeVars bindings
+  let (newBindings, newDecls) = fst $ flip runSubstBuilder mempty $ scopedDecls $ do
+        env <- traverseDeclsOpen simplifyDTTraversal decls
+        let usedEnv = bindingsVars `envIntersect` env
+        let usedEnvTypes = flip fmapNames usedEnv \n a -> (fst $ bindingsVars ! n, a)
+        bindingsSubst <- traverse (uncurry complicate) usedEnvTypes
+        substBuilder bindingsSubst bindings
+  Module ir newDecls newBindings
+  where
+    simplifyDTTraversal :: TraversalDef SubstBuilder
+    simplifyDTTraversal =
+      ( traverseDecl simplifyDTTraversal
+      , simplifyDTExpr
+      , simplifyDTAtom )
+
+    simplifyDTExpr :: Expr -> SubstBuilder Expr
+    simplifyDTExpr expr = case expr of
+      Op (SumToVariant x) -> Atom <$> simplifyDTAtom x
+      _ -> traverseExpr simplifyDTTraversal expr
+
+    simplifyDTAtom :: Atom -> SubstBuilder Atom
+    simplifyDTAtom atom = case atom of
+      Variant ~(NoExt types) label i value -> do
+        let LabeledItems ixtypes = enumerate types
+        let index = fst $ ixtypes M.! label NE.!! i
+        sumTy <- simplifyDTAtom $ getType atom
+        SumVal sumTy index <$> simplifyDTAtom value
+      VariantTy ~(NoExt types) ->
+        SumTy . toList <$> traverse simplifyDTAtom types
+      _ -> traverseAtom simplifyDTTraversal atom
+
+    -- XXX: This is quadratic due to the isSimple check!
+    complicate :: Type -> Atom -> SubstBuilder Atom
+    complicate origTy' newVal | isSimple origTy' = return newVal
+    complicate origTy' newVal = case (origTy', getType newVal) of
+      (VariantTy ~(NoExt types'), SumTy cs) -> mdo
+        let labels = toList $ withLabels types'
+        let types = restructure (alts <&> \(Abs _ (Variant _ _ _ x)) -> getType x) types'
+        alts <- forM (zip cs labels) $ \(ty, (label, i, subOrigTy')) -> do
+          ~(Abs bs (Block Empty (Atom a))) <-
+            buildNAbs (toNest [Ignore ty]) \[v] ->
+              Variant (NoExt types) label i <$> complicate subOrigTy' v
+          return $ Abs bs a
+        return $ ACase newVal alts $ VariantTy $ NoExt types
+      (TabTy n a, _) -> buildLam n TabArrow \i -> complicate a =<< app newVal i
+      (RecordTy ~(NoExt types'), _) -> do
+        Record <$> (zipWithT complicate types' =<< getUnpacked newVal)
+      (PairTy lt' rt', _) -> do
+        ~[l, r] <- getUnpacked newVal
+        PairVal <$> complicate lt' l <*> complicate rt' r
+      (SumTy cs', ~(SumTy cs)) -> mdo
+        let types = alts <&> \(Abs _ (SumVal _ _ x)) -> getType x
+        alts <- forM (zip3 [0..] cs cs') \(i, ty, ty') -> do
+          ~(Abs bs (Block Empty (Atom a))) <-
+            buildNAbs (toNest [Ignore ty]) \[v] ->
+              SumVal (SumTy types) i <$> complicate ty' v
+          return $ Abs bs a
+        return $ ACase newVal alts $ SumTy types
+      (TypeCon _ _, _) -> error "Not implemented"
+      (TC (IndexRange _ _ _), _) -> error "Not implemented"
+      (TC (IndexSlice _ _  ), _) -> error "Not implemented"
+      -- I think that this should never happen, but I'm not 100% sure. It would
+      -- pass the `assertSimple` check so better to check it explicitly.
+      (ProjectElt _ _, _) -> error "The unlikely happened. Please open a bug report."
+      _ -> return $ assertSimple origTy' newVal
+
+    assertSimple :: Atom -> a -> a
+    assertSimple a = case isSimple a of
+      True  -> id
+      False -> error $ "Not a simple atom: " ++ pprint a
+
+    isSimple = not . containsAtomPattern \case
+      Variant   _ _ _ _ -> True
+      VariantTy _       -> True
+      _                 -> False
+
+
+containsAtomPattern :: (Atom -> Bool) -> Atom -> Bool
+containsAtomPattern p atom = case runSubstBuilderT (checkPat atom) mempty of
+  Nothing -> True
+  Just _  -> False
+  where
+    checkPat :: Atom -> SubstBuilderT Maybe Atom
+    checkPat a = case p a of
+      True  -> lift $ lift Nothing
+      False -> traverseAtom checkPatT a
+
+    checkPatT = (traverseDecl checkPatT, traverseExpr checkPatT, checkPat)

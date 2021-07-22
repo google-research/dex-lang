@@ -61,7 +61,7 @@ import PPrint ()
 import Util (bindM2, scanM, restructure)
 
 newtype BuilderT m a = BuilderT (ReaderT BuilderEnvR (CatT BuilderEnvC m) a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative, MonadFix)
 
 type Builder = BuilderT Identity
 type BuilderEnv = (BuilderEnvR, BuilderEnvC)
