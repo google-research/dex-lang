@@ -1,0 +1,341 @@
+import fft
+import parser
+import plot
+
+' # Speech Processing
+
+' This notebook describes the basic steps behind speech processing.
+ The goal will be to walk through the process from reading in a wave
+ file to being ready to train a full speech recognition system.
+
+
+' ## Wave Files
+  To begin we need to be able to read in .wav files. To do this
+  we follow the wave file spec and define a header and the raw
+  data format.
+
+' [Wave Format Documentation](https://docs.fileformat.com/audio/wav/)
+
+
+data WavHeader =
+     AsWavHeader {size:Int &
+                  type:(Fin 4=>Char) &
+                  chunk:(Fin 4=>Char) &
+                  formatlength:Int &
+                  channels:Int &
+                  samplerate:Int &
+                  bitspersample:Int &
+                  datasize:Int}
+
+data Wav = AsWav header:WavHeader dat:(List Int)
+
+' ### Binary Manipulation
+  We will need a couple additional binary conversion functions. (These are naive for now.)
+
+z = FToI (pow 2.0 15.0)
+def W32ToI (x : Word32): Int  =
+    y:Int = internalCast _ x
+    select (y <= z) y ((-1)*z + (y- z))
+
+def W8ToW32 (x : Word8): Word32  = internalCast _  x
+
+def bytesToInt32 (chunk : Fin 4 => Byte) : Int =
+  [a, b, c, d] = map W8ToW32 chunk
+  W32ToI ((d .<<. 24) .|. (c .<<. 16) .|. (b .<<. 8) .|. a)
+
+
+def bytesToInt16 (chunk : Fin 2 => Byte) : Int =
+  [a, b] = map W8ToW32 chunk
+  W32ToI ((b .<<. 8) .|. a)
+
+
+' ### Parsing Types
+
+' We also add a couple additional parser helpers.
+
+def parseChars (n:Int) : (Parser (Fin n => Char)) =
+    MkParser \h. for i. parse h parseAny
+
+def parseI16 : Parser Int = MkParser \h.
+    bytesToInt16 $ parse h $ parseChars 2
+
+' ### Wave Parsing and IO
+
+' We define a parser to construct the header and to read in the data.
+
+wavparser : Parser Wav = MkParser \h.
+              parse h $ parseChars 4
+              size = bytesToInt32 $ parse h $ parseChars 4
+              type = parse h $ parseChars 4
+              chunk = parse h $ parseChars 4
+              parse h parseI16
+              formatlength = bytesToInt32 $ parse h $ parseChars 4
+              channels = parse h parseI16
+              samplerate = bytesToInt32 $ parse h $ parseChars 4
+              bytesToInt32 $ parse h $ parseChars 4
+              parse h parseI16
+              bitspersample = parse h parseI16
+              parse h $ pString (AsList 4 ['d', 'a', 't', 'a'])
+              datasize = bytesToInt32 $ parse h $ parseChars 4
+              x = parse h $ parseMany parseI16
+              header = AsWavHeader {size,
+                     type, chunk,
+                     formatlength,
+                     channels, samplerate,
+                     bitspersample,
+                     datasize}
+              AsWav header x
+
+
+x  = unsafeIO do runParserPartial (readFile "examples/speech2.wav") wavparser
+(AsList len raw_sample_wav) = case x of
+     Nothing -> mempty
+     (Just (AsWav header dat)) -> dat
+
+
+samplerate = 8000
+
+' ### The Audio
+
+' We are going to work with an MNist style of audio that has short snippets of
+  people saying letters.
+
+s = unsafeIO do base64Encode (readFile "examples/speech2.wav")
+
+:html "<audio controls src='data:audio/wav;base64,"<> s <>"'/>"
+
+
+' Here is what this looks like as a wave.
+
+:html showPlot $ xyPlot (for i. IToF (ordinal i))  (for i. IToF raw_sample_wav.i)
+
+
+' ## MFCC Signal Processing
+
+' Before doing machine learning on the data we need to process it.
+  We are going to follow a standard pipeline to produce MFCC features
+  for the data. The steps for this process are outlined in wikipedia.
+
+' [MFCC Wikipedia](https://en.wikipedia.org/wiki/Mel-frequency_cepstrum)
+
+' We will rely pretty heavily on the windowing tools provided in the prelude.
+
+' ### Step 0: Preemphasis Smoothing
+
+
+' We begin by padding so it is divisible by 80. This will allow us
+  to keep the sizes throughout.
+
+Datsize = (Pad (Fin 0) (Fin len) (Fin (80 -(mod len 80))))
+sample_wav : Datsize => Float =
+           pad 0.0 (for j. IToF raw_sample_wav.j)
+
+' As a warmup, we will play around with windowing by running a simple
+convolution filter over the data. This preemphasis filter smooths out the signal.
+
+
+-- Hyperparam
+smoothing_coef = 0.97
+def smoothing (x:(Window Unit (Fin 0))=>Float)  : Float =
+    x.{|mid=()|} - (smoothing_coef * x.{|left=()|})
+
+signal : Datsize => Float = map smoothing $ window $ pad 0.0 sample_wav
+
+' ### Step 1: Movement to Frequency domain
+
+' Next we move from time to frequency domain by applying an FFT.
+
+' Instead of applying on FFT on the whole sequence we break it up into overlapping windows and apply an FFT on each one.  The windows in speech are known as frames, they are typically 0.025 seconds long. We use a stride of 0.01 seconds for overlap.
+
+-- Hyperparam
+FrameWindow = Window (Fin 0) (Fin 199)
+Step = Fin  $ idiv samplerate 80
+PostWindow = Fin $ idiv (size Datsize) (size Step)
+
+frame_split : PostWindow => FrameWindow => Float =
+             stride $ castTable (_ & Step) $ window $ pad 0.0 signal
+
+
+' One issue though is that the FFT does not change the size of its input,
+  so if we have a short sequence we will end up with low frequency space
+  resolution. We get around this by padding out the time sequence.
+
+NFFT = Fin 512
+
+' Finally we only keep the positive components of the FFT which are the first half
+  plus one.
+
+Positive = Fin ((idiv 512  2) + 1)
+PaddingFFT = Fin ((size NFFT) - (size FrameWindow))
+
+fft_frames = for i.
+    prefft : (Pad (Fin 0) FrameWindow PaddingFFT) => Float  = pad 0.0 frame_split.i
+    ff = fft_real prefft
+    for j:Positive. (complex_abs ff.((ordinal j)@_)) / (IToF (size NFFT))
+
+
+:html matshow fft_frames
+
+
+' ## Step 2 / 3: Construct Scales
+
+' The next problem is that we have the data in frequency-space which is not that useful for the
+  problem of speech recognition. We would like to move the data to a scale that is more focused on
+  the range of human communication and our biology.
+
+
+' ### Mel FilterBank
+
+' To do this we use a nonlinear rescaling known as the Mel Scale.
+
+' Mel scale looks like this.
+
+Hertz = Float
+Mel = Float
+def mel (f:Hertz) : Mel = 1125.0 * log (1.0 + (f / 700.0))
+def imel (f:Mel) : Hertz = 700.0 * (exp (f / 1125.0) - 1.0)
+
+' However it is now so easy to move between frequency scales. To do this we will need
+' a bit of Dex machinery.
+
+' ### Linear Scales
+
+' Let us define a scaled range as a linear mapping between ordinals and a range. We keep the type around so we know the size of the domain.
+
+LinearScale = {start:Float & end:Float}
+data ScaledRange a = AsScaledRange scale:LinearScale
+
+' Given a scale, we can easily map from an index to a point, get the step, get the full domain,
+  and take the binned inverse to get the nearest index.
+
+def step (AsScaledRange {start, end}:ScaledRange a) : Float =
+    (1.0 / (IToF ((size a) - 1) )) * (end - start)
+def scaled (AsScaledRange {start, end}:ScaledRange a) (x:a): Float =
+    start + ((IToF (ordinal x)) / (IToF ((size a) - 1))) * (end - start)
+def domain (scale:ScaledRange a) : a => Float =
+    for i. scaled scale i
+def bin (scale:ScaledRange a) (x:Float) : a =
+    (AsScaledRange {start, end}) = scale
+    (FToI (floor ((x - start) / (step scale))))@_
+
+' ## Mapping Between Scales
+
+' We can then define a two linear ranges. One in Hertz (corresponding to the FFT) and one in Mel Space.
+
+MelBins = Fin 26
+
+
+top = (IToF samplerate) / 2.0
+hscale : ScaledRange Positive = AsScaledRange {start=0.0, end=top}
+melscale : ScaledRange (Pad Unit MelBins Unit) = AsScaledRange {start=mel 0.0, end=mel top}
+domain melscale
+
+mel_to_hscale = for i.
+        mel = scaled melscale i
+        bin hscale (imel mel)
+
+
+' ## Triangle Filter Bank
+
+' In order to apply this mapping we need a way to handle the non-linear disconnect. To do this
+  We build a triangle windowing function.
+
+:t fft_frames
+
+def triangle_window (mlower:m) (mpt:m)  (mupper:m) : m => Float =
+    up = (mlower..mpt)
+    down = (mpt..mupper)
+    uprange = AsScaledRange {start=0.0, end=1.0}
+    downrange = AsScaledRange {start=1.0, end=0.0}
+    yieldState zero \ref.
+        for i' : up.
+            i = %inject i'
+            (ref!i) := scaled uprange i'
+        for i' : down.
+            i = %inject i'
+            (ref!i) := scaled downrange i'
+
+
+' The 25'th Mel bin is going to take in the mass from this range of hertz's bins.
+
+:html showPlot $ xyPlot (domain hscale) (triangle_window mel_to_hscale.(24@_) mel_to_hscale.(25@_) mel_to_hscale.(26@_))
+
+' Whereas the 19'th Mel bin is going to take in the mass from this range of hertz's bins.
+
+:html showPlot $ xyPlot (domain hscale) (triangle_window mel_to_hscale.(18@_) mel_to_hscale.(19@_) mel_to_hscale.(20@_))
+
+
+' Here is the full matrix.
+
+
+H : MelBins => Positive => Float =
+  map (\x. triangle_window x.{|left=()|}  x.{|mid=()|} x.{|right=()|}) $
+     window $ castTable (Pad Unit MelBins Unit) mel_to_hscale
+
+
+
+
+
+' We can plot these over each other to get the triangles for each Mel bin.
+
+d = for i. plotToDiagram $ xyPlot (domain hscale) H.i
+:html renderScaledSVG $ concatDiagrams d
+
+' The final Mel features are constructed applying a matrix multiply.
+
+eps = 0.000001
+melled : PostWindow => MelBins => Float =
+       for i. for m. log ((sum for j. fft_frames.i.j * H.m.j) + eps)
+:html matshow for i j. melled.j.i
+
+' ## Step 4: Transform the Mel spectrum
+
+' The last step is to take a Discrete cosine transform in feature space. This will allow us to
+  further compress the signal down for usage. We start with 26 Mel features and after this step
+  we will end with 13 MFCCs.
+
+' There is a nice property that the discrete cosine transform can be computed by running a
+  standard FFT on a transformed version of the data. We implement this based on
+
+' [Fast Cosine Transform](https://dsp.stackexchange.com/questions/2807/fast-cosine-transform-via-fft)
+
+AB = {A : Unit | B : Unit}
+
+def dct (input : m=>Float) : m=>Complex =
+   d = for (k, i, j) : (AB & m & AB).
+        case j of
+             {|B=()|} -> case k of
+               {|A=()|} -> input.i
+               {|B=()|} -> input.(((size m)-1-(ordinal i))@_)
+             {|A=()|} -> 0.0
+   d' = unsafeCastTable (AB & AB & m) $ fft_real d
+   for i. d'.({|A=()|}, {|A=()|}, i)
+
+' Now we just apply DCT along each Mel window to get our final values.
+From this we drop the top DCT coefficient and keep the next 13.
+
+MFCCStart = 1@MelBins
+MFCCLen = 13@MelBins
+mfcc = for i.
+    d = dct melled.i
+    for j': (MFCCStart..MFCCLen).
+        j = %inject j'
+        (MkComplex m _) =  d.j
+        m
+
+' Finally there is one last heuristic (lifting) that is applied. This readjusts the
+  coefficients based on higher-frequencies.
+
+lift_coef = 22.0
+
+mfcc_lifted = for i j.
+        -- Lifting
+        n = IToF (ordinal j)
+        lift = 1.0 + (lift_coef/2.)*sin(pi* n /lift_coef)
+        mfcc.i.j * lift
+
+
+:html matshow $ for i j. mfcc_lifted.j.i
+
+
+' We now have our MFCC features which are ready for training or analysing speech data.

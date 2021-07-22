@@ -1448,8 +1448,19 @@ def withFile (f:FilePath) (mode:StreamMode)
 def writeFile (f:FilePath) (s:String) : {IO} Unit =
   withFile f WriteMode \stream. fwrite stream s
 
+
+
 def readFile (f:FilePath) : {IO} String =
-  withFile f ReadMode \stream. fread stream
+  withFile f ReadMode (\stream.
+     yieldState (AsList _ []) \results.
+       iter \_.
+           str = fread stream
+           (AsList n _) = str
+           results := (get results) <> str
+           case n == 0 of
+                True -> Done ()
+                False -> Continue)
+
 
 def hasFile (f:FilePath) : {IO} Bool =
   stream = fopen f ReadMode
@@ -1981,6 +1992,55 @@ def softmax (x: n=>Float) : n=>Float =
   e =  for i. exp (x.i - m)
   s = sum e
   for i. e.i / s
+
+'## Windowing and Generic Convolutions
+
+' These functions support typed windowing (possibly non-linear) and
+  linear convolution style operations. Not all windowing operations
+  are elegant under the dex type system, as the standard "valid"
+  convolution will change the size of the output in non-trivial ways.
+  We therefore focus on the "same" convolution that assumes the center
+  of the window is always within the original table, thus keeping the
+  same size. This requires the user to provide enough padding for the
+  window to work.
+
+def Pad (left:Type) (mid:Type) (right:Type) : Type =
+        {left:left | mid:mid | right:right}
+def Window (left:Type) (right:Type) : Type =
+        {left:left | mid:Unit | right:right}
+
+def window (tab: Pad left m right => n) :
+           m => (Window left right) => n =
+    for i : m.
+        for j : (Window left right).
+            k = fromOrdinal _ $ (ordinal i) + (ordinal j)
+            tab.k
+
+def pad (init:n) (tab: m=>n) : (Pad left m right) => n =
+    for i. case i of
+             {|mid=j|} -> tab.j
+             {|left=j|} -> init
+             {|right=j|} -> init
+
+' Needs to  be called with `castTable` to do the striding.
+
+def stride (tab : (m & Fin len)=>n) : m => n =
+    for i. tab.(i, 0@_)
+
+' Two dimensional versions of these functions for convenience.
+
+def window2 (tab: Pad up m down => Pad left n right => o) :
+             m => n => (Window up down) => (Window left right) => o =
+    x  = window tab
+    x' = for i j. window x.i.j
+    for i j k l. x'.i.k.j.l
+
+def pad2 (init:o) (tab: m=>n=>o) : (Pad up m down) => (Pad left n right) => o =
+         pad (for i. init) (for j. pad init tab.j)
+
+def stride2 (tab : (m & Fin vlen)=>(n & Fin hlen) => o) : m => n => o=
+    for i j. tab.(i, 0@_).(j, 0@_)
+
 
 '## Polynomials
 TODO: Move this somewhere else
