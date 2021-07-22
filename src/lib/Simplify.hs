@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Simplify (simplifyModule, simplifyCase, splitSimpModule) where
+module Simplify (simplifyModule, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -157,24 +157,6 @@ simplifyExtLabeledItems (Ext items ext) = do
     items' <- mapM simplifyAtom items
     ext' <- substBuilderR (Ext NoLabeledItems ext)
     return $ prefixExtLabeledItems items' ext'
-
-simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
-simplifyCase e alts = case e of
-  DataCon _ _ con args -> do
-    let Abs bs result = alts !! con
-    Just (newEnv bs args, result)
-  Variant (NoExt types) label i value -> do
-    let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) NE.!! i
-    let Abs bs result = alts !! index
-    Just (newEnv bs [value], result)
-  SumVal _ i value -> do
-    let Abs bs result = alts !! i
-    Just (newEnv bs [value], result)
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let Abs bs result = alts !! (fromIntegral tag)
-    Just (newEnv bs (vals !! fromIntegral tag), result)
-  _ -> Nothing
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)

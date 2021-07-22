@@ -45,7 +45,7 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
-    extendEffRow, getProjection,
+    extendEffRow, getProjection, simplifyCase,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
@@ -85,7 +85,7 @@ import GHC.Generics
 import Err
 import LabeledItems
 import Env
-import Util (IsBool (..), (...), Zippable (..), zipErr)
+import Util (IsBool (..), (...), Zippable (..), zipErr, enumerate)
 
 -- === core IR ===
 
@@ -1042,7 +1042,7 @@ instance HasVars Atom where
     ProjectElt _ v -> freeVars (Var v)
 
 instance Subst Atom where
-  subst env atom = case atom of
+  subst env@(subEnv, bs) atom = case atom of
     Var v   -> substVar env v
     Lam lam -> Lam $ subst env lam
     Pi  ty  -> Pi  $ subst env ty
@@ -1056,12 +1056,33 @@ instance Subst Atom where
     Variant row label i val -> Variant (subst env row) label i (subst env val)
     RecordTy row -> RecordTy $ subst env row
     VariantTy row -> VariantTy $ subst env row
-    ACase v alts rty -> ACase (subst env v) (subst env alts) (subst env rty)
+    ACase s alts rty -> case simplifyCase s' alts of
+      Just (cenv, result) -> subst (subEnv <> cenv, bs) result
+      Nothing             -> ACase s' (subst env alts) (subst env rty)
+      where s' = subst env s
     DataConRef def params args -> DataConRef def (subst env params) args'
       where Abs args' () = subst env $ Abs args ()
     BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
         where Abs b' body' = subst env $ Abs b body
     ProjectElt idxs v -> getProjection (toList idxs) $ substVar env v
+
+simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
+simplifyCase e alts = case e of
+  DataCon _ _ con args -> do
+    let Abs bs result = alts !! con
+    Just (newEnv bs args, result)
+  Variant (NoExt types) label i value -> do
+    let LabeledItems ixtypes = enumerate types
+    let index = fst $ (ixtypes M.! label) NE.!! i
+    let Abs bs result = alts !! index
+    Just (newEnv bs [value], result)
+  SumVal _ i value -> do
+    let Abs bs result = alts !! i
+    Just (newEnv bs [value], result)
+  Con (SumAsProd _ (TagRepVal tag) vals) -> do
+    let Abs bs result = alts !! (fromIntegral tag)
+    Just (newEnv bs (vals !! fromIntegral tag), result)
+  _ -> Nothing
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
