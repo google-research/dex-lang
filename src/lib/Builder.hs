@@ -167,6 +167,13 @@ buildAbs b f = do
      return (b, ans)
   return (Abs b' (decls, ans))
 
+buildAAbs :: MonadBuilder m => Binder -> (Atom -> m a) -> m (Abs Binder a)
+buildAAbs b' f = do
+  (Abs b (decls, a)) <- buildAbs b' f
+  case decls of
+    Empty -> return $ Abs b a
+    _     -> error $ "buildAAbs with non-empty body: " ++ pprint decls
+
 buildLam :: MonadBuilder m => Binder -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
 
@@ -762,7 +769,10 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     buildDepEffLam b'
       (\x -> extendR (b'@>x) (substBuilderR arr))
       (\x -> extendR (b'@>x) (evalBlockE def body))
-  Pi _ -> substBuilderR atom
+  Pi (Abs b (arr, ty)) -> do
+    b' <- mapM fAtom b
+    Pi <$> buildAAbs b' \x ->
+      extendR (b'@>x) $ (,) <$> (substBuilderR arr) <*> (fAtom ty)
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substBuilderR atom
