@@ -277,6 +277,8 @@ instance HasPtrs Atom where
     Var v   -> Var <$> traverse (tp f) v
     Lam lam -> Lam <$> tp f lam
     Pi  ty  -> Pi  <$> tp f ty
+    DepPairTy     ta -> DepPairTy <$> tp f ta
+    DepPair   x y ta -> DepPair <$> tp f x <*> tp f y <*> tp f ta
     TC  tc  -> TC  <$> traverse (tp f) tc
     Con (Lit (PtrLit ptrTy ptr)) -> (Con . Lit . PtrLit ptrTy) <$> f ptrTy ptr
     Con con -> Con <$> traverse (tp f) con
@@ -291,6 +293,7 @@ instance HasPtrs Atom where
     VariantTy row -> VariantTy <$> tp f row
     ACase v alts rty -> ACase <$> tp f v <*>  tp f alts <*> tp f rty
     DataConRef def params args -> DataConRef def <$> tp f params <*> tp f args
+    DepPairRef _ _ _ -> undefined  -- This is only used in Imp
     BoxedRef b ptr size body ->
       BoxedRef <$> tp f b <*> tp f ptr <*> tp f size <*> tp f body
     ProjectElt idxs v -> pure $ ProjectElt idxs v

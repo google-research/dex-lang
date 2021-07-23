@@ -650,6 +650,11 @@ makeDestRec ty = case ty of
         let dcs' = applyDataDefParams def params
         contents <- forM dcs' \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
         return $ Con $ ConRef $ SumAsProd ty tag contents
+  DepPairTy a@(Abs b _) -> do
+    lhsDest <- makeDestRec $ absArgType a
+    v       <- freshVarE UnknownBinder b  -- TODO: scope names more carefully
+    rhsDest <- withDepVar (Bind v) $ makeDestRec $ applyAbs a $ Var v
+    return $ DepPairRef lhsDest (Abs (Bind v) rhsDest) a
   RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
   VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
@@ -726,6 +731,8 @@ copyAtom topDest topSrc = do
         rec body' src
         storeAnywhere (fromScalarAtom ptrPtr) ptr
       (DataConRef _ _ refs, DataCon _ _ _ vals) -> copyDataConArgs refs vals
+      (DepPairRef lr rra _, DepPair l r _) ->
+        copyAtom lr l >> copyAtom (applyAbs rra l) r
       (Con destRefCon, _) -> case (destRefCon, src) of
         (BaseTypeRef ptr, _) -> storeAnywhere (fromScalarAtom ptr) (fromScalarAtom src)
         (TabRef _, TabVal _ _) -> case (canParallelize, tryParallelCopy) of
@@ -799,6 +806,10 @@ loadDest (BoxedRef b ptrPtr _ body) = do
   loadDest body'
 loadDest (DataConRef def params bs) = do
   DataCon def params 0 <$> loadDataConArgs bs
+loadDest (DepPairRef lr rra a) = do
+  l <- loadDest lr
+  r <- loadDest $ applyAbs rra l
+  return $ DepPair l r a
 loadDest (Con dest) = do
  case dest of
   BaseTypeRef ptr -> unsafePtrLoad ptr
@@ -918,6 +929,7 @@ splitDest (maybeDest, (Block decls ans)) = do
       (_, Con (Lit _)) -> tell [(dest, result)]
       -- This is conservative, in case the type is dependent. We could do better.
       (DataConRef _ _ _, DataCon _ _ _ _) -> tell [(dest, result)]
+      (DepPairRef _ _ _, DepPair _ _ _  ) -> tell [(dest, result)]
       -- This is conservative. Without it, we hit bugs like #348
       (Con (ConRef (SumAsProd _ _ _)), _) -> tell [(dest, result)]
       (Con (ConRef destCon), Con srcCon) -> do

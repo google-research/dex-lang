@@ -116,6 +116,12 @@ instance HasType Atom where
       return $ Pi $ makeAbs b (arr, bodyTy)
     Pi (Abs b (arr, resultTy)) -> withBinder b $
       checkArrow arr >> resultTy|:TyKind $> TyKind
+    DepPairTy (Abs b ty) -> withBinder b $ typeCheck ty $> TyKind
+    DepPair x y ta -> do
+      xTy <- typeCheck x
+      absArgType ta `checkEq` xTy
+      y |: applyAbs ta x
+      return $ DepPairTy ta
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
@@ -159,6 +165,10 @@ instance HasType Atom where
       let argBs' = applyNaryAbs (Abs paramBs argBs) params
       checkDataConRefBindings argBs' args
       return $ RawRefTy $ TypeCon def params
+    DepPairRef l (Abs ~(Bind v) r) ty -> do
+      l |: RawRefTy (absArgType ty)
+      r |: RawRefTy (applyAbs ty $ Var v)
+      return $ RawRefTy $ DepPairTy ty
     BoxedRef b ptr numel body -> do
       PtrTy (_, t) <- typeCheck ptr
       checkEq (binderAnn b) (BaseTy t)
@@ -185,6 +195,8 @@ instance HasType Atom where
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         PairTy x _ | i == 0 -> return x
         PairTy _ y | i == 1 -> return y
+        DepPairTy ta | i == 0 -> return $ absArgType ta
+        DepPairTy ta | i == 1 -> return $ applyAbs ta $ ProjectElt (0 NE.:| is) v
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -359,7 +371,8 @@ withBinder :: Binder -> TypeM a -> TypeM a
 withBinder b m = typeCheck b >> extendTypeEnv (boundVars b) m
 
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> BinderP b -> m ()
-checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
+--checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
+checkNoShadow env b = when (b `isin` env) $ error $ pprint b ++ " shadowed"
 
 -- === Core IR syntactic variants ===
 
@@ -386,6 +399,8 @@ instance CoreVariant Atom where
         -- _        -> goneBy Simp
         _ -> alwaysAllowed
       checkVariant b >> checkVariant body
+    DepPairTy     (Abs b ty) -> checkVariant b >> checkVariant ty
+    DepPair   x y (Abs b ty) -> forM_ [x, y, ty] checkVariant >> checkVariant b
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
@@ -398,6 +413,7 @@ instance CoreVariant Atom where
     VariantTy _ -> alwaysAllowed
     ACase _ _ _ -> goneBy Simp
     DataConRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    DepPairRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
     BoxedRef _ _ _ _ -> neverAllowed  -- only used internally in Imp lowering
     ProjectElt _ (_:>ty) -> checkVariant ty
 
@@ -1060,6 +1076,7 @@ projectLength ty = case ty of
     in length bs
   RecordTy (NoExt types) -> length types
   ProdTy tys -> length tys
+  DepPairTy _ -> 2
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
 

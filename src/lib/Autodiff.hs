@@ -356,6 +356,7 @@ linearizeAtom atom = case atom of
     wrt <- ask
     return (atom, buildLam i TabArrow \i' ->
                     rematPrimal wrt $ linearizeBlock (i@>i') body)
+  DepPair _ _ _   -> notImplemented
   DataCon _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   Record elems    -> Record <$> traverse linearizeAtom elems
   Variant t l i e -> Variant t l i <$> linearizeAtom e
@@ -364,6 +365,7 @@ linearizeAtom atom = case atom of
   RecordTy _      -> emitWithZero
   VariantTy _     -> emitWithZero
   Pi _            -> emitWithZero
+  DepPairTy _     -> emitWithZero
   TC _            -> emitWithZero
   Eff _           -> emitWithZero
   ProjectElt idxs v -> getProjection (toList idxs) <$> linearizeAtom (Var v)
@@ -372,6 +374,7 @@ linearizeAtom atom = case atom of
   ACase _ _ _     -> error "Unexpected ACase"
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _ _ _ -> error "Unexpected ref"
+  DepPairRef _ _ _ -> error "Unexpected ref"
   where
     emitWithZero = LinA $ return $ withZeroTangent atom
     rematPrimal wrt m = do
@@ -703,6 +706,7 @@ transposeAtom atom ct = case atom of
       Nothing  -> return ()
   Con con         -> transposeCon con ct
   Record  e       -> void $ zipWithT transposeAtom e =<< getUnpacked ct
+  DepPair _ _ _   -> notImplemented
   DataCon _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
   TabVal b body   ->
@@ -716,11 +720,13 @@ transposeAtom atom ct = case atom of
   RecordTy _      -> notTangent
   VariantTy _     -> notTangent
   Pi _            -> notTangent
+  DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _ _ _ -> error "Unexpected ref"
+  DepPairRef _ _ _ -> error "Unexpected ref"
   ProjectElt _ v -> do
     lin <- isLin $ Var v
     when lin $ flip emitCTToRef ct =<< linAtomRef atom
