@@ -94,6 +94,8 @@ import Util (IsBool (..), (...), Zippable (..), zipErr, enumerate)
 data Atom = Var Var
           | Lam LamExpr
           | Pi  PiType
+          | DepPairTy           (Abs Binder Type)
+          | DepPair   Atom Atom (Abs Binder Type) -- lhs, rhs, rhs type abstracted over lhs
           | DataCon DataDef [Atom] Int [Atom]
           | TypeCon DataDef [Atom]
           | LabeledRow (ExtLabeledItems Type Name)
@@ -107,6 +109,8 @@ data Atom = Var Var
           | ACase Atom [AltP Atom] Type
             -- single-constructor only for now
           | DataConRef DataDef [Atom] (Nest DataConRefBinding)
+          -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
+          | DepPairRef Atom (Abs Binder Atom) (Abs Binder Type)
           | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
           -- access a nested member of a binder
           -- XXX: Variable name must not be an alias for another name or for
@@ -1026,6 +1030,8 @@ instance HasVars Atom where
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
     Eff eff -> freeVars eff
+    DepPairTy     ta -> freeVars ta
+    DepPair   x y ta -> freeVars x <> freeVars y <> freeVars ta
     -- TODO: think about these cases. We don't want to needlessly traverse the
     --       data definition but we might need to know the free Vars.
     DataCon _ params _ args -> freeVars params <> freeVars args
@@ -1037,6 +1043,7 @@ instance HasVars Atom where
     VariantTy row -> freeVars row
     ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
     DataConRef _ params args -> freeVars params <> freeVars args
+    DepPairRef l r a -> freeVars l <> freeVars r <> freeVars a
     BoxedRef b ptr size body ->
       freeVars ptr <> freeVars size <> freeVars (Abs b body)
     ProjectElt _ v -> freeVars (Var v)
@@ -1049,6 +1056,8 @@ instance Subst Atom where
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
+    DepPairTy     ta -> DepPairTy $ subst env ta
+    DepPair   x y ta -> DepPair (subst env x) (subst env y) (subst env ta)
     DataCon def params con args -> DataCon def (subst env params) con (subst env args)
     TypeCon def params          -> TypeCon def (subst env params)
     LabeledRow row -> LabeledRow $ subst env row
@@ -1062,6 +1071,7 @@ instance Subst Atom where
       where s' = subst env s
     DataConRef def params args -> DataConRef def (subst env params) args'
       where Abs args' () = subst env $ Abs args ()
+    DepPairRef l r a -> DepPairRef (subst env l) (subst env r) (subst env a)
     BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
         where Abs b' body' = subst env $ Abs b body
     ProjectElt idxs v -> getProjection (toList idxs) $ substVar env v
@@ -1174,6 +1184,8 @@ getProjection (i:is) a = case getProjection is a of
   DataCon _ _ _ xs    -> xs !! i
   Record items        -> toList items !! i
   ProdVal xs          -> xs !! i
+  DepPair l _ _ | i == 0 -> l
+  DepPair _ r _ | i == 1 -> r
   _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
 instance HasVars () where freeVars () = mempty

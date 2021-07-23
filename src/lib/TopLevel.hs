@@ -301,7 +301,6 @@ evalBackend :: Bindings -> Block -> TopPassM Atom
 evalBackend env block = do
   backend <- asks (backendName . evalConfig)
   let eval = case backend of
-
                MLIR        -> evalMLIR
                LLVM        -> evalLLVM
                LLVMMC      -> evalLLVM

@@ -315,6 +315,10 @@ instance PrettyPrec Atom where
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
+    DepPairTy (Abs b ty) -> atPrec ArgPrec $ align $ group $
+        parens $ p b <+> "&>" <+> p ty
+    DepPair x y _ -> atPrec ArgPrec $ align $ group $
+        parens $ p x <> ",>" <+> p y
     DataCon (DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
@@ -337,6 +341,8 @@ instance PrettyPrec Atom where
     ACase e alts _ -> prettyPrecCase "acase" e alts
     DataConRef _ params args -> atPrec AppPrec $
       "DataConRef" <+> p params <+> p args
+    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
+      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
     BoxedRef b ptr size body -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
     ProjectElt idxs x -> prettyProjection idxs x
@@ -381,7 +387,11 @@ prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
           hint = Name SourceName (fromString fieldName) 0
       PairTy x _ | i == 0 -> rec x "a" \pat -> UPatPair pat uignore
       PairTy _ y | i == 1 -> rec y "b" \pat -> UPatPair uignore pat
-      _ -> error "Bad projection"
+      ProdTy tys -> rec (tys !! i) "x" \pat -> UPatTable $
+        enumerate tys <&> \(j, _) -> if i == j then pat else uignore
+      DepPairTy (Abs b _) | i == 0 -> rec (binderType b) "a" \pat -> UPatPair pat uignore
+      DepPairTy (Abs _ t) | i == 1 -> rec t              "b" \pat -> UPatPair uignore pat
+      _ -> error $ "Bad projection: " ++ pprint i ++ " from " ++ show ty
     where
       rec :: Type -> Name -> (UPat -> UPat') -> (UPat, Name)
       rec subTy nameHint patBuilder = case NE.nonEmpty is of
@@ -517,8 +527,9 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
-instance Pretty Module where
-  pretty (Module variant decls bindings) =
+instance Pretty Module where pretty = prettyFromPrettyPrec
+instance PrettyPrec Module where
+  prettyPrec (Module variant decls bindings) = atPrec LowestPrec $
     "Module" <+> parens (p (show variant)) <> nest 2 body
     where
       body = hardline <> "unevaluated decls:"

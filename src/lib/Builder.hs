@@ -20,7 +20,7 @@ module Builder (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buil
                 fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
                 select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
                 fromPair, getFst, getSnd, getFstRef, getSndRef,
-                naryApp, appReduce, appTryReduce, buildAbs,
+                naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, emitDecl, withNameHint,
                 singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
@@ -159,20 +159,26 @@ buildPi b f = do
     Nothing -> throw CompilerErr $
       "Unexpected irreducible decls in pi type: " ++ pprint decls
 
-buildAbs :: MonadBuilder m => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
-buildAbs b f = do
-  ((b', ans), decls) <- scopedDecls $ do
+buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
+buildAbsAux b f = do
+  ((b', ans, aux), decls) <- scopedDecls $ do
      v <- freshVarE UnknownBinder b
-     ans <- f $ Var v
-     return (b, ans)
-  return (Abs b' (decls, ans))
+     (ans, aux) <- f $ Var v
+     return (Bind v, ans, aux)
+  return (makeAbs b' (decls, ans), aux)
 
-buildAAbs :: MonadBuilder m => Binder -> (Atom -> m a) -> m (Abs Binder a)
-buildAAbs b' f = do
-  (Abs b (decls, a)) <- buildAbs b' f
+buildAbs :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
+buildAbs b f = fst <$> buildAbsAux b (\x -> (,()) <$> f x)
+
+buildAAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder a, b)
+buildAAbsAux b' f = do
+  (Abs b (decls, a), aux) <- buildAbsAux b' f
   case decls of
-    Empty -> return $ Abs b a
-    _     -> error $ "buildAAbs with non-empty body: " ++ pprint decls
+    Empty -> return $ (Abs b a, aux)
+    _     -> error $ "buildAAbsAux with non-empty body: " ++ pprint decls
+
+buildAAbs :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m a) -> m (Abs Binder a)
+buildAAbs b' f = fst <$> buildAAbsAux b' (\x -> (,()) <$> f x)
 
 buildLam :: MonadBuilder m => Binder -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
@@ -772,6 +778,14 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     b' <- mapM fAtom b
     Pi <$> buildAAbs b' \x ->
       extendR (b'@>x) $ (,) <$> (substBuilderR arr) <*> (fAtom ty)
+  DepPairTy (Abs b ty) -> do
+    b' <- mapM fAtom b
+    DepPairTy <$> buildAAbs b' \x -> extendR (b'@>x) $ fAtom ty
+  DepPair x y (Abs b ty) -> do
+    x' <- fAtom x
+    y' <- fAtom y
+    b' <- mapM fAtom b
+    DepPair x' y' <$> buildAAbs b' \xb -> extendR (b'@>xb) $ fAtom ty
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substBuilderR atom
@@ -794,6 +808,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
   ACase e alts ty -> ACase <$> fAtom e <*> mapM traverseAAlt alts <*> fAtom ty
   DataConRef dataDef params args -> DataConRef dataDef <$>
     traverse fAtom params <*> traverseNestedArgs args
+  DepPairRef _ _ _ -> undefined  -- Should be unnecessary, those refs are only used in Imp lowering
   BoxedRef b ptr size body -> do
     ptr'  <- fAtom ptr
     size' <- buildScoped $ evalBlockE def size
