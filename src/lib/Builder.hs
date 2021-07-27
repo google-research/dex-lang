@@ -18,10 +18,10 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 app,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
-                fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam,
+                fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
                 select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
                 fromPair, getFst, getSnd, getFstRef, getSndRef,
-                naryApp, appReduce, appTryReduce, buildAbs,
+                naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
                 singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
@@ -154,13 +154,26 @@ buildPi b f = do
     Nothing -> throw CompilerErr $
       "Unexpected irreducible decls in pi type: " ++ pprint decls
 
-buildAbs :: HasCallStack => MonadBuilder m => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
-buildAbs b f = do
-  ((v, ans), decls) <- scopedDecls $ do
-     v <- withNameHint b $ freshVarE UnknownBinder $ binderType b
-     ans <- f $ Var v
-     return (v, ans)
-  return (Abs (Bind v) (decls, ans))
+buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
+buildAbsAux b f = do
+  ((b', ans, aux), decls) <- scopedDecls $ do
+     v <- freshVarE UnknownBinder $ binderType b
+     (ans, aux) <- f $ Var v
+     return (Bind v, ans, aux)
+  return (makeAbs b' (decls, ans), aux)
+
+buildAbs :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
+buildAbs b f = fst <$> buildAbsAux b (\x -> (,()) <$> f x)
+
+buildAAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder a, b)
+buildAAbsAux b' f = do
+  (Abs b (decls, a), aux) <- buildAbsAux b' f
+  case decls of
+    Empty -> return $ (Abs b a, aux)
+    _     -> error $ "buildAAbsAux with non-empty body: " ++ pprint decls
+
+buildAAbs :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m a) -> m (Abs Binder a)
+buildAAbs b' f = fst <$> buildAAbsAux b' (\x -> (,()) <$> f x)
 
 buildLam :: MonadBuilder m => Binder -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
@@ -255,9 +268,12 @@ makeSuperclassGetter dataDefName methodIdx = do
       return $ getTupleProjection methodIdx $ getProjection [0, 0] dict
 
 buildImplicitNaryLam :: MonadBuilder m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
-buildImplicitNaryLam Empty body = body []
-buildImplicitNaryLam (Nest b bs) body =
-  buildLam b ImplicitArrow \x -> do
+buildImplicitNaryLam bs body = buildNaryLam ImplicitArrow bs body
+
+buildNaryLam :: MonadBuilder m => Arrow -> (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
+buildNaryLam _   Empty       body = body []
+buildNaryLam arr (Nest b bs) body =
+  buildLam b arr \x -> do
     bs' <- substBuilder (b@>SubstVal x) bs
     buildImplicitNaryLam bs' \xs -> body $ x:xs
 
@@ -563,8 +579,7 @@ singletonTypeVal :: Type -> Maybe Atom
 singletonTypeVal (TabTy v a) = TabValA v <$> singletonTypeVal a
 singletonTypeVal (RecordTy (NoExt items)) = Record <$> traverse singletonTypeVal items
 singletonTypeVal (TC con) = case con of
-  PairType a b -> PairVal <$> singletonTypeVal a <*> singletonTypeVal b
-  UnitType     -> return UnitVal
+  ProdType tys -> ProdVal <$> traverse singletonTypeVal tys
   _            -> Nothing
 singletonTypeVal _ = Nothing
 
@@ -812,7 +827,18 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
     buildDepEffLam b'
       (\x -> extendR (b'@>SubstVal x) (substBuilderR arr))
       (\x -> extendR (b'@>SubstVal x) (evalBlockE def body))
-  Pi _ -> substBuilderR atom
+  Pi (Abs b (arr, ty)) -> do
+    b' <- mapM fAtom b
+    Pi <$> buildAAbs b' \x ->
+      extendR (b'@>SubstVal x) $ (,) <$> (substBuilderR arr) <*> (fAtom ty)
+  DepPairTy (Abs b ty) -> do
+    b' <- mapM fAtom b
+    DepPairTy <$> buildAAbs b' \x -> extendR (b'@>SubstVal x) $ fAtom ty
+  DepPair x y (Abs b ty) -> do
+    x' <- fAtom x
+    y' <- fAtom y
+    b' <- mapM fAtom b
+    DepPair x' y' <$> buildAAbs b' \xb -> extendR (b'@>SubstVal xb) $ fAtom ty
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substBuilderR atom
@@ -835,6 +861,7 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
   ACase e alts ty -> ACase <$> fAtom e <*> mapM traverseAAlt alts <*> fAtom ty
   DataConRef dataDef params args -> DataConRef dataDef <$>
     traverse fAtom params <*> traverseNestedArgs args
+  DepPairRef _ _ _ -> undefined  -- Should be unnecessary, those refs are only used in Imp lowering
   BoxedRef b ptr size body -> do
     ptr'  <- fAtom ptr
     size' <- buildScoped $ evalBlockE def size
@@ -873,8 +900,8 @@ dropSub m = local mempty m
 
 indexSetSizeE :: MonadBuilder m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
-  UnitType                   -> return $ IdxRepVal 1
   IntRange low high -> clampPositive =<< high `isub` low
+  SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSizeE types
   IndexRange n low high -> do
     low' <- case low of
       InclusiveLim x -> indexToIntE x
@@ -885,7 +912,7 @@ indexSetSizeE (TC con) = case con of
       ExclusiveLim x -> indexToIntE x
       Unlimited      -> indexSetSizeE n
     clampPositive =<< high' `isub` low'
-  PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
+  ProdType tys -> foldM imul (IdxRepVal 1) =<< traverse indexSetSizeE tys
   ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSizeE (RecordTy (NoExt types)) = do
@@ -901,6 +928,8 @@ clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
+data IterOrder = MinorToMajor | MajorToMinor
+
 -- XXX: Be careful if you use this function as an interpretation for
 --      IndexAsInt instruction, as for Int and IndexRanges it will
 --      generate the same instruction again, potentially leading to an
@@ -909,73 +938,77 @@ indexToIntE :: MonadBuilder m => Atom -> m Atom
 indexToIntE (Con (IntRangeVal _ _ i))     = return i
 indexToIntE (Con (IndexRangeVal _ _ _ i)) = return i
 indexToIntE idx = case getType idx of
-  UnitTy  -> return $ IdxRepVal 0
-  PairTy _ rType -> do
-    (lVal, rVal) <- fromPair idx
-    lIdx  <- indexToIntE lVal
-    rIdx  <- indexToIntE rVal
-    rSize <- indexSetSizeE rType
-    imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
   TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
-  RecordTy (NoExt types) -> do
-    sizes <- traverse indexSetSizeE types
-    (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IdxRepVal 1)
-    -- Unpack and sum the strided contributions
-    subindices <- getUnpacked idx
-    subints <- traverse indexToIntE subindices
-    scaled <- mapM (uncurry imul) $ zip (toList strides) subints
-    foldM iadd (IdxRepVal 0) scaled
-  VariantTy (NoExt types) -> do
-    sizes <- traverse indexSetSizeE types
-    (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-    -- Build and apply a case expression
-    alts <- flip mapM (zip (toList offsets) (toList types)) $
-      \(offset, subty) -> buildNAbs (toNest [Ignore subty]) \[subix] -> do
-        i <- indexToIntE subix
-        iadd offset i
-    emit $ Case idx alts IdxRepTy
+  ProdTy           types  -> prodToInt MajorToMinor types
+  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
+  SumTy            types  -> sumToInt  types
+  VariantTy (NoExt types) -> sumToInt  types
   ty -> error $ "Unexpected type " ++ pprint ty
+  where
+    -- XXX: Assumes minor-to-major iteration order
+    prodToInt :: (MonadBuilder m, Traversable t) => IterOrder -> t Type -> m Atom
+    prodToInt order types = do
+      sizes <- toList <$> traverse indexSetSizeE types
+      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
+      strides <- rev . fst <$> scanM (\sz prev -> (prev,) <$> imul sz prev) (rev sizes) (IdxRepVal 1)
+      -- Unpack and sum the strided contributions
+      subindices <- getUnpacked idx
+      subints <- traverse indexToIntE subindices
+      scaled <- mapM (uncurry imul) $ zip strides subints
+      foldM iadd (IdxRepVal 0) scaled
+    sumToInt :: (MonadBuilder m, Traversable t) => t Type -> m Atom
+    sumToInt types = do
+      sizes <- traverse indexSetSizeE types
+      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
+      alts <- flip mapM (zip (toList offsets) (toList types)) $
+        \(offset, subty) -> buildNAbs (toNest [Ignore subty]) \[subix] -> do
+          i <- indexToIntE subix
+          iadd offset i
+      emit $ Case idx alts IdxRepTy
 
 intToIndexE :: MonadBuilder m => Type -> Atom -> m Atom
-intToIndexE (TC con) i = case con of
-  IntRange        low high   -> return $ Con $ IntRangeVal        low high i
-  IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
-  UnitType                   -> return $ UnitVal
-  PairType a b -> do
-    bSize <- indexSetSizeE b
-    iA <- intToIndexE a =<< idiv i bSize
-    iB <- intToIndexE b =<< irem i bSize
-    return $ PairVal iA iB
-  ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
-  _ -> error $ "Unexpected type " ++ pprint con
-intToIndexE (RecordTy (NoExt types)) i = do
-  sizes <- traverse indexSetSizeE types
-  (strides, _) <- scanM
-    (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
-  offsets <- flip mapM (zip (toList types) (toList strides)) $
-    \(ty, (s1, s2)) -> do
-      x <- irem i s2
-      y <- idiv x s1
-      intToIndexE ty y
-  return $ Record (restructure offsets types)
-intToIndexE (VariantTy (NoExt types)) i = do
-  sizes <- traverse indexSetSizeE types
-  (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-  let
-    reflect = reflectLabels types
-    -- Find the right index by looping through the possible offsets
-    go prev ((label, repeatNum), ty, offset) = do
-      shifted <- isub i offset
-      -- TODO: This might run intToIndex on negative indices. Fix this!
-      index   <- intToIndexE ty shifted
-      beforeThis <- ilt i offset
-      select beforeThis prev $ Variant (NoExt types) label repeatNum index
-    ((l0, 0), ty0, _):zs = zip3 (toList reflect) (toList types) (toList offsets)
-  start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
-  foldM go start zs
-intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
+intToIndexE ty i = case ty of
+  TC con -> case con of
+    IntRange        low high   -> return $ Con $ IntRangeVal        low high i
+    IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
+    -- Strategically placed reverses make intToProd major-to-minor
+    ProdType types             -> intToProd (reverse types) (ProdVal . reverse)
+    SumType  types             -> intToSum  types [0..] $ SumVal ty
+    ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
+    _ -> error $ "Unexpected type " ++ pprint ty
+  RecordTy  (NoExt types) -> intToProd types Record
+  VariantTy (NoExt types) -> intToSum  types (reflectLabels types) $ uncurry $ Variant (NoExt types)
+  _ -> error $ "Unexpected type " ++ pprint ty
+  where
+    -- XXX: Expects that the types are in a minor-to-major order
+    intToProd :: (MonadBuilder m, Traversable t) => t Type -> (t Atom -> Atom) -> m Atom
+    intToProd types mkProd = do
+      sizes <- traverse indexSetSizeE types
+      (strides, _) <- scanM
+        (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
+      offsets <- flip mapM (zip (toList types) (toList strides)) $
+        \(ety, (s1, s2)) -> do
+          x <- irem i s2
+          y <- idiv x s1
+          intToIndexE ety y
+      return $ mkProd (restructure offsets types)
+    intToSum :: (MonadBuilder m, Traversable t) => t Type -> t l -> (l -> Atom -> Atom) -> m Atom
+    intToSum types labels mkSum = do
+      sizes <- traverse indexSetSizeE types
+      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
+      let
+        -- Find the right index by looping through the possible offsets
+        go prev (label, cty, offset) = do
+          shifted <- isub i offset
+          -- TODO: This might run intToIndex on negative indices. Fix this!
+          index   <- intToIndexE cty shifted
+          beforeThis <- ilt i offset
+          select beforeThis prev $ mkSum label index
+        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
+      start <- mkSum l <$> intToIndexE ty0 i
+      foldM go start zs
 
 -- === pseudo-prelude ===
 

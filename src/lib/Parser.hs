@@ -413,7 +413,7 @@ uForExpr = do
     else return e
 
 unitExpr :: UExpr'
-unitExpr = UPrimExpr $ ConExpr UnitCon
+unitExpr = UPrimExpr $ ConExpr $ ProdCon []
 
 ns :: a -> WithSrc a
 ns = WithSrc Nothing

@@ -16,6 +16,7 @@ module TopLevel (
   evalSourceText, runInterblockM, execInterblockM,
   evalInterblockM, lookupSourceName, evalSourceBlockIO) where
 
+import Data.Functor
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -50,7 +51,15 @@ import Util (highlightRegion, measureSeconds)
 import Optimize
 import Parallelize
 
+#if DEX_LLVM_VERSION == HEAD
+import Data.Foldable
+import MLIR.Lower
+import MLIR.Eval
+#endif
+
 -- === monad for wiring together the source blocks ===
+
+-- import qualified SaferNames.Syntax as S
 
 type MonadInterblock m = ( MonadReader EvalConfig m
                          , MonadState TopState m
@@ -329,7 +338,7 @@ evalUModule sourceModule = do
       return result
     _ -> do
       let (block, rest) = splitSimpModule bindings optimized
-      result <- evalBackend bindings block
+      result <- evalBackend block
       evaluated <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty evaluated
       return evaluated
@@ -342,10 +351,31 @@ roundtripSaferNamesPass _ m = return m
 --   _ <- liftEither $ S.checkTypes env' $ S.Block S.UnitTy decls' (S.Atom S.UnitVal)
 --   return $ Module ir (fromSafeB decls') bindings
 
-evalBackend :: MonadPasses m => Bindings -> Block -> m Atom
-evalBackend env block = do
-  backend <- asks $ backendName . evalConfig
-  bench   <- asks $ benchmark
+-- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
+-- TODO: Standalone functions --- use the env!
+evalMLIR :: MonadPasses m => Block -> m Atom
+#if DEX_LLVM_VERSION == HEAD
+evalMLIR block' = do
+  -- This is a little silly, but simplification likes to leave inlinable
+  -- let-bindings (they just construct atoms) in the block.
+  let block = inlineTraverse block'
+  let (moduleOp, recon@(Abs bs _)) = coreToMLIR block
+  liftIO $ do
+    let resultTypes = toList bs <&> binderAnn <&> \case BaseTy bt -> bt; _ -> error "Expected a base type"
+    resultVals <- evalModule moduleOp [] resultTypes
+    return $ applyNaryAbs recon $ Con . Lit <$> resultVals
+  where
+    inlineTraverse :: Block -> Block
+    inlineTraverse block = fst $ flip runSubstBuilder mempty $ traverseBlock substTraversalDef block
+#else
+evalMLIR = error "Dex built without support for MLIR"
+#endif
+
+evalLLVM :: MonadPasses m => Block -> m Atom
+evalLLVM block = do
+  TopState env _ _ _ <- asks topState
+  backend <- asks (backendName . evalConfig)
+  bench   <- asks benchmark
   logger  <- getLogger
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
@@ -368,6 +398,18 @@ evalBackend env block = do
   resultVals <- liftM (map (Con . Lit)) $ liftIO $
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
+
+evalBackend :: MonadPasses m => Block -> m Atom
+evalBackend block = do
+  backend <- asks (backendName . evalConfig)
+  let eval = case backend of
+               MLIR        -> evalMLIR
+               LLVM        -> evalLLVM
+               LLVMMC      -> evalLLVM
+               LLVMCUDA    -> evalLLVM
+               Interpreter -> error "TODO"
+  eval block
+
 
 withCompileTime :: MonadInterblock m => m Result -> m Result
 withCompileTime m = do

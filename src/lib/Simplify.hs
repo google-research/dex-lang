@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Simplify (simplifyModule, simplifyCase, splitSimpModule) where
+module Simplify (simplifyModule, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -14,6 +14,7 @@ import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
 import Data.List (partition, elemIndex)
+import Data.Graph (graphFromEdges, topSort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -51,33 +52,48 @@ prependBindings bindings (EvaluatedModule bindings' scs sourceMap) =
   EvaluatedModule (bindings <> bindings') scs sourceMap
 
 splitSimpModule :: Bindings -> Module -> (Block, Abs Binder Module)
-splitSimpModule scope m = do
-  let (Module Simp decls bindings) = hoistDepDataCons scope m
+splitSimpModule scope (Module _ decls bindings) = do
   let localVars = bindingsAsVars $ freeVars bindings `envIntersect` boundVars decls
-  let block = Block decls $ Atom $ TupleVal $ map Var localVars
+  let (blockResult, recon) = fst $ runBuilder (scope <> boundVars decls) mempty $
+        mkTelescope scope $ Var <$> localVars
+  let block = Block decls $ Atom blockResult
   let (Abs b (decls', bindings')) =
         fst $ runBuilder scope mempty $ buildAbs (Bind ("result":>getType block)) $
           \result -> do
-             results <- unpackConsList result
-             substBuilder (newEnv localVars (map SubstVal results)) bindings
+             results <- recon result
+             substBuilder (newEnv localVars $ map SubstVal results) bindings
   (block, Abs b (Module Evaluated decls' bindings'))
 
--- Bundling up the free vars in a result with a dependent constructor like
--- `AsList n xs` doesn't give us a well typed term. This is a short-term
--- workaround.
-hoistDepDataCons :: Bindings -> Module -> Module
-hoistDepDataCons scope (Module Simp decls (EvaluatedModule bindings scs sourceMap)) =
-  Module Simp decls' $ EvaluatedModule bindings' scs sourceMap
+mkTelescope :: forall m. MonadBuilder m => Scope -> [Atom] -> m (Atom, Atom -> m [Atom])
+mkTelescope outerScope atoms = do
+  let xs = bindingsAsVars $ foldMap localFVs atoms
+  -- XXX: This is valid iff our IR satisfies the property that the type of an atom
+  -- never has more free vars than the atom itself.
+  let varsInTypes = foldMap (localFVs . varType) xs
+  let xsNoType = filter (not . (`isin` varsInTypes)) xs
+  let (graph, nodeFromVertex, _) = graphFromEdges $ (bindingsAsVars varsInTypes) <&> \v ->
+        (v, varName v, varName <$> (bindingsAsVars $ localFVs $ varType v))
+  let orderedVars = fst3 . nodeFromVertex <$> topSort graph
+  (packedXs, recon) <- flip runReaderT mempty $ buildDepPairs orderedVars xsNoType
+  -- TODO: Don't put everything under all the binders
+  return (packedXs, \p -> do
+    env <- recon p
+    substBuilder env atoms)
   where
-    (bindings', (_, decls')) = runBuilder scope mempty $ do
-      mapM_ emitDecl decls
-      forM bindings \info -> case info of
-        AtomBinderInfo ty (LetBound ann x)
-          | isData ty -> do x' <- emit x
-                            return $ AtomBinderInfo ty (LetBound ann $ Atom x')
-        _ -> return info
-hoistDepDataCons _ (Module _ _ _) =
-  error "Should only be hoisting data cons on core-Simp IR"
+    localFVs a = freeVars a `envDiff` outerScope
+
+    buildDepPairs :: [Var] -> [Var] -> ReaderT SubstEnv m (Atom, Atom -> m SubstEnv)
+    buildDepPairs vs xs = case vs of
+      []  -> return (ProdVal $ Var <$> xs, \p -> do newEnv xs <$> (map SubstVal <$> getUnpacked p))
+      v:t -> do
+        (tp, recon) <- buildDepPairs t xs
+        a <- buildAAbs (Bind v) \vb -> extendR (v@> SubstVal vb) $ substBuilderR $ getType tp
+        return (DepPair (Var v) tp a, \p -> do
+          ~[rv, rc] <- getUnpacked p
+          env <- recon rc
+          return $ env <> v @> SubstVal rv)
+
+    fst3 (a, _, _) = a
 
 simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
 simplifyDecls Empty = return mempty
@@ -133,6 +149,9 @@ simplifyAtom atom = case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substBuilderR atom
   Pi  _ -> substBuilderR atom
+  DepPairTy _ -> substBuilderR atom
+  DepPair x y at -> do
+    DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substBuilderR at
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM simplifyAtom tc
   Eff eff -> Eff <$> substBuilderR eff
@@ -159,6 +178,7 @@ simplifyAtom atom = case atom of
         ACase e' alts' <$> (substBuilderR rty)
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
+  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
 
 simplifyExtLabeledItems :: ExtLabeledItems Atom Name -> SimplifyM (ExtLabeledItems Atom Name)
@@ -166,21 +186,6 @@ simplifyExtLabeledItems (Ext items ext) = do
     items' <- mapM simplifyAtom items
     ext' <- substBuilderR (Ext NoLabeledItems ext)
     return $ prefixExtLabeledItems items' ext'
-
-simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
-simplifyCase e alts = case e of
-  DataCon _ _ con args -> do
-    let Abs bs result = alts !! con
-    Just (newEnv bs (map SubstVal args), result)
-  Variant (NoExt types) label i value -> do
-    let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) NE.!! i
-    let Abs bs result = alts !! index
-    Just (newEnv bs [SubstVal value], result)
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let Abs bs result = alts !! (fromIntegral tag)
-    Just (newEnv bs (map SubstVal (vals !! fromIntegral tag)), result)
-  _ -> Nothing
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)
@@ -451,6 +456,19 @@ simplifyOp op = case op of
       -- Simplify the case away if we can.
       dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
     _ -> emitOp op
+  SumToVariant (ACase scrutinee alts _) -> do
+    scrutinee' <- substBuilderR scrutinee
+    alts' <- substBuilderR alts
+    ~resultTy'@(VariantTy labs) <- substBuilderR $ getType $ Op op
+    -- NB: Technically the alternative bodies can also be SumAsProd constructors,
+    -- but that should never happen. Those are only introduced during Imp lowering
+    -- and so the only way to introduce them here would via inlining of results of
+    -- another compilation unit. However, the builtin sum types are always internal
+    -- to the compilation units, because they are not exposed to the surface
+    -- language, so they cannot get introduced via inlining!
+    let variantAlts = alts' <&> \(Abs bs (SumVal _ i val)) ->
+          Abs bs $ Variant labs "c" i val
+    return $ ACase scrutinee' variantAlts resultTy'
   PrimEffect ref (MExtend f) -> dropSub $ do
     ~(f', Nothing) <- simplifyLam f
     emitOp $ PrimEffect ref $ MExtend f'

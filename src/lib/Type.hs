@@ -106,6 +106,12 @@ instance HasType Atom where
       return $ Pi $ makeAbs b (arr, bodyTy)
     Pi (Abs b (arr, resultTy)) -> withBinder b $
       checkArrow arr >> resultTy|:TyKind $> TyKind
+    DepPairTy (Abs b ty) -> withBinder b $ typeCheck ty $> TyKind
+    DepPair x y ta -> do
+      xTy <- typeCheck x
+      absArgType ta `checkEq` xTy
+      y |: applyAbs ta x
+      return $ DepPairTy ta
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
@@ -149,6 +155,10 @@ instance HasType Atom where
       let argBs' = applyNaryAbs (Abs paramBs argBs) params
       checkDataConRefBindings argBs' args
       return $ RawRefTy $ TypeCon def params
+    DepPairRef l (Abs ~(Bind v) r) ty -> do
+      l |: RawRefTy (absArgType ty)
+      r |: RawRefTy (applyAbs ty $ Var v)
+      return $ RawRefTy $ DepPairTy ty
     BoxedRef b ptr numel body -> do
       PtrTy (_, t) <- typeCheck ptr
       checkEq (binderAnn b) (BaseTy t)
@@ -175,6 +185,8 @@ instance HasType Atom where
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         PairTy x _ | i == 0 -> return x
         PairTy _ y | i == 1 -> return y
+        DepPairTy ta | i == 0 -> return $ absArgType ta
+        DepPairTy ta | i == 1 -> return $ applyAbs ta $ ProjectElt (0 NE.:| is) v
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -237,8 +249,13 @@ checkCase e alts resultTy = do
           checkEq (getType b) ty
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
-      VariantTy _ -> throw CompilerErr
-        "Can't pattern-match partially-known variants"
+      VariantTy _ -> throw CompilerErr "Can't pattern-match partially-known variants"
+      SumTy cases -> do
+        forM_ (zip cases alts) \(ty, (Abs bs body)) -> do
+          [b] <- pure $ toList bs
+          checkEq (getType b) ty
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
       _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
   return resultTy
 
@@ -368,6 +385,8 @@ instance CoreVariant Atom where
         -- _        -> goneBy Simp
         _ -> alwaysAllowed
       checkVariant b >> checkVariant body
+    DepPairTy     (Abs b ty) -> checkVariant b >> checkVariant ty
+    DepPair   x y (Abs b ty) -> forM_ [x, y, ty] checkVariant >> checkVariant b
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
@@ -380,6 +399,7 @@ instance CoreVariant Atom where
     VariantTy _ -> alwaysAllowed
     ACase _ _ _ -> goneBy Simp
     DataConRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
+    DepPairRef _ _ _ -> neverAllowed  -- only used internally in Imp lowering
     BoxedRef _ _ _ _ -> neverAllowed  -- only used internally in Imp lowering
     ProjectElt _ (_:>ty) -> checkVariant ty
 
@@ -573,8 +593,8 @@ typeCheckTyCon tc = case tc of
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
-  PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
-  UnitType         -> return TyKind
+  ProdType as      -> mapM_ (|: TyKind) as >> return TyKind
+  SumType  cs      -> mapM_ (|: TyKind) cs >> return TyKind
   RefType r a      -> mapM_ (|: TyKind) r >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
@@ -584,8 +604,12 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
-  UnitCon -> return UnitTy
+  ProdCon xs -> ProdTy <$> traverse typeCheck xs
+  SumCon ty tag payload -> do
+    SumTy caseTys <- return ty
+    unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
+    payload |: (caseTys !! tag)
+    return ty
   SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
   ClassDictHole _ ty -> ty |: TyKind >> return ty
   IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
@@ -598,9 +622,8 @@ typeCheckCon con = case con of
     TabTy b (RawRefTy a) <- typeCheck tabTy
     return $ RawRefTy $ TabTy b a
   ConRef conRef -> case conRef of
-    UnitCon -> return $ RawRefTy UnitTy
-    PairCon x y ->
-      RawRefTy <$> (PairTy <$> typeCheckRef x <*> typeCheckRef y)
+    ProdCon xs ->
+      RawRefTy . ProdTy <$> traverse typeCheckRef xs
     IntRangeVal     l h i ->
       i|:(RawRefTy IdxRepTy) >> return (RawRefTy $ TC $ IntRange     l h)
     IndexRangeVal t l h i ->
@@ -819,8 +842,12 @@ typeCheckOp op = case op of
         forM_ dataConDefs \(DataConDef _ binders) ->
           assertEq binders Empty "Not an enum"
       VariantTy _ -> return ()  -- TODO: check empty payload
+      SumTy cases -> forM_ cases \cty -> assertEq cty UnitTy "Not an enum"
       _ -> throw TypeErr $ "Not an enum: " ++ pprint t
     return t
+  SumToVariant x -> do
+    SumTy cases <- typeCheck x
+    return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
@@ -1009,8 +1036,8 @@ checkDataLike msg ty = case ty of
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
     BaseType _       -> return ()
-    PairType a b     -> recur a >> recur b
-    UnitType         -> return ()
+    ProdType as      -> traverse_ recur as
+    SumType  cs      -> traverse_ recur cs
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
     IndexSlice _ _   -> return ()
@@ -1037,7 +1064,8 @@ projectLength ty = case ty of
     let [DataConDef _ bs] = applyDataDefParams def params
     in length bs
   RecordTy (NoExt types) -> length types
-  PairTy _ _ -> 2
+  ProdTy tys -> length tys
+  DepPairTy _ -> 2
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
 

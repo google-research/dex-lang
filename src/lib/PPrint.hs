@@ -165,10 +165,12 @@ instance PrettyPrec e => PrettyPrec (PrimExpr e) where
 instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
-    BaseType b     -> prettyPrec b
-    PairType a b  -> atPrec ArgPrec $ align $ group $
-      parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
-    UnitType       -> atPrec ArgPrec "Unit"
+    BaseType b   -> prettyPrec b
+    ProdType []  -> atPrec ArgPrec $ "Unit"
+    ProdType as  -> atPrec ArgPrec $ align $ group $
+      encloseSep "(" ")" " & " $ fmap pApp as
+    SumType  cs  -> atPrec ArgPrec $ align $ group $
+      encloseSep "(|" "|)" " | " $ fmap pApp cs
     IntRange a b -> if docAsStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
       else prettyExprDefault $ TCExpr con
@@ -195,9 +197,10 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
-  PairCon x y -> atPrec ArgPrec $ align $ group $
-    parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
-  UnitCon     -> atPrec ArgPrec "()"
+  ProdCon xs  -> atPrec ArgPrec $ align $ group $
+    encloseSep "(" ")" ", " $ fmap pLowest xs
+  SumCon _ tag payload -> atPrec ArgPrec $
+    "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"
@@ -211,6 +214,7 @@ prettyPrecPrimCon con = case con of
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
+
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
@@ -310,6 +314,10 @@ instance PrettyPrec Atom where
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
+    DepPairTy (Abs b ty) -> atPrec ArgPrec $ align $ group $
+        parens $ p b <+> "&>" <+> p ty
+    DepPair x y _ -> atPrec ArgPrec $ align $ group $
+        parens $ p x <> ",>" <+> p y
     DataCon (DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
@@ -332,6 +340,8 @@ instance PrettyPrec Atom where
     ACase e alts _ -> prettyPrecCase "acase" e alts
     DataConRef _ params args -> atPrec AppPrec $
       "DataConRef" <+> p params <+> p args
+    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
+      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
     BoxedRef b ptr size body -> atPrec AppPrec $
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
     ProjectElt idxs x -> prettyProjection idxs x
@@ -380,7 +390,11 @@ prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
           hint = USourceVar fieldName
       PairTy x _ | i == 0 -> rec x "a" \pat -> UPatPair pat uignore
       PairTy _ y | i == 1 -> rec y "b" \pat -> UPatPair uignore pat
-      _ -> error "Bad projection"
+      ProdTy tys -> rec (tys !! i) "x" \pat -> UPatTable $
+        enumerate tys <&> \(j, _) -> if i == j then pat else uignore
+      DepPairTy (Abs b _) | i == 0 -> rec (binderType b) "a" \pat -> UPatPair pat uignore
+      DepPairTy (Abs _ t) | i == 1 -> rec t              "b" \pat -> UPatPair uignore pat
+      _ -> error $ "Bad projection: " ++ pprint i ++ " from " ++ show ty
     where
       rec :: Type -> UVar -> (UPat -> UPat') -> (UPat, UVar)
       rec subTy nameHint patBuilder = case NE.nonEmpty is of
@@ -518,10 +532,9 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
+instance Pretty Module where pretty = prettyFromPrettyPrec
 instance PrettyPrec Module where
-  prettyPrec m = atPrec ArgPrec $ pretty m
-instance Pretty Module where
-  pretty (Module variant decls result) =
+  prettyPrec (Module variant decls result) = atPrec LowestPrec $
     "Module" <+> parens (p (show variant)) <> nest 2 body
     where
       body = hardline <> "unevaluated decls:"

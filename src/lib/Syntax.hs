@@ -23,7 +23,8 @@ module Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv, SubstVal (..),
     Scope, CmdName (..), HasIVars (..), ForAnn (..),
-    Val, Op, Con, Hof, TC, Module (..), EvaluatedModule (..),
+    Val, Op, Con, Hof, TC, Module (..),
+    EvaluatedModule (..), SynthCandidates (..),
     emptyEvaluatedModule, DataConRefBinding (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
     IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
@@ -51,17 +52,21 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
     fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
-    extendEffRow, getProjection, getTupleProjection,
+    extendEffRow, getProjection, simplifyCase,
     varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth, SynthCandidates (..),
-    pattern SumTy, pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
+    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
+    getTupleProjection,
+    pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
-    pattern UnitTy, pattern PairTy, pattern FunTy, pattern PiTy,
+    pattern UnitTy, pattern PairTy,
+    pattern ProdTy, pattern ProdVal,
+    pattern SumTy, pattern SumVal,
+    pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow,
@@ -78,7 +83,6 @@ import Control.Monad.Except hiding (Except)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
-import Data.List (elemIndex)
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
@@ -92,13 +96,15 @@ import Cat
 import Err
 import LabeledItems
 import Env
-import Util (IsBool (..), (...), Zippable (..), zipErr)
+import Util (IsBool (..), (...), Zippable (..), zipErr, enumerate)
 
 -- === core IR ===
 
 data Atom = Var Var
           | Lam LamExpr
           | Pi  PiType
+          | DepPairTy           (Abs Binder Type)
+          | DepPair   Atom Atom (Abs Binder Type) -- lhs, rhs, rhs type abstracted over lhs
           | DataCon DataDef [Atom] Int [Atom]
           | TypeCon DataDef [Atom]
           | LabeledRow (ExtLabeledItems Type Name)
@@ -112,6 +118,8 @@ data Atom = Var Var
           | ACase Atom [AltP Atom] Type
             -- single-constructor only for now
           | DataConRef DataDef [Atom] (Nest DataConRefBinding)
+          -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
+          | DepPairRef Atom (Abs Binder Atom) (Abs Binder Type)
           | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
           -- access a nested member of a binder
           -- XXX: Variable name must not be an alias for another name or for
@@ -312,11 +320,11 @@ data PrimExpr e =
 
 data PrimTC e =
         BaseType BaseType
+      | ProdType [e]
+      | SumType [e]
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
-      | PairType e e
-      | UnitType
       | RefType (Maybe e) e
       | TypeKind
       | EffectRowKind
@@ -326,8 +334,8 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | PairCon e e
-      | UnitCon
+      | ProdCon [e]
+      | SumCon e Int e  -- type, tag, payload
       | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
       -- These are just newtype wrappers. TODO: use ADTs instead
@@ -388,6 +396,9 @@ data PrimOp e =
       | DataConTag e
       -- Create an enum (payload-free ADT) from a Word8
       | ToEnum e e
+      -- Converts sum types returned by primitives to variant-types that
+      -- can be scrutinized in the surface language.
+      | SumToVariant e
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -574,7 +585,7 @@ data ImpInstr = IFor Direction IBinder Size ImpBlock
               | IPrimOp IPrimOp
                 deriving (Show)
 
-data Backend = LLVM | LLVMCUDA | LLVMMC | Interpreter  deriving (Show, Eq)
+data Backend = LLVM | LLVMCUDA | LLVMMC | MLIR | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
 -- === base types ===
@@ -590,7 +601,7 @@ data LitVal = Int64Lit   Int64
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Ord, Generic)
 
-data ScalarBaseType = Int64Type | Int32Type 
+data ScalarBaseType = Int64Type | Int32Type
                     | Word8Type | Word32Type | Word64Type
                     | Float64Type | Float32Type
                       deriving (Show, Eq, Ord, Generic)
@@ -1180,6 +1191,8 @@ instance HasVars Atom where
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
     Eff eff -> freeVars eff
+    DepPairTy     ta -> freeVars ta
+    DepPair   x y ta -> freeVars x <> freeVars y <> freeVars ta
     -- TODO: think about these cases. We don't want to needlessly traverse the
     --       data definition but we might need to know the free Vars.
     DataCon _ params _ args -> freeVars params <> freeVars args
@@ -1191,18 +1204,21 @@ instance HasVars Atom where
     VariantTy row -> freeVars row
     ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
     DataConRef _ params args -> freeVars params <> freeVars args
+    DepPairRef l r a -> freeVars l <> freeVars r <> freeVars a
     BoxedRef b ptr size body ->
       freeVars ptr <> freeVars size <> freeVars (Abs b body)
     ProjectElt _ v -> freeVars (Var v)
 
 instance Subst Atom where
-  subst env atom = case atom of
+  subst env@(subEnv, bs) atom = case atom of
     Var v   -> substVar env v
     Lam lam -> Lam $ subst env lam
     Pi  ty  -> Pi  $ subst env ty
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
+    DepPairTy     ta -> DepPairTy $ subst env ta
+    DepPair   x y ta -> DepPair (subst env x) (subst env y) (subst env ta)
     DataCon def params con args -> DataCon def (subst env params) con (subst env args)
     TypeCon def params          -> TypeCon def (subst env params)
     LabeledRow row -> LabeledRow $ subst env row
@@ -1210,12 +1226,34 @@ instance Subst Atom where
     Variant row label i val -> Variant (subst env row) label i (subst env val)
     RecordTy row -> RecordTy $ subst env row
     VariantTy row -> VariantTy $ subst env row
-    ACase v alts rty -> ACase (subst env v) (subst env alts) (subst env rty)
+    ACase s alts rty -> case simplifyCase s' alts of
+      Just (cenv, result) -> subst (subEnv <> cenv, bs) result
+      Nothing             -> ACase s' (subst env alts) (subst env rty)
+      where s' = subst env s
     DataConRef def params args -> DataConRef def (subst env params) args'
       where Abs args' () = subst env $ Abs args ()
+    DepPairRef l r a -> DepPairRef (subst env l) (subst env r) (subst env a)
     BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
         where Abs b' body' = subst env $ Abs b body
     ProjectElt idxs v -> getProjection (toList idxs) $ substVar env v
+
+simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
+simplifyCase e alts = case e of
+  DataCon _ _ con args -> do
+    let Abs bs result = alts !! con
+    Just (newEnv bs (map SubstVal args), result)
+  Variant (NoExt types) label i value -> do
+    let LabeledItems ixtypes = enumerate types
+    let index = fst $ (ixtypes M.! label) NE.!! i
+    let Abs bs result = alts !! index
+    Just (newEnv bs [SubstVal value], result)
+  SumVal _ i value -> do
+    let Abs bs result = alts !! i
+    Just (newEnv bs [SubstVal value], result)
+  Con (SumAsProd _ (TagRepVal tag) vals) -> do
+    let Abs bs result = alts !! (fromIntegral tag)
+    Just (newEnv bs (map SubstVal (vals !! fromIntegral tag)), result)
+  _ -> Nothing
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) = foldMap freeVars row
@@ -1347,10 +1385,11 @@ getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var v -> ProjectElt (NE.fromList [i]) v
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  DataCon _ _ _ xs -> xs !! i
-  Record items -> toList items !! i
-  PairVal x _ | i == 0 -> x
-  PairVal _ y | i == 1 -> y
+  DataCon _ _ _ xs    -> xs !! i
+  Record items        -> toList items !! i
+  ProdVal xs          -> xs !! i
+  DepPair l _ _ | i == 0 -> l
+  DepPair _ r _ | i == 1 -> r
   _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
 getTupleProjection :: Int -> Atom -> Atom
@@ -1453,68 +1492,6 @@ applyFloatBinOp f x y = case (x, y) of
 applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom -> Atom
 applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
--- === nary sum type ===
-
--- Here we're using variants to simulate an nary sum type. The plan is to
--- eventually go the other way: lower variants to built-in n-way sums.
-
-makeSumTy :: [Type] -> Type
-makeSumTy tys
-  | length tyLists <= 26 = VariantTy $ NoExt $ LabeledItems $ M.fromList $ zip labels tyLists
-  -- TODO: a built-in sum type without this restriction
-  -- (it's currently only used for internal Bool/Maybe so it's not important)
-  | otherwise = error "ran out of letters!"
-  where
-    tyLists = map (NE.:| []) tys
-    labels = map (:[]) ['a'..]
-
-matchSumTy :: Type -> Maybe [Type]
-matchSumTy variantTy = do
-  VariantTy (NoExt (LabeledItems items)) <- return variantTy
-  forM (M.assocs items) \(_, tys) -> do
-    ty NE.:| [] <- return tys
-    return ty
-
-pattern SumTy :: [Type] -> Type
-pattern SumTy tys <- (matchSumTy -> Just tys)
-  where SumTy tys = makeSumTy tys
-
-makeSumVal :: Type -> Int -> Atom -> Atom
-makeSumVal (VariantTy variantTy) con x = let
-  NoExt (LabeledItems m) = variantTy
-  label = M.keys m !! con
-  in Variant variantTy label 0 x
-makeSumVal _ _ _ = error "not a variant type"
-
-matchSumVal :: Atom -> Maybe (Type, Int, Atom)
-matchSumVal variant = do
-  Variant types label 0 x <- return variant
-  let NoExt (LabeledItems labeledTypes) = types
-  con <- elemIndex label (M.keys labeledTypes)
-  return (VariantTy types, con, x)
-
-pattern SumVal :: Type -> Int -> Atom -> Atom
-pattern SumVal ty con val <- (matchSumVal -> Just (ty, con, val))
-  where SumVal ty con val = makeSumVal ty con val
-
-pattern MaybeTy :: Type -> Type
-pattern MaybeTy a = SumTy [UnitTy, a]
-
-pattern NothingAtom :: Type -> Atom
-pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
-
-pattern JustAtom :: Type -> Atom -> Atom
-pattern JustAtom a x = SumVal (MaybeTy a) 1 x
-
-pattern BoolTy :: Type
-pattern BoolTy = Word8Ty
-
-pattern FalseAtom :: Atom
-pattern FalseAtom = Con (Lit (Word8Lit 0))
-
-pattern TrueAtom :: Atom
-pattern TrueAtom = Con (Lit (Word8Lit 1))
-
 -- === Synonyms ===
 
 varType :: Var -> Type
@@ -1581,16 +1558,28 @@ pattern Word8Ty :: Type
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
 pattern PairVal :: Atom -> Atom -> Atom
-pattern PairVal x y = Con (PairCon x y)
+pattern PairVal x y = Con (ProdCon [x, y])
 
 pattern PairTy :: Type -> Type -> Type
-pattern PairTy x y = TC (PairType x y)
+pattern PairTy x y = TC (ProdType [x, y])
+
+pattern ProdTy :: [Type] -> Type
+pattern ProdTy tys = TC (ProdType tys)
+
+pattern ProdVal :: [Atom] -> Atom
+pattern ProdVal xs = Con (ProdCon xs)
+
+pattern SumTy :: [Type] -> Type
+pattern SumTy cs = TC (SumType cs)
+
+pattern SumVal :: Type -> Int -> Atom -> Atom
+pattern SumVal ty tag payload = Con (SumCon ty tag payload)
 
 pattern UnitVal :: Atom
-pattern UnitVal = Con UnitCon
+pattern UnitVal = Con (ProdCon [])
 
 pattern UnitTy :: Type
-pattern UnitTy = TC UnitType
+pattern UnitTy = TC (ProdType [])
 
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
@@ -1711,6 +1700,24 @@ pattern ClassDictCon :: [Type] -> [Type] -> DataConDef
 pattern ClassDictCon superclassTys methodTys <-
  DataConDef _ (Nest (BinderAnn (PairTy (TupleTy superclassTys) (TupleTy methodTys))) Empty)
 
+pattern MaybeTy :: Type -> Type
+pattern MaybeTy a = SumTy [UnitTy, a]
+
+pattern NothingAtom :: Type -> Atom
+pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
+
+pattern JustAtom :: Type -> Atom -> Atom
+pattern JustAtom a x = SumVal (MaybeTy a) 1 x
+
+pattern BoolTy :: Type
+pattern BoolTy = Word8Ty
+
+pattern FalseAtom :: Atom
+pattern FalseAtom = Con (Lit (Word8Lit 0))
+
+pattern TrueAtom :: Atom
+pattern TrueAtom = Con (Lit (Word8Lit 1))
+
 -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
 
@@ -1740,6 +1747,7 @@ builtinNames = M.fromList
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("unsafeFromOrdinal", OpExpr $ UnsafeFromOrdinal () ())
   , ("toOrdinal"        , OpExpr $ ToOrdinal ())
+  , ("sumToVariant"   , OpExpr $ SumToVariant ())
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
@@ -1773,12 +1781,12 @@ builtinNames = M.fromList
   , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("IntRange"  , TCExpr $ IntRange () ())
   , ("Ref"       , TCExpr $ RefType (Just ()) ())
-  , ("PairType"  , TCExpr $ PairType () ())
-  , ("UnitType"  , TCExpr $ UnitType)
+  , ("PairType"  , TCExpr $ ProdType [(), ()])
+  , ("UnitType"  , TCExpr $ ProdType [])
   , ("EffKind"   , TCExpr $ EffectRowKind)
   , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
-  , ("pair", ConExpr $ PairCon () ())
+  , ("pair", ConExpr $ ProdCon [(), ()])
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
   -- TODO: Lift vectors to constructors

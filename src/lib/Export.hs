@@ -151,7 +151,7 @@ prepareFunctionForExport env nameStr func = do
       PairTy a b | idx == Empty -> do
         (atom_a, res_a) <- createDest idx a
         (atom_b, res_b) <- createDest idx b
-        return (Con $ ConRef $ PairCon atom_a atom_b, ExportPairResult res_a res_b)
+        return (Con $ ConRef $ ProdCon [atom_a, atom_b], ExportPairResult res_a res_b)
       _ -> unsupported
       where unsupported = error $ "Unsupported result type: " ++ pprint ty
 

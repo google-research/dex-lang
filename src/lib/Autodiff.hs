@@ -184,6 +184,7 @@ linearizeOp op = case op of
   VariantSplit ts v      -> (VariantSplit ts <$> la v) `bindLin` emitOp
   FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
   ThrowException _       -> notImplemented
+  SumToVariant _         -> notImplemented
   OutputStreamPtr        -> emitDiscrete
   where
     emitDiscrete = if isTrivialForAD (Op op)
@@ -329,8 +330,8 @@ linearizeHof env hof = case hof of
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _                 -> emitWithZero
-  PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
-  UnitCon               -> emitWithZero
+  ProdCon xs            -> ProdVal <$> traverse linearizeAtom xs
+  SumCon  _ _ _         -> notImplemented
   SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
   IntRangeVal _ _ _     -> emitWithZero
   IndexRangeVal _ _ _ _ -> emitWithZero
@@ -355,6 +356,7 @@ linearizeAtom atom = case atom of
     wrt <- ask
     return (atom, buildLam i TabArrow \i' ->
                     rematPrimal wrt $ linearizeBlock (i@> SubstVal i') body)
+  DepPair _ _ _   -> notImplemented
   DataCon _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   Record elems    -> Record <$> traverse linearizeAtom elems
   Variant t l i e -> Variant t l i <$> linearizeAtom e
@@ -363,6 +365,7 @@ linearizeAtom atom = case atom of
   RecordTy _      -> emitWithZero
   VariantTy _     -> emitWithZero
   Pi _            -> emitWithZero
+  DepPairTy _     -> emitWithZero
   TC _            -> emitWithZero
   Eff _           -> emitWithZero
   ProjectElt idxs v -> getProjection (toList idxs) <$> linearizeAtom (Var v)
@@ -371,6 +374,7 @@ linearizeAtom atom = case atom of
   ACase _ _ _     -> error "Unexpected ACase"
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _ _ _ -> error "Unexpected ref"
+  DepPairRef _ _ _ -> error "Unexpected ref"
   where
     emitWithZero = LinA $ return $ withZeroTangent atom
     rematPrimal wrt m = do
@@ -394,8 +398,7 @@ tangentType ty = case ty of
     IntRange   _ _                -> UnitTy
     IndexRange _ _ _              -> UnitTy
     IndexSlice _ _                -> UnitTy
-    UnitType                      -> UnitTy
-    PairType a b                  -> PairTy (tangentType a) (tangentType b)
+    ProdType   tys                -> ProdTy $ tangentType <$> tys
     -- XXX: This assumes that arrays are always constants.
     _ -> unsupported
   _ -> unsupported
@@ -616,6 +619,7 @@ transposeOp op ct = case op of
   RecordSplit  _ _      -> notImplemented
   VariantLift  _ _      -> notImplemented
   VariantSplit _ _      -> notImplemented
+  SumToVariant _        -> notImplemented
   PtrStore _ _          -> notLinear
   PtrLoad    _          -> notLinear
   PtrOffset _ _         -> notLinear
@@ -703,6 +707,7 @@ transposeAtom atom ct = case atom of
       Nothing  -> return ()
   Con con         -> transposeCon con ct
   Record  e       -> void $ zipWithT transposeAtom e =<< getUnpacked ct
+  DepPair _ _ _   -> notImplemented
   DataCon _ _ _ e -> void $ zipWithT transposeAtom e =<< getUnpacked ct
   Variant _ _ _ _ -> notImplemented
   TabVal b body   ->
@@ -716,11 +721,13 @@ transposeAtom atom ct = case atom of
   RecordTy _      -> notTangent
   VariantTy _     -> notTangent
   Pi _            -> notTangent
+  DepPairTy _     -> notTangent
   TC _            -> notTangent
   Eff _           -> notTangent
   ACase _ _ _     -> error "Unexpected ACase"
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _ _ _ -> error "Unexpected ref"
+  DepPairRef _ _ _ -> error "Unexpected ref"
   ProjectElt _ v -> do
     lin <- isLin $ Var v
     when lin $ flip emitCTToRef ct =<< linAtomRef atom
@@ -729,10 +736,13 @@ transposeAtom atom ct = case atom of
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
   Lit _             -> return ()
-  UnitCon           -> return ()
-  PairCon x y       -> do
+  ProdCon []        -> return ()
+  ProdCon [x, y]    -> do
     getFst ct >>= transposeAtom x
     getSnd ct >>= transposeAtom y
+  -- XXX: We only have getFst and getSnd for references
+  ProdCon _         -> error "Unexpected generalized product"
+  SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   ClassDictHole _ _ -> notTangent
   IntRangeVal _ _ _     -> notTangent
@@ -827,11 +837,10 @@ addTangent x y = case getType x of
   TC con -> case con of
     BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
     BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
-    UnitType            -> return UnitVal
-    PairType _ _        -> do
-      (xa, xb) <- fromPair x
-      (ya, yb) <- fromPair y
-      PairVal <$> addTangent xa ya <*> addTangent xb yb
+    ProdType _          -> do
+      xs <- getUnpacked x
+      ys <- getUnpacked y
+      ProdVal <$> zipWithM addTangent xs ys
     _ -> notTangent
   _ -> notTangent
   where notTangent = error $ "Not a tangent type: " ++ pprint (getType x)
