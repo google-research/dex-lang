@@ -469,12 +469,6 @@ checkMethodDefs _ methodTys methods = do
     let methodTy = methodTys !! idx
     rhs' <- checkSigma rhs Suggest methodTy
     return (idx, rhs')
-  -- forM_ methods' (reflectLabels methods') \(l,i) ->
-  --   when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
-  -- forM_ (reflectLabels methodTys) \(l,_) ->
-  --   case lookupLabelHead methods' l of
-  --     Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
-  --     Just _  -> return ()
   let methodsSorted = sortOn fst methods'
   unless (map fst methodsSorted == [0..(length methodTys - 1)]) $
     throw TypeErr $ "Missing or duplicated methods"

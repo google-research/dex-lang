@@ -288,7 +288,7 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m Val
+evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m Atom
 evalUModuleVal v m = do
    evaluated <- evalUModule m
    env <- asks topState
@@ -441,7 +441,7 @@ addCtx block err@(Err e src s) = case src of
           ctx = highlightRegion (start - n, stop - n) (sbText block)
 
 logTop :: MonadPasses m => Output -> m ()
-logTop x = logM [x]
+logTop x = logIO [x]
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do

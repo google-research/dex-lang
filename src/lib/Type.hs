@@ -92,7 +92,14 @@ checkBindings env bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
   mapM_ checkAnyBinding $ envPairs bs
 
 checkAnyBinding :: (Name, AnyBinderInfo) -> TypeM ()
-checkAnyBinding _ = return ()
+checkAnyBinding (v, binderInfo) =
+  addContext ("binding: " ++ pprint (v, binderInfo)) $ case binderInfo of
+    AtomBinderInfo ty (LetBound _ expr) -> case expr of
+      Atom atom ->  do
+        ty |: TyKind
+        atom |: ty
+      _ -> throw TypeErr "Let bindings must be atoms"
+    _ -> return ()
 
 -- === Core IR ===
 

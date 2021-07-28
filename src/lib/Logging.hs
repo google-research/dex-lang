@@ -9,7 +9,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Logging (Logger, LoggerT (..), MonadLogger (..), logM, runLoggerT,
+module Logging (Logger, LoggerT (..), MonadLogger (..), logIO, runLoggerT,
                 runLogger, execLogger, logThis, readLog) where
 
 import Control.Monad
@@ -55,11 +55,11 @@ class (Pretty l, Monoid l, Monad m) => MonadLogger l m | m -> l where
 instance (MonadIO m, Pretty l, Monoid l) => MonadLogger l (LoggerT l m) where
   getLogger = LoggerT ask
 
-logM :: MonadIO m => MonadLogger l m => l -> m ()
-logM val = do
+logIO :: MonadIO m => MonadLogger l m => l -> m ()
+logIO val = do
   logger <- getLogger
   liftIO $ logThis logger val
 
-runLoggerT :: (Monoid l, MonadIO m) => Logger l -> LoggerT l m a -> m a
+runLoggerT :: Monoid l => Logger l -> LoggerT l m a -> m a
 runLoggerT l (LoggerT m) = runReaderT m l
 

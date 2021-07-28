@@ -694,7 +694,6 @@ withNameHint :: HasCallStack => (MonadBuilder m, NameHint hint) => hint -> m a -
 withNameHint hint m =
   flip builderLocal m \(prevHint, eff) -> case asNameHint hint of
     Nothing      -> (prevHint, eff)
-    -- Just "ptr"   -> error "don't use this as a hint!"
     Just newHint -> (newHint , eff)
 
 runBuilderT' :: Monad m => BuilderT m a -> BuilderEnv -> m (a, BuilderEnvC)

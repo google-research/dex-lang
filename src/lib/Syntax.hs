@@ -698,7 +698,7 @@ type UVars = Env ()
 
 uvarSingleton :: UVar -> UVars
 uvarSingleton v = case v of
-  USourceVar   _  -> mempty
+  USourceVar   _  -> error "Should only query `freeUVars` on post-renaming IR"
   UInternalVar v' -> v' @> ()
 
 class HasUVars a where
