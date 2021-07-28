@@ -112,15 +112,17 @@ inferRho :: UExpr -> UInferM Atom
 inferRho expr = checkOrInferRho expr Infer
 
 instantiateSigma :: Atom -> UInferM Atom
-instantiateSigma f = case getType f of
-  Pi (Abs b (ImplicitArrow, _)) -> do
-    x <- freshType $ binderType b
-    ans <- emitZonked $ App f x
-    instantiateSigma ans
-  Pi (Abs b (ClassArrow, _)) -> do
-    ctx <- getSrcCtx
-    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ctx $ binderType b))
-  _ -> return f
+instantiateSigma f = do
+  ty <- tryGetType f
+  case ty of
+    Pi (Abs b (ImplicitArrow, _)) -> do
+      x <- freshType $ binderType b
+      ans <- emitZonked $ App f x
+      instantiateSigma ans
+    Pi (Abs b (ClassArrow, _)) -> do
+      ctx <- getSrcCtx
+      instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ctx $ binderType b))
+    _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
 checkOrInferRho (WithSrc pos expr) reqTy = do
@@ -576,8 +578,8 @@ bindPat (WithSrc pos pat) val = addSrcContext pos $ case pat of
   UPatPair p1 p2 -> do
     _    <- fromPairType (getType val)
     val' <- zonk val  -- ensure it has a pair type before unpacking
-    x1   <- getFst val'
-    x2   <- getSnd val'
+    x1   <- getFst val' >>= zonk
+    x2   <- getSnd val' >>= zonk
     env1 <- bindPat p1 x1
     env2 <- bindPat p2 x2
     return $ env1 <> env2
@@ -591,12 +593,12 @@ bindPat (WithSrc pos pat) val = addSrcContext pos $ case pat of
                                              ++ " got " ++ show (length ps)
     params <- mapM (freshType . binderType) $ toList paramBs
     constrainEq (TypeCon def params) (getType val)
-    xs <- zonk (Atom $ val) >>= emitUnpack
+    xs <- zonk (Atom $ val) >>= emitUnpack >>= mapM zonk
     fold <$> zipWithM bindPat (toList ps) xs
   UPatRecord (Ext pats Nothing) -> do
     expectedTypes <- mapM (const $ freshType TyKind) pats
     constrainEq (RecordTy (NoExt expectedTypes)) (getType val)
-    xs <- zonk (Atom $ val) >>= emitUnpack
+    xs <- zonk (Atom $ val) >>= emitUnpack >>= mapM zonk
     fold <$> zipWithM bindPat (toList pats) xs
   UPatRecord (Ext pats (Just tailPat)) -> do
     wantedTypes <- mapM (const $ freshType TyKind) pats

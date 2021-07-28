@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}  -- due to module instances
 
 module Type (
-  getType, checkType, HasType (..), Checkable (..), litType,
+  getType, tryGetType, checkType, HasType (..), Checkable (..), litType,
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent, checkExtends,
   indexSetConcreteSize, traceCheckM, traceCheck, projectLength,
@@ -49,6 +49,10 @@ class Pretty a => HasType a where
 
 getType :: (HasCallStack, HasType a) => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
+  where ctx = addContext $ "Querying:\n" ++ pprint x
+
+tryGetType :: (MonadErr m, HasCallStack, HasType a) => a -> m Type
+tryGetType x = liftEither $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
 
 checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
