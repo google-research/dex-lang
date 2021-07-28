@@ -219,7 +219,7 @@ emitLoops buildPureLoop (ABlock decls result) = do
                 let regionEnv = newEnv oldRegionNames $ for localRefs \(getType -> RefTy h _) -> SubstVal h
                 extendR (regionEnv <> newEnv oldRefNames (map SubstVal localRefs)) $ buildBody pari
       (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce (fmap snd newRefs) iterTy body)
-      updates <- unpackConsList updateList
+      updates <- unpackRightLeaningConsList updateList
       forM_ (zip newRefs updates) $ \((ref, bm), update) -> do
         updater <- mextendForRef (Var ref) bm update
         emitOp $ PrimEffect (Var ref) $ MExtend updater

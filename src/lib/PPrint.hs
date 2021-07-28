@@ -168,7 +168,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "Unit"
     ProdType as  -> atPrec ArgPrec $ align $ group $
-      encloseSep "(" ",)" " & " $ fmap pApp as
+      encloseSep "(" ")" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
     IntRange a b -> if docAsStr (pArg a) == "0"
@@ -198,7 +198,7 @@ prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   ProdCon xs  -> atPrec ArgPrec $ align $ group $
-    encloseSep "(" ",)" ", " $ fmap pLowest xs
+    encloseSep "(" ")" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $

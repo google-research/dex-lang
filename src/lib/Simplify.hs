@@ -210,7 +210,7 @@ simplifyLams numArgs lam = do
         Right (dat, (ctx, recon), atomf) ->
           ( ProdVal $ (toList dat) ++ (toList ctx)
           , Just \vals -> do
-             (datEls', ctxEls') <- splitAt (length dat) <$> unpackConsList vals
+             (datEls', ctxEls') <- splitAt (length dat) <$> getUnpacked vals
              let dat' = restructure datEls' dat
              let ctx' = restructure ctxEls' ctx
              atomf dat' <$> recon dat' ctx'
@@ -375,7 +375,7 @@ simplifyExpr expr = case expr of
             let (datType, datTree) = (\(dat, _, _) -> (getType $ ProdVal $ toList dat, dat)) $ head facs
             caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon ctxDef [])
             (cdat, cctx) <- fromPair caseResult
-            dat <- flip restructure datTree <$> unpackConsList cdat
+            dat <- flip restructure datTree <$> getUnpacked cdat
             -- At this point we have the data components `dat` ready to be applied to the
             -- full atom reconstruction function, but we only have the sum type for the closures
             -- and a list of potential non-data reconstruction functions. To get a list of

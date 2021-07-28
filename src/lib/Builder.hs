@@ -19,13 +19,13 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
                 fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
-                select, substBuilder, substBuilderR, emitUnpack, unpackConsList, getUnpacked,
+                select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
                 fromPair, getFst, getSnd, getFstRef, getSndRef,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
                 singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
-                builderExtend, unpackLeftLeaningConsList,
+                builderExtend, unpackLeftLeaningConsList, unpackRightLeaningConsList,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
@@ -418,13 +418,13 @@ unsafePtrLoad x = emit $ Hof $ RunIO $ Lam $ Abs (Ignore UnitTy) $
 ptrLoad :: MonadBuilder m => Atom -> m Atom
 ptrLoad x = emitOp $ PtrLoad x
 
-unpackConsList :: MonadBuilder m => Atom -> m [Atom]
-unpackConsList xs = case getType xs of
+unpackRightLeaningConsList :: HasCallStack => MonadBuilder m => Atom -> m [Atom]
+unpackRightLeaningConsList xs = case getType xs of
   UnitTy -> return []
   -- PairTy _ UnitTy -> (:[]) <$> getFst xs
   PairTy _ _ -> do
     (x, rest) <- fromPair xs
-    liftM (x:) $ unpackConsList rest
+    liftM (x:) $ unpackRightLeaningConsList rest
   _ -> error $ "Not a cons list: " ++ pprint (getType xs)
 
 -- ((...((ans, x{n}), x{n-1})..., x2), x1) -> (ans, [x1, ..., x{n}])
