@@ -1,3 +1,95 @@
+
+' `chol` from chol.dx and its dependencies.
+
 import linalg
 
+def cast (d:a) : m = (ordinal d)@m
 
+def transposeLowerToUpper (lower:LowerTriMat n v) : UpperTriMat n v = 
+  for i:n. for j':(i..). 
+    j = %inject j'
+    lower.j.(cast i)
+
+def lowerTriMat (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
+    d = %indexRef ref i
+    d!j
+
+-- API
+def chol (x:n=>n=>Float) : LowerTriMat n Float =
+  yieldState zero \buf.
+    mat = lowerTriMat buf
+    for i:n. for j':(..i).
+      j = %inject j'
+      row  = for k:(..<j). get $ mat i (cast k)
+      row' = for k:(..<j). get $ mat j (cast k)
+      a = x.i.j - vdot row row'
+      if (ordinal i) == (ordinal j)
+        then
+          mat i j' := sqrt a
+        else
+          b = get $ mat j (cast j')
+          mat i j' := a / b
+
+-- API
+def cholsolve (l:LowerTriMat n Float) (b:n=>Float) : n=>Float = 
+    b' = forward_substitute l b
+    u = transposeLowerToUpper l
+    backward_substitute u b'
+
+' gaussian process prediction
+$$ k(x, z) = \sigma^2\exp\bigg(-\frac{(x-z)^2}{\theta}\bigg)$$
+
+def gaussian_kernal (theta:Float) (variance:Float) 
+    (x:d=>Float) (z:d=>Float) : Float = 
+    diff = x - z
+    power = (neg (vdot diff diff)) / theta
+    variance * (exp power)
+
+def gp_prediction 
+    (xs1:n1=>d=>Float) (ys1:n1=>Float) (xs2:n2=>d=>Float)
+    (kernal:(d=>Float)->(d=>Float)->Float) (noise_var:Float)
+    : (n2=>Float & n2=>n2=>Float) = 
+    k11 = for i j. kernal xs1.i xs1.j
+    k21 = for i j. kernal xs2.i xs1.j
+    k22 = for i j. kernal xs2.i xs2.j
+    c = chol $ k11 + noise_var .* eye
+    mu_pred = k21 **. (cholsolve c ys1)
+    temp = transpose for i. cholsolve c k21.i
+    cov_pred = k22 + (noise_var .* eye) -  k21 ** temp
+    (mu_pred, cov_pred)
+
+' synthetic data
+
+import plot
+
+arr1 = linspace (Fin 11) (-3.) (3.6)
+xs1 = for i. [arr1.i]   -- training
+ys1 = for i. sin arr1.i + 0.1 .* arb (newKey 0)
+
+arr2 = linspace (Fin 201) (-5.) (5.05)
+xs2 = for i. [arr2.i]   -- test
+ys2 = for i. sin arr2.i -- target
+
+noise_var = pow 0.1 2.0
+
+' test
+
+%time
+(ys2_mu, ys2_cov) = gp_prediction xs1 ys1 xs2 (gaussian_kernal 1.0 1.0) noise_var
+ys2_std = for i. sqrt ys2_cov.i.i
+ys2_upper = ys2_mu + ys2_std
+ys2_lower = ys2_mu - ys2_std
+
+:html showPlot $ xyPlot arr1 ys1
+:html showPlot $ xycPlot arr2 ys2_mu ys2_std
+
+arr2' : (Fin 603)=>Float = for i. arr2.((mod (ordinal i) 201)@_)
+ys2_mu':(Fin 603)=>Float = for i.
+    ii = ordinal i 
+    case ii < 201 of
+        True -> ys2_lower.(ii@_)
+        False -> case ii < 402 of 
+            True-> ys2_mu.((mod ii 201)@_)
+            False -> ys2_upper.((mod ii 201)@_)
+
+:html showPlot $ xyPlot arr2' ys2_mu'
