@@ -400,7 +400,7 @@ inferInterfaceDataDef className paramBs superclasses methods =
   withNestedBinders paramBs \paramBs' -> do
     superclasses' <- mapM checkUType superclasses
     methods'     <- mapM checkUType methods
-    let dictContents = PairTy (TupleTy superclasses') (TupleTy methods')
+    let dictContents = PairTy (ProdTy superclasses') (ProdTy methods')
     return $ DataDef className paramBs'
                [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
 
@@ -447,8 +447,8 @@ checkInstance Empty ty methods = do
         [ClassDictCon superclassTys methodTys] -> do
           let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
           methods' <- checkMethodDefs className methodTys methods
-          return $ DataCon def params 0 [PairVal (TupleVal superclassHoles)
-                                                 (TupleVal methods')]
+          return $ DataCon def params 0 [PairVal (ProdVal superclassHoles)
+                                                 (ProdVal methods')]
         _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
     _     -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
 checkInstance (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) ty methods = do

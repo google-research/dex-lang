@@ -208,7 +208,7 @@ simplifyLams numArgs lam = do
       return $ case result of
         Left  res -> (res, Nothing)
         Right (dat, (ctx, recon), atomf) ->
-          ( TupleVal $ (toList dat) ++ (toList ctx)
+          ( ProdVal $ (toList dat) ++ (toList ctx)
           , Just \vals -> do
              (datEls', ctxEls') <- splitAt (length dat) <$> unpackConsList vals
              let dat' = restructure datEls' dat
@@ -358,7 +358,7 @@ simplifyExpr expr = case expr of
                 ~(Right fac@(dat, (ctx, _), _)) <- extendR (newEnv bs' (map SubstVal xs)) $
                                                      defunBlock (boundVars bs') body
                 -- NB: The return value here doesn't really matter as we're going to replace it afterwards.
-                return (TupleVal $ toList dat ++ toList ctx, fac)
+                return (ProdVal $ toList dat ++ toList ctx, fac)
             -- Now that we know the exact set of values each case needs, ctxDef is a sum type
             -- that can encapsulate the necessary contexts.
             -- TODO: Handle dependency once separateDataComponent supports it
@@ -369,10 +369,10 @@ simplifyExpr expr = case expr of
             let alts'' = for (enumerate $ zip alts' facs) $
                   \(i, (Abs bs (Block decls _), (dat, (ctx, _), _))) ->
                     Abs bs $ Block decls $ Atom $
-                      PairVal (TupleVal $ toList dat) (DataCon ctxDef [] i $ toList ctx)
+                      PairVal (ProdVal $ toList dat) (DataCon ctxDef [] i $ toList ctx)
             -- Here, we emit the case expression and unpack the results. All the trees
             -- should be the same, so we just pick the first one.
-            let (datType, datTree) = (\(dat, _, _) -> (getType $ TupleVal $ toList dat, dat)) $ head facs
+            let (datType, datTree) = (\(dat, _, _) -> (getType $ ProdVal $ toList dat, dat)) $ head facs
             caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon ctxDef [])
             (cdat, cctx) <- fromPair caseResult
             dat <- flip restructure datTree <$> unpackConsList cdat

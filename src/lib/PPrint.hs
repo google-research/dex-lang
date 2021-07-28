@@ -553,7 +553,7 @@ instance Pretty SynthCandidates where
     "instance dicts:" <+> p (instanceDicts     scs)
 
 instance Pretty SourceMap where
-  pretty (SourceMap m) = pretty $ M.toList m
+  pretty (SourceMap m) = pretty $ M.toAscList m
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x

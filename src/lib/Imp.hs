@@ -505,7 +505,7 @@ toImpHof env (maybeDest, hof) = do
           guardBlock firstThread $
             copyAtom resDest =<< destToAtom =<< destGet arrDest =<< intToIndex arrIdxTy tid
         combineWithDest :: Dest -> Atom -> ImpM ()
-        combineWithDest accsDest ~(TupleVal accsUpdatesList) = do
+        combineWithDest accsDest ~(ProdVal accsUpdatesList) = do
           let accsDestList = fromDestConsList accsDest
           forM_ (zip3 accsDestList baseMonoids accsUpdatesList) $ \(dest, bm, update) -> do
             extender <- fromBuilder $ mextendForRef dest bm update

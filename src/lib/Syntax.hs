@@ -57,7 +57,6 @@ module Syntax (
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    getTupleProjection,
     pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
@@ -74,8 +73,7 @@ module Syntax (
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
     pattern EffKind, pattern NestOne, pattern BinderAnn,
-    pattern LabeledRowKind, pattern UPatIgnore,
-    pattern TupleTy, pattern TupleVal, pattern ClassDictCon)
+    pattern LabeledRowKind, pattern UPatIgnore, pattern ClassDictCon)
   where
 
 import qualified Data.Map.Strict as M
@@ -1392,10 +1390,6 @@ getProjection (i:is) a = case getProjection is a of
   DepPair _ r _ | i == 1 -> r
   _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
-getTupleProjection :: Int -> Atom -> Atom
-getTupleProjection 0 val = getProjection [0] val
-getTupleProjection i val = getTupleProjection (i-1) $ getProjection [1] val
-
 instance HasVars () where freeVars () = mempty
 instance Subst () where subst _ () = ()
 
@@ -1626,29 +1620,9 @@ pattern TabVal v b = Lam (Abs v (TabArrow, b))
 pattern TabValA :: Binder -> Atom -> Atom
 pattern TabValA v a = Lam (Abs v (TabArrow, (Block Empty (Atom a))))
 
-pattern TupleTy :: [Type] -> Type
-pattern TupleTy tys <- (fromConsListTy -> Just tys)
-  where TupleTy tys = foldr PairTy UnitTy tys
-
-pattern TupleVal :: [Atom] -> Atom
-pattern TupleVal xs <- (fromConsList -> Just xs)
-  where TupleVal xs = foldr PairVal UnitVal xs
-
 isTabTy :: Type -> Bool
 isTabTy (TabTy _ _) = True
 isTabTy _ = False
-
-fromConsListTy :: Type -> Maybe [Type]
-fromConsListTy ty = case ty of
-  UnitTy         -> return []
-  PairTy t rest -> (t:) <$> fromConsListTy rest
-  _              -> Nothing
-
-fromConsList :: Atom -> Maybe [Atom]
-fromConsList xs = case xs of
-  UnitVal        -> return []
-  PairVal x rest -> (x:) <$> fromConsList rest
-  _              -> Nothing
 
 -- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
 fromLeftLeaningConsListTy :: MonadError Err m => Int -> Type -> m (Type, [Type])
@@ -1698,7 +1672,7 @@ pattern BinderAnn x <- ((\case Ignore   ann  -> ann
 
 pattern ClassDictCon :: [Type] -> [Type] -> DataConDef
 pattern ClassDictCon superclassTys methodTys <-
- DataConDef _ (Nest (BinderAnn (PairTy (TupleTy superclassTys) (TupleTy methodTys))) Empty)
+ DataConDef _ (Nest (BinderAnn (PairTy (ProdTy superclassTys) (ProdTy methodTys))) Empty)
 
 pattern MaybeTy :: Type -> Type
 pattern MaybeTy a = SumTy [UnitTy, a]

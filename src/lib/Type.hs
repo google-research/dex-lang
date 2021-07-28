@@ -190,7 +190,6 @@ instance HasType Atom where
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
 
-
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
 checkDataConRefBindings Empty Empty = return ()
 checkDataConRefBindings (Nest b restBs) (Nest refBinding restRefs) = do
@@ -896,7 +895,7 @@ typeCheckHof hof = case hof of
     checkEq threadRange (binderType threadRange')
     -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-    return $ PairTy (TabTy (Ignore n) tileElemTy) $ TupleTy accTys
+    return $ PairTy (TabTy (Ignore n) tileElemTy) $ ProdTy accTys
   While body -> do
     Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr

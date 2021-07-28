@@ -19,13 +19,13 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
                 fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
-                select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
+                select, substBuilder, substBuilderR, emitUnpack, unpackConsList, getUnpacked,
                 fromPair, getFst, getSnd, getFstRef, getSndRef,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
                 singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
-                builderExtend, unpackConsList, unpackLeftLeaningConsList,
+                builderExtend, unpackLeftLeaningConsList,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
@@ -258,14 +258,14 @@ makeMethodGetter dataDefName methodIdx = do
   ~def@(DataDef _ paramBs _) <- getDataDef dataDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
-      return $ getTupleProjection methodIdx $ getProjection [1, 0] dict
+      return $ getProjection [methodIdx] $ getProjection [1, 0] dict
 
 makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
 makeSuperclassGetter dataDefName methodIdx = do
   ~def@(DataDef _ paramBs _) <- getDataDef dataDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
-      return $ getTupleProjection methodIdx $ getProjection [0, 0] dict
+      return $ getProjection [methodIdx] $ getProjection [0, 0] dict
 
 buildImplicitNaryLam :: MonadBuilder m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
 buildImplicitNaryLam bs body = buildNaryLam ImplicitArrow bs body
@@ -384,6 +384,7 @@ getSndRef r = emitOp $ SndRef r
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
 -- equivalent types spelled differently).
 getUnpacked :: MonadBuilder m => Atom -> m [Atom]
+getUnpacked (ProdVal xs) = return xs
 getUnpacked atom = do
   scope <- getScope
   let len = projectLength $ getType atom
@@ -891,8 +892,8 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
 transformModuleAsBlock :: (Block -> Block) -> Module -> Module
 transformModuleAsBlock transform (Module ir decls bindings) = do
   let localVars = bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ TupleVal $ map Var localVars
-  let (Block newDecls (Atom (TupleVal newLocalVals))) = transform block
+  let block = Block decls $ Atom $ ProdVal $ map Var localVars
+  let (Block newDecls (Atom (ProdVal newLocalVals))) = transform block
   Module ir newDecls $ scopelessSubst (newEnv localVars $ map SubstVal newLocalVals) bindings
 
 dropSub :: MonadReader SubstEnv m => m a -> m a
