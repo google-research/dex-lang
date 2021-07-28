@@ -215,28 +215,66 @@ instance SourceRenamableE UMethodDef where
   sourceRenameE (UMethodDef v expr) =
     UMethodDef <$> sourceRenameE v <*> sourceRenameE expr
 
-instance SourceRenamableB UPat' where
-  sourceRenameB pat = case pat of
-    UPatBinder b -> UPatBinder <$> sourceRenameB b
+instance SourceRenamableB b => SourceRenamableB (Nest b) where
+  sourceRenameB (Nest b bs) = Nest <$> sourceRenameB b <*> sourceRenameB bs
+  sourceRenameB Empty = return Empty
+
+-- === renaming patterns ===
+
+-- We want to ensure that pattern siblings don't shadow each other, so we carry
+-- the set of in-scope siblings' names along with the normal renaming env.
+
+type SiblingSet = S.Set SourceName
+type PatRenamerT m p = WithEnv SiblingSet (ReaderT SiblingSet m) p
+
+class SourceRenamablePat pat where
+  sourceRenamePat :: Renamer m => pat -> PatRenamerT (WithEnv RenameEnv m) pat
+
+liftPatRenamerT :: Monad m => m p -> PatRenamerT m p
+liftPatRenamerT m = lift $ lift m
+
+runPatRenamerT :: Monad m => PatRenamerT m p -> m p
+runPatRenamerT m = fst <$> runReaderT (runWithEnv m) mempty
+
+instance SourceRenamablePat UBinder where
+  sourceRenamePat ubinder = do
+    case ubinder of
+      UBindSource b -> do
+        siblingNames <- lift ask
+        when (S.member b siblingNames) $ throw RepeatedPatVarErr $ pprint b
+        extendEnv $ S.singleton b
+      _ -> return ()
+    liftPatRenamerT $ sourceRenameB ubinder
+
+instance SourceRenamablePat UPat' where
+  sourceRenamePat pat = case pat of
+    UPatBinder b -> UPatBinder <$> sourceRenamePat b
     UPatCon ~(USourceVar con) bs -> do
-      con' <- lift do
+      con' <- liftPatRenamerT $ lift do
         SourceMap sourceMap <- asks snd
         case M.lookup con sourceMap of
           Nothing    -> throw UnboundVarErr $ pprint con
           Just name -> return $ UInternalVar name
-      bs' <- sourceRenameB bs
+      bs' <- sourceRenamePat bs
       return $ UPatCon con' bs'
-    UPatPair p1 p2 -> UPatPair <$> sourceRenameB p1 <*> sourceRenameB p2
+    UPatPair p1 p2 -> UPatPair <$> sourceRenamePat p1 <*> sourceRenamePat p2
     UPatUnit -> return UPatUnit
     UPatRecord (Ext ps ext) -> UPatRecord <$>
-      (Ext <$> forM ps sourceRenameB <*> mapM sourceRenameB ext)
-    UPatVariant labels label p -> UPatVariant labels label <$> sourceRenameB p
-    UPatVariantLift labels p -> UPatVariantLift labels <$> sourceRenameB p
-    UPatTable ps -> UPatTable <$> mapM sourceRenameB ps
+      (Ext <$> forM ps sourceRenamePat <*> mapM sourceRenamePat ext)
+    UPatVariant labels label p -> UPatVariant labels label <$> sourceRenamePat p
+    UPatVariantLift labels p -> UPatVariantLift labels <$> sourceRenamePat p
+    UPatTable ps -> UPatTable <$> mapM sourceRenamePat ps
 
-instance SourceRenamableB b => SourceRenamableB (Nest b) where
-  sourceRenameB (Nest b bs) = Nest <$> sourceRenameB b <*> sourceRenameB bs
-  sourceRenameB Empty = return Empty
+instance SourceRenamablePat p => SourceRenamablePat (WithSrc p) where
+  sourceRenamePat (WithSrc pos pat) = addSrcContext pos $
+    WithSrc pos <$> sourceRenamePat pat
+
+instance SourceRenamablePat p => SourceRenamablePat (Nest p) where
+  sourceRenamePat (Nest b bs) = Nest <$> sourceRenamePat b <*> sourceRenamePat bs
+  sourceRenamePat Empty = return Empty
+
+instance SourceRenamableB UPat' where
+  sourceRenameB pat = runPatRenamerT $ sourceRenamePat pat
 
 -- === WithEnv Monad transformer ===
 
