@@ -143,8 +143,7 @@ linearizeOp op = case op of
          MGet      -> pure MGet
          MPut    x -> liftA MPut $ la x) `bindLin` emitOp
   IndexRef ref i         -> (IndexRef <$> la ref <*> pure i) `bindLin` emitOp
-  FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
-  SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
+  ProjRef i ref          -> (ProjRef i <$> la ref          ) `bindLin` emitOp
   Select p t f           -> (Select p <$> la t   <*> la f  ) `bindLin` emitOp
   -- XXX: This assumes that pointers are always constants
   PtrLoad _              -> emitWithZero
@@ -608,8 +607,7 @@ transposeOp op ct = case op of
   TabCon ~(TabTy b _) es -> forM_ (enumerate es) \(i, e) -> do
     transposeAtom e =<< tabGet ct =<< intToIndexE (binderType b) (IdxRepVal $ fromIntegral i)
   IndexRef     _ _      -> notImplemented
-  FstRef       _        -> notImplemented
-  SndRef       _        -> notImplemented
+  ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
   VectorBinOp  _ _ _    -> notImplemented
   VectorPack   _        -> notImplemented
@@ -652,12 +650,9 @@ linAtomRef (ProjectElt (i NE.:| is) x) =
         Just is' -> ProjectElt is' x
         Nothing -> Var x
   in case getType subproj of
-    PairTy _ _ -> do
+    ProdTy _ -> do
       ref <- linAtomRef subproj
-      (traverse $ emitOp . getter) ref
-      where getter = case i of 0 -> FstRef
-                               1 -> SndRef
-                               _ -> error "bad pair projection"
+      (traverse $ emitOp . ProjRef i) ref
     ty -> error $ "Projecting references not implemented for type " <> pprint ty
 linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
@@ -737,11 +732,9 @@ transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
   Lit _             -> return ()
   ProdCon []        -> return ()
-  ProdCon [x, y]    -> do
-    getFst ct >>= transposeAtom x
-    getSnd ct >>= transposeAtom y
-  -- XXX: We only have getFst and getSnd for references
-  ProdCon _         -> error "Unexpected generalized product"
+  ProdCon xs ->
+    forM_ (enumerate xs) \(i, x) ->
+      getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   ClassDictHole _ _ -> notTangent
@@ -812,8 +805,7 @@ zeroAt :: Type -> Atom
 zeroAt ty = case ty of
   BaseTy bt  -> Con $ Lit $ zeroLit bt
   TabTy i a  -> TabValA i $ zeroAt a
-  UnitTy     -> UnitVal
-  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  ProdTy tys -> ProdVal $ map zeroAt tys
   RecordTy (Ext tys Nothing) -> Record $ fmap zeroAt tys
   _          -> unreachable
   where

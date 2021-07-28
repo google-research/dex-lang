@@ -736,12 +736,9 @@ typeCheckOp op = case op of
     RefTy h (TabTyAbs a) <- typeCheck ref
     i |: absArgType a
     return $ RefTy h $ snd $ applyAbs a i
-  FstRef ref -> do
-    RefTy h (PairTy a _) <- typeCheck ref
-    return $ RefTy h a
-  SndRef ref -> do
-    RefTy h (PairTy _ b) <- typeCheck ref
-    return $ RefTy h b
+  ProjRef i ref -> do
+    RefTy h (ProdTy tys) <- typeCheck ref
+    return $ RefTy h $ tys !! i
   IOAlloc t n -> do
     n |: IdxRepTy
     declareEff IOEffect

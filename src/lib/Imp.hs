@@ -278,8 +278,7 @@ toImpOp (maybeDest, op) = case op of
       returnVal =<< intToIndex realIdxTy (fromScalarAtom i)
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
-  FstRef ~(Con (ConRef (ProdCon [ref, _  ]))) -> returnVal ref
-  SndRef ~(Con (ConRef (ProdCon [_  , ref]))) -> returnVal ref
+  ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
   IOAlloc ty n -> do
     ptr <- emitAlloc (Heap CPU, ty) (fromScalarAtom n)
     returnVal $ toScalarAtom ptr

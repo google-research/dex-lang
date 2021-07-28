@@ -354,8 +354,7 @@ data PrimOp e =
       | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
       | IndexRef e e
-      | FstRef e
-      | SndRef e
+      | ProjRef Int e
       | FFICall String e [e]
       | Inject e
       | SliceOffset e e              -- Index slice first, inner index second
@@ -1761,8 +1760,8 @@ builtinNames = M.fromList
   , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
   , ("pair", ConExpr $ ProdCon [(), ()])
-  , ("fstRef", OpExpr $ FstRef ())
-  , ("sndRef", OpExpr $ SndRef ())
+  , ("fstRef", OpExpr $ ProjRef 0 ())
+  , ("sndRef", OpExpr $ ProjRef 1 ())
   -- TODO: Lift vectors to constructors
   --, ("VectorFloatType",  TCExpr $ BaseType $ Vector FloatType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())

@@ -91,8 +91,7 @@ parallelTraverseExpr expr = case expr of
   --       to recreate all the aliases. We could do that by carrying around a block and using
   --       SubstBuilder to take care of renaming for us.
   Op (IndexRef ref _) -> disallowRef ref >> nothingSpecial
-  Op (FstRef   ref  ) -> disallowRef ref >> nothingSpecial
-  Op (SndRef   ref  ) -> disallowRef ref >> nothingSpecial
+  Op (ProjRef  _ ref) -> disallowRef ref >> nothingSpecial
   _ -> nothingSpecial
   where
     nothingSpecial = traverseExpr parallelTrav expr

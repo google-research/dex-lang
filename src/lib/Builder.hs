@@ -20,7 +20,7 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 iadd, imul, isub, idiv, ilt, ieq,
                 fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
                 select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
-                fromPair, getFst, getSnd, getFstRef, getSndRef,
+                fromPair, getFst, getSnd, getProj, getProjRef,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
@@ -368,17 +368,19 @@ fromPair pair = do
   ~[x, y] <- getUnpacked pair
   return (x, y)
 
+getProj :: MonadBuilder m => Int -> Atom -> m Atom
+getProj i x = do
+  xs <- getUnpacked x
+  return $ xs !! i
+
 getFst :: MonadBuilder m => Atom -> m Atom
 getFst p = fst <$> fromPair p
 
 getSnd :: MonadBuilder m => Atom -> m Atom
 getSnd p = snd <$> fromPair p
 
-getFstRef :: MonadBuilder m => Atom -> m Atom
-getFstRef r = emitOp $ FstRef r
-
-getSndRef :: MonadBuilder m => Atom -> m Atom
-getSndRef r = emitOp $ SndRef r
+getProjRef :: MonadBuilder m => Int -> Atom -> m Atom
+getProjRef i r = emitOp $ ProjRef i r
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
