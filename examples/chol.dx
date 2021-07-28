@@ -5,30 +5,32 @@ triangular matrix $L$ and its transpose $L^*$.
 
 ' $$ A = LL^*$$
 
-' ## Background on triangle matrices and `%inject`
+' ## Background
+### Triangular matrices
 Dex can enforce matrix shapes with its dependent types.
-Here is a 4x4 lower triangle matrix.
+Here is a 4x4 lower triangular matrix.
 Try replacing `(..i)` below with `(..<i)`, `(i..)` or `(i<..)`.
 
 lmat = for i:(Fin 4). for j:(..i). 1
 :p lmat
 :t lmat
 
-' `%inject` works on dependent-typed indices. 
-Its functionality is best demonstrated in the following upper triangle matrix.
+' The linalg library has handy types and functions for manipulating triangular matrices.
+
+import linalg
+
+lmat' : LowerTriMat (Fin 4) Int = for i j. 1
+:t lmat'
+
+' ### `%inject`
+`%inject` works on dependent-typed indices. 
+Its functionality is best demonstrated in the following upper triangular matrix:
 
 :p for i:(Fin 4). for j:(i..). %inject j
 
 ' ... in comparison with the upper triangle of the corresponding full matrix. 
 
 :p for i:(Fin 4). for j:(Fin 4). j
-
-' The linalg library has handy types and functions for manipulating triangle matrices.
-
-import linalg
-
-lmat' : LowerTriMat (Fin 4) Int = for i j. 1
-:t lmat'
 
 ' One use case of `%inject` is to implement the type-safe transpose function. 
 
@@ -45,29 +47,28 @@ umat'' = transposeLowerToUpper lmat''
 :p lmat''
 :p umat''
 
-' ## Background on stateful updates
-The Effect section in prelude.dx defined functions such as `yieldState`, `get`, `(!)`, `:=`  etc. 
-They are useful for algorithms that care about the sequence of execution 
-(e.g. dynamic programming, the Cholesky algorithm). 
-We demonstrate their usage with a trivial example: 
-complete the Fibonacci sequence.
+' ### Stateful updates
+The Effect section in prelude.dx define functions such as `yieldState`, `get`, `(!)`, `:=`. 
+They are useful for sequential algorithms (e.g. dynamic programming, the Cholesky algorithm). 
+We demonstrate their usage with an example: complete the Fibonacci sequence.
 
 table_init = [0,1,0,0,0,0,0,0]
-table = yieldState table_init \table_ref.
+table = yieldState table_init \table_ref. -- create a "pointer" to the state
   for i. 
     ii = ordinal i
     case ii <= 1 of 
       True -> ()
       False -> 
-        a:Int = (get table_ref).((ii-2)@_)
-        b:Int = (get table_ref).((ii-1)@_)
-        table_ref!i := a + b
+        table_curr = get table_ref -- dereference the "pointer"
+        a:Int = table_curr.((ii-2)@_)
+        b:Int = table_curr.((ii-1)@_)
+        table_ref!i := a + b -- modify the state
 :p table
 
 ' ## Cholesky Algorithm
 
+-- workaround for ref!i!j -- issue #239
 def lowerTriMat (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
-    -- workaround for ref!i!j -- relevant issue #239
     d = %indexRef ref i
     d!j
 
