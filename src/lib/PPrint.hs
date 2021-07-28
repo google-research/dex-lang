@@ -168,7 +168,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "Unit"
     ProdType as  -> atPrec ArgPrec $ align $ group $
-      encloseSep "(" ")" " & " $ fmap pApp as
+      encloseSep "(" ",)" " & " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
     IntRange a b -> if docAsStr (pArg a) == "0"
@@ -198,7 +198,7 @@ prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   ProdCon xs  -> atPrec ArgPrec $ align $ group $
-    encloseSep "(" ")" ", " $ fmap pLowest xs
+    encloseSep "(" ",)" ", " $ fmap pLowest xs
   SumCon _ tag payload -> atPrec ArgPrec $
     "(" <> p tag <> "|" <+> pApp payload <+> "|)"
   SumAsProd ty tag payload -> atPrec LowestPrec $
@@ -359,8 +359,8 @@ fromInfix t = do
 -- TODO: we don't want to show `proj x [0,1]` etc to users, but this rewrite is
 -- bad for debugging the compiler because it obscures what's actually going on.
 -- We should just have a separate path for user-facing printing.
--- prettyProjection idxs v = atPrec ArgPrec $ "proj" <+> p idxs <+> p v
 prettyProjection :: NE.NonEmpty Int -> Var -> DocPrec ann
+-- prettyProjection idxs v = atPrec ArgPrec $ "proj" <+> p idxs <+> p v
 prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
   -- Builds a source expression that performs the given projection.
   uproj = UApp (PlainArrow ()) (nosrc ulam) (nosrc uvar)

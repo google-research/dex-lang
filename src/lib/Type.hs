@@ -183,8 +183,7 @@ instance HasType Atom where
           return $ go 0 mempty bs'
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
-        PairTy x _ | i == 0 -> return x
-        PairTy _ y | i == 1 -> return y
+        ProdTy xs -> return $ xs !! i
         DepPairTy ta | i == 0 -> return $ absArgType ta
         DepPairTy ta | i == 1 -> return $ applyAbs ta $ ProjectElt (0 NE.:| is) v
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty

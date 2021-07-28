@@ -53,9 +53,10 @@ prependBindings bindings (EvaluatedModule bindings' scs sourceMap) =
 
 splitSimpModule :: Bindings -> Module -> (Block, Abs Binder Module)
 splitSimpModule scope (Module _ decls bindings) = do
-  let localVars = bindingsAsVars $ freeVars bindings `envIntersect` boundVars decls
+  let localScope = boundVars decls
+  let localVars = bindingsAsVars $ freeVars bindings `envIntersect` localScope
   let (blockResult, recon) = fst $ runBuilder (scope <> boundVars decls) mempty $
-        mkTelescope scope $ Var <$> localVars
+        mkTelescope localScope $ Var <$> localVars
   let block = Block decls $ Atom blockResult
   let (Abs b (decls', bindings')) =
         fst $ runBuilder scope mempty $ buildAbs (Bind ("result":>getType block)) $
@@ -65,7 +66,7 @@ splitSimpModule scope (Module _ decls bindings) = do
   (block, Abs b (Module Evaluated decls' bindings'))
 
 mkTelescope :: forall m. MonadBuilder m => Scope -> [Atom] -> m (Atom, Atom -> m [Atom])
-mkTelescope outerScope atoms = do
+mkTelescope localScope atoms = do
   let xs = bindingsAsVars $ foldMap localFVs atoms
   -- XXX: This is valid iff our IR satisfies the property that the type of an atom
   -- never has more free vars than the atom itself.
@@ -80,7 +81,7 @@ mkTelescope outerScope atoms = do
     env <- recon p
     substBuilder env atoms)
   where
-    localFVs a = freeVars a `envDiff` outerScope
+    localFVs a = freeVars a `envIntersect` localScope
 
     buildDepPairs :: [Var] -> [Var] -> ReaderT SubstEnv m (Atom, Atom -> m SubstEnv)
     buildDepPairs vs xs = case vs of
