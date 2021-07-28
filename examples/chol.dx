@@ -1,39 +1,99 @@
 ' # Cholesky Factorization
-https://en.wikipedia.org/wiki/Cholesky_decomposition
+The [Cholesky decomposition](https://en.wikipedia.org/wiki/Cholesky_decomposition) 
+rewrites a positive-definite matrix $A$ as the matrix product of a lower 
+triangular matrix $L$ and its transpose $L^*$.
+
+' $$ A = LL^*$$
+
+' ## Background
+### Triangular matrices
+Dex can enforce matrix shapes with its dependent types.
+Here is a 4x4 lower triangular matrix.
+Try replacing `(..i)` below with `(..<i)`, `(i..)` or `(i<..)`.
+
+lmat = for i:(Fin 4). for j:(..i). 1
+:p lmat
+:t lmat
+
+' The linalg library has handy types and functions for manipulating triangular matrices.
+
+import linalg
+
+lmat' : LowerTriMat (Fin 4) Int = for i j. 1
+:t lmat'
+
+' ### `%inject`
+`%inject` works on dependent-typed indices. 
+Its functionality is best demonstrated in the following upper triangular matrix:
+
+:p for i:(Fin 4). for j:(i..). %inject j
+
+' ... in comparison with the upper triangle of the corresponding full matrix. 
+
+:p for i:(Fin 4). for j:(Fin 4). j
+
+' One use case of `%inject` is to implement the type-safe transpose function. 
+
+def cast (d:a) : m = (ordinal d)@m
+
+def transposeLowerToUpper (lower:LowerTriMat n v) : UpperTriMat n v = 
+  for i:n. for j':(i..). 
+    j = %inject j'
+    lower.j.(cast i)
+
+lmat'' : LowerTriMat (Fin 4) Int = for i j. ordinal (i,j)
+umat'' = transposeLowerToUpper lmat''
+
+:p lmat''
+:p umat''
+
+' ### Stateful updates
+The Effect section in prelude.dx define functions such as `yieldState`, `get`, `(!)`, `:=`. 
+They are useful for sequential algorithms (e.g. dynamic programming, the Cholesky algorithm). 
+We demonstrate their usage with an example: complete the Fibonacci sequence.
+
+table_init = [0,1,0,0,0,0,0,0]
+table = yieldState table_init \table_ref. -- create a "pointer" to the state
+  for i. 
+    ii = ordinal i
+    case ii <= 1 of 
+      True -> ()
+      False -> 
+        table_curr = get table_ref -- dereference the "pointer"
+        a:Int = table_curr.((ii-2)@_)
+        b:Int = table_curr.((ii-1)@_)
+        table_ref!i := a + b -- modify the state
+:p table
 
 ' ## Cholesky Algorithm
 
-def chol [Eq n] (x:n=>n=>Float) : (n=>n=>Float) =
+-- workaround for ref!i!j -- issue #239
+def lowerTriMat (ref:Ref h (LowerTriMat a b)) (i:a) (j:(..i)) : Ref h b =
+    d = %indexRef ref i
+    d!j
+
+def chol (x:n=>n=>Float) : LowerTriMat n Float =
   yieldState zero \buf.
-    for_ i. for j':(..i).
-      j = %inject(j')
-      row  = for k:(..<j). get buf!i!(%inject k)
-      row' = for k:(..<j). get buf!j!(%inject k)
+    mat = lowerTriMat buf
+    for i:n. for j':(..i).
+      j = %inject j'
+      row  = for k:(..<j). get $ mat i (cast k)
+      row' = for k:(..<j). get $ mat j (cast k)
       a = x.i.j - vdot row row'
-      if i==j
+      if (ordinal i) == (ordinal j)
         then
-          buf!i!j := sqrt a
+          mat i j' := sqrt a
         else
-          b = get buf!j!j
-          buf!i!j := a / b
+          b = get $ mat j (cast j')
+          mat i j' := a / b
 
 ' ## PSD solver based on Cholesky decomposition
 
-def trisolveL (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
-  yieldState zero \buf. for i.
-    row   = for j:(..<i). mat.i.(%inject j)
-    xPrev = for j:(..<i). get (buf!%inject j)
-    buf!i := (b.i - vdot row xPrev) / mat.i.i
-
-def trisolveU (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
-  yieldState zero \buf. rof i.
-    row   = for j:(i..). mat.i.%inject(j)
-    xPrev = for j:(i..). get (buf!%inject j)
-    buf!i := (b.i - vdot row xPrev) / mat.i.i
-
-def psdsolve [Eq n] (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+def psdsolve (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
   l = chol mat
-  trisolveU (transpose l) $  trisolveL l b
+  b' = forward_substitute l b
+  u = transposeLowerToUpper l
+  backward_substitute u b'
 
 ' Test
 
@@ -45,15 +105,21 @@ psd : N=>N=>Float =
   x = a ** transpose a
   x + eye
 
-l : N=>N=>Float = chol psd
+def padLowerTriMat [Add v] (mat:LowerTriMat n v) : n=>n=>v = 
+  for i j.
+    if (ordinal j)<=(ordinal i)
+      then mat.i.(cast j)
+      else zero
 
-:p l
+l = chol psd
+l_full = padLowerTriMat l
+:p l_full
 > [ [2.021765, 0., 0., 0.]
 > , [-1.795019, 1.990174, 0., 0.]
 > , [-0.897886, 0.186757, 1.980266, 0.]
 > , [1.445752, -0.296448, 0.724586, 2.230807] ]
 
-psdReconstructed = l ** transpose l
+psdReconstructed = l_full ** transpose l_full
 
 :p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
 > 0.
