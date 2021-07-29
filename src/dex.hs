@@ -53,18 +53,17 @@ runMode evalMode preludeFile opts = do
   key <- case preludeFile of
            Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
            Just path -> show <$> getModificationTime path
-  env <- cachedWithSnapshot "prelude" key $ evalPrelude opts preludeFile
-  let runEnv m = evalStateT m env
+  env <- cachedWithSnapshot "prelude" key $ execInterblockM opts initTopState $ evalPrelude preludeFile
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
       let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-      runEnv $ runInputT hasklineSettings $ forever (replLoop prompt opts)
+      evalInterblockM opts env $ runInputT hasklineSettings $ forever $ replLoop prompt
     ScriptMode fname fmt _ -> do
-      results <- runEnv $ evalFile opts fname
+      results <- evalInterblockM opts env $ evalFile fname
       printLitProg fmt results
     ExportMode dexPath objPath -> do
-      results <- fmap snd <$> runEnv (evalFile opts dexPath)
+      results <- evalInterblockM opts env $ map snd <$> evalFile dexPath
       let outputs = foldMap (\(Result outs _) -> outs) results
       let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
       putStr $ foldMap (nonEmptyNewline . pprint) errors
@@ -79,24 +78,24 @@ runMode evalMode preludeFile opts = do
     WatchMode  fname -> runTerminal fname opts env
 #endif
 
-evalPrelude :: EvalConfig -> Maybe FilePath -> IO TopEnv
-evalPrelude opts fname = flip execStateT initTopEnv $ do
+evalPrelude :: Maybe FilePath -> InterblockM ()
+evalPrelude fname = do
   source <- case fname of
               Nothing   -> return preludeSource
               Just path -> liftIO $ readFile path
-  result <- evalSource opts source
+  result <- evalSourceText source
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
-replLoop prompt opts = do
+replLoop :: String -> InputT InterblockM ()
+replLoop prompt = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
-  result <- lift $ evalDecl opts sourceBlock
+  result <- lift $ evalSourceBlock sourceBlock
   case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
 
-dexCompletions :: CompletionFunc (StateT TopEnv IO)
+dexCompletions :: CompletionFunc InterblockM
 dexCompletions (line, _) = do
   env <- get
   let varNames = map pprint $ envNames $ topBindings env

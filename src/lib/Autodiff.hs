@@ -36,16 +36,16 @@ data DerivWrt = DerivWrt { activeVars  :: Env Type
                          }
 -- `Tangents` holds the tangent values and the region variables that are
 -- arguments to the linearized function.
-data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name] }
+data TangentEnv = TangentEnv { tangentVals :: Env Atom, activeRefs :: [Name] }
 
 type PrimalM  = ReaderT DerivWrt   Builder
 type TangentM = ReaderT TangentEnv Builder
 newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
-linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
+linearize scope ~(Lam (Abs b (_, block))) = fst $ runBuilder scope mempty $ do
   checkBuilder =<< buildLam b PureArrow \x@(Var v) -> do
-    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@>x) block
+    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@> SubstVal x) block
     -- TODO: check linearity
     fLin <- buildLam (fmap tangentType b) LinArrow \xt -> runReaderT yt $ TangentEnv (v @> xt) []
     fLinChecked <- checkBuilder fLin
@@ -80,7 +80,7 @@ linearizeBlock env (Block decls result) = case decls of
                   _         -> isSingletonType $ tangentType $ varType v
             let nontrivialVs = if vIsTrivial then [] else [v]
             (ans, bodyLin) <- extendWrt nontrivialVs [] $ runLinA $
-              linearizeBlock (env <> b @> Var v) body
+              linearizeBlock (env <> b @> SubstVal (Var v)) body
             return (ans, do
               t <- boundLin
               -- Tangent environment needs to be synced between the primal and tangent
@@ -90,7 +90,7 @@ linearizeBlock env (Block decls result) = case decls of
           else do
             expr' <- substBuilder env expr
             x <- emit expr'
-            runLinA $ linearizeBlock (env <> b @> x) body
+            runLinA $ linearizeBlock (env <> b @> SubstVal x) body
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
@@ -107,7 +107,7 @@ linearizeExpr env expr = case expr of
         return (ans, applyLinToTangents linLam)
     where
       linearizeInactiveAlt (Abs bs body) = do
-        buildNAbs bs \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs xs) body
+        buildNAbs bs \xs -> tangentFunAsLambda $ linearizeBlock (env <> newEnv bs (map SubstVal xs)) body
   _ -> LinA $ do
     expr' <- substBuilder env expr
     runLinA $ case expr' of
@@ -126,7 +126,7 @@ linearizeOp op = case op of
     (primalRef, mkTangentRef) <- runLinA $ la refArg
     (primalUpdate, mkTangentUpdate) <-
       buildLamAux b (const $ return PureArrow) \x@(Var v) ->
-        extendWrt [v] [] $ runLinA $ linearizeBlock (b @> x) body
+        extendWrt [v] [] $ runLinA $ linearizeBlock (b @> SubstVal  x) body
     let LamVal (Bind primalStateVar) _ = primalUpdate
     ans <- emitOp $ PrimEffect primalRef $ MExtend primalUpdate
     return (ans, do
@@ -143,8 +143,7 @@ linearizeOp op = case op of
          MGet      -> pure MGet
          MPut    x -> liftA MPut $ la x) `bindLin` emitOp
   IndexRef ref i         -> (IndexRef <$> la ref <*> pure i) `bindLin` emitOp
-  FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
-  SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
+  ProjRef i ref          -> (ProjRef i <$> la ref          ) `bindLin` emitOp
   Select p t f           -> (Select p <$> la t   <*> la f  ) `bindLin` emitOp
   -- XXX: This assumes that pointers are always constants
   PtrLoad _              -> emitWithZero
@@ -271,7 +270,7 @@ linearizeHof env hof = case hof of
   For ~(RegularFor d) ~(LamVal i body) -> LinA $ do
     i' <- mapM (substBuilder env) i
     ansWithLinTab <- buildFor d i' \i'' ->
-       tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
+       tangentFunAsLambda $ linearizeBlock (env <> i@> SubstVal i'') body
     (ans, linTab) <- unzipTab ansWithLinTab
     return (ans, buildFor d i' \i'' -> app linTab i'' >>= applyLinToTangents)
   Tile _ _ _        -> notImplemented
@@ -320,12 +319,12 @@ linearizeHof env hof = case hof of
     linearizeEffectFun rws ~(BinaryFunVal h ref eff body) = do
       h' <- mapM (substBuilder env) h
       buildLamAux h' (const $ return PureArrow) \h''@(Var hVar) -> do
-        let env' = env <> h@>h''
+        let env' = env <> h@> SubstVal h''
         eff' <- substBuilder env' eff
         ref' <- mapM (substBuilder env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') \ref''@(Var refVar) ->
           extendWrt [refVar] [RWSEffect rws (varName hVar)] $
-            (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
+            (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@> SubstVal ref'') body)
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
@@ -355,7 +354,7 @@ linearizeAtom atom = case atom of
   Lam (Abs i (TabArrow, body)) -> LinA $ do
     wrt <- ask
     return (atom, buildLam i TabArrow \i' ->
-                    rematPrimal wrt $ linearizeBlock (i@>i') body)
+                    rematPrimal wrt $ linearizeBlock (i@> SubstVal i') body)
   DepPair _ _ _   -> notImplemented
   DataCon _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   Record elems    -> Record <$> traverse linearizeAtom elems
@@ -475,7 +474,7 @@ extendWrt :: [Var] -> [Effect] -> PrimalM a -> PrimalM a
 extendWrt active effs m = local update m
   where update (DerivWrt active' effs') = DerivWrt (active' <> foldMap varAsEnv active) (effs' <> effs)
 
-extendTangentEnv :: SubstEnv -> [Name] -> TangentM a -> TangentM a
+extendTangentEnv :: Env Atom -> [Name] -> TangentM a -> TangentM a
 extendTangentEnv tv effs m = local update m
   where update (TangentEnv tv' effs') = TangentEnv (tv' <> tv) (effs' <> effs)
 
@@ -517,7 +516,7 @@ instance Monoid TransposeEnv where
 type TransposeM a = ReaderT TransposeEnv Builder a
 
 transpose :: Scope -> Atom -> Atom
-transpose scope ~(Lam (Abs b (_, block))) = fst $ flip runBuilder scope $ do
+transpose scope ~(Lam (Abs b (_, block))) = fst $ runBuilder scope mempty $ do
   checkBuilder =<< buildLam (Bind $ "ct" :> getType block) LinArrow \ct -> do
     snd <$> (flip runReaderT mempty $ withLinVar b $ transposeBlock block ct)
 
@@ -531,13 +530,14 @@ transposeBlock (Block decls result) ct = case decls of
       Op (IndexRef ~(Var ref) idx) -> do
         linRefEnv <- asks linRefSubst
         case envLookup linRefEnv ref of
-          Just ctRef -> do
+          Just (Rename _) -> error "not possible?"
+          Just (SubstVal ctRef) -> do
             idx'   <- substNonlin idx
             ctRef' <- emitOp $ IndexRef ctRef idx'
-            localLinRefSubst (b@>ctRef') $ transposeBlock contBlock ct
+            localLinRefSubst (b@> SubstVal ctRef') $ transposeBlock contBlock ct
           Nothing    -> do
             x <- emit =<< substNonlin expr
-            localNonlinSubst (b @> x) $ transposeBlock contBlock ct
+            localNonlinSubst (b @> SubstVal  x) $ transposeBlock contBlock ct
       _ -> do
         isLinearExpr <- (||) <$> isLinEff (exprEffs expr) <*> isLin expr
         if isLinearExpr
@@ -546,7 +546,7 @@ transposeBlock (Block decls result) ct = case decls of
             transposeExpr expr ctExpr
           else do
             x <- emit =<< substNonlin expr
-            localNonlinSubst (b @> x) $ transposeBlock contBlock ct
+            localNonlinSubst (b @> SubstVal  x) $ transposeBlock contBlock ct
     where
       contBlock = Block rest result
 
@@ -572,7 +572,7 @@ transposeExpr expr ct = case expr of
   where
     transposeNonlinAlt (Abs bs body) =
       buildNAbs bs \xs -> do
-        localNonlinSubst (newEnv bs xs) $ transposeBlock body ct
+        localNonlinSubst (newEnv bs (map SubstVal xs)) $ transposeBlock body ct
         return UnitVal
 
 transposeOp :: Op -> Atom -> TransposeM ()
@@ -607,8 +607,7 @@ transposeOp op ct = case op of
   TabCon ~(TabTy b _) es -> forM_ (enumerate es) \(i, e) -> do
     transposeAtom e =<< tabGet ct =<< intToIndexE (binderType b) (IdxRepVal $ fromIntegral i)
   IndexRef     _ _      -> notImplemented
-  FstRef       _        -> notImplemented
-  SndRef       _        -> notImplemented
+  ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
   VectorBinOp  _ _ _    -> notImplemented
   VectorPack   _        -> notImplemented
@@ -651,12 +650,9 @@ linAtomRef (ProjectElt (i NE.:| is) x) =
         Just is' -> ProjectElt is' x
         Nothing -> Var x
   in case getType subproj of
-    PairTy _ _ -> do
+    ProdTy _ -> do
       ref <- linAtomRef subproj
-      (traverse $ emitOp . getter) ref
-      where getter = case i of 0 -> FstRef
-                               1 -> SndRef
-                               _ -> error "bad pair projection"
+      (traverse $ emitOp . ProjRef i) ref
     ty -> error $ "Projecting references not implemented for type " <> pprint ty
 linAtomRef a = error $ "Not a linear var: " ++ pprint a
 
@@ -665,7 +661,7 @@ transposeHof hof ct = case hof of
   For ~(RegularFor d) ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b \i -> do
       ct' <- tabGet ct i
-      localNonlinSubst (b@>i) $ transposeBlock body ct'
+      localNonlinSubst (b@> SubstVal i) $ transposeBlock body ct'
       return UnitVal
     where flipDir dir = case dir of Fwd -> Rev; Rev -> Fwd
   RunReader r ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
@@ -673,7 +669,7 @@ transposeHof hof ct = case hof of
     let baseTy = getBaseMonoidType valTy
     baseMonoid <- tangentBaseMonoidFor baseTy
     (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" valTy baseMonoid \ref -> do
-      localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ct
+      localLinRegion h $ localLinRefSubst (b@> SubstVal ref) $ transposeBlock body ct
       return UnitVal
     transposeAtom r ctr
   RunWriter bm ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
@@ -681,12 +677,12 @@ transposeHof hof ct = case hof of
       error "AD of Accum effect only supported when the base monoid is (0, +) on Float"
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader "r" ctEff \ref -> do
-      localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
+      localLinRegion h $ localLinRefSubst (b@> SubstVal ref) $ transposeBlock body ctBody
       return UnitVal
   RunState s ~(BinaryFunVal (Bind (h:>_)) b _ body) -> do
     (ctBody, ctState) <- fromPair ct
     (_, cts) <- (fromPair =<<) $ emitRunState "s" ctState \ref -> do
-      localLinRegion h $ localLinRefSubst (b@>ref) $ transposeBlock body ctBody
+      localLinRegion h $ localLinRefSubst (b@> SubstVal ref) $ transposeBlock body ctBody
       return UnitVal
     transposeAtom s cts
   Tile      _ _ _  -> notImplemented
@@ -712,7 +708,7 @@ transposeAtom atom ct = case atom of
   TabVal b body   ->
     void $ buildFor Fwd b \i -> do
       ct' <- tabGet ct i
-      localNonlinSubst (b@>i) $ transposeBlock body ct'
+      localNonlinSubst (b@>SubstVal i) $ transposeBlock body ct'
       return UnitVal
   Lam _           -> notTangent
   TypeCon _ _     -> notTangent
@@ -736,11 +732,9 @@ transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
   Lit _             -> return ()
   ProdCon []        -> return ()
-  ProdCon [x, y]    -> do
-    getFst ct >>= transposeAtom x
-    getSnd ct >>= transposeAtom y
-  -- XXX: We only have getFst and getSnd for references
-  ProdCon _         -> error "Unexpected generalized product"
+  ProdCon xs ->
+    forM_ (enumerate xs) \(i, x) ->
+      getProj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   SumAsProd _ _ _   -> notImplemented
   ClassDictHole _ _ -> notTangent
@@ -811,8 +805,7 @@ zeroAt :: Type -> Atom
 zeroAt ty = case ty of
   BaseTy bt  -> Con $ Lit $ zeroLit bt
   TabTy i a  -> TabValA i $ zeroAt a
-  UnitTy     -> UnitVal
-  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  ProdTy tys -> ProdVal $ map zeroAt tys
   RecordTy (Ext tys Nothing) -> Record $ fmap zeroAt tys
   _          -> unreachable
   where

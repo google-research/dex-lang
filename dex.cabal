@@ -54,7 +54,7 @@ library
                        Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec, Export
-                       Err, LabeledItems,
+                       Err, LabeledItems, SourceRename,
                        SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint

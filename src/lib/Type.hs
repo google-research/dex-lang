@@ -7,13 +7,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -Wno-orphans #-}  -- due to module instances
 
 module Type (
-  getType, checkType, HasType (..), Checkable (..), litType,
+  getType, tryGetType, checkType, HasType (..), Checkable (..), litType,
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent, checkExtends,
-  indexSetConcreteSize, checkNoShadow, traceCheckM, traceCheck, projectLength,
-  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect) where
+  indexSetConcreteSize, traceCheckM, traceCheck, projectLength,
+  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect, nameToAtom) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -50,6 +51,10 @@ getType :: (HasCallStack, HasType a) => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
 
+tryGetType :: (MonadErr m, HasCallStack, HasType a) => a -> m Type
+tryGetType x = liftEither $ ctx $ runTypeCheck SkipChecks $ typeCheck x
+  where ctx = addContext $ "Querying:\n" ++ pprint x
+
 checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
 checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeCheck x
   where ctx = addContext $ "Checking:\n" ++ pprint x
@@ -70,39 +75,35 @@ traceCheck x y =
 -- === Module interfaces ===
 
 class Pretty a => Checkable a where
-  checkValid :: a -> Except ()
+  checkValid :: Scope -> a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module ir decls bindings) =
+  checkValid scope m@(Module _ decls (EvaluatedModule bindings _ _)) =
     addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
-      let env = freeVars m
-      forM_ (envNames env) \v -> when (not $ isGlobal $ v:>()) $
-        throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
         let block = Block decls $ Atom UnitVal
-        void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
+        void $ runTypeCheck (CheckWith (scope, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
-        checkBindings (env <> foldMap boundVars decls) ir bindings
+        checkBindings (scope <> foldMap boundVars decls) bindings
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
-checkBindings :: TypeEnv -> IRVariant -> Bindings -> Except ()
-checkBindings env ir bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
-  mapM_ (checkBinding ir) $ envPairs bs
+checkBindings :: TypeEnv -> Bindings -> Except ()
+checkBindings env bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
+  mapM_ checkAnyBinding $ envPairs bs
 
-checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
-checkBinding ir (v, b@(ty, info)) | isGlobal (v:>()) =
-  addContext ("binding: " ++ pprint (v, b)) $ do
-    ty |: TyKind
-    when (ir >= Evaluated && not (all isGlobal (envAsVars $ freeVars b))) $
-      throw CompilerErr "Non-global name in a fully evaluated atom"
-    case info of
-      LetBound _ atom -> atom |: ty
-      _ -> return ()
-checkBinding _ _ = throw CompilerErr "Module bindings must have global names"
+checkAnyBinding :: (Name, AnyBinderInfo) -> TypeM ()
+checkAnyBinding (v, binderInfo) =
+  addContext ("binding: " ++ pprint (v, binderInfo)) $ case binderInfo of
+    AtomBinderInfo ty (LetBound _ expr) -> case expr of
+      Atom atom ->  do
+        ty |: TyKind
+        atom |: ty
+      _ -> throw TypeErr "Let bindings must be atoms"
+    _ -> return ()
 
 -- === Core IR ===
 
@@ -187,20 +188,18 @@ instance HasType Atom where
           -- use projections.
           let go :: Int -> SubstEnv -> Nest Binder -> Type
               go j env (Nest b _) | i == j = scopelessSubst env $ binderAnn b
-              go j env (Nest b rest) = go (j+1) (env <> (b @> proj)) rest
+              go j env (Nest b rest) = go (j+1) (env <> (b @> SubstVal proj)) rest
                 where proj = ProjectElt (j NE.:| is) v
               go _ _ _ = error "Bad projection index"
           return $ go 0 mempty bs'
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
-        PairTy x _ | i == 0 -> return x
-        PairTy _ y | i == 1 -> return y
+        ProdTy xs -> return $ xs !! i
         DepPairTy ta | i == 0 -> return $ absArgType ta
         DepPairTy ta | i == 1 -> return $ applyAbs ta $ ProjectElt (0 NE.:| is) v
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
-
 
 checkDataConRefBindings :: Nest Binder -> Nest DataConRefBinding -> TypeM ()
 checkDataConRefBindings Empty Empty = return ()
@@ -208,7 +207,7 @@ checkDataConRefBindings (Nest b restBs) (Nest refBinding restRefs) = do
   let DataConRefBinding b'@(Bind v) ref = refBinding
   ref |: RawRefTy (binderAnn b)
   checkEq (binderAnn b) (binderAnn b')
-  let restBs' = scopelessSubst (b@>Var v) restBs
+  let restBs' = scopelessSubst (b@>SubstVal (Var v)) restBs
   withBinder b' $ checkDataConRefBindings restBs' restRefs
 checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
 
@@ -219,7 +218,8 @@ typeCheckVar v@(name:>annTy) = do
     throw CompilerErr "Effect variables should only occur in effect rows"
   checkWithEnv \(env, _) -> case envLookup env v of
     Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-    Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
+    Just (AtomBinderInfo ty _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
+    Just x -> error $ "Not an atom var: " ++ pprint x
   return annTy
 
 isDependent :: DataConDef -> Bool
@@ -340,7 +340,6 @@ instance HasType Block where
 
 instance HasType Binder where
   typeCheck b = do
-    checkWithEnv \(env, _) -> checkNoShadow env b
     let ty = binderType b
     ty |: TyKind
     return ty
@@ -370,18 +369,14 @@ checkEq reqTy ty = checkWithEnv \_ -> assertEq reqTy ty ""
 withBinder :: Binder -> TypeM a -> TypeM a
 withBinder b m = typeCheck b >> extendTypeEnv (boundVars b) m
 
-checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> BinderP b -> m ()
---checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
-checkNoShadow env b = when (b `isin` env) $ error $ pprint b ++ " shadowed"
-
 -- === Core IR syntactic variants ===
 
 type VariantM = ReaderT IRVariant Except
 
 checkModuleVariant :: Module -> Except ()
-checkModuleVariant (Module ir decls bindings) = do
+checkModuleVariant (Module ir decls (EvaluatedModule bindings _ _)) = do
   flip runReaderT ir $ mapM_ checkVariant decls
-  flip runReaderT ir $ mapM_ (checkVariant . snd) bindings
+  flip runReaderT ir $ mapM_ checkVariant bindings
 
 class CoreVariant a where
   checkVariant :: a -> VariantM ()
@@ -419,10 +414,11 @@ instance CoreVariant Atom where
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
-    DataBoundTypeCon _   -> alwaysAllowed
-    DataBoundDataCon _ _ -> alwaysAllowed
     LetBound _ _     -> absentUntil Simp
     _                -> neverAllowed
+
+instance CoreVariant AnyBinderInfo where
+  checkVariant _ = alwaysAllowed
 
 instance CoreVariant Expr where
   checkVariant expr = addExpr expr $ case expr of
@@ -510,7 +506,8 @@ checkEffRow (EffectRow effs effTail) = do
   forM_ effTail \v -> do
     checkWithEnv \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-      Just (ty, _) -> assertEq EffKind ty "Effect var"
+      Just (AtomBinderInfo ty _) -> assertEq EffKind ty "Effect var"
+      Just x -> error $ "Not an atom var: " ++ pprint x
 
 declareEff :: Effect -> TypeM ()
 declareEff eff = declareEffs $ oneEffect eff
@@ -543,7 +540,8 @@ checkLabeledRow (Ext items rest) = do
   forM_ rest \v -> do
     checkWithEnv \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-      Just (ty, _) -> assertEq LabeledRowKind ty "Labeled row var"
+      Just (AtomBinderInfo ty _) -> assertEq LabeledRowKind ty "Labeled row var"
+      Just x -> error $ "Not an atom var: " ++ pprint x
 
 labeledRowDifference :: ExtLabeledItems Type Name
                      -> ExtLabeledItems Type Name
@@ -742,12 +740,9 @@ typeCheckOp op = case op of
     RefTy h (TabTyAbs a) <- typeCheck ref
     i |: absArgType a
     return $ RefTy h $ snd $ applyAbs a i
-  FstRef ref -> do
-    RefTy h (PairTy a _) <- typeCheck ref
-    return $ RefTy h a
-  SndRef ref -> do
-    RefTy h (PairTy _ b) <- typeCheck ref
-    return $ RefTy h b
+  ProjRef i ref -> do
+    RefTy h (ProdTy tys) <- typeCheck ref
+    return $ RefTy h $ tys !! i
   IOAlloc t n -> do
     n |: IdxRepTy
     declareEff IOEffect
@@ -908,7 +903,7 @@ typeCheckHof hof = case hof of
     checkEq threadRange (binderType threadRange')
     -- TODO: Check compatibility of baseMonoids and accTys (need to be careful about lifting!)
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
-    return $ PairTy (TabTy (Ignore n) tileElemTy) $ mkConsListTy accTys
+    return $ PairTy (TabTy (Ignore n) tileElemTy) $ ProdTy accTys
   While body -> do
     Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr
@@ -1100,12 +1095,13 @@ typeReduceBlock scope (Block decls result) = do
 typeReduceAtom :: Scope -> Atom -> Atom
 typeReduceAtom scope x = case x of
   Var (Name InferenceName _ _ :> _) -> x
-  Var v -> case snd (scope ! v) of
+  Var v -> case scope ! v of
     -- TODO: worry about effects!
-    LetBound PlainLet expr -> fromMaybe x $ typeReduceExpr scope expr
+    AtomBinderInfo _ (LetBound PlainLet expr) -> fromMaybe x $ typeReduceExpr scope expr
     _ -> x
   TC con -> TC $ fmap (typeReduceAtom scope) con
-  Pi (Abs b (arr, ty)) -> Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (,PiBound) $ binderAsEnv b)) ty)
+  Pi (Abs b (arr, ty)) ->
+    Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (flip AtomBinderInfo PiBound) $ binderAsEnv b)) ty)
   TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
   RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
   VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
@@ -1117,11 +1113,13 @@ typeReduceAtom scope x = case x of
       Empty       -> Empty
       -- Technically this should use a more concrete type than UnknownBinder, but anything else
       -- than LetBound is indistinguishable for this reduction anyway.
-      Nest b rest -> Nest b' $ reduceNest (s <> (fmap (,UnknownBinder) $ binderAsEnv b)) rest
+      Nest b rest -> Nest b' $ reduceNest
+                      (s <> (fmap (flip AtomBinderInfo UnknownBinder) $ binderAsEnv b)) rest
         where b' = fmap (typeReduceAtom s) b
     reduceDataDef (DataDef n bs cons) =
       DataDef n (reduceNest scope bs)
-            (fmap (reduceDataConDef (scope <> (foldMap (fmap (,UnknownBinder) . binderAsEnv) bs))) cons)
+            (fmap (reduceDataConDef
+                   (scope <> (foldMap (fmap (flip AtomBinderInfo UnknownBinder) . binderAsEnv) bs))) cons)
     reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
 
 typeReduceExpr :: Scope -> Expr -> Maybe Atom
@@ -1133,7 +1131,66 @@ typeReduceExpr scope expr = case expr of
     -- TODO: Worry about variable capture. Should really carry a substitution.
     case f' of
       Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
-        typeReduceBlock scope $ subst (b@>x', scope) block
+        typeReduceBlock scope $ subst (b@>SubstVal x', scope) block
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
       _ -> Nothing
   _ -> Nothing
+
+
+nameToAtom :: Scope -> Name -> Maybe Atom
+nameToAtom scope v = do
+  case scope ! v of
+    AtomBinderInfo ty _ -> return $ Var $ v :> ty
+    DataDefName dataDef ->
+      return $ TypeCon dataDef []
+    ClassDefName (ClassDef dataDef _) ->
+      return $ TypeCon dataDef []
+    TyConName dataDefName -> do
+      let DataDefName dataDef = scope ! dataDefName
+      return $ TypeCon dataDef []
+    DataConName dataDefName conIdx -> do
+      let DataDefName dataDef = scope ! dataDefName
+      return $ DataCon dataDef [] conIdx []
+    MethodName _ _ methodGetter -> return methodGetter
+    binderInfo -> error $ "Not an atom name: " ++ pprint binderInfo
+
+-- === these instances have to go here because we need `getType` ===
+
+instance HasVars Module where
+  freeVars (Module _ decls result) = freeVars $ Abs decls result
+
+instance Subst Module where
+  subst env (Module ir decls result) = Module ir decls' result'
+    where Abs decls' result' = subst env $ Abs decls result
+
+instance HasVars EvaluatedModule where
+  freeVars (EvaluatedModule bindings synthCandidates sourceMap) =
+    (foldMap freeVars bindings <> freeVars synthCandidates <> freeVars sourceMap)
+      `envDiff` bindings
+
+instance HasVars SourceMap where
+  freeVars (SourceMap m) =
+    flip foldMap m \v -> (v @> LocalUExprBound)
+
+instance Subst EvaluatedModule where
+  subst env (EvaluatedModule bindings synthCandidates (SourceMap sourceMap)) = do
+    let (AsRecEnv bindings', env') = renamingSubst env (AsRecEnv bindings)
+    let envNew = env <> env'
+    let synthCandidates' = subst envNew synthCandidates
+    let (sourceMap', (_, bindings'')) = flip runCat envNew $ mapM substOrEmit sourceMap
+    EvaluatedModule (bindings'<>bindings'') synthCandidates' $ SourceMap sourceMap'
+
+substOrEmit :: Name -> Cat ScopedSubstEnv Name
+substOrEmit name = do
+  (substEnv, scope) <- look
+  case envLookup substEnv name of
+    Nothing -> return name
+    Just (Rename name') -> return name'
+    Just (SubstVal (Var (name':>_))) -> return name'
+    Just (SubstVal atom) -> do
+      let name' = genFresh name scope
+      let info = AtomBinderInfo (getType atom) (LetBound PlainLet (Atom atom))
+      -- we extend the subst here so that we only generate one new binding for
+      -- each name that appears on the rhs of the source map
+      extend (name @> Rename name', name' @> info)
+      return name'
