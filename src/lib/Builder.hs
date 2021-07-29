@@ -29,8 +29,8 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
-                buildDataDef, emitDataDef, emitDataConName, emitTyConName,
-                emitSuperclass, emitMethodType,
+                buildDataDef, emitDataDef, emitClassDef, emitDataConName, emitTyConName,
+                emitSuperclass, emitMethodType, getDataDef, getClassDef,
                 emitRunReader, tabGet, SubstBuilderT, SubstBuilder, runSubstBuilderT,
                 ptrOffset, ptrLoad, unsafePtrLoad,
                 evalBlockE, substTraversalDef,
@@ -226,6 +226,9 @@ emitBinding binfo = do
 emitDataDef :: MonadBuilder m => DataDef -> m DataDefName
 emitDataDef dataDef = emitBinding $ DataDefName dataDef
 
+emitClassDef :: MonadBuilder m => ClassDef -> m ClassDefName
+emitClassDef classDef = emitBinding $ ClassDefName classDef
+
 emitDataConName :: MonadBuilder m => DataDefName -> Int -> m Name
 emitDataConName dataDefName conIdx = do
   DataDef _ _ dataCons <- getDataDef dataDefName
@@ -243,26 +246,33 @@ getDataDef dataDefName = do
     DataDefName dataDef -> return dataDef
     _ -> error "Not a data def"
 
+getClassDef :: MonadBuilder m => ClassDefName -> m ClassDef
+getClassDef classDefName = do
+  scope <- getScope
+  case scope ! classDefName of
+    ClassDefName classDef -> return classDef
+    _ -> error "Not a data def"
+
 emitSuperclass :: MonadBuilder m => ClassDefName -> Int -> m Name
 emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
   emitBinding $ SuperclassName dataDef idx getter
 
 emitMethodType :: MonadBuilder m => ClassDefName -> Int -> m Name
-emitMethodType dataDef idx = do
-  getter <- makeMethodGetter dataDef idx
-  emitBinding $ MethodName dataDef idx getter
+emitMethodType classDef idx = do
+  getter <- makeMethodGetter classDef idx
+  emitBinding $ MethodName classDef idx getter
 
-makeMethodGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
-makeMethodGetter dataDefName methodIdx = do
-  ~def@(DataDef _ paramBs _) <- getDataDef dataDefName
+makeMethodGetter :: MonadBuilder m => ClassDefName -> Int -> m Atom
+makeMethodGetter classDefName methodIdx = do
+  ClassDef def@(DataDef _ paramBs _) _ <- getClassDef classDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [1, 0] dict
 
 makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
-makeSuperclassGetter dataDefName methodIdx = do
-  ~def@(DataDef _ paramBs _) <- getDataDef dataDefName
+makeSuperclassGetter classDefName methodIdx = do
+  ClassDef def@(DataDef _ paramBs _) _ <- getClassDef classDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [0, 0] dict

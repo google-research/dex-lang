@@ -571,6 +571,7 @@ instance Pretty AnyBinderInfo where
   pretty info = case info of
     AtomBinderInfo ty binfo -> "<atom binder>" <+> p ty <+> p binfo
     DataDefName  dataDef -> "<data def>" <+> p dataDef
+    ClassDefName classDef -> "<class def>" <+> p classDef
     TyConName    dataDef -> "<type con name>" <+> p dataDef
     DataConName  dataDef i -> "<data con name>" <+> parens ("idx:" <+> p i) <+> p dataDef
     SuperclassName dataDef i getter ->
@@ -584,6 +585,10 @@ instance Pretty AnyBinderInfo where
 instance Pretty DataDef where
   pretty (DataDef name bs cons) =
     "data" <+> p name <+> p bs <> hardline <> prettyLines cons
+
+instance Pretty ClassDef where
+  pretty (ClassDef dataDef methodNames) =
+    "interface" <+> p dataDef <+> p methodNames
 
 instance Pretty DataConDef where
   pretty (DataConDef name bs) =
@@ -676,10 +681,11 @@ instance Pretty UDecl where
      let methods = [UAnnBinder b ty | (b, ty) <- zip (toList methodNames) methodTys]
      in "interface" <+> p params <+> p superclasses <+> p interfaceName
          <> hardline <> prettyLines methods
-  pretty (UInstance bs ty methods Nothing) =
-    "instance" <+> p bs <+> p ty <> hardline <> prettyLines methods
-  pretty (UInstance bs ty methods (Just v)) =
-    "named-instance" <+> p v <+> ":" <+> p bs <+> p ty <> hardline <> prettyLines methods
+  pretty (UInstance bs className params methods Nothing) =
+    "instance" <+> p bs <+> p className <+> p params <+> hardline <> prettyLines methods
+  pretty (UInstance bs className params methods (Just v)) =
+    "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
+        <> hardline <> prettyLines methods
 
 instance Pretty UPatAnnArrow where
   pretty (UPatAnnArrow b arr) = p b <> ":" <> p arr

@@ -62,7 +62,7 @@ inferModule scope (UModule uDecl sourceMap) = do
   where
     requiresEvaluation = case uDecl of
       ULet         _ _ _     -> True
-      UInstance    _ _ _ _   -> True
+      UInstance    _ _ _ _ _ -> True
       UDataDefDecl _ _ _     -> False
       UInterface   _ _ _ _ _ -> False
 
@@ -345,6 +345,8 @@ nameToAtom v = do
     AtomBinderInfo ty _ -> return $ Var $ v :> ty
     DataDefName dataDef ->
       return $ TypeCon dataDef []
+    ClassDefName (ClassDef dataDef _) ->
+      return $ TypeCon dataDef []
     TyConName dataDefName -> do
       let DataDefName dataDef = scope ! dataDefName
       return $ TypeCon dataDef []
@@ -371,15 +373,18 @@ inferUDecl (UDataDefDecl def tc dcs) = do
   dcs' <- mapM (emitDataConName def') [0..(length dcs - 1)]
   return $ tc @> Rename tc' <> newEnv dcs (map Rename dcs')
 inferUDecl (UInterface paramBs superclasses methodTys className methodNames) = do
-  classDef <- inferInterfaceDataDef (pprint className) paramBs superclasses methodTys
-  className'  <- withNameHint className $ emitDataDef classDef
-  _            <- mapM (emitSuperclass className') [0..(length superclasses - 1)]
+  let classPrettyName = pprint className
+  let methodPrettyNames = map pprint $ toList methodNames
+  classDef <- inferInterfaceDataDef classPrettyName methodPrettyNames
+                paramBs superclasses methodTys
+  className' <- withNameHint className $ emitClassDef classDef
+  mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <- forM (enumerate (toList methodNames)) \(i, name) ->
                     withNameHint name $ emitMethodType className' i
   return $  className @> Rename className'
          <> newEnv methodNames (map Rename methodNames')
-inferUDecl (UInstance argBinders instanceTy methods maybeName) = do
-  instanceDict <- checkInstance argBinders instanceTy methods
+inferUDecl (UInstance argBinders ~(UInternalVar className) params methods maybeName) = do
+  instanceDict <- checkInstance argBinders className params methods
   case maybeName of
     Nothing -> do
       _ <- withNameHint hint $ emitAnn InstanceLet (Atom instanceDict)
@@ -397,14 +402,16 @@ inferDataDef (UDataDef (tyConName, paramBs) dataCons) =
                      return $ DataConDef dataConName argBs'
     return $ DataDef tyConName paramBs' dataCons'
 
-inferInterfaceDataDef :: SourceName -> Nest UAnnBinder -> [UType] -> [UType] -> UInferM ClassDef
-inferInterfaceDataDef className paramBs superclasses methods =
+inferInterfaceDataDef :: SourceName -> [SourceName] -> Nest UAnnBinder
+                      -> [UType] -> [UType] -> UInferM ClassDef
+inferInterfaceDataDef className methodNames paramBs superclasses methods =
   withNestedBinders paramBs \paramBs' -> do
     superclasses' <- mapM checkUType superclasses
     methods'     <- mapM checkUType methods
     let dictContents = PairTy (ProdTy superclasses') (ProdTy methods')
-    return $ DataDef className paramBs'
-               [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+    let dictDef = DataDef className paramBs'
+                    [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+    return $ ClassDef dictDef methodNames
 
 withNestedBinders :: Nest UAnnBinder -> (Nest Binder -> UInferM a) -> UInferM a
 withNestedBinders Empty cont = cont Empty
@@ -440,41 +447,44 @@ checkULam (UPatAnn p ann) body piTy = do
     \x@(Var v) -> checkLeaks [v] $ withBindPat p v $
                       checkSigma body Suggest $ snd $ applyAbs piTy x
 
-checkInstance :: Nest UPatAnnArrow -> UType -> [UMethodDef] -> UInferM Atom
-checkInstance Empty ty methods = do
-  ty' <- checkUType ty
-  case ty' of
-    TypeCon def@(DataDef className _ _) params ->
-      case applyDataDefParams def params of
-        [ClassDictCon superclassTys methodTys] -> do
-          let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
-          methods' <- checkMethodDefs className methodTys methods
-          return $ DataCon def params 0 [PairVal (ProdVal superclassHoles)
-                                                 (ProdVal methods')]
-        _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
-    _     -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
-checkInstance (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) ty methods = do
+checkInstance :: Nest UPatAnnArrow -> Name -> [UType] -> [UMethodDef] -> UInferM Atom
+checkInstance (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) className params methods = do
   case arrow of
     ImplicitArrow -> return ()
     ClassArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
   argTy <- checkAnn ann
   buildLam (Bind $ patNameHint p :> argTy) (fromUArrow arrow) \(Var v) ->
-    checkLeaks [v] $ withBindPat p v $ checkInstance rest ty methods
+    checkLeaks [v] $ withBindPat p v $ checkInstance rest className params methods
+checkInstance Empty className params methods = do
+  substEnv <- ask
+  className' <- case envLookup substEnv className of
+    Nothing -> return className
+    Just (Rename className') -> return className'
+    Just (SubstVal _) -> throw TypeErr $ "Not a valid class: " ++ pprint className
+  params' <- mapM checkUType params
+  ClassDef def methodNames <- getClassDef className'
+  [ClassDictCon superclassTys methodTys] <- return $ applyDataDefParams def params'
+  let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
+  methodsChecked <- mapM (checkMethodDef className' methodTys) methods
+  let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
+  forM_ (repeated idxs) \i ->
+    throw TypeErr $ "Duplicate method: " ++ pprint (methodNames!!i)
+  forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
+    throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
+  return $ DataCon def params' 0 [PairVal (ProdVal superclassHoles)
+                                          (ProdVal methods')]
 
-checkMethodDefs :: SourceName ->  [Type] -> [UMethodDef] -> UInferM [Atom]
-checkMethodDefs _ methodTys methods = do
-  methods' <- forM methods \(UMethodDef (UInternalVar v) rhs) -> do
-    scope <- getScope
-    -- TODO: check it's the right class! (easier with named data defs)
-    let MethodName _ idx _ = scope ! v
-    let methodTy = methodTys !! idx
-    rhs' <- checkSigma rhs Suggest methodTy
-    return (idx, rhs')
-  let methodsSorted = sortOn fst methods'
-  unless (map fst methodsSorted == [0..(length methodTys - 1)]) $
-    throw TypeErr $ "Missing or duplicated methods"
-  return $ map snd methodsSorted
+checkMethodDef :: ClassDefName -> [Type] -> UMethodDef -> UInferM (Int, Atom)
+checkMethodDef className methodTys (UMethodDef ~(UInternalVar v) rhs) = do
+  scope <- getScope
+  ClassDef (DataDef classSourceName _ _ ) _ <- getClassDef className
+  case scope ! v of
+    MethodName className' i _ | className == className' -> do
+      let methodTy = methodTys !! i
+      rhs' <- checkSigma rhs Suggest methodTy
+      return (i, rhs')
+    _ -> throw TypeErr $ pprint v ++ " is not a method of " ++ pprint classSourceName
 
 checkUEffRow :: UEffectRow -> UInferM EffectRow
 checkUEffRow (EffectRow effs t) = do

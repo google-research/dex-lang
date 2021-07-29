@@ -46,7 +46,7 @@ module Syntax (
     UPat, UPat' (..), SourceUModule (..),
     UModule (..), UDecl (..), UDataDef (..), UArrow, arrowEff,
     UEffect, UEffectRow, UEffArrow,
-    DataDef (..), DataConDef (..), ClassDef, UConDef, Nest (..), toNest,
+    DataDef (..), DataConDef (..), ClassDef (..), UConDef, Nest (..), toNest,
     DataDefName, ClassDefName,
     subst, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
@@ -148,8 +148,8 @@ type Binder = BinderP Type
 -- The SourceNames in DataDef, DataConDef and ClassDef are purely for printing
 data DataDef = DataDef SourceName (Nest Binder) [DataConDef]  deriving (Show, Generic)
 data DataConDef = DataConDef SourceName (Nest Binder)    deriving (Show, Generic)
-type ClassDef = DataDef  -- TODO: make ClassDef a separate thing (even if mostly
-                         -- just a wrapper around DataDef).
+-- The SourceNames are the method names, for reporting errors
+data ClassDef = ClassDef DataDef [SourceName]  deriving (Show, Generic)
 
 data Abs b body = Abs b body               deriving (Show, Generic)
 data Nest a = Nest a (Nest a) | Empty
@@ -261,7 +261,7 @@ data UDecl =
        (Nest UBinder)   -- method names
  | UInstance
      (Nest UPatAnnArrow)      -- dictionary args (i.e. conditions)
-       UType                  -- dictionary type
+       UVar [UExpr]            -- class var and params
        [UMethodDef]           -- method definitions
      (Maybe UBinder)          -- optional instance name
    deriving (Show, Generic)
@@ -797,8 +797,8 @@ instance HasUVars UDecl where
     freeUVars dataDef <> freeUVars (Abs bTyCon bDataCons)
   freeUVars (UInterface paramBs superclasses methods _ _) =
     freeUVars $ Abs paramBs (superclasses, methods)
-  freeUVars (UInstance bs ty methods _) =
-    freeUVars $ Abs bs (ty, methods)
+  freeUVars (UInstance bs className params methods _) =
+    freeUVars $ Abs bs ((className, params), methods)
 
 instance (BindsUVars b1, HasUVars b1, HasUVars b2) => HasUVars (NestPair b1 b2) where
   freeUVars (NestPair b1 b2) =
@@ -830,7 +830,7 @@ instance BindsUVars UDecl where
       boundUVars $ NestPair bTyCon bDataCons
     UInterface _ _ _ className methodNames ->
       boundUVars $ NestPair className methodNames
-    UInstance _ _ _ instanceName  -> foldMap boundUVars instanceName
+    UInstance _ _ _ _ instanceName  -> foldMap boundUVars instanceName
 
 instance (BindsUVars b1, BindsUVars b2) => BindsUVars (NestPair b1 b2) where
   boundUVars (NestPair b1 b2) = boundUVars b1 <> boundUVars b2
@@ -899,6 +899,9 @@ data AnyBinderInfo =
  | DataDefName  DataDef
  | TyConName    DataDefName
  | DataConName  DataDefName Int
+ | ClassDefName ClassDef
+ -- The atoms in SuperclassName and MethodNames are the dict projections, cached
+ -- for fast lookup.
  | SuperclassName ClassDefName Int Atom
  | MethodName     ClassDefName Int Atom
  | LocalUExprBound
@@ -906,10 +909,9 @@ data AnyBinderInfo =
  | TrulyUnknownBinder
    deriving (Show, Generic)
 
--- Just documentation for now, but it'll be a distinct type
--- with safer-names
-type DataDefName = Name
-type ClassDefName = DataDefName
+-- Just documentation for now, but they'll be distinct types with safer-names
+type DataDefName  = Name
+type ClassDefName = Name
 
 data BinderInfo =
         LamBound (ArrowP ())
@@ -1286,6 +1288,7 @@ instance HasVars AnyBinderInfo where
   freeVars info = case info of
     AtomBinderInfo ty binfo -> freeVars ty <> freeVars binfo
     DataDefName dataDef     -> freeVars dataDef
+    ClassDefName classDef   -> freeVars classDef
     TyConName      dataDefName   -> freeVarsName dataDefName
     DataConName    dataDefName _ -> freeVarsName dataDefName
     SuperclassName dataDefName _ getter -> freeVarsName dataDefName <> freeVars getter
@@ -1298,6 +1301,7 @@ instance Subst AnyBinderInfo where
   subst env@(substEnv, _) info = case info of
     AtomBinderInfo ty binfo    -> AtomBinderInfo (subst env ty) (subst env binfo)
     DataDefName dataDef        -> DataDefName    (subst env dataDef)
+    ClassDefName classDef      -> ClassDefName   (subst env classDef)
     TyConName      dataDefName        -> TyConName   (substName substEnv dataDefName)
     DataConName    dataDefName idx -> DataConName    (substName substEnv dataDefName) idx
     SuperclassName dataDefName idx getter ->
@@ -1323,6 +1327,13 @@ instance Subst DataDef where
   subst env (DataDef tcName paramBs dataCons) =
     DataDef tcName paramBs' dataCons'
     where Abs paramBs' dataCons' = subst env $ Abs paramBs dataCons
+
+instance HasVars ClassDef where
+  freeVars (ClassDef dataDef _) = freeVars dataDef
+
+instance Subst ClassDef where
+  subst env (ClassDef dataDef methodNames) =
+    ClassDef (subst env dataDef) methodNames
 
 instance HasVars DataConDef where
   freeVars (DataConDef _ bs) = freeVars $ Abs bs ()
@@ -1810,6 +1821,7 @@ instance Store LetAnn
 instance Store BinderInfo
 instance Store AnyBinderInfo
 instance Store DataDef
+instance Store ClassDef
 instance Store DataConDef
 instance Store LitVal
 instance Store ScalarBaseType

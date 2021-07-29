@@ -166,10 +166,10 @@ sourceRenamableBTopDecl (ULet ann (UPatAnn pat (Just ty)) expr) = do
   let ty'   = foldr addImplicitPiArg  ty   implicitArgs
   let expr' = foldr addImplicitLamArg expr implicitArgs
   sourceRenameB $ ULet ann (UPatAnn pat (Just ty')) expr'
-sourceRenamableBTopDecl (UInstance argBinders instanceTy methods maybeName) = do
-  let implicitArgs = findImplicitArgNames $ Abs argBinders instanceTy
+sourceRenamableBTopDecl (UInstance argBinders className params methods maybeName) = do
+  let implicitArgs = findImplicitArgNames $ Abs argBinders (className, params)
   let argBinders' = toNest (map nameAsImplicitBinder implicitArgs) <> argBinders
-  sourceRenameB $ UInstance argBinders' instanceTy methods maybeName
+  sourceRenameB $ UInstance argBinders' className params methods maybeName
 sourceRenamableBTopDecl decl = sourceRenameB decl
 
 instance SourceRenamableB UDecl where
@@ -189,11 +189,11 @@ instance SourceRenamableB UDecl where
       className' <- sourceRenameB className
       methodNames' <- sourceRenameB methodNames
       return $ UInterface paramBs' superclasses' methodTys' className' methodNames'
-    UInstance conditions dictTy methodDefs instanceName -> do
-      Abs conditions' (dictTy', methodDefs') <-
-        lift $ sourceRenameE $ Abs conditions (dictTy, methodDefs)
+    UInstance conditions className params methodDefs instanceName -> do
+      Abs conditions' ((className', params'), methodDefs') <-
+        lift $ sourceRenameE $ Abs conditions ((className, params), methodDefs)
       instanceName' <- mapM sourceRenameB instanceName
-      return $ UInstance conditions' dictTy' methodDefs' instanceName'
+      return $ UInstance conditions' className' params' methodDefs' instanceName'
 
 instance SourceRenamableE UDataDef where
   sourceRenameE (UDataDef (tyConName, paramBs) dataCons) =
@@ -430,3 +430,7 @@ instance HasImplicitArgNamesE e => HasImplicitArgNamesE (WithSrc e) where
 
 instance HasImplicitArgNamesB e => HasImplicitArgNamesB (WithSrc e) where
   implicitArgsB (WithSrc _ x) = implicitArgsB x
+
+instance HasImplicitArgNamesE e => HasImplicitArgNamesE [e] where
+  implicitArgsE xs = mapM_ implicitArgsE xs
+

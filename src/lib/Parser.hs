@@ -285,11 +285,12 @@ instanceDef isNamed = do
     True  -> keyWord NamedInstanceKW *> (Just . fromString <$> anyName) <* sym ":"
   explicitArgs <- many defArg
   constraints <- classConstraints
-  classTy <- uType
+  className <- upperName
+  params <- many leafExpr
   let argBinders = explicitArgs
                  ++ [UPatAnnArrow (UPatAnn (ns UPatIgnore) (Just c)) ClassArrow | c <- constraints]
   methods <- onePerLine instanceMethod
-  return $ UInstance (toNest argBinders) classTy methods name
+  return $ UInstance (toNest argBinders) (fromString className) params methods name
 
 instanceMethod :: Parser UMethodDef
 instanceMethod = do
