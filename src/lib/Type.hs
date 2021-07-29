@@ -14,7 +14,7 @@ module Type (
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent, checkExtends,
   indexSetConcreteSize, traceCheckM, traceCheck, projectLength,
-  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect) where
+  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect, nameToAtom) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -1135,6 +1135,24 @@ typeReduceExpr scope expr = case expr of
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
       _ -> Nothing
   _ -> Nothing
+
+
+nameToAtom :: Scope -> Name -> Maybe Atom
+nameToAtom scope v = do
+  case scope ! v of
+    AtomBinderInfo ty _ -> return $ Var $ v :> ty
+    DataDefName dataDef ->
+      return $ TypeCon dataDef []
+    ClassDefName (ClassDef dataDef _) ->
+      return $ TypeCon dataDef []
+    TyConName dataDefName -> do
+      let DataDefName dataDef = scope ! dataDefName
+      return $ TypeCon dataDef []
+    DataConName dataDefName conIdx -> do
+      let DataDefName dataDef = scope ! dataDefName
+      return $ DataCon dataDef [] conIdx []
+    MethodName _ _ methodGetter -> return methodGetter
+    binderInfo -> error $ "Not an atom name: " ++ pprint binderInfo
 
 -- === these instances have to go here because we need `getType` ===
 

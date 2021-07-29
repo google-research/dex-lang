@@ -192,10 +192,9 @@ evalSourceBlock' block = case sbContents block of
       Nothing -> throw UnboundVarErr $ pprint v
       Just v' -> do
         bindings <- asks $ topBindings . topState
-        case envLookup bindings v' of
-          Just (AtomBinderInfo ty _) -> do
-            logTop (TextOut $ pprint ty)
-          _ -> throw CompilerErr $ pprint v
+        case nameToAtom bindings v' of
+          Just x -> logTop $ TextOut $ pprint $ getType x
+          Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
   ImportModule moduleName -> do
     currentlyImported <- gets modulesImported
     case M.lookup moduleName currentlyImported of

@@ -14,6 +14,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Data.Maybe (fromJust)
 import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
@@ -333,28 +334,11 @@ lookupUVar :: UVar -> UInferM Atom
 lookupUVar (USourceVar _) = error "Shouldn't have source names left"
 lookupUVar (UInternalVar v) = do
   substEnv <- ask
-  case envLookup substEnv v of
-    Nothing -> nameToAtom v
-    Just (Rename  v') -> nameToAtom v'
-    Just (SubstVal x) -> return x
-
-nameToAtom :: Name -> UInferM Atom
-nameToAtom v = do
   scope <- getScope
-  case scope ! v of
-    AtomBinderInfo ty _ -> return $ Var $ v :> ty
-    DataDefName dataDef ->
-      return $ TypeCon dataDef []
-    ClassDefName (ClassDef dataDef _) ->
-      return $ TypeCon dataDef []
-    TyConName dataDefName -> do
-      let DataDefName dataDef = scope ! dataDefName
-      return $ TypeCon dataDef []
-    DataConName dataDefName conIdx -> do
-      let DataDefName dataDef = scope ! dataDefName
-      return $ DataCon dataDef [] conIdx []
-    MethodName _ _ methodGetter -> return methodGetter
-    binderInfo -> error $ "Not an atom name: " ++ pprint binderInfo
+  case envLookup substEnv v of
+    Nothing -> return $ fromJust $ nameToAtom scope v
+    Just (Rename  v') -> return $ fromJust $ nameToAtom scope v'
+    Just (SubstVal x) -> return x
 
 inferUDecl ::  UDecl -> UInferM SubstEnv
 inferUDecl (ULet letAnn (UPatAnn p ann) rhs) = do
