@@ -37,9 +37,8 @@ def cholsolve (l:LowerTriMat n Float) (b:n=>Float) : n=>Float =
     backward_substitute u b'
 
 ' gaussian process prediction
-$$ k(x, z) = \sigma^2\exp\bigg(-\frac{(x-z)^2}{\theta}\bigg)$$
 
-def gaussian_kernal (theta:Float) (variance:Float) 
+def gaussian_kernel (theta:Float) (variance:Float) 
     (x:d=>Float) (z:d=>Float) : Float = 
     diff = x - z
     power = (neg (vdot diff diff)) / theta
@@ -47,11 +46,11 @@ def gaussian_kernal (theta:Float) (variance:Float)
 
 def gp_prediction 
     (xs1:n1=>d=>Float) (ys1:n1=>Float) (xs2:n2=>d=>Float)
-    (kernal:(d=>Float)->(d=>Float)->Float) (noise_var:Float)
+    (kernel:(d=>Float)->(d=>Float)->Float) (noise_var:Float)
     : (n2=>Float & n2=>n2=>Float) = 
-    k11 = for i j. kernal xs1.i xs1.j
-    k21 = for i j. kernal xs2.i xs1.j
-    k22 = for i j. kernal xs2.i xs2.j
+    k11 = for i j. kernel xs1.i xs1.j
+    k21 = for i j. kernel xs2.i xs1.j
+    k22 = for i j. kernel xs2.i xs2.j
     c = chol $ k11 + noise_var .* eye
     mu_pred = k21 **. (cholsolve c ys1)
     temp = transpose for i. cholsolve c k21.i
@@ -75,7 +74,7 @@ noise_var = pow 0.1 2.0
 ' test
 
 %time
-(ys2_mu, ys2_cov) = gp_prediction xs1 ys1 xs2 (gaussian_kernal 1.0 1.0) noise_var
+(ys2_mu, ys2_cov) = gp_prediction xs1 ys1 xs2 (gaussian_kernel 1.0 1.0) noise_var
 ys2_std = for i. sqrt ys2_cov.i.i
 ys2_upper = ys2_mu + ys2_std
 ys2_lower = ys2_mu - ys2_std
