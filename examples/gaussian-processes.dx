@@ -79,16 +79,13 @@ ys2_std = for i. sqrt ys2_cov.i.i
 ys2_upper = ys2_mu + ys2_std
 ys2_lower = ys2_mu - ys2_std
 
-:html showPlot $ xyPlot arr1 ys1
-:html showPlot $ xycPlot arr2 ys2_mu ys2_std
+p_base = xycPlot arr2 ys2_mu ys2_std
+p_lower = xyPlot arr2 ys2_lower
+p_upper = xyPlot arr2 ys2_upper
 
-arr2' : (Fin 603)=>Float = for i. arr2.((mod (ordinal i) 201)@_)
-ys2_mu':(Fin 603)=>Float = for i.
-    ii = ordinal i 
-    case ii < 201 of
-        True -> ys2_lower.(ii@_)
-        False -> case ii < 402 of 
-            True-> ys2_mu.((mod ii 201)@_)
-            False -> ys2_upper.((mod ii 201)@_)
+def showDiagram (d:Diagram) : String =
+  renderSVG d ((0.0, 0.0), (1.0, 1.0))
 
-:html showPlot $ xyPlot arr2' ys2_mu'
+:html showDiagram $ (plotToDiagram p_base) <> 
+  (plotToDiagram p_lower) <> 
+  (plotToDiagram p_upper)
