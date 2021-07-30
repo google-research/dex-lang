@@ -38,11 +38,17 @@ def cholsolve (l:LowerTriMat n Float) (b:n=>Float) : n=>Float =
 
 ' gaussian process prediction
 
-def gaussian_kernel (theta:Float) (variance:Float) 
+def gaussian_kernel (variance:Float) 
     (x:d=>Float) (z:d=>Float) : Float = 
     diff = x - z
-    power = (neg (vdot diff diff)) / theta
-    variance * (exp power)
+    power = neg (vdot diff diff) / variance / 2.
+    exp power
+
+def exp_kernel (variance:Float)
+    (x:d=>Float) (z:d=>Float) : Float = 
+    diff = x - z
+    power = neg (sqrt (vdot diff diff)) / variance / 2.
+    exp power
 
 def gp_prediction 
     (xs1:n1=>d=>Float) (ys1:n1=>Float) (xs2:n2=>d=>Float)
@@ -74,7 +80,11 @@ noise_var = pow 0.1 2.0
 ' test
 
 %time
-(ys2_mu, ys2_cov) = gp_prediction xs1 ys1 xs2 (gaussian_kernel 1.0 1.0) noise_var
+(ys2_mu, ys2_cov) = gp_prediction xs1 ys1 xs2 (gaussian_kernel 1.0) noise_var
+
+-- %time
+-- (ys2_mu, ys2_cov) = gp_prediction xs1 ys1 xs2 (exp_kernel 1.0) noise_var
+
 ys2_std = for i. sqrt ys2_cov.i.i
 ys2_upper = ys2_mu + ys2_std
 ys2_lower = ys2_mu - ys2_std
