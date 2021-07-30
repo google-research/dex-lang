@@ -556,6 +556,14 @@ exceptToMaybeExpr expr = do
       (maybeAns, newState) <- fromPair result
       emitMaybeCase maybeAns (return $ NothingAtom a) \ans ->
         return $ JustAtom a $ PairVal ans newState
+    Hof (RunWriter baseMonoid lam) -> do
+      let BinaryFunVal _ b _ body = lam
+      let RefTy _ accumTy = binderAnn b
+      result  <- emitRunWriter "ref" accumTy baseMonoid \ref ->
+        extendR (b@>ref) $ exceptToMaybeBlock body
+      (maybeAns, accumResult) <- fromPair result
+      emitMaybeCase maybeAns (return $ NothingAtom a) \ans ->
+        return $ JustAtom a $ PairVal ans accumResult
     Hof (While ~(Lam (Abs _ (_, body)))) -> do
       eff <- getAllowedEffects
       lam <- buildLam (Ignore UnitTy) (PlainArrow eff) \_ ->
