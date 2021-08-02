@@ -33,7 +33,7 @@ import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
 import Env (nameTag)
 
 import SaferNames.NameCore (unsafeCoerceE, unsafeCoerceB, getRawName)
-import SaferNames.Name
+import SaferNames.Name hiding (lookupEnv)
 import SaferNames.Syntax
 
 type PrettyPrecE e = (forall (n::S). PrettyPrec (e n)) :: Constraint
