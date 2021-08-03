@@ -28,7 +28,9 @@ module SaferNames.Name (
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
   InjectableE (..), InjectableB (..), Ext (..), InjectionCoercion,
   lookupBindings, lookupBindingsVal, withFreshM, inject, injectM, withDistinct,
-  EmptyAbs, pattern EmptyAbs, SubstVal (..)) where
+  EmptyAbs, pattern EmptyAbs, SubstVal (..),
+  NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..),
+  liftSG, traverseNestSG) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -77,7 +79,6 @@ newEnv f = Env f emptyNameMap
 
 voidEnv :: Env v VoidS o
 voidEnv = newEnv absurdNameFunction
-
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -194,8 +195,7 @@ class SubstE (v::E->E) (e::E) where
 class SubstB (v::E->E) (b::B) where
   substB :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
          => b i i'
-         -> (forall o'. b o o' -> m i' o' r)
-         -> m i o r
+         -> SubstGenT m i i' (b o) o
 
 type HasNamesE = SubstE Name
 type HasNamesB = SubstB Name
@@ -204,8 +204,19 @@ instance Typeable s => SubstE Name (Name s) where
   substE name = lookupEnv name
 
 instance (InjectableE s, Typeable s) => SubstB v (NameBinder s) where
-  substB b cont =
-    withFreshM \b' -> extendRenamer (b @> binderName b') $ cont b'
+  substB b = SubstGenT do
+    Scope names <- getScope
+    withFresh names \b' -> do
+      let frag = ScopeFrag $ singletonNameSet b'
+      return $ Abs frag $ PairE (b @> binderName b') b'
+
+withSubstB :: (SubstB v b, ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+           => b i i'
+           -> (forall o'. b o o' -> m i' o' r)
+           -> m i o r
+withSubstB b cont = do
+  Abs scopeFrag (PairE substFrag b') <- runSubstGenT $ substB b
+  extendScope scopeFrag $ extendRenamer substFrag $ cont b'
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -318,6 +329,15 @@ bindingsAsScope (Bindings m) = Scope $ nameMapNames m
 
 bindingsFragAsScopeFrag :: BindingsFrag n l -> ScopeFrag n l
 bindingsFragAsScopeFrag (BindingsFrag m) = ScopeFrag $ nameMapNames m
+
+
+-- TODO: we ought to make `ScopeFrag` a category, but it's tricky because
+-- we require the `Distinct` constraint to make the identity fragment.
+emptyScopeFrag :: Distinct n => ScopeFrag n n
+emptyScopeFrag = ScopeFrag emptyNameSetFrag
+
+concatScopeFrags :: ScopeFrag n1 n2 -> ScopeFrag n2 n3 -> ScopeFrag n1 n3
+concatScopeFrags (ScopeFrag s1) (ScopeFrag s2) = ScopeFrag $ concatNameSets s1 s2
 
 infixl 9 !
 (!) :: Env v i o -> Name s i -> v s o
@@ -612,6 +632,73 @@ lookupNameTraversalEnv (NameTraverserEnv f frag) name =
     Left name' -> f name'
     Right val -> return val
 
+-- === monadish thing for computations that produce names ===
+
+class NameGen (m :: E -> S -> *) where
+  returnG :: e n -> m e n
+  bindG   :: m e n -> (forall l. e l -> m e' l) -> m e' n
+
+newtype NameGenT (m::MonadKind1) (e::E) (n::S) =
+  NameGenT { runNameGenT :: m n (Abs ScopeFrag e n) }
+
+instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) where
+  returnG e = NameGenT $ do
+    withDistinct do
+      let frag = ScopeFrag emptyNameSetFrag
+      return (Abs frag e)
+  bindG (NameGenT m) f = NameGenT do
+    Abs s  e  <- m
+    Abs s' e' <- extendScope s $ runNameGenT $ f e
+    return $ Abs (concatScopeFrags s s') e'
+
+-- === monadish thing for computations that produce names and substitutions ===
+
+-- TODO: Here we actually just want an indexed monad `m :: S -> S -> * -> *`
+-- with a bind like `>>>= :: m i i' a -> (a -> m i' i'' b) -> m i i'' b`. But we
+-- also want it to be an instance of `NameGen`, so we end up with all this
+-- `forall o' ...` business. Can we separate them better?
+-- TODO: Is this whole thing just getting too silly? Maybe it wouldn't be the
+-- end of the world if we were forced to sprinkle some explicit recursive helper
+-- functions in our passes instead of trying to treat everything as some
+-- generalized traversal.
+class (forall i. NameGen (m i i)) => SubstGen (m :: S -> S -> E -> S -> *) where
+  returnSG :: e o -> m i i e o
+  bindSG   :: m i i' e o -> (forall o'. e o' -> m i' i'' e' o') -> m i i'' e' o
+
+traverseNestSG :: SubstGen m
+               => (forall ii ii' oo. b ii ii' -> m ii ii' (b oo) oo)
+               -> Nest b i i'
+               -> m i i' (Nest b o) o
+traverseNestSG _ Empty = returnSG Empty
+traverseNestSG f (Nest b bs) =
+  f b `bindSG` \b' ->
+    traverseNestSG f bs `bindSG` \bs' ->
+      returnSG $ Nest b' bs'
+
+newtype SubstGenT (m::MonadKind2) (i::S) (i'::S) (e::E) (o::S) =
+  SubstGenT { runSubstGenT :: m i o (Abs ScopeFrag (PairE (EnvFrag Name i i') e) o) }
+
+instance (ScopeReader2 m, ScopeExtender2 m, Renamer m, Monad2 m)
+         => NameGen (SubstGenT m i i) where
+  returnG = returnSG
+  bindG = bindSG
+
+instance (ScopeReader2 m, ScopeExtender2 m, Renamer m, Monad2 m)
+         => SubstGen (SubstGenT m) where
+  returnSG e = SubstGenT $ withDistinct do
+    return (Abs emptyScopeFrag (PairE emptyEnvFrag e))
+  bindSG (SubstGenT m) f = SubstGenT do
+    Abs s (PairE env e) <- m
+    extendScope s $ extendRenamer env do
+      Abs s' (PairE env' e') <- runSubstGenT $ f e
+      envInj <- extendScope s' $ injectM s' env
+      return $ Abs (concatScopeFrags s s') $ PairE (envInj <.> env')  e'
+
+liftSG :: ScopeReader2 m => m i o a -> (a -> SubstGenT m i i' e o) -> SubstGenT m i i' e o
+liftSG m cont = SubstGenT do
+  ans <- m
+  runSubstGenT $ cont ans
+
 -- === instances ===
 
 instance InjectableV v => InjectableE (Env v i) where
@@ -634,7 +721,7 @@ instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
 
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE (Abs b body) = do
-    substB b \b' -> Abs b' <$> substE body
+    withSubstB b \b' -> Abs b' <$> substE body
 
 instance (BindsNames b1, BindsNames b2) => BindsNames (NestPair b1 b2) where
   toExtVal (NestPair b1 b2) = toExtVal b1 >>> toExtVal b2
@@ -646,10 +733,10 @@ instance (InjectableB b1, InjectableB b2) => InjectableB (NestPair b1 b2) where
         cont fresh'' (NestPair b1' b2')
 
 instance (SubstB v b1, SubstB v b2) => SubstB v (NestPair b1 b2) where
-  substB (NestPair b1 b2) cont =
-    substB b1 \b1' ->
-      substB b2 \b2' ->
-        cont (NestPair b1' b2')
+  substB (NestPair b1 b2) =
+    substB b1 `bindSG` \b1' ->
+      substB b2 `bindSG` \b2' ->
+        returnSG $ NestPair b1' b2'
 
 instance BindsNames b => BindsNames (Nest b) where
   toExtVal Empty = id
@@ -663,12 +750,12 @@ instance InjectableB b => InjectableB (Nest b) where
         cont fresh'' (Nest b' rest')
 
 instance SubstB v b => SubstB v (Nest b) where
-  substB nest cont = case nest of
-    Empty -> cont Empty
+  substB nest = case nest of
+    Empty -> returnSG Empty
     Nest b rest ->
-      substB b \b' ->
-        substB rest \rest' ->
-          cont $ Nest b' rest'
+      substB b `bindSG` \b' ->
+        substB rest `bindSG` \rest' ->
+          returnSG $ Nest b' rest'
 
 instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE

@@ -410,9 +410,10 @@ instance BindsNames DataConRefBinding where
   toExtVal (DataConRefBinding b _) = toExtVal b
 
 instance InjectableToAtomSubstVal v => SubstB v DataConRefBinding where
-  substB (DataConRefBinding b ref) cont = do
-    ref' <- substE ref
-    substB b \b' -> cont $ DataConRefBinding b' ref'
+  substB (DataConRefBinding b ref) =
+    substE ref `liftSG` \ref' ->
+    substB b   `bindSG` \b' ->
+    returnSG $ DataConRefBinding b' ref'
 
 instance InjectableE Atom where
   injectionProofE f atom = case atom of
@@ -690,15 +691,16 @@ instance InjectableB Binder where
     injectionProofB f b \f' b' -> cont f' (b':>ty')
 
 instance SubstB Name Binder where
-  substB (b:>ty) cont = do
-    ty' <- substE ty
-    substB b \b' ->
-      cont (b':>ty')
+  substB (b:>ty) =
+    substE ty `liftSG` \ty' ->
+    substB b  `bindSG` \b' ->
+    returnSG $ b':>ty'
 
 instance InjectableToAtomSubstVal v => SubstB v Binder where
-  substB (b:>ty) cont = do
-    ty' <- substE ty
-    substB b \b' -> cont (b':>ty')
+  substB (b:>ty) =
+    substE ty `liftSG` \ty' ->
+    substB b  `bindSG` \b' ->
+    returnSG $ b':>ty'
 
 instance AlphaEqB Binder where
   withAlphaEqB (b1:>ty1) (b2:>ty2) cont = do
@@ -755,9 +757,10 @@ instance InjectableB Decl where
     injectionProofB f b \f' b' -> cont f' $ Let ann b' expr'
 
 instance InjectableToAtomSubstVal v => SubstB v Decl where
-  substB (Let ann b expr) cont = do
-    expr' <- substE expr
-    substB b \b' -> cont $ Let ann b' expr'
+  substB (Let ann b expr) =
+    substE expr `liftSG` \expr' ->
+    substB b    `bindSG` \b' ->
+    returnSG $ Let ann b' expr'
 
 instance BindsNames Decl where
   toExtVal (Let _ b _) = toExtVal b
