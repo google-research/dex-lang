@@ -13,7 +13,7 @@ module SaferNames.NameCore (
   NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
   lookupNameMap, extendNameMap,  concatNameMaps,
   Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName) where
+  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapNameMap) where
 
 import Prelude hiding (id, (.))
 import Data.Text.Prettyprint.Doc  hiding (nest)
@@ -79,6 +79,9 @@ emptyNameSetFrag = UnsafeMakeNameSet mempty
 
 emptyNameSet :: NameSet VoidS
 emptyNameSet = UnsafeMakeNameSet mempty
+
+absurdNameFunction :: Name v VoidS -> a
+absurdNameFunction _ = error "Void names shouldn't exist"
 
 singletonNameSet :: NameBinder s i i' -> NameSet (i:=>:i')
 singletonNameSet (UnsafeMakeBinder (UnsafeMakeName v)) =
