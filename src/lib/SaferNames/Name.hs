@@ -12,28 +12,31 @@ module SaferNames.Name (
   Name (..), RawName, S (..), Env (..), (<.>), NameBinder (..),
   EnvReader (..), EnvExtender (..), Renamer (..),
   ScopeReader (..), ScopeExtender (..), BindingsReader (..), BindingsExtender (..),
-  Scope, ScopeFrag, SubstE (..), SubstB (..),
+  Scope (..), Bindings (..), ScopeFrag (..), BindingsFrag (..), SubstE (..), SubstB (..),
   E, B, HasNamesE, HasNamesB, BindsNames (..),
   BindsOneName (..), BindsNameList (..),
   Abs (..), Nest (..), NestPair (..),
   UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
   EitherE (..), LiftE (..), EqE, EqB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
-  ScopeReaderT (..), BindingsReaderT (..), EnvReaderT (..),
+  runScopeReaderT, ScopeReaderT (..), BindingsReaderT (..), EnvReaderT (..),
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
   BindingsReader2, BindingsExtender2,
-  applyAbs, applyNaryAbs,
+  ScopeReader2, ScopeExtender2,
+  applyAbs, applyNaryAbs, emptyScopeFrag, concatScopeFrags, asScopeFrag,
+  emptyBindings, bindingsAsScope, voidEnv, appendBindings,
   ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
   InjectableE (..), InjectableB (..), Ext (..), InjectionCoercion,
-  lookupBindings, lookupBindingsVal, withFreshM, inject, injectM, withDistinct,
+  lookupBindings, lookupBindingsVal, withFreshM, inject, injectM, withDistinct, (!), (<>>),
   EmptyAbs, pattern EmptyAbs, SubstVal (..),
   NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..),
   liftSG, traverseNestSG) where
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
@@ -56,6 +59,8 @@ data Scope (n::S) where
 data ScopeFrag (n::S) (l::S) where
   ScopeFrag :: Distinct l => NameSet (n:=>:l) -> ScopeFrag n l
 
+-- TODO: there's a lot of redundancy between bindings/scopes and frag/full.
+--       We could consider making them aliases of the same type.
 -- Bindings are Scopes that additionally carry static information associated with names
 data Bindings (n::S) where
   Bindings :: Distinct n => NameMap IdE n n -> Bindings n
@@ -143,6 +148,9 @@ instance BindsNames BindingsFrag where
 toNameSet :: BindsNames b => b n l -> NameSet (n:=>:l)
 toNameSet b = fromExtVal $ toExtVal b
 
+asScopeFrag :: (BindsNames b, Distinct l) => b n l -> ScopeFrag n l
+asScopeFrag b = ScopeFrag $ toNameSet b
+
 inject :: BindsNames b => InjectableE e => Distinct l => b n l -> e n -> e l
 inject ext x = injectNames (toNameSet ext) x
 
@@ -158,11 +166,10 @@ withDistinct cont = do
 traverseNames :: (Monad m, HasNamesE e)
               => Scope o -> (forall s. Name s i -> m (Name s o)) -> e i -> m (e o)
 traverseNames scope f e =
-  flip runReaderT scope $
-    runScopeReaderT $
-      flip runReaderT (newNameTraverserEnv f) $
-         runNameTraverserT $
-           substE e
+  runScopeReaderT scope $
+    flip runReaderT (newNameTraverserEnv f) $
+       runNameTraverserT $
+         substE e
 
 -- This may become expensive. It traverses the body of the Abs to check for
 -- leaked variables.
@@ -276,15 +283,13 @@ instance BindsOneName b s => BindsNameList (Nest b) s where
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-
 applySubst :: (ScopeReader m, SubstE (SubstVal s val) e, Typeable val, InjectableE val)
            => EnvFrag (SubstVal s val) o i o -> e i -> m o (e o)
 applySubst substFrag x = do
   scope <- getScope
-  return $
-    flip runReader scope $ runScopeReaderT $
-      flip runReaderT voidEnv $ runEnvReaderT $
-        withEmptyRenamer $ extendEnv substFrag $ substE x
+  return $ runIdentity $ runScopeReaderT scope $
+    flip runReaderT voidEnv $ runEnvReaderT $
+      withEmptyRenamer $ extendEnv substFrag $ substE x
 
 applyAbs :: ( Typeable s, InjectableE s, Typeable val, InjectableE val
             , ScopeReader m, BindsOneName b s, SubstE (SubstVal s val) e)
@@ -303,6 +308,9 @@ infixl 1 <.>
 
 emptyEnvFrag :: EnvFrag v i i o
 emptyEnvFrag = EnvFrag emptyNameMap
+
+emptyBindings :: Bindings VoidS
+emptyBindings = Bindings absurdNameMap
 
 lookupEnvFrag :: EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
 lookupEnvFrag (EnvFrag m) name =
@@ -329,7 +337,6 @@ bindingsAsScope (Bindings m) = Scope $ nameMapNames m
 
 bindingsFragAsScopeFrag :: BindingsFrag n l -> ScopeFrag n l
 bindingsFragAsScopeFrag (BindingsFrag m) = ScopeFrag $ nameMapNames m
-
 
 -- TODO: we ought to make `ScopeFrag` a category, but it's tricky because
 -- we require the `Distinct` constraint to make the identity fragment.
@@ -422,7 +429,7 @@ checkAlphaEq :: (AlphaEqE e, MonadErr1 m, ScopeReader m)
 checkAlphaEq e1 e2 = do
   scope <- getScope
   liftEither $
-    flip runReaderT scope $ runScopeReaderT $
+    runScopeReaderT scope $
       flip runReaderT (voidEnv, voidEnv) $ runZipEnvReaderT $
         withEmptyZipEnv $ alphaEqE e1 e2
 
@@ -471,8 +478,11 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
 -- === ScopeReaderT transformer ===
 
 newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
-  ScopeReaderT {runScopeReaderT :: ReaderT (Scope n) m a}
+  ScopeReaderT {runScopeReaderT' :: ReaderT (Scope n) m a}
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+
+runScopeReaderT :: Scope n -> ScopeReaderT m n a -> m a
+runScopeReaderT scope m = flip runReaderT scope $ runScopeReaderT' m
 
 instance Monad m => ScopeReader (ScopeReaderT m) where
   getScope = ScopeReaderT ask

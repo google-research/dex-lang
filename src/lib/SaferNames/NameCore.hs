@@ -7,13 +7,13 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 module SaferNames.NameCore (
-  S (..), RawName, Name (..), withFresh, injectNames, projectName,
+  S (..), RawName, Name (..), withFresh, injectNames, injectNamesR, projectName,
   NameBinder (..),
   NameSet (..), singletonNameSet, emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
   NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
   lookupNameMap, extendNameMap,  concatNameMaps,
   Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapNameMap) where
+  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapNameMap, absurdNameMap) where
 
 import Prelude hiding (id, (.))
 import Data.Text.Prettyprint.Doc  hiding (nest)
@@ -159,6 +159,9 @@ getRawName (UnsafeMakeName rawName) = rawName
 injectNames :: InjectableE e => Distinct l => NameSet (n:=>:l) -> e n -> e l
 injectNames _ x = unsafeCoerceE x
 
+injectNamesR :: InjectableE e => e (n:=>:l) -> e l
+injectNamesR = unsafeCoerceE
+
 class InjectableE (e::E) where
   injectionProofE :: InjectionCoercion n l -> e n -> e l
 
@@ -211,6 +214,9 @@ lookupNameMap (UnsafeMakeNameMap m _) name@(UnsafeMakeName rawName) =
 
 emptyNameMap :: NameMap v (i:=>:i) o
 emptyNameMap = UnsafeMakeNameMap mempty mempty
+
+absurdNameMap :: NameMap v VoidS o
+absurdNameMap = UnsafeMakeNameMap mempty mempty
 
 singletonNameMap :: NameBinder s i i' -> v s o -> NameMap v (i:=>:i') o
 singletonNameMap (UnsafeMakeBinder (UnsafeMakeName name)) x =

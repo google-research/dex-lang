@@ -23,7 +23,7 @@ module Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv, SubstVal (..),
     Scope, CmdName (..), HasIVars (..), ForAnn (..),
-    Val, Op, Con, Hof, TC, Module (..),
+    Val, Op, Con, Hof, TC, Module (..), TopState (..), emptyTopState,
     EvaluatedModule (..), SynthCandidates (..),
     emptyEvaluatedModule, DataConRefBinding (..),
     ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
@@ -183,12 +183,20 @@ type Con = PrimCon Atom
 type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
-data SourceMap = SourceMap (M.Map SourceName Name)  deriving (Show, Generic)
+data SourceMap = SourceMap { fromSourceMap :: M.Map SourceName Name }  deriving (Show, Generic)
 
 data Module = Module IRVariant (Nest Decl) EvaluatedModule deriving (Show, Generic)
 
 data EvaluatedModule =
   EvaluatedModule Bindings SynthCandidates SourceMap deriving (Show, Generic)
+
+data TopState = TopState
+  { topBindings        :: Bindings
+  , topSynthCandidates :: SynthCandidates
+  , topSourceMap       :: SourceMap }
+
+emptyTopState :: TopState
+emptyTopState = TopState mempty mempty mempty
 
 emptyEvaluatedModule :: EvaluatedModule
 emptyEvaluatedModule = EvaluatedModule mempty mempty mempty

@@ -21,7 +21,8 @@ module SaferNames.Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceNameMap (..),
-    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), EvaluatedModule (..),
+    ForAnn (..), Val, Op, Con, Hof, TC, Module (..),
+    EvaluatedModule (..), SynthCandidates (..), TopState (..), emptyTopState,
     DataConRefBinding (..),
     AltP, Alt, AtomBinderInfo (..), TypedBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -173,22 +174,39 @@ type AtomSubstVal = SubstVal TypedBinderInfo Atom :: E -> E
 
 type SourceName = T.Text
 
+data TopState n = TopState
+  { topBindings        :: Bindings        n
+  , topSynthCandidates :: SynthCandidates n
+  , topSourceNameMap   :: SourceNameMap   n }
+
+emptyTopState :: TopState VoidS
+emptyTopState = TopState emptyBindings mempty (SourceNameMap mempty)
+
 data SourceNameMap n = SourceNameMap
   { fromSourceNameMap :: M.Map SourceName (Name UnitE n)}
 
 data Module n where
   Module
     :: IRVariant
-    -> Nest Decl n l    -- Unevaluated decls representing runtime work to be done
-    -> ScopeFrag l l'   -- Evaluated bindings
-    -> SourceNameMap l' -- Mapping of module's source names to internal names
+    -> Nest Decl n l      -- Unevaluated decls representing runtime work to be done
+    -> ScopeFrag l l'     -- Evaluated bindings
+    -> SourceNameMap l'   -- Mapping of module's source names to internal names
+    -> SynthCandidates l' -- Values considered in scope for dictionary synthesis
     -> Module n
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
     :: ScopeFrag n l     -- Evaluated bindings
     -> SourceNameMap l   -- Mapping of module's source names to internal names
+    -> SynthCandidates l -- Values considered in scope for dictionary synthesis
     -> EvaluatedModule n
+
+-- TODO: we could add a lot more structure for querying by dict type, caching, etc.
+data SynthCandidates n = SynthCandidates
+  { lambdaDicts       :: [Atom n]
+  , superclassGetters :: [Atom n]
+  , instanceDicts     :: [Atom n] }
+  deriving (Show)
 
 -- === effects ===
 
@@ -778,3 +796,10 @@ instance Pretty Arrow where
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
     ClassArrow     -> "?=>"
+
+instance Semigroup (SynthCandidates n) where
+  SynthCandidates xs ys zs <> SynthCandidates xs' ys' zs' =
+    SynthCandidates (xs<>xs') (ys<>ys') (zs<>zs')
+
+instance Monoid (SynthCandidates n) where
+  mempty = SynthCandidates mempty mempty mempty

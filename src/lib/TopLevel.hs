@@ -11,9 +11,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module TopLevel (
-  EvalConfig (..), TopState (..), initTopState,
-  evalSourceBlock, evalFile, MonadInterblock, InterblockM,
-  evalSourceText, runInterblockM, execInterblockM,
+  EvalConfig (..),
+  evalSourceBlock, evalFile, MonadInterblock (..), InterblockM,
+  evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx,
   evalInterblockM, lookupSourceName, evalSourceBlockIO) where
 
 import Data.Functor
@@ -27,11 +27,12 @@ import qualified Data.Map.Strict as M
 import Data.Store (Store)
 import GHC.Generics (Generic)
 import System.FilePath
+import System.Console.Haskeline -- for MonadException
 
 import Paths_dex  (getDataFileName)
 
 import Err
-import Syntax
+import Syntax as D
 import Builder
 import Env
 import SourceRename
@@ -47,7 +48,7 @@ import Logging
 import LLVMExec
 import PPrint()
 import Parser
-import Util (highlightRegion, measureSeconds)
+import Util (highlightRegion, measureSeconds, onFst, onSnd)
 import Optimize
 import Parallelize
 
@@ -57,69 +58,71 @@ import MLIR.Lower
 import MLIR.Eval
 #endif
 
--- === monad for wiring together the source blocks ===
+import SaferNames.Bridge
 
--- import qualified SaferNames.Syntax as S
+import qualified SaferNames.Name   as S
 
-type MonadInterblock m = ( MonadReader EvalConfig m
-                         , MonadState TopState m
-                         , MonadIO m )
-
-data TopState = TopState
-  { topBindings        :: Bindings
-  , topSynthCandidates :: SynthCandidates
-  , topSourceMap       :: SourceMap
-  , modulesImported    :: ModulesImported }
-    deriving Generic
-
-initTopState :: TopState
-initTopState = TopState mempty mempty mempty mempty
+-- === shared effects ===
 
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , libPath     :: Maybe FilePath
   , logFile     :: Maybe FilePath }
 
-type InterblockM = ReaderT EvalConfig (StateT TopState IO)
+class Monad m => ConfigReader m where
+  getConfig :: m EvalConfig
 
-runInterblockM :: EvalConfig -> TopState -> InterblockM a -> IO (a, TopState)
-runInterblockM opts env m = runStateT (runReaderT m opts) env
+-- === monad for wiring together the source blocks ===
 
-evalInterblockM :: EvalConfig -> TopState -> InterblockM a -> IO a
-evalInterblockM opts env m = evalStateT (runReaderT m opts) env
+class (ConfigReader m, MonadIO m) => MonadInterblock m where
+  getTopStateEx :: m TopStateEx
+  setTopStateEx :: TopStateEx -> m ()
 
-execInterblockM :: EvalConfig -> TopState -> InterblockM a -> IO TopState
-execInterblockM opts env m = execStateT (runReaderT m opts) env
+  getImportStatus :: ModuleName -> m (Maybe ModuleImportStatus)
+  setImportStatus :: ModuleName -> ModuleImportStatus -> m ()
+
+newtype InterblockM a = InterblockM
+  { runInterblockM' :: ReaderT EvalConfig (StateT (ModulesImported, TopStateEx) IO) a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadException)
+
+runInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO (a, TopStateEx)
+runInterblockM opts env m = do
+  (ans, (_, finalState)) <- runStateT (runReaderT (runInterblockM' m) opts) (mempty, env)
+  return (ans, finalState)
+
+evalInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO a
+evalInterblockM opts env m = fst <$> runInterblockM opts env m
+
+execInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO TopStateEx
+execInterblockM opts env m = snd <$> runInterblockM opts env m
 
 -- === monad for wiring together the passes within each source block ===
 
-type MonadPasses m = ( MonadReader TopPassEnv m
-                     , MonadErr m
-                     , MonadLogger [Output] m
-                     , MonadIO m )
+class ( forall n. MonadErr (m n)
+      , forall n. MonadLogger [Output] (m n)
+      , forall n. ConfigReader (m n)
+      , forall n. MonadIO (m n) )
+      => MonadPasses (m::S.MonadKind1) where
+  requireBenchmark :: m n Bool
+  getTopState :: m n (JointTopState n)
 
-data TopPassEnv = TopPassEnv
-  { topState   :: TopState
-  , benchmark  :: Bool
-  , evalConfig :: EvalConfig }
-
-newtype PassesM a = PassesM (ReaderT TopPassEnv (LoggerT [Output] IO) a)
-                            deriving (Functor, Applicative, Monad, MonadIO)
+newtype PassesM (n::S.S) a = PassesM
+  { runPassesM' :: ReaderT (Bool, EvalConfig, JointTopState n) (LoggerT [Output] IO) a }
+    deriving (Functor, Applicative, Monad, MonadIO)
 
 type ModulesImported = M.Map ModuleName ModuleImportStatus
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
-runPassesM :: Bool -> EvalConfig -> TopState -> PassesM a -> IO (Except a, [Output])
+runPassesM :: Bool -> EvalConfig -> JointTopState n -> PassesM n a -> IO (Except a, [Output])
 runPassesM bench opts env (PassesM m) = do
   let maybeLogFile = logFile opts
-  let passEnv = TopPassEnv env bench opts
   runLogger maybeLogFile \l ->
-     runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m passEnv
+     runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m $ (bench, opts, env)
 
 -- ======
 
-evalSourceBlockIO :: EvalConfig -> TopState -> SourceBlock -> IO (Result, Maybe TopState)
+evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
   (ans, env') <- runInterblockM opts env $ evalSourceBlock block
   if mayUpdateTopState block
@@ -134,19 +137,13 @@ evalSourceText source = do
   results <- mapM evalSourceBlock  sourceBlocks
   return $ zip sourceBlocks results
 
-extendTopState :: EvaluatedModule -> TopState -> TopState
-extendTopState m (TopState scope scs sourceMap imported) =
-  -- ensure the internal bindings are fresh wrt top bindings
-  let EvaluatedModule bindings' scs' sourceMap' = subst (mempty, scope) m
-  in TopState (scope <> bindings') (scs <> scs') (sourceMap <> sourceMap') imported
-
-liftPassesM :: MonadInterblock m => Bool -> PassesM a -> m (Except a, [Output])
+liftPassesM :: MonadInterblock m => Bool -> (forall n. PassesM n a) -> m (Except a, [Output])
 liftPassesM bench m = do
-  opts <- ask
-  env <- get
+  opts <- getConfig
+  TopStateEx env <- getTopStateEx
   liftIO $ runPassesM bench opts env m
 
-liftPassesM_ :: MonadInterblock m => Bool -> PassesM () -> m Result
+liftPassesM_ :: MonadInterblock m => Bool -> (forall n. PassesM n ()) -> m Result
 liftPassesM_ bench m = do
   (maybeAns, outs) <- liftPassesM bench m
   return $ Result outs maybeAns
@@ -163,7 +160,8 @@ evalSourceBlock' block = case sbContents block of
     case maybeEvaluatedModule of
       Left err -> return $ Result outs $ Left err
       Right evaluatedModule -> do
-        modify $ extendTopState evaluatedModule
+        TopStateEx curState <- getTopStateEx
+        setTopStateEx $ extendTopStateD curState evaluatedModule
         return $ Result outs $ Right ()
   Command cmd (v, m) -> liftPassesM_ (requiresBench block) case cmd of
     EvalExpr fmt -> do
@@ -187,17 +185,17 @@ evalSourceBlock' block = case sbContents block of
       val <- evalUModuleVal v m
       logTop $ TextOut $ pprint $ getType val
   GetNameType v -> liftPassesM_ False do
-    SourceMap m <- asks $ topSourceMap . topState
+    SourceMap m <- topSourceMap <$> topStateD <$> getTopState
     case M.lookup v m of
       Nothing -> throw UnboundVarErr $ pprint v
       Just v' -> do
-        bindings <- asks $ topBindings . topState
+        bindings <- topBindings <$> topStateD <$> getTopState
         case nameToAtom bindings v' of
           Just x -> logTop $ TextOut $ pprint $ getType x
           Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
   ImportModule moduleName -> do
-    currentlyImported <- gets modulesImported
-    case M.lookup moduleName currentlyImported of
+    moduleStatus <- getImportStatus moduleName
+    case moduleStatus of
       Just CurrentlyImporting -> liftPassesM_ False $ throw MiscErr $
         "Circular import detected: " ++ pprint moduleName
       Just FullyImported -> return emptyResult
@@ -245,10 +243,6 @@ summarizeModuleResults results =
 emptyResult :: Result
 emptyResult = Result [] (Right ())
 
-setImportStatus :: MonadInterblock m => ModuleName -> ModuleImportStatus -> m ()
-setImportStatus name status =
-  modify \s -> s { modulesImported = M.insert name status $ modulesImported s }
-
 evalFile :: MonadInterblock m => FilePath -> m [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
 
@@ -287,18 +281,20 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m Atom
+evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m n Atom
 evalUModuleVal v m = do
    evaluated <- evalUModule m
-   env <- asks topState
-   result <- lookupSourceName (extendTopState evaluated env) v
+   env <- getTopState
+   let finalState = extendTopStateD env evaluated
+   result <- lookupSourceName finalState v
    case result of
      AtomBinderInfo _ (LetBound _ (Atom atom)) -> return atom
      _ -> throw TypeErr $ "Not an atom name: " ++ pprint v
 
-lookupSourceName :: MonadErr m => TopState -> SourceName -> m AnyBinderInfo
-lookupSourceName (TopState bindings _ (SourceMap sourceMap) _) v =
-  case M.lookup v sourceMap of
+lookupSourceName :: MonadErr m => TopStateEx -> SourceName -> m AnyBinderInfo
+lookupSourceName (TopStateEx topState) v =
+  let D.TopState bindings _ (SourceMap sourceMap) = topStateD topState
+  in case M.lookup v sourceMap of
     Just name ->
       case envLookup bindings name of
         Just info -> return info
@@ -308,16 +304,16 @@ lookupSourceName (TopState bindings _ (SourceMap sourceMap) _) v =
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalUModule :: MonadPasses m => SourceUModule -> m EvaluatedModule
+evalUModule :: MonadPasses m => SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
-  TopState bindings synthCandidates sourceMap _ <- asks topState
+  D.TopState bindings synthCandidates sourceMap <- topStateD <$> getTopState
   logPass Parse sourceModule
   renamed <- renameSourceNames bindings sourceMap sourceModule
   logPass RenamePass renamed
   typed <- liftEither $ inferModule bindings renamed
   -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
   -- safer names system while we're staging it in.
-  typed' <- roundtripSaferNamesPass bindings typed
+  typed' <- roundtripSaferNamesPass typed
   checkPass TypePass typed'
   synthed <- liftEither $ synthModule bindings synthCandidates typed'
   -- TODO: check that the type of module exports doesn't change from here on
@@ -326,7 +322,7 @@ evalUModule sourceModule = do
   checkPass SimpPass defunctionalized
   let stdOptimized = optimizeModule defunctionalized
   -- Apply backend specific optimizations
-  backend <- asks (backendName . evalConfig)
+  backend <- backendName <$> getConfig
   let optimized = case backend of
                     LLVMCUDA -> parallelizeModule stdOptimized
                     LLVMMC   -> parallelizeModule stdOptimized
@@ -342,17 +338,14 @@ evalUModule sourceModule = do
       checkPass ResultPass $ Module Evaluated Empty evaluated
       return evaluated
 
-roundtripSaferNamesPass :: MonadError Err m => Bindings -> Module -> m Module
-roundtripSaferNamesPass _ m = return m
--- roundtripSaferNamesPass env (Module ir decls bindings) = do
---   let env' = toSafeBindings env
---   let decls' = toSafeB decls
---   _ <- liftEither $ S.checkTypes env' $ S.Block S.UnitTy decls' (S.Atom S.UnitVal)
---   return $ Module ir (fromSafeB decls') bindings
+roundtripSaferNamesPass :: MonadPasses m => Module -> m n Module
+roundtripSaferNamesPass m = do
+  env <- getTopState
+  return $ fromSafe env $ toSafe env $ m
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
-evalMLIR :: MonadPasses m => Block -> m Atom
+evalMLIR :: MonadPasses m => Block -> m n Atom
 #if DEX_LLVM_VERSION == HEAD
 evalMLIR block' = do
   -- This is a little silly, but simplification likes to leave inlinable
@@ -370,11 +363,11 @@ evalMLIR block' = do
 evalMLIR = error "Dex built without support for MLIR"
 #endif
 
-evalLLVM :: MonadPasses m => Block -> m Atom
+evalLLVM :: MonadPasses m => Block -> m n Atom
 evalLLVM block = do
-  TopState env _ _ _ <- asks topState
-  backend <- asks (backendName . evalConfig)
-  bench   <- asks benchmark
+  env <- topBindings <$> topStateD <$> getTopState
+  backend <- backendName <$> getConfig
+  bench   <- requireBenchmark
   logger  <- getLogger
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
@@ -398,9 +391,9 @@ evalLLVM block = do
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
 
-evalBackend :: MonadPasses m => Block -> m Atom
+evalBackend :: MonadPasses m => Block -> m n Atom
 evalBackend block = do
-  backend <- asks (backendName . evalConfig)
+  backend <- backendName <$> getConfig
   let eval = case backend of
                MLIR        -> evalMLIR
                LLVM        -> evalLLVM
@@ -415,16 +408,15 @@ withCompileTime m = do
   (Result outs err, t) <- measureSeconds m
   return $ Result (outs ++ [TotalTime t]) err
 
-checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m ()
+checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m n ()
 checkPass name x = do
-  scope <- topBindings <$> topState <$> ask
+  scope <- topBindings <$> topStateD <$> getTopState
   logPass name x
   liftEither $ checkValid scope x
   logTop $ MiscLog $ pprint name ++ " checks passed"
 
-logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m ()
+logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
 logPass passName x = logTop $ PassInfo passName $ pprint x
-
 
 addResultCtx :: SourceBlock -> Result -> Result
 addResultCtx block (Result outs maybeErr) = case maybeErr of
@@ -439,7 +431,7 @@ addCtx block err@(Err e src s) = case src of
     where n = sbOffset block
           ctx = highlightRegion (start - n, stop - n) (sbText block)
 
-logTop :: MonadPasses m => Output -> m ()
+logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
@@ -482,36 +474,41 @@ traverseLiterals block f =
 findModulePath :: MonadInterblock m => ModuleName -> m FilePath
 findModulePath moduleName = do
   let fname = moduleName ++ ".dx"
-  specifiedPath <- asks libPath
+  specifiedPath <- libPath <$> getConfig
   case specifiedPath of
     Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
     Just path -> return $ path </> fname
 
 -- === instances ===
 
-instance HasPtrs TopState where
-  traversePtrs f (TopState bindings synthCandidates sourceMap status) =
-    TopState <$> traverse (traversePtrs f) bindings
-             <*> pure synthCandidates
-             <*> pure sourceMap
-             <*> pure status
+instance ConfigReader (PassesM n) where
+  getConfig = PassesM $ asks \(_, cfg, _) -> cfg
 
-instance Store TopState
-instance Store ModuleImportStatus
+instance MonadPasses PassesM where
+  requireBenchmark = PassesM $ asks \(bench, _, _) -> bench
+  getTopState      = PassesM $ asks \(_    , _, s) -> s
 
-instance MonadReader TopPassEnv PassesM where
-  ask = PassesM ask
-  local f (PassesM m) = PassesM $ local f m
-
-instance MonadError Err PassesM where
+instance MonadError Err (PassesM n) where
   throwError err = liftEitherIO $ throwError err
-  catchError (PassesM m) f = do
+  catchError (PassesM m) f = PassesM do
     env <- ask
-    l <- getLogger
+    l <- runPassesM' getLogger
     result <- runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m env
     case result of
-      Left e -> f e
+      Left e -> runPassesM' $ f e
       Right x -> return x
 
-instance MonadLogger [Output] PassesM where
+instance MonadLogger [Output] (PassesM n) where
   getLogger = PassesM $ lift $ getLogger
+
+instance ConfigReader InterblockM where
+  getConfig = InterblockM ask
+
+instance MonadInterblock InterblockM where
+  getTopStateEx = InterblockM $ gets snd
+  setTopStateEx s = InterblockM $ modify $ onSnd $ const s
+
+  getImportStatus name = InterblockM $ gets $ M.lookup name . fst
+  setImportStatus name status = InterblockM $ modify $ onFst $ M.insert name status
+
+instance Store ModuleImportStatus

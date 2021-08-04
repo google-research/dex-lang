@@ -17,6 +17,7 @@ import System.Posix.IO (stdOutput)
 
 import System.Directory
 import Data.List
+import qualified Data.Map.Strict as M
 
 import Syntax
 import PPrint
@@ -30,6 +31,8 @@ import Export
 import RenderHtml
 import LiveOutput
 #endif
+
+import SaferNames.Bridge
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly
@@ -70,7 +73,8 @@ runMode evalMode preludeFile opts = do
       let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
       unless (backendName opts == LLVM) $ liftEitherIO $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
-      exportFunctions objPath exportedFuns $ topBindings env
+      TopStateEx env' <- return env
+      exportFunctions objPath exportedFuns $ topBindings $ topStateD env'
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
@@ -89,16 +93,16 @@ evalPrelude fname = do
 replLoop :: String -> InputT InterblockM ()
 replLoop prompt = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
-  env <- lift get
+  env <- lift getTopStateEx
   result <- lift $ evalSourceBlock sourceBlock
-  case result of Result _ (Left _) -> lift $ put env
+  case result of Result _ (Left _) -> lift $ setTopStateEx env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
 
 dexCompletions :: CompletionFunc InterblockM
 dexCompletions (line, _) = do
-  env <- get
-  let varNames = map pprint $ envNames $ topBindings env
+  TopStateEx env <- getTopStateEx
+  let varNames = map pprint $ M.keys $ fromSourceMap $ topSourceMap $ topStateD env
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]

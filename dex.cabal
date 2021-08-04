@@ -68,7 +68,7 @@ library
                        -- Text output
                        prettyprinter, text,
                        -- Portable system utilities
-                       filepath, directory, ansi-terminal, process, temporary,
+                       filepath, directory, ansi-terminal, process, temporary, haskeline,
                        -- Serialization
                        store, aeson
   if flag(live)
