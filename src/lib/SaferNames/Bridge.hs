@@ -102,13 +102,13 @@ nameBijectionFromDBindings fromSafeMap bindings cont = do
     let bindingsFrag = makeBindingsFrag scope bindings toSafeMap' fromSafeMap' scopeFrag
     cont bindingsFrag toSafeMap' fromSafeMap'
 
-type ConstNameMap n l = NameMap (ConstE UnitE) (n:=>:l) VoidS
+type ConstEnv n l = EnvFrag (ConstE UnitE) n l VoidS
 
 makeBindingsFrag :: forall n l. Distinct l =>
                     S.Scope l -> D.Bindings -> ToSafeNameMap l -> FromSafeNameMap l
-                 -> ConstNameMap n l -> BindingsFrag n l
-makeBindingsFrag scope bindings toSafeMap fromSafeMap constNameMap =
-  S.Env $ fmapNameMap (\name _ -> getSafeBinding name) constNameMap
+                 -> ConstEnv n l -> BindingsFrag n l
+makeBindingsFrag scope bindings toSafeMap fromSafeMap constEnv =
+  fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
   where
     getSafeBinding :: S.Name s (n:=>:l) -> IdE s l
     getSafeBinding name =
@@ -122,17 +122,17 @@ makeBindingsFrag scope bindings toSafeMap fromSafeMap constNameMap =
 withFreshSafeRec :: MonadToSafe m
                  => FromSafeNameMap n
                  -> [(D.Name, D.AnyBinderInfo)]
-                 -> (forall l. Distinct l => ConstNameMap n l -> FromSafeNameMap l -> m l a)
+                 -> (forall l. Distinct l => ConstEnv n l -> FromSafeNameMap l -> m l a)
                  -> m n a
 withFreshSafeRec fromSafeMap [] cont = do
   Distinct _ <- getScope
-  cont emptyNameMap fromSafeMap
+  cont emptyEnv fromSafeMap
 withFreshSafeRec fromSafeMap ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
-    frag <- return $ singletonNameMap b (ConstE UnitE)
+    frag <- return $ b S.@> ConstE UnitE
     withFreshSafeRec (fromSafeMap <>> (b S.@> valD)) rest
       \frag' fromSafeMap' -> do
-        cont (frag `concatNameMaps` frag') fromSafeMap'
+        cont (frag <.> frag') fromSafeMap'
 
 withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
                     -> (forall l s. S.NameBinder s n l -> UnsafeName s -> m l a)

@@ -392,7 +392,7 @@ instance (InjectableToAtomSubstVal Name) where
 
 lookupAtomSubstVal :: EnvReader v m => InjectableToAtomSubstVal v
                    => Name s i -> m i o (AtomSubstVal s o)
-lookupAtomSubstVal name = injectToAtomSubstVal <$> lookupEnv name
+lookupAtomSubstVal name = injectToAtomSubstVal <$> lookupEnvM name
 
 -- right-biased, unlike the underlying Map
 instance Semigroup (SourceMap n) where

@@ -8,14 +8,13 @@
 
 module SaferNames.NameCore (
   S (..), RawName, Name (..), withFresh, injectNames, injectNamesR, projectName,
-  NameBinder (..),
-  NameSet (..), singletonNameSet, emptyNameSetFrag, emptyNameSet, extendNameSet, concatNameSets,
-  NameMap (..), singletonNameMap, emptyNameMap, nameMapNames,
-  lookupNameMap, extendNameMap,  concatNameMaps,
+  NameBinder (..), ScopeFrag (..), Scope, singletonScope, (<.>),
+  EnvFrag (..), Env, singletonEnv, emptyEnv, envAsScope, lookupEnv, lookupEnvFrag,
   Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapNameMap, absurdNameMap) where
+  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapEnvFrag) where
 
 import Prelude hiding (id, (.))
+import Control.Category
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import Data.Type.Equality
 import Type.Reflection
@@ -28,11 +27,11 @@ import qualified Env as D
 
 -- `S` is the kind of "scope parameters". It's only ever used as a phantom type.
 -- It represents a list of names, given by the value of the singleton type
--- `NameSet n` (`n::S`). Names are tagged with a scope parameter, and a name of
+-- `Scope n` (`n::S`). Names are tagged with a scope parameter, and a name of
 -- type `Name n` has an underlying raw name that must occur in the corresponding
--- `Scope n`. (A detail: `NameSet n` actually only carries a *set* of names, not
+-- `Scope n`. (A detail: `Scope n` actually only carries a *set* of names, not
 -- a list, because that's all we need at runtime. But it's important to remember
--- that it conceptually represents a list. For example, a `NameSet n` and a `NameSet
+-- that it conceptually represents a list. For example, a `Scope n` and a `NameSet
 -- m` that happen to represent the same set of names can't necessarily be
 -- considered equal.) Types of kind `S` are mostly created existentially through
 -- rank-2 polymorphism, rather than using the constructors in the data
@@ -40,9 +39,9 @@ import qualified Env as D
 -- magicallyCreateFreshS x = x -- where does `n` come from? magic!
 
 -- We also have `:=>:` to represent differences between scopes with a common
--- prefix. A `NameSet (n:=>:l)` means that
---   1. `NameSet n` is a prefix of `NameSet l`
---   2. `NameSet (n:=>:l)` is the list of names by which `l` extends `n`.
+-- prefix. A `Scope (n:=>:l)` means that
+--   1. `Scope n` is a prefix of `Scope l`
+--   2. `Scope (n:=>:l)` is the list of names by which `l` extends `n`.
 
 --      x    y    z    x    w    x
 --     \-----------------/\--------/
@@ -68,32 +67,23 @@ type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
                       -- contravariant in the second. These are things like
                       -- `Binder n l` or `Decl n l`, that bind the names in
-                      -- `NameSet (n:=>:l)`, extending `n` to `l`. Their free
-                      -- name are in `NameSet n`. We sometimes call `n` the
+                      -- `ScopeFrag n l`, extending `n` to `l`. Their free
+                      -- name are in `Scope n`. We sometimes call `n` the
                       -- "outside scope" and "l" the "inside scope".
 
-newtype NameSet (n::S) = UnsafeMakeNameSet (S.Set RawName)
+newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScope (S.Set RawName)
+type Scope (n::S) = ScopeFrag VoidS n
 
-emptyNameSetFrag :: NameSet (n:=>:n)
-emptyNameSetFrag = UnsafeMakeNameSet mempty
+instance Category ScopeFrag where
+  id = UnsafeMakeScope mempty
+  UnsafeMakeScope s2 . UnsafeMakeScope s1 = UnsafeMakeScope $ s1 <> s2
 
-emptyNameSet :: NameSet VoidS
-emptyNameSet = UnsafeMakeNameSet mempty
+singletonScope :: NameBinder s i i' -> ScopeFrag i i'
+singletonScope (UnsafeMakeBinder (UnsafeMakeName v)) =
+  UnsafeMakeScope (S.singleton v)
 
 absurdNameFunction :: Name v VoidS -> a
 absurdNameFunction _ = error "Void names shouldn't exist"
-
-singletonNameSet :: NameBinder s i i' -> NameSet (i:=>:i')
-singletonNameSet (UnsafeMakeBinder (UnsafeMakeName v)) =
-  UnsafeMakeNameSet (S.singleton v)
-
-extendNameSet :: NameSet n -> NameSet (n:=>:l) -> NameSet l
-extendNameSet (UnsafeMakeNameSet s1) (UnsafeMakeNameSet s2) =
-  UnsafeMakeNameSet (s1 <> s2)
-
-concatNameSets :: NameSet (n1:=>:n2) -> NameSet (n2:=>:n3) -> NameSet (n1:=>:n3)
-concatNameSets (UnsafeMakeNameSet s1) (UnsafeMakeNameSet s2) =
-  UnsafeMakeNameSet (s1 <> s2)
 
 -- TODO: we reuse the old `Name` to make use of the GlobalName name space while
 -- we're using both the old and new systems together.
@@ -118,9 +108,9 @@ data NameBinder (s::E)  -- static information for the name this binds (note
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name s l }
 
-withFresh :: InjectableE s => Typeable s => Distinct n => NameSet (VoidS:=>:n)
+withFresh :: InjectableE s => Typeable s => Distinct n => Scope n
           -> (forall l. Distinct l => NameBinder s n l -> a) -> a
-withFresh (UnsafeMakeNameSet scope) cont =
+withFresh (UnsafeMakeScope scope) cont =
   cont @UnsafeMakeDistinctS $ UnsafeMakeBinder freshName
   where freshName = UnsafeMakeName $ freshRawName "v" scope
 
@@ -135,8 +125,8 @@ freshRawName tag usedNames = D.Name D.GenName tag nextNum
                 _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
-projectName :: NameSet (n:=>:l) -> Name s l -> Either (Name s n) (Name s (n:=>:l))
-projectName (UnsafeMakeNameSet scope) (UnsafeMakeName rawName)
+projectName :: ScopeFrag n l -> Name s l -> Either (Name s n) (Name s (n:=>:l))
+projectName (UnsafeMakeScope scope) (UnsafeMakeName rawName)
   | S.member rawName scope = Right $ UnsafeMakeName rawName
   | otherwise              = Left  $ UnsafeMakeName rawName
 
@@ -156,7 +146,7 @@ getRawName (UnsafeMakeName rawName) = rawName
 
 -- Note [Injections]
 
-injectNames :: InjectableE e => Distinct l => NameSet (n:=>:l) -> e n -> e l
+injectNames :: InjectableE e => Distinct l => ScopeFrag n l -> e n -> e l
 injectNames _ x = unsafeCoerceE x
 
 injectNamesR :: InjectableE e => e (n:=>:l) -> e l
@@ -191,54 +181,58 @@ instance InjectableB (NameBinder s) where
 
 -- === environments ===
 
--- The `NameMap` type is purely an optimization. We could do everything using
+-- The `Env` type is purely an optimization. We could do everything using
 -- the safe API by defining:
---    type NameMap v i o = (NameSet i, forall s. Name s i -> v s o)
+--    type Env v i o = (ScopeFrag i, forall s. Name s i -> v s o)
 -- Instead, we use this unsafely-implemented data type for efficiency, to avoid
 -- long chains of case analyses as we extend environments one name at a time.
 
-data NameMap
-  (v::E -> E)  -- env payload, as a function of the static data type (Note [NameMap payload])
-  (i::S)       -- scope parameter for names we can look up in this env
+data EnvFrag
+  (v::E -> E)  -- env payload, as a function of the static data type (Note [Env payload])
+  (i'::S)      -- starting scope parameter for names we can look up in this env
+  (i ::S)      -- ending   scope parameter for names we can look up in this env
   (o::S)       -- scope parameter for the values stored in the env
-  = UnsafeMakeNameMap
+  = UnsafeMakeEnv
       (M.Map RawName (EnvVal v o))
       (S.Set RawName)  -- cached name set as an optimization, to avoid the O(n)
                        -- map-to-set conversion
 
-lookupNameMap :: NameMap v i o -> Name s i -> v s o
-lookupNameMap (UnsafeMakeNameMap m _) name@(UnsafeMakeName rawName) =
+type Env v i o = EnvFrag v VoidS i o
+
+lookupEnv :: Env v i o -> Name s i -> v s o
+lookupEnv (UnsafeMakeEnv m _) name@(UnsafeMakeName rawName) =
   case M.lookup rawName m of
     Nothing -> error "Env lookup failed (this should never happen)"
     Just d -> fromEnvVal name d
 
-emptyNameMap :: NameMap v (i:=>:i) o
-emptyNameMap = UnsafeMakeNameMap mempty mempty
+lookupEnvFrag :: EnvFrag v i i' o -> Name s (i:=>:i') -> v s o
+lookupEnvFrag (UnsafeMakeEnv m _) name@(UnsafeMakeName rawName) =
+  case M.lookup rawName m of
+    Nothing -> error "Env lookup failed (this should never happen)"
+    Just d -> fromEnvVal name d
 
-absurdNameMap :: NameMap v VoidS o
-absurdNameMap = UnsafeMakeNameMap mempty mempty
+emptyEnv :: EnvFrag v i i o
+emptyEnv = UnsafeMakeEnv mempty mempty
 
-singletonNameMap :: NameBinder s i i' -> v s o -> NameMap v (i:=>:i') o
-singletonNameMap (UnsafeMakeBinder (UnsafeMakeName name)) x =
-  UnsafeMakeNameMap (M.singleton name $ toEnvVal x) (S.singleton name)
+absurdEnv :: Env v VoidS o
+absurdEnv = UnsafeMakeEnv mempty mempty
 
-concatNameMaps :: NameMap v (i1:=>:i2) o
-               -> NameMap v (i2:=>:i3) o
-               -> NameMap v (i1:=>:i3) o
-concatNameMaps (UnsafeMakeNameMap m1 s1) (UnsafeMakeNameMap m2 s2) =
-  UnsafeMakeNameMap (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
+singletonEnv :: NameBinder s i i' -> v s o -> EnvFrag v i i' o
+singletonEnv (UnsafeMakeBinder (UnsafeMakeName name)) x =
+  UnsafeMakeEnv (M.singleton name $ toEnvVal x) (S.singleton name)
 
-extendNameMap :: NameMap v i o -> NameMap v (i:=>:i') o -> NameMap v i' o
-extendNameMap (UnsafeMakeNameMap m1 s1) (UnsafeMakeNameMap m2 s2) =
-  UnsafeMakeNameMap (m2 <> m1) (s2 <> s1)
+infixl 1 <.>
+(<.>) :: EnvFrag v i1 i2 o -> EnvFrag v i2 i3 o -> EnvFrag v i1 i3 o
+(<.>) (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
+  UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
 
-fmapNameMap :: (forall s. Name s i -> v s o -> v' s o') -> NameMap v i o -> NameMap v' i o'
-fmapNameMap f (UnsafeMakeNameMap m s) = UnsafeMakeNameMap m' s
+fmapEnvFrag :: (forall s. Name s (i:=>:i') -> v s o -> v' s o') -> EnvFrag v i i' o -> EnvFrag v' i i' o'
+fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
   where m' = flip M.mapWithKey m \k (EnvVal rep val) ->
                withTypeable rep $ toEnvVal $ f (UnsafeMakeName k) val
 
-nameMapNames :: NameMap v i o -> NameSet i
-nameMapNames (UnsafeMakeNameMap _ s) = UnsafeMakeNameSet s
+envAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
+envAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
 
 -- === handling the dynamic/heterogeneous stuff for Env ===
 
@@ -279,8 +273,8 @@ instance Show (Name s n) where
 
 type InjectableV v = (forall s. InjectableE s => InjectableE (v s)) :: Constraint
 
-instance InjectableV v => InjectableE (NameMap v i) where
-  injectionProofE fresh m = fmapNameMap (\(UnsafeMakeName _) v -> injectionProofE fresh v) m
+instance InjectableV v => InjectableE (EnvFrag v i i') where
+  injectionProofE fresh m = fmapEnvFrag (\(UnsafeMakeName _) v -> injectionProofE fresh v) m
 
 -- === unsafe coercions ===
 
@@ -297,9 +291,9 @@ unsafeCoerceB = unsafeCoerce
 
 {-
 
-Note [NameMap payload]
+Note [Env payload]
 
-The "payload" parameter of a `NameMap` has kind `E->E`, making the payload a
+The "payload" parameter of a `Env` has kind `E->E`, making the payload a
 function of the queried name's static data parameter. Type-level functions are
 limited, and we really only care about only two instantiations of v:: E -> E.
 
@@ -333,7 +327,7 @@ into this:
 The expression `\x. x + z + y`, initially in the scope `[z]`, gets injected into
 the scope `[z, y]`. For expression-like things, the injection is valid if we
 know that (1) that the new scope contains distinct names, and (2) it extends the
-old scope. These are the `Distinct l` and `NameSet (n:=>:l)` conditions below in
+old scope. These are the `Distinct l` and `ScopeFrag (n:=>:l)` conditions below in
 `injectNames`. Note that the expression may end up with internal binders
 shadowing the new vars in scope, shadows, like the inner `y` above, and that's
 fine.

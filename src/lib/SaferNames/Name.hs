@@ -49,23 +49,6 @@ import Err
 
 -- === environments and scopes ===
 
-newtype EnvFrag v i i' o = Env (NameMap v (i:=>:i') o)
-type Env v i o = EnvFrag v VoidS i o
-
-newtype ScopeFrag n l = Scope (NameSet (n:=>:l))
-type Scope n = ScopeFrag VoidS n
-
-emptyEnv :: EnvFrag v i i o
-emptyEnv = Env emptyNameMap
-
-infixl 1 <.>
-(<.>) :: EnvFrag v i1 i2 o -> EnvFrag v i2 i3 o -> EnvFrag v i1 i3 o
-(<.>) (Env m1) (Env m2) = Env $ concatNameMaps m1 m2
-
-instance Category ScopeFrag where
-  id = Scope emptyNameSetFrag
-  Scope s2 . Scope s1 = Scope $ concatNameSets s1 s2
-
 data NameFunction v i o where
   NameFunction
     :: (forall s. Name s hidden -> v s o)
@@ -80,9 +63,6 @@ emptyNameFunction = newNameFunction absurdNameFunction
 
 type Bindings n = NameFunction IdE n n
 type BindingsFrag n l = EnvFrag IdE n l l
-
-envAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
-envAsScope (Env m) = Scope $ nameMapNames m
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -102,7 +82,7 @@ class ScopeReader m => BindingsExtender (m::MonadKind1) where
   extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
 
 class Monad2 m => EnvReader (v::E->E) (m::MonadKind2) | m -> v where
-  lookupEnv :: Name s i -> m i o (v s o)
+  lookupEnvM :: Name s i -> m i o (v s o)
 
 class Monad2 m => EnvExtender (v::E->E) (m::MonadKind2) | m -> v where
   extendEnv :: EnvFrag v i i' o -> m i' o r -> m i o r
@@ -135,11 +115,8 @@ class BindsNames (b :: B) where
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
 
-toNameSet :: BindsNames b => b n l -> NameSet (n:=>:l)
-toNameSet b = s  where  Scope s = toScopeFrag b
-
 inject :: BindsNames b => InjectableE e => Distinct l => b n l -> e n -> e l
-inject ext x = injectNames (toNameSet ext) x
+inject ext x = injectNames (toScopeFrag ext) x
 
 -- like inject, but uses the ScopeReader monad for its `Distinct` proof
 injectM :: ScopeReader m => BindsNames b => InjectableE e => b n l -> e n -> m l (e l)
@@ -161,9 +138,9 @@ fromConstAbs :: (ScopeReader m, MonadErr1 m, BindsNames b, HasNamesE e)
              => Abs b e n -> m n (e n)
 fromConstAbs (Abs b e) = do
   Distinct scope <- getScope
-  liftEither $ traverseNames scope (tryProjectName $ toNameSet b) e
+  liftEither $ traverseNames scope (tryProjectName $ toScopeFrag b) e
 
-tryProjectName :: MonadErr m => NameSet (n:=>:l) -> Name s l -> m (Name s n)
+tryProjectName :: MonadErr m => ScopeFrag n l -> Name s l -> m (Name s n)
 tryProjectName names name =
   case projectName names name of
     Left name' -> return name'
@@ -192,13 +169,13 @@ type HasNamesE = SubstE Name
 type HasNamesB = SubstB Name
 
 instance Typeable s => SubstE Name (Name s) where
-  substE name = lookupEnv name
+  substE name = lookupEnvM name
 
 instance (InjectableE s, Typeable s) => SubstB v (NameBinder s) where
   substB b = SubstGenT do
-    Distinct (Scope names) <- getScope
+    Distinct names <- getScope
     withFresh names \b' -> do
-      let frag = Scope $ singletonNameSet b'
+      let frag = singletonScope b'
       return $ WithScopeFrag frag $ PairE (b @> binderName b') b'
 
 withSubstB :: (SubstB v b, ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
@@ -252,10 +229,10 @@ class BindsOneName (b::B) (s::E) | b -> s where
   binderName :: b i i' -> Name s i'
 
 instance BindsNames (NameBinder s) where
-  toScopeFrag b = Scope $ singletonNameSet b
+  toScopeFrag b = singletonScope b
 
 instance BindsOneName (NameBinder s) s where
-  b @> x = Env (singletonNameMap b x)
+  b @> x = singletonEnv b x
   binderName = nameBinderName
 
 infixr 7 @@>
@@ -289,7 +266,7 @@ applyNaryAbs (Abs bs body) xs = applySubst (bs @@> map SubstVal xs) body
 infixl 9 !
 (!) :: NameFunction v i o -> Name s i -> v s o
 (!) (NameFunction f env) name =
-  case lookupEnvFrag env name of
+  case lookupEnvFragProjected env name of
     Left name' -> f name'
     Right val -> val
 
@@ -297,11 +274,11 @@ infixl 1 <>>
 (<>>) :: NameFunction v i o -> EnvFrag v i i' o -> NameFunction v i' o
 (<>>) (NameFunction f frag) frag' = NameFunction f $ frag <.> frag'
 
-lookupEnvFrag :: EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
-lookupEnvFrag (Env m) name =
-  case projectName (nameMapNames m) name of
+lookupEnvFragProjected :: EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
+lookupEnvFragProjected m name =
+  case projectName (envAsScope m) name of
     Left  name' -> Left name'
-    Right name' -> Right $ lookupNameMap m name'
+    Right name' -> Right $ lookupEnvFrag m name'
 
 -- === versions of monad constraints with scope params ===
 
@@ -337,9 +314,9 @@ withFreshM :: (ScopeReader m, ScopeExtender m, Typeable s, InjectableE s)
            => (forall o'. NameBinder s o o' -> m o' a)
            -> m o a
 withFreshM cont = do
-  Distinct (Scope m) <- getScope
+  Distinct m <- getScope
   withFresh m \b' -> do
-    extendScope (Scope (singletonNameSet b')) $
+    extendScope (singletonScope b') $
       cont b'
 
 -- -- === alpha-renaming-invariant equality checking ===
@@ -467,7 +444,7 @@ newtype EnvReaderT (v::E->E) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
 
 instance Monad1 m => EnvReader v (EnvReaderT v m) where
-  lookupEnv name = EnvReaderT $ (! name) <$> ask
+  lookupEnvM name = EnvReaderT $ (! name) <$> ask
 
 instance Monad1 m => EnvExtender v (EnvReaderT v m) where
   extendEnv frag (EnvReaderT cont) =
@@ -476,9 +453,9 @@ instance Monad1 m => EnvExtender v (EnvReaderT v m) where
 instance Monad1 m => Renamer (EnvReaderT (SubstVal s val) m) where
   withEmptyRenamer (EnvReaderT cont) =
     EnvReaderT $ withReaderT (const $ newNameFunction Rename) cont
-  extendRenamer (Env frag) (EnvReaderT cont) =
+  extendRenamer frag (EnvReaderT cont) =
     EnvReaderT $ withReaderT (<>>frag') cont
-    where frag' = Env $ fmapNameMap (\_ v -> Rename v) frag
+    where frag' = fmapEnvFrag (\_ v -> Rename v) frag
 
 instance Monad1 m => Renamer (EnvReaderT Name m) where
   withEmptyRenamer (EnvReaderT cont) =
@@ -584,13 +561,13 @@ instance Monad m => Renamer (NameTraverserT m) where
     NameTraverserT $ withReaderT (`extendNameTraverserEnv` frag) cont
 
 instance Monad m => EnvReader Name (NameTraverserT m) where
-  lookupEnv name = NameTraverserT do
+  lookupEnvM name = NameTraverserT do
     env <- ask
     lift $ ScopeReaderT $ lift $ lookupNameTraversalEnv env name
 
 lookupNameTraversalEnv :: Monad m => NameTraverserEnv m i o -> Name s i -> m (Name s o)
 lookupNameTraversalEnv (NameTraverserEnv f frag) name =
-  case lookupEnvFrag frag name of
+  case lookupEnvFragProjected frag name of
     Left name' -> f name'
     Right val -> return val
 
@@ -670,9 +647,6 @@ instance InjectableV v => InjectableE (NameFunction v i) where
   injectionProofE fresh (NameFunction f m) =
     NameFunction (\name -> withNameClasses name $ injectionProofE fresh $ f name)
                  (injectionProofE fresh m)
-
-instance InjectableV v => InjectableE (EnvFrag v i i') where
-  injectionProofE fresh (Env m) = Env (injectionProofE fresh m)
 
 instance InjectableE atom => InjectableE (SubstVal (sMatch::E) (atom::E) (s::E)) where
   injectionProofE fresh substVal = case substVal of
