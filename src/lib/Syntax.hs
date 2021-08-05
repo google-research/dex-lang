@@ -46,7 +46,7 @@ module Syntax (
     UPat, UPat' (..), SourceUModule (..),
     UModule (..), UDecl (..), UDataDef (..), UArrow, arrowEff,
     UEffect, UEffectRow, UEffArrow,
-    DataDef (..), DataConDef (..), ClassDef (..), UConDef, Nest (..), toNest,
+    DataDef (..), NamedDataDef, DataConDef (..), ClassDef (..), UConDef, Nest (..), toNest,
     DataDefName, ClassDefName,
     subst, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
@@ -103,8 +103,8 @@ data Atom = Var Var
           | Pi  PiType
           | DepPairTy           (Abs Binder Type)
           | DepPair   Atom Atom (Abs Binder Type) -- lhs, rhs, rhs type abstracted over lhs
-          | DataCon DataDef [Atom] Int [Atom]
-          | TypeCon DataDef [Atom]
+          | DataCon NamedDataDef [Atom] Int [Atom]
+          | TypeCon NamedDataDef [Atom]
           | LabeledRow (ExtLabeledItems Type Name)
           | Record (LabeledItems Atom)
           | RecordTy (ExtLabeledItems Type Name)
@@ -115,7 +115,7 @@ data Atom = Var Var
           | Eff EffectRow
           | ACase Atom [AltP Atom] Type
             -- single-constructor only for now
-          | DataConRef DataDef [Atom] (Nest DataConRefBinding)
+          | DataConRef NamedDataDef [Atom] (Nest DataConRefBinding)
           -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
           | DepPairRef Atom (Abs Binder Atom) (Abs Binder Type)
           | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
@@ -149,7 +149,9 @@ type Binder = BinderP Type
 data DataDef = DataDef SourceName (Nest Binder) [DataConDef]  deriving (Show, Generic)
 data DataConDef = DataConDef SourceName (Nest Binder)    deriving (Show, Generic)
 -- The SourceNames are the method names, for reporting errors
-data ClassDef = ClassDef DataDef [SourceName]  deriving (Show, Generic)
+data ClassDef = ClassDef NamedDataDef [SourceName]  deriving (Show, Generic)
+
+type NamedDataDef = (Name, DataDef)
 
 data Abs b body = Abs b body               deriving (Show, Generic)
 data Nest a = Nest a (Nest a) | Empty
@@ -1337,11 +1339,11 @@ instance Subst DataDef where
     where Abs paramBs' dataCons' = subst env $ Abs paramBs dataCons
 
 instance HasVars ClassDef where
-  freeVars (ClassDef dataDef _) = freeVars dataDef
+  freeVars (ClassDef (_, dataDef) _) = freeVars dataDef
 
 instance Subst ClassDef where
-  subst env (ClassDef dataDef methodNames) =
-    ClassDef (subst env dataDef) methodNames
+  subst env (ClassDef (name, dataDef) methodNames) =
+    ClassDef (substName (fst env) name, subst env dataDef) methodNames
 
 instance HasVars DataConDef where
   freeVars (DataConDef _ bs) = freeVars $ Abs bs ()

@@ -80,7 +80,7 @@ prettyVal val = case val of
           TC (BaseType (Scalar Word8Type)) -> pretty ('"': concat elems ++ "\"")
           _      -> pretty elems
     return $ elemsDoc <> idxSetDoc
-  DataCon (DataDef _ _ dataCons) _ con args ->
+  DataCon (_, DataDef _ _ dataCons) _ con args ->
     case args of
       [] -> return $ pretty conName
       _  -> do
@@ -97,7 +97,7 @@ prettyVal val = case val of
     SumAsProd ty (TagRepVal trep) payload -> do
       let t = fromIntegral trep
       case ty of
-        TypeCon (DataDef _ _ dataCons) _ ->
+        TypeCon (_, DataDef _ _ dataCons) _ ->
           case args of
             [] -> return $ pretty conName
             _  -> do

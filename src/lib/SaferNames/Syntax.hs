@@ -117,7 +117,7 @@ data TypedBinderInfo (n::S) = TypedBinderInfo (Type n) (AtomBinderInfo n)
 data Decl n l = Let LetAnn (Binder n l) (Expr n)
                 deriving (Show)
 
-type AtomName   = Name TypedBinderInfo
+type AtomName = Name TypedBinderInfo
 
 data Binder (n::S) (l::S) =
   (:>) (NameBinder TypedBinderInfo n l) (Type n)  deriving Show

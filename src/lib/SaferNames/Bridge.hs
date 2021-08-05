@@ -199,7 +199,8 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 
 type UnsafeName s = UnsafeNameE s VoidS
 data UnsafeNameE (s::E) (n::S) where
-  UnsafeAtomName :: D.Name -> UnsafeNameE S.TypedBinderInfo VoidS
+  UnsafeAtomName    :: D.Name -> UnsafeNameE S.TypedBinderInfo VoidS
+  UnsafeDataDefName :: D.Name -> UnsafeNameE S.DataDef         VoidS
 
 type FromSafeNameMap i = S.Env UnsafeNameE i VoidS
 
@@ -260,12 +261,12 @@ instance HasSafeVersionE D.Atom where
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
         return $ S.Pi $ S.PiType arr' b' eff' body'
-    D.DataCon dataDef@(D.DataDef printName _ _ ) params con args ->
+    D.DataCon (def, D.DataDef printName _ _) params con args ->
       S.DataCon (rawName GenName $ fromString printName) <$>
-        toSafeE (DataDefRef dataDef) <*>
+        toSafeDataDefName def <*>
         mapM toSafeE params <*> pure con <*> mapM toSafeE args
-    D.TypeCon dataDef params ->
-      S.TypeCon <$> toSafeE (DataDefRef dataDef) <*> mapM toSafeE params
+    D.TypeCon (def, _) params ->
+      S.TypeCon <$> toSafeDataDefName def <*> mapM toSafeE params
     D.LabeledRow (Ext items t) ->
       S.LabeledRow <$> (Ext <$> mapM toSafeE items <*> mapM toSafeAtomName t)
     D.Record items -> S.Record <$> mapM toSafeE items
@@ -280,8 +281,8 @@ instance HasSafeVersionE D.Atom where
     D.TC  tc   -> S.TC  <$> mapM toSafeE tc
     D.Eff effs -> S.Eff <$> toSafeE effs
     D.ACase scrut alts ty -> S.ACase <$> toSafeE scrut <*> mapM toSafeE alts <*> toSafeE ty
-    D.DataConRef dataDef params args ->
-      S.DataConRef <$> toSafeE (DataDefRef dataDef) <*>
+    D.DataConRef (def, _) params args ->
+      S.DataConRef <$> toSafeDataDefName def <*>
         mapM toSafeE params <*> toSafeE (D.Abs args ())
     D.BoxedRef b ptr size body ->
       S.BoxedRef <$> toSafeE ptr <*> toSafeE size <*> toSafeE (D.Abs b body)
@@ -299,12 +300,10 @@ instance HasSafeVersionE D.Atom where
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body
         return $ D.Pi $ D.Abs b' (arr', body')
-    S.DataCon _ dataDefName params con args -> do
-      dataDef <- fromDataDefRef <$> fromSafeE dataDefName
-      D.DataCon dataDef <$> mapM fromSafeE params <*> pure con <*> mapM fromSafeE args
-    S.TypeCon dataDefName params -> do
-      dataDef <- fromDataDefRef <$> fromSafeE dataDefName
-      D.TypeCon dataDef <$> mapM fromSafeE params
+    S.DataCon _ def params con args -> do
+      D.DataCon <$> fromSafeDataDefName def <*> mapM fromSafeE params <*> pure con <*> mapM fromSafeE args
+    S.TypeCon def params ->
+      D.TypeCon <$> fromSafeDataDefName def <*> mapM fromSafeE params
     S.LabeledRow (Ext items t) -> D.LabeledRow <$>
       (Ext <$> mapM fromSafeE items <*> mapM fromSafeAtomName t)
     S.Record items -> D.Record <$> mapM fromSafeE items
@@ -319,11 +318,11 @@ instance HasSafeVersionE D.Atom where
     S.TC  tc   -> D.TC  <$> mapM fromSafeE tc
     S.Eff effs -> D.Eff <$> fromSafeE effs
     S.ACase scrut alts ty -> D.ACase <$> fromSafeE scrut <*> mapM fromSafeE alts <*> fromSafeE ty
-    S.DataConRef dataDef params ab -> do
-      dataDef <- fromDataDefRef <$> fromSafeE dataDef
+    S.DataConRef def params ab -> do
+      def' <- fromSafeDataDefName def
       params' <- mapM fromSafeE params
       D.Abs bs () <- fromSafeE ab
-      return $ D.DataConRef dataDef params' bs
+      return $ D.DataConRef def' params' bs
     S.BoxedRef ptr size ab -> do
       ptr' <- fromSafeE ptr
       size' <- fromSafeE size
@@ -365,9 +364,19 @@ toSafeAtomName name = do
 
 fromSafeAtomName :: MonadFromSafe m => S.AtomName i -> m i D.Name
 fromSafeAtomName name = do
-  name' <- lookupFromSafeNameMap name
-  case name' of
-    UnsafeAtomName v -> return v
+  UnsafeAtomName v <- lookupFromSafeNameMap name
+  return v
+
+toSafeDataDefName :: MonadToSafe m => D.Name -> m o (S.Name S.DataDef o)
+toSafeDataDefName name = do
+  SafeDataDefName name' <- lookupToSafeNameMap name
+  return name'
+
+fromSafeDataDefName :: MonadFromSafe m => S.Name S.DataDef i -> m i (D.Name, D.DataDef)
+fromSafeDataDefName name = do
+  UnsafeDataDefName defName <- lookupFromSafeNameMap name
+  D.DataDefName defVal <- (D.!defName) <$> getUnsafeBindings
+  return (defName, defVal)
 
 fromSafeAtomNameVar :: MonadFromSafe m => S.AtomName i -> m i D.Var
 fromSafeAtomNameVar name = do
@@ -394,14 +403,6 @@ fromSafeArrow arr eff = case arr of
   S.LinArrow      -> return D.LinArrow
   S.ImplicitArrow -> return D.ImplicitArrow
   S.ClassArrow    -> return D.ClassArrow
-
-newtype DataDefRef = DataDefRef { fromDataDefRef :: D.DataDef }
-instance HasSafeVersionE DataDefRef where
-  type SafeVersionE DataDefRef = S.Name S.DataDef
-  -- TODO: to handle these we need the unsafe IR to keep around the data def
-  -- names rather than just inlining the definition.
-  toSafeE = undefined
-  fromSafeE = undefined
 
 instance HasSafeVersionE () where
   type SafeVersionE () = S.UnitE

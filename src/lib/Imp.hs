@@ -327,7 +327,7 @@ toImpOp (maybeDest, op) = case op of
     (DataCon _ _ i _) -> returnVal $ TagRepVal $ fromIntegral i
     _ -> error $ "Not a data constructor: " ++ pprint con
   ToEnum ty i -> returnVal $ case ty of
-    TypeCon (DataDef _ _ cons) _ ->
+    TypeCon (_, DataDef _ _ cons) _ ->
       Con $ SumAsProd ty i (map (const []) cons)
     VariantTy (NoExt labeledItems) ->
       Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
@@ -633,7 +633,7 @@ makeDestRec ty = case ty of
           withEnclosingIdxs (Bind i) $ makeDestRec bodyTy'
         return $ Con $ TabRef lam
   TypeCon def params -> do
-    let dcs = applyDataDefParams def params
+    let dcs = applyDataDefParams (snd def) params
     case dcs of
       [] -> error "Void type not allowed"
       [DataConDef _ bs] -> do
@@ -643,7 +643,7 @@ makeDestRec ty = case ty of
         when (any isDependent dcs) $ error
           "Dependent data constructors only allowed for single-constructor types"
         tag <- rec TagRepTy
-        let dcs' = applyDataDefParams def params
+        let dcs' = applyDataDefParams (snd def) params
         contents <- forM dcs' \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
         return $ Con $ ConRef $ SumAsProd ty tag contents
   DepPairTy a@(Abs b _) -> do

@@ -318,13 +318,13 @@ instance PrettyPrec Atom where
         parens $ p b <+> "&>" <+> p ty
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <> ",>" <+> p y
-    DataCon (DataDef _ _ cons) _ con xs -> case xs of
+    DataCon (_, DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
       where (DataConDef name _) = cons !! con
-    TypeCon (DataDef name _ _) params -> case params of
+    TypeCon (_, DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
@@ -370,7 +370,7 @@ prettyProjection idxs (name :> fullTy) = atPrec ArgPrec $ pretty uproj where
 
   buildProj :: Type -> NE.NonEmpty Int -> (UPat, UVar)
   buildProj ty (i NE.:| is) = case ty of
-      TypeCon def params ->
+      TypeCon (_, def) params ->
         rec subTy (UInternalVar hint) \pat ->
           UPatCon (USourceVar conName) $ enumerate bs <&> \(j, _) ->
             if i == j then pat else uignore

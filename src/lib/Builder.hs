@@ -265,14 +265,14 @@ emitMethodType classDef idx = do
 
 makeMethodGetter :: MonadBuilder m => ClassDefName -> Int -> m Atom
 makeMethodGetter classDefName methodIdx = do
-  ClassDef def@(DataDef _ paramBs _) _ <- getClassDef classDefName
+  ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [1, 0] dict
 
 makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
 makeSuperclassGetter classDefName methodIdx = do
-  ClassDef def@(DataDef _ paramBs _) _ <- getClassDef classDefName
+  ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [0, 0] dict

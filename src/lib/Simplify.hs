@@ -316,7 +316,7 @@ simplifyExpr expr = case expr of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@> SubstVal x') $ simplifyBlock body
       DataCon def params con xs -> return $ DataCon def params' con xs'
-         where DataDef _ paramBs _ = def
+         where (_, DataDef _ paramBs _) = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
       ACase e alts ~(Pi ab) -> do
         let rty' = snd $ applyAbs ab $ getType x'
@@ -365,15 +365,19 @@ simplifyExpr expr = case expr of
             let altCtxTypes = fmap (\(_, (ctx, _), _) -> fmap getType $ toList ctx) facs
             let ctxDef = DataDef "CaseClosure" Empty $
                   fmap (DataConDef "Closure" . toNest . fmap Ignore) altCtxTypes
+            -- XXX: the name is for the safe-names bridge. It shouldn't be
+            --      needed here because this data type doesn't appear at the top level.
+            --      TODO: replace with a built-in sum type instead of synthesizing an ADT here.
+            let namedCtxDef = (error "don't have a name!", ctxDef)
             -- New cases return a pair of data components, and a closure for non-data atoms
             let alts'' = for (enumerate $ zip alts' facs) $
                   \(i, (Abs bs (Block decls _), (dat, (ctx, _), _))) ->
                     Abs bs $ Block decls $ Atom $
-                      PairVal (ProdVal $ toList dat) (DataCon ctxDef [] i $ toList ctx)
+                      PairVal (ProdVal $ toList dat) (DataCon namedCtxDef [] i $ toList ctx)
             -- Here, we emit the case expression and unpack the results. All the trees
             -- should be the same, so we just pick the first one.
             let (datType, datTree) = (\(dat, _, _) -> (getType $ ProdVal $ toList dat, dat)) $ head facs
-            caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon ctxDef [])
+            caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon namedCtxDef [])
             (cdat, cctx) <- fromPair caseResult
             dat <- flip restructure datTree <$> getUnpacked cdat
             -- At this point we have the data components `dat` ready to be applied to the
