@@ -114,7 +114,7 @@ makeBindingsFrag scope bindings toSafeMap fromSafeMap constNameMap =
           AtomBinderInfo ty info ->
             let (ty', info') = runToSafeM toSafeMap scope $
                                  (,) <$> toSafeE ty <*> toSafeE info
-            in IdE $ S.TypedBinderInfo ty' info'
+            in IdE $ S.AtomNameDef ty' info'
 
 withFreshSafeRec :: MonadToSafe m
                  => FromSafeNameMap n
@@ -199,7 +199,7 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 
 type UnsafeName s = UnsafeNameE s VoidS
 data UnsafeNameE (s::E) (n::S) where
-  UnsafeAtomName    :: D.Name -> UnsafeNameE S.TypedBinderInfo VoidS
+  UnsafeAtomName    :: D.Name -> UnsafeNameE S.AtomNameDef VoidS
   UnsafeDataDefName :: D.Name -> UnsafeNameE S.DataDef         VoidS
 
 type FromSafeNameMap i = S.Env UnsafeNameE i VoidS
@@ -237,14 +237,37 @@ class HasSafeVersionB (b:: *) where
   toSafeB   :: MonadToSafe   m => b -> (forall o'. SafeVersionB b o o' -> m o' r) -> m o r
   fromSafeB :: MonadFromSafe m => SafeVersionB b i i' -> (b -> m i' r) -> m i r
 
+instance HasSafeVersionE D.EvaluatedModule where
+  type SafeVersionE D.EvaluatedModule = S.EvaluatedModule
+  toSafeE = undefined
+  fromSafeE = undefined
+
 instance HasSafeVersionE D.Module where
   type SafeVersionE D.Module = S.Module
+  toSafeE (D.Module ir decls evaluated) =
+    toSafeB decls \decls' -> do
+      evaluated' <- toSafeE evaluated
+      return $ S.Module ir decls' evaluated'
+  fromSafeE (S.Module ir decls evaluated) =
+    fromSafeB decls \decls' -> do
+      evaluated' <- fromSafeE evaluated
+      return $ D.Module ir decls' evaluated'
 
 instance HasSafeVersionE D.SourceMap where
-  type SafeVersionE D.SourceMap = S.SourceNameMap
+  type SafeVersionE D.SourceMap = S.SourceMap
+  toSafeE (D.SourceMap m) = S.SourceMap <$>
+    forM m \name -> undefined
+
+  fromSafeE (S.SourceMap m) = D.SourceMap <$>
+    forM m \case
+      SrcAtomName v -> undefined
 
 instance HasSafeVersionE D.SynthCandidates where
   type SafeVersionE D.SynthCandidates = S.SynthCandidates
+  toSafeE (D.SynthCandidates xs ys zs) =
+    S.SynthCandidates <$> mapM toSafeE xs <*> mapM toSafeE ys <*> mapM toSafeE zs
+  fromSafeE (S.SynthCandidates xs ys zs) =
+    D.SynthCandidates <$> mapM fromSafeE xs <*> mapM fromSafeE ys <*> mapM fromSafeE zs
 
 instance HasSafeVersionE D.Atom where
   type SafeVersionE D.Atom = S.Atom
@@ -252,17 +275,17 @@ instance HasSafeVersionE D.Atom where
   toSafeE atom = case atom of
     D.Var (v D.:> _) -> S.Var <$> toSafeAtomName v
     D.Lam (D.Abs b (arr, body)) -> do
-      withFreshAtomBinderS b \b' -> do
+      toSafeB b \b' -> do
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
         return $ S.Lam $ S.LamExpr arr' b' eff' body'
     D.Pi (D.Abs b (arr, body)) ->
-      withFreshAtomBinderS b \b' -> do
+      toSafeB b \b' -> do
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
         return $ S.Pi $ S.PiType arr' b' eff' body'
     D.DataCon (def, D.DataDef printName _ _) params con args ->
-      S.DataCon (rawName GenName $ fromString printName) <$>
+      S.DataCon printName <$>
         toSafeDataDefName def <*>
         mapM toSafeE params <*> pure con <*> mapM toSafeE args
     D.TypeCon (def, _) params ->
@@ -291,12 +314,12 @@ instance HasSafeVersionE D.Atom where
   fromSafeE atom = case atom of
     S.Var v -> D.Var <$> fromSafeAtomNameVar v
     S.Lam (S.LamExpr arr b eff body) -> do
-      withFreshAtomBinderD b \b' -> do
+      fromSafeB b \b' -> do
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body
         return $ D.Lam $ D.Abs b' (arr', body')
     S.Pi (S.PiType arr b eff body) -> do
-      withFreshAtomBinderD b \b' -> do
+      fromSafeB b \b' -> do
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body
         return $ D.Pi $ D.Abs b' (arr', body')
@@ -333,29 +356,21 @@ instance HasSafeVersionE D.Atom where
 instance HasSafeVersionB D.Binder where
   type SafeVersionB D.Binder = S.Binder
 
-withFreshAtomBinderS :: MonadToSafe m
-                     => D.Binder
-                     -> (forall o'. S.Binder o o' -> m o' r)
-                     -> m o r
-withFreshAtomBinderS (Ignore ty) cont = do
-  ty' <- toSafeE ty
-  withFreshM \b' -> do
-    cont (b' S.:> ty')
-withFreshAtomBinderS (Bind (b D.:> ty)) cont = do
-  ty' <- toSafeE ty
-  withFreshM \b' -> do
-    extendToSafeNameMap b (SafeAtomName $ S.binderName b') $
+  toSafeB (Ignore ty) cont = do
+    ty' <- toSafeE ty
+    withFreshM \b' -> do
       cont (b' S.:> ty')
+  toSafeB (Bind (b D.:> ty)) cont = do
+    ty' <- toSafeE ty
+    withFreshM \b' -> do
+      extendToSafeNameMap b (SafeAtomName $ S.binderName b') $
+        cont (b' S.:> ty')
 
-withFreshAtomBinderD :: MonadFromSafe m
-                     => S.Binder i i'
-                     -> (D.Binder -> m i' r)
-                     -> m i r
-withFreshAtomBinderD (b S.:> ty) cont = do
-  ty' <- fromSafeE ty
-  withFreshUnsafeName (AtomBinderInfo ty' UnknownBinder) \v' ->
-    extendFromSafeMap b (UnsafeAtomName v') $
-      cont (Bind (v' D.:> ty'))
+  fromSafeB (b S.:> ty) cont = do
+    ty' <- fromSafeE ty
+    withFreshUnsafeName (AtomBinderInfo ty' UnknownBinder) \v' ->
+      extendFromSafeMap b (UnsafeAtomName v') $
+        cont (Bind (v' D.:> ty'))
 
 toSafeAtomName :: MonadToSafe m => D.Name -> m o (S.AtomName o)
 toSafeAtomName name = do
@@ -406,6 +421,8 @@ fromSafeArrow arr eff = case arr of
 
 instance HasSafeVersionE () where
   type SafeVersionE () = S.UnitE
+  toSafeE () = return UnitE
+  fromSafeE UnitE = return ()
 
 instance HasSafeVersionB D.DataConRefBinding where
   type SafeVersionB D.DataConRefBinding = S.DataConRefBinding
@@ -455,7 +472,7 @@ instance HasSafeVersionB D.Decl where
       cont $ D.Let ann b' expr'
 
 data AnnBinderP (ann::E) (n::S) (l::S) =
-  AnnBinderP (S.NameBinder S.TypedBinderInfo n l) (ann n)
+  AnnBinderP (S.NameBinder S.AtomNameDef n l) (ann n)
 
 instance HasSafeVersionE D.Effect where
   type SafeVersionE D.Effect = S.Effect
@@ -489,6 +506,8 @@ instance HasSafeVersionB b => HasSafeVersionB (D.Nest b) where
 
 instance HasSafeVersionE BinderInfo where
   type SafeVersionE BinderInfo = AtomBinderInfo
+  toSafeE = undefined
+  fromSafeE = undefined
 
 traverseSet :: (Ord a, Ord b, Monad m) => (a -> m b) -> Set.Set a -> m (Set.Set b)
 traverseSet f s = Set.fromList <$> mapM f (Set.toList s)
@@ -527,5 +546,5 @@ instance MonadFail (FromSafeM i) where
 instance InjectableE ToSafeNameMap
 
 instance InjectableE S.SynthCandidates
-instance InjectableE S.SourceNameMap
+instance InjectableE S.SourceMap
 

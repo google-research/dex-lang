@@ -20,11 +20,12 @@ module SaferNames.Syntax (
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
-    BinOp (..), UnOp (..), CmpOp (..), SourceNameMap (..),
-    ForAnn (..), Val, Op, Con, Hof, TC, Module (..),
+    BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
+    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), SourceNameDef (..),
+    ClassDef (..),
     EvaluatedModule (..), SynthCandidates (..), TopState (..), emptyTopState,
     DataConRefBinding (..),
-    AltP, Alt, AtomBinderInfo (..), TypedBinderInfo (..),
+    AltP, Alt, AtomNameDef (..), AtomBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
     Direction (..), Limit (..), DataDef (..), DataConDef (..), Nest (..), IndexStructure,
@@ -47,7 +48,6 @@ import Control.Monad.Except hiding (Except)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
-import qualified Data.Text             as T
 import Data.Int
 import Data.Text.Prettyprint.Doc
 import Data.Word
@@ -74,8 +74,8 @@ data Atom n =
    Var (AtomName n)
  | Lam (LamExpr n)
  | Pi  (PiType  n)
-   -- RawName is purely for printing
- | DataCon RawName (Name DataDef n) [Atom n] Int [Atom n]
+   -- SourceName is purely for printing
+ | DataCon SourceName (Name DataDef n) [Atom n] Int [Atom n]
  | TypeCon (Name DataDef n) [Atom n]
  | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
  | Record (LabeledItems (Atom n))
@@ -112,15 +112,15 @@ data AtomBinderInfo (n::S) =
  | MiscBound
  | InferenceName
 
-data TypedBinderInfo (n::S) = TypedBinderInfo (Type n) (AtomBinderInfo n)
+data AtomNameDef (n::S) = AtomNameDef (Type n) (AtomBinderInfo n)
 
 data Decl n l = Let LetAnn (Binder n l) (Expr n)
                 deriving (Show)
 
-type AtomName = Name TypedBinderInfo
+type AtomName = Name AtomNameDef
 
 data Binder (n::S) (l::S) =
-  (:>) (NameBinder TypedBinderInfo n l) (Type n)  deriving Show
+  (:>) (NameBinder AtomNameDef n l) (Type n)  deriving Show
 
 data DataConRefBinding n l = DataConRefBinding (Binder n l) (Atom n) deriving Show
 
@@ -128,12 +128,12 @@ type AltP (e::E) = Abs (Nest Binder) e :: E
 type Alt = AltP Block                  :: E
 
 data DataDef n where
-  -- The `RawName` is just for pretty-printing. The actual alpha-renamable
+  -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Bindings
-  DataDef :: RawName -> Nest Binder n l -> [DataConDef l] -> DataDef n
+  DataDef :: SourceName -> Nest Binder n l -> [DataConDef l] -> DataDef n
 
--- As above, the `RawName` is just for pretty-printing
-data DataConDef n = DataConDef RawName (EmptyAbs (Nest Binder) n)
+-- As above, the `SourceName` is just for pretty-printing
+data DataConDef n = DataConDef SourceName (EmptyAbs (Nest Binder) n)
                     deriving Show
 
 -- The Type is the type of the result expression (and thus the type of the
@@ -168,37 +168,45 @@ type Hof n = PrimHof (Atom n)
 
 type IndexStructure = Nest Binder
 
-type AtomSubstVal = SubstVal TypedBinderInfo Atom :: E -> E
+type AtomSubstVal = SubstVal AtomNameDef Atom :: E -> E
 
 -- === top-level modules ===
 
-type SourceName = T.Text
+type SourceName = String
 
 data TopState n = TopState
   { topBindings        :: Bindings        n
   , topSynthCandidates :: SynthCandidates n
-  , topSourceNameMap   :: SourceNameMap   n }
+  , topSourceMap   :: SourceMap   n }
 
 emptyTopState :: TopState VoidS
-emptyTopState = TopState emptyBindings mempty (SourceNameMap mempty)
+emptyTopState = TopState emptyBindings mempty (SourceMap mempty)
 
-data SourceNameMap n = SourceNameMap
-  { fromSourceNameMap :: M.Map SourceName (Name UnitE n)}
+data SourceNameDef (n::S) =
+   SrcAtomName    (Name AtomNameDef n)
+ | SrcTyConName   (Name DataDef n)
+ | SrcDataConName (Name DataDef n) Int
+ | SrcClassName   (Name ClassDef n)
+ | SrcMethodName  (Name ClassDef n) Int
+ | SrcUExprName   (Name UnitE n)
+
+data ClassDef  n = ClassDef SourceName [SourceName] (Name DataDef n)
+
+data SourceMap (n::S) = SourceMap
+  { fromSourceMap :: M.Map SourceName (SourceNameDef n)}
 
 data Module n where
   Module
     :: IRVariant
     -> Nest Decl n l      -- Unevaluated decls representing runtime work to be done
-    -> ScopeFrag l l'     -- Evaluated bindings
-    -> SourceNameMap l'   -- Mapping of module's source names to internal names
-    -> SynthCandidates l' -- Values considered in scope for dictionary synthesis
+    -> EvaluatedModule l
     -> Module n
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
     :: ScopeFrag n l     -- Evaluated bindings
-    -> SourceNameMap l   -- Mapping of module's source names to internal names
     -> SynthCandidates l -- Values considered in scope for dictionary synthesis
+    -> SourceMap l       -- Mapping of module's source names to internal names
     -> EvaluatedModule n
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
@@ -383,11 +391,11 @@ lookupAtomSubstVal :: EnvReader v m => InjectableToAtomSubstVal v
 lookupAtomSubstVal name = injectToAtomSubstVal <$> lookupEnv name
 
 -- right-biased, unlike the underlying Map
-instance Semigroup (SourceNameMap n) where
-  m1 <> m2 = SourceNameMap $ fromSourceNameMap m2 <> fromSourceNameMap m1
+instance Semigroup (SourceMap n) where
+  m1 <> m2 = SourceMap $ fromSourceMap m2 <> fromSourceMap m1
 
-instance Monoid (SourceNameMap n) where
-  mempty = SourceNameMap mempty
+instance Monoid (SourceMap n) where
+  mempty = SourceMap mempty
 
 ipe :: InjectableE e => InjectionCoercion n l -> e n -> e l
 ipe = injectionProofE
@@ -725,7 +733,7 @@ instance AlphaEqB Binder where
     alphaEqE ty1 ty2
     withAlphaEqB b1 b2 cont
 
-instance BindsOneName Binder TypedBinderInfo where
+instance BindsOneName Binder AtomNameDef where
   (b:>_) @> x = b @> x
   binderName (b:>_) = binderName b
 
@@ -756,16 +764,16 @@ instance AlphaEqE AtomBinderInfo where
     (MiscBound    , MiscBound    ) -> return ()
     _ -> zipErr
 
-instance InjectableE TypedBinderInfo where
-  injectionProofE f (TypedBinderInfo ty info) =
-    TypedBinderInfo (ipe f ty) (ipe f info)
+instance InjectableE AtomNameDef where
+  injectionProofE f (AtomNameDef ty info) =
+    AtomNameDef (ipe f ty) (ipe f info)
 
-instance InjectableToAtomSubstVal v => SubstE v TypedBinderInfo where
-  substE (TypedBinderInfo ty info) =
-    TypedBinderInfo <$> substE ty <*> substE info
+instance InjectableToAtomSubstVal v => SubstE v AtomNameDef where
+  substE (AtomNameDef ty info) =
+    AtomNameDef <$> substE ty <*> substE info
 
-instance AlphaEqE TypedBinderInfo where
-  alphaEqE (TypedBinderInfo ty info) (TypedBinderInfo ty' info') = do
+instance AlphaEqE AtomNameDef where
+  alphaEqE (AtomNameDef ty info) (AtomNameDef ty' info') = do
     alphaEqE ty ty'
     alphaEqE info info'
 

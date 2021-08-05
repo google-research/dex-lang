@@ -23,6 +23,7 @@ import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+import Data.String (fromString)
 import System.IO.Unsafe
 import System.Environment
 
@@ -125,7 +126,7 @@ instance PrettyPrec (Atom n) where
     Eff e -> atPrec ArgPrec $ p e
     DataCon name _ _ _ xs -> case xs of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
     TypeCon name params -> case params of
