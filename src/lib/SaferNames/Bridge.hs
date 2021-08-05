@@ -58,7 +58,7 @@ initTopState = TopStateEx $ JointTopState
     D.emptyTopState
     S.emptyTopState
     (ToSafeNameMap mempty)
-    voidEnv
+    emptyNameFunction
 
 data JointTopState n = JointTopState
   { topStateD   :: D.TopState
@@ -69,33 +69,36 @@ data JointTopState n = JointTopState
 extendTopStateD :: JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
   let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
-  let S.TopState bindingsS scsS sourceMapS = topStateS jointTopState
-  -- ensure the internal bindings are fresh wrt top bindings
-  let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
-  runToSafeM (topToSafeMap jointTopState) (bindingsAsScope bindingsS) do
-    nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
-     \bindingsFrag toSafeMap' fromSafeMap' -> do
-       scsS'       <- toSafeE scsD'
-       sourceMapS' <- toSafeE sourceMapD'
-       sourceMapSInj <- injectM bindingsFrag sourceMapS
-       scsSInj       <- injectM bindingsFrag scsS
-       return $ TopStateEx $ JointTopState
-         (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
-         (S.TopState (appendBindings bindingsS bindingsFrag)
-                     (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
-         toSafeMap'
-         fromSafeMap'
+  case topStateS jointTopState of
+    S.TopState (TopBindings bindingsS) scsS sourceMapS -> do
+      -- ensure the internal bindings are fresh wrt top bindings
+      let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
+      runToSafeM (topToSafeMap jointTopState) (envAsScope bindingsS) do
+        nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
+         \bindingsFrag toSafeMap' fromSafeMap' -> do
+           let scopeFrag = envAsScope bindingsFrag
+           scsS'       <- toSafeE scsD'
+           sourceMapS' <- toSafeE sourceMapD'
+           sourceMapSInj <- injectM scopeFrag sourceMapS
+           bindingsSInj  <- injectM scopeFrag bindingsS
+           scsSInj       <- injectM scopeFrag scsS
+           return $ TopStateEx $ JointTopState
+             (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
+             (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
+                         (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
+             toSafeMap'
+             fromSafeMap'
 
 -- This is pretty horrible. The name system isn't really designed for creating
 -- bijections, so we have to do a lot of things manually.
 nameBijectionFromDBindings
     :: MonadToSafe m => FromSafeNameMap n -> D.Bindings
-    -> (forall l. BindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
+    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
     -> m n a
 nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do
     toSafeMap' <- getToSafeNameMap
-    scope <- getScope
+    Distinct scope <- getScope
     let bindingsFrag = makeBindingsFrag scope bindings toSafeMap' fromSafeMap' scopeFrag
     cont bindingsFrag toSafeMap' fromSafeMap'
 
@@ -105,7 +108,7 @@ makeBindingsFrag :: forall n l. Distinct l =>
                     S.Scope l -> D.Bindings -> ToSafeNameMap l -> FromSafeNameMap l
                  -> ConstNameMap n l -> BindingsFrag n l
 makeBindingsFrag scope bindings toSafeMap fromSafeMap constNameMap =
-  BindingsFrag $ fmapNameMap (\name _ -> getSafeBinding name) constNameMap
+  S.Env $ fmapNameMap (\name _ -> getSafeBinding name) constNameMap
   where
     getSafeBinding :: S.Name s (n:=>:l) -> IdE s l
     getSafeBinding name =
@@ -122,7 +125,8 @@ withFreshSafeRec :: MonadToSafe m
                  -> (forall l. Distinct l => ConstNameMap n l -> FromSafeNameMap l -> m l a)
                  -> m n a
 withFreshSafeRec fromSafeMap [] cont = do
-  withDistinct $ cont emptyNameMap fromSafeMap
+  Distinct _ <- getScope
+  cont emptyNameMap fromSafeMap
 withFreshSafeRec fromSafeMap ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
     frag <- return $ singletonNameMap b (ConstE UnitE)
@@ -144,8 +148,9 @@ extendTopStateS = error "not implemented"
 
 toSafe :: HasSafeVersionE e => JointTopState n -> e -> SafeVersionE e n
 toSafe jointTopState e =
-  runToSafeM (topToSafeMap jointTopState) scope $ toSafeE e
-  where scope = S.bindingsAsScope $ S.topBindings $ topStateS $ jointTopState
+  case S.topBindings $ topStateS $ jointTopState of
+    TopBindings bindings ->
+      runToSafeM (topToSafeMap jointTopState) (envAsScope bindings) $ toSafeE e
 
 fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
 fromSafe jointTopState e =
@@ -171,7 +176,7 @@ newtype ToSafeM o a =
   ToSafeM { runToSafeM' :: ReaderT (ToSafeNameMap o) (ScopeReaderT Identity o) a }
   deriving (Functor, Applicative, Monad)
 
-runToSafeM :: ToSafeNameMap o -> S.Scope o -> ToSafeM o a -> a
+runToSafeM :: Distinct o => ToSafeNameMap o -> S.Scope o -> ToSafeM o a -> a
 runToSafeM nameMap scope m =
   runIdentity $ runScopeReaderT scope $
     flip runReaderT nameMap $
@@ -202,7 +207,7 @@ data UnsafeNameE (s::E) (n::S) where
   UnsafeAtomName    :: D.Name -> UnsafeNameE S.AtomNameDef VoidS
   UnsafeDataDefName :: D.Name -> UnsafeNameE S.DataDef         VoidS
 
-type FromSafeNameMap i = S.Env UnsafeNameE i VoidS
+type FromSafeNameMap i = S.NameFunction UnsafeNameE i VoidS
 
 newtype FromSafeM i a =
   FromSafeM { runFromSafeM' :: ReaderT (FromSafeNameMap i) (Reader D.Bindings) a }

@@ -118,7 +118,7 @@ data NameBinder (s::E)  -- static information for the name this binds (note
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name s l }
 
-withFresh :: InjectableE s => Typeable s => Distinct n => NameSet n
+withFresh :: InjectableE s => Typeable s => Distinct n => NameSet (VoidS:=>:n)
           -> (forall l. Distinct l => NameBinder s n l -> a) -> a
 withFresh (UnsafeMakeNameSet scope) cont =
   cont @UnsafeMakeDistinctS $ UnsafeMakeBinder freshName

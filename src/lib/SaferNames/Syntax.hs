@@ -23,7 +23,8 @@ module SaferNames.Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), SourceNameDef (..),
     ClassDef (..),
-    EvaluatedModule (..), SynthCandidates (..), TopState (..), emptyTopState,
+    EvaluatedModule (..), SynthCandidates (..), TopState (..),
+    TopBindings (..), emptyTopState,
     DataConRefBinding (..),
     AltP, Alt, AtomNameDef (..), AtomBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -175,12 +176,15 @@ type AtomSubstVal = SubstVal AtomNameDef Atom :: E -> E
 type SourceName = String
 
 data TopState n = TopState
-  { topBindings        :: Bindings        n
+  { topBindings        :: TopBindings n
   , topSynthCandidates :: SynthCandidates n
-  , topSourceMap   :: SourceMap   n }
+  , topSourceMap       :: SourceMap   n }
+
+data TopBindings n where
+  TopBindings :: Distinct n => Env IdE n n -> TopBindings n
 
 emptyTopState :: TopState VoidS
-emptyTopState = TopState emptyBindings mempty (SourceMap mempty)
+emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
 
 data SourceNameDef (n::S) =
    SrcAtomName    (Name AtomNameDef n)
@@ -204,7 +208,7 @@ data Module n where
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
-    :: ScopeFrag n l     -- Evaluated bindings
+    :: BindingsFrag n l  -- Evaluated bindings
     -> SynthCandidates l -- Values considered in scope for dictionary synthesis
     -> SourceMap l       -- Mapping of module's source names to internal names
     -> EvaluatedModule n
@@ -433,7 +437,7 @@ instance InjectableB DataConRefBinding where
     injectionProofB f b \f' b' -> cont f' $ DataConRefBinding b' ref'
 
 instance BindsNames DataConRefBinding where
-  toExtVal (DataConRefBinding b _) = toExtVal b
+  toScopeFrag (DataConRefBinding b _) = toScopeFrag b
 
 instance InjectableToAtomSubstVal v => SubstB v DataConRefBinding where
   substB (DataConRefBinding b ref) =
@@ -709,7 +713,7 @@ instance AlphaEqE EffectRow where
     alphaEqTraversable tailVar tailVar'
 
 instance BindsNames Binder where
-  toExtVal (b:>_) = toExtVal b
+  toScopeFrag (b:>_) = toScopeFrag b
 
 instance InjectableB Binder where
   injectionProofB f (b:>ty) cont = do
@@ -789,7 +793,7 @@ instance InjectableToAtomSubstVal v => SubstB v Decl where
     returnSG $ Let ann b' expr'
 
 instance BindsNames Decl where
-  toExtVal (Let _ b _) = toExtVal b
+  toScopeFrag (Let _ b _) = toScopeFrag b
 
 instance AlphaEqB Decl where
   withAlphaEqB (Let ann b expr) (Let ann' b' expr') cont = do
