@@ -69,6 +69,8 @@ def decode (l: Int) (code: Float) (rule: Alphabet=>(Interval->Interval)) : List 
   initStr: List Word8 = AsList _ []
   fst $ fold (initStr, top) update
 
+'Lossless compression on a test string
+
 str' = "abbadcabccdd"
 (AsList l str) = str'
 
@@ -77,8 +79,10 @@ r = getUpdateRule p
 
 code = encode str r
 code
+> 0.081569
 
 decoded = decode l code r
 decoded == str'
+> True
 
 
