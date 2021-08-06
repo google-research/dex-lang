@@ -1,0 +1,84 @@
+'### [Arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding)
+
+Alphabet = Fin 26
+Interval = (Float&Float)
+top:Interval = (0.,1.)
+
+def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
+def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
+
+def cumProb (ps: n=>Float) : n=>Float =
+  withState 0.0 \total.
+    for i. if ps.i > 0. 
+      then
+        currTotal = get total
+        newTotal = currTotal + ps.i
+        total := newTotal
+        currTotal
+      else 0.
+
+def getFrequency (str: (Fin l)=>Word8) : Alphabet=>Int =
+  a: Alphabet => Int = zero
+  yieldState a \ref. for i. 
+    i' = (charToIdx str.i)@_
+    ref!i' := (get ref).i' + 1
+
+def getProbability (l: Int) (freq: Alphabet=>Int) : Alphabet=>(Float&Float) =
+  probs = for i. IToF freq.i / IToF l
+  cums = cumProb probs
+  for i. (probs.i, cums.i)
+
+def getUpdateRule (p: Alphabet=>(Float&Float)) : Alphabet=>(Interval->Interval) =
+  for i. 
+    case p.i == (0.,0.) of
+      True -> id
+      False ->
+        \(x, w).
+          x' = x + w*(snd p.i)
+          w' = w*(fst p.i)
+          (x', w')
+
+def subdivide (str: (Fin l)=>Word8) 
+              (rule: Alphabet=>(Interval->Interval)) 
+              (i: (Fin l)) (in: Interval) : Interval =
+  updateInterval = rule.((charToIdx str.i)@_)
+  updateInterval in
+
+def encode (str: (Fin l)=>Word8) (rule: Alphabet=>(Interval->Interval)) : Float =
+  update = subdivide str rule
+  finalInterval = fold top update
+  fst finalInterval + (snd finalInterval)/2.
+
+def findInterval  (l: Int) 
+                  (code: Float) 
+                  (rule: Alphabet=>(Interval->Interval))
+                  (i: (Fin l))
+                  ((str,in): (List Word8 & Interval)) : (List Word8 & Interval) =
+  (letter, in') = boundedIter (size Alphabet) (' ', top) \j.
+    case rule.(j@_) in == in of
+      True -> Continue
+      False ->
+        (x, w) = rule.(j@_) in 
+        case code >= x && code < (x+w) of
+          True -> Done (idxToChar j, (x,w))
+          False -> Continue
+  (str <> AsList 1 [letter], in')
+
+def decode (l: Int) (code: Float) (rule: Alphabet=>(Interval->Interval)) : List Word8 =
+  update = findInterval l code rule
+  initStr: List Word8 = AsList _ []
+  fst $ fold (initStr, top) update
+
+str' = "abbadcabccdd"
+(AsList l str) = str'
+
+p = getProbability l $ getFrequency str
+r = getUpdateRule p
+
+code = encode str r
+code
+
+decoded = decode l code r
+decoded == str'
+
+
