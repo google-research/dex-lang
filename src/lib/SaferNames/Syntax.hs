@@ -34,6 +34,7 @@ module SaferNames.Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     IRVariant (..), SubstVal (..), AtomName, AtomSubstVal,
+    TopBindingsFrag, TopBinding (..),
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -181,7 +182,14 @@ data TopState n = TopState
   , topSourceMap       :: SourceMap   n }
 
 data TopBindings n where
-  TopBindings :: Distinct n => Env IdE n n -> TopBindings n
+  TopBindings :: Distinct n => Env TopBinding n n -> TopBindings n
+
+type TopBindingsFrag n l = EnvFrag TopBinding n l l
+
+-- TODO: add Store, PPrint etc
+data TopBinding (e::E) (n::S) where
+  TopBinding :: (SubstE AtomSubstVal e, SubstE Name e, InjectableE e)
+             => e n -> TopBinding e n
 
 emptyTopState :: TopState VoidS
 emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
@@ -208,9 +216,9 @@ data Module n where
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
-    :: BindingsFrag n l  -- Evaluated bindings
-    -> SynthCandidates l -- Values considered in scope for dictionary synthesis
-    -> SourceMap l       -- Mapping of module's source names to internal names
+    :: TopBindingsFrag n l  -- Evaluated bindings
+    -> SynthCandidates l    -- Values considered in scope for dictionary synthesis
+    -> SourceMap l          -- Mapping of module's source names to internal names
     -> EvaluatedModule n
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
@@ -741,6 +749,28 @@ instance BindsOneName Binder AtomNameDef where
   (b:>_) @> x = b @> x
   binderName (b:>_) = binderName b
 
+
+instance InjectableToAtomSubstVal v => SubstE v SynthCandidates where
+  substE (SynthCandidates xs ys zs) =
+    SynthCandidates <$> mapM substE xs <*> mapM substE ys <*> mapM substE zs
+
+instance SubstE Name SourceNameDef where
+  substE def = case def of
+    SrcAtomName    v   -> SrcAtomName    <$> substE v
+    SrcTyConName   v   -> SrcTyConName   <$> substE v
+    SrcDataConName v i -> SrcDataConName <$> substE v <*> pure i
+    SrcClassName   v   -> SrcClassName   <$> substE v
+    SrcMethodName  v i -> SrcMethodName  <$> substE v <*> pure i
+    SrcUExprName   v   -> SrcUExprName   <$> substE v
+
+instance SubstE Name SourceMap where
+  substE (SourceMap m) = SourceMap <$> mapM substE m
+
+instance SubstE Name EvaluatedModule where
+  substE (EvaluatedModule bindings scs sourceMap) =
+    withSubstB (RecEnvFrag bindings) \(RecEnvFrag bindings') ->
+      EvaluatedModule bindings' <$> substE scs <*> substE sourceMap
+
 instance InjectableE AtomBinderInfo where
   injectionProofE f info = case info of
     LetBound ann expr -> LetBound ann (ipe f expr)
@@ -815,3 +845,12 @@ instance Semigroup (SynthCandidates n) where
 
 instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty
+
+instance InjectableE (TopBinding e) where
+  injectionProofE fresh (TopBinding e) = TopBinding $ injectionProofE fresh e
+
+instance SubstE Name (TopBinding e) where
+  substE (TopBinding e) = TopBinding <$> substE e
+
+instance SubstE AtomSubstVal (TopBinding e) where
+  substE (TopBinding e) = TopBinding <$> substE e

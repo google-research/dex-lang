@@ -93,7 +93,7 @@ extendTopStateD jointTopState evaluated = do
 -- bijections, so we have to do a lot of things manually.
 nameBijectionFromDBindings
     :: MonadToSafe m => FromSafeNameMap n -> D.Bindings
-    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
+    -> (forall l. Distinct l => TopBindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
     -> m n a
 nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do
@@ -106,18 +106,18 @@ type ConstEnv n l = EnvFrag (ConstE UnitE) n l VoidS
 
 makeBindingsFrag :: forall n l. Distinct l =>
                     S.Scope l -> D.Bindings -> ToSafeNameMap l -> FromSafeNameMap l
-                 -> ConstEnv n l -> BindingsFrag n l
+                 -> ConstEnv n l -> TopBindingsFrag n l
 makeBindingsFrag scope bindings toSafeMap fromSafeMap constEnv =
   fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
   where
-    getSafeBinding :: S.Name s (n:=>:l) -> IdE s l
+    getSafeBinding :: S.Name s (n:=>:l) -> TopBinding s l
     getSafeBinding name =
       case fromSafeMap S.! injectNamesR name of
         UnsafeAtomName name' -> case bindings D.! name' of
           AtomBinderInfo ty info ->
             let (ty', info') = runToSafeM toSafeMap scope $
                                  (,) <$> toSafeE ty <*> toSafeE info
-            in IdE $ S.AtomNameDef ty' info'
+            in TopBinding $ S.AtomNameDef ty' info'
 
 withFreshSafeRec :: MonadToSafe m
                  => FromSafeNameMap n

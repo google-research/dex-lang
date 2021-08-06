@@ -10,8 +10,10 @@ module SaferNames.NameCore (
   S (..), RawName, Name (..), withFresh, injectNames, injectNamesR, projectName,
   NameBinder (..), ScopeFrag (..), Scope, singletonScope, (<.>),
   EnvFrag (..), Env, singletonEnv, emptyEnv, envAsScope, lookupEnv, lookupEnvFrag,
-  Distinct, E, B, InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapEnvFrag) where
+  Distinct, E, B, InjectableE (..), InjectableB (..),
+  InjectableV, InjectionCoercion, Nest (..),
+  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapEnvFrag,
+  toEnvPairs, fromEnvPairs, EnvPair (..)) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -189,8 +191,8 @@ instance InjectableB (NameBinder s) where
 
 data EnvFrag
   (v::E -> E)  -- env payload, as a function of the static data type (Note [Env payload])
-  (i'::S)      -- starting scope parameter for names we can look up in this env
-  (i ::S)      -- ending   scope parameter for names we can look up in this env
+  (i ::S)      -- starting scope parameter for names we can look up in this env
+  (i'::S)      -- ending   scope parameter for names we can look up in this env
   (o::S)       -- scope parameter for the values stored in the env
   = UnsafeMakeEnv
       (M.Map RawName (EnvVal v o))
@@ -214,9 +216,6 @@ lookupEnvFrag (UnsafeMakeEnv m _) name@(UnsafeMakeName rawName) =
 emptyEnv :: EnvFrag v i i o
 emptyEnv = UnsafeMakeEnv mempty mempty
 
-absurdEnv :: Env v VoidS o
-absurdEnv = UnsafeMakeEnv mempty mempty
-
 singletonEnv :: NameBinder s i i' -> v s o -> EnvFrag v i i' o
 singletonEnv (UnsafeMakeBinder (UnsafeMakeName name)) x =
   UnsafeMakeEnv (M.singleton name $ toEnvVal x) (S.singleton name)
@@ -234,10 +233,35 @@ fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
 envAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
 envAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
 
+-- === iterating through env pairs ===
+
+data EnvPair (v::E->E) (o::S) (i::S) (i'::S) where
+  EnvPair :: NameBinder s i i' -> v s o -> EnvPair v o i i'
+
+toEnvPairs :: forall v i i' o . EnvFrag v i i' o -> Nest (EnvPair v o) i i'
+toEnvPairs (UnsafeMakeEnv m _) =
+  go $ M.elems $ M.mapWithKey mkPair m
+  where
+    mkPair :: RawName -> EnvVal v o -> EnvPair v o UnsafeMakeS UnsafeMakeS
+    mkPair rawName (EnvVal _ v) = EnvPair (UnsafeMakeBinder $ UnsafeMakeName rawName) v
+
+    go :: [EnvPair v o UnsafeMakeS UnsafeMakeS] -> Nest (EnvPair v o) i i'
+    go [] = unsafeCoerceB Empty
+    go (EnvPair b val : rest) = Nest (EnvPair (unsafeCoerceB b) val) $ go rest
+
+fromEnvPairs :: Nest (EnvPair v o) i i' -> EnvFrag v i i' o
+fromEnvPairs Empty = emptyEnv
+fromEnvPairs (Nest (EnvPair b v) rest) =
+  singletonEnv b v <.> fromEnvPairs rest
+
+data Nest (binder::B) (n::S) (l::S) where
+  Nest  :: binder n h -> Nest binder h l -> Nest binder n l
+  Empty ::                                  Nest binder n n
+
 -- === handling the dynamic/heterogeneous stuff for Env ===
 
 data EnvVal (v::E->E) (n::S) where
-  EnvVal :: InjectableE s => TypeRep s -> v s n -> EnvVal v n
+  EnvVal :: (Typeable s, InjectableE s) => TypeRep s -> v s n -> EnvVal v n
 
 fromEnvVal :: forall s i v o. Typeable s => Name s i -> EnvVal v o -> v s o
 fromEnvVal name (EnvVal rep val) =
@@ -286,6 +310,23 @@ unsafeCoerceE = unsafeCoerce
 
 unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
 unsafeCoerceB = unsafeCoerce
+
+-- === instances ===
+
+instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
+  show Empty = ""
+  show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
+
+instance (forall (n'::S) (l'::S). Pretty (b n' l')) => Pretty (Nest b n l) where
+  pretty Empty = ""
+  pretty (Nest b rest) = "(Nest " <> pretty b <> " in " <> pretty rest <> ")"
+
+instance InjectableB b => InjectableB (Nest b) where
+  injectionProofB fresh Empty cont = cont fresh Empty
+  injectionProofB fresh (Nest b rest) cont =
+    injectionProofB fresh b \fresh' b' ->
+      injectionProofB fresh' rest \fresh'' rest' ->
+        cont fresh'' (Nest b' rest')
 
 -- === notes ===
 

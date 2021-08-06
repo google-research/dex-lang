@@ -14,7 +14,7 @@ module SaferNames.Name (
   NameFunction (..), emptyNameFunction, WithScopeFrag (..), DistinctScope (..),
   ScopeReader (..), ScopeExtender (..), BindingsReader (..), BindingsExtender (..),
   Scope, Bindings, ScopeFrag (..), BindingsFrag, SubstE (..), SubstB (..),
-  E, B, HasNamesE, HasNamesB, BindsNames (..),
+  E, B, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
   BindsOneName (..), BindsNameList (..),
   Abs (..), Nest (..), NestPair (..),
   UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
@@ -29,9 +29,9 @@ module SaferNames.Name (
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
   InjectableE (..), InjectableB (..), InjectionCoercion,
   withFreshM, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
-  EmptyAbs, pattern EmptyAbs, SubstVal (..),
-  NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..),
-  liftSG, traverseNestSG) where
+  EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
+  NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
+  liftSG, forEachNestItemSG) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -99,13 +99,12 @@ data Abs (binder::B) (body::E) (n::S) where
 data NestPair (b1::B) (b2::B) (n::S) (l::S) where
   NestPair :: b1 n l -> b2 l l' -> NestPair b1 b2 n l'
 
-data Nest (binder::B) (n::S) (l::S) where
-  Nest  :: binder n h -> Nest binder h l -> Nest binder n l
-  Empty ::                                  Nest binder n n
-
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
+
+-- wraps an EnvFrag as a kind suitable for SubstB instances etc
+newtype RecEnvFrag (v::E->E) n l = RecEnvFrag { fromRecEnvFrag :: EnvFrag v n l l }
 
 -- === Injections and projections ===
 
@@ -171,19 +170,19 @@ type HasNamesB = SubstB Name
 instance Typeable s => SubstE Name (Name s) where
   substE name = lookupEnvM name
 
-instance (InjectableE s, Typeable s) => SubstB v (NameBinder s) where
-  substB b = SubstGenT do
+instance SubstB v (NameBinder s) where
+  substB b = SubstGenT $ withNameClasses (binderName b) do
     Distinct names <- getScope
     withFresh names \b' -> do
       let frag = singletonScope b'
-      return $ WithScopeFrag frag $ PairE (b @> binderName b') b'
+      return $ WithScopeSubstFrag frag (b @> binderName b') b'
 
 withSubstB :: (SubstB v b, ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
            => b i i'
            -> (forall o'. b o o' -> m i' o' r)
            -> m i o r
 withSubstB b cont = do
-  WithScopeFrag scopeFrag (PairE substFrag b') <- runSubstGenT $ substB b
+  WithScopeSubstFrag scopeFrag substFrag b' <- runSubstGenT $ substB b
   extendScope scopeFrag $ extendRenamer substFrag $ cont b'
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
@@ -279,6 +278,13 @@ lookupEnvFragProjected m name =
   case projectName (envAsScope m) name of
     Left  name' -> Left name'
     Right name' -> Right $ lookupEnvFrag m name'
+
+forEachNestItem :: Monad m
+                => Nest b i i'
+                -> (forall ii ii'. b ii ii' -> m (b' ii ii'))
+                -> m (Nest b' i i')
+forEachNestItem Empty _ = return Empty
+forEachNestItem (Nest b rest) f = Nest <$> f b <*> forEachNestItem rest f
 
 -- === versions of monad constraints with scope params ===
 
@@ -606,18 +612,23 @@ class (forall i. NameGen (m i i)) => SubstGen (m :: S -> S -> E -> S -> *) where
   returnSG :: e o -> m i i e o
   bindSG   :: m i i' e o -> (forall o'. e o' -> m i' i'' e' o') -> m i i'' e' o
 
-traverseNestSG :: SubstGen m
-               => (forall ii ii' oo. b ii ii' -> m ii ii' (b oo) oo)
-               -> Nest b i i'
-               -> m i i' (Nest b o) o
-traverseNestSG _ Empty = returnSG Empty
-traverseNestSG f (Nest b bs) =
+forEachNestItemSG :: SubstGen m
+               => Nest b i i'
+               -> (forall ii ii' oo. b ii ii' -> m ii ii' (b' oo) oo)
+               -> m i i' (Nest b' o) o
+forEachNestItemSG Empty _ = returnSG Empty
+forEachNestItemSG (Nest b bs) f =
   f b `bindSG` \b' ->
-    traverseNestSG f bs `bindSG` \bs' ->
+    forEachNestItemSG bs f `bindSG` \bs' ->
       returnSG $ Nest b' bs'
 
+data WithScopeSubstFrag (i::S) (i'::S) (e::E) (o::S) where
+  WithScopeSubstFrag :: Distinct o'
+                     => ScopeFrag o o' -> EnvFrag Name i i' o' -> e o'
+                     -> WithScopeSubstFrag i i' e o
+
 newtype SubstGenT (m::MonadKind2) (i::S) (i'::S) (e::E) (o::S) =
-  SubstGenT { runSubstGenT :: m i o (WithScopeFrag (PairE (EnvFrag Name i i') e) o) }
+  SubstGenT { runSubstGenT :: m i o (WithScopeSubstFrag i i' e o)}
 
 instance (ScopeReader2 m, ScopeExtender2 m, Renamer m, Monad2 m)
          => NameGen (SubstGenT m i i) where
@@ -628,13 +639,13 @@ instance (ScopeReader2 m, ScopeExtender2 m, Renamer m, Monad2 m)
          => SubstGen (SubstGenT m) where
   returnSG e = SubstGenT $ do
     Distinct _ <- getScope
-    return (WithScopeFrag id (PairE emptyEnv e))
+    return (WithScopeSubstFrag id emptyEnv e)
   bindSG (SubstGenT m) f = SubstGenT do
-    WithScopeFrag s (PairE env e) <- m
+    WithScopeSubstFrag s env e <- m
     extendScope s $ extendRenamer env do
-      WithScopeFrag s' (PairE env' e') <- runSubstGenT $ f e
+      WithScopeSubstFrag s' env' e' <- runSubstGenT $ f e
       envInj <- extendScope s' $ injectM s' env
-      return $ WithScopeFrag (s >>> s') $ PairE (envInj <.> env')  e'
+      return $ WithScopeSubstFrag (s >>> s') (envInj <.> env')  e'
 
 liftSG :: ScopeReader2 m => m i o a -> (a -> SubstGenT m i i' e o) -> SubstGenT m i i' e o
 liftSG m cont = SubstGenT do
@@ -681,20 +692,8 @@ instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
 
-instance InjectableB b => InjectableB (Nest b) where
-  injectionProofB fresh Empty cont = cont fresh Empty
-  injectionProofB fresh (Nest b rest) cont =
-    injectionProofB fresh b \fresh' b' ->
-      injectionProofB fresh' rest \fresh'' rest' ->
-        cont fresh'' (Nest b' rest')
-
 instance SubstB v b => SubstB v (Nest b) where
-  substB nest = case nest of
-    Empty -> returnSG Empty
-    Nest b rest ->
-      substB b `bindSG` \b' ->
-        substB rest `bindSG` \rest' ->
-          returnSG $ Nest b' rest'
+  substB nest = forEachNestItemSG nest substB
 
 instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE
@@ -725,14 +724,6 @@ instance SubstE v e => SubstE v (ListE e) where
 instance (forall n' l. Show (b n' l), forall n'. Show (body n')) => Show (Abs b body n) where
   show (Abs b body) = "(Abs " <> show b <> " " <> show body <> ")"
 
-instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
-  show Empty = ""
-  show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
-
-instance (PrettyB b) => Pretty (Nest b n l) where
-  pretty Empty = ""
-  pretty (Nest b rest) = "(Nest " <> pretty b <> " in " <> pretty rest <> ")"
-
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"
 
@@ -741,3 +732,16 @@ instance Pretty a => Pretty (LiftE a n) where
 
 instance Pretty (UnitE n) where
   pretty UnitE = ""
+
+instance BindsNames (RecEnvFrag v) where
+  toScopeFrag env = envAsScope $ fromRecEnvFrag env
+
+-- Traversing a recursive set of bindings is a bit tricky because we have to do
+-- two passes: first we rename the binders, then we go and subst the payloads.
+instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) where
+  substB (RecEnvFrag env) = SubstGenT do
+    WithScopeSubstFrag s r pairs <- runSubstGenT $ forEachNestItemSG (toEnvPairs env)
+       \(EnvPair b x) -> substB b `bindSG` \b' -> returnSG (EnvPair b' x)
+    extendScope s $ extendRenamer r do
+      pairs' <- forEachNestItem pairs \(EnvPair b x) -> EnvPair b <$> substE x
+      return $ WithScopeSubstFrag s r $ RecEnvFrag $ fromEnvPairs pairs'
