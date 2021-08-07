@@ -43,7 +43,7 @@ module Syntax (
     SourceName, SourceMap (..), UExpr, UExpr' (..), UType, UPatAnn (..),
     UAnnBinder (..), UVar (..), UBinder (..), UMethodDef (..),
     UMethodTypeDef, UPatAnnArrow (..), UVars,
-    UPat, UPat' (..), SourceUModule (..),
+    UPat, UPat' (..), SourceUModule (..), SourceNameDef (..), sourceNameDefName,
     UModule (..), UDecl (..), UDataDef (..), UArrow, arrowEff,
     UEffect, UEffectRow, UEffArrow,
     DataDef (..), NamedDataDef, DataConDef (..), ClassDef (..), UConDef, Nest (..), toNest,
@@ -185,7 +185,23 @@ type Con = PrimCon Atom
 type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
-data SourceMap = SourceMap { fromSourceMap :: M.Map SourceName Name }  deriving (Show, Generic)
+data SourceNameDef =
+   SrcAtomName    Name
+ | SrcTyConName   Name
+ | SrcDataConName Name
+ | SrcClassName   Name
+ | SrcMethodName  Name
+   deriving (Show, Generic)
+
+sourceNameDefName :: SourceNameDef -> Name
+sourceNameDefName def = case def of
+  SrcAtomName    v -> v
+  SrcTyConName   v -> v
+  SrcDataConName v -> v
+  SrcClassName   v -> v
+  SrcMethodName  v -> v
+
+data SourceMap = SourceMap { fromSourceMap :: M.Map SourceName SourceNameDef }  deriving (Show, Generic)
 
 data Module = Module IRVariant (Nest Decl) EvaluatedModule deriving (Show, Generic)
 
@@ -1841,6 +1857,7 @@ instance Store Device
 instance Store DataConRefBinding
 instance Store SourceMap
 instance Store SynthCandidates
+instance Store SourceNameDef
 
 instance IsString UVar where
   fromString = USourceVar . fromString
@@ -1887,3 +1904,6 @@ instance Semigroup SynthCandidates where
 
 instance Monoid SynthCandidates where
   mempty = SynthCandidates mempty mempty mempty
+
+instance HasName SourceNameDef where
+  getName srcName = Just $ sourceNameDefName srcName

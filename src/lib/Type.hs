@@ -1178,8 +1178,17 @@ instance Subst EvaluatedModule where
     let (sourceMap', (_, bindings'')) = flip runCat envNew $ mapM substOrEmit sourceMap
     EvaluatedModule (bindings'<>bindings'') synthCandidates' $ SourceMap sourceMap'
 
-substOrEmit :: Name -> Cat ScopedSubstEnv Name
-substOrEmit name = do
+
+substOrEmit :: SourceNameDef -> Cat ScopedSubstEnv SourceNameDef
+substOrEmit def = case def of
+  SrcAtomName    v -> SrcAtomName    <$> substOrEmitName v
+  SrcTyConName   v -> SrcTyConName   <$> substOrEmitName v
+  SrcDataConName v -> SrcDataConName <$> substOrEmitName v
+  SrcClassName   v -> SrcClassName   <$> substOrEmitName v
+  SrcMethodName  v -> SrcMethodName  <$> substOrEmitName v
+
+substOrEmitName :: Name -> Cat ScopedSubstEnv Name
+substOrEmitName name = do
   (substEnv, scope) <- look
   case envLookup substEnv name of
     Nothing -> return name

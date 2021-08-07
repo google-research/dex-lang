@@ -63,7 +63,12 @@ instance SourceRenamableE UVar where
     SourceMap sourceMap <- asks snd
     case M.lookup sourceName sourceMap of
       Nothing    -> throw UnboundVarErr $ pprint sourceName
-      Just name -> return $ UInternalVar name
+      -- TODO: consider distinguishing between these cases in the UExpr IR
+      Just (SrcAtomName     name) -> return $ UInternalVar name
+      Just (SrcTyConName    name) -> return $ UInternalVar name
+      Just (SrcDataConName  name) -> return $ UInternalVar name
+      Just (SrcClassName    name) -> return $ UInternalVar name
+      Just (SrcMethodName   name) -> return $ UInternalVar name
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableB UBinder where
@@ -75,7 +80,7 @@ instance SourceRenamableB UBinder where
         throw RepeatedVarErr $ pprint b
       let freshName = genFresh (Name GenName (fromString b) 0) scope
       extendEnv ( freshName @> LocalUExprBound
-                , SourceMap (M.singleton b freshName))
+                , SourceMap (M.singleton b (SrcAtomName freshName)))
       return $ UBind freshName
     UBind _ -> error "Shouldn't be source-renaming internal names"
     UIgnore -> return UIgnore
@@ -254,7 +259,8 @@ instance SourceRenamablePat UPat' where
         SourceMap sourceMap <- asks snd
         case M.lookup con sourceMap of
           Nothing    -> throw UnboundVarErr $ pprint con
-          Just name -> return $ UInternalVar name
+          Just (SrcDataConName name) -> return $ UInternalVar name
+          Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
       bs' <- sourceRenamePat bs
       return $ UPatCon con' bs'
     UPatPair p1 p2 -> UPatPair <$> sourceRenamePat p1 <*> sourceRenamePat p2

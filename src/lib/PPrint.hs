@@ -555,6 +555,14 @@ instance Pretty SynthCandidates where
 instance Pretty SourceMap where
   pretty (SourceMap m) = pretty $ M.toAscList m
 
+instance Pretty SourceNameDef where
+  pretty name = case name of
+    SrcAtomName    v -> "Let/lambda name"       <+> p v
+    SrcTyConName   v -> "Type constructor name" <+> p v
+    SrcDataConName v -> "Data constructor name" <+> p v
+    SrcClassName   v -> "Class name"            <+> p v
+    SrcMethodName  v -> "Method name"           <+> p v
+
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
   pretty (Right x) = "Right" <+> p x

@@ -190,7 +190,7 @@ evalSourceBlock' block = case sbContents block of
       Nothing -> throw UnboundVarErr $ pprint v
       Just v' -> do
         bindings <- topBindings <$> topStateD <$> getTopState
-        case nameToAtom bindings v' of
+        case nameToAtom bindings (sourceNameDefName v') of
           Just x -> logTop $ TextOut $ pprint $ getType x
           Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
   ImportModule moduleName -> do

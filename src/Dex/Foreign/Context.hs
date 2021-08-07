@@ -81,7 +81,7 @@ dexInsert ctxPtr namePtr atomPtr = do
   let freshName = genFresh (Name GenName (fromString name) 0) (topBindings $ topStateD env)
   let newBinding = AtomBinderInfo (getType atom) (LetBound PlainLet (Atom atom))
   let evaluated = EvaluatedModule (freshName @> newBinding) mempty
-                                  (SourceMap (M.singleton name freshName))
+                                  (SourceMap (M.singleton name (SrcAtomName freshName)))
   let envNew = extendTopStateD env evaluated
   toStablePtr $ Context evalConfig $ envNew
 
