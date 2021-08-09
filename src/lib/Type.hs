@@ -905,15 +905,15 @@ typeCheckHof hof = case hof of
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
     return $ PairTy (TabTy (Ignore n) tileElemTy) $ ProdTy accTys
   While body -> do
-    Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
+    Pi (Abs (BinderAnn UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     checkEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f -> do
-    Pi (Abs (Ignore a) (PlainArrow Pure, b)) <- typeCheck f
+    Pi (Abs (BinderAnn a) (PlainArrow Pure, b)) <- typeCheck f
     return $ a --> PairTy b (a --@ b)
   Transpose f -> do
-    Pi (Abs (Ignore a) (LinArrow, b)) <- typeCheck f
+    Pi (Abs (BinderAnn a) (LinArrow, b)) <- typeCheck f
     return $ b --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f

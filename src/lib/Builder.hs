@@ -224,7 +224,10 @@ emitBinding binfo = do
   return name
 
 emitDataDef :: MonadBuilder m => DataDef -> m DataDefName
-emitDataDef dataDef = emitBinding $ DataDefName dataDef
+emitDataDef dataDef =
+  -- XXX: the hint shouldn't be necssary but ...
+  withNameHint (Name GenName "_data_def_" 0) $
+    emitBinding $ DataDefName dataDef
 
 emitClassDef :: MonadBuilder m => ClassDef -> m ClassDefName
 emitClassDef classDef = emitBinding $ ClassDefName classDef

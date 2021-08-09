@@ -275,7 +275,9 @@ instance Typeable s => HasSafeVersionE (UnsafeName s) where
         withNameClasses safeName $
           case castSName safeName of
             Just safeName' -> return safeName'
-            Nothing -> error $ "Bad cast: " ++ pprint (name', safeName)
+            Nothing -> do
+              m <- getToSafeNameMap
+              error $ "Bad cast: " ++ pprint (name', safeName) ++ "\n" ++ pprint m
   fromSafeE name = lookupFromSafeNameMap name
 
 castSName :: forall (s1::E) (s2::E) (v::E->E) (n::S).
@@ -754,8 +756,28 @@ instance HasSafeVersionB b => HasSafeVersionB (D.Nest b) where
 
 instance HasSafeVersionE BinderInfo where
   type SafeVersionE BinderInfo = AtomBinderInfo
-  toSafeE = undefined
-  fromSafeE = undefined
+  toSafeE info = case info of
+    D.LetBound ann expr -> S.LetBound ann <$> toSafeE expr
+    D.LamBound arr  -> return (S.LamBound arr')
+      where arr' = case arr of
+                     D.PlainArrow () -> S.PlainArrow
+                     D.ImplicitArrow -> S.ImplicitArrow
+                     D.LinArrow      -> S.LinArrow
+                     D.TabArrow      -> S.TabArrow
+                     D.ClassArrow    -> S.ClassArrow
+    D.PiBound       -> return S.PiBound
+    D.UnknownBinder -> return S.MiscBound
+  fromSafeE info = case info of
+    S.LetBound ann expr -> D.LetBound ann <$> fromSafeE expr
+    S.LamBound arr  -> return (D.LamBound arr')
+      where arr' = case arr of
+                     S.PlainArrow    -> D.PlainArrow ()
+                     S.ImplicitArrow -> D.ImplicitArrow
+                     S.LinArrow      -> D.LinArrow
+                     S.TabArrow      -> D.TabArrow
+                     S.ClassArrow    -> D.ClassArrow
+    S.PiBound       -> return D.PiBound
+    S.MiscBound     -> return D.UnknownBinder
 
 traverseSet :: (Ord a, Ord b, Monad m) => (a -> m b) -> Set.Set a -> m (Set.Set b)
 traverseSet f s = Set.fromList <$> mapM f (Set.toList s)
