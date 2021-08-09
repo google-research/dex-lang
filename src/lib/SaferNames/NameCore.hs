@@ -17,6 +17,7 @@ module SaferNames.NameCore (
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Data.Foldable (fold)
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import Data.Type.Equality
 import Type.Reflection
@@ -328,6 +329,10 @@ instance InjectableB b => InjectableB (Nest b) where
     injectionProofB fresh b \fresh' b' ->
       injectionProofB fresh' rest \fresh'' rest' ->
         cont fresh'' (Nest b' rest')
+
+instance (forall s n. Pretty (v s n)) => Pretty (EnvFrag v i i' o) where
+  pretty (UnsafeMakeEnv m _) =
+    fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, EnvVal _ x) <- M.toList m ]
 
 -- === notes ===
 

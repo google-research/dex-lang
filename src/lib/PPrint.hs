@@ -813,3 +813,9 @@ instance ToJSON Result where
           , "compile_time" .= toJSON compileTime
           , "run_time"     .= toJSON runTime ]
         out -> ["result" .= String (fromString $ pprint out)]
+
+instance Pretty TopState where
+  pretty s =
+    "bindings: "         <> hardline <> pretty (topBindings s)        <> hardline <>
+    "synth candidates: " <> hardline <> pretty (topSynthCandidates s) <> hardline <>
+    "source map: "       <> hardline <> pretty (topSourceMap s)       <> hardline

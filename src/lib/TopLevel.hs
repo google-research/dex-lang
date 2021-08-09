@@ -314,6 +314,7 @@ evalUModule sourceModule = do
   -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
   -- safer names system while we're staging it in.
   checkPass TypePass typed
+  topState <- getTopState
   typed' <- roundtripSaferNamesPass typed
   checkPass TypePass typed'
   synthed <- liftEither $ synthModule bindings synthCandidates typed'

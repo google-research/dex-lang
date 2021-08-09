@@ -31,6 +31,7 @@ import Data.String (fromString)
 import Data.Proxy
 import Data.Maybe (fromJust)
 import Data.Store (Store)
+import Data.Text.Prettyprint.Doc
 import GHC.Generics (Generic (..))
 import GHC.Stack
 
@@ -42,6 +43,7 @@ import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.Syntax
 import SaferNames.LazyMap as LM
+import SaferNames.PPrint
 
 import Serialize (HasPtrs (..))
 
@@ -64,7 +66,7 @@ initTopState = TopStateEx $ JointTopState
     D.emptyTopState
     S.emptyTopState
     (ToSafeNameMap mempty)
-    emptyNameFunction
+    emptyEnv
 
 data JointTopState n = JointTopState
   { topStateD   :: D.TopState
@@ -118,10 +120,11 @@ makeBindingsFrag scope bindings toSafeMap fromSafeMap constEnv =
   where
     getSafeBinding :: S.Name s (n:=>:l) -> TopBinding s l
     getSafeBinding name = do
-      let Just name' = getName $ fromUnsafeNameE (fromSafeMap S.! injectNamesR name)
+      let Just name' = getName $ fromUnsafeNameE
+            ((emptyNameFunction <>> fromSafeMap) S.! injectNamesR name)
       let binderInfo = bindings D.! name'
       case runToSafeM toSafeMap scope $ toSafeE binderInfo of
-        SomeTopBinding binding -> withNameClasses name $ castSName binding
+        SomeTopBinding binding -> withNameClasses name $ fromJust $ castSName binding
 
 withFreshSafeRec :: MonadToSafe m
                  => FromSafeNameMap n
@@ -134,7 +137,7 @@ withFreshSafeRec fromSafeMap [] cont = do
 withFreshSafeRec fromSafeMap ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
     frag <- return $ b S.@> ConstE UnitE
-    withFreshSafeRec (fromSafeMap <>> (b S.@> UnsafeNameE valD)) rest
+    withFreshSafeRec (fromSafeMap <.> (b S.@> UnsafeNameE valD)) rest
       \frag' fromSafeMap' -> do
         cont (frag <.> frag') fromSafeMap'
 
@@ -200,7 +203,7 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 
 data UnsafeNameE (s::E) (n::S) = UnsafeNameE { fromUnsafeNameE :: UnsafeName s}
 
-type FromSafeNameMap i = S.NameFunction UnsafeNameE i VoidS
+type FromSafeNameMap i = S.Env UnsafeNameE i VoidS
 
 newtype FromSafeM i a =
   FromSafeM { runFromSafeM' :: ReaderT (FromSafeNameMap i) (Reader D.Bindings) a }
@@ -211,7 +214,9 @@ runFromSafeM nameMap bindings m =
   flip runReader bindings $ flip runReaderT nameMap $ runFromSafeM' m
 
 instance MonadFromSafe FromSafeM where
-  lookupFromSafeNameMap v = FromSafeM $ (fromUnsafeNameE . (S.! v)) <$> ask
+  lookupFromSafeNameMap v = FromSafeM do
+    env <- ask
+    return $ fromUnsafeNameE $ ((emptyNameFunction <>> env) S.! v)
   getUnsafeBindings = FromSafeM $ lift ask
   withFreshUnsafeName hint info f =
     FromSafeM $ ReaderT \m -> do
@@ -221,7 +226,7 @@ instance MonadFromSafe FromSafeM where
         runReaderT (runFromSafeM' (f v')) m
 
   extendFromSafeMap b v (FromSafeM m) = FromSafeM $ flip withReaderT m
-    \env -> env <>> b S.@> UnsafeNameE v
+    \env -> env <.> b S.@> UnsafeNameE v
 
 -- === --- ===
 
@@ -268,15 +273,16 @@ instance Typeable s => HasSafeVersionE (UnsafeName s) where
     case m D.! name' of
       SafeNameHidden safeName ->
         withNameClasses safeName $
-          return $ castSName safeName
-
+          case castSName safeName of
+            Just safeName' -> return safeName'
+            Nothing -> error $ "Bad cast: " ++ pprint (name', safeName)
   fromSafeE name = lookupFromSafeNameMap name
 
 castSName :: forall (s1::E) (s2::E) (v::E->E) (n::S).
-              HasCallStack => (Typeable s1, Typeable s2) => v s1 n -> v s2 n
+              HasCallStack => (Typeable s1, Typeable s2) => v s1 n -> Maybe (v s2 n)
 castSName name = case typeRep1 `eqTypeRep` typeRep2 of
-  Just HRefl -> name
-  _ -> error $ "not a valid cast " <> show typeRep1 <> " to " <> show typeRep2
+  Just HRefl -> Just name
+  _ -> Nothing -- error $ show typeRep1 ++ "  to  " ++ show typeRep2
   where
     typeRep1 :: TypeRep s1
     typeRep1 = typeRep
@@ -333,7 +339,7 @@ instance HasSafeVersionB DRecEnvFrag where
     renameBinders (envPairs env) \nest -> do
       nest' <- forEachNestItem nest \(TempPair b info) -> do
         SomeTopBinding info' <- toSafeE info
-        return $ EnvPair b $ castSName info'
+        return $ EnvPair b $ fromJust $ castSName info'
       cont $ RecEnvFrag $ fromEnvPairs nest'
     where
       renameBinders
@@ -798,3 +804,29 @@ instance D.HasName (UnsafeName s) where
   getName (UnsafeMethodName     v) = Just v
   getName (UnsafeDataDefName    v) = Just v
   getName (UnsafeSuperclassName v) = Just v
+
+instance Pretty (UnsafeNameE s n) where
+  pretty (UnsafeNameE name) = pretty name
+
+instance Pretty (UnsafeName n) where
+  pretty name = case name of
+    UnsafeAtomName       v -> pretty v <+> "(atom name)"
+    UnsafeTyConName      v -> pretty v <+> "(ty con name)"
+    UnsafeDataConName    v -> pretty v <+> "(data con name)"
+    UnsafeClassName      v -> pretty v <+> "(class name name)"
+    UnsafeMethodName     v -> pretty v <+> "(method name)"
+    UnsafeDataDefName    v -> pretty v <+> "(data def name)"
+    UnsafeSuperclassName v -> pretty v <+> "(superclas name)"
+
+instance Pretty (SafeNameHidden n) where
+  pretty (SafeNameHidden name) = pretty name
+
+instance Pretty (ToSafeNameMap n) where
+  pretty (ToSafeNameMap env) = pretty env
+
+instance Pretty (JointTopState n) where
+  pretty s =
+    "topState (unsafe):"   <> nest 2 (hardline <> pretty (topStateD s))      <> hardline <>
+    "topState (safe):"     <> nest 2 (hardline <> pretty (topStateS s))      <> hardline <>
+    "unsafe-to-safe map:"  <> nest 2 (hardline <> pretty (topToSafeMap   s)) <> hardline <>
+    "safe-to-unsafe map:"  <> nest 2 (hardline <> pretty (topFromSafeMap s)) <> hardline

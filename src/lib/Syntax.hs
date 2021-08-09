@@ -212,6 +212,7 @@ data TopState = TopState
   { topBindings        :: Bindings
   , topSynthCandidates :: SynthCandidates
   , topSourceMap       :: SourceMap }
+  deriving (Show)
 
 emptyTopState :: TopState
 emptyTopState = TopState mempty mempty mempty

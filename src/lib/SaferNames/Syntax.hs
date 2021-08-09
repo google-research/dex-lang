@@ -46,7 +46,7 @@ module SaferNames.Syntax (
     pattern FunTy, pattern BinaryFunTy,
     (-->), (?-->), (--@), (==>) ) where
 
-import Data.Foldable (toList)
+import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
@@ -54,7 +54,7 @@ import qualified Data.Set              as S
 import Data.Int
 import Data.Text.Prettyprint.Doc
 import Data.Word
-import Type.Reflection (Typeable)
+import Type.Reflection (Typeable, TypeRep, typeRep)
 import Foreign.Ptr
 
 import Syntax
@@ -186,6 +186,7 @@ data TopState n = TopState
   { topBindings        :: TopBindings n
   , topSynthCandidates :: SynthCandidates n
   , topSourceMap       :: SourceMap   n }
+  deriving Show
 
 data TopBindings n where
   TopBindings :: Distinct n => Env TopBinding n n -> TopBindings n
@@ -206,6 +207,7 @@ data SourceNameDef (n::S) =
  | SrcDataConName (Name DataConNameDef n)
  | SrcClassName   (Name ClassDef n)
  | SrcMethodName  (Name MethodDef n)
+ deriving Show
 
 data TyConNameDef   n = TyConNameDef   (Name DataDef n)
 data DataConNameDef n = DataConNameDef (Name DataDef n) Int
@@ -215,6 +217,7 @@ data ClassDef  n = ClassDef SourceName [SourceName] (NamedDataDef n)
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (SourceNameDef n)}
+  deriving Show
 
 data Module n where
   Module
@@ -879,3 +882,32 @@ instance SubstE Name (TopBinding e) where
 
 instance SubstE AtomSubstVal (TopBinding e) where
   substE (TopBinding e) = TopBinding <$> substE e
+
+instance Show (TopBindings n)
+
+instance Pretty (SourceMap n) where
+  pretty (SourceMap m) =
+    fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
+
+instance Pretty (SourceNameDef n) where
+  pretty def = case def of
+   SrcAtomName    name -> "atom name:"        <+> pretty name
+   SrcTyConName   name -> "type constructor:" <+> pretty name
+   SrcDataConName name -> "data constructor:" <+> pretty name
+   SrcClassName   name -> "class name:"       <+> pretty name
+   SrcMethodName  name -> "method name:"      <+> pretty name
+
+instance Pretty (TopBinding s n) where
+  pretty (TopBinding x) = prettyTypeOf x
+
+prettyTypeOf :: forall (n::S) (e::E) ann . Typeable e => e n -> Doc ann
+prettyTypeOf _ = pretty $ show (typeRep :: TypeRep e)
+
+instance Pretty (TopBindings n) where
+  pretty (TopBindings env) = pretty env
+
+instance Pretty (TopState n) where
+  pretty s =
+    "bindings: "        <> nest 2 (hardline <> pretty (topBindings s))  <> hardline <>
+    "synth candidates:" <> hardline <>
+    "source map: "      <> nest 2 (hardline <> pretty (topSourceMap s)) <> hardline
