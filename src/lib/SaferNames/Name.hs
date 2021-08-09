@@ -31,7 +31,7 @@ module SaferNames.Name (
   withFreshM, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
-  liftSG, forEachNestItemSG) where
+  liftSG, forEachNestItem, forEachNestItemSG) where
 
 import Prelude hiding (id, (.))
 import Control.Category

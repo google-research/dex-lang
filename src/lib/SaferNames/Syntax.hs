@@ -25,7 +25,8 @@ module SaferNames.Syntax (
     ClassDef (..),
     EvaluatedModule (..), SynthCandidates (..), TopState (..),
     TopBindings (..), emptyTopState,
-    DataConRefBinding (..),
+    DataConRefBinding (..), MethodDef (..), SuperclassDef (..),
+    DataConNameDef (..), TyConNameDef (..),
     AltP, Alt, AtomNameDef (..), AtomBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -34,7 +35,7 @@ module SaferNames.Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     IRVariant (..), SubstVal (..), AtomName, AtomSubstVal,
-    TopBindingsFrag, TopBinding (..),
+    TopBindingsFrag, TopBinding (..), NamedDataDef,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -53,6 +54,7 @@ import qualified Data.Set              as S
 import Data.Int
 import Data.Text.Prettyprint.Doc
 import Data.Word
+import Type.Reflection (Typeable)
 import Foreign.Ptr
 
 import Syntax
@@ -77,8 +79,8 @@ data Atom n =
  | Lam (LamExpr n)
  | Pi  (PiType  n)
    -- SourceName is purely for printing
- | DataCon SourceName (Name DataDef n) [Atom n] Int [Atom n]
- | TypeCon (Name DataDef n) [Atom n]
+ | DataCon SourceName (NamedDataDef n) [Atom n] Int [Atom n]
+ | TypeCon (NamedDataDef n) [Atom n]
  | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
  | Record (LabeledItems (Atom n))
  | RecordTy  (ExtLabeledItems (Type n) (AtomName n))
@@ -89,7 +91,7 @@ data Atom n =
  | Eff (EffectRow n)
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
- | DataConRef (Name DataDef n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
+ | DataConRef (NamedDataDef n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
  | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
@@ -113,6 +115,10 @@ data AtomBinderInfo (n::S) =
  | PiBound
  | MiscBound
  | InferenceName
+
+-- We inlinine the definition for compatibility with the unsafe IR.
+-- TODO: remove once we don't need the bridge anymore
+type NamedDataDef n = (Name DataDef n, DataDef n)
 
 data AtomNameDef (n::S) = AtomNameDef (Type n) (AtomBinderInfo n)
 
@@ -188,7 +194,7 @@ type TopBindingsFrag n l = EnvFrag TopBinding n l l
 
 -- TODO: add Store, PPrint etc
 data TopBinding (e::E) (n::S) where
-  TopBinding :: (SubstE AtomSubstVal e, SubstE Name e, InjectableE e)
+  TopBinding :: (Typeable e, SubstE AtomSubstVal e, SubstE Name e, InjectableE e)
              => e n -> TopBinding e n
 
 emptyTopState :: TopState VoidS
@@ -196,13 +202,16 @@ emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
 
 data SourceNameDef (n::S) =
    SrcAtomName    (Name AtomNameDef n)
- | SrcTyConName   (Name DataDef n)
- | SrcDataConName (Name DataDef n) Int
+ | SrcTyConName   (Name TyConNameDef n)
+ | SrcDataConName (Name DataConNameDef n)
  | SrcClassName   (Name ClassDef n)
- | SrcMethodName  (Name ClassDef n) Int
- | SrcUExprName   (Name UnitE n)
+ | SrcMethodName  (Name MethodDef n)
 
-data ClassDef  n = ClassDef SourceName [SourceName] (Name DataDef n)
+data TyConNameDef   n = TyConNameDef   (Name DataDef n)
+data DataConNameDef n = DataConNameDef (Name DataDef n) Int
+data MethodDef n = MethodDef (Name ClassDef n) Int (Atom n)
+data SuperclassDef n = SuperclassDef (Name ClassDef n) Int (Atom n)
+data ClassDef  n = ClassDef SourceName [SourceName] (NamedDataDef n)
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (SourceNameDef n)}
@@ -438,6 +447,20 @@ instance InjectableE DataConDef where
 instance InjectableToAtomSubstVal v => SubstE v DataConDef where
   substE (DataConDef name ab) = DataConDef name <$> substE ab
 
+instance InjectableToAtomSubstVal v => SubstE v MethodDef where
+instance InjectableE MethodDef where
+
+instance InjectableToAtomSubstVal v => SubstE v SuperclassDef where
+instance InjectableE SuperclassDef where
+
+instance InjectableToAtomSubstVal v => SubstE v DataConNameDef where
+instance InjectableE DataConNameDef where
+
+instance InjectableToAtomSubstVal v => SubstE v TyConNameDef where
+instance InjectableE TyConNameDef where
+
+instance InjectableToAtomSubstVal v => SubstE v ClassDef where
+instance InjectableE ClassDef where
 
 instance InjectableB DataConRefBinding where
   injectionProofB f (DataConRefBinding b ref) cont = do
@@ -458,10 +481,10 @@ instance InjectableE Atom where
     Var name -> Var $ ipe f name
     Lam lam  -> Lam $ ipe f lam
     Pi  piTy -> Pi  $ ipe f piTy
-    DataCon printName defName params con args ->
-      DataCon printName (ipe f defName) (fmap (ipe f) params) con (fmap (ipe f) args)
-    TypeCon defName params ->
-      TypeCon (ipe f defName) (fmap (ipe f) params)
+    DataCon printName (defName, def) params con args ->
+      DataCon printName (ipe f defName, ipe f def) (fmap (ipe f) params) con (fmap (ipe f) args)
+    TypeCon (defName, def) params ->
+      TypeCon (ipe f defName, ipe f def) (fmap (ipe f) params)
     LabeledRow (Ext items ext) -> LabeledRow $ Ext (fmap (ipe f) items) (fmap (ipe f) ext)
     Record items -> Record $ fmap (ipe f) items
     RecordTy (Ext items ext) -> RecordTy $ Ext (fmap (ipe f) items) (fmap (ipe f) ext)
@@ -474,7 +497,8 @@ instance InjectableE Atom where
     TC  tc  -> TC  $ fmap (ipe f) tc
     Eff eff -> Eff $ ipe f eff
     ACase scrut alts ty -> ACase (ipe f scrut) (fmap (ipe f) alts) (ipe f ty)
-    DataConRef def params bs -> DataConRef (ipe f def) (fmap (ipe f) params) (ipe f bs)
+    DataConRef (defName, def) params bs ->
+      DataConRef (ipe f defName, ipe f def) (fmap (ipe f) params) (ipe f bs)
     BoxedRef ptr size ab -> BoxedRef (ipe f ptr) (ipe f size) (ipe f ab)
     ProjectElt idxs x -> ProjectElt idxs $ ipe f x
 
@@ -535,22 +559,24 @@ instance InjectableToAtomSubstVal v => SubstE v Atom where
         PairVal _ y | i == 1 -> y
         _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
 
-substDataDefName :: InjectableToAtomSubstVal v => EnvReader v m
-                 => Name DataDef i -> m i o (Name DataDef o)
-substDataDefName name =
+substDataDefName :: (InjectableToAtomSubstVal v, EnvReader v m, ScopeReader2 m,
+                     ScopeExtender2 m, Renamer m)
+                 => NamedDataDef i -> m i o (NamedDataDef o)
+substDataDefName (name, def) = do
+  def' <- substE def
   lookupAtomSubstVal name >>= \case
-    Rename name' -> return name'
+    Rename name' -> return (name', def')
 
 instance AlphaEqE Atom where
   alphaEqE atom1 atom2 = case (atom1, atom2) of
     (Var v, Var v') -> alphaEqE v v'
     (Pi ab, Pi ab') -> alphaEqE ab ab'
-    (DataCon _ def params con args, DataCon _ def' params' con' args') -> do
+    (DataCon _ (def,_) params con args, DataCon _ (def',_) params' con' args') -> do
       alphaEqE def def'
       alphaEqTraversable params params'
       assertEq con con' ""
       alphaEqTraversable args args'
-    (TypeCon def params, TypeCon def' params') -> do
+    (TypeCon (def, _) params, TypeCon (def', _) params') -> do
       alphaEqE def def'
       alphaEqTraversable params params'
     (Variant (Ext items  ext ) l  con  payload ,
@@ -756,12 +782,11 @@ instance InjectableToAtomSubstVal v => SubstE v SynthCandidates where
 
 instance SubstE Name SourceNameDef where
   substE def = case def of
-    SrcAtomName    v   -> SrcAtomName    <$> substE v
-    SrcTyConName   v   -> SrcTyConName   <$> substE v
-    SrcDataConName v i -> SrcDataConName <$> substE v <*> pure i
-    SrcClassName   v   -> SrcClassName   <$> substE v
-    SrcMethodName  v i -> SrcMethodName  <$> substE v <*> pure i
-    SrcUExprName   v   -> SrcUExprName   <$> substE v
+    SrcAtomName    v -> SrcAtomName    <$> substE v
+    SrcTyConName   v -> SrcTyConName   <$> substE v
+    SrcDataConName v -> SrcDataConName <$> substE v
+    SrcClassName   v -> SrcClassName   <$> substE v
+    SrcMethodName  v -> SrcMethodName  <$> substE v
 
 instance SubstE Name SourceMap where
   substE (SourceMap m) = SourceMap <$> mapM substE m

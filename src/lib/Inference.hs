@@ -388,15 +388,15 @@ inferDataDef (UDataDef (tyConName, paramBs) dataCons) =
 
 inferInterfaceDataDef :: SourceName -> [SourceName] -> Nest UAnnBinder
                       -> [UType] -> [UType] -> UInferM ClassDef
-inferInterfaceDataDef className methodNames paramBs superclasses methods =
-  withNestedBinders paramBs \paramBs' -> do
+inferInterfaceDataDef className methodNames paramBs superclasses methods = do
+  dictDef <- withNestedBinders paramBs \paramBs' -> do
     superclasses' <- mapM checkUType superclasses
     methods'     <- mapM checkUType methods
     let dictContents = PairTy (ProdTy superclasses') (ProdTy methods')
-    let dictDef = DataDef className paramBs'
-                    [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
-    defName <- emitDataDef dictDef
-    return $ ClassDef (defName, dictDef) methodNames
+    return $ DataDef className paramBs'
+               [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+  defName <- emitDataDef dictDef
+  return $ ClassDef (defName, dictDef) methodNames
 
 withNestedBinders :: Nest UAnnBinder -> (Nest Binder -> UInferM a) -> UInferM a
 withNestedBinders Empty cont = cont Empty

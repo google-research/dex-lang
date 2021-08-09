@@ -72,18 +72,7 @@ instance SourceRenamableE UVar where
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance SourceRenamableB UBinder where
-  sourceRenameB ubinder = case ubinder of
-    UBindSource b -> do
-      (scope, SourceMap sourceMap) <- lift ask
-      mayShadow <- lift askMayShadow
-      unless (mayShadow || not (M.member b sourceMap)) $
-        throw RepeatedVarErr $ pprint b
-      let freshName = genFresh (Name GenName (fromString b) 0) scope
-      extendEnv ( freshName @> LocalUExprBound
-                , SourceMap (M.singleton b (SrcAtomName freshName)))
-      return $ UBind freshName
-    UBind _ -> error "Shouldn't be source-renaming internal names"
-    UIgnore -> return UIgnore
+  sourceRenameB b = sourceRenameUBinder SrcAtomName b
 
 instance SourceRenamableB UPatAnn where
   sourceRenameB (UPatAnn b ann) = do
@@ -185,20 +174,41 @@ instance SourceRenamableB UDecl where
       return $ ULet ann pat' expr'
     UDataDefDecl dataDef tyConName dataConNames -> do
       dataDef' <- lift $ sourceRenameE dataDef
-      tyConName' <- sourceRenameB tyConName
-      dataConNames' <- mapM sourceRenameB dataConNames
+      tyConName' <- sourceRenameUBinder SrcTyConName tyConName
+      dataConNames' <- mapM (sourceRenameUBinder SrcDataConName) dataConNames
       return $ UDataDefDecl dataDef' tyConName' dataConNames'
     UInterface paramBs superclasses methodTys className methodNames -> do
       Abs paramBs' (superclasses', methodTys') <-
         lift $ sourceRenameE $ Abs paramBs (superclasses, methodTys)
-      className' <- sourceRenameB className
-      methodNames' <- sourceRenameB methodNames
+      className' <- sourceRenameUBinder SrcClassName className
+      methodNames' <- sourceRenameUBinderNest SrcMethodName methodNames
       return $ UInterface paramBs' superclasses' methodTys' className' methodNames'
     UInstance conditions className params methodDefs instanceName -> do
       Abs conditions' ((className', params'), methodDefs') <-
         lift $ sourceRenameE $ Abs conditions ((className, params), methodDefs)
       instanceName' <- mapM sourceRenameB instanceName
       return $ UInstance conditions' className' params' methodDefs' instanceName'
+
+sourceRenameUBinderNest :: Renamer m => (Name -> SourceNameDef)
+                        -> Nest UBinder -> WithEnv RenameEnv m (Nest UBinder)
+sourceRenameUBinderNest _ Empty = return Empty
+sourceRenameUBinderNest f (Nest b bs) =
+  Nest <$> sourceRenameUBinder f b <*> sourceRenameUBinderNest f bs
+
+sourceRenameUBinder :: Renamer m => (Name -> SourceNameDef)
+                    -> UBinder -> WithEnv RenameEnv m UBinder
+sourceRenameUBinder asSourceNameDef ubinder = case ubinder of
+  UBindSource b -> do
+    (scope, SourceMap sourceMap) <- lift ask
+    mayShadow <- lift askMayShadow
+    unless (mayShadow || not (M.member b sourceMap)) $
+      throw RepeatedVarErr $ pprint b
+    let freshName = genFresh (Name GenName (fromString b) 0) scope
+    extendEnv ( freshName @> LocalUExprBound
+              , SourceMap (M.singleton b (asSourceNameDef freshName)))
+    return $ UBind freshName
+  UBind _ -> error "Shouldn't be source-renaming internal names"
+  UIgnore -> return UIgnore
 
 instance SourceRenamableE UDataDef where
   sourceRenameE (UDataDef (tyConName, paramBs) dataCons) =
