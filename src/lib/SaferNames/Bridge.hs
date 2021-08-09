@@ -143,7 +143,7 @@ withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
                     -> m n a
 withFreshBijectionD name info cont =
   asUnsafeNameFromBinderInfo info name \name' ->
-    withFreshM \b ->
+    withFreshM name \b ->
       extendToSafeNameMap name' (binderName b) $
         cont b name'
 
@@ -192,7 +192,8 @@ instance MonadToSafe ToSafeM where
 class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
   lookupFromSafeNameMap :: S.Name s i -> m i (UnsafeName s)
   getUnsafeBindings :: m i (D.Bindings)
-  withFreshUnsafeName :: D.AnyBinderInfo
+  withFreshUnsafeName :: S.HasNameHint hint
+                      => hint -> D.AnyBinderInfo
                       -> (D.Name -> m i a) -> m i a
   extendFromSafeMap :: S.NameBinder s i i'
                     -> UnsafeName s -> m i' a -> m i a
@@ -212,10 +213,10 @@ runFromSafeM nameMap bindings m =
 instance MonadFromSafe FromSafeM where
   lookupFromSafeNameMap v = FromSafeM $ (fromUnsafeNameE . (S.! v)) <$> ask
   getUnsafeBindings = FromSafeM $ lift ask
-  withFreshUnsafeName info f =
+  withFreshUnsafeName hint info f =
     FromSafeM $ ReaderT \m -> do
       scope <- ask
-      let v' = genFresh "v" scope  -- TODO: preverse name hints
+      let v' = genFresh (getNameHint hint) scope  -- TODO: preverse name hints
       withReaderT (<> (v' D.@> info)) $
         runReaderT (runFromSafeM' (f v')) m
 
@@ -353,7 +354,7 @@ instance HasSafeVersionB DRecEnvFrag where
         -> m o r
       renameBindersEnvPair name info cont =
         asUnsafeNameFromBinderInfo info name \name' ->
-          withFreshM \b ->
+          withFreshM name \b ->
             extendToSafeNameMap name' (binderName b) $
               cont $ TempPair b info
 
@@ -373,7 +374,7 @@ instance HasSafeVersionB DRecEnvFrag where
         -> m i r
       renameBinders S.Empty cont = cont []
       renameBinders (S.Nest (EnvPair b binderInfo) rest) cont =
-        withFreshUnsafeName TrulyUnknownBinder \v -> do
+        withFreshUnsafeName b TrulyUnknownBinder \v -> do
           let v' = asUnsafeNameFromTopBinding binderInfo v
           withNameClasses (S.binderName b) $
             extendFromSafeMap b v' $ do
@@ -573,17 +574,17 @@ instance HasSafeVersionB D.Binder where
 
   toSafeB (Ignore ty) cont = do
     ty' <- toSafeE ty
-    withFreshM \b' -> do
+    withFreshM IgnoreHint \b' -> do
       cont (b' S.:> ty')
   toSafeB (Bind (b D.:> ty)) cont = do
     ty' <- toSafeE ty
-    withFreshM \b' -> do
+    withFreshM b \b' -> do
       extendToSafeNameMap (UnsafeAtomName b) (S.binderName b') $
         cont (b' S.:> ty')
 
   fromSafeB (b S.:> ty) cont = do
     ty' <- fromSafeE ty
-    withFreshUnsafeName (AtomBinderInfo ty' UnknownBinder) \v' ->
+    withFreshUnsafeName b (AtomBinderInfo ty' UnknownBinder) \v' ->
       extendFromSafeMap b (UnsafeAtomName v') $
         cont (Bind (v' D.:> ty'))
 

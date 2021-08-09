@@ -110,11 +110,12 @@ data NameBinder (s::E)  -- static information for the name this binds (note
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name s l }
 
-withFresh :: InjectableE s => Typeable s => Distinct n => Scope n
+withFresh :: (InjectableE s, Typeable s, Distinct n)
+          => RawName -> Scope n
           -> (forall l. Distinct l => NameBinder s n l -> a) -> a
-withFresh (UnsafeMakeScope scope) cont =
+withFresh hint (UnsafeMakeScope scope) cont =
   cont @UnsafeMakeDistinctS $ UnsafeMakeBinder freshName
-  where freshName = UnsafeMakeName $ freshRawName "v" scope
+  where freshName = UnsafeMakeName $ freshRawName (D.nameTag hint) scope
 
 freshRawName :: D.Tag -> S.Set RawName -> RawName
 freshRawName tag usedNames = D.Name D.GenName tag nextNum

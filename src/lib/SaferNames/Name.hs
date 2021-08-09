@@ -31,7 +31,8 @@ module SaferNames.Name (
   withFreshM, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
-  liftSG, forEachNestItem, forEachNestItemSG) where
+  liftSG, forEachNestItem, forEachNestItemSG,
+  HasNameHint (..), NameHint, CommonHint (..)) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -148,7 +149,7 @@ tryProjectName names name =
 toConstAbs :: (Typeable s, InjectableE s, InjectableE e, ScopeReader m, ScopeExtender m)
            => e n -> m n (Abs (NameBinder s) e n)
 toConstAbs body =
-  withFreshM \b -> do
+  withFreshM ("ignore"::NameHint) \b -> do
     body' <- injectM b body
     return $ Abs b body'
 
@@ -173,7 +174,7 @@ instance Typeable s => SubstE Name (Name s) where
 instance SubstB v (NameBinder s) where
   substB b = SubstGenT $ withNameClasses (binderName b) do
     Distinct names <- getScope
-    withFresh names \b' -> do
+    withFresh (getNameHint b) names \b' -> do
       let frag = singletonScope b'
       return $ WithScopeSubstFrag frag (b @> binderName b') b'
 
@@ -307,7 +308,7 @@ type ScopeExtender2    (m::MonadKind2) = forall (n::S). ScopeExtender    (m n)
 type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
 type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
 
--- -- === subst monad ===
+-- === subst monad ===
 
 -- Only alllows non-trivial substitution with names that match the parameter
 -- `sMatch`. For example, this lets us substitute ordinary variables in Core
@@ -316,16 +317,17 @@ data SubstVal (sMatch::E) (atom::E) (s::E) (n::S) where
   SubstVal :: atom n   -> SubstVal s      atom s n
   Rename   :: Name s n -> SubstVal sMatch atom s n
 
-withFreshM :: (ScopeReader m, ScopeExtender m, Typeable s, InjectableE s)
-           => (forall o'. NameBinder s o o' -> m o' a)
+withFreshM :: (ScopeReader m, ScopeExtender m, Typeable s, InjectableE s, HasNameHint hint)
+           => hint
+           -> (forall o'. NameBinder s o o' -> m o' a)
            -> m o a
-withFreshM cont = do
+withFreshM hint cont = do
   Distinct m <- getScope
-  withFresh m \b' -> do
+  withFresh (getNameHint hint) m \b' -> do
     extendScope (singletonScope b') $
       cont b'
 
--- -- === alpha-renaming-invariant equality checking ===
+-- === alpha-renaming-invariant equality checking ===
 
 type AlphaEq e = AlphaEqE e  :: Constraint
 
@@ -370,7 +372,7 @@ instance Typeable s => AlphaEqE (Name s) where
 
 instance (InjectableE s, Typeable s) => AlphaEqB (NameBinder s) where
   withAlphaEqB b1 b2 cont = do
-    withFreshM \b -> do
+    withFreshM b1 \b -> do
       let v = binderName b
       extendZipEnvFst (b1@>v) $ extendZipEnvSnd (b2@>v) $ cont
 
@@ -651,6 +653,31 @@ liftSG :: ScopeReader2 m => m i o a -> (a -> SubstGenT m i i' e o) -> SubstGenT 
 liftSG m cont = SubstGenT do
   ans <- m
   runSubstGenT $ cont ans
+
+-- === name hints ===
+
+type NameHint = RawName
+
+class HasNameHint a where
+  getNameHint :: a -> NameHint
+
+instance HasNameHint (Name s n) where
+  getNameHint = getRawName
+
+instance HasNameHint (NameBinder s n l) where
+  getNameHint = getRawName . binderName
+
+instance HasNameHint RawName where
+  getNameHint = id
+
+data CommonHint =
+   IgnoreHint
+ | GenHint
+
+instance HasNameHint CommonHint where
+  getNameHint hint = case hint of
+    IgnoreHint -> "_"
+    GenHint    -> "v"
 
 -- === instances ===
 
