@@ -1,21 +1,36 @@
-'### [Arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding)
+'### Arithmetic coding (WIP)
+A finite-precision variant based on [this](https://web.stanford.edu/class/ee398a/handouts/papers/WittenACM87ArithmCoding.pdf) paper by Ian H. Witten et al.
 
 Alphabet = Fin 26
-Interval = (Float&Float)
-top:Interval = (0.,1.)
+Interval = (Int&Int)
+maxBits = 7
+maxInt = intpow2 maxBits
+half = idiv maxInt 2
 
 def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
 def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
+def intToBin (i: Int) : List Word8 = "WIP"
 
-def cumProb (ps: n=>Float) : n=>Float =
-  withState 0.0 \total.
-    for i. if ps.i > 0. 
+'Statistical modelling
+
+def normalize (freq: Int) (l: Int) (w: Int) : Int = FToI $ IToF freq / IToF l * IToF w
+
+def getCumFreq (fs: Alphabet=>Int) : Alphabet=>Int =
+  withState zero \total.
+    for i. if fs.i /= zero
       then
-        currTotal = get total
-        newTotal = currTotal + ps.i
+        newTotal = get total + fs.i
         total := newTotal
-        currTotal
-      else 0.
+        newTotal
+      else zero
+
+def getIntervals (xs: Alphabet=>Int) : Alphabet=>Interval =
+  withState (0,0) \ref.
+    for i. if xs.i /= zero
+      then
+        ref := ((snd (get ref)), xs.i)
+        get ref
+      else (0,0)
 
 def getFrequency (str: (Fin l)=>Word8) : Alphabet=>Int =
   a: Alphabet => Int = zero
@@ -23,31 +38,74 @@ def getFrequency (str: (Fin l)=>Word8) : Alphabet=>Int =
     i' = (charToIdx str.i)@_
     ref!i' := (get ref).i' + 1
 
-def getProbability (l: Int) (freq: Alphabet=>Int) : Alphabet=>(Float&Float) =
-  probs = for i. IToF freq.i / IToF l
-  cums = cumProb probs
-  for i. (probs.i, cums.i)
-
-def getUpdateRule (p: Alphabet=>(Float&Float)) : Alphabet=>(Interval->Interval) =
-  for i. 
-    case p.i == (0.,0.) of
+def model (str: (Fin l)=>Word8) : Alphabet=>(Interval->Interval) =
+  freq = getFrequency str
+  cumFreq = getCumFreq freq
+  inFreq = getIntervals cumFreq
+  for i.
+    case inFreq.i == (0,0) of
       True -> id
       False ->
-        \(x, w).
-          x' = x + w*(snd p.i)
-          w' = w*(fst p.i)
-          (x', w')
+        (fLow, fHigh) = inFreq.i
+        \(low, high).
+          w = high-low+1
+          low' = low + normalize fLow l w
+          high' = low-1 + normalize fHigh l w
+          (low', high')
 
-def subdivide (str: (Fin l)=>Word8) 
-              (rule: Alphabet=>(Interval->Interval)) 
-              (i: (Fin l)) (in: Interval) : Interval =
-  updateInterval = rule.((charToIdx str.i)@_)
-  updateInterval in
+'Encoding arithmetic
 
-def encode (str: (Fin l)=>Word8) (rule: Alphabet=>(Interval->Interval)) : Float =
-  update = subdivide str rule
-  finalInterval = fold top update
-  fst finalInterval + (snd finalInterval)/2.
+def appendBit (b: Int) (code: Int) (numBits: Int) : Int =
+  half = intpow2 numBits
+  case b==1 of 
+    True -> %or code half
+    False -> code
+
+appendBit 1 3 3
+
+def intervalRef (ref: Ref h (a&b&c&d)) : Ref h a = %fstRef ref
+def codeRef (ref: Ref h (a&b&c&d)) : Ref h b = %fstRef (%sndRef ref)
+def bitsRef (ref: Ref h (a&b&c&d)) : Ref h c = %fstRef (%sndRef (%sndRef ref))
+def tallyRef (ref: Ref h (a&b&c&d)) : Ref h d = %sndRef (%sndRef (%sndRef ref))
+
+def getInterval (ref: Ref h (a&b&c&d)) : {State h} a = %get (intervalRef ref)
+def getCode (ref: Ref h (a&b&c&d)) : {State h} b = %get (codeRef ref)
+def getBits (ref: Ref h (a&b&c&d)) : {State h} c = %get (bitsRef ref)
+def getTally (ref: Ref h (a&b&c&d)) : {State h} d = %get (tallyRef ref)
+
+def buildCode (str: (Fin l)=>Word8) 
+              (model: Alphabet=>(Interval->Interval)) 
+              (i: (Fin l)) 
+              (params: (Interval&Int&Int&Int)) : (Interval&Int&Int&Int) =
+  yieldState params \ref.
+    (low, high) = model.((charToIdx str.i)@_) (getInterval ref)
+    sharedBits = %xor low high
+    tally' = getTally ref
+    case (%and sharedBits half)/=0 of
+      True -> tallyRef ref := getTally ref + 1
+      False ->
+        yieldState half \mask.
+          boundedIter maxBits (get ref) \_.
+            case (%and sharedBits (get mask))/=0 of
+              True -> Done (get ref)
+              False -> 
+                codeRef ref := case (%and low (get mask))==0 of
+                  True -> appendBit 0 (getCode ref) (getBits ref)
+                  False -> appendBit 1 (getCode ref) (getBits ref)
+                bitsRef ref := getBits ref + 1
+                mask := %shr (get mask) 1
+                Continue
+        bit = select ((%and low half)==0) 0 1
+        for i:(Fin tally').
+          codeRef ref := appendBit bit (getCode ref) (getBits ref)
+          bitsRef ref := getBits ref + 1
+        tallyRef ref := 0
+
+def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Int =
+  update = buildCode str model
+  initInterval = (0,maxInt-1)
+  result = fold (initInterval,0,0,0) update
+  fst (snd result)
 
 def findInterval  (l: Int) 
                   (code: Float) 
@@ -71,18 +129,23 @@ def decode (l: Int) (code: Float) (rule: Alphabet=>(Interval->Interval)) : List 
 
 'Lossless compression on a test string
 
-str' = "abbadcabccdd"
+str' = "abccedac"
 (AsList l str) = str'
+initInterval = (0,maxInt-1)
+m = model str
+m.(0@_) initInterval
+m.(1@_) initInterval
+m.(2@_) initInterval
+m.(3@_) initInterval
+m.(4@_) initInterval
 
-p = getProbability l $ getFrequency str
-r = getUpdateRule p
-
-code = encode str r
+code = encode str m
 code
 > 0.081569
 
-decoded = decode l code r
+decoded = decode l code m
 decoded == str'
 > True
+
 
 
