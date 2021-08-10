@@ -7,6 +7,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module SaferNames.Name (
   Name (..), RawName, S (..), Env, (<.>), EnvFrag (..), NameBinder (..),
@@ -43,6 +45,8 @@ import Control.Monad.Writer.Strict
 import Data.Dynamic
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
+import GHC.Generics (Generic (..), Rep)
+import Data.Store (Store)
 
 import SaferNames.NameCore
 import Util (zipErr, onFst, onSnd)
@@ -197,29 +201,34 @@ type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
-data UnitE (n::S) = UnitE deriving (Show, Eq)
+data UnitE (n::S) = UnitE
+     deriving (Show, Eq, Generic)
+
 data VoidE (n::S)
+     deriving (Generic)
 
 data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
-     deriving (Show, Eq)
+     deriving (Show, Eq, Generic)
 
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
-     deriving (Show, Eq)
+     deriving (Show, Eq, Generic)
 
 data MaybeE (e::E) (n::S) = JustE (e n) | NothingE
-     deriving (Show, Eq)
+     deriving (Show, Eq, Generic)
 
 data ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
-     deriving (Show, Eq)
+     deriving (Show, Eq, Generic)
 
 data LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-     deriving (Show, Eq)
+     deriving (Show, Eq, Generic)
 
 -- The identity function at `E`
 newtype IdE (e::E) (n::S) = IdE { fromIdE :: e n }
+        deriving (Show, Eq, Generic)
 
 -- The constant function at `E`
 newtype ConstE (const::E) (ignored::E) (n::S) = ConstE (const n)
+        deriving (Show, Eq, Generic)
 
 -- -- === various convenience utilities ===
 
@@ -763,6 +772,29 @@ instance Pretty a => Pretty (LiftE a n) where
 instance Pretty (UnitE n) where
   pretty UnitE = ""
 
+instance ( Generic (b UnsafeS UnsafeS)
+         , Generic (body UnsafeS) )
+         => Generic (Abs b body n) where
+  type Rep (Abs b body n) = Rep (b UnsafeS UnsafeS, body UnsafeS)
+  from (Abs b body) = from (unsafeCoerceB b, unsafeCoerceE body)
+  to rep = Abs (unsafeCoerceB b) (unsafeCoerceE body)
+    where (b, body) = to rep
+
+instance ( Generic (b1 UnsafeS UnsafeS)
+         , Generic (b2 UnsafeS UnsafeS) )
+         => Generic (NestPair b1 b2 n l) where
+  type Rep (NestPair b1 b2 n l) = Rep (b1 UnsafeS UnsafeS, b2 UnsafeS UnsafeS)
+  from (NestPair b1 b2) = from (unsafeCoerceB b1, unsafeCoerceB b2)
+  to rep = NestPair (unsafeCoerceB b1) (unsafeCoerceB b2)
+    where (b1, b2) = to rep
+
+instance ( Store   (b UnsafeS UnsafeS), Store   (body UnsafeS)
+         , Generic (b UnsafeS UnsafeS), Generic (body UnsafeS) )
+         => Store (Abs b body n)
+instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
+         , Generic (b1 UnsafeS UnsafeS), Generic (b2 UnsafeS UnsafeS) )
+         => Store (NestPair b1 b2 n l)
+
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envAsScope $ fromRecEnvFrag env
 
@@ -775,3 +807,12 @@ instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) whe
     extendScope s $ extendRenamer r do
       pairs' <- forEachNestItem pairs \(EnvPair b x) -> EnvPair b <$> substE x
       return $ WithScopeSubstFrag s r $ RecEnvFrag $ fromEnvPairs pairs'
+
+instance Store (UnitE n)
+instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
+instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
+instance Store (e n) => Store (MaybeE e n)
+instance Store (e n) => Store (ListE  e n)
+instance Store a => Store (LiftE a n)
+instance Store (e n) => Store (IdE e n)
+instance Store (const n) => Store (ConstE const ignored n)

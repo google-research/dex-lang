@@ -5,6 +5,8 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module SaferNames.NameCore (
   S (..), RawName, Name (..), withFresh, injectNames, injectNamesR, projectName,
@@ -25,6 +27,8 @@ import Unsafe.Coerce
 import qualified Data.Map  as M
 import qualified Data.Set  as S
 import GHC.Exts (Constraint)
+import Data.Store (Store)
+import GHC.Generics (Generic (..))
 
 import qualified Env as D
 
@@ -63,7 +67,7 @@ import qualified Env as D
 
 data S = (:=>:) S S
        | VoidS
-       | UnsafeMakeS
+       | UnsafeS
        | UnsafeMakeDistinctS
 
 type E = S -> *       -- expression-y things, covariant in the S param
@@ -245,10 +249,10 @@ toEnvPairs :: forall v i i' o . EnvFrag v i i' o -> Nest (EnvPair v o) i i'
 toEnvPairs (UnsafeMakeEnv m _) =
   go $ M.elems $ M.mapWithKey mkPair m
   where
-    mkPair :: RawName -> EnvVal v o -> EnvPair v o UnsafeMakeS UnsafeMakeS
+    mkPair :: RawName -> EnvVal v o -> EnvPair v o UnsafeS UnsafeS
     mkPair rawName (EnvVal _ v) = EnvPair (UnsafeMakeBinder $ UnsafeMakeName rawName) v
 
-    go :: [EnvPair v o UnsafeMakeS UnsafeMakeS] -> Nest (EnvPair v o) i i'
+    go :: [EnvPair v o UnsafeS UnsafeS] -> Nest (EnvPair v o) i i'
     go [] = unsafeCoerceB Empty
     go (EnvPair b val : rest) = Nest (EnvPair (unsafeCoerceB b) val) $ go rest
 
@@ -335,6 +339,37 @@ instance (forall s n. Pretty (v s n)) => Pretty (EnvFrag v i i' o) where
   pretty (UnsafeMakeEnv m _) =
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, EnvVal _ x) <- M.toList m ]
 
+instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
+  type Rep (Nest b n l) = Rep [b UnsafeS UnsafeS]
+  from = from . listFromNest
+    where
+      listFromNest :: Nest b n' l' -> [b UnsafeS UnsafeS]
+      listFromNest nest = case nest of
+        Empty -> []
+        Nest b rest -> unsafeCoerceB b : listFromNest rest
+
+  to = listToNest . to
+    where
+      listToNest :: [b UnsafeS UnsafeS] -> Nest b n l
+      listToNest l = case l of
+        [] -> unsafeCoerceB Empty
+        b:rest -> Nest (unsafeCoerceB b) $ listToNest rest
+
+instance Generic (Name s n) where
+  type Rep (Name s n) = Rep RawName
+  from (UnsafeMakeName v) = from v
+  to v = UnsafeMakeName $ to v
+
+instance Generic (NameBinder s n l) where
+  type Rep (NameBinder s n l) = Rep RawName
+  from (UnsafeMakeBinder (UnsafeMakeName v)) = from v
+  to v = UnsafeMakeBinder $ UnsafeMakeName $ to v
+
+instance Store (Name s n)
+instance Store (NameBinder s n l)
+instance ( Store   (b UnsafeS UnsafeS)
+         , Generic (b UnsafeS UnsafeS) ) => Store (Nest b n l)
+
 -- === notes ===
 
 {-
@@ -360,7 +395,7 @@ get a new name.
 
 
 Note [Injections]
- 
+
 When we inline an expression, we lift it into a larger (deeper) scope,
 containing more in-scope variables. For example, when we turn this:
 

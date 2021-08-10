@@ -12,6 +12,8 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
@@ -57,6 +59,9 @@ import Data.Word
 import Type.Reflection (Typeable, TypeRep, typeRep)
 import Foreign.Ptr
 
+import GHC.Generics (Generic (..), Rep)
+import Data.Store (Store)
+
 import Syntax
   ( LetAnn (..), IRVariant (..)
   , PrimExpr (..), PrimTC (..), PrimCon (..), PrimOp (..), PrimHof (..)
@@ -99,7 +104,7 @@ data Atom n =
  -- here may also appear in the type of the atom. (We maintain this
  -- invariant during substitution and in Builder.hs.)
  | ProjectElt (NE.NonEmpty Int) (AtomName n)
-   deriving (Show)
+   deriving (Show, Generic)
 
 data Expr n =
    App (Atom n) (Atom n)
@@ -107,7 +112,7 @@ data Expr n =
  | Atom (Atom n)
  | Op  (Op  n)
  | Hof (Hof n)
-   deriving (Show)
+   deriving (Show, Generic)
 
 data AtomBinderInfo (n::S) =
    LetBound LetAnn (Expr n)
@@ -115,22 +120,27 @@ data AtomBinderInfo (n::S) =
  | PiBound
  | MiscBound
  | InferenceName
+   deriving (Show, Generic)
 
 -- We inlinine the definition for compatibility with the unsafe IR.
 -- TODO: remove once we don't need the bridge anymore
 type NamedDataDef n = (Name DataDef n, DataDef n)
 
 data AtomNameDef (n::S) = AtomNameDef (Type n) (AtomBinderInfo n)
+     deriving (Show, Generic)
 
 data Decl n l = Let LetAnn (Binder n l) (Expr n)
-                deriving (Show)
+                deriving (Show, Generic)
 
 type AtomName = Name AtomNameDef
 
 data Binder (n::S) (l::S) =
-  (:>) (NameBinder AtomNameDef n l) (Type n)  deriving Show
+  (:>) (NameBinder AtomNameDef n l) (Type n)
+  deriving (Show, Generic)
 
-data DataConRefBinding n l = DataConRefBinding (Binder n l) (Atom n) deriving Show
+data DataConRefBinding n l =
+  DataConRefBinding (Binder n l) (Atom n)
+  deriving (Show, Generic)
 
 type AltP (e::E) = Abs (Nest Binder) e :: E
 type Alt = AltP Block                  :: E
@@ -141,8 +151,9 @@ data DataDef n where
   DataDef :: SourceName -> Nest Binder n l -> [DataConDef l] -> DataDef n
 
 -- As above, the `SourceName` is just for pretty-printing
-data DataConDef n = DataConDef SourceName (EmptyAbs (Nest Binder) n)
-                    deriving Show
+data DataConDef n =
+  DataConDef SourceName (EmptyAbs (Nest Binder) n)
+  deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
 -- block). It's given by querying the result expression's type, and checking
@@ -163,7 +174,7 @@ data Arrow =
  | ClassArrow
  | TabArrow
  | LinArrow
-   deriving (Show, Eq)
+   deriving (Show, Eq, Generic)
 
 type Val  = Atom
 type Type = Atom
@@ -207,17 +218,17 @@ data SourceNameDef (n::S) =
  | SrcDataConName (Name DataConNameDef n)
  | SrcClassName   (Name ClassDef n)
  | SrcMethodName  (Name MethodDef n)
- deriving Show
+ deriving (Show, Generic)
 
-data TyConNameDef   n = TyConNameDef   (Name DataDef n)
-data DataConNameDef n = DataConNameDef (Name DataDef n) Int
-data MethodDef n = MethodDef (Name ClassDef n) Int (Atom n)
-data SuperclassDef n = SuperclassDef (Name ClassDef n) Int (Atom n)
-data ClassDef  n = ClassDef SourceName [SourceName] (NamedDataDef n)
+data TyConNameDef   n = TyConNameDef   (Name DataDef n)                    deriving (Show, Generic)
+data DataConNameDef n = DataConNameDef (Name DataDef n) Int                deriving (Show, Generic)
+data ClassDef       n = ClassDef SourceName [SourceName] (NamedDataDef n)  deriving (Show, Generic)
+data MethodDef      n = MethodDef (Name ClassDef n) Int (Atom n)           deriving (Show, Generic)
+data SuperclassDef  n = SuperclassDef (Name ClassDef n) Int (Atom n)       deriving (Show, Generic)
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (SourceNameDef n)}
-  deriving Show
+  deriving (Show, Generic)
 
 data Module n where
   Module
@@ -238,15 +249,15 @@ data SynthCandidates n = SynthCandidates
   { lambdaDicts       :: [Atom n]
   , superclassGetters :: [Atom n]
   , instanceDicts     :: [Atom n] }
-  deriving (Show)
+  deriving (Show, Generic)
 
 -- === effects ===
 
 data EffectRow n = EffectRow (S.Set (Effect n)) (Maybe (AtomName n))
-                   deriving (Show, Eq)
+                   deriving (Show, Generic)
 
 data Effect n = RWSEffect RWS (AtomName n) | ExceptionEffect | IOEffect
-                deriving (Show, Eq, Ord)
+                deriving (Show, Eq, Ord, Generic)
 
 pattern Pure :: EffectRow n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
@@ -911,3 +922,51 @@ instance Pretty (TopState n) where
     "bindings: "        <> nest 2 (hardline <> pretty (topBindings s))  <> hardline <>
     "synth candidates:" <> hardline <>
     "source map: "      <> nest 2 (hardline <> pretty (topSourceMap s)) <> hardline
+
+instance Generic (Block n) where
+  type Rep (Block n) = Rep (PairE Type (Abs (Nest Decl) Expr) n)
+  from (Block ty decls result) = from $ PairE ty $ Abs decls result
+  to rep = case to rep of
+    PairE ty (Abs decls result) -> Block ty decls result
+
+instance Generic (LamExpr n) where
+  type Rep (LamExpr n) = Rep (Arrow, Abs Binder (PairE EffectRow Block) n)
+  from (LamExpr arr b row block) = from (arr, Abs b (PairE row block))
+  to rep = case to rep of
+    (arr, Abs b (PairE row block)) -> LamExpr arr b row block
+
+instance Generic (PiType n) where
+  type Rep (PiType n) = Rep (Arrow, Abs Binder (PairE EffectRow Type) n)
+  from (PiType arr b row ty) = from (arr, Abs b (PairE row ty))
+  to rep = case to rep of
+    (arr, Abs b (PairE row ty)) -> PiType arr b row ty
+
+instance Generic (DataDef n) where
+  type Rep (DataDef n) = Rep (SourceName, Abs (Nest Binder) (ListE DataConDef) n)
+  from (DataDef name bs dataCons) = from (name, Abs bs (ListE dataCons))
+  to rep = case to rep of
+    (name, Abs bs (ListE dataCons)) -> DataDef name bs dataCons
+
+instance Store (Atom n)
+instance Store (Expr n)
+instance Store (AtomBinderInfo n)
+instance Store (AtomNameDef n)
+instance Store (Decl n l)
+instance Store (Binder n l)
+instance Store (DataConRefBinding n l)
+instance Store (DataDef n)
+instance Store (DataConDef n)
+instance Store (Block n)
+instance Store (LamExpr n)
+instance Store (PiType  n)
+instance Store Arrow
+instance Store (SourceNameDef n)
+instance Store (TyConNameDef   n)
+instance Store (DataConNameDef n)
+instance Store (ClassDef       n)
+instance Store (MethodDef      n)
+instance Store (SuperclassDef  n)
+instance Store (SourceMap n)
+instance Store (SynthCandidates n)
+instance Store (EffectRow n)
+instance Store (Effect n)
