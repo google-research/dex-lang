@@ -870,6 +870,10 @@ def vjp (f:a->b) (x:a) : (b & b --o a) =
 
 def grad (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 
+def gradAndValue (f:a->Float) (x:a) : (a & Float) =
+  (val, vjpfun) = vjp f x
+  (vjpfun 1.0, val)
+
 def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
 def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
