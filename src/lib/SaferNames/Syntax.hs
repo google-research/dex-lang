@@ -122,7 +122,7 @@ data AtomBinderInfo (n::S) =
  | InferenceName
    deriving (Show, Generic)
 
--- We inlinine the definition for compatibility with the unsafe IR.
+-- We inline the definition for compatibility with the unsafe IR.
 -- TODO: remove once we don't need the bridge anymore
 type NamedDataDef n = (Name DataDef n, DataDef n)
 

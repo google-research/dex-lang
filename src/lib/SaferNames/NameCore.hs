@@ -297,7 +297,7 @@ instance Eq (Name s n) where
   UnsafeMakeName rawName == UnsafeMakeName rawName' = rawName == rawName'
 
 instance Ord (Name s n) where
-  compare (UnsafeMakeName name) (UnsafeMakeName name')= compare name name'
+  compare (UnsafeMakeName name) (UnsafeMakeName name') = compare name name'
 
 instance Show (Name s n) where
   show (UnsafeMakeName rawName) = show rawName

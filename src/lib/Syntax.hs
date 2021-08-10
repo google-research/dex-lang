@@ -288,7 +288,7 @@ data UDecl =
        (Nest UBinder)   -- method names
  | UInstance
      (Nest UPatAnnArrow)      -- dictionary args (i.e. conditions)
-       UVar [UExpr]            -- class var and params
+       UVar [UExpr]           -- class var and params
        [UMethodDef]           -- method definitions
      (Maybe UBinder)          -- optional instance name
    deriving (Show, Generic)
