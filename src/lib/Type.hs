@@ -126,7 +126,7 @@ instance HasType Atom where
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
-    DataCon def@(DataDef _ paramBs cons) params con args -> do
+    DataCon def@(_, DataDef _ paramBs cons) params con args -> do
       let paramVars = fmap (\(Bind v) -> v) paramBs
       let (DataConDef _ argBs) = cons !! con
       let funTy = foldr
@@ -135,7 +135,7 @@ instance HasType Atom where
             (   zip (repeat ImplicitArrow) (toList paramBs)
              ++ zip (repeat PureArrow    ) (toList argBs))
       foldM checkApp funTy $ params ++ args
-    TypeCon (DataDef _ bs _) params -> do
+    TypeCon (_, DataDef _ bs _) params -> do
       let paramTys = map binderType $ toList bs
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
@@ -159,7 +159,7 @@ instance HasType Atom where
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy
-    DataConRef ~def@(DataDef _ paramBs [DataConDef _ argBs]) params args -> do
+    DataConRef ~def@(_, DataDef _ paramBs [DataConDef _ argBs]) params args -> do
       checkEq (length paramBs) (length params)
       forM_ (zip (toList paramBs) (toList params)) \(b, param) ->
         param |: binderAnn b
@@ -181,7 +181,7 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        TypeCon def params -> do
+        TypeCon (_, def) params -> do
           [DataConDef _ bs'] <- return $ applyDataDefParams def params
           -- Users might be accessing a value whose type depends on earlier
           -- projected values from this constructor. Rewrite them to also
@@ -244,7 +244,7 @@ checkCase e alts resultTy = do
   checkWithEnv \_ -> do
     ety <- typeCheck e
     case ety of
-      TypeCon def params -> do
+      TypeCon (_, def) params -> do
         let cons = applyDataDefParams def params
         checkEq  (length cons) (length alts)
         forM_ (zip cons alts) \((DataConDef _ bs'), (Abs bs body)) -> do
@@ -844,7 +844,7 @@ typeCheckOp op = case op of
     t |: TyKind
     x |: Word8Ty
     case t of
-      TypeCon (DataDef _ _ dataConDefs) _ ->
+      TypeCon (_, DataDef _ _ dataConDefs) _ ->
         forM_ dataConDefs \(DataConDef _ binders) ->
           assertEq binders Empty "Not an enum"
       VariantTy _ -> return ()  -- TODO: check empty payload
@@ -905,15 +905,15 @@ typeCheckHof hof = case hof of
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
     return $ PairTy (TabTy (Ignore n) tileElemTy) $ ProdTy accTys
   While body -> do
-    Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck body
+    Pi (Abs (BinderAnn UnitTy) (arr , condTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     checkEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f -> do
-    Pi (Abs (Ignore a) (PlainArrow Pure, b)) <- typeCheck f
+    Pi (Abs (BinderAnn a) (PlainArrow Pure, b)) <- typeCheck f
     return $ a --> PairTy b (a --@ b)
   Transpose f -> do
-    Pi (Abs (Ignore a) (LinArrow, b)) <- typeCheck f
+    Pi (Abs (BinderAnn a) (LinArrow, b)) <- typeCheck f
     return $ b --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f
@@ -1038,7 +1038,7 @@ checkDataLike msg ty = case ty of
   TabTy _ b -> recur b
   RecordTy (NoExt items)  -> traverse_ recur items
   VariantTy (NoExt items) -> traverse_ recur items
-  TypeCon def params ->
+  TypeCon (_, def) params ->
     mapM_ checkDataLikeDataCon $ applyDataDefParams def params
   TC con -> case con of
     BaseType _       -> return ()
@@ -1066,7 +1066,7 @@ isData ty = case checkData ty of
 
 projectLength :: Type -> Int
 projectLength ty = case ty of
-  TypeCon def params ->
+  TypeCon (_, def) params ->
     let [DataConDef _ bs] = applyDataDefParams def params
     in length bs
   RecordTy (NoExt types) -> length types
@@ -1102,7 +1102,7 @@ typeReduceAtom scope x = case x of
   TC con -> TC $ fmap (typeReduceAtom scope) con
   Pi (Abs b (arr, ty)) ->
     Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (flip AtomBinderInfo PiBound) $ binderAsEnv b)) ty)
-  TypeCon def params -> TypeCon (reduceDataDef def) (fmap rec params)
+  TypeCon (name, def) params -> TypeCon (name, reduceDataDef def) (fmap rec params)
   RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
   VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
   ACase _ _ _ -> error "Not implemented"
@@ -1141,16 +1141,14 @@ nameToAtom :: Scope -> Name -> Maybe Atom
 nameToAtom scope v = do
   case scope ! v of
     AtomBinderInfo ty _ -> return $ Var $ v :> ty
-    DataDefName dataDef ->
-      return $ TypeCon dataDef []
     ClassDefName (ClassDef dataDef _) ->
       return $ TypeCon dataDef []
     TyConName dataDefName -> do
       let DataDefName dataDef = scope ! dataDefName
-      return $ TypeCon dataDef []
+      return $ TypeCon (dataDefName, dataDef) []
     DataConName dataDefName conIdx -> do
       let DataDefName dataDef = scope ! dataDefName
-      return $ DataCon dataDef [] conIdx []
+      return $ DataCon (dataDefName, dataDef) [] conIdx []
     MethodName _ _ methodGetter -> return methodGetter
     binderInfo -> error $ "Not an atom name: " ++ pprint binderInfo
 
@@ -1180,8 +1178,17 @@ instance Subst EvaluatedModule where
     let (sourceMap', (_, bindings'')) = flip runCat envNew $ mapM substOrEmit sourceMap
     EvaluatedModule (bindings'<>bindings'') synthCandidates' $ SourceMap sourceMap'
 
-substOrEmit :: Name -> Cat ScopedSubstEnv Name
-substOrEmit name = do
+
+substOrEmit :: SourceNameDef -> Cat ScopedSubstEnv SourceNameDef
+substOrEmit def = case def of
+  SrcAtomName    v -> SrcAtomName    <$> substOrEmitName v
+  SrcTyConName   v -> SrcTyConName   <$> substOrEmitName v
+  SrcDataConName v -> SrcDataConName <$> substOrEmitName v
+  SrcClassName   v -> SrcClassName   <$> substOrEmitName v
+  SrcMethodName  v -> SrcMethodName  <$> substOrEmitName v
+
+substOrEmitName :: Name -> Cat ScopedSubstEnv Name
+substOrEmitName name = do
   (substEnv, scope) <- look
   case envLookup substEnv name of
     Nothing -> return name

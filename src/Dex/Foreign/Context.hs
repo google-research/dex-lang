@@ -12,9 +12,6 @@ module Dex.Foreign.Context (
   dexEval, dexEvalExpr,
   ) where
 
-import Control.Monad.Reader
-import Control.Monad.State.Strict
-
 import Foreign.Ptr
 import Foreign.StablePtr
 import Foreign.C.String
@@ -35,7 +32,9 @@ import PPrint
 
 import Dex.Foreign.Util
 
-data Context = Context EvalConfig TopState
+import SaferNames.Bridge
+
+data Context = Context EvalConfig TopStateEx
 
 foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
 setError :: String -> IO ()
@@ -50,13 +49,13 @@ dexCreateContext = do
     Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
     Left  err        -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
   where
-    evalPrelude :: EvalConfig -> String -> IO (Either Err TopState)
+    evalPrelude :: EvalConfig -> String -> IO (Either Err TopStateEx)
     evalPrelude opts sourceText = do
       (results, env) <- runInterblockM opts initTopState $
                             map snd <$> evalSourceText sourceText
       return $ env `unlessError` results
       where
-        unlessError :: TopState -> [Result] -> Except TopState
+        unlessError :: TopStateEx -> [Result] -> Except TopStateEx
         result `unlessError` []                        = Right result
         _      `unlessError` ((Result _ (Left err)):_) = Left err
         result `unlessError` (_:t                    ) = result `unlessError` t
@@ -76,13 +75,14 @@ dexEval ctxPtr sourcePtr = do
 
 dexInsert :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
 dexInsert ctxPtr namePtr atomPtr = do
-  Context evalConfig env <- fromStablePtr ctxPtr
+  Context evalConfig (TopStateEx env) <- fromStablePtr ctxPtr
   name <- fromString <$> peekCString namePtr
   atom <- fromStablePtr atomPtr
-  let freshName = genFresh (Name GenName (fromString name) 0) (topBindings env)
+  let freshName = genFresh (Name GenName (fromString name) 0) (topBindings $ topStateD env)
   let newBinding = AtomBinderInfo (getType atom) (LetBound PlainLet (Atom atom))
-  let envNew = env { topSourceMap = topSourceMap env <> SourceMap (M.singleton name freshName)
-                   , topBindings  = topBindings  env <> freshName @> newBinding }
+  let evaluated = EvaluatedModule (freshName @> newBinding) mempty
+                                  (SourceMap (M.singleton name (SrcAtomName freshName)))
+  let envNew = extendTopStateD env evaluated
   toStablePtr $ Context evalConfig $ envNew
 
 dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
@@ -93,8 +93,7 @@ dexEvalExpr ctxPtr sourcePtr = do
     Right expr -> do
       let (v, m) = exprAsModule expr
       let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
-      (Result [] maybeErr, newState) <-
-          runStateT (runReaderT (evalSourceBlock block) evalConfig) env
+      (Result [] maybeErr, newState) <- runInterblockM evalConfig env $ evalSourceBlock block
       case maybeErr of
         Right () -> do
           let Right (AtomBinderInfo _ (LetBound _ (Atom atom))) = lookupSourceName newState v

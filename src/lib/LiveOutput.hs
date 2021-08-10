@@ -42,18 +42,18 @@ data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
 
-runWeb :: FilePath -> EvalConfig -> TopState -> IO ()
+runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runWeb fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   putStrLn "Streaming output to localhost:8000"
   run 8000 $ serveResults $ resultStream resultsChan
 
-runTerminal :: FilePath -> EvalConfig -> TopState -> IO ()
+runTerminal :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runTerminal fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   displayResultsTerm resultsChan
 
-watchAndEvalFile :: FilePath -> EvalConfig -> TopState -> IO (ReqChan RFragment)
+watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO (ReqChan RFragment)
 watchAndEvalFile fname opts env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
   let cfg = (opts, subChan Push resultsChan)
@@ -66,12 +66,12 @@ watchAndEvalFile fname opts env = runActor $ do
 type SourceContents = String
 
 type DriverCfg = (EvalConfig, PChan RFragment)
-type DriverState = (WithId TopState, CacheState)
+type DriverState = (WithId TopStateEx, CacheState)
 type DriverM = ReaderT DriverCfg
                  (StateT DriverState
                      (Actor SourceContents))
 
-type EvalCache = M.Map (SourceBlock, WithId TopState) (NodeId, WithId TopState)
+type EvalCache = M.Map (SourceBlock, WithId TopStateEx) (NodeId, WithId TopStateEx)
 data CacheState = CacheState
        { nextBlockId :: NodeId
        , nextStateId :: NodeId
@@ -80,7 +80,7 @@ data CacheState = CacheState
 emptyCache :: CacheState
 emptyCache = CacheState 0 1 mempty
 
-runDriver :: DriverCfg -> TopState -> Actor SourceContents ()
+runDriver :: DriverCfg -> TopStateEx -> Actor SourceContents ()
 runDriver cfg env =
   liftM fst $ flip runStateT (WithId 0 env, emptyCache) $ flip runReaderT cfg $
     forever $ receive >>= evalSource
@@ -119,7 +119,7 @@ evalBlock (WithId blockId block) = do
 
 -- === DriverM utils ===
 
-updateTopState :: WithId TopState -> DriverM ()
+updateTopState :: WithId TopStateEx -> DriverM ()
 updateTopState s = modify \(_,c) -> (s, c)
 
 makeNewBlockId :: SourceBlock -> DriverM (WithId SourceBlock)
@@ -130,13 +130,13 @@ makeNewBlockId block = do
   resultsChan `send` oneSourceBlock newId block
   return $ WithId newId block
 
-makeNewStateId :: TopState -> DriverM (WithId TopState)
+makeNewStateId :: TopStateEx -> DriverM (WithId TopStateEx)
 makeNewStateId env = do
   newId <- gets $ nextStateId . snd
   modify \(s, cache) -> (s, cache {nextStateId = newId + 1 })
   return $ WithId newId env
 
-insertCache :: (SourceBlock, WithId TopState) -> (NodeId, WithId TopState) -> DriverM ()
+insertCache :: (SourceBlock, WithId TopStateEx) -> (NodeId, WithId TopStateEx) -> DriverM ()
 insertCache key val = modify \(s, cache) ->
   (s, cache { evalCache = M.insert key val $ evalCache cache })
 

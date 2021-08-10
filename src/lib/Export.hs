@@ -77,7 +77,7 @@ prepareFunctionForExport env nameStr func = do
         return (resultDest, cargs', ExportedSignature{..}, outputName)
 
   let coreModule = Module Core decls $ EvaluatedModule mempty mempty $
-                     SourceMap $ M.singleton outputSourceName resultName
+                     SourceMap $ M.singleton outputSourceName $ SrcAtomName resultName
   let defunctionalized = simplifyModule env coreModule
   let Module _ optDecls (EvaluatedModule optBindings _ (SourceMap sourceMap)) =
         optimizeModule defunctionalized

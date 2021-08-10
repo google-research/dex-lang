@@ -209,7 +209,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     scrutTy' <- zonk scrutTy
     scrut'' <- zonk scrut'
     case scrutTy' of
-      TypeCon def params -> do
+      TypeCon (_, def) params -> do
         let conDefs = applyDataDefParams def params
         altsSorted <- forM (enumerate conDefs) \(i, DataConDef _ bs) -> do
           case lookup (ConAlt i) alts' of
@@ -388,14 +388,15 @@ inferDataDef (UDataDef (tyConName, paramBs) dataCons) =
 
 inferInterfaceDataDef :: SourceName -> [SourceName] -> Nest UAnnBinder
                       -> [UType] -> [UType] -> UInferM ClassDef
-inferInterfaceDataDef className methodNames paramBs superclasses methods =
-  withNestedBinders paramBs \paramBs' -> do
+inferInterfaceDataDef className methodNames paramBs superclasses methods = do
+  dictDef <- withNestedBinders paramBs \paramBs' -> do
     superclasses' <- mapM checkUType superclasses
     methods'     <- mapM checkUType methods
     let dictContents = PairTy (ProdTy superclasses') (ProdTy methods')
-    let dictDef = DataDef className paramBs'
-                    [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
-    return $ ClassDef dictDef methodNames
+    return $ DataDef className paramBs'
+               [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+  defName <- emitDataDef dictDef
+  return $ ClassDef (defName, dictDef) methodNames
 
 withNestedBinders :: Nest UAnnBinder -> (Nest Binder -> UInferM a) -> UInferM a
 withNestedBinders Empty cont = cont Empty
@@ -448,7 +449,7 @@ checkInstance Empty className params methods = do
     Just (SubstVal _) -> throw TypeErr $ "Not a valid class: " ++ pprint className
   params' <- mapM checkUType params
   ClassDef def methodNames <- getClassDef className'
-  [ClassDictCon superclassTys methodTys] <- return $ applyDataDefParams def params'
+  [ClassDictCon superclassTys methodTys] <- return $ applyDataDefParams (snd def) params'
   let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
   methodsChecked <- mapM (checkMethodDef className' methodTys) methods
   let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
@@ -462,7 +463,7 @@ checkInstance Empty className params methods = do
 checkMethodDef :: ClassDefName -> [Type] -> UMethodDef -> UInferM (Int, Atom)
 checkMethodDef className methodTys (UMethodDef ~(UInternalVar v) rhs) = do
   scope <- getScope
-  ClassDef (DataDef classSourceName _ _ ) _ <- getClassDef className
+  ClassDef (_, DataDef classSourceName _ _ ) _ <- getClassDef className
   case scope ! v of
     MethodName className' i _ | className == className' -> do
       let methodTy = methodTys !! i
@@ -507,7 +508,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
            in withBindPats (zip subPats vs) $ checkRho body reqTy
   return (conIdx, alt)
 
-lookupDataCon :: Name -> UInferM (DataDef, Int)
+lookupDataCon :: Name -> UInferM (NamedDataDef, Int)
 lookupDataCon conName = do
   substEnv <- ask
   conName' <- case envLookup substEnv conName of
@@ -518,14 +519,14 @@ lookupDataCon conName = do
   case envLookup scope conName' of
     Just (DataConName dataDefName con) -> do
       let DataDefName def = scope ! dataDefName
-      return (def, con)
+      return ((dataDefName, def), con)
     Just _  -> throw CompilerErr $ "Not a data constructor: " ++ pprint conName
     Nothing -> throw CompilerErr $ pprint conName
 
 checkCasePat :: UPat -> Type -> UInferM (CaseAltIndex, [(UPat, Type)])
 checkCasePat (WithSrc pos pat) scrutineeTy = addSrcContext' pos $ case pat of
   UPatCon ~(UInternalVar conName) ps -> do
-    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
+    (def@(_, DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
     when (length argBs /= length ps) $ throw TypeErr $
      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
@@ -578,7 +579,7 @@ bindPat (WithSrc pos pat) val = addSrcContext pos $ case pat of
     env2 <- bindPat p2 x2
     return $ env1 <> env2
   UPatCon ~(UInternalVar conName) ps -> do
-    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
+    (def@(_, DataDef _ paramBs cons), con) <- lookupDataCon conName
     when (length cons /= 1) $ throw TypeErr $
       "sum type constructor in can't-fail pattern"
     let (DataConDef _ argBs) = cons !! con

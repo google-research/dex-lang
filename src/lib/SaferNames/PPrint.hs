@@ -20,9 +20,11 @@ import GHC.Exts (Constraint)
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Foldable (fold)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+import Data.String (fromString)
 import System.IO.Unsafe
 import System.Environment
 
@@ -65,7 +67,7 @@ instance Pretty (Block n) where
   pretty (Block _ decls expr) = hardline <> prettyLines decls' <> pLowest expr
     where decls' = fromNest decls
 
-fromNest :: Nest b n l -> [b UnsafeMakeS UnsafeMakeS]
+fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
 fromNest Empty = []
 fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 
@@ -125,10 +127,10 @@ instance PrettyPrec (Atom n) where
     Eff e -> atPrec ArgPrec $ p e
     DataCon name _ _ _ xs -> case xs of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
-    TypeCon name params -> case params of
+    TypeCon (name, _) params -> case params of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (nameTag (getRawName name)) ->
         atPrec ArgPrec $ align $ group $

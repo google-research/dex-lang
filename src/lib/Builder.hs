@@ -224,7 +224,10 @@ emitBinding binfo = do
   return name
 
 emitDataDef :: MonadBuilder m => DataDef -> m DataDefName
-emitDataDef dataDef = emitBinding $ DataDefName dataDef
+emitDataDef dataDef =
+  -- XXX: the hint shouldn't be necssary but ...
+  withNameHint (Name GenName "_data_def_" 0) $
+    emitBinding $ DataDefName dataDef
 
 emitClassDef :: MonadBuilder m => ClassDef -> m ClassDefName
 emitClassDef classDef = emitBinding $ ClassDefName classDef
@@ -265,14 +268,14 @@ emitMethodType classDef idx = do
 
 makeMethodGetter :: MonadBuilder m => ClassDefName -> Int -> m Atom
 makeMethodGetter classDefName methodIdx = do
-  ClassDef def@(DataDef _ paramBs _) _ <- getClassDef classDefName
+  ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [1, 0] dict
 
 makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
 makeSuperclassGetter classDefName methodIdx = do
-  ClassDef def@(DataDef _ paramBs _) _ <- getClassDef classDefName
+  ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
   buildImplicitNaryLam paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [0, 0] dict
