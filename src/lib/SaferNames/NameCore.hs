@@ -12,7 +12,7 @@ module SaferNames.NameCore (
   EnvFrag (..), Env, singletonEnv, emptyEnv, envAsScope, lookupEnv, lookupEnvFrag,
   Distinct, E, B, InjectableE (..), InjectableB (..),
   InjectableV, InjectionCoercion, Nest (..),
-  unsafeCoerceE, unsafeCoerceB, withNameClasses, getRawName, absurdNameFunction, fmapEnvFrag,
+  unsafeCoerceE, unsafeCoerceB, getRawName, absurdNameFunction, fmapEnvFrag,
   toEnvPairs, fromEnvPairs, EnvPair (..)) where
 
 import Prelude hiding (id, (.))
@@ -103,7 +103,7 @@ data Name
           -- variables themselves, so `s` takes a scope parameter.
   (n::S)  -- Scope parameter
   where
-    UnsafeMakeName :: (InjectableE s, Typeable s) => RawName -> Name s n
+    UnsafeMakeName :: RawName -> Name s n
 
 data NameBinder (s::E)  -- static information for the name this binds (note
                         -- that `NameBinder` doesn't actually carry this data)
@@ -138,9 +138,6 @@ projectName (UnsafeMakeScope scope) (UnsafeMakeName rawName)
 class Distinct (n::S)
 instance Distinct VoidS
 instance Distinct UnsafeMakeDistinctS
-
-withNameClasses :: Name s n -> ((InjectableE s, Typeable s) => r) -> r
-withNameClasses (UnsafeMakeName _) cont = cont
 
 -- useful for printing etc.
 getRawName :: Name s n -> RawName
@@ -203,13 +200,13 @@ data EnvFrag
 
 type Env v i o = EnvFrag v VoidS i o
 
-lookupEnv :: Env v i o -> Name s i -> v s o
+lookupEnv :: Typeable s => Env v i o -> Name s i -> v s o
 lookupEnv (UnsafeMakeEnv m _) name@(UnsafeMakeName rawName) =
   case M.lookup rawName m of
     Nothing -> error "Env lookup failed (this should never happen)"
     Just d -> fromEnvVal name d
 
-lookupEnvFrag :: EnvFrag v i i' o -> Name s (i:=>:i') -> v s o
+lookupEnvFrag :: Typeable s => EnvFrag v i i' o -> Name s (i:=>:i') -> v s o
 lookupEnvFrag (UnsafeMakeEnv m _) name@(UnsafeMakeName rawName) =
   case M.lookup rawName m of
     Nothing -> error "Env lookup failed (this should never happen)"
@@ -218,7 +215,7 @@ lookupEnvFrag (UnsafeMakeEnv m _) name@(UnsafeMakeName rawName) =
 emptyEnv :: EnvFrag v i i o
 emptyEnv = UnsafeMakeEnv mempty mempty
 
-singletonEnv :: NameBinder s i i' -> v s o -> EnvFrag v i i' o
+singletonEnv :: (Typeable s, InjectableE s) => NameBinder s i i' -> v s o -> EnvFrag v i i' o
 singletonEnv (UnsafeMakeBinder (UnsafeMakeName name)) x =
   UnsafeMakeEnv (M.singleton name $ toEnvVal x) (S.singleton name)
 
@@ -227,7 +224,10 @@ infixl 1 <.>
 (<.>) (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
   UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
 
-fmapEnvFrag :: (forall s. Name s (i:=>:i') -> v s o -> v' s o') -> EnvFrag v i i' o -> EnvFrag v' i i' o'
+fmapEnvFrag :: InjectableV v
+            => (forall s. (Typeable s, InjectableE s)
+                          => Name s (i:=>:i') -> v s o -> v' s o')
+            -> EnvFrag v i i' o -> EnvFrag v' i i' o'
 fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
   where m' = flip M.mapWithKey m \k (EnvVal rep val) ->
                withTypeable rep $ toEnvVal $ f (UnsafeMakeName k) val
@@ -238,7 +238,8 @@ envAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
 -- === iterating through env pairs ===
 
 data EnvPair (v::E->E) (o::S) (i::S) (i'::S) where
-  EnvPair :: NameBinder s i i' -> v s o -> EnvPair v o i i'
+  EnvPair :: (Typeable s, InjectableE s)
+          => NameBinder s i i' -> v s o -> EnvPair v o i i'
 
 toEnvPairs :: forall v i i' o . EnvFrag v i i' o -> Nest (EnvPair v o) i i'
 toEnvPairs (UnsafeMakeEnv m _) =
@@ -359,7 +360,7 @@ get a new name.
 
 
 Note [Injections]
-
+ 
 When we inline an expression, we lift it into a larger (deeper) scope,
 containing more in-scope variables. For example, when we turn this:
 

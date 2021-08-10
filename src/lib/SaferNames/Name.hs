@@ -52,7 +52,7 @@ import Err
 
 data NameFunction v i o where
   NameFunction
-    :: (forall s. Name s hidden -> v s o)
+    :: (forall s. (Typeable s, InjectableE s) => Name s hidden -> v s o)
     -> EnvFrag v hidden i o
     -> NameFunction v i o
 
@@ -83,7 +83,7 @@ class ScopeReader m => BindingsExtender (m::MonadKind1) where
   extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
 
 class Monad2 m => EnvReader (v::E->E) (m::MonadKind2) | m -> v where
-  lookupEnvM :: Name s i -> m i o (v s o)
+  lookupEnvM :: (Typeable s, InjectableE s) => Name s i -> m i o (v s o)
 
 class Monad2 m => EnvExtender (v::E->E) (m::MonadKind2) | m -> v where
   extendEnv :: EnvFrag v i i' o -> m i' o r -> m i o r
@@ -168,11 +168,11 @@ class SubstB (v::E->E) (b::B) where
 type HasNamesE = SubstE Name
 type HasNamesB = SubstB Name
 
-instance Typeable s => SubstE Name (Name s) where
+instance (Typeable s, InjectableE s) => SubstE Name (Name s) where
   substE name = lookupEnvM name
 
-instance SubstB v (NameBinder s) where
-  substB b = SubstGenT $ withNameClasses (binderName b) do
+instance (Typeable s, InjectableE s) => SubstB v (NameBinder s) where
+  substB b = SubstGenT do
     Distinct names <- getScope
     withFresh (getNameHint b) names \b' -> do
       let frag = singletonScope b'
@@ -225,7 +225,7 @@ newtype ConstE (const::E) (ignored::E) (n::S) = ConstE (const n)
 
 infixr 7 @>
 class BindsOneName (b::B) (s::E) | b -> s where
-  (@>) :: b i i' -> v s o -> EnvFrag v i i' o
+  (@>) :: (Typeable s, InjectableE s) => b i i' -> v s o -> EnvFrag v i i' o
   binderName :: b i i' -> Name s i'
 
 instance BindsNames (NameBinder s) where
@@ -237,7 +237,7 @@ instance BindsOneName (NameBinder s) s where
 
 infixr 7 @@>
 class BindsNameList (b::B) (s::E) | b -> s where
-  (@@>) :: b i i' -> [v s o] -> EnvFrag v i i' o
+  (@@>) :: (Typeable s, InjectableE s) => b i i' -> [v s o] -> EnvFrag v i i' o
 
 instance BindsOneName b s => BindsNameList (Nest b) s where
   (@@>) Empty [] = emptyEnv
@@ -264,7 +264,7 @@ applyNaryAbs :: ( Typeable s, InjectableE s, Typeable val, InjectableE val
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> map SubstVal xs) body
 
 infixl 9 !
-(!) :: NameFunction v i o -> Name s i -> v s o
+(!) :: (Typeable s, InjectableE s) => NameFunction v i o -> Name s i -> v s o
 (!) (NameFunction f env) name =
   case lookupEnvFragProjected env name of
     Left name' -> f name'
@@ -274,7 +274,7 @@ infixl 1 <>>
 (<>>) :: NameFunction v i o -> EnvFrag v i i' o -> NameFunction v i' o
 (<>>) (NameFunction f frag) frag' = NameFunction f $ frag <.> frag'
 
-lookupEnvFragProjected :: EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
+lookupEnvFragProjected :: Typeable s => EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
 lookupEnvFragProjected m name =
   case projectName (envAsScope m) name of
     Left  name' -> Left name'
@@ -339,8 +339,8 @@ class ( forall i1 i2 o. Monad (m i1 i2 o)
       , forall i1 i2.   ScopeReader (m i1 i2)
       , forall i1 i2.   ScopeExtender (m i1 i2))
       => ZipEnvReader (m :: S -> S -> S -> * -> *) where
-  lookupZipEnvFst :: Name s i1 -> m i1 i2 o (Name s o)
-  lookupZipEnvSnd :: Name s i2 -> m i1 i2 o (Name s o)
+  lookupZipEnvFst :: (Typeable s, InjectableE s) => Name s i1 -> m i1 i2 o (Name s o)
+  lookupZipEnvSnd :: (Typeable s, InjectableE s) => Name s i2 -> m i1 i2 o (Name s o)
 
   extendZipEnvFst :: EnvFrag Name i1 i1' o -> m i1' i2  o r -> m i1 i2 o r
   extendZipEnvSnd :: EnvFrag Name i2 i2' o -> m i1  i2' o r -> m i1 i2 o r
@@ -364,7 +364,7 @@ checkAlphaEq e1 e2 = do
       flip runReaderT (emptyNameFunction, emptyNameFunction) $ runZipEnvReaderT $
         withEmptyZipEnv $ alphaEqE e1 e2
 
-instance Typeable s => AlphaEqE (Name s) where
+instance (Typeable s, InjectableE s) => AlphaEqE (Name s) where
   alphaEqE v1 v2 = do
     v1' <- lookupZipEnvFst v1
     v2' <- lookupZipEnvSnd v2
@@ -573,7 +573,7 @@ instance Monad m => EnvReader Name (NameTraverserT m) where
     env <- ask
     lift $ ScopeReaderT $ lift $ lookupNameTraversalEnv env name
 
-lookupNameTraversalEnv :: Monad m => NameTraverserEnv m i o -> Name s i -> m (Name s o)
+lookupNameTraversalEnv :: (Monad m, Typeable s) => NameTraverserEnv m i o -> Name s i -> m (Name s o)
 lookupNameTraversalEnv (NameTraverserEnv f frag) name =
   case lookupEnvFragProjected frag name of
     Left name' -> f name'
@@ -683,7 +683,7 @@ instance HasNameHint CommonHint where
 
 instance InjectableV v => InjectableE (NameFunction v i) where
   injectionProofE fresh (NameFunction f m) =
-    NameFunction (\name -> withNameClasses name $ injectionProofE fresh $ f name)
+    NameFunction (\name -> injectionProofE fresh $ f name)
                  (injectionProofE fresh m)
 
 instance InjectableE atom => InjectableE (SubstVal (sMatch::E) (atom::E) (s::E)) where
@@ -733,6 +733,9 @@ instance InjectableE e => InjectableE (IdE e) where
 
 instance SubstE v e => SubstE v (IdE e) where
   substE (IdE e) = IdE <$> substE e
+
+instance InjectableE const => InjectableE (ConstE const ignored) where
+  injectionProofE fresh (ConstE e) = ConstE $ injectionProofE fresh e
 
 instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
   injectionProofE fresh (PairE e1 e2) =

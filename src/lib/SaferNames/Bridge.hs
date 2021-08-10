@@ -118,13 +118,13 @@ makeBindingsFrag :: forall n l. Distinct l
 makeBindingsFrag scope bindings toSafeMap fromSafeMap constEnv =
   fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
   where
-    getSafeBinding :: S.Name s (n:=>:l) -> TopBinding s l
+    getSafeBinding :: (Typeable s, InjectableE s) => S.Name s (n:=>:l) -> TopBinding s l
     getSafeBinding name = do
       let Just name' = getName $ fromUnsafeNameE
             ((emptyNameFunction <>> fromSafeMap) S.! injectNamesR name)
       let binderInfo = bindings D.! name'
       case runToSafeM toSafeMap scope $ toSafeE binderInfo of
-        SomeTopBinding binding -> withNameClasses name $ fromJust $ castSName binding
+        SomeTopBinding binding -> fromJust $ castSName binding
 
 withFreshSafeRec :: MonadToSafe m
                  => FromSafeNameMap n
@@ -142,7 +142,8 @@ withFreshSafeRec fromSafeMap ((vD,info):rest) cont = do
         cont (frag <.> frag') fromSafeMap'
 
 withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
-                    -> (forall l s. S.NameBinder s n l -> UnsafeName s -> m l a)
+                    -> (forall l s. (Typeable s, InjectableE s)
+                                   => S.NameBinder s n l -> UnsafeName s -> m l a)
                     -> m n a
 withFreshBijectionD name info cont =
   asUnsafeNameFromBinderInfo info name \name' ->
@@ -170,9 +171,10 @@ class ( S.ScopeReader m, S.ScopeExtender m
       , MonadFail1 m, Monad1 m)
       => MonadToSafe (m::MonadKind1) where
   getToSafeNameMap :: m o (ToSafeNameMap o)
-  extendToSafeNameMap :: UnsafeName s -> S.Name s o -> m o a -> m o a
+  extendToSafeNameMap :: Typeable s => UnsafeName s -> S.Name s o -> m o a -> m o a
 
-data SafeNameHidden (n::S) where SafeNameHidden :: S.Name s n -> SafeNameHidden n
+data SafeNameHidden (n::S) where
+  SafeNameHidden :: Typeable s => S.Name s n -> SafeNameHidden n
 newtype ToSafeNameMap (o::S) = ToSafeNameMap (D.Env (SafeNameHidden o))
 
 newtype ToSafeM o a =
@@ -193,12 +195,13 @@ instance MonadToSafe ToSafeM where
 -- === monad for translating from safe to unsafe names ===
 
 class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
-  lookupFromSafeNameMap :: S.Name s i -> m i (UnsafeName s)
+  lookupFromSafeNameMap :: (Typeable s, InjectableE s) => S.Name s i -> m i (UnsafeName s)
   getUnsafeBindings :: m i (D.Bindings)
   withFreshUnsafeName :: S.HasNameHint hint
                       => hint -> D.AnyBinderInfo
                       -> (D.Name -> m i a) -> m i a
-  extendFromSafeMap :: S.NameBinder s i i'
+  extendFromSafeMap :: (Typeable s, InjectableE s)
+                    => S.NameBinder s i i'
                     -> UnsafeName s -> m i' a -> m i a
 
 data UnsafeNameE (s::E) (n::S) = UnsafeNameE { fromUnsafeNameE :: UnsafeName s}
@@ -265,19 +268,18 @@ fromSafeAtomNameVar name = do
   AtomBinderInfo ty _ <- (D.! name') <$> getUnsafeBindings
   return $ name' D.:> ty
 
-instance Typeable s => HasSafeVersionE (UnsafeName s) where
+instance (Typeable s, InjectableE s) => HasSafeVersionE (UnsafeName s) where
   type SafeVersionE (UnsafeName s) = S.Name s
   toSafeE name = do
     let Just name' = getName name
     ToSafeNameMap m <- getToSafeNameMap
     case m D.! name' of
       SafeNameHidden safeName ->
-        withNameClasses safeName $
-          case castSName safeName of
-            Just safeName' -> return safeName'
-            Nothing -> do
-              m <- getToSafeNameMap
-              error $ "Bad cast: " ++ pprint (name', safeName) ++ "\n" ++ pprint m
+        case castSName safeName of
+          Just safeName' -> return safeName'
+          Nothing -> do
+            m <- getToSafeNameMap
+            error $ "Bad cast: " ++ pprint (name', safeName) ++ "\n" ++ pprint m
   fromSafeE name = lookupFromSafeNameMap name
 
 castSName :: forall (s1::E) (s2::E) (v::E->E) (n::S).
@@ -384,10 +386,9 @@ instance HasSafeVersionB DRecEnvFrag where
       renameBinders (S.Nest (EnvPair b binderInfo) rest) cont =
         withFreshUnsafeName b TrulyUnknownBinder \v -> do
           let v' = asUnsafeNameFromTopBinding binderInfo v
-          withNameClasses (S.binderName b) $
-            extendFromSafeMap b v' $ do
-              renameBinders rest \rest' -> do
-                cont $ (DEnvPair v' binderInfo) : rest'
+          extendFromSafeMap b v' $ do
+            renameBinders rest \rest' -> do
+              cont $ (DEnvPair v' binderInfo) : rest'
 
 data DEnvPair n where
   DEnvPair :: Typeable s => UnsafeName s -> TopBinding s n -> DEnvPair n
@@ -452,7 +453,8 @@ repFromEVal _ = typeRep
 -- payload. This GADT hides `s` existentially but ensures that the bindings and
 -- the not-yet-fully-evaluated payload are the same.
 data TempPair (n::S) (l::S) where
-  TempPair :: Typeable s => NameBinder s n l -> AnyBinderInfo -> TempPair n l
+  TempPair :: (Typeable s, InjectableE s)
+           => NameBinder s n l -> AnyBinderInfo -> TempPair n l
 
 instance HasSafeVersionE D.Module where
   type SafeVersionE D.Module = S.Module

@@ -410,7 +410,7 @@ instance (InjectableToAtomSubstVal AtomSubstVal) where
 instance (InjectableToAtomSubstVal Name) where
   injectToAtomSubstVal = Rename
 
-lookupAtomSubstVal :: EnvReader v m => InjectableToAtomSubstVal v
+lookupAtomSubstVal :: (EnvReader v m, Typeable s, InjectableE s, InjectableToAtomSubstVal v)
                    => Name s i -> m i o (AtomSubstVal s o)
 lookupAtomSubstVal name = injectToAtomSubstVal <$> lookupEnvM name
 
