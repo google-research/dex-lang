@@ -1,11 +1,14 @@
-'### Arithmetic coding (WIP)
+'### Arithmetic coding
 A finite-precision variant based on [this](https://web.stanford.edu/class/ee398a/handouts/papers/WittenACM87ArithmCoding.pdf) paper by Ian H. Witten et al.
 
 Alphabet = Fin 26
 Interval = (Int&Int)
+Code = (Int&Int&Int)
 maxBits = 7
 maxInt = intpow2 maxBits
 half = idiv maxInt 2
+fstQuarter = idiv half 2
+thdQuarter = fstQuarter * 3
 
 def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
 def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
@@ -55,63 +58,55 @@ def model (str: (Fin l)=>Word8) : Alphabet=>(Interval->Interval) =
 
 'Encoding arithmetic
 
-def appendBit (b: Int) (code: Int) (numBits: Int) : Int =
+def appendBit (b: Int) ((code, numBits, tally): Code) : Code =
   half = intpow2 numBits
   case b==1 of 
-    True -> %or code half
-    False -> code
+    True -> (%or code half, numBits+tally+1, 0)
+    False -> 
+      (code', numBits') = yieldState (code, numBits+1) \ref. for i:(Fin tally).
+        (code', numBits') = get ref
+        half' = intpow2 numBits'
+        ref := (%or code' half', numBits'+1)
+      (code', numBits', 0)
 
-appendBit 1 3 3
+appendBit 1 (2,5,0)
 
-def intervalRef (ref: Ref h (a&b&c&d)) : Ref h a = %fstRef ref
-def codeRef (ref: Ref h (a&b&c&d)) : Ref h b = %fstRef (%sndRef ref)
-def bitsRef (ref: Ref h (a&b&c&d)) : Ref h c = %fstRef (%sndRef (%sndRef ref))
-def tallyRef (ref: Ref h (a&b&c&d)) : Ref h d = %sndRef (%sndRef (%sndRef ref))
+def intervalRef (ref: Ref h (a&b)) : Ref h a = %fstRef ref
+def codeRef (ref: Ref h (a&b)) : Ref h b = %sndRef ref
+def tallyRef (ref: Ref h (a&(b&c&d))) : Ref h d = %sndRef (%sndRef (%sndRef ref))
 
-def getInterval (ref: Ref h (a&b&c&d)) : {State h} a = %get (intervalRef ref)
-def getCode (ref: Ref h (a&b&c&d)) : {State h} b = %get (codeRef ref)
-def getBits (ref: Ref h (a&b&c&d)) : {State h} c = %get (bitsRef ref)
-def getTally (ref: Ref h (a&b&c&d)) : {State h} d = %get (tallyRef ref)
+def getInterval (ref: Ref h (a&b)) : {State h} a = %get (intervalRef ref)
+def getCode (ref: Ref h (a&b)) : {State h} b = %get (codeRef ref)
+def getTally (ref: Ref h (a&(b&c&d))) : {State h} d = %get (tallyRef ref)
 
-def buildCode (str: (Fin l)=>Word8) 
+def shiftInterval (str: (Fin l)=>Word8) 
               (model: Alphabet=>(Interval->Interval)) 
               (i: (Fin l)) 
-              (params: (Interval&Int&Int&Int)) : (Interval&Int&Int&Int) =
+              (params: (Interval&Code)) : (Interval&Code) =
   yieldState params \ref.
     (low, high) = model.((charToIdx str.i)@_) (getInterval ref)
-    sharedBits = %xor low high
-    tally' = getTally ref
-    case (%and sharedBits half)/=0 of
-      True -> tallyRef ref := getTally ref + 1
-      False ->
-        yieldState half \mask.
-          boundedIter maxBits (get ref) \_.
-            case (%and sharedBits (get mask))/=0 of
-              True -> Done (get ref)
-              False -> 
-                codeRef ref := case (%and low (get mask))==0 of
-                  True -> appendBit 0 (getCode ref) (getBits ref)
-                  False -> appendBit 1 (getCode ref) (getBits ref)
-                bitsRef ref := getBits ref + 1
-                mask := %shr (get mask) 1
-                Continue
-        bit = select ((%and low half)==0) 0 1
-        for i:(Fin tally').
-          codeRef ref := appendBit bit (getCode ref) (getBits ref)
-          bitsRef ref := getBits ref + 1
-        tallyRef ref := 0
+    (low', high') = if high < half
+      then
+        codeRef ref := appendBit 0 (getCode ref)
+        (low, high)
+      else if low > half
+        then
+          codeRef ref := appendBit 1 (getCode ref)
+          (low-half, high-half)
+        else
+          tallyRef ref := getTally ref + 1
+          (low-fstQuarter, high-fstQuarter)
+    intervalRef ref := (2*low', 2*(high'+1)-1) -- high is an open boundary
 
-def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Int =
-  update = buildCode str model
+def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Code =
+  update = shiftInterval str model
   initInterval = (0,maxInt-1)
-  result = fold (initInterval,0,0,0) update
-  fst (snd result)
+  snd $ fold (initInterval,(0,0,0)) update
 
-def findInterval  (l: Int) 
-                  (code: Float) 
+def findInterval  (l: Int)
                   (rule: Alphabet=>(Interval->Interval))
                   (i: (Fin l))
-                  ((str,in): (List Word8 & Interval)) : (List Word8 & Interval) =
+                  (params: (Interval&Code&List Word8)) : (Interval&Code&List Word8) =
   (letter, in') = boundedIter (size Alphabet) (' ', top) \j.
     case rule.(j@_) in == in of
       True -> Continue
@@ -122,14 +117,15 @@ def findInterval  (l: Int)
           False -> Continue
   (str <> AsList 1 [letter], in')
 
-def decode (l: Int) (code: Float) (rule: Alphabet=>(Interval->Interval)) : List Word8 =
-  update = findInterval l code rule
+def decode (l: Int) (code: Int) (model: Alphabet=>(Interval->Interval)) : List Word8 =
+  update = findInterval l code model
   initStr: List Word8 = AsList _ []
-  fst $ fold (initStr, top) update
+  initInterval = (0,maxInt-1)
+  snd $ fold (initInterval, code, initStr) update
 
 'Lossless compression on a test string
 
-str' = "abccedac"
+str' = "abccedacabccedac"
 (AsList l str) = str'
 initInterval = (0,maxInt-1)
 m = model str
@@ -146,6 +142,7 @@ code
 decoded = decode l code m
 decoded == str'
 > True
+
 
 
 
