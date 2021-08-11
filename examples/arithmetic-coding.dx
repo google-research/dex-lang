@@ -81,10 +81,14 @@ dequeue (17,5,0)
 > ((8, (4, 0)), 1)
 
 def intervalRef (ref: Ref h (a&b)) : Ref h a = %fstRef ref
+def lowRef (ref: Ref h ((a&b)&c)) : Ref h a = %fstRef (%fstRef ref)
+def highRef (ref: Ref h ((a&b)&c)) : Ref h b = %sndRef (%fstRef ref)
 def codeRef (ref: Ref h (a&b)) : Ref h b = %sndRef ref
 def tallyRef (ref: Ref h (a&(b&c&d))) : Ref h d = %sndRef (%sndRef (%sndRef ref))
 
 def getInterval (ref: Ref h (a&b)) : {State h} a = %get (intervalRef ref)
+def getLow (ref: Ref h ((a&b)&c)) : {State h} a = %get (lowRef ref)
+def getHigh (ref: Ref h ((a&b)&c)) : {State h} b = %get (highRef ref)
 def getCode (ref: Ref h (a&b)) : {State h} b = %get (codeRef ref)
 def getTally (ref: Ref h (a&(b&c&d))) : {State h} d = %get (tallyRef ref)
 
@@ -93,19 +97,24 @@ def encodeSymbol (str: (Fin l)=>Word8)
               (i: (Fin l)) 
               (params: (Interval&Code)) : (Interval&Code) =
   yieldState params \p.
-    (low, high) = model.((charToIdx str.i)@_) (getInterval p)
-    (low', high') = if high < half
-      then
-        codeRef p := enqueue 0 (getCode p)
-        (low, high)
-      else if low >= half
-        then
-          codeRef p := enqueue 1 (getCode p)
-          (low-half, high-half)
-        else
-          tallyRef p := getTally p + 1
-          (low-fstQuarter, high-fstQuarter)
-    intervalRef p := (2*low', 2*(high'+1)-1)
+    intervalRef p := model.((charToIdx str.i)@_) (getInterval p)
+    boundedIter maxBits (getInterval p) \_.
+      case getHigh p < half of
+        True ->
+          codeRef p := enqueue 0 (getCode p)
+          intervalRef p := (2*(getLow p), 2*(getHigh p)+1) -- or, 2*(getHigh p + 1)-1
+          Continue
+        False -> case getLow p >= half of
+          True ->
+            codeRef p := enqueue 1 (getCode p)
+            intervalRef p := (2*(getLow p - half), 2*(getHigh p - half)+1)
+            Continue
+          False -> case getHigh p < thdQuarter && getLow p >= fstQuarter of
+            True ->
+              tallyRef p := getTally p + 1
+              intervalRef p := (2*(getLow p - fstQuarter), 2*(getHigh p - fstQuarter)+1)
+              Continue
+            False -> Done (getInterval p)
 
 def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Code =
   update = encodeSymbol str model
@@ -120,16 +129,32 @@ def decodeSymbol  (l: Int)
     fstRef := yieldState (fst params) \p.
       (code, bit) = dequeue (getCode p)
       codeRef p := code
-      interv = getInterval p
+      interval = getInterval p
       symbol = boundedIter (size Alphabet) (' ') \j.
-        case model.(j@_) interv == interv of
+        case model.(j@_) interval == interval of
           True -> Continue
           False ->
-            (low, high) = model.(j@_) interv 
+            (low, high) = model.(j@_) interval 
             case code >= x && code < (x+w) of
               True -> Done (idxToChar j, (x,w))
               False -> Continue
       sndRef := (str <> AsList 1 [symbol], in')
+  
+
+'yieldState params \ref.
+  (low, high) = model.((charToIdx str.i)@_) (getInterval ref)
+  (low', high') = if high < half
+    then
+      codeRef %fst ref := enqueue 0 (getCode ref)
+      (low, high)
+    else if low >= half
+      then
+        codeRef ref := enqueue 1 (getCode ref)
+        (low-half, high-half)
+      else
+        tallyRef ref := getTally ref + 1
+        (low-fstQuarter, high-fstQuarter)
+  intervalRef ref := (2*low', 2*(high'+1)-1)
 
 def decode (l: Int) (code: Int) (model: Alphabet=>(Interval->Interval)) : List Word8 =
   update = decodeSymbol l code model
@@ -156,5 +181,6 @@ code
 decoded = decode l code m
 decoded == str'
 > True
+
 
 
