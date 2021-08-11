@@ -56,11 +56,11 @@ def model (str: (Fin l)=>Word8) : Alphabet=>(Interval->Interval) =
           high' = low-1 + normalize fHigh l w
           (low', high')
 
-'Encoding arithmetic
+'Coding via integer arithmetic
 
-def appendBit (b: Int) ((code, numBits, tally): Code) : Code =
+def enqueue (bit: Int) ((code, numBits, tally): Code) : Code =
   half = intpow2 numBits
-  case b==1 of 
+  case bit==1 of 
     True -> (%or code half, numBits+tally+1, 0)
     False -> 
       (code', numBits') = yieldState (code, numBits+1) \ref. for i:(Fin tally).
@@ -69,7 +69,16 @@ def appendBit (b: Int) ((code, numBits, tally): Code) : Code =
         ref := (%or code' half', numBits'+1)
       (code', numBits', 0)
 
-appendBit 1 (2,5,0)
+def dequeue ((code, numBits, tally): Code) : (Code&Int) = 
+  ((%shr code 1, numBits-1, tally), %and 1 code)
+
+-- tests
+enqueue 1 (2,5,0)
+> (34, (6, 0))
+dequeue (34,6,0)
+> ((17, (5, 0)), 0)
+dequeue (17,5,0)
+> ((8, (4, 0)), 1)
 
 def intervalRef (ref: Ref h (a&b)) : Ref h a = %fstRef ref
 def codeRef (ref: Ref h (a&b)) : Ref h b = %sndRef ref
@@ -79,53 +88,58 @@ def getInterval (ref: Ref h (a&b)) : {State h} a = %get (intervalRef ref)
 def getCode (ref: Ref h (a&b)) : {State h} b = %get (codeRef ref)
 def getTally (ref: Ref h (a&(b&c&d))) : {State h} d = %get (tallyRef ref)
 
-def shiftInterval (str: (Fin l)=>Word8) 
+def encodeSymbol (str: (Fin l)=>Word8) 
               (model: Alphabet=>(Interval->Interval)) 
               (i: (Fin l)) 
               (params: (Interval&Code)) : (Interval&Code) =
-  yieldState params \ref.
-    (low, high) = model.((charToIdx str.i)@_) (getInterval ref)
+  yieldState params \p.
+    (low, high) = model.((charToIdx str.i)@_) (getInterval p)
     (low', high') = if high < half
       then
-        codeRef ref := appendBit 0 (getCode ref)
+        codeRef p := enqueue 0 (getCode p)
         (low, high)
-      else if low > half
+      else if low >= half
         then
-          codeRef ref := appendBit 1 (getCode ref)
+          codeRef p := enqueue 1 (getCode p)
           (low-half, high-half)
         else
-          tallyRef ref := getTally ref + 1
+          tallyRef p := getTally p + 1
           (low-fstQuarter, high-fstQuarter)
-    intervalRef ref := (2*low', 2*(high'+1)-1) -- high is an open boundary
+    intervalRef p := (2*low', 2*(high'+1)-1)
 
 def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Code =
-  update = shiftInterval str model
+  update = encodeSymbol str model
   initInterval = (0,maxInt-1)
   snd $ fold (initInterval,(0,0,0)) update
 
-def findInterval  (l: Int)
-                  (rule: Alphabet=>(Interval->Interval))
+def decodeSymbol  (l: Int)
+                  (model: Alphabet=>(Interval->Interval))
                   (i: (Fin l))
-                  (params: (Interval&Code&List Word8)) : (Interval&Code&List Word8) =
-  (letter, in') = boundedIter (size Alphabet) (' ', top) \j.
-    case rule.(j@_) in == in of
-      True -> Continue
-      False ->
-        (x, w) = rule.(j@_) in 
-        case code >= x && code < (x+w) of
-          True -> Done (idxToChar j, (x,w))
-          False -> Continue
-  (str <> AsList 1 [letter], in')
+                  (params: ((Interval&Code)&List Word8)) : ((Interval&Code)&List Word8) =
+  yieldState params \ref.
+    fstRef := yieldState (fst params) \p.
+      (code, bit) = dequeue (getCode p)
+      codeRef p := code
+      interv = getInterval p
+      symbol = boundedIter (size Alphabet) (' ') \j.
+        case model.(j@_) interv == interv of
+          True -> Continue
+          False ->
+            (low, high) = model.(j@_) interv 
+            case code >= x && code < (x+w) of
+              True -> Done (idxToChar j, (x,w))
+              False -> Continue
+      sndRef := (str <> AsList 1 [symbol], in')
 
 def decode (l: Int) (code: Int) (model: Alphabet=>(Interval->Interval)) : List Word8 =
-  update = findInterval l code model
+  update = decodeSymbol l code model
   initStr: List Word8 = AsList _ []
   initInterval = (0,maxInt-1)
-  snd $ fold (initInterval, code, initStr) update
+  snd $ fold ((initInterval, code), initStr) update
 
 'Lossless compression on a test string
 
-str' = "abccedacabccedac"
+str' = "abccedac"
 (AsList l str) = str'
 initInterval = (0,maxInt-1)
 m = model str
@@ -142,7 +156,5 @@ code
 decoded = decode l code m
 decoded == str'
 > True
-
-
 
 
