@@ -1,4 +1,4 @@
-'### Arithmetic coding
+'## Arithmetic coding
 A finite-precision variant based on [this](https://web.stanford.edu/class/ee398a/handouts/papers/WittenACM87ArithmCoding.pdf) paper by Ian H. Witten et al.
 
 Alphabet = Fin 26
@@ -13,9 +13,8 @@ thdQuarter = fstQuarter * 3
 
 def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
 def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
-def intToBin (i: Int) : List Word8 = "WIP"
 
-'Statistical modelling
+'### Statistical modelling
 
 def norm (freq: Int) (l: Int) (w: Int) : Int = FToI $ IToF freq / IToF l * IToF w
 def inverseNorm (norm: Int) (l: Int) (w: Int) : Int = FToI $ IToF norm / IToF w * IToF l
@@ -58,7 +57,7 @@ def model (str: (Fin l)=>Word8) : Alphabet=>(Interval->Interval) =
           high' = low-1 + norm fHigh l w
           (low', high')
 
-'Coding via integer arithmetic
+'### Integer arithmetic
 
 def enqueue (bit: Int) ((code, numBits, tally): Code) : Code =
   half = intpow2 numBits
@@ -71,123 +70,127 @@ def enqueue (bit: Int) ((code, numBits, tally): Code) : Code =
         ref := (%or code' half', numBits'+1)
       (code', numBits', 0)
 
-def dequeue (code: Int) : (Int&Int) = (%shr code 1, %and 1 code)
+def dequeue ((code, buffer, tally): Code) : Code = (%shr code (1+tally), 2*buffer+%and 1 code, 0)
 
--- tests
-enqueue 1 (2,5,0)
-> (34, (6, 0))
-dequeue 34
-> (17, 0)
-dequeue 17
-> (8, 1)
+'### Scaling functions
 
--- Helper functions for stateful computations on nested pairs. 
--- Alternatively can use records, but it's not supported for state effects yet.
-def intervalRef (ref: Ref h (a&b)) : Ref h a = %fstRef ref
-def lowRef (ref: Ref h ((a&b)&c)) : Ref h a = %fstRef (%fstRef ref)
-def highRef (ref: Ref h ((a&b)&c)) : Ref h b = %sndRef (%fstRef ref)
-def codeRef (ref: Ref h (a&b)) : Ref h b = %sndRef ref
-def tallyRef (ref: Ref h (a&(b&c&d))) : Ref h d = %sndRef (%sndRef (%sndRef ref))
-def bufferRef (ref: Ref h ((a&b)&c&d)) : Ref h c = %fstRef (%sndRef ref)
-def strRef (ref: Ref h ((a&b)&c&d)) : Ref h d = %sndRef (%sndRef ref)
+def encodeInterval ((low, high): Interval) (code: Code) : (Int&Int&Code&(IterResult Int)) =
+  case high < half of
+    True ->
+      (2*low,
+       2*high+1,
+       enqueue 0 code,
+       Continue)
+    False -> case low >= half of
+      True ->
+        (2*(low - half),
+         2*(high - half)+1,
+         enqueue 1 code,
+         Continue)
+      False -> case high < thdQuarter && low >= fstQuarter of
+        True ->
+          (2*(low - fstQuarter), 
+           2*(high - fstQuarter)+1, 
+           (fst code, fst (snd code), snd (snd code) + 1), 
+           Continue)
+        False -> (low, high, code, Done 0)
 
 def encodeSymbol (str: (Fin l)=>Word8) 
               (model: Alphabet=>(Interval->Interval)) 
               (i: (Fin l)) 
               (params: (Interval&Code)) : (Interval&Code) =
   yieldState params \p.
-    intervalRef p := model.((charToIdx str.i)@_) (get (intervalRef p))
-    boundedIter maxBits (get (intervalRef p)) \_.
-      case get (highRef p) < half of
-        True ->
-          codeRef p := enqueue 0 (get (codeRef p))
-          intervalRef p := (2*(get (lowRef p)), 2*(get (highRef p))+1)
-          Continue
-        False -> case get (lowRef p) >= half of
-          True ->
-            codeRef p := enqueue 1 (get (codeRef p))
-            intervalRef p := (2*(get (lowRef p) - half), 2*(get (highRef p) - half)+1)
-            Continue
-          False -> case get (highRef p) < thdQuarter && get (lowRef p) >= fstQuarter of
-            True ->
-              tallyRef p := get (tallyRef p) + 1
-              intervalRef p := (2*(get (lowRef p) - fstQuarter), 2*(get (highRef p) - fstQuarter)+1)
-              Continue
-            False -> Done (get (intervalRef p))
+    intervalRef = fstRef p
+    codeRef = sndRef p
+    intervalRef := model.((charToIdx str.i)@_) (get intervalRef)
+    boundedIter maxBits 0 \_.
+      (low, high, code, result) = encodeInterval (get intervalRef) (get codeRef)
+      intervalRef := (low, high)
+      codeRef := code
+      result
 
-def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Code =
-  update = encodeSymbol str model
-  initInterval = (0,maxInt-1)
-  snd $ fold (initInterval,(0,0,0)) update
+def findInterval (interval: Interval) (buff: Int) (model: Alphabet=>(Interval->Interval)) : (Word8&Interval)=
+  boundedIter (size Alphabet) (' ',(0,0)) \j.
+    case model.(j@_) interval == interval of
+      True -> Continue
+      False ->
+        (low, high) = model.(j@_) interval
+        case buff >= low && buff < high of
+          True -> Done (idxToChar j, (low,high))
+          False -> Continue
+
+def decodeInterval ((low, high): Interval) (code: Code) : (Int&Int&Code&(IterResult Int)) =
+  case high < half of
+    True ->
+      (2*low,
+       2*high+1,
+       dequeue code,
+       Continue)
+    False -> case low >= half of
+      True ->
+        (x, buffer, z) = code
+        (2*(low-half),
+         2*(high-half)+1,
+         dequeue (x, buffer-half, z),
+         Continue)
+      False -> case high < thdQuarter && low >= fstQuarter of
+        True ->
+          (x, buffer, z) = code
+          (2*(low-fstQuarter),
+           2*(high-fstQuarter)+1,
+           dequeue (x, buffer-fstQuarter, z),
+           Continue)
+        False -> (low, high, code, Done 0)
 
 def decodeSymbol  (l: Int)
                   (model: Alphabet=>(Interval->Interval))
                   (i: (Fin l))
-                  (params: ((Interval&Int)&Buffer&List Word8)) : ((Interval&Int)&Buffer&List Word8) =
-  yieldState params \p'.
-    fstRef p' := yieldState (fst params) \p.
-      interval = get (intervalRef p)
-      buff = get (bufferRef p')
-      (symbol, interval') = boundedIter (size Alphabet) (' ',(0,0)) \j.
-        case model.(j@_) interval == interval of
-          True -> Continue
-          False ->
-            (low, high) = model.(j@_) interval
-            case buff >= low && buff < high of
-              True -> Done (idxToChar j, (low,high))
-              False -> Continue
-      strRef p' := get (strRef p') <> AsList 1 [symbol]
-      intervalRef p := interval'
-      (code, bit) = dequeue (get (codeRef p))
-      codeRef p := code
-      boundedIter maxBits (get (intervalRef p)) \_.
-        (code, bit) = dequeue (get (codeRef p))
-        case get (highRef p) < half of
-          True ->
-            codeRef p := code
-            bufferRef p' := 2*(get (bufferRef p')) + bit
-            intervalRef p := (2*(get (lowRef p)), 2*(get (highRef p))+1)
-            Continue
-          False -> case get (lowRef p) >= half of
-            True ->
-              codeRef p := code
-              bufferRef p' := 2*(get (bufferRef p') - half) + bit
-              intervalRef p := (2*(get (lowRef p) - half), 2*(get (highRef p) - half)+1)
-              Continue
-            False -> case get (highRef p) < thdQuarter && get (lowRef p) >= fstQuarter of
-              True ->
-                codeRef p := code
-                bufferRef p' := 2*(get (bufferRef p') - fstQuarter) + bit
-                intervalRef p := (2*(get (lowRef p) - fstQuarter), 2*(get (highRef p) - fstQuarter)+1)
-                Continue
-              False -> Done (get (intervalRef p))
+                  (params: (Interval&Code&List Word8)) : (Interval&Code&List Word8) =
+  yieldState params \p.
+    intervalRef = fstRef p
+    codeRef = fstRef (sndRef p)
+    strRef = sndRef (sndRef p)
+    bufferRef = fstRef (sndRef codeRef)
+    (symbol, interval) = findInterval (get intervalRef) (get bufferRef) model
+    strRef := get strRef <> AsList 1 [symbol]
+    intervalRef := interval
+    boundedIter maxBits 0 \_.
+      (low, high, code, result) = decodeInterval (get intervalRef) (get codeRef)
+      intervalRef := (low, high)
+      codeRef := code 
+      result
+
+'### Coding interface
+
+def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : Int =
+  update = encodeSymbol str model
+  initInterval = (0,maxInt-1)
+  fst $ snd $ fold (initInterval,(0,0,0)) update
 
 def decode (l: Int) (code: Int) (model: Alphabet=>(Interval->Interval)) : List Word8 =
   update = decodeSymbol l model
   initStr: List Word8 = AsList _ []
   initInterval = (0,maxInt-1)
-  (initBuffer, initCode) = yieldState (0,code) \ref. for i:(Fin maxBits). 
-    (code', bit) = dequeue (get (sndRef ref))
-    fstRef ref := 2*(get (fstRef ref))+bit
-    sndRef ref := code'
-  snd $ snd $ fold ((initInterval, initCode), initBuffer, initStr) update
+  initCode' = (code, 0, 0)
+  initCode = yieldState initCode' \ref. for i:(Fin maxBits). ref := dequeue (get ref)
+  snd $ snd $ fold (initInterval, initCode, initStr) update
 
-'Lossless compression on a test string
+'### Demo: Lossless compression on a test string
 
 str' = "abccedac"
 (AsList l str) = str'
-initInterval = (0,maxInt-1)
 m = model str
 
-code = fst $ encode str m
+code = encode str m
 code
 > 60584
 
 decoded = decode l code m
 decoded
-> (AsList 8 "abccadae")
+> (AsList 8 "abccedaa")
 decoded == str'
 > False
+
 
 
 
