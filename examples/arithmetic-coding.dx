@@ -108,24 +108,10 @@ def dequeue ((codeLst, bitPos, tally): Code) (buffer: Int): (Code&Int) =
   (AsList numInts intArr) = codeLst
   codePos = idiv (bitPos) maxBits -- initial bitPos is 1
   code = intArr.(codePos@_)
-  bit = %and 1 code
-
-  (intArr', buffer', bitPos') = yieldState (intArr, 2*buffer+bit, bitPos) \ref.
-    arrRef = fstRef ref
-    bufferRef = fstRef (sndRef ref)
-    posRef = sndRef (sndRef ref) 
-    arrRef!(codePos@_) := %shr code 1
-
-    for i:(Fin tally).
-      codePos = idiv (get posRef) maxBits
-      code = get arrRef!(codePos@_)
-      bit = %and 1 code
-      bufferRef := 2*(get bufferRef) + bit
-      arrRef!(codePos@_) := %shr code 1
-      posRef := (get posRef) + 1
-
+  buffer' = 2*buffer + %and 1 code
+  intArr' = yieldState intArr \arr. arr!(codePos@_) := %shr code 1
   codeLst' = AsList numInts intArr'
-  ((codeLst', bitPos', 0), buffer')
+  ((codeLst', bitPos+1, 0), buffer')
 
 '### Scaling functions
 
@@ -179,26 +165,31 @@ def decodeInterval ((low, high): Interval)
                    (code: Code) (buffer: Int) : (Int&Int&Code&Int&(IterResult Int)) =
   case high < half of
     True ->
+      (code', buffer') = dequeue code buffer
       (2*low,
        2*high+1,
-       dequeue code,
+       code',
+       buffer',
        Continue)
     False -> case low >= half of
       True ->
-        (x, buffer, z) = code
+        (code', buffer') = dequeue code (buffer-half)
         (2*(low-half),
          2*(high-half)+1,
-         dequeue (x, buffer-half, z),
+         code',
+         buffer',
          Continue)
       False -> case high < thdQuarter && low >= fstQuarter of
         True ->
-          (x, buffer, z) = code
+          (code', buffer') = dequeue code (buffer-fstQuarter)
           (2*(low-fstQuarter),
            2*(high-fstQuarter)+1,
-           dequeue (x, buffer-fstQuarter, z),
+           code',
+           buffer',
            Continue)
-        False -> (low, high, code, Done 0)
+        False -> (low, high, code, buffer, Done 0)
 
+-- move state updates to helper functions
 def decodeSymbol  (l: Int)
                   (model: Alphabet=>(Interval->Interval))
                   (i: (Fin l))
@@ -212,9 +203,10 @@ def decodeSymbol  (l: Int)
     strRef := get strRef <> AsList 1 [symbol]
     intervalRef := interval
     boundedIter precision 0 \_.
-      (low, high, code, result) = decodeInterval (get intervalRef) (get codeRef)
+      (low, high, code, buffer, result) = decodeInterval (get intervalRef) (get codeRef) (get bufferRef)
       intervalRef := (low, high)
       codeRef := code 
+      bufferRef := buffer
       result
 
 '### Coding interface
@@ -222,31 +214,39 @@ def decodeSymbol  (l: Int)
 def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : List Int =
   update = encodeSymbol str model
   initInterval = (0,top-1)
-  fst $ snd $ fold (initInterval,(AsList 1 [0],0,0)) update
+  -- enqueue an extra 1 to the code to preserve length
+  fst $ enqueue 1 $ snd $ fold (initInterval,(AsList 1 [0],0,0)) update
 
 def decode (l: Int) (codeLst: List Int) (model: Alphabet=>(Interval->Interval)) : List Word8 =
   update = decodeSymbol l model
   initStr: List Word8 = AsList _ []
   initInterval = (0,top-1)
   initCode' = (codeLst, 1, 0)
-  initCode = yieldState initCode' \ref. for i:(Fin precision). ref := dequeue (get ref)
-  snd $ snd $ fold (initInterval, initCode, 0, initStr) update
+  initBuffer' = 0
+  (initCode, initBuffer) = yieldState (initCode',initBuffer') \ref. 
+    for i:(Fin precision). 
+      (code, buffer) = dequeue (get (fstRef ref)) (get (sndRef ref))
+      fstRef ref := code
+      sndRef ref := buffer
+  snd $ snd $ snd $ fold (initInterval, initCode, initBuffer, initStr) update
 
 '### Demo: Lossless compression on a test string
 
-str' = "edacg"
+str' = "biudngr"
 (AsList l str) = str'
 m = model str
 
 code = encode str m
 code
-> (AsList 1 [821])
+> (AsList 1 [11208])
 
 decoded = decode l code m
 decoded
-> 
+> (AsList 7 "biudngr")
 decoded == str'
-> 
+> True
+
+
 
 
 
