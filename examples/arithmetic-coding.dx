@@ -3,7 +3,7 @@ A finite-precision variant based on [this](https://web.stanford.edu/class/ee398a
 
 Alphabet = Fin 26
 Interval = (Int&Int)
-Code = ((List Int)&Int&Int)
+Code = ((List Int)&Int)
 maxBits = 31
 precision = 7
 top = intpow2 precision
@@ -73,81 +73,87 @@ def selectStream (numBits: Int) (code: Ref h Int)
     True -> code := %or (get code) bitMask
     False -> overflow := %or (get overflow) bitMask
 
-def enqueue (bit: Int) ((codeLst, numBits, tally): Code) : Code =
+def enqueue (bit: Int) ((codeLst, bitPos): Code) : Code =
   (AsList numInts intArr) = codeLst
-  code = intArr.((numInts-1)@_)
-  overflow = (0, AsList 0 [])
+  codePos = idiv (bitPos) maxBits 
 
-  (code', overflow', numBits') = yieldState (code, overflow, numBits) \ref.
-    codeRef = fstRef ref
-    overflowRef = fstRef (fstRef (sndRef ref))
-    lstOverflowRef = sndRef (fstRef (sndRef ref))
-    bitsRef = sndRef (sndRef ref)
+  (codeLst', _, numInts') = yieldState (codeLst, intArr, numInts) \ref.
+    lstRef = fstRef ref
+    arrRef = fstRef (sndRef ref)
+    numRef = sndRef (sndRef ref)
+    case codePos >= get numRef of
+      True -> 
+        numRef := (get numRef) + 1
+        lstRef := (get lstRef) <> (AsList 1 [bit])
+      False ->
+        if bit == 1 then 
+          code = get arrRef!(codePos@_)
+          numBits = mod bitPos maxBits
+          bitMask = intpow2 numBits
+          arrRef!(codePos@_) := %or code bitMask
+        lstRef := (AsList numInts (get arrRef))
 
-    if bit==1 then selectStream (get bitsRef) codeRef overflowRef
-    bitsRef := (get bitsRef)+1
-    if overflowing (get bitsRef) then 
-      lstOverflowRef := (get lstOverflowRef) <> (AsList 1 [get overflowRef])
-      overflowRef := 0
+  (codeLst', bitPos+1)
 
-    for i:(Fin tally).
-      if bit==0 then selectStream (get bitsRef) codeRef overflowRef
-      bitsRef := (get bitsRef)+1
-      if overflowing (get bitsRef) then 
-        lstOverflowRef := (get lstOverflowRef) <> (AsList 1 [get overflowRef])
-        overflowRef := 0
-
-    if existsOverflow (get bitsRef) then
-      lstOverflowRef := (get lstOverflowRef) <> (AsList 1 [get overflowRef])
-
-  intArr' = yieldState intArr \arr. arr!((numInts-1)@_) := code'
-  codeLst' = (AsList numInts intArr') <> (snd overflow')
-  (codeLst', mod numBits' maxBits, 0)
-
-def dequeue ((codeLst, bitPos, tally): Code) (buffer: Int): (Code&Int) = 
+def dequeue ((codeLst, bitPos): Code) (buffer: Int): (Code&Int) = 
   (AsList numInts intArr) = codeLst
-  codePos = idiv (bitPos) maxBits -- initial bitPos is 1
-  code = intArr.(codePos@_)
-  buffer' = 2*buffer + %and 1 code
-  intArr' = yieldState intArr \arr. arr!(codePos@_) := %shr code 1
+  codePos = idiv (bitPos) maxBits
+  (buffer', intArr') = case numInts > codePos of
+    True ->
+      code = intArr.(codePos@_)
+      intArr' = yieldState intArr \arr. arr!(codePos@_) := %shr code 1
+      (2*buffer + %and 1 code, intArr')
+    False -> (2*buffer, intArr)
   codeLst' = AsList numInts intArr'
-  ((codeLst', bitPos+1, 0), buffer')
+  ((codeLst', bitPos+1), buffer')
 
 '### Scaling functions
 
-def encodeInterval ((low, high): Interval) (code: Code) : (Int&Int&Code&(IterResult Int)) =
+def updateCode (bit: Int) (code: Code) (tally: Int) : Code =
+  yieldState code \ref.
+    ref := enqueue bit (get ref)
+    for i:(Fin tally).
+      ref := enqueue (%xor bit 1) (get ref)
+
+def encodeInterval ((low, high): Interval) 
+                   (code: Code) (tally: Int) : (Int&Int&Code&Int&(IterResult Int)) =
   case high < half of
     True ->
       (2*low,
        2*high+1,
-       enqueue 0 code,
+       updateCode 0 code tally,
+       0,
        Continue)
     False -> case low >= half of
       True ->
         (2*(low - half),
          2*(high - half)+1,
-         enqueue 1 code,
+         updateCode 1 code tally,
+         0,
          Continue)
       False -> case high < thdQuarter && low >= fstQuarter of
         True ->
           (2*(low - fstQuarter), 
            2*(high - fstQuarter)+1, 
-           (fst code, fst (snd code), snd (snd code) + 1), 
+           code, 
+           tally + 1,
            Continue)
-        False -> (low, high, code, Done 0)
+        False -> (low, high, code, tally, Done 0)
 
 def encodeSymbol (str: (Fin l)=>Word8) 
               (model: Alphabet=>(Interval->Interval)) 
               (i: (Fin l)) 
-              (params: (Interval&Code)) : (Interval&Code) =
+              (params: (Interval&Code&Int)) : (Interval&Code&Int) =
   yieldState params \p.
     intervalRef = fstRef p
-    codeRef = sndRef p
+    codeRef = fstRef (sndRef p)
+    tallyRef = sndRef (sndRef p)
     intervalRef := model.((charToIdx str.i)@_) (get intervalRef)
     boundedIter precision 0 \_.
-      (low, high, code, result) = encodeInterval (get intervalRef) (get codeRef)
+      (low, high, code, tally, result) = encodeInterval (get intervalRef) (get codeRef) (get tallyRef)
       intervalRef := (low, high)
       codeRef := code
+      tallyRef := tally
       result
 
 def findInterval (interval: Interval) (buffer: Int) 
@@ -211,17 +217,20 @@ def decodeSymbol  (l: Int)
 
 '### Coding interface
 
-def encode (str: (Fin l)=>Word8) (model: Alphabet=>(Interval->Interval)) : List Int =
+def encode (str: (Fin l)=>Word8) 
+           (model: Alphabet=>(Interval->Interval)) : List Int =
   update = encodeSymbol str model
   initInterval = (0,top-1)
   -- enqueue an extra 1 to the code to preserve length
-  fst $ enqueue 1 $ snd $ fold (initInterval,(AsList 1 [0],0,0)) update
+  fst $ fst $ snd $ fold (initInterval,(AsList 1 [0],0),0) update
 
-def decode (l: Int) (codeLst: List Int) (model: Alphabet=>(Interval->Interval)) : List Word8 =
+def decode (l: Int) (codeLst: List Int) 
+           (model: Alphabet=>(Interval->Interval)) : List Word8 =
   update = decodeSymbol l model
   initStr: List Word8 = AsList _ []
   initInterval = (0,top-1)
-  initCode' = (codeLst, 1, 0)
+  codeLst' = codeLst <> (AsList 1 [0])
+  initCode' = (codeLst', 0)
   initBuffer' = 0
   (initCode, initBuffer) = yieldState (initCode',initBuffer') \ref. 
     for i:(Fin precision). 
@@ -232,19 +241,22 @@ def decode (l: Int) (codeLst: List Int) (model: Alphabet=>(Interval->Interval)) 
 
 '### Demo: Lossless compression on a test string
 
-str' = "biudngr"
+str' = "abccedaczh"
 (AsList l str) = str'
 m = model str
 
 code = encode str m
 code
-> (AsList 1 [11208])
+> 
 
 decoded = decode l code m
 decoded
-> (AsList 7 "biudngr")
+> 
 decoded == str'
-> True
+> 
+
+
+
 
 
 
