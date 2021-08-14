@@ -163,7 +163,7 @@ def findInterval (interval: Interval) (buffer: Int)
       True -> Continue
       False ->
         (low, high) = model.(j@_) interval
-        case buffer >= low && buffer < high of
+        case buffer < high of
           True -> Done (idxToChar j, (low,high))
           False -> Continue
 
@@ -254,6 +254,7 @@ decoded
 > 
 decoded == str'
 > 
+
 
 
 
