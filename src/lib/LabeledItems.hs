@@ -10,6 +10,7 @@
 module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
   , withLabels, lookupLabelHead, ExtLabeledItems (..), prefixExtLabeledItems
+  , unzipExtLabeledItems
   , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
   , pattern Unlabeled ) where
 
@@ -70,6 +71,14 @@ data ExtLabeledItems a b = Ext (LabeledItems a) (Maybe b)
 -- Adds more items to the front of an ExtLabeledItems.
 prefixExtLabeledItems :: LabeledItems a -> ExtLabeledItems a b -> ExtLabeledItems a b
 prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
+
+-- The returned list is parallel to the input LabeledItems, following
+-- the sort order of the labels.
+unzipExtLabeledItems :: ExtLabeledItems a b -> (ExtLabeledItems () (), [a], Maybe b)
+unzipExtLabeledItems (Ext items (Just b)) =
+  (Ext ((const ()) <$> items) (Just ()), (toList items), Just b)
+unzipExtLabeledItems (Ext items Nothing) =
+  (Ext ((const ()) <$> items) Nothing, (toList items), Nothing)
 
 pattern NoLabeledItems :: LabeledItems a
 pattern NoLabeledItems <- ((\(LabeledItems items) -> M.null items) -> True)

@@ -18,9 +18,9 @@ module SaferNames.Name (
   Scope, Bindings, ScopeFrag (..), BindingsFrag, SubstE (..), SubstB (..),
   E, B, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
   BindsOneName (..), BindsNameList (..),
-  Abs (..), Nest (..), NestPair (..),
-  UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
-  EitherE (..), LiftE (..), EqE, EqB,
+  Abs (..), Nest (..), NestPair (..), UnitB (..), MaybeB (..),
+  IsVoidS (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
+  EitherE (..), EitherBE (..), LiftE (..), EqE, EqB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, ScopeReaderT (..), BindingsReaderT (..), EnvReaderT (..),
   MonadKind, MonadKind1, MonadKind2,
@@ -32,7 +32,7 @@ module SaferNames.Name (
   InjectableE (..), InjectableB (..), InjectionCoercion,
   withFreshM, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
-  NameGen (..), NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
+  NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, forEachNestItem, forEachNestItemSG,
   HasNameHint (..), NameHint, CommonHint (..)) where
 
@@ -43,6 +43,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Data.Dynamic
+import Data.String (fromString)
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..), Rep)
@@ -102,7 +103,7 @@ data Abs (binder::B) (body::E) (n::S) where
   Abs :: binder n l -> body l -> Abs binder body n
 
 data NestPair (b1::B) (b2::B) (n::S) (l::S) where
-  NestPair :: b1 n l -> b2 l l' -> NestPair b1 b2 n l'
+  NestPair :: b1 n l' -> b2 l' l -> NestPair b1 b2 n l
 
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
@@ -110,6 +111,10 @@ pattern EmptyAbs bs = Abs bs UnitE
 
 -- wraps an EnvFrag as a kind suitable for SubstB instances etc
 newtype RecEnvFrag (v::E->E) n l = RecEnvFrag { fromRecEnvFrag :: EnvFrag v n l l }
+
+-- Proof object that a given scope is void
+data IsVoidS n where
+  IsVoidS :: IsVoidS VoidS
 
 -- === Injections and projections ===
 
@@ -204,6 +209,12 @@ type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 data UnitE (n::S) = UnitE
      deriving (Show, Eq, Generic)
 
+data UnitB (n::S) (l::S) where
+  UnitB :: UnitB n n
+
+instance Show (UnitB n l) where
+  show = undefined
+
 data VoidE (n::S)
      deriving (Generic)
 
@@ -213,8 +224,16 @@ data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
      deriving (Show, Eq, Generic)
 
+data EitherBE (b::B) (e::E) (n::S) (l::S) where
+  LeftBE :: b n l -> EitherBE b e n l
+  RightBE :: e n -> EitherBE b e n n
+
 data MaybeE (e::E) (n::S) = JustE (e n) | NothingE
      deriving (Show, Eq, Generic)
+
+data MaybeB b (n::S) (l::S) where
+  JustB :: b n l -> MaybeB b n l
+  NothingB :: MaybeB b n n
 
 data ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
      deriving (Show, Eq, Generic)
@@ -594,6 +613,9 @@ class NameGen (m :: E -> S -> *) where
   returnG :: e n -> m e n
   bindG   :: m e n -> (forall l. e l -> m e' l) -> m e' n
 
+fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
+fmapG f e = e `bindG` (returnG . f)
+
 data WithScopeFrag (e::E) (n::S) where
   WithScopeFrag :: Distinct l => ScopeFrag n l -> e l -> WithScopeFrag e n
 
@@ -678,6 +700,9 @@ instance HasNameHint (NameBinder s n l) where
 
 instance HasNameHint RawName where
   getNameHint = id
+
+instance HasNameHint String where
+  getNameHint = fromString
 
 data CommonHint =
    IgnoreHint
@@ -816,3 +841,5 @@ instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance Store (e n) => Store (IdE e n)
 instance Store (const n) => Store (ConstE const ignored n)
+
+instance Show (NestPair b1 b2 n l)

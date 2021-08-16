@@ -16,15 +16,15 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module SaferNames.Syntax (
-    Type, Kind, BaseType (..), ScalarBaseType (..),
-    Effect (..), RWS (..), EffectRow (..),
+    Type, Kind, BaseType (..), ScalarBaseType (..), Except,
+    EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
     SrcPos, Binder (..), Block (..), Decl (..),
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
-    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), SourceNameDef (..),
-    ClassDef (..),
+    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..), SourceNameDef (..),
+    FromSourceNameDef, fromSourceNameDef, ClassDef (..),
     EvaluatedModule (..), SynthCandidates (..), TopState (..),
     TopBindings (..), emptyTopState,
     DataConRefBinding (..), MethodDef (..), SuperclassDef (..),
@@ -37,6 +37,15 @@ module SaferNames.Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     IRVariant (..), SubstVal (..), AtomName, AtomSubstVal,
+    SourceName, SourceNameOr (..), UVar (..), UBinder (..),
+    UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
+    ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
+    UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
+    UMethodDef (..), UAnnBinder (..),
+    WithSrcE (..), WithSrcB (..), srcPos,
+    SourceBlock (..), SourceBlock' (..),
+    SourceUModule (..), UType,
+    CmdName (..), LogLevel (..), PassName, OutFormat (..),
     TopBindingsFrag, TopBinding (..), NamedDataDef,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
@@ -45,7 +54,8 @@ module SaferNames.Syntax (
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern TyKind,
     pattern Pure, pattern LabeledRowKind, pattern EffKind,
-    pattern FunTy, pattern BinaryFunTy,
+    pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
+    pattern IntLitExpr, pattern FloatLitExpr,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
@@ -54,6 +64,7 @@ import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import Data.Int
+import Data.String (IsString, fromString)
 import Data.Text.Prettyprint.Doc
 import Data.Word
 import Type.Reflection (Typeable, TypeRep, typeRep)
@@ -68,8 +79,10 @@ import Syntax
   , BaseMonoid, BaseMonoidP (..), PrimEffect (..), BinOp (..), UnOp (..)
   , CmpOp (..), Direction (..)
   , ForAnn (..), Limit (..), strToPrimName, primNameToStr, showPrimName
+  , BlockId, ReachedEOF, ModuleName, CmdName (..), LogLevel (..)
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
-  , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth)
+  , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
+  , PassName, OutFormat (..))
 
 import SaferNames.Name
 import Util (zipErr)
@@ -79,7 +92,7 @@ import LabeledItems
 
 -- === core IR ===
 
-data Atom n =
+data Atom (n::S) =
    Var (AtomName n)
  | Lam (LamExpr n)
  | Pi  (PiType  n)
@@ -189,9 +202,188 @@ type IndexStructure = Nest Binder
 
 type AtomSubstVal = SubstVal AtomNameDef Atom :: E -> E
 
+-- === front-end language AST ===
+
+data SourceNameOr (a::E) (n::S) where
+  -- Only appears before renaming pass
+  SourceName :: SourceName -> SourceNameOr a VoidS
+  -- Only appears after renaming pass
+  InternalName :: a n -> SourceNameOr a n
+
+data UVar (n::S) =
+   UAtomVar (Name AtomNameDef n)
+ | UTyConVar (Name TyConNameDef n)
+ | UDataConVar (Name DataConNameDef n)
+ | UClassVar (Name ClassDef n)
+ | UMethodVar (Name MethodDef n)
+   deriving (Eq, Ord, Show, Generic)
+
+data UBinder (s::E) (n::S) (l::S) where
+  -- Only appears before renaming pass
+  UBindSource :: SourceName -> UBinder s VoidS VoidS
+  -- May appear before or after renaming pass
+  UIgnore :: UBinder s n n
+  -- The following binders only appear after the renaming pass.
+  UBind :: (NameBinder s n l) -> UBinder s n l
+
+type UExpr = WithSrcE UExpr'
+data UExpr' (n::S) =
+   UVar (SourceNameOr UVar n)
+ | ULam (ULamExpr n)
+ | UPi  (UPiExpr n)
+ | UApp Arrow (UExpr n) (UExpr n)
+ | UDecl (UDeclExpr n)
+ | UFor Direction (UForExpr n)
+ | UCase (UExpr n) [UAlt n]
+ | UHole
+ | UTypeAnn (UExpr n) (UExpr n)
+ | UTabCon [UExpr n]
+ | UIndexRange (Limit (UExpr n)) (Limit (UExpr n))
+ | UPrimExpr (PrimExpr (UExpr n))
+ | URecord (ExtLabeledItems (UExpr n) (UExpr n))     -- {a=x, b=y, ...rest}
+ | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
+ | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
+ | URecordTy (ExtLabeledItems (UExpr n) (UExpr n))   -- {a:X & b:Y & ...rest}
+ | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
+ | UIntLit  Int
+ | UFloatLit Double
+  deriving (Show, Generic)
+
+data ULamExpr (n::S) where
+  ULamExpr :: Arrow -> UPatAnn n l -> UExpr l -> ULamExpr n
+
+data UPiExpr (n::S) where
+  UPiExpr :: Arrow -> UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
+
+data UDeclExpr (n::S) where
+  UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
+
+type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameDef) n l)
+
+-- TODO Why are the type and data constructor names SourceName, rather
+-- than being scoped names of the proper color of their own?
+data UDataDef (n::S) where
+  UDataDef
+    :: (SourceName, Nest (UAnnBinder AtomNameDef) n l)    -- param binders
+    -- Trailing l' is the last scope for the chain of potentially
+    -- dependent constructor argument types.
+    -> [(SourceName, UDataDefTrail l)] -- data constructor types
+    -> UDataDef n
+
+data UDataDefTrail (l::S) where
+  UDataDefTrail :: Nest (UAnnBinder AtomNameDef) l l' -> UDataDefTrail l
+
+data UDecl (n::S) (l::S) where
+  ULet :: LetAnn -> UPatAnn n l -> UExpr n -> UDecl n l
+  UDataDefDecl
+    :: UDataDef n                            -- actual definition
+    -> UBinder TyConNameDef n l'             -- type constructor name
+    ->   Nest (UBinder DataConNameDef) l' l  -- data constructor names
+    -> UDecl n l
+  UInterface
+    :: Nest (UAnnBinder AtomNameDef) n p  -- parameter binders
+    ->  [UType p]                         -- superclasses
+    ->  [UType p]                         -- method types
+    -> UBinder ClassDef n l'              -- class name
+    ->   Nest (UBinder MethodDef) l' l    -- method names
+    -> UDecl n l
+  UInstance
+    :: Nest UPatAnnArrow n l'            -- dictionary args (i.e. conditions)
+    ->   SourceNameOr (Name ClassDef) l' -- class variable
+    ->   [UExpr l']                      -- class parameters
+    ->   [UMethodDef l']                 -- method definitions
+    -- Maybe we should make a separate color (namespace) for instance names?
+    -> MaybeB (UBinder AtomNameDef) n l  -- optional instance name
+    -> UDecl n l
+
+type UType  = UExpr
+
+data UForExpr (n::S) where
+  UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
+
+data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodDef) n) (UExpr n)
+  deriving (Show, Generic)
+
+data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
+  deriving (Show, Generic)
+
+data UPatAnnArrow (n::S) (l::S) = UPatAnnArrow (UPatAnn n l) Arrow
+  deriving (Show, Generic)
+
+data UAnnBinder (s::E) (n::S) (l::S) = UAnnBinder (UBinder s n l) (UType n)
+  deriving (Show, Generic)
+
+data UAlt (n::S) where
+  UAlt :: UPat n l -> UExpr l -> UAlt n
+
+type UPat = WithSrcB UPat'
+data UPat' (n::S) (l::S) =
+   UPatBinder (UBinder AtomNameDef n l)
+ | UPatCon (SourceNameOr (Name DataConNameDef) n) (Nest UPat n l)
+ | UPatPair (NestPair UPat UPat n l)
+ | UPatUnit (UnitB n l)
+ -- The ExtLabeledItems and the Nest are meant to be parallel.  If the
+ -- ExtLabeledItems has a Just at the end, that corresponds to the
+ -- last item in the given Nest.
+ | UPatRecord (ExtLabeledItems () ()) (Nest UPat n l)     -- {a=x, b=y, ...rest}
+ | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
+ | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
+ | UPatTable (Nest UPat n l)
+  deriving (Show)
+
+data WithSrcE (a::E) (n::S) = WithSrcE SrcCtx (a n)
+  deriving (Show)
+
+data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcCtx (binder n l)
+  deriving (Show)
+
+class HasSrcPos a where
+  srcPos :: a -> SrcCtx
+
+instance HasSrcPos (WithSrcE (a::E) (n::S)) where
+  srcPos (WithSrcE pos _) = pos
+
+instance HasSrcPos (WithSrcB (b::B) (n::S) (n::S)) where
+  srcPos (WithSrcB pos _) = pos
+
+pattern UPatIgnore :: UPat' (n::S) n
+pattern UPatIgnore = UPatBinder UIgnore
+
 -- === top-level modules ===
 
 type SourceName = String
+
+-- body must only contain SourceName version of names and binders
+data SourceUModule = SourceUModule (UDecl VoidS VoidS) deriving (Show)
+
+-- body must only contain Name version of names and binders
+data UModule (n::S) where
+  UModule
+    :: Distinct l
+    => ScopeFrag n l
+    -> SourceMap l
+    -> UDecl n l
+    -> UModule n
+
+data SourceBlock = SourceBlock
+  { sbLine     :: Int
+  , sbOffset   :: Int
+  , sbLogLevel :: LogLevel
+  , sbText     :: String
+  , sbContents :: SourceBlock'
+  , sbId       :: Maybe BlockId }  deriving (Show)
+
+data SourceBlock' =
+   RunModule SourceUModule
+ | Command CmdName (SourceName, SourceUModule)
+ | GetNameType SourceName
+ -- TODO Add a color for module names?
+ | ImportModule ModuleName
+ | ProseBlock String
+ | CommentLine
+ | EmptyLines
+ | UnParseable ReachedEOF String
+  deriving (Show, Generic)
 
 data TopState n = TopState
   { topBindings        :: TopBindings n
@@ -219,6 +411,9 @@ data SourceNameDef (n::S) =
  | SrcClassName   (Name ClassDef n)
  | SrcMethodName  (Name MethodDef n)
  deriving (Show, Generic)
+
+class FromSourceNameDef (color::E) where
+  fromSourceNameDef :: SourceNameDef n -> Maybe (Name color n)
 
 data TyConNameDef   n = TyConNameDef   (Name DataDef n)                    deriving (Show, Generic)
 data DataConNameDef n = DataConNameDef (Name DataDef n) Int                deriving (Show, Generic)
@@ -253,13 +448,21 @@ data SynthCandidates n = SynthCandidates
 
 -- === effects ===
 
-data EffectRow n = EffectRow (S.Set (Effect n)) (Maybe (AtomName n))
-                   deriving (Show, Generic)
+data EffectP (name::E) (n::S) =
+  RWSEffect RWS (name n) | ExceptionEffect | IOEffect
+  deriving (Show, Eq, Ord, Generic)
 
-data Effect n = RWSEffect RWS (AtomName n) | ExceptionEffect | IOEffect
-                deriving (Show, Eq, Ord, Generic)
+type Effect = EffectP AtomName
+type UEffect = EffectP (SourceNameOr (Name AtomNameDef))
 
-pattern Pure :: EffectRow n
+data EffectRowP (name::E) (n::S) =
+  EffectRow (S.Set (EffectP name n)) (Maybe (name n))
+  deriving (Show, Eq, Ord, Generic)
+
+type EffectRow = EffectRowP AtomName
+type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameDef))
+
+pattern Pure :: Ord (name n) => EffectRowP name n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
  where  Pure = EffectRow mempty Nothing
 
@@ -290,6 +493,12 @@ a --@ b = nonDepPiType LinArrow a Pure b
 
 (==>) :: (ScopeReader m, ScopeExtender m) => Type n -> Type n -> m n (Type n)
 a ==> b = nonDepPiType TabArrow a Pure b
+
+pattern IntLitExpr :: Int -> UExpr' n
+pattern IntLitExpr x = UIntLit x
+
+pattern FloatLitExpr :: Double -> UExpr' n
+pattern FloatLitExpr x = UFloatLit x
 
 getIntLit :: LitVal -> Int
 getIntLit l = case l of
@@ -444,6 +653,16 @@ showParens x = "(" <> show x <> ")"
 instance Show (DataDef n) where
   show (DataDef name bs cons) =
     "DataDef" <++> showParens name <++> showParens bs <++> showParens cons
+
+instance InjectableE SourceMap where
+  injectionProofE c (SourceMap m) = SourceMap $ injectionProofE c `fmap` m
+
+instance InjectableE SourceNameDef where
+  injectionProofE c (SrcAtomName n) = SrcAtomName $ injectionProofE c n
+  injectionProofE c (SrcTyConName n) = SrcTyConName $ injectionProofE c n
+  injectionProofE c (SrcDataConName n) = SrcDataConName $ injectionProofE c n
+  injectionProofE c (SrcClassName n) = SrcClassName $ injectionProofE c n
+  injectionProofE c (SrcMethodName n) = SrcMethodName $ injectionProofE c n
 
 instance InjectableE DataDef where
   injectionProofE fresh (DataDef name bs cons) =
@@ -970,3 +1189,82 @@ instance Store (SourceMap n)
 instance Store (SynthCandidates n)
 instance Store (EffectRow n)
 instance Store (Effect n)
+
+instance IsString (SourceNameOr a VoidS) where
+  fromString = SourceName
+
+instance IsString (UBinder s VoidS VoidS) where
+  fromString = UBindSource
+
+instance IsString (UPat' VoidS VoidS) where
+  fromString = UPatBinder . fromString
+
+instance IsString (UPatAnn VoidS VoidS) where
+  fromString s = UPatAnn (fromString s) Nothing
+
+instance IsString (UExpr' VoidS) where
+  fromString = UVar . fromString
+
+instance IsString (a n) => IsString (WithSrcE a n) where
+  fromString = WithSrcE Nothing . fromString
+
+instance IsString (b n l) => IsString (WithSrcB b n l) where
+  fromString = WithSrcB Nothing . fromString
+
+instance FromSourceNameDef AtomNameDef where
+  fromSourceNameDef (SrcAtomName name) = Just name
+  fromSourceNameDef _ = Nothing
+
+instance FromSourceNameDef TyConNameDef where
+  fromSourceNameDef (SrcTyConName name) = Just name
+  fromSourceNameDef _ = Nothing
+
+instance FromSourceNameDef DataConNameDef where
+  fromSourceNameDef (SrcDataConName name) = Just name
+  fromSourceNameDef _ = Nothing
+
+instance FromSourceNameDef ClassDef where
+  fromSourceNameDef (SrcClassName name) = Just name
+  fromSourceNameDef _ = Nothing
+
+instance FromSourceNameDef MethodDef where
+  fromSourceNameDef (SrcMethodName name) = Just name
+  fromSourceNameDef _ = Nothing
+
+instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S)) where
+  (SourceName name1) == (SourceName name2) = name1 == name2
+  (InternalName name1) == (InternalName name2) = name1 == name2
+  _ == _ = False
+
+instance Ord (a n) => Ord (SourceNameOr a n) where
+  (SourceName name1) `compare` (SourceName name2) = name1 `compare` name2
+  (InternalName name1) `compare` (InternalName name2) = name1 `compare` name2
+  (SourceName _) `compare` (InternalName _) = LT
+  (InternalName _) `compare` (SourceName _) = GT
+
+instance Show (SourceNameOr a n) where
+  show = undefined
+
+instance Show (UBinder s n l) where
+  show = undefined
+
+instance Show (ULamExpr n) where
+  show = undefined
+
+instance Show (UPiExpr n) where
+  show = undefined
+
+instance Show (UDeclExpr n) where
+  show = undefined
+
+instance Show (UDataDef n) where
+  show = undefined
+
+instance Show (UDecl n l) where
+  show = undefined
+
+instance Show (UForExpr n) where
+  show = undefined
+
+instance Show (UAlt n) where
+  show = undefined

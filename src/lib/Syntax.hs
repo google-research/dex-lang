@@ -53,7 +53,7 @@ module Syntax (
     fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     extendEffRow, getProjection, simplifyCase,
-    varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
+    varType, binderType, isTabTy, BlockId, LogLevel (..), IRVariant (..),
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
