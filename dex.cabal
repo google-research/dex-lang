@@ -57,7 +57,7 @@ library
                        Err, LabeledItems, SourceRename,
                        SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
-                       SaferNames.PPrint
+                       SaferNames.PPrint, SaferNames.Parser
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
