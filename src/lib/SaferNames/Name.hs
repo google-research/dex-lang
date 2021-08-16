@@ -345,7 +345,11 @@ data SubstVal (sMatch::E) (atom::E) (s::E) (n::S) where
   SubstVal :: atom n   -> SubstVal s      atom s n
   Rename   :: Name s n -> SubstVal sMatch atom s n
 
-withFreshM :: (ScopeReader m, ScopeExtender m, Typeable s, InjectableE s, HasNameHint hint)
+-- TODO Presumably this wanted the constraints Typeable s and
+-- InjectableE s only because it used `withFresh`; but I don't know
+-- why `withFresh` wanted them, so I don't know whether `withFreshM`
+-- may want to add them back.
+withFreshM :: (ScopeReader m, ScopeExtender m, HasNameHint hint)
            => hint
            -> (forall o'. NameBinder s o o' -> m o' a)
            -> m o a
