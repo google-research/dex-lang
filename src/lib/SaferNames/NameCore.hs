@@ -115,7 +115,8 @@ data NameBinder (s::E)  -- static information for the name this binds (note
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name s l }
 
-withFresh :: (InjectableE s, Typeable s, Distinct n)
+-- TODO Why did this want the constraints Typable s and InjectableE s?
+withFresh :: (Distinct n)
           => RawName -> Scope n
           -> (forall l. Distinct l => NameBinder s n l -> a) -> a
 withFresh hint (UnsafeMakeScope scope) cont =
@@ -297,7 +298,7 @@ instance Eq (Name s n) where
   UnsafeMakeName rawName == UnsafeMakeName rawName' = rawName == rawName'
 
 instance Ord (Name s n) where
-  compare (UnsafeMakeName name) (UnsafeMakeName name')= compare name name'
+  compare (UnsafeMakeName name) (UnsafeMakeName name') = compare name name'
 
 instance Show (Name s n) where
   show (UnsafeMakeName rawName) = show rawName

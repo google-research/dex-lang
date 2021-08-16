@@ -53,7 +53,7 @@ module Syntax (
     fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     extendEffRow, getProjection, simplifyCase,
-    varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
+    varType, binderType, isTabTy, BlockId, LogLevel (..), IRVariant (..),
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
@@ -288,7 +288,7 @@ data UDecl =
        (Nest UBinder)   -- method names
  | UInstance
      (Nest UPatAnnArrow)      -- dictionary args (i.e. conditions)
-       UVar [UExpr]            -- class var and params
+       UVar [UExpr]           -- class var and params
        [UMethodDef]           -- method definitions
      (Maybe UBinder)          -- optional instance name
    deriving (Show, Generic)

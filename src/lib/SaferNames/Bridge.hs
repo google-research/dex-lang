@@ -818,7 +818,6 @@ instance MonadFail (FromSafeM i) where
 instance InjectableE ToSafeNameMap
 
 instance InjectableE S.SynthCandidates
-instance InjectableE S.SourceMap
 
 instance D.HasName (UnsafeName s) where
   getName (UnsafeAtomName       v) = Just v
