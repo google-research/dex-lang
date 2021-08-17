@@ -579,6 +579,15 @@ instance HasSafeVersionE D.Atom where
       return $ D.BoxedRef b ptr' size' body
     S.ProjectElt idxs v -> D.ProjectElt idxs <$> fromSafeAtomNameVar v
 
+instance HasSafeVersionB D.DataConRefBinding where
+  type SafeVersionB D.DataConRefBinding = S.DataConRefBinding
+  toSafeB (D.DataConRefBinding b ann) cont = do
+    ann' <- toSafeE ann
+    toSafeB b \b' -> cont $ S.DataConRefBinding b' ann'
+  fromSafeB (S.DataConRefBinding b ann) cont = do
+    ann' <- fromSafeE ann
+    fromSafeB b \b' -> cont $ D.DataConRefBinding b' ann'
+
 instance HasSafeVersionB D.Binder where
   type SafeVersionB D.Binder = S.Binder
 
@@ -667,15 +676,6 @@ instance HasSafeVersionE () where
   toSafeE () = return UnitE
   fromSafeE UnitE = return ()
 
-instance HasSafeVersionB D.DataConRefBinding where
-  type SafeVersionB D.DataConRefBinding = S.DataConRefBinding
-  toSafeB (D.DataConRefBinding b ann) cont = do
-    ann' <- toSafeE ann
-    toSafeB b \b' -> cont $ S.DataConRefBinding b' ann'
-  fromSafeB (S.DataConRefBinding b ann) cont = do
-    ann' <- fromSafeE ann
-    fromSafeB b \b' -> cont $ D.DataConRefBinding b' ann'
-
 instance HasSafeVersionE D.Expr where
   type SafeVersionE D.Expr = S.Expr
   toSafeE expr = case expr of
@@ -713,9 +713,6 @@ instance HasSafeVersionB D.Decl where
     expr' <- fromSafeE expr
     fromSafeB b \b' -> do
       cont $ D.Let ann b' expr'
-
-data AnnBinderP (ann::E) (n::S) (l::S) =
-  AnnBinderP (S.NameBinder S.AtomNameDef n l) (ann n)
 
 instance HasSafeVersionE D.Effect where
   type SafeVersionE D.Effect = S.Effect
@@ -815,10 +812,6 @@ instance MonadFail (ToSafeM o) where
 instance MonadFail (FromSafeM i) where
   fail s = error s
 
-instance InjectableE ToSafeNameMap
-
-instance InjectableE S.SynthCandidates
-
 instance D.HasName (UnsafeName s) where
   getName (UnsafeAtomName       v) = Just v
   getName (UnsafeTyConName      v) = Just v
@@ -840,6 +833,9 @@ instance Pretty (UnsafeName n) where
     UnsafeMethodName     v -> pretty v <+> "(method name)"
     UnsafeDataDefName    v -> pretty v <+> "(data def name)"
     UnsafeSuperclassName v -> pretty v <+> "(superclas name)"
+
+instance InjectableE ToSafeNameMap where
+  injectionProofE = undefined
 
 instance Pretty (SafeNameHidden n) where
   pretty (SafeNameHidden name) = pretty name

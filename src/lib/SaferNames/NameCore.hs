@@ -6,7 +6,9 @@
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module SaferNames.NameCore (
   S (..), RawName, Name (..), withFresh, injectNames, injectNamesR, projectName,
@@ -15,7 +17,8 @@ module SaferNames.NameCore (
   Distinct, E, B, InjectableE (..), InjectableB (..),
   InjectableV, InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, absurdNameFunction, fmapEnvFrag,
-  toEnvPairs, fromEnvPairs, EnvPair (..)) where
+  toEnvPairs, fromEnvPairs, EnvPair (..),
+  GenericE (..), GenericB (..)) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -27,6 +30,7 @@ import Unsafe.Coerce
 import qualified Data.Map  as M
 import qualified Data.Set  as S
 import GHC.Exts (Constraint)
+import Data.Kind (Type)
 import Data.Store (Store)
 import GHC.Generics (Generic (..))
 
@@ -148,6 +152,18 @@ instance Distinct UnsafeMakeDistinctS
 getRawName :: Name s n -> RawName
 getRawName (UnsafeMakeName rawName) = rawName
 
+-- === variant of Generic suited for E-kind and B-kind things ===
+
+class GenericE (e::E) where
+  type RepE e :: S -> Type
+  fromE :: e n -> RepE e n
+  toE   :: RepE e n -> e n
+
+class GenericB (b::B) where
+  type RepB b :: S -> S -> Type
+  fromB :: b n l -> RepB b n l
+  toB   :: RepB b n l -> b n l
+
 -- === injections ===
 
 -- Note [Injections]
@@ -161,10 +177,20 @@ injectNamesR = unsafeCoerceE
 class InjectableE (e::E) where
   injectionProofE :: InjectionCoercion n l -> e n -> e l
 
+  default injectionProofE :: (GenericE e, InjectableE (RepE e))
+                          => InjectionCoercion n l -> e n -> e l
+  injectionProofE free x = toE $ injectionProofE free $ fromE x
+
 class InjectableB (b::B) where
   injectionProofB :: InjectionCoercion n n' -> b n l
                   -> (forall l'. InjectionCoercion l l' -> b n' l' -> a)
                   -> a
+  default injectionProofB :: (GenericB b, InjectableB (RepB b))
+                          => InjectionCoercion n n' -> b n l
+                          -> (forall l'. InjectionCoercion l l' -> b n' l' -> a)
+                          -> a
+  injectionProofB fresh b cont =
+    injectionProofB fresh (fromB b) \fresh' b' -> cont fresh' $ toB b'
 
 data InjectionCoercion (n::S) (l::S) where
   InjectionCoercion :: (forall s. Name s n -> Name s l) -> InjectionCoercion n l
@@ -370,6 +396,9 @@ instance Store (Name s n)
 instance Store (NameBinder s n l)
 instance ( Store   (b UnsafeS UnsafeS)
          , Generic (b UnsafeS UnsafeS) ) => Store (Nest b n l)
+
+instance (forall n s. Show (s n) => Show (v s n)) => Show (EnvFrag v i i' o) where
+  show = undefined
 
 -- === notes ===
 

@@ -48,8 +48,6 @@ import Logging
 import LLVMExec
 import PPrint()
 import Parser
-import qualified SaferNames.Parser as SP
-import qualified SaferNames.SourceRename as SSR
 import Util (highlightRegion, measureSeconds, onFst, onSnd)
 import Optimize
 import Parallelize

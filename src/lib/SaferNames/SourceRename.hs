@@ -231,9 +231,12 @@ instance SourceRenamableB UDecl where
         sourceRenameE $ Abs conditions (PairE (PairE className $ ListE params) $ ListE methodDefs)
       runRenamerNameGenT $ UInstance conditions' className' params' methodDefs' `fmapG` sourceRenameB instanceName
 
-instance SourceRenamableB b => SourceRenamableB (MaybeB b) where
-  sourceRenameB (JustB b) = JustB `fmapG` sourceRenameB b
-  sourceRenameB NothingB = returnG NothingB
+instance SourceRenamableB UnitB where
+  sourceRenameB UnitB = returnG UnitB
+
+instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (EitherB b1 b2) where
+  sourceRenameB (LeftB  b) = LeftB  `fmapG` sourceRenameB b
+  sourceRenameB (RightB b) = RightB `fmapG` sourceRenameB b
 
 sourceRenameUBinderNest :: Renamer m => (forall o'. Name s o' -> SourceNameDef o')
                         -> Nest (UBinder s) i i' -> RenamerNameGenT m (Nest (UBinder s) o) o
@@ -342,10 +345,10 @@ instance SourceRenamablePat UPat' where
         Just (SrcDataConName name) -> return $ InternalName name
         Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
       runPatRenamerNameGenT $ UPatCon con' `fmapG` sourceRenamePat siblingNames bs
-    UPatPair (NestPair p1 p2) ->
+    UPatPair (PairB p1 p2) ->
       sourceRenamePat siblingNames p1 `bindG` \p1' ->
       sourceRenamePat siblingNames p2 `bindG` \p2' ->
-      returnG $ UPatPair $ NestPair p1' p2'
+      returnG $ UPatPair $ PairB p1' p2'
     UPatUnit UnitB -> returnG $ UPatUnit UnitB
     UPatRecord labels ps -> UPatRecord labels `fmapG` sourceRenamePat siblingNames ps
     UPatVariant labels label p -> UPatVariant labels label `fmapG` sourceRenamePat siblingNames p

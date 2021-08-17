@@ -8,6 +8,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module SaferNames.Name (
@@ -18,9 +20,12 @@ module SaferNames.Name (
   Scope, Bindings, ScopeFrag (..), BindingsFrag, SubstE (..), SubstB (..),
   E, B, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
   BindsOneName (..), BindsNameList (..),
-  Abs (..), Nest (..), NestPair (..), UnitB (..), MaybeB (..),
-  IsVoidS (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
-  EitherE (..), EitherBE (..), LiftE (..), EqE, EqB,
+  Abs (..), Nest (..), PairB (..), UnitB (..),
+  IsVoidS (..), UnitE (..), VoidE, PairE (..), ListE (..), ComposeE (..),
+  EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB,
+  EitherB (..), BinderP (..),
+  LiftB, pattern LiftB,
+  MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, ScopeReaderT (..), BindingsReaderT (..), EnvReaderT (..),
   MonadKind, MonadKind1, MonadKind2,
@@ -34,7 +39,11 @@ module SaferNames.Name (
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, forEachNestItem, forEachNestItemSG,
-  HasNameHint (..), NameHint, CommonHint (..)) where
+  HasNameHint (..), NameHint, CommonHint (..),
+  GenericE (..), GenericB (..), TypesEqual (..), TypesNotEqual (..),
+  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
+  pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4
+  ) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -88,7 +97,7 @@ class ScopeReader m => BindingsExtender (m::MonadKind1) where
   extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
 
 class Monad2 m => EnvReader (v::E->E) (m::MonadKind2) | m -> v where
-  lookupEnvM :: (Typeable s, InjectableE s) => Name s i -> m i o (v s o)
+   lookupEnvM :: (Typeable s, InjectableE s) => Name s i -> m i o (v s o)
 
 class Monad2 m => EnvExtender (v::E->E) (m::MonadKind2) | m -> v where
   extendEnv :: EnvFrag v i i' o -> m i' o r -> m i o r
@@ -101,9 +110,11 @@ class Monad2 m => Renamer (m::MonadKind2) where
 
 data Abs (binder::B) (body::E) (n::S) where
   Abs :: binder n l -> body l -> Abs binder body n
+deriving instance (ShowB b, ShowE e) => Show (Abs b e n)
 
-data NestPair (b1::B) (b2::B) (n::S) (l::S) where
-  NestPair :: b1 n l' -> b2 l' l -> NestPair b1 b2 n l
+data BinderP (b::B) (ann::E) (n::S) (l::S) =
+  (:>) (b n l) (ann n)
+  deriving (Show, Generic)
 
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
@@ -120,6 +131,9 @@ data IsVoidS n where
 
 class BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
+
+  default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
+  toScopeFrag b = toScopeFrag $ fromB b
 
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
@@ -169,10 +183,21 @@ class SubstE (v::E->E) (e::E) where
   substE :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
          => e i -> m i o (e o)
 
+  default substE :: ( GenericE e, SubstE v (RepE e)
+                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m )
+                 => e i -> m i o (e o)
+  substE e = toE <$> substE (fromE e)
+
 class SubstB (v::E->E) (b::B) where
   substB :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
          => b i i'
          -> SubstGenT m i i' (b o) o
+
+  default substB :: ( GenericB b, SubstB v (RepB b)
+                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+                  => b i i'
+                  -> SubstGenT m i i' (b o) o
+  substB b = substB (fromB b) `bindSG` \b' -> returnSG $ toB b'
 
 type HasNamesE = SubstE Name
 type HasNamesB = SubstB Name
@@ -206,14 +231,11 @@ type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
+type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
+type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
+
 data UnitE (n::S) = UnitE
      deriving (Show, Eq, Generic)
-
-data UnitB (n::S) (l::S) where
-  UnitB :: UnitB n n
-
-instance Show (UnitB n l) where
-  show = undefined
 
 data VoidE (n::S)
      deriving (Generic)
@@ -224,22 +246,28 @@ data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
      deriving (Show, Eq, Generic)
 
-data EitherBE (b::B) (e::E) (n::S) (l::S) where
-  LeftBE :: b n l -> EitherBE b e n l
-  RightBE :: e n -> EitherBE b e n n
+newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
+        deriving (Show, Eq, Generic)
 
-data MaybeE (e::E) (n::S) = JustE (e n) | NothingE
-     deriving (Show, Eq, Generic)
+newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
+        deriving (Show, Eq, Generic)
 
-data MaybeB b (n::S) (l::S) where
-  JustB :: b n l -> MaybeB b n l
-  NothingB :: MaybeB b n n
+newtype ComposeE (f :: * -> *) (e::E) (n::S) =
+  ComposeE (f (e n))
+  deriving (Show, Eq, Generic)
 
-data ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
-     deriving (Show, Eq, Generic)
+data UnitB (n::S) (l::S) where
+  UnitB :: UnitB n n
+deriving instance Show (UnitB n l)
 
-data LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-     deriving (Show, Eq, Generic)
+data PairB (b1::B) (b2::B) (n::S) (l::S) where
+  PairB :: b1 n l' -> b2 l' l -> PairB b1 b2 n l
+deriving instance (ShowB b1, ShowB b2) => Show (PairB b1 b2 n l)
+
+data EitherB (b1::B) (b2::B) (n::S) (l::S) =
+   LeftB  (b1 n l)
+ | RightB (b2 n l)
+   deriving (Show, Eq, Generic)
 
 -- The identity function at `E`
 newtype IdE (e::E) (n::S) = IdE { fromIdE :: e n }
@@ -248,6 +276,27 @@ newtype IdE (e::E) (n::S) = IdE { fromIdE :: e n }
 -- The constant function at `E`
 newtype ConstE (const::E) (ignored::E) (n::S) = ConstE (const n)
         deriving (Show, Eq, Generic)
+
+type MaybeE e = EitherE e UnitE
+
+pattern JustE :: e n -> MaybeE e n
+pattern JustE e = LeftE e
+
+pattern NothingE :: MaybeE e n
+pattern NothingE = RightE UnitE
+
+type MaybeB b = EitherB b UnitB
+
+pattern JustB :: b n l -> MaybeB b n l
+pattern JustB b = LeftB b
+
+pattern NothingB :: MaybeB b n n
+pattern NothingB = RightB UnitB
+
+type LiftB (e::E) = BinderP UnitB e :: B
+
+pattern LiftB :: e n -> LiftB e n n
+pattern LiftB e = UnitB :> e
 
 -- -- === various convenience utilities ===
 
@@ -359,6 +408,20 @@ withFreshM hint cont = do
     extendScope (singletonScope b') $
       cont b'
 
+data TypesEqual (a::E) (b::E) where
+  TypesEqual :: TypesEqual a a
+
+class TypesNotEqual a b where
+  notEqProof :: TypesEqual a b -> r
+
+instance (Typeable s, InjectableE s, TypesNotEqual sMatch s)
+         => (SubstE (SubstVal sMatch atom) (Name s)) where
+  substE name = do
+    substVal <- lookupEnvM name
+    case substVal of
+      Rename name' -> return name'
+      SubstVal _ -> notEqProof (TypesEqual :: TypesEqual s sMatch)
+
 -- === alpha-renaming-invariant equality checking ===
 
 type AlphaEq e = AlphaEqE e  :: Constraint
@@ -382,10 +445,20 @@ class ( forall i1 i2 o. Monad (m i1 i2 o)
 class AlphaEqE (e::E) where
   alphaEqE :: ZipEnvReader m => e i1 -> e i2 -> m i1 i2 o ()
 
+  default alphaEqE :: (GenericE e, AlphaEqE (RepE e), ZipEnvReader m)
+                   => e i1 -> e i2 -> m i1 i2 o ()
+  alphaEqE e1 e2 = fromE e1 `alphaEqE` fromE e2
+
 class AlphaEqB (b::B) where
   withAlphaEqB :: ZipEnvReader m => b i1 i1' -> b i2 i2'
                -> (forall o'. m i1' i2' o' a)
                ->             m i1  i2  o  a
+
+  default withAlphaEqB :: (GenericB b, AlphaEqB (RepB b), ZipEnvReader m)
+                       => b i1 i1' -> b i2 i2'
+                       -> (forall o'. m i1' i2' o' a)
+                       ->             m i1  i2  o  a
+  withAlphaEqB b1 b2 cont = withAlphaEqB (fromB b1) (fromB b2) $ cont
 
 checkAlphaEq :: (AlphaEqE e, MonadErr1 m, ScopeReader m)
              => e n -> e n -> m n ()
@@ -425,18 +498,29 @@ instance AlphaEqB b => AlphaEqB (Nest b) where
     withAlphaEqB b1 b2 $ withAlphaEqB rest1 rest2 $ cont
   withAlphaEqB _ _ _ = zipErr
 
-instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (NestPair b1 b2) where
-  withAlphaEqB (NestPair a1 b1) (NestPair a2 b2) cont =
+instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (PairB b1 b2) where
+  withAlphaEqB (PairB a1 b1) (PairB a2 b2) cont =
     withAlphaEqB a1 a2 $ withAlphaEqB b1 b2 $ cont
 
 instance (AlphaEqB b, AlphaEqE e) => AlphaEqE (Abs b e) where
   alphaEqE (Abs b1 e1) (Abs b2 e2) = withAlphaEqB b1 b2 $ alphaEqE e1 e2
+
+instance (AlphaEqB b, AlphaEqE ann) => AlphaEqB (BinderP b ann) where
+  withAlphaEqB (b1:>ann1) (b2:>ann2) cont = do
+    alphaEqE ann1 ann2
+    withAlphaEqB b1 b2 $ cont
 
 instance AlphaEqE UnitE where
   alphaEqE UnitE UnitE = return ()
 
 instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
   alphaEqE (PairE a1 b1) (PairE a2 b2) = alphaEqE a1 a2 >> alphaEqE b1 b2
+
+instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
+  alphaEqE (LeftE  e1) (LeftE  e2) = alphaEqE e1 e2
+  alphaEqE (RightE e1) (RightE e2) = alphaEqE e1 e2
+  alphaEqE (LeftE  _ ) (RightE _ ) = zipErr
+  alphaEqE (RightE _ ) (LeftE  _ ) = zipErr
 
 -- === ScopeReaderT transformer ===
 
@@ -738,20 +822,36 @@ instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE (Abs b body) = do
     withSubstB b \b' -> Abs b' <$> substE body
 
-instance (BindsNames b1, BindsNames b2) => BindsNames (NestPair b1 b2) where
-  toScopeFrag (NestPair b1 b2) = toScopeFrag b1 >>> toScopeFrag b2
+instance (BindsNames b1, BindsNames b2) => BindsNames (PairB b1 b2) where
+  toScopeFrag (PairB b1 b2) = toScopeFrag b1 >>> toScopeFrag b2
 
-instance (InjectableB b1, InjectableB b2) => InjectableB (NestPair b1 b2) where
-  injectionProofB fresh (NestPair b1 b2) cont =
+instance (InjectableB b1, InjectableB b2) => InjectableB (PairB b1 b2) where
+  injectionProofB fresh (PairB b1 b2) cont =
     injectionProofB fresh b1 \fresh' b1' ->
       injectionProofB fresh' b2 \fresh'' b2' ->
-        cont fresh'' (NestPair b1' b2')
+        cont fresh'' (PairB b1' b2')
 
-instance (SubstB v b1, SubstB v b2) => SubstB v (NestPair b1 b2) where
-  substB (NestPair b1 b2) =
+instance (SubstB v b1, SubstB v b2) => SubstB v (PairB b1 b2) where
+  substB (PairB b1 b2) =
     substB b1 `bindSG` \b1' ->
       substB b2 `bindSG` \b2' ->
-        returnSG $ NestPair b1' b2'
+        returnSG $ PairB b1' b2'
+
+instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
+  injectionProofB fresh (b:>ann) cont = do
+    let ann' = injectionProofE fresh ann
+    injectionProofB fresh b \fresh' b' ->
+      cont fresh' $ b':>ann'
+
+instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
+   substB (b:>ann) =
+      substE ann `liftSG` \ann' ->
+      substB b   `bindSG` \b' ->
+      returnSG $ b':>ann'
+
+instance BindsNames b => BindsNames (BinderP b ann) where
+  toScopeFrag (b:>_) = toScopeFrag b
+
 
 instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
@@ -766,6 +866,26 @@ instance InjectableE UnitE where
 instance SubstE v UnitE where
   substE UnitE = return UnitE
 
+instance (Functor f, InjectableE e) => InjectableE (ComposeE f e) where
+  injectionProofE fresh (ComposeE xs) = ComposeE $ fmap (injectionProofE fresh) xs
+
+instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
+  substE (ComposeE xs) = ComposeE <$> mapM substE xs
+
+-- alternatively we could use Zippable, but we'd want to be able to derive it
+-- (e.g. via generic) for the many-armed cases like PrimOp.
+instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
+  alphaEqE (ComposeE xs) (ComposeE ys) = alphaEqTraversable xs ys
+
+instance InjectableB UnitB where
+  injectionProofB fresh UnitB cont = cont fresh UnitB
+
+instance BindsNames UnitB where
+  toScopeFrag UnitB = id
+
+instance SubstB v UnitB where
+  substB UnitB = returnSG UnitB
+
 instance InjectableE e => InjectableE (IdE e) where
   injectionProofE fresh (IdE e) = IdE $ injectionProofE fresh e
 
@@ -775,6 +895,15 @@ instance SubstE v e => SubstE v (IdE e) where
 instance InjectableE const => InjectableE (ConstE const ignored) where
   injectionProofE fresh (ConstE e) = ConstE $ injectionProofE fresh e
 
+instance InjectableE VoidE where
+  injectionProofE _ _ = error "impossible"
+
+instance AlphaEqE VoidE where
+  alphaEqE _ _ = error "impossible"
+
+instance SubstE v VoidE where
+  substE _ = error "impossible"
+
 instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
   injectionProofE fresh (PairE e1 e2) =
     PairE (injectionProofE fresh e1) (injectionProofE fresh e2)
@@ -783,14 +912,31 @@ instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE (PairE x y) =
     PairE <$> substE x <*> substE y
 
+instance (InjectableE e1, InjectableE e2) => InjectableE (EitherE e1 e2) where
+  injectionProofE fresh (LeftE  e) = LeftE  (injectionProofE fresh e)
+  injectionProofE fresh (RightE e) = RightE (injectionProofE fresh e)
+
+instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
+  substE (LeftE  x) = LeftE  <$> substE x
+  substE (RightE x) = RightE <$> substE x
+
 instance InjectableE e => InjectableE (ListE e) where
   injectionProofE fresh (ListE xs) = ListE $ map (injectionProofE fresh) xs
 
+instance AlphaEqE e => AlphaEqE (ListE e) where
+  alphaEqE = undefined
+
+instance InjectableE (LiftE a) where
+  injectionProofE _ (LiftE x) = LiftE x
+
+instance SubstE v (LiftE a) where
+  substE (LiftE x) = return $ LiftE x
+
+instance Eq a => AlphaEqE (LiftE a) where
+  alphaEqE (LiftE x) (LiftE y) = unless (x == y) zipErr
+
 instance SubstE v e => SubstE v (ListE e) where
   substE (ListE xs) = ListE <$> mapM substE xs
-
-instance (forall n' l. Show (b n' l), forall n'. Show (body n')) => Show (Abs b body n) where
-  show (Abs b body) = "(Abs " <> show b <> " " <> show body <> ")"
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"
@@ -811,10 +957,10 @@ instance ( Generic (b UnsafeS UnsafeS)
 
 instance ( Generic (b1 UnsafeS UnsafeS)
          , Generic (b2 UnsafeS UnsafeS) )
-         => Generic (NestPair b1 b2 n l) where
-  type Rep (NestPair b1 b2 n l) = Rep (b1 UnsafeS UnsafeS, b2 UnsafeS UnsafeS)
-  from (NestPair b1 b2) = from (unsafeCoerceB b1, unsafeCoerceB b2)
-  to rep = NestPair (unsafeCoerceB b1) (unsafeCoerceB b2)
+         => Generic (PairB b1 b2 n l) where
+  type Rep (PairB b1 b2 n l) = Rep (b1 UnsafeS UnsafeS, b2 UnsafeS UnsafeS)
+  from (PairB b1 b2) = from (unsafeCoerceB b1, unsafeCoerceB b2)
+  to rep = PairB (unsafeCoerceB b1) (unsafeCoerceB b2)
     where (b1, b2) = to rep
 
 instance ( Store   (b UnsafeS UnsafeS), Store   (body UnsafeS)
@@ -822,7 +968,7 @@ instance ( Store   (b UnsafeS UnsafeS), Store   (body UnsafeS)
          => Store (Abs b body n)
 instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
          , Generic (b1 UnsafeS UnsafeS), Generic (b2 UnsafeS UnsafeS) )
-         => Store (NestPair b1 b2 n l)
+         => Store (PairB b1 b2 n l)
 
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envAsScope $ fromRecEnvFrag env
@@ -840,10 +986,32 @@ instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) whe
 instance Store (UnitE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
 instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
-instance Store (e n) => Store (MaybeE e n)
 instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance Store (e n) => Store (IdE e n)
 instance Store (const n) => Store (ConstE const ignored n)
 
-instance Show (NestPair b1 b2 n l)
+instance (Store (b n l), Store (ann n)) => Store (BinderP b ann n l)
+
+type EE = EitherE
+
+type EitherE1 e0             = EE e0 VoidE
+type EitherE2 e0 e1          = EE e0 (EE e1 VoidE)
+type EitherE3 e0 e1 e2       = EE e0 (EE e1 (EE e2 VoidE))
+type EitherE4 e0 e1 e2 e3    = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
+type EitherE5 e0 e1 e2 e3 e4 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
+
+pattern Case0 :: e0 n -> EE e0 rest n
+pattern Case0 e = LeftE e
+
+pattern Case1 :: e1 n -> EE e0 (EE e1 rest) n
+pattern Case1 e = RightE (LeftE e)
+
+pattern Case2 :: e2 n -> EE e0 (EE e1 (EE e2 rest)) n
+pattern Case2 e = RightE (RightE (LeftE e))
+
+pattern Case3 :: e3 n -> EE e0 (EE e1 (EE e2 (EE e3 rest))) n
+pattern Case3 e = RightE (RightE (RightE (LeftE e)))
+
+pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
+pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))

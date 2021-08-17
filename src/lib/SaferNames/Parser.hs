@@ -254,9 +254,9 @@ toNest = toNestParsed . map fromString
 toNestParsed :: [a VoidS VoidS] -> Nest a VoidS VoidS
 toNestParsed = foldr Nest Empty
 
-toNestPair :: forall a b. (IsString (a VoidS VoidS), IsString (b VoidS VoidS))
-           => String -> String -> NestPair a b VoidS VoidS
-toNestPair s1 s2 = NestPair parse1 parse2 where
+toPairB :: forall a b. (IsString (a VoidS VoidS), IsString (b VoidS VoidS))
+           => String -> String -> PairB a b VoidS VoidS
+toPairB s1 s2 = PairB parse1 parse2 where
   parse1 :: a VoidS VoidS
   parse1 = fromString s1
   parse2 :: b VoidS VoidS
@@ -454,28 +454,28 @@ uTabCon = withSrc $ do
   xs <- brackets $ expr `sepBy` sym ","
   return $ UTabCon xs
 
-type UStatement (n::S) (l::S) = (EitherBE UDecl UExpr n l, SrcPos)
+type UStatement (n::S) (l::S) = (EitherB UDecl (LiftB UExpr) n l, SrcPos)
 
 block :: Parser (UExpr VoidS)
 block = withIndent $ do
   statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
   case last statements of
-    (LeftBE _, _) -> fail "Last statement in a block must be an expression."
-    _             -> return $ wrapUStatements statements
+    (LeftB _, _) -> fail "Last statement in a block must be an expression."
+    _            -> return $ wrapUStatements statements
 
 -- TODO Generalize to Nest UStatement n l -> UExpr n ?
 wrapUStatements :: [UStatement VoidS VoidS] -> UExpr VoidS
 wrapUStatements statements = case statements of
-  [(RightBE e, _)] -> e
+  [(RightB (LiftB e), _)] -> e
   (s, pos):rest -> WithSrcE (Just pos) $ case s of
-    LeftBE  d -> UDecl $ UDeclExpr d $ wrapUStatements rest
-    RightBE e -> UDecl $ UDeclExpr d $ wrapUStatements rest
+    LeftB  d -> UDecl $ UDeclExpr d $ wrapUStatements rest
+    RightB (LiftB e) -> UDecl $ UDeclExpr d $ wrapUStatements rest
       where d = ULet PlainLet (UPatAnn (nsB UPatIgnore) Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser (UStatement VoidS VoidS)
-uStatement = withPos $   liftM LeftBE  (instanceDef True <|> decl)
-                     <|> liftM RightBE expr
+uStatement = withPos $   liftM LeftB  (instanceDef True <|> decl)
+                     <|> liftM (RightB . LiftB) expr
 
 -- TODO: put the `try` only around the `x:` not the annotation itself
 uPiType :: Parser (UExpr VoidS)
@@ -590,7 +590,7 @@ patPairOp :: Parser (UPat (n::S) (l::S) -> UPat l (l'::S) -> UPat n l')
 patPairOp = do
   allowed <- asks canPair
   if allowed
-    then sym "," $> \x y -> joinSrcB x y $ UPatPair $ NestPair x y
+    then sym "," $> \x y -> joinSrcB x y $ UPatPair $ PairB x y
     else fail "pair pattern not allowed outside parentheses"
 
 annot :: Parser a -> Parser a
@@ -669,7 +669,7 @@ uIsoSugar = withSrc (char '#' *> options) where
           $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r")
         )
         <> labeledSingleton "bwd" (lam
-          (nsB $ UPatPair $ toNestPair "x" "r")
+          (nsB $ UPatPair $ toPairB "x" "r")
           $ ns $ URecord $ Ext (labeledSingleton field $ "x")
                                $ Just $ "r"
         )
@@ -695,7 +695,7 @@ uIsoSugar = withSrc (char '#' *> options) where
     UApp plain "MkIso" $
       ns $ URecord $ NoExt $
         labeledSingleton "fwd" (lam
-          (nsB $ UPatPair $ NestPair
+          (nsB $ UPatPair $ PairB
             (nsB $ UPatRecord (Ext NoLabeledItems $ Just $ ()) $ toNest ["l"])
             (nsB $ (UPatRecord (Ext (labeledSingleton field ()) $ Just ())
                                (toNest ["x", "r"]))))
@@ -705,7 +705,7 @@ uIsoSugar = withSrc (char '#' *> options) where
             `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ "r")
         )
         <> labeledSingleton "bwd" (lam
-          (nsB $ UPatPair $ NestPair
+          (nsB $ UPatPair $ PairB
             (nsB $ (UPatRecord (Ext (labeledSingleton field ()) $ Just ())
                                (toNest ["x", "l"])))
             (nsB $ UPatRecord (Ext NoLabeledItems $ Just ()) $ toNest ["r"]))

@@ -20,7 +20,6 @@ import GHC.Exts (Constraint)
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import Data.Foldable (fold)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
