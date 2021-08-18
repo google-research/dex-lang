@@ -243,7 +243,7 @@ interfaceDef = do
     v <- anyName
     ty <- annot uType
     return (fromString v, ty)
-  let methodNames' :: Nest (UBinder MethodDef) VoidS VoidS
+  let methodNames' :: Nest (UBinder MethodNameC) VoidS VoidS
       methodNames' = toNest methodNames
   let tyConParams' = tyConParams
   return $ UInterface tyConParams' superclasses methodTys (fromString tyConName) methodNames'
@@ -287,7 +287,7 @@ tyConDef = do
 dataConDef :: Parser (UConDef VoidS VoidS)
 dataConDef = (,) <$> upperName <*> manyNested dataConDefBinder
 
-dataConDefBinder :: Parser (UAnnBinder AtomNameDef VoidS VoidS)
+dataConDefBinder :: Parser (UAnnBinder AtomNameC VoidS VoidS)
 dataConDefBinder = annBinder <|> (UAnnBinder UIgnore <$> containedExpr)
 
 decl :: Parser (UDecl VoidS VoidS)
@@ -490,16 +490,16 @@ uPiType = withSrc $ upi <$> piBinderPat <*> arrow effects <*> uType
         UIgnore       -> (UPatAnn (WithSrcB pos (UPatBinder UIgnore)) (Just ty))
         UBind _       -> error "Shouldn't have UBind at parsing stage"
 
-annBinder :: Parser (UAnnBinder (s::E) VoidS VoidS)
+annBinder :: Parser (UAnnBinder (c::C) VoidS VoidS)
 annBinder = try $ namedBinder <|> anonBinder
 
-namedBinder :: Parser (UAnnBinder (s::E) VoidS VoidS)
+namedBinder :: Parser (UAnnBinder (c::C) VoidS VoidS)
 namedBinder = label "named annoted binder" $ do
   v <- lowerName
   ty <- annot containedExpr
   return $ UAnnBinder (fromString v) ty
 
-anonBinder :: Parser (UAnnBinder (s::E) VoidS VoidS)
+anonBinder :: Parser (UAnnBinder (s::C) VoidS VoidS)
 anonBinder =
   label "anonymous annoted binder" $ UAnnBinder UIgnore <$>
     (underscore >> sym ":" >> containedExpr)

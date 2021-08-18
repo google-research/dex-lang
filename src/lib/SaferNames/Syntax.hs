@@ -27,13 +27,10 @@ module SaferNames.Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
-    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..), SourceNameDef (..),
-    FromSourceNameDef, fromSourceNameDef, ClassDef (..),
-    EvaluatedModule (..), SynthCandidates (..), TopState (..),
-    TopBindings (..), emptyTopState,
-    DataConRefBinding (..), MethodDef (..), SuperclassDef (..),
-    DataConNameDef (..), TyConNameDef (..),
-    AltP, Alt, AtomNameDef (..), AtomBinderInfo (..),
+    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
+    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), TopState (..),
+    emptyTopState,
+    DataConRefBinding (..), AltP, Alt, AtomBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
     Direction (..), Limit (..), DataDef (..), DataConDef (..), Nest (..), IndexStructure,
@@ -50,7 +47,10 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindingsFrag, TopBinding (..), NamedDataDef,
+    TopBindings (..), TopBindingsFrag, NamedDataDef,
+    BindingsReader (..), BindingsExtender (..),  Binding (..),
+    Bindings, BindingsFrag,
+    BindingsReaderT (..), BindingsReader2, BindingsExtender2,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -64,6 +64,7 @@ module SaferNames.Syntax (
 
 import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Reader
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -88,6 +89,7 @@ import Syntax
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
   , PassName, OutFormat (..))
 
+import SaferNames.NameCore
 import SaferNames.Name
 import PPrint ()
 import Err
@@ -140,17 +142,15 @@ data AtomBinderInfo (n::S) =
 
 -- We inline the definition for compatibility with the unsafe IR.
 -- TODO: remove once we don't need the bridge anymore
-type NamedDataDef n = (Name DataDef n, DataDef n)
-
-data AtomNameDef (n::S) = AtomNameDef (Type n) (AtomBinderInfo n)
-     deriving (Show, Generic)
+type NamedDataDef n = (DataDefName n, DataDef n)
 
 data Decl n l = Let LetAnn (Binder n l) (Expr n)
                 deriving (Show, Generic)
 
-type AtomName = Name AtomNameDef
+type AtomName    = Name AtomNameC
+type DataDefName = Name DataDefNameC
 
-type Binder = BinderP (NameBinder AtomNameDef) Type
+type Binder = BinderP (NameBinder AtomNameC) Type
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
 type AltP (e::E) = Abs (Nest Binder) e :: E
@@ -164,6 +164,10 @@ data DataDef n where
 -- As above, the `SourceName` is just for pretty-printing
 data DataConDef n =
   DataConDef SourceName (EmptyAbs (Nest Binder) n)
+  deriving (Show, Generic)
+
+data ClassDef n =
+  ClassDef SourceName [SourceName] (NamedDataDef n)
   deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
@@ -198,7 +202,61 @@ type Hof n = PrimHof (Atom n)
 
 type IndexStructure = Nest Binder
 
-type AtomSubstVal = SubstVal AtomNameDef Atom :: E -> E
+type AtomSubstVal = SubstVal AtomNameC Atom :: V
+
+-- === bindings - static information we carry about names ===
+
+data Binding (c::C) (n::S) where
+  AtomNameBinding   :: Type n -> AtomBinderInfo n         -> Binding AtomNameC       n
+  DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
+  TyConBinding      :: DataDefName n                      -> Binding TyConNameC      n
+  DataConBinding    :: DataDefName n -> Int               -> Binding DataConNameC    n
+  ClassBinding      :: ClassDef n                         -> Binding ClassNameC      n
+  SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
+  MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
+
+type Bindings n = NameFunction Binding n n
+type BindingsFrag n l = EnvFrag Binding n l l
+
+class ScopeReader m => BindingsReader (m::MonadKind1) where
+  getBindings :: m n (Bindings n)
+
+class ScopeReader m => BindingsExtender (m::MonadKind1) where
+  extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
+
+type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
+type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
+
+instance Monad m => BindingsExtender (ScopeReaderT m) where
+  extendBindings frag = extendScope (envAsScope frag)
+
+newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
+  BindingsReaderT {runBindingsReaderT :: ReaderT (Bindings n) (ScopeReaderT m n) a }
+  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+
+instance Monad m => BindingsReader (BindingsReaderT m) where
+  getBindings = BindingsReaderT ask
+
+instance Monad m => BindingsExtender (BindingsReaderT m) where
+  extendBindings frag (BindingsReaderT (ReaderT f)) =
+    BindingsReaderT $ ReaderT \bindings -> do
+       let scopeFrag = envAsScope frag
+       extendScope scopeFrag do
+         bindings' <- injectM scopeFrag bindings
+         f (bindings' <>> frag)
+
+instance Monad m => ScopeReader (BindingsReaderT m) where
+  getScope = BindingsReaderT $ lift $ getScope
+
+instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
+  getBindings = EnvReaderT $ lift getBindings
+
+instance (InjectableV v, ScopeReader m, BindingsExtender m)
+         => BindingsExtender (EnvReaderT v m i) where
+  extendBindings frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
+    extendBindings frag do
+      env' <- injectM (envAsScope frag) env
+      cont env'
 
 -- === front-end language AST ===
 
@@ -212,20 +270,20 @@ deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
 
 data UVar (n::S) =
-   UAtomVar (Name AtomNameDef n)
- | UTyConVar (Name TyConNameDef n)
- | UDataConVar (Name DataConNameDef n)
- | UClassVar (Name ClassDef n)
- | UMethodVar (Name MethodDef n)
+   UAtomVar    (Name AtomNameC    n)
+ | UTyConVar   (Name TyConNameC   n)
+ | UDataConVar (Name DataConNameC n)
+ | UClassVar   (Name ClassNameC   n)
+ | UMethodVar  (Name MethodNameC  n)
    deriving (Eq, Ord, Show, Generic)
 
-data UBinder (s::E) (n::S) (l::S) where
+data UBinder (c::C) (n::S) (l::S) where
   -- Only appears before renaming pass
-  UBindSource :: SourceName -> UBinder s VoidS VoidS
+  UBindSource :: SourceName -> UBinder c VoidS VoidS
   -- May appear before or after renaming pass
-  UIgnore :: UBinder s n n
+  UIgnore :: UBinder c n n
   -- The following binders only appear after the renaming pass.
-  UBind :: (NameBinder s n l) -> UBinder s n l
+  UBind :: (NameBinder c n l) -> UBinder c n l
 
 type UExpr = WithSrcE UExpr'
 data UExpr' (n::S) =
@@ -259,42 +317,42 @@ data UPiExpr (n::S) where
 data UDeclExpr (n::S) where
   UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
 
-type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameDef) n l)
+type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameC) n l)
 
 -- TODO Why are the type and data constructor names SourceName, rather
 -- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
-    :: (SourceName, Nest (UAnnBinder AtomNameDef) n l)    -- param binders
+    :: (SourceName, Nest (UAnnBinder AtomNameC) n l)    -- param binders
     -- Trailing l' is the last scope for the chain of potentially
     -- dependent constructor argument types.
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
 data UDataDefTrail (l::S) where
-  UDataDefTrail :: Nest (UAnnBinder AtomNameDef) l l' -> UDataDefTrail l
+  UDataDefTrail :: Nest (UAnnBinder AtomNameC) l l' -> UDataDefTrail l
 
 data UDecl (n::S) (l::S) where
   ULet :: LetAnn -> UPatAnn n l -> UExpr n -> UDecl n l
   UDataDefDecl
-    :: UDataDef n                            -- actual definition
-    -> UBinder TyConNameDef n l'             -- type constructor name
-    ->   Nest (UBinder DataConNameDef) l' l  -- data constructor names
+    :: UDataDef n                          -- actual definition
+    -> UBinder TyConNameC n l'             -- type constructor name
+    ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
     -> UDecl n l
   UInterface
-    :: Nest (UAnnBinder AtomNameDef) n p  -- parameter binders
-    ->  [UType p]                         -- superclasses
-    ->  [UType p]                         -- method types
-    -> UBinder ClassDef n l'              -- class name
-    ->   Nest (UBinder MethodDef) l' l    -- method names
+    :: Nest (UAnnBinder AtomNameC) n p     -- parameter binders
+    ->  [UType p]                          -- superclasses
+    ->  [UType p]                          -- method types
+    -> UBinder ClassNameC n l'             -- class name
+    ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UDecl n l
   UInstance
-    :: Nest UPatAnnArrow n l'            -- dictionary args (i.e. conditions)
-    ->   SourceNameOr (Name ClassDef) l' -- class variable
-    ->   [UExpr l']                      -- class parameters
-    ->   [UMethodDef l']                 -- method definitions
+    :: Nest UPatAnnArrow n l'              -- dictionary args (i.e. conditions)
+    ->   SourceNameOr (Name ClassNameC) l' -- class variable
+    ->   [UExpr l']                        -- class parameters
+    ->   [UMethodDef l']                   -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
-    -> MaybeB (UBinder AtomNameDef) n l  -- optional instance name
+    -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
     -> UDecl n l
 
 type UType  = UExpr
@@ -302,7 +360,7 @@ type UType  = UExpr
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
 
-data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodDef) n) (UExpr n)
+data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (UExpr n)
   deriving (Show, Generic)
 
 data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
@@ -311,7 +369,7 @@ data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
 data UPatAnnArrow (n::S) (l::S) = UPatAnnArrow (UPatAnn n l) Arrow
   deriving (Show, Generic)
 
-data UAnnBinder (s::E) (n::S) (l::S) = UAnnBinder (UBinder s n l) (UType n)
+data UAnnBinder (c::C) (n::S) (l::S) = UAnnBinder (UBinder c n l) (UType n)
   deriving (Show, Generic)
 
 data UAlt (n::S) where
@@ -319,8 +377,8 @@ data UAlt (n::S) where
 
 type UPat = WithSrcB UPat'
 data UPat' (n::S) (l::S) =
-   UPatBinder (UBinder AtomNameDef n l)
- | UPatCon (SourceNameOr (Name DataConNameDef) n) (Nest UPat n l)
+   UPatBinder (UBinder AtomNameC n l)
+ | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
  -- The ExtLabeledItems and the Nest are meant to be parallel.  If the
@@ -393,37 +451,15 @@ data TopState n = TopState
   deriving Show
 
 data TopBindings n where
-  TopBindings :: Distinct n => Env TopBinding n n -> TopBindings n
+  TopBindings :: Distinct n => Env Binding n n -> TopBindings n
 
-type TopBindingsFrag n l = EnvFrag TopBinding n l l
-
--- TODO: add Store, PPrint etc
-data TopBinding (e::E) (n::S) where
-  TopBinding :: (Typeable e, SubstE AtomSubstVal e, SubstE Name e, InjectableE e)
-             => e n -> TopBinding e n
+type TopBindingsFrag n l = EnvFrag Binding n l l
 
 emptyTopState :: TopState VoidS
 emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
 
-data SourceNameDef (n::S) =
-   SrcAtomName    (Name AtomNameDef n)
- | SrcTyConName   (Name TyConNameDef n)
- | SrcDataConName (Name DataConNameDef n)
- | SrcClassName   (Name ClassDef n)
- | SrcMethodName  (Name MethodDef n)
- deriving (Show, Generic)
-
-class FromSourceNameDef (color::E) where
-  fromSourceNameDef :: SourceNameDef n -> Maybe (Name color n)
-
-data TyConNameDef   n = TyConNameDef   (Name DataDef n)                    deriving (Show, Generic)
-data DataConNameDef n = DataConNameDef (Name DataDef n) Int                deriving (Show, Generic)
-data ClassDef       n = ClassDef SourceName [SourceName] (NamedDataDef n)  deriving (Show, Generic)
-data MethodDef      n = MethodDef (Name ClassDef n) Int (Atom n)           deriving (Show, Generic)
-data SuperclassDef  n = SuperclassDef (Name ClassDef n) Int (Atom n)       deriving (Show, Generic)
-
 data SourceMap (n::S) = SourceMap
-  { fromSourceMap :: M.Map SourceName (SourceNameDef n)}
+  { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
   deriving (Show, Generic)
 
 data Module n where
@@ -454,14 +490,14 @@ data EffectP (name::E) (n::S) =
   deriving (Show, Eq, Ord, Generic)
 
 type Effect = EffectP AtomName
-type UEffect = EffectP (SourceNameOr (Name AtomNameDef))
+type UEffect = EffectP (SourceNameOr (Name AtomNameC))
 
 data EffectRowP (name::E) (n::S) =
   EffectRow (S.Set (EffectP name n)) (Maybe (name n))
   deriving (Show, Eq, Ord, Generic)
 
 type EffectRow = EffectRowP AtomName
-type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameDef))
+type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
 
 pattern Pure :: Ord (name n) => EffectRowP name n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
@@ -479,7 +515,7 @@ infixr 2 ==>
 nonDepPiType :: (ScopeReader m, ScopeExtender m)
              => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
 nonDepPiType arr argTy eff resultTy =
-  toConstAbs (PairE eff resultTy) >>= \case
+  toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
       return $ Pi $ PiType arr (b:>argTy) eff' resultTy'
 
@@ -620,8 +656,8 @@ pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 -- -- === instances ===
 
-instance TypesNotEqual AtomNameDef DataDef  where notEqProof = \case
-instance TypesNotEqual AtomNameDef ClassDef where notEqProof = \case
+instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 
 -- right-biased, unlike the underlying Map
 instance Semigroup (SourceMap n) where
@@ -649,40 +685,9 @@ instance SubstE Name DataConDef
 instance SubstE AtomSubstVal DataConDef
 instance AlphaEqE DataConDef
 
-instance GenericE MethodDef where
-  type RepE MethodDef = PairE (Name ClassDef) (PairE (LiftE Int) Atom)
-  fromE (MethodDef name idx getter) = PairE name (PairE (LiftE idx) getter)
-  toE   (PairE name (PairE (LiftE idx) getter)) = MethodDef name idx getter
-instance SubstE Name MethodDef
-instance SubstE AtomSubstVal MethodDef
-instance InjectableE MethodDef
-
-instance GenericE SuperclassDef where
-  type RepE SuperclassDef = PairE (Name ClassDef) (PairE (LiftE Int) Atom)
-  fromE (SuperclassDef name idx getter) = PairE name (PairE (LiftE idx) getter)
-  toE   (PairE name (PairE (LiftE idx) getter)) = SuperclassDef name idx getter
-instance SubstE Name SuperclassDef
-instance SubstE AtomSubstVal SuperclassDef
-instance InjectableE SuperclassDef
-
-instance GenericE DataConNameDef where
-  type RepE DataConNameDef = PairE (Name DataDef) (LiftE Int)
-  fromE (DataConNameDef name idx) = PairE name (LiftE idx)
-  toE   (PairE name (LiftE idx)) = DataConNameDef name idx
-instance SubstE Name DataConNameDef
-instance SubstE AtomSubstVal DataConNameDef
-instance InjectableE DataConNameDef
-
-instance GenericE TyConNameDef where
-  type RepE TyConNameDef = Name DataDef
-  fromE (TyConNameDef name) = name
-  toE   name = TyConNameDef name
-instance SubstE Name TyConNameDef
-instance SubstE AtomSubstVal TyConNameDef
-instance InjectableE TyConNameDef
-
 instance GenericE ClassDef where
-  type RepE ClassDef = PairE (LiftE (SourceName, [SourceName])) (PairE (Name DataDef) DataDef)
+  type RepE ClassDef = PairE (LiftE (SourceName, [SourceName]))
+                             (PairE (Name DataDefNameC) DataDef)
   fromE (ClassDef className methodNames (dataDefName, dataDef)) =
           PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)
   toE (PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)) =
@@ -719,11 +724,11 @@ instance GenericE Atom where
             ) (EitherE4
   {- Lam -}        LamExpr
   {- Pi -}         PiType
-  {- DataCon -}    ( LiftE (SourceName, Int)      `PairE`
-                     PairE (Name DataDef) DataDef `PairE`
-                     ListE Atom                   `PairE`
+  {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
+                     PairE DataDefName DataDef `PairE`
+                     ListE Atom                `PairE`
                      ListE Atom )
-  {- TypeCon -}    ( PairE (Name DataDef) DataDef `PairE` ListE Atom )
+  {- TypeCon -}    ( PairE DataDefName DataDef `PairE` ListE Atom )
             ) (EitherE5
   {- LabeledRow -} (ExtLabeledItemsE Type AtomName)
   {- Record -}     (ComposeE LabeledItems Atom)
@@ -737,8 +742,8 @@ instance GenericE Atom where
             ) (EitherE4
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
-  {- DataConRef -} ( PairE (Name DataDef) DataDef `PairE`
-                     ListE Atom                   `PairE`
+  {- DataConRef -} ( PairE DataDefName DataDef      `PairE`
+                     ListE Atom                     `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
   {- BoxedRef -}   ( Atom `PairE` Block `PairE` Abs Binder Atom ))
 
@@ -981,37 +986,30 @@ instance InjectableE SynthCandidates
 instance SubstE Name SynthCandidates
 instance SubstE AtomSubstVal SynthCandidates
 
-instance GenericE SourceNameDef where
-  type RepE SourceNameDef =
-     EitherE5
-        (Name AtomNameDef)
-        (Name TyConNameDef)
-        (Name DataConNameDef)
-        (Name ClassDef)
-        (Name MethodDef)
-
-  fromE = \case
-    SrcAtomName    name -> Case0 name
-    SrcTyConName   name -> Case1 name
-    SrcDataConName name -> Case2 name
-    SrcClassName   name -> Case3 name
-    SrcMethodName  name -> Case4 name
-
-  toE = \case
-    Case0 name -> SrcAtomName    name
-    Case1 name -> SrcTyConName   name
-    Case2 name -> SrcDataConName name
-    Case3 name -> SrcClassName   name
-    Case4 name -> SrcMethodName  name
-    _ -> error "impossible"
-
-instance InjectableE SourceNameDef
-instance SubstE Name SourceNameDef
-
 instance SubstE Name EvaluatedModule where
   substE (EvaluatedModule bindings scs sourceMap) =
     withSubstB (RecEnvFrag bindings) \(RecEnvFrag bindings') ->
       EvaluatedModule bindings' <$> substE scs <*> substE sourceMap
+
+instance SubstE Name (Binding c) where
+  substE binding = case binding of
+    AtomNameBinding   ty info         -> AtomNameBinding   <$> substE ty <*> substE info
+    DataDefBinding    dataDef         -> DataDefBinding    <$> substE dataDef
+    TyConBinding      dataDefName     -> TyConBinding      <$> substE dataDefName
+    DataConBinding    dataDefName idx -> DataConBinding    <$> substE dataDefName <*> pure idx
+    ClassBinding      classDef        -> ClassBinding      <$> substE classDef
+    SuperclassBinding className idx e -> SuperclassBinding <$> substE className <*> pure idx <*> substE e
+    MethodBinding     className idx e -> MethodBinding     <$> substE className <*> pure idx <*> substE e
+
+instance InjectableE (Binding c) where
+  injectionProofE fresh binding = case binding of
+    AtomNameBinding   ty info         -> AtomNameBinding   (injectionProofE fresh ty) (injectionProofE fresh info)
+    DataDefBinding    dataDef         -> DataDefBinding    (injectionProofE fresh dataDef)
+    TyConBinding      dataDefName     -> TyConBinding      (injectionProofE fresh dataDefName)
+    DataConBinding    dataDefName idx -> DataConBinding    (injectionProofE fresh dataDefName) idx
+    ClassBinding      classDef        -> ClassBinding      (injectionProofE fresh classDef)
+    SuperclassBinding className idx e -> SuperclassBinding (injectionProofE fresh className) idx (injectionProofE fresh e)
+    MethodBinding     className idx e -> MethodBinding     (injectionProofE fresh className) idx (injectionProofE fresh e)
 
 instance GenericE AtomBinderInfo where
   type RepE AtomBinderInfo =
@@ -1042,16 +1040,6 @@ instance SubstE Name AtomBinderInfo
 instance SubstE AtomSubstVal AtomBinderInfo
 instance AlphaEqE AtomBinderInfo
 
-instance GenericE AtomNameDef where
-  type RepE AtomNameDef = PairE Type AtomBinderInfo
-  fromE (AtomNameDef ty info) = PairE ty info
-  toE   (PairE ty info) = AtomNameDef ty info
-
-instance InjectableE AtomNameDef
-instance SubstE Name AtomNameDef
-instance SubstE AtomSubstVal AtomNameDef
-instance AlphaEqE AtomNameDef
-
 instance GenericB Decl where
   type RepB Decl = BinderP Binder (PairE (LiftE LetAnn) Expr)
   fromB (Let ann b expr) = b :> PairE (LiftE ann) expr
@@ -1078,19 +1066,10 @@ instance Semigroup (SynthCandidates n) where
 instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty
 
-instance InjectableE (TopBinding e) where
-  injectionProofE fresh (TopBinding e) = TopBinding $ injectionProofE fresh e
-
-instance SubstE Name (TopBinding e) where
-  substE (TopBinding e) = TopBinding <$> substE e
-
-instance SubstE AtomSubstVal (TopBinding e) where
-  substE (TopBinding e) = TopBinding <$> substE e
-
 instance Show (TopBindings n)
 
 instance GenericE SourceMap where
-  type RepE SourceMap = ListE (PairE (LiftE SourceName) SourceNameDef)
+  type RepE SourceMap = ListE (PairE (LiftE SourceName) (EnvVal Name))
   fromE (SourceMap m) = ListE [PairE (LiftE v) def | (v, def) <- M.toList m]
   toE   (ListE pairs) = SourceMap $ M.fromList [(v, def) | (PairE (LiftE v) def) <- pairs]
 
@@ -1101,28 +1080,8 @@ instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
-instance Pretty (SourceNameDef n) where
-  pretty def = case def of
-   SrcAtomName    name -> "atom name:"        <+> pretty name
-   SrcTyConName   name -> "type constructor:" <+> pretty name
-   SrcDataConName name -> "data constructor:" <+> pretty name
-   SrcClassName   name -> "class name:"       <+> pretty name
-   SrcMethodName  name -> "method name:"      <+> pretty name
-
-instance Pretty (TopBinding s n) where
-  pretty (TopBinding x) = prettyTypeOf x
-
 prettyTypeOf :: forall (n::S) (e::E) ann . Typeable e => e n -> Doc ann
 prettyTypeOf _ = pretty $ show (typeRep :: TypeRep e)
-
-instance Pretty (TopBindings n) where
-  pretty (TopBindings env) = pretty env
-
-instance Pretty (TopState n) where
-  pretty s =
-    "bindings: "        <> nest 2 (hardline <> pretty (topBindings s))  <> hardline <>
-    "synth candidates:" <> hardline <>
-    "source map: "      <> nest 2 (hardline <> pretty (topSourceMap s)) <> hardline
 
 instance Generic (Block n) where
   type Rep (Block n) = Rep (PairE Type (Abs (Nest Decl) Expr) n)
@@ -1151,7 +1110,6 @@ instance Generic (DataDef n) where
 instance Store (Atom n)
 instance Store (Expr n)
 instance Store (AtomBinderInfo n)
-instance Store (AtomNameDef n)
 instance Store (Decl n l)
 instance Store (DataDef n)
 instance Store (DataConDef n)
@@ -1159,12 +1117,7 @@ instance Store (Block n)
 instance Store (LamExpr n)
 instance Store (PiType  n)
 instance Store Arrow
-instance Store (SourceNameDef n)
-instance Store (TyConNameDef   n)
-instance Store (DataConNameDef n)
 instance Store (ClassDef       n)
-instance Store (MethodDef      n)
-instance Store (SuperclassDef  n)
 instance Store (SourceMap n)
 instance Store (SynthCandidates n)
 instance Store (EffectRow n)
@@ -1191,26 +1144,6 @@ instance IsString (a n) => IsString (WithSrcE a n) where
 
 instance IsString (b n l) => IsString (WithSrcB b n l) where
   fromString = WithSrcB Nothing . fromString
-
-instance FromSourceNameDef AtomNameDef where
-  fromSourceNameDef (SrcAtomName name) = Just name
-  fromSourceNameDef _ = Nothing
-
-instance FromSourceNameDef TyConNameDef where
-  fromSourceNameDef (SrcTyConName name) = Just name
-  fromSourceNameDef _ = Nothing
-
-instance FromSourceNameDef DataConNameDef where
-  fromSourceNameDef (SrcDataConName name) = Just name
-  fromSourceNameDef _ = Nothing
-
-instance FromSourceNameDef ClassDef where
-  fromSourceNameDef (SrcClassName name) = Just name
-  fromSourceNameDef _ = Nothing
-
-instance FromSourceNameDef MethodDef where
-  fromSourceNameDef (SrcMethodName name) = Just name
-  fromSourceNameDef _ = Nothing
 
 deriving instance Show (UBinder s n l)
 deriving instance Show (UDataDefTrail n)

@@ -236,3 +236,26 @@ instance Pretty (Effect n) where
     IOEffect        -> "IO"
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance Pretty (AtomBinderInfo n) where
+  pretty = undefined
+
+instance Pretty (Binding s n) where
+  pretty b = case b of
+    AtomNameBinding   ty info -> "Atom name type:" <+> pretty ty
+                             <+> "binder info:" <+> pretty info
+    -- DataDefBinding    dataDef ->
+    -- TyConBinding      dataDefName ->
+    -- DataConBinding    dataDefName idx ->
+    -- ClassBinding      classDef ->
+    -- SuperclassBinding className idx _ ->
+    -- MethodBinding     className idx _ ->
+
+instance Pretty (TopBindings n) where
+  pretty (TopBindings env) = pretty env
+
+instance Pretty (TopState n) where
+  pretty s =
+    "bindings: "        <> nest 2 (hardline <> pretty (topBindings s))  <> hardline <>
+    "synth candidates:" <> hardline <>
+    "source map: "      <> nest 2 (hardline <> pretty (topSourceMap s)) <> hardline
