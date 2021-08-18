@@ -670,7 +670,8 @@ instance GenericE DataDef where
   type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest Binder) (ListE DataConDef))
   fromE (DataDef name bs cons) = PairE (LiftE name) (Abs bs (ListE cons))
   toE   (PairE (LiftE name) (Abs bs (ListE cons))) = DataDef name bs cons
-deriving instance (Show (DataDef n))
+deriving instance Show (DataDef n)
+deriving via WrapE DataDef n instance Generic (DataDef n)
 instance InjectableE DataDef
 instance SubstE Name DataDef
 instance SubstE AtomSubstVal DataDef
@@ -904,6 +905,7 @@ instance AlphaEqE Block
 instance SubstE Name Block
 instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
+deriving via WrapE Block n instance Generic (Block n)
 
 instance GenericE LamExpr where
   type RepE LamExpr = PairE (LiftE Arrow) (Abs Binder (PairE EffectRow Block))
@@ -914,6 +916,7 @@ instance AlphaEqE LamExpr
 instance SubstE Name LamExpr
 instance SubstE AtomSubstVal LamExpr
 deriving instance Show (LamExpr n)
+deriving via WrapE LamExpr n instance Generic (LamExpr n)
 
 instance GenericE PiType where
   type RepE PiType = PairE (LiftE Arrow) (Abs Binder (PairE EffectRow Type))
@@ -924,6 +927,7 @@ instance AlphaEqE PiType
 instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
 deriving instance Show (PiType n)
+deriving via WrapE PiType n instance Generic (PiType n)
 
 instance GenericE (EffectP name) where
   type RepE (EffectP name) =
@@ -1082,30 +1086,6 @@ instance Pretty (SourceMap n) where
 
 prettyTypeOf :: forall (n::S) (e::E) ann . Typeable e => e n -> Doc ann
 prettyTypeOf _ = pretty $ show (typeRep :: TypeRep e)
-
-instance Generic (Block n) where
-  type Rep (Block n) = Rep (PairE Type (Abs (Nest Decl) Expr) n)
-  from (Block ty decls result) = from $ PairE ty $ Abs decls result
-  to rep = case to rep of
-    PairE ty (Abs decls result) -> Block ty decls result
-
-instance Generic (LamExpr n) where
-  type Rep (LamExpr n) = Rep (Arrow, Abs Binder (PairE EffectRow Block) n)
-  from (LamExpr arr b row block) = from (arr, Abs b (PairE row block))
-  to rep = case to rep of
-    (arr, Abs b (PairE row block)) -> LamExpr arr b row block
-
-instance Generic (PiType n) where
-  type Rep (PiType n) = Rep (Arrow, Abs Binder (PairE EffectRow Type) n)
-  from (PiType arr b row ty) = from (arr, Abs b (PairE row ty))
-  to rep = case to rep of
-    (arr, Abs b (PairE row ty)) -> PiType arr b row ty
-
-instance Generic (DataDef n) where
-  type Rep (DataDef n) = Rep (SourceName, Abs (Nest Binder) (ListE DataConDef) n)
-  from (DataDef name bs dataCons) = from (name, Abs bs (ListE dataCons))
-  to rep = case to rep of
-    (name, Abs bs (ListE dataCons)) -> DataDef name bs dataCons
 
 instance Store (Atom n)
 instance Store (Expr n)

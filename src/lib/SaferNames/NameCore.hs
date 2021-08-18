@@ -19,7 +19,7 @@ module SaferNames.NameCore (
   InjectableV, InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
   toEnvPairs, fromEnvPairs, EnvPair (..),
-  GenericE (..), GenericB (..), EnvVal (..),
+  GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep) where
 
 import Prelude hiding (id, (.))
@@ -170,6 +170,19 @@ class GenericB (b::B) where
   type RepB b :: S -> S -> Type
   fromB :: b n l -> RepB b n l
   toB   :: RepB b n l -> b n l
+
+newtype WrapE (e::E) (n::S) = WrapE { fromWrapE :: e n }
+newtype WrapB (b::B) (n::S) (l::S) = WrapB { fromWrapB :: b n l}
+
+instance (GenericE e, Generic (RepE e n)) => Generic (WrapE e n) where
+  type Rep (WrapE e n) = Rep (RepE e n)
+  from e = from $ fromE $ fromWrapE e
+  to e = WrapE $ toE $ to e
+
+instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
+  type Rep (WrapB b n l) = Rep (RepB b n l)
+  from b = from $ fromB $ fromWrapB b
+  to b = WrapB $ toB $ to b
 
 -- === injections ===
 
@@ -360,6 +373,8 @@ instance Pretty (NameBinder s n l) where
 
 instance (forall c. Pretty (v c n)) => Pretty (EnvVal v n) where
   pretty = undefined
+
+instance Pretty (NameColorRep c)
 
 instance Eq (Name s n) where
   UnsafeMakeName _ rawName == UnsafeMakeName _ rawName' = rawName == rawName'

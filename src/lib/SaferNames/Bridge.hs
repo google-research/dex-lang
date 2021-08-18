@@ -303,7 +303,7 @@ instance HasSafeVersionB DRecEnvFrag where
         EnvVal rep info' <- toSafeE info
         case eqNameColorRep rep (getNameColor b) of
           Just EqNameColor -> return $ EnvPair b $ info'
-          Nothing -> error "color mismatch"
+          Nothing -> error $ "color mismatch: " <> pprint rep <> " vs " <> pprint (getNameColor b)
       cont $ RecEnvFrag $ fromEnvPairs nest'
     where
       renameBinders
