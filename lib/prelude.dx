@@ -1615,6 +1615,9 @@ instance [Arbitrary a, Arbitrary b] Arbitrary (a & b)
 instance Arbitrary (Fin n)
   arb = randIdx
 
+instance Arbitrary Bool
+  arb = \key. rand key < 0.5
+
 '## Ord on Arrays
 
 '### Searching

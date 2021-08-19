@@ -56,11 +56,10 @@ def parseP6' : Parser Image = MkParser \h.
         parse h parseAny
   MkImage rows cols pixels
 
-def loadImageP6 (filename:String) : Image =
+def loadImageP6 (filename:String) : Maybe Image =
   -- Todo: decide between exceptions and Maybe
   image_raw = unsafeIO do readFile filename
-  -- (rows, cols, _) = fromJust $ runParserPartial image_raw parseP6header
-  fromJust $ runParserPartial image_raw parseP6'
+  runParserPartial image_raw parseP6'
 
 
 '## Image saving utilities
