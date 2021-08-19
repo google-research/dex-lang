@@ -47,7 +47,8 @@ module SaferNames.Syntax (
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
     TopBindings (..), TopBindingsFrag, NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
-    Bindings, BindingsFrag,
+    refreshBinders, withFreshBinder, withFreshBinding,
+    Bindings, BindingsFrag, lookupBindings,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
@@ -57,7 +58,7 @@ module SaferNames.Syntax (
     pattern PairVal, pattern TyKind,
     pattern Pure, pattern LabeledRowKind, pattern EffKind,
     pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
-    pattern IntLitExpr, pattern FloatLitExpr,
+    pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
@@ -257,6 +258,50 @@ instance (InjectableV v, ScopeReader m, BindingsExtender m)
     extendBindings frag do
       env' <- injectM (envAsScope frag) env
       cont env'
+
+-- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
+-- like we do with `SubstE Name`, `SubstE AtomSubstVal`, etc?
+class BindsNames b => BindsBindings (b::B) where
+  boundBindings :: b n l -> BindingsFrag n l
+
+lookupBindings :: BindingsReader m => Name c o -> m o (Binding c o)
+lookupBindings v = (!v) <$> getBindings
+
+withFreshBinding
+  :: (NameColor c, BindingsReader m, BindingsExtender m, HasNameHint hint)
+  => hint
+  -> Binding c o
+  -> (forall o'. NameBinder c o o' -> m o' a)
+  -> m o a
+withFreshBinding hint binding cont = do
+  Distinct scope <- getScope
+  withFresh (getNameHint hint) nameColorRep scope \b' -> do
+    let binding' = inject b' binding
+    extendBindings (b' @> binding') $
+      cont b'
+
+withFreshBinder
+  :: (BindingsReader m, BindingsExtender m, HasNameHint hint)
+  => hint
+  -> Type o
+  -> AtomBinderInfo o
+  -> (forall o'. Binder o o' -> m o' a)
+  -> m o a
+withFreshBinder hint ty info cont =
+  withFreshBinding hint (AtomNameBinding ty info) \b ->
+    cont $ b :> ty
+
+refreshBinders
+  :: ( BindingsExtender2 m, Renamer m
+     , EnvGetter AtomSubstVal m, SubstB AtomSubstVal b, BindsBindings b)
+  => b i i'
+  -> (forall o'. b o o' -> m i' o' r)
+  -> m i o r
+refreshBinders b cont = do
+  WithScopeSubstFrag _ env b' <- liftScopedEnvReader $ runSubstGenT $ substB b
+  extendBindings (boundBindings b') do
+    extendRenamer env $
+      cont b'
 
 -- === front-end language AST ===
 
@@ -513,23 +558,23 @@ infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
-nonDepPiType :: (ScopeReader m, ScopeExtender m)
+nonDepPiType :: ScopeReader m
              => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
       return $ Pi $ PiType arr (b:>argTy) eff' resultTy'
 
-(?-->) :: (ScopeReader m, ScopeExtender m) => Type n -> Type n -> m n (Type n)
+(?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a ?--> b = nonDepPiType ImplicitArrow a Pure b
 
-(-->) :: (ScopeReader m, ScopeExtender m) => Type n -> Type n -> m n (Type n)
+(-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a --> b = nonDepPiType PlainArrow a Pure b
 
-(--@) :: (ScopeReader m, ScopeExtender m) => Type n -> Type n -> m n (Type n)
+(--@) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a --@ b = nonDepPiType LinArrow a Pure b
 
-(==>) :: (ScopeReader m, ScopeExtender m) => Type n -> Type n -> m n (Type n)
+(==>) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a ==> b = nonDepPiType TabArrow a Pure b
 
 pattern IntLitExpr :: Int -> UExpr' n
@@ -567,6 +612,12 @@ pattern TagRepVal x = Con (Lit (Word8Lit x))
 
 pattern Word8Ty :: Type n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
+
+pattern ProdTy :: [Type n] -> Type n
+pattern ProdTy tys = TC (ProdType tys)
+
+pattern ProdVal :: [Atom n] -> Atom n
+pattern ProdVal xs = Con (ProdCon xs)
 
 pattern PairVal :: Atom n -> Atom n -> Atom n
 pattern PairVal x y = Con (ProdCon [x, y])
@@ -1169,3 +1220,7 @@ deriving instance Show (UDataDef n)
 deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
+
+instance BindsBindings Binder
+instance BindsBindings Decl
+instance BindsBindings b => (BindsBindings (Nest b))
