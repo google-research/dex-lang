@@ -228,7 +228,7 @@ movieflat = for i.
     for j k. probToColor movie.i.(j, k) flip_prob.(j, k)
 
 :html imseqshow movieflat
-
+> <html output>
 
 
 '### Run Standard Gibbs
@@ -250,7 +250,7 @@ movieflat' = for i.
     for j k. probToColor movie'.i.(j, k) flip_prob
 
 :html imseqshow movieflat'
-
+> <html output>
 
 'We see Gibbs with gradients mixes faster.
 The difference in performance between the two methods
@@ -260,7 +260,9 @@ will generally grow in proportion to the size of the state.
 if not (dex_test_mode ())
   then pngsToSavedGif 1 (map imgToPng movieflat) "gibbs_with_gradients"
   else ""
+> (AsList 0 "")
 
 if not (dex_test_mode ())
   then pngsToSavedGif 1 (map imgToPng movieflat') "standard_gibbs"
   else ""
+> (AsList 0 "")
