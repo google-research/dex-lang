@@ -110,7 +110,7 @@ instance HasImplicitArgNamesE (SourceNameOr e) where
     when (isFree && isLower (head v)) $ tell [v]
   implicitArgsE _ = error "Unexpected internal name"
 
-instance HasImplicitArgNamesB (UBinder (color::E)) where
+instance HasImplicitArgNamesB (UBinder (color::C)) where
   implicitArgsB ubinder = case ubinder of
     UBindSource b -> extendEnv (S.singleton b)
     UBind _ -> error "Unexpected internal name"
@@ -164,8 +164,8 @@ instance HasImplicitArgNamesB b => HasImplicitArgNamesB (Nest b) where
   implicitArgsB (Nest b bs) = implicitArgsB b >> implicitArgsB bs
 
 instance (HasImplicitArgNamesB b1, HasImplicitArgNamesB b2)
-         => HasImplicitArgNamesB (NestPair b1 b2) where
-  implicitArgsB (NestPair b1 b2) = implicitArgsB b1 >> implicitArgsB b2
+         => HasImplicitArgNamesB (PairB b1 b2) where
+  implicitArgsB (PairB b1 b2) = implicitArgsB b1 >> implicitArgsB b2
 
 instance (HasImplicitArgNamesB b, HasImplicitArgNamesE e)
          => HasImplicitArgNamesE (Abs b e) where

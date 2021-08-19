@@ -8,33 +8,42 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE EmptyCase #-}
 
 module SaferNames.Name (
-  Name (..), RawName, S (..), Env, (<.>), EnvFrag (..), NameBinder (..),
-  EnvReader (..), EnvExtender (..), Renamer (..), Distinct,
-  NameFunction (..), emptyNameFunction, WithScopeFrag (..), DistinctScope (..),
-  ScopeReader (..), ScopeExtender (..), BindingsReader (..), BindingsExtender (..),
-  Scope, Bindings, ScopeFrag (..), BindingsFrag, SubstE (..), SubstB (..),
-  E, B, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
-  BindsOneName (..), BindsNameList (..),
-  Abs (..), Nest (..), NestPair (..), UnitB (..), MaybeB (..),
-  IsVoidS (..), UnitE (..), VoidE, PairE (..), MaybeE (..), ListE (..),
-  EitherE (..), EitherBE (..), LiftE (..), EqE, EqB,
+  Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
+  EnvReader (..), EnvExtender (..), Renamer (..), Distinct, WithDistinct (..),
+  NameFunction (..), emptyNameFunction, WithScopeFrag (..),
+  ScopeReader (..), ScopeExtender (..),
+  Scope, ScopeFrag (..), SubstE (..), SubstB (..),
+  E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
+  BindsOneName (..), BindsNameList (..), NameColorRep (..),
+  Abs (..), Nest (..), PairB (..), UnitB (..),
+  IsVoidS (..), UnitE (..), VoidE, PairE (..), ListE (..), ComposeE (..),
+  EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB,
+  EitherB (..), BinderP (..),
+  LiftB, pattern LiftB,
+  MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
-  runScopeReaderT, ScopeReaderT (..), BindingsReaderT (..), EnvReaderT (..),
+  runScopeReaderT, ScopeReaderT (..), EnvReaderT (..),
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
-  BindingsReader2, BindingsExtender2,
   ScopeReader2, ScopeExtender2,
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
-  checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), IdE (..), ConstE (..),
-  InjectableE (..), InjectableB (..), InjectionCoercion,
-  withFreshM, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
+  checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), ConstE (..),
+  InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
+  withFreshM, withFreshLike, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, forEachNestItem, forEachNestItemSG,
-  HasNameHint (..), NameHint, CommonHint (..)) where
+  HasNameHint (..), NameHint, HasNameColor (..), CommonHint (..), NameColor (..),
+  GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
+  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
+  pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4
+  ) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -42,7 +51,6 @@ import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
-import Data.Dynamic
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
@@ -57,40 +65,31 @@ import Err
 
 data NameFunction v i o where
   NameFunction
-    :: (forall s. (Typeable s, InjectableE s) => Name s hidden -> v s o)
+    :: (forall c. Name c hidden -> v c o)
     -> EnvFrag v hidden i o
     -> NameFunction v i o
 
-newNameFunction :: (forall s. Name s i -> v s o) -> NameFunction v i o
+newNameFunction :: (forall c. Name c i -> v c o) -> NameFunction v i o
 newNameFunction f = NameFunction f emptyEnv
 
 emptyNameFunction :: NameFunction v VoidS o
 emptyNameFunction = newNameFunction absurdNameFunction
 
-type Bindings n = NameFunction IdE n n
-type BindingsFrag n l = EnvFrag IdE n l l
-
 -- === monadic type classes for reading and extending envs and scopes ===
 
-data DistinctScope n where
-  Distinct :: Distinct n => Scope n -> DistinctScope n
+data WithDistinct e n where
+  Distinct :: Distinct n => e n -> WithDistinct e n
 
 class Monad1 m => ScopeReader (m::MonadKind1) where
-  getScope :: m n (DistinctScope n)
+  getScope :: m n (WithDistinct Scope n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   extendScope :: Distinct l => ScopeFrag n l -> m l r -> m n r
 
-class ScopeReader m => BindingsReader (m::MonadKind1) where
-  getBindings :: m n (Bindings n)
+class Monad2 m => EnvReader (v::V) (m::MonadKind2) | m -> v where
+   lookupEnvM :: Name c i -> m i o (v c o)
 
-class ScopeReader m => BindingsExtender (m::MonadKind1) where
-  extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
-
-class Monad2 m => EnvReader (v::E->E) (m::MonadKind2) | m -> v where
-  lookupEnvM :: (Typeable s, InjectableE s) => Name s i -> m i o (v s o)
-
-class Monad2 m => EnvExtender (v::E->E) (m::MonadKind2) | m -> v where
+class Monad2 m => EnvExtender (v::V) (m::MonadKind2) | m -> v where
   extendEnv :: EnvFrag v i i' o -> m i' o r -> m i o r
 
 class Monad2 m => Renamer (m::MonadKind2) where
@@ -101,16 +100,18 @@ class Monad2 m => Renamer (m::MonadKind2) where
 
 data Abs (binder::B) (body::E) (n::S) where
   Abs :: binder n l -> body l -> Abs binder body n
+deriving instance (ShowB b, ShowE e) => Show (Abs b e n)
 
-data NestPair (b1::B) (b2::B) (n::S) (l::S) where
-  NestPair :: b1 n l' -> b2 l' l -> NestPair b1 b2 n l
+data BinderP (b::B) (ann::E) (n::S) (l::S) =
+  (:>) (b n l) (ann n)
+  deriving (Show, Generic)
 
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
 
 -- wraps an EnvFrag as a kind suitable for SubstB instances etc
-newtype RecEnvFrag (v::E->E) n l = RecEnvFrag { fromRecEnvFrag :: EnvFrag v n l l }
+newtype RecEnvFrag (v::V) n l = RecEnvFrag { fromRecEnvFrag :: EnvFrag v n l l }
 
 -- Proof object that a given scope is void
 data IsVoidS n where
@@ -120,6 +121,9 @@ data IsVoidS n where
 
 class BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
+
+  default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
+  toScopeFrag b = toScopeFrag $ fromB b
 
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
@@ -134,7 +138,7 @@ injectM b e = do
   return $ inject b e
 
 traverseNames :: (Monad m, HasNamesE e)
-              => Distinct o => Scope o -> (forall s. Name s i -> m (Name s o)) -> e i -> m (e o)
+              => Distinct o => Scope o -> (forall c. Name c i -> m (Name c o)) -> e i -> m (e o)
 traverseNames scope f e =
   runScopeReaderT scope $
     flip runReaderT (newNameTraverserEnv f) $
@@ -149,41 +153,53 @@ fromConstAbs (Abs b e) = do
   Distinct scope <- getScope
   liftEither $ traverseNames scope (tryProjectName $ toScopeFrag b) e
 
-tryProjectName :: MonadErr m => ScopeFrag n l -> Name s l -> m (Name s n)
+tryProjectName :: MonadErr m => ScopeFrag n l -> Name c l -> m (Name c n)
 tryProjectName names name =
   case projectName names name of
     Left name' -> return name'
     Right _    -> throw EscapedNameErr (pprint name)
 
-toConstAbs :: (Typeable s, InjectableE s, InjectableE e, ScopeReader m, ScopeExtender m)
-           => e n -> m n (Abs (NameBinder s) e n)
-toConstAbs body =
-  withFreshM ("ignore"::NameHint) \b -> do
+toConstAbs :: (InjectableE e, ScopeReader m, ScopeExtender m)
+           => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
+toConstAbs rep body =
+  withFreshM ("ignore"::NameHint) rep \b -> do
     body' <- injectM b body
     return $ Abs b body'
 
 -- === type classes for traversing names ===
 
-class SubstE (v::E->E) (e::E) where
+class SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
   substE :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
          => e i -> m i o (e o)
 
-class SubstB (v::E->E) (b::B) where
+  default substE :: ( GenericE e, SubstE v (RepE e)
+                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m )
+                 => e i -> m i o (e o)
+  substE e = toE <$> substE (fromE e)
+
+class SubstB (v::V) (b::B) where
   substB :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
          => b i i'
          -> SubstGenT m i i' (b o) o
 
+  default substB :: ( GenericB b, SubstB v (RepB b)
+                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+                  => b i i'
+                  -> SubstGenT m i i' (b o) o
+  substB b = substB (fromB b) `bindSG` \b' -> returnSG $ toB b'
+
 type HasNamesE = SubstE Name
 type HasNamesB = SubstB Name
 
-instance (Typeable s, InjectableE s) => SubstE Name (Name s) where
+instance SubstE Name (Name c) where
   substE name = lookupEnvM name
 
-instance (Typeable s, InjectableE s) => SubstB v (NameBinder s) where
+instance SubstB v (NameBinder c) where
   substB b = SubstGenT do
     Distinct names <- getScope
-    withFresh (getNameHint b) names \b' -> do
+    let rep = getNameColorRep $ nameBinderName b
+    withFresh (getNameHint b) rep names \b' -> do
       let frag = singletonScope b'
       return $ WithScopeSubstFrag frag (b @> binderName b') b'
 
@@ -206,14 +222,11 @@ type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
+type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
+type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
+
 data UnitE (n::S) = UnitE
      deriving (Show, Eq, Generic)
-
-data UnitB (n::S) (l::S) where
-  UnitB :: UnitB n n
-
-instance Show (UnitB n l) where
-  show = undefined
 
 data VoidE (n::S)
      deriving (Generic)
@@ -224,75 +237,96 @@ data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
      deriving (Show, Eq, Generic)
 
-data EitherBE (b::B) (e::E) (n::S) (l::S) where
-  LeftBE :: b n l -> EitherBE b e n l
-  RightBE :: e n -> EitherBE b e n n
-
-data MaybeE (e::E) (n::S) = JustE (e n) | NothingE
-     deriving (Show, Eq, Generic)
-
-data MaybeB b (n::S) (l::S) where
-  JustB :: b n l -> MaybeB b n l
-  NothingB :: MaybeB b n n
-
-data ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
-     deriving (Show, Eq, Generic)
-
-data LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-     deriving (Show, Eq, Generic)
-
--- The identity function at `E`
-newtype IdE (e::E) (n::S) = IdE { fromIdE :: e n }
+newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
         deriving (Show, Eq, Generic)
 
--- The constant function at `E`
-newtype ConstE (const::E) (ignored::E) (n::S) = ConstE (const n)
+newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
         deriving (Show, Eq, Generic)
+
+newtype ComposeE (f :: * -> *) (e::E) (n::S) =
+  ComposeE (f (e n))
+  deriving (Show, Eq, Generic)
+
+data UnitB (n::S) (l::S) where
+  UnitB :: UnitB n n
+deriving instance Show (UnitB n l)
+
+data PairB (b1::B) (b2::B) (n::S) (l::S) where
+  PairB :: b1 n l' -> b2 l' l -> PairB b1 b2 n l
+deriving instance (ShowB b1, ShowB b2) => Show (PairB b1 b2 n l)
+
+data EitherB (b1::B) (b2::B) (n::S) (l::S) =
+   LeftB  (b1 n l)
+ | RightB (b2 n l)
+   deriving (Show, Eq, Generic)
+
+-- The constant function of kind `V`
+newtype ConstE (const::E) (ignored::C) (n::S) = ConstE (const n)
+        deriving (Show, Eq, Generic)
+
+type MaybeE e = EitherE e UnitE
+
+pattern JustE :: e n -> MaybeE e n
+pattern JustE e = LeftE e
+
+pattern NothingE :: MaybeE e n
+pattern NothingE = RightE UnitE
+
+type MaybeB b = EitherB b UnitB
+
+pattern JustB :: b n l -> MaybeB b n l
+pattern JustB b = LeftB b
+
+pattern NothingB :: MaybeB b n n
+pattern NothingB = RightB UnitB
+
+type LiftB (e::E) = BinderP UnitB e :: B
+
+pattern LiftB :: e n -> LiftB e n n
+pattern LiftB e = UnitB :> e
 
 -- -- === various convenience utilities ===
 
 infixr 7 @>
-class BindsOneName (b::B) (s::E) | b -> s where
-  (@>) :: (Typeable s, InjectableE s) => b i i' -> v s o -> EnvFrag v i i' o
-  binderName :: b i i' -> Name s i'
+class BindsOneName (b::B) (c::C) | b -> c where
+  (@>) :: b i i' -> v c o -> EnvFrag v i i' o
+  binderName :: b i i' -> Name c i'
 
-instance BindsNames (NameBinder s) where
+instance BindsNames (NameBinder c) where
   toScopeFrag b = singletonScope b
 
-instance BindsOneName (NameBinder s) s where
+instance BindsOneName (NameBinder c) c where
   b @> x = singletonEnv b x
   binderName = nameBinderName
 
 infixr 7 @@>
-class BindsNameList (b::B) (s::E) | b -> s where
-  (@@>) :: (Typeable s, InjectableE s) => b i i' -> [v s o] -> EnvFrag v i i' o
+class BindsNameList (b::B) (c::C) | b -> c where
+  (@@>) :: b i i' -> [v c o] -> EnvFrag v i i' o
 
-instance BindsOneName b s => BindsNameList (Nest b) s where
+instance BindsOneName b c => BindsNameList (Nest b) c where
   (@@>) Empty [] = emptyEnv
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-applySubst :: (ScopeReader m, SubstE (SubstVal s val) e, Typeable val, InjectableE val)
-           => EnvFrag (SubstVal s val) o i o -> e i -> m o (e o)
+applySubst :: (ScopeReader m, SubstE (SubstVal c val) e, InjectableE val)
+           => EnvFrag (SubstVal c val) o i o -> e i -> m o (e o)
 applySubst substFrag x = do
   Distinct scope <- getScope
   return $ runIdentity $ runScopeReaderT scope $
     flip runReaderT (emptyNameFunction) $ runEnvReaderT $
       withEmptyRenamer $ extendEnv substFrag $ substE x
 
-applyAbs :: ( Typeable s, InjectableE s, Typeable val, InjectableE val
-            , ScopeReader m, BindsOneName b s, SubstE (SubstVal s val) e)
+applyAbs :: (InjectableE val , ScopeReader m, BindsOneName b c, SubstE (SubstVal c val) e)
          => Abs b e n -> val n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (b@>SubstVal x) body
 
-applyNaryAbs :: ( Typeable s, InjectableE s, Typeable val, InjectableE val
-                , ScopeReader m, BindsNameList b s, SubstE (SubstVal s val) e
-                , SubstB (SubstVal s val) b)
+applyNaryAbs :: ( InjectableE val, ScopeReader m, BindsNameList b c, SubstE (SubstVal c val) e
+                , SubstB (SubstVal c val) b)
              => Abs b e n -> [val n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> map SubstVal xs) body
 
 infixl 9 !
-(!) :: (Typeable s, InjectableE s) => NameFunction v i o -> Name s i -> v s o
+(!) :: NameFunction v i o -> Name c i -> v c o
 (!) (NameFunction f env) name =
   case lookupEnvFragProjected env name of
     Left name' -> f name'
@@ -302,7 +336,7 @@ infixl 1 <>>
 (<>>) :: NameFunction v i o -> EnvFrag v i i' o -> NameFunction v i' o
 (<>>) (NameFunction f frag) frag' = NameFunction f $ frag <.> frag'
 
-lookupEnvFragProjected :: Typeable s => EnvFrag v i i' o -> Name s i' -> Either (Name s i) (v s o)
+lookupEnvFragProjected :: EnvFrag v i i' o -> Name c i' -> Either (Name c i) (v c o)
 lookupEnvFragProjected m name =
   case projectName (envAsScope m) name of
     Left  name' -> Left name'
@@ -333,31 +367,50 @@ type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
 type ScopeReader2      (m::MonadKind2) = forall (n::S). ScopeReader      (m n)
 type ScopeExtender2    (m::MonadKind2) = forall (n::S). ScopeExtender    (m n)
 
-type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
-type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
-
 -- === subst monad ===
 
 -- Only alllows non-trivial substitution with names that match the parameter
--- `sMatch`. For example, this lets us substitute ordinary variables in Core
+-- `cMatch`. For example, this lets us substitute ordinary variables in Core
 -- with Atoms, while ensuring that things like data def names only get renamed.
-data SubstVal (sMatch::E) (atom::E) (s::E) (n::S) where
-  SubstVal :: atom n   -> SubstVal s      atom s n
-  Rename   :: Name s n -> SubstVal sMatch atom s n
+data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
+  SubstVal :: atom n   -> SubstVal c      atom c n
+  Rename   :: Name c n -> SubstVal cMatch atom c n
 
--- TODO Presumably this wanted the constraints Typeable s and
--- InjectableE s only because it used `withFresh`; but I don't know
--- why `withFresh` wanted them, so I don't know whether `withFreshM`
--- may want to add them back.
 withFreshM :: (ScopeReader m, ScopeExtender m, HasNameHint hint)
            => hint
-           -> (forall o'. NameBinder s o o' -> m o' a)
+           -> NameColorRep c
+           -> (forall o'. NameBinder c o o' -> m o' a)
            -> m o a
-withFreshM hint cont = do
+withFreshM hint rep cont = do
   Distinct m <- getScope
-  withFresh (getNameHint hint) m \b' -> do
+  withFresh (getNameHint hint) rep m \b' -> do
     extendScope (singletonScope b') $
       cont b'
+
+withFreshLike
+  :: (ScopeReader m, ScopeExtender m, HasNameHint hint, HasNameColor hint c)
+  => hint
+  -> (forall o'. NameBinder c o o' -> m o' a)
+  -> m o a
+withFreshLike hint cont =
+  withFreshM (getNameHint hint) (getNameColor hint) cont
+
+data ColorsEqual (a::C) (b::C) where
+  ColorsEqual :: ColorsEqual a a
+
+class ColorsNotEqual a b where
+  notEqProof :: ColorsEqual a b -> r
+
+instance (ColorsNotEqual cMatch c)
+         => (SubstE (SubstVal cMatch atom) (Name c)) where
+  substE name = do
+    substVal <- lookupEnvM name
+    case substVal of
+      Rename name' -> return name'
+      SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
+
+instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
@@ -371,8 +424,8 @@ class ( forall i1 i2 o. Monad (m i1 i2 o)
       , forall i1 i2.   ScopeReader (m i1 i2)
       , forall i1 i2.   ScopeExtender (m i1 i2))
       => ZipEnvReader (m :: S -> S -> S -> * -> *) where
-  lookupZipEnvFst :: (Typeable s, InjectableE s) => Name s i1 -> m i1 i2 o (Name s o)
-  lookupZipEnvSnd :: (Typeable s, InjectableE s) => Name s i2 -> m i1 i2 o (Name s o)
+  lookupZipEnvFst :: Name c i1 -> m i1 i2 o (Name c o)
+  lookupZipEnvSnd :: Name c i2 -> m i1 i2 o (Name c o)
 
   extendZipEnvFst :: EnvFrag Name i1 i1' o -> m i1' i2  o r -> m i1 i2 o r
   extendZipEnvSnd :: EnvFrag Name i2 i2' o -> m i1  i2' o r -> m i1 i2 o r
@@ -382,10 +435,20 @@ class ( forall i1 i2 o. Monad (m i1 i2 o)
 class AlphaEqE (e::E) where
   alphaEqE :: ZipEnvReader m => e i1 -> e i2 -> m i1 i2 o ()
 
+  default alphaEqE :: (GenericE e, AlphaEqE (RepE e), ZipEnvReader m)
+                   => e i1 -> e i2 -> m i1 i2 o ()
+  alphaEqE e1 e2 = fromE e1 `alphaEqE` fromE e2
+
 class AlphaEqB (b::B) where
   withAlphaEqB :: ZipEnvReader m => b i1 i1' -> b i2 i2'
                -> (forall o'. m i1' i2' o' a)
                ->             m i1  i2  o  a
+
+  default withAlphaEqB :: (GenericB b, AlphaEqB (RepB b), ZipEnvReader m)
+                       => b i1 i1' -> b i2 i2'
+                       -> (forall o'. m i1' i2' o' a)
+                       ->             m i1  i2  o  a
+  withAlphaEqB b1 b2 cont = withAlphaEqB (fromB b1) (fromB b2) $ cont
 
 checkAlphaEq :: (AlphaEqE e, MonadErr1 m, ScopeReader m)
              => e n -> e n -> m n ()
@@ -396,15 +459,15 @@ checkAlphaEq e1 e2 = do
       flip runReaderT (emptyNameFunction, emptyNameFunction) $ runZipEnvReaderT $
         withEmptyZipEnv $ alphaEqE e1 e2
 
-instance (Typeable s, InjectableE s) => AlphaEqE (Name s) where
+instance AlphaEqE (Name c) where
   alphaEqE v1 v2 = do
     v1' <- lookupZipEnvFst v1
     v2' <- lookupZipEnvSnd v2
     unless (v1' == v2') zipErr
 
-instance (InjectableE s, Typeable s) => AlphaEqB (NameBinder s) where
+instance AlphaEqB (NameBinder c) where
   withAlphaEqB b1 b2 cont = do
-    withFreshM b1 \b -> do
+    withFreshLike b1 \b -> do
       let v = binderName b
       extendZipEnvFst (b1@>v) $ extendZipEnvSnd (b2@>v) $ cont
 
@@ -425,12 +488,17 @@ instance AlphaEqB b => AlphaEqB (Nest b) where
     withAlphaEqB b1 b2 $ withAlphaEqB rest1 rest2 $ cont
   withAlphaEqB _ _ _ = zipErr
 
-instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (NestPair b1 b2) where
-  withAlphaEqB (NestPair a1 b1) (NestPair a2 b2) cont =
+instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (PairB b1 b2) where
+  withAlphaEqB (PairB a1 b1) (PairB a2 b2) cont =
     withAlphaEqB a1 a2 $ withAlphaEqB b1 b2 $ cont
 
 instance (AlphaEqB b, AlphaEqE e) => AlphaEqE (Abs b e) where
   alphaEqE (Abs b1 e1) (Abs b2 e2) = withAlphaEqB b1 b2 $ alphaEqE e1 e2
+
+instance (AlphaEqB b, AlphaEqE ann) => AlphaEqB (BinderP b ann) where
+  withAlphaEqB (b1:>ann1) (b2:>ann2) cont = do
+    alphaEqE ann1 ann2
+    withAlphaEqB b1 b2 $ cont
 
 instance AlphaEqE UnitE where
   alphaEqE UnitE UnitE = return ()
@@ -438,10 +506,16 @@ instance AlphaEqE UnitE where
 instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (PairE e1 e2) where
   alphaEqE (PairE a1 b1) (PairE a2 b2) = alphaEqE a1 a2 >> alphaEqE b1 b2
 
+instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
+  alphaEqE (LeftE  e1) (LeftE  e2) = alphaEqE e1 e2
+  alphaEqE (RightE e1) (RightE e2) = alphaEqE e1 e2
+  alphaEqE (LeftE  _ ) (RightE _ ) = zipErr
+  alphaEqE (RightE _ ) (LeftE  _ ) = zipErr
+
 -- === ScopeReaderT transformer ===
 
 newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
-  ScopeReaderT {runScopeReaderT' :: ReaderT (DistinctScope n) m a}
+  ScopeReaderT {runScopeReaderT' :: ReaderT (WithDistinct Scope n) m a}
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
 
 runScopeReaderT :: Distinct n => Scope n -> ScopeReaderT m n a -> m a
@@ -454,32 +528,9 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
   extendScope frag (ScopeReaderT m) = ScopeReaderT $ withReaderT
     (\(Distinct scope) -> Distinct (scope >>> frag)) m
 
-instance Monad m => BindingsExtender (ScopeReaderT m) where
-  extendBindings frag = extendScope (envAsScope frag)
-
--- === BindingsReaderT transformer ===
-
-newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
-  BindingsReaderT {runBindingsReaderT :: ReaderT (Bindings n) (ScopeReaderT m n) a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
-
-instance Monad m => BindingsReader (BindingsReaderT m) where
-  getBindings = BindingsReaderT ask
-
-instance Monad m => BindingsExtender (BindingsReaderT m) where
-  extendBindings frag (BindingsReaderT (ReaderT f)) =
-    BindingsReaderT $ ReaderT \bindings -> do
-       let scopeFrag = envAsScope frag
-       extendScope scopeFrag do
-         bindings' <- injectM scopeFrag bindings
-         f (bindings' <>> frag)
-
-instance Monad m => ScopeReader (BindingsReaderT m) where
-  getScope = BindingsReaderT $ lift $ getScope
-
 -- === EnvReaderT transformer ===
 
-newtype EnvReaderT (v::E->E) (m::MonadKind1) (i::S) (o::S) (a:: *) =
+newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   EnvReaderT { runEnvReaderT :: ReaderT (NameFunction v i o) (m o) a }
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
 
@@ -506,9 +557,6 @@ instance Monad1 m => Renamer (EnvReaderT Name m) where
 instance ScopeReader m => ScopeReader (EnvReaderT v m i) where
   getScope = EnvReaderT $ lift getScope
 
-instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
-  getBindings = EnvReaderT $ lift getBindings
-
 -- The rest are boilerplate but this one is a bit interesting. When we extend
 -- the scope we have to inject the env, `Env i o` into the new scope, to become
 -- `Env i oNew `
@@ -517,13 +565,6 @@ instance (InjectableV v, ScopeReader m, ScopeExtender m)
   extendScope frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
     extendScope frag do
       env' <- injectM frag env
-      cont env'
-
-instance (InjectableV v, ScopeReader m, BindingsExtender m)
-         => BindingsExtender (EnvReaderT v m i) where
-  extendBindings frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
-    extendBindings frag do
-      env' <- injectM (envAsScope frag) env
       cont env'
 
 -- === ZipEnvReaderT transformer ===
@@ -605,7 +646,7 @@ instance Monad m => EnvReader Name (NameTraverserT m) where
     env <- ask
     lift $ ScopeReaderT $ lift $ lookupNameTraversalEnv env name
 
-lookupNameTraversalEnv :: (Monad m, Typeable s) => NameTraverserEnv m i o -> Name s i -> m (Name s o)
+lookupNameTraversalEnv :: Monad m => NameTraverserEnv m i o -> Name c i -> m (Name c o)
 lookupNameTraversalEnv (NameTraverserEnv f frag) name =
   case lookupEnvFragProjected frag name of
     Left name' -> f name'
@@ -717,6 +758,17 @@ instance HasNameHint CommonHint where
     IgnoreHint -> "_"
     GenHint    -> "v"
 
+-- === getting name colors ===
+
+class HasNameColor a c | a -> c where
+  getNameColor :: a -> NameColorRep c
+
+instance HasNameColor (Name c n) c where
+  getNameColor = getNameColorRep
+
+instance HasNameColor (NameBinder c n l) c where
+  getNameColor b = getNameColorRep $ nameBinderName b
+
 -- === instances ===
 
 instance InjectableV v => InjectableE (NameFunction v i) where
@@ -724,7 +776,7 @@ instance InjectableV v => InjectableE (NameFunction v i) where
     NameFunction (\name -> injectionProofE fresh $ f name)
                  (injectionProofE fresh m)
 
-instance InjectableE atom => InjectableE (SubstVal (sMatch::E) (atom::E) (s::E)) where
+instance InjectableE atom => InjectableE (SubstVal (cMatch::C) (atom::E) (c::C)) where
   injectionProofE fresh substVal = case substVal of
     Rename name  -> Rename   $ injectionProofE fresh name
     SubstVal val -> SubstVal $ injectionProofE fresh val
@@ -738,20 +790,35 @@ instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE (Abs b body) = do
     withSubstB b \b' -> Abs b' <$> substE body
 
-instance (BindsNames b1, BindsNames b2) => BindsNames (NestPair b1 b2) where
-  toScopeFrag (NestPair b1 b2) = toScopeFrag b1 >>> toScopeFrag b2
+instance (BindsNames b1, BindsNames b2) => BindsNames (PairB b1 b2) where
+  toScopeFrag (PairB b1 b2) = toScopeFrag b1 >>> toScopeFrag b2
 
-instance (InjectableB b1, InjectableB b2) => InjectableB (NestPair b1 b2) where
-  injectionProofB fresh (NestPair b1 b2) cont =
+instance (InjectableB b1, InjectableB b2) => InjectableB (PairB b1 b2) where
+  injectionProofB fresh (PairB b1 b2) cont =
     injectionProofB fresh b1 \fresh' b1' ->
       injectionProofB fresh' b2 \fresh'' b2' ->
-        cont fresh'' (NestPair b1' b2')
+        cont fresh'' (PairB b1' b2')
 
-instance (SubstB v b1, SubstB v b2) => SubstB v (NestPair b1 b2) where
-  substB (NestPair b1 b2) =
+instance (SubstB v b1, SubstB v b2) => SubstB v (PairB b1 b2) where
+  substB (PairB b1 b2) =
     substB b1 `bindSG` \b1' ->
       substB b2 `bindSG` \b2' ->
-        returnSG $ NestPair b1' b2'
+        returnSG $ PairB b1' b2'
+
+instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
+  injectionProofB fresh (b:>ann) cont = do
+    let ann' = injectionProofE fresh ann
+    injectionProofB fresh b \fresh' b' ->
+      cont fresh' $ b':>ann'
+
+instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
+   substB (b:>ann) =
+      substE ann `liftSG` \ann' ->
+      substB b   `bindSG` \b' ->
+      returnSG $ b':>ann'
+
+instance BindsNames b => BindsNames (BinderP b ann) where
+  toScopeFrag (b:>_) = toScopeFrag b
 
 instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
@@ -766,14 +833,37 @@ instance InjectableE UnitE where
 instance SubstE v UnitE where
   substE UnitE = return UnitE
 
-instance InjectableE e => InjectableE (IdE e) where
-  injectionProofE fresh (IdE e) = IdE $ injectionProofE fresh e
+instance (Functor f, InjectableE e) => InjectableE (ComposeE f e) where
+  injectionProofE fresh (ComposeE xs) = ComposeE $ fmap (injectionProofE fresh) xs
 
-instance SubstE v e => SubstE v (IdE e) where
-  substE (IdE e) = IdE <$> substE e
+instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
+  substE (ComposeE xs) = ComposeE <$> mapM substE xs
+
+-- alternatively we could use Zippable, but we'd want to be able to derive it
+-- (e.g. via generic) for the many-armed cases like PrimOp.
+instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
+  alphaEqE (ComposeE xs) (ComposeE ys) = alphaEqTraversable xs ys
+
+instance InjectableB UnitB where
+  injectionProofB fresh UnitB cont = cont fresh UnitB
+
+instance BindsNames UnitB where
+  toScopeFrag UnitB = id
+
+instance SubstB v UnitB where
+  substB UnitB = returnSG UnitB
 
 instance InjectableE const => InjectableE (ConstE const ignored) where
   injectionProofE fresh (ConstE e) = ConstE $ injectionProofE fresh e
+
+instance InjectableE VoidE where
+  injectionProofE _ _ = error "impossible"
+
+instance AlphaEqE VoidE where
+  alphaEqE _ _ = error "impossible"
+
+instance SubstE v VoidE where
+  substE _ = error "impossible"
 
 instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
   injectionProofE fresh (PairE e1 e2) =
@@ -783,14 +873,33 @@ instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE (PairE x y) =
     PairE <$> substE x <*> substE y
 
+instance (InjectableE e1, InjectableE e2) => InjectableE (EitherE e1 e2) where
+  injectionProofE fresh (LeftE  e) = LeftE  (injectionProofE fresh e)
+  injectionProofE fresh (RightE e) = RightE (injectionProofE fresh e)
+
+instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
+  substE (LeftE  x) = LeftE  <$> substE x
+  substE (RightE x) = RightE <$> substE x
+
 instance InjectableE e => InjectableE (ListE e) where
   injectionProofE fresh (ListE xs) = ListE $ map (injectionProofE fresh) xs
 
+instance AlphaEqE e => AlphaEqE (ListE e) where
+  alphaEqE (ListE xs) (ListE ys)
+    | length xs == length ys = mapM_ (uncurry alphaEqE) (zip xs ys)
+    | otherwise              = zipErr
+
+instance InjectableE (LiftE a) where
+  injectionProofE _ (LiftE x) = LiftE x
+
+instance SubstE v (LiftE a) where
+  substE (LiftE x) = return $ LiftE x
+
+instance Eq a => AlphaEqE (LiftE a) where
+  alphaEqE (LiftE x) (LiftE y) = unless (x == y) zipErr
+
 instance SubstE v e => SubstE v (ListE e) where
   substE (ListE xs) = ListE <$> mapM substE xs
-
-instance (forall n' l. Show (b n' l), forall n'. Show (body n')) => Show (Abs b body n) where
-  show (Abs b body) = "(Abs " <> show b <> " " <> show body <> ")"
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"
@@ -811,10 +920,10 @@ instance ( Generic (b UnsafeS UnsafeS)
 
 instance ( Generic (b1 UnsafeS UnsafeS)
          , Generic (b2 UnsafeS UnsafeS) )
-         => Generic (NestPair b1 b2 n l) where
-  type Rep (NestPair b1 b2 n l) = Rep (b1 UnsafeS UnsafeS, b2 UnsafeS UnsafeS)
-  from (NestPair b1 b2) = from (unsafeCoerceB b1, unsafeCoerceB b2)
-  to rep = NestPair (unsafeCoerceB b1) (unsafeCoerceB b2)
+         => Generic (PairB b1 b2 n l) where
+  type Rep (PairB b1 b2 n l) = Rep (b1 UnsafeS UnsafeS, b2 UnsafeS UnsafeS)
+  from (PairB b1 b2) = from (unsafeCoerceB b1, unsafeCoerceB b2)
+  to rep = PairB (unsafeCoerceB b1) (unsafeCoerceB b2)
     where (b1, b2) = to rep
 
 instance ( Store   (b UnsafeS UnsafeS), Store   (body UnsafeS)
@@ -822,7 +931,7 @@ instance ( Store   (b UnsafeS UnsafeS), Store   (body UnsafeS)
          => Store (Abs b body n)
 instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
          , Generic (b1 UnsafeS UnsafeS), Generic (b2 UnsafeS UnsafeS) )
-         => Store (NestPair b1 b2 n l)
+         => Store (PairB b1 b2 n l)
 
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envAsScope $ fromRecEnvFrag env
@@ -837,13 +946,37 @@ instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) whe
       pairs' <- forEachNestItem pairs \(EnvPair b x) -> EnvPair b <$> substE x
       return $ WithScopeSubstFrag s r $ RecEnvFrag $ fromEnvPairs pairs'
 
+instance (forall c. SubstE substVal (v c)) => SubstE substVal (EnvVal v) where
+  substE = undefined
+
 instance Store (UnitE n)
+instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
 instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
-instance Store (e n) => Store (MaybeE e n)
 instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
-instance Store (e n) => Store (IdE e n)
 instance Store (const n) => Store (ConstE const ignored n)
+instance (Store (b n l), Store (ann n)) => Store (BinderP b ann n l)
 
-instance Show (NestPair b1 b2 n l)
+type EE = EitherE
+
+type EitherE1 e0             = EE e0 VoidE
+type EitherE2 e0 e1          = EE e0 (EE e1 VoidE)
+type EitherE3 e0 e1 e2       = EE e0 (EE e1 (EE e2 VoidE))
+type EitherE4 e0 e1 e2 e3    = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
+type EitherE5 e0 e1 e2 e3 e4 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
+
+pattern Case0 :: e0 n -> EE e0 rest n
+pattern Case0 e = LeftE e
+
+pattern Case1 :: e1 n -> EE e0 (EE e1 rest) n
+pattern Case1 e = RightE (LeftE e)
+
+pattern Case2 :: e2 n -> EE e0 (EE e1 (EE e2 rest)) n
+pattern Case2 e = RightE (RightE (LeftE e))
+
+pattern Case3 :: e3 n -> EE e0 (EE e1 (EE e2 (EE e3 rest))) n
+pattern Case3 e = RightE (RightE (RightE (LeftE e)))
+
+pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
+pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))

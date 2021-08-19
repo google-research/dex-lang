@@ -18,7 +18,7 @@ import qualified Data.Map.Strict as M
 -- import Env
 import Err
 import LabeledItems
-import SaferNames.NameCore (injectNames, singletonScope)
+import SaferNames.NameCore
 import SaferNames.Name hiding (Renamer)
 import SaferNames.ResolveImplicitNames
 import SaferNames.Syntax
@@ -110,37 +110,37 @@ instance SourceRenamableE (SourceNameOr UVar) where
   sourceRenameE (SourceName sourceName) = do
     SourceMap sourceMap <- askSourceMap
     case M.lookup sourceName sourceMap of
-      Nothing    -> throw UnboundVarErr $ pprint sourceName
-      Just (SrcAtomName     name) -> return $ InternalName $ UAtomVar name
-      Just (SrcTyConName    name) -> return $ InternalName $ UTyConVar name
-      Just (SrcDataConName  name) -> return $ InternalName $ UDataConVar name
-      Just (SrcClassName    name) -> return $ InternalName $ UClassVar name
-      Just (SrcMethodName   name) -> return $ InternalName $ UMethodVar name
+      Nothing -> throw UnboundVarErr $ pprint sourceName
+      Just (EnvVal AtomNameRep    name) -> return $ InternalName $ UAtomVar name
+      Just (EnvVal TyConNameRep   name) -> return $ InternalName $ UTyConVar name
+      Just (EnvVal DataConNameRep name) -> return $ InternalName $ UDataConVar name
+      Just (EnvVal ClassNameRep   name) -> return $ InternalName $ UClassVar name
+      Just (EnvVal MethodNameRep  name) -> return $ InternalName $ UMethodVar name
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-instance FromSourceNameDef color => SourceRenamableE (SourceNameOr (Name color)) where
+instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
   sourceRenameE (SourceName sourceName) = do
     SourceMap sourceMap <- askSourceMap
     case M.lookup sourceName sourceMap of
       Nothing    -> throw UnboundVarErr $ pprint sourceName
-      Just sourceNameDef -> case fromSourceNameDef sourceNameDef of
-        -- TODO: Do we want namespace-specific errors here?
-        Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
-        (Just name) -> return $ InternalName name
+      Just (EnvVal rep val) ->
+        case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
+          Just EqNameColor -> return $ InternalName val
+          Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = withSourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
-instance SourceRenamableB (UBinder AtomNameDef) where
-  sourceRenameB b = sourceRenameUBinder SrcAtomName b
+instance SourceRenamableB (UBinder AtomNameC) where
+  sourceRenameB b = sourceRenameUBinder b
 
 instance SourceRenamableB UPatAnn where
   sourceRenameB (UPatAnn b ann) = RenamerNameGenT do
     ann' <- mapM sourceRenameE ann
     runRenamerNameGenT $ (flip UPatAnn ann') `fmapG` sourceRenameB b
 
-instance SourceRenamableB (UAnnBinder AtomNameDef) where
+instance SourceRenamableB (UAnnBinder AtomNameC) where
   sourceRenameB (UAnnBinder b ann) = RenamerNameGenT do
     ann' <- sourceRenameE ann
     runRenamerNameGenT $ (flip UAnnBinder ann') `fmapG` sourceRenameB b
@@ -217,44 +217,48 @@ instance SourceRenamableB UDecl where
       runRenamerNameGenT $ flip (ULet ann) expr' `fmapG` sourceRenameB pat
     UDataDefDecl dataDef tyConName dataConNames -> do
       dataDef' <- sourceRenameE dataDef
-      runRenamerNameGenT $ sourceRenameUBinder SrcTyConName tyConName `bindG` \tyConName' ->
-        sourceRenameUBinderNest SrcDataConName dataConNames `bindG` \dataConNames' ->
+      runRenamerNameGenT $ sourceRenameUBinder tyConName `bindG` \tyConName' ->
+        sourceRenameUBinderNest dataConNames `bindG` \dataConNames' ->
         returnG $ UDataDefDecl dataDef' tyConName' dataConNames'
     UInterface paramBs superclasses methodTys className methodNames -> do
       Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
         sourceRenameE $ Abs paramBs $ PairE (ListE superclasses) (ListE methodTys)
-      runRenamerNameGenT $ sourceRenameUBinder SrcClassName className `bindG` \className' ->
-        sourceRenameUBinderNest SrcMethodName methodNames `bindG` \methodNames' ->
+      runRenamerNameGenT $ sourceRenameUBinder className `bindG` \className' ->
+        sourceRenameUBinderNest methodNames `bindG` \methodNames' ->
         returnG $ UInterface paramBs' superclasses' methodTys' className' methodNames'
     UInstance conditions className params methodDefs instanceName -> do
       Abs conditions' (PairE (PairE className' (ListE params')) (ListE methodDefs')) <-
         sourceRenameE $ Abs conditions (PairE (PairE className $ ListE params) $ ListE methodDefs)
       runRenamerNameGenT $ UInstance conditions' className' params' methodDefs' `fmapG` sourceRenameB instanceName
 
-instance SourceRenamableB b => SourceRenamableB (MaybeB b) where
-  sourceRenameB (JustB b) = JustB `fmapG` sourceRenameB b
-  sourceRenameB NothingB = returnG NothingB
+instance SourceRenamableB UnitB where
+  sourceRenameB UnitB = returnG UnitB
 
-sourceRenameUBinderNest :: Renamer m => (forall o'. Name s o' -> SourceNameDef o')
-                        -> Nest (UBinder s) i i' -> RenamerNameGenT m (Nest (UBinder s) o) o
-sourceRenameUBinderNest _ Empty = returnG Empty
-sourceRenameUBinderNest f (Nest b bs) =
-  sourceRenameUBinder f b `bindG` \b' ->
-  sourceRenameUBinderNest f bs `bindG` \bs' ->
+instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (EitherB b1 b2) where
+  sourceRenameB (LeftB  b) = LeftB  `fmapG` sourceRenameB b
+  sourceRenameB (RightB b) = RightB `fmapG` sourceRenameB b
+
+sourceRenameUBinderNest :: (Renamer m, NameColor c)
+                        => Nest (UBinder c) i i'
+                        -> RenamerNameGenT m (Nest (UBinder c) o) o
+sourceRenameUBinderNest Empty = returnG Empty
+sourceRenameUBinderNest (Nest b bs) =
+  sourceRenameUBinder b `bindG` \b' ->
+  sourceRenameUBinderNest bs `bindG` \bs' ->
   returnG $ Nest b' bs'
 
-sourceRenameUBinder :: Renamer m => (forall o'. Name s o' -> SourceNameDef o')
-                    -> UBinder s i i' -> RenamerNameGenT m (UBinder s o) o
-sourceRenameUBinder asSourceNameDef ubinder = case ubinder of
+sourceRenameUBinder :: (Renamer m, NameColor c)
+                    => UBinder c i i' -> RenamerNameGenT m (UBinder c o) o
+sourceRenameUBinder ubinder = case ubinder of
   UBindSource b -> RenamerNameGenT do
     SourceMap sourceMap <- askSourceMap
     mayShadow <- askMayShadow
     unless (mayShadow || not (M.member b sourceMap)) $
       throw RepeatedVarErr $ pprint b
-    withFreshM b \freshName -> do
+    withFreshM b nameColorRep \freshName -> do
       (Distinct _) <- getScope
       let frag = (singletonScope freshName)
-      let sourceMap' = SourceMap (M.singleton b (asSourceNameDef $ nameBinderName freshName))
+      let sourceMap' = SourceMap (M.singleton b (EnvVal nameColorRep $ nameBinderName freshName))
       return $ RenamerContent frag sourceMap' $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> returnG UIgnore
@@ -319,7 +323,7 @@ class SourceRenamablePat (pat::B) where
                   -> pat i i'
                   -> PatRenamerNameGenT m (pat o) o
 
-instance SourceRenamablePat (UBinder AtomNameDef) where
+instance SourceRenamablePat (UBinder AtomNameC) where
   sourceRenamePat siblingNames ubinder = PatRenamerNameGenT do
     newSibs <- case ubinder of
       UBindSource b -> do
@@ -339,13 +343,13 @@ instance SourceRenamablePat UPat' where
       SourceMap sourceMap <- askSourceMap
       con' <- case M.lookup con sourceMap of
         Nothing    -> throw UnboundVarErr $ pprint con
-        Just (SrcDataConName name) -> return $ InternalName name
+        Just (EnvVal DataConNameRep name) -> return $ InternalName name
         Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
       runPatRenamerNameGenT $ UPatCon con' `fmapG` sourceRenamePat siblingNames bs
-    UPatPair (NestPair p1 p2) ->
+    UPatPair (PairB p1 p2) ->
       sourceRenamePat siblingNames p1 `bindG` \p1' ->
       sourceRenamePat siblingNames p2 `bindG` \p2' ->
-      returnG $ UPatPair $ NestPair p1' p2'
+      returnG $ UPatPair $ PairB p1' p2'
     UPatUnit UnitB -> returnG $ UPatUnit UnitB
     UPatRecord labels ps -> UPatRecord labels `fmapG` sourceRenamePat siblingNames ps
     UPatVariant labels label p -> UPatVariant labels label `fmapG` sourceRenamePat siblingNames p

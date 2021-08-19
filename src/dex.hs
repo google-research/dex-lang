@@ -56,9 +56,7 @@ runMode evalMode preludeFile opts = do
   key <- case preludeFile of
            Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
            Just path -> show <$> getModificationTime path
-  -- disabling cache while we don't have Generic instances for safe IR
-  -- env <- cachedWithSnapshot "prelude" key $ execInterblockM opts initTopState $ evalPrelude preludeFile
-  env <- execInterblockM opts initTopState $ evalPrelude preludeFile
+  env <- cachedWithSnapshot "prelude" key $ execInterblockM opts initTopState $ evalPrelude preludeFile
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions

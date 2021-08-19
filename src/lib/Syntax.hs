@@ -212,7 +212,7 @@ data TopState = TopState
   { topBindings        :: Bindings
   , topSynthCandidates :: SynthCandidates
   , topSourceMap       :: SourceMap }
-  deriving (Show)
+  deriving (Show, Generic)
 
 emptyTopState :: TopState
 emptyTopState = TopState mempty mempty mempty
@@ -1859,6 +1859,7 @@ instance Store DataConRefBinding
 instance Store SourceMap
 instance Store SynthCandidates
 instance Store SourceNameDef
+instance Store TopState
 
 instance IsString UVar where
   fromString = USourceVar . fromString
