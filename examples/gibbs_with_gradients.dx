@@ -107,7 +107,7 @@ def gibbsWithGradients (x:n=>Bool) (f:n=>Float->Float) (key:Key) : n=>Bool =
 of Algorithm 1 from the paper.  In fact, the reason this demo got
 started was because I wasn't sure I understood the pseudocode
 in our own paper.  Writing the algorithm in this terse (but machine-checked)
-format made me realize we were missing a line from the algorithm box. m
+format made me realize we were missing a line from the algorithm box.
 
 '## Ising Model
 An Ising model specifies an unnormalized joint probability distribution over variables
@@ -161,7 +161,7 @@ bias = for i j.  -- Bias for individual pixels.
 def flattened_ising (x:n=>Float) : Float =
   -- The main algorithms were written in such a way as to operate
   -- on any index set, no matter its dimension.  However, this means
-  -- we need to cast the state two a 2D table to pass it to the Ising pmf.
+  -- we need to cast the state to a 2D table to pass it to the Ising pmf.
   x_unflattend = for i j.
     x.(unsafeFromOrdinal _ (ordinal (i,j)))
   ising_logprob x_unflattend bias theta
