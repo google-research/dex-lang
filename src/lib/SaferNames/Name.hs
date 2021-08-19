@@ -11,11 +11,12 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE EmptyCase #-}
 
 module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
-  EnvReader (..), EnvExtender (..), Renamer (..), Distinct,
-  NameFunction (..), emptyNameFunction, WithScopeFrag (..), DistinctScope (..),
+  EnvReader (..), EnvExtender (..), Renamer (..), Distinct, WithDistinct (..),
+  NameFunction (..), emptyNameFunction, WithScopeFrag (..),
   ScopeReader (..), ScopeExtender (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
@@ -76,11 +77,11 @@ emptyNameFunction = newNameFunction absurdNameFunction
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
-data DistinctScope n where
-  Distinct :: Distinct n => Scope n -> DistinctScope n
+data WithDistinct e n where
+  Distinct :: Distinct n => e n -> WithDistinct e n
 
 class Monad1 m => ScopeReader (m::MonadKind1) where
-  getScope :: m n (DistinctScope n)
+  getScope :: m n (WithDistinct Scope n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   extendScope :: Distinct l => ScopeFrag n l -> m l r -> m n r
@@ -408,6 +409,9 @@ instance (ColorsNotEqual cMatch c)
       Rename name' -> return name'
       SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
 
+instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
+instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
+
 -- === alpha-renaming-invariant equality checking ===
 
 type AlphaEq e = AlphaEqE e  :: Constraint
@@ -511,7 +515,7 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
 -- === ScopeReaderT transformer ===
 
 newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
-  ScopeReaderT {runScopeReaderT' :: ReaderT (DistinctScope n) m a}
+  ScopeReaderT {runScopeReaderT' :: ReaderT (WithDistinct Scope n) m a}
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
 
 runScopeReaderT :: Distinct n => Scope n -> ScopeReaderT m n a -> m a
@@ -945,10 +949,8 @@ instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) whe
 instance (forall c. SubstE substVal (v c)) => SubstE substVal (EnvVal v) where
   substE = undefined
 
-instance (forall c. InjectableE (v c)) => InjectableE (EnvVal v) where
-  injectionProofE = undefined
-
 instance Store (UnitE n)
+instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
 instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
 instance Store (e n) => Store (ListE  e n)

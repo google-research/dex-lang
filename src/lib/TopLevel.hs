@@ -104,21 +104,22 @@ class ( forall n. MonadErr (m n)
       , forall n. MonadIO (m n) )
       => MonadPasses (m::S.MonadKind1) where
   requireBenchmark :: m n Bool
-  getTopState :: m n (JointTopState n)
+  getTopState :: m n (S.WithDistinct JointTopState n)
 
 newtype PassesM (n::S.S) a = PassesM
-  { runPassesM' :: ReaderT (Bool, EvalConfig, JointTopState n) (LoggerT [Output] IO) a }
+  { runPassesM' :: ReaderT (Bool, EvalConfig, S.WithDistinct JointTopState n)
+                     (LoggerT [Output] IO) a }
     deriving (Functor, Applicative, Monad, MonadIO)
 
 type ModulesImported = M.Map ModuleName ModuleImportStatus
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
-runPassesM :: Bool -> EvalConfig -> JointTopState n -> PassesM n a -> IO (Except a, [Output])
+runPassesM :: S.Distinct n => Bool -> EvalConfig -> JointTopState n -> PassesM n a -> IO (Except a, [Output])
 runPassesM bench opts env (PassesM m) = do
   let maybeLogFile = logFile opts
   runLogger maybeLogFile \l ->
-     runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m $ (bench, opts, env)
+    runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m $ (bench, opts, S.Distinct env)
 
 -- ======
 
@@ -185,11 +186,12 @@ evalSourceBlock' block = case sbContents block of
       val <- evalUModuleVal v m
       logTop $ TextOut $ pprint $ getType val
   GetNameType v -> liftPassesM_ False do
-    SourceMap m <- topSourceMap <$> topStateD <$> getTopState
+    S.Distinct topState <- getTopState
+    let SourceMap m = topSourceMap $ topStateD topState
     case M.lookup v m of
       Nothing -> throw UnboundVarErr $ pprint v
       Just v' -> do
-        bindings <- topBindings <$> topStateD <$> getTopState
+        let bindings = topBindings $ topStateD topState
         case nameToAtom bindings (sourceNameDefName v') of
           Just x -> logTop $ TextOut $ pprint $ getType x
           Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
@@ -284,7 +286,7 @@ isLogInfo out = case out of
 evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m n Atom
 evalUModuleVal v m = do
    evaluated <- evalUModule m
-   env <- getTopState
+   S.Distinct env <- getTopState
    let finalState = extendTopStateD env evaluated
    result <- lookupSourceName finalState v
    case result of
@@ -306,7 +308,8 @@ lookupSourceName (TopStateEx topState) v =
 -- errors, but there could still be internal shadowing errors.
 evalUModule :: MonadPasses m => SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
-  D.TopState bindings synthCandidates sourceMap <- topStateD <$> getTopState
+  S.Distinct topState <- getTopState
+  let D.TopState bindings synthCandidates sourceMap = topStateD topState
   logPass Parse sourceModule
   renamed <- renameSourceNames bindings sourceMap sourceModule
   logPass RenamePass renamed
@@ -341,7 +344,7 @@ evalUModule sourceModule = do
 
 roundtripSaferNamesPass :: MonadPasses m => Module -> m n Module
 roundtripSaferNamesPass m = do
-  env <- getTopState
+  S.Distinct env <- getTopState
   return $ fromSafe env $ toSafe env $ m
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
@@ -366,7 +369,8 @@ evalMLIR = error "Dex built without support for MLIR"
 
 evalLLVM :: MonadPasses m => Block -> m n Atom
 evalLLVM block = do
-  env <- topBindings <$> topStateD <$> getTopState
+  S.Distinct topState <- getTopState
+  let env = topBindings $ topStateD topState
   backend <- backendName <$> getConfig
   bench   <- requireBenchmark
   logger  <- getLogger
@@ -411,7 +415,8 @@ withCompileTime m = do
 
 checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m n ()
 checkPass name x = do
-  scope <- topBindings <$> topStateD <$> getTopState
+  S.Distinct topState <- getTopState
+  let scope = topBindings $ topStateD topState
   logPass name x
   liftEither $ checkValid scope x
   logTop $ MiscLog $ pprint name ++ " checks passed"

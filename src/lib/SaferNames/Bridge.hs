@@ -10,6 +10,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# OPTIONS_GHC -w #-}
 
 module SaferNames.Bridge
@@ -59,14 +62,14 @@ import PPrint
 
 -- Hides the `n` parameter as an existential
 data TopStateEx where
-  TopStateEx :: JointTopState n -> TopStateEx
+  TopStateEx :: Distinct n => JointTopState n -> TopStateEx
 
 initTopState :: TopStateEx
 initTopState = TopStateEx $ JointTopState
     D.emptyTopState
     S.emptyTopState
     (ToSafeNameMap mempty)
-    emptyEnv
+    (FromSafeNameMap emptyEnv)
 
 data JointTopState n = JointTopState
   { topStateD   :: D.TopState
@@ -74,7 +77,7 @@ data JointTopState n = JointTopState
   , topToSafeMap   :: ToSafeNameMap n
   , topFromSafeMap :: FromSafeNameMap n }
 
-extendTopStateD :: JointTopState n -> D.EvaluatedModule -> TopStateEx
+extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
   let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
   case topStateS jointTopState of
@@ -115,7 +118,7 @@ type ConstEnv n l = EnvFrag (ConstE UnitE) n l VoidS
 makeBindingsFrag :: forall n l. Distinct l
                  => S.Scope l -> D.Bindings -> ToSafeNameMap l -> FromSafeNameMap l
                  -> ConstEnv n l -> BindingsFrag n l
-makeBindingsFrag scope bindings toSafeMap fromSafeMap constEnv =
+makeBindingsFrag scope bindings toSafeMap (FromSafeNameMap fromSafeMap) constEnv =
   fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
   where
     getSafeBinding :: S.Name c (n:=>:l) -> Binding c l
@@ -136,10 +139,10 @@ withFreshSafeRec :: MonadToSafe m
 withFreshSafeRec fromSafeMap [] cont = do
   Distinct _ <- getScope
   cont emptyEnv fromSafeMap
-withFreshSafeRec fromSafeMap ((vD,info):rest) cont = do
+withFreshSafeRec (FromSafeNameMap fromSafeMap) ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
     frag <- return $ b S.@> ConstE UnitE
-    withFreshSafeRec (fromSafeMap <.> (b S.@> UnsafeNameE valD)) rest
+    withFreshSafeRec (FromSafeNameMap $ fromSafeMap <.> (b S.@> UnsafeNameE valD)) rest
       \frag' fromSafeMap' -> do
         cont (frag <.> frag') fromSafeMap'
 
@@ -155,7 +158,8 @@ withFreshBijectionD name info cont =
 extendTopStateS :: JointTopState n -> S.EvaluatedModule n -> TopStateEx
 extendTopStateS = error "not implemented"
 
-toSafe :: HasSafeVersionE e => JointTopState n -> e -> SafeVersionE e n
+toSafe :: (Distinct n, HasSafeVersionE e)
+       => JointTopState n -> e -> SafeVersionE e n
 toSafe jointTopState e =
   case S.topBindings $ topStateS $ jointTopState of
     TopBindings bindings ->
@@ -175,6 +179,7 @@ class ( S.ScopeReader m, S.ScopeExtender m
   extendToSafeNameMap :: UnsafeName c -> S.Name c o -> m o a -> m o a
 
 newtype ToSafeNameMap (o::S) = ToSafeNameMap (D.Env (EnvVal S.Name o))
+  deriving (Show, Pretty, Generic)
 
 newtype ToSafeM o a =
   ToSafeM { runToSafeM' :: ReaderT (ToSafeNameMap o) (ScopeReaderT Identity o) a }
@@ -204,7 +209,8 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 
 data UnsafeNameE (c::C) (n::S) = UnsafeNameE { fromUnsafeNameE :: UnsafeName c}
 
-type FromSafeNameMap i = S.Env UnsafeNameE i VoidS
+newtype FromSafeNameMap i = FromSafeNameMap (S.Env UnsafeNameE i VoidS)
+  deriving (Pretty, Generic)
 
 newtype FromSafeM i a =
   FromSafeM { runFromSafeM' :: ReaderT (FromSafeNameMap i) (Reader D.Bindings) a }
@@ -216,7 +222,7 @@ runFromSafeM nameMap bindings m =
 
 instance MonadFromSafe FromSafeM where
   lookupFromSafeNameMap v = FromSafeM do
-    env <- ask
+    FromSafeNameMap env <- ask
     return $ fromUnsafeNameE $ ((emptyNameFunction <>> env) S.! v)
   getUnsafeBindings = FromSafeM $ lift ask
   withFreshUnsafeName hint info f =
@@ -227,7 +233,7 @@ instance MonadFromSafe FromSafeM where
         runReaderT (runFromSafeM' (f v')) m
 
   extendFromSafeMap b v (FromSafeM m) = FromSafeM $ flip withReaderT m
-    \env -> env <.> b S.@> UnsafeNameE v
+    \(FromSafeNameMap env) -> FromSafeNameMap $ env <.> b S.@> UnsafeNameE v
 
 -- === --- ===
 
@@ -708,11 +714,22 @@ traverseSet f s = Set.fromList <$> mapM f (Set.toList s)
 
 instance Store TopStateEx
 
--- TODO!
+instance GenericE JointTopState where
+  type RepE JointTopState = LiftE D.TopState `PairE`
+                            S.TopState       `PairE`
+                            ToSafeNameMap    `PairE`
+                            FromSafeNameMap
+  fromE (JointTopState stateD stateS toSafeMap fromSafeMap) =
+    (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap)
+  toE (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap) =
+    JointTopState stateD stateS toSafeMap fromSafeMap
+
+deriving via (WrapE JointTopState n) instance Generic (JointTopState n)
+
 instance Generic TopStateEx where
-  type Rep TopStateEx = Rep ()
-  to = undefined
-  from = undefined
+  type Rep TopStateEx = Rep (JointTopState UnsafeMakeDistinctS)
+  from (TopStateEx topState) = from (unsafeCoerceE topState :: JointTopState UnsafeMakeDistinctS)
+  to rep = TopStateEx (to rep :: JointTopState UnsafeMakeDistinctS)
 
 instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch
@@ -744,11 +761,10 @@ instance Pretty (UnsafeNameE s n) where
 instance Pretty (UnsafeName n) where
   pretty (UnsafeName _ name) = pretty name
 
+instance Store (ToSafeNameMap n)
 instance InjectableE ToSafeNameMap where
   injectionProofE = undefined
-
-instance Pretty (ToSafeNameMap n) where
-  pretty (ToSafeNameMap env) = pretty env
+instance Store (FromSafeNameMap n)
 
 instance Pretty (JointTopState n) where
   pretty s =
@@ -756,3 +772,10 @@ instance Pretty (JointTopState n) where
     "topState (safe):"     <> nest 2 (hardline <> pretty (topStateS s))      <> hardline <>
     "unsafe-to-safe map:"  <> nest 2 (hardline <> pretty (topToSafeMap   s)) <> hardline <>
     "safe-to-unsafe map:"  <> nest 2 (hardline <> pretty (topFromSafeMap s)) <> hardline
+
+deriving instance NameColor c => Generic (UnsafeName  c)
+deriving instance NameColor c => Generic (UnsafeNameE c n)
+
+instance NameColor c => Store (UnsafeName  c)
+instance NameColor c => Store (UnsafeNameE c n)
+

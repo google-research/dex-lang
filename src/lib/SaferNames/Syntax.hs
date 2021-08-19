@@ -5,7 +5,6 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -17,7 +16,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE EmptyCase #-}
 
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
@@ -74,8 +72,9 @@ import Data.Text.Prettyprint.Doc
 import Data.Word
 import Type.Reflection (Typeable, TypeRep, typeRep)
 import Foreign.Ptr
+import Data.Maybe (fromJust)
 
-import GHC.Generics (Generic (..), Rep)
+import GHC.Generics (Generic (..))
 import Data.Store (Store)
 
 import Syntax
@@ -214,6 +213,7 @@ data Binding (c::C) (n::S) where
   ClassBinding      :: ClassDef n                         -> Binding ClassNameC      n
   SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
+deriving instance Show (Binding c n)
 
 type Bindings n = NameFunction Binding n n
 type BindingsFrag n l = EnvFrag Binding n l l
@@ -448,10 +448,11 @@ data TopState n = TopState
   { topBindings        :: TopBindings n
   , topSynthCandidates :: SynthCandidates n
   , topSourceMap       :: SourceMap   n }
-  deriving Show
+  deriving (Show, Generic)
 
-data TopBindings n where
-  TopBindings :: Distinct n => Env Binding n n -> TopBindings n
+data TopBindings n =
+  TopBindings (Env Binding n n)
+  deriving (Show, Generic)
 
 type TopBindingsFrag n l = EnvFrag Binding n l l
 
@@ -460,7 +461,7 @@ emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
-  deriving (Show, Generic)
+  deriving Show
 
 data Module n where
   Module
@@ -655,9 +656,6 @@ pattern BinaryFunTy :: Binder n l -> Binder l l' -> EffectRow l' -> Type l' -> T
 pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 -- -- === instances ===
-
-instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
-instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
 
 -- right-biased, unlike the underlying Map
 instance Semigroup (SourceMap n) where
@@ -1044,6 +1042,38 @@ instance SubstE Name AtomBinderInfo
 instance SubstE AtomSubstVal AtomBinderInfo
 instance AlphaEqE AtomBinderInfo
 
+instance NameColor c => GenericE (Binding c) where
+  type RepE (Binding c) =
+    EitherE2
+      (EitherE5
+          (Type `PairE` AtomBinderInfo)
+          DataDef
+          DataDefName
+          (DataDefName `PairE` LiftE Int)
+          ClassDef)
+      (EitherE2
+          (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
+          (Name ClassNameC `PairE` LiftE Int `PairE` Atom))
+  fromE binding = case binding of
+    AtomNameBinding   ty info         -> Case0 $ Case0 $ ty `PairE` info
+    DataDefBinding    dataDef         -> Case0 $ Case1 $ dataDef
+    TyConBinding      dataDefName     -> Case0 $ Case2 $ dataDefName
+    DataConBinding    dataDefName idx -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx
+    ClassBinding      classDef        -> Case0 $ Case4 $ classDef
+    SuperclassBinding className idx e -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` e
+    MethodBinding     className idx e -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
+
+  toE rep = case rep of
+    Case0 (Case0 (ty `PairE` info))                       -> fromJust $ tryAsColor $ AtomNameBinding   ty info
+    Case0 (Case1 dataDef)                                 -> fromJust $ tryAsColor $ DataDefBinding    dataDef
+    Case0 (Case2 dataDefName)                             -> fromJust $ tryAsColor $ TyConBinding      dataDefName
+    Case0 (Case3 (dataDefName `PairE` LiftE idx))         -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx
+    Case0 (Case4 classDef)                                -> fromJust $ tryAsColor $ ClassBinding      classDef
+    Case1 (Case0 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ SuperclassBinding className idx e
+    Case1 (Case1 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ MethodBinding     className idx e
+
+deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
+
 instance GenericB Decl where
   type RepB Decl = BinderP Binder (PairE (LiftE LetAnn) Expr)
   fromB (Let ann b expr) = b :> PairE (LiftE ann) expr
@@ -1070,12 +1100,14 @@ instance Semigroup (SynthCandidates n) where
 instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty
 
-instance Show (TopBindings n)
-
 instance GenericE SourceMap where
   type RepE SourceMap = ListE (PairE (LiftE SourceName) (EnvVal Name))
   fromE (SourceMap m) = ListE [PairE (LiftE v) def | (v, def) <- M.toList m]
   toE   (ListE pairs) = SourceMap $ M.fromList [(v, def) | (PairE (LiftE v) def) <- pairs]
+
+deriving via WrapE SourceMap n instance Generic (SourceMap n)
+-- instance Generic (SourceMap n) where
+--   type Rep (SourceMap n) = Rep ()
 
 instance InjectableE SourceMap
 instance SubstE Name SourceMap
@@ -1103,6 +1135,9 @@ instance Store (SynthCandidates n)
 instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
+instance Store (TopState n)
+instance Store (TopBindings n)
+instance NameColor c => Store (Binding c n)
 
 instance IsString (SourceNameOr a VoidS) where
   fromString = SourceName

@@ -20,7 +20,7 @@ module SaferNames.NameCore (
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
   toEnvPairs, fromEnvPairs, EnvPair (..),
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
-  NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep) where
+  NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -31,8 +31,8 @@ import Unsafe.Coerce
 import qualified Data.Map  as M
 import qualified Data.Set  as S
 import GHC.Exts (Constraint)
-import Data.Store (Store)
-import GHC.Generics (Generic (..), Rec0)
+import Data.Store (Store (..))
+import GHC.Generics (Generic (..))
 
 import qualified Env as D
 
@@ -95,7 +95,7 @@ type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
 newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScope (S.Set RawName)
-type Scope (n::S) = ScopeFrag VoidS n
+type Scope = ScopeFrag VoidS :: S -> *
 
 instance Category ScopeFrag where
   id = UnsafeMakeScope mempty
@@ -248,6 +248,8 @@ data EnvFrag
       (M.Map RawName (EnvVal v o))
       (S.Set RawName)  -- cached name set as an optimization, to avoid the O(n)
                        -- map-to-set conversion
+  deriving (Generic)
+deriving instance (forall c. Show (v c o)) => Show (EnvFrag v i i' o)
 
 type Env v i o = EnvFrag v VoidS i o
 
@@ -333,8 +335,26 @@ data NameColorRep (c::C) where
   SuperclassNameRep :: NameColorRep SuperclassNameC
   MethodNameRep     :: NameColorRep MethodNameC
 
-deriving instance Show    (NameColorRep c)
-deriving instance Eq      (NameColorRep c)
+deriving instance Show (NameColorRep c)
+deriving instance Eq   (NameColorRep c)
+
+data DynamicColor
+   atomNameVal
+   dataDefNameVal
+   tyConNameVal
+   dataConNameVal
+   classNameVal
+   superclassNameVal
+   methodNameVal
+ =
+   AtomNameVal       atomNameVal
+ | DataDefNameVal    dataDefNameVal
+ | TyConNameVal      tyConNameVal
+ | DataConNameVal    dataConNameVal
+ | ClassNameVal      classNameVal
+ | SuperclassNameVal superclassNameVal
+ | MethodNameVal     methodNameVal
+   deriving (Show, Generic)
 
 data EqNameColor (c1::C) (c2::C) where
   EqNameColor :: EqNameColor c c
@@ -360,6 +380,13 @@ instance NameColor ClassNameC      where nameColorRep = ClassNameRep
 instance NameColor SuperclassNameC where nameColorRep = SuperclassNameRep
 instance NameColor MethodNameC     where nameColorRep = MethodNameRep
 
+tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
+              (NameColor c1, NameColor c2) => v c1 n -> Maybe (v c2 n)
+tryAsColor x = case eqNameColorRep (nameColorRep :: NameColorRep c1)
+                                   (nameColorRep :: NameColorRep c2) of
+  Just EqNameColor -> Just x
+  Nothing -> Nothing
+
 -- === instances ===
 
 instance Show (NameBinder s n l) where
@@ -374,7 +401,8 @@ instance Pretty (NameBinder s n l) where
 instance (forall c. Pretty (v c n)) => Pretty (EnvVal v n) where
   pretty = undefined
 
-instance Pretty (NameColorRep c)
+instance Pretty (NameColorRep c) where
+  pretty rep = pretty (show rep)
 
 instance Eq (Name s n) where
   UnsafeMakeName _ rawName == UnsafeMakeName _ rawName' = rawName == rawName'
@@ -439,37 +467,67 @@ instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
         [] -> unsafeCoerceB Empty
         b:rest -> Nest (unsafeCoerceB b) $ listToNest rest
 
-instance (forall c. Generic (v c n)) => Generic (EnvVal v n) where
-  type Rep (EnvVal v n) = Rep ()
+instance NameColor c => Generic (NameColorRep c) where
+  type Rep (NameColorRep c) = Rep ()
+  from _ = from ()
+  to   _ = nameColorRep
 
+instance NameColor c => Generic (Name c n) where
+  type Rep (Name c n) = Rep RawName
+  from (UnsafeMakeName _ rawName) = from rawName
+  to name = UnsafeMakeName nameColorRep rawName
+    where rawName = to name
 
-instance Generic (NameColorRep c) where
-  type Rep (NameColorRep c) = Rec0 Int
-  from = undefined
-  to = undefined
-
-instance Generic (Name c n) where
-  type Rep (Name c n) = Rep (NameColorRep c, RawName)
-  from (UnsafeMakeName rep rawName) = from (rep, rawName)
-  to name = UnsafeMakeName rep rawName
-    where (rep, rawName) = to name
-
-instance Generic (NameBinder c n l) where
+instance NameColor c => Generic (NameBinder c n l) where
   type Rep (NameBinder c n l) = Rep (Name c l)
   from (UnsafeMakeBinder v) = from v
   to v = UnsafeMakeBinder $ to v
 
-instance Store (NameColorRep c)
-instance Store (Name c n)
-instance Store (NameBinder c n l)
+instance (forall c. NameColor c => Store (v c n)) => Generic (EnvVal v n) where
+  type Rep (EnvVal v n) = Rep (DynamicColor (v AtomNameC       n)
+                                            (v DataDefNameC    n)
+                                            (v TyConNameC      n)
+                                            (v DataConNameC    n)
+                                            (v ClassNameC      n)
+                                            (v SuperclassNameC n)
+                                            (v MethodNameC     n))
+  from (EnvVal rep val) = case rep of
+    AtomNameRep       -> from $ AtomNameVal       val
+    DataDefNameRep    -> from $ DataDefNameVal    val
+    TyConNameRep      -> from $ TyConNameVal      val
+    DataConNameRep    -> from $ DataConNameVal    val
+    ClassNameRep      -> from $ ClassNameVal      val
+    SuperclassNameRep -> from $ SuperclassNameVal val
+    MethodNameRep     -> from $ MethodNameVal     val
+
+  to genRep = case to genRep of
+    (AtomNameVal       val) -> EnvVal AtomNameRep       val
+    (DataDefNameVal    val) -> EnvVal DataDefNameRep    val
+    (TyConNameVal      val) -> EnvVal TyConNameRep      val
+    (DataConNameVal    val) -> EnvVal DataConNameRep    val
+    (ClassNameVal      val) -> EnvVal ClassNameRep      val
+    (SuperclassNameVal val) -> EnvVal SuperclassNameRep val
+    (MethodNameVal     val) -> EnvVal MethodNameRep     val
+
+instance (forall c. NameColor c => Store (v c n)) => Store (EnvVal v n)
+
+instance (forall c. InjectableE (v c)) => InjectableE (EnvVal v) where
+  injectionProofE = undefined
+
+instance ( forall c. NameColor c => Store (v c o)
+         , forall c. NameColor c => Generic (v c o))
+         => Store (EnvFrag v i i' o) where
+
+instance NameColor c => Store (Name c n)
+instance NameColor c => Store (NameBinder c n l)
+instance NameColor c => Store (NameColorRep c)
 instance ( Store   (b UnsafeS UnsafeS)
          , Generic (b UnsafeS UnsafeS) ) => Store (Nest b n l)
 
-instance (forall n c. Show (v c n)) => Show (EnvFrag v i i' o) where
-  show = undefined
-
-instance ( (forall c. Store   (v c n))
-         , (forall c. Generic (v c n)) ) => Store (EnvVal v n)
+instance
+  ( Store a0, Store a1, Store a2, Store a3
+  , Store a4, Store a5, Store a6)
+  => Store (DynamicColor a0 a1 a2 a3 a4 a5 a6)
 
 -- === notes ===
 
@@ -486,7 +544,6 @@ containing more in-scope variables. For example, when we turn this:
 into this:
 
   \y. (\x. \y. x + y + z) y
-
 
 The expression `\x. x + z + y`, initially in the scope `[z]`, gets injected into
 the scope `[z, y]`. For expression-like things, the injection is valid if we
