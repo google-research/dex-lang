@@ -58,7 +58,7 @@ getType scope e = undefined
 -- TODO: not clear why we need the explicit `Monad2` here since it should
 -- already be a superclass, transitively, through both MonadErr2 and
 -- MonadAtomSubst.
-class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter AtomSubstVal m
+class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter Name m
       , BindingsReader2 m, BindingsExtender2 m)
      => Typer (m::MonadKind2)
 
@@ -74,10 +74,10 @@ instance Pretty e => MonadError e (IgnoreChecks e) where
   throwError e = error $ pprint e
   catchError m _ = m
 
-type CheckedTyperM = EnvReaderT AtomSubstVal  (BindingsReaderT Except) :: S -> S -> * -> *
+type CheckedTyperM = EnvReaderT Name  (BindingsReaderT Except) :: S -> S -> * -> *
 instance Typer CheckedTyperM
 
-type UncheckedTyper = EnvReaderT AtomSubstVal (BindingsReaderT (IgnoreChecks Err)) :: S -> S -> * -> *
+type UncheckedTyper = EnvReaderT Name (BindingsReaderT (IgnoreChecks Err)) :: S -> S -> * -> *
 instance Typer UncheckedTyper
 
 -- === typeable things ===
@@ -85,7 +85,7 @@ instance Typer UncheckedTyper
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class SubstE AtomSubstVal e => HasType (e::E) where
+class SubstE Name e => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -137,7 +137,7 @@ instance CheckableE EvaluatedModule where
       return $ EvaluatedModule bindings' scs' sourceMap'
 
 instance CheckableE SourceMap where
-  checkE sourceMap = undefined -- substM sourceMap
+  checkE sourceMap = substM sourceMap
 
 instance CheckableE SynthCandidates where
   checkE (SynthCandidates xs ys zs) =
@@ -159,12 +159,9 @@ instance CheckableE Atom where
 instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> do
-      substVal <- lookupEnvM name
-      case substVal of
-        Rename name' -> do
-          AtomNameBinding ty _ <- lookupBindings name'
-          return ty
-        SubstVal atom' -> dropSubst $ getTypeE atom'
+      name' <- substM name
+      AtomNameBinding ty _ <- lookupBindings name'
+      return ty
     Lam (LamExpr arr b eff body) -> do
       checkArrowAndEffects arr eff
       checkB b \b' -> do
@@ -275,7 +272,7 @@ instance CheckableB Decl where
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
     withFreshBinder b ty' (LetBound ann expr') \b' ->
-      extendEnv (b @> Rename (binderName b')) $
+      extendRenamer (b @> binderName b') $
         cont $ Let ann b' expr'
 
 instance CheckableB b => CheckableB (Nest b) where
@@ -628,7 +625,7 @@ typeConFunType name = do
   dropSubst $ buildNaryPiType ImplicitArrow paramBinders \ext params -> return TyKind
 
 -- TODO: put this in Builder?
-buildNaryPiType :: EnvReader AtomSubstVal m
+buildNaryPiType :: EnvReader Name m
                 => Arrow
                 -> Nest Binder i i'
                 -> (forall o'. ScopeFrag o o' -> [Type o'] -> m i' o' (Type o'))

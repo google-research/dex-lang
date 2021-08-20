@@ -76,8 +76,8 @@ newNameFunction f = NameFunction f emptyEnv
 emptyNameFunction :: NameFunction v VoidS o
 emptyNameFunction = newNameFunction absurdNameFunction
 
-idNameFunction :: NameFunction (SubstVal s val) n n
-idNameFunction = newNameFunction Rename
+idNameFunction :: FromName v => NameFunction v n n
+idNameFunction = newNameFunction fromName
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
