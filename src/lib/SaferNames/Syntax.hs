@@ -296,8 +296,8 @@ withFreshBinder hint ty info cont =
     cont $ b :> ty
 
 refreshBinders
-  :: ( BindingsExtender2 m, Renamer m
-     , EnvGetter AtomSubstVal m, SubstB AtomSubstVal b, BindsBindings b)
+  :: ( InjectableV v, BindingsExtender2 m, FromName v
+     , EnvGetter v m, SubstB v b, BindsBindings b)
   => b i i'
   -> (forall o'. b o o' -> m i' o' r)
   -> m i o r

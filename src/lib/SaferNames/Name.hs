@@ -15,10 +15,9 @@
 
 module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
-  EnvReader (..), EnvGetter (..), EnvExtender (..),
-  Renamer (..), Distinct, WithDistinct (..),
+  EnvReader (..), EnvGetter (..), FromName (..), Distinct, WithDistinct (..),
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
-  WithScopeFrag (..), WithScopeSubstFrag (..),
+  WithScopeFrag (..), WithScopeSubstFrag (..), extendRenamer,
   ScopeReader (..), ScopeExtender (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
@@ -91,18 +90,31 @@ class Monad1 m => ScopeReader (m::MonadKind1) where
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   extendScope :: Distinct l => ScopeFrag n l -> m l r -> m n r
 
-class Monad2 m => EnvReader (v::V) (m::MonadKind2) | m -> v where
-   lookupEnvM :: Name c i -> m i o (v c o)
+class (InjectableV v, Monad2 m) => EnvReader (v::V) (m::MonadKind2) | m -> v where
+  lookupEnvM :: Name c i -> m i o (v c o)
+  extendEnv :: EnvFrag v i i' o -> m i' o r -> m i o r
+  dropSubst :: FromName v => m o o r -> m i o r
 
+-- We distinguish EnvGetter from EnvReader because the API for EnvReader is more
+-- restricted, only allowing env access by query. So it allows querying names to
+-- have effects, which we exploit in `traverseNames`. But having full access to
+-- the env is important
 class EnvReader v m => EnvGetter (v::V) (m::MonadKind2) | m -> v where
    getEnv :: m i o (NameFunction v i o)
 
-class Monad2 m => EnvExtender (v::V) (m::MonadKind2) | m -> v where
-  extendEnv :: EnvFrag v i i' o -> m i' o r -> m i o r
+-- === extending envs with name-only substitutions ===
 
-class Monad2 m => Renamer (m::MonadKind2) where
-  dropSubst :: m o o r -> m i o r
-  extendRenamer :: EnvFrag Name i i' o -> m i' o r -> m i o r
+class FromName (v::V) where
+  fromName :: Name c n -> v c n
+
+instance FromName Name where
+  fromName = id
+
+instance FromName (SubstVal c v) where
+  fromName = Rename
+
+extendRenamer :: (EnvReader v m, FromName v) => EnvFrag Name i i' o -> m i' o r -> m i o r
+extendRenamer frag = extendEnv (fmapEnvFrag (const fromName) frag)
 
 -- === common scoping patterns ===
 
@@ -178,21 +190,21 @@ toConstAbs rep body = do
 
 class SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
-  substE :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+  substE :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
          => e i -> m i o (e o)
 
   default substE :: ( GenericE e, SubstE v (RepE e)
-                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m )
+                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
                  => e i -> m i o (e o)
   substE e = toE <$> substE (fromE e)
 
 class SubstB (v::V) (b::B) where
-  substB :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+  substB :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
          => b i i'
          -> SubstGenT m i i' (b o) o
 
   default substB :: ( GenericB b, SubstB v (RepB b)
-                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+                    , ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
                   => b i i'
                   -> SubstGenT m i i' (b o) o
   substB b = substB (fromB b) `bindSG` \b' -> returnSG $ toB b'
@@ -213,11 +225,11 @@ instance SubstB v (NameBinder c) where
 
 
 -- Like SubstE, but with fewer requirements for the monad
-substM :: ( InjectableE v, EnvGetter (SubstVal s v) m , ScopeReader2 m, SubstE (SubstVal s v) e)
+substM :: (EnvGetter v m, ScopeReader2 m, SubstE v e, FromName v)
        => e i -> m i o (e o)
 substM e = liftScopedEnvReader $ substE e
 
-withSubstB :: (SubstB v b, ScopeReader2 m, ScopeExtender2 m , EnvReader v m, Renamer m)
+withSubstB :: (SubstB v b, ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
            => b i i'
            -> (forall o'. b o o' -> m i' o' r)
            -> m i o r
@@ -570,27 +582,16 @@ liftScopedEnvReader m = do
 runEnvReaderT :: NameFunction v i o -> EnvReaderT v m i o a -> m o a
 runEnvReaderT env m = runReaderT (runEnvReaderT' m) env
 
-instance Monad1 m => EnvReader v (EnvReaderT v m) where
+instance (InjectableV v, Monad1 m) => EnvReader v (EnvReaderT v m) where
   lookupEnvM name = EnvReaderT $ (! name) <$> ask
 
-instance Monad1 m => EnvExtender v (EnvReaderT v m) where
+  dropSubst (EnvReaderT cont) =
+    EnvReaderT $ withReaderT (const $ newNameFunction fromName) cont
+
   extendEnv frag (EnvReaderT cont) =
     EnvReaderT $ withReaderT (\env -> env <>> frag) cont
 
-instance Monad1 m => Renamer (EnvReaderT (SubstVal s val) m) where
-  dropSubst (EnvReaderT cont) =
-    EnvReaderT $ withReaderT (const $ newNameFunction Rename) cont
-  extendRenamer frag (EnvReaderT cont) =
-    EnvReaderT $ withReaderT (<>>frag') cont
-    where frag' = fmapEnvFrag (\_ v -> Rename v) frag
-
-instance Monad1 m => Renamer (EnvReaderT Name m) where
-  dropSubst (EnvReaderT cont) =
-    EnvReaderT $ withReaderT (const $ newNameFunction id) cont
-  extendRenamer frag (EnvReaderT cont) =
-    EnvReaderT $ withReaderT (<>>frag) cont
-
-instance Monad1 m => EnvGetter v (EnvReaderT v m) where
+instance (InjectableV v, Monad1 m) => EnvGetter v (EnvReaderT v m) where
   getEnv = EnvReaderT ask
 
 instance ScopeReader m => ScopeReader (EnvReaderT v m i) where
@@ -674,16 +675,16 @@ instance Monad m => ScopeExtender (NameTraverserT m i) where
       env' <- injectM frag env
       cont env'
 
-instance Monad m => Renamer (NameTraverserT m) where
-  dropSubst (NameTraverserT cont) =
-    NameTraverserT $ withReaderT (const $ newNameTraverserEnv return) cont
-  extendRenamer frag (NameTraverserT cont) =
-    NameTraverserT $ withReaderT (`extendNameTraverserEnv` frag) cont
-
 instance Monad m => EnvReader Name (NameTraverserT m) where
   lookupEnvM name = NameTraverserT do
     env <- ask
     lift $ ScopeReaderT $ lift $ lookupNameTraversalEnv env name
+
+  dropSubst (NameTraverserT cont) =
+    NameTraverserT $ withReaderT (const $ newNameTraverserEnv return) cont
+
+  extendEnv frag (NameTraverserT cont) =
+    NameTraverserT $ withReaderT (`extendNameTraverserEnv` frag) cont
 
 lookupNameTraversalEnv :: Monad m => NameTraverserEnv m i o -> Name c i -> m (Name c o)
 lookupNameTraversalEnv (NameTraverserEnv f frag) name =
@@ -747,12 +748,12 @@ data WithScopeSubstFrag (i::S) (i'::S) (e::E) (o::S) where
 newtype SubstGenT (m::MonadKind2) (i::S) (i'::S) (e::E) (o::S) =
   SubstGenT { runSubstGenT :: m i o (WithScopeSubstFrag i i' e o)}
 
-instance (ScopeReader2 m, ScopeExtender2 m, Renamer m, Monad2 m)
+instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
          => NameGen (SubstGenT m i i) where
   returnG = returnSG
   bindG = bindSG
 
-instance (ScopeReader2 m, ScopeExtender2 m, Renamer m, Monad2 m)
+instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
          => SubstGen (SubstGenT m) where
   returnSG e = SubstGenT $ do
     Distinct _ <- getScope

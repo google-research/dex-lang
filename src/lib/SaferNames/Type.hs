@@ -59,8 +59,7 @@ getType scope e = undefined
 -- already be a superclass, transitively, through both MonadErr2 and
 -- MonadAtomSubst.
 class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter AtomSubstVal m
-      , BindingsReader2 m, BindingsExtender2 m
-      , EnvExtender AtomSubstVal m, Renamer m)
+      , BindingsReader2 m, BindingsExtender2 m)
      => Typer (m::MonadKind2)
 
 -- This fakes MonadErr by just throwing a hard error using `error`. We use it
