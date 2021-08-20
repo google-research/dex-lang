@@ -18,7 +18,7 @@ module SaferNames.NameCore (
   Distinct, E, B, V, InjectableE (..), InjectableB (..),
   InjectableV, InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
-  toEnvPairs, fromEnvPairs, EnvPair (..),
+  toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep,
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor) where
 
@@ -278,11 +278,12 @@ infixl 1 <.>
   UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
 
 fmapEnvFrag :: InjectableV v
-            => (forall c. Name c (i:=>:i') -> v c o -> v' c o')
+            => (forall c. NameColor c => Name c (i:=>:i') -> v c o -> v' c o')
             -> EnvFrag v i i' o -> EnvFrag v' i i' o'
 fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
   where m' = flip M.mapWithKey m \k (EnvVal rep val) ->
-               EnvVal rep $ f (UnsafeMakeName rep k) val
+               withNameColorRep rep $
+                 EnvVal rep $ f (UnsafeMakeName rep k) val
 
 envAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
 envAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
@@ -290,7 +291,7 @@ envAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
 -- === iterating through env pairs ===
 
 data EnvPair (v::V) (o::S) (i::S) (i'::S) where
-  EnvPair :: NameBinder c i i' -> v c o -> EnvPair v o i i'
+  EnvPair :: NameColor c => NameBinder c i i' -> v c o -> EnvPair v o i i'
 
 toEnvPairs :: forall v i i' o . EnvFrag v i i' o -> Nest (EnvPair v o) i i'
 toEnvPairs (UnsafeMakeEnv m _) =
@@ -298,7 +299,8 @@ toEnvPairs (UnsafeMakeEnv m _) =
   where
     mkPair :: RawName -> EnvVal v o -> EnvPair v o UnsafeS UnsafeS
     mkPair rawName (EnvVal rep v) =
-      EnvPair (UnsafeMakeBinder $ UnsafeMakeName rep rawName) v
+      withNameColorRep rep $
+        EnvPair (UnsafeMakeBinder $ UnsafeMakeName rep rawName) v
 
     go :: [EnvPair v o UnsafeS UnsafeS] -> Nest (EnvPair v o) i i'
     go [] = unsafeCoerceB Empty
@@ -387,6 +389,16 @@ tryAsColor x = case eqNameColorRep (nameColorRep :: NameColorRep c1)
   Just EqNameColor -> Just x
   Nothing -> Nothing
 
+withNameColorRep :: NameColorRep c -> (NameColor c => a) -> a
+withNameColorRep rep cont = case rep of
+  AtomNameRep       -> cont
+  DataDefNameRep    -> cont
+  TyConNameRep      -> cont
+  DataConNameRep    -> cont
+  ClassNameRep      -> cont
+  SuperclassNameRep -> cont
+  MethodNameRep     -> cont
+
 -- === instances ===
 
 instance Show (NameBinder s n l) where
@@ -399,7 +411,7 @@ instance Pretty (NameBinder s n l) where
   pretty (UnsafeMakeBinder name) = pretty name
 
 instance (forall c. Pretty (v c n)) => Pretty (EnvVal v n) where
-  pretty = undefined
+  pretty (EnvVal _ val) = pretty val
 
 instance Pretty (NameColorRep c) where
   pretty rep = pretty (show rep)
@@ -413,7 +425,7 @@ instance Ord (Name s n) where
 instance Show (Name s n) where
   show (UnsafeMakeName _ rawName) = show rawName
 
-type InjectableV v = (forall (c::C). InjectableE (v c)) :: Constraint
+type InjectableV v = (forall (c::C). NameColor c => InjectableE (v c)) :: Constraint
 
 instance InjectableV v => InjectableE (EnvFrag v i i') where
   injectionProofE fresh m = fmapEnvFrag (\(UnsafeMakeName _ _) v -> injectionProofE fresh v) m

@@ -259,3 +259,24 @@ instance Pretty (TopState n) where
     "bindings: "        <> nest 2 (hardline <> pretty (topBindings s))  <> hardline <>
     "synth candidates:" <> hardline <>
     "source map: "      <> nest 2 (hardline <> pretty (topSourceMap s)) <> hardline
+
+instance Pretty (Module n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (Module n) where
+  prettyPrec (Module variant decls result) = atPrec LowestPrec $
+    "Module" <+> parens (p (show variant)) <> nest 2 body
+    where
+      body = hardline <> "unevaluated decls:"
+          <> hardline <> prettyLines (fromNest decls)
+          <> hardline <> "evaluated bindings:"
+          <> hardline <> p result
+
+instance Pretty (EvaluatedModule n) where
+  pretty (EvaluatedModule bindings synthCandidates sourceMap) =
+     p bindings <> hardline <> p synthCandidates <> hardline <> p sourceMap
+
+instance Pretty (SynthCandidates n) where
+  pretty scs =
+    "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline <>
+    "superclasses:"   <+> p (superclassGetters scs) <> hardline <>
+    "instance dicts:" <+> p (instanceDicts     scs)
+

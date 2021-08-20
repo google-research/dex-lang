@@ -61,6 +61,8 @@ import MLIR.Eval
 import SaferNames.Bridge
 
 import qualified SaferNames.Name   as S
+import qualified SaferNames.Syntax as S
+import qualified SaferNames.Type   as S
 
 -- === shared effects ===
 
@@ -345,7 +347,9 @@ evalUModule sourceModule = do
 roundtripSaferNamesPass :: MonadPasses m => Module -> m n Module
 roundtripSaferNamesPass m = do
   S.Distinct env <- getTopState
-  return $ fromSafe env $ toSafe env $ m
+  let m' = toSafe env $ m
+  S.checkModule (S.topBindings $ topStateS env) m'
+  return $ fromSafe env m'
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!

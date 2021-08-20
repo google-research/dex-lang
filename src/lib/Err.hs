@@ -11,7 +11,7 @@
 module Err (Err (..), ErrType (..), Except, SrcPos, SrcCtx,
             throw, throwIf, modifyErr, MonadErr,
             addContext, addSrcContext, catchIOExcept, liftEitherIO,
-            assertEq, ignoreExcept, pprint, docAsStr) where
+            assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr) where
 
 import Control.Exception hiding (throw)
 import Control.Monad
@@ -60,6 +60,10 @@ throwIf False _ _ = return ()
 
 modifyErr :: MonadError e m => m a -> (e -> e) -> m a
 modifyErr m f = catchError m \e -> throwError (f e)
+
+asCompilerErr :: MonadErr m => m a -> m a
+asCompilerErr m =
+  modifyErr m (\(Err _ c msg) -> Err CompilerErr c msg)
 
 addContext :: MonadErr m => String -> m a -> m a
 addContext s m = modifyErr m \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
@@ -140,3 +144,5 @@ instance Pretty ErrType where
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Escaped name"
     ModuleImportErr   -> "Module import error"
+
+sCompilerErr (Right x) = Right x

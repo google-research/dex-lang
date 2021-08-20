@@ -308,7 +308,8 @@ instance HasSafeVersionB DRecEnvFrag where
       nest' <- forEachNestItem nest \(TempPair b info) -> do
         EnvVal rep info' <- toSafeE info
         case eqNameColorRep rep (getNameColor b) of
-          Just EqNameColor -> return $ EnvPair b $ info'
+          Just EqNameColor ->
+            withNameColorRep rep $ return $ EnvPair b $ info'
           Nothing -> error $ "color mismatch: " <> pprint rep <> " vs " <> pprint (getNameColor b)
       cont $ RecEnvFrag $ fromEnvPairs nest'
     where

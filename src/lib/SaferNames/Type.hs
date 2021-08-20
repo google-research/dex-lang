@@ -7,9 +7,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module SaferNames.Type (
-  checkTypes, getType, litType, getBaseMonoidType) where
+  checkModule, checkTypes, getType, litType, getBaseMonoidType) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -34,7 +35,15 @@ import SaferNames.PPrint ()
 
 -- === top-level API ===
 
-checkTypes :: forall n m e. MonadErr m => CheckableE e => Scope n -> e n -> m ()
+checkModule :: (Distinct n, MonadErr m) => TopBindings n -> Module n -> m ()
+checkModule topBindings m@(Module ir decls evaluated) = do
+  addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
+    liftEither $
+      runBindingsReaderT (fromTopBindings topBindings) $
+        runEnvReaderT idNameFunction $
+          void $ checkE m
+
+checkTypes :: forall n m e. MonadErr m => CheckableE e => Bindings n -> e n -> m ()
 checkTypes scope e = undefined
   -- liftEither $ runSubstReaderT scope (newEnv Rename) m
   -- where m = void (checkE e) :: CheckedTyperM n n ()
@@ -108,7 +117,45 @@ infixr 7 |:
 checkEq :: (MonadErr m, Show a, Pretty a, Eq a) => a -> a -> m ()
 checkEq reqTy ty = assertEq reqTy ty ""
 
+-- === Module interfaces ===
+
+instance CheckableE Module where
+  checkE (Module ir decls evaluated) = do
+    -- TODO: need to add back the IR check. Should we just do it alongside type checking
+    -- instead of as a separate pass?
+    -- addContext "Checking IR variant" $ checkModuleVariant m
+    addContext "Checking module body" $
+      checkB decls \decls' -> do
+        addContext "Checking module result" do
+          evaluated' <- checkE evaluated
+          return $ Module ir decls' evaluated'
+
+instance CheckableE EvaluatedModule where
+  checkE (EvaluatedModule bindings scs sourceMap) =
+    checkB (RecEnvFrag bindings) \(RecEnvFrag bindings') -> do
+      scs' <- checkE scs
+      sourceMap' <- checkE sourceMap
+      return $ EvaluatedModule bindings' scs' sourceMap'
+
+instance CheckableE SourceMap where
+  checkE sourceMap = undefined -- substM sourceMap
+
+instance CheckableE SynthCandidates where
+  checkE (SynthCandidates xs ys zs) =
+    SynthCandidates <$> mapM checkE xs
+                    <*> mapM checkE ys
+                    <*> mapM checkE zs
+
+instance (forall c. NameColor c => CheckableE (v c)) => CheckableB (RecEnvFrag v) where
+  checkB _ _ = undefined
+
+instance NameColor c => CheckableE (Binding c) where
+  checkE = undefined
+
 -- === type checking core ===
+
+instance CheckableE Atom where
+  checkE atom = snd <$> getTypeAndSubstE atom
 
 instance HasType Atom where
   getTypeE atom = case atom of

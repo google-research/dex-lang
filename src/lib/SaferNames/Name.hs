@@ -17,7 +17,7 @@ module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), EnvGetter (..), EnvExtender (..),
   Renamer (..), Distinct, WithDistinct (..),
-  NameFunction (..), emptyNameFunction,
+  NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
   WithScopeFrag (..), WithScopeSubstFrag (..),
   ScopeReader (..), ScopeExtender (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
@@ -30,7 +30,7 @@ module SaferNames.Name (
   LiftB, pattern LiftB,
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
-  runScopeReaderT, ScopeReaderT (..), EnvReaderT (..),
+  runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
@@ -76,6 +76,9 @@ newNameFunction f = NameFunction f emptyEnv
 
 emptyNameFunction :: NameFunction v VoidS o
 emptyNameFunction = newNameFunction absurdNameFunction
+
+idNameFunction :: NameFunction (SubstVal s val) n n
+idNameFunction = newNameFunction Rename
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -210,8 +213,7 @@ instance SubstB v (NameBinder c) where
 
 
 -- Like SubstE, but with fewer requirements for the monad
-substM :: ( InjectableE val, EnvGetter (SubstVal s val) m
-          , ScopeReader2 m, SubstE (SubstVal s val) e)
+substM :: ( InjectableE v, EnvGetter (SubstVal s v) m , ScopeReader2 m, SubstE (SubstVal s v) e)
        => e i -> m i o (e o)
 substM e = liftScopedEnvReader $ substE e
 
@@ -329,7 +331,7 @@ applySubst :: (ScopeReader m, SubstE (SubstVal c val) e, InjectableE val)
 applySubst substFrag x = do
   Distinct scope <- getScope
   return $ runIdentity $ runScopeReaderT scope $
-    flip runReaderT (emptyNameFunction) $ runEnvReaderT $
+    runEnvReaderT (emptyNameFunction) $
       dropSubst $ extendEnv substFrag $ substE x
 
 applyAbs :: (InjectableE val , ScopeReader m, BindsOneName b c, SubstE (SubstVal c val) e)
@@ -547,7 +549,7 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
 -- === EnvReaderT transformer ===
 
 newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
-  EnvReaderT { runEnvReaderT :: ReaderT (NameFunction v i o) (m o) a }
+  EnvReaderT { runEnvReaderT' :: ReaderT (NameFunction v i o) (m o) a }
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
 
 type ScopedEnvReader (v::V) = EnvReaderT v (ScopeReaderT Identity) :: MonadKind2
@@ -563,8 +565,10 @@ liftScopedEnvReader m = do
   Distinct scope <- getScope
   return $
     runIdentity $ runScopeReaderT scope $
-      flip runReaderT env $
-        runEnvReaderT $ m
+      runEnvReaderT env m
+
+runEnvReaderT :: NameFunction v i o -> EnvReaderT v m i o a -> m o a
+runEnvReaderT env m = runReaderT (runEnvReaderT' m) env
 
 instance Monad1 m => EnvReader v (EnvReaderT v m) where
   lookupEnvM name = EnvReaderT $ (! name) <$> ask
@@ -808,7 +812,9 @@ instance HasNameColor (NameBinder c n l) c where
 
 instance InjectableV v => InjectableE (NameFunction v i) where
   injectionProofE fresh (NameFunction f m) =
-    NameFunction (\name -> injectionProofE fresh $ f name)
+    NameFunction (\name ->
+                      withNameColorRep (getNameColorRep name)  $
+                        injectionProofE fresh $ f name)
                  (injectionProofE fresh m)
 
 instance InjectableE atom => InjectableE (SubstVal (cMatch::C) (atom::E) (c::C)) where
@@ -973,7 +979,7 @@ instance BindsNames (RecEnvFrag v) where
 
 -- Traversing a recursive set of bindings is a bit tricky because we have to do
 -- two passes: first we rename the binders, then we go and subst the payloads.
-instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) where
+instance (forall c. NameColor c => SubstE substVal (v c)) => SubstB substVal (RecEnvFrag v) where
   substB (RecEnvFrag env) = SubstGenT do
     WithScopeSubstFrag s r pairs <- runSubstGenT $ forEachNestItemSG (toEnvPairs env)
        \(EnvPair b x) -> substB b `bindSG` \b' -> returnSG (EnvPair b' x)
@@ -981,7 +987,10 @@ instance (forall s. SubstE substVal (v s)) => SubstB substVal (RecEnvFrag v) whe
       pairs' <- forEachNestItem pairs \(EnvPair b x) -> EnvPair b <$> substE x
       return $ WithScopeSubstFrag s r $ RecEnvFrag $ fromEnvPairs pairs'
 
-instance (forall c. SubstE substVal (v c)) => SubstE substVal (EnvVal v) where
+instance InjectableV v => InjectableB (RecEnvFrag v) where
+  injectionProofB _ _ _ = undefined
+
+instance (forall c. NameColor c => SubstE substVal (v c)) => SubstE substVal (EnvVal v) where
   substE = undefined
 
 instance Store (UnitE n)

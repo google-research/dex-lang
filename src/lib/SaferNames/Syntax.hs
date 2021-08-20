@@ -45,10 +45,10 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindings (..), TopBindingsFrag, NamedDataDef,
+    TopBindings (..), TopBindingsFrag, NamedDataDef, fromTopBindings,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
     refreshBinders, withFreshBinder, withFreshBinding,
-    Bindings, BindingsFrag, lookupBindings,
+    Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
@@ -232,8 +232,12 @@ instance Monad m => BindingsExtender (ScopeReaderT m) where
   extendBindings frag = extendScope (envAsScope frag)
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
-  BindingsReaderT {runBindingsReaderT :: ReaderT (Bindings n) (ScopeReaderT m n) a }
+  BindingsReaderT {runBindingsReaderT' :: ReaderT (Bindings n) (ScopeReaderT m n) a }
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+
+runBindingsReaderT :: Distinct n => (Scope n, Bindings n) -> (BindingsReaderT m n a) -> m a
+runBindingsReaderT (scope, bindings) cont =
+  runScopeReaderT scope $ runReaderT (runBindingsReaderT' cont) bindings
 
 instance Monad m => BindingsReader (BindingsReaderT m) where
   getBindings = BindingsReaderT ask
@@ -495,9 +499,11 @@ data TopState n = TopState
   , topSourceMap       :: SourceMap   n }
   deriving (Show, Generic)
 
-data TopBindings n =
-  TopBindings (Env Binding n n)
-  deriving (Show, Generic)
+data TopBindings n = TopBindings (Env Binding n n)
+     deriving (Show, Generic)
+
+fromTopBindings :: TopBindings n -> (Scope n, Bindings n)
+fromTopBindings (TopBindings env) = (envAsScope env, emptyNameFunction <>> env)
 
 type TopBindingsFrag n l = EnvFrag Binding n l l
 
@@ -1039,31 +1045,6 @@ instance InjectableE SynthCandidates
 instance SubstE Name SynthCandidates
 instance SubstE AtomSubstVal SynthCandidates
 
-instance SubstE Name EvaluatedModule where
-  substE (EvaluatedModule bindings scs sourceMap) =
-    withSubstB (RecEnvFrag bindings) \(RecEnvFrag bindings') ->
-      EvaluatedModule bindings' <$> substE scs <*> substE sourceMap
-
-instance SubstE Name (Binding c) where
-  substE binding = case binding of
-    AtomNameBinding   ty info         -> AtomNameBinding   <$> substE ty <*> substE info
-    DataDefBinding    dataDef         -> DataDefBinding    <$> substE dataDef
-    TyConBinding      dataDefName     -> TyConBinding      <$> substE dataDefName
-    DataConBinding    dataDefName idx -> DataConBinding    <$> substE dataDefName <*> pure idx
-    ClassBinding      classDef        -> ClassBinding      <$> substE classDef
-    SuperclassBinding className idx e -> SuperclassBinding <$> substE className <*> pure idx <*> substE e
-    MethodBinding     className idx e -> MethodBinding     <$> substE className <*> pure idx <*> substE e
-
-instance InjectableE (Binding c) where
-  injectionProofE fresh binding = case binding of
-    AtomNameBinding   ty info         -> AtomNameBinding   (injectionProofE fresh ty) (injectionProofE fresh info)
-    DataDefBinding    dataDef         -> DataDefBinding    (injectionProofE fresh dataDef)
-    TyConBinding      dataDefName     -> TyConBinding      (injectionProofE fresh dataDefName)
-    DataConBinding    dataDefName idx -> DataConBinding    (injectionProofE fresh dataDefName) idx
-    ClassBinding      classDef        -> ClassBinding      (injectionProofE fresh classDef)
-    SuperclassBinding className idx e -> SuperclassBinding (injectionProofE fresh className) idx (injectionProofE fresh e)
-    MethodBinding     className idx e -> MethodBinding     (injectionProofE fresh className) idx (injectionProofE fresh e)
-
 instance GenericE AtomBinderInfo where
   type RepE AtomBinderInfo =
      EitherE5
@@ -1124,6 +1105,9 @@ instance NameColor c => GenericE (Binding c) where
     Case1 (Case1 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ MethodBinding     className idx e
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
+instance NameColor c => InjectableE         (Binding c)
+instance NameColor c => SubstE Name         (Binding c)
+instance NameColor c => SubstE AtomSubstVal (Binding c)
 
 instance GenericB Decl where
   type RepB Decl = BinderP Binder (PairE (LiftE LetAnn) Expr)
@@ -1166,6 +1150,23 @@ instance SubstE Name SourceMap
 instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
+
+instance GenericE Module where
+  type RepE Module = LiftE IRVariant `PairE` Abs (Nest Decl) EvaluatedModule
+  fromE = undefined
+  toE = undefined
+
+instance InjectableE Module
+instance SubstE Name Module
+
+instance GenericE EvaluatedModule where
+  type RepE EvaluatedModule = Abs (RecEnvFrag Binding)
+                                  (PairE SynthCandidates SourceMap)
+  fromE = undefined
+  toE = undefined
+
+instance InjectableE EvaluatedModule
+instance SubstE Name EvaluatedModule
 
 prettyTypeOf :: forall (n::S) (e::E) ann . Typeable e => e n -> Doc ann
 prettyTypeOf _ = pretty $ show (typeRep :: TypeRep e)
