@@ -14,16 +14,38 @@ end
 
 const NativeFunction = Ptr{NativeFunctionObj}
 
+
+##########################################################################################
+# Global State
+
 # These can only be called once in life-time of program, can not re-init after fini etc
 init() = @ccall libdex.dexInit()::Nothing
 fini() = @ccall libdex.dexFini()::Nothing
+
+# No reason to call these more than once in life-time of program
+create_JIT() = @ccall libdex.dexCreateJIT()::Ptr{HsJIT}
+destroy_JIT(jit) = @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
+
 function __init__()
     init()
     atexit(fini)
+
+    @eval const JIT = create_JIT()
+    atexit(()->destroy_JIT(JIT))
 end
 
+##########################################################################################
 
-get_error() = unsafe_string(@ccall libdex.dexGetError()::Cstring)
+struct DexError <: Exception
+    msg::String
+end
+Base.showerror(io::IO, err::DexError) = println(io, "(DexError)\n", err.msg)
+
+get_error_msg() = unsafe_string(@ccall libdex.dexGetError()::Cstring)
+throw_from_dex() = throw(DexError(get_error_msg()))
+
+
+
 
 create_context() = @ccall libdex.dexCreateContext()::Ptr{HsContext}
 destroy_context(ctx) = @ccall libdex.dexDestroyContext(ctx::Ptr{HsContext})::Nothing
@@ -46,18 +68,9 @@ print(atm) = unsafe_string(@ccall libdex.dexPrint(atm::Ptr{HsAtom})::Cstring)
 # TODO once have tagged unions working
 #to_CAtom = dex_func('dexToCAtom', HsAtomPtr, CAtomPtr, ctypes.c_int)
 
-create_JIT() = @ccall libdex.dexCreateJIT()::Ptr{HsJIT}
-destroy_JIT(jit) = @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
-function jit(f)
-    JIT = create_JIT()
-    try
-        f(JIT)
-    finally
-        destroy_JIT(JIT)
-    end
-end
 
-compile(jit, ctx, atm) = @ccall libdex.dexCompile(jit::Ptr{HsJIT}, ctx::Ptr{HsContext}, atm::Ptr{HsAtom})::NativeFunction
+compile(ctx, atm, jit=JIT) = @ccall libdex.dexCompile(jit::Ptr{HsJIT}, ctx::Ptr{HsContext}, atm::Ptr{HsAtom})::NativeFunction
 
-get_function_signature(jit, f) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::NativeFunction)::Ptr{NativeFunctionSignature}
+get_function_signature(f, jit=JIT) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::NativeFunction)::Ptr{NativeFunctionSignature}
 free_function_fignature() = @ccall libdex.dexFreeFunctionSignature()::Ptr{NativeFunctionSignature}
+
