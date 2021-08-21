@@ -24,7 +24,10 @@ fini() = @ccall libdex.dexFini()::Nothing
 
 # No reason to call these more than once in life-time of program
 create_JIT() = @ccall libdex.dexCreateJIT()::Ptr{HsJIT}
-destroy_JIT(jit) = @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
+function destroy_JIT(jit)
+    NO_FREE[] || @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
+    return nothing
+end
 
 ##########################################################################################
 
@@ -38,7 +41,11 @@ throw_from_dex() = throw(DexError(get_error_msg()))
 
 
 create_context() = @ccall libdex.dexCreateContext()::Ptr{HsContext}
-destroy_context(ctx) = @ccall libdex.dexDestroyContext(ctx::Ptr{HsContext})::Nothing
+function destroy_context(ctx)
+    NO_FREE[] || @ccall libdex.dexDestroyContext(ctx::Ptr{HsContext})::Nothing
+    return nothing
+end
+
 function context(f)
     ctx = create_context()
     try

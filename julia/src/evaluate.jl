@@ -18,7 +18,7 @@ function DexModule(source::AbstractString)
     ctx == C_NULL && throw_from_dex()
     m =  DexModule(ctx)
     finalizer(m) do _m
-        destroy_context(_m.ctx)
+        destroy_context(getfield(_m, :ctx))
     end
     return m
 end

@@ -4,16 +4,18 @@ module DexCall
     include("api.jl")
     include("evaluate.jl")
     
+    # use this to disable free'ing haskell objects after we have closed the RTS
+    const NO_FREE = Ref(false)
 
     function __init__()
         init()
-        atexit(fini)
+        @eval const JIT = create_JIT()
+        atexit() do
+            destroy_JIT(JIT)
+            NO_FREE[] = true
+            fini()
+        end
     
         @eval const PRELUDE = create_context()
-        atexit(()->destroy_context(PRELUDE))
-    
-        @eval const JIT = create_JIT()
-        atexit(()->destroy_JIT(JIT))
     end
-
 end
