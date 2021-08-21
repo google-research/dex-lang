@@ -1,5 +1,5 @@
 module DexCall
-    export throw_from_dex, context, dex_eval, evaluate, DexError
+    export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule
 
     include("api.jl")
     include("evaluate.jl")
