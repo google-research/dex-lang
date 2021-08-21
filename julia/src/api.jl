@@ -26,14 +26,6 @@ fini() = @ccall libdex.dexFini()::Nothing
 create_JIT() = @ccall libdex.dexCreateJIT()::Ptr{HsJIT}
 destroy_JIT(jit) = @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
 
-function __init__()
-    init()
-    atexit(fini)
-
-    @eval const JIT = create_JIT()
-    atexit(()->destroy_JIT(JIT))
-end
-
 ##########################################################################################
 
 struct DexError <: Exception
@@ -43,8 +35,6 @@ Base.showerror(io::IO, err::DexError) = println(io, "(DexError)\n", err.msg)
 
 get_error_msg() = unsafe_string(@ccall libdex.dexGetError()::Cstring)
 throw_from_dex() = throw(DexError(get_error_msg()))
-
-
 
 
 create_context() = @ccall libdex.dexCreateContext()::Ptr{HsContext}
@@ -60,6 +50,7 @@ end
 
 
 dex_eval(ctx, str) = @ccall libdex.dexEval(ctx::Ptr{HsContext}, str::Cstring)::Ptr{HsContext}
+
 insert(ctx, str, atm) = @ccall libdex.dexInsert(ctx::Ptr{HsContext}, str::Cstring, atm::Ptr{HsAtom})::Ptr{HsContext}
 eval_expr(ctx, str) = @ccall libdex.dexEvalExpr(ctx::Ptr{HsContext}, str::Cstring)::Ptr{HsAtom}
 lookup(ctx, str) = @ccall libdex.dexLookup(ctx::Ptr{HsContext}, str::Cstring)::Ptr{HsAtom}
