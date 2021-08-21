@@ -1,5 +1,5 @@
 const libdex = joinpath(dirname(@__DIR__), "deps", "libDex.so")
-isfile(libdex) || error("libDex not found in $libdex. Please run `make build-ffis`")
+isfile(libdex) || error("libDex not found in $libdex. Please run `Pkg.build()`")
 
 
 struct HsAtom end
