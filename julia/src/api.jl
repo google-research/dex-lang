@@ -2,19 +2,6 @@ const libdex = joinpath(dirname(@__DIR__), "deps", "libDex.so")
 isfile(libdex) || error("libDex not found in $libdex. Please run `Pkg.build()`")
 
 
-struct HsAtom end
-struct HsContext end
-struct HsJIT end
-struct NativeFunctionObj end
-struct NativeFunctionSignature
-    arg::Cstring
-    res::Cstring
-    _ccall::Cstring  # can't name this field `ccall` as that is a built-in in julia
-end
-
-const NativeFunction = Ptr{NativeFunctionObj}
-
-
 ##########################################################################################
 # Global State
 
@@ -63,12 +50,10 @@ eval_expr(ctx, str) = @ccall libdex.dexEvalExpr(ctx::Ptr{HsContext}, str::Cstrin
 lookup(ctx, str) = @ccall libdex.dexLookup(ctx::Ptr{HsContext}, str::Cstring)::Ptr{HsAtom}
 
 print(atm) = unsafe_string(@ccall libdex.dexPrint(atm::Ptr{HsAtom})::Cstring)
-# TODO once have tagged unions working
-#to_CAtom = dex_func('dexToCAtom', HsAtomPtr, CAtomPtr, ctypes.c_int)
-
 
 compile(ctx, atm, jit=JIT) = @ccall libdex.dexCompile(jit::Ptr{HsJIT}, ctx::Ptr{HsContext}, atm::Ptr{HsAtom})::NativeFunction
 
 get_function_signature(f, jit=JIT) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::NativeFunction)::Ptr{NativeFunctionSignature}
 free_function_fignature() = @ccall libdex.dexFreeFunctionSignature()::Ptr{NativeFunctionSignature}
 
+to_CAtom(src, dest) = @ccall libdex.dexToCAtom(src::Ptr{HsAtom}, dest::Ptr{CAtom})::Int32

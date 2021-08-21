@@ -1,6 +1,7 @@
 module DexCall
-    export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule
+    export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule, julia_type
 
+    include("api_types.jl")
     include("api.jl")
     include("evaluate.jl")
     
