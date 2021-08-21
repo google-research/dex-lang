@@ -1,7 +1,10 @@
 module DexCall
-    export throw_from_dex, context, dex_eval
+    export throw_from_dex, context, dex_eval, evaluate, DexError
 
     include("api.jl")
+    include("evaluate.jl")
+    
+
     function __init__()
         init()
         atexit(fini)
