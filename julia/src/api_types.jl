@@ -59,9 +59,9 @@ function CAtom(atm::Ptr{HsAtom})
 end
 
 """
-    julia_type(x)
+    juliaize(x)
 
 Get the corresponding Julia type from some output of Dex.
 """
-julia_type(x::CAtom) = bust_union(x)
-julia_type(x::Ptr{HsAtom}) = julia_type(CAtom(x))
+juliaize(x::CAtom) = bust_union(x)
+juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))

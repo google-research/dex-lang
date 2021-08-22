@@ -6,7 +6,7 @@ end
 
 Base.show(io::IO, atom::Atom) = show(io, print(atom.ptr))
 
-julia_type(x::Atom) = julia_type(x.ptr)
+juliaize(x::Atom) = juliaize(x.ptr)
 
 mutable struct DexModule
     # Needs to be mutable struct so can attach finalizer

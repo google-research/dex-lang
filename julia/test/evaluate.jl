@@ -14,11 +14,11 @@
         @test repr(evaluate("IToW8 65")) === repr(repr('A'))
     end
 
-    @testset "evaluate julia_type" begin
-        @test julia_type(evaluate("1")) === Int32(1)
-        @test julia_type(evaluate("1.5")) === 1.5f0
+    @testset "evaluate juliaize" begin
+        @test juliaize(evaluate("1")) === Int32(1)
+        @test juliaize(evaluate("1.5")) === 1.5f0
 
-        @test julia_type(evaluate("IToW8 65")) === Int8(65)
+        @test juliaize(evaluate("IToW8 65")) === Int8(65)
         
     end
 
