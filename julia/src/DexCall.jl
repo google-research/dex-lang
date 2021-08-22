@@ -1,9 +1,14 @@
 module DexCall
+    using CombinedParsers
+    using CombinedParsers.Regexp
+    using CombinedParsers.TextParse: Numeric
+
     export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule, julia_type
 
     include("api_types.jl")
     include("api.jl")
     include("evaluate.jl")
+    include("native_function.jl")
     
     # use this to disable free'ing haskell objects after we have closed the RTS
     const NO_FREE = Ref(false)

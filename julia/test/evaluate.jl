@@ -5,6 +5,7 @@
 
     @testset "evaluate  show" begin
         @test repr(evaluate("1")) == repr("1")
+        @test repr(evaluate("1.5")) == repr("1.5")
         @test repr(evaluate("[1, 2]")) == repr("[1, 2]")
         @test repr(evaluate("1+3")) == repr("4")
         @test repr(evaluate("for i. [1, 2].i + 1")) == repr("[2, 3]")
