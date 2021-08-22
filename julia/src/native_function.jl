@@ -5,12 +5,11 @@ macro dex_func_str(str)
         NativeFunction(evaluate(str))
     else  # named function
         name = Symbol(only(m.captures))
-        Core.println(name)
         mod = DexModule(str)
         atom = getproperty(mod, name)
         native_func = NativeFunction(atom)
 
-        # TODOL: make this declared as const if at global scope, or maybe if a `c` flag is set
+        # TODOL: make this declared as const if a `c` flag is set
         :($(esc(name)) = $(native_func))
     end
 end
@@ -142,7 +141,7 @@ function to_ctype!(named_sizes::Dict{Symbol, Int}, builder::ArrayBuilder{T, N}, 
         end
     end)
     size(actual) == combined_size || throw(DimensionMismatch("Expected $(combined_size), got $(actual_size)"))
-    return pointer(actual)
+    return pointer(flip_array_order(actual))  # flip array order to C
 end
 
 # scalar types:
@@ -151,10 +150,11 @@ to_ctype!(::Any, ::Type{T}, ::S) where {T,S} = throw(ArgumentError("expected $T 
 
 "Makes for writing into. Returns a pointer, and a thunk that when run gives the instance."
 function create(builder::ArrayBuilder{T, N}, named_sizes::Dict{Symbol,Int}) where {T,N}
-    size = (size_or_name isa Symbol ? named_sizes[size_or_name] : size_or_name
+    size::NTuple{N,Int} = Tuple(size_or_name isa Symbol ? named_sizes[size_or_name] : size_or_name
             for size_or_name in builder.size)
-    result = Array{T, N}(undef, size...)
-    return pointer(result), ()->result
+    
+    result = Array{T, N}(undef, reverse(size)...)  # reverse size because dex wants C ordered
+    return pointer(result), ()->flip_array_order(result)  # flip order back to Fortran
 end
 
 # scalar types
@@ -163,6 +163,9 @@ function create(::Type{T}, ::Any) where T
     pointer_from_objref(ref), ()->ref[]
 end
 
+"converts between C and Fortran order"
+flip_array_order(x::Vector) = x
+flip_array_order(x::Array) = permutedims(x, ndims(x):-1:1)
 
 
 "Mirror of NativeFunctionSignature that using julia Strings, rather than CStrings"

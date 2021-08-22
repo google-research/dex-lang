@@ -33,11 +33,8 @@
             for i j. x.j.i
         """
 
-        myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0]) isa Matrix{Float32}
-
-        # Broken because elements come out in wrong order.
-        # Check C vs Fortran array orders
-        @test_broken myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0]) == [1f0 2f0 3f0; 4f0 5f0 6f0]'
+        myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0]) isa AbstractMatrix{Float32}
+        @test myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0]) == [1f0 2f0 3f0; 4f0 5f0 6f0]'
     end
 
     @testset "dex_func errors" begin
