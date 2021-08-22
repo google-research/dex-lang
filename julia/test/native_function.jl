@@ -16,7 +16,7 @@
         end
     end
 
-    @testset "dex_func happy path" begin
+    @testset "dex_func anon funcs" begin
         @test dex_func"\x:Float. exp x"(0f0) === 1f0
         @test dex_func"\x:Float. (2.0*x, x)"(1.5f0) === (3f0,  1.5f0)
         @test dex_func"\x:Int64 y:Int. I64ToI x + y"(Int64(1), Int32(2)) === Int32(3)
@@ -24,6 +24,20 @@
 
         @test dex_func"\x:((Fin 3)=>Float). for i. 2.0 * x.i"([1f0, 2f0, 3f0]) isa Vector{Float32}
         @test dex_func"\x:((Fin 3)=>Float). for i. 2.0 * x.i"([1f0, 2f0, 3f0]) == [2f0, 4f0, 6f0]
+    end
+
+    @testset "dex_func named funcs" begin
+        dex_func"""
+        def myTranspose (n: Int) ?-> (m: Int) ?->
+                        (x : (Fin n)=>(Fin m)=>Float) : (Fin m)=>(Fin n)=>Float =
+            for i j. x.j.i
+        """
+
+        myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0]) isa Matrix{Float32}
+
+        # Broken because elements come out in wrong order.
+        # Check C vs Fortran array orders
+        @test_broken myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0]) == [1f0 2f0 3f0; 4f0 5f0 6f0]'
     end
 
     @testset "dex_func errors" begin

@@ -1,5 +1,18 @@
 macro dex_func_str(str)
-    NativeFunction(evaluate(str))
+    # TODO support functions defined as `foo = \x. 1.0` etc
+    m = match(r"^def ([a-zA-Z0-9]+)", str)
+    if m === nothing  # then this must be an anon function
+        NativeFunction(evaluate(str))
+    else  # named function
+        name = Symbol(only(m.captures))
+        Core.println(name)
+        mod = DexModule(str)
+        atom = getproperty(mod, name)
+        native_func = NativeFunction(atom)
+
+        # TODOL: make this declared as const if at global scope, or maybe if a `c` flag is set
+        :($(esc(name)) = $(native_func))
+    end
 end
 
 
