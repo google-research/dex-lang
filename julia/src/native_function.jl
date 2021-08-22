@@ -67,13 +67,6 @@ function NativeFunction(atom::Ptr{HsAtom}, ctx=PRELUDE, jit=JIT)
     finally
         free_function_signature(sig_ptr)
     end
-    #== TODO
-    func_type = ctypes.CFUNCTYPE(
-        ctypes.c_int64,
-        *(arg.type.arg_ctype for arg in self.argument_signature),
-        *(res.type.ref_ctype for res in self.result_signature))
-    self.callable = func_type(ctypes.cast(ptr, ctypes.c_void_p).value)
-    ==#
 end
 
 function (f::NativeFunction{R})(args...)::R where R
@@ -182,7 +175,7 @@ function NativeFunctionSignatureJL(ptr::Ptr{NativeFunctionSignature})
 end
 
 "given a Binder for a result_signature returns the julia type that will be returned by the funcion"
-result_type(x::Binder) = result_type(x.type)  # don't care about size etc
+result_type(x::Binder) = result_type(x.type)
 function result_type(x::Vector{Binder})
     @assert !isempty(x)
     if length(x) == 1
@@ -202,21 +195,15 @@ result_type(::ArrayBuilder{T,N}) where {T,N} = Array{T,N}
         parser("f64"=>Float64),
         parser("i32"=>Int32),
         parser("i64"=>Int64),
-        parser("i8"=> Int8),
+        parser("i8"=>Int8),
     ])
-    
     size_ele = Numeric(Int) | name
-    
     sizes = join(Repeat(size_ele),",")
-    
     array_type = map(scalar_type * "[" * sizes * "]") do (T, _, sz, _)
         ArrayBuilder{T}(sz)
     end
-
     type = Either{Any}(Any[array_type, scalar_type])
-
     implicit = parser("?"=>true) | false
-
     arg_sig = map(implicit * name * ":" * type) do (i, n, _ , t)
         Binder(n, t, i)
     end

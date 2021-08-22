@@ -47,9 +47,9 @@ julia> m.addTwo
 ```
 
 
-# Atoms: `juliaize`, `NativeFunction`
+## Atoms: `juliaize`, `NativeFunction`
 
-As shown above `evaluate` and the contents of a `DexModule` are returned as atoms.
+`evaluate` and the contents of a `DexModule` are returned as `Atom`s.
 These can be displayed, but not much else.
 
 ```julia
@@ -60,7 +60,7 @@ julia> typeof(m.addTwo)
 DexCall.Atom
 ```
 
-To convert scalars into julia typed scalars used `juliaize`
+To convert scalars into julia typed scalars used `juliaize`.
 ```julia
 julia> juliaize(m.x)
 42
@@ -71,7 +71,7 @@ Int32
 
 It is not presently possible to `juliaize` arrays (but you can get them as the output of functions, see below).
 
-To convert functions into something you can execute, use `NativeFunction`.
+To convert function `Atom`s into something you can execute, use `NativeFunction`.
 
 ```julia
 julia> const add_two = NativeFunction(m.addTwo)
@@ -88,7 +88,7 @@ julia> add_two([0f0, 10f0, 100f0])
 This is due to Dex using C memory layout, and Julia's default `Array` using Fortran memory layout.
 We hope to address this in future versions.
 
-# `dex_func` compile Dex code directly into a function you can call from julia.
+## `dex_func` compile Dex code directly into a function you can call from julia.
 
 The `dex_func` [string macro](https://docs.julialang.org/en/v1/manual/metaprogramming/#Non-Standard-String-Literals) allows you to define a function in Dex that you can then call from julia.
 The function type it defines is a `NativeFunction` as described above.

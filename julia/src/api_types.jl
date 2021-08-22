@@ -47,7 +47,7 @@ end
 
 mutable struct CAtom <: TaggedUnion{Tuple{CLit, CRectArray}}
     tag::UInt64
-    payload::NTuple{3, UInt64}  # actually the union needs to be big genough to hold largest which is the CRectArray
+    payload::NTuple{3, UInt64}  # actually the Union, needs to be big genough to hold largest which is the CRectArray
     CAtom() = new()  # incomplete initialization because will initialize in a ccall
 end
 
@@ -61,7 +61,7 @@ end
 """
     juliaize(x)
 
-Get the corresponding Julia type from some output of Dex.
+Get the corresponding Julia object from some output of Dex.
 """
 juliaize(x::CAtom) = bust_union(x)
 juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))
