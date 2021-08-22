@@ -11,10 +11,7 @@ fini() = @ccall libdex.dexFini()::Nothing
 
 # No reason to call these more than once in life-time of program
 create_JIT() = @ccall libdex.dexCreateJIT()::Ptr{HsJIT}
-function destroy_JIT(jit)
-    NO_FREE[] || @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
-    return nothing
-end
+destroy_JIT(jit) = NO_FREE[] || @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
 
 ##########################################################################################
 
@@ -28,10 +25,7 @@ throw_from_dex() = throw(DexError(get_error_msg()))
 
 
 create_context() = @ccall libdex.dexCreateContext()::Ptr{HsContext}
-function destroy_context(ctx)
-    NO_FREE[] || @ccall libdex.dexDestroyContext(ctx::Ptr{HsContext})::Nothing
-    return nothing
-end
+destroy_context(ctx) = NO_FREE[] || @ccall libdex.dexDestroyContext(ctx::Ptr{HsContext})::Nothing
 
 function context(f)
     ctx = create_context()
@@ -51,9 +45,13 @@ lookup(ctx, str) = @ccall libdex.dexLookup(ctx::Ptr{HsContext}, str::Cstring)::P
 
 print(atm) = unsafe_string(@ccall libdex.dexPrint(atm::Ptr{HsAtom})::Cstring)
 
-compile(ctx, atm, jit=JIT) = @ccall libdex.dexCompile(jit::Ptr{HsJIT}, ctx::Ptr{HsContext}, atm::Ptr{HsAtom})::NativeFunction
+compile(ctx, atm, jit=JIT) = @ccall libdex.dexCompile(jit::Ptr{HsJIT}, ctx::Ptr{HsContext}, atm::Ptr{HsAtom})::Ptr{NativeFunctionObj}
+unload(f, jit=JIT) = NO_FREE[] || @ccall libdex.dexUnload(jit::Ptr{HsJIT}, f::Ptr{NativeFunctionObj})::Nothing
 
-get_function_signature(f, jit=JIT) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::NativeFunction)::Ptr{NativeFunctionSignature}
-free_function_fignature() = @ccall libdex.dexFreeFunctionSignature()::Ptr{NativeFunctionSignature}
+get_function_signature(f, jit=JIT) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::Ptr{NativeFunctionObj})::Ptr{NativeFunctionSignature}
+
+# This disagrees with the code in python/src/api.py, but matches the code in src/Dex/Foreign
+free_function_signature(s) = NO_FREE[] || @ccall libdex.dexFreeFunctionSignature(s::Ptr{NativeFunctionSignature})::Nothing
+
 
 to_CAtom(src, dest) = @ccall libdex.dexToCAtom(src::Ptr{HsAtom}, dest::Ptr{CAtom})::Int32

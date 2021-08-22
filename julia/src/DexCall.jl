@@ -1,7 +1,6 @@
 module DexCall
     using CombinedParsers
     using CombinedParsers.Regexp
-    using CombinedParsers.TextParse: Numeric
 
     export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule, julia_type
 

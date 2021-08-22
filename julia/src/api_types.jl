@@ -8,9 +8,6 @@ struct NativeFunctionSignature
     _ccall::Cstring  # can't name this field `ccall` as that is a built-in in julia
 end
 
-const NativeFunction = Ptr{NativeFunctionObj}
-
-
 struct CRectArray
     data::Ptr{Nothing}
     shape_ptr::Ptr{Int64}
