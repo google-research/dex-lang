@@ -2,7 +2,7 @@ module DexCall
     using CombinedParsers
     using CombinedParsers.Regexp
 
-    export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule, julia_type
+    export throw_from_dex, context, dex_eval, evaluate, DexError, DexModule, julia_type, NativeFunction, @dex_func_str
 
     include("api_types.jl")
     include("api.jl")
