@@ -18,7 +18,15 @@ destroy_JIT(jit) = NO_FREE[] || @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::No
 struct DexError <: Exception
     msg::String
 end
-Base.showerror(io::IO, err::DexError) = println(io, "(DexError)\n", err.msg)
+function Base.showerror(io::IO, err::DexError)
+    if '\n' ∈ err.msg
+        # If message is multiline then it may dend on exact alignment
+        println(io, "DexError:\n", err.msg)
+    else
+        # If one line then short enough to happen on same line as everuthing else
+        println(io, "DexError: ", err.msg)
+    end
+end
 
 get_error_msg() = unsafe_string(@ccall libdex.dexGetError()::Cstring)
 throw_from_dex() = throw(DexError(get_error_msg()))
