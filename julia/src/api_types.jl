@@ -45,14 +45,12 @@ struct CLit <: TaggedUnion{Tuple{Int64, Int32, Int8, Float64, Float32}}
     payload::NTuple{8, UInt8}  # actually the Union, needs to be big enough to hold largest which is an Int64
 end
 
-mutable struct CAtom <: TaggedUnion{Tuple{CLit, CRectArray}}
+struct CAtom <: TaggedUnion{Tuple{CLit, CRectArray}}
     tag::UInt64
-    payload::NTuple{3, UInt64}  # actually the Union, needs to be big genough to hold largest which is the CRectArray
-    CAtom() = new()  # incomplete initialization because will initialize in a ccall
+    payload::NTuple{3, UInt64}  # actually the Union, needs to be big enough to hold largest which is the CRectArray
 end
-
 function CAtom(atm::Ptr{HsAtom})
-    result = Ref(CAtom())
+    result = Ref{CAtom}()
     success = to_CAtom(atm, result)
     iszero(success) && throw_from_dex()
     return result[]
