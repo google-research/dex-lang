@@ -14,7 +14,7 @@ create_JIT() = @ccall libdex.dexCreateJIT()::Ptr{HsJIT}
 destroy_JIT(jit) = NO_FREE[] || @ccall libdex.dexDestroyJIT(jit::Ptr{HsJIT})::Nothing
 
 ##########################################################################################
-
+"An error thrown from with-in Dex"
 struct DexError <: Exception
     msg::String
 end

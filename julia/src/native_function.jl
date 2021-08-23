@@ -1,3 +1,53 @@
+@doc raw"""
+    dex_func"..."
+    dex_func"..."c
+
+Compiles a string of dex code which defines a function.
+That function can be anonymous, or named.
+If named it can either be a lambda that is assigned to a variable, or defined using `def`.
+
+Flags:
+ - `c`: for a named function declares it as const
+
+
+!!! warning
+    If the code in the string does anything other than define a single function then the
+    behavour of the `dex_func` string macro is undefined. It will probably eventually error.
+
+# Examples
+###Long form:
+```julia
+julia> dex_func\"\"\"
+              def myTranspose (n: Int) ?-> (m: Int) ?->
+                              (x : (Fin n)=>(Fin m)=>Float) : (Fin m)=>(Fin n)=>Float =
+                  for i j. x.j.i
+              \"\"\"
+(::NativeFunction{Matrix{Float32}}) (generic function with 1 method)
+
+julia> myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0])
+3×2 Matrix{Float32}:
+ 1.0  4.0
+ 2.0  5.0
+ 3.0  6.0
+```
+
+### Short form
+julia> dex_func"inc = \a:Int. a + 1"
+(::NativeFunction{Int32}) (generic function with 1 method)
+
+julia> inc(Int32(9))
+10
+```
+
+### Anonymous
+```julia
+julia> map(dex_func"\x:Float. pow 2.0 x", [1f0, 2f0,  3f0])
+3-element Vector{Float32}:
+ 2.0
+ 4.0
+ 8.0
+```
+"""
 macro dex_func_str(str, flags="")
     m = something(
         match(r"^def ([a-zA-Z0-9_]+)", str),  # `def foo`
@@ -36,7 +86,15 @@ ArrayBuilder{T}(size) where T = ArrayBuilder{T,length(size)}(size)
 
 
 
-"Callable Julia wrapper of some native dex function. Returns type is `R`."
+"""
+    NativeFunction{R}
+
+Callable Julia wrapper of some native Dex function.
+Returns type from calling it is is `R`.
+
+Usually constructed using [`@dex_func_str`](@ref),
+or via `NativeFunction(atom)` on some [`DexCall.Atom`](@ref).
+"""
 struct NativeFunction{R} <: Function
     c_func_ptr::Ptr{Nothing}
     implict_argument_signature::Vector{Binder}

@@ -15,7 +15,8 @@ julia> evaluate(raw"sum $ for i. exp [log 2.0, log 4.0].i")
 
 ## `DexModule` run a whole bunch of Dex code defining a module.
 Similar to `evaluate`, `DexModule` takes a string full of Dex code and runs it.
-However, it allowed you to run multiple expressions, and returns a namespaced module object that you can query to get variables out from.
+However, DexModule is a bit more powerful.
+It allowed you to run multiple expressions, and returns a namespaced module object that you can query to get variables out from.
 
 
 ```julia
@@ -94,7 +95,8 @@ The `dex_func` [string macro](https://docs.julialang.org/en/v1/manual/metaprogra
 The function type it defines is a `NativeFunction` as described above.
 In functionality, `dex_func` is very similar to `NativeFunction ∘ evaluate` except that it does a whole ton of the work at parse time -- including compiling the Dex function.
 
-You can use it to define either named functions:
+You can use it to define either named functions.
+Both in long form:
 ```julia
 julia> dex_func"""
               def myTranspose (n: Int) ?-> (m: Int) ?->
@@ -110,7 +112,16 @@ julia> myTranspose([1f0 2f0 3f0; 4f0 5f0 6f0])
  3.0  6.0
 ```
 
-Or you can use it to define anonymous functions:
+As well as in short-form by assigning a lambda to a variable:
+```julia
+julia> dex_func"inc = \a:Int. a + 1"
+(::NativeFunction{Int32}) (generic function with 1 method)
+
+julia> inc(Int32(9))
+10
+```
+
+You can also use it to define anonymous functions:
 
 ```julia
 julia> map(dex_func"\x:Float. pow 2.0 x", [1f0, 2f0,  3f0])
@@ -119,3 +130,7 @@ julia> map(dex_func"\x:Float. pow 2.0 x", [1f0, 2f0,  3f0])
  4.0
  8.0
 ```
+
+By adding a `c` flag after the string for a named function (in either long or short form), you can make it declared as const.
+Which is [a good idea if declaring it at global scope](https://docs.julialang.org/en/v1/manual/performance-tips/#Avoid-global-variables).
+For example: `dex_func"inc = \a:Int. a + 1"c`
