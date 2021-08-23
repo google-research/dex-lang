@@ -587,7 +587,7 @@ instance [VSpace v, VSpace w] VSpace (v & w)
 
 '## More Fashion MNist
 
-' Now that we has more functions we can revisit some of the Fashion MNist examples.
+' Now that we have more functions we can revisit some of the Fashion MNist examples.
 
 ' Function that uses state to produce a histogram:
 
