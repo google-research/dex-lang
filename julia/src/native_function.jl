@@ -1,6 +1,9 @@
 macro dex_func_str(str)
-    # TODO support functions defined as `foo = \x. 1.0` etc
-    m = match(r"^def ([a-zA-Z0-9]+)", str)
+    m = something(
+        match(r"^(def ([a-zA-Z0-9_]+))", str),  # `def foo`
+        match(r"^([a-zA-Z0-9_]+)\s*=\s*[\\]", str),  # `foo = \x`
+        Some(nothing)  # not found by either, so still give nothing.
+    )
     if m === nothing  # then this must be an anon function
         NativeFunction(evaluate(str))
     else  # named function
