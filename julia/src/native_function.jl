@@ -1,6 +1,6 @@
-macro dex_func_str(str)
+macro dex_func_str(str, flags="")
     m = something(
-        match(r"^(def ([a-zA-Z0-9_]+))", str),  # `def foo`
+        match(r"^def ([a-zA-Z0-9_]+)", str),  # `def foo`
         match(r"^([a-zA-Z0-9_]+)\s*=\s*[\\]", str),  # `foo = \x`
         Some(nothing)  # not found by either, so still give nothing.
     )
@@ -12,8 +12,11 @@ macro dex_func_str(str)
         atom = getproperty(mod, name)
         native_func = NativeFunction(atom)
 
-        # TODOL: make this declared as const if a `c` flag is set
-        :($(esc(name)) = $(native_func))
+        assigment = :($(esc(name)) = $(native_func))
+        if 'c' in flags
+            assigment = Expr(:const, assigment)
+        end
+        return assigment
     end
 end
 

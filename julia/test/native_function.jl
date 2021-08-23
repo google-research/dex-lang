@@ -1,3 +1,4 @@
+
 @testset "native_function.jl" begin
     @testset "signature parser" begin
         @testset "$example" for example in (
@@ -39,6 +40,12 @@
 
         dex_func"double_it = \x:Float. 2.0 * x"
         @test double_it(4f0) === 8f0
+    end
+
+    @testset "dex_func named const funcs" begin
+        @eval dex_func"foo = \x:Int. 1.5"c  # use @eval to run at global scope, so can declare const
+        @test isconst(@__MODULE__, :foo)
+        @test foo(Int32(4)) === 1.5f0
     end
 
     @testset "dex_func errors" begin
