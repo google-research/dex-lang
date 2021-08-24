@@ -21,7 +21,19 @@
         @test juliaize(evaluate("IToW8 65")) === Int8(65)
     end
 
-    @testset "convert CAtom" begin
+    @testset "Atom function call" begin
+        m = DexModule("""
+        def addOne (x: Float) : Float = x + 1.0
+        """)
+        x = evaluate("2.5")
+        y = evaluate("[2, 3, 4]")
+        @test repr(m.addOne(x)) == repr("3.5")
+
+        # This is a function that is in `m` from dex's prelude
+        @test repr(m.sum(y)) == repr("9")
+    end
+
+    @testset "convert Atom" begin
         atom = evaluate("1.0")
         @test convert(Number, atom) === 1f0
         @test convert(Real, atom) === 1f0

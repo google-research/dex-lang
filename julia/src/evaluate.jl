@@ -1,11 +1,10 @@
 """
     Atom
 A wrapped DexLang value.
-On its own not good for much -- just displays as a string.
 
-However scalar values can be converted to julia objects using [`juliaize`](@ref),
-and functions can be made exectuable using [`NativeFunction`](@ref).
-They can also be converted using `convert(T, atom)` where T is the destination type.
+Scalar values can be converted to julia objects using [`juliaize`](@ref), or `convert`.
+Functions can be called directly, if you pass in atoms,
+or they can be compiled and made usable on julia objects by using [`NativeFunction`](@ref).
 """
 struct Atom
     ptr::Ptr{HsAtom}
@@ -16,6 +15,22 @@ Base.show(io::IO, atom::Atom) = show(io, print(atom.ptr))
 
 juliaize(x::Atom) = juliaize(x.ptr)
 Base.convert(::Type{T}, atom::Atom) where {T<:Number} = convert(T, juliaize(atom))
+
+
+function (self::Atom)(args...)
+    # TODO: Make those calls more hygenic
+    env = self.ctx
+    pieces = (self, args...)
+    for (i, atom) in enumerate(pieces)
+        # NB: Atoms can contain arbitrary references
+        if atom.ctx !== PRELUDE && atom.ctx !== self.ctx
+            throw(ArgumentError("Mixing atoms coming from different Dex modules is not supported yet!"))
+        end
+        old_env, env = env, insert(env, "julia_arg$i", atom.ptr)
+        destroy_context(old_env)
+    end
+    return evaluate(join("julia_arg" .* string.(eachindex(pieces)), " "), self.ctx, env)
+end
 
 mutable struct DexModule
     # Needs to be mutable struct so can attach finalizer

@@ -22,7 +22,7 @@ It allowed you to run multiple expressions, and returns a namespaced module obje
 ```julia
 julia> m = DexModule(raw"""
        x = 42
-       y = for i:(Fin 3). x
+       y = for i:(Fin 3). IToF x
        z = sum y
 
        def addTwo (n: Int) ?-> (x: (Fin n)=>Float) : (Fin n)=>Float = 
@@ -31,22 +31,27 @@ julia> m = DexModule(raw"""
 DexModule(Ptr{DexCall.HsContext} @0x0000000000000031)
 ```
 
-You can then query things from it by name, each of which is returns as an Atom
+You can then query things from it by name, each of which is returns as an `Atom`
 ```julia
 
 julia> m.x
 "42"
 
 julia> m.y
-"[42, 42, 42]"
+"[42., 42., 42.]"
 
 julia> m.z
-"126"
+"126."
 
 julia> m.addTwo
 "\\n:Int32 ?->\n  \\x:((Fin n) => Float32).\n    for i:(Fin n).\n       tmp:((Add Float32) ?=> Float32 -> Float32 -> Float32) = (+) Float32\n       tmp1:(Float32 -> Float32 -> Float32) = tmp instance1\n       tmp2:Float32 = x i\n       tmp3:(Float32 -> Float32) = tmp1 tmp2\n      tmp3 2."
 ```
 
+If the variable defines is a function you can even call it, though you need to passin `Atom`s:
+```julia
+julia> m.addTwo(m.y)
+"[44., 44., 44.]"
+```
 
 ## Atoms: `juliaize`, `NativeFunction`
 
@@ -82,7 +87,8 @@ julia> typeof(convert(Int64, m.x))
 Int64
 ```
 
-To convert function `Atom`s into something you can execute, use `NativeFunction`.
+To convert function `Atom`s into something you can execute as if it was a regular julia function use `NativeFunction`.
+This will compile it and handing inputs and outputs without needing to del with `Atom`s directly.
 
 ```julia
 julia> const add_two = NativeFunction(m.addTwo)
