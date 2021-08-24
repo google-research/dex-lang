@@ -146,7 +146,6 @@ function (f::NativeFunction{R})(args...)::R where R
     implict_values = map(f.implict_argument_signature) do binder
         # Right now the Exported API only supports implicts that are sizes
         # and now all of them will have been determined by the preverious `to_ctype!` step
-        @assert binder.type == Int32
         named_sizes[binder.name]
     end
 
