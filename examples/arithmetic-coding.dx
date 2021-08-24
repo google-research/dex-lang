@@ -1,269 +1,92 @@
-'## Arithmetic coding
-A finite-precision variant based on [this](https://web.stanford.edu/class/ee398a/handouts/papers/WittenACM87ArithmCoding.pdf) paper by Ian H. Witten et al.
+'## [Arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding)
 
 Alphabet = Fin 26
-Interval = (Int&Int)
-Code = ((List Int)&Int)
-maxBits = 31
-precision = 7
-top = intpow2 precision
-half = idiv top 2
-fstQuarter = idiv half 2
-thdQuarter = fstQuarter * 3
+Interval = (Float&Float)
+top:Interval = (0.,1.)
 
 def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
 def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
 
 '### Statistical modelling
 
-def norm (freq: Int) (l: Int) (w: Int) : Int = FToI $ IToF freq / IToF l * IToF w
-def inverseNorm (norm: Int) (l: Int) (w: Int) : Int = FToI $ IToF norm / IToF w * IToF l
-
-def getCumFreq (fs: Alphabet=>Int) : Alphabet=>Int =
-  withState zero \total.
-    for i. if fs.i /= zero
+def cumProb (ps: n=>Float) : n=>Float =
+  withState 0.0 \total.
+    for i. if ps.i > 0. 
       then
-        newTotal = get total + fs.i
+        currTotal = get total
+        newTotal = currTotal + ps.i
         total := newTotal
-        newTotal
-      else zero
-
-def getIntervals (xs: Alphabet=>Int) : Alphabet=>Interval =
-  withState (0,0) \ref.
-    for i. if xs.i /= zero
-      then
-        ref := ((snd (get ref)), xs.i)
-        get ref
-      else (0,0)
+        currTotal
+      else 0.
 
 def getFrequency (str: (Fin l)=>Word8) : Alphabet=>Int =
   a: Alphabet => Int = zero
   yieldState a \ref. for i. 
     i' = (charToIdx str.i)@_
-    ref!i' := get ref!i' + 1
+    ref!i' := (get ref).i' + 1
 
-def model (str: (Fin l)=>Word8) : Alphabet=>(Interval->Interval) =
-  freq = getFrequency str
-  cumFreq = getCumFreq freq
-  inFreq = getIntervals cumFreq
-  for i.
-    case inFreq.i == (0,0) of
-      True -> id
-      False ->
-        (fLow, fHigh) = inFreq.i
-        \(low, high).
-          w = high-low+1
-          low' = low + norm fLow l w
-          high' = low-1 + norm fHigh l w
-          (low', high')
-
-'### Integer arithmetic
-
-def overflowing (numBits: Int) : Bool = 
-  mod numBits maxBits == 0 && numBits > maxBits
-
-def existsOverflow (numBits: Int) : Bool =
-  mod numBits maxBits > 0 && numBits > maxBits
-
-def selectStream (numBits: Int) (code: Ref h Int) 
-                 (overflow: Ref h Int) : {State h} Unit =
-  numBits' = mod numBits maxBits
-  bitMask = intpow2 numBits'
-  case (numBits < maxBits) of 
-    True -> code := %or (get code) bitMask
-    False -> overflow := %or (get overflow) bitMask
-
-def enqueue (bit: Int) ((codeLst, bitPos): Code) : Code =
-  (AsList numInts intArr) = codeLst
-  codePos = idiv (bitPos) maxBits 
-
-  (codeLst', _, numInts') = yieldState (codeLst, intArr, numInts) \ref.
-    lstRef = fstRef ref
-    arrRef = fstRef (sndRef ref)
-    numRef = sndRef (sndRef ref)
-    case codePos >= get numRef of
-      True -> 
-        numRef := (get numRef) + 1
-        lstRef := (get lstRef) <> (AsList 1 [bit])
-      False ->
-        if bit == 1 then 
-          code = get arrRef!(codePos@_)
-          numBits = mod bitPos maxBits
-          bitMask = intpow2 numBits
-          arrRef!(codePos@_) := %or code bitMask
-        lstRef := (AsList numInts (get arrRef))
-
-  (codeLst', bitPos+1)
-
-def dequeue ((codeLst, bitPos): Code) (buffer: Int): (Code&Int) = 
-  (AsList numInts intArr) = codeLst
-  codePos = idiv (bitPos) maxBits
-  (buffer', intArr') = case numInts > codePos of
-    True ->
-      code = intArr.(codePos@_)
-      intArr' = yieldState intArr \arr. arr!(codePos@_) := %shr code 1
-      (2*buffer + %and 1 code, intArr')
-    False -> (2*buffer, intArr)
-  codeLst' = AsList numInts intArr'
-  ((codeLst', bitPos+1), buffer')
+def getProbability (l: Int) (freq: Alphabet=>Int) : Alphabet=>(Float&Float) =
+  probs = for i. IToF freq.i / IToF l
+  cums = cumProb probs
+  for i. (probs.i, cums.i)
 
 '### Scaling functions
 
-def updateCode (bit: Int) (code: Code) (tally: Int) : Code =
-  yieldState code \ref.
-    ref := enqueue bit (get ref)
-    for i:(Fin tally).
-      ref := enqueue (%xor bit 1) (get ref)
+def getUpdateRule (p: Alphabet=>(Float&Float)) : Alphabet=>(Interval->Interval) =
+  for i. 
+    case p.i == (0.,0.) of
+      True -> id
+      False ->
+        \(x, w).
+          x' = x + w*(snd p.i)
+          w' = w*(fst p.i)
+          (x', w')
 
-def encodeInterval ((low, high): Interval) 
-                   (code: Code) (tally: Int) : (Int&Int&Code&Int&(IterResult Int)) =
-  case high < half of
-    True ->
-      (2*low,
-       2*high+1,
-       updateCode 0 code tally,
-       0,
-       Continue)
-    False -> case low >= half of
-      True ->
-        (2*(low - half),
-         2*(high - half)+1,
-         updateCode 1 code tally,
-         0,
-         Continue)
-      False -> case high < thdQuarter && low >= fstQuarter of
-        True ->
-          (2*(low - fstQuarter), 
-           2*(high - fstQuarter)+1, 
-           code, 
-           tally + 1,
-           Continue)
-        False -> (low, high, code, tally, Done 0)
+def subdivide (str: (Fin l)=>Word8) 
+              (rule: Alphabet=>(Interval->Interval)) 
+              (i: (Fin l)) (in: Interval) : Interval =
+  updateInterval = rule.((charToIdx str.i)@_)
+  updateInterval in
 
-def encodeSymbol (str: (Fin l)=>Word8) 
-              (model: Alphabet=>(Interval->Interval)) 
-              (i: (Fin l)) 
-              (params: (Interval&Code&Int)) : (Interval&Code&Int) =
-  yieldState params \p.
-    intervalRef = fstRef p
-    codeRef = fstRef (sndRef p)
-    tallyRef = sndRef (sndRef p)
-    intervalRef := model.((charToIdx str.i)@_) (get intervalRef)
-    boundedIter precision 0 \_.
-      (low, high, code, tally, result) = encodeInterval (get intervalRef) (get codeRef) (get tallyRef)
-      intervalRef := (low, high)
-      codeRef := code
-      tallyRef := tally
-      result
-
-def findInterval (interval: Interval) (buffer: Int) 
-                 (model: Alphabet=>(Interval->Interval)) : (Word8&Interval)=
-  boundedIter (size Alphabet) (' ',(0,0)) \j.
-    case model.(j@_) interval == interval of
+def findInterval  (l: Int) 
+                  (code: Float) 
+                  (rule: Alphabet=>(Interval->Interval))
+                  (i: (Fin l))
+                  ((str,in): (List Word8 & Interval)) : (List Word8 & Interval) =
+  (letter, in') = boundedIter (size Alphabet) (' ', top) \j.
+    case rule.(j@_) in == in of
       True -> Continue
       False ->
-        (low, high) = model.(j@_) interval
-        case buffer < high of
-          True -> Done (idxToChar j, (low,high))
+        (x, w) = rule.(j@_) in 
+        case code >= x && code < (x+w) of
+          True -> Done (idxToChar j, (x,w))
           False -> Continue
-
-def decodeInterval ((low, high): Interval) 
-                   (code: Code) (buffer: Int) : (Int&Int&Code&Int&(IterResult Int)) =
-  case high < half of
-    True ->
-      (code', buffer') = dequeue code buffer
-      (2*low,
-       2*high+1,
-       code',
-       buffer',
-       Continue)
-    False -> case low >= half of
-      True ->
-        (code', buffer') = dequeue code (buffer-half)
-        (2*(low-half),
-         2*(high-half)+1,
-         code',
-         buffer',
-         Continue)
-      False -> case high < thdQuarter && low >= fstQuarter of
-        True ->
-          (code', buffer') = dequeue code (buffer-fstQuarter)
-          (2*(low-fstQuarter),
-           2*(high-fstQuarter)+1,
-           code',
-           buffer',
-           Continue)
-        False -> (low, high, code, buffer, Done 0)
-
--- move state updates to helper functions
-def decodeSymbol  (l: Int)
-                  (model: Alphabet=>(Interval->Interval))
-                  (i: (Fin l))
-                  (params: (Interval&Code&Int&List Word8)) : (Interval&Code&Int&List Word8) =
-  yieldState params \p.
-    intervalRef = fstRef p
-    codeRef = fstRef (sndRef p)
-    strRef = sndRef (sndRef (sndRef p))
-    bufferRef = fstRef (sndRef (sndRef p))
-    (symbol, interval) = findInterval (get intervalRef) (get bufferRef) model
-    strRef := get strRef <> AsList 1 [symbol]
-    intervalRef := interval
-    boundedIter precision 0 \_.
-      (low, high, code, buffer, result) = decodeInterval (get intervalRef) (get codeRef) (get bufferRef)
-      intervalRef := (low, high)
-      codeRef := code 
-      bufferRef := buffer
-      result
+  (str <> AsList 1 [letter], in')
 
 '### Coding interface
 
-def encode (str: (Fin l)=>Word8) 
-           (model: Alphabet=>(Interval->Interval)) : List Int =
-  update = encodeSymbol str model
-  initInterval = (0,top-1)
-  -- enqueue an extra 1 to the code to preserve length
-  fst $ fst $ snd $ fold (initInterval,(AsList 1 [0],0),0) update
+def encode (str: (Fin l)=>Word8) (rule: Alphabet=>(Interval->Interval)) : Float =
+  update = subdivide str rule
+  finalInterval = fold top update
+  fst finalInterval + (snd finalInterval)/2.
 
-def decode (l: Int) (codeLst: List Int) 
-           (model: Alphabet=>(Interval->Interval)) : List Word8 =
-  update = decodeSymbol l model
+def decode (l: Int) (code: Float) (rule: Alphabet=>(Interval->Interval)) : List Word8 =
+  update = findInterval l code rule
   initStr: List Word8 = AsList _ []
-  initInterval = (0,top-1)
-  codeLst' = codeLst <> (AsList 1 [0])
-  initCode' = (codeLst', 0)
-  initBuffer' = 0
-  (initCode, initBuffer) = yieldState (initCode',initBuffer') \ref. 
-    for i:(Fin precision). 
-      (code, buffer) = dequeue (get (fstRef ref)) (get (sndRef ref))
-      fstRef ref := code
-      sndRef ref := buffer
-  snd $ snd $ snd $ fold (initInterval, initCode, initBuffer, initStr) update
+  fst $ fold (initStr, top) update
 
 '### Demo: Lossless compression on a test string
 
-str' = "abccedaczh"
+str' = "abbadcabccdd"
 (AsList l str) = str'
-m = model str
 
-code = encode str m
+p = getProbability l $ getFrequency str
+r = getUpdateRule p
+
+code = encode str r
 code
-> 
+> 0.081569
 
-decoded = decode l code m
-decoded
-> 
+decoded = decode l code r
 decoded == str'
-> 
-
-
-
-
-
-
-
-
-
-
-
-
-
+> True
