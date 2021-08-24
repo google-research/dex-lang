@@ -169,7 +169,38 @@ function (f::NativeFunction{R})(args...)::R where R
     end
 end
 
-# Work around needing to have the return types as literals, by defining a generated function that does.
+
+"""
+    _ccall_dex_func(f_ptr, args...)
+
+Use `ccall` to call the dex native function pointed to by `f_ptr`, passing in the given `args`.
+The `args` must already be in a C compatible type etc.
+
+
+!!! warning
+    Noone should be expected to follow what this code does.
+    Like even people who have been using julia for years shouldn't.
+    It's pretty gross.
+
+The sensible version of this code is:
+```julia
+ccall(f_ptr, Int64, typeof.(args), args...)
+```
+
+However, we can not do that directly because `ccall` is not a function but rather a built-in
+language intrinsic that is largely resolved at compile time, and that needs the type 
+information given to it as literals.
+`typeof.(args)` is not a literal which is a problem -- even though it can actually be 
+resolved at compile-time -- the information exists.
+
+So we use a generated function in order to get at the information.
+Docs on those are at https://docs.julialang.org/en/v1/manual/metaprogramming/#Generated-functions
+The short version though is that they take in arguments at compile time and they only get their types,
+then they return a AST which is what is run at runtime.
+So what we are doing is building the AST that is for the ccall, which has the types all present as literals.
+
+See: https://github.com/JuliaLang/julia/issues/41991
+"""
 @generated function _ccall_dex_func(f_ptr, args...)
     arg_types = Expr(:tuple, args...)
     return :(ccall(f_ptr, Int64, $arg_types, $(Any[:(args[$i]) for i in 1:length(args)]...)))
