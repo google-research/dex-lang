@@ -10,6 +10,7 @@
             "arg2:f32[arg0]",
             "?arg0:i32,?arg1:i32,arg2:f32[arg0,arg1]",
             "arg3:f32[arg1,arg0]",
+            "arg0:f32,?arg1:i32,arg2:f32[arg1]"
         )
             # This is just a quick check to make sure the parser doesn't error.
             # later integration tests will show it has the right behavour.
@@ -40,6 +41,11 @@
 
         dex_func"double_it = \x:Float. 2.0 * x"
         @test double_it(4f0) === 8f0
+    end
+
+    @testset "dex_func not all implicits at start" begin
+        dex_func"def f (a : Float) (n : Int) ?-> (b : (Fin n)=>Float) : Float = a + sum b"
+        @test f(100f0, [10f0, 2f0, 0.1f0, 0.1f0, 0.1f0]) === 112.3f0
     end
 
     @testset "dex_func named const funcs" begin

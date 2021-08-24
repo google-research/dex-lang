@@ -99,8 +99,7 @@ or via `NativeFunction(atom)` on some [`DexCall.Atom`](@ref).
 """
 struct NativeFunction{R} <: Function
     c_func_ptr::Ptr{Nothing}
-    implict_argument_signature::Vector{Binder}
-    explicit_argument_signature::Vector{Binder}
+    argument_signature::Vector{Binder}
     result_signature::Vector{Binder}
 end
 
@@ -112,13 +111,11 @@ function NativeFunction(atom::Ptr{HsAtom}, ctx=PRELUDE, jit=JIT)
 
     try
         signature = NativeFunctionSignatureJL(sig_ptr)
-        argument_signature = parse_sig(signature.arg)
         result_signature = parse_sig(signature.res)
         R = result_type(result_signature)
         f = NativeFunction{R}(
             c_func_ptr,
-            filter(x->x.implicit, argument_signature),
-            filter(x->!x.implicit, argument_signature),
+            parse_sig(signature.arg),
             result_signature
         )
 
@@ -136,20 +133,25 @@ function NativeFunction(atom::Ptr{HsAtom}, ctx=PRELUDE, jit=JIT)
 end
 
 function (f::NativeFunction{R})(args...)::R where R
-    if length(args) != length(f.explicit_argument_signature)
-        throw(ArgumentError("wrong number of inputs, expected: $(length(f.explicit_argument_signature) )"))
-    end
-
     named_sizes = Dict{Symbol, Int}()
-    arg_ctypes = map(f.explicit_argument_signature, args) do binder, arg
-        to_ctype!(named_sizes, binder.type, arg)
+    num_explict = 0
+    c_args = map(f.argument_signature) do binder
+        if binder.implicit
+            -one(binder.type)  # we will do implicts in a second pass, once named_sizes is filled out
+        else
+            num_explict += 1
+            to_ctype!(named_sizes, binder.type, args[num_explict])
+        end
+    end
+    num_explict == length(args) || throw(ArgumentError("Wrong number of arguments, expected $num_explict"))
+
+    for (i, binder) in enumerate(f.argument_signature)
+        # second pass, filling in implicits from the `named_sizes`
+        binder.implicit || continue
+        # Make sure it is the right type, just in case dex ever allows e.g Int32 implicts
+        c_args[i] = convert(binder.type, named_sizes[binder.name])
     end
 
-    implict_values = map(f.implict_argument_signature) do binder
-        # Right now the Exported API only supports implicts that are sizes
-        # and now all of them will have been determined by the preverious `to_ctype!` step
-        named_sizes[binder.name]
-    end
 
     results_ptrs_and_thunks = map(f.result_signature) do builder
         create(builder.type, named_sizes)  
@@ -158,9 +160,8 @@ function (f::NativeFunction{R})(args...)::R where R
     result_ptrs = first.(results_ptrs_and_thunks)
     result_thunks = Tuple(last.(results_ptrs_and_thunks))
 
-    args = (implict_values..., arg_ctypes..., result_ptrs...)
     # No return value, that we care about because it write's its return into  the results_ptrs
-    _ccall_dex_func(f.c_func_ptr, args...)
+    _ccall_dex_func(f.c_func_ptr, c_args..., result_ptrs...)
 
     if length(result_thunks) === 1
         only(result_thunks)()

@@ -57,7 +57,6 @@ compile(ctx, atm, jit=JIT) = @ccall libdex.dexCompile(jit::Ptr{HsJIT}, ctx::Ptr{
 unload(f, jit=JIT) = NO_FREE[] || @ccall libdex.dexUnload(jit::Ptr{HsJIT}, f::Ptr{NativeFunctionObj})::Nothing
 
 get_function_signature(f, jit=JIT) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::Ptr{NativeFunctionObj})::Ptr{NativeFunctionSignature}
-
 free_function_signature(s) = NO_FREE[] || @ccall libdex.dexFreeFunctionSignature(s::Ptr{NativeFunctionSignature})::Nothing
 
 
