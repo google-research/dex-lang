@@ -58,7 +58,6 @@ unload(f, jit=JIT) = NO_FREE[] || @ccall libdex.dexUnload(jit::Ptr{HsJIT}, f::Pt
 
 get_function_signature(f, jit=JIT) = @ccall libdex.dexGetFunctionSignature(jit::Ptr{HsJIT}, f::Ptr{NativeFunctionObj})::Ptr{NativeFunctionSignature}
 
-# This disagrees with the code in python/src/api.py, but matches the code in src/Dex/Foreign
 free_function_signature(s) = NO_FREE[] || @ccall libdex.dexFreeFunctionSignature(s::Ptr{NativeFunctionSignature})::Nothing
 
 
