@@ -72,6 +72,16 @@ Int32
 
 It is not presently possible to `juliaize` arrays (but you can get them as the output of functions, see below).
 
+You can also use [`convert`](https://docs.julialang.org/en/v1/manual/conversion-and-promotion/#Conversion) to convert the atom to a Julia object.
+In which case it will make the minimal change from the Dex type to get to the type you requested
+```julia
+julia> typeof(convert(Integer, m.x))
+Int32
+
+julia> typeof(convert(Int64, m.x))
+Int64
+```
+
 To convert function `Atom`s into something you can execute, use `NativeFunction`.
 
 ```julia

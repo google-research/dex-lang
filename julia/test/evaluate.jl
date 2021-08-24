@@ -19,7 +19,18 @@
         @test juliaize(evaluate("1.5")) === 1.5f0
 
         @test juliaize(evaluate("IToW8 65")) === Int8(65)
-        
+    end
+
+    @testset "convert CAtom" begin
+        atom = evaluate("1.0")
+        @test convert(Number, atom) === 1f0
+        @test convert(Real, atom) === 1f0
+        @test convert(Float64, atom) === 1.0
+
+        atom = evaluate("2")
+        @test convert(Number, atom) === Int32(2)
+        @test convert(Real, atom) === Int32(2)
+        @test convert(Float64, atom) === 2.0
     end
 
 
