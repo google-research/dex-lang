@@ -90,7 +90,7 @@ ArrayBuilder{T}(size) where T = ArrayBuilder{T,length(size)}(size)
     NativeFunction{R}
 
 Callable Julia wrapper of some native Dex function.
-Returns type from calling it is is `R`.
+Return type from calling it is is `R`.
 
 Usually constructed using [`@dex_func_str`](@ref),
 or via `NativeFunction(atom)` on some [`DexCall.Atom`](@ref).
