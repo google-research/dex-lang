@@ -29,7 +29,7 @@ jobs:
         stack-version: 'latest'
     
     - name: Setup Julia
-      uses: julia-actions/setup-julia@v1
+      uses: julia-actions/setup-julia@2d6959702913c06ee8c6997dadafe089ec18549f  # v1.6.1
       with:
         version: '1.6'
         arch: x64
@@ -47,11 +47,11 @@ jobs:
           ${{ runner.os }}-
 
     - name: Build DexCall.jl
-      uses: julia-actions/julia-buildpkg@latest
+      uses: julia-actions/julia-buildpkg@f995fa4149fed4a8e9b95ba82f54cc107c1d832a  #v1.2.0
       with:
         project: "julia/"
     
     - name: Test DexCall.jl
-      uses: julia-actions/julia-runtest@latest
+      uses: julia-actions/julia-runtest@eda4346d69c0d1653e483c397a83c7f32f4ef2ac  # v1.6.0
       with:
         project: "julia/"
