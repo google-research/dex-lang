@@ -49,9 +49,11 @@ julia> map(dex_func"\x:Float. pow 2.0 x", [1f0, 2f0,  3f0])
 ```
 """
 macro dex_func_str(str, flags="")
+    # Check if it is named function. Note that we don't need to check if the name is a
+    # valid Dex/Julia identifier, the parser of each would/will error if it isn't.
     m = something(
-        match(r"^def ([a-zA-Z0-9_]+)", str),  # `def foo`
-        match(r"^([a-zA-Z0-9_]+)\s*=\s*[\\]", str),  # `foo = \x`
+        match(r"^def\s+(.+?)\b", str),  # `def foo`
+        match(r"^(.+?)\b\s*=\s*[\\]", str),  # `foo = \x`
         Some(nothing)  # not found by either, so still give nothing.
     )
     if m === nothing  # then this must be an anon function
