@@ -242,41 +242,64 @@ instance Pretty (AtomBinderInfo n) where
 
 instance Pretty (Binding s n) where
   pretty b = case b of
-    AtomNameBinding   ty info -> "Atom name type:" <+> pretty ty
-                             <+> "binder info:" <+> pretty info
-    -- DataDefBinding    dataDef ->
-    -- TyConBinding      dataDefName ->
-    -- DataConBinding    dataDefName idx ->
-    -- ClassBinding      classDef ->
-    -- SuperclassBinding className idx _ ->
-    -- MethodBinding     className idx _ ->
+    AtomNameBinding   ty info ->
+          "Atom name type:" <+> pretty ty
+      <+> "binder info:" <+> pretty info
+    DataDefBinding    dataDef -> pretty dataDef
+    TyConBinding      dataDefName -> "Type constructor:" <+> pretty dataDefName
+    DataConBinding    dataDefName idx ->
+      "Data constructor:" <+> pretty dataDefName <+>
+      "Constructor index:" <+> pretty idx
+    ClassBinding      classDef -> pretty classDef
+    SuperclassBinding className idx _ ->
+      "Superclass" <+> pretty idx <+> "of" <+> pretty className
+    MethodBinding     className idx _ ->
+      "Method" <+> pretty idx <+> "of" <+> pretty className
+
+instance Pretty (DataDef n) where
+  pretty (DataDef dataDefSourceName _ _) =
+    "Data def" <+> pretty dataDefSourceName
+
+instance Pretty (ClassDef n) where
+  pretty (ClassDef classSourceName methodNames _) =
+    "Class" <+> pretty classSourceName <+> pretty methodNames
 
 instance Pretty (TopBindings n) where
   pretty (TopBindings env) = pretty env
 
 instance Pretty (TopState n) where
   pretty s =
-    "bindings: "        <> nest 2 (hardline <> pretty (topBindings s))  <> hardline <>
-    "synth candidates:" <> hardline <>
-    "source map: "      <> nest 2 (hardline <> pretty (topSourceMap s)) <> hardline
+       "bindings: "
+    <>   indented (pretty (topBindings s))
+    <> "synth candidates:"
+    <>   indented (pretty (topSynthCandidates s))
+    <> "source map: "
+    <>   indented (pretty (topSourceMap s))
 
 instance Pretty (Module n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Module n) where
-  prettyPrec (Module variant decls result) = atPrec LowestPrec $
-    "Module" <+> parens (p (show variant)) <> nest 2 body
+  prettyPrec (Module variant decls result) = atPrec ArgPrec $
+    "Module" <+> parens (p (show variant)) <> indented body
     where
-      body = hardline <> "unevaluated decls:"
-          <> hardline <> prettyLines (fromNest decls)
-          <> hardline <> "evaluated bindings:"
-          <> hardline <> p result
+      body = "unevaluated decls:"
+           <>   indented (prettyLines (fromNest decls))
+           <> "evaluated bindings:"
+           <>   indented (p result)
 
 instance Pretty (EvaluatedModule n) where
   pretty (EvaluatedModule bindings synthCandidates sourceMap) =
-     p bindings <> hardline <> p synthCandidates <> hardline <> p sourceMap
+       "decls:"
+    <>   indented (p bindings)
+    <> "Synthesis candidates:"
+    <>   indented (p synthCandidates)
+    <> "Source map:"
+    <>   indented (p sourceMap)
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
-    "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline <>
-    "superclasses:"   <+> p (superclassGetters scs) <> hardline <>
-    "instance dicts:" <+> p (instanceDicts     scs)
+       "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
+    <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
+    <> "instance dicts:" <+> p (instanceDicts     scs)
 
+indented :: Doc ann -> Doc ann
+indented doc = nest 2 (hardline <> doc) <> hardline

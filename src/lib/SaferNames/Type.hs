@@ -12,7 +12,8 @@
 module SaferNames.Type (
   checkModule, checkTypes, getType, litType, getBaseMonoidType) where
 
-import Control.Category ((>>>))
+import Prelude hiding (id)
+import Control.Category ((>>>), id)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
@@ -27,7 +28,7 @@ import LabeledItems
 
 import Err
 import Type (litType)
-import Util (forMZipped, forMZipped_)
+import Util (forMZipped, forMZipped_, iota)
 
 import SaferNames.Syntax
 import SaferNames.Name
@@ -60,7 +61,8 @@ getType scope e = undefined
 -- MonadAtomSubst.
 class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter Name m
       , BindingsReader2 m, BindingsExtender2 m)
-     => Typer (m::MonadKind2)
+     => Typer (m::MonadKind2) where
+  declareEffs :: EffectRow o -> m i o ()
 
 -- This fakes MonadErr by just throwing a hard error using `error`. We use it
 -- to skip the checks (via laziness) when we just querying types.
@@ -75,10 +77,12 @@ instance Pretty e => MonadError e (IgnoreChecks e) where
   catchError m _ = m
 
 type CheckedTyperM = EnvReaderT Name  (BindingsReaderT Except) :: S -> S -> * -> *
-instance Typer CheckedTyperM
+instance Typer CheckedTyperM where
+  declareEffs _ = return ()  -- TODO!
 
 type UncheckedTyper = EnvReaderT Name (BindingsReaderT (IgnoreChecks Err)) :: S -> S -> * -> *
-instance Typer UncheckedTyper
+instance Typer UncheckedTyper where
+  declareEffs _ = return ()  -- TODO!
 
 -- === typeable things ===
 
@@ -145,11 +149,38 @@ instance CheckableE SynthCandidates where
                     <*> mapM checkE ys
                     <*> mapM checkE zs
 
-instance (forall c. NameColor c => CheckableE (v c)) => CheckableB (RecEnvFrag v) where
-  checkB _ _ = undefined
+instance CheckableB (RecEnvFrag Binding) where
+  checkB recEnv cont = do
+    WithScopeSubstFrag _ envFrag recEnv' <-
+      liftScopedEnvReader $ runSubstGenT $ substB recEnv
+    void $ extendBindings (boundBindings recEnv') $ dropSubst $
+      traverseEnvFrag checkE (fromRecEnvFrag recEnv')
+    extendBindings (boundBindings recEnv') $
+      extendEnv envFrag $
+         cont recEnv'
 
 instance NameColor c => CheckableE (Binding c) where
-  checkE = undefined
+  checkE binding = case binding of
+    AtomNameBinding   ty info         -> do
+      ty' <-checkTypeE TyKind ty
+      info' <- case info of
+        LetBound ann expr -> do
+          expr' <- checkTypeE ty' expr
+          return $ LetBound ann expr'
+        LamBound arr  -> return $ LamBound arr
+        PiBound       -> return PiBound
+        MiscBound     -> return MiscBound
+        InferenceName -> return InferenceName
+      return $ AtomNameBinding ty' info'
+    DataDefBinding    dataDef         -> DataDefBinding  <$> checkE dataDef
+    TyConBinding      dataDefName     -> TyConBinding    <$> substM dataDefName
+    DataConBinding    dataDefName idx -> DataConBinding  <$> substM dataDefName <*> pure idx
+    ClassBinding      classDef        -> ClassBinding    <$> substM classDef
+    SuperclassBinding className idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
+    MethodBinding     className idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
+
+instance CheckableE DataDef where
+  checkE = substM -- TODO
 
 -- === type checking core ===
 
@@ -228,17 +259,16 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        -- TypeCon def params -> do
-        --   [DataConDef _ bs'] <- return $ applyDataDefParams def params
-        --   -- Users might be accessing a value whose type depends on earlier
-        --   -- projected values from this constructor. Rewrite them to also
-        --   -- use projections.
-        --   let go :: Int -> SubstEnv -> Nest Binder -> Type
-        --       go j env (Nest b _) | i == j = scopelessSubst env $ binderAnn b
-        --       go j env (Nest b rest) = go (j+1) (env <> (b @> proj)) rest
-        --         where proj = ProjectElt (j NE.:| is) v
-        --       go _ _ _ = error "Bad projection index"
-        --   return $ go 0 mempty bs'
+        TypeCon (defName, _) params -> do
+          v' <- substM v
+          DataDefBinding def <- lookupBindings defName
+          [DataConDef _ (Abs bs' UnitE)] <- applyDataDefParams def params
+          PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
+          -- `ty` can depends on earlier binders from this constructor. Rewrite
+          -- it to also use projections.
+          dropSubst $
+            applyNaryAbs (Abs bsInit bTy) [ ProjectElt (j NE.:| is) v'
+                                          | j <- iota $ nestLength bsInit]
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         PairTy x _ | i == 0 -> return x
@@ -248,6 +278,11 @@ instance HasType Atom where
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
 
 instance CheckableB Binder where
+  checkB (b:>ty) cont = do
+    ty' <- checkTypeE TyKind ty
+    withFreshBinder b ty' MiscBound \b' ->
+      extendRenamer (b@>binderName b') $
+        cont b'
 
 instance HasType Expr where
   getTypeE expr = case expr of
@@ -622,15 +657,21 @@ dataConFunType name con = do
 typeConFunType :: Typer m => Name DataDefNameC o -> m i o (Type o)
 typeConFunType name = do
   DataDefBinding (DataDef _ paramBinders _) <- lookupBindings name
-  dropSubst $ buildNaryPiType ImplicitArrow paramBinders \ext params -> return TyKind
+  dropSubst $ buildNaryPiType ImplicitArrow paramBinders \_ _ ->
+    return TyKind
 
 -- TODO: put this in Builder?
-buildNaryPiType :: EnvReader Name m
+buildNaryPiType :: Typer m
                 => Arrow
                 -> Nest Binder i i'
                 -> (forall o'. ScopeFrag o o' -> [Type o'] -> m i' o' (Type o'))
                 -> m i o (Type o)
-buildNaryPiType _ _ _ = undefined
+buildNaryPiType _ Empty cont = cont id []
+buildNaryPiType arr (Nest b rest) cont =
+  refreshBinders b \b' ->
+    Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \frag params -> do
+      param <- Var <$> injectM frag (binderName b')
+      cont (toScopeFrag b' >>> frag) (param : params)
 
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase e alts resultTy = do
@@ -704,6 +745,8 @@ checkIntBaseType allowVector t = case t of
       Int64Type -> return ()
       Int32Type -> return ()
       Word8Type  -> return ()
+      Word32Type -> return ()
+      Word64Type -> return ()
       _         -> notInt
     notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                              "integer type, but found: " ++ pprint t
@@ -770,6 +813,7 @@ checkBinOp op x y = do
       FPow   -> (fa, sr)
       FCmp _ -> (fa, br)
       BAnd   -> (ia, sr);  BOr    -> (ia, sr)
+      BXor   -> (ia, sr)
       BShL   -> (ia, sr);  BShR   -> (ia, sr)
       where
         ia = SomeIntArg; fa = SomeFloatArg
@@ -821,24 +865,19 @@ applyDataDefParams (DataDef _ bs cons) params =
 -- === effects ===
 
 checkEffRow :: Typer m => EffectRow i -> m i o (EffectRow o)
-checkEffRow _ = undefined -- return ()
--- checkEffRow (EffectRow effs effTail) = do
---   forM_ effs \eff -> case eff of
---     RWSEffect _ v -> Var (v:>TyKind) |: TyKind
---     ExceptionEffect -> return ()
---     IOEffect        -> return ()
---   forM_ effTail \v -> do
---     checkWithEnv \(env, _) -> case envLookup env (v:>()) of
---       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
---       Just (ty, _) -> assertEq EffKind ty "Effect var"
+checkEffRow effRow@(EffectRow effs effTail) = do
+  forM_ effs \eff -> case eff of
+    RWSEffect _ v -> Var v |: TyKind
+    ExceptionEffect -> return ()
+    IOEffect        -> return ()
+  forM_ effTail \v -> do
+    v' <- substM v
+    AtomNameBinding ty _ <- lookupBindings v'
+    checkAlphaEq EffKind ty
+  substM effRow
 
 declareEff :: Typer m => Effect o -> m i o ()
 declareEff eff = declareEffs $ oneEffect eff
-
-declareEffs :: Typer m => EffectRow o -> m i o ()
-declareEffs = undefined
--- declareEffs effs = checkWithEnv \(_, allowedEffects) ->
---   checkExtends allowedEffects effs
 
 extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
 extendAllowedEffect eff m = undefined -- updateAllowedEff (extendEffect eff) m

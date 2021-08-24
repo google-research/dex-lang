@@ -27,7 +27,7 @@ module SaferNames.Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), EvaluatedModule (..), SynthCandidates (..), TopState (..),
-    emptyTopState,
+    emptyTopState, BindsBindings (..),
     DataConRefBinding (..), AltP, Alt, AtomBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -266,7 +266,7 @@ instance (InjectableV v, ScopeReader m, BindingsExtender m)
 -- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
 -- like we do with `SubstE Name`, `SubstE AtomSubstVal`, etc?
 class BindsNames b => BindsBindings (b::B) where
-  boundBindings :: b n l -> BindingsFrag n l
+  boundBindings :: Distinct l => b n l -> BindingsFrag n l
 
 lookupBindings :: BindingsReader m => Name c o -> m o (Binding c o)
 lookupBindings v = (!v) <$> getBindings
@@ -1222,6 +1222,24 @@ deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 
-instance BindsBindings Binder
-instance BindsBindings Decl
-instance BindsBindings b => (BindsBindings (Nest b))
+instance BindsBindings Binder where
+  boundBindings (b:>ty) = b @> AtomNameBinding ty' MiscBound
+    where ty' = inject (toScopeFrag b) ty
+
+instance BindsBindings Decl where
+  boundBindings (Let ann (b:>ty) expr) =
+    b @> AtomNameBinding ty' (LetBound ann expr')
+    where
+      ty'   = inject (toScopeFrag b) ty
+      expr' = inject (toScopeFrag b) expr
+
+instance BindsBindings b => (BindsBindings (Nest b)) where
+  boundBindings Empty = emptyEnv
+  boundBindings (Nest b rest) = undefined
+    -- inject (envAsScope restBindings) bBindings <.> restBindings
+    -- where
+    --  bBindings    = boundBindings b
+    --  restBindings = boundBindings rest
+
+instance BindsBindings (RecEnvFrag Binding) where
+  boundBindings (RecEnvFrag frag) = frag

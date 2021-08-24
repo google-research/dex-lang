@@ -14,7 +14,8 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
              measureSeconds,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
-             Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_) where
+             Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
+             iota) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
@@ -29,6 +30,9 @@ import Cat
 
 class IsBool a where
   toBool :: a -> Bool
+
+iota :: Int -> [Int]
+iota n = [0..n-1]
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"

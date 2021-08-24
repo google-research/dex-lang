@@ -39,11 +39,13 @@ module SaferNames.Name (
   withFreshM, withFreshLike, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
-  liftSG, forEachNestItem, forEachNestItemSG, substM, ScopedEnvReader, liftScopedEnvReader,
+  liftSG, traverseEnvFrag, forEachNestItem, forEachNestItemSG,
+  substM, ScopedEnvReader, liftScopedEnvReader,
   HasNameHint (..), NameHint, HasNameColor (..), CommonHint (..), NameColor (..),
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
-  pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4
+  pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
+  splitNestAt, nestLength
   ) where
 
 import Prelude hiding (id, (.))
@@ -378,6 +380,21 @@ forEachNestItem :: Monad m
                 -> m (Nest b' i i')
 forEachNestItem Empty _ = return Empty
 forEachNestItem (Nest b rest) f = Nest <$> f b <*> forEachNestItem rest f
+
+-- TODO: make a more general E-kinded Traversable?
+traverseEnvFrag :: forall v v' i i' o o' m .
+                   Monad m
+                => (forall c. NameColor c => v c o -> m (v' c o'))
+                -> EnvFrag v i i' o  -> m (EnvFrag v' i i' o')
+traverseEnvFrag f frag = liftM fromEnvPairs $
+  forEachNestItem (toEnvPairs frag) \(EnvPair b val) ->
+    EnvPair b <$> f val
+
+nestLength :: Nest b n l -> Int
+nestLength = undefined
+
+splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
+splitNestAt = undefined
 
 -- === versions of monad constraints with scope params ===
 

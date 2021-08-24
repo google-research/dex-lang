@@ -124,7 +124,7 @@ data NameBinder (c::C)  -- name color
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name c l }
 
-withFresh :: (Distinct n)
+withFresh :: Distinct n
           => RawName -> NameColorRep c -> Scope n
           -> (forall l. Distinct l => NameBinder c n l -> a) -> a
 withFresh hint rep (UnsafeMakeScope scope) cont =
