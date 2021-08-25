@@ -103,7 +103,7 @@ requiredFunctions scope expr =
   flip foldMap (transitiveClosure getParents immediateParents) \fname ->
     case scope ! fname of
        AtomBinderInfo _ (LetBound _ (Atom f)) -> [(fname, f)]
-       _ -> error "Shouldn't have other free variables left"
+       _ -> []
   where
     getParents :: Name -> [Name]
     getParents fname = envNames $ freeVars $ scope ! fname

@@ -66,26 +66,28 @@ prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSi
 prepareFunctionForExport env nameStr func = do
   -- Create a module that simulates an application of arguments to the function
   -- TODO: Assert that the type of func is closed?
-  let ((dest, cargs, apiDesc, resultName), (_, decls)) = runBuilder (freeVars func) mempty $ do
+  let ((dest, cargs, apiDesc, resultName, resultType), (_, decls)) = runBuilder (freeVars func) mempty $ do
         (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
         let (atomArgs, exportedArgSig) = unzip args
         resultAtom <- naryApp func atomArgs
-        ~(Var (outputName:>_)) <- emit $ Atom resultAtom
+        ~(Var (outputName:>outputType)) <- emit $ Atom resultAtom
         ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
         let cargs' = cargArgs <> cdestArgs
         let exportedCCallSig = fmap (\(Bind (v:>_)) -> v) cargs'
-        return (resultDest, cargs', ExportedSignature{..}, outputName)
+        return (resultDest, cargs', ExportedSignature{..}, outputName, outputType)
 
   let coreModule = Module Core decls $ EvaluatedModule mempty mempty $
                      SourceMap $ M.singleton outputSourceName $ SrcAtomName resultName
   let defunctionalized = simplifyModule env coreModule
   let Module _ optDecls (EvaluatedModule optBindings _ (SourceMap sourceMap)) =
         optimizeModule defunctionalized
-
-  let Just outputName = M.lookup outputSourceName sourceMap
-  let AtomBinderInfo _ (LetBound PlainLet outputExpr) = optBindings ! outputName
+  let ~(Just (SrcAtomName outputName)) = M.lookup outputSourceName sourceMap
+  -- XXX: this is a terrible hack. We could require any number of hops through
+  -- the evaluated bindings. TODO: reconstruct the result properly.
+  let outputExpr = case envLookup optBindings outputName of
+                     Just ~(AtomBinderInfo _ (LetBound PlainLet expr))-> expr
+                     Nothing -> Atom $ Var $ outputName :> resultType
   let block = Block optDecls outputExpr
-
   let name = Name TopFunctionName (fromString nameStr) 0
   let (_, impModule, _) = toImpModule env LLVM CEntryFun name cargs (Just dest) block
   (impModule, apiDesc)
