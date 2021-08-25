@@ -102,7 +102,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 isomorphisms ode-integrator fluidsim \
                 sgd chol fft tutorial vega-plotting kernelregression \
                 quaternions manifold-gradients schrodinger \
-				gaussian-processes
+				gp-regression
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
