@@ -1,7 +1,7 @@
 '## [Arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding)
 This demonstrates a lossless method for compression on a string of letters.
 Rather than assigning a code to each letter, the entire string is encoded
-into a single floating point number.
+into a single floating-point number.
 
 Alphabet = Fin 26
 Interval = (Float&Float)
