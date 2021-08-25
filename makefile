@@ -100,7 +100,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd chol fft tutorial vega-plotting kernelregression \
+                sgd psd fft tutorial vega-plotting kernelregression \
                 quaternions manifold-gradients schrodinger
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
