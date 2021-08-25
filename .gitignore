@@ -26,3 +26,5 @@ benchmarks/rodinia/rodinia
 examples/export/scalar
 examples/export/array
 hie.yaml
+Manifest.toml
+julia/deps/build.log

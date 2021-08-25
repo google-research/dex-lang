@@ -57,3 +57,11 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
        assert False
        ref := 2
 > Nothing
+
+-- https://github.com/google-research/dex-lang/issues/612
+def sashabug (h: Unit) : {Except} List Int =
+  yieldState mempty \results.
+      results := (get results) <> AsList 1 [2]
+
+catch do (catch do sashabug ())
+> (Just (Just (AsList 1 [2])))

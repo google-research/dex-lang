@@ -1,4 +1,4 @@
-name: Python tests
+name: Julia tests
 
 on:
   push:
@@ -27,35 +27,31 @@ jobs:
         enable-stack: true
         stack-no-global: true
         stack-version: 'latest'
-
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v2
+    
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@ee66464cb7897ffcc5322800f4b18d449794af30  # v1.6.1
       with:
-        python-version: 3.9
-
-    - name: Install system dependencies
-      run: |
-        pip install pytest jax jaxlib
-        ${{ matrix.install_deps }}
-        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+        version: '1.6'
+        arch: x64
 
     - name: Cache
       uses: actions/cache@v2
       with:
         path: |
           ~/.stack
-          ~/.cache/pip
           $GITHUB_WORKSPACE/.stack-work
-        key: ${{ runner.os }}-python-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+          ~/.julia/artifacts
+        key: ${{ runner.os }}-julia-${{ hashFiles('**/*.cabal', 'stack*.yaml', '**/Project.toml') }}
         restore-keys: |
-          ${{ runner.os }}-python-
+          ${{ runner.os }}-julia-
           ${{ runner.os }}-
 
-    - name: Build
-      run: make build-ffis
-
-    - name: Install Python bindings
-      run: pip install -e $GITHUB_WORKSPACE/python
-
-    - name: Run tests
-      run: pytest python/tests
+    - name: Build DexCall.jl
+      uses: julia-actions/julia-buildpkg@f995fa4149fed4a8e9b95ba82f54cc107c1d832a  #v1.2.0
+      with:
+        project: "julia/"
+    
+    - name: Test DexCall.jl
+      uses: julia-actions/julia-runtest@eda4346d69c0d1653e483c397a83c7f32f4ef2ac  # v1.6.0
+      with:
+        project: "julia/"
