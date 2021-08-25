@@ -9,6 +9,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- disabling because some safer-names stuff lives under a preprocessor flag
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module TopLevel (
   EvalConfig (..),

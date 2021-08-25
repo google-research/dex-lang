@@ -25,7 +25,7 @@ import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
-import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc hiding (nest)
 
 import LabeledItems
 
@@ -40,9 +40,9 @@ import SaferNames.PPrint ()
 -- === top-level API ===
 
 checkModule :: (Distinct n, MonadErr m) => TopBindings n -> Module n -> m ()
-checkModule topBindings m =
+checkModule env m =
   addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
-    runBindingsReaderT (fromTopBindings topBindings) $
+    runBindingsReaderT (fromTopBindings env) $
       checkTypes m
 
 checkTypes :: (BindingsReader m, MonadErr1 m, CheckableE e)
@@ -147,9 +147,6 @@ class HasNamesB b => CheckableB (b::B) where
 infixr 7 |:
 (|:) :: (Typer m, HasType e) => e i -> Type o -> m i o ()
 (|:) x reqTy = void $ checkTypeE reqTy x
-
-checkEq :: (MonadErr m, Show a, Pretty a, Eq a) => a -> a -> m ()
-checkEq reqTy ty = assertEq reqTy ty ""
 
 -- === Module interfaces ===
 
@@ -365,6 +362,11 @@ typeCheckPrimCon :: Typer m => PrimCon (Atom i) -> m i o (Type o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
+  SumCon ty tag payload -> do
+    ty'@(SumTy caseTys) <- substM ty
+    unless (0 <= tag && tag < length caseTys) $ throw TypeErr "Invalid SumType tag"
+    payload |: (caseTys !! tag)
+    return ty'
   SumAsProd ty tag _ -> tag |:TagRepTy >> substM ty  -- TODO: check!
   ClassDictHole _ ty  -> ty |:TyKind   >> substM ty
   IntRangeVal     l h i -> i|:IdxRepTy >> substM (TC $ IntRange     l h)
@@ -397,16 +399,17 @@ typeCheckPrimCon con = case con of
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
-  TabCon ty xs -> do
+  TabCon ty _xs -> do
     ty |: TyKind
-    ty'@(Pi (PiType TabArrow (b:>idxTy) Pure bodyTy)) <- substM ty
+    substM ty
     -- TODO! We can't do this until we have the interpreter working again so we
+    -- ty'@(Pi (PiType TabArrow (b:>idxTy) Pure bodyTy)) <- substM ty
     -- can call `indices`
     -- idxs <- indices idxTy
     -- forMZipped_ xs idxs \x i -> do
     --   eltTy <- applyAbs (Abs b bodyTy) i
     --   x |: eltTy
-    return ty'
+    -- return ty'
   ScalarBinOp binop x y -> do
     xTy <- typeCheckBaseType x
     yTy <- typeCheckBaseType y
@@ -579,13 +582,14 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     declareEffs effT
     (leadingIdxTysT, Pure, resultTyT) <- fromNaryNonDepPiType (replicate dim TabArrow) tr
     (leadingIdxTysS, Pure, resultTyS) <- fromNaryNonDepPiType (replicate dim TabArrow) sr
-    (_, Pure, resultTyT') <- fromNonDepPiType TabArrow resultTyT
+    (dvTy, Pure, resultTyT') <- fromNonDepPiType TabArrow resultTyT
+    checkAlphaEq l dvTy
     checkAlphaEq (ListE leadingIdxTysT) (ListE leadingIdxTysS)
     checkAlphaEq resultTyT' resultTyS
     naryNonDepPiType TabArrow Pure (leadingIdxTysT ++ [n]) resultTyT'
   PTileReduce baseMonoids n mapping -> do
     -- mapping : gtid:IdxRepTy -> nthr:IdxRepTy -> (...((ParIndexRange n gtid nthr)=>a, acc{n})..., acc1)
-    ([gtid, nthr], Pure, mapResultTy) <-
+    ([_gtid, _nthr], Pure, mapResultTy) <-
       getTypeE mapping >>= fromNaryNonDepPiType [PlainArrow, PlainArrow]
     (tiledArrTy, accTys) <- fromLeftLeaningConsListTy (length baseMonoids) mapResultTy
     (_, tileElemTy) <- fromNonDepTabTy tiledArrTy
@@ -672,7 +676,7 @@ dataConFunType name con = do
   DataDefBinding def@(DataDef _ paramBinders cons) <- lookupBindings name
   let DataConDef _ argBinders = cons !! con
   case argBinders of
-    EmptyAbs argBinders' ->
+    Abs argBinders' UnitE ->
       dropSubst $
         buildNaryPiType ImplicitArrow paramBinders \ext params ->
           buildNaryPiType PlainArrow argBinders' \ext' _ -> do
@@ -744,8 +748,8 @@ checkAlt :: HasType body => Typer m
 checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
-  refreshBinders bs \bs' -> do
-    resultTyReq' <- injectM bs' resultTyReq
+  refreshBinders bs \bsFresh -> do
+    resultTyReq' <- injectM bsFresh resultTyReq
     body |: resultTyReq'
 
 checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
@@ -877,21 +881,21 @@ checkUnOp op x = do
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
-indexSetConcreteSize :: Type n -> Maybe Int
-indexSetConcreteSize ty = case ty of
+_indexSetConcreteSize :: Type n -> Maybe Int
+_indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ fromIntegral $ high - low
   _                      -> Nothing
 
 -- === built-in index set type class ===
 
-indices :: BindingsReader m => Type n -> m n [Atom n]
-indices = undefined
+_indices :: BindingsReader m => Type n -> m n [Atom n]
+_indices = undefined
 
 -- === various helpers for querying types ===
 
 getBaseMonoidType :: MonadFail1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
-  Pi (PiType _ b _ ty) -> fromConstAbs (Abs b ty)
+  Pi (PiType _ b _ resultTy) -> fromConstAbs (Abs b resultTy)
   _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]

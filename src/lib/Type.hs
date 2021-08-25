@@ -8,6 +8,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}  -- due to module instances
+-- disabling due to false claims of "inaccessible right hand side" in Pi patterns
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
 
 module Type (
   getType, tryGetType, checkType, HasType (..), Checkable (..), litType,

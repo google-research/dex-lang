@@ -76,7 +76,6 @@ import Data.Int
 import Data.String (IsString, fromString)
 import Data.Text.Prettyprint.Doc
 import Data.Word
-import Type.Reflection (Typeable, TypeRep, typeRep)
 import Foreign.Ptr
 import Data.Maybe (fromJust)
 
@@ -614,6 +613,10 @@ fromNaryNonDepPiType [] ty = return ([], Pure, ty)
 fromNaryNonDepPiType [arr] ty = do
   (argTy, eff, resultTy) <- fromNonDepPiType arr ty
   return ([argTy], eff, resultTy)
+fromNaryNonDepPiType (arr:arrs) ty = do
+  (argTy, Pure, innerTy) <- fromNonDepPiType arr ty
+  (argTys, eff, resultTy) <- fromNaryNonDepPiType arrs innerTy
+  return (argTy:argTys, eff, resultTy)
 
 fromNonDepTabTy :: (ScopeReader m, MonadFail1 m) => Type n -> m n (Type n, Type n)
 fromNonDepTabTy ty = do
@@ -901,6 +904,7 @@ instance GenericE Atom where
     Case0 val -> case val of
       Case0 v -> Var v
       Case1 (PairE (LiftE idxs) x) -> ProjectElt idxs x
+      _ -> error "impossible"
     Case1 val -> case val of
       Case0 lamExpr -> Lam lamExpr
       Case1 piExpr  -> Pi  piExpr
@@ -911,6 +915,7 @@ instance GenericE Atom where
         DataCon printName (defName, def) params con args
       Case3 (PairE defName def `PairE` ListE params) ->
         TypeCon (defName, def) params
+      _ -> error "impossible"
     Case2 val -> case val of
       Case0 (ExtLabeledItemsE extItems) -> LabeledRow extItems
       Case1 (ComposeE items) -> Record items
@@ -919,15 +924,19 @@ instance GenericE Atom where
               LiftE (l, con)              `PairE`
               payload) -> Variant extItems l con payload
       Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      _ -> error "impossible"
     Case3 val -> case val of
       Case0 (ComposeE con) -> Con con
       Case1 (ComposeE con) -> TC con
+      _ -> error "impossible"
     Case4 val -> case val of
       Case0 effs -> Eff effs
       Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       Case2 (PairE defName def `PairE` ListE params `PairE` bs) ->
         DataConRef (defName, def) params bs
       Case3 (ptr `PairE` size `PairE` ab) -> BoxedRef ptr size ab
+      _ -> error "impossible"
+    _ -> error "impossible"
 
 instance InjectableE Atom
 instance AlphaEqE Atom
@@ -1086,6 +1095,7 @@ instance OrdE name => GenericE (EffectRowP name) where
   toE (ListE effs `PairE` ext) = EffectRow (S.fromList effs) ext'
     where ext' = case ext of JustE v  -> Just v
                              NothingE -> Nothing
+                             _ -> error "impossible"
 
 instance InjectableE (EffectRowP AtomName)
 instance SubstE Name (EffectRowP AtomName)
@@ -1170,6 +1180,7 @@ instance NameColor c => GenericE (Binding c) where
     Case0 (Case4 classDef)                                -> fromJust $ tryAsColor $ ClassBinding      classDef
     Case1 (Case0 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ SuperclassBinding className idx e
     Case1 (Case1 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ MethodBinding     className idx e
+    _ -> error "impossible"
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
 instance NameColor c => InjectableE         (Binding c)
@@ -1234,9 +1245,6 @@ instance GenericE EvaluatedModule where
 
 instance InjectableE EvaluatedModule
 instance SubstE Name EvaluatedModule
-
-prettyTypeOf :: forall (n::S) (e::E) ann . Typeable e => e n -> Doc ann
-prettyTypeOf _ = pretty $ show (typeRep :: TypeRep e)
 
 instance Store (Atom n)
 instance Store (Expr n)

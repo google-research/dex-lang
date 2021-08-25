@@ -19,16 +19,16 @@ import qualified Data.Map.Strict as M
 import Err
 import LabeledItems
 import SaferNames.NameCore
-import SaferNames.Name hiding (Renamer)
+import SaferNames.Name
 import SaferNames.ResolveImplicitNames
 import SaferNames.Syntax
 
--- renameSourceNames :: MonadErr m => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
+renameSourceNames :: MonadErr m => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
 -- renameSourceNames scope sourceMap m =
 --   runReaderT (runReaderT (renameSourceNames' m) (scope, sourceMap)) False
 renameSourceNames = undefined
 
-type RenameEnv (n::S) = (Scope n, SourceMap n)
+-- type RenameEnv (n::S) = (Scope n, SourceMap n)
 
 -- We have this class because we want to read some extra context (whether
 -- shadowing is allowed) but we've already used up the MonadReader
@@ -39,22 +39,22 @@ class (Monad1 m, ScopeExtender m, MonadErr1 m) => Renamer m where
   askSourceMap :: m n (SourceMap n)
   extendSourceMap :: (SourceMap n) -> m n a -> m n a
 
--- Will implement Renamer directly (with a newtype)
-data RenamerData (n::S) a
+-- -- Will implement Renamer directly (with a newtype)
+-- data RenamerData (n::S) a
 
-instance Functor (RenamerData n) where
+-- instance Functor (RenamerData n) where
 
-instance Applicative (RenamerData n) where
+-- instance Applicative (RenamerData n) where
 
-instance Monad (RenamerData n) where
+-- instance Monad (RenamerData n) where
 
-instance ScopeReader RenamerData where
+-- instance ScopeReader RenamerData where
 
-instance ScopeExtender RenamerData where
+-- instance ScopeExtender RenamerData where
 
-instance MonadError Err (RenamerData n) where
+-- instance MonadError Err (RenamerData n) where
 
-instance Renamer RenamerData where
+-- instance Renamer RenamerData where
 
 -- instance MonadErr m => Renamer n (ReaderT (RenameEnv n) (ReaderT Bool m)) where
 --   askMayShadow = lift ask
@@ -62,8 +62,8 @@ instance Renamer RenamerData where
 --     env <- ask
 --     lift $ local (const mayShadow) (runReaderT cont env)
 
-renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
-renameSourceNames' (SourceUModule decl) = do
+_renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
+_renameSourceNames' (SourceUModule decl) = do
   (RenamerContent frag sourceMap decl') <- runRenamerNameGenT $
     sourceRenameB $ resolveImplicitTopDecl decl
   return $ UModule frag sourceMap decl'
@@ -116,6 +116,8 @@ instance SourceRenamableE (SourceNameOr UVar) where
       Just (EnvVal DataConNameRep name) -> return $ InternalName $ UDataConVar name
       Just (EnvVal ClassNameRep   name) -> return $ InternalName $ UClassVar name
       Just (EnvVal MethodNameRep  name) -> return $ InternalName $ UMethodVar name
+      Just (EnvVal DataDefNameRep _   ) -> error "Shouldn't find these in source map"
+      Just (EnvVal SuperclassNameRep _) -> error "Shouldn't find these in source map"
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
