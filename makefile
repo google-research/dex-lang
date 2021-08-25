@@ -78,10 +78,11 @@ build-prof: dexrt-llvm
 	$(STACK) build $(PROF) --flag dex:-foreign
 
 # For some reason stack fails to detect modifications to foreign library files
-build-python: dexrt-llvm
+build-ffis: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty
 	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
