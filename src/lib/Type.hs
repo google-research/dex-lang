@@ -87,10 +87,6 @@ instance Checkable Module where
       addContext "Checking evaluated bindings" $ do
         checkBindings (scope <> foldMap boundVars decls) bindings
 
-asCompilerErr :: Except a -> Except a
-asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
-asCompilerErr (Right x) = Right x
-
 checkBindings :: TypeEnv -> Bindings -> Except ()
 checkBindings env bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
   mapM_ checkAnyBinding $ envPairs bs

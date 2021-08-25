@@ -58,7 +58,8 @@ library
                        SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint, SaferNames.Parser,
-                       SaferNames.ResolveImplicitNames, SaferNames.SourceRename
+                       SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
+                       SaferNames.Type
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
