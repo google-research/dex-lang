@@ -104,8 +104,10 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd chol tutorial vega-plotting kernelregression \
+                sgd chol tutorial kernelregression \
                 quaternions manifold-gradients schrodinger
+# TODO: re-enable
+# vega-plotting
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
