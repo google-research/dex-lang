@@ -138,6 +138,7 @@ function (f::NativeFunction{R})(args...)::R where R
     c_args = map(f.argument_signature) do binder
         if binder.implicit
             -one(binder.type)  # we will do implicts in a second pass, once named_sizes is filled out
+            # Note: because scoping rules are left-to-right if we reversed the list we could do this in a single pass
         else
             num_explict += 1
             to_ctype!(named_sizes, binder.type, args[num_explict])
