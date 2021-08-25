@@ -574,7 +574,7 @@ exceptToMaybeExpr expr = do
       let BinaryFunVal _ b _ body = lam
       let RefTy _ accumTy = binderAnn b
       result  <- emitRunWriter "ref" accumTy baseMonoid \ref ->
-        extendR (b@>ref) $ exceptToMaybeBlock body
+        extendR (b@>SubstVal ref) $ exceptToMaybeBlock body
       (maybeAns, accumResult) <- fromPair result
       emitMaybeCase maybeAns (return $ NothingAtom a) \ans ->
         return $ JustAtom a $ PairVal ans accumResult
