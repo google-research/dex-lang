@@ -1,0 +1,75 @@
+import parser
+import plot
+
+
+
+'## Color utilities
+
+def hueToRGB (p:Float) (q:Float) (t:Float) : Float = 
+  t = t - floor t
+  if t < (1.0/6.0)
+    then p + (q - p) * 6.0 * t
+    else if t < (1.0/2.0)
+      then q
+      else if t < (2.0/3.0)
+        then p + (q - p) * (2.0/3.0 - t) * 6.0
+        else p
+
+def hslToRGB (h:Float) (s:Float) (l:Float) : Color =
+  -- Hue, Saturation, Lightness to Red, Green, Blue
+  if s == 0.0
+    then [l, l, l] -- achromatic
+    else
+      q = select (l < 0.5) (l * (1.0 + s)) (l + s - l * s)
+      p = 2.0 * l - q
+      r = hueToRGB p q (h + 1.0/3.0)
+      g = hueToRGB p q h
+      b = hueToRGB p q (h - 1.0/3.0)
+      [r, g, b]
+
+
+
+'## Image Loading Utilities
+
+data Image =
+  MkImage rows:(Int) cols:(Int) pixels:(Fin rows => Fin cols => Fin 3 => Word8)
+
+def parseP6' : Parser Image = MkParser \h.
+  -- Loads a raw PPM file in P6 format.
+  -- The header will look something like:
+  --P6
+  --220 220    (height, width)
+  --255        (max color value)
+  -- followed by a flat block of height x width x 3 chars.
+  parse h $ pChar 'P'
+  parse h $ pChar '6'
+  parse h $ parseAny
+  rows = parse h $ parseUnsignedInt
+  parse h $ parseAny
+  cols = parse h $ parseUnsignedInt
+  parse h $ parseAny
+  colorsize = parse h $ parseUnsignedInt
+  parse h $ parseAny
+  pixels = for r:(Fin rows).
+    for c:(Fin cols).
+      for c:(Fin 3).
+        parse h parseAny
+  MkImage rows cols pixels
+
+def loadImageP6 (filename:String) : Maybe Image =
+  -- Todo: decide between exceptions and Maybe
+  image_raw = unsafeIO do readFile filename
+  runParserPartial image_raw parseP6'
+
+
+'## Image saving utilities
+
+def pngsToSavedGif (delay:Int) (pngs:t=>Png) (outFileName:String) : Gif =
+  unsafeIO \().
+    withTempFiles \pngFiles.
+      for i.
+        writeFile pngFiles.i pngs.i
+      shellOut $
+        "convert" <> " -delay " <> show delay <> " " <>
+        concat (for i. "png:" <> pngFiles.i <> " ") <>
+        "gif:" <> outFileName <> ".gif"

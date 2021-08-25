@@ -1,0 +1,268 @@
+'# Gibbs with Gradients
+
+'This is a demo of an MCMC sampler from the paper:
+[Oops I Took A Gradient: Scalable Sampling for Discrete Distributions](https://arxiv.org/abs/2102.04509).
+Here we use it to do approximate inference in an [Ising Model](https://en.wikipedia.org/wiki/Ising_model)
+for image denoising.
+
+'We'll compare it with standard [Gibbs sampling](https://en.wikipedia.org/wiki/Gibbs_sampling),
+a standard method that proposes flipping one entry of the state at a time.
+The main innovation of Gibbs with Gradients is that, instead
+of choosing which entry to flip uniformly at random,
+we use a gradient of the probability density to flip entries
+that are more likely to be accepted.
+
+'But how can we get a gradient with respect to discrete inputs?
+Although the inputs are discrete, the main idea of the
+paper is to cheat a little, and treat the function like one that 
+has continuous inputs, so that the gradient is well-defined.
+This might sound a bit hacky, but the resulting MCMC operator
+still has the correct marginal distribution, since we apply
+a [Metropolis-Hastings](https://en.wikipedia.org/wiki/Metropolis%E2%80%93Hastings_algorithm) correction step.
+
+'This also might sound like an abuse of types, and therefore bad
+fit for a strongly-typed language like Dex.
+However, as we'll see below, there's no problem - the type
+system will end up making it clearer to the user what the
+requirements are for using this approach.
+
+
+'### Preamble
+
+import parser
+import plot
+import image
+
+-- a  helper function to flip a bit at a specified index.
+-- Makes a copy and then updates the copy in-place.
+def flipEntry (x:n=>Bool) (flip_ix:n) : n=>Bool =
+  yieldState x \xref.
+    xref!flip_ix := not x.flip_ix
+
+
+'## Standard Gibbs Sampler
+
+'The Gibbs update function is pure.
+It takes a state `x`,
+which is a Boolean vector `n=>Bool`,
+and an unnormalized probability mass function `f`.
+The pmf maps Boolean vectors of the same size as `x` and maps
+them to an unnormalized log probability density.
+Dex also tracks random keys explicitly.
+
+def gibbsUpdate (x:n=>Bool) (f:n=>Bool->Float) (key:Key) : n=>Bool =
+    
+  [key_sample, key_accept] = splitKey key
+  
+  -- Sample which dimension to change and flip it.
+  flip_ix = randIdx key_sample
+  x' = flipEntry x flip_ix
+
+  -- Accept / reject step.
+  acceptance_rate = exp (f x' - f x)
+  if rand key_accept < acceptance_rate
+    then x'
+    else x
+
+
+
+'## Gibbs with Gradients Sampler
+First, we need some helper casting functions:
+
+def boolToFloat (x:Bool)  : Float = select x 1. (-1.)
+def floatToBool (x:Float) : Bool  = x > 0.0
+
+'The Gibbs with Gradients sampler has a slightly different function signature
+than standard Gibbs.  Instead of its log probability function taking in a
+discrete array, it takes in an array of floats of the same size.
+This is because Gibbs with Gradients needs to be able to differentiate the energy function
+with respect to its input.
+
+def gibbsWithGradients (x:n=>Bool) (f:n=>Float->Float) (key:Key) : n=>Bool =
+  [key_sample, key_accept] = splitKey key
+
+  -- Compute proposal distribution, which is
+  -- proportional to the gradient wrt each dimension.
+  xFloat = map boolToFloat x
+  (dfdx, fx) = gradAndValue f xFloat
+  diff_x = -xFloat * dfdx
+  log_proposal = logsoftmax (diff_x / 2.0)  -- log q(x' | x)
+
+  -- sample which dimension to change and flip it.
+  i = categorical log_proposal key_sample
+  x' = flipEntry x i
+
+  -- Compute reverse transition distribution.
+  xFloat' = map boolToFloat x'
+  diff_x' = -xFloat' * dfdx
+  log_reverse = logsoftmax (diff_x' / 2.0)  -- log q(x | x')
+
+  -- Metropolis-Hastings accept/reject step.
+  acceptance_rate = exp (f xFloat' - fx + log_reverse.i - log_proposal.i)
+  if rand key_accept < acceptance_rate
+    then x'
+    else x
+
+'The algorithm itself is almost a line-by-line transliteration
+of Algorithm 1 from the paper.  In fact, the reason this demo got
+started was because I wasn't sure I understood the pseudocode
+in our own paper.  Writing the algorithm in this terse (but machine-checked)
+format made me realize we were missing a line from the algorithm box.
+
+'## Ising Model
+An Ising model specifies an unnormalized joint probability distribution over variables
+in a grid.  It's set up so that neighbouring variables
+are encouraged to match, meaning that states with large
+areas having the same state have relatively high probability.
+These models used to be used for image denoising, by encouraging
+each pixel to both match a noisy source image, and match their neighbours,
+smoothing over local noise.
+
+-- Increment/decrement index, wrapping around at ends.
+def incwrap (i:n) : n = unsafeFromOrdinal n (mod ((ordinal i) + 1) (size n))
+def decwrap (i:n) : n = unsafeFromOrdinal n (mod ((ordinal i) - 1) (size n))
+
+def ising_logprob (x:n=>m=>Float) (bias:n=>m=>Float) (theta:Float) : Float =
+  -- x is -1 or 1
+  sum for (i, j).
+    t1 = x.i.j * x.(incwrap i).j
+    t2 = x.i.j * x.(decwrap i).j
+    t3 = x.i.j * x.i.(incwrap j)
+    t4 = x.i.j * x.i.(decwrap j)
+    theta * (t1 + t2 + t3 + t4) + bias.i.j * x.i.j
+
+
+'### Setting up image
+
+(MkImage rows cols pixels) = fromJust $ loadImageP6 "examples/peace.ppm"
+
+-- Convert to binary image.
+def pixelToBool (x:Char) : Bool = (W8ToI x) < 0
+image_bool = for i j.
+  pixelToBool pixels.i.j.(1@_)
+
+-- Add noise to image.
+noisefrac = 0.1
+image_noisy = for i j.
+  addnoise = rand (ixkey2 (newKey 0) i j) < noisefrac
+  case addnoise of
+    True -> not image_bool.i.j
+    False ->    image_bool.i.j
+
+
+'### Set up an Ising model to denoise that image.
+The model simply encodes that nearby pixels usually have the same color.
+The bias term makes it more likely that the pixels will match the noisy image.
+
+theta = 0.5  -- Coupling constant between neighbouring pixels.
+bias = for i j.  -- Bias for individual pixels.
+  boolToFloat image_noisy.i.j
+
+def flattened_ising (x:n=>Float) : Float =
+  -- The main algorithms were written in such a way as to operate
+  -- on any index set, no matter its dimension.  However, this means
+  -- we need to cast the state to a 2D table to pass it to the Ising pmf.
+  x_unflattend = for i j.
+    x.(unsafeFromOrdinal _ (ordinal (i,j)))
+  ising_logprob x_unflattend bias theta
+
+'Normally for image denoising, we start with the noisy image.
+However, to simulate a more realistic inference problem,
+we'll start far from the mode at a completely random initialization.
+
+init_field =
+  for (i, j):((Fin rows) & (Fin cols)).
+    rand (ixkey2 (newKey 0) i j) < 0.5
+
+
+'## Generate animations
+
+'### Plotting helpers
+
+def runSampler (samplerStep: n=>Bool -> (n=>Float->Float) -> Key -> (n=>Bool))
+  (init:n=>Bool) (f:n=>Float -> Float)
+  (iters:Int) (writePeriod:Int) : List (n=>Bool) =
+  yieldAccum (ListMonoid (n=>Bool)) \list.
+    yieldState init \state.
+      for i:(Fin iters).
+        x = get state
+        state := samplerStep x f (newKey (ordinal i))
+        if mod (ordinal i) writePeriod == 0 then
+          append list x
+
+def probToColor (x:Bool) (grad:Float) : Color =
+  -- For visualizing the probability that a given bit will flip.
+  -- Turns pixels red if they have a high chance of flipping.
+  scaled_change_prob = clip (0.0, 1.0) (100.0 * grad)
+  
+  hue = 0.0         -- 0 means red
+  saturation = 1.0  -- fully saturated
+  lightness = case x of
+    True  ->       scaled_change_prob
+    False -> 1.0 - scaled_change_prob
+
+  hslToRGB hue saturation lightness
+
+
+'### Run Gibbs with Gradients
+We'll color the pixels by the probability that they'll be proposed to flip.
+In an Ising model, this creates an outline around the edges of homoeneous regions.
+
+'To see the full animation, which will take a few minutes to
+compute, modify the lines below:
+
+num_iters = if dex_test_mode()
+               then 3
+               else 17500  -- Number of frames for full animation.
+write_period = 50
+
+-- Run main algorithm
+frameList = runSampler gibbsWithGradients init_field flattened_ising num_iters write_period
+
+-- Convert to animation
+(AsList _ movie) = frameList
+movieflat = for i.
+    xf = map boolToFloat movie.i
+    dfdx = grad flattened_ising xf
+    flip_prob = softmax (-xf * dfdx / 2.0)  -- Color pixels by probability of flipping.
+    for j k. probToColor movie.i.(j, k) flip_prob.(j, k)
+
+:html imseqshow movieflat
+> <html output>
+
+
+'### Run Standard Gibbs
+
+'So that we can re-use the helper functions for Gibbs with Gradients,
+we need to write a little adapter to match the signature of standard Gibbs.
+
+def wrappedGibbs (x:n=>Bool) (f:n=>Float->Float) (key:Key) : n=>Bool =
+  boolf:(n=>Bool->Float) = \x'.
+    f (map boolToFloat x')
+  gibbsUpdate x boolf key
+
+frameList' = runSampler wrappedGibbs init_field flattened_ising num_iters write_period
+
+(AsList _ movie') = frameList'
+movieflat' = for i.
+    xf = map boolToFloat movie'.i
+    flip_prob = 1.0 / (IToF (rows * cols))  -- Uniform probability of flipping.
+    for j k. probToColor movie'.i.(j, k) flip_prob
+
+:html imseqshow movieflat'
+> <html output>
+
+'We see Gibbs with gradients mixes faster.
+The difference in performance between the two methods
+will generally grow in proportion to the size of the state.
+
+-- Optionally save animations to disk.
+if not (dex_test_mode ())
+  then pngsToSavedGif 1 (map imgToPng movieflat) "gibbs_with_gradients"
+  else ""
+> (AsList 0 "")
+
+if not (dex_test_mode ())
+  then pngsToSavedGif 1 (map imgToPng movieflat') "standard_gibbs"
+  else ""
+> (AsList 0 "")
