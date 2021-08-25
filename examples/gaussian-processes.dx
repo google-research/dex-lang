@@ -57,3 +57,4 @@ def showDiagram (d:Diagram) : String =
   renderSVG d ((0.0, 0.0), (1.0, 1.0))
 
 :html showDiagram $ (plotToDiagram p_pred) <> (plotToDiagram p_target)
+> <html output>
