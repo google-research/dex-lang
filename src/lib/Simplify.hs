@@ -363,21 +363,16 @@ simplifyExpr expr = case expr of
             -- that can encapsulate the necessary contexts.
             -- TODO: Handle dependency once separateDataComponent supports it
             let altCtxTypes = fmap (\(_, (ctx, _), _) -> fmap getType $ toList ctx) facs
-            let ctxDef = DataDef "CaseClosure" Empty $
-                  fmap (DataConDef "Closure" . toNest . fmap Ignore) altCtxTypes
-            -- XXX: the name is for the safe-names bridge. It shouldn't be
-            --      needed here because this data type doesn't appear at the top level.
-            --      TODO: replace with a built-in sum type instead of synthesizing an ADT here.
-            let namedCtxDef = (error "don't have a name!", ctxDef)
+            let closureTy = SumTy (map ProdTy altCtxTypes)
             -- New cases return a pair of data components, and a closure for non-data atoms
             let alts'' = for (enumerate $ zip alts' facs) $
                   \(i, (Abs bs (Block decls _), (dat, (ctx, _), _))) ->
                     Abs bs $ Block decls $ Atom $
-                      PairVal (ProdVal $ toList dat) (DataCon namedCtxDef [] i $ toList ctx)
+                      PairVal (ProdVal $ toList dat) (SumVal closureTy i $ ProdVal $ toList ctx)
             -- Here, we emit the case expression and unpack the results. All the trees
             -- should be the same, so we just pick the first one.
             let (datType, datTree) = (\(dat, _, _) -> (getType $ ProdVal $ toList dat, dat)) $ head facs
-            caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon namedCtxDef [])
+            caseResult <- emit $ Case e' alts'' $ PairTy datType closureTy
             (cdat, cctx) <- fromPair caseResult
             dat <- flip restructure datTree <$> getUnpacked cdat
             -- At this point we have the data components `dat` ready to be applied to the
@@ -392,7 +387,8 @@ simplifyExpr expr = case expr of
             nondatTree <- (\(_, (ctx, rec), _) -> rec dat ctx) $ head facs
             nondat <- forM (enumerate nondatTree) \(i, _) -> do
               aalts <- forM facs \(_, (ctx, rec), _) -> do
-                Abs bs' b <- buildNAbs (toNest $ toList $ fmap (Ignore . getType) ctx) \ctxVals ->
+                Abs bs' b <- buildNAbs (toNest [Ignore $ ProdTy $ toList $ fmap getType ctx]) \[ctxVal] -> do
+                  ctxVals <- getUnpacked ctxVal
                   ((!! i) . toList) <$> rec dat (restructure ctxVals ctx)
                 case b of
                   Block Empty (Atom r) -> return $ Abs bs' r
