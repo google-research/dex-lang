@@ -45,7 +45,8 @@ module SaferNames.Name (
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
-  splitNestAt, nestLength
+  splitNestAt, nestLength, binderAnn,
+  OutReaderT (..), OutReader (..)
   ) where
 
 import Prelude hiding (id, (.))
@@ -391,10 +392,18 @@ traverseEnvFrag f frag = liftM fromEnvPairs $
     EnvPair b <$> f val
 
 nestLength :: Nest b n l -> Int
-nestLength = undefined
+nestLength Empty = 0
+nestLength (Nest _ rest) = 1 + nestLength rest
 
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
-splitNestAt = undefined
+splitNestAt 0 bs = PairB Empty bs
+splitNestAt _  Empty = error "split index too high"
+splitNestAt n (Nest b rest) =
+  case splitNestAt (n-1) rest of
+    PairB xs ys -> PairB (Nest b xs) ys
+
+binderAnn :: BinderP b ann n l -> ann n
+binderAnn (_:>ann) = ann
 
 -- === versions of monad constraints with scope params ===
 
@@ -623,6 +632,28 @@ instance (InjectableV v, ScopeReader m, ScopeExtender m)
     extendScope frag do
       env' <- injectM frag env
       cont env'
+
+-- === OutReader monad: reads data in the output name space ===
+
+class OutReader (e::E) (m::MonadKind1) | m -> e where
+  askOutReader :: m n (e n)
+  localOutReader :: e l -> m l a -> m n a
+
+newtype OutReaderT (e::E) (m::MonadKind1) (n::S) (a :: *) =
+  OutReaderT { runOutReaderT' :: ReaderT (e n) (m n) a }
+  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+
+instance (InjectableE e, ScopeReader m)
+         => ScopeReader (OutReaderT e m) where
+  getScope = undefined
+
+instance (InjectableE e, ScopeExtender m)
+         => ScopeExtender (OutReaderT e m) where
+  extendScope = undefined
+
+instance Monad1 m => OutReader e (OutReaderT e m) where
+  askOutReader = undefined
+  localOutReader = undefined
 
 -- === ZipEnvReaderT transformer ===
 

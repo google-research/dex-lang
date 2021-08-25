@@ -50,6 +50,8 @@ module SaferNames.Syntax (
     refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
+    naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
+    fromNonDepTabTy, binderType, binderAsVar,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -59,6 +61,7 @@ module SaferNames.Syntax (
     pattern Pure, pattern LabeledRowKind, pattern EffKind,
     pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
+    pattern TabTy,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
@@ -230,6 +233,14 @@ type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
 
 instance Monad m => BindingsExtender (ScopeReaderT m) where
   extendBindings frag = extendScope (envAsScope frag)
+
+instance (InjectableE e, BindingsReader m)
+         => BindingsReader (OutReaderT e m) where
+  getBindings = undefined
+
+instance (InjectableE e, BindingsExtender m)
+         => BindingsExtender (OutReaderT e m) where
+  extendBindings = undefined
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
   BindingsReaderT {runBindingsReaderT' :: ReaderT (Bindings n) (ScopeReaderT m n) a }
@@ -560,6 +571,12 @@ extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
 -- === Synonyms ===
 
+binderType :: Binder n l -> Type n
+binderType = binderAnn
+
+binderAsVar :: Binder n l -> Atom l
+binderAsVar (b:>_) = Var $ nameBinderName b
+
 infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
@@ -570,6 +587,20 @@ nonDepPiType arr argTy eff resultTy =
   toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
       return $ Pi $ PiType arr (b:>argTy) eff' resultTy'
+
+fromNonDepPiType :: ScopeReader m
+                 => Arrow -> Type n -> m n (Maybe (Type n, EffectRow n, Type n))
+fromNonDepPiType = undefined
+
+naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
+naryNonDepPiType = undefined
+
+fromNaryNonDepPiType :: ScopeReader m
+                     => [Arrow] -> Type n -> m n (Maybe ([Type n], EffectRow n, Type n))
+fromNaryNonDepPiType = undefined
+
+fromNonDepTabTy :: ScopeReader m => Type n -> m n (Maybe (Type n, Type n))
+fromNonDepTabTy = undefined
 
 (?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a ?--> b = nonDepPiType ImplicitArrow a Pure b
@@ -648,6 +679,9 @@ pattern RefTy r a = TC (RefType (Just r) a)
 
 pattern RawRefTy :: Type n -> Type n
 pattern RawRefTy a = TC (RefType Nothing a)
+
+pattern TabTy :: Binder n l -> Type l -> Type n
+pattern TabTy i a = Pi (PiType TabArrow i Pure a)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
@@ -1233,13 +1267,18 @@ instance BindsBindings Decl where
       ty'   = inject (toScopeFrag b) ty
       expr' = inject (toScopeFrag b) expr
 
+instance (BindsBindings b1, BindsBindings b2)
+         => (BindsBindings (PairB b1 b2)) where
+  boundBindings (PairB b1 b2) =
+    let bindings2 = boundBindings b2
+        scopeFrag = envAsScope bindings2
+    in withSubscopeDistinct scopeFrag $
+        let bindings1 = boundBindings b1
+        in inject scopeFrag bindings1 <.> bindings2
+
 instance BindsBindings b => (BindsBindings (Nest b)) where
   boundBindings Empty = emptyEnv
-  boundBindings (Nest b rest) = undefined
-    -- inject (envAsScope restBindings) bBindings <.> restBindings
-    -- where
-    --  bBindings    = boundBindings b
-    --  restBindings = boundBindings rest
+  boundBindings (Nest b rest) = boundBindings $ PairB b rest
 
 instance BindsBindings (RecEnvFrag Binding) where
   boundBindings (RecEnvFrag frag) = frag

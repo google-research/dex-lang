@@ -18,7 +18,7 @@ module SaferNames.NameCore (
   Distinct, E, B, V, InjectableE (..), InjectableB (..),
   InjectableV, InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
-  toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep,
+  toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep, withSubscopeDistinct,
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor) where
 
@@ -151,6 +151,14 @@ projectName (UnsafeMakeScope scope) (UnsafeMakeName rep rawName)
 class Distinct (n::S)
 instance Distinct VoidS
 instance Distinct UnsafeMakeDistinctS
+
+withSubscopeDistinct :: forall n l r. Distinct l => ScopeFrag n l -> (Distinct n => r) -> r
+withSubscopeDistinct _ cont = fromWrapWithDistinct
+  ( unsafeCoerce ( WrapWithDistinct cont :: WrapWithDistinct n r
+                                       ) :: WrapWithDistinct UnsafeMakeDistinctS r)
+
+newtype WrapWithDistinct n r =
+  WrapWithDistinct { fromWrapWithDistinct :: Distinct n => r }
 
 -- useful for printing etc.
 getRawName :: Name c n -> RawName
