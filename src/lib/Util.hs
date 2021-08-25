@@ -19,6 +19,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import qualified Data.List.NonEmpty as NE
 import Data.Foldable
 import Prelude
 import qualified Data.Set as Set
@@ -256,6 +257,9 @@ instance Zippable [] where
   zipWithZ _ [] [] = return []
   zipWithZ f (x:xs) (y:ys) = (:) <$> f x y <*> zipWithZ f xs ys
   zipWithZ _ _ _ = zipErr
+
+instance Zippable NE.NonEmpty where
+  zipWithZ f xs ys = NE.fromList <$> zipWithZ f (NE.toList xs) (NE.toList ys)
 
 zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
 zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()

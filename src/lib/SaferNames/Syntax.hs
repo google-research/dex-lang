@@ -51,7 +51,7 @@ module SaferNames.Syntax (
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
-    fromNonDepTabTy, binderType, binderAsVar,
+    fromNonDepTabTy, binderType,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -62,6 +62,8 @@ module SaferNames.Syntax (
     pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
     pattern TabTy,
+    pattern SumTy, pattern SumVal, pattern MaybeTy,
+    pattern NothingAtom, pattern JustAtom,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
@@ -236,11 +238,14 @@ instance Monad m => BindingsExtender (ScopeReaderT m) where
 
 instance (InjectableE e, BindingsReader m)
          => BindingsReader (OutReaderT e m) where
-  getBindings = undefined
+  getBindings = OutReaderT $ lift getBindings
 
-instance (InjectableE e, BindingsExtender m)
+instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
-  extendBindings = undefined
+  extendBindings frag (OutReaderT (ReaderT cont)) = OutReaderT $ ReaderT \env ->
+    extendBindings frag do
+      env' <- injectM (envAsScope frag) env
+      cont env'
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
   BindingsReaderT {runBindingsReaderT' :: ReaderT (Bindings n) (ScopeReaderT m n) a }
@@ -574,9 +579,6 @@ extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 binderType :: Binder n l -> Type n
 binderType = binderAnn
 
-binderAsVar :: Binder n l -> Atom l
-binderAsVar (b:>_) = Var $ nameBinderName b
-
 infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
@@ -588,19 +590,33 @@ nonDepPiType arr argTy eff resultTy =
     Abs b (PairE eff' resultTy') ->
       return $ Pi $ PiType arr (b:>argTy) eff' resultTy'
 
-fromNonDepPiType :: ScopeReader m
-                 => Arrow -> Type n -> m n (Maybe (Type n, EffectRow n, Type n))
-fromNonDepPiType = undefined
+fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
+                 => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
+fromNonDepPiType arr ty = do
+  Pi (PiType arr' (b:>argTy) eff resultTy) <- return ty
+  unless (arr == arr') $ fail "arrow type mismatch"
+  PairE eff' resultTy' <- fromConstAbs $ Abs b (PairE eff resultTy)
+  return $ (argTy, eff', resultTy')
 
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
-naryNonDepPiType = undefined
+naryNonDepPiType _ Pure [] resultTy = return resultTy
+naryNonDepPiType _ _    [] _        = error "nullary function can't have effects"
+naryNonDepPiType arr eff [ty] resultTy = nonDepPiType arr ty eff resultTy
+naryNonDepPiType arr eff (ty:tys) resultTy = do
+  innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
+  nonDepPiType arr ty Pure innerFunctionTy
 
-fromNaryNonDepPiType :: ScopeReader m
-                     => [Arrow] -> Type n -> m n (Maybe ([Type n], EffectRow n, Type n))
-fromNaryNonDepPiType = undefined
+fromNaryNonDepPiType :: (ScopeReader m, MonadFail1 m)
+                     => [Arrow] -> Type n -> m n ([Type n], EffectRow n, Type n)
+fromNaryNonDepPiType [] ty = return ([], Pure, ty)
+fromNaryNonDepPiType [arr] ty = do
+  (argTy, eff, resultTy) <- fromNonDepPiType arr ty
+  return ([argTy], eff, resultTy)
 
-fromNonDepTabTy :: ScopeReader m => Type n -> m n (Maybe (Type n, Type n))
-fromNonDepTabTy = undefined
+fromNonDepTabTy :: (ScopeReader m, MonadFail1 m) => Type n -> m n (Type n, Type n)
+fromNonDepTabTy ty = do
+  (idxTy, Pure, resultTy) <- fromNonDepPiType TabArrow ty
+  return (idxTy, resultTy)
 
 (?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a ?--> b = nonDepPiType ImplicitArrow a Pure b
@@ -655,6 +671,12 @@ pattern ProdTy tys = TC (ProdType tys)
 
 pattern ProdVal :: [Atom n] -> Atom n
 pattern ProdVal xs = Con (ProdCon xs)
+
+pattern SumTy :: [Type n] -> Type n
+pattern SumTy cs = TC (SumType cs)
+
+pattern SumVal :: Type n -> Int -> Atom n -> Atom n
+pattern SumVal ty tag payload = Con (SumCon ty tag payload)
 
 pattern PairVal :: Atom n -> Atom n -> Atom n
 pattern PairVal x y = Con (ProdCon [x, y])
@@ -745,6 +767,15 @@ pattern FunTy b eff bodyTy = Pi (PiType PlainArrow b eff bodyTy)
 
 pattern BinaryFunTy :: Binder n l -> Binder l l' -> EffectRow l' -> Type l' -> Type n
 pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
+
+pattern MaybeTy :: Type n -> Type n
+pattern MaybeTy a = SumTy [UnitTy, a]
+
+pattern NothingAtom :: Type n -> Atom n
+pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
+
+pattern JustAtom :: Type n -> Atom n -> Atom n
+pattern JustAtom a x = SumVal (MaybeTy a) 1 x
 
 -- -- === instances ===
 

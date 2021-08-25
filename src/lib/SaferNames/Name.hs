@@ -46,7 +46,7 @@ module SaferNames.Name (
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
   splitNestAt, nestLength, binderAnn,
-  OutReaderT (..), OutReader (..)
+  OutReaderT (..), OutReader (..), runOutReaderT,
   ) where
 
 import Prelude hiding (id, (.))
@@ -170,17 +170,17 @@ traverseNames scope f e =
 
 -- This may become expensive. It traverses the body of the Abs to check for
 -- leaked variables.
-fromConstAbs :: (ScopeReader m, MonadErr1 m, BindsNames b, HasNamesE e)
+fromConstAbs :: (ScopeReader m, MonadFail1 m, BindsNames b, HasNamesE e)
              => Abs b e n -> m n (e n)
 fromConstAbs (Abs b e) = do
   Distinct scope <- getScope
-  liftEither $ traverseNames scope (tryProjectName $ toScopeFrag b) e
+  traverseNames scope (tryProjectName $ toScopeFrag b) e
 
-tryProjectName :: MonadErr m => ScopeFrag n l -> Name c l -> m (Name c n)
+tryProjectName :: MonadFail m => ScopeFrag n l -> Name c l -> m (Name c n)
 tryProjectName names name =
   case projectName names name of
     Left name' -> return name'
-    Right _    -> throw EscapedNameErr (pprint name)
+    Right _    -> fail $ "Escaped name: " <> pprint name
 
 toConstAbs :: (InjectableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
@@ -637,23 +637,34 @@ instance (InjectableV v, ScopeReader m, ScopeExtender m)
 
 class OutReader (e::E) (m::MonadKind1) | m -> e where
   askOutReader :: m n (e n)
-  localOutReader :: e l -> m l a -> m n a
+  localOutReader :: e n -> m n a -> m n a
 
 newtype OutReaderT (e::E) (m::MonadKind1) (n::S) (a :: *) =
   OutReaderT { runOutReaderT' :: ReaderT (e n) (m n) a }
   deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
 
+runOutReaderT :: e n -> OutReaderT e m n a -> m n a
+runOutReaderT env m = flip runReaderT env $ runOutReaderT' m
+
 instance (InjectableE e, ScopeReader m)
          => ScopeReader (OutReaderT e m) where
-  getScope = undefined
+  getScope = OutReaderT $ lift getScope
 
 instance (InjectableE e, ScopeExtender m)
          => ScopeExtender (OutReaderT e m) where
-  extendScope = undefined
+  extendScope frag (OutReaderT (ReaderT cont)) = OutReaderT $ ReaderT \env ->
+    extendScope frag do
+      env' <- injectM frag env
+      cont env'
 
 instance Monad1 m => OutReader e (OutReaderT e m) where
-  askOutReader = undefined
-  localOutReader = undefined
+  askOutReader = OutReaderT ask
+  localOutReader r (OutReaderT m) = OutReaderT $ local (const r) m
+
+instance OutReader e m => OutReader e (EnvReaderT v m i) where
+  askOutReader = EnvReaderT $ ReaderT $ const askOutReader
+  localOutReader e (EnvReaderT (ReaderT f)) = EnvReaderT $ ReaderT $ \env ->
+    localOutReader e $ f env
 
 -- === ZipEnvReaderT transformer ===
 
