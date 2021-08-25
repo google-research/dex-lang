@@ -346,10 +346,14 @@ evalUModule sourceModule = do
 
 roundtripSaferNamesPass :: MonadPasses m => Module -> m n Module
 roundtripSaferNamesPass m = do
+#ifdef DEX_SAFE_NAMES
   S.Distinct env <- getTopState
   let m' = toSafe env $ m
   S.checkModule (S.topBindings $ topStateS env) m'
   return $ fromSafe env m'
+#else
+  return m
+#endif
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
