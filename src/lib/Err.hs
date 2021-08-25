@@ -144,5 +144,3 @@ instance Pretty ErrType where
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Escaped name"
     ModuleImportErr   -> "Module import error"
-
-sCompilerErr (Right x) = Right x
