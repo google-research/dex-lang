@@ -45,7 +45,7 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindings (..), TopBindingsFrag, NamedDataDef, fromTopBindings,
+    TopBindings (..), TopBindingsFrag, NamedDataDef, fromTopBindings, ScopedBindings,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
     refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
@@ -518,7 +518,9 @@ data TopState n = TopState
 data TopBindings n = TopBindings (Env Binding n n)
      deriving (Show, Generic)
 
-fromTopBindings :: TopBindings n -> (Scope n, Bindings n)
+type ScopedBindings n = (Scope n, Bindings n)
+
+fromTopBindings :: TopBindings n -> ScopedBindings n
 fromTopBindings (TopBindings env) = (envAsScope env, emptyNameFunction <>> env)
 
 type TopBindingsFrag n l = EnvFrag Binding n l l

@@ -45,14 +45,19 @@ checkModule topBindings m =
     runBindingsReaderT (fromTopBindings topBindings) $
       checkTypes m
 
-checkTypes :: forall n m e. (BindingsReader m, MonadErr1 m, CheckableE e)
+checkTypes :: (BindingsReader m, MonadErr1 m, CheckableE e)
            => e n -> m n ()
-checkTypes e = runCheckedTyperM $ void $ checkE e
+checkTypes e = do
+  Distinct scope <- getScope
+  bindings <- getBindings
+  liftEither $ runTyperT (scope, bindings) $ void $ checkE e
 
-getType :: forall e n. HasType e => Scope n -> e n -> Type n
-getType scope e = undefined
-  -- runIdentity $ runIgnoreChecks $ runSubstReaderT scope (newEnv Rename) doit
-  -- where doit = getTypeE e :: UncheckedTyper n n (Type n)
+getType :: (BindingsReader m, HasType e)
+           => e n -> m n (Type n)
+getType e = do
+  Distinct scope <- getScope
+  bindings <- getBindings
+  return $ runIgnoreChecks $ runTyperT (scope, bindings) $ getTypeE e
 
 -- === the type checking/querying monad ===
 
@@ -68,8 +73,11 @@ class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter Name m
 
 -- This fakes MonadErr by just throwing a hard error using `error`. We use it
 -- to skip the checks (via laziness) when we just querying types.
-newtype IgnoreChecks e a = IgnoreChecks { runIgnoreChecks :: Identity a }
+newtype IgnoreChecks e a = IgnoreChecks { runIgnoreChecks' :: Identity a }
                            deriving (Functor, Applicative, Monad)
+
+runIgnoreChecks :: IgnoreChecks e a -> a
+runIgnoreChecks = runIdentity . runIgnoreChecks'
 
 instance MonadFail (IgnoreChecks e) where
   fail = error "Monad fail!"
@@ -78,42 +86,34 @@ instance Pretty e => MonadError e (IgnoreChecks e) where
   throwError e = error $ pprint e
   catchError m _ = m
 
-newtype CheckedTyperM (i::S) (o::S) (a :: *) =
-  CheckedTyperM { runCheckedTyperM' ::
+newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
+  TyperT { runTyperT' ::
     EnvReaderT Name
       (OutReaderT EffectRow
-        (BindingsReaderT
-          Except)) i o a }
-  deriving ( Functor, Applicative, Monad, MonadFail, MonadErr
+        (BindingsReaderT m)) i o a }
+  deriving ( Functor, Applicative, Monad, MonadFail
            , EnvGetter Name, EnvReader Name
            , ScopeReader, BindingsReader, BindingsExtender)
 
-runCheckedTyperM :: (BindingsReader m, MonadErr1 m)
-                => CheckedTyperM n n a -> m n a
-runCheckedTyperM m = do
-  Distinct scope <- getScope
-  bindings       <- getBindings
-  liftEither $
-    runBindingsReaderT (scope, bindings) $
-      runOutReaderT Pure $
-        runEnvReaderT idNameFunction $
-          runCheckedTyperM' m
+deriving instance MonadError e m => MonadError e (TyperT m i o)
 
-instance Typer CheckedTyperM where
-  declareEffs eff = CheckedTyperM do
+runTyperT :: (MonadErr m, Distinct n)
+          => ScopedBindings n -> TyperT m n n a -> m a
+runTyperT scope m = do
+  runBindingsReaderT scope $
+    runOutReaderT Pure $
+      runEnvReaderT idNameFunction $
+        runTyperT' m
+
+instance (MonadFail m, MonadErr m) => Typer (TyperT m) where
+  declareEffs eff = TyperT do
     allowedEffs <- askOutReader
     checkExtends allowedEffs eff
-  extendAllowedEffect eff (CheckedTyperM m) = CheckedTyperM do
+  extendAllowedEffect eff (TyperT m) = TyperT do
     curEffs <- askOutReader
     localOutReader (extendEffect eff curEffs) m
-  withAllowedEff eff (CheckedTyperM m) = CheckedTyperM $
+  withAllowedEff eff (TyperT m) = TyperT $
     localOutReader eff m
-
-type UncheckedTyper = EnvReaderT Name (BindingsReaderT (IgnoreChecks Err)) :: S -> S -> * -> *
-instance Typer UncheckedTyper where
-  declareEffs _ = undefined
-  extendAllowedEffect = undefined
-  withAllowedEff = undefined
 
 -- === typeable things ===
 
