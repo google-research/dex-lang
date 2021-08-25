@@ -1,4 +1,7 @@
 '## [Arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding)
+This demonstrates a lossless method for compression on a string of letters.
+Rather than assigning a code to each letter, the entire string is encoded
+into a single floating point number.
 
 Alphabet = Fin 26
 Interval = (Float&Float)
@@ -8,6 +11,7 @@ def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
 def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
 
 '### Statistical modelling
+First, model the probability of each letter given by the string to be encoded.
 
 def cumProb (ps: n=>Float) : n=>Float =
   withState 0.0 \total.
@@ -64,6 +68,11 @@ def findInterval  (l: Int)
   (str <> AsList 1 [letter], in')
 
 '### Coding interface
+Start from an initial interval, [0, 1). 
+For each letter encoded from the string, the current interval is divided based on the
+cumulative probability of all letters, then updated to the partition that matches
+the encoded letter.
+The decoding process retraces the steps of the encoding process to recover the correct letters.
 
 def encode (str: (Fin l)=>Word8) (rule: Alphabet=>(Interval->Interval)) : Float =
   update = subdivide str rule
@@ -90,3 +99,4 @@ code
 decoded = decode l code r
 decoded == str'
 > True
+
