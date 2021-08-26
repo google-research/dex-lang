@@ -3,7 +3,7 @@
 :p
   (x, x) = (1, 1)
   x
-> Error: variable already defined: x
+> Error: variable already defined within pattern: x
 >
 >   (x, x) = (1, 1)
 >       ^
@@ -11,7 +11,7 @@
 :p
   f = \(x, x). x
   f (1, 1)
-> Error: variable already defined: x
+> Error: variable already defined within pattern: x
 >
 >   f = \(x, x). x
 >            ^
@@ -32,6 +32,9 @@ arr = 10
 
 arr = 20
 > Error: variable already defined: arr
+>
+> arr = 20
+> ^^^^
 
 :p arr
 > 10
@@ -76,3 +79,6 @@ data Shadow = ShadowCon
 data Shadow = ShadowCon'
 ShadowCon' = 1
 > Error: variable already defined: ShadowCon'
+>
+> ShadowCon' = 1
+> ^^^^^^^^^^^

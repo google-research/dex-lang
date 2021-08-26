@@ -90,6 +90,9 @@ build-ci: dexrt-llvm
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
 
+build-safe-names: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
+
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp
@@ -101,8 +104,10 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd psd fft tutorial vega-plotting kernelregression \
+                sgd psd fft chol tutorial kernelregression \
                 quaternions manifold-gradients schrodinger
+# TODO: re-enable
+# vega-plotting
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \

@@ -26,13 +26,16 @@ optimizeModule = dceModule . inlineModule . narrowEffects . dceModule
 type DceM = State Scope
 
 dceModule :: Module -> Module
-dceModule (Module ir decls bindings) = flip evalState mempty $ do
-  newBindings <- traverse dceBinding bindings
-  modify (<> freeVars newBindings)
+dceModule (Module ir decls result) = flip evalState mempty $ do
+  let EvaluatedModule bindings scs sourceMap = result
+  bindings' <- traverse dceBinding bindings
+  let result' = EvaluatedModule bindings' scs sourceMap
+  modify (<> freeVars result')
   newDecls <- dceDecls decls
-  return $ Module ir newDecls newBindings
+  return $ Module ir newDecls result'
   where
-    dceBinding (ty, LetBound ann expr) = (ty,) . LetBound ann <$> dceExpr expr
+    dceBinding (AtomBinderInfo ty (LetBound ann expr)) =
+      AtomBinderInfo ty . LetBound ann <$> dceExpr expr
     dceBinding b = return b
 
 dceBlock :: Block -> DceM Block
@@ -91,13 +94,13 @@ inlineTraversalDef = (inlineTraverseDecl, inlineTraverseExpr, traverseAtom inlin
 inlineModule :: Module -> Module
 inlineModule m = transformModuleAsBlock inlineBlock (computeInlineHints m)
   where
-    inlineBlock block = fst $ runSubstBuilder (traverseBlock inlineTraversalDef block) mempty
+    inlineBlock block = fst $ runSubstBuilder mempty mempty (traverseBlock inlineTraversalDef block)
 
 inlineTraverseDecl :: Decl -> InlineM SubstEnv
 inlineTraverseDecl decl = case decl of
   Let _ b@(BindWithHint CanInline _) expr@(Hof (For _ body)) | isPure expr -> do
     ~(LamVal ib block) <- traverseAtom inlineTraversalDef body
-    return $ b @> TabVal ib block
+    return $ b @> SubstVal (TabVal ib block)
   -- If `f` turns out to be an inlined table lambda, we expand its block and
   -- call ourselves recursively on the block's result expression. This makes
   -- it possible for us to e.g. discover that the result is a `for` loop, and
@@ -107,10 +110,10 @@ inlineTraverseDecl decl = case decl of
     x <- traverseAtom inlineTraversalDef x'
     case f of
       TabVal b (Block body result) -> do
-        dropSub $ extendR (b@>x) $ do
+        dropSub $ extendR (b@>SubstVal x) $ do
           blockEnv <- traverseDeclsOpen substTraversalDef body
           extendR blockEnv $ inlineTraverseDecl $ Let letAnn letBinder result
-      _ -> (letBinder@>) <$> emitTo (binderNameHint letBinder) letAnn (App f x)
+      _ -> ((letBinder@>) . SubstVal )<$> withNameHint letBinder (emitAnn letAnn (App f x))
   _ -> traverseDecl inlineTraversalDef decl
 
 -- TODO: This is a bit overeager. We should count under how many loops are we.
@@ -135,7 +138,7 @@ inlineTraverseExpr expr = case expr of
     f <- traverseAtom inlineTraversalDef f'
     x <- traverseAtom inlineTraversalDef x'
     case f of
-      TabVal b body -> Atom <$> (dropSub $ extendR (b@>x) $ evalBlockE inlineTraversalDef body)
+      TabVal b body -> Atom <$> (dropSub $ extendR (b@>SubstVal x) $ evalBlockE inlineTraversalDef body)
       _ -> return $ App f x
   _ -> nope
   where nope = traverseExpr inlineTraversalDef expr
@@ -146,7 +149,7 @@ computeInlineHints :: Module -> Module
 computeInlineHints m@(Module _ _ bindings) =
     transformModuleAsBlock (flip evalState bindingsNoInline . hintBlock) m
   where
-    usedInBindings = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
+    usedInBindings = bindingsAsVars $ freeVars bindings
     bindingsNoInline = newEnv usedInBindings (repeat NoInline)
 
     hintBlock (Block decls result) = do
@@ -215,7 +218,7 @@ computeInlineHints m@(Module _ _ bindings) =
 narrowEffects :: Module -> Module
 narrowEffects m = transformModuleAsBlock narrowBlock m
   where
-    narrowBlock block = fst $ runSubstBuilder (traverseBlock narrowingTraversalDef block) mempty
+    narrowBlock block = fst $ runSubstBuilder mempty mempty (traverseBlock narrowingTraversalDef block)
 
     narrowingTraversalDef :: TraversalDef SubstBuilder
     narrowingTraversalDef = ( traverseDecl narrowingTraversalDef
@@ -228,8 +231,8 @@ narrowEffects m = transformModuleAsBlock narrowBlock m
           b' <- mapM (traverseAtom narrowingTraversalDef) b
           ~lam@(Lam (Abs b'' (_, body''))) <-
             buildDepEffLam b'
-              (\x -> extendR (b'@>x) (substBuilderR arr))
-              (\x -> extendR (b'@>x) (evalBlockE narrowingTraversalDef body))
+              (\x -> extendR (b'@>SubstVal x) (substBuilderR arr))
+              (\x -> extendR (b'@>SubstVal x) (evalBlockE narrowingTraversalDef body))
           return $ case arr of
             PlainArrow _ -> Lam $ Abs b'' (PlainArrow (blockEffs body''), body'')
             _            -> lam

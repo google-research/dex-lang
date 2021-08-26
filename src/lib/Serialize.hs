@@ -80,7 +80,7 @@ prettyVal val = case val of
           TC (BaseType (Scalar Word8Type)) -> pretty ('"': concat elems ++ "\"")
           _      -> pretty elems
     return $ elemsDoc <> idxSetDoc
-  DataCon (DataDef _ _ dataCons) _ con args ->
+  DataCon (_, DataDef _ _ dataCons) _ con args ->
     case args of
       [] -> return $ pretty conName
       _  -> do
@@ -97,7 +97,7 @@ prettyVal val = case val of
     SumAsProd ty (TagRepVal trep) payload -> do
       let t = fromIntegral trep
       case ty of
-        TypeCon (DataDef _ _ dataCons) _ ->
+        TypeCon (_, DataDef _ _ dataCons) _ ->
           case args of
             [] -> return $ pretty conName
             _  -> do
@@ -304,6 +304,11 @@ instance HasPtrs EffectRow where traversePtrs _ x = pure x
 instance HasPtrs a => HasPtrs [a]         where traversePtrs f xs = traverse (tp f) xs
 instance HasPtrs a => HasPtrs (Nest a)    where traversePtrs f xs = traverse (tp f) xs
 instance HasPtrs a => HasPtrs (BinderP a) where traversePtrs f xs = traverse (tp f) xs
+
+instance HasPtrs AnyBinderInfo where
+  traversePtrs f (AtomBinderInfo ty info) =
+    AtomBinderInfo <$> traversePtrs f ty <*> traversePtrs f info
+  traversePtrs _ info = pure info
 
 instance HasPtrs BinderInfo where
   traversePtrs f binfo = case binfo of

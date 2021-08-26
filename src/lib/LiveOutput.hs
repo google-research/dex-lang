@@ -14,8 +14,7 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 
 import Data.Binary.Builder (fromByteString, Builder)
-import Data.List (nub, sort)
-import Data.Foldable (toList, fold)
+import Data.Foldable (fold)
 import qualified Data.Map.Strict as M
 
 import Network.Wai
@@ -32,32 +31,33 @@ import Cat
 import Syntax
 import Actor
 import Parser
-import Env
-import TopLevel hiding (evalSource)
+import TopLevel
 import RenderHtml
 import PPrint
 
 type NodeId = Int
+data WithId a = WithId { getNodeId :: NodeId
+                       , withoutId :: a }
 data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
 
-runWeb :: FilePath -> EvalConfig -> TopEnv -> IO ()
+runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runWeb fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   putStrLn "Streaming output to localhost:8000"
   run 8000 $ serveResults $ resultStream resultsChan
 
-runTerminal :: FilePath -> EvalConfig -> TopEnv -> IO ()
+runTerminal :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runTerminal fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   displayResultsTerm resultsChan
 
-watchAndEvalFile :: FilePath -> EvalConfig -> TopEnv -> IO (ReqChan RFragment)
+watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO (ReqChan RFragment)
 watchAndEvalFile fname opts env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
-  let cfg = ((opts, env), subChan Push resultsChan)
-  (_, sourceChan) <- spawn Trap $ runDriver cfg
+  let cfg = (opts, subChan Push resultsChan)
+  (_, sourceChan) <- spawn Trap $ runDriver cfg env
   liftIO $ watchFile fname sourceChan
   return $ subChan Request resultsChan
 
@@ -65,70 +65,89 @@ watchAndEvalFile fname opts env = runActor $ do
 
 type SourceContents = String
 
-type EnvMap = M.Map NodeId (MVar TopEnv)
-type DriverCfg = ((EvalConfig, TopEnv), PChan RFragment)
+type DriverCfg = (EvalConfig, PChan RFragment)
+type DriverState = (WithId TopStateEx, CacheState)
 type DriverM = ReaderT DriverCfg
-                 (CatT (Dag SourceBlock, EnvMap)
-                   (Actor SourceContents))
+                 (StateT DriverState
+                     (Actor SourceContents))
 
-runDriver :: DriverCfg -> Actor SourceContents ()
-runDriver cfg = liftM fst $ flip runCatT mempty $ flip runReaderT cfg $
-                  forever $ receive >>= evalSource
+type EvalCache = M.Map (SourceBlock, WithId TopStateEx) (NodeId, WithId TopStateEx)
+data CacheState = CacheState
+       { nextBlockId :: NodeId
+       , nextStateId :: NodeId
+       , evalCache  :: EvalCache }
+
+emptyCache :: CacheState
+emptyCache = CacheState 0 1 mempty
+
+runDriver :: DriverCfg -> TopStateEx -> Actor SourceContents ()
+runDriver cfg env =
+  liftM fst $ flip runStateT (WithId 0 env, emptyCache) $ flip runReaderT cfg $
+    forever $ receive >>= evalSource
 
 evalSource :: SourceContents -> DriverM ()
-evalSource source = do
-  nodes <- evalCatT $ mapM sourceBlockToDag $ parseProg source
-  envMap <- looks snd
-  let unevaluatedNodes = filter (not . (`M.member` envMap)) nodes
-  mapM_ launchBlockEval unevaluatedNodes
-  updateResultList nodes
+evalSource source = withLocalTopState do
+    (evaluated, remaining) <- tryEvalBlocksCached $ parseProg source
+    remaining' <- mapM makeNewBlockId remaining
+    updateResultList $ map getNodeId $ evaluated ++ remaining'
+    mapM_ evalBlock remaining'
 
-sourceBlockToDag :: SourceBlock -> CatT (Env NodeId, [NodeId]) DriverM NodeId
-sourceBlockToDag block = do
-  (varMap, alwaysInScope) <- look
-  let parents = sort $ nub $ toList $
-                  (boundUVars block <> freeUVars block) `envIntersect` varMap
-  n <- lift $ addToBlockDag (block, alwaysInScope <> parents)
-  -- TODO: Stop forcing dependencies on all preceding blocks. This will require
-  --       an improvement of the analysis above, such that all blocks depend on those
-  --       that contain interface instance definitions.
-  extend (foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block, [n])
-  case sbContents block of
-    ImportModule _ -> extend $ asSnd [n]
-    _ -> return ()
-  return n
+tryEvalBlocksCached :: [SourceBlock] -> DriverM ([WithId SourceBlock], [SourceBlock])
+tryEvalBlocksCached [] = return ([], [])
+tryEvalBlocksCached blocks@(block:rest) = do
+  (env, cache) <- get
+  case M.lookup (block, env) (evalCache cache) of
+    Nothing -> return ([], blocks)
+    Just (blockId, env') -> do
+      let block' = WithId blockId block
+      updateTopState env'
+      (evaluated, remaining) <- tryEvalBlocksCached rest
+      return (block':evaluated, remaining)
 
-launchBlockEval :: NodeId -> DriverM ()
-launchBlockEval n = do
-  (block, parents) <- looks $ flip lookupDag n . fst
-  envLoc <- newEnvLoc n
-  (cfg, resultsChan) <- ask
-  resultsChan `send` oneSourceBlock n block
-  let chan = subChan (oneResult n) resultsChan
-  envMap <- looks snd
-  let parentEnvLocs = map (envMap M.!) parents
-  void $ liftIO $ forkIO $ blockEval cfg block parentEnvLocs envLoc chan
+evalBlock :: WithId SourceBlock -> DriverM ()
+evalBlock (WithId blockId block) = do
+  oldState <- gets fst
+  opts <- asks fst
+  (result, maybeNewState) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
+  resultsChan <- asks snd
+  resultsChan `send` oneResult blockId result
+  newState <- case maybeNewState of
+    Nothing -> return $ oldState
+    Just s -> makeNewStateId s
+  updateTopState newState
+  insertCache (block, oldState) (blockId, newState)
 
-blockEval :: (EvalConfig, TopEnv) -> SourceBlock
-          -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()
-blockEval (opts, topEnv) block parentLocs loc resultChan = do
-  parentEnv <- liftM fold $ mapM readMVar parentLocs
-  (env', ans) <- liftIO $ evalSourceBlock opts (topEnv <> parentEnv) block
-  putMVar loc (parentEnv <> env')
-  sendFromIO resultChan ans
+-- === DriverM utils ===
 
-addToBlockDag :: Node SourceBlock -> DriverM NodeId
-addToBlockDag node = do
-  curDag <- looks fst
-  let (n, newDagBit) = addToDag curDag node
-  extend $ asFst newDagBit
-  return n
+updateTopState :: WithId TopStateEx -> DriverM ()
+updateTopState s = modify \(_,c) -> (s, c)
 
-newEnvLoc :: NodeId -> DriverM (MVar TopEnv)
-newEnvLoc n = do
-  v <- liftIO newEmptyMVar
-  extend $ asSnd $ M.singleton n v
-  return v
+makeNewBlockId :: SourceBlock -> DriverM (WithId SourceBlock)
+makeNewBlockId block = do
+  newId <- gets $ nextBlockId . snd
+  modify \(s, cache) -> (s, cache {nextBlockId = newId + 1 })
+  resultsChan <- asks snd
+  resultsChan `send` oneSourceBlock newId block
+  return $ WithId newId block
+
+makeNewStateId :: TopStateEx -> DriverM (WithId TopStateEx)
+makeNewStateId env = do
+  newId <- gets $ nextStateId . snd
+  modify \(s, cache) -> (s, cache {nextStateId = newId + 1 })
+  return $ WithId newId env
+
+insertCache :: (SourceBlock, WithId TopStateEx) -> (NodeId, WithId TopStateEx) -> DriverM ()
+insertCache key val = modify \(s, cache) ->
+  (s, cache { evalCache = M.insert key val $ evalCache cache })
+
+withLocalTopState :: DriverM a -> DriverM a
+withLocalTopState cont = do
+  startState <- gets fst
+  result <- cont
+  updateTopState startState
+  return result
+
+-- === utils for sending results ===
 
 updateResultList :: [NodeId] -> DriverM ()
 updateResultList ids = do
@@ -271,35 +290,16 @@ onmod fname action = do
       unless (t == t') action
       loop t'
 
--- === DAG utils ===
-
--- | A pair of an @a@ and a list of neighbor node ids.
-type Node a = (a, [NodeId])
-
--- | A directed acyclic graph, represented as a bidirectional map from node ids
--- to nodes.
-data Dag a = Dag (M.Map NodeId (Node a)) (M.Map (Node a) NodeId)
-
--- | Adds a node to a DAG, if it does not already exist.
--- Returns the added node id and a DAG representing the added node.
-addToDag :: Ord a => Dag a -> Node a -> (NodeId, Dag a)
-addToDag (Dag _ m) node =
-  case M.lookup node m of
-    Just i  -> (i, mempty)
-    Nothing -> (i, Dag (M.singleton i node) (M.singleton node i))
-      where i = M.size m
-
-lookupDag :: Dag a -> NodeId -> Node a
-lookupDag (Dag m _) i = m M.! i
-
-instance Ord a => Semigroup (Dag a) where
-  (Dag m1 m2) <> (Dag m1' m2') = Dag (m1' <> m1) (m2' <> m2)
-
-instance Ord a => Monoid (Dag a) where
-  mempty = Dag mempty mempty
+-- === instances ===
 
 instance Semigroup RFragment where
   (RFragment x y z) <> (RFragment x' y' z') = RFragment (x<>x') (y<>y') (z<>z')
 
 instance Monoid RFragment where
   mempty = RFragment mempty mempty mempty
+
+instance Eq (WithId a) where
+  (==) (WithId x _) (WithId y _) = x == y
+
+instance Ord (WithId a) where
+  compare (WithId x _) (WithId y _) = compare x y

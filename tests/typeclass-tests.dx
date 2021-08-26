@@ -1,4 +1,6 @@
 
+interface InterfaceTest0 a
+  someMethod : a
 
 interface InterfaceTest1 a
   InterfaceTest1 : a
@@ -23,9 +25,14 @@ instance InterfaceTest4 Float
   foo = 1
 > Type error:Missing method: bar
 
+baz = 1
 instance InterfaceTest4 Float
   baz = 1
 > Type error:baz is not a method of InterfaceTest4
+
+instance InterfaceTest4 Float
+  someMethod = 1
+> Type error:someMethod is not a method of InterfaceTest4
 
 instance InterfaceTest4 Float
   foo = 1
