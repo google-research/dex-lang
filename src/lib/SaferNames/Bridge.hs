@@ -60,9 +60,17 @@ import qualified SaferNames.Syntax    as S
 
 import PPrint
 
+#ifdef DEX_SAFE_NAMES
+
 -- Hides the `n` parameter as an existential
 data TopStateEx where
   TopStateEx :: Distinct n => JointTopState n -> TopStateEx
+
+data JointTopState n = JointTopState
+  { topStateD   :: D.TopState
+  , topStateS   :: S.TopState n
+  , topToSafeMap   :: ToSafeNameMap n
+  , topFromSafeMap :: FromSafeNameMap n }
 
 initTopState :: TopStateEx
 initTopState = TopStateEx $ JointTopState
@@ -70,12 +78,6 @@ initTopState = TopStateEx $ JointTopState
     S.emptyTopState
     (ToSafeNameMap mempty)
     (FromSafeNameMap emptyEnv)
-
-data JointTopState n = JointTopState
-  { topStateD   :: D.TopState
-  , topStateS   :: S.TopState n
-  , topToSafeMap   :: ToSafeNameMap n
-  , topFromSafeMap :: FromSafeNameMap n }
 
 extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
@@ -99,6 +101,73 @@ extendTopStateD jointTopState evaluated = do
                          (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
              toSafeMap'
              fromSafeMap'
+
+instance Pretty (JointTopState n) where
+  pretty s =
+    "topState (unsafe):"   <> nest 2 (hardline <> pretty (topStateD s))      <> hardline <>
+    "topState (safe):"     <> nest 2 (hardline <> pretty (topStateS s))      <> hardline <>
+    "unsafe-to-safe map:"  <> nest 2 (hardline <> pretty (topToSafeMap   s)) <> hardline <>
+    "safe-to-unsafe map:"  <> nest 2 (hardline <> pretty (topFromSafeMap s)) <> hardline
+
+instance GenericE JointTopState where
+  type RepE JointTopState = LiftE D.TopState `PairE`
+                            S.TopState       `PairE`
+                            ToSafeNameMap    `PairE`
+                            FromSafeNameMap
+  fromE (JointTopState stateD stateS toSafeMap fromSafeMap) =
+    (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap)
+  toE (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap) =
+    JointTopState stateD stateS toSafeMap fromSafeMap
+
+toSafe :: (Distinct n, HasSafeVersionE e)
+       => JointTopState n -> e -> SafeVersionE e n
+toSafe jointTopState e =
+  case S.topBindings $ topStateS $ jointTopState of
+    TopBindings bindings ->
+      runToSafeM (topToSafeMap jointTopState) (envAsScope bindings) $ toSafeE e
+
+fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
+fromSafe jointTopState e =
+  runFromSafeM (topFromSafeMap jointTopState) bindings $ fromSafeE e
+  where bindings = D.topBindings $ topStateD $ jointTopState
+
+
+#else
+
+-- Hides the `n` parameter as an existential
+data TopStateEx where
+  TopStateEx :: Distinct n => JointTopState n -> TopStateEx
+
+data JointTopState (n::S) = JointTopState
+  { topStateD   :: D.TopState }
+
+initTopState :: TopStateEx
+initTopState = TopStateEx $ (JointTopState D.emptyTopState :: JointTopState VoidS)
+
+extendTopStateD :: forall n. Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
+extendTopStateD jointTopState evaluated = do
+  let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
+  let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
+  TopStateEx $
+    ((JointTopState (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD')))
+         :: JointTopState n)
+
+instance Pretty (JointTopState n) where
+  pretty s =
+    "topState :"   <> nest 2 (hardline <> pretty (topStateD s))
+
+instance GenericE JointTopState where
+  type RepE JointTopState = LiftE D.TopState
+  fromE (JointTopState stateD) = LiftE stateD
+  toE (LiftE stateD) = JointTopState stateD
+
+toSafe :: ()
+toSafe = ()
+
+fromSafe :: ()
+fromSafe = ()
+
+#endif
 
 -- This is pretty horrible. The name system isn't really designed for creating
 -- bijections, so we have to do a lot of things manually.
@@ -157,18 +226,6 @@ withFreshBijectionD name info cont =
 
 extendTopStateS :: JointTopState n -> S.EvaluatedModule n -> TopStateEx
 extendTopStateS = error "not implemented"
-
-toSafe :: (Distinct n, HasSafeVersionE e)
-       => JointTopState n -> e -> SafeVersionE e n
-toSafe jointTopState e =
-  case S.topBindings $ topStateS $ jointTopState of
-    TopBindings bindings ->
-      runToSafeM (topToSafeMap jointTopState) (envAsScope bindings) $ toSafeE e
-
-fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
-fromSafe jointTopState e =
-  runFromSafeM (topFromSafeMap jointTopState) bindings $ fromSafeE e
-  where bindings = D.topBindings $ topStateD $ jointTopState
 
 -- === monad for translating from unsafe to safe names ===
 
@@ -715,16 +772,6 @@ traverseSet f s = Set.fromList <$> mapM f (Set.toList s)
 
 instance Store TopStateEx
 
-instance GenericE JointTopState where
-  type RepE JointTopState = LiftE D.TopState `PairE`
-                            S.TopState       `PairE`
-                            ToSafeNameMap    `PairE`
-                            FromSafeNameMap
-  fromE (JointTopState stateD stateS toSafeMap fromSafeMap) =
-    (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap)
-  toE (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap) =
-    JointTopState stateD stateS toSafeMap fromSafeMap
-
 deriving via (WrapE JointTopState n) instance Generic (JointTopState n)
 
 instance Generic TopStateEx where
@@ -766,13 +813,6 @@ instance Store (ToSafeNameMap n)
 instance InjectableE ToSafeNameMap where
   injectionProofE = undefined
 instance Store (FromSafeNameMap n)
-
-instance Pretty (JointTopState n) where
-  pretty s =
-    "topState (unsafe):"   <> nest 2 (hardline <> pretty (topStateD s))      <> hardline <>
-    "topState (safe):"     <> nest 2 (hardline <> pretty (topStateS s))      <> hardline <>
-    "unsafe-to-safe map:"  <> nest 2 (hardline <> pretty (topToSafeMap   s)) <> hardline <>
-    "safe-to-unsafe map:"  <> nest 2 (hardline <> pretty (topFromSafeMap s)) <> hardline
 
 deriving instance NameColor c => Generic (UnsafeName  c)
 deriving instance NameColor c => Generic (UnsafeNameE c n)
