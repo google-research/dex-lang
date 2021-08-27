@@ -55,6 +55,13 @@ STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
 STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
 endif
 
+clang_version = $(shell clang++ -dumpversion | awk '{ print(gsub(/((9)|(10)|(11))/, "")) }')
+check_clang_version:
+ifneq ($(clang_version), 1)
+	@echo "Please use clang++ version 9."
+	false
+endif
+
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
 
@@ -93,7 +100,7 @@ build-nolive: dexrt-llvm
 build-safe-names: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
 
-dexrt-llvm: src/lib/dexrt.bc
+dexrt-llvm: src/lib/dexrt.bc check_clang_version
 
 %.bc: %.cpp
 	clang++ $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
