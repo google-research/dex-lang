@@ -55,11 +55,11 @@ STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
 STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
 endif
 
-clang_version = $(shell clang++ -dumpversion | awk '{ print(gsub(/((9)|(10)|(11))/, "")) }')
+clang_version = $(shell clang++ -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*/, "")) }')
 check_clang_version:
 ifneq ($(clang_version), 1)
 	@echo "Please use clang++ version 9."
-	false
+	@false
 endif
 
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
