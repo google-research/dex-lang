@@ -21,6 +21,7 @@ module SaferNames.Name (
   WithScopeFrag (..), WithScopeSubstFrag (..), extendRenamer,
   ScopeReader (..), ScopeExtender (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
+  Inplace, liftInplace, runInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
   BindsOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
@@ -52,6 +53,7 @@ module SaferNames.Name (
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -792,7 +794,8 @@ lookupNameTraversalEnv (NameTraverserEnv f frag) name =
 
 class NameGen (m :: E -> S -> *) where
   returnG :: e n -> m e n
-  bindG   :: m e n -> (forall l. e l -> m e' l) -> m e' n
+  bindG   :: m e n -> (forall l. (Distinct l, Ext n l) => e l -> m e' l) -> m e' n
+  getDistinctEvidenceG :: m DistinctEvidence n
 
 fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
 fmapG f e = e `bindG` (returnG . f)
@@ -811,6 +814,58 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
     WithScopeFrag s  e  <- m
     WithScopeFrag s' e' <- extendScope s $ runNameGenT $ f e
     return $ WithScopeFrag (s >>> s') e'
+  getDistinctEvidenceG = NameGenT do
+    Distinct _ <- getScope
+    return $ WithScopeFrag id getDistinctEvidence
+
+-- === in-place scope updating monad ===
+
+-- [NoteInplaceMonad]
+
+data Inplace (m :: E -> S -> *) (n::S) (l::S) (a:: *) =
+  UnsafeMakeInplace { unsafeRunInplace :: (m (LiftE a) n) }
+
+instance NameGen m => Functor (Inplace m n l) where
+  fmap = liftM
+
+instance NameGen m => Applicative (Inplace m n l) where
+  pure x = UnsafeMakeInplace (returnG (LiftE x))
+  liftA2 = liftM2
+
+instance NameGen m => Monad (Inplace m n l) where
+  return = pure
+  UnsafeMakeInplace m >>= f = UnsafeMakeInplace $
+    m `bindG` \(LiftE x) ->
+      let UnsafeMakeInplace m' = f x
+      in unsafeCoerceE $ m'
+
+liftInplace :: forall m n e l.
+               (NameGen m, InjectableE e)
+            => (forall l'. (Distinct l', Ext l l') => m e l')
+            -> Inplace m n l (e l)
+liftInplace cont = liftInplace' \distinct ext ->
+  withDistinctEvidence distinct $ withExtEvidence ext cont
+
+runInplace :: (NameGen m, InjectableE e)
+           => (forall l. (Distinct l, Ext n l) => Inplace m n l (e l))
+           -> m e n
+runInplace cont = runInplace' \distinct ext ->
+  withDistinctEvidence distinct $ withExtEvidence ext cont
+
+liftInplace' :: forall m n e l.
+                (NameGen m, InjectableE e)
+             => (forall l'. DistinctEvidence l' -> ExtEvidence l l' -> m e l')
+             -> Inplace m n l (e l)
+liftInplace' cont = UnsafeMakeInplace $
+   cont FabricateDistinctEvidence FabricateExtEvidence `bindG` \x ->
+   returnG $ LiftE $ unsafeCoerceE x
+
+runInplace' :: (NameGen m, InjectableE e)
+            => (forall l. DistinctEvidence l -> ExtEvidence n l -> Inplace m n l (e l))
+            -> m e n
+runInplace' cont =
+  unsafeRunInplace (cont FabricateDistinctEvidence FabricateExtEvidence) `bindG` \(LiftE e) ->
+  returnG $ unsafeCoerceE e
 
 -- === monadish thing for computations that produce names and substitutions ===
 
@@ -824,8 +879,10 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
 -- generalized traversal.
 class (forall i. NameGen (m i i)) => SubstGen (m :: S -> S -> E -> S -> *) where
   returnSG :: e o -> m i i e o
-  bindSG   :: m i i' e o -> (forall o'. e o' -> m i' i'' e' o')
+  bindSG   :: m i i' e o
+           -> (forall o'. (Distinct o', Ext o o') => e o' -> m i' i'' e' o')
            -> m i i'' e' o
+  getDistinctEvidenceSG :: m i i DistinctEvidence o
 
 forEachNestItemSG :: SubstGen m
                => Nest b i i'
@@ -849,6 +906,7 @@ instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
          => NameGen (SubstGenT m i i) where
   returnG = returnSG
   bindG = bindSG
+  getDistinctEvidenceG = getDistinctEvidenceSG
 
 instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
          => SubstGen (SubstGenT m) where
@@ -861,6 +919,9 @@ instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
       WithScopeSubstFrag s' env' e' <- runSubstGenT $ f e
       envInj <- extendScope s' $ injectM env
       return $ WithScopeSubstFrag (s >>> s') (envInj <.> env')  e'
+  getDistinctEvidenceSG = SubstGenT do
+    Distinct _ <- getScope
+    return $ WithScopeSubstFrag id emptyEnv getDistinctEvidence
 
 liftSG :: ScopeReader2 m => m i o a -> (a -> SubstGenT m i i' e o) -> SubstGenT m i i' e o
 liftSG m cont = SubstGenT do
@@ -1127,3 +1188,25 @@ pattern Case3 e = RightE (RightE (RightE (LeftE e)))
 
 pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
 pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
+
+-- === notes ===
+
+{-
+
+[NoteInplaceMonad]
+
+The InPlace monad wraps a NameGen monad and hides its ever-changing scope
+parameter. Instead it exposes a scope parameter that doesn't change, so we can
+have an ordinary Monad instance instead of using bindG/returnG. When the scope
+parameter for the underlying NameGen monad is extended, we just implicitly
+inject all the existing values into the new name space. This is fine as long as
+we enforce two invariants. First, we make sure that the actual underlying
+parameter is only updated by fresh extension. This is already guaranteed by
+`NameGen`. Second, we only produce values which are covariant in their scope
+parameter. We enforce this with the InjectableE constraint to `liftInplace`.
+This is the condition that lets us update all the existing values "in place".
+Otherwise you could get access to, say, a `Bindings n`. If you generated a new
+name, `Name n`, you'd expect to be able to look it up in the bindings, but it
+would fail!
+
+-}
