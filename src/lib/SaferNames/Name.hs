@@ -16,7 +16,7 @@
 module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), EnvGetter (..), FromName (..), Distinct, WithDistinct (..),
-  Ext, toExt, ProvesExt,
+  Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy, withComposeExts,
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
   WithScopeFrag (..), WithScopeSubstFrag (..), extendRenamer,
   ScopeReader (..), ScopeExtender (..),
@@ -37,7 +37,7 @@ module SaferNames.Name (
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  withFreshM, withFreshLike, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
+  withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, traverseEnvFrag, forEachNestItem, forEachNestItemSG,
@@ -92,7 +92,7 @@ class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: m n (WithDistinct Scope n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
-  extendScope :: Distinct l => ScopeFrag n l -> m l r -> m n r
+  extendScope :: Distinct l => ScopeFrag n l -> (Ext n l => m l r) -> m n r
 
 class (InjectableV v, Monad2 m) => EnvReader (v::V) (m::MonadKind2) | m -> v where
   lookupEnvM :: Name c i -> m i o (v c o)
@@ -144,10 +144,10 @@ data IsVoidS n where
 -- === Injections and projections ===
 
 class ProvesExt (b :: B) where
-  toExt :: b n l -> Ext n l
+  toExtEvidence :: b n l -> ExtEvidence n l
 
-  default toExt :: BindsNames b => b n l -> Ext n l
-  toExt b = toExt $ toScopeFrag b
+  default toExtEvidence :: BindsNames b => b n l -> ExtEvidence n l
+  toExtEvidence b = toExtEvidence $ toScopeFrag b
 
 class ProvesExt b => BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
@@ -155,21 +155,41 @@ class ProvesExt b => BindsNames (b :: B) where
   default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
   toScopeFrag b = toScopeFrag $ fromB b
 
-instance ProvesExt Ext where
-  toExt = id
+instance ProvesExt ExtEvidence where
+  toExtEvidence = id
 
 instance ProvesExt ScopeFrag
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
 
-inject :: ProvesExt b => InjectableE e => Distinct l => b n l -> e n -> e l
-inject ext x = injectNames (toExt ext) x
+withExtEvidence :: ProvesExt b => b n l -> (Ext n l => a) -> a
+withExtEvidence b cont = withExtEvidence' (toExtEvidence b) cont
 
 -- like inject, but uses the ScopeReader monad for its `Distinct` proof
-injectM :: ScopeReader m => ProvesExt b => InjectableE e => b n l -> e n -> m l (e l)
-injectM b e = do
+injectM :: (ScopeReader m, Ext n l, InjectableE e) => e n -> m l (e l)
+injectM e = do
   Distinct _ <- getScope
-  return $ inject b e
+  return $ inject e
+
+-- Uses `proxy n2` to provide the type `n2` to use as the intermediate scope.
+injectMVia :: forall n1 n2 n3 m proxy e.
+              (Ext n1 n2, Ext n2 n3, ScopeReader m, InjectableE e)
+           => proxy n2 -> e n1 -> m n3 (e n3)
+injectMVia _ e = withExtEvidence (extL >>> extR) $ injectM e
+  where extL = getExtEvidence :: ExtEvidence n1 n2
+        extR = getExtEvidence :: ExtEvidence n2 n3
+
+-- We need a lot of proxies here! Is there a better way?
+withComposeExts :: forall n1 n2 n3 proxy1 proxy2 proxy3 a.
+                  (Ext n1 n2, Ext n2 n3)
+                => proxy1 n1 -> proxy2 n2 -> proxy3 n3
+                -> (Ext n1 n3 => a) -> a
+withComposeExts _ _ _ cont = withExtEvidence (extL >>> extR) cont
+  where extL = getExtEvidence :: ExtEvidence n1 n2
+        extR = getExtEvidence :: ExtEvidence n2 n3
+
+getScopeProxy :: Monad (m n) => m n (UnitE n)
+getScopeProxy = return UnitE
 
 traverseNames :: (Monad m, HasNamesE e)
               => Distinct o => Scope o -> (forall c. Name c i -> m (Name c o)) -> e i -> m (e o)
@@ -198,7 +218,7 @@ toConstAbs :: (InjectableE e, ScopeReader m)
 toConstAbs rep body = do
   Distinct scope <- getScope
   withFresh ("ignore"::NameHint) rep scope \b -> do
-    return $ Abs b $ inject b body
+    return $ Abs b $ inject body
 
 -- === type classes for traversing names ===
 
@@ -236,7 +256,6 @@ instance SubstB v (NameBinder c) where
     withFresh (getNameHint b) rep names \b' -> do
       let frag = singletonScope b'
       return $ WithScopeSubstFrag frag (b @> binderName b') b'
-
 
 -- Like SubstE, but with fewer requirements for the monad
 substM :: (EnvGetter v m, ScopeReader2 m, SubstE v e, FromName v)
@@ -593,8 +612,10 @@ instance Monad m => ScopeReader (ScopeReaderT m) where
   getScope = ScopeReaderT ask
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
-  extendScope frag (ScopeReaderT m) = ScopeReaderT $ withReaderT
-    (\(Distinct scope) -> Distinct (scope >>> frag)) m
+  extendScope frag m = ScopeReaderT $ withReaderT
+    (\(Distinct scope) -> Distinct (scope >>> frag)) $
+        withExtEvidence (toExtEvidence frag) $
+          runScopeReaderT' m
 
 -- === EnvReaderT transformer ===
 
@@ -640,9 +661,10 @@ instance ScopeReader m => ScopeReader (EnvReaderT v m i) where
 -- `Env i oNew `
 instance (InjectableV v, ScopeReader m, ScopeExtender m)
          => ScopeExtender (EnvReaderT v m i) where
-  extendScope frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
+  extendScope frag m = EnvReaderT $ ReaderT \env ->
     extendScope frag do
-      env' <- injectM frag env
+      let EnvReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 -- === OutReader monad: reads data in the output name space ===
@@ -664,9 +686,10 @@ instance (InjectableE e, ScopeReader m)
 
 instance (InjectableE e, ScopeExtender m)
          => ScopeExtender (OutReaderT e m) where
-  extendScope frag (OutReaderT (ReaderT cont)) = OutReaderT $ ReaderT \env ->
+  extendScope frag m = OutReaderT $ ReaderT \env ->
     extendScope frag do
-      env' <- injectM frag env
+      let OutReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 instance Monad1 m => OutReader e (OutReaderT e m) where
@@ -691,11 +714,12 @@ instance ScopeReader m => ScopeReader (ZipEnvReaderT m i1 i2) where
 
 instance (ScopeReader m, ScopeExtender m)
          => ScopeExtender (ZipEnvReaderT m i1 i2) where
-  extendScope frag (ZipEnvReaderT (ReaderT cont)) =
+  extendScope frag m =
     ZipEnvReaderT $ ReaderT \(env1, env2) -> do
       extendScope frag do
-        env1' <- injectM frag env1
-        env2' <- injectM frag env2
+        let ZipEnvReaderT (ReaderT cont) = m
+        env1' <- injectM env1
+        env2' <- injectM env2
         cont (env1', env2')
 
 instance (Monad1 m, ScopeReader m, ScopeExtender m, MonadErr1 m, MonadFail1 m)
@@ -741,9 +765,10 @@ instance Monad m => ScopeReader (NameTraverserT m i) where
   getScope = NameTraverserT $ lift $ getScope
 
 instance Monad m => ScopeExtender (NameTraverserT m i) where
-  extendScope frag (NameTraverserT (ReaderT cont)) = NameTraverserT $ ReaderT \env ->
+  extendScope frag m = NameTraverserT $ ReaderT \env ->
     extendScope frag do
-      env' <- injectM frag env
+      let NameTraverserT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 instance Monad m => EnvReader Name (NameTraverserT m) where
@@ -834,7 +859,7 @@ instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
     WithScopeSubstFrag s env e <- m
     extendScope s $ extendRenamer env do
       WithScopeSubstFrag s' env' e' <- runSubstGenT $ f e
-      envInj <- extendScope s' $ injectM s' env
+      envInj <- extendScope s' $ injectM env
       return $ WithScopeSubstFrag (s >>> s') (envInj <.> env')  e'
 
 liftSG :: ScopeReader2 m => m i o a -> (a -> SubstGenT m i i' e o) -> SubstGenT m i i' e o

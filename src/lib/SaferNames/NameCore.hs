@@ -12,16 +12,17 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module SaferNames.NameCore (
-  S (..), C (..), RawName, Name (..), withFresh, injectNames, injectNamesR, projectName,
+  S (..), C (..), RawName, Name (..), withFresh, inject, injectNamesR, projectName,
   NameBinder (..), ScopeFrag (..), Scope, singletonScope, (<.>),
   EnvFrag (..), Env, singletonEnv, emptyEnv, envAsScope, lookupEnv, lookupEnvFrag,
-  Distinct, E, B, V, InjectableE (..), InjectableB (..),
+  E, B, V, InjectableE (..), InjectableB (..),
   InjectableV, InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
   toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep, withSubscopeDistinct,
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor,
-  Ext, scopeFragToExt) where
+  Distinct, DistinctEvidence (..), withDistinctEvidence, getDistinctEvidence,
+  Ext, ExtEvidence (..), withExtEvidence', getExtEvidence, scopeFragToExtEvidence) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -73,7 +74,6 @@ import qualified Env as D
 data S = (:=>:) S S
        | VoidS
        | UnsafeS
-       | UnsafeMakeDistinctS
 
 -- Name "color" ("type", "kind", etc. already taken)
 data C =
@@ -125,12 +125,16 @@ data NameBinder (c::C)  -- name color
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name c l }
 
-withFresh :: Distinct n
+withFresh :: forall n c a. Distinct n
           => RawName -> NameColorRep c -> Scope n
-          -> (forall l. Distinct l => NameBinder c n l -> a) -> a
+          -> (forall l. (Ext n l, Distinct l) => NameBinder c n l -> a) -> a
 withFresh hint rep (UnsafeMakeScope scope) cont =
-  cont @UnsafeMakeDistinctS $ UnsafeMakeBinder freshName
-  where freshName = UnsafeMakeName rep $ freshRawName (D.nameTag hint) scope
+  withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+    withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
+      cont $ UnsafeMakeBinder freshName
+  where
+    freshName :: Name c UnsafeS
+    freshName = UnsafeMakeName rep $ freshRawName (D.nameTag hint) scope
 
 freshRawName :: D.Tag -> S.Set RawName -> RawName
 freshRawName tag usedNames = D.Name D.GenName tag nextNum
@@ -150,16 +154,30 @@ projectName (UnsafeMakeScope scope) (UnsafeMakeName rep rawName)
 
 -- proves that the names in n are distinct
 class Distinct (n::S)
-instance Distinct VoidS
-instance Distinct UnsafeMakeDistinctS
+-- data version of Distinct
+data DistinctEvidence (n::S) = FabricateDistinctEvidence
 
-withSubscopeDistinct :: forall n l r. Distinct l => Ext n l -> (Distinct n => r) -> r
-withSubscopeDistinct _ cont = fromWrapWithDistinct
-  ( unsafeCoerce ( WrapWithDistinct cont :: WrapWithDistinct n r
-                                       ) :: WrapWithDistinct UnsafeMakeDistinctS r)
+instance Distinct VoidS
+
+getDistinctEvidence :: Distinct n => DistinctEvidence n
+getDistinctEvidence = FabricateDistinctEvidence
+
+withDistinctEvidence :: forall n a. DistinctEvidence n -> (Distinct n => a) -> a
+withDistinctEvidence _ cont = fromWrapWithDistinct
+ ( unsafeCoerce ( WrapWithDistinct cont :: WrapWithDistinct n     a
+                                      ) :: WrapWithDistinct VoidS a)
 
 newtype WrapWithDistinct n r =
   WrapWithDistinct { fromWrapWithDistinct :: Distinct n => r }
+
+
+withSubscopeDistinct :: forall n l a.
+                        Distinct l
+                     => ExtEvidence n l -> ((Ext n l, Distinct n) => a) -> a
+withSubscopeDistinct ext cont =
+  withExtEvidence' ext $
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence n) $
+      cont
 
 -- useful for printing etc.
 getRawName :: Name c n -> RawName
@@ -201,17 +219,36 @@ instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
 -- `Distinct l` is still needed to further prove that). Unlike `ScopeFrag`
 -- (which is also proof) it doesn't actually carry any data, so we can unsafely
 -- create one from nothing when we need to.
-data Ext (n::S) (l::S) = UnsafeMakeExt
+class Ext (n::S) (l::S)
 
-instance Category Ext where
-  id = UnsafeMakeExt
-  UnsafeMakeExt . UnsafeMakeExt = UnsafeMakeExt
+instance Ext (n::S) (n::S)
 
-scopeFragToExt :: ScopeFrag n l -> Ext n l
-scopeFragToExt _ = UnsafeMakeExt
+getExtEvidence :: Ext n l => ExtEvidence n l
+getExtEvidence = FabricateExtEvidence
 
-injectNames :: InjectableE e => Distinct l => Ext n l -> e n -> e l
-injectNames _ x = unsafeCoerceE x
+-- We give this one a ' because the more general one defined in Name is the
+-- version we usually want to use.
+withExtEvidence' :: forall n l a. ExtEvidence n l -> (Ext n l => a) -> a
+withExtEvidence' _ cont = fromWrapWithExt
+ ( unsafeCoerce ( WrapWithExt cont :: WrapWithExt n     l     a
+                                 ) :: WrapWithExt VoidS VoidS a)
+
+newtype WrapWithExt n l r =
+  WrapWithExt { fromWrapWithExt :: Ext n l => r }
+
+data ExtEvidence (n::S) (l::S) = FabricateExtEvidence
+
+instance Category ExtEvidence where
+  id = FabricateExtEvidence
+  -- Unfortunately, we can't write the class version of this transitivity axiom
+  -- because the intermediate type would be ambiguous.
+  FabricateExtEvidence . FabricateExtEvidence = FabricateExtEvidence
+
+scopeFragToExtEvidence :: ScopeFrag n l -> ExtEvidence n l
+scopeFragToExtEvidence _ = FabricateExtEvidence
+
+inject :: (InjectableE e, Distinct l, Ext n l) => e n -> e l
+inject x = unsafeCoerceE x
 
 injectNamesR :: InjectableE e => e (n:=>:l) -> e l
 injectNamesR = unsafeCoerceE
@@ -582,7 +619,7 @@ into this:
 The expression `\x. x + z + y`, initially in the scope `[z]`, gets injected into
 the scope `[z, y]`. For expression-like things, the injection is valid if we
 know that (1) that the new scope contains distinct names, and (2) it extends the
-old scope. These are the `Distinct l` and `Ext n l` conditions in `injectNames`.
+old scope. These are the `Distinct l` and `Ext n l` conditions in `inject`.
 Note that the expression may end up with internal binders shadowing the new vars
 in scope, shadows, like the inner `y` above, and that's fine.
 

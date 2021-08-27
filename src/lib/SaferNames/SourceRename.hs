@@ -95,8 +95,9 @@ instance (Renamer m) => NameGen (RenamerNameGenT m) where
     (RenamerContent frag sourceMap expr) <- action
     extendScope frag $ extendSourceMap sourceMap $ do
       (RenamerContent frag2 sourceMap2 expr2) <- runRenamerNameGenT $ cont expr
-      let sourceMap' = inject frag2 sourceMap <> sourceMap2
-      return $ RenamerContent (frag >>> frag2) sourceMap' expr2
+      withExtEvidence frag2 do
+        let sourceMap' = inject sourceMap <> sourceMap2
+        return $ RenamerContent (frag >>> frag2) sourceMap' expr2
 
 withSourceRenameB :: SourceRenamableB b
                   => Renamer m
@@ -316,8 +317,9 @@ instance (Renamer m) => NameGen (PatRenamerNameGenT m) where
     (sibs, RenamerContent frag sourceMap expr) <- action
     extendScope frag $ extendSourceMap sourceMap $ do
       (sibs', RenamerContent frag' sourceMap' expr') <- runPatRenamerNameGenT $ cont expr
-      let sourceMap'' = inject frag' sourceMap <> sourceMap'
-      return (sibs <> sibs', RenamerContent (frag >>> frag') sourceMap'' expr')
+      withExtEvidence frag' do
+        let sourceMap'' = inject sourceMap <> sourceMap'
+        return (sibs <> sibs', RenamerContent (frag >>> frag') sourceMap'' expr')
 
 class SourceRenamablePat (pat::B) where
   sourceRenamePat :: Renamer m

@@ -89,18 +89,18 @@ extendTopStateD jointTopState evaluated = do
       runToSafeM (topToSafeMap jointTopState) (envAsScope bindingsS) do
         nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
          \bindingsFrag toSafeMap' fromSafeMap' -> do
-           let scopeFrag = envAsScope bindingsFrag
-           scsS'       <- toSafeE scsD'
-           sourceMapS' <- toSafeE sourceMapD'
-           sourceMapSInj <- injectM scopeFrag sourceMapS
-           bindingsSInj  <- injectM scopeFrag bindingsS
-           scsSInj       <- injectM scopeFrag scsS
-           return $ TopStateEx $ JointTopState
-             (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
-             (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
-                         (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
-             toSafeMap'
-             fromSafeMap'
+           withExtEvidence (toExtEvidence $ envAsScope bindingsFrag) do
+             scsS'       <- toSafeE scsD'
+             sourceMapS' <- toSafeE sourceMapD'
+             sourceMapSInj <- injectM sourceMapS
+             bindingsSInj  <- injectM bindingsS
+             scsSInj       <- injectM scsS
+             return $ TopStateEx $ JointTopState
+               (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
+               (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
+                           (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
+               toSafeMap'
+               fromSafeMap'
 
 instance Pretty (JointTopState n) where
   pretty s =
@@ -775,9 +775,11 @@ instance Store TopStateEx
 deriving via (WrapE JointTopState n) instance Generic (JointTopState n)
 
 instance Generic TopStateEx where
-  type Rep TopStateEx = Rep (JointTopState UnsafeMakeDistinctS)
-  from (TopStateEx topState) = from (unsafeCoerceE topState :: JointTopState UnsafeMakeDistinctS)
-  to rep = TopStateEx (to rep :: JointTopState UnsafeMakeDistinctS)
+  type Rep TopStateEx = Rep (JointTopState UnsafeS)
+  from (TopStateEx topState) = from (unsafeCoerceE topState :: JointTopState UnsafeS)
+  to rep =
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+      TopStateEx (to rep :: JointTopState UnsafeS)
 
 instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch
@@ -788,10 +790,11 @@ instance ScopeReader ToSafeM where
   getScope = ToSafeM $ ReaderT \_ -> getScope
 
 instance ScopeExtender ToSafeM where
-  extendScope frag (ToSafeM (ReaderT f)) =
+  extendScope frag m  =
     ToSafeM $ ReaderT \env ->
       extendScope frag do
-        env' <- injectM frag env
+        let ToSafeM (ReaderT f) =m
+        env' <- injectM env
         f env'
 
 instance MonadFail (ToSafeM o) where

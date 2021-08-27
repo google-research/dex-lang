@@ -227,7 +227,7 @@ class ScopeReader m => BindingsReader (m::MonadKind1) where
   getBindings :: m n (Bindings n)
 
 class ScopeReader m => BindingsExtender (m::MonadKind1) where
-  extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
+  extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
 
 type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
 type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
@@ -241,9 +241,10 @@ instance (InjectableE e, BindingsReader m)
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
-  extendBindings frag (OutReaderT (ReaderT cont)) = OutReaderT $ ReaderT \env ->
+  extendBindings frag m = OutReaderT $ ReaderT \env ->
     extendBindings frag do
-      env' <- injectM (envAsScope frag) env
+      let OutReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
@@ -258,11 +259,12 @@ instance Monad m => BindingsReader (BindingsReaderT m) where
   getBindings = BindingsReaderT ask
 
 instance Monad m => BindingsExtender (BindingsReaderT m) where
-  extendBindings frag (BindingsReaderT (ReaderT f)) =
+  extendBindings frag m =
     BindingsReaderT $ ReaderT \bindings -> do
        let scopeFrag = envAsScope frag
        extendScope scopeFrag do
-         bindings' <- injectM scopeFrag bindings
+         let BindingsReaderT (ReaderT f) = m
+         bindings' <- injectM bindings
          f (bindings' <>> frag)
 
 instance Monad m => ScopeReader (BindingsReaderT m) where
@@ -273,9 +275,10 @@ instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
 
 instance (InjectableV v, ScopeReader m, BindingsExtender m)
          => BindingsExtender (EnvReaderT v m i) where
-  extendBindings frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
+  extendBindings frag m = EnvReaderT $ ReaderT \env ->
     extendBindings frag do
-      env' <- injectM (envAsScope frag) env
+      let EnvReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 -- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
@@ -290,12 +293,12 @@ withFreshBinding
   :: (NameColor c, BindingsReader m, BindingsExtender m, HasNameHint hint)
   => hint
   -> Binding c o
-  -> (forall o'. NameBinder c o o' -> m o' a)
+  -> (forall o'. Ext o o' => NameBinder c o o' -> m o' a)
   -> m o a
 withFreshBinding hint binding cont = do
   Distinct scope <- getScope
   withFresh (getNameHint hint) nameColorRep scope \b' -> do
-    let binding' = inject b' binding
+    let binding' = inject binding
     extendBindings (b' @> binding') $
       cont b'
 
@@ -304,7 +307,7 @@ withFreshBinder
   => hint
   -> Type o
   -> AtomBinderInfo o
-  -> (forall o'. Binder o o' -> m o' a)
+  -> (forall o'. Ext o o' => Binder o o' -> m o' a)
   -> m o a
 withFreshBinder hint ty info cont =
   withFreshBinding hint (AtomNameBinding ty info) \b ->
@@ -314,7 +317,7 @@ refreshBinders
   :: ( InjectableV v, BindingsExtender2 m, FromName v
      , EnvGetter v m, SubstB v b, BindsBindings b)
   => b i i'
-  -> (forall o'. b o o' -> m i' o' r)
+  -> (forall o'. Ext o o' => b o o' -> m i' o' r)
   -> m i o r
 refreshBinders b cont = do
   WithScopeSubstFrag _ env b' <- liftScopedEnvReader $ runSubstGenT $ substB b
@@ -1301,23 +1304,23 @@ deriving instance Show (UAlt n)
 
 instance BindsBindings Binder where
   boundBindings (b:>ty) = b @> AtomNameBinding ty' MiscBound
-    where ty' = inject (toScopeFrag b) ty
+    where ty' = withExtEvidence b $ inject ty
 
 instance BindsBindings Decl where
   boundBindings (Let ann (b:>ty) expr) =
-    b @> AtomNameBinding ty' (LetBound ann expr')
-    where
-      ty'   = inject (toScopeFrag b) ty
-      expr' = inject (toScopeFrag b) expr
+    withExtEvidence b do
+      let ty'   = inject ty
+      let expr' = inject expr
+      b @> AtomNameBinding ty' (LetBound ann expr')
 
 instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (PairB b1 b2)) where
-  boundBindings (PairB b1 b2) =
+  boundBindings (PairB b1 b2) = do
     let bindings2 = boundBindings b2
-        ext = toExt $ envAsScope bindings2
-    in withSubscopeDistinct ext $
-        let bindings1 = boundBindings b1
-        in inject ext bindings1 <.> bindings2
+    let ext = toExtEvidence $ envAsScope bindings2
+    withSubscopeDistinct ext do
+      let bindings1 = boundBindings b1
+      inject bindings1 <.> bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
   boundBindings Empty = emptyEnv
