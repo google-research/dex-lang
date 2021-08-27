@@ -20,7 +20,8 @@ module SaferNames.NameCore (
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
   toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep, withSubscopeDistinct,
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
-  NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor) where
+  NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor,
+  Ext, scopeFragToExt) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -152,7 +153,7 @@ class Distinct (n::S)
 instance Distinct VoidS
 instance Distinct UnsafeMakeDistinctS
 
-withSubscopeDistinct :: forall n l r. Distinct l => ScopeFrag n l -> (Distinct n => r) -> r
+withSubscopeDistinct :: forall n l r. Distinct l => Ext n l -> (Distinct n => r) -> r
 withSubscopeDistinct _ cont = fromWrapWithDistinct
   ( unsafeCoerce ( WrapWithDistinct cont :: WrapWithDistinct n r
                                        ) :: WrapWithDistinct UnsafeMakeDistinctS r)
@@ -196,7 +197,20 @@ instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
 
 -- Note [Injections]
 
-injectNames :: InjectableE e => Distinct l => ScopeFrag n l -> e n -> e l
+-- `Ext n l` is proof that `l` extends `n` (not necessarily freshly:
+-- `Distinct l` is still needed to further prove that). Unlike `ScopeFrag`
+-- (which is also proof) it doesn't actually carry any data, so we can unsafely
+-- create one from nothing when we need to.
+data Ext (n::S) (l::S) = UnsafeMakeExt
+
+instance Category Ext where
+  id = UnsafeMakeExt
+  UnsafeMakeExt . UnsafeMakeExt = UnsafeMakeExt
+
+scopeFragToExt :: ScopeFrag n l -> Ext n l
+scopeFragToExt _ = UnsafeMakeExt
+
+injectNames :: InjectableE e => Distinct l => Ext n l -> e n -> e l
 injectNames _ x = unsafeCoerceE x
 
 injectNamesR :: InjectableE e => e (n:=>:l) -> e l
@@ -568,10 +582,9 @@ into this:
 The expression `\x. x + z + y`, initially in the scope `[z]`, gets injected into
 the scope `[z, y]`. For expression-like things, the injection is valid if we
 know that (1) that the new scope contains distinct names, and (2) it extends the
-old scope. These are the `Distinct l` and `ScopeFrag (n:=>:l)` conditions below in
-`injectNames`. Note that the expression may end up with internal binders
-shadowing the new vars in scope, shadows, like the inner `y` above, and that's
-fine.
+old scope. These are the `Distinct l` and `Ext n l` conditions in `injectNames`.
+Note that the expression may end up with internal binders shadowing the new vars
+in scope, shadows, like the inner `y` above, and that's fine.
 
 But not everything with an expression-like kind `E` (`S -> *`) is injectable.
 For example, a type like `Name n -> Bool` can't be coerced to a `Name l -> Bool`

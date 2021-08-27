@@ -16,6 +16,7 @@
 module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), EnvGetter (..), FromName (..), Distinct, WithDistinct (..),
+  Ext, toExt, ProvesExt,
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
   WithScopeFrag (..), WithScopeSubstFrag (..), extendRenamer,
   ScopeReader (..), ScopeExtender (..),
@@ -46,7 +47,7 @@ module SaferNames.Name (
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
   splitNestAt, nestLength, binderAnn,
-  OutReaderT (..), OutReader (..), runOutReaderT,
+  OutReaderT (..), OutReader (..), runOutReaderT
   ) where
 
 import Prelude hiding (id, (.))
@@ -142,20 +143,30 @@ data IsVoidS n where
 
 -- === Injections and projections ===
 
-class BindsNames (b :: B) where
+class ProvesExt (b :: B) where
+  toExt :: b n l -> Ext n l
+
+  default toExt :: BindsNames b => b n l -> Ext n l
+  toExt b = toExt $ toScopeFrag b
+
+class ProvesExt b => BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
 
   default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
   toScopeFrag b = toScopeFrag $ fromB b
 
+instance ProvesExt Ext where
+  toExt = id
+
+instance ProvesExt ScopeFrag
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
 
-inject :: BindsNames b => InjectableE e => Distinct l => b n l -> e n -> e l
-inject ext x = injectNames (toScopeFrag ext) x
+inject :: ProvesExt b => InjectableE e => Distinct l => b n l -> e n -> e l
+inject ext x = injectNames (toExt ext) x
 
 -- like inject, but uses the ScopeReader monad for its `Distinct` proof
-injectM :: ScopeReader m => BindsNames b => InjectableE e => b n l -> e n -> m l (e l)
+injectM :: ScopeReader m => ProvesExt b => InjectableE e => b n l -> e n -> m l (e l)
 injectM b e = do
   Distinct _ <- getScope
   return $ inject b e
@@ -321,6 +332,7 @@ class BindsOneName (b::B) (c::C) | b -> c where
   (@>) :: b i i' -> v c o -> EnvFrag v i i' o
   binderName :: b i i' -> Name c i'
 
+instance ProvesExt  (NameBinder c) where
 instance BindsNames (NameBinder c) where
   toScopeFrag b = singletonScope b
 
@@ -787,7 +799,8 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
 -- generalized traversal.
 class (forall i. NameGen (m i i)) => SubstGen (m :: S -> S -> E -> S -> *) where
   returnSG :: e o -> m i i e o
-  bindSG   :: m i i' e o -> (forall o'. e o' -> m i' i'' e' o') -> m i i'' e' o
+  bindSG   :: m i i' e o -> (forall o'. e o' -> m i' i'' e' o')
+           -> m i i'' e' o
 
 forEachNestItemSG :: SubstGen m
                => Nest b i i'
@@ -891,6 +904,7 @@ instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE (Abs b body) = do
     withSubstB b \b' -> Abs b' <$> substE body
 
+instance (BindsNames b1, BindsNames b2) => ProvesExt  (PairB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (PairB b1 b2) where
   toScopeFrag (PairB b1 b2) = toScopeFrag b1 >>> toScopeFrag b2
 
@@ -918,9 +932,11 @@ instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
       substB b   `bindSG` \b' ->
       returnSG $ b':>ann'
 
+instance BindsNames b => ProvesExt  (BinderP b ann) where
 instance BindsNames b => BindsNames (BinderP b ann) where
   toScopeFrag (b:>_) = toScopeFrag b
 
+instance BindsNames b => ProvesExt  (Nest b) where
 instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
@@ -948,6 +964,7 @@ instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
 instance InjectableB UnitB where
   injectionProofB fresh UnitB cont = cont fresh UnitB
 
+instance ProvesExt  UnitB where
 instance BindsNames UnitB where
   toScopeFrag UnitB = id
 
@@ -1034,6 +1051,7 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
          , Generic (b1 UnsafeS UnsafeS), Generic (b2 UnsafeS UnsafeS) )
          => Store (PairB b1 b2 n l)
 
+instance ProvesExt  (RecEnvFrag v) where
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envAsScope $ fromRecEnvFrag env
 

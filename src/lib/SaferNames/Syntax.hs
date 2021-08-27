@@ -827,6 +827,7 @@ instance GenericB DataConRefBinding where
   fromB (DataConRefBinding b val) = b :> val
   toB   (b :> val) = DataConRefBinding b val
 instance InjectableB DataConRefBinding
+instance ProvesExt  DataConRefBinding
 instance BindsNames DataConRefBinding
 instance SubstB Name DataConRefBinding
 instance SubstB AtomSubstVal DataConRefBinding
@@ -1196,6 +1197,7 @@ instance InjectableB Decl
 instance SubstB AtomSubstVal Decl
 instance SubstB Name Decl
 instance AlphaEqB Decl
+instance ProvesExt  Decl
 instance BindsNames Decl
 
 instance Pretty Arrow where
@@ -1312,10 +1314,10 @@ instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (PairB b1 b2)) where
   boundBindings (PairB b1 b2) =
     let bindings2 = boundBindings b2
-        scopeFrag = envAsScope bindings2
-    in withSubscopeDistinct scopeFrag $
+        ext = toExt $ envAsScope bindings2
+    in withSubscopeDistinct ext $
         let bindings1 = boundBindings b1
-        in inject scopeFrag bindings1 <.> bindings2
+        in inject ext bindings1 <.> bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
   boundBindings Empty = emptyEnv
