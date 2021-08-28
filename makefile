@@ -3,6 +3,7 @@
 SHELL=/bin/bash
 
 STACK=$(shell command -v stack 2>/dev/null)
+
 ifeq (, $(STACK))
 	STACK=cabal
 
@@ -55,11 +56,17 @@ STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
 STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
 endif
 
-clang_version = $(shell clang++ -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
-check_clang_version:
-ifneq ($(clang_version), 1)
-	@echo "Please use clang++ version 9."
-	@false
+CLANG = $(shell for clangversion in $(possible-clang-locations) ; do \
+	if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
+	then echo "$$clangversion" ; break ; fi ; done)
+possible-clang-locations = clang++-9 clang++-10 clang++-11 clang++
+clang-version-compatibile = $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+check-clang-version:
+ifeq (, $(CLANG))
+	$(error "Please install clang++-9")
+endif
+ifneq ($(clang-version-compatibile), 1)
+	$(error "Please install clang++-9")
 endif
 
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
@@ -100,10 +107,10 @@ build-nolive: dexrt-llvm
 build-safe-names: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
 
-dexrt-llvm: src/lib/dexrt.bc check_clang_version
+dexrt-llvm: src/lib/dexrt.bc check-clang-version
 
 %.bc: %.cpp
-	clang++ $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
+	$(CLANG) $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
 
 # --- running tests ---
 
