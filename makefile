@@ -3,7 +3,6 @@
 SHELL=/bin/bash
 
 STACK=$(shell command -v stack 2>/dev/null)
-
 ifeq (, $(STACK))
 	STACK=cabal
 
