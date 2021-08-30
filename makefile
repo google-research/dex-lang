@@ -59,12 +59,12 @@ CLANG = $(shell for clangversion in $(possible-clang-locations) ; do \
 	if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
 	then echo "$$clangversion" ; break ; fi ; done)
 possible-clang-locations = clang++-9 clang++-10 clang++-11 clang++
-clang-version-compatibile = $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+clang-version-compatible = $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
 check-clang-version:
 ifeq (, $(CLANG))
 	$(error "Please install clang++-9")
 endif
-ifneq ($(clang-version-compatibile), 1)
+ifneq ($(clang-version-compatible), 1)
 	$(error "Please install clang++-9")
 endif
 
