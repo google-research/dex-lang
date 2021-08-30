@@ -43,7 +43,7 @@ module SaferNames.Name (
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, traverseEnvFrag, forEachNestItem, forEachNestItemSG,
   substM, ScopedEnvReader, liftScopedEnvReader,
-  HasNameHint (..), NameHint, HasNameColor (..), CommonHint (..), NameColor (..),
+  HasNameHint (..), NameHint, HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
@@ -58,7 +58,7 @@ import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
-import Data.String (fromString)
+import Data.String
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..), Rep)
@@ -219,7 +219,7 @@ toConstAbs :: (InjectableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
 toConstAbs rep body = do
   Distinct scope <- getScope
-  withFresh ("ignore"::NameHint) rep scope \b -> do
+  withFresh "ignore" rep scope \b -> do
     return $ Abs b $ inject body
 
 -- === type classes for traversing names ===
@@ -465,15 +465,15 @@ data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
   SubstVal :: atom n   -> SubstVal c      atom c n
   Rename   :: Name c n -> SubstVal cMatch atom c n
 
-withFreshM :: (ScopeReader m, ScopeExtender m, HasNameHint hint)
-           => hint
+withFreshM :: (ScopeReader m, ScopeExtender m)
+           => NameHint
            -> NameColorRep c
            -> (forall o'. (Distinct o', Ext o o')
                           => NameBinder c o o' -> m o' a)
            -> m o a
 withFreshM hint rep cont = do
   Distinct m <- getScope
-  withFresh (getNameHint hint) rep m \b' -> do
+  withFresh hint rep m \b' -> do
     extendScope (singletonScope b') $
       cont b'
 
@@ -931,31 +931,20 @@ liftSG m cont = SubstGenT do
 
 -- === name hints ===
 
-type NameHint = RawName
-
 class HasNameHint a where
   getNameHint :: a -> NameHint
 
 instance HasNameHint (Name s n) where
-  getNameHint = getRawName
+  getNameHint name = Hint $ getRawName name
 
 instance HasNameHint (NameBinder s n l) where
-  getNameHint = getRawName . binderName
+  getNameHint b = Hint $ getRawName $ binderName b
 
 instance HasNameHint RawName where
-  getNameHint = id
+  getNameHint = Hint
 
 instance HasNameHint String where
   getNameHint = fromString
-
-data CommonHint =
-   IgnoreHint
- | GenHint
-
-instance HasNameHint CommonHint where
-  getNameHint hint = case hint of
-    IgnoreHint -> "_"
-    GenHint    -> "v"
 
 -- === getting name colors ===
 

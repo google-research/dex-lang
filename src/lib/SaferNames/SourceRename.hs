@@ -258,7 +258,7 @@ sourceRenameUBinder ubinder = case ubinder of
     mayShadow <- askMayShadow
     unless (mayShadow || not (M.member b sourceMap)) $
       throw RepeatedVarErr $ pprint b
-    withFreshM b nameColorRep \freshName -> do
+    withFreshM (getNameHint b) nameColorRep \freshName -> do
       (Distinct _) <- getScope
       let frag = (singletonScope freshName)
       let sourceMap' = SourceMap (M.singleton b (EnvVal nameColorRep $ nameBinderName freshName))

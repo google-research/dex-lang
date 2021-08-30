@@ -40,12 +40,11 @@ import SaferNames.PPrint ()
 import LabeledItems
 import Util (bindM2, scanM, restructure)
 
-
 class Monad1 m => Builder (m::MonadKind1) where
-  emitAnn :: LetAnn -> Expr n -> m n (AtomName n)
+  emitDecl :: NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 
 emit :: Builder m => Expr n -> m n (Atom n)
-emit expr = Var <$> emitAnn PlainLet expr
+emit expr = Var <$> emitDecl NoHint PlainLet expr
 
 emitOp :: Builder m => Op n -> m n (Atom n)
 emitOp op = emit $ Op op
@@ -81,12 +80,12 @@ runBuilderT cont = runBuilderNameGenT $ runInplace $ runBuilderT' cont
 
 instance (BindingsReader m, BindingsExtender m)
          => Builder (BuilderT m n) where
-  emitAnn ann expr = BuilderT $
+  emitDecl hint ann expr = BuilderT $
     liftInplace $ BuilderNameGenT do
       expr' <- injectM expr
       ty <- getType expr'
       let binderInfo = LetBound ann expr'
-      withFreshBinder ("v" :: NameHint) ty binderInfo \b -> do
+      withFreshBinder hint ty binderInfo \b -> do
         return $ DistinctAbs (Nest (Let ann b expr') Empty) (binderName b)
 
 apBuilder :: (InjectableE e, InjectableE e')

@@ -313,7 +313,7 @@ instance HasType Atom where
 instance CheckableB Binder where
   checkB (b:>ty) cont = do
     ty' <- checkTypeE TyKind ty
-    withFreshBinder b ty' MiscBound \b' ->
+    withFreshBinder (getNameHint b) ty' MiscBound \b' ->
       extendRenamer (b@>binderName b') $
         cont b'
 
@@ -339,7 +339,7 @@ instance CheckableB Decl where
   checkB (Let ann (b:>ty) expr) cont = do
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
-    withFreshBinder b ty' (LetBound ann expr') \b' ->
+    withFreshBinder (getNameHint b) ty' (LetBound ann expr') \b' ->
       extendRenamer (b @> binderName b') $
         cont $ Let ann b' expr'
 

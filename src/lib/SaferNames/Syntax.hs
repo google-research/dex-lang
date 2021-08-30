@@ -292,21 +292,21 @@ lookupBindings :: BindingsReader m => Name c o -> m o (Binding c o)
 lookupBindings v = (!v) <$> getBindings
 
 withFreshBinding
-  :: (NameColor c, BindingsReader m, BindingsExtender m, HasNameHint hint)
-  => hint
+  :: (NameColor c, BindingsReader m, BindingsExtender m)
+  => NameHint
   -> Binding c o
   -> (forall o'. (Distinct o', Ext o o') => NameBinder c o o' -> m o' a)
   -> m o a
 withFreshBinding hint binding cont = do
   Distinct scope <- getScope
-  withFresh (getNameHint hint) nameColorRep scope \b' -> do
+  withFresh hint nameColorRep scope \b' -> do
     let binding' = inject binding
     extendBindings (b' @> binding') $
       cont b'
 
 withFreshBinder
-  :: (BindingsReader m, BindingsExtender m, HasNameHint hint)
-  => hint
+  :: (BindingsReader m, BindingsExtender m)
+  => NameHint
   -> Type o
   -> AtomBinderInfo o
   -> (forall o'. (Distinct o', Ext o o') => Binder o o' -> m o' a)

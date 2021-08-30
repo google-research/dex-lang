@@ -22,7 +22,8 @@ module SaferNames.NameCore (
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor,
   Distinct, DistinctEvidence (..), withDistinctEvidence, getDistinctEvidence,
-  Ext, ExtEvidence (..), withExtEvidence', getExtEvidence, scopeFragToExtEvidence) where
+  Ext, ExtEvidence (..), withExtEvidence', getExtEvidence, scopeFragToExtEvidence,
+  NameHint (..)) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -34,6 +35,7 @@ import qualified Data.Map  as M
 import qualified Data.Set  as S
 import GHC.Exts (Constraint)
 import Data.Store (Store (..))
+import Data.String
 import GHC.Generics (Generic (..))
 
 import qualified Env as D
@@ -125,8 +127,14 @@ data NameBinder (c::C)  -- name color
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name c l }
 
+data NameHint = Hint RawName
+              | NoHint
+
+instance IsString NameHint where
+  fromString s = Hint $ fromString s
+
 withFresh :: forall n c a. Distinct n
-          => RawName -> NameColorRep c -> Scope n
+          => NameHint -> NameColorRep c -> Scope n
           -> (forall l. (Ext n l, Distinct l) => NameBinder c n l -> a) -> a
 withFresh hint rep (UnsafeMakeScope scope) cont =
   withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
@@ -134,7 +142,12 @@ withFresh hint rep (UnsafeMakeScope scope) cont =
       cont $ UnsafeMakeBinder freshName
   where
     freshName :: Name c UnsafeS
-    freshName = UnsafeMakeName rep $ freshRawName (D.nameTag hint) scope
+    freshName = UnsafeMakeName rep $ freshRawName (D.nameTag rawNameHint) scope
+
+    rawNameHint :: RawName
+    rawNameHint = case hint of
+      Hint v -> v
+      NoHint -> "v"
 
 freshRawName :: D.Tag -> S.Set RawName -> RawName
 freshRawName tag usedNames = D.Name D.GenName tag nextNum
