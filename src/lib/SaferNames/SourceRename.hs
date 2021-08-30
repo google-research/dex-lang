@@ -98,6 +98,9 @@ instance (Renamer m) => NameGen (RenamerNameGenT m) where
       withExtEvidence frag2 do
         let sourceMap' = inject sourceMap <> sourceMap2
         return $ RenamerContent (frag >>> frag2) sourceMap' expr2
+  getDistinctEvidenceG = RenamerNameGenT do
+    Distinct _ <- getScope
+    return $ RenamerContent id mempty getDistinctEvidence
 
 withSourceRenameB :: SourceRenamableB b
                   => Renamer m
@@ -320,6 +323,9 @@ instance (Renamer m) => NameGen (PatRenamerNameGenT m) where
       withExtEvidence frag' do
         let sourceMap'' = inject sourceMap <> sourceMap'
         return (sibs <> sibs', RenamerContent (frag >>> frag') sourceMap'' expr')
+  getDistinctEvidenceG = PatRenamerNameGenT do
+    Distinct _ <- getScope
+    return (mempty, RenamerContent id mempty getDistinctEvidence)
 
 class SourceRenamablePat (pat::B) where
   sourceRenamePat :: Renamer m

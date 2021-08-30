@@ -43,7 +43,7 @@ module SaferNames.Name (
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, traverseEnvFrag, forEachNestItem, forEachNestItemSG,
   substM, ScopedEnvReader, liftScopedEnvReader,
-  HasNameHint (..), NameHint, HasNameColor (..), NameHint (..), NameColor (..),
+  HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
@@ -374,22 +374,22 @@ instance BindsOneName b c => BindsNameList (Nest b) c where
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-applySubst :: (ScopeReader m, SubstE (SubstVal c val) e, InjectableE val)
-           => EnvFrag (SubstVal c val) o i o -> e i -> m o (e o)
+applySubst :: (ScopeReader m, SubstE v e, InjectableV v, FromName v)
+           => EnvFrag v o i o -> e i -> m o (e o)
 applySubst substFrag x = do
   Distinct scope <- getScope
   return $ runIdentity $ runScopeReaderT scope $
     runEnvReaderT (emptyNameFunction) $
       dropSubst $ extendEnv substFrag $ substE x
 
-applyAbs :: (InjectableE val , ScopeReader m, BindsOneName b c, SubstE (SubstVal c val) e)
-         => Abs b e n -> val n -> m n (e n)
-applyAbs (Abs b body) x = applySubst (b@>SubstVal x) body
+applyAbs :: (InjectableV v, FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
+         => Abs b e n -> v c n -> m n (e n)
+applyAbs (Abs b body) x = applySubst (b@>x) body
 
-applyNaryAbs :: ( InjectableE val, ScopeReader m, BindsNameList b c, SubstE (SubstVal c val) e
-                , SubstB (SubstVal c val) b)
-             => Abs b e n -> [val n] -> m n (e n)
-applyNaryAbs (Abs bs body) xs = applySubst (bs @@> map SubstVal xs) body
+applyNaryAbs :: ( InjectableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
+                , SubstB v b)
+             => Abs b e n -> [v c n] -> m n (e n)
+applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 
 infixl 9 !
 (!) :: NameFunction v i o -> Name c i -> v c o
@@ -840,26 +840,21 @@ instance NameGen m => Monad (Inplace m n l) where
       let UnsafeMakeInplace m' = f x
       in unsafeCoerceE $ m'
 
-liftInplace :: forall m n e l.
-               (NameGen m, InjectableE e)
-            => (forall l'. (Distinct l', Ext l l') => m e l')
-            -> Inplace m n l (e l)
-liftInplace cont = liftInplace' \distinct ext ->
-  withDistinctEvidence distinct $ withExtEvidence ext cont
+liftInplace :: forall m n e e' l.
+               (NameGen m, InjectableE e, InjectableE e')
+            => e l
+            -> (forall l'. e l' -> m e' l')
+            -> Inplace m n l (e' l)
+liftInplace x cont = UnsafeMakeInplace $
+  cont (unsafeCoerceE x) `bindG` \result ->
+  returnG $ LiftE $ unsafeCoerceE result
 
 runInplace :: (NameGen m, InjectableE e)
            => (forall l. (Distinct l, Ext n l) => Inplace m n l (e l))
            -> m e n
-runInplace cont = runInplace' \distinct ext ->
+runInplace cont =
+  runInplace' \distinct ext ->
   withDistinctEvidence distinct $ withExtEvidence ext cont
-
-liftInplace' :: forall m n e l.
-                (NameGen m, InjectableE e)
-             => (forall l'. DistinctEvidence l' -> ExtEvidence l l' -> m e l')
-             -> Inplace m n l (e l)
-liftInplace' cont = UnsafeMakeInplace $
-   cont FabricateDistinctEvidence FabricateExtEvidence `bindG` \x ->
-   returnG $ LiftE $ unsafeCoerceE x
 
 runInplace' :: (NameGen m, InjectableE e)
             => (forall l. DistinctEvidence l -> ExtEvidence n l -> Inplace m n l (e l))

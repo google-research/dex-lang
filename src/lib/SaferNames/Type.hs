@@ -275,7 +275,7 @@ instance HasType Atom where
       DataDefBinding def@(DataDef _ paramBs [DataConDef _ argBs]) <- lookupBindings defName'
       paramTys <- nonDepBinderNestTypes paramBs
       params' <- forMZipped paramTys params checkTypeE
-      argBs' <- applyNaryAbs (Abs paramBs argBs) params'
+      argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
       checkDataConRefBindings argBs' args
       return $ RawRefTy $ TypeCon (defName',def) params'
     BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
@@ -301,7 +301,7 @@ instance HasType Atom where
           -- `ty` can depends on earlier binders from this constructor. Rewrite
           -- it to also use projections.
           dropSubst $
-            applyNaryAbs (Abs bsInit bTy) [ ProjectElt (j NE.:| is) v'
+            applyNaryAbs (Abs bsInit bTy) [ SubstVal (ProjectElt (j NE.:| is) v')
                                           | j <- iota $ nestLength bsInit]
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
@@ -462,7 +462,7 @@ typeCheckPrimOp op = case op of
   IndexRef ref i -> do
     RefTy h (Pi (PiType TabArrow (b:>iTy) Pure eltTy)) <- getTypeE ref
     i' <- checkTypeE iTy i
-    eltTy' <- applyAbs (Abs b eltTy) i'
+    eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
     return $ RefTy h eltTy'
   ProjRef i ref -> do
     RefTy h (ProdTy tys) <- getTypeE ref
@@ -748,7 +748,7 @@ checkDataConRefBindings (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding re
   checkAlphaEq (binderAnn b) bAnn'
   checkB b' \b'' -> do
     ab <- injectM $ Abs b (EmptyAbs restBs)
-    restBs' <- applyAbs ab (Var (binderName b''))
+    restBs' <- applyAbs ab (binderName b'')
     checkDataConRefBindings restBs' (EmptyAbs restRefs)
 checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
 
@@ -770,7 +770,7 @@ checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
 checkApp fTy x = do
   Pi (PiType _ (b:>argTy) eff resultTy) <- return fTy
   x' <- checkTypeE argTy x
-  PairE eff' resultTy' <- applyAbs (Abs b (PairE eff resultTy)) x'
+  PairE eff' resultTy' <- applyAbs (Abs b (PairE eff resultTy)) (SubstVal x')
   declareEffs eff'
   return resultTy'
 
@@ -914,7 +914,7 @@ getBaseMonoidType ty = case ty of
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
 applyDataDefParams (DataDef _ bs cons) params =
-  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) params
+  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
 
 -- === effects ===
 
