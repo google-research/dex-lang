@@ -18,7 +18,7 @@ module SaferNames.Name (
   EnvReader (..), EnvGetter (..), FromName (..), Distinct, WithDistinct (..),
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy, withComposeExts,
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
-  WithScopeFrag (..), WithScopeSubstFrag (..), extendRenamer,
+  DistinctAbs (..), WithScopeSubstFrag (..), extendRenamer,
   ScopeReader (..), ScopeExtender (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
   Inplace, liftInplace, runInplace,
@@ -468,7 +468,8 @@ data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
 withFreshM :: (ScopeReader m, ScopeExtender m, HasNameHint hint)
            => hint
            -> NameColorRep c
-           -> (forall o'. NameBinder c o o' -> m o' a)
+           -> (forall o'. (Distinct o', Ext o o')
+                          => NameBinder c o o' -> m o' a)
            -> m o a
 withFreshM hint rep cont = do
   Distinct m <- getScope
@@ -800,23 +801,23 @@ class NameGen (m :: E -> S -> *) where
 fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
 fmapG f e = e `bindG` (returnG . f)
 
-data WithScopeFrag (e::E) (n::S) where
-  WithScopeFrag :: Distinct l => ScopeFrag n l -> e l -> WithScopeFrag e n
+data DistinctAbs (b::B) (e::E) (n::S) where
+  DistinctAbs :: Distinct l => b n l -> e l -> DistinctAbs b e n
 
 newtype NameGenT (m::MonadKind1) (e::E) (n::S) =
-  NameGenT { runNameGenT :: m n (WithScopeFrag e n) }
+  NameGenT { runNameGenT :: m n (DistinctAbs ScopeFrag e n) }
 
 instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) where
   returnG e = NameGenT $ do
     Distinct _ <- getScope
-    return (WithScopeFrag id e)
+    return (DistinctAbs id e)
   bindG (NameGenT m) f = NameGenT do
-    WithScopeFrag s  e  <- m
-    WithScopeFrag s' e' <- extendScope s $ runNameGenT $ f e
-    return $ WithScopeFrag (s >>> s') e'
+    DistinctAbs s  e  <- m
+    DistinctAbs s' e' <- extendScope s $ runNameGenT $ f e
+    return $ DistinctAbs (s >>> s') e'
   getDistinctEvidenceG = NameGenT do
     Distinct _ <- getScope
-    return $ WithScopeFrag id getDistinctEvidence
+    return $ DistinctAbs id getDistinctEvidence
 
 -- === in-place scope updating monad ===
 

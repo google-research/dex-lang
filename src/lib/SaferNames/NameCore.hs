@@ -374,6 +374,12 @@ data Nest (binder::B) (n::S) (l::S) where
   Nest  :: binder n h -> Nest binder h l -> Nest binder n l
   Empty ::                                  Nest binder n n
 
+instance Category (Nest b) where
+  id = Empty
+  nest' . nest = case nest of
+    Empty -> nest'
+    Nest b rest -> Nest b $ rest >>> nest'
+
 -- === handling the dynamic/heterogeneous stuff for Env ===
 
 data EnvVal (v::V) (n::S) where
