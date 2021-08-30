@@ -15,7 +15,7 @@ module SaferNames.Type (
   checkModule, checkTypes, getType, litType, getBaseMonoidType) where
 
 import Prelude hiding (id)
-import Control.Category ((>>>), id)
+import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -139,8 +139,14 @@ class HasNamesE e => CheckableE (e::E) where
 class HasNamesB b => CheckableB (b::B) where
   checkB :: Typer m
          => b i i'
-         -> (forall o'. b o o' -> m i' o' a)
+         -> (forall o'. Ext o o' => b o o' -> m i' o' a)
          -> m i o a
+
+checkBEvidenced :: (CheckableB b, Typer m)
+                => b i i'
+                -> (forall o'. ExtEvidence o o' -> b o o' -> m i' o' a)
+                -> m i o a
+checkBEvidenced b cont = checkB b \b' -> cont getExtEvidence b'
 
 -- === convenience functions ===
 
@@ -269,7 +275,7 @@ instance HasType Atom where
       DataDefBinding def@(DataDef _ paramBs [DataConDef _ argBs]) <- lookupBindings defName'
       paramTys <- nonDepBinderNestTypes paramBs
       params' <- forMZipped paramTys params checkTypeE
-      argBs' <- applyNaryAbs (Abs paramBs argBs) params'
+      argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
       checkDataConRefBindings argBs' args
       return $ RawRefTy $ TypeCon (defName',def) params'
     BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
@@ -295,7 +301,7 @@ instance HasType Atom where
           -- `ty` can depends on earlier binders from this constructor. Rewrite
           -- it to also use projections.
           dropSubst $
-            applyNaryAbs (Abs bsInit bTy) [ ProjectElt (j NE.:| is) v'
+            applyNaryAbs (Abs bsInit bTy) [ SubstVal (ProjectElt (j NE.:| is) v')
                                           | j <- iota $ nestLength bsInit]
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
@@ -307,7 +313,7 @@ instance HasType Atom where
 instance CheckableB Binder where
   checkB (b:>ty) cont = do
     ty' <- checkTypeE TyKind ty
-    withFreshBinder b ty' MiscBound \b' ->
+    withFreshBinder (getNameHint b) ty' MiscBound \b' ->
       extendRenamer (b@>binderName b') $
         cont b'
 
@@ -324,8 +330,8 @@ instance HasType Expr where
 instance HasType Block where
   getTypeE (Block ty decls expr) = do
     tyReq <- substM ty
-    checkB decls \decls' -> do
-      tyReq' <- injectM decls' tyReq
+    checkB decls \_ -> do
+      tyReq' <- injectM tyReq
       expr |: tyReq'
     return tyReq
 
@@ -333,14 +339,18 @@ instance CheckableB Decl where
   checkB (Let ann (b:>ty) expr) cont = do
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
-    withFreshBinder b ty' (LetBound ann expr') \b' ->
+    withFreshBinder (getNameHint b) ty' (LetBound ann expr') \b' ->
       extendRenamer (b @> binderName b') $
         cont $ Let ann b' expr'
 
 instance CheckableB b => CheckableB (Nest b) where
   checkB nest cont = case nest of
     Empty -> cont Empty
-    Nest b rest -> checkB b \b' -> checkB rest \rest' -> cont $ Nest b' rest'
+    Nest b rest ->
+      checkBEvidenced b \ext1 b' ->
+        checkBEvidenced rest \ext2 rest' ->
+          withExtEvidence (ext1 >>> ext2) $
+            cont $ Nest b' rest'
 
 typeCheckPrimTC :: Typer m => PrimTC (Atom i) -> m i o (Type o)
 typeCheckPrimTC tc = case tc of
@@ -452,7 +462,7 @@ typeCheckPrimOp op = case op of
   IndexRef ref i -> do
     RefTy h (Pi (PiType TabArrow (b:>iTy) Pure eltTy)) <- getTypeE ref
     i' <- checkTypeE iTy i
-    eltTy' <- applyAbs (Abs b eltTy) i'
+    eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
     return $ RefTy h eltTy'
   ProjRef i ref -> do
     RefTy h (ProdTy tys) <- getTypeE ref
@@ -649,9 +659,9 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   dropSubst $
     refreshBinders regionBinder \regionBinder' ->
-      refreshBinders refBinder \refBinder' -> do
+      refreshBinders refBinder \_ -> do
         eff' <- substM eff
-        regionName <- injectM refBinder' $ binderName regionBinder'
+        regionName <- injectM $ binderName regionBinder'
         extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff'
   _ :> RefTy _ referentTy <- return refBinder
   referentTy' <- fromConstAbs $ Abs regionBinder referentTy
@@ -678,31 +688,35 @@ dataConFunType name con = do
   case argBinders of
     Abs argBinders' UnitE ->
       dropSubst $
-        buildNaryPiType ImplicitArrow paramBinders \ext params ->
-          buildNaryPiType PlainArrow argBinders' \ext' _ -> do
-            params' <- mapM (injectM ext') params
-            name'   <- injectM (ext >>> ext') name
-            def'    <- injectM (ext >>> ext') def
+        buildNaryPiType ImplicitArrow paramBinders \params -> do
+          proxy <- getScopeProxy
+          buildNaryPiType PlainArrow argBinders' \_ -> do
+            params' <- mapM injectM params
+            name'   <- injectMVia proxy name
+            def'    <- injectMVia proxy def
             return $ TypeCon (name', def') params'
 
 typeConFunType :: Typer m => Name DataDefNameC o -> m i o (Type o)
 typeConFunType name = do
   DataDefBinding (DataDef _ paramBinders _) <- lookupBindings name
-  dropSubst $ buildNaryPiType ImplicitArrow paramBinders \_ _ ->
+  dropSubst $ buildNaryPiType ImplicitArrow paramBinders \_ ->
     return TyKind
 
 -- TODO: put this in Builder?
 buildNaryPiType :: Typer m
                 => Arrow
                 -> Nest Binder i i'
-                -> (forall o'. ScopeFrag o o' -> [Type o'] -> m i' o' (Type o'))
+                -> (forall o'. Ext o o' => [Type o'] -> m i' o' (Type o'))
                 -> m i o (Type o)
-buildNaryPiType _ Empty cont = cont id []
-buildNaryPiType arr (Nest b rest) cont =
-  refreshBinders b \b' ->
-    Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \frag params -> do
-      param <- Var <$> injectM frag (binderName b')
-      cont (toScopeFrag b' >>> frag) (param : params)
+buildNaryPiType _ Empty cont = cont []
+buildNaryPiType arr (Nest b rest) cont = do
+  p1 <- getScopeProxy
+  refreshBinders b \b' -> do
+    p2 <- getScopeProxy
+    Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \params -> do
+      p3 <- getScopeProxy
+      param <- Var <$> injectM (binderName b')
+      withComposeExts p1 p2 p3 $ cont (param : params)
 
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase e alts resultTy = do
@@ -733,8 +747,8 @@ checkDataConRefBindings (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding re
   bAnn' <- substM $ binderAnn b'
   checkAlphaEq (binderAnn b) bAnn'
   checkB b' \b'' -> do
-    ab <- injectM b'' $ Abs b (EmptyAbs restBs)
-    restBs' <- applyAbs ab (Var (binderName b''))
+    ab <- injectM $ Abs b (EmptyAbs restBs)
+    restBs' <- applyAbs ab (binderName b'')
     checkDataConRefBindings restBs' (EmptyAbs restRefs)
 checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
 
@@ -748,15 +762,15 @@ checkAlt :: HasType body => Typer m
 checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
-  refreshBinders bs \bsFresh -> do
-    resultTyReq' <- injectM bsFresh resultTyReq
+  refreshBinders bs \_ -> do
+    resultTyReq' <- injectM resultTyReq
     body |: resultTyReq'
 
 checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
 checkApp fTy x = do
   Pi (PiType _ (b:>argTy) eff resultTy) <- return fTy
   x' <- checkTypeE argTy x
-  PairE eff' resultTy' <- applyAbs (Abs b (PairE eff resultTy)) x'
+  PairE eff' resultTy' <- applyAbs (Abs b (PairE eff resultTy)) (SubstVal x')
   declareEffs eff'
   return resultTy'
 
@@ -900,7 +914,7 @@ getBaseMonoidType ty = case ty of
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
 applyDataDefParams (DataDef _ bs cons) params =
-  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) params
+  fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
 
 -- === effects ===
 

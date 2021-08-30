@@ -51,7 +51,8 @@ module SaferNames.Syntax (
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
-    fromNonDepTabTy, binderType,
+    fromNonDepTabTy, binderType, getProjection,
+    applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -98,6 +99,7 @@ import SaferNames.Name
 import PPrint ()
 import Err
 import LabeledItems
+import Util ((...))
 
 -- === core IR ===
 
@@ -227,7 +229,7 @@ class ScopeReader m => BindingsReader (m::MonadKind1) where
   getBindings :: m n (Bindings n)
 
 class ScopeReader m => BindingsExtender (m::MonadKind1) where
-  extendBindings :: Distinct l => BindingsFrag n l -> m l r -> m n r
+  extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
 
 type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
 type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
@@ -241,9 +243,10 @@ instance (InjectableE e, BindingsReader m)
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
-  extendBindings frag (OutReaderT (ReaderT cont)) = OutReaderT $ ReaderT \env ->
+  extendBindings frag m = OutReaderT $ ReaderT \env ->
     extendBindings frag do
-      env' <- injectM (envAsScope frag) env
+      let OutReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
@@ -258,11 +261,12 @@ instance Monad m => BindingsReader (BindingsReaderT m) where
   getBindings = BindingsReaderT ask
 
 instance Monad m => BindingsExtender (BindingsReaderT m) where
-  extendBindings frag (BindingsReaderT (ReaderT f)) =
+  extendBindings frag m =
     BindingsReaderT $ ReaderT \bindings -> do
        let scopeFrag = envAsScope frag
        extendScope scopeFrag do
-         bindings' <- injectM scopeFrag bindings
+         let BindingsReaderT (ReaderT f) = m
+         bindings' <- injectM bindings
          f (bindings' <>> frag)
 
 instance Monad m => ScopeReader (BindingsReaderT m) where
@@ -273,9 +277,10 @@ instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
 
 instance (InjectableV v, ScopeReader m, BindingsExtender m)
          => BindingsExtender (EnvReaderT v m i) where
-  extendBindings frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
+  extendBindings frag m = EnvReaderT $ ReaderT \env ->
     extendBindings frag do
-      env' <- injectM (envAsScope frag) env
+      let EnvReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 -- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
@@ -287,34 +292,35 @@ lookupBindings :: BindingsReader m => Name c o -> m o (Binding c o)
 lookupBindings v = (!v) <$> getBindings
 
 withFreshBinding
-  :: (NameColor c, BindingsReader m, BindingsExtender m, HasNameHint hint)
-  => hint
+  :: (NameColor c, BindingsReader m, BindingsExtender m)
+  => NameHint
   -> Binding c o
-  -> (forall o'. NameBinder c o o' -> m o' a)
+  -> (forall o'. (Distinct o', Ext o o') => NameBinder c o o' -> m o' a)
   -> m o a
 withFreshBinding hint binding cont = do
   Distinct scope <- getScope
-  withFresh (getNameHint hint) nameColorRep scope \b' -> do
-    let binding' = inject b' binding
+  withFresh hint nameColorRep scope \b' -> do
+    let binding' = inject binding
     extendBindings (b' @> binding') $
       cont b'
 
 withFreshBinder
-  :: (BindingsReader m, BindingsExtender m, HasNameHint hint)
-  => hint
+  :: (BindingsReader m, BindingsExtender m)
+  => NameHint
   -> Type o
   -> AtomBinderInfo o
-  -> (forall o'. Binder o o' -> m o' a)
+  -> (forall o'. (Distinct o', Ext o o') => Binder o o' -> m o' a)
   -> m o a
 withFreshBinder hint ty info cont =
-  withFreshBinding hint (AtomNameBinding ty info) \b ->
+  withFreshBinding hint (AtomNameBinding ty info) \b -> do
+    Distinct _ <- getScope
     cont $ b :> ty
 
 refreshBinders
   :: ( InjectableV v, BindingsExtender2 m, FromName v
      , EnvGetter v m, SubstB v b, BindsBindings b)
   => b i i'
-  -> (forall o'. b o o' -> m i' o' r)
+  -> (forall o'. Ext o o' => b o o' -> m i' o' r)
   -> m i o r
 refreshBinders b cont = do
   WithScopeSubstFrag _ env b' <- liftScopedEnvReader $ runSubstGenT $ substB b
@@ -575,6 +581,33 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
+-- === Helpers for function evaluation over fixed-width types ===
+
+applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
+               => (a -> Atom n) -> a -> a -> Atom n) -> Atom n -> Atom n -> Atom n
+applyIntBinOp' f x y = case (x, y) of
+  (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
+  (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
+  (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
+  (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
+  (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
+  _ -> error "Expected integer atoms"
+
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
+applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
+
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom n -> Atom n -> Atom n
+applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
+
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
+applyFloatBinOp f x y = case (x, y) of
+  (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
+  (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
+  _ -> error "Expected float atoms"
+
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom n -> Atom n
+applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
+
 -- === Synonyms ===
 
 binderType :: Binder n l -> Type n
@@ -754,6 +787,17 @@ fromConsList xs = case xs of
 
 type BundleDesc = Int  -- length
 
+getProjection :: [Int] -> Atom n -> Atom n
+getProjection [] a = a
+getProjection (i:is) a = case getProjection is a of
+  Var name -> ProjectElt (NE.fromList [i]) name
+  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
+  DataCon _ _ _ _ xs -> xs !! i
+  Record items -> toList items !! i
+  PairVal x _ | i == 0 -> x
+  PairVal _ y | i == 1 -> y
+  _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
+
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
 bundleFold empty pair els = case els of
   []  -> (empty, 0)
@@ -827,6 +871,7 @@ instance GenericB DataConRefBinding where
   fromB (DataConRefBinding b val) = b :> val
   toB   (b :> val) = DataConRefBinding b val
 instance InjectableB DataConRefBinding
+instance ProvesExt  DataConRefBinding
 instance BindsNames DataConRefBinding
 instance SubstB Name DataConRefBinding
 instance SubstB AtomSubstVal DataConRefBinding
@@ -958,17 +1003,6 @@ instance SubstE AtomSubstVal Atom where
           SubstVal x -> return x
           Rename v'  -> return $ Var v'
         return $ getProjection (NE.toList idxs) v'
-        where
-          getProjection :: [Int] -> Atom n -> Atom n
-          getProjection [] a = a
-          getProjection (i:is) a = case getProjection is a of
-            Var name -> ProjectElt (NE.fromList [i]) name
-            ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-            DataCon _ _ _ _ xs -> xs !! i
-            Record items -> toList items !! i
-            PairVal x _ | i == 0 -> x
-            PairVal _ y | i == 1 -> y
-            _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
       Case1 _ -> error "impossible"
       _ -> error "impossible"
     RightE rest -> (toE . RightE) <$> substE rest
@@ -1196,6 +1230,7 @@ instance InjectableB Decl
 instance SubstB AtomSubstVal Decl
 instance SubstB Name Decl
 instance AlphaEqB Decl
+instance ProvesExt  Decl
 instance BindsNames Decl
 
 instance Pretty Arrow where
@@ -1299,23 +1334,23 @@ deriving instance Show (UAlt n)
 
 instance BindsBindings Binder where
   boundBindings (b:>ty) = b @> AtomNameBinding ty' MiscBound
-    where ty' = inject (toScopeFrag b) ty
+    where ty' = withExtEvidence b $ inject ty
 
 instance BindsBindings Decl where
   boundBindings (Let ann (b:>ty) expr) =
-    b @> AtomNameBinding ty' (LetBound ann expr')
-    where
-      ty'   = inject (toScopeFrag b) ty
-      expr' = inject (toScopeFrag b) expr
+    withExtEvidence b do
+      let ty'   = inject ty
+      let expr' = inject expr
+      b @> AtomNameBinding ty' (LetBound ann expr')
 
 instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (PairB b1 b2)) where
-  boundBindings (PairB b1 b2) =
+  boundBindings (PairB b1 b2) = do
     let bindings2 = boundBindings b2
-        scopeFrag = envAsScope bindings2
-    in withSubscopeDistinct scopeFrag $
-        let bindings1 = boundBindings b1
-        in inject scopeFrag bindings1 <.> bindings2
+    let ext = toExtEvidence $ envAsScope bindings2
+    withSubscopeDistinct ext do
+      let bindings1 = boundBindings b1
+      inject bindings1 <.> bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
   boundBindings Empty = emptyEnv
