@@ -47,26 +47,29 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++
+
+CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
+	if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
+	then echo "$$clangversion" ; break ; fi ; done)
+
+
 ifeq (1,$(DEX_LLVM_HEAD))
 ifeq ($(PLATFORM),Darwin)
-	$(error LLVM head builds not supported on macOS!)
+$(error LLVM head builds not supported on macOS!)
 endif
 STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
 STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
+else \
+ifeq (,$(CLANG))
+$(error "Please install clang++-9")
+else
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+ifneq ($(clang-version-compatible),1)
+$(error "Please install clang++-9")
+endif
 endif
 
-CLANG = $(shell for clangversion in $(possible-clang-locations) ; do \
-	if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
-	then echo "$$clangversion" ; break ; fi ; done)
-possible-clang-locations = clang++-9 clang++-10 clang++-11 clang++
-clang-version-compatible = $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
-check-clang-version:
-ifeq (, $(CLANG))
-	$(error "Please install clang++-9")
-endif
-ifneq ($(clang-version-compatible), 1)
-	$(error "Please install clang++-9")
-endif
 
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
@@ -106,7 +109,7 @@ build-nolive: dexrt-llvm
 build-safe-names: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
 
-dexrt-llvm: src/lib/dexrt.bc check-clang-version
+dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp
 	$(CLANG) $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
