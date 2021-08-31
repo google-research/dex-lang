@@ -16,10 +16,12 @@
 module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), EnvGetter (..), FromName (..), Distinct, WithDistinct (..),
+  Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy, withComposeExts,
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
-  WithScopeFrag (..), WithScopeSubstFrag (..), extendRenamer,
+  DistinctAbs (..), WithScopeSubstFrag (..), extendRenamer,
   ScopeReader (..), ScopeExtender (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
+  Inplace, liftInplace, runInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
   BindsOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
@@ -36,26 +38,27 @@ module SaferNames.Name (
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  withFreshM, withFreshLike, inject, injectM, (!), (<>>), emptyEnv, envAsScope,
+  withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>), emptyEnv, envAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
   NameGen (..), fmapG, NameGenT (..), SubstGen (..), SubstGenT (..), withSubstB,
   liftSG, traverseEnvFrag, forEachNestItem, forEachNestItemSG,
   substM, ScopedEnvReader, liftScopedEnvReader,
-  HasNameHint (..), NameHint, HasNameColor (..), CommonHint (..), NameColor (..),
+  HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
   splitNestAt, nestLength, binderAnn,
-  OutReaderT (..), OutReader (..), runOutReaderT,
+  OutReaderT (..), OutReader (..), runOutReaderT
   ) where
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
-import Data.String (fromString)
+import Data.String
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..), Rep)
@@ -91,7 +94,7 @@ class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: m n (WithDistinct Scope n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
-  extendScope :: Distinct l => ScopeFrag n l -> m l r -> m n r
+  extendScope :: Distinct l => ScopeFrag n l -> (Ext n l => m l r) -> m n r
 
 class (InjectableV v, Monad2 m) => EnvReader (v::V) (m::MonadKind2) | m -> v where
   lookupEnvM :: Name c i -> m i o (v c o)
@@ -142,23 +145,53 @@ data IsVoidS n where
 
 -- === Injections and projections ===
 
-class BindsNames (b :: B) where
+class ProvesExt (b :: B) where
+  toExtEvidence :: b n l -> ExtEvidence n l
+
+  default toExtEvidence :: BindsNames b => b n l -> ExtEvidence n l
+  toExtEvidence b = toExtEvidence $ toScopeFrag b
+
+class ProvesExt b => BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
 
   default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
   toScopeFrag b = toScopeFrag $ fromB b
 
+instance ProvesExt ExtEvidence where
+  toExtEvidence = id
+
+instance ProvesExt ScopeFrag
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
 
-inject :: BindsNames b => InjectableE e => Distinct l => b n l -> e n -> e l
-inject ext x = injectNames (toScopeFrag ext) x
+withExtEvidence :: ProvesExt b => b n l -> (Ext n l => a) -> a
+withExtEvidence b cont = withExtEvidence' (toExtEvidence b) cont
 
 -- like inject, but uses the ScopeReader monad for its `Distinct` proof
-injectM :: ScopeReader m => BindsNames b => InjectableE e => b n l -> e n -> m l (e l)
-injectM b e = do
+injectM :: (ScopeReader m, Ext n l, InjectableE e) => e n -> m l (e l)
+injectM e = do
   Distinct _ <- getScope
-  return $ inject b e
+  return $ inject e
+
+-- Uses `proxy n2` to provide the type `n2` to use as the intermediate scope.
+injectMVia :: forall n1 n2 n3 m proxy e.
+              (Ext n1 n2, Ext n2 n3, ScopeReader m, InjectableE e)
+           => proxy n2 -> e n1 -> m n3 (e n3)
+injectMVia _ e = withExtEvidence (extL >>> extR) $ injectM e
+  where extL = getExtEvidence :: ExtEvidence n1 n2
+        extR = getExtEvidence :: ExtEvidence n2 n3
+
+-- We need a lot of proxies here! Is there a better way?
+withComposeExts :: forall n1 n2 n3 proxy1 proxy2 proxy3 a.
+                  (Ext n1 n2, Ext n2 n3)
+                => proxy1 n1 -> proxy2 n2 -> proxy3 n3
+                -> (Ext n1 n3 => a) -> a
+withComposeExts _ _ _ cont = withExtEvidence (extL >>> extR) cont
+  where extL = getExtEvidence :: ExtEvidence n1 n2
+        extR = getExtEvidence :: ExtEvidence n2 n3
+
+getScopeProxy :: Monad (m n) => m n (UnitE n)
+getScopeProxy = return UnitE
 
 traverseNames :: (Monad m, HasNamesE e)
               => Distinct o => Scope o -> (forall c. Name c i -> m (Name c o)) -> e i -> m (e o)
@@ -186,8 +219,8 @@ toConstAbs :: (InjectableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
 toConstAbs rep body = do
   Distinct scope <- getScope
-  withFresh ("ignore"::NameHint) rep scope \b -> do
-    return $ Abs b $ inject b body
+  withFresh "ignore" rep scope \b -> do
+    return $ Abs b $ inject body
 
 -- === type classes for traversing names ===
 
@@ -225,7 +258,6 @@ instance SubstB v (NameBinder c) where
     withFresh (getNameHint b) rep names \b' -> do
       let frag = singletonScope b'
       return $ WithScopeSubstFrag frag (b @> binderName b') b'
-
 
 -- Like SubstE, but with fewer requirements for the monad
 substM :: (EnvGetter v m, ScopeReader2 m, SubstE v e, FromName v)
@@ -321,6 +353,7 @@ class BindsOneName (b::B) (c::C) | b -> c where
   (@>) :: b i i' -> v c o -> EnvFrag v i i' o
   binderName :: b i i' -> Name c i'
 
+instance ProvesExt  (NameBinder c) where
 instance BindsNames (NameBinder c) where
   toScopeFrag b = singletonScope b
 
@@ -341,22 +374,22 @@ instance BindsOneName b c => BindsNameList (Nest b) c where
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-applySubst :: (ScopeReader m, SubstE (SubstVal c val) e, InjectableE val)
-           => EnvFrag (SubstVal c val) o i o -> e i -> m o (e o)
+applySubst :: (ScopeReader m, SubstE v e, InjectableV v, FromName v)
+           => EnvFrag v o i o -> e i -> m o (e o)
 applySubst substFrag x = do
   Distinct scope <- getScope
   return $ runIdentity $ runScopeReaderT scope $
     runEnvReaderT (emptyNameFunction) $
       dropSubst $ extendEnv substFrag $ substE x
 
-applyAbs :: (InjectableE val , ScopeReader m, BindsOneName b c, SubstE (SubstVal c val) e)
-         => Abs b e n -> val n -> m n (e n)
-applyAbs (Abs b body) x = applySubst (b@>SubstVal x) body
+applyAbs :: (InjectableV v, FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
+         => Abs b e n -> v c n -> m n (e n)
+applyAbs (Abs b body) x = applySubst (b@>x) body
 
-applyNaryAbs :: ( InjectableE val, ScopeReader m, BindsNameList b c, SubstE (SubstVal c val) e
-                , SubstB (SubstVal c val) b)
-             => Abs b e n -> [val n] -> m n (e n)
-applyNaryAbs (Abs bs body) xs = applySubst (bs @@> map SubstVal xs) body
+applyNaryAbs :: ( InjectableV v, FromName v, ScopeReader m, BindsNameList b c, SubstE v e
+                , SubstB v b)
+             => Abs b e n -> [v c n] -> m n (e n)
+applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 
 infixl 9 !
 (!) :: NameFunction v i o -> Name c i -> v c o
@@ -432,14 +465,15 @@ data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
   SubstVal :: atom n   -> SubstVal c      atom c n
   Rename   :: Name c n -> SubstVal cMatch atom c n
 
-withFreshM :: (ScopeReader m, ScopeExtender m, HasNameHint hint)
-           => hint
+withFreshM :: (ScopeReader m, ScopeExtender m)
+           => NameHint
            -> NameColorRep c
-           -> (forall o'. NameBinder c o o' -> m o' a)
+           -> (forall o'. (Distinct o', Ext o o')
+                          => NameBinder c o o' -> m o' a)
            -> m o a
 withFreshM hint rep cont = do
   Distinct m <- getScope
-  withFresh (getNameHint hint) rep m \b' -> do
+  withFresh hint rep m \b' -> do
     extendScope (singletonScope b') $
       cont b'
 
@@ -581,8 +615,10 @@ instance Monad m => ScopeReader (ScopeReaderT m) where
   getScope = ScopeReaderT ask
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
-  extendScope frag (ScopeReaderT m) = ScopeReaderT $ withReaderT
-    (\(Distinct scope) -> Distinct (scope >>> frag)) m
+  extendScope frag m = ScopeReaderT $ withReaderT
+    (\(Distinct scope) -> Distinct (scope >>> frag)) $
+        withExtEvidence (toExtEvidence frag) $
+          runScopeReaderT' m
 
 -- === EnvReaderT transformer ===
 
@@ -628,9 +664,10 @@ instance ScopeReader m => ScopeReader (EnvReaderT v m i) where
 -- `Env i oNew `
 instance (InjectableV v, ScopeReader m, ScopeExtender m)
          => ScopeExtender (EnvReaderT v m i) where
-  extendScope frag (EnvReaderT (ReaderT cont)) = EnvReaderT $ ReaderT \env ->
+  extendScope frag m = EnvReaderT $ ReaderT \env ->
     extendScope frag do
-      env' <- injectM frag env
+      let EnvReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 -- === OutReader monad: reads data in the output name space ===
@@ -652,9 +689,10 @@ instance (InjectableE e, ScopeReader m)
 
 instance (InjectableE e, ScopeExtender m)
          => ScopeExtender (OutReaderT e m) where
-  extendScope frag (OutReaderT (ReaderT cont)) = OutReaderT $ ReaderT \env ->
+  extendScope frag m = OutReaderT $ ReaderT \env ->
     extendScope frag do
-      env' <- injectM frag env
+      let OutReaderT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 instance Monad1 m => OutReader e (OutReaderT e m) where
@@ -679,11 +717,12 @@ instance ScopeReader m => ScopeReader (ZipEnvReaderT m i1 i2) where
 
 instance (ScopeReader m, ScopeExtender m)
          => ScopeExtender (ZipEnvReaderT m i1 i2) where
-  extendScope frag (ZipEnvReaderT (ReaderT cont)) =
+  extendScope frag m =
     ZipEnvReaderT $ ReaderT \(env1, env2) -> do
       extendScope frag do
-        env1' <- injectM frag env1
-        env2' <- injectM frag env2
+        let ZipEnvReaderT (ReaderT cont) = m
+        env1' <- injectM env1
+        env2' <- injectM env2
         cont (env1', env2')
 
 instance (Monad1 m, ScopeReader m, ScopeExtender m, MonadErr1 m, MonadFail1 m)
@@ -729,9 +768,10 @@ instance Monad m => ScopeReader (NameTraverserT m i) where
   getScope = NameTraverserT $ lift $ getScope
 
 instance Monad m => ScopeExtender (NameTraverserT m i) where
-  extendScope frag (NameTraverserT (ReaderT cont)) = NameTraverserT $ ReaderT \env ->
+  extendScope frag m = NameTraverserT $ ReaderT \env ->
     extendScope frag do
-      env' <- injectM frag env
+      let NameTraverserT (ReaderT cont) = m
+      env' <- injectM env
       cont env'
 
 instance Monad m => EnvReader Name (NameTraverserT m) where
@@ -755,25 +795,73 @@ lookupNameTraversalEnv (NameTraverserEnv f frag) name =
 
 class NameGen (m :: E -> S -> *) where
   returnG :: e n -> m e n
-  bindG   :: m e n -> (forall l. e l -> m e' l) -> m e' n
+  bindG   :: m e n -> (forall l. (Distinct l, Ext n l) => e l -> m e' l) -> m e' n
+  getDistinctEvidenceG :: m DistinctEvidence n
 
 fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
 fmapG f e = e `bindG` (returnG . f)
 
-data WithScopeFrag (e::E) (n::S) where
-  WithScopeFrag :: Distinct l => ScopeFrag n l -> e l -> WithScopeFrag e n
+data DistinctAbs (b::B) (e::E) (n::S) where
+  DistinctAbs :: Distinct l => b n l -> e l -> DistinctAbs b e n
 
 newtype NameGenT (m::MonadKind1) (e::E) (n::S) =
-  NameGenT { runNameGenT :: m n (WithScopeFrag e n) }
+  NameGenT { runNameGenT :: m n (DistinctAbs ScopeFrag e n) }
 
 instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) where
   returnG e = NameGenT $ do
     Distinct _ <- getScope
-    return (WithScopeFrag id e)
+    return (DistinctAbs id e)
   bindG (NameGenT m) f = NameGenT do
-    WithScopeFrag s  e  <- m
-    WithScopeFrag s' e' <- extendScope s $ runNameGenT $ f e
-    return $ WithScopeFrag (s >>> s') e'
+    DistinctAbs s  e  <- m
+    DistinctAbs s' e' <- extendScope s $ runNameGenT $ f e
+    return $ DistinctAbs (s >>> s') e'
+  getDistinctEvidenceG = NameGenT do
+    Distinct _ <- getScope
+    return $ DistinctAbs id getDistinctEvidence
+
+-- === in-place scope updating monad ===
+
+-- [NoteInplaceMonad]
+
+data Inplace (m :: E -> S -> *) (n::S) (l::S) (a:: *) =
+  UnsafeMakeInplace { unsafeRunInplace :: (m (LiftE a) n) }
+
+instance NameGen m => Functor (Inplace m n l) where
+  fmap = liftM
+
+instance NameGen m => Applicative (Inplace m n l) where
+  pure x = UnsafeMakeInplace (returnG (LiftE x))
+  liftA2 = liftM2
+
+instance NameGen m => Monad (Inplace m n l) where
+  return = pure
+  UnsafeMakeInplace m >>= f = UnsafeMakeInplace $
+    m `bindG` \(LiftE x) ->
+      let UnsafeMakeInplace m' = f x
+      in unsafeCoerceE $ m'
+
+liftInplace :: forall m n e e' l.
+               (NameGen m, InjectableE e, InjectableE e')
+            => e l
+            -> (forall l'. e l' -> m e' l')
+            -> Inplace m n l (e' l)
+liftInplace x cont = UnsafeMakeInplace $
+  cont (unsafeCoerceE x) `bindG` \result ->
+  returnG $ LiftE $ unsafeCoerceE result
+
+runInplace :: (NameGen m, InjectableE e)
+           => (forall l. (Distinct l, Ext n l) => Inplace m n l (e l))
+           -> m e n
+runInplace cont =
+  runInplace' \distinct ext ->
+  withDistinctEvidence distinct $ withExtEvidence ext cont
+
+runInplace' :: (NameGen m, InjectableE e)
+            => (forall l. DistinctEvidence l -> ExtEvidence n l -> Inplace m n l (e l))
+            -> m e n
+runInplace' cont =
+  unsafeRunInplace (cont FabricateDistinctEvidence FabricateExtEvidence) `bindG` \(LiftE e) ->
+  returnG $ unsafeCoerceE e
 
 -- === monadish thing for computations that produce names and substitutions ===
 
@@ -787,7 +875,10 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
 -- generalized traversal.
 class (forall i. NameGen (m i i)) => SubstGen (m :: S -> S -> E -> S -> *) where
   returnSG :: e o -> m i i e o
-  bindSG   :: m i i' e o -> (forall o'. e o' -> m i' i'' e' o') -> m i i'' e' o
+  bindSG   :: m i i' e o
+           -> (forall o'. (Distinct o', Ext o o') => e o' -> m i' i'' e' o')
+           -> m i i'' e' o
+  getDistinctEvidenceSG :: m i i DistinctEvidence o
 
 forEachNestItemSG :: SubstGen m
                => Nest b i i'
@@ -811,6 +902,7 @@ instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
          => NameGen (SubstGenT m i i) where
   returnG = returnSG
   bindG = bindSG
+  getDistinctEvidenceG = getDistinctEvidenceSG
 
 instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
          => SubstGen (SubstGenT m) where
@@ -821,8 +913,11 @@ instance (ScopeReader2 m, ScopeExtender2 m, EnvReader v m, FromName v, Monad2 m)
     WithScopeSubstFrag s env e <- m
     extendScope s $ extendRenamer env do
       WithScopeSubstFrag s' env' e' <- runSubstGenT $ f e
-      envInj <- extendScope s' $ injectM s' env
+      envInj <- extendScope s' $ injectM env
       return $ WithScopeSubstFrag (s >>> s') (envInj <.> env')  e'
+  getDistinctEvidenceSG = SubstGenT do
+    Distinct _ <- getScope
+    return $ WithScopeSubstFrag id emptyEnv getDistinctEvidence
 
 liftSG :: ScopeReader2 m => m i o a -> (a -> SubstGenT m i i' e o) -> SubstGenT m i i' e o
 liftSG m cont = SubstGenT do
@@ -831,31 +926,20 @@ liftSG m cont = SubstGenT do
 
 -- === name hints ===
 
-type NameHint = RawName
-
 class HasNameHint a where
   getNameHint :: a -> NameHint
 
 instance HasNameHint (Name s n) where
-  getNameHint = getRawName
+  getNameHint name = Hint $ getRawName name
 
 instance HasNameHint (NameBinder s n l) where
-  getNameHint = getRawName . binderName
+  getNameHint b = Hint $ getRawName $ binderName b
 
 instance HasNameHint RawName where
-  getNameHint = id
+  getNameHint = Hint
 
 instance HasNameHint String where
   getNameHint = fromString
-
-data CommonHint =
-   IgnoreHint
- | GenHint
-
-instance HasNameHint CommonHint where
-  getNameHint hint = case hint of
-    IgnoreHint -> "_"
-    GenHint    -> "v"
 
 -- === getting name colors ===
 
@@ -891,6 +975,7 @@ instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE (Abs b body) = do
     withSubstB b \b' -> Abs b' <$> substE body
 
+instance (BindsNames b1, BindsNames b2) => ProvesExt  (PairB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (PairB b1 b2) where
   toScopeFrag (PairB b1 b2) = toScopeFrag b1 >>> toScopeFrag b2
 
@@ -918,9 +1003,11 @@ instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
       substB b   `bindSG` \b' ->
       returnSG $ b':>ann'
 
+instance BindsNames b => ProvesExt  (BinderP b ann) where
 instance BindsNames b => BindsNames (BinderP b ann) where
   toScopeFrag (b:>_) = toScopeFrag b
 
+instance BindsNames b => ProvesExt  (Nest b) where
 instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
@@ -948,6 +1035,7 @@ instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
 instance InjectableB UnitB where
   injectionProofB fresh UnitB cont = cont fresh UnitB
 
+instance ProvesExt  UnitB where
 instance BindsNames UnitB where
   toScopeFrag UnitB = id
 
@@ -1034,6 +1122,7 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
          , Generic (b1 UnsafeS UnsafeS), Generic (b2 UnsafeS UnsafeS) )
          => Store (PairB b1 b2 n l)
 
+instance ProvesExt  (RecEnvFrag v) where
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envAsScope $ fromRecEnvFrag env
 
@@ -1084,3 +1173,25 @@ pattern Case3 e = RightE (RightE (RightE (LeftE e)))
 
 pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
 pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
+
+-- === notes ===
+
+{-
+
+[NoteInplaceMonad]
+
+The InPlace monad wraps a NameGen monad and hides its ever-changing scope
+parameter. Instead it exposes a scope parameter that doesn't change, so we can
+have an ordinary Monad instance instead of using bindG/returnG. When the scope
+parameter for the underlying NameGen monad is extended, we just implicitly
+inject all the existing values into the new name space. This is fine as long as
+we enforce two invariants. First, we make sure that the actual underlying
+parameter is only updated by fresh extension. This is already guaranteed by
+`NameGen`. Second, we only produce values which are covariant in their scope
+parameter. We enforce this with the InjectableE constraint to `liftInplace`.
+This is the condition that lets us update all the existing values "in place".
+Otherwise you could get access to, say, a `Bindings n`. If you generated a new
+name, `Name n`, you'd expect to be able to look it up in the bindings, but it
+would fail!
+
+-}

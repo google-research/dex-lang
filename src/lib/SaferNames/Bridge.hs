@@ -89,18 +89,18 @@ extendTopStateD jointTopState evaluated = do
       runToSafeM (topToSafeMap jointTopState) (envAsScope bindingsS) do
         nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
          \bindingsFrag toSafeMap' fromSafeMap' -> do
-           let scopeFrag = envAsScope bindingsFrag
-           scsS'       <- toSafeE scsD'
-           sourceMapS' <- toSafeE sourceMapD'
-           sourceMapSInj <- injectM scopeFrag sourceMapS
-           bindingsSInj  <- injectM scopeFrag bindingsS
-           scsSInj       <- injectM scopeFrag scsS
-           return $ TopStateEx $ JointTopState
-             (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
-             (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
-                         (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
-             toSafeMap'
-             fromSafeMap'
+           withExtEvidence (toExtEvidence $ envAsScope bindingsFrag) do
+             scsS'       <- toSafeE scsD'
+             sourceMapS' <- toSafeE sourceMapD'
+             sourceMapSInj <- injectM sourceMapS
+             bindingsSInj  <- injectM bindingsS
+             scsSInj       <- injectM scsS
+             return $ TopStateEx $ JointTopState
+               (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
+               (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
+                           (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
+               toSafeMap'
+               fromSafeMap'
 
 instance Pretty (JointTopState n) where
   pretty s =
@@ -220,7 +220,7 @@ withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
                     -> m n a
 withFreshBijectionD name info cont =
   asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
-    withFreshM name rep \b ->
+    withFreshM (getNameHint name) rep \b ->
       extendToSafeNameMap name' (binderName b) $
         cont b name'
 
@@ -258,8 +258,7 @@ instance MonadToSafe ToSafeM where
 class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
   lookupFromSafeNameMap :: S.Name c i -> m i (UnsafeName c)
   getUnsafeBindings :: m i (D.Bindings)
-  withFreshUnsafeName :: S.HasNameHint hint
-                      => hint -> D.AnyBinderInfo
+  withFreshUnsafeName :: S.NameHint -> D.AnyBinderInfo
                       -> (D.Name -> m i a) -> m i a
   extendFromSafeMap :: S.NameBinder c i i'
                     -> UnsafeName c -> m i' a -> m i a
@@ -285,7 +284,9 @@ instance MonadFromSafe FromSafeM where
   withFreshUnsafeName hint info f =
     FromSafeM $ ReaderT \m -> do
       scope <- ask
-      let v' = genFresh (getNameHint hint) scope  -- TODO: preverse name hints
+      let hint' = case hint of S.Hint rawName -> rawName
+                               S.NoHint -> "v"
+      let v' = genFresh hint' scope
       withReaderT (<> (v' D.@> info)) $
         runReaderT (runFromSafeM' (f v')) m
 
@@ -388,7 +389,7 @@ instance HasSafeVersionB DRecEnvFrag where
         -> m o r
       renameBindersEnvPair name info cont =
         asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
-          withFreshM name rep \b ->
+          withFreshM (S.Hint name) rep \b ->
             extendToSafeNameMap name' (binderName b) $
               cont $ TempPair b info
 
@@ -409,7 +410,7 @@ instance HasSafeVersionB DRecEnvFrag where
         -> m i r
       renameBinders S.Empty cont = cont []
       renameBinders (S.Nest (EnvPair b binderInfo) rest) cont =
-        withFreshUnsafeName b TrulyUnknownBinder \v -> do
+        withFreshUnsafeName (getNameHint b) TrulyUnknownBinder \v -> do
           let v' = UnsafeName (getNameColor b) v
           extendFromSafeMap b v' $ do
             renameBinders rest \rest' -> do
@@ -589,17 +590,17 @@ instance HasSafeVersionB D.Binder where
 
   toSafeB (Ignore ty) cont = do
     ty' <- toSafeE ty
-    withFreshM IgnoreHint nameColorRep \b' -> do
+    withFreshM S.NoHint nameColorRep \b' -> do
       cont (b' S.:> ty')
   toSafeB (Bind (b D.:> ty)) cont = do
     ty' <- toSafeE ty
-    withFreshM b nameColorRep \b' -> do
+    withFreshM (getNameHint b) nameColorRep \b' -> do
       extendToSafeNameMap (UnsafeName AtomNameRep b) (S.binderName b') $
         cont (b' S.:> ty')
 
   fromSafeB (b S.:> ty) cont = do
     ty' <- fromSafeE ty
-    withFreshUnsafeName b (AtomBinderInfo ty' UnknownBinder) \v' ->
+    withFreshUnsafeName (getNameHint b) (AtomBinderInfo ty' UnknownBinder) \v' ->
       extendFromSafeMap b (UnsafeName AtomNameRep v') $
         cont (Bind (v' D.:> ty'))
 
@@ -775,9 +776,11 @@ instance Store TopStateEx
 deriving via (WrapE JointTopState n) instance Generic (JointTopState n)
 
 instance Generic TopStateEx where
-  type Rep TopStateEx = Rep (JointTopState UnsafeMakeDistinctS)
-  from (TopStateEx topState) = from (unsafeCoerceE topState :: JointTopState UnsafeMakeDistinctS)
-  to rep = TopStateEx (to rep :: JointTopState UnsafeMakeDistinctS)
+  type Rep TopStateEx = Rep (JointTopState UnsafeS)
+  from (TopStateEx topState) = from (unsafeCoerceE topState :: JointTopState UnsafeS)
+  to rep =
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+      TopStateEx (to rep :: JointTopState UnsafeS)
 
 instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch
@@ -788,10 +791,11 @@ instance ScopeReader ToSafeM where
   getScope = ToSafeM $ ReaderT \_ -> getScope
 
 instance ScopeExtender ToSafeM where
-  extendScope frag (ToSafeM (ReaderT f)) =
+  extendScope frag m  =
     ToSafeM $ ReaderT \env ->
       extendScope frag do
-        env' <- injectM frag env
+        let ToSafeM (ReaderT f) =m
+        env' <- injectM env
         f env'
 
 instance MonadFail (ToSafeM o) where
