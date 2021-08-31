@@ -49,7 +49,7 @@ endif
 
 possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++
 
-CLANG := $(shell if [[ $$DEX_LLVM_HEAD -eq 1 ]] ; \
+CLANG := $(shell if [[ "$$DEX_LLVM_HEAD" -eq 1 ]] ; \
 	then echo "clang++"; \
 	else \
 		for clangversion in $(possible-clang-locations) ; do \
