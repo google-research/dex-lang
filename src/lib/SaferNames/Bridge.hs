@@ -178,7 +178,8 @@ nameBijectionFromDBindings
 nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do
     toSafeMap' <- getToSafeNameMap
-    Distinct scope <- getScope
+    Distinct <- getDistinct
+    scope <- getScope
     let bindingsFrag = makeBindingsFrag scope bindings toSafeMap' fromSafeMap' scopeFrag
     cont bindingsFrag toSafeMap' fromSafeMap'
 
@@ -206,7 +207,7 @@ withFreshSafeRec :: MonadToSafe m
                  -> (forall l. Distinct l => ConstEnv n l -> FromSafeNameMap l -> m l a)
                  -> m n a
 withFreshSafeRec fromSafeMap [] cont = do
-  Distinct _ <- getScope
+  Distinct <- getDistinct
   cont emptyEnv fromSafeMap
 withFreshSafeRec (FromSafeNameMap fromSafeMap) ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
@@ -788,7 +789,10 @@ instance HasPtrs TopStateEx where
   traversePtrs _ s = pure s
 
 instance ScopeReader ToSafeM where
-  getScope = ToSafeM $ ReaderT \_ -> getScope
+  addScope e = ToSafeM $ lift $ addScope e
+
+instance ScopeGetter ToSafeM where
+  getScope = ToSafeM $ lift $ getScope
 
 instance ScopeExtender ToSafeM where
   extendScope frag m  =

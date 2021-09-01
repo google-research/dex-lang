@@ -89,7 +89,7 @@ data RenamerContent e n where
 
 instance (Renamer m) => NameGen (RenamerNameGenT m) where
   returnG expr = RenamerNameGenT do
-    (Distinct _) <- getScope
+    Distinct <- getDistinct
     return $ RenamerContent id mempty expr
   bindG (RenamerNameGenT action) cont = RenamerNameGenT do
     (RenamerContent frag sourceMap expr) <- action
@@ -99,7 +99,7 @@ instance (Renamer m) => NameGen (RenamerNameGenT m) where
         let sourceMap' = inject sourceMap <> sourceMap2
         return $ RenamerContent (frag >>> frag2) sourceMap' expr2
   getDistinctEvidenceG = RenamerNameGenT do
-    Distinct _ <- getScope
+    Distinct <- getDistinct
     return $ RenamerContent id mempty getDistinctEvidence
 
 withSourceRenameB :: SourceRenamableB b
@@ -262,7 +262,7 @@ sourceRenameUBinder ubinder = case ubinder of
     unless (mayShadow || not (M.member b sourceMap)) $
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) nameColorRep \freshName -> do
-      (Distinct _) <- getScope
+      Distinct <- getDistinct
       let frag = (singletonScope freshName)
       let sourceMap' = SourceMap (M.singleton b (EnvVal nameColorRep $ nameBinderName freshName))
       return $ RenamerContent frag sourceMap' $ UBind freshName
@@ -324,7 +324,7 @@ instance (Renamer m) => NameGen (PatRenamerNameGenT m) where
         let sourceMap'' = inject sourceMap <> sourceMap'
         return (sibs <> sibs', RenamerContent (frag >>> frag') sourceMap'' expr')
   getDistinctEvidenceG = PatRenamerNameGenT do
-    Distinct _ <- getScope
+    Distinct <- getDistinct
     return (mempty, RenamerContent id mempty getDistinctEvidence)
 
 class SourceRenamablePat (pat::B) where
