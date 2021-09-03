@@ -27,7 +27,7 @@ module SaferNames.Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), EvaluatedModule (..), SynthCandidates (..), TopState (..),
-    emptyTopState, BindsBindings (..), WithBindings (..),
+    emptyTopState, BindsBindings (..), WithBindings (..), Scopable (..),
     DataConRefBinding (..), AltP, Alt, AtomBinderInfo (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -53,7 +53,7 @@ module SaferNames.Syntax (
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     fromNonDepTabTy, binderType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    SrcCtx,
+    SrcCtx, freshBinderNamePair,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -232,6 +232,16 @@ data WithBindings (e::E) (n::S) where
 class ScopeReader m => BindingsReader (m::MonadKind1) where
   addBindings :: InjectableE e => e n -> m n (WithBindings e n)
 
+-- Like BindingsExtender, but suitable for in-place scope monads
+class (ScopeReader m, Monad1 m)
+      => Scopable (m::MonadKind1) where
+  withBindings :: ( SubstB Name b, BindsBindings b
+                  , HasNamesE e, InjectableE e
+                  , HasNamesE e', InjectableE e')
+               => Abs b e n
+               -> (forall l. Ext n l => e l -> m l (e' l))
+               -> m n (Abs b e' n)
+
 class (BindingsReader m, ScopeGetter m) => BindingsGetter (m::MonadKind1) where
   getBindings :: m n (Bindings n)
 
@@ -275,6 +285,14 @@ instance Monad m => BindingsReader (BindingsReaderT m) where
     scope <- lift $ getScope
     Distinct <- lift $ getDistinct
     return $ WithBindings bindings scope e
+
+instance Monad m => Scopable (BindingsReaderT m) where
+   withBindings (Abs b name) cont =
+     runEnvReaderT (idNameFunction :: NameFunction Name n n) $
+       refreshBinders b \b' -> do
+         name' <- substM name
+         result <- EnvReaderT $ lift $ cont name'
+         return $ Abs b' result
 
 instance Monad m => BindingsGetter (BindingsReaderT m) where
   getBindings = BindingsReaderT ask
@@ -360,6 +378,14 @@ refreshBinders b cont = do
       extendBindings (boundBindings b') do
         extendRenamer env' $
           cont b'
+
+freshBinderNamePair :: (ScopeReader m, NameColor c)
+                    => NameHint
+                    -> m n (Abs (NameBinder c) (Name c) n)
+freshBinderNamePair hint = do
+  WithScope scope UnitE <- addScope UnitE
+  withFresh hint nameColorRep scope \b ->
+    injectM $ Abs b (binderName b)
 
 -- === front-end language AST ===
 
@@ -1400,3 +1426,9 @@ instance SubstE Name UVar where
     UDataConVar v -> UDataConVar <$> substE v
     UClassVar   v -> UClassVar   <$> substE v
     UMethodVar  v -> UMethodVar  <$> substE v
+
+instance InjectableE e => InjectableE (WithBindings e) where
+  injectionProofE (fresh::InjectionCoercion n l) (WithBindings bindings (scope::Scope h) e) =
+    withExtEvidence (injectionProofE fresh ext) $
+      WithBindings bindings scope e
+    where ext = getExtEvidence :: ExtEvidence h n

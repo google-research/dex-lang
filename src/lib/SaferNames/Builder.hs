@@ -9,24 +9,27 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
   buildPureLam, BuilderT, Builder (..), Builder2, EffectsReader2,
   runBuilderT, buildBlock,
-  EffectsReader (..), EffectsReaderT (..), runEffectsReaderT,
+  EffectsReader (..), EffectsReaderT (..),
+  runEffectsReaderT, liftEffectsReaderT,
   liftBuilder, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
-  getClassDef,
+  getClassDef, liftBuilderNameGenT,
   ) where
 
 import Prelude hiding ((.), id)
 import Control.Category
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -40,12 +43,11 @@ import SaferNames.PPrint ()
 
 import LabeledItems
 
-class (EffectsReader m, BindingsReader m) => Builder (m::MonadKind1) where
+class BindingsReader m => Builder (m::MonadKind1) where
   emitDecl :: NameHint -> LetAnn -> Expr n -> m n (AtomName n)
-  buildAbs :: (BindsBindings b, InjectableE e, InjectableE e')
-           => Abs b e n
-           -> (forall l. Ext n l => e l -> m l (e' l))
-           -> m n (Abs b (Abs (Nest Decl) e') n)
+
+-- Everything but the decls
+type LocalBuilder m = (BindingsReader m, EffectsReader m, Scopable m)
 
 type Builder2       (m :: MonadKind2) = forall i. Builder (m i)
 type EffectsReader2 (m :: MonadKind2) = forall i. EffectsReader (m i)
@@ -74,6 +76,12 @@ instance (BindingsReader m, BindingsExtender m, Monad1 m, BindsBindings decl)
     Distinct <- getDistinct
     return $ DistinctAbs Empty getDistinctEvidence
 
+liftBuilderNameGenT :: ScopeReader m => m n (e n) -> BuilderNameGenT decl m e n
+liftBuilderNameGenT m = BuilderNameGenT do
+  Distinct <- getDistinct
+  result <- m
+  return $ DistinctAbs Empty result
+
 -- === BuilderT ===
 
 newtype BuilderT (m::MonadKind1) (n::S) (l::S) (a:: *) =
@@ -85,7 +93,8 @@ runBuilderT :: (BindingsReader m, BindingsExtender m, InjectableE e)
             -> m n (DistinctAbs (Nest Decl) e n)
 runBuilderT cont = runBuilderNameGenT $ runInplace $ runBuilderT' cont
 
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, EffectsReader m)
+-- TODO: should be able to get away with `Scopable m` instead of `BindingsExtender m`
+instance (BindingsReader m, BindingsGetter m, BindingsExtender m)
          => Builder (BuilderT m n) where
   emitDecl hint ann expr = BuilderT $
     liftInplace expr \expr' -> BuilderNameGenT do
@@ -96,18 +105,18 @@ instance (BindingsReader m, BindingsGetter m, BindingsExtender m, EffectsReader 
 
 instance (BindingsReader m, BindingsGetter m, BindingsExtender m)
          => ScopeReader (BuilderT m n) where
-
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m)
-         => BindingsExtender (BuilderT m n) where
+  getDistinctEvidenceM = BuilderT $
+    liftInplace UnitE \UnitE ->
+      liftBuilderNameGenT getDistinctEvidenceM
+  addScope e = BuilderT $
+    liftInplace e \e' ->
+      liftBuilderNameGenT $ addScope e'
 
 instance (BindingsReader m, BindingsGetter m, BindingsExtender m)
          => BindingsReader (BuilderT m n) where
-
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m)
-         => ScopeGetter (BuilderT m n) where
-
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, EffectsReader m)
-         => EffectsReader (BuilderT m n) where
+  addBindings e = BuilderT $
+    liftInplace e \e' ->
+      liftBuilderNameGenT $ addBindings e'
 
 apBuilder :: ( Monad1 m, BindingsReader m, BindingsExtender m
              , InjectableE e, InjectableE e')
@@ -127,6 +136,17 @@ liftBuilder x cont = BuilderT $
       Distinct <- getDistinct
       DistinctAbs Empty <$> cont x'
 
+liftLocalBuilder
+  :: (EffectsReader m, BindingsReader m, InjectableE e, InjectableE e')
+  => e n
+  -> (forall l. e l -> EffectsReaderT (BindingsReaderT Identity) l (e' l))
+  -> m n (e' n)
+liftLocalBuilder x cont = do
+  effs <- getAllowedEffects
+  WithBindings bindings scope (PairE x' effs') <- addBindings (PairE x effs)
+  injectM $ runIdentity $ runBindingsReaderT (scope, bindings) $
+    runEffectsReaderT effs' (cont x')
+
 -- === effects monad ===
 
 class Monad1 m => EffectsReader m where
@@ -141,10 +161,17 @@ instance ScopeGetter m => (ScopeGetter (EffectsReaderT m)) where
   getScope = EffectsReaderT $ lift $ getScope
 
 instance ScopeReader m => (ScopeReader (EffectsReaderT m)) where
-  addScope = undefined
+  addScope e = EffectsReaderT $ lift $ addScope e
+  getDistinctEvidenceM = EffectsReaderT $ lift getDistinctEvidenceM
 
 instance BindingsReader m => (BindingsReader (EffectsReaderT m)) where
-  addBindings = undefined
+  addBindings e = EffectsReaderT $ lift $ addBindings e
+
+instance Scopable m => (Scopable (EffectsReaderT m)) where
+  withBindings ab cont = EffectsReaderT $ ReaderT \effs ->
+    withBindings ab \e -> do
+      effs' <- injectM effs
+      runReaderT (runEffectsReaderT' $ cont e) effs'
 
 instance BindingsGetter m => (BindingsGetter (EffectsReaderT m)) where
   getBindings = EffectsReaderT $ lift $ getBindings
@@ -160,7 +187,6 @@ instance Monad1 m => EffectsReader (EffectsReaderT m) where
   getAllowedEffects = EffectsReaderT ask
   withAllowedEffects effs (EffectsReaderT cont) =
     EffectsReaderT $ local (const effs) cont
-
 
 runEffectsReaderT :: EffectRow n -> EffectsReaderT m n a -> m n a
 runEffectsReaderT effs cont = runReaderT (runEffectsReaderT' cont) effs
@@ -187,29 +213,53 @@ atomAsBlock x = do
   ty <- getType x
   return $ Block ty Empty $ Atom x
 
-buildLamGeneral :: Builder m
-                => Arrow
-                -> Type n
-                -> (forall l. Ext n l => AtomName l -> m l (EffectRow l))
-                -> (forall l. Ext n l => AtomName l -> m l (Atom l, a))
-                -> m n (Atom n, a)
-buildLamGeneral _ _ _ _ = undefined
--- buildLamGeneral arr ty fEff fBody = do
---   effsAbs <- withFreshBinder NoHint ty (LamBound arr) \b -> do
---     effs <- fEff $ binderName b
---     return $ Abs b effs
---   withFreshBinder NoHint ty (LamBound arr) \b -> do
---     let x = binderName b
---     (body, aux) <- fBody x
---     effsAbs' <- injectM effsAbs
---     effs' <- applyAbs effsAbs' x
---     let lam = Lam $ LamExpr arr b effs' body
---     return (lam, aux)
+data BinderWithInfo n l =
+  BinderWithInfo (Binder n l) (AtomBinderInfo n)
 
-buildPureLam :: Builder m
+instance GenericB BinderWithInfo where
+  type RepB BinderWithInfo = BinderP Binder AtomBinderInfo
+  fromB (BinderWithInfo b info) = b:>info
+  toB   (b:>info) = BinderWithInfo b info
+
+instance ProvesExt   BinderWithInfo
+instance BindsNames  BinderWithInfo
+instance InjectableB BinderWithInfo
+instance SubstB Name BinderWithInfo
+instance BindsBindings BinderWithInfo where
+  boundBindings (BinderWithInfo (b:>ty) info) =
+    withExtEvidence b $
+      b @> inject (AtomNameBinding ty info)
+
+withFreshAtomBinder :: (Scopable m, SubstE Name e, InjectableE e)
+                    => NameHint -> Type n -> AtomBinderInfo n
+                    -> (forall l. Ext n l => AtomName l -> m l (e l))
+                    -> m n (Abs Binder e n)
+withFreshAtomBinder hint ty info cont = do
+  Abs b name <- freshBinderNamePair hint
+  Abs (BinderWithInfo b' _) body <-
+    withBindings (Abs (BinderWithInfo (b:>ty) info) name) cont
+  return $ Abs b' body
+
+buildLamGeneral
+  :: LocalBuilder m
+  => Arrow
+  -> Type n
+  -> (forall l. Ext n l => AtomName l -> m l (EffectRow l))
+  -> (forall l. Ext n l => AtomName l -> m l (Block l, a))
+  -> m n (Atom n, a)
+buildLamGeneral arr ty fEff fBody = do
+  ab <- withFreshAtomBinder NoHint ty (LamBound arr) \v -> do
+    effs <- fEff v
+    withAllowedEffects effs do
+      (body, aux) <- fBody v
+      return $ effs `PairE` body `PairE` LiftE aux
+  Abs b (effs `PairE` body `PairE` LiftE aux) <- return ab
+  return (Lam $ LamExpr arr b effs body, aux)
+
+buildPureLam :: LocalBuilder m
              => Arrow
              -> Type n
-             -> (forall l. Ext n l => AtomName l -> m l (Atom l))
+             -> (forall l. Ext n l => AtomName l -> m l (Block l))
              -> m n (Atom n)
 buildPureLam arr ty body =
   fst <$> buildLamGeneral arr ty (const $ return Pure) \x ->
@@ -217,7 +267,7 @@ buildPureLam arr ty body =
       result <- body x
       return (result, ())
 
-buildPureNaryLam :: Builder m
+buildPureNaryLam :: LocalBuilder m
                  => Arrow
                  -> EmptyAbs (Nest Binder) n
                  -> (forall l. Ext n l => [AtomName l] -> m l (Atom l))
@@ -229,7 +279,7 @@ buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
     p2 <- getScopeProxy
     restAbs <- injectM $ Abs b $ EmptyAbs rest
     rest' <- applyAbs restAbs x
-    buildPureNaryLam arr rest' \xs -> do
+    atomAsBlock =<< buildPureNaryLam arr rest' \xs -> do
       p3 <- getScopeProxy
       x' <- injectM x
       withComposeExts p1 p2 p3 $
@@ -238,30 +288,32 @@ buildPureNaryLam _ _ _ = error "impossible"
 
 -- === builder versions of common ops ===
 
-getClassDef :: Builder m => Name ClassNameC n -> m n (ClassDef n)
+getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
   ~(ClassBinding classDef) <- lookupBindings classDefName
   return classDef
 
-makeMethodGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
-makeMethodGetter classDefName methodIdx = do
-  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
-  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
-    defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
+makeMethodGetter :: BindingsReader m => Name ClassNameC n -> Int -> m n (Atom n)
+makeMethodGetter classDefName methodIdx = runEffectsReaderT Pure do
+  liftLocalBuilder classDefName \classDefName' -> do
+    ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName'
+    buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+      defName' <- injectM defName
+      def'     <- injectM def
+      buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
+        atomAsBlock $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
 
-makeSuperclassGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
-makeSuperclassGetter classDefName methodIdx = do
-  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
-  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
-    defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
+makeSuperclassGetter :: BindingsReader m => Name ClassNameC n -> Int -> m n (Atom n)
+makeSuperclassGetter classDefName methodIdx = runEffectsReaderT Pure do
+  liftLocalBuilder classDefName \classDefName' -> do
+    ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName'
+    buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+      defName' <- injectM defName
+      def'     <- injectM def
+      buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
+        atomAsBlock $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
-recGetHead :: Builder m => Label -> Atom n -> m n (Atom n)
+recGetHead :: BindingsReader m => Label -> Atom n -> m n (Atom n)
 recGetHead l x = do
   ~(RecordTy (Ext r _)) <- getType x
   let i = fromJust $ elemIndex l $ map fst $ toList $ reflectLabels r

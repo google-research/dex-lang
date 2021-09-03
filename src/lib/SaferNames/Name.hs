@@ -91,6 +91,12 @@ idNameFunction = newNameFunction fromName
 data WithScope (e::E) (n::S) where
   WithScope :: (Distinct l, Ext l n) => Scope l -> e l -> WithScope e n
 
+instance InjectableE e => InjectableE (WithScope e) where
+  injectionProofE (fresh::InjectionCoercion n l) (WithScope (scope::Scope h) e) =
+    withExtEvidence (injectionProofE fresh ext) $
+      WithScope scope e
+    where ext = getExtEvidence :: ExtEvidence h n
+
 -- Similar functionality to ScopeGetter, but suitable for InPlace
 class Monad1 m => ScopeReader (m::MonadKind1) where
   getDistinctEvidenceM :: m n (DistinctEvidence n)
@@ -1217,7 +1223,7 @@ pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
 
 [NoteInplaceMonad]
 
-The InPlace monad wraps a NameGen monad and hides its ever-changing scope
+The Inplace monad wraps a NameGen monad and hides its ever-changing scope
 parameter. Instead it exposes a scope parameter that doesn't change, so we can
 have an ordinary Monad instance instead of using bindG/returnG. When the scope
 parameter for the underlying NameGen monad is extended, we just implicitly
@@ -1227,8 +1233,8 @@ parameter is only updated by fresh extension. This is already guaranteed by
 `NameGen`. Second, we only produce values which are covariant in their scope
 parameter. We enforce this with the InjectableE constraint to `liftInplace`.
 This is the condition that lets us update all the existing values "in place".
-Otherwise you could get access to, say, a `Bindings n`. If you generated a new
-name, `Name n`, you'd expect to be able to look it up in the bindings, but it
-would fail!
+Otherwise you could get access to, say, a `Bindings n`. If you then generated a
+new name, `Name n`, you'd expect to be able to look it up in the bindings, but
+it would fail!
 
 -}

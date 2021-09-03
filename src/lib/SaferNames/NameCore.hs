@@ -303,6 +303,12 @@ instance InjectableB (NameBinder s) where
   injectionProofB  _ (UnsafeMakeBinder b) cont =
     cont (InjectionCoercion unsafeCoerceE) (UnsafeMakeBinder b)
 
+instance InjectableE DistinctEvidence where
+  injectionProofE _ _ = FabricateDistinctEvidence
+
+instance InjectableE (ExtEvidence n) where
+  injectionProofE _ _ = FabricateExtEvidence
+
 -- === environments ===
 
 -- The `Env` type is purely an optimization. We could do everything using
