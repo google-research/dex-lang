@@ -74,7 +74,7 @@ compile    = dex_func('dexCompile',    HsJITPtr, HsContextPtr, HsAtomPtr, Native
 unload     = dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
 
 getFunctionSignature  = dex_func('dexGetFunctionSignature', HsJITPtr, NativeFunction, NativeFunctionSignaturePtr)
-freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr)
+freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
 
 init()
 jit = createJIT()
