@@ -8,7 +8,7 @@ processing. The goal of the project is to explore:
   * Interactive and incremental numerical programming and visualization
 
 To learn more, check out our
-[workshop paper](https://openreview.net/pdf?id=rJxd7vsWPS),
+[paper](https://arxiv.org/abs/2104.05372),
 our [tutorial](https://google-research.github.io/dex-lang/examples/tutorial.html)
 or these example programs:
 
