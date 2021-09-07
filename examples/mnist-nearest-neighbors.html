@@ -357,13 +357,10 @@ fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> 
 unexpected newline
 expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;:&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx <span class="symbol">@</span><span class="type-name">NTest</span> 123
-</div><div class="err-block">Type error:
-Expected: Int32
-  Actual: (Int32 -&gt; a)
-(Solving for: [a:Type])
+</div><div class="err-block">Error: variable not in scope: NTest
 
 example = asidx @NTest 123
-          ^^^^^^
+                 ^^^^^^
 </div></div><div class="cell"><div class="code-block"><span class="command">:plotmat</span> xsTest<span class="symbol">.</span>example
 
 </div><div class="err-block">Parse error:28:10:
