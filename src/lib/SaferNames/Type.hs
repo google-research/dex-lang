@@ -715,13 +715,13 @@ buildNaryPiType :: Typer m
                 -> m i o (Type o)
 buildNaryPiType _ Empty cont = cont []
 buildNaryPiType arr (Nest b rest) cont = do
-  p1 <- getScopeProxy
+  ext1 <- idExt
   refreshBinders b \b' -> do
-    p2 <- getScopeProxy
+    ext2 <- injectExt ext1
     Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \params -> do
-      p3 <- getScopeProxy
+      ExtW <- injectExt ext2
       param <- Var <$> injectM (binderName b')
-      withComposeExts p1 p2 p3 $ cont (param : params)
+      cont (param : params)
 
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase e alts resultTy = do

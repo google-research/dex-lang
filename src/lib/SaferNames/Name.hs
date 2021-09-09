@@ -12,11 +12,12 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module SaferNames.Name (
   Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), EnvGetter (..), FromName (..), Distinct, DistinctWitness (..),
-  Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy, withComposeExts,
+  Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy,
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
   DistinctAbs (..), WithScope (..),
   WithScopeSubstFrag (..), extendRenamer,
@@ -49,7 +50,8 @@ module SaferNames.Name (
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
   splitNestAt, nestLength, binderAnn,
-  OutReaderT (..), OutReader (..), runOutReaderT, getDistinct
+  OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
+  ExtWitness (..), idExt, injectExt
   ) where
 
 import Prelude hiding (id, (.))
@@ -186,20 +188,36 @@ injectM e = do
   Distinct <- getDistinct
   return $ inject e
 
+data ExtWitness (n::S) (l::S) where
+  ExtW :: Ext n l => ExtWitness n l
+
+instance ProvesExt ExtWitness where
+  toExtEvidence ExtW = getExtEvidence
+
+instance Category ExtWitness where
+  id :: forall n. ExtWitness n n
+  id = withExtEvidence (id::ExtEvidence n n) ExtW
+
+  (.) :: forall n1 n2 n3. ExtWitness n2 n3 -> ExtWitness n1 n2 -> ExtWitness n1 n3
+  (.) ExtW ExtW = withExtEvidence (ext1 >>> ext2) ExtW
+     where ext1 = getExtEvidence :: ExtEvidence n1 n2
+           ext2 = getExtEvidence :: ExtEvidence n2 n3
+
+idExt :: Monad1 m => m n (ExtWitness n n)
+idExt = return id
+
+injectExt :: (ProvesExt ext, Ext n2 n3, ScopeReader m)
+          => ext n1 n2 -> m n3 (ExtWitness n1 n3)
+injectExt ext = do
+  ext' <- injectM $ toExtEvidence ext
+  withExtEvidence ext' $
+    return ExtW
+
 -- Uses `proxy n2` to provide the type `n2` to use as the intermediate scope.
 injectMVia :: forall n1 n2 n3 m proxy e.
               (Ext n1 n2, Ext n2 n3, ScopeReader m, InjectableE e)
            => proxy n2 -> e n1 -> m n3 (e n3)
 injectMVia _ e = withExtEvidence (extL >>> extR) $ injectM e
-  where extL = getExtEvidence :: ExtEvidence n1 n2
-        extR = getExtEvidence :: ExtEvidence n2 n3
-
--- We need a lot of proxies here! Is there a better way?
-withComposeExts :: forall n1 n2 n3 proxy1 proxy2 proxy3 a.
-                  (Ext n1 n2, Ext n2 n3)
-                => proxy1 n1 -> proxy2 n2 -> proxy3 n3
-                -> (Ext n1 n3 => a) -> a
-withComposeExts _ _ _ cont = withExtEvidence (extL >>> extR) cont
   where extL = getExtEvidence :: ExtEvidence n1 n2
         extR = getExtEvidence :: ExtEvidence n2 n3
 

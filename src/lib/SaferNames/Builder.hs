@@ -274,16 +274,15 @@ buildPureNaryLam :: LocalBuilder m
                  -> m n (Atom n)
 buildPureNaryLam _ (EmptyAbs Empty) cont = cont []
 buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
-  p1 <- getScopeProxy
+  ext1 <- idExt
   buildPureLam arr ty \x -> do
-    p2 <- getScopeProxy
+    ext2 <- injectExt ext1
     restAbs <- injectM $ Abs b $ EmptyAbs rest
     rest' <- applyAbs restAbs x
     atomAsBlock =<< buildPureNaryLam arr rest' \xs -> do
-      p3 <- getScopeProxy
+      ExtW <- injectExt ext2
       x' <- injectM x
-      withComposeExts p1 p2 p3 $
-        cont (x':xs)
+      cont (x':xs)
 buildPureNaryLam _ _ _ = error "impossible"
 
 -- === builder versions of common ops ===
