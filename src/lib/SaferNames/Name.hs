@@ -884,43 +884,47 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
 
 -- [NoteInplaceMonad]
 
-data Inplace (m :: E -> S -> *) (n::S) (l::S) (a:: *) =
-  UnsafeMakeInplace { unsafeRunInplace :: (m (LiftE a) n) }
+data Inplace (m :: E -> S -> *) (n::S) (a:: *) =
+  UnsafeMakeInplace { unsafeRunInplace :: (m (LiftE a) UnsafeS) }
 
-instance NameGen m => Functor (Inplace m n l) where
+instance NameGen m => Functor (Inplace m n) where
   fmap = liftM
 
-instance NameGen m => Applicative (Inplace m n l) where
+instance NameGen m => Applicative (Inplace m n) where
   pure x = UnsafeMakeInplace (returnG (LiftE x))
   liftA2 = liftM2
 
-instance NameGen m => Monad (Inplace m n l) where
+instance NameGen m => Monad (Inplace m n) where
   return = pure
   UnsafeMakeInplace m >>= f = UnsafeMakeInplace $
     m `bindG` \(LiftE x) ->
       let UnsafeMakeInplace m' = f x
       in unsafeCoerceE $ m'
 
-liftInplace :: forall m n e e' l.
-               (NameGen m, InjectableE e, InjectableE e')
-            => e l
-            -> (forall l'. e l' -> m e' l')
-            -> Inplace m n l (e' l)
-liftInplace x cont = UnsafeMakeInplace $
-  cont (unsafeCoerceE x) `bindG` \result ->
-  returnG $ LiftE $ unsafeCoerceE result
+-- XXX: this might not be completely safe. For example, the caller might use it
+-- to smuggle out a data representation of the `Ext n l`, along with, say, a
+-- `Scope l`, and then use it to generate a lookup that will fail. We should
+-- think about whether there's a way to plug that hole.
+liftInplace :: forall m e n.
+               (NameGen m, InjectableE e)
+            => (forall l. Ext n l => m e l)
+            -> Inplace m n (e n)
+liftInplace cont = UnsafeMakeInplace $
+  withExtEvidence (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
+    cont `bindG` \result ->
+    returnG $ LiftE $ unsafeCoerceE result
 
 runInplace :: (NameGen m, InjectableE e)
-           => (forall l. (Distinct l, Ext n l) => Inplace m n l (e l))
+           => (forall l. (Distinct l, Ext n l) => Inplace m l (e l))
            -> m e n
 runInplace cont =
   runInplace' \distinct ext ->
   withDistinctEvidence distinct $ withExtEvidence ext cont
 
 runInplace' :: (NameGen m, InjectableE e)
-            => (forall l. DistinctEvidence l -> ExtEvidence n l -> Inplace m n l (e l))
+            => (forall l. DistinctEvidence l -> ExtEvidence n l -> Inplace m l (e l))
             -> m e n
-runInplace' cont =
+runInplace' cont = unsafeCoerceE $
   unsafeRunInplace (cont FabricateDistinctEvidence FabricateExtEvidence) `bindG` \(LiftE e) ->
   returnG $ unsafeCoerceE e
 
