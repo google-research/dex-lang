@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 0b1ef8ed99cccbf1388b314524c5e3b273cba2b9ea3967779ad2c407b4b7876a
+-- hash: 232afdb2c94e92c869f8ceb740e018b9ab61477872a5cedd7bef0a5e45594543
 
 name:           effects-playground
 version:        0.1.0.0
@@ -28,10 +28,6 @@ source-repository head
 library
   exposed-modules:
       Lib
-      LibEv
-      LibEv2
-      LibMonadic
-      MonadWithParallelTraverse
       TableEffects
       TableEffectsExamples
   other-modules:

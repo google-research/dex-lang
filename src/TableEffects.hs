@@ -18,6 +18,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE TypeFamilies #-}
 
 
 module TableEffects where
@@ -35,21 +36,6 @@ import Data.Traversable (Traversable)
 -- type of the effect, and whose values are the operations defined by that
 -- effect.
 type EffSig = * -> *
-
--- Some example signatures.
-data State s r where
-  Get :: State s s
-  Put :: s -> State s ()
-
-data Accum m r where
-  Tell :: m -> Accum m ()
-
-data PrefixScan m r where
-  Append :: m -> PrefixScan m ()
-  CurrentPrefix :: PrefixScan m m
-
-data Except e r where
-  Throw :: e -> Except e r
 
 
 -- We can combine a collection of effect signatures into a simple ordered union
@@ -69,12 +55,23 @@ data EffNil r  -- empty effect type has no operations
 class HasEff (sig :: EffSig) (union :: EffSig) where
   liftEff :: sig r -> union r
 
-instance HasEff sig (sig `EffCons` rest) where
-  liftEff op = Here op
+-- Some unfortunate type family shenanigans here to get around restrictions
+-- of Haskell's instance solver.
+type family HasEffAtTop (sig :: EffSig) (union :: EffSig) :: Bool where
+  HasEffAtTop sig (sig `EffCons` rest) = True
+  HasEffAtTop _ _ = False
 
-instance {--OVERLAPPING--} HasEff sig rest
-    => HasEff sig (other `EffCons` rest) where
-  liftEff op = There (liftEff op)
+class HasEff_ (sig :: EffSig) (union :: EffSig) (atTop :: Bool) where
+  liftEff_ :: sig r -> union r
+
+instance HasEff_ sig union (HasEffAtTop sig union) => HasEff sig union where
+  liftEff = liftEff_ @sig @union @(HasEffAtTop sig union)
+
+instance HasEff_ sig (sig `EffCons` rest) True where
+  liftEff_ op = Here op
+
+instance HasEff sig rest => HasEff_ sig (other `EffCons` rest) False where
+  liftEff_ op = There (liftEff op)
 
 
 -- Hack to let us reason about dex-style static tables in Haskell.
@@ -86,12 +83,16 @@ deriving instance Functor (Table a)
 class IndexSet a where
   size :: Integer
   iota :: Table a a
+  fromOrdinal :: Integer -> a
+  ordinal :: a -> Integer
 
-newtype Fin (n :: Nat) = UnsafeFromOrdinal Integer
+newtype Fin (n :: Nat) = UnsafeFromOrdinal Integer deriving (Eq, Ord, Show)
 
 instance KnownNat n => IndexSet (Fin n) where
   size = natVal (Proxy @n)
   iota = Table id
+  fromOrdinal = UnsafeFromOrdinal 
+  ordinal (UnsafeFromOrdinal i) = i
 
 tableIndex :: Table a b -> a -> b
 tableIndex (Table f) = f
@@ -147,105 +148,125 @@ runPure = \case
   Impure (TraverseTable iters) cont -> runPure $ cont $ fmap runPure iters
 
 -- For other effects, we consider a few classes of handler that can be
--- parallelized. The easiest ones to reason about are read-only and write-only
--- effects. We can also build something for input/output effects, but I'm not
--- sure we have any "reasonable" instances for those.
--- TODO: should we specialize `m` to a concrete `EffComp rest`?
-data OutputEffHandler (op :: EffSig) (m :: * -> *) (f :: * -> *) = OutputEffHandler
-  { retO      :: forall a. a -> f a
-  , handleO   :: forall a b. Monad m
-              => op a       -> (a   -> m (f b)) -> m (f b)
-  , parallelO :: forall a b ix. Monad m
-              => Table ix (f a) -> (Table ix a -> m (f b)) -> m (f b)
+-- parallelized.
+
+-- First, we consider the simplest type of handler, which has no state and also
+-- can't change the result type. This could support a Reader, for instance.
+-- This is fairly limited in expressive power, it's basically just a function
+-- definition. (But it's allowed to invoke other effects in the stack.)
+newtype BasicEffHandler (op :: EffSig) (m :: * -> *) = BasicEffHandler
+  { handleB :: forall a. op a -> m a
   }
 
-handleOutput :: forall op rest f a
-              . OutputEffHandler op (EffComp rest) f
+handleBasic :: forall op rest a
+              . BasicEffHandler op (EffComp rest)
              -> EffComp (op `EffCons` rest) a
-             -> EffComp rest (f a)
-handleOutput h@OutputEffHandler{retO, handleO, parallelO} comp = case comp of
-    Pure r -> Pure $ retO r
-    Impure (Effect (Here op)) cont -> handleO op (rec . cont)
+             -> EffComp rest a
+handleBasic h@BasicEffHandler{handleB} comp = case comp of
+    Pure r -> Pure r
+    Impure (Effect (Here op)) cont -> handleB op >>= (rec . cont)
+    Impure (Effect (There op)) cont -> Impure (Effect op) (rec . cont)
+    Impure (TraverseTable iters) cont -> 
+      Impure (TraverseTable $ fmap rec iters) (rec . cont)
+  where
+    rec :: forall b. EffComp (op `EffCons` rest) b -> EffComp rest b
+    rec = handleBasic h
+
+
+-- Next, we consider a type of effect that can change the output type, but does
+-- not have any state.
+-- We can write this in delimited continuation passing style. Each handler gets
+-- access to the continuation up to some loop boundary, but with an unknown
+-- result type. The only control we give is that the handler can modify the
+-- return type with a handler-controlled higher-order datatype.
+-- Note that, in parallelize, we assume the work has already been done before
+-- control enters `parallelR`. So nothing `parallelR` can do will result in
+-- serializing those computations. If we restrict the primitives as well, we
+-- can ensure that `parallelR` itself runs in `log(n)` time.
+data WithRetEffHandler (op :: EffSig) (m :: * -> *) (f :: * -> *) = WithRetEffHandler
+  { retR      :: forall a. a -> m (f a)
+  , handleR   ::
+      forall a b.    op a           -> (a          -> m (f b)) -> m (f b)
+  , parallelR ::
+      forall a b ix. Table ix (f a) -> (Table ix a -> m (f b)) -> m (f b)
+  }
+
+handleWithRet :: forall op rest f a
+               . WithRetEffHandler op (EffComp rest) f
+              -> EffComp (op `EffCons` rest) a
+              -> EffComp rest (f a)
+handleWithRet h@WithRetEffHandler{retR, handleR, parallelR} comp = case comp of
+    Pure r -> retR r
+    Impure (Effect (Here op)) cont -> handleR op (rec . cont)
     Impure (Effect (There op)) cont -> Impure (Effect op) (rec . cont)
     Impure (TraverseTable iters) cont -> 
       Impure (TraverseTable $ fmap rec iters) $ \iterResults ->
-        parallelO iterResults (rec . cont)
+        parallelR iterResults (rec . cont)
   where
     rec :: forall b. EffComp (op `EffCons` rest) b -> EffComp rest (f b)
-    rec = handleOutput h
+    rec = handleWithRet h
 
-
-data InputEffHandler (op :: EffSig) (m :: * -> *) s = InputEffHandler
-  { handleI   :: forall a b. Monad m
-              => s -> op a     -> (s -> a   -> m b) -> m b
-  , parallelI :: forall a b ix. Monad m
-              => s -> (Table ix s -> m a) -> (s -> a -> m b) -> m b
+-- Next, we consider a type of handler that is stateful, but can't change the
+-- return type. We also require that the state is "forkable": state may be
+-- influenced by list index, but cannot be influenced by the actual computation
+-- in previous iterations. (PRNGKey is the typical example, and Accum also makes
+-- some use of this. Are there others?)
+data ForkStateEffHandler (op :: EffSig) (m :: * -> *) s = ForkStateEffHandler
+  { handleF   :: forall a. s -> op a -> m (s, a)
+  , parallelF :: forall ix. IndexSet ix => s -> m (Table ix s, s)
   }
 
-handleInput :: forall op rest s a
-             . InputEffHandler op (EffComp rest) s
+handleForkState :: forall op rest s a
+             . ForkStateEffHandler op (EffComp rest) s
             -> s
             -> EffComp (op `EffCons` rest) a
             -> EffComp rest a
-handleInput h@InputEffHandler{handleI, parallelI} s comp = case comp of
+handleForkState h@ForkStateEffHandler{handleF, parallelF}
+                  s comp =
+  case comp of
     Pure r -> Pure r
-    Impure (Effect (Here op)) cont -> handleI s op (\s a -> rec s $ cont a)
+    Impure (Effect (Here op)) cont -> do
+      (s, a) <- handleF s op
+      rec s (cont a)
     Impure (Effect (There op)) cont -> Impure (Effect op) (rec s . cont)
-    Impure (TraverseTable iters@(Table _)) cont  -- unpack iters to get a proof of IndexSet ix
-      -> parallelI s runIters runCont
-      where
-        runIters ss = for $ \i -> rec (tableIndex ss i) (tableIndex iters i)
-        runCont s a = rec s (cont a)
+    Impure (TraverseTable iters@(Table _)) cont -> do
+      (ss, s') <- parallelF s
+      result <- for $ \i -> rec (tableIndex ss i) (tableIndex iters i)
+      rec s' (cont result)
   where
     rec :: forall b. s -> EffComp (op `EffCons` rest) b -> EffComp rest b
-    rec = handleInput h
+    rec = handleForkState h
 
-
-data SimpleInputEffHandler (op :: EffSig) (m :: * -> *) s = SimpleInputEffHandler
-  { handleISimple   :: forall a. Monad m
-              => s -> op a -> (s, a)
-  , parallelISimple :: forall ix. Monad m
-              => s -> (Table ix s, s)
+-- Finally, we can combine the two into a handler that can maintain a forkable
+-- state as well as modify the output type. Note that even though it gets to
+-- modify things both before and after the loop runs, it has no  way to sequence
+-- the loop iteration computations, since we "hide" the actual
+-- work in the (Table ix s -> m (Table ix (f a))) argument.
+data ForkStateWithRetEffHandler (op :: EffSig) (m :: * -> *) s (f :: * -> *) = ForkStateWithRetEffHandler
+  { retFR      :: forall a.      s -> a -> m (f a)
+  , handleFR   :: forall a b.    s -> op a -> (s -> a -> m (f b)) -> m (f b)
+  , parallelFR :: forall a b ix. IndexSet ix
+                                  => s
+                                  -> (Table ix s -> m (Table ix (f a)))
+                                  -> (s -> Table ix a -> m (f b))
+                                  -> m (f b)
   }
 
-handleInputSimple :: forall op rest s a
-             . SimpleInputEffHandler op (EffComp rest) s
-            -> s
-            -> EffComp (op `EffCons` rest) a
-            -> EffComp rest a
-handleInputSimple h@SimpleInputEffHandler{handleISimple, parallelISimple} =
-  handleInput InputEffHandler{
-    handleI = \s op cont -> uncurry cont (handleISimple s op),
-    parallelI = \s iters cont -> let (ss, s') = parallelISimple s in
-      iters ss >>= cont s'
-  }
-
-
-
-data InputOutputEffHandler (op :: EffSig) (m :: * -> *) s (f :: * -> *) = InputOutputEffHandler
-  { retIO      :: forall a. s -> a -> f a
-  , handleIO   :: forall a b. Monad m
-               => s -> op a -> (s -> a -> m (f b)) -> m (f b)
-  , parallelIO :: forall a b ix. Monad m
-               => s -> (Table ix s -> m (Table ix (f a)))
-                    -> (s -> Table ix a -> m (f b))
-                    -> m (f b)
-  }
-
-handleInputOutput :: forall op rest s f a
-                   . InputOutputEffHandler op (EffComp rest) s f
-                  -> s
-                  -> EffComp (op `EffCons` rest) a
-                  -> EffComp rest (f a)
-handleInputOutput h@InputOutputEffHandler{retIO, handleIO, parallelIO} s comp = case comp of
-    Pure r -> Pure $ retIO s r
-    Impure (Effect (Here op)) cont -> handleIO s op (\s a -> rec s $ cont a)
+handleForkStateWithRet :: forall op rest s f a
+                        . ForkStateWithRetEffHandler op (EffComp rest) s f
+                       -> s
+                       -> EffComp (op `EffCons` rest) a
+                       -> EffComp rest (f a)
+handleForkStateWithRet h@ForkStateWithRetEffHandler{retFR, handleFR, parallelFR} s comp = case comp of
+    Pure r -> retFR s r
+    Impure (Effect (Here op)) cont -> handleFR s op (\s a -> rec s $ cont a)
     Impure (Effect (There op)) cont -> Impure (Effect op) (rec s . cont)
     Impure (TraverseTable iters@(Table _)) cont  -- unpack iters to get a proof of IndexSet ix
-      -> parallelIO s runIters runCont
+      -> parallelFR s runIters runCont
       where
         runIters ss = for $ \i -> rec (tableIndex ss i) (tableIndex iters i)
         runCont s a = rec s (cont a)
   where
     rec :: forall b. s -> EffComp (op `EffCons` rest) b -> EffComp rest (f b)
-    rec = handleInputOutput h
+    rec = handleForkStateWithRet h
+
