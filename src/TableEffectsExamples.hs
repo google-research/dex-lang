@@ -44,9 +44,13 @@ data Accum m r where
 data Except e r where
   Throw :: e -> Except e r
 
-
 data Random key r where
   NextKey :: Random key key
+
+data Amb r where
+  Amb :: [r] -> Amb r
+  AmbIx :: IndexSet ix => Amb ix -- isomprphic to Amb $ tableToList iota
+  Fail :: Amb r  -- isomorphic to Amb []
 
 -- Only parallelizable if we impose a strong applicative restriction? So maybe
 -- we don't actually implement these.
@@ -79,6 +83,22 @@ seqEithers tab = -- note: a log(n) parallel version exists
     Nothing -> Right $ flip fmap tab \(Right v) -> v
   where firstError x = case x of Left e -> Just $ First e
                                  Right _ -> Nothing
+
+data SomeTable r where
+  SomeTable :: forall ix r. IndexSet ix => Table ix r -> SomeTable r
+
+listToTable :: forall a. [a] -> SomeTable a
+listToTable lst = case someNatVal $ fromIntegral $ length lst of
+  Just (SomeNat (_ :: Proxy n)) ->
+    SomeTable $ Table @(Fin n) \i -> lst !! fromIntegral (ordinal i)
+  Nothing -> error "impossible list?"
+
+
+listFor :: [a] -> (a -> EffComp sig b) -> EffComp sig [b]
+listFor lst f = case listToTable lst of
+  SomeTable (tab@(Table _) :: Table ix a) -> do
+    allRes <- for \i -> f (tableIndex tab i)
+    return $ tableToList allRes
 
 -----------------------------
 
@@ -139,6 +159,30 @@ runMockRandom = handleForkState ForkStateEffHandler
         (key1, key2) = splitKeyPair key
         key1s = splitKey key1
         in return (key1s, key2)
+    }
+
+-- Somewhat hairy because it has to keep converting between tables and lists.
+-- Might be better in Dex?
+runAmb :: EffComp (Amb `EffCons` c) a -> EffComp c [a]
+runAmb = handleWithRet WithRetEffHandler
+    { retR = \x -> return [x]
+    , handleR = \op cont -> case op of
+        Amb lst -> case listToTable lst of
+          SomeTable (tab@(Table _) :: Table ix a) -> do
+            allRes <- for \i -> cont (tableIndex tab i)
+            return $ concatTable allRes
+        (AmbIx :: Amb ix) -> do
+            allRes <- for \i -> cont i
+            return $ concatTable allRes
+        Fail -> return []
+    , parallelR = \(iterResults@(Table _) :: Table ix r) cont -> do
+        let
+          cartProd here rest = [x:y | x <-  here, y <- rest]
+          allOptions = foldrTable cartProd [] iterResults
+          buildTable lst = Table @ix \i -> lst !! fromInteger (ordinal i)
+          allTables = buildTable <$> allOptions
+        allRes <- listFor allTables cont
+        return $ concat allRes
     }
 
 -----------------------------
