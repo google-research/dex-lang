@@ -317,7 +317,7 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
 def pixel (x:Char) : Float32 =
      r = W8ToI x
      IToF case r < 0 of
-             True -> (abs r) + 128
+             True -> 256 + r
              False -> r
 
 def getIm : Batch => Image =
@@ -603,16 +603,11 @@ def bincount (inp : a => b) : b => Int =
 ' Plot how many times each pixel value occurs in an image:
 
 hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
-> Ordinal index out of range:256 >= 256
-> Runtime error
 :t hist
-> Error: variable not in scope: hist
+> ((Fin 256) => Int32)
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
-> Error: variable not in scope: hist
->
-> :html showPlot $ yPlot (for i. (IToF hist.i))
->                                      ^^^^
+> <html output>
 
 ' Find nearest images in the dataset:
 
