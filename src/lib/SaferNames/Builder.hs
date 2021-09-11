@@ -20,7 +20,9 @@ module SaferNames.Builder (
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
-  getClassDef, liftBuilderNameGenT, atomAsBlock,
+  getDataDef, getClassDef, liftBuilderNameGenT, atomAsBlock,
+  Emits, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
+  buildAbs, buildNaryAbs
   ) where
 
 import Prelude hiding ((.), id)
@@ -38,6 +40,7 @@ import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
 
+import Err
 import LabeledItems
 
 class (BindingsReader m, Scopable m, MonadFail1 m)
@@ -267,6 +270,24 @@ buildPureLam arr ty body =
       result <- body x
       return (result, ())
 
+buildLam
+  :: Builder m
+  => Arrow
+  -> Type n
+  -> EffectRow n
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildLam arr ty effBuilder body = undefined
+
+buildDepEffLam
+  :: Builder m
+  => Arrow
+  -> Type n
+  -> (forall l. (         Ext n l) => AtomName l -> m l (EffectRow l))
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildDepEffLam arr ty effBuilder body = undefined
+
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
 buildPureNaryLam :: Builder m
@@ -287,7 +308,36 @@ buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
       cont (x':xs)
 buildPureNaryLam _ _ _ = error "impossible"
 
+buildPi :: (MonadErr1 m, Builder m)
+        => Type n
+        -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
+        -> m n (Type n)
+buildPi _ _ = undefined
+
+buildNonDepPi :: (MonadErr1 m, Builder m)
+              => Type n -> EffectRow n -> Type n -> m n (Type n)
+buildNonDepPi = undefined
+
+buildAbs
+  :: (Builder m, InjectableE e, HasNamesE e)
+  => Type n
+  -> (forall l. Ext n l => AtomName l -> m l (e l))
+  -> m n (Abs Binder e n)
+buildAbs ty body = do
+  withFreshAtomBinder NoHint ty MiscBound \v -> do
+    body v
+
+buildNaryAbs
+  :: (Builder m, InjectableE e, HasNamesE e)
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. Ext n l => [AtomName l] -> m l (e l))
+  -> m n (Abs (Nest Binder) e n)
+buildNaryAbs ty body = undefined
+
 -- === builder versions of common ops ===
+
+getDataDef :: Builder m => DataDefName n -> m n (DataDef n)
+getDataDef _ = undefined
 
 getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do

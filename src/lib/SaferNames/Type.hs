@@ -13,7 +13,8 @@
 
 module SaferNames.Type (
   HasType (..),
-  checkModule, checkTypes, getType, litType, getBaseMonoidType) where
+  checkModule, checkTypes, getType, litType, getBaseMonoidType,
+  instantiatePi, checkExtends, applyDataDefParams) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -59,6 +60,11 @@ getType e = do
   Distinct <- getDistinct
   WithBindings bindings scope e' <- addBindings e
   injectM $ runIgnoreChecks $ runTyperT (scope, bindings) $ getTypeE e'
+
+instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
+instantiatePi (PiType _ b eff body) x = do
+  PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
+  return (eff', body')
 
 -- === the type checking/querying monad ===
 

@@ -35,7 +35,7 @@ module SaferNames.Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    IRVariant (..), SubstVal (..), AtomName, AtomSubstVal,
+    IRVariant (..), SubstVal (..), AtomName, DataDefName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
@@ -51,9 +51,10 @@ module SaferNames.Syntax (
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
+    considerNonDepPiType,
     fromNonDepTabTy, binderType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    SrcCtx, freshBinderNamePair,
+    SrcCtx, freshBinderNamePair, piArgType, piArrow, extendEffRow,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -182,7 +183,7 @@ data ClassDef n =
 -- that it doesn't have any free names bound by the decls in the block. We store
 -- it separately as an optimization, to avoid having to traverse the block.
 data Block n where
-  Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
+  Block :: Type n -> Nest Decl n l -> Expr l -> Block n
 
 data LamExpr (n::S) where
   LamExpr :: Arrow -> Binder n l -> EffectRow l -> Block l -> LamExpr n
@@ -676,12 +677,22 @@ infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
+piArgType :: PiType n -> Type n
+piArgType (PiType _ (_:>ty) _ _) = ty
+
+piArrow :: PiType n -> Arrow
+piArrow (PiType arr _ _ _) = arr
+
 nonDepPiType :: ScopeReader m
-             => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
+             => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
-      return $ Pi $ PiType arr (b:>argTy) eff' resultTy'
+      return $ PiType arr (b:>argTy) eff' resultTy'
+
+considerNonDepPiType :: ScopeReader m
+                     => PiType n -> m n (Maybe (Arrow, Type n, EffectRow n, Type n))
+considerNonDepPiType = undefined
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
                  => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
@@ -694,10 +705,10 @@ fromNonDepPiType arr ty = do
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
 naryNonDepPiType _ Pure [] resultTy = return resultTy
 naryNonDepPiType _ _    [] _        = error "nullary function can't have effects"
-naryNonDepPiType arr eff [ty] resultTy = nonDepPiType arr ty eff resultTy
+naryNonDepPiType arr eff [ty] resultTy = Pi <$> nonDepPiType arr ty eff resultTy
 naryNonDepPiType arr eff (ty:tys) resultTy = do
   innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
-  nonDepPiType arr ty Pure innerFunctionTy
+  Pi <$> nonDepPiType arr ty Pure innerFunctionTy
 
 fromNaryNonDepPiType :: (ScopeReader m, MonadFail1 m)
                      => [Arrow] -> Type n -> m n ([Type n], EffectRow n, Type n)
@@ -716,16 +727,16 @@ fromNonDepTabTy ty = do
   return (idxTy, resultTy)
 
 (?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a ?--> b = nonDepPiType ImplicitArrow a Pure b
+a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
 
 (-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a --> b = nonDepPiType PlainArrow a Pure b
+a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
 
 (--@) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a --@ b = nonDepPiType LinArrow a Pure b
+a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
 (==>) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a ==> b = nonDepPiType TabArrow a Pure b
+a ==> b = Pi <$> nonDepPiType TabArrow a Pure b
 
 pattern IntLitExpr :: Int -> UExpr' n
 pattern IntLitExpr x = UIntLit x
@@ -1432,3 +1443,9 @@ instance InjectableE e => InjectableE (WithBindings e) where
     withExtEvidence (injectionProofE fresh ext) $
       WithBindings bindings scope e
     where ext = getExtEvidence :: ExtEvidence h n
+
+instance InjectableE UVar where
+  injectionProofE = undefined
+
+instance HasNameHint (UPat n l) where
+  getNameHint = undefined
