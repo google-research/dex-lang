@@ -21,7 +21,7 @@ module SaferNames.Name (
   NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
   DistinctAbs (..), WithScope (..),
   WithScopeSubstFrag (..), extendRenamer,
-  ScopeReader (..), ScopeExtender (..), ScopeGetter (..), ScopeReader (..),
+  ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
   Inplace, liftInplace, runInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
@@ -250,9 +250,9 @@ tryProjectName names name =
 toConstAbs :: (InjectableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
 toConstAbs rep body = do
-  WithScope scope body <- addScope body
+  WithScope scope body' <- addScope body
   withFresh "ignore" rep scope \b -> do
-    injectM $ Abs b $ inject body
+    injectM $ Abs b $ inject body'
 
 -- === type classes for traversing names ===
 
@@ -670,7 +670,7 @@ instance Monad m => ScopeGetter (ScopeReaderT m) where
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
   extendScope frag m = ScopeReaderT $ withReaderT
-    (\(d, scope) -> (getDistinctEvidence, scope >>> frag)) $
+    (\(_, scope) -> (getDistinctEvidence, scope >>> frag)) $
         withExtEvidence (toExtEvidence frag) $
           runScopeReaderT' m
 
@@ -704,6 +704,7 @@ instance (InjectableV v, Monad1 m) => EnvGetter v (EnvReaderT v m) where
 
 instance ScopeReader m => ScopeReader (EnvReaderT v m i) where
   addScope e = EnvReaderT $ lift $ addScope e
+  getDistinctEvidenceM = EnvReaderT $ lift getDistinctEvidenceM
 
 instance ScopeGetter m => ScopeGetter (EnvReaderT v m i) where
   getScope = EnvReaderT $ lift getScope
@@ -735,6 +736,7 @@ runOutReaderT env m = flip runReaderT env $ runOutReaderT' m
 instance (InjectableE e, ScopeReader m)
          => ScopeReader (OutReaderT e m) where
   addScope e = OutReaderT $ lift $ addScope e
+  getDistinctEvidenceM = OutReaderT $ lift getDistinctEvidenceM
 
 instance (InjectableE e, ScopeGetter m)
          => ScopeGetter (OutReaderT e m) where
@@ -767,6 +769,7 @@ type ZipEnv i1 i2 o = (NameFunction Name i1 o, NameFunction Name i2 o)
 
 instance ScopeReader m => ScopeReader (ZipEnvReaderT m i1 i2) where
   addScope e = ZipEnvReaderT $ lift $ addScope e
+  getDistinctEvidenceM = ZipEnvReaderT $ lift getDistinctEvidenceM
 
 instance ScopeGetter m => ScopeGetter (ZipEnvReaderT m i1 i2) where
   getScope = ZipEnvReaderT $ lift getScope

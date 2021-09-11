@@ -26,8 +26,6 @@ module SaferNames.Builder (
 import Prelude hiding ((.), id)
 import Control.Category
 import Control.Monad
-import Control.Monad.Identity
-import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
@@ -95,7 +93,7 @@ runBuilderT
   => (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
   -> m n (e n)
 runBuilderT cont = do
-  (DistinctAbs decls result) <- runBuilderNameGenT $ runInplace $ runBuilderT' cont
+  DistinctAbs decls result <- runBuilderNameGenT $ runInplace $ runBuilderT' cont
   -- this should always succeed because we don't supply the `Emits` predicate to
   -- the continuation
   fromConstAbs $ Abs decls result
@@ -105,7 +103,12 @@ runBuilderTWithEmits
      , InjectableE e, HasNamesE e)
   => (forall l. (Emits l, Distinct l, Ext n l) => BuilderT m l (e l))
   -> m n (Abs (Nest Decl) e n)
-runBuilderTWithEmits _ = undefined
+runBuilderTWithEmits cont = do
+  DistinctAbs decls result <- runBuilderNameGenT $ runInplace $ runBuilderT' do
+    evidence <- fabricateEmitsEvidenceM
+    withEmitsEvidence evidence do
+      cont
+  return $ Abs decls result
 
 -- TODO: should be able to get away with `Scopable m` instead of `BindingsExtender m`
 instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
@@ -128,11 +131,12 @@ instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
       Distinct <- getDistinct
       return $ DistinctAbs id result
 
-fabricateEmitsEvidenceM :: Monad1 m => m n (EmitsEvidence n)
-fabricateEmitsEvidenceM = return FabricateEmitsEvidence
+  getAllowedEffects = undefined
+  withAllowedEffects _ _ = undefined
 
 instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
          => MonadFail (BuilderT m n) where
+  fail = undefined
 
 instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
          => ScopeReader (BuilderT m) where
@@ -154,7 +158,7 @@ instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
 
 instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
          => Scopable (BuilderT m) where
-  withBindings (Abs b e) cont = undefined
+  withBindings  _ _ = undefined
 
 -- === Emits predicate ===
 
@@ -175,6 +179,9 @@ withEmitsEvidence _ cont = fromWrapWithEmits
 
 newtype WrapWithEmits n r =
   WrapWithEmits { fromWrapWithEmits :: Emits n => r }
+
+fabricateEmitsEvidenceM :: Monad1 m => m n (EmitsEvidence n)
+fabricateEmitsEvidenceM = return FabricateEmitsEvidence
 
 -- === lambda-like things ===
 
