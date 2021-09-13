@@ -47,12 +47,27 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
-ifeq (1,$(LLVM_HEAD))
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++
+
+CLANG := clang++
+
+ifeq (1,$(DEX_LLVM_HEAD))
 ifeq ($(PLATFORM),Darwin)
-	$(error LLVM head builds not supported on macOS!)
+$(error LLVM head builds not supported on macOS!)
 endif
 STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
 STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
+else
+CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
+if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
+then echo "$$clangversion" ; break ; fi ; done)
+ifeq (,$(CLANG))
+$(error "Please install clang++-9")
+endif
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+ifneq (1,$(clang-version-compatible))
+$(error "Please install clang++-9")
+endif
 endif
 
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
@@ -78,10 +93,11 @@ build-prof: dexrt-llvm
 	$(STACK) build $(PROF) --flag dex:-foreign
 
 # For some reason stack fails to detect modifications to foreign library files
-build-python: dexrt-llvm
+build-ffis: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty
 	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
@@ -89,10 +105,13 @@ build-ci: dexrt-llvm
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
 
+build-safe-names: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
+
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp
-	clang++ $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
+	$(CLANG) $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
 
 # --- running tests ---
 
@@ -100,9 +119,10 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd psd fft tutorial vega-plotting kernelregression \
-                quaternions manifold-gradients schrodinger \
-				gp-regression
+                sgd psd tutorial kernelregression \
+                quaternions manifold-gradients schrodinger
+# TODO: re-enable
+# fft vega-plotting
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \

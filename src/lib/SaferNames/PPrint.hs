@@ -23,6 +23,7 @@ import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+import Data.String (fromString)
 import System.IO.Unsafe
 import System.Environment
 
@@ -33,7 +34,7 @@ import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
 import Env (nameTag)
 
 import SaferNames.NameCore (unsafeCoerceE, unsafeCoerceB, getRawName)
-import SaferNames.Name
+import SaferNames.Name hiding (lookupEnv)
 import SaferNames.Syntax
 
 type PrettyPrecE e = (forall (n::S). PrettyPrec (e n)) :: Constraint
@@ -65,7 +66,7 @@ instance Pretty (Block n) where
   pretty (Block _ decls expr) = hardline <> prettyLines decls' <> pLowest expr
     where decls' = fromNest decls
 
-fromNest :: Nest b n l -> [b UnsafeMakeS UnsafeMakeS]
+fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
 fromNest Empty = []
 fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 
@@ -125,10 +126,10 @@ instance PrettyPrec (Atom n) where
     Eff e -> atPrec ArgPrec $ p e
     DataCon name _ _ _ xs -> case xs of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+      [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
-    TypeCon name params -> case params of
+    TypeCon (name, _) params -> case params of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (nameTag (getRawName name)) ->
         atPrec ArgPrec $ align $ group $
@@ -235,3 +236,70 @@ instance Pretty (Effect n) where
     IOEffect        -> "IO"
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance Pretty (AtomBinderInfo n) where
+  pretty = undefined
+
+instance Pretty (Binding s n) where
+  pretty b = case b of
+    AtomNameBinding   ty info ->
+          "Atom name type:" <+> pretty ty
+      <+> "binder info:" <+> pretty info
+    DataDefBinding    dataDef -> pretty dataDef
+    TyConBinding      dataDefName -> "Type constructor:" <+> pretty dataDefName
+    DataConBinding    dataDefName idx ->
+      "Data constructor:" <+> pretty dataDefName <+>
+      "Constructor index:" <+> pretty idx
+    ClassBinding      classDef -> pretty classDef
+    SuperclassBinding className idx _ ->
+      "Superclass" <+> pretty idx <+> "of" <+> pretty className
+    MethodBinding     className idx _ ->
+      "Method" <+> pretty idx <+> "of" <+> pretty className
+
+instance Pretty (DataDef n) where
+  pretty (DataDef dataDefSourceName _ _) =
+    "Data def" <+> pretty dataDefSourceName
+
+instance Pretty (ClassDef n) where
+  pretty (ClassDef classSourceName methodNames _) =
+    "Class" <+> pretty classSourceName <+> pretty methodNames
+
+instance Pretty (TopBindings n) where
+  pretty (TopBindings env) = pretty env
+
+instance Pretty (TopState n) where
+  pretty s =
+       "bindings: "
+    <>   indented (pretty (topBindings s))
+    <> "synth candidates:"
+    <>   indented (pretty (topSynthCandidates s))
+    <> "source map: "
+    <>   indented (pretty (topSourceMap s))
+
+instance Pretty (Module n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (Module n) where
+  prettyPrec (Module variant decls result) = atPrec ArgPrec $
+    "Module" <+> parens (p (show variant)) <> indented body
+    where
+      body = "unevaluated decls:"
+           <>   indented (prettyLines (fromNest decls))
+           <> "evaluated bindings:"
+           <>   indented (p result)
+
+instance Pretty (EvaluatedModule n) where
+  pretty (EvaluatedModule bindings synthCandidates sourceMap) =
+       "decls:"
+    <>   indented (p bindings)
+    <> "Synthesis candidates:"
+    <>   indented (p synthCandidates)
+    <> "Source map:"
+    <>   indented (p sourceMap)
+
+instance Pretty (SynthCandidates n) where
+  pretty scs =
+       "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
+    <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
+    <> "instance dicts:" <+> p (instanceDicts     scs)
+
+indented :: Doc ann -> Doc ann
+indented doc = nest 2 (hardline <> doc) <> hardline

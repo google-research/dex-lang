@@ -11,7 +11,7 @@
 module Err (Err (..), ErrType (..), Except, SrcPos, SrcCtx,
             throw, throwIf, modifyErr, MonadErr,
             addContext, addSrcContext, catchIOExcept, liftEitherIO,
-            assertEq, ignoreExcept, pprint, docAsStr) where
+            assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr) where
 
 import Control.Exception hiding (throw)
 import Control.Monad
@@ -31,6 +31,8 @@ data ErrType = NoErr
              | LinErr
              | UnboundVarErr
              | RepeatedVarErr
+             | RepeatedPatVarErr
+             | InvalidPatternErr
              | CompilerErr
              | IRVariantErr
              | NotImplementedErr
@@ -39,6 +41,7 @@ data ErrType = NoErr
              | RuntimeErr
              | ZipErr
              | EscapedNameErr
+             | ModuleImportErr
                deriving (Show, Eq)
 
 type Except = Either Err
@@ -57,6 +60,10 @@ throwIf False _ _ = return ()
 
 modifyErr :: MonadError e m => m a -> (e -> e) -> m a
 modifyErr m f = catchError m \e -> throwError (f e)
+
+asCompilerErr :: MonadErr m => m a -> m a
+asCompilerErr m =
+  modifyErr m (\(Err _ c msg) -> Err CompilerErr c msg)
 
 addContext :: MonadErr m => String -> m a -> m a
 addContext s m = modifyErr m \(Err e p s') -> Err e p (s' ++ "\n" ++ s)
@@ -83,11 +90,12 @@ ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
 
-assertEq :: (MonadErr m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
+assertEq :: (HasCallStack, MonadErr m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = "assertion failure (" ++ s ++ "):\n"
-              ++ pprint x ++ " != " ++ pprint y ++ "\n"
+              ++ pprint x ++ " != " ++ pprint y ++ "\n\n"
+              ++ prettyCallStack callStack ++ "\n"
 
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
@@ -124,6 +132,8 @@ instance Pretty ErrType where
     IRVariantErr      -> "Internal IR validation error: "
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
+    RepeatedPatVarErr -> "Error: variable already defined within pattern: "
+    InvalidPatternErr -> "Error: not a valid pattern: "
     NotImplementedErr -> "Not implemented:"
     CompilerErr       ->
       "Compiler bug!" <> line <>
@@ -133,3 +143,4 @@ instance Pretty ErrType where
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Escaped name"
+    ModuleImportErr   -> "Module import error"

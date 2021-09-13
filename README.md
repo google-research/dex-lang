@@ -8,7 +8,7 @@ processing. The goal of the project is to explore:
   * Interactive and incremental numerical programming and visualization
 
 To learn more, check out our
-[workshop paper](https://openreview.net/pdf?id=rJxd7vsWPS),
+[paper](https://arxiv.org/abs/2104.05372),
 our [tutorial](https://google-research.github.io/dex-lang/examples/tutorial.html)
 or these example programs:
 
@@ -34,8 +34,8 @@ development. Expect monstrous bugs and razor-sharp edges!**
     * Ubuntu/Debian: `apt-get install llvm-9-dev`
     * macOS: `brew install llvm@9`
       * Make sure `llvm@9` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@9)/bin:$PATH"`
-  * Install clang (may be installed together with llvm)
-    * Ubuntu/Debian: `apt-get install clang`
+  * Install clang 9 (may be installed together with llvm)
+    * Ubuntu/Debian: `apt-get install clang-9`
     * macOS: installs with llvm
   * Install libpng (often included by default in *nix platforms)
     * Ubuntu/Debian: `apt-get install libpng-dev`

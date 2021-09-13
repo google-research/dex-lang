@@ -1,0 +1,57 @@
+name: Julia tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-18.04]
+        include:
+          - os: ubuntu-18.04
+            install_deps: sudo apt-get install llvm-9-tools llvm-9-dev pkg-config wget gzip
+            path_extension: /usr/lib/llvm-9/bin
+
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v2
+
+    - name: Setup Haskell Stack
+      uses: actions/setup-haskell@v1
+      with:
+        enable-stack: true
+        stack-no-global: true
+        stack-version: 'latest'
+    
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@ee66464cb7897ffcc5322800f4b18d449794af30  # v1.6.1
+      with:
+        version: '1.6'
+        arch: x64
+
+    - name: Cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.stack
+          $GITHUB_WORKSPACE/.stack-work
+          ~/.julia/artifacts
+        key: ${{ runner.os }}-julia-${{ hashFiles('**/*.cabal', 'stack*.yaml', '**/Project.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-julia-
+          ${{ runner.os }}-
+
+    - name: Build DexCall.jl
+      uses: julia-actions/julia-buildpkg@f995fa4149fed4a8e9b95ba82f54cc107c1d832a  #v1.2.0
+      with:
+        project: "julia/"
+    
+    - name: Test DexCall.jl
+      uses: julia-actions/julia-runtest@eda4346d69c0d1653e483c397a83c7f32f4ef2ac  # v1.6.0
+      with:
+        project: "julia/"

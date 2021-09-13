@@ -52,7 +52,7 @@ jobs:
           ${{ runner.os }}-
 
     - name: Build
-      run: make build-python
+      run: make build-ffis
 
     - name: Install Python bindings
       run: pip install -e $GITHUB_WORKSPACE/python
