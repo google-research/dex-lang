@@ -45,7 +45,7 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindings (..), TopBindingsFrag, NamedDataDef, fromTopBindings, ScopedBindings,
+    TopBindings (..), NamedDataDef, fromTopBindings, ScopedBindings,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
@@ -548,10 +548,8 @@ data SourceUModule = SourceUModule (UDecl VoidS VoidS) deriving (Show)
 -- body must only contain Name version of names and binders
 data UModule (n::S) where
   UModule
-    :: Distinct l
-    => ScopeFrag n l
+    :: UDecl n l
     -> SourceMap l
-    -> UDecl n l
     -> UModule n
 
 data SourceBlock = SourceBlock
@@ -588,8 +586,6 @@ type ScopedBindings n = (Scope n, Bindings n)
 fromTopBindings :: TopBindings n -> ScopedBindings n
 fromTopBindings (TopBindings env) = (envAsScope env, emptyNameFunction <>> env)
 
-type TopBindingsFrag n l = EnvFrag Binding n l l
-
 emptyTopState :: TopState VoidS
 emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
 
@@ -606,7 +602,7 @@ data Module n where
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
-    :: TopBindingsFrag n l  -- Evaluated bindings
+    :: BindingsFrag n l     -- Evaluated bindings
     -> SynthCandidates l    -- Values considered in scope for dictionary synthesis
     -> SourceMap l          -- Mapping of module's source names to internal names
     -> EvaluatedModule n
@@ -1461,3 +1457,6 @@ instance BindsAtMostOneName (UBinder c) c where
 
 instance BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x
+
+instance InjectableE UModule where
+  injectionProofE = undefined

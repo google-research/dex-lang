@@ -11,6 +11,7 @@ module SaferNames.Inference (inferModule) where
 import Prelude hiding ((.), id)
 import Control.Category
 import Control.Monad
+import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -30,19 +31,44 @@ import Err
 import Util (enumerate)
 
 inferModule :: Bindings n -> UModule n -> Except (Module n)
-inferModule = undefined
+inferModule bindings uModule = runInfererM bindings do
+  UModule decl sourceMap <- injectM uModule
+  case decl of
+    ULet _ _ _ -> do
+      Abs decls sourceMap' <-
+        buildScoped $ inferUDeclLocal decl $ substM sourceMap
+      return $ Module Typed decls $
+        EvaluatedModule emptyEnv mempty sourceMap'
+    _ -> do
+      Abs (RecEnvFrag bindingsFrag) sourceMap' <-
+        buildScopedTop $ inferUDeclTop decl $ substM sourceMap
+      return $ Module Typed id $
+        EvaluatedModule bindingsFrag mempty sourceMap'
 
 -- === Inferer monad ===
 
 class (MonadErr2 m, Builder2 m, EnvGetter Name m)
       => Inferer (m::MonadKind2)
 
-type SigmaType = Type  -- may     start with an implicit lambda
-type RhoType   = Type  -- doesn't start with an implicit lambda
-data SuggestionStrength = Suggest | Concrete  deriving Show
-data RequiredTy (e::E) (n::S) = Check SuggestionStrength (e n)
-                              | Infer
-                                deriving Show
+data InfererM (i::S) (o::S) (a:: *) = InfererM
+
+runInfererM :: Bindings n
+            -> (forall l. Ext n l => InfererM l l (e l))
+            -> Except (e n)
+runInfererM _ _ = undefined
+
+instance Functor (InfererM i o)
+instance Applicative (InfererM i o)
+instance Monad (InfererM i o)
+instance MonadFail (InfererM i o)
+instance MonadError Err (InfererM i o)
+instance Builder (InfererM i)
+instance BindingsReader (InfererM i)
+instance ScopeReader (InfererM i)
+instance Scopable (InfererM i)
+instance (EnvReader Name) InfererM
+instance (EnvGetter Name) InfererM
+instance Inferer InfererM
 
 constrainEq :: Inferer m => Type o -> Type o -> m i o ()
 constrainEq = undefined
@@ -80,6 +106,13 @@ buildAndReduceScoped :: Inferer m
 buildAndReduceScoped _ = undefined
 
 -- === actual inference pass ===
+
+type SigmaType = Type  -- may     start with an implicit lambda
+type RhoType   = Type  -- doesn't start with an implicit lambda
+data SuggestionStrength = Suggest | Concrete  deriving Show
+data RequiredTy (e::E) (n::S) = Check SuggestionStrength (e n)
+                              | Infer
+                                deriving Show
 
 checkSigma :: (Emits o, Inferer m) => UExpr i
            -> SuggestionStrength
@@ -315,9 +348,8 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   bindLamPat p var cont
 inferUDeclLocal _ _ = error "not a local decl"
 
-inferUDeclTop ::  (Emits o, Inferer m) => UDecl i i' -> m i o (EnvFrag Name i i' o)
--- inferUDeclTop (ULet letAnn p rhs) = inferUDeclLocal $ ULet letAnn p rhs
-inferUDeclTop _ = undefined
+inferUDeclTop ::  (EmitsTop o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
+inferUDeclTop = undefined
 
 inferDataDef :: Inferer m => UDataDef i -> m i o (DataDef o)
 inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
@@ -332,7 +364,7 @@ inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
   return $ DataConDef sourceName argBs'
 
-inferInterfaceDataDef :: Inferer m
+inferInterfaceDataDef :: (EmitsTop o, Inferer m)
                       => SourceName -> [SourceName]
                       -> Nest (UAnnBinder AtomNameC) i i'
                       -> [UType i'] -> [UType i']
@@ -346,9 +378,6 @@ inferInterfaceDataDef className methodNames paramBs superclasses methods = do
       return $ PairTy (ProdTy superclasses') (ProdTy methods')
   defName <- emitDataDef dictDef
   return $ ClassDef className methodNames (defName, dictDef)
-
-emitDataDef :: Inferer m => DataDef o -> m i o (DataDefName o)
-emitDataDef = undefined
 
 withNestedUBinders :: (Inferer m, InjectableE e, HasNamesE e)
                   => Nest (UAnnBinder AtomNameC) i i'

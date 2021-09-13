@@ -173,7 +173,7 @@ fromSafe = ()
 -- bijections, so we have to do a lot of things manually.
 nameBijectionFromDBindings
     :: MonadToSafe m => FromSafeNameMap n -> D.Bindings
-    -> (forall l. Distinct l => TopBindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
+    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
     -> m n a
 nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do

@@ -21,8 +21,9 @@ module SaferNames.Builder (
   select, getUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   getDataDef, getClassDef, getDataCon, liftBuilderNameGenT, atomAsBlock,
-  Emits, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
-  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype
+  Emits, EmitsTop, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
+  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype,
+  emitDataDef, emitClassDef, emitDataConName, emitTyConName
   ) where
 
 import Prelude hiding ((.), id)
@@ -46,9 +47,14 @@ import LabeledItems
 class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   emitDecl :: Emits n => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
+  emitBinding :: EmitsTop n => NameHint -> Binding c n -> m n (Name c n)
   buildScoped :: (InjectableE e, HasNamesE e)
               => (forall l. (Emits l, Ext n l) => m l (e l))
               -> m n (Abs (Nest Decl) e n)
+
+  buildScopedTop :: (InjectableE e, HasNamesE e)
+                 => (forall l. (EmitsTop l, Ext n l) => m l (e l))
+                 -> m n (Abs (RecEnvFrag Binding) e n)
   getAllowedEffects :: m n (EffectRow n)
   withAllowedEffects :: EffectRow n -> m n a -> m n a
 
@@ -185,6 +191,27 @@ newtype WrapWithEmits n r =
 
 fabricateEmitsEvidenceM :: Monad1 m => m n (EmitsEvidence n)
 fabricateEmitsEvidenceM = return FabricateEmitsEvidence
+
+-- === EmitsTop predicate ===
+
+-- permission to emit top-level bindings
+
+data EmitsTopEvidence (n::S) = FabricateEmitsTopEvidence
+
+class EmitsTop (n::S)
+
+instance EmitsTop UnsafeS
+
+withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
+withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
+ ( unsafeCoerce ( WrapWithEmitsTop cont :: WrapWithEmitsTop n       a
+                                      ) :: WrapWithEmitsTop UnsafeS a)
+
+newtype WrapWithEmitsTop n r =
+  WrapWithEmitsTop { fromWrapWithEmitsTop :: EmitsTop n => r }
+
+fabricateEmitsTopEvidenceM :: Monad1 m => m n (EmitsTopEvidence n)
+fabricateEmitsTopEvidenceM = return FabricateEmitsTopEvidence
 
 -- === lambda-like things ===
 
@@ -363,6 +390,24 @@ buildNewtype :: Builder m
 buildNewtype _ _ _ = undefined
 
 -- === builder versions of common ops ===
+
+emitDataDef :: (EmitsTop n, Builder m) => DataDef n -> m n (DataDefName n)
+emitDataDef dataDef =
+  emitBinding NoHint $ DataDefBinding dataDef
+
+emitClassDef :: (EmitsTop n, Builder m) => ClassDef n -> m n (Name ClassNameC n)
+emitClassDef classDef@(ClassDef name _ _) =
+  emitBinding (getNameHint name) $ ClassBinding classDef
+
+emitDataConName :: (EmitsTop n, Builder m) => DataDefName n -> Int -> m n (Name DataConNameC n)
+emitDataConName dataDefName conIdx = do
+  DataDef _ _ dataCons <- getDataDef dataDefName
+  let (DataConDef name _) = dataCons !! conIdx
+  emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx
+
+emitTyConName :: (EmitsTop n, Builder m) => DataDefName n -> m n (Name TyConNameC n)
+emitTyConName dataDefName =
+  emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName
 
 getDataDef :: Builder m => DataDefName n -> m n (DataDef n)
 getDataDef _ = undefined

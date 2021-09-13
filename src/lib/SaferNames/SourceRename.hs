@@ -64,9 +64,9 @@ class (Monad1 m, ScopeExtender m, MonadErr1 m) => Renamer m where
 
 _renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
 _renameSourceNames' (SourceUModule decl) = do
-  (RenamerContent frag sourceMap decl') <- runRenamerNameGenT $
+  (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $
     sourceRenameB $ resolveImplicitTopDecl decl
-  return $ UModule frag sourceMap decl'
+  return $ UModule decl' sourceMap
 
 class SourceRenamableE e where
   sourceRenameE :: Renamer m => e i -> m o (e o)
