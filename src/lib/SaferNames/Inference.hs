@@ -136,7 +136,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
   ULam (ULamExpr ImplicitArrow (UPatAnn p ann) body) -> do
     argTy <- checkAnn ann
     v <- freshInferenceName argTy
-    withBindPat p v $ checkOrInferRho body reqTy
+    bindLamPat p v $ checkOrInferRho body reqTy
   ULam lamExpr ->
     case reqTy of
       Check _ (Pi piTy) -> checkULam lamExpr piTy
@@ -192,14 +192,13 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         buildNonDepPi ann' effs' ty'
       -- TODO: won't type check unless we check no decls are produced
       -- _ -> buildPi ann' \v ->
-      --   withBindPat (WithSrcB pos' pat) v do
+      --   bindLamPat (WithSrcB pos' pat) v do
       --     effs' <- checkUEffRow effs
       --     ty' <- checkUType ty
       --     return (effs', ty')
     matchRequirement piTy
   UDecl (UDeclExpr decl body) -> do
-    env <- inferUDeclLocal decl
-    extendEnv env $ checkOrInferRho body reqTy
+    inferUDeclLocal decl $ checkOrInferRho body reqTy
   UCase scrut alts -> do
     scrut' <- inferRho scrut
     scrutTy <- getType scrut'
@@ -303,8 +302,8 @@ inferUVar = \case
     ~(MethodBinding _ _ getter) <- lookupBindings v
     return getter
 
-inferUDeclLocal ::  (Emits o, Inferer m) => UDecl i i' -> m i o (EnvFrag Name i i' o)
-inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) = do
+inferUDeclLocal ::  (Emits o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
+inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   val <- case ann of
     Nothing -> inferSigma rhs
     Just ty -> do
@@ -313,11 +312,11 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) = do
       checkSigma rhs reqCon ty'
   expr <- zonk $ Atom val
   var <- emitDecl (getNameHint p) letAnn expr
-  bindPat p var
-inferUDeclLocal _ = error "not a local decl"
+  bindLamPat p var cont
+inferUDeclLocal _ _ = error "not a local decl"
 
 inferUDeclTop ::  (Emits o, Inferer m) => UDecl i i' -> m i o (EnvFrag Name i i' o)
-inferUDeclTop (ULet letAnn p rhs) = inferUDeclLocal $ ULet letAnn p rhs
+-- inferUDeclTop (ULet letAnn p rhs) = inferUDeclLocal $ ULet letAnn p rhs
 inferUDeclTop _ = undefined
 
 inferDataDef :: Inferer m => UDataDef i -> m i o (DataDef o)
@@ -384,7 +383,7 @@ inferULam :: Inferer m => EffectRow o -> ULamExpr i -> m i o (Atom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
   argTy <- checkAnn ann
   buildLam arrow argTy effs \v ->
-    withBindPat p v $ inferSigma body
+    bindLamPat p v $ inferSigma body
 
 checkULam :: Inferer m => ULamExpr i -> PiType o -> m i o (Atom o)
 checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
@@ -396,7 +395,7 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
     (\v -> do
         piTy' <- injectM piTy
         fst <$> instantiatePi piTy' (Var v) )
-     \v -> withBindPat p v do
+     \v -> bindLamPat p v do
         piTy' <- injectM piTy
         (_, resultTy) <- instantiatePi piTy' (Var v)
         checkSigma body Suggest resultTy
@@ -413,31 +412,78 @@ data CaseAltIndex = ConAlt Int
   deriving (Eq, Show)
 
 checkCaseAlt :: Inferer m => RhoType o -> Type o -> UAlt i -> m i o (CaseAltIndex, Alt o)
-checkCaseAlt = undefined
+checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
+  alt <- checkCasePat pat scrutineeTy do
+    reqTy' <- injectM reqTy
+    checkRho body reqTy'
+  idx <- getCaseAltIndex pat
+  return (idx, alt)
 
-withBindPat :: (Emits o, Inferer m) => UPat i i' -> AtomName o -> m i' o a -> m i o a
-withBindPat pat var m = do
-  env <- bindPat pat var
-  extendEnv env m
+getCaseAltIndex :: Inferer m => UPat i i' -> m i o CaseAltIndex
+getCaseAltIndex = undefined
 
-bindPat :: (Emits o, Inferer m) => UPat i i' -> AtomName o -> m i o (EnvFrag Name i i' o)
-bindPat (WithSrcB pos pat) v = addSrcContext pos $ case pat of
-  UPatBinder b -> return (b @> v)
+checkCasePat :: Inferer m
+             => UPat i i'
+             -> Type o
+             -> (forall o'. (Emits o', Ext o o') => m i' o' (Atom o'))
+             -> m i o (Alt o)
+checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext' pos $ case pat of
+  UPatCon ~(InternalName conName) ps -> do
+    (dataDefName, con) <- substM conName >>= getDataCon
+    dataDef@(DataDef _ paramBs cons) <- getDataDef dataDefName
+    DataConDef _ (EmptyAbs argBs) <- return $ cons !! con
+    when (nestLength argBs /= nestLength ps) $ throw TypeErr $
+      "Unexpected number of pattern binders. Expected " ++ show (nestLength argBs)
+                                             ++ " got " ++ show (nestLength ps)
+    (params, argBs') <- inferParams (Abs paramBs $ EmptyAbs argBs)
+    constrainEq scrutineeTy $ TypeCon (dataDefName, dataDef) params
+    buildAlt argBs' \args ->
+      bindLamPats ps args $ cont
+  UPatVariant labels@(LabeledItems lmap) label p -> do
+    ty <- freshType TyKind
+    prevTys <- mapM (const $ freshType TyKind) labels
+    rest <- freshInferenceName LabeledRowKind
+    let patTypes = prevTys <> labeledSingleton label ty
+    let extPatTypes = Ext patTypes $ Just rest
+    constrainEq scrutineeTy $ VariantTy extPatTypes
+    buildUnaryAlt ty \x ->
+      bindLamPat p x cont
+  UPatVariantLift labels p -> do
+    prevTys <- mapM (const $ freshType TyKind) labels
+    rest <- freshInferenceName LabeledRowKind
+    let extPatTypes = Ext prevTys $ Just rest
+    constrainEq scrutineeTy $ VariantTy extPatTypes
+    let ty = VariantTy $ Ext NoLabeledItems $ Just rest
+    buildUnaryAlt ty \x ->
+      bindLamPat p x cont
+  _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
+
+inferParams
+  :: Inferer m
+  => Abs (Nest Binder) e o
+  -> m i o ([Type o], e o)
+inferParams _ = undefined
+
+bindLamPats :: (Emits o, Inferer m)
+            => Nest UPat i i' -> [AtomName o] -> m i' o a -> m i o a
+bindLamPats _ _ _ = undefined
+
+bindLamPat :: (Emits o, Inferer m) => UPat i i' -> AtomName o -> m i' o a -> m i o a
+bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
+  UPatBinder b -> extendEnv (b @> v) cont
   UPatUnit UnitB -> do
     ty <- getType $ Var v
     constrainEq UnitTy ty
-    return emptyEnv
+    cont
   UPatPair (PairB p1 p2) -> do
     ty <- getType $ Var v
-    _    <- fromPairType ty
+    _  <- fromPairType ty
     v' <- zonk v  -- ensure it has a pair type before unpacking
     x1 <- emit (Atom $ ProjectElt (NE.fromList [0]) v') >>= zonk
-    env1 <- bindPat p1 x1
-    extendEnv env1 do
+    bindLamPat p1 x1 do
       x2  <- emit (Atom $ ProjectElt (NE.fromList [1]) v') >>= zonk
-      env2 <- bindPat p2 x2
-      env1' <- injectM env1
-      return $ env1' <.> env2
+      bindLamPat p2 x2 do
+        cont
 
 checkAnn :: Inferer m => Maybe (UType i) -> m i o (Type o)
 checkAnn ann = case ann of

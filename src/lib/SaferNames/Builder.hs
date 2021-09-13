@@ -20,9 +20,9 @@ module SaferNames.Builder (
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
-  getDataDef, getClassDef, liftBuilderNameGenT, atomAsBlock,
+  getDataDef, getClassDef, getDataCon, liftBuilderNameGenT, atomAsBlock,
   Emits, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
-  buildAbs, buildNaryAbs, buildNewtype
+  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype
   ) where
 
 import Prelude hiding ((.), id)
@@ -334,6 +334,27 @@ buildNaryAbs
   -> m n (Abs (Nest Binder) e n)
 buildNaryAbs ty body = undefined
 
+buildAlt
+  :: Builder m
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
+  -> m n (Alt n)
+buildAlt bs body = do
+  ext1 <- idExt
+  buildNaryAbs bs \xs -> do
+    ext2 <- injectExt ext1
+    buildBlock do
+      ExtW <- injectExt ext2
+      xs' <- mapM injectM xs
+      body xs'
+
+buildUnaryAlt
+  :: Builder m
+  => Type n
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Alt n)
+buildUnaryAlt _ _ = undefined
+
 buildNewtype :: Builder m
              => SourceName
              -> EmptyAbs (Nest Binder) n
@@ -345,6 +366,9 @@ buildNewtype _ _ _ = undefined
 
 getDataDef :: Builder m => DataDefName n -> m n (DataDef n)
 getDataDef _ = undefined
+
+getDataCon :: Builder m => Name DataConNameC n -> m n (DataDefName n, idx)
+getDataCon _ = undefined
 
 getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
