@@ -158,6 +158,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     -- TODO: check leaks
     ann' <- checkAnn ann
     piTy <- case pat of
+      -- BUGGY! checkUType might produce decls
       UnderscoreUPat -> buildPi (Ignore ann') $ const $
                           (,) <$> mapM checkUEffRow arr <*> checkUType ty
       _ -> withNameHint ("pat" :: Name) $ buildPi b \x ->
@@ -563,6 +564,8 @@ checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (CaseAltIndex, Alt)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   (conIdx, patTys) <- checkCasePat pat scrutineeTy
   let (subPats, subPatTys) = unzip patTys
+  -- BUGGY! this use of patNameHint, which should just be a hint, is responsible
+  -- for carrying dependence within the binder nest.
   let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
   alt <- buildNAbs (toNest bs) \xs ->
            withBindPats (zip subPats xs) $ checkRho body reqTy
@@ -586,6 +589,7 @@ checkCasePat (WithSrc pos pat) scrutineeTy = addSrcContext' pos $ case pat of
      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                             ++ " got " ++ show (length ps)
     params <- mapM (freshType . binderType) $ toList paramBs
+    -- buggy! doesn't account for dependence between arg binders
     let argTys = applyNaryAbs (Abs paramBs $ map binderType $ toList argBs) params
     constrainEq scrutineeTy (TypeCon def params)
     return (ConAlt con, zip (toList ps) argTys)

@@ -163,6 +163,7 @@ buildAbs b f = do
   ((b', ans), decls) <- scopedDecls $ do
      v <- freshVarE UnknownBinder b
      ans <- f $ Var v
+     -- BUGGY!!!
      return (b, ans)
   return (Abs b' (decls, ans))
 
@@ -673,6 +674,8 @@ withEffects effs m = modifyAllowedEffects (const effs) m
 modifyAllowedEffects :: MonadBuilder m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = builderLocal (\(name, eff) -> (name, f eff)) m
 
+-- Buggy: this doesn't do any freshening at all. Use site had better be very
+-- careful.
 emitDecl :: MonadBuilder m => Decl -> m ()
 emitDecl decl = builderExtend (bindings, Nest decl Empty)
   where bindings = case decl of
