@@ -17,7 +17,7 @@ def solve' (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
        (x', r', p')
   xOut
 
-def chol_solve (l:LowerTriMat n Float) (b:n=>Float) : n=>Float =
+def chol_solve (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
     b' = forward_substitute l b
     u = transposeLowerToUpper l
     backward_substitute u b'
@@ -68,11 +68,11 @@ preds = map predict xtest
 
 ' # Gaussian process regression
 
-' GP regression (kriging) works in a similar way.
-Compared with kernel ridge regression, GP regression assumes Gaussian distributed prior. This, combined with the Bayes Rule, gives the variance of the prediction.
+' GP regression (kriging) works in a similar way. Compared with kernel ridge regression, GP regression assumes Gaussian distributed prior. This, combined
+with the Bayes rule, gives the variance of the prediction.
 
-' In this particular implementation, the conjugate gradient solver is replaced
-with the cholesky solver from `lib/linalg.dx` to speed up.
+' In this implementation, the conjugate gradient solver is replaced with the
+cholesky solver from `lib/linalg.dx` for efficiency.
 
 def gp_regress (kernel: a -> a -> Float) (xs: n=>a) (ys: n=>Float)
     : (a -> (Float&Float)) =
