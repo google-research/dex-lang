@@ -25,7 +25,7 @@ module SaferNames.Name (
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
   Inplace, liftInplace, runInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
-  BindsOneName (..), BindsNameList (..), NameColorRep (..),
+  BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), ListE (..), ComposeE (..),
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB,
@@ -385,27 +385,34 @@ pattern LiftB e = UnitB :> e
 -- -- === various convenience utilities ===
 
 infixr 7 @>
-class BindsOneName (b::B) (c::C) | b -> c where
+class BindsAtMostOneName (b::B) (c::C) | b -> c where
   (@>) :: b i i' -> v c o -> EnvFrag v i i' o
+
+class BindsAtMostOneName (b::B) (c::C)
+  =>  BindsOneName (b::B) (c::C) | b -> c where
   binderName :: b i i' -> Name c i'
 
 instance ProvesExt  (NameBinder c) where
 instance BindsNames (NameBinder c) where
   toScopeFrag b = singletonScope b
 
-instance BindsOneName (NameBinder c) c where
+instance BindsAtMostOneName (NameBinder c) c where
   b @> x = singletonEnv b x
+
+instance BindsOneName (NameBinder c) c where
   binderName = nameBinderName
 
-instance BindsOneName b c => BindsOneName (BinderP b ann) c where
+instance BindsAtMostOneName b c => BindsAtMostOneName (BinderP b ann) c where
   (b:>_) @> x = b @> x
+
+instance BindsOneName b c => BindsOneName (BinderP b ann) c where
   binderName (b:>_) = binderName b
 
 infixr 7 @@>
 class BindsNameList (b::B) (c::C) | b -> c where
   (@@>) :: b i i' -> [v c o] -> EnvFrag v i i' o
 
-instance BindsOneName b c => BindsNameList (Nest b) c where
+instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   (@@>) Empty [] = emptyEnv
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"

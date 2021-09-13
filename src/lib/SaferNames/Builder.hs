@@ -22,7 +22,7 @@ module SaferNames.Builder (
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   getDataDef, getClassDef, liftBuilderNameGenT, atomAsBlock,
   Emits, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
-  buildAbs, buildNaryAbs
+  buildAbs, buildNaryAbs, buildNewtype
   ) where
 
 import Prelude hiding ((.), id)
@@ -333,6 +333,13 @@ buildNaryAbs
   -> (forall l. Ext n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
 buildNaryAbs ty body = undefined
+
+buildNewtype :: Builder m
+             => SourceName
+             -> EmptyAbs (Nest Binder) n
+             -> (forall l. Ext n l => [AtomName l] -> m l (Type l))
+             -> m n (DataDef n)
+buildNewtype _ _ _ = undefined
 
 -- === builder versions of common ops ===
 

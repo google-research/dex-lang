@@ -321,21 +321,64 @@ inferUDeclTop (ULet letAnn p rhs) = inferUDeclLocal $ ULet letAnn p rhs
 inferUDeclTop _ = undefined
 
 inferDataDef :: Inferer m => UDataDef i -> m i o (DataDef o)
-inferDataDef = undefined
+inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
+  Abs paramBs' (ListE dataCons') <-
+    withNestedUBinders paramBs \_ -> do
+      dataCons' <- mapM inferDataCon dataCons
+      return $ ListE dataCons'
+  return $ DataDef tyConName paramBs' dataCons'
+
+inferDataCon :: Inferer m => (SourceName, UDataDefTrail i) -> m i o (DataConDef o)
+inferDataCon (sourceName, UDataDefTrail argBs) = do
+  argBs' <- checkUBinders (EmptyAbs argBs)
+  return $ DataConDef sourceName argBs'
 
 inferInterfaceDataDef :: Inferer m
                       => SourceName -> [SourceName]
                       -> Nest (UAnnBinder AtomNameC) i i'
                       -> [UType i'] -> [UType i']
                       -> m i o (ClassDef o)
-inferInterfaceDataDef className methodNames paramBs superclasses methods = undefined
+inferInterfaceDataDef className methodNames paramBs superclasses methods = do
+  paramBs' <- checkUBinders $ EmptyAbs paramBs
+  dictDef <- buildNewtype className paramBs' \params -> do
+    extendEnv (paramBs @@> params) do
+      superclasses' <- mapM checkUType superclasses
+      methods'      <- mapM checkUType methods
+      return $ PairTy (ProdTy superclasses') (ProdTy methods')
+  defName <- emitDataDef dictDef
+  return $ ClassDef className methodNames (defName, dictDef)
 
-withNestedBinders :: Inferer m
+emitDataDef :: Inferer m => DataDef o -> m i o (DataDefName o)
+emitDataDef = undefined
+
+withNestedUBinders :: (Inferer m, InjectableE e, HasNamesE e)
                   => Nest (UAnnBinder AtomNameC) i i'
-                  -> (forall o'. Ext o o' => Nest Binder o o' -> m i' o' a)
-                  -> m i o a
-withNestedBinders Empty cont = cont Empty
-withNestedBinders _ _ = undefined
+                  -> (forall o'. Ext o o' => [AtomName o'] -> m i' o' (e o'))
+                  -> m i o (Abs (Nest Binder) e o)
+withNestedUBinders bs cont = case bs of
+  Empty -> Abs Empty <$> cont []
+  Nest b rest -> do
+    ext1 <- idExt
+    Abs b' (Abs rest' body) <- withUBinder b \name -> do
+      ext2 <- injectExt ext1
+      withNestedUBinders rest \names -> do
+        ExtW <- injectExt ext2
+        name' <- injectM name
+        cont (name':names)
+    return $ Abs (Nest b' rest') body
+
+withUBinder :: (Inferer m, InjectableE e, HasNamesE e)
+            => UAnnBinder AtomNameC i i'
+            -> (forall o'. Ext o o' => AtomName o' -> m i' o' (e o'))
+            -> m i o (Abs Binder e o)
+withUBinder (UAnnBinder b ann) cont = do
+  ann' <- checkUType ann
+  buildAbs ann' \name -> extendEnv (b @> name) $ cont name
+
+checkUBinders :: Inferer m
+              => EmptyAbs (Nest (UAnnBinder AtomNameC)) i
+              -> m i o (EmptyAbs (Nest Binder) o)
+checkUBinders (EmptyAbs bs) = withNestedUBinders bs \_ -> return UnitE
 
 inferULam :: Inferer m => EffectRow o -> ULamExpr i -> m i o (Atom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
@@ -379,10 +422,7 @@ withBindPat pat var m = do
 
 bindPat :: (Emits o, Inferer m) => UPat i i' -> AtomName o -> m i o (EnvFrag Name i i' o)
 bindPat (WithSrcB pos pat) v = addSrcContext pos $ case pat of
-  UPatBinder b -> case b of
-    UBindSource _ -> error "shouldn't have source names left after the renaming pass"
-    UIgnore -> return emptyEnv
-    UBind b -> return (b @> v)
+  UPatBinder b -> return (b @> v)
   UPatUnit UnitB -> do
     ty <- getType $ Var v
     constrainEq UnitTy ty
@@ -419,8 +459,35 @@ checkExtLabeledRow (Ext types (Just ext)) = do
   Var ext' <- checkRho ext LabeledRowKind
   return $ Ext types' $ Just ext'
 
-inferTabCon :: Inferer m => [UExpr i] -> RequiredTy RhoType o -> m i o (Atom o)
-inferTabCon = undefined
+inferTabCon :: (Emits o, Inferer m) => [UExpr i] -> RequiredTy RhoType o -> m i o (Atom o)
+inferTabCon xs reqTy = do
+  (tabTy, xs') <- case reqTy of
+    Check Concrete tabTy@(TabTyAbs piTy) -> do
+      idx <- indices $ piArgType piTy
+      -- TODO: Check length!!
+      unless (length idx == length xs) $
+        throw TypeErr "Table type doesn't match annotation"
+      xs' <- forM (zip xs idx) \(x, i) -> do
+        (_, xTy) <- instantiatePi piTy i
+        checkOrInferRho x $ Check Concrete xTy
+      return (tabTy, xs')
+    _ -> do
+      elemTy <- case xs of
+        []    -> freshType TyKind
+        (x:_) -> getType =<< inferRho x
+      tabTy <- FixedIntRange 0 (fromIntegral $ length xs) ==> elemTy
+      case reqTy of
+        Check Suggest sTy -> addContext context $ constrainEq sTy tabTy
+          where context = "If attempting to construct a fixed-size table not " <>
+                          "indexed by 'Fin n' for some n, this error may " <>
+                          "indicate there was not enough information to infer " <>
+                          "a concrete index set; try adding an explicit " <>
+                          "annotation."
+        Infer       -> return ()
+        _           -> error "Missing case"
+      xs' <- mapM (flip checkRho elemTy) xs
+      return (tabTy, xs')
+  liftM Var $ emitZonked $ Op $ TabCon tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Inferer m => Bool -> Arrow -> Type o -> m i o (PiType o)

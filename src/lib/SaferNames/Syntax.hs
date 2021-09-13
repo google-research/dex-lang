@@ -64,7 +64,7 @@ module SaferNames.Syntax (
     pattern Pure, pattern LabeledRowKind, pattern EffKind,
     pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTy,
+    pattern TabTy, pattern TabTyAbs,
     pattern SumTy, pattern SumVal, pattern MaybeTy,
     pattern NothingAtom, pattern JustAtom,
     (-->), (?-->), (--@), (==>) ) where
@@ -409,7 +409,7 @@ data UVar (n::S) =
 
 data UBinder (c::C) (n::S) (l::S) where
   -- Only appears before renaming pass
-  UBindSource :: SourceName -> UBinder c VoidS VoidS
+  UBindSource :: SourceName -> UBinder c n n
   -- May appear before or after renaming pass
   UIgnore :: UBinder c n n
   -- The following binders only appear after the renaming pass.
@@ -812,6 +812,9 @@ pattern RawRefTy a = TC (RefType Nothing a)
 
 pattern TabTy :: Binder n l -> Type l -> Type n
 pattern TabTy i a = Pi (PiType TabArrow i Pure a)
+
+pattern TabTyAbs :: PiType n -> Type n
+pattern TabTyAbs a <- Pi a@(PiType TabArrow _ _ _)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
@@ -1449,3 +1452,12 @@ instance InjectableE UVar where
 
 instance HasNameHint (UPat n l) where
   getNameHint = undefined
+
+instance BindsAtMostOneName (UBinder c) c where
+  b @> x = case b of
+    UBindSource _ -> emptyEnv
+    UIgnore       -> emptyEnv
+    UBind b'      -> b' @> x
+
+instance BindsAtMostOneName (UAnnBinder c) c where
+  UAnnBinder b _ @> x = b @> x

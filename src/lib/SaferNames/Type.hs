@@ -14,7 +14,7 @@
 module SaferNames.Type (
   HasType (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, applyDataDefParams) where
+  instantiatePi, checkExtends, applyDataDefParams, indices) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -913,8 +913,8 @@ _indexSetConcreteSize ty = case ty of
 
 -- === built-in index set type class ===
 
-_indices :: BindingsReader m => Type n -> m n [Atom n]
-_indices = undefined
+indices :: BindingsReader m => Type n -> m n [Atom n]
+indices = undefined
 
 -- === various helpers for querying types ===
 
