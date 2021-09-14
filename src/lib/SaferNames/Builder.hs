@@ -14,12 +14,12 @@
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
   buildPureLam, BuilderT, Builder (..), Builder2,
-  runBuilderT, buildBlock, app, add, mul, sub, neg, div',
+  runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
   emitMethodType, emitSuperclass,
   makeSuperclassGetter, makeMethodGetter,
-  select, getUnpacked,
+  select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   getDataDef, getClassDef, getDataCon, liftBuilderNameGenT, atomAsBlock,
   Emits, EmitsTop, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
@@ -232,6 +232,13 @@ buildBlockAux cont = do
   ty' <- fromConstAbs $ Abs decls ty
   return (Block ty' decls $ Atom result, aux)
 
+buildBlockReduced :: Builder m
+                  => (forall l. (Emits l, Ext n l) => m l (Atom l))
+                  -> m n (Maybe (Atom n))
+buildBlockReduced cont = do
+  block <- buildBlock cont
+  tryReduceBlock block
+
 buildBlock :: Builder m
            => (forall l. (Emits l, Ext n l) => m l (Atom l))
            -> m n (Block n)
@@ -342,13 +349,13 @@ buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
 buildPureNaryLam _ _ _ = error "impossible"
 
 buildPi :: (MonadErr1 m, Builder m)
-        => Type n
+        => Arrow -> Type n
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (Type n)
-buildPi _ _ = undefined
+buildPi _ _ _ = undefined
 
 buildNonDepPi :: (MonadErr1 m, Builder m)
-              => Type n -> EffectRow n -> Type n -> m n (Type n)
+              => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
 buildNonDepPi = undefined
 
 buildAbs
@@ -586,6 +593,10 @@ getUnpacked = undefined
 --       atom' = typeReduceAtom scope atom
 --       res = map (\i -> getProjection [i] atom') [0..(len-1)]
 --   return res
+
+-- TODO: should we just make all of these return names instead of atoms?
+emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
+emitUnpacked =  undefined
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x i)

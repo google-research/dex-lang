@@ -14,7 +14,7 @@
 module SaferNames.Type (
   HasType (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, applyDataDefParams, indices) where
+  instantiatePi, checkExtends, applyDataDefParams, indices, tryReduceBlock) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -995,3 +995,8 @@ labeledRowDifference (Ext (LabeledItems items) rest)
     _ -> throw TypeErr $ "Row tail " ++ pprint subrest
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
+
+-- === reducing types ===
+
+tryReduceBlock :: BindingsReader m => Block n -> m n (Maybe (Atom n))
+tryReduceBlock = undefined

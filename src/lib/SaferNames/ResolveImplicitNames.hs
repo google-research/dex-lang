@@ -167,6 +167,14 @@ instance (HasImplicitArgNamesB b1, HasImplicitArgNamesB b2)
          => HasImplicitArgNamesB (PairB b1 b2) where
   implicitArgsB (PairB b1 b2) = implicitArgsB b1 >> implicitArgsB b2
 
+instance HasImplicitArgNamesB UnitB where
+  implicitArgsB UnitB = return ()
+
+instance (HasImplicitArgNamesB b1, HasImplicitArgNamesB b2)
+         => HasImplicitArgNamesB (EitherB b1 b2) where
+  implicitArgsB (LeftB  b) = implicitArgsB b
+  implicitArgsB (RightB b) = implicitArgsB b
+
 instance (HasImplicitArgNamesB b, HasImplicitArgNamesE e)
          => HasImplicitArgNamesE (Abs b e) where
   implicitArgsE (Abs b e) = do

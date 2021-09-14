@@ -367,6 +367,25 @@ instance SourceRenamablePat UPat' where
     UPatVariantLift labels p -> UPatVariantLift labels `fmapG` sourceRenamePat siblingNames p
     UPatTable ps -> UPatTable `fmapG` sourceRenamePat siblingNames ps
 
+instance SourceRenamablePat UnitB where
+  sourceRenamePat _ UnitB = returnG UnitB
+
+instance (SourceRenamablePat p1, SourceRenamablePat p2)
+         => SourceRenamablePat (PairB p1 p2) where
+  sourceRenamePat sibs (PairB p1 p2) =
+    sourceRenamePat sibs p1 `bindG` \p1' ->
+    sourceRenamePat sibs p2 `bindG` \p2' ->
+    returnG $ PairB p1' p2'
+
+instance (SourceRenamablePat p1, SourceRenamablePat p2)
+         => SourceRenamablePat (EitherB p1 p2) where
+  sourceRenamePat sibs (LeftB p) =
+    sourceRenamePat sibs p `bindG` \p' ->
+    returnG $ LeftB p'
+  sourceRenamePat sibs (RightB p) =
+    sourceRenamePat sibs p `bindG` \p' ->
+    returnG $ RightB p'
+
 instance SourceRenamablePat p => SourceRenamablePat (WithSrcB p) where
   sourceRenamePat sibs (WithSrcB pos pat) = PatRenamerNameGenT $ addSrcContext pos $
     runPatRenamerNameGenT $ (WithSrcB pos) `fmapG` sourceRenamePat sibs pat

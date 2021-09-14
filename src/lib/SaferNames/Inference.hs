@@ -12,13 +12,12 @@ import Prelude hiding ((.), id)
 import Control.Category
 import Control.Monad
 import Control.Monad.Except hiding (Except)
-import Control.Monad.Reader
 import Data.Foldable (toList)
-import Data.List (elemIndex, sortOn)
-import Data.Maybe (fromJust)
+import Data.List (sortOn)
 import Data.String (fromString)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
 import SaferNames.NameCore
 import SaferNames.Name
@@ -100,18 +99,13 @@ tryGetType :: (Inferer m, HasType e) => e o -> m i o (Type o)
 tryGetType = undefined
 
 getSrcCtx :: Inferer m => m i o SrcCtx
-getSrcCtx = undefined -- lift ask
+getSrcCtx = undefined
 
 addSrcContext' :: Inferer m => SrcCtx -> m i o a -> m i o a
-addSrcContext' pos m = undefined
+addSrcContext' = undefined
 
 makeReqCon :: Inferer m => Type o -> m i o SuggestionStrength
-makeReqCon _ = undefined
-
-buildAndReduceScoped :: Inferer m
-                     => (forall l. (Emits l, Ext n l) => m i l (Atom l))
-                     -> m i n (Maybe (Atom n))
-buildAndReduceScoped _ = undefined
+makeReqCon = undefined
 
 -- === actual inference pass ===
 
@@ -143,7 +137,7 @@ checkSigma expr reqCon sTy = case sTy of
 
 inferSigma :: (Emits o, Inferer m) => UExpr i -> m i o (Atom o)
 inferSigma (WithSrcE pos expr) = case expr of
-  ULam lam@(ULamExpr ImplicitArrow pat body) ->
+  ULam lam@(ULamExpr ImplicitArrow _ _) ->
     addSrcContext' pos $ inferULam Pure lam
   _ -> inferRho (WithSrcE pos expr)
 
@@ -204,13 +198,13 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     infTy <- getType =<< zonk f'
     piTy  <- addSrcContext' (srcPos f) $ fromPiType True arr infTy
     considerNonDepPiType piTy >>= \case
-      Just (arr, argTy, effs, resultTy) -> do
+      Just (_, argTy, effs, _) -> do
         x' <- checkSigma x Suggest argTy
         addEffects effs
         appVal <- emitZonked $ App f' x'
         instantiateSigma (Var appVal) >>= matchRequirement
       Nothing -> do
-        maybeX <- buildAndReduceScoped do
+        maybeX <- buildBlockReduced do
           argTy' <- injectM $ piArgType piTy
           checkSigma x Suggest argTy'
         case maybeX of
@@ -230,13 +224,18 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       UPatBinder UIgnore -> do
         effs' <- checkUEffRow effs
         ty' <- checkUType ty
-        buildNonDepPi ann' effs' ty'
-      -- TODO: won't type check unless we check no decls are produced
-      -- _ -> buildPi ann' \v ->
-      --   bindLamPat (WithSrcB pos' pat) v do
-      --     effs' <- checkUEffRow effs
-      --     ty' <- checkUType ty
-      --     return (effs', ty')
+        buildNonDepPi arr ann' effs' ty'
+      _ -> buildPi arr ann' \v -> do
+        Abs decls (PairE effs' ty') <- buildScoped do
+          v' <- injectM v
+          bindLamPat (WithSrcB pos' pat) v' do
+            effs' <- checkUEffRow effs
+            ty'   <- checkUType   ty
+            return $ PairE effs' ty'
+        case decls of
+          Empty -> return (effs', ty')
+          -- TODO: make an acceptable user-facing error
+          _ -> error "pi type shouldn't require decls to normalize"
     matchRequirement piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
@@ -336,7 +335,7 @@ nthCaseAltIdx ty i = case ty of
     Nothing -> error "alt index out of range"
     where
       pairedIndices :: [(Int, CaseAltIndex)]
-      pairedIndices = enumerate $ [VariantAlt l i | (l, i, _) <- toList (withLabels types)]
+      pairedIndices = enumerate $ [VariantAlt l idx | (l, idx, _) <- toList (withLabels types)]
   _ -> error $ "can't pattern-match on: " <> pprint ty
 
 buildMonomorphicCase :: (Emits n, Builder m) => [IndexedAlt n] -> Atom n -> Type n -> m n (Atom n)
@@ -416,7 +415,7 @@ inferUVar = \case
     ~(DataDefBinding dataDef)         <- lookupBindings dataDefName
     return $ DataCon (pprint v) (dataDefName, dataDef) [] idx []
   UClassVar v -> do
-    ~(ClassBinding (ClassDef classSoruceName _ dataDef)) <- lookupBindings v
+    ~(ClassBinding (ClassDef _ _ dataDef)) <- lookupBindings v
     return $ TypeCon dataDef []
   UMethodVar v -> do
     ~(MethodBinding _ _ getter) <- lookupBindings v
@@ -445,6 +444,7 @@ inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods m
     JustB instanceName -> do
       instanceVal <- emitDecl (getNameHint instanceName) PlainLet (Atom instanceDict)
       extendEnv (instanceName @> instanceVal) cont
+    _ -> error "impossible"
 inferUDeclLocal _ _ = error "not a local decl"
 
 inferUDeclTop ::  (EmitsTop o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
@@ -521,6 +521,7 @@ checkUBinders :: Inferer m
               => EmptyAbs (Nest (UAnnBinder AtomNameC)) i
               -> m i o (EmptyAbs (Nest Binder) o)
 checkUBinders (EmptyAbs bs) = withNestedUBinders bs \_ -> return UnitE
+checkUBinders _ = error "impossible"
 
 inferULam :: Inferer m => EffectRow o -> ULamExpr i -> m i o (Atom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
@@ -594,10 +595,27 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
   return (i, rhs')
 
 checkUEffRow :: Inferer m => UEffectRow i -> m i o (EffectRow o)
-checkUEffRow = undefined
+checkUEffRow (EffectRow effs t) = do
+   effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
+   t' <- forM t \(InternalName v) -> do
+            v' <- substM v
+            constrainVarTy v' EffKind
+            return v'
+   return $ EffectRow effs' t'
 
 checkUEff :: Inferer m => UEffect i -> m i o (Effect o)
-checkUEff = undefined
+checkUEff eff = case eff of
+  RWSEffect rws ~(InternalName region) -> do
+    region' <- substM region
+    constrainVarTy region' TyKind
+    return $ RWSEffect rws region'
+  ExceptionEffect -> return ExceptionEffect
+  IOEffect        -> return IOEffect
+
+constrainVarTy :: Inferer m => AtomName o -> Type o -> m i o ()
+constrainVarTy v tyReq = do
+  varTy <- getType $ Var v
+  constrainEq tyReq varTy
 
 data CaseAltIndex = ConAlt Int
                   | VariantAlt Label Int
@@ -613,7 +631,18 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   return $ IndexedAlt idx alt
 
 getCaseAltIndex :: Inferer m => UPat i i' -> m i o CaseAltIndex
-getCaseAltIndex = undefined
+getCaseAltIndex (WithSrcB _ pat) = case pat of
+  UPatCon ~(InternalName conName) _ -> do
+    (_, con) <- substM conName >>= getDataCon
+    return $ ConAlt con
+  UPatVariant (LabeledItems lmap) label _ -> do
+    let i = case M.lookup label lmap of
+              Just prev -> length prev
+              Nothing -> 0
+    return (VariantAlt label i)
+  UPatVariantLift labels _ -> do
+    return (VariantTailAlt labels)
+  _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 checkCasePat :: Inferer m
              => UPat i i'
@@ -632,7 +661,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext' pos $ case pat
     constrainEq scrutineeTy $ TypeCon (dataDefName, dataDef) params
     buildAlt argBs' \args ->
       bindLamPats ps args $ cont
-  UPatVariant labels@(LabeledItems lmap) label p -> do
+  UPatVariant labels label p -> do
     ty <- freshType TyKind
     prevTys <- mapM (const $ freshType TyKind) labels
     rest <- freshInferenceName LabeledRowKind
@@ -651,22 +680,26 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext' pos $ case pat
       bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-inferParams
-  :: Inferer m
-  => Abs (Nest Binder) e o
-  -> m i o ([Type o], e o)
-inferParams _ = undefined
+inferParams :: (Inferer m, InjectableE e, HasNamesE e)
+            => Abs (Nest Binder) e o -> m i o ([Type o], e o)
+inferParams (Abs Empty body) = return ([], body)
+inferParams (Abs (Nest (b:>ty) bs) body) = do
+  x <- freshInferenceName ty
+  rest <- applyAbs (Abs b (Abs bs body)) x
+  (xs, body') <- inferParams rest
+  return (Var x : xs, body')
 
 bindLamPats :: (Emits o, Inferer m)
             => Nest UPat i i' -> [AtomName o] -> m i' o a -> m i o a
-bindLamPats _ _ _ = undefined
+bindLamPats Empty [] cont = cont
+bindLamPats (Nest p ps) (x:xs) cont = bindLamPat p x $ bindLamPats ps xs cont
+bindLamPats _ _ _ = error "mismatched number of args"
 
 bindLamPat :: (Emits o, Inferer m) => UPat i i' -> AtomName o -> m i' o a -> m i o a
 bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
   UPatBinder b -> extendEnv (b @> v) cont
   UPatUnit UnitB -> do
-    ty <- getType $ Var v
-    constrainEq UnitTy ty
+    constrainVarTy v UnitTy
     cont
   UPatPair (PairB p1 p2) -> do
     ty <- getType $ Var v
@@ -677,6 +710,52 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- emit (Atom $ ProjectElt (NE.fromList [1]) v') >>= zonk
       bindLamPat p2 x2 do
         cont
+  UPatCon ~(InternalName conName) ps -> do
+    (dataDefName, _) <- getDataCon =<< substM conName
+    dataDef@(DataDef _ paramBs cons) <- getDataDef dataDefName
+    case cons of
+      [DataConDef _ (EmptyAbs argBs)] -> do
+        when (nestLength argBs /= nestLength ps) $ throw TypeErr $
+          "Unexpected number of pattern binders. Expected " ++ show (nestLength argBs)
+                                                 ++ " got " ++ show (nestLength ps)
+        (params, UnitE) <- inferParams (Abs paramBs UnitE)
+        constrainVarTy v $ TypeCon (dataDefName, dataDef) params
+        xs <- zonk (Var v) >>= emitUnpacked >>= mapM zonk
+        bindLamPats ps xs cont
+      _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
+  UPatRecord (Ext labels Nothing) (PairB pats (RightB UnitB)) -> do
+    expectedTypes <- mapM (const $ freshType TyKind) labels
+    constrainVarTy v (RecordTy (NoExt expectedTypes))
+    xs <- zonk (Var v) >>= emitUnpacked >>= mapM zonk
+    bindLamPats pats xs cont
+  UPatRecord (Ext labels (Just tailLabel)) (PairB pats (LeftB tailPat)) -> do
+    wantedTypes <- mapM (const $ freshType TyKind) labels
+    restType <- freshInferenceName LabeledRowKind
+    constrainVarTy v (RecordTy $ Ext wantedTypes $ Just restType)
+    -- Split the record.
+    wantedTypes' <- mapM zonk wantedTypes
+    v' <- zonk $ Var v
+    split <- emit $ Op $ RecordSplit wantedTypes' v'
+    [left, right] <- emitUnpacked $ Var split
+    leftVals <- emitUnpacked $ Var left
+    bindLamPats pats leftVals $
+      bindLamPat tailPat right $
+        cont
+  UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
+  UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
+  UPatTable ps -> do
+    elemTy <- freshType TyKind
+    let idxTy = FixedIntRange 0 (fromIntegral $ nestLength ps)
+    ty <- getType $ Var v
+    tabTy <- idxTy ==> elemTy
+    constrainEq ty tabTy
+    idxs <- indices idxTy
+    unless (length idxs == nestLength ps) $
+      throw TypeErr $ "Incorrect length of table pattern: table index set has "
+                      <> pprint (length idxs) <> " elements but there are "
+                      <> pprint (nestLength ps) <> " patterns."
+    xs <- forM idxs \i -> emitZonked $ App (Var v) i
+    bindLamPats ps xs cont
 
 checkAnn :: Inferer m => Maybe (UType i) -> m i o (Type o)
 checkAnn ann = case ann of
@@ -684,7 +763,11 @@ checkAnn ann = case ann of
   Nothing -> freshType TyKind
 
 checkUType :: Inferer m => UType i -> m i o (Type o)
-checkUType = undefined
+checkUType ty = do
+  reduced <- buildBlockReduced $ withAllowedEffects Pure $ checkRho ty TyKind
+  case reduced of
+    Just ty' -> return $ ty'
+    Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
 
 checkExtLabeledRow :: (Emits o, Inferer m)
                    => ExtLabeledItems (UExpr i) (UExpr i)

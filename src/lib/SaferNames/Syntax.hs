@@ -512,10 +512,8 @@ data UPat' (n::S) (l::S) =
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
- -- The ExtLabeledItems and the Nest are meant to be parallel.  If the
- -- ExtLabeledItems has a Just at the end, that corresponds to the
- -- last item in the given Nest.
- | UPatRecord (ExtLabeledItems () ()) (Nest UPat n l)     -- {a=x, b=y, ...rest}
+ -- The ExtLabeledItems and the PairB are parallel, constrained by the parser.
+ | UPatRecord (ExtLabeledItems () ()) (PairB (Nest UPat) (MaybeB UPat) n l) -- {a=x, b=y, ...rest}
  | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
  | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
  | UPatTable (Nest UPat n l)
@@ -1469,3 +1467,5 @@ instance Pretty (UBinder c n l) where
   pretty (UBindSource v) = pretty v
   pretty UIgnore         = "_"
   pretty (UBind v)       = pretty v
+
+instance Pretty (UType n)
