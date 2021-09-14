@@ -239,21 +239,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Infer -> freshType TyKind
       Check _ req -> return req
     alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
-    scrutTy' <- zonk scrutTy
     scrut'' <- zonk scrut'
-    case scrutTy' of
-      TypeCon (_, def) params -> do
-        conDefs <- applyDataDefParams def params
-        altsSorted <- forM (enumerate conDefs) \(i, DataConDef _ bs) -> do
-          case lookup (ConAlt i) alts' of
-            Nothing  ->
-              buildNaryAbs bs \_ -> do
-                reqTy'' <- injectM reqTy'
-                return $ Block reqTy'' Empty $ Op $ ThrowError reqTy''
-            Just alt -> return alt
-        liftM Var $ emit $ Case scrut'' altsSorted reqTy'
-      VariantTy _ -> undefined
-      _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy'
+    buildSortedCase scrut'' alts' reqTy'
   UTabCon xs -> inferTabCon xs reqTy >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -313,6 +300,98 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         Check _ req -> do
           ty <- getType x
           constrainEq req ty
+
+-- === sorting case alternatives ===
+
+data IndexedAlt n = IndexedAlt CaseAltIndex (Alt n)
+
+instance InjectableE IndexedAlt where
+  injectionProofE = undefined
+
+buildNthOrderedAlt :: (Emits n, Builder m)
+                   => [IndexedAlt n] -> Type n -> Type n -> Int -> [AtomName n]
+                   -> m n (Atom n)
+buildNthOrderedAlt alts scrutTy resultTy i vs = do
+  case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
+    Nothing -> do
+      resultTy' <- injectM resultTy
+      emitOp $ ThrowError resultTy'
+    Just alt -> applyNaryAbs alt vs >>= emitBlock
+
+-- converts from the ordinal index used in the core IR to the more complicated
+-- `CaseAltIndex` used in the surface IR.
+nthCaseAltIdx :: Type n -> Int -> CaseAltIndex
+nthCaseAltIdx ty i = case ty of
+  TypeCon _ _ -> ConAlt i
+  VariantTy (NoExt types) -> case lookup i pairedIndices of
+    Just idx -> idx
+    Nothing -> error "alt index out of range"
+    where
+      pairedIndices :: [(Int, CaseAltIndex)]
+      pairedIndices = enumerate $ [VariantAlt l i | (l, i, _) <- toList (withLabels types)]
+  _ -> error $ "can't pattern-match on: " <> pprint ty
+
+buildMonomorphicCase :: (Emits n, Builder m) => [IndexedAlt n] -> Atom n -> Type n -> m n (Atom n)
+buildMonomorphicCase alts scrut resultTy = do
+  scrutTy <- getType scrut
+  buildCase scrut resultTy \i vs -> do
+    ListE alts' <- injectM $ ListE alts
+    scrutTy'    <- injectM scrutTy
+    resultTy'   <- injectM resultTy
+    buildNthOrderedAlt alts' scrutTy' resultTy' i vs
+
+buildSortedCase :: (MonadErr1 m, Builder m, Emits n)
+                 => Atom n -> [IndexedAlt n] -> Type n
+                 -> m n (Atom n)
+buildSortedCase scrut alts resultTy = do
+  scrutTy <- getType scrut
+  case scrutTy of
+    TypeCon _ _ -> buildMonomorphicCase alts scrut resultTy
+    VariantTy (Ext types tailName) -> do
+      case filter isVariantTailAlt alts of
+        [] -> case tailName of
+          Nothing ->
+            -- We already know the type exactly, so just emit a case.
+            buildMonomorphicCase alts scrut resultTy
+          Just _ -> do
+            -- Split off the types we don't know about, mapping them to a
+            -- runtime error.
+            buildSplitCase types scrut resultTy
+              (\v -> do ListE alts' <- injectM $ ListE alts
+                        resultTy'   <- injectM resultTy
+                        buildMonomorphicCase alts' (Var v) resultTy')
+              (\_ -> do resultTy' <- injectM resultTy
+                        emitOp $ ThrowError resultTy')
+        [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
+            -- Split off the types skipped by the tail pattern.
+            let splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+            let left = LabeledItems $ M.intersectionWith splitLeft
+                        (fromLabeledItems types) skippedItems
+            checkNoTailOverlaps alts left
+            buildSplitCase left scrut resultTy
+              (\v -> do ListE alts' <- injectM $ ListE alts
+                        resultTy'   <- injectM resultTy
+                        buildMonomorphicCase alts' (Var v) resultTy')
+              (\v -> do tailAlt' <- injectM tailAlt
+                        applyNaryAbs tailAlt' [v] >>= emitBlock )
+        _ -> throw TypeErr "Can't specify more than one variant tail pattern."
+    _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
+
+-- Make sure all of the alternatives are exclusive with the tail pattern (could
+-- technically allow overlap but this is simpler). Split based on the tail
+-- pattern's skipped types.
+checkNoTailOverlaps :: MonadErr1 m => [IndexedAlt n] -> LabeledItems (Type n) ->  m n ()
+checkNoTailOverlaps alts (LabeledItems tys) = do
+  forM_ alts \(IndexedAlt (VariantAlt label i) _) ->
+    case M.lookup label tys of
+      Just tys' | i <= length tys' -> return ()
+      _ -> throw TypeErr "Variant explicit alternatives overlap with tail pattern."
+
+isVariantTailAlt :: IndexedAlt n -> Bool
+isVariantTailAlt (IndexedAlt (VariantTailAlt _) _) = True
+isVariantTailAlt _ = False
+
+-- ===
 
 inferUVar :: Inferer m => UVar o -> m i o (Atom o)
 inferUVar = \case
@@ -440,13 +519,13 @@ data CaseAltIndex = ConAlt Int
                   | VariantTailAlt (LabeledItems ())
   deriving (Eq, Show)
 
-checkCaseAlt :: Inferer m => RhoType o -> Type o -> UAlt i -> m i o (CaseAltIndex, Alt o)
+checkCaseAlt :: Inferer m => RhoType o -> Type o -> UAlt i -> m i o (IndexedAlt o)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   alt <- checkCasePat pat scrutineeTy do
     reqTy' <- injectM reqTy
     checkRho body reqTy'
   idx <- getCaseAltIndex pat
-  return (idx, alt)
+  return $ IndexedAlt idx alt
 
 getCaseAltIndex :: Inferer m => UPat i i' -> m i o CaseAltIndex
 getCaseAltIndex = undefined

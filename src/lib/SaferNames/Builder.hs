@@ -23,7 +23,9 @@ module SaferNames.Builder (
   getDataDef, getClassDef, getDataCon, liftBuilderNameGenT, atomAsBlock,
   Emits, EmitsTop, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype,
-  emitDataDef, emitClassDef, emitDataConName, emitTyConName
+  emitDataDef, emitClassDef, emitDataConName, emitTyConName,
+  buildCase, buildSplitCase,
+  emitBlock
   ) where
 
 import Prelude hiding ((.), id)
@@ -65,6 +67,9 @@ emit expr = emitDecl NoHint PlainLet expr
 
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
+
+emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
+emitBlock = undefined
 
 -- === BuilderNameGenT ===
 
@@ -388,6 +393,27 @@ buildNewtype :: Builder m
              -> (forall l. Ext n l => [AtomName l] -> m l (Type l))
              -> m n (DataDef n)
 buildNewtype _ _ _ = undefined
+
+-- TODO: consider a version with nonempty list of alternatives where we figure
+-- out the result type from one of the alts rather than providing it explicitly
+buildCase :: (Emits n, Builder m)
+          => Atom n -> Type n
+          -> (forall l. (Emits l, Ext n l) => Int -> [AtomName l] -> m l (Atom l))
+          -> m n (Atom n)
+buildCase _ _ _ = undefined
+
+buildSplitCase :: (Emits n, Builder m)
+               => LabeledItems (Type n) -> Atom n -> Type n
+               -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+               -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+               -> m n (Atom n)
+buildSplitCase tys scrut resultTy match fallback = do
+  split <- emitOp $ VariantSplit tys scrut
+  buildCase split resultTy \i [v] ->
+    case i of
+      0 -> match v
+      1 -> fallback v
+      _ -> error "should only have two cases"
 
 -- === builder versions of common ops ===
 
