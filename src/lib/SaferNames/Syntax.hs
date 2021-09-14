@@ -35,7 +35,7 @@ module SaferNames.Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    IRVariant (..), SubstVal (..), AtomName, DataDefName, AtomSubstVal,
+    IRVariant (..), SubstVal (..), AtomName, DataDefName, ClassName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
@@ -157,6 +157,7 @@ data Decl n l = Let LetAnn (Binder n l) (Expr n)
 
 type AtomName    = Name AtomNameC
 type DataDefName = Name DataDefNameC
+type ClassName   = Name ClassNameC
 
 type Binder = BinderP (NameBinder AtomNameC) Type
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
@@ -477,10 +478,10 @@ data UDecl (n::S) (l::S) where
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UDecl n l
   UInstance
-    :: Nest UPatAnnArrow n l'              -- dictionary args (i.e. conditions)
-    ->   SourceNameOr (Name ClassNameC) l' -- class variable
-    ->   [UExpr l']                        -- class parameters
-    ->   [UMethodDef l']                   -- method definitions
+    :: SourceNameOr (Name ClassNameC) n  -- class name
+    -> Nest UPatAnnArrow n l'            -- dictionary args (i.e. conditions)
+    ->   [UExpr l']                      -- class parameters
+    ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
     -> UDecl n l
@@ -1449,6 +1450,9 @@ instance InjectableE UVar where
 instance HasNameHint (UPat n l) where
   getNameHint = undefined
 
+instance HasNameHint (UBinder c n l) where
+  getNameHint = undefined
+
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
     UBindSource _ -> emptyEnv
@@ -1460,3 +1464,8 @@ instance BindsAtMostOneName (UAnnBinder c) c where
 
 instance InjectableE UModule where
   injectionProofE = undefined
+
+instance Pretty (UBinder c n l) where
+  pretty (UBindSource v) = pretty v
+  pretty UIgnore         = "_"
+  pretty (UBind v)       = pretty v

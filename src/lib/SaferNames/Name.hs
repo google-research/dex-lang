@@ -49,7 +49,7 @@ module SaferNames.Name (
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
-  splitNestAt, nestLength, binderAnn,
+  splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt
   ) where
@@ -374,6 +374,8 @@ type MaybeB b = EitherB b UnitB
 pattern JustB :: b n l -> MaybeB b n l
 pattern JustB b = LeftB b
 
+-- TODO: this doesn't seem to force n==n, e.g. see where we have to explicitly
+-- write `RightB UnitB` in inference rule for instances.
 pattern NothingB :: MaybeB b n n
 pattern NothingB = RightB UnitB
 
@@ -469,6 +471,10 @@ traverseEnvFrag f frag = liftM fromEnvPairs $
 nestLength :: Nest b n l -> Int
 nestLength Empty = 0
 nestLength (Nest _ rest) = 1 + nestLength rest
+
+nestToList :: (forall n' l'. b n' l' -> a) -> Nest b n l -> [a]
+nestToList _ Empty = []
+nestToList f (Nest b rest) = f b : nestToList f rest
 
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs

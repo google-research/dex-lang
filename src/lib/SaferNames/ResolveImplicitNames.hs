@@ -27,9 +27,9 @@ resolveImplicitTopDecl (ULet ann (UPatAnn pat (Just ty)) expr) =
     implicitArgs = findImplicitArgNames ty
     ty'   = foldr addImplicitPiArg  ty   implicitArgs
     expr' = foldr addImplicitLamArg expr implicitArgs
-resolveImplicitTopDecl (UInstance argBinders className params methods maybeName) =
-  UInstance argBinders' className params methods maybeName where
-    implicitArgs = findImplicitArgNames $ Abs argBinders (PairE className $ ListE params)
+resolveImplicitTopDecl (UInstance className argBinders params methods maybeName) =
+  UInstance className argBinders' params methods maybeName where
+    implicitArgs = findImplicitArgNames $ PairE className $ Abs argBinders (ListE params)
     argBinders' = foldr Nest argBinders $ map nameAsImplicitBinder implicitArgs
 resolveImplicitTopDecl decl = decl
 

@@ -308,7 +308,7 @@ instanceDef isNamed = do
   let argBinders = explicitArgs
                  ++ [UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just c)) ClassArrow | c <- constraints]
   methods <- onePerLine instanceMethod
-  return $ UInstance (toNestParsed argBinders) (fromString className) params methods name
+  return $ UInstance (fromString className) (toNestParsed argBinders) params methods name
 
 instanceMethod :: Parser (UMethodDef VoidS)
 instanceMethod = do

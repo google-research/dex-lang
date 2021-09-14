@@ -14,8 +14,9 @@ import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable (toList)
-import Data.List (elemIndex)
+import Data.List (elemIndex, sortOn)
 import Data.Maybe (fromJust)
+import Data.String (fromString)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
@@ -28,22 +29,29 @@ import SaferNames.PPrint ()
 
 import LabeledItems
 import Err
-import Util (enumerate)
+import Util
 
 inferModule :: Bindings n -> UModule n -> Except (Module n)
 inferModule bindings uModule = runInfererM bindings do
   UModule decl sourceMap <- injectM uModule
-  case decl of
-    ULet _ _ _ -> do
-      Abs decls sourceMap' <-
-        buildScoped $ inferUDeclLocal decl $ substM sourceMap
-      return $ Module Typed decls $
-        EvaluatedModule emptyEnv mempty sourceMap'
-    _ -> do
+  if isTopDecl decl
+    then do
       Abs (RecEnvFrag bindingsFrag) sourceMap' <-
         buildScopedTop $ inferUDeclTop decl $ substM sourceMap
       return $ Module Typed id $
         EvaluatedModule bindingsFrag mempty sourceMap'
+    else do
+      Abs decls sourceMap' <-
+        buildScoped $ inferUDeclLocal decl $ substM sourceMap
+      return $ Module Typed decls $
+        EvaluatedModule emptyEnv mempty sourceMap'
+
+isTopDecl :: UDecl n l -> Bool
+isTopDecl decl = case decl of
+  ULet         _ _ _     -> False
+  UDataDefDecl _ _ _     -> True
+  UInterface   _ _ _ _ _ -> True
+  UInstance    _ _ _ _ _ -> False
 
 -- === Inferer monad ===
 
@@ -425,10 +433,37 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   expr <- zonk $ Atom val
   var <- emitDecl (getNameHint p) letAnn expr
   bindLamPat p var cont
+inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods maybeName) cont = do
+  className' <- substM className
+  instanceDict <- checkInstanceArgs argBinders do
+                    className'' <- injectM className'
+                    checkInstanceBody className'' params methods
+  case maybeName of
+    RightB UnitB  -> do
+      void $ emitDecl "instance" InstanceLet $ Atom instanceDict
+      cont
+    JustB instanceName -> do
+      instanceVal <- emitDecl (getNameHint instanceName) PlainLet (Atom instanceDict)
+      extendEnv (instanceName @> instanceVal) cont
 inferUDeclLocal _ _ = error "not a local decl"
 
 inferUDeclTop ::  (EmitsTop o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
-inferUDeclTop = undefined
+inferUDeclTop (UDataDefDecl def tc dcs) cont = do
+  def' <- inferDataDef def >>= emitDataDef
+  tc' <- emitTyConName def'
+  dcs' <- mapM (emitDataConName def') [0..(nestLength dcs - 1)]
+  extendEnv (tc @> tc' <.> dcs @@> dcs') cont
+inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) cont = do
+  let classPrettyName   = fromString (pprint className) :: SourceName
+  let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
+  classDef <- inferInterfaceDataDef classPrettyName methodPrettyNames
+                paramBs superclasses methodTys
+  className' <- emitClassDef classDef
+  mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
+  methodNames' <- forM (enumerate methodPrettyNames) \(i, prettyName) ->
+                    emitMethodType (getNameHint prettyName) className' i
+  extendEnv (className @> className' <.> methodNames @@> methodNames') cont
+inferUDeclTop _ _ = error "not a top decl"
 
 inferDataDef :: Inferer m => UDataDef i -> m i o (DataDef o)
 inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
@@ -507,6 +542,56 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
         piTy' <- injectM piTy
         (_, resultTy) <- instantiatePi piTy' (Var v)
         checkSigma body Suggest resultTy
+
+checkInstanceArgs
+  :: (Emits o, Inferer m)
+  => Nest UPatAnnArrow i i'
+  -> (forall o'. (Emits o', Ext o o') =>  m i' o' (Atom o'))
+  -> m i o (Atom o)
+checkInstanceArgs Empty cont = cont
+checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
+  case arrow of
+    ImplicitArrow -> return ()
+    ClassArrow    -> return ()
+    _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
+  argTy <- checkAnn ann
+  ext1 <- idExt
+  buildLam arrow argTy Pure \v -> do
+    ext2 <- injectExt ext1
+    bindLamPat p v $
+      checkInstanceArgs rest do
+        ExtW <- injectExt ext2
+        cont
+
+checkInstanceBody :: (Emits o, Inferer m)
+                  => ClassName o
+                  -> [UType i]
+                  -> [UMethodDef i]
+                  -> m i o (Atom o)
+checkInstanceBody className params methods = do
+  ClassDef _ methodNames def <- getClassDef className
+  params' <- mapM checkUType params
+  Just dictTy <- fromNewtype =<< applyDataDefParams (snd def) params'
+  PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
+  let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
+  methodsChecked <- mapM (checkMethodDef className methodTys) methods
+  let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
+  forM_ (repeated idxs) \i ->
+    throw TypeErr $ "Duplicate method: " ++ pprint (methodNames!!i)
+  forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
+    throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
+  return $ DataCon "instance-dict" def params' 0 [PairVal (ProdVal superclassHoles)
+                                                          (ProdVal methods')]
+
+checkMethodDef :: (Emits o, Inferer m)
+               => ClassName o -> [Type o] -> UMethodDef i -> m i o (Int, Atom o)
+checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
+  MethodBinding className' i _ <- substM v >>= lookupBindings
+  when (className /= className') $
+    throw TypeErr $ pprint v ++ " is not a method of " ++ pprint className
+  let methodTy = methodTys !! i
+  rhs' <- checkSigma rhs Suggest methodTy
+  return (i, rhs')
 
 checkUEffRow :: Inferer m => UEffectRow i -> m i o (EffectRow o)
 checkUEffRow = undefined

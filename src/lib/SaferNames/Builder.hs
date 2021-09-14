@@ -17,12 +17,13 @@ module SaferNames.Builder (
   runBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
+  emitMethodType, emitSuperclass,
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   getDataDef, getClassDef, getDataCon, liftBuilderNameGenT, atomAsBlock,
   Emits, EmitsTop, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
-  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype,
+  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock
@@ -394,6 +395,11 @@ buildNewtype :: Builder m
              -> m n (DataDef n)
 buildNewtype _ _ _ = undefined
 
+fromNewtype :: BindingsReader m
+            => [DataConDef n]
+            -> m n (Maybe (Type n))
+fromNewtype = undefined
+
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, Builder m)
@@ -431,6 +437,36 @@ emitDataConName dataDefName conIdx = do
   let (DataConDef name _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx
 
+emitSuperclass :: (EmitsTop n, Builder m)
+               => ClassName n -> Int -> m n (Name SuperclassNameC n)
+emitSuperclass dataDef idx = do
+  getter <- makeSuperclassGetter dataDef idx
+  emitBinding NoHint $ SuperclassBinding dataDef idx getter
+
+makeSuperclassGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
+makeSuperclassGetter classDefName methodIdx = do
+  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
+  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+    defName' <- injectM defName
+    def'     <- injectM def
+    buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
+      return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
+
+emitMethodType :: (EmitsTop n, Builder m)
+               => NameHint -> ClassName n -> Int -> m n (Name MethodNameC n)
+emitMethodType hint classDef idx = do
+  getter <- makeMethodGetter classDef idx
+  emitBinding hint $ MethodBinding classDef idx getter
+
+makeMethodGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
+makeMethodGetter classDefName methodIdx = do
+  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
+  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+    defName' <- injectM defName
+    def'     <- injectM def
+    buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
+      return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
+
 emitTyConName :: (EmitsTop n, Builder m) => DataDefName n -> m n (Name TyConNameC n)
 emitTyConName dataDefName =
   emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName
@@ -445,24 +481,6 @@ getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
   ~(ClassBinding classDef) <- lookupBindings classDefName
   return classDef
-
-makeMethodGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
-makeMethodGetter classDefName methodIdx = do
-  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
-  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
-    defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
-
-makeSuperclassGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
-makeSuperclassGetter classDefName methodIdx = do
-  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
-  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
-    defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
 recGetHead :: BindingsReader m => Label -> Atom n -> m n (Atom n)
 recGetHead l x = do

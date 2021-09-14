@@ -232,10 +232,11 @@ instance SourceRenamableB UDecl where
       runRenamerNameGenT $ sourceRenameUBinder className `bindG` \className' ->
         sourceRenameUBinderNest methodNames `bindG` \methodNames' ->
         returnG $ UInterface paramBs' superclasses' methodTys' className' methodNames'
-    UInstance conditions className params methodDefs instanceName -> do
-      Abs conditions' (PairE (PairE className' (ListE params')) (ListE methodDefs')) <-
-        sourceRenameE $ Abs conditions (PairE (PairE className $ ListE params) $ ListE methodDefs)
-      runRenamerNameGenT $ UInstance conditions' className' params' methodDefs' `fmapG` sourceRenameB instanceName
+    UInstance className conditions params methodDefs instanceName -> do
+      className' <- sourceRenameE className
+      Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
+        sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
+      runRenamerNameGenT $ UInstance className' conditions' params' methodDefs' `fmapG` sourceRenameB instanceName
 
 instance SourceRenamableB UnitB where
   sourceRenameB UnitB = returnG UnitB
