@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
 module SaferNames.Type (
+  HasType (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType) where
 
 import Prelude hiding (id)
@@ -45,19 +46,19 @@ checkModule env m =
     runBindingsReaderT (fromTopBindings env) $
       checkTypes m
 
-checkTypes :: (BindingsReader m, MonadErr1 m, CheckableE e)
+checkTypes :: (BindingsReader m, MonadErr1 m, InjectableE e, CheckableE e)
            => e n -> m n ()
 checkTypes e = do
-  Distinct scope <- getScope
-  bindings <- getBindings
-  liftEither $ runTyperT (scope, bindings) $ void $ checkE e
+  Distinct <- getDistinct
+  WithBindings bindings scope e' <- addBindings e
+  liftEither $ runTyperT (scope, bindings) $ void $ checkE e'
 
 getType :: (BindingsReader m, HasType e)
            => e n -> m n (Type n)
 getType e = do
-  Distinct scope <- getScope
-  bindings <- getBindings
-  return $ runIgnoreChecks $ runTyperT (scope, bindings) $ getTypeE e
+  Distinct <- getDistinct
+  WithBindings bindings scope e' <- addBindings e
+  injectM $ runIgnoreChecks $ runTyperT (scope, bindings) $ getTypeE e'
 
 -- === the type checking/querying monad ===
 
@@ -65,7 +66,7 @@ getType e = do
 -- already be a superclass, transitively, through both MonadErr2 and
 -- MonadAtomSubst.
 class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter Name m
-      , BindingsReader2 m, BindingsExtender2 m)
+      , BindingsGetter2 m, BindingsExtender2 m)
      => Typer (m::MonadKind2) where
   declareEffs :: EffectRow o -> m i o ()
   extendAllowedEffect :: Effect o -> m i o () -> m i o ()
@@ -93,7 +94,8 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
         (BindingsReaderT m)) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail
            , EnvGetter Name, EnvReader Name
-           , ScopeReader, BindingsReader, BindingsExtender)
+           , ScopeReader, ScopeGetter, BindingsReader
+           , BindingsGetter, BindingsExtender)
 
 deriving instance MonadError e m => MonadError e (TyperT m i o)
 
@@ -120,7 +122,7 @@ instance (MonadFail m, MonadErr m) => Typer (TyperT m) where
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class SubstE Name e => HasType (e::E) where
+class (InjectableE e, SubstE Name e) => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -185,8 +187,11 @@ instance CheckableE SynthCandidates where
 
 instance CheckableB (RecEnvFrag Binding) where
   checkB recEnv cont = do
-    WithScopeSubstFrag _ envFrag recEnv' <-
-      liftScopedEnvReader $ runSubstGenT $ substB recEnv
+    WithScopeSubstFrag _ envFrag recEnv' <- do
+      Distinct <- getDistinct
+      env <- getEnv
+      scope <- getScope
+      return $ runScopedEnvReader scope env $ runSubstGenT $ substB recEnv
     void $ extendBindings (boundBindings recEnv') $ dropSubst $
       traverseEnvFrag checkE (fromRecEnvFrag recEnv')
     extendBindings (boundBindings recEnv') $
@@ -710,13 +715,13 @@ buildNaryPiType :: Typer m
                 -> m i o (Type o)
 buildNaryPiType _ Empty cont = cont []
 buildNaryPiType arr (Nest b rest) cont = do
-  p1 <- getScopeProxy
+  ext1 <- idExt
   refreshBinders b \b' -> do
-    p2 <- getScopeProxy
+    ext2 <- injectExt ext1
     Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \params -> do
-      p3 <- getScopeProxy
+      ExtW <- injectExt ext2
       param <- Var <$> injectM (binderName b')
-      withComposeExts p1 p2 p3 $ cont (param : params)
+      cont (param : params)
 
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase e alts resultTy = do
