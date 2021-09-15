@@ -16,7 +16,7 @@
 {-# OPTIONS_GHC -w #-}
 
 module SaferNames.Bridge
-  ( TopStateEx (..), JointTopState (..), initTopState
+  ( TopStateEx (..), JointTopState (..), emptyTopStateEx
   , toSafe, fromSafe, extendTopStateD
   , HasSafeVersionE (..), HasSafeVersionB (..))  where
 
@@ -72,16 +72,16 @@ data JointTopState n = JointTopState
   , topToSafeMap   :: ToSafeNameMap n
   , topFromSafeMap :: FromSafeNameMap n }
 
-initTopState :: TopStateEx
-initTopState = TopStateEx $ JointTopState
-    D.emptyTopState
+emptyTopStateEx :: D.ProtoludeScope -> TopStateEx
+emptyTopStateEx proto = TopStateEx $ JointTopState
+    D.emptyTopState proto
     S.emptyTopState
     (ToSafeNameMap mempty)
     (FromSafeNameMap emptyEnv)
 
 extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
-  let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
+  let D.TopState bindingsD scsD sourceMapD protoD = topStateD jointTopState
   case topStateS jointTopState of
     S.TopState (TopBindings bindingsS) scsS sourceMapS -> do
       -- ensure the internal bindings are fresh wrt top bindings
@@ -96,7 +96,7 @@ extendTopStateD jointTopState evaluated = do
              bindingsSInj  <- injectM bindingsS
              scsSInj       <- injectM scsS
              return $ TopStateEx $ JointTopState
-               (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
+               (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD') protoD)
                (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
                            (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
                toSafeMap'
@@ -141,15 +141,15 @@ data TopStateEx where
 data JointTopState (n::S) = JointTopState
   { topStateD   :: D.TopState }
 
-initTopState :: TopStateEx
-initTopState = TopStateEx $ (JointTopState D.emptyTopState :: JointTopState VoidS)
+emptyTopStateEx :: D.ProtoludeScope -> TopStateEx
+emptyTopStateEx proto = TopStateEx $ (JointTopState (D.emptyTopState proto) :: JointTopState VoidS)
 
 extendTopStateD :: forall n. Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
-  let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
+  let D.TopState bindingsD scsD sourceMapD protoD = topStateD jointTopState
   let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
   TopStateEx $
-    ((JointTopState (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD')))
+    ((JointTopState (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD') protoD))
          :: JointTopState n)
 
 instance Pretty (JointTopState n) where

@@ -1839,8 +1839,8 @@ def padTo (m:Type) (x:a) (xs:n=>a) : (m=>a) =
       False -> x
 
 def idivCeil (x:Int) (y:Int) : Int = idiv x y + BToI (rem x y /= 0)
-def intdiv2 (x:Int) : Int = %shr x 1
-def intpow2 (power:Int) : Int = %shl 1 power
+def intdiv2 (x:Int) : Int = %shr x (1 : Int)
+def intpow2 (power:Int) : Int = %shl (1 : Int) power
 def isOdd  (x:Int) : Bool = rem x 2 == 1
 def isEven (x:Int) : Bool = rem x 2 == 0
 
@@ -1861,7 +1861,7 @@ def intlog2 (x:Int) : Int =
         if x >= (get cmpRef)
           then
             ansRef := (get ansRef) + 1
-            cmpRef := %shl (get cmpRef) 1
+            cmpRef := %shl (get cmpRef) (1 : Int)
             True
           else
             False

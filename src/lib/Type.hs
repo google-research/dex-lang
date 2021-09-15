@@ -16,7 +16,8 @@ module Type (
   isPure, functionEffs, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
   checkIntBaseType, checkFloatBaseType, withBinder, isDependent, checkExtends,
   indexSetConcreteSize, traceCheckM, traceCheck, projectLength,
-  typeReduceBlock, typeReduceAtom, typeReduceExpr, oneEffect, nameToAtom) where
+  typeReduceBlock, typeReduceLocals, typeReduceExpr, typeReduceAtom,
+  oneEffect, nameToAtom) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -695,11 +696,18 @@ typeCheckOp op = case op of
   TabCon ty xs -> do
     ty |: TyKind
     TabTyAbs a <- return ty
-    let idxs = indicesNoIO $ absArgType a
-    mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
-    assertEq (length idxs) (length xs) "Index set size mismatch"
+    checkingEnv <- ask
+    case checkingEnv of
+      SkipChecks   -> return ()
+      CheckWith  _ -> do
+        let idxs = indicesNoIO $ absArgType a
+        mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
+        assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
-  ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
+  ScalarBinOp binop x y -> do
+    typeEnv <- ask
+    let doCheck = case typeEnv of SkipChecks -> False; CheckWith _ -> True
+    bindM2 (checkBinOp doCheck binop) (typeCheck x) (typeCheck y)
   ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do
     p |: (BaseTy $ Scalar Word8Type)
@@ -971,10 +979,13 @@ checkOpArgType argTy x =
     SomeUIntArg  -> assertEq x Word8Ty ""
     SomeFloatArg -> checkFloatBaseType True x
 
-checkBinOp :: Fallible m => BinOp -> Type -> Type -> m Type
-checkBinOp op x y = do
-  checkOpArgType argTy x
-  assertEq x y ""
+checkBinOp :: Fallible m => Bool -> BinOp -> Type -> Type -> m Type
+checkBinOp doCheck op x y = do
+  case doCheck of
+    True -> do
+      checkOpArgType argTy x
+      assertEq x y ""
+    False -> return ()
   return $ case retTy of
     SameReturn -> x
     Word8Return -> BaseTy $ Scalar Word8Type
@@ -1078,12 +1089,20 @@ projectLength ty = case ty of
 -- are equivalent. If they fail (return Nothing), this means we cannot use
 -- the value as a type in the IR.
 
-typeReduceBlock :: Scope -> Block -> Maybe Atom
-typeReduceBlock scope (Block decls result) = do
-  let localScope = foldMap boundVars decls
-  ans <- typeReduceExpr (scope <> localScope) result
-  [] <- return $ toList $ localScope `envIntersect` freeVars ans
-  return ans
+typeReduceBlock :: Scope -> Block -> Either (Scope, Atom) Atom
+typeReduceBlock scope (Block decls result) =
+  typeReduceLocals scope (foldMap boundVars decls) result
+
+typeReduceLocals :: Scope -> Scope -> Expr -> Either (Scope, Atom) Atom
+typeReduceLocals scope localScope result =
+  case typeReduceExpr (scope <> localScope) result of
+    Just ans -> case null $ localScope `envIntersect` freeVars ans of
+      True  -> Right ans
+      False -> Left (localScope, ans)
+    Nothing  -> Left (localScope <> v @> AtomBinderInfo rty (LetBound PlainLet result), Var v)
+      where
+        rty = getType result
+        v = (genFresh "unred" (scope <> localScope)) :> rty
 
 -- XXX: This should handle all terms of type Type. Otherwise type equality checking
 --      will get broken.
@@ -1092,14 +1111,16 @@ typeReduceAtom scope x = case x of
   Var (Name InferenceName _ _ :> _) -> x
   Var v -> case scope ! v of
     -- TODO: worry about effects!
-    AtomBinderInfo _ (LetBound PlainLet expr) -> fromMaybe x $ typeReduceExpr scope expr
+    AtomBinderInfo _ (LetBound _ expr) -> fromMaybe x $ typeReduceExpr scope expr
     _ -> x
   TC con -> TC $ fmap (typeReduceAtom scope) con
   Pi (Abs b (arr, ty)) ->
-    Pi $ Abs b (arr, typeReduceAtom (scope <> (fmap (flip AtomBinderInfo PiBound) $ binderAsEnv b)) ty)
+    Pi $ Abs b' (arr, typeReduceAtom (scope <> (fmap (flip AtomBinderInfo PiBound) $ binderAsEnv b')) ty)
+    where b' = fmap (typeReduceAtom scope) b
   TypeCon (name, def) params -> TypeCon (name, reduceDataDef def) (fmap rec params)
   RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext
   VariantTy (Ext tys ext) -> VariantTy $ Ext (fmap rec tys) ext
+  ProjectElt path v -> getProjection (toList path) $ typeReduceAtom scope $ Var v
   ACase _ _ _ -> error "Not implemented"
   _ -> x
   where
@@ -1124,11 +1145,21 @@ typeReduceExpr scope expr = case expr of
     let f' = typeReduceAtom scope f
     let x' = typeReduceAtom scope x
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    case f' of
-      Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow ->
-        typeReduceBlock scope $ subst (b@>SubstVal x', scope) block
-      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
-      _ -> Nothing
+    case x' of
+      -- Class dict holes shouldn't ever be substituted because they can cause
+      -- issues due to Syntax.getProjection in Atom's substitution rule.
+      Con (ClassDictHole _ _) -> Nothing
+      _ -> case f' of
+        Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow || arr == ClassArrow ->
+          -- TODO: We might want to make this more fine grained?
+          case typeReduceBlock scope $ subst (b@>SubstVal x', scope) block of
+            Left  _   -> Nothing
+            Right ans -> Just ans
+        TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
+        _ -> Nothing
+  -- TODO: Other casts?
+  -- TODO: Make sure that this wraps correctly
+  Op (CastOp Int32Ty (Con (Lit (Int64Lit v)))) -> Just $ Con $ Lit $ Int32Lit $ fromIntegral v
   _ -> Nothing
 
 

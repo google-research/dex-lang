@@ -590,6 +590,10 @@ instance Pretty AnyBinderInfo where
     ImpBound             -> "Imp name"
     TrulyUnknownBinder   -> "<unknown binder (really)>"
 
+instance Pretty a => Pretty (SubstVal a) where
+  pretty (SubstVal x) = "subst with" <+> p x
+  pretty (Rename   n) = "rename to" <+> p n
+
 instance Pretty DataDef where
   pretty (DataDef name bs cons) =
     "data" <+> p name <+> p bs <> hardline <> prettyLines cons

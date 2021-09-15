@@ -1481,7 +1481,7 @@ impInstrTypes instr = case instr of
 
 checkImpBinOp :: Fallible m => BinOp -> IType -> IType -> m IType
 checkImpBinOp op x y = do
-  retTy <- checkBinOp op (BaseTy x) (BaseTy y)
+  retTy <- checkBinOp True op (BaseTy x) (BaseTy y)
   case retTy of
     BaseTy bt -> return bt
     _         -> throw CompilerErr $ "Unexpected BinOp return type: " ++ pprint retTy

@@ -42,28 +42,13 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 > 3.
 
 :p 1.0 + 1
-> Type error:
-> Expected: Float32
->   Actual: Int32
->
-> :p 1.0 + 1
->          ^
+> 2.
 
 :p 1 + (1.0 + 2.0)
-> Type error:
-> Expected: Int32
->   Actual: Float32
->
-> :p 1 + (1.0 + 2.0)
->         ^^^^^^^^^
+> 4.
 
 :p 1.0 + (2 + 3)
-> Type error:
-> Expected: Float32
->   Actual: Int32
->
-> :p 1.0 + (2 + 3)
->           ^^^^^
+> 6.
 
 :p x + x
 > Error: variable not in scope: x
@@ -153,32 +138,36 @@ myPair = (1, 2.3)
   (x,y,z)
 > (1, (2, 3))
 
-:p
-  ((x,y),z) = (1,2,3)
-  ((x,y),z)
-> Type error:
-> Expected: (a & b)
->   Actual: Int32
-> (Solving for: [a:Type, b:Type])
->
->   ((x,y),z) = (1,2,3)
->     ^^^
+-- XXX: This is an ambiguous type error with overloaded literals
+-- TODO: Reenable once we have reasonable error messages for ambiguous types
+-- :p
+--   ((x,y),z) = (1,2,3)
+--   ((x,y),z)
+-- > Type error:
+-- > Expected: (a & b)
+-- >   Actual: Int32
+-- > (Solving for: [a:Type, b:Type])
+-- >
+-- >   ((x,y),z) = (1,2,3)
+-- >     ^^^
 
 :p
   (x,(y,z)) = (1,2,3)
   (x,(y,z))
 > (1, (2, 3))
 
-:p
-  (x,y) = 1
-  (x,y)
-> Type error:
-> Expected: (a & b)
->   Actual: Int32
-> (Solving for: [a:Type, b:Type])
->
->   (x,y) = 1
->    ^^^
+-- XXX: This is an ambiguous type error with overloaded literals
+-- TODO: Reenable once we have reasonable error messages for ambiguous types
+-- :p
+--   (x,y) = 1
+--   (x,y)
+-- > Type error:
+-- > Expected: (a & b)
+-- >   Actual: Int32
+-- > (Solving for: [a:Type, b:Type])
+-- >
+-- >   (x,y) = 1
+-- >    ^^^
 
 :p
   yieldState [1,2,3] \xsRef.
@@ -263,11 +252,7 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 > (1, 2)
 
 :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
-> Type error:
-> Expected: ((Fin a & Fin 2) => Int32)
->   Actual: ((Fin 4) => Int32)
-> (Solving for: [a:Int32])
-> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+> Type error:Failed to infer the index set of an array literal. Please try adding a type annotation.
 >
 > :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
 >    ^^^^^^^^^^^^^
@@ -280,13 +265,10 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p
   [a, b] = [1, 2, 3]
   (a, b)
-> Type error:
-> Expected: ((Fin 3) => Int32)
->   Actual: ((Fin 2) => a)
-> (Solving for: [a:Type])
+> Type error:Table literal has 3 elements, but its inferred index set (((Fin 2) => Int32)) has a size of 2
 >
 >   [a, b] = [1, 2, 3]
->   ^^^^^^^
+>            ^^^^^^^^^
 
 :p
   [[a, _], [_, d]] = [[1, 2], [3, 4]]

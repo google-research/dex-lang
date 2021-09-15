@@ -3,7 +3,7 @@
 '`Iso a b` is the type of an isomorphism between `a` and `b`.
 
 :t MkIso
-> ((a:Type) ?-> (b:Type) ?-> (tmp2:{bwd: b -> a & fwd: a -> b}) -> Iso a b)
+> ((a:Type) ?-> (b:Type) ?-> (tmp8:{bwd: b -> a & fwd: a -> b}) -> Iso a b)
 
 'This is a normal ADT, and you can construct your own isomorphisms.
 

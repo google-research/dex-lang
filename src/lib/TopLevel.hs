@@ -30,6 +30,7 @@ import Data.Store (Store)
 import GHC.Generics (Generic)
 import System.FilePath
 import System.Console.Haskeline -- for MonadException
+import Debug.Trace
 
 import Paths_dex  (getDataFileName)
 
@@ -127,6 +128,54 @@ runPassesM bench opts env m = do
       (bench, opts, (S.Distinct, env))
 
 -- ======
+
+initTopState :: TopStateEx
+initTopState = case emptyTopStateEx protolude of
+  TopStateEx empty -> extendTopStateD empty protoludeModule
+  where
+    protoludeModule :: EvaluatedModule
+    protoludeModule = case null decls of
+      True  -> EvaluatedModule bindings scs sourceMap
+      False -> error "Unexpected decls in protolude!"
+
+    ((sourceMap, protolude), ((bindings, scs), decls)) = runBuilder mempty mempty do
+      -- interface FromInteger a
+      --   fromInteger : Int -> a
+      let a = "a" :> TyKind
+      let fromIntegerDataDef =
+            makeClassDataDef "FromInteger" (toNest [Bind a]) []
+              [ Int64Ty --> Var a ]
+      fromIntegerNamedData <- (,fromIntegerDataDef) <$> emitDataDef fromIntegerDataDef
+      fromIntegerIface <- emitClassDef $
+        ClassDef fromIntegerNamedData ["fromInteger"]
+      fromIntegerMethod <- emitMethodType [False] fromIntegerIface 0
+
+      let fromIntegerInstance fromIntegerImpl = do
+            implLam <- buildLam (Ignore Int64Ty) PureArrow fromIntegerImpl
+            let FunTy _ _ resultTy = getType implLam
+            let dict = DataCon fromIntegerNamedData [resultTy] 0
+                  [PairVal (ProdVal []) (ProdVal [implLam])]
+            void $ emitBinding $ AtomBinderInfo (TypeCon fromIntegerNamedData [resultTy]) $
+              LetBound InstanceLet (Atom dict)
+
+      -- instance FromInteger Int64
+      fromIntegerInstance return
+      -- instance FromInteger Int32
+      fromIntegerInstance $ emitOp . CastOp Int32Ty
+      -- instance FromInteger Float64
+      fromIntegerInstance $ emitOp . CastOp (BaseTy $ Scalar Float64Type)
+      -- instance FromInteger Float32
+      fromIntegerInstance $ emitOp . CastOp (BaseTy $ Scalar Float32Type)
+
+      let source = SourceMap $ M.fromList
+            [ ("FromInteger", SrcClassName fromIntegerIface)
+            , ("fromInteger", SrcMethodName fromIntegerMethod)
+            ]
+      let scope = ProtoludeScope
+            { protoludeFromIntegerIface  = fromIntegerIface
+            , protoludeFromIntegerMethod = fromIntegerMethod
+            }
+      return (source, scope)
 
 evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
@@ -300,7 +349,7 @@ evalUModuleVal v m = do
 
 lookupSourceName :: Fallible m => TopStateEx -> SourceName -> m AnyBinderInfo
 lookupSourceName (TopStateEx topState) v =
-  let D.TopState bindings _ (SourceMap sourceMap) = topStateD topState
+  let D.TopState bindings _ (SourceMap sourceMap) _ = topStateD topState
   in case M.lookup v sourceMap of
     Just name ->
       case envLookup bindings name of
@@ -314,11 +363,11 @@ lookupSourceName (TopStateEx topState) v =
 evalUModule :: MonadPasses m => SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
   (S.Distinct, topState) <- getTopState
-  let D.TopState bindings synthCandidates sourceMap = topStateD topState
+  let D.TopState bindings synthCandidates sourceMap protolude = topStateD topState
   logPass Parse sourceModule
   renamed <- renameSourceNames bindings sourceMap sourceModule
   logPass RenamePass renamed
-  typed <- liftExcept $ inferModule bindings renamed
+  typed <- liftExcept $ inferModule bindings synthCandidates renamed protolude
   -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
   -- safer names system while we're staging it in.
   checkPass TypePass typed
