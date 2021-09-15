@@ -46,6 +46,7 @@ import SaferNames.PPrint ()
 
 import Err
 import LabeledItems
+import Util (enumerate)
 
 class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
@@ -317,7 +318,7 @@ buildLam
   -> EffectRow n
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildLam arr ty effBuilder body = undefined
+buildLam arr ty eff body = buildDepEffLam arr ty (const $ injectM eff) body
 
 buildDepEffLam
   :: Builder m
@@ -326,7 +327,8 @@ buildDepEffLam
   -> (forall l. (         Ext n l) => AtomName l -> m l (EffectRow l))
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildDepEffLam arr ty effBuilder body = undefined
+buildDepEffLam arr ty effBuilder body =
+  fst <$> buildLamGeneral arr ty effBuilder (\v -> (,()) <$> body v)
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
@@ -352,11 +354,20 @@ buildPi :: (MonadErr1 m, Builder m)
         => Arrow -> Type n
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (Type n)
-buildPi _ _ _ = undefined
+buildPi arr ty body = do
+  ab <- withFreshAtomBinder NoHint ty PiBound \v -> do
+    withAllowedEffects Pure do
+      (effs, resultTy) <- body v
+      return $ PairE effs resultTy
+  Abs b (PairE effs resultTy) <- return ab
+  return $ Pi $ PiType arr b effs resultTy
 
 buildNonDepPi :: (MonadErr1 m, Builder m)
               => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
-buildNonDepPi = undefined
+buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
+  resultTy' <- injectM resultTy
+  effs'     <- injectM effs
+  return (effs', resultTy')
 
 buildAbs
   :: (Builder m, InjectableE e, HasNamesE e)
@@ -367,12 +378,32 @@ buildAbs ty body = do
   withFreshAtomBinder NoHint ty MiscBound \v -> do
     body v
 
+singletonBinder :: Builder m => Type n -> m n (EmptyAbs Binder n)
+singletonBinder ty = buildAbs ty \_ -> return UnitE
+
+singletonBinderNest :: Builder m => Type n -> m n (EmptyAbs (Nest Binder) n)
+singletonBinderNest ty = do
+  EmptyAbs b <- singletonBinder ty
+  return $ EmptyAbs (Nest b Empty)
+
 buildNaryAbs
   :: (Builder m, InjectableE e, HasNamesE e)
   => EmptyAbs (Nest Binder) n
   -> (forall l. Ext n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
-buildNaryAbs ty body = undefined
+buildNaryAbs (EmptyAbs Empty) body = Abs Empty <$> body []
+buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
+  ext1 <- idExt
+  Abs b' (Abs bs' body') <-
+    buildAbs ty \v -> do
+      ext2 <- injectExt ext1
+      ab <- injectM $ Abs b (EmptyAbs bs)
+      bs' <- applyAbs ab v
+      buildNaryAbs bs' \vs -> do
+        ExtW <- injectExt ext2
+        v' <- injectM v
+        body $ v' : vs
+  return $ Abs (Nest b' bs') body'
 
 buildAlt
   :: Builder m
@@ -393,19 +424,25 @@ buildUnaryAlt
   => Type n
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
-buildUnaryAlt _ _ = undefined
+buildUnaryAlt ty body = do
+  bs <- singletonBinderNest ty
+  buildAlt bs \[v] -> body v
 
 buildNewtype :: Builder m
              => SourceName
              -> EmptyAbs (Nest Binder) n
              -> (forall l. Ext n l => [AtomName l] -> m l (Type l))
              -> m n (DataDef n)
-buildNewtype _ _ _ = undefined
+buildNewtype name paramBs body = do
+  Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
+    ty <- body params
+    singletonBinderNest ty
+  return $ DataDef name paramBs' [DataConDef ("mk" <> name) argBs]
 
-fromNewtype :: BindingsReader m
-            => [DataConDef n]
-            -> m n (Maybe (Type n))
-fromNewtype = undefined
+fromNewtype :: [DataConDef n]
+            -> Maybe (Type n)
+fromNewtype [DataConDef _ (EmptyAbs (Nest (_:>ty) Empty))] = Just ty
+fromNewtype _ = Nothing
 
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
@@ -413,7 +450,18 @@ buildCase :: (Emits n, Builder m)
           => Atom n -> Type n
           -> (forall l. (Emits l, Ext n l) => Int -> [AtomName l] -> m l (Atom l))
           -> m n (Atom n)
-buildCase _ _ _ = undefined
+buildCase scrut resultTy indexedAltBody = do
+  ext1 <- idExt
+  scrutTy <- getType scrut
+  altsBinderTys <- caseAltsBinderTys scrutTy
+  alts <- forM (enumerate altsBinderTys) \(i, bs) -> do
+    buildNaryAbs bs \xs -> do
+      ext2 <- injectExt ext1
+      buildBlock do
+        ExtW <- injectExt ext2
+        ListE xs' <- injectM $ ListE xs
+        indexedAltBody i xs'
+  liftM Var $ emit $ Case scrut alts resultTy
 
 buildSplitCase :: (Emits n, Builder m)
                => LabeledItems (Type n) -> Atom n -> Type n
@@ -479,10 +527,14 @@ emitTyConName dataDefName =
   emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName
 
 getDataDef :: Builder m => DataDefName n -> m n (DataDef n)
-getDataDef _ = undefined
+getDataDef v = do
+  DataDefBinding def <- lookupBindings v
+  return def
 
-getDataCon :: Builder m => Name DataConNameC n -> m n (DataDefName n, idx)
-getDataCon _ = undefined
+getDataCon :: Builder m => Name DataConNameC n -> m n (DataDefName n, Int)
+getDataCon v = do
+  DataConBinding defName idx <- lookupBindings v
+  return (defName, idx)
 
 getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do

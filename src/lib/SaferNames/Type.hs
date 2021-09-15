@@ -14,7 +14,8 @@
 module SaferNames.Type (
   HasType (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, applyDataDefParams, indices, tryReduceBlock) where
+  instantiatePi, checkExtends, applyDataDefParams, indices, tryReduceBlock,
+  caseAltsBinderTys) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -730,22 +731,25 @@ buildNaryPiType arr (Nest b rest) cont = do
       cont (param : params)
 
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
-checkCase e alts resultTy = do
+checkCase scrut alts resultTy = do
   resultTy' <- substM resultTy
-  ety <- getTypeE e
-  case ety of
-    TypeCon (defName, _) params -> do
-      DataDefBinding def <- lookupBindings defName
-      cons <- applyDataDefParams def params
-      forMZipped_ cons alts \(DataConDef _ bs') alt ->
-        checkAlt resultTy' bs' alt
-    VariantTy (NoExt types) -> do
-      bs <- mapM typeAsBinderNest $ toList types
-      forMZipped_ bs alts $ checkAlt resultTy'
-    VariantTy _ -> throw CompilerErr
-      "Can't pattern-match partially-known variants"
-    _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
+  scrutTy <- getTypeE scrut
+  altsBinderTys <- caseAltsBinderTys scrutTy
+  forMZipped_ alts altsBinderTys \alt bs ->
+    checkAlt resultTy' bs alt
   return resultTy'
+
+caseAltsBinderTys :: (MonadFail1 m, BindingsReader m)
+                  => Type n -> m n [EmptyAbs (Nest Binder) n]
+caseAltsBinderTys ty = case ty of
+  TypeCon (defName, _) params -> do
+    DataDefBinding def <- lookupBindings defName
+    cons <- applyDataDefParams def params
+    return [bs | DataConDef _ bs <- cons]
+  VariantTy (NoExt types) -> do
+    mapM typeAsBinderNest $ toList types
+  VariantTy _ -> fail "Can't pattern-match partially-known variants"
+  _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
 checkDataConRefBindings :: Typer m
                         => EmptyAbs (Nest Binder) o

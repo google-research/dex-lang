@@ -572,7 +572,7 @@ checkInstanceBody :: (Emits o, Inferer m)
 checkInstanceBody className params methods = do
   ClassDef _ methodNames def <- getClassDef className
   params' <- mapM checkUType params
-  Just dictTy <- fromNewtype =<< applyDataDefParams (snd def) params'
+  Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params'
   PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
   let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
   methodsChecked <- mapM (checkMethodDef className methodTys) methods
@@ -728,7 +728,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     constrainVarTy v (RecordTy (NoExt expectedTypes))
     xs <- zonk (Var v) >>= emitUnpacked >>= mapM zonk
     bindLamPats pats xs cont
-  UPatRecord (Ext labels (Just tailLabel)) (PairB pats (LeftB tailPat)) -> do
+  UPatRecord (Ext labels (Just ())) (PairB pats (LeftB tailPat)) -> do
     wantedTypes <- mapM (const $ freshType TyKind) labels
     restType <- freshInferenceName LabeledRowKind
     constrainVarTy v (RecordTy $ Ext wantedTypes $ Just restType)
@@ -741,6 +741,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     bindLamPats pats leftVals $
       bindLamPat tailPat right $
         cont
+  UPatRecord _ _ -> error "mismatched labels and patterns (should be ruled out by the parser)"
   UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
