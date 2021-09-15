@@ -57,11 +57,13 @@ module Syntax (
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
+    ProtoludeScope (..),
     pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
     pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
     pattern IntLitExpr, pattern FloatLitExpr,
+    pattern Int32Ty, pattern Int64Ty,
     pattern UnitTy, pattern PairTy,
     pattern ProdTy, pattern ProdVal,
     pattern SumTy, pattern SumVal,
@@ -211,10 +213,11 @@ data EvaluatedModule =
 data TopState = TopState
   { topBindings        :: Bindings
   , topSynthCandidates :: SynthCandidates
-  , topSourceMap       :: SourceMap }
+  , topSourceMap       :: SourceMap
+  , topProtolude       :: ProtoludeScope }
   deriving (Show, Generic)
 
-emptyTopState :: TopState
+emptyTopState :: ProtoludeScope -> TopState
 emptyTopState = TopState mempty mempty mempty
 
 emptyEvaluatedModule :: EvaluatedModule
@@ -656,6 +659,15 @@ ptrSize = 8
 
 vectorWidth :: Int
 vectorWidth = 4
+
+-- === protolude ===
+
+data ProtoludeScope = ProtoludeScope
+  { protoludeFromIntegerIface  :: Name
+  , protoludeFromIntegerMethod :: Name
+  }
+  deriving (Show, Eq, Generic)
+
 
 -- === some handy monoids ===
 
@@ -1419,7 +1431,7 @@ substExtLabeledItemsTail env (Just v) = case envLookup env (v:>()) of
 getProjection :: [Int] -> Atom -> Atom
 getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
-  Var v -> ProjectElt (NE.fromList [i]) v
+  Var v               -> ProjectElt (NE.fromList [i]) v
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ xs    -> xs !! i
   Record items        -> toList items !! i
@@ -1507,7 +1519,7 @@ applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
   (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
   (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
-  _ -> error "Expected integer atoms"
+  _ -> error $ "Expected integer atoms, got: " ++ show x ++ " and " ++ show y
 
 applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom -> Atom -> Atom
 applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
@@ -1657,6 +1669,12 @@ pattern TabVal v b = Lam (Abs v (TabArrow, b))
 
 pattern TabValA :: Binder -> Atom -> Atom
 pattern TabValA v a = Lam (Abs v (TabArrow, (Block Empty (Atom a))))
+
+pattern Int32Ty :: Type
+pattern Int32Ty = BaseTy (Scalar Int32Type)
+
+pattern Int64Ty :: Type
+pattern Int64Ty = BaseTy (Scalar Int64Type)
 
 isTabTy :: Type -> Bool
 isTabTy (TabTy _ _) = True
@@ -1860,6 +1878,7 @@ instance Store DataConRefBinding
 instance Store SourceMap
 instance Store SynthCandidates
 instance Store SourceNameDef
+instance Store ProtoludeScope
 instance Store TopState
 
 instance IsString UVar where

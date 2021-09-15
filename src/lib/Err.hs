@@ -12,7 +12,7 @@
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
             Fallible (..), FallibleM (..), HardFailM (..),
-            runHardFail, throw, throwIf,
+            runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
@@ -170,6 +170,9 @@ instance FallibleApplicative HardFailM where
 
 throw :: Fallible m => ErrType -> String -> m a
 throw errTy s = throwErrs $ Errs [Err errTy mempty s]
+
+throwErr :: Fallible m => Err -> m a
+throwErr err = throwErrs $ Errs [err]
 
 throwIf :: Fallible m => Bool -> ErrType -> String -> m ()
 throwIf True  e s = throw e s

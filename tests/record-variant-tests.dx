@@ -154,9 +154,9 @@ def getTwoFoosAndABar (rest : Fields)?->
   ({b=b, a=a1, a=a2}) = {a=1, b=2}
   (a1, a2, b)
 > Type error:
-> Expected: {a: a & a: b & b: c}
->   Actual: {a: Int32 & b: Int32}
-> (Solving for: [a:Type, b:Type, c:Type])
+> Expected: {a: c & a: d & b: e}
+>   Actual: {a: a & b: b}
+> (Solving for: [a:Type, b:Type, c:Type, d:Type, e:Type])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^

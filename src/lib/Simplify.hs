@@ -473,6 +473,8 @@ simplifyOp op = case op of
   PrimEffect ref (MExtend f) -> dropSub $ do
     ~(f', Nothing) <- simplifyLam f
     emitOp $ PrimEffect ref $ MExtend f'
+  -- TODO: Make sure that fromIntegral wraps in the same way as Dex
+  CastOp Int32Ty (Con (Lit (Int64Lit val))) -> return $ Con $ Lit $ Int32Lit $ fromIntegral val
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom

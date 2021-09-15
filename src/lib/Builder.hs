@@ -10,7 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
+module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux, buildPi,
                 getAllowedEffects, withEffects, modifyAllowedEffects,
                 buildLam, BuilderT, Builder, MonadBuilder, buildScoped, runBuilderT,
                 runSubstBuilder, runBuilder, getScope, getSynthCandidates,
@@ -39,7 +39,7 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 clampPositive, buildNAbs, buildNAbsAux, buildNestedLam,
                 transformModuleAsBlock, dropSub, appReduceTraversalDef,
                 indexSetSizeE, indexToIntE, intToIndexE, freshVarE,
-                catMaybesE, runMaybeWhile) where
+                catMaybesE, runMaybeWhile, makeClassDataDef) where
 
 import Control.Applicative
 import Control.Monad
@@ -151,8 +151,8 @@ buildPi b f = do
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   let block = wrapDecls decls ans
   case typeReduceBlock scope block of
-    Just piTy -> return piTy
-    Nothing -> throw CompilerErr $
+    Right piTy -> return piTy
+    Left _ -> throw CompilerErr $
       "Unexpected irreducible decls in pi type: " ++ pprint decls
 
 buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
@@ -1114,3 +1114,8 @@ runMaybeWhile lam = do
   emitIf hadError
     (return $ NothingAtom UnitTy)
     (return $ JustAtom    UnitTy UnitVal)
+
+makeClassDataDef :: SourceName -> Nest Binder -> [Type] -> [Type] -> DataDef
+makeClassDataDef className params superclasses methods =
+  DataDef className params [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+  where dictContents = PairTy (ProdTy superclasses) (ProdTy methods)

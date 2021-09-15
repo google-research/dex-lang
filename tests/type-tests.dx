@@ -99,22 +99,13 @@ xr = map IToF arr
 > ((Fin 3) => Int32)
 
 :t [1, [2]]
-> Type error:
-> Expected: Int32
->   Actual: ((Fin 1) => Int32)
-> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
->
-> :t [1, [2]]
->        ^^^
+> Type error:Couldn't synthesize a class dictionary for: (FromInteger ((Fin 1) => Int32))
 
 :t [[1, 2], [3, 4]]
 > ((Fin 2) => (Fin 2) => Int32)
 
 :t [[1, 2], [3]]
-> Type error:
-> Expected: ((Fin 2) => Int32)
->   Actual: ((Fin 1) => Int32)
-> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+> Type error:Table literal has 1 elements, but its inferred index set (((Fin 2) => Int32)) has a size of 2
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -218,12 +209,7 @@ g : a -> a = \x. x
 :t
    f = \x:Float. x
    f 1
-> Type error:
-> Expected: Float32
->   Actual: Int32
->
->    f 1
->      ^
+> Float32
 
 g1 : (a -> Int) -> (a -> Int) = \x. x
 
@@ -396,3 +382,29 @@ c = [1, 2]
     y
   f (1,2)
 > 2
+
+-- Tests for type inference of table literals
+
+def mkEmpty (a:Type) : (Fin 0)=>a = []
+
+:t [0.0, 1.0]
+> ((Fin 2) => Float32)
+:t [[0.0], [1.0]]
+> ((Fin 2) => (Fin 1) => Float32)
+:t [0.0, 1.0] : (Fin 2)=>Float
+> ((Fin 2) => Float32)
+:t [0.0, 1.0] : ((Fin 1) & (Fin 2))=>Float
+> ((Fin 1 & Fin 2) => Float32)
+
+:t [[0.0], [1.0, 2.0]] : i:(Fin 2)=>(..i)=>Float
+> ((i:(Fin 2)) => (..i) => Float32)
+:t [[[0.0, 1.0]], [[2.0, 3.0], [4.0, 5.0]]] : i:(Fin 2)=>(..i)=>(Fin 2)=>Float
+> ((i:(Fin 2)) => (..i) => (Fin 2) => Float32)
+
+def uncurryTable (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
+  for i j. x.(i, j)
+
+:t uncurryTable [0.0, 1.0, 2.0, 3.0]  -- We should be able to infer the tuple type here
+> ((Fin 2) => (Fin 2) => Float32)
+:t uncurryTable [0, 1, 2, 3]          -- Extra difficulty: need to default the integer type
+> ((Fin 2) => (Fin 2) => Int32)
