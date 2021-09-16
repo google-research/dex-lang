@@ -607,7 +607,7 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (EnvVal v n) where
 
 instance (forall c. NameColor c => Store (v c n)) => Store (EnvVal v n)
 
-instance (forall c. InjectableE (v c)) => InjectableE (EnvVal v) where
+instance (forall c. NameColor c => InjectableE (v c)) => InjectableE (EnvVal v) where
   injectionProofE = undefined
 
 instance ( forall c. NameColor c => Store (v c o)

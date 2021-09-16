@@ -48,7 +48,7 @@ checkModule env m =
     runBindingsReaderT (fromTopBindings env) $
       checkTypes m
 
-checkTypes :: (BindingsReader m, MonadErr1 m, InjectableE e, CheckableE e)
+checkTypes :: (BindingsReader m, MonadErr1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = do
   Distinct <- getDistinct
@@ -129,7 +129,7 @@ instance (MonadFail m, MonadErr m) => Typer (TyperT m) where
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class (InjectableE e, SubstE Name e) => HasType (e::E) where
+class SubstE Name e => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 

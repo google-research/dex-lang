@@ -51,11 +51,11 @@ class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   emitDecl :: Emits n => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
   emitBinding :: EmitsTop n => NameHint -> Binding c n -> m n (Name c n)
-  buildScoped :: (InjectableE e, HasNamesE e)
+  buildScoped :: HasNamesE e
               => (forall l. (Emits l, Ext n l) => m l (e l))
               -> m n (Abs (Nest Decl) e n)
 
-  buildScopedTop :: (InjectableE e, HasNamesE e)
+  buildScopedTop :: HasNamesE e
                  => (forall l. (EmitsTop l, Ext n l) => m l (e l))
                  -> m n (Abs (RecEnvFrag Binding) e n)
   getAllowedEffects :: m n (EffectRow n)
@@ -103,8 +103,7 @@ newtype BuilderT (m::MonadKind1) (n::S) (a:: *) =
   deriving (Functor, Applicative, Monad)
 
 runBuilderT
-  :: ( BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m
-     , InjectableE e, HasNamesE e)
+  :: ( BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m , HasNamesE e)
   => (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
   -> m n (e n)
 runBuilderT cont = do
@@ -114,8 +113,7 @@ runBuilderT cont = do
   fromConstAbs $ Abs decls result
 
 runBuilderTWithEmits
-  :: ( BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m
-     , InjectableE e, HasNamesE e)
+  :: ( BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m, HasNamesE e)
   => (forall l. (Emits l, Distinct l, Ext n l) => BuilderT m l (e l))
   -> m n (Abs (Nest Decl) e n)
 runBuilderTWithEmits cont = do
@@ -271,7 +269,7 @@ instance BindsBindings BinderWithInfo where
     withExtEvidence b $
       b @> inject (AtomNameBinding ty info)
 
-withFreshAtomBinder :: (Scopable m, SubstE Name e, InjectableE e)
+withFreshAtomBinder :: (Scopable m, SubstE Name e)
                     => NameHint -> Type n -> AtomBinderInfo n
                     -> (forall l. Ext n l => AtomName l -> m l (e l))
                     -> m n (Abs Binder e n)
@@ -372,7 +370,7 @@ buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
   return (effs', resultTy')
 
 buildAbs
-  :: (Builder m, InjectableE e, HasNamesE e)
+  :: (Builder m, HasNamesE e)
   => Type n
   -> (forall l. Ext n l => AtomName l -> m l (e l))
   -> m n (Abs Binder e n)
@@ -389,7 +387,7 @@ singletonBinderNest ty = do
   return $ EmptyAbs (Nest b Empty)
 
 buildNaryAbs
-  :: (Builder m, InjectableE e, HasNamesE e)
+  :: (Builder m, HasNamesE e)
   => EmptyAbs (Nest Binder) n
   -> (forall l. Ext n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)

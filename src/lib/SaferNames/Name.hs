@@ -234,8 +234,7 @@ traverseNames scope f e =
 
 -- This may become expensive. It traverses the body of the Abs to check for
 -- leaked variables.
-fromConstAbs :: ( ScopeReader m, MonadFail1 m, BindsNames b, HasNamesE e
-                , InjectableB b, InjectableE e)
+fromConstAbs :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
              => Abs b e n -> m n (e n)
 fromConstAbs ab = do
   WithScope scope (Abs b e) <- addScope ab
@@ -256,7 +255,7 @@ toConstAbs rep body = do
 
 -- === type classes for traversing names ===
 
-class SubstE (v::V) (e::E) where
+class InjectableE e => SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
   substE :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
          => e i -> m i o (e o)
@@ -266,7 +265,7 @@ class SubstE (v::V) (e::E) where
                  => e i -> m i o (e o)
   substE e = toE <$> substE (fromE e)
 
-class SubstB (v::V) (b::B) where
+class InjectableB b => SubstB (v::V) (b::B) where
   substB :: ( ScopeReader2 m, ScopeExtender2 m , EnvReader v m, FromName v)
          => b i i'
          -> SubstGenT m i i' (b o) o
