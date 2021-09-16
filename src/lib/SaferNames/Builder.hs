@@ -44,7 +44,6 @@ import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
 
-import Err
 import LabeledItems
 import Util (enumerate)
 
@@ -137,6 +136,8 @@ instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
       withFreshBinder hint ty binderInfo \b -> do
         return $ DistinctAbs (Nest (Let ann b expr') Empty) (binderName b)
 
+  emitBinding _ = undefined
+
   buildScoped cont = do
     ext1 <- idExt
     BuilderT $ liftInplace $ BuilderNameGenT do
@@ -147,6 +148,7 @@ instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
       Distinct <- getDistinct
       return $ DistinctAbs id result
 
+  buildScopedTop _ = undefined
   getAllowedEffects = undefined
   withAllowedEffects _ _ = undefined
 
@@ -209,16 +211,16 @@ class EmitsTop (n::S)
 
 instance EmitsTop UnsafeS
 
-withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
-withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
+_withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
+_withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
  ( unsafeCoerce ( WrapWithEmitsTop cont :: WrapWithEmitsTop n       a
                                       ) :: WrapWithEmitsTop UnsafeS a)
 
 newtype WrapWithEmitsTop n r =
   WrapWithEmitsTop { fromWrapWithEmitsTop :: EmitsTop n => r }
 
-fabricateEmitsTopEvidenceM :: Monad1 m => m n (EmitsTopEvidence n)
-fabricateEmitsTopEvidenceM = return FabricateEmitsTopEvidence
+_fabricateEmitsTopEvidenceM :: Monad1 m => m n (EmitsTopEvidence n)
+_fabricateEmitsTopEvidenceM = return FabricateEmitsTopEvidence
 
 -- === lambda-like things ===
 
@@ -404,6 +406,7 @@ buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
         v' <- injectM v
         body $ v' : vs
   return $ Abs (Nest b' bs') body'
+buildNaryAbs _ _ = error "impossible"
 
 buildAlt
   :: Builder m

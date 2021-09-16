@@ -1468,4 +1468,5 @@ instance Pretty (UBinder c n l) where
   pretty UIgnore         = "_"
   pretty (UBind v)       = pretty v
 
-instance Pretty (UType n)
+instance Pretty (UType n) where
+  pretty = undefined

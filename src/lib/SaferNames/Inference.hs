@@ -10,6 +10,7 @@ module SaferNames.Inference (inferModule) where
 
 import Prelude hiding ((.), id)
 import Control.Category
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Data.Foldable (toList)
@@ -57,24 +58,57 @@ isTopDecl decl = case decl of
 class (MonadErr2 m, Builder2 m, EnvGetter Name m)
       => Inferer (m::MonadKind2)
 
-data InfererM (i::S) (o::S) (a:: *) = InfererM
+data InfererM (i::S) (o::S) (a:: *)
 
 runInfererM :: Bindings n
             -> (forall l. Ext n l => InfererM l l (e l))
             -> Except (e n)
 runInfererM _ _ = undefined
 
-instance Functor (InfererM i o)
-instance Applicative (InfererM i o)
-instance Monad (InfererM i o)
-instance MonadFail (InfererM i o)
-instance MonadError Err (InfererM i o)
-instance Builder (InfererM i)
-instance BindingsReader (InfererM i)
-instance ScopeReader (InfererM i)
-instance Scopable (InfererM i)
-instance (EnvReader Name) InfererM
-instance (EnvGetter Name) InfererM
+instance Functor (InfererM i o) where
+  fmap = undefined
+
+instance Applicative (InfererM i o) where
+  pure = undefined
+  liftA2 = undefined
+
+instance Monad (InfererM i o) where
+  return = undefined
+  (>>=) = undefined
+
+instance MonadFail (InfererM i o) where
+  fail = undefined
+
+instance MonadError Err (InfererM i o) where
+  throwError = undefined
+  catchError = undefined
+
+instance Builder (InfererM i) where
+  buildScoped _ = undefined
+  buildScopedTop _ = undefined
+  getAllowedEffects = undefined
+  withAllowedEffects = undefined
+  emitDecl = undefined
+  emitBinding = undefined
+
+instance BindingsReader (InfererM i) where
+  addBindings = undefined
+
+instance ScopeReader (InfererM i) where
+  getDistinctEvidenceM = undefined
+  addScope = undefined
+
+instance Scopable (InfererM i) where
+  withBindings _ _ = undefined
+
+instance (EnvReader Name) InfererM where
+  lookupEnvM = undefined
+  extendEnv  = undefined
+  dropSubst  = undefined
+
+instance (EnvGetter Name) InfererM where
+  getEnv = undefined
+
 instance Inferer InfererM
 
 constrainEq :: Inferer m => Type o -> Type o -> m i o ()
