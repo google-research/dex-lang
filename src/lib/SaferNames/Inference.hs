@@ -55,7 +55,7 @@ isTopDecl decl = case decl of
 
 -- === Inferer monad ===
 
-class (MonadErr2 m, Builder2 m, EnvGetter Name m)
+class (MonadErr2 m, Builder2 m, EnvReader Name m)
       => Inferer (m::MonadKind2)
 
 data InfererM (i::S) (o::S) (a:: *)
@@ -102,12 +102,8 @@ instance Scopable (InfererM i) where
   withBindings _ _ = undefined
 
 instance (EnvReader Name) InfererM where
-  lookupEnvM = undefined
-  extendEnv  = undefined
-  dropSubst  = undefined
-
-instance (EnvGetter Name) InfererM where
-  getEnv = undefined
+  getEnv  = undefined
+  withEnv = undefined
 
 instance Inferer InfererM
 

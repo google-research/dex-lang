@@ -364,21 +364,15 @@ withFreshBinder hint ty info cont =
     Distinct <- getDistinct
     cont $ b :> ty
 
+-- TODO: maybe delete this? If we're moving to the in-place version of scopeful
+-- monads then we can't access binders directly like this anyway.
 refreshBinders
   :: ( InjectableV v, BindingsExtender2 m, FromName v
-     , EnvGetter v m, SubstB v b, BindsBindings b)
+     , EnvReader v m, SubstB v b, BindsBindings b)
   => b i i'
   -> (forall o'. Ext o o' => b o o' -> m i' o' r)
   -> m i o r
-refreshBinders b cont = do
-  scope <- getScope
-  Distinct <- getDistinct
-  env <- getEnv
-  case runScopedEnvReader scope env $ runSubstGenT $ substB b of
-    WithScopeSubstFrag _ env' b' ->
-      extendBindings (boundBindings b') do
-        extendRenamer env' $
-          cont b'
+refreshBinders _ _ = undefined
 
 freshBinderNamePair :: (ScopeReader m, NameColor c)
                     => NameHint
@@ -929,8 +923,8 @@ instance GenericE ClassDef where
           PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)
   toE (PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)) =
         ClassDef className methodNames (dataDefName, dataDef)
-instance InjectableE ClassDef
-instance SubstE Name ClassDef
+instance InjectableE         ClassDef
+instance SubstE Name         ClassDef
 instance SubstE AtomSubstVal ClassDef
 
 instance GenericB DataConRefBinding where
@@ -1055,24 +1049,24 @@ instance AlphaEqE Atom
 instance SubstE Name Atom
 
 instance SubstE AtomSubstVal Atom where
-  substE atom = case fromE atom of
+  substE env atom = case fromE atom of
     LeftE specialCase -> case specialCase of
       -- Var
       Case0 v -> do
-        substVal <- lookupEnvM v
+        substVal <- lookupSustTraversalEnv env v
         case substVal of
           Rename v' -> return $ Var v'
           SubstVal x -> return x
       -- ProjectElt
       Case1 (PairE (LiftE idxs) v) -> do
-        substVal <- lookupEnvM v
+        substVal <- lookupSustTraversalEnv env v
         v' <- case substVal of
           SubstVal x -> return x
           Rename v'  -> return $ Var v'
         return $ getProjection (NE.toList idxs) v'
       Case1 _ -> error "impossible"
       _ -> error "impossible"
-    RightE rest -> (toE . RightE) <$> substE rest
+    RightE rest -> (toE . RightE) <$> substE env rest
 
 instance GenericE Expr where
   type RepE Expr =
@@ -1116,12 +1110,12 @@ instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2
 instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
 
 instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
-  substE (ExtLabeledItemsE (Ext items maybeExt)) = do
-    items' <- mapM substE items
+  substE env (ExtLabeledItemsE (Ext items maybeExt)) = do
+    items' <- mapM (substE env) items
     ext <- case maybeExt of
       Nothing -> return $ NoExt NoLabeledItems
       Just v ->
-        lookupEnvM v >>= \case
+        lookupSustTraversalEnv env v >>= \case
           Rename        v'  -> return $ Ext NoLabeledItems $ Just v'
           SubstVal (Var v') -> return $ Ext NoLabeledItems $ Just v'
           SubstVal (LabeledRow row) -> return row
@@ -1178,9 +1172,9 @@ instance InjectableE name => InjectableE (EffectP name)
 instance AlphaEqE    name => AlphaEqE    (EffectP name)
 instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
-  substE eff = case eff of
+  substE env eff = case eff of
     RWSEffect rws v -> do
-      v' <- lookupEnvM v >>= \case
+      v' <- lookupSustTraversalEnv env v >>= \case
               Rename        v'  -> return v'
               SubstVal (Var v') -> return v'
               SubstVal _ -> error "Heap parameter must be a name"
@@ -1203,11 +1197,11 @@ instance SubstE Name (EffectRowP AtomName)
 instance AlphaEqE    (EffectRowP AtomName)
 
 instance SubstE AtomSubstVal (EffectRowP AtomName) where
-  substE (EffectRow effs tailVar) = do
-    effs' <- S.fromList <$> mapM substE (S.toList effs)
+  substE env (EffectRow effs tailVar) = do
+    effs' <- S.fromList <$> mapM (substE env) (S.toList effs)
     tailEffRow <- case tailVar of
       Nothing -> return $ EffectRow mempty Nothing
-      Just v -> lookupEnvM v >>= \case
+      Just v -> lookupSustTraversalEnv env v >>= \case
         Rename        v'  -> return $ EffectRow mempty (Just v')
         SubstVal (Var v') -> return $ EffectRow mempty (Just v')
         SubstVal (Eff r)  -> return r
@@ -1284,6 +1278,9 @@ instance NameColor c => GenericE (Binding c) where
     _ -> error "impossible"
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
+instance InjectableV         Binding
+instance SubstV Name         Binding
+instance SubstV AtomSubstVal Binding
 instance NameColor c => InjectableE         (Binding c)
 instance NameColor c => SubstE Name         (Binding c)
 instance NameColor c => SubstE AtomSubstVal (Binding c)
@@ -1428,12 +1425,12 @@ instance BindsBindings (RecEnvFrag Binding) where
 
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where
-  substE = \case
-    UAtomVar    v -> UAtomVar    <$> substE v
-    UTyConVar   v -> UTyConVar   <$> substE v
-    UDataConVar v -> UDataConVar <$> substE v
-    UClassVar   v -> UClassVar   <$> substE v
-    UMethodVar  v -> UMethodVar  <$> substE v
+  substE env = \case
+    UAtomVar    v -> UAtomVar    <$> substE env v
+    UTyConVar   v -> UTyConVar   <$> substE env v
+    UDataConVar v -> UDataConVar <$> substE env v
+    UClassVar   v -> UClassVar   <$> substE env v
+    UMethodVar  v -> UMethodVar  <$> substE env v
 
 instance InjectableE e => InjectableE (WithBindings e) where
   injectionProofE (fresh::InjectionCoercion n l) (WithBindings bindings (scope::Scope h) e) =
@@ -1469,3 +1466,4 @@ instance Pretty (UBinder c n l) where
 
 instance Pretty (UType n) where
   pretty = undefined
+
