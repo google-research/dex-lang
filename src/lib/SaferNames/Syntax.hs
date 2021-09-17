@@ -35,7 +35,7 @@ module SaferNames.Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    IRVariant (..), SubstVal (..), AtomName, AtomSubstVal,
+    IRVariant (..), SubstVal (..), AtomName, DataDefName, ClassName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
@@ -45,15 +45,16 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindings (..), TopBindingsFrag, NamedDataDef, fromTopBindings, ScopedBindings,
+    TopBindings (..), NamedDataDef, fromTopBindings, ScopedBindings,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
+    considerNonDepPiType,
     fromNonDepTabTy, binderType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    SrcCtx, freshBinderNamePair,
+    SrcCtx, freshBinderNamePair, piArgType, piArrow, extendEffRow,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -63,7 +64,7 @@ module SaferNames.Syntax (
     pattern Pure, pattern LabeledRowKind, pattern EffKind,
     pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTy,
+    pattern TabTy, pattern TabTyAbs,
     pattern SumTy, pattern SumVal, pattern MaybeTy,
     pattern NothingAtom, pattern JustAtom,
     (-->), (?-->), (--@), (==>) ) where
@@ -156,6 +157,7 @@ data Decl n l = Let LetAnn (Binder n l) (Expr n)
 
 type AtomName    = Name AtomNameC
 type DataDefName = Name DataDefNameC
+type ClassName   = Name ClassNameC
 
 type Binder = BinderP (NameBinder AtomNameC) Type
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
@@ -182,7 +184,7 @@ data ClassDef n =
 -- that it doesn't have any free names bound by the decls in the block. We store
 -- it separately as an optimization, to avoid having to traverse the block.
 data Block n where
-  Block :: Type n -> Nest Decl n l ->  Expr l -> Block n
+  Block :: Type n -> Nest Decl n l -> Expr l -> Block n
 
 data LamExpr (n::S) where
   LamExpr :: Arrow -> Binder n l -> EffectRow l -> Block l -> LamExpr n
@@ -408,7 +410,7 @@ data UVar (n::S) =
 
 data UBinder (c::C) (n::S) (l::S) where
   -- Only appears before renaming pass
-  UBindSource :: SourceName -> UBinder c VoidS VoidS
+  UBindSource :: SourceName -> UBinder c n n
   -- May appear before or after renaming pass
   UIgnore :: UBinder c n n
   -- The following binders only appear after the renaming pass.
@@ -476,10 +478,10 @@ data UDecl (n::S) (l::S) where
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UDecl n l
   UInstance
-    :: Nest UPatAnnArrow n l'              -- dictionary args (i.e. conditions)
-    ->   SourceNameOr (Name ClassNameC) l' -- class variable
-    ->   [UExpr l']                        -- class parameters
-    ->   [UMethodDef l']                   -- method definitions
+    :: SourceNameOr (Name ClassNameC) n  -- class name
+    -> Nest UPatAnnArrow n l'            -- dictionary args (i.e. conditions)
+    ->   [UExpr l']                      -- class parameters
+    ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
     -> UDecl n l
@@ -510,10 +512,8 @@ data UPat' (n::S) (l::S) =
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
- -- The ExtLabeledItems and the Nest are meant to be parallel.  If the
- -- ExtLabeledItems has a Just at the end, that corresponds to the
- -- last item in the given Nest.
- | UPatRecord (ExtLabeledItems () ()) (Nest UPat n l)     -- {a=x, b=y, ...rest}
+ -- The ExtLabeledItems and the PairB are parallel, constrained by the parser.
+ | UPatRecord (ExtLabeledItems () ()) (PairB (Nest UPat) (MaybeB UPat) n l) -- {a=x, b=y, ...rest}
  | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
  | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
  | UPatTable (Nest UPat n l)
@@ -547,10 +547,8 @@ data SourceUModule = SourceUModule (UDecl VoidS VoidS) deriving (Show)
 -- body must only contain Name version of names and binders
 data UModule (n::S) where
   UModule
-    :: Distinct l
-    => ScopeFrag n l
+    :: UDecl n l
     -> SourceMap l
-    -> UDecl n l
     -> UModule n
 
 data SourceBlock = SourceBlock
@@ -587,8 +585,6 @@ type ScopedBindings n = (Scope n, Bindings n)
 fromTopBindings :: TopBindings n -> ScopedBindings n
 fromTopBindings (TopBindings env) = (envAsScope env, emptyNameFunction <>> env)
 
-type TopBindingsFrag n l = EnvFrag Binding n l l
-
 emptyTopState :: TopState VoidS
 emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
 
@@ -605,7 +601,7 @@ data Module n where
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
-    :: TopBindingsFrag n l  -- Evaluated bindings
+    :: BindingsFrag n l     -- Evaluated bindings
     -> SynthCandidates l    -- Values considered in scope for dictionary synthesis
     -> SourceMap l          -- Mapping of module's source names to internal names
     -> EvaluatedModule n
@@ -676,12 +672,22 @@ infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
+piArgType :: PiType n -> Type n
+piArgType (PiType _ (_:>ty) _ _) = ty
+
+piArrow :: PiType n -> Arrow
+piArrow (PiType arr _ _ _) = arr
+
 nonDepPiType :: ScopeReader m
-             => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
+             => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
-      return $ Pi $ PiType arr (b:>argTy) eff' resultTy'
+      return $ PiType arr (b:>argTy) eff' resultTy'
+
+considerNonDepPiType :: ScopeReader m
+                     => PiType n -> m n (Maybe (Arrow, Type n, EffectRow n, Type n))
+considerNonDepPiType = undefined
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
                  => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
@@ -694,10 +700,10 @@ fromNonDepPiType arr ty = do
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
 naryNonDepPiType _ Pure [] resultTy = return resultTy
 naryNonDepPiType _ _    [] _        = error "nullary function can't have effects"
-naryNonDepPiType arr eff [ty] resultTy = nonDepPiType arr ty eff resultTy
+naryNonDepPiType arr eff [ty] resultTy = Pi <$> nonDepPiType arr ty eff resultTy
 naryNonDepPiType arr eff (ty:tys) resultTy = do
   innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
-  nonDepPiType arr ty Pure innerFunctionTy
+  Pi <$> nonDepPiType arr ty Pure innerFunctionTy
 
 fromNaryNonDepPiType :: (ScopeReader m, MonadFail1 m)
                      => [Arrow] -> Type n -> m n ([Type n], EffectRow n, Type n)
@@ -716,16 +722,16 @@ fromNonDepTabTy ty = do
   return (idxTy, resultTy)
 
 (?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a ?--> b = nonDepPiType ImplicitArrow a Pure b
+a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
 
 (-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a --> b = nonDepPiType PlainArrow a Pure b
+a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
 
 (--@) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a --@ b = nonDepPiType LinArrow a Pure b
+a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
 (==>) :: ScopeReader m => Type n -> Type n -> m n (Type n)
-a ==> b = nonDepPiType TabArrow a Pure b
+a ==> b = Pi <$> nonDepPiType TabArrow a Pure b
 
 pattern IntLitExpr :: Int -> UExpr' n
 pattern IntLitExpr x = UIntLit x
@@ -801,6 +807,9 @@ pattern RawRefTy a = TC (RefType Nothing a)
 
 pattern TabTy :: Binder n l -> Type l -> Type n
 pattern TabTy i a = Pi (PiType TabArrow i Pure a)
+
+pattern TabTyAbs :: PiType n -> Type n
+pattern TabTyAbs a <- Pi a@(PiType TabArrow _ _ _)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
@@ -1432,3 +1441,32 @@ instance InjectableE e => InjectableE (WithBindings e) where
     withExtEvidence (injectionProofE fresh ext) $
       WithBindings bindings scope e
     where ext = getExtEvidence :: ExtEvidence h n
+
+instance InjectableE UVar where
+  injectionProofE = undefined
+
+instance HasNameHint (UPat n l) where
+  getNameHint = undefined
+
+instance HasNameHint (UBinder c n l) where
+  getNameHint = undefined
+
+instance BindsAtMostOneName (UBinder c) c where
+  b @> x = case b of
+    UBindSource _ -> emptyEnv
+    UIgnore       -> emptyEnv
+    UBind b'      -> b' @> x
+
+instance BindsAtMostOneName (UAnnBinder c) c where
+  UAnnBinder b _ @> x = b @> x
+
+instance InjectableE UModule where
+  injectionProofE = undefined
+
+instance Pretty (UBinder c n l) where
+  pretty (UBindSource v) = pretty v
+  pretty UIgnore         = "_"
+  pretty (UBind v)       = pretty v
+
+instance Pretty (UType n) where
+  pretty = undefined

@@ -25,7 +25,7 @@ module SaferNames.Name (
   Scope, ScopeFrag (..), SubstE (..), SubstB (..),
   Inplace, liftInplace, runInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
-  BindsOneName (..), BindsNameList (..), NameColorRep (..),
+  BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), ListE (..), ComposeE (..),
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB,
@@ -49,7 +49,7 @@ module SaferNames.Name (
   GenericE (..), GenericB (..), ColorsEqual (..), ColorsNotEqual (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
-  splitNestAt, nestLength, binderAnn,
+  splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt
   ) where
@@ -374,6 +374,8 @@ type MaybeB b = EitherB b UnitB
 pattern JustB :: b n l -> MaybeB b n l
 pattern JustB b = LeftB b
 
+-- TODO: this doesn't seem to force n==n, e.g. see where we have to explicitly
+-- write `RightB UnitB` in inference rule for instances.
 pattern NothingB :: MaybeB b n n
 pattern NothingB = RightB UnitB
 
@@ -385,27 +387,34 @@ pattern LiftB e = UnitB :> e
 -- -- === various convenience utilities ===
 
 infixr 7 @>
-class BindsOneName (b::B) (c::C) | b -> c where
+class BindsAtMostOneName (b::B) (c::C) | b -> c where
   (@>) :: b i i' -> v c o -> EnvFrag v i i' o
+
+class BindsAtMostOneName (b::B) (c::C)
+  =>  BindsOneName (b::B) (c::C) | b -> c where
   binderName :: b i i' -> Name c i'
 
 instance ProvesExt  (NameBinder c) where
 instance BindsNames (NameBinder c) where
   toScopeFrag b = singletonScope b
 
-instance BindsOneName (NameBinder c) c where
+instance BindsAtMostOneName (NameBinder c) c where
   b @> x = singletonEnv b x
+
+instance BindsOneName (NameBinder c) c where
   binderName = nameBinderName
 
-instance BindsOneName b c => BindsOneName (BinderP b ann) c where
+instance BindsAtMostOneName b c => BindsAtMostOneName (BinderP b ann) c where
   (b:>_) @> x = b @> x
+
+instance BindsOneName b c => BindsOneName (BinderP b ann) c where
   binderName (b:>_) = binderName b
 
 infixr 7 @@>
 class BindsNameList (b::B) (c::C) | b -> c where
   (@@>) :: b i i' -> [v c o] -> EnvFrag v i i' o
 
-instance BindsOneName b c => BindsNameList (Nest b) c where
+instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   (@@>) Empty [] = emptyEnv
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
@@ -462,6 +471,10 @@ traverseEnvFrag f frag = liftM fromEnvPairs $
 nestLength :: Nest b n l -> Int
 nestLength Empty = 0
 nestLength (Nest _ rest) = 1 + nestLength rest
+
+nestToList :: (forall n' l'. b n' l' -> a) -> Nest b n l -> [a]
+nestToList _ Empty = []
+nestToList f (Nest b rest) = f b : nestToList f rest
 
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs

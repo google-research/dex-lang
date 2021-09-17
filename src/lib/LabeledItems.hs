@@ -9,7 +9,7 @@
 
 module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
-  , withLabels, lookupLabelHead, ExtLabeledItems (..), prefixExtLabeledItems
+  , withLabels, lookupLabelHead, lookupLabel, ExtLabeledItems (..), prefixExtLabeledItems
   , unzipExtLabeledItems
   , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
   , pattern Unlabeled ) where
@@ -31,7 +31,7 @@ type Label = String
 -- record objects; the order in the concrete syntax of items with different
 -- fields is discarded (so both `{b:Z & a:X & a:Y}` and `{a:X & b:Z & a:Y}` map
 -- to `M.fromList [("a", NE.fromList [X, Y]), ("b", NE.fromList [Z])]` )
-newtype LabeledItems a = LabeledItems (M.Map Label (NE.NonEmpty a))
+newtype LabeledItems a = LabeledItems { fromLabeledItems :: M.Map Label (NE.NonEmpty a) }
   deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
 
 labeledSingleton :: Label -> a -> LabeledItems a
@@ -52,6 +52,11 @@ lookupLabelHead :: LabeledItems a -> Label -> Maybe a
 lookupLabelHead (LabeledItems items) l = case M.lookup l items of
   Nothing -> Nothing
   Just (x NE.:| _) -> Just x
+
+lookupLabel :: LabeledItems a -> Label -> [a]
+lookupLabel (LabeledItems items) l = case M.lookup l items of
+  Just (x NE.:| xs) -> x : xs
+  Nothing -> []
 
 instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =

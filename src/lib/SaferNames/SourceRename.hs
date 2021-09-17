@@ -64,9 +64,9 @@ class (Monad1 m, ScopeExtender m, MonadErr1 m) => Renamer m where
 
 _renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
 _renameSourceNames' (SourceUModule decl) = do
-  (RenamerContent frag sourceMap decl') <- runRenamerNameGenT $
+  (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $
     sourceRenameB $ resolveImplicitTopDecl decl
-  return $ UModule frag sourceMap decl'
+  return $ UModule decl' sourceMap
 
 class SourceRenamableE e where
   sourceRenameE :: Renamer m => e i -> m o (e o)
@@ -232,10 +232,11 @@ instance SourceRenamableB UDecl where
       runRenamerNameGenT $ sourceRenameUBinder className `bindG` \className' ->
         sourceRenameUBinderNest methodNames `bindG` \methodNames' ->
         returnG $ UInterface paramBs' superclasses' methodTys' className' methodNames'
-    UInstance conditions className params methodDefs instanceName -> do
-      Abs conditions' (PairE (PairE className' (ListE params')) (ListE methodDefs')) <-
-        sourceRenameE $ Abs conditions (PairE (PairE className $ ListE params) $ ListE methodDefs)
-      runRenamerNameGenT $ UInstance conditions' className' params' methodDefs' `fmapG` sourceRenameB instanceName
+    UInstance className conditions params methodDefs instanceName -> do
+      className' <- sourceRenameE className
+      Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
+        sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
+      runRenamerNameGenT $ UInstance className' conditions' params' methodDefs' `fmapG` sourceRenameB instanceName
 
 instance SourceRenamableB UnitB where
   sourceRenameB UnitB = returnG UnitB
@@ -365,6 +366,25 @@ instance SourceRenamablePat UPat' where
     UPatVariant labels label p -> UPatVariant labels label `fmapG` sourceRenamePat siblingNames p
     UPatVariantLift labels p -> UPatVariantLift labels `fmapG` sourceRenamePat siblingNames p
     UPatTable ps -> UPatTable `fmapG` sourceRenamePat siblingNames ps
+
+instance SourceRenamablePat UnitB where
+  sourceRenamePat _ UnitB = returnG UnitB
+
+instance (SourceRenamablePat p1, SourceRenamablePat p2)
+         => SourceRenamablePat (PairB p1 p2) where
+  sourceRenamePat sibs (PairB p1 p2) =
+    sourceRenamePat sibs p1 `bindG` \p1' ->
+    sourceRenamePat sibs p2 `bindG` \p2' ->
+    returnG $ PairB p1' p2'
+
+instance (SourceRenamablePat p1, SourceRenamablePat p2)
+         => SourceRenamablePat (EitherB p1 p2) where
+  sourceRenamePat sibs (LeftB p) =
+    sourceRenamePat sibs p `bindG` \p' ->
+    returnG $ LeftB p'
+  sourceRenamePat sibs (RightB p) =
+    sourceRenamePat sibs p `bindG` \p' ->
+    returnG $ RightB p'
 
 instance SourceRenamablePat p => SourceRenamablePat (WithSrcB p) where
   sourceRenamePat sibs (WithSrcB pos pat) = PatRenamerNameGenT $ addSrcContext pos $

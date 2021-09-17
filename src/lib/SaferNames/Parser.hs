@@ -14,7 +14,6 @@ import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
-import Data.Foldable (toList)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (fromMaybe)
@@ -308,7 +307,7 @@ instanceDef isNamed = do
   let argBinders = explicitArgs
                  ++ [UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just c)) ClassArrow | c <- constraints]
   methods <- onePerLine instanceMethod
-  return $ UInstance (toNestParsed argBinders) (fromString className) params methods name
+  return $ UInstance (fromString className) (toNestParsed argBinders) params methods name
 
 instanceMethod :: Parser (UMethodDef VoidS)
 instanceMethod = do
@@ -581,7 +580,9 @@ leafPat =
                         -> UPat' VoidS VoidS
         unzipUPatRecord labeled = UPatRecord labels nest where
           (labels, items, rest) = unzipExtLabeledItems labeled
-          nest = toNestParsed $ items ++ toList rest
+          patTail = case rest of Nothing -> NothingB
+                                 Just p  -> JustB p
+          nest = PairB (toNestParsed items) patTail
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser (UPat VoidS VoidS)]]
@@ -664,9 +665,7 @@ uIsoSugar = withSrc (char '#' *> options) where
     UApp plain (ns "MkIso") $
       ns $ URecord $ NoExt $
         labeledSingleton "fwd" (lam
-          (nsB $ UPatRecord
-                   (Ext (labeledSingleton field ()) (Just ()))
-                   (toNest ["x", "r"]))
+            (uPatRecordLit [(field, "x")] (Just "r"))
           $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r")
         )
         <> labeledSingleton "bwd" (lam
@@ -697,9 +696,8 @@ uIsoSugar = withSrc (char '#' *> options) where
       ns $ URecord $ NoExt $
         labeledSingleton "fwd" (lam
           (nsB $ UPatPair $ PairB
-            (nsB $ UPatRecord (Ext NoLabeledItems $ Just $ ()) $ toNest ["l"])
-            (nsB $ (UPatRecord (Ext (labeledSingleton field ()) $ Just ())
-                               (toNest ["x", "r"]))))
+            (uPatRecordLit [] (Just "l"))
+            (uPatRecordLit [(field, "x")] (Just "r")))
           $ "(,)"
             `mkApp` (ns $ URecord $ (Ext (labeledSingleton field $ "x")
                                          $ Just $ "l"))
@@ -707,9 +705,8 @@ uIsoSugar = withSrc (char '#' *> options) where
         )
         <> labeledSingleton "bwd" (lam
           (nsB $ UPatPair $ PairB
-            (nsB $ (UPatRecord (Ext (labeledSingleton field ()) $ Just ())
-                               (toNest ["x", "l"])))
-            (nsB $ UPatRecord (Ext NoLabeledItems $ Just ()) $ toNest ["r"]))
+            (uPatRecordLit [(field, "x")] (Just "l"))
+            (uPatRecordLit [] (Just "r")))
           $ "(,)"
             `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ "l")
             `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ "x")
@@ -748,6 +745,17 @@ uIsoSugar = withSrc (char '#' *> options) where
                     UVariantLift (labeledSingleton field ()) "l")
             ]
         )
+
+uPatRecordLit :: [(Label, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
+uPatRecordLit labelsPats ext = nsB
+  let (labels, pats) = unzip labelsPats
+  in case ext of
+       Nothing ->
+         UPatRecord (NoExt (foldMap (\s -> labeledSingleton s ()) labels))
+                    (PairB (toNestParsed $ pats) NothingB)
+       Just tailPat ->
+         UPatRecord (Ext undefined (Just ()))
+                    (PairB (toNestParsed $ pats) (JustB tailPat))
 
 parseLabeledItems
   :: String -> String -> Parser a
