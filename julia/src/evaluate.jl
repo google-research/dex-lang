@@ -60,8 +60,8 @@ julia> m.y
 "84"
 ```
 """
-function DexModule(source::AbstractString)
-    ctx = dex_eval(PRELUDE, source)
+function DexModule(source::AbstractString, parent_ctx=PRELUDE)
+    ctx = dex_eval(parent_ctx, source)
     ctx == C_NULL && throw_from_dex()
     m =  DexModule(ctx)
     finalizer(m) do _m
