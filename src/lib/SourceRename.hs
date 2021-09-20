@@ -14,7 +14,6 @@ import Data.List (nub)
 import Data.String
 import Control.Monad.Writer
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
@@ -23,7 +22,7 @@ import Err
 import LabeledItems
 import Syntax
 
-renameSourceNames :: MonadErr m => Scope -> SourceMap -> SourceUModule -> m UModule
+renameSourceNames :: Fallible m => Scope -> SourceMap -> SourceUModule -> m UModule
 renameSourceNames scope sourceMap m =
   runReaderT (runReaderT (renameSourceNames' m) (scope, sourceMap)) False
 
@@ -32,11 +31,11 @@ type RenameEnv = (Scope, SourceMap)
 -- We have this class because we want to read some extra context (whether
 -- shadowing is allowed) but we've already used up the MonadReader
 -- (we can't add a field because we want it to be monoidal).
-class (MonadReader RenameEnv m, MonadErr m) => Renamer m where
+class (MonadReader RenameEnv m, Fallible m) => Renamer m where
   askMayShadow :: m Bool
   setMayShadow :: Bool -> m a -> m a
 
-instance MonadErr m => Renamer (ReaderT RenameEnv (ReaderT Bool m)) where
+instance Fallible m => Renamer (ReaderT RenameEnv (ReaderT Bool m)) where
   askMayShadow = lift ask
   setMayShadow mayShadow cont = do
     env <- ask
@@ -323,11 +322,15 @@ instance (Monoid env, MonadReader env m) => Monad (WithEnv env m) where
 instance Monoid env => MonadTrans (WithEnv env) where
   lift m = WithEnv $ fmap (,mempty) m
 
-instance (Monoid env, MonadError e m, MonadReader env m)
-         => MonadError e (WithEnv env m) where
-  throwError e = lift $ throwError e
-  catchError (WithEnv m) handler =
-    WithEnv $ catchError m (runWithEnv . handler)
+instance (Monoid env, MonadFail m, MonadReader env m)
+         => MonadFail (WithEnv env m) where
+  fail s = lift $ fail s
+
+instance (Monoid env, Fallible m, MonadReader env m)
+         => Fallible (WithEnv env m) where
+  throwErrs errs = lift $ throwErrs errs
+  addErrCtx ctx (WithEnv m) = WithEnv $
+    addErrCtx ctx m
 
 -- === Traversal to find implicit names
 

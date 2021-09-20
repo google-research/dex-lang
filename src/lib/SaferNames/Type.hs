@@ -21,14 +21,11 @@ import Prelude hiding (id)
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
-import Control.Monad.Identity
 import Data.Foldable (toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
-import Data.Text.Prettyprint.Doc hiding (nest)
 
 import LabeledItems
 
@@ -42,25 +39,25 @@ import SaferNames.PPrint ()
 
 -- === top-level API ===
 
-checkModule :: (Distinct n, MonadErr m) => TopBindings n -> Module n -> m ()
+checkModule :: (Distinct n, Fallible m) => TopBindings n -> Module n -> m ()
 checkModule env m =
   addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
     runBindingsReaderT (fromTopBindings env) $
       checkTypes m
 
-checkTypes :: (BindingsReader m, MonadErr1 m, CheckableE e)
+checkTypes :: (BindingsReader m, Fallible1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = do
   Distinct <- getDistinct
   WithBindings bindings scope e' <- addBindings e
-  liftEither $ runTyperT (scope, bindings) $ void $ checkE e'
+  liftExcept $ runTyperT (scope, bindings) $ void $ checkE e'
 
 getType :: (BindingsReader m, HasType e)
            => e n -> m n (Type n)
 getType e = do
   Distinct <- getDistinct
   WithBindings bindings scope e' <- addBindings e
-  injectM $ runIgnoreChecks $ runTyperT (scope, bindings) $ getTypeE e'
+  injectM $ runHardFail $ runTyperT (scope, bindings) $ getTypeE e'
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
 instantiatePi (PiType _ b eff body) x = do
@@ -70,43 +67,26 @@ instantiatePi (PiType _ b eff body) x = do
 -- === the type checking/querying monad ===
 
 -- TODO: not clear why we need the explicit `Monad2` here since it should
--- already be a superclass, transitively, through both MonadErr2 and
+-- already be a superclass, transitively, through both Fallible2 and
 -- MonadAtomSubst.
-class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvReader Name m
+class ( Monad2 m, Fallible2 m, EnvReader Name m
       , BindingsGetter2 m, BindingsExtender2 m)
      => Typer (m::MonadKind2) where
   declareEffs :: EffectRow o -> m i o ()
   extendAllowedEffect :: Effect o -> m i o () -> m i o ()
   withAllowedEff :: EffectRow o -> m i o a -> m i o a
 
--- This fakes MonadErr by just throwing a hard error using `error`. We use it
--- to skip the checks (via laziness) when we just querying types.
-newtype IgnoreChecks e a = IgnoreChecks { runIgnoreChecks' :: Identity a }
-                           deriving (Functor, Applicative, Monad)
-
-runIgnoreChecks :: IgnoreChecks e a -> a
-runIgnoreChecks = runIdentity . runIgnoreChecks'
-
-instance MonadFail (IgnoreChecks e) where
-  fail = error "Monad fail!"
-
-instance Pretty e => MonadError e (IgnoreChecks e) where
-  throwError e = error $ pprint e
-  catchError m _ = m
-
 newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
   TyperT { runTyperT' ::
     EnvReaderT Name
       (OutReaderT EffectRow
         (BindingsReaderT m)) i o a }
-  deriving ( Functor, Applicative, Monad, MonadFail
+  deriving ( Functor, Applicative, Monad
            , EnvReader Name
            , ScopeReader, ScopeGetter, BindingsReader
            , BindingsGetter, BindingsExtender)
 
-deriving instance MonadError e m => MonadError e (TyperT m i o)
-
-runTyperT :: (MonadErr m, Distinct n)
+runTyperT :: (Fallible m, Distinct n)
           => ScopedBindings n -> TyperT m n n a -> m a
 runTyperT scope m = do
   runBindingsReaderT scope $
@@ -114,7 +94,14 @@ runTyperT scope m = do
       runEnvReaderT idNameFunction $
         runTyperT' m
 
-instance (MonadFail m, MonadErr m) => Typer (TyperT m) where
+instance Fallible m => MonadFail (TyperT m i o) where
+  fail = undefined
+
+instance Fallible m => Fallible (TyperT m i o) where
+  throwErrs = undefined
+  addErrCtx = undefined
+
+instance Fallible m => Typer (TyperT m) where
   declareEffs eff = TyperT do
     allowedEffs <- askOutReader
     checkExtends allowedEffs eff
@@ -683,7 +670,7 @@ checkRWSAction rws f = do
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
 -- from GADT+monad type inference.
-checkEmpty :: MonadErr m => Nest b n l -> m ()
+checkEmpty :: Fallible m => Nest b n l -> m ()
 checkEmpty Empty = return ()
 checkEmpty _  = throw TypeErr "Not empty"
 
@@ -795,12 +782,12 @@ typeCheckRef x = do
   TC (RefType _ a) <- getTypeE x
   return a
 
-checkArrowAndEffects :: MonadErr m => Arrow -> EffectRow n -> m ()
+checkArrowAndEffects :: Fallible m => Arrow -> EffectRow n -> m ()
 checkArrowAndEffects PlainArrow _ = return ()
 checkArrowAndEffects _ Pure = return ()
 checkArrowAndEffects _ _ = throw TypeErr $ "Only plain arrows may have effects"
 
-checkIntBaseType :: MonadError Err m => Bool -> BaseType -> m ()
+checkIntBaseType :: Fallible m => Bool -> BaseType -> m ()
 checkIntBaseType allowVector t = case t of
   Scalar sbt               -> checkSBT sbt
   Vector sbt | allowVector -> checkSBT sbt
@@ -816,7 +803,7 @@ checkIntBaseType allowVector t = case t of
     notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                              "integer type, but found: " ++ pprint t
 
-checkFloatBaseType :: MonadError Err m => Bool -> BaseType -> m ()
+checkFloatBaseType :: Fallible m => Bool -> BaseType -> m ()
 checkFloatBaseType allowVector t = case t of
   Scalar sbt               -> checkSBT sbt
   Vector sbt | allowVector -> checkSBT sbt
@@ -829,7 +816,7 @@ checkFloatBaseType allowVector t = case t of
     notFloat = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                                "floating-point type, but found: " ++ pprint t
 
-checkValidCast :: MonadErr m => BaseType -> BaseType -> m ()
+checkValidCast :: Fallible m => BaseType -> BaseType -> m ()
 checkValidCast (PtrType _) (PtrType _) = return ()
 checkValidCast (PtrType _) (Scalar Int64Type) = return ()
 checkValidCast (Scalar Int64Type) (PtrType _) = return ()
@@ -853,14 +840,14 @@ typeCheckBaseType e =
 data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
 data ReturnType   = SameReturn | Word8Return
 
-checkOpArgType :: MonadError Err m => ArgumentType -> BaseType -> m ()
+checkOpArgType :: Fallible m => ArgumentType -> BaseType -> m ()
 checkOpArgType argTy x =
   case argTy of
     SomeIntArg   -> checkIntBaseType   True x
     SomeUIntArg  -> assertEq x (Scalar Word8Type) ""
     SomeFloatArg -> checkFloatBaseType True x
 
-checkBinOp :: MonadError Err m => BinOp -> BaseType -> BaseType -> m BaseType
+checkBinOp :: Fallible m => BinOp -> BaseType -> BaseType -> m BaseType
 checkBinOp op x y = do
   checkOpArgType argTy x
   assertEq x y ""
@@ -884,7 +871,7 @@ checkBinOp op x y = do
         ia = SomeIntArg; fa = SomeFloatArg
         br = Word8Return; sr = SameReturn
 
-checkUnOp :: MonadError Err m => UnOp -> BaseType -> m BaseType
+checkUnOp :: Fallible m => UnOp -> BaseType -> m BaseType
 checkUnOp op x = do
   checkOpArgType argTy x
   return $ case retTy of
@@ -949,7 +936,7 @@ checkEffRow effRow@(EffectRow effs effTail) = do
 declareEff :: Typer m => Effect o -> m i o ()
 declareEff eff = declareEffs $ oneEffect eff
 
-checkExtends :: MonadError Err m => EffectRow n -> EffectRow n -> m ()
+checkExtends :: Fallible m => EffectRow n -> EffectRow n -> m ()
 checkExtends allowed (EffectRow effs effTail) = do
   let (EffectRow allowedEffs allowedEffTail) = allowed
   case effTail of

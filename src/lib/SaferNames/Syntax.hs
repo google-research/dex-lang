@@ -20,7 +20,7 @@
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
-    SrcPos, Binder, Block (..), Decl (..),
+    Binder, Block (..), Decl (..),
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
@@ -54,7 +54,7 @@ module SaferNames.Syntax (
     considerNonDepPiType,
     fromNonDepTabTy, binderType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    SrcCtx, freshBinderNamePair, piArgType, piArrow, extendEffRow,
+    freshBinderNamePair, piArgType, piArrow, extendEffRow,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -274,7 +274,7 @@ instance (InjectableE e, ScopeReader m, BindingsExtender m)
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
   BindingsReaderT {runBindingsReaderT' :: ReaderT (Bindings n) (ScopeReaderT m n) a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
 runBindingsReaderT :: Distinct n => (Scope n, Bindings n) -> (BindingsReaderT m n a) -> m a
 runBindingsReaderT (scope, bindings) cont =
@@ -512,14 +512,14 @@ data UPat' (n::S) (l::S) =
  | UPatTable (Nest UPat n l)
   deriving (Show)
 
-data WithSrcE (a::E) (n::S) = WithSrcE SrcCtx (a n)
+data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
   deriving (Show)
 
-data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcCtx (binder n l)
+data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcPosCtx (binder n l)
   deriving (Show)
 
 class HasSrcPos a where
-  srcPos :: a -> SrcCtx
+  srcPos :: a -> SrcPosCtx
 
 instance HasSrcPos (WithSrcE (a::E) (n::S)) where
   srcPos (WithSrcE pos _) = pos
@@ -825,14 +825,14 @@ mkConsListTy = foldr PairTy UnitTy
 mkConsList :: [Atom n] -> Atom n
 mkConsList = foldr PairVal UnitVal
 
-fromConsListTy :: MonadError Err m => Type n -> m [Type n]
+fromConsListTy :: Fallible m => Type n -> m [Type n]
 fromConsListTy ty = case ty of
   UnitTy         -> return []
   PairTy t rest -> (t:) <$> fromConsListTy rest
   _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
 
 -- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
-fromLeftLeaningConsListTy :: MonadError Err m => Int -> Type n -> m (Type n, [Type n])
+fromLeftLeaningConsListTy :: Fallible m => Int -> Type n -> m (Type n, [Type n])
 fromLeftLeaningConsListTy depth initTy = go depth initTy []
   where
     go 0        ty xs = return (ty, reverse xs)
@@ -840,7 +840,7 @@ fromLeftLeaningConsListTy depth initTy = go depth initTy []
       PairTy lt rt -> go (remDepth - 1) lt (rt : xs)
       _ -> throw CompilerErr $ "Not a pair: " ++ show xs
 
-fromConsList :: MonadError Err m => Atom n -> m [Atom n]
+fromConsList :: Fallible m => Atom n -> m [Atom n]
 fromConsList xs = case xs of
   UnitVal        -> return []
   PairVal x rest -> (x:) <$> fromConsList rest

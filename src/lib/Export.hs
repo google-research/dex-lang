@@ -37,7 +37,7 @@ import Optimize
 exportFunctions :: FilePath -> [(String, Atom)] -> Bindings -> IO ()
 exportFunctions objPath funcs env = do
   let names = fmap fst funcs
-  unless (length (nub names) == length names) $ liftEitherIO $
+  unless (length (nub names) == length names) $
     throw CompilerErr "Duplicate export names"
   modules <- forM funcs $ \(name, funcAtom) -> do
     let (impModule, _) = prepareFunctionForExport env name funcAtom

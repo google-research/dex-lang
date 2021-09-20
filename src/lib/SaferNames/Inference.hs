@@ -12,7 +12,6 @@ import Prelude hiding ((.), id)
 import Control.Category
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Except hiding (Except)
 import Data.Foldable (toList)
 import Data.List (sortOn)
 import Data.String (fromString)
@@ -55,7 +54,7 @@ isTopDecl decl = case decl of
 
 -- === Inferer monad ===
 
-class (MonadErr2 m, Builder2 m, EnvReader Name m)
+class (MonadFail2 m, Fallible2 m, Builder2 m, EnvReader Name m)
       => Inferer (m::MonadKind2)
 
 data InfererM (i::S) (o::S) (a:: *)
@@ -79,9 +78,9 @@ instance Monad (InfererM i o) where
 instance MonadFail (InfererM i o) where
   fail = undefined
 
-instance MonadError Err (InfererM i o) where
-  throwError = undefined
-  catchError = undefined
+instance Fallible (InfererM i o) where
+  throwErrs = undefined
+  addErrCtx = undefined
 
 instance Builder (InfererM i) where
   buildScoped _ = undefined
@@ -128,10 +127,10 @@ typeReduceAtom = undefined
 tryGetType :: (Inferer m, HasType e) => e o -> m i o (Type o)
 tryGetType = undefined
 
-getSrcCtx :: Inferer m => m i o SrcCtx
+getSrcCtx :: Inferer m => m i o SrcPosCtx
 getSrcCtx = undefined
 
-addSrcContext' :: Inferer m => SrcCtx -> m i o a -> m i o a
+addSrcContext' :: Inferer m => SrcPosCtx -> m i o a -> m i o a
 addSrcContext' = undefined
 
 makeReqCon :: Inferer m => Type o -> m i o SuggestionStrength
@@ -377,7 +376,7 @@ buildMonomorphicCase alts scrut resultTy = do
     resultTy'   <- injectM resultTy
     buildNthOrderedAlt alts' scrutTy' resultTy' i vs
 
-buildSortedCase :: (MonadErr1 m, Builder m, Emits n)
+buildSortedCase :: (Fallible1 m, Builder m, Emits n)
                  => Atom n -> [IndexedAlt n] -> Type n
                  -> m n (Atom n)
 buildSortedCase scrut alts resultTy = do
@@ -417,7 +416,7 @@ buildSortedCase scrut alts resultTy = do
 -- Make sure all of the alternatives are exclusive with the tail pattern (could
 -- technically allow overlap but this is simpler). Split based on the tail
 -- pattern's skipped types.
-checkNoTailOverlaps :: MonadErr1 m => [IndexedAlt n] -> LabeledItems (Type n) ->  m n ()
+checkNoTailOverlaps :: Fallible1 m => [IndexedAlt n] -> LabeledItems (Type n) ->  m n ()
 checkNoTailOverlaps alts (LabeledItems tys) = do
   forM_ alts \(IndexedAlt (VariantAlt label i) _) ->
     case M.lookup label tys of
@@ -877,7 +876,7 @@ checkAllowedUnconditionally Pure = return True
 checkAllowedUnconditionally eff = do
   eff' <- zonk eff
   effAllowed <- getAllowedEffects >>= zonk
-  return $ case checkExtends effAllowed eff' of
+  return $ case checkExtends effAllowed eff' :: Except () of
     Left _   -> False
     Right () -> True
 

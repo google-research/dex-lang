@@ -1290,7 +1290,7 @@ withDevice device = local (\opts -> opts {curDevice = device })
 -- "shouldn't launch a kernel from device/thread code"
 
 -- State keeps track of _all_ names used in the program, Reader keeps the type env.
-type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType, Device) (Either Err)) a
+type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType, Device) (Either Errs)) a
 
 instance Checkable ImpModule where
   -- TODO: check main function defined
@@ -1479,14 +1479,14 @@ impInstrTypes instr = case instr of
   IQueryParallelism _ _ -> [IIdxRepTy, IIdxRepTy]
   ICall (_:>IFunType _ _ resultTys) _ -> resultTys
 
-checkImpBinOp :: MonadError Err m => BinOp -> IType -> IType -> m IType
+checkImpBinOp :: Fallible m => BinOp -> IType -> IType -> m IType
 checkImpBinOp op x y = do
   retTy <- checkBinOp op (BaseTy x) (BaseTy y)
   case retTy of
     BaseTy bt -> return bt
     _         -> throw CompilerErr $ "Unexpected BinOp return type: " ++ pprint retTy
 
-checkImpUnOp :: MonadError Err m => UnOp -> IType -> m IType
+checkImpUnOp :: Fallible m => UnOp -> IType -> m IType
 checkImpUnOp op x = do
   retTy <- checkUnOp op (BaseTy x)
   case retTy of

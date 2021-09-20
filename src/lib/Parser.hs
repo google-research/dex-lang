@@ -25,6 +25,7 @@ import qualified Text.Megaparsec.Debug
 import LabeledItems
 import Syntax
 import PPrint
+import Err
 
 -- canPair is used for the ops (,) (|) (&) which should only appear inside
 -- parentheses (to avoid conflicts with records and other syntax)

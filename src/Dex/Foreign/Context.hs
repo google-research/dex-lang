@@ -29,6 +29,7 @@ import TopLevel
 import Parser (parseExpr, exprAsModule)
 import Env hiding (Tag)
 import PPrint
+import Err
 
 import Dex.Foreign.Util
 
@@ -49,7 +50,7 @@ dexCreateContext = do
     Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
     Left  err        -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
   where
-    evalPrelude :: EvalConfig -> String -> IO (Either Err TopStateEx)
+    evalPrelude :: EvalConfig -> String -> IO (Either Errs TopStateEx)
     evalPrelude opts sourceText = do
       (results, env) <- runInterblockM opts initTopState $
                             map snd <$> evalSourceText sourceText
@@ -96,7 +97,8 @@ dexEvalExpr ctxPtr sourcePtr = do
       (Result [] maybeErr, newState) <- runInterblockM evalConfig env $ evalSourceBlock block
       case maybeErr of
         Right () -> do
-          let Right (AtomBinderInfo _ (LetBound _ (Atom atom))) = lookupSourceName newState v
+          let Right (AtomBinderInfo _ (LetBound _ (Atom atom))) =
+                lookupSourceName newState v :: Except AnyBinderInfo
           toStablePtr atom
         Left err -> setError (pprint err) $> nullPtr
     Left err -> setError (pprint err) $> nullPtr
@@ -105,7 +107,7 @@ dexLookup :: Ptr Context -> CString -> IO (Ptr Atom)
 dexLookup ctxPtr namePtr = do
   Context _ env <- fromStablePtr ctxPtr
   name <- peekCString namePtr
-  case lookupSourceName env $ fromString name of
+  case lookupSourceName env (fromString name) :: Except AnyBinderInfo of
     Right (AtomBinderInfo _ (LetBound _ (Atom atom))) -> toStablePtr atom
     Left  _ -> setError "Unbound name" $> nullPtr
     Right _ -> setError "Looking up an expression" $> nullPtr

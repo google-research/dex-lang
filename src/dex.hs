@@ -71,7 +71,7 @@ runMode evalMode preludeFile opts = do
       let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
       putStr $ foldMap (nonEmptyNewline . pprint) errors
       let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-      unless (backendName opts == LLVM) $ liftEitherIO $
+      unless (backendName opts == LLVM) $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
       TopStateEx env' <- return env
       exportFunctions objPath exportedFuns $ topBindings $ topStateD env'

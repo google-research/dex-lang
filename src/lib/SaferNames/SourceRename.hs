@@ -23,7 +23,7 @@ import SaferNames.Name
 import SaferNames.ResolveImplicitNames
 import SaferNames.Syntax
 
-renameSourceNames :: MonadErr m => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
+renameSourceNames :: Fallible m => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
 -- renameSourceNames scope sourceMap m =
 --   runReaderT (runReaderT (renameSourceNames' m) (scope, sourceMap)) False
 renameSourceNames = undefined
@@ -33,7 +33,7 @@ renameSourceNames = undefined
 -- We have this class because we want to read some extra context (whether
 -- shadowing is allowed) but we've already used up the MonadReader
 -- (we can't add a field because we want it to be monoidal).
-class (Monad1 m, ScopeExtender m, MonadErr1 m) => Renamer m where
+class (Monad1 m, ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
   askSourceMap :: m n (SourceMap n)
@@ -52,11 +52,11 @@ class (Monad1 m, ScopeExtender m, MonadErr1 m) => Renamer m where
 
 -- instance ScopeExtender RenamerData where
 
--- instance MonadError Err (RenamerData n) where
+-- instance Fallibleor Err (RenamerData n) where
 
 -- instance Renamer RenamerData where
 
--- instance MonadErr m => Renamer n (ReaderT (RenameEnv n) (ReaderT Bool m)) where
+-- instance Fallible m => Renamer n (ReaderT (RenameEnv n) (ReaderT Bool m)) where
 --   askMayShadow = lift ask
 --   setMayShadow mayShadow cont = do
 --     env <- ask

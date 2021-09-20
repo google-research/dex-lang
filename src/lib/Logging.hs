@@ -20,6 +20,7 @@ import Prelude hiding (log)
 import System.IO
 
 import PPrint
+import Err
 
 data Logger l = Logger (MVar l) (Maybe Handle)
 
@@ -47,7 +48,8 @@ readLog (Logger log _) = liftIO $ readMVar log
 -- === monadic interface ===
 
 newtype LoggerT l m a = LoggerT (ReaderT (Logger l) m a)
-                        deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
+                        deriving (Functor, Applicative, Monad, MonadTrans,
+                                  MonadIO, MonadFail, Fallible)
 
 class (Pretty l, Monoid l, Monad m) => MonadLogger l m | m -> l where
   getLogger :: m (Logger l)
@@ -62,4 +64,3 @@ logIO val = do
 
 runLoggerT :: Monoid l => Logger l -> LoggerT l m a -> m a
 runLoggerT l (LoggerT m) = runReaderT m l
-
