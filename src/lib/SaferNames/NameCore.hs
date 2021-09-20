@@ -15,8 +15,8 @@ module SaferNames.NameCore (
   S (..), C (..), RawName, Name (..), withFresh, inject, injectNamesR, projectName,
   NameBinder (..), ScopeFrag (..), Scope, singletonScope, (<.>),
   EnvFrag (..), Env, singletonEnv, emptyEnv, envAsScope, lookupEnv, lookupEnvFrag,
-  E, B, V, InjectableE (..), InjectableB (..),
-  InjectableV, InjectionCoercion, Nest (..),
+  E, B, V, InjectableE (..), InjectableB (..), InjectableV,
+  InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
   toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep, withSubscopeDistinct,
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
@@ -33,7 +33,6 @@ import Data.Kind (Type)
 import Unsafe.Coerce
 import qualified Data.Map  as M
 import qualified Data.Set  as S
-import GHC.Exts (Constraint)
 import Data.Store (Store (..))
 import Data.String
 import GHC.Generics (Generic (..))
@@ -284,10 +283,18 @@ class InjectableB (b::B) where
   injectionProofB fresh b cont =
     injectionProofB fresh (fromB b) \fresh' b' -> cont fresh' $ toB b'
 
+-- previously we just had the alias
+-- `type InjectableV v = forall c. NameColor c => InjectableE (v c)`
+-- but GHC seemed to have trouble figuring out superclasses etc. so
+-- we're making it an explicit class instead
+class (forall c. NameColor c => InjectableE (v c))
+      => InjectableV (v::V)
+
 data InjectionCoercion (n::S) (l::S) where
   InjectionCoercion :: (forall s. Name s n -> Name s l) -> InjectionCoercion n l
 
-instance InjectableE (Name s) where
+instance InjectableV Name
+instance InjectableE (Name c) where
   injectionProofE (InjectionCoercion f) name = f name
 
 -- This is the unsafely-implemented base case. Here's why it's valid. Let's say
@@ -509,8 +516,6 @@ instance Ord (Name s n) where
 instance Show (Name s n) where
   show (UnsafeMakeName _ rawName) = show rawName
 
-type InjectableV v = (forall (c::C). NameColor c => InjectableE (v c)) :: Constraint
-
 instance InjectableV v => InjectableE (EnvFrag v i i') where
   injectionProofE fresh m = fmapEnvFrag (\(UnsafeMakeName _ _) v -> injectionProofE fresh v) m
 
@@ -606,8 +611,7 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (EnvVal v n) where
     (MethodNameVal     val) -> EnvVal MethodNameRep     val
 
 instance (forall c. NameColor c => Store (v c n)) => Store (EnvVal v n)
-
-instance (forall c. InjectableE (v c)) => InjectableE (EnvVal v) where
+instance InjectableV v => InjectableE (EnvVal v) where
   injectionProofE = undefined
 
 instance ( forall c. NameColor c => Store (v c o)

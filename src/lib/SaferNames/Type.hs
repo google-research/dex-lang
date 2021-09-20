@@ -48,7 +48,7 @@ checkModule env m =
     runBindingsReaderT (fromTopBindings env) $
       checkTypes m
 
-checkTypes :: (BindingsReader m, MonadErr1 m, InjectableE e, CheckableE e)
+checkTypes :: (BindingsReader m, MonadErr1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = do
   Distinct <- getDistinct
@@ -72,7 +72,7 @@ instantiatePi (PiType _ b eff body) x = do
 -- TODO: not clear why we need the explicit `Monad2` here since it should
 -- already be a superclass, transitively, through both MonadErr2 and
 -- MonadAtomSubst.
-class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvGetter Name m
+class ( MonadFail2 m, Monad2 m, MonadErr2 m, EnvReader Name m
       , BindingsGetter2 m, BindingsExtender2 m)
      => Typer (m::MonadKind2) where
   declareEffs :: EffectRow o -> m i o ()
@@ -100,7 +100,7 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
       (OutReaderT EffectRow
         (BindingsReaderT m)) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail
-           , EnvGetter Name, EnvReader Name
+           , EnvReader Name
            , ScopeReader, ScopeGetter, BindingsReader
            , BindingsGetter, BindingsExtender)
 
@@ -129,7 +129,7 @@ instance (MonadFail m, MonadErr m) => Typer (TyperT m) where
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class (InjectableE e, SubstE Name e) => HasType (e::E) where
+class SubstE Name e => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -193,17 +193,18 @@ instance CheckableE SynthCandidates where
                     <*> mapM checkE zs
 
 instance CheckableB (RecEnvFrag Binding) where
-  checkB recEnv cont = do
-    WithScopeSubstFrag _ envFrag recEnv' <- do
-      Distinct <- getDistinct
-      env <- getEnv
-      scope <- getScope
-      return $ runScopedEnvReader scope env $ runSubstGenT $ substB recEnv
-    void $ extendBindings (boundBindings recEnv') $ dropSubst $
-      traverseEnvFrag checkE (fromRecEnvFrag recEnv')
-    extendBindings (boundBindings recEnv') $
-      extendEnv envFrag $
-         cont recEnv'
+  checkB _ _ = undefined
+  -- checkB recEnv cont = do
+  --   WithScopeSubstFrag _ envFrag recEnv' <- do
+  --     Distinct <- getDistinct
+  --     env <- getEnv
+  --     scope <- getScope
+  --     return $ runScopedEnvReader scope env $ runSubstGenT $ substB recEnv
+  --   void $ extendBindings (boundBindings recEnv') $ dropSubst $
+  --     traverseEnvFrag checkE (fromRecEnvFrag recEnv')
+  --   extendBindings (boundBindings recEnv') $
+  --     extendEnv envFrag $
+  --        cont recEnv'
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
