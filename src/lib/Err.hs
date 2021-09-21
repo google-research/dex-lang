@@ -16,7 +16,7 @@ module Err (Err (..), Errs (..), ErrType (..), Except, ErrCtx (..),
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
-            SeqFallibleApplicative, traverseMergingErrs) where
+            FallibleApplicativeWrapper, traverseMergingErrs) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
@@ -73,11 +73,13 @@ class MonadFail m => Fallible m where
   throwErrs :: Errs -> m a
   addErrCtx :: ErrCtx -> m a -> m a
 
--- We have this in its own class because IO and `Either Err` can't implement it
+-- We have this in its own class because IO and `Except` can't implement it
+-- (but FallibleM can)
 class Fallible m => CtxReader m where
   getErrCtx :: m ErrCtx
 
 -- We have this in its own class because StateT can't implement it
+-- (but FallibleM, Except and IO all can)
 class Fallible m => FallibleApplicative m where
   mergeErrs :: m a -> m b -> m (a, b)
 
@@ -108,20 +110,20 @@ instance FallibleApplicative IO where
     result2 <- catchIOExcept m2
     liftExcept $ mergeErrs result1 result2
 
--- === SeqFallibleApplicative ===
+-- === FallibleApplicativeWrapper ===
 
 -- Wraps a Fallible monad, presenting an applicative interface that sequences
 -- actions using the error-concatenating `mergeErrs` instead of the default
 -- abort-on-failure sequencing.
 
-newtype SeqFallibleApplicative m a =
-  SeqFallibleApplicative { fromSeqFallibleApplicative :: m a }
+newtype FallibleApplicativeWrapper m a =
+  FallibleApplicativeWrapper { fromFallibleApplicativeWrapper :: m a }
   deriving (Functor)
 
-instance FallibleApplicative m => Applicative (SeqFallibleApplicative m) where
-  pure x = SeqFallibleApplicative $ pure x
-  liftA2 f (SeqFallibleApplicative m1) (SeqFallibleApplicative m2) =
-    SeqFallibleApplicative $ fmap (uncurry f) (mergeErrs m1 m2)
+instance FallibleApplicative m => Applicative (FallibleApplicativeWrapper m) where
+  pure x = FallibleApplicativeWrapper $ pure x
+  liftA2 f (FallibleApplicativeWrapper m1) (FallibleApplicativeWrapper m2) =
+    FallibleApplicativeWrapper $ fmap (uncurry f) (mergeErrs m1 m2)
 
 -- === HardFail ===
 
@@ -206,7 +208,7 @@ layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
 traverseMergingErrs :: (Traversable f, FallibleApplicative m)
                     => (a -> m b) -> f a -> m (f b)
 traverseMergingErrs f xs =
-  fromSeqFallibleApplicative $ traverse (\x -> SeqFallibleApplicative $ f x) xs
+  fromFallibleApplicativeWrapper $ traverse (\x -> FallibleApplicativeWrapper $ f x) xs
 
 -- === instances ===
 
@@ -314,8 +316,7 @@ leftmostJust (Just x) _ = Just x
 leftmostJust Nothing y  = y
 
 rightmostJust :: Maybe a -> Maybe a -> Maybe a
-rightmostJust _ (Just y) = Just y
-rightmostJust x Nothing  = x
+rightmostJust = flip leftmostJust
 
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> pretty d <> hardline) xs
