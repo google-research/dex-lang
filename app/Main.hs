@@ -1,6 +1,12 @@
 module Main where
 
-import Lib
+import TableEffectsExamples
 
 main :: IO ()
-main = putStrLn "hello world"
+main = do
+  putStrLn "Examples:"
+  putStrLn "res1 = "
+  print res1
+  putStrLn "res2 = "
+  print res2
+

@@ -31,6 +31,8 @@ import Control.Monad
 import GHC.TypeLits
 import Data.Traversable (Traversable)
 
+import Table
+
 
 -- An effect signature is a parameterized data type, parameterized by the output
 -- type of the effect, and whose values are the operations defined by that
@@ -74,35 +76,13 @@ instance HasEff sig rest => HasEff_ sig (other `EffCons` rest) False where
   liftEff_ op = There (liftEff op)
 
 
--- Hack to let us reason about dex-style static tables in Haskell.
-data Table a b where
-  Table :: IndexSet a => (a -> b) -> Table a b
-
-deriving instance Functor (Table a)
-
-class IndexSet a where
-  size :: Integer
-  iota :: Table a a
-  fromOrdinal :: Integer -> a
-  ordinal :: a -> Integer
-
-newtype Fin (n :: Nat) = UnsafeFromOrdinal Integer deriving (Eq, Ord, Show)
-
-instance KnownNat n => IndexSet (Fin n) where
-  size = natVal (Proxy @n)
-  iota = Table id
-  fromOrdinal = UnsafeFromOrdinal 
-  ordinal (UnsafeFromOrdinal i) = i
-
-tableIndex :: Table a b -> a -> b
-tableIndex (Table f) = f
 
 -- Given the above, we can construct a data type representing a (possibly)
 -- parallelizable effectful computation. We only care about parallelism within
 -- list constructs.
 data EffOrTraversal sig r where
   Effect :: sig r -> EffOrTraversal sig r
-  TraverseTable :: Table ix (EffComp sig s) -> EffOrTraversal sig (Table ix s)
+  TraverseTable :: Table n (EffComp sig s) -> EffOrTraversal sig (Table n s)
 
 data EffComp (sig :: EffSig) r where
   -- Return a value without having any effects.
@@ -130,9 +110,14 @@ instance Monad (EffComp sig) where
   Pure v >>= f = f v
   Impure va vc >>= f = Impure va $ \a -> vc a >>= f
 
--- To expose the table-specific parallelism, we handle "for" separately
-for :: IndexSet a => (a -> EffComp sig b) -> EffComp sig (Table a b)
-for f = Impure (TraverseTable (f <$> iota)) Pure
+-- To expose the table-specific parallelism, we give a special implementation
+-- of traversing tables under effects. (Note that Table does NOT implement the
+-- ordinary Traversable class.)
+traverseTable :: (a -> EffComp sig b) -> Table n a -> EffComp sig (Table n b)
+traverseTable f a = Impure (TraverseTable (f <$> a)) Pure
+
+for :: KnownNat n => (Int -> EffComp sig b) -> EffComp sig (Table n b)
+for = flip traverseTable iota
 
 -- We also provide a hook to call effects easily.
 effect :: HasEff sig union => sig r -> EffComp union r
@@ -213,7 +198,7 @@ handleWithRet h@WithRetEffHandler{retR, handleR, parallelR} comp = case comp of
 -- some use of this. Are there others?)
 data ForkStateEffHandler (op :: EffSig) (m :: * -> *) s = ForkStateEffHandler
   { handleF   :: forall a. s -> op a -> m (s, a)
-  , parallelF :: forall ix. IndexSet ix => s -> m (Table ix s, s)
+  , parallelF :: forall ix. KnownNat ix => s -> m (Table ix s, s)
   }
 
 handleForkState :: forall op rest s a
@@ -229,8 +214,8 @@ handleForkState h@ForkStateEffHandler{handleF, parallelF}
       (s, a) <- handleF s op
       rec s (cont a)
     Impure (Effect (There op)) cont -> Impure (Effect op) (rec s . cont)
-    Impure (TraverseTable iters@(Table _)) cont -> do
-      (ss, s') <- parallelF s
+    Impure (TraverseTable iters@(UnsafeFromList _ :: Table n b)) cont -> do
+      (ss, s') <- parallelF @n s
       result <- for $ \i -> rec (tableIndex ss i) (tableIndex iters i)
       rec s' (cont result)
   where
@@ -245,7 +230,7 @@ handleForkState h@ForkStateEffHandler{handleF, parallelF}
 data ForkStateWithRetEffHandler (op :: EffSig) (m :: * -> *) s (f :: * -> *) = ForkStateWithRetEffHandler
   { retFR      :: forall a.      s -> a -> m (f a)
   , handleFR   :: forall a b.    s -> op a -> (s -> a -> m (f b)) -> m (f b)
-  , parallelFR :: forall a b ix. IndexSet ix
+  , parallelFR :: forall a b ix. KnownNat ix
                                   => s
                                   -> (Table ix s -> m (Table ix (f a)))
                                   -> (s -> Table ix a -> m (f b))
@@ -261,7 +246,7 @@ handleForkStateWithRet h@ForkStateWithRetEffHandler{retFR, handleFR, parallelFR}
     Pure r -> retFR s r
     Impure (Effect (Here op)) cont -> handleFR s op (\s a -> rec s $ cont a)
     Impure (Effect (There op)) cont -> Impure (Effect op) (rec s . cont)
-    Impure (TraverseTable iters@(Table _)) cont  -- unpack iters to get a proof of IndexSet ix
+    Impure (TraverseTable iters@(UnsafeFromList _ :: Table n b)) cont  -- unpack iters to get a proof of IndexSet ix
       -> parallelFR s runIters runCont
       where
         runIters ss = for $ \i -> rec (tableIndex ss i) (tableIndex iters i)

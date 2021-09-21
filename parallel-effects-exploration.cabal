@@ -17,6 +17,7 @@ source-repository head
 library
   exposed-modules:
       Lib
+      Table
       TableEffects
       TableEffectsExamples
   hs-source-dirs:

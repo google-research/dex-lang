@@ -32,8 +32,9 @@ import GHC.TypeLits
 import Data.Traversable (Traversable)
 import Data.Semigroup
 
+import Table
 import TableEffects
-import Data.Foldable (Foldable(fold))
+import Data.Foldable
 
 
 -- Some example signatures.
@@ -49,7 +50,6 @@ data Random key r where
 
 data Amb r where
   Amb :: [r] -> Amb r
-  AmbIx :: IndexSet ix => Amb ix -- isomprphic to Amb $ tableToList iota
   Fail :: Amb r  -- isomorphic to Amb []
 
 -- Only parallelizable if we impose a strong applicative restriction? So maybe
@@ -65,40 +65,19 @@ data PrefixScan m r where
 -----------------------------
 -- Utilities
 
-tableToList :: forall ix a. Table ix a -> [a]
-tableToList tab@(Table _) = tableIndex tab . fromOrdinal <$> [0..size @ix - 1]
-
-foldrTable :: (a -> b -> b) -> b -> Table ix a -> b
-foldrTable f b tab = -- note: a log(n) parallel version exists
-  foldr f b $ tableToList tab
-
-concatTable :: Monoid m => Table ix m -> m
-concatTable tab = -- note: a log(n) parallel version exists
-  fold $ tableToList tab
-
 seqEithers :: Table ix (Either e a) -> Either e (Table ix a)
 seqEithers tab = -- note: a log(n) parallel version exists
-  case concatTable (firstError <$> tab) of
+  case fold (firstError <$> tab) of
     Just (First e) -> Left e
     Nothing -> Right $ flip fmap tab \(Right v) -> v
   where firstError x = case x of Left e -> Just $ First e
                                  Right _ -> Nothing
 
-data SomeTable r where
-  SomeTable :: forall ix r. IndexSet ix => Table ix r -> SomeTable r
-
-listToTable :: forall a. [a] -> SomeTable a
-listToTable lst = case someNatVal $ fromIntegral $ length lst of
-  Just (SomeNat (_ :: Proxy n)) ->
-    SomeTable $ Table @(Fin n) \i -> lst !! fromIntegral (ordinal i)
-  Nothing -> error "impossible list?"
-
-
-listFor :: [a] -> (a -> EffComp sig b) -> EffComp sig [b]
-listFor lst f = case listToTable lst of
-  SomeTable (tab@(Table _) :: Table ix a) -> do
-    allRes <- for \i -> f (tableIndex tab i)
-    return $ tableToList allRes
+-- listFor :: [a] -> (a -> EffComp sig b) -> EffComp sig [b]
+-- listFor lst f = case listToTable lst of
+--   SomeTable (tab@(Table _) :: Table ix a) -> do
+--     allRes <- for \i -> f (tableIndex tab i)
+--     return $ tableToList allRes
 
 -----------------------------
 
@@ -115,7 +94,7 @@ runAccumSlow comp = do
         let ms = fmap (\(AccumOutImpl m _) -> m) iterResults
         let as = fmap (\(AccumOutImpl _ a) -> a) iterResults
         AccumOutImpl m' b <- cont as
-        return $ AccumOutImpl (concatTable ms <> m') b
+        return $ AccumOutImpl (fold ms <> m') b
     } comp
   return (m, a)
 
@@ -128,7 +107,7 @@ runAccumFast comp = do
         iterResults <- iters =<< for (const $ return mempty)
         let ms = fmap (\(AccumOutImpl m _) -> m) iterResults
         let as = fmap (\(AccumOutImpl _ a) -> a) iterResults
-        cont (m <> concatTable ms) as
+        cont (m <> fold ms) as
     } mempty comp
   return (m, a)
 
@@ -144,9 +123,8 @@ runExceptSoft = handleWithRet WithRetEffHandler
 
 newtype MockPRNGKey = MockPRNGKey String deriving (Eq, Show)
 
-splitKey :: IndexSet ix => MockPRNGKey -> Table ix MockPRNGKey
-splitKey (MockPRNGKey s) =
-  Table \i -> MockPRNGKey $ s <> "_" <> show (ordinal i)
+splitKey :: KnownNat ix => MockPRNGKey -> Table ix MockPRNGKey
+splitKey (MockPRNGKey s) = purefor \i -> MockPRNGKey $ s <> "_" <> show i
 
 splitKeyPair :: MockPRNGKey -> (MockPRNGKey, MockPRNGKey)
 splitKeyPair (MockPRNGKey s) = (MockPRNGKey $ s <> "_0", MockPRNGKey $ s <> "_1")
@@ -167,63 +145,63 @@ runAmb :: EffComp (Amb `EffCons` c) a -> EffComp c [a]
 runAmb = handleWithRet WithRetEffHandler
     { retR = \x -> return [x]
     , handleR = \op cont -> case op of
-        Amb lst -> case listToTable lst of
-          SomeTable (tab@(Table _) :: Table ix a) -> do
-            allRes <- for \i -> cont (tableIndex tab i)
-            return $ concatTable allRes
-        (AmbIx :: Amb ix) -> do
-            allRes <- for \i -> cont i
-            return $ concatTable allRes
+        Amb lst -> case fromList lst of
+          SomeTable (tab@(UnsafeFromList _) :: Table ix a) -> do
+            allRes <- for @ix \i -> cont (tableIndex tab i)
+            return $ concat allRes
         Fail -> return []
-    , parallelR = \(iterResults@(Table _) :: Table ix r) cont -> do
-        let
-          cartProd here rest = [x:y | x <-  here, y <- rest]
-          allOptions = foldrTable cartProd [] iterResults
-          buildTable lst = Table @ix \i -> lst !! fromInteger (ordinal i)
-          allTables = buildTable <$> allOptions
-        allRes <- listFor allTables cont
-        return $ concat allRes
+    , parallelR = \(iterResults@(UnsafeFromList _) :: Table ix [a]) cont -> let
+        -- Construct a list of lists such that the outer list is the list of
+        -- elements in the Cartesian product of the subtable results.
+        cartProd here rest = [x:y | x <-  here, y <- rest]
+        allOptions = foldr cartProd [] iterResults
+        -- Now, transform each Cartesian product into a table.
+        buildTable lst = purefor @ix \i -> lst !! i
+        listOfTables = buildTable <$> allOptions
+        in case fromList listOfTables of
+          SomeTable (tableOfTables :: Table n (Table ix a)) -> do
+            allRes <- for @n \i -> cont $ tableIndex tableOfTables i
+            return $ concat allRes
     }
 
 -----------------------------
 
 -- Demo function: Draw "random numbers" and accumulate them, possibly throwing
 -- an exception partway through.
-myDemoFunc :: forall key ix effs
+myDemoFunc :: forall ix key effs
             . ( HasEff (Random key) effs
               , HasEff (Accum [key]) effs
               , HasEff (Except String) effs
-              , IndexSet ix
-              , Eq ix)
-           => Maybe ix -> EffComp effs Integer
+              , KnownNat ix)
+           => Maybe Int -> EffComp effs Int
 myDemoFunc throwHere = do
   k <- effect $ NextKey @key
   effect $ Tell [k]
-  vals <- for \i -> if Just i == throwHere
+  vals <- for @ix \i -> if Just i == throwHere
     then effect $ Throw $
-      "Exception at iteration " <> show (ordinal i)
+      "Exception at iteration " <> show i
     else do
       k' <- effect $ NextKey @key
       effect $ Tell [k']
-      return $ ordinal i
+      return i
   k <- effect $ NextKey @key
   effect $ Tell [k]
-  let theSum = foldrTable (+) 0 vals
+  let theSum = sum vals
   return theSum
 
 
 -- Run the demo func.
-runDemoFunc :: (IndexSet ix, Eq ix)
-            => Maybe ix -> ([MockPRNGKey], Either String Integer)
-runDemoFunc ix =
+runDemoFunc :: forall ix. (KnownNat ix)
+            => Maybe Int -> ([MockPRNGKey], Either String Int)
+runDemoFunc i =
   runPure $ runAccumFast
           $ runExceptSoft
           $ runMockRandom (MockPRNGKey "rootKey")
-          $ myDemoFunc @MockPRNGKey ix
+          $ myDemoFunc @ix @MockPRNGKey i
 
 
-res1 :: ([MockPRNGKey], Either String Integer)
-res1 = runDemoFunc $ Nothing @(Fin 5)
+res1 :: ([MockPRNGKey], Either String Int)
+res1 = runDemoFunc @5 Nothing
 {-
 ( [ MockPRNGKey "rootKey_1",
   , MockPRNGKey "rootKey_0_0_0_1"
@@ -233,11 +211,11 @@ res1 = runDemoFunc $ Nothing @(Fin 5)
   , MockPRNGKey "rootKey_0_0_4_1"
   , MockPRNGKey "rootKey_0_1_1"
   ]
-, Right 15)
+, Right 10)
 -}
 
-res2 :: ([MockPRNGKey], Either String Integer)
-res2 = runDemoFunc $ Just $ fromOrdinal @(Fin 5) 2
+res2 :: ([MockPRNGKey], Either String Int)
+res2 = runDemoFunc @5 $ Just 2
 {-
 ( [ MockPRNGKey "rootKey_1",
   , MockPRNGKey "rootKey_0_0_0_1"
