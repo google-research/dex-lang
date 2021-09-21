@@ -1290,7 +1290,7 @@ withDevice device = local (\opts -> opts {curDevice = device })
 -- "shouldn't launch a kernel from device/thread code"
 
 -- State keeps track of _all_ names used in the program, Reader keeps the type env.
-type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType, Device) (Either Errs)) a
+type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType, Device) Except) a
 
 instance Checkable ImpModule where
   -- TODO: check main function defined

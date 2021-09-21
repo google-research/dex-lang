@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Parser (Parser, parseit, parseProg, runTheParser, parseData,
+module Parser (Parser, parseit, parseProg, parseData,
                parseTopDeclRepl, uint, withSource, parseExpr, exprAsModule,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
@@ -50,14 +50,14 @@ parseExpr :: String -> Except UExpr
 parseExpr s = parseit s (expr <* eof)
 
 parseit :: String -> Parser a -> Except a
-parseit s p = case runTheParser s (p <* (optional eol >> eof)) of
-  Left e -> throw ParseErr (errorBundlePretty e)
+parseit s p = case parse (runReaderT p (ParseCtx 0 False False)) "" s of
+  Left e  -> throw ParseErr $ errorBundlePretty e
   Right x -> return x
 
 mustParseit :: String -> Parser a -> a
 mustParseit s p  = case parseit s p of
-  Right ans -> ans
-  Left e -> error $ "This shouldn't happen:\n" ++ pprint e
+  Failure e -> error $ "This shouldn't happen:\n" ++ pprint e
+  Success x -> x
 
 importModule :: Parser SourceBlock'
 importModule = ImportModule <$> do
@@ -1021,9 +1021,6 @@ symChars :: [Char]
 symChars = ".,!$^&*:-~+/=<>|?\\@"
 
 -- === Util ===
-
-runTheParser :: String -> Parser a -> Either (ParseErrorBundle String Void) a
-runTheParser s p = parse (runReaderT p (ParseCtx 0 False False)) "" s
 
 sc :: Parser ()
 sc = L.space space lineComment empty

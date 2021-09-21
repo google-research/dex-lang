@@ -9,7 +9,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds #-}
 
-module Err (Err (..), Errs (..), ErrType (..), Except, ErrCtx (..),
+module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
             Fallible (..), FallibleM (..), HardFailM (..),
             runHardFail, throw, throwIf,
@@ -65,8 +65,6 @@ data ErrCtx = ErrCtx
   , messageCtx :: [String] }
     deriving (Show, Eq)
 
-type Except = Either Errs
-
 type SrcPos = (Int, Int)
 
 class MonadFail m => Fallible m where
@@ -84,7 +82,7 @@ class Fallible m => FallibleApplicative m where
   mergeErrs :: m a -> m b -> m (a, b)
 
 newtype FallibleM a =
-  FallibleM { fromFallibleM :: ReaderT ErrCtx (Either Errs) a }
+  FallibleM { fromFallibleM :: ReaderT ErrCtx Except a }
   deriving (Functor, Applicative, Monad)
 
 instance Fallible FallibleM where
@@ -109,6 +107,28 @@ instance FallibleApplicative IO where
     result1 <- catchIOExcept m1
     result2 <- catchIOExcept m2
     liftExcept $ mergeErrs result1 result2
+
+-- === Except type ===
+
+-- Except is isomorphic to `Either Errs` but having a distinct type makes it
+-- easier to debug type errors.
+
+data Except a =
+   Failure Errs
+ | Success a
+   deriving (Show, Eq)
+
+instance Functor Except where
+  fmap = liftM
+
+instance Applicative Except where
+  pure = return
+  liftA2 = liftM2
+
+instance Monad Except where
+  return = Success
+  Failure errs >>= _ = Failure errs
+  Success x >>= f = f x
 
 -- === FallibleApplicativeWrapper ===
 
@@ -166,19 +186,19 @@ addSrcTextContext offset text m =
   addErrCtx (mempty {srcTextCtx = Just (offset, text)}) m
 
 catchIOExcept :: MonadIO m => IO a -> m (Except a)
-catchIOExcept m = liftIO $ (liftM Right m) `catches`
-  [ Handler \(e::Errs)          -> return $ Left e
-  , Handler \(e::IOError)       -> return $ Left $ Errs [Err DataIOErr   mempty $ show e]
-  , Handler \(e::SomeException) -> return $ Left $ Errs [Err CompilerErr mempty $ show e]
+catchIOExcept m = liftIO $ (liftM Success m) `catches`
+  [ Handler \(e::Errs)          -> return $ Failure e
+  , Handler \(e::IOError)       -> return $ Failure $ Errs [Err DataIOErr   mempty $ show e]
+  , Handler \(e::SomeException) -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
   ]
 
 liftExcept :: Fallible m => Except a -> m a
-liftExcept (Left errs) = throwErrs errs
-liftExcept (Right ans) = return ans
+liftExcept (Failure errs) = throwErrs errs
+liftExcept (Success ans) = return ans
 
 ignoreExcept :: HasCallStack => Except a -> a
-ignoreExcept (Left e) = error $ pprint e
-ignoreExcept (Right x) = x
+ignoreExcept (Failure e) = error $ pprint e
+ignoreExcept (Success x) = x
 
 assertEq :: (HasCallStack, Fallible m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
@@ -215,22 +235,22 @@ traverseMergingErrs f xs =
 instance MonadFail FallibleM where
   fail s = throw MonadFailErr s
 
-instance Fallible (Either Errs) where
-  throwErrs errs = Left errs
+instance Fallible Except where
+  throwErrs errs = Failure errs
 
-  addErrCtx _ (Right ans) = Right ans
-  addErrCtx ctx (Left (Errs errs)) =
-    Left $ Errs [Err errTy (ctx <> ctx') s | Err errTy ctx' s <- errs]
+  addErrCtx _ (Success ans) = Success ans
+  addErrCtx ctx (Failure (Errs errs)) =
+    Failure $ Errs [Err errTy (ctx <> ctx') s | Err errTy ctx' s <- errs]
 
-instance FallibleApplicative (Either Errs) where
-  mergeErrs (Right x) (Right y) = Right (x, y)
-  mergeErrs x y = Left (getErrs x <> getErrs y)
+instance FallibleApplicative Except where
+  mergeErrs (Success x) (Success y) = Success (x, y)
+  mergeErrs x y = Failure (getErrs x <> getErrs y)
     where getErrs :: Except a -> Errs
-          getErrs = \case Left e  -> e
-                          Right _ -> mempty
+          getErrs = \case Failure e  -> e
+                          Success _ -> mempty
 
-instance MonadFail (Either Errs) where
-  fail s = Left $ Errs [Err CompilerErr mempty s]
+instance MonadFail Except where
+  fail s = Failure $ Errs [Err CompilerErr mempty s]
 
 instance Exception Errs
 

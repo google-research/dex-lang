@@ -164,11 +164,11 @@ evalSourceBlock' block = case sbContents block of
   RunModule m -> do
     (maybeEvaluatedModule, outs) <- liftPassesM (requiresBench block) $ evalUModule m
     case maybeEvaluatedModule of
-      Left err -> return $ Result outs $ Left err
-      Right evaluatedModule -> do
+      Failure err -> return $ Result outs $ Failure err
+      Success evaluatedModule -> do
         TopStateEx curState <- getTopStateEx
         setTopStateEx $ extendTopStateD curState evaluatedModule
-        return $ Result outs $ Right ()
+        return $ Result outs $ Success ()
   Command cmd (v, m) -> liftPassesM_ (requiresBench block) case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal v m
@@ -242,13 +242,13 @@ filterLogs block (Result outs err) = let
 
 summarizeModuleResults :: [Result] -> Result
 summarizeModuleResults results =
-  case [err | Result _ (Left err) <- results] of
-    [] -> Result allOuts $ Right ()
+  case [err | Result _ (Failure err) <- results] of
+    [] -> Result allOuts $ Success ()
     errs -> Result allOuts $ throw ModuleImportErr $ foldMap pprint errs
   where allOuts = foldMap resultOutputs results
 
 emptyResult :: Result
-emptyResult = Result [] (Right ())
+emptyResult = Result [] (Success ())
 
 evalFile :: MonadInterblock m => FilePath -> m [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)

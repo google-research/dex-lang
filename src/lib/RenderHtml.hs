@@ -25,6 +25,7 @@ import Syntax
 import PPrint
 import Parser
 import Serialize ()
+import Err
 
 pprintHtml :: ToMarkup a => a -> String
 pprintHtml x = renderHtml $ toMarkup x
@@ -52,8 +53,8 @@ wrapBody blocks = docTypeHtml $ do
 instance ToMarkup Result where
   toMarkup (Result outs err) = foldMap toMarkup outs <> err'
     where err' = case err of
-                   Left e   -> cdiv "err-block" $ toHtml $ pprint e
-                   Right () -> mempty
+                   Failure e  -> cdiv "err-block" $ toHtml $ pprint e
+                   Success () -> mempty
 
 instance ToMarkup Output where
   toMarkup out = case out of
@@ -75,10 +76,7 @@ cdiv c inner = H.div inner ! class_ (stringValue c)
 
 highlightSyntax :: String -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
-  where
-    classified = case runTheParser s (many (withSource classify) <* eof) of
-                   Left e -> error $ errorBundlePretty e
-                   Right ans -> ans
+  where classified = ignoreExcept $ parseit s (many (withSource classify) <* eof)
 
 syntaxSpan :: String -> StrClass -> Html
 syntaxSpan s NormalStr = toHtml s

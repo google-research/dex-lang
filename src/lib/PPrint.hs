@@ -13,7 +13,7 @@ module PPrint (pprint, docAsStr, printLitBlock, PrecedenceLevel(..), DocPrec,
                PrettyPrec(..), atPrec, toJSONStr, prettyFromPrettyPrec,
                pAppArg, fromInfix) where
 
-import Data.Aeson hiding (Result, Null, Value)
+import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Float
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
@@ -529,8 +529,8 @@ instance Pretty SourceBlock where
 
 instance Pretty Result where
   pretty (Result outs r) = vcat (map pretty outs) <> maybeErr
-    where maybeErr = case r of Left err -> p err
-                               Right () -> mempty
+    where maybeErr = case r of Failure err -> p err
+                               Success () -> mempty
 
 instance Pretty Module where pretty = prettyFromPrettyPrec
 instance PrettyPrec Module where
@@ -783,8 +783,8 @@ printOutput :: Bool -> Output -> String
 printOutput isatty out = addPrefix (addColor isatty Cyan ">") $ pprint $ out
 
 printResult :: Bool -> Except () -> String
-printResult _ (Right ()) = ""
-printResult isatty (Left err) = addColor isatty Red $ addPrefix ">" $ pprint err
+printResult _ (Success ()) = ""
+printResult isatty (Failure err) = addColor isatty Red $ addPrefix ">" $ pprint err
 
 addPrefix :: String -> String -> String
 addPrefix prefix str = unlines $ map prefixLine $ lines str
@@ -805,8 +805,8 @@ instance ToJSON Result where
   toJSON (Result outs err) = object (outMaps <> errMaps)
     where
       errMaps = case err of
-        Left e   -> ["error" .= String (fromString $ pprint e)]
-        Right () -> []
+        Failure e   -> ["error" .= String (fromString $ pprint e)]
+        Success () -> []
       outMaps = flip foldMap outs $ \case
         BenchResult name compileTime runTime _ ->
           [ "bench_name"   .= toJSON name

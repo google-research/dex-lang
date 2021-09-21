@@ -582,8 +582,8 @@ checkBuilder x = do
   let globals = freeVars x `envDiff` scope
   eff <- getAllowedEffects
   case checkType (scope <> globals) eff x of
-    Left e   -> error $ pprint e
-    Right () -> return x
+    Failure e  -> error $ pprint e
+    Success () -> return x
 
 isSingletonType :: Type -> Bool
 isSingletonType ty = case singletonTypeVal ty of

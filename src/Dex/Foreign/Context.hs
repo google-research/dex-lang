@@ -47,19 +47,19 @@ dexCreateContext = do
   let evalConfig = EvalConfig LLVM Nothing Nothing
   maybePreludeEnv <- evalPrelude evalConfig preludeSource
   case maybePreludeEnv of
-    Right preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
-    Left  err        -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
+    Success preludeEnv -> toStablePtr $ Context evalConfig preludeEnv
+    Failure  err       -> nullPtr <$ setError ("Failed to initialize standard library: " ++ pprint err)
   where
-    evalPrelude :: EvalConfig -> String -> IO (Either Errs TopStateEx)
+    evalPrelude :: EvalConfig -> String -> IO (Except TopStateEx)
     evalPrelude opts sourceText = do
       (results, env) <- runInterblockM opts initTopState $
                             map snd <$> evalSourceText sourceText
       return $ env `unlessError` results
       where
         unlessError :: TopStateEx -> [Result] -> Except TopStateEx
-        result `unlessError` []                        = Right result
-        _      `unlessError` ((Result _ (Left err)):_) = Left err
-        result `unlessError` (_:t                    ) = result `unlessError` t
+        result `unlessError` []                        = Success result
+        _      `unlessError` ((Result _ (Failure err)):_) = Failure err
+        result `unlessError` (_:t                       ) = result `unlessError` t
 
 dexDestroyContext :: Ptr Context -> IO ()
 dexDestroyContext = freeStablePtr . castPtrToStablePtr . castPtr
@@ -69,7 +69,7 @@ dexEval ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
   (results, finalEnv) <- runInterblockM evalConfig env $ evalSourceText source
-  let anyError = asum $ fmap (\case (_, Result _ (Left err)) -> Just err; _ -> Nothing) results
+  let anyError = asum $ fmap (\case (_, Result _ (Failure err)) -> Just err; _ -> Nothing) results
   case anyError of
     Nothing  -> toStablePtr $ Context evalConfig finalEnv
     Just err -> setError (pprint err) $> nullPtr
@@ -91,23 +91,23 @@ dexEvalExpr ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
   case parseExpr source of
-    Right expr -> do
+    Success expr -> do
       let (v, m) = exprAsModule expr
       let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
       (Result [] maybeErr, newState) <- runInterblockM evalConfig env $ evalSourceBlock block
       case maybeErr of
-        Right () -> do
-          let Right (AtomBinderInfo _ (LetBound _ (Atom atom))) =
-                lookupSourceName newState v :: Except AnyBinderInfo
+        Success () -> do
+          let Success (AtomBinderInfo _ (LetBound _ (Atom atom))) =
+                lookupSourceName newState v
           toStablePtr atom
-        Left err -> setError (pprint err) $> nullPtr
-    Left err -> setError (pprint err) $> nullPtr
+        Failure err -> setError (pprint err) $> nullPtr
+    Failure err -> setError (pprint err) $> nullPtr
 
 dexLookup :: Ptr Context -> CString -> IO (Ptr Atom)
 dexLookup ctxPtr namePtr = do
   Context _ env <- fromStablePtr ctxPtr
   name <- peekCString namePtr
-  case lookupSourceName env (fromString name) :: Except AnyBinderInfo of
-    Right (AtomBinderInfo _ (LetBound _ (Atom atom))) -> toStablePtr atom
-    Left  _ -> setError "Unbound name" $> nullPtr
-    Right _ -> setError "Looking up an expression" $> nullPtr
+  case lookupSourceName env (fromString name) of
+    Success (AtomBinderInfo _ (LetBound _ (Atom atom))) -> toStablePtr atom
+    Failure _ -> setError "Unbound name" $> nullPtr
+    Success _ -> setError "Looking up an expression" $> nullPtr

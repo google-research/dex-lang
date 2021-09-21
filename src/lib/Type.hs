@@ -70,8 +70,8 @@ traceCheckM x = traceCheck x (return ())
 traceCheck :: (HasCallStack, HasVars a, HasType a) => a -> b -> b
 traceCheck x y =
   case checkType (freeVars x) Pure x of
-    Right () -> y
-    Left e -> error $ "Check failed: " ++ pprint x ++ "\n" ++ pprint e
+    Success () -> y
+    Failure e -> error $ "Check failed: " ++ pprint x ++ "\n" ++ pprint e
 
 -- === Module interfaces ===
 
@@ -1055,9 +1055,9 @@ checkData = checkDataLike " is not serializable"
 
 --TODO: Make this work even if the type has type variables!
 isData :: Type -> Bool
-isData ty = case checkData ty :: Except () of
-  Left  _ -> False
-  Right _ -> True
+isData ty = case checkData ty of
+  Failure _ -> False
+  Success _ -> True
 
 projectLength :: Type -> Int
 projectLength ty = case ty of

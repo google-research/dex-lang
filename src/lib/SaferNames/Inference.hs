@@ -876,9 +876,9 @@ checkAllowedUnconditionally Pure = return True
 checkAllowedUnconditionally eff = do
   eff' <- zonk eff
   effAllowed <- getAllowedEffects >>= zonk
-  return $ case checkExtends effAllowed eff' :: Except () of
-    Left _   -> False
-    Right () -> True
+  return $ case checkExtends effAllowed eff' of
+    Failure _  -> False
+    Success () -> True
 
 openEffectRow :: Inferer m => EffectRow o -> m i o (EffectRow o)
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff

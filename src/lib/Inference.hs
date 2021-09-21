@@ -34,7 +34,7 @@ import Cat
 import Util
 import Err
 
-type UInferM = ReaderT SubstEnv (ReaderT SrcPosCtx ((BuilderT (SolverT (Either Errs)))))
+type UInferM = ReaderT SubstEnv (ReaderT SrcPosCtx ((BuilderT (SolverT Except))))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -731,9 +731,9 @@ checkAllowedUnconditionally Pure = return True
 checkAllowedUnconditionally eff = do
   eff' <- zonk eff
   effAllowed <- getAllowedEffects >>= zonk
-  return $ case checkExtends effAllowed eff' :: Except () of
-    Left _   -> False
-    Right () -> True
+  return $ case checkExtends effAllowed eff' of
+    Failure _  -> False
+    Success () -> True
 
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
@@ -752,7 +752,7 @@ getSrcCtx = lift ask
 
 -- We have two variants here because at the top level we want error messages and
 -- internally we want to consider all alternatives.
-type SynthPassM = SubstBuilderT (Either Errs)
+type SynthPassM = SubstBuilderT Except
 type SynthDictM = SubstBuilderT []
 
 synthModule :: Scope -> SynthCandidates -> Module -> Except Module
@@ -822,8 +822,8 @@ inferToSynth m = do
   scope <- getScope
   scs <- getSynthCandidates
   case runUInferM mempty scope scs m of
-    Left _ -> empty
-    Right (x, (_, decls)) -> do
+    Failure _ -> empty
+    Success (x, (_, decls)) -> do
       mapM_ emitDecl decls
       return x
 
