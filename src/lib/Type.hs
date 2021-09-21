@@ -20,7 +20,6 @@ module Type (
 
 import Prelude hiding (pi)
 import Control.Monad
-import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable (toList, traverse_)
 import Data.Functor
@@ -53,8 +52,8 @@ getType :: (HasCallStack, HasType a) => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
 
-tryGetType :: (MonadErr m, HasCallStack, HasType a) => a -> m Type
-tryGetType x = liftEither $ ctx $ runTypeCheck SkipChecks $ typeCheck x
+tryGetType :: (Fallible m, HasCallStack, HasType a) => a -> m Type
+tryGetType x = liftExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
 
 checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
@@ -71,8 +70,8 @@ traceCheckM x = traceCheck x (return ())
 traceCheck :: (HasCallStack, HasVars a, HasType a) => a -> b -> b
 traceCheck x y =
   case checkType (freeVars x) Pure x of
-    Right () -> y
-    Left e -> error $ "Check failed: " ++ pprint x ++ "\n" ++ pprint e
+    Success () -> y
+    Failure e -> error $ "Check failed: " ++ pprint x ++ "\n" ++ pprint e
 
 -- === Module interfaces ===
 
@@ -488,10 +487,8 @@ goneBy ir = do
   curIR <- ask
   when (curIR >= ir) $ throw IRVariantErr $ "shouldn't appear after " ++ show ir
 
-addExpr :: (Pretty e, MonadError Err m) => e -> m a -> m a
-addExpr x m = modifyErr m \e -> case e of
-  Err IRVariantErr ctx s -> Err CompilerErr ctx (s ++ ": " ++ pprint x)
-  _ -> e
+addExpr :: (Pretty e, Fallible m) => e -> m a -> m a
+addExpr x m = addContext (pprint x) m
 
 -- === effects ===
 
@@ -514,7 +511,7 @@ declareEffs :: EffectRow -> TypeM ()
 declareEffs effs = checkWithEnv \(_, allowedEffects) ->
   checkExtends allowedEffects effs
 
-checkExtends :: MonadError Err m => EffectRow -> EffectRow -> m ()
+checkExtends :: Fallible m => EffectRow -> EffectRow -> m ()
 checkExtends allowed (EffectRow effs effTail) = do
   let (EffectRow allowedEffs allowedEffTail) = allowed
   case effTail of
@@ -647,7 +644,7 @@ typeCheckRef x = do
   TC (RefType _ a) <- typeCheck x
   return a
 
-checkIntBaseType :: MonadError Err m => Bool -> Type -> m ()
+checkIntBaseType :: Fallible m => Bool -> Type -> m ()
 checkIntBaseType allowVector t = case t of
   BaseTy (Scalar sbt)               -> checkSBT sbt
   BaseTy (Vector sbt) | allowVector -> checkSBT sbt
@@ -663,7 +660,7 @@ checkIntBaseType allowVector t = case t of
     notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                              "integer type, but found: " ++ pprint t
 
-checkFloatBaseType :: MonadError Err m => Bool -> Type -> m ()
+checkFloatBaseType :: Fallible m => Bool -> Type -> m ()
 checkFloatBaseType allowVector t = case t of
   BaseTy (Scalar sbt)               -> checkSBT sbt
   BaseTy (Vector sbt) | allowVector -> checkSBT sbt
@@ -967,14 +964,14 @@ litType v = case v of
 data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
 data ReturnType   = SameReturn | Word8Return
 
-checkOpArgType :: MonadError Err m => ArgumentType -> Type -> m ()
+checkOpArgType :: Fallible m => ArgumentType -> Type -> m ()
 checkOpArgType argTy x =
   case argTy of
     SomeIntArg   -> checkIntBaseType   True x
     SomeUIntArg  -> assertEq x Word8Ty ""
     SomeFloatArg -> checkFloatBaseType True x
 
-checkBinOp :: MonadError Err m => BinOp -> Type -> Type -> m Type
+checkBinOp :: Fallible m => BinOp -> Type -> Type -> m Type
 checkBinOp op x y = do
   checkOpArgType argTy x
   assertEq x y ""
@@ -998,7 +995,7 @@ checkBinOp op x y = do
         ia = SomeIntArg; fa = SomeFloatArg
         br = Word8Return; sr = SameReturn
 
-checkUnOp :: MonadError Err m => UnOp -> Type -> m Type
+checkUnOp :: Fallible m => UnOp -> Type -> m Type
 checkUnOp op x = do
   checkOpArgType argTy x
   return $ case retTy of
@@ -1030,7 +1027,7 @@ indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ fromIntegral $ high - low
   _                      -> Nothing
 
-checkDataLike :: MonadError Err m => String -> Type -> m ()
+checkDataLike :: Fallible m => String -> Type -> m ()
 checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy _ b -> recur b
@@ -1049,18 +1046,18 @@ checkDataLike msg ty = case ty of
   _   -> throw TypeErr $ pprint ty ++ msg
   where recur x = checkDataLike msg x
 
-checkDataLikeDataCon :: MonadError Err m => DataConDef -> m ()
+checkDataLikeDataCon :: Fallible m => DataConDef -> m ()
 checkDataLikeDataCon (DataConDef _ bs) =
   mapM_ (checkDataLike "data con binder" . binderAnn) bs
 
-checkData :: MonadError Err m => Type -> m ()
+checkData :: Fallible m => Type -> m ()
 checkData = checkDataLike " is not serializable"
 
 --TODO: Make this work even if the type has type variables!
 isData :: Type -> Bool
 isData ty = case checkData ty of
-  Left  _ -> False
-  Right _ -> True
+  Failure _ -> False
+  Success _ -> True
 
 projectLength :: Type -> Int
 projectLength ty = case ty of

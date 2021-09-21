@@ -10,7 +10,7 @@ import System.Console.Haskeline
 import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
-import Options.Applicative
+import Options.Applicative hiding (Success, Failure)
 import Text.PrettyPrint.ANSI.Leijen (text, hardline)
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
@@ -26,6 +26,7 @@ import Resources
 import TopLevel
 import Parser  hiding (Parser)
 import Env (envNames)
+import Err
 import Export
 #ifdef DEX_LIVE
 import RenderHtml
@@ -68,10 +69,10 @@ runMode evalMode preludeFile opts = do
     ExportMode dexPath objPath -> do
       results <- evalInterblockM opts env $ map snd <$> evalFile dexPath
       let outputs = foldMap (\(Result outs _) -> outs) results
-      let errors = foldMap (\case (Result _ (Left err)) -> [err]; _ -> []) results
+      let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
       putStr $ foldMap (nonEmptyNewline . pprint) errors
       let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-      unless (backendName opts == LLVM) $ liftEitherIO $
+      unless (backendName opts == LLVM) $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
       TopStateEx env' <- return env
       exportFunctions objPath exportedFuns $ topBindings $ topStateD env'
@@ -95,7 +96,7 @@ replLoop prompt = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift getTopStateEx
   result <- lift $ evalSourceBlock sourceBlock
-  case result of Result _ (Left _) -> lift $ setTopStateEx env
+  case result of Result _ (Failure _) -> lift $ setTopStateEx env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
 
@@ -112,8 +113,8 @@ dexCompletions (line, _) = do
   return (rest, completions)
 
 liftErrIO :: MonadIO m => Except a -> m a
-liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
-liftErrIO (Right x) = return x
+liftErrIO (Failure err) = liftIO $ putStrLn (pprint err) >> exitFailure
+liftErrIO (Success ans) = return ans
 
 readMultiline :: (MonadException m, MonadIO m) =>
                    String -> (String -> Maybe a) -> InputT m a

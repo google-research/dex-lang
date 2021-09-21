@@ -16,7 +16,7 @@
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
     EffectP (..), Effect, RWS (..), EffectRowP (..), EffectRow,
-    ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
+    ClassName (..), TyQual (..), Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
@@ -33,9 +33,9 @@ module Syntax (
     UAlt (..), AltP, Alt, ModuleName,
     IScope, BinderInfo (..), AnyBinderInfo (..), AsRecEnv (..),
     Bindings, CUDAKernel (..), BenchStats,
-    SrcCtx, Result (..), Output (..), OutFormat (..),
-    Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
-    addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
+    Result (..), Output (..), OutFormat (..),
+    Err (..), ErrType (..), Except, throw, throwIf, addContext,
+    addSrcContext, catchIOExcept, liftExcept, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
     freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
     AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
@@ -325,13 +325,13 @@ data UPat' = UPatBinder UBinder
            | UPatTable [UPat]
              deriving (Show)
 
-data WithSrc a = WithSrc SrcCtx a
+data WithSrc a = WithSrc SrcPosCtx a
                  deriving (Show, Functor, Foldable, Traversable)
 
 pattern UPatIgnore :: UPat'
 pattern UPatIgnore = UPatBinder UIgnore
 
-srcPos :: WithSrc a -> SrcCtx
+srcPos :: WithSrc a -> SrcPosCtx
 srcPos (WithSrc pos _) = pos
 
 -- === primitive constructors and operators ===
@@ -361,7 +361,7 @@ data PrimCon e =
         Lit LitVal
       | ProdCon [e]
       | SumCon e Int e  -- type, tag, payload
-      | ClassDictHole SrcCtx e   -- Only used during type inference
+      | ClassDictHole SrcPosCtx e  -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
       -- These are just newtype wrappers. TODO: use ADTs instead
       | IntRangeVal   e e e
@@ -1662,7 +1662,7 @@ isTabTy (TabTy _ _) = True
 isTabTy _ = False
 
 -- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
-fromLeftLeaningConsListTy :: MonadError Err m => Int -> Type -> m (Type, [Type])
+fromLeftLeaningConsListTy :: Fallible m => Int -> Type -> m (Type, [Type])
 fromLeftLeaningConsListTy depth initTy = go depth initTy []
   where
     go 0        ty xs = return (ty, reverse xs)

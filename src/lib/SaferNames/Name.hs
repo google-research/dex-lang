@@ -35,7 +35,7 @@ module SaferNames.Name (
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv,
   MonadKind, MonadKind1, MonadKind2,
-  Monad1, Monad2, MonadErr1, MonadErr2, MonadFail1, MonadFail2,
+  Monad1, Monad2, Fallible1, Fallible2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
@@ -522,8 +522,8 @@ type MonadKind2 = S -> S -> * -> *
 type Monad1 (m :: MonadKind1) = forall (n::S)        . Monad (m n  )
 type Monad2 (m :: MonadKind2) = forall (n::S) (l::S) . Monad (m n l)
 
-type MonadErr1 (m :: MonadKind1) = forall (n::S)        . MonadErr (m n  )
-type MonadErr2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadErr (m n l)
+type Fallible1 (m :: MonadKind1) = forall (n::S)        . Fallible (m n  )
+type Fallible2 (m :: MonadKind2) = forall (n::S) (l::S) . Fallible (m n l)
 
 type MonadFail1 (m :: MonadKind1) = forall (n::S)        . MonadFail (m n  )
 type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
@@ -585,7 +585,7 @@ type AlphaEq e = AlphaEqE e  :: Constraint
 -- TODO: consider generalizing this to something that can also handle e.g.
 -- unification and type checking with some light reduction
 class ( forall i1 i2 o. Monad (m i1 i2 o)
-      , forall i1 i2 o. MonadErr (m i1 i2 o)
+      , forall i1 i2 o. Fallible (m i1 i2 o)
       , forall i1 i2 o. MonadFail (m i1 i2 o)
       , forall i1 i2.   ScopeGetter (m i1 i2)
       , forall i1 i2.   ScopeExtender (m i1 i2))
@@ -620,11 +620,11 @@ class ( InjectableV v
       , forall c. NameColor c => AlphaEqE (v c))
       => AlphaEqV (v::V) where
 
-checkAlphaEq :: (AlphaEqE e, MonadErr1 m, ScopeReader m)
+checkAlphaEq :: (AlphaEqE e, Fallible1 m, ScopeReader m)
              => e n -> e n -> m n ()
 checkAlphaEq e1 e2 = do
   WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
-  liftEither $
+  liftExcept $
     runScopeReaderT scope $
       flip runReaderT (emptyNameFunction, emptyNameFunction) $ runZipEnvReaderT $
         withEmptyZipEnv $ alphaEqE e1' e2'
@@ -687,7 +687,7 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
 
 newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
   ScopeReaderT {runScopeReaderT' :: ReaderT (DistinctEvidence n, Scope n) m a}
-  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
 runScopeReaderT :: Distinct n => Scope n -> ScopeReaderT m n a -> m a
 runScopeReaderT scope m =
@@ -714,7 +714,7 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
 
 newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   EnvReaderT { runEnvReaderT' :: ReaderT (NameFunction v i o) (m o) a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
 type ScopedEnvReader (v::V) = EnvReaderT v (ScopeReaderT Identity) :: MonadKind2
 
@@ -757,7 +757,7 @@ class OutReader (e::E) (m::MonadKind1) | m -> e where
 
 newtype OutReaderT (e::E) (m::MonadKind1) (n::S) (a :: *) =
   OutReaderT { runOutReaderT' :: ReaderT (e n) (m n) a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
 runOutReaderT :: e n -> OutReaderT e m n a -> m n a
 runOutReaderT env m = flip runReaderT env $ runOutReaderT' m
@@ -792,7 +792,7 @@ instance OutReader e m => OutReader e (EnvReaderT v m i) where
 
 newtype ZipEnvReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a:: *) =
   ZipEnvReaderT { runZipEnvReaderT :: ReaderT (ZipEnv i1 i2 o) (m o) a }
-  deriving (Functor, Applicative, Monad, MonadError err, MonadFail)
+  deriving (Functor, Applicative, Monad, Fallible, MonadFail)
 
 type ZipEnv i1 i2 o = (NameFunction Name i1 o, NameFunction Name i2 o)
 
@@ -813,7 +813,7 @@ instance (ScopeReader m, ScopeExtender m)
         env2' <- injectM env2
         cont (env1', env2')
 
-instance (Monad1 m, ScopeReader m, ScopeExtender m, MonadErr1 m, MonadFail1 m)
+instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
          => ZipEnvReader (ZipEnvReaderT m) where
 
   lookupZipEnvFst v = ZipEnvReaderT $ (!v) <$> fst <$> ask

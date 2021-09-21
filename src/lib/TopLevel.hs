@@ -50,7 +50,7 @@ import Logging
 import LLVMExec
 import PPrint()
 import Parser
-import Util (highlightRegion, measureSeconds, onFst, onSnd)
+import Util (measureSeconds, onFst, onSnd)
 import Optimize
 import Parallelize
 
@@ -102,7 +102,7 @@ execInterblockM opts env m = snd <$> runInterblockM opts env m
 
 -- === monad for wiring together the passes within each source block ===
 
-class ( forall n. MonadErr (m n)
+class ( forall n. Fallible (m n)
       , forall n. MonadLogger [Output] (m n)
       , forall n. ConfigReader (m n)
       , forall n. MonadIO (m n) )
@@ -113,17 +113,18 @@ class ( forall n. MonadErr (m n)
 newtype PassesM (n::S.S) a = PassesM
   { runPassesM' :: ReaderT (Bool, EvalConfig, (S.DistinctWitness n, JointTopState n))
                      (LoggerT [Output] IO) a }
-    deriving (Functor, Applicative, Monad, MonadIO)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Fallible)
 
 type ModulesImported = M.Map ModuleName ModuleImportStatus
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
 runPassesM :: S.Distinct n => Bool -> EvalConfig -> JointTopState n -> PassesM n a -> IO (Except a, [Output])
-runPassesM bench opts env (PassesM m) = do
+runPassesM bench opts env m = do
   let maybeLogFile = logFile opts
   runLogger maybeLogFile \l ->
-    runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m $ (bench, opts, (S.Distinct, env))
+    catchIOExcept $ runLoggerT l $ runReaderT (runPassesM' m) $
+      (bench, opts, (S.Distinct, env))
 
 -- ======
 
@@ -163,11 +164,11 @@ evalSourceBlock' block = case sbContents block of
   RunModule m -> do
     (maybeEvaluatedModule, outs) <- liftPassesM (requiresBench block) $ evalUModule m
     case maybeEvaluatedModule of
-      Left err -> return $ Result outs $ Left err
-      Right evaluatedModule -> do
+      Failure err -> return $ Result outs $ Failure err
+      Success evaluatedModule -> do
         TopStateEx curState <- getTopStateEx
         setTopStateEx $ extendTopStateD curState evaluatedModule
-        return $ Result outs $ Right ()
+        return $ Result outs $ Success ()
   Command cmd (v, m) -> liftPassesM_ (requiresBench block) case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal v m
@@ -241,13 +242,13 @@ filterLogs block (Result outs err) = let
 
 summarizeModuleResults :: [Result] -> Result
 summarizeModuleResults results =
-  case [err | Result _ (Left err) <- results] of
-    [] -> Result allOuts $ Right ()
+  case [err | Result _ (Failure err) <- results] of
+    [] -> Result allOuts $ Success ()
     errs -> Result allOuts $ throw ModuleImportErr $ foldMap pprint errs
   where allOuts = foldMap resultOutputs results
 
 emptyResult :: Result
-emptyResult = Result [] (Right ())
+emptyResult = Result [] (Success ())
 
 evalFile :: MonadInterblock m => FilePath -> m [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
@@ -297,7 +298,7 @@ evalUModuleVal v m = do
      AtomBinderInfo _ (LetBound _ (Atom atom)) -> return atom
      _ -> throw TypeErr $ "Not an atom name: " ++ pprint v
 
-lookupSourceName :: MonadErr m => TopStateEx -> SourceName -> m AnyBinderInfo
+lookupSourceName :: Fallible m => TopStateEx -> SourceName -> m AnyBinderInfo
 lookupSourceName (TopStateEx topState) v =
   let D.TopState bindings _ (SourceMap sourceMap) = topStateD topState
   in case M.lookup v sourceMap of
@@ -317,13 +318,13 @@ evalUModule sourceModule = do
   logPass Parse sourceModule
   renamed <- renameSourceNames bindings sourceMap sourceModule
   logPass RenamePass renamed
-  typed <- liftEither $ inferModule bindings renamed
+  typed <- liftExcept $ inferModule bindings renamed
   -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
   -- safer names system while we're staging it in.
   checkPass TypePass typed
   typed' <- roundtripSaferNamesPass typed
   checkPass TypePass typed'
-  synthed <- liftEither $ synthModule bindings synthCandidates typed'
+  synthed <- liftExcept $ synthModule bindings synthCandidates typed'
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
   let defunctionalized = simplifyModule bindings synthed
@@ -428,24 +429,15 @@ checkPass name x = do
   (S.Distinct, topState) <- getTopState
   let scope = topBindings $ topStateD topState
   logPass name x
-  liftEither $ checkValid scope x
+  liftExcept $ checkValid scope x
   logTop $ MiscLog $ pprint name ++ " checks passed"
 
 logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
 logPass passName x = logTop $ PassInfo passName $ pprint x
 
 addResultCtx :: SourceBlock -> Result -> Result
-addResultCtx block (Result outs maybeErr) = case maybeErr of
-  Left err -> Result outs $ Left $ addCtx block err
-  Right () -> Result outs $ Right ()
-
-addCtx :: SourceBlock -> Err -> Err
-addCtx block err@(Err e src s) = case src of
-  Nothing -> err
-  Just (start, stop) ->
-    Err e Nothing $ s ++ "\n\n" ++ ctx
-    where n = sbOffset block
-          ctx = highlightRegion (start - n, stop - n) (sbText block)
+addResultCtx block (Result outs errs) =
+  Result outs (addSrcTextContext (sbOffset block) (sbText block) errs)
 
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
@@ -503,16 +495,6 @@ instance ConfigReader (PassesM n) where
 instance MonadPasses PassesM where
   requireBenchmark = PassesM $ asks \(bench, _, _) -> bench
   getTopState      = PassesM $ asks \(_    , _, s) -> s
-
-instance MonadError Err (PassesM n) where
-  throwError err = liftEitherIO $ throwError err
-  catchError (PassesM m) f = PassesM do
-    env <- ask
-    l <- runPassesM' getLogger
-    result <- runExceptT $ catchIOExcept $ runLoggerT l $ runReaderT m env
-    case result of
-      Left e -> runPassesM' $ f e
-      Right x -> return x
 
 instance MonadLogger [Output] (PassesM n) where
   getLogger = PassesM $ lift $ getLogger

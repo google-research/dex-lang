@@ -64,7 +64,7 @@ import PPrint ()
 import Util (bindM2, scanM, restructure)
 
 newtype BuilderT m a = BuilderT (ReaderT BuilderEnvR (CatT BuilderEnvC m) a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Fallible, Alternative)
 
 type Builder = BuilderT Identity
 type BuilderEnv = (BuilderEnvR, BuilderEnvC)
@@ -140,7 +140,7 @@ freshNestedBindersRec substEnv (Nest b bs) = do
   vs <- freshNestedBindersRec (substEnv <> b @> SubstVal (Var v)) bs
   return $ Nest v vs
 
-buildPi :: (MonadError Err m, MonadBuilder m)
+buildPi :: (Fallible m, MonadBuilder m)
         => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
 buildPi b f = do
   scope <- getScope
@@ -582,8 +582,8 @@ checkBuilder x = do
   let globals = freeVars x `envDiff` scope
   eff <- getAllowedEffects
   case checkType (scope <> globals) eff x of
-    Left e   -> error $ pprint e
-    Right () -> return x
+    Failure e  -> error $ pprint e
+    Success () -> return x
 
 isSingletonType :: Type -> Bool
 isSingletonType ty = case singletonTypeVal ty of
@@ -675,16 +675,6 @@ instance (Monoid env, MonadCat env m) => MonadCat env (BuilderT m) where
     ((ans, env'), scopeEnv) <- lift $ lift $ scoped $ runCatT (runReaderT m name) env
     extend env'
     return (ans, scopeEnv)
-
-instance MonadError e m => MonadError e (BuilderT m) where
-  throwError = lift . throwError
-  catchError m catch = do
-    envC <- builderLook
-    envR <- builderAsk
-    (ans, envC') <- lift $ runBuilderT' m (envR, envC)
-                     `catchError` (\e -> runBuilderT' (catch e) (envR, envC))
-    builderExtend envC'
-    return ans
 
 instance MonadReader r m => MonadReader r (BuilderT m) where
   ask = lift ask

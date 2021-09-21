@@ -11,7 +11,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
              scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
+             onSnd, onFst, findReplace, swapAt, uncurry3,
              measureSeconds,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
@@ -144,38 +144,6 @@ restructure xs structure = evalState (traverse procLeaf structure) xs
         procLeaf _ = do ~(x:rest) <- get
                         put rest
                         return x
-
-highlightRegion :: (Int, Int) -> String -> String
-highlightRegion pos@(low, high) s
-  | low > high || high > length s = error $ "Bad region: \n"
-                                              ++ show pos ++ "\n" ++ s
-  | otherwise =
-    -- TODO: flag to control line numbers
-    -- (disabling for now because it makes quine tests tricky)
-    -- "Line " ++ show (1 + lineNum) ++ "\n"
-
-    allLines !! lineNum ++ "\n"
-    ++ take start (repeat ' ') ++ take (stop - start) (repeat '^') ++ "\n"
-  where
-    allLines = lines s
-    (lineNum, start, stop) = getPosTriple pos allLines
-
-getPosTriple :: (Int, Int) -> [String] -> (Int, Int, Int)
-getPosTriple (start, stop) lines_ = (lineNum, start - offset, stop')
-  where
-    lineLengths = map ((+1) . length) lines_
-    lineOffsets = cumsum lineLengths
-    lineNum = maxLT lineOffsets start
-    offset = lineOffsets  !! lineNum
-    stop' = min (stop - offset) (lineLengths !! lineNum)
-
-cumsum :: [Int] -> [Int]
-cumsum xs = scanl (+) 0 xs
-
-maxLT :: Ord a => [a] -> a -> Int
-maxLT [] _ = 0
-maxLT (x:xs) n = if n < x then -1
-                          else 1 + maxLT xs n
 
 -- TODO: find a more efficient implementation
 findReplace :: Eq a => [a] -> [a] -> [a] -> [a]

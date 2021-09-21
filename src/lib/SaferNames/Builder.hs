@@ -350,7 +350,7 @@ buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
       cont (x':xs)
 buildPureNaryLam _ _ _ = error "impossible"
 
-buildPi :: (MonadErr1 m, Builder m)
+buildPi :: (Fallible1 m, Builder m)
         => Arrow -> Type n
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (Type n)
@@ -362,7 +362,7 @@ buildPi arr ty body = do
   Abs b (PairE effs resultTy) <- return ab
   return $ Pi $ PiType arr b effs resultTy
 
-buildNonDepPi :: (MonadErr1 m, Builder m)
+buildNonDepPi :: (Fallible1 m, Builder m)
               => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
 buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
   resultTy' <- injectM resultTy

@@ -97,7 +97,7 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
             let run = do
                   let (CInt fd') = fdFD fd
                   exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-                  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+                  unless (exitCode == 0) $ throw RuntimeErr ""
                   freeLitVals resultPtr resultTypes
             let sync = when shouldSyncCUDA $ synchronizeCUDA
             exampleDuration <- snd <$> measureSeconds (run >> sync)
@@ -127,7 +127,7 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   (exitCode, duration) <- measureSeconds $ do
     exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
     return exitCode
-  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+  unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
 
 compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a

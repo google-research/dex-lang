@@ -13,7 +13,6 @@ module Inference (inferModule, synthModule) where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
 import Data.Maybe (fromJust)
 import Data.Foldable (fold, toList)
 import Data.Functor
@@ -33,12 +32,13 @@ import Type
 import PPrint
 import Cat
 import Util
+import Err
 
 data UInferEnv = UInferEnv
   { inferSubst        :: SubstEnv
-  , srcCtx            :: SrcCtx
+  , srcCtx            :: SrcPosCtx
   }
-type UInferM = ReaderT UInferEnv (BuilderT (SolverT (Either Err)))
+type UInferM = ReaderT UInferEnv (BuilderT (SolverT Except))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -736,17 +736,17 @@ checkAllowedUnconditionally eff = do
   eff' <- zonk eff
   effAllowed <- getAllowedEffects >>= zonk
   return $ case checkExtends effAllowed eff' of
-    Left _   -> False
-    Right () -> True
+    Failure _  -> False
+    Success () -> True
 
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
-addSrcContext' :: SrcCtx -> UInferM a -> UInferM a
+addSrcContext' :: SrcPosCtx -> UInferM a -> UInferM a
 addSrcContext' pos = addSrcContext pos . local (\e -> e { srcCtx = pos })
 
-getSrcCtx :: UInferM SrcCtx
+getSrcCtx :: UInferM SrcPosCtx
 getSrcCtx = asks srcCtx
 
 getInferSubst :: UInferM SubstEnv
@@ -759,7 +759,7 @@ extInferSubst ext = local (\e -> e { inferSubst = inferSubst e <> ext })
 
 -- We have two variants here because at the top level we want error messages and
 -- internally we want to consider all alternatives.
-type SynthPassM = SubstBuilderT (Either Err)
+type SynthPassM = SubstBuilderT Except
 type SynthDictM = SubstBuilderT []
 
 synthModule :: Scope -> SynthCandidates -> Module -> Except Module
@@ -772,7 +772,7 @@ synthModule scope scs (Module Typed decls result) = do
   return $ Module Core decls' result'
 synthModule _ _ _ = error $ "Unexpected IR variant"
 
-synthDictTop :: SrcCtx -> Type -> SynthPassM Atom
+synthDictTop :: SrcPosCtx -> Type -> SynthPassM Atom
 synthDictTop ctx ty = do
   scope <- getScope
   scs <- getSynthCandidates
@@ -784,7 +784,7 @@ synthDictTop ctx ty = do
            ++ "\n" ++ pprint solutions
 
 traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
-              => (SrcCtx -> Type -> m Atom) -> TraversalDef m
+              => (SrcPosCtx -> Type -> m Atom) -> TraversalDef m
 traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
@@ -829,8 +829,8 @@ inferToSynth m = do
   scope <- getScope
   scs <- getSynthCandidates
   case runUInferM mempty scope scs m of
-    Left _ -> empty
-    Right (x, (_, decls)) -> do
+    Failure _ -> empty
+    Success (x, (_, decls)) -> do
       mapM_ emitDecl decls
       return x
 
@@ -853,7 +853,7 @@ data SolverEnv = SolverEnv { solverVars :: Env Kind
                            , solverSub  :: Env (SubstVal Type) }
 type SolverT m = CatT SolverEnv m
 
-runSolverT :: (MonadError Err m, HasVars a, Subst a, Pretty a)
+runSolverT :: (Fallible m, HasVars a, Subst a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m >>= zonk
@@ -900,21 +900,21 @@ checkLeaks tvs m = do
 unsolved :: SolverEnv -> Env Kind
 unsolved (SolverEnv vs sub) = vs `envDiff` sub
 
-freshInferenceName :: (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Name
+freshInferenceName :: (Fallible m, MonadCat SolverEnv m) => Kind -> m Name
 freshInferenceName k = do
   env <- look
   let v = genFresh (rawName InferenceName "?") $ solverVars env
   extend $ SolverEnv (v@>k) mempty
   return v
 
-freshType ::  (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Type
+freshType ::  (Fallible m, MonadCat SolverEnv m) => Kind -> m Type
 freshType EffKind = Eff <$> freshEff
 freshType k = Var . (:>k) <$> freshInferenceName k
 
-freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
+freshEff :: (Fallible m, MonadCat SolverEnv m) => m EffectRow
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
-constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
+constrainEq :: (MonadCat SolverEnv m, Fallible m)
              => Type -> Type -> m ()
 constrainEq t1 t2 = do
   t1' <- zonk t1
@@ -931,7 +931,7 @@ zonk x = do
   s <- looks solverSub
   return $ scopelessSubst s x
 
-unify :: (MonadCat SolverEnv m, MonadError Err m)
+unify :: (MonadCat SolverEnv m, Fallible m)
        => Type -> Type -> m ()
 unify t1 t2 = do
   t1' <- zonk t1
@@ -961,7 +961,7 @@ unify t1 t2 = do
     (Eff eff, Eff eff') -> unifyEff eff eff'
     _ -> throw TypeErr ""
 
-unifyExtLabeledItems :: (MonadCat SolverEnv m, MonadError Err m)
+unifyExtLabeledItems :: (MonadCat SolverEnv m, Fallible m)
   => ExtLabeledItems Type Name -> ExtLabeledItems Type Name -> m ()
 unifyExtLabeledItems r1 r2 = do
   r1' <- zonk r1
@@ -987,8 +987,7 @@ unifyExtLabeledItems r1 r2 = do
       unifyExtLabeledItems (Ext NoLabeledItems t2)
                            (Ext (LabeledItems extras1) (Just newTail))
 
-unifyEff :: (MonadCat SolverEnv m, MonadError Err m)
-         => EffectRow -> EffectRow -> m ()
+unifyEff :: (MonadCat SolverEnv m, Fallible m) => EffectRow -> EffectRow -> m ()
 unifyEff r1 r2 = do
   r1' <- zonk r1
   r2' <- zonk r2
@@ -1005,7 +1004,7 @@ unifyEff r1 r2 = do
       unifyEff (extendEffRow extras1 newRow) (EffectRow mempty t2)
     _ -> throw TypeErr ""
 
-bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
+bindQ :: (MonadCat SolverEnv m, Fallible m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
           | hasSkolems t = throw TypeErr "Can't unify with skolem vars"
           | otherwise = extend $ mempty { solverSub = v@>SubstVal t }
