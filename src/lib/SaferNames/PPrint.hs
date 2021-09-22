@@ -12,6 +12,9 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE IncoherentInstances #-}  -- due to `ConRef`
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module SaferNames.PPrint ( pprint, pprintList, asStr , atPrec) where
@@ -34,7 +37,7 @@ import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
 import Env (nameTag)
 
 import SaferNames.NameCore (unsafeCoerceE, unsafeCoerceB, getRawName)
-import SaferNames.Name hiding (lookupEnv)
+import SaferNames.Name
 import SaferNames.Syntax
 
 type PrettyPrecE e = (forall (n::S). PrettyPrec (e n)) :: Constraint
@@ -264,8 +267,8 @@ instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =
     "Class" <+> pretty classSourceName <+> pretty methodNames
 
-instance Pretty (TopBindings n) where
-  pretty (TopBindings env) = pretty env
+deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedEnv v i o)
+deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedRecEnv v o)
 
 instance Pretty (TopState n) where
   pretty s =

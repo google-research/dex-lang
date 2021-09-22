@@ -35,7 +35,7 @@ inferModule bindings uModule = runInfererM bindings do
   UModule decl sourceMap <- injectM uModule
   if isTopDecl decl
     then do
-      Abs (RecEnvFrag bindingsFrag) sourceMap' <-
+      Abs bindingsFrag sourceMap' <-
         buildScopedTop $ inferUDeclTop decl $ substM sourceMap
       return $ Module Typed id $
         EvaluatedModule bindingsFrag mempty sourceMap'
@@ -43,7 +43,7 @@ inferModule bindings uModule = runInfererM bindings do
       Abs decls sourceMap' <-
         buildScoped $ inferUDeclLocal decl $ substM sourceMap
       return $ Module Typed decls $
-        EvaluatedModule emptyEnv mempty sourceMap'
+        EvaluatedModule emptyOutFrag mempty sourceMap'
 
 isTopDecl :: UDecl n l -> Bool
 isTopDecl decl = case decl of

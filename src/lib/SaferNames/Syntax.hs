@@ -45,7 +45,7 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindings (..), NamedDataDef, fromTopBindings, ScopedBindings,
+    NamedDataDef, TopBindings, fromTopBindings, ScopedBindings,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
@@ -225,8 +225,8 @@ data Binding (c::C) (n::S) where
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
 deriving instance Show (Binding c n)
 
-type Bindings n = NameFunction Binding n n
-type BindingsFrag n l = EnvFrag Binding n l l
+type BindingsFrag = RecEnvFrag Binding :: S -> S -> *
+type Bindings     = RecEnv     Binding :: S -> *
 
 data WithBindings (e::E) (n::S) where
   WithBindings :: (Distinct l, Ext l n) => Bindings l -> Scope l -> e l -> WithBindings e n
@@ -254,7 +254,7 @@ type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
 type BindingsGetter2   (m::MonadKind2) = forall (n::S). BindingsGetter   (m n)
 
 instance Monad m => BindingsExtender (ScopeReaderT m) where
-  extendBindings frag = extendScope (envAsScope frag)
+  extendBindings frag = extendScope (toScopeFrag frag)
 
 instance (InjectableE e, BindingsReader m)
          => BindingsReader (OutReaderT e m) where
@@ -289,7 +289,7 @@ instance Monad m => BindingsReader (BindingsReaderT m) where
 
 instance Monad m => Scopable (BindingsReaderT m) where
    withBindings (Abs b name) cont =
-     runEnvReaderT (idNameFunction :: NameFunction Name n n) $
+     runEnvReaderT (idEnv :: Env Name n n) $
        refreshBinders b \b' -> do
          name' <- substM name
          result <- EnvReaderT $ lift $ cont name'
@@ -301,11 +301,9 @@ instance Monad m => BindingsGetter (BindingsReaderT m) where
 instance Monad m => BindingsExtender (BindingsReaderT m) where
   extendBindings frag m =
     BindingsReaderT $ ReaderT \bindings -> do
-       let scopeFrag = envAsScope frag
-       extendScope scopeFrag do
+       extendScope (toScopeFrag frag) do
          let BindingsReaderT (ReaderT f) = m
-         bindings' <- injectM bindings
-         f (bindings' <>> frag)
+         f (bindings `extendOutMap` frag)
 
 instance Monad m => ScopeReader (BindingsReaderT m) where
   addScope e = BindingsReaderT $ lift $ addScope e
@@ -336,7 +334,7 @@ class BindsNames b => BindsBindings (b::B) where
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
   WithBindings bindings _ v' <- addBindings v
-  injectM $ bindings ! v'
+  injectM $ fromRecEnv bindings ! v'
 
 withFreshBinding
   :: (NameColor c, BindingsReader m, BindingsExtender m)
@@ -349,7 +347,7 @@ withFreshBinding hint binding cont = do
   Distinct <- getDistinct
   withFresh hint nameColorRep scope \b' -> do
     let binding' = inject binding
-    extendBindings (b' @> binding') $
+    extendBindings (RecEnvFrag (b' @> binding')) $
       cont b'
 
 withFreshBinder
@@ -568,18 +566,18 @@ data TopState n = TopState
   { topBindings        :: TopBindings n
   , topSynthCandidates :: SynthCandidates n
   , topSourceMap       :: SourceMap   n }
-  deriving (Show, Generic)
+  deriving (Generic)
 
-data TopBindings n = TopBindings (Env Binding n n)
-     deriving (Show, Generic)
+type TopBindings = MaterializedRecEnv Binding
 
 type ScopedBindings n = (Scope n, Bindings n)
 
-fromTopBindings :: TopBindings n -> ScopedBindings n
-fromTopBindings (TopBindings env) = (envAsScope env, emptyNameFunction <>> env)
+fromTopBindings :: forall n. TopBindings n -> ScopedBindings n
+fromTopBindings (MaterializedRecEnv (RecEnvFrag frag)) =
+  (Scope (envFragAsScope frag), RecEnv (envFromFrag frag))
 
 emptyTopState :: TopState VoidS
-emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
+emptyTopState = TopState emptyOutMap mempty (SourceMap mempty)
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
@@ -1362,7 +1360,6 @@ instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
 instance Store (TopState n)
-instance Store (TopBindings n)
 instance NameColor c => Store (Binding c n)
 
 instance IsString (SourceNameOr a VoidS) where
@@ -1397,7 +1394,7 @@ deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 
 instance BindsBindings Binder where
-  boundBindings (b:>ty) = b @> AtomNameBinding ty' MiscBound
+  boundBindings (b:>ty) = RecEnvFrag $ b @> AtomNameBinding ty' MiscBound
     where ty' = withExtEvidence b $ inject ty
 
 instance BindsBindings Decl where
@@ -1405,23 +1402,22 @@ instance BindsBindings Decl where
     withExtEvidence b do
       let ty'   = inject ty
       let expr' = inject expr
-      b @> AtomNameBinding ty' (LetBound ann expr')
+      RecEnvFrag $ b @> AtomNameBinding ty' (LetBound ann expr')
 
 instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (PairB b1 b2)) where
   boundBindings (PairB b1 b2) = do
     let bindings2 = boundBindings b2
-    let ext = toExtEvidence $ envAsScope bindings2
+    let ext = toExtEvidence bindings2
     withSubscopeDistinct ext do
-      let bindings1 = boundBindings b1
-      inject bindings1 <.> bindings2
+      boundBindings b1 `catOutFrags` bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
-  boundBindings Empty = emptyEnv
+  boundBindings Empty = emptyOutFrag
   boundBindings (Nest b rest) = boundBindings $ PairB b rest
 
 instance BindsBindings (RecEnvFrag Binding) where
-  boundBindings (RecEnvFrag frag) = frag
+  boundBindings frag = frag
 
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where
@@ -1449,8 +1445,8 @@ instance HasNameHint (UBinder c n l) where
 
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
-    UBindSource _ -> emptyEnv
-    UIgnore       -> emptyEnv
+    UBindSource _ -> emptyInFrag
+    UIgnore       -> emptyInFrag
     UBind b'      -> b' @> x
 
 instance BindsAtMostOneName (UAnnBinder c) c where

@@ -91,7 +91,7 @@ runTyperT :: (Fallible m, Distinct n)
 runTyperT scope m = do
   runBindingsReaderT scope $
     runOutReaderT Pure $
-      runEnvReaderT idNameFunction $
+      runEnvReaderT idEnv $
         runTyperT' m
 
 instance Fallible m => MonadFail (TyperT m i o) where
@@ -165,7 +165,7 @@ instance CheckableE Module where
 
 instance CheckableE EvaluatedModule where
   checkE (EvaluatedModule bindings scs sourceMap) =
-    checkB (RecEnvFrag bindings) \(RecEnvFrag bindings') -> do
+    checkB bindings \bindings' -> do
       scs' <- checkE scs
       sourceMap' <- checkE sourceMap
       return $ EvaluatedModule bindings' scs' sourceMap'

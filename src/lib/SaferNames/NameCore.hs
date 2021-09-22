@@ -13,12 +13,12 @@
 
 module SaferNames.NameCore (
   S (..), C (..), RawName, Name (..), withFresh, inject, injectNamesR, projectName,
-  NameBinder (..), ScopeFrag (..), Scope, singletonScope, (<.>),
-  EnvFrag (..), Env, singletonEnv, emptyEnv, envAsScope, lookupEnv, lookupEnvFrag,
+  NameBinder (..), ScopeFrag (..), Scope (..), singletonScope, catEnvFrags,
+  EnvFrag (..), singletonEnv, emptyEnvFrag, envFragAsScope, lookupEnvFrag,
   E, B, V, InjectableE (..), InjectableB (..), InjectableV,
   InjectionCoercion, Nest (..),
   unsafeCoerceE, unsafeCoerceB, getRawName, getNameColorRep, absurdNameFunction, fmapEnvFrag,
-  toEnvPairs, fromEnvPairs, EnvPair (..), withNameColorRep, withSubscopeDistinct,
+  toEnvPairs, EnvPair (..), withNameColorRep, withSubscopeDistinct,
   GenericE (..), GenericB (..), WrapE (..), WrapB (..), EnvVal (..),
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor,
   Distinct, DistinctEvidence (..), withDistinctEvidence, getDistinctEvidence,
@@ -97,7 +97,7 @@ type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
 newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScope (S.Set RawName)
-type Scope = ScopeFrag VoidS :: S -> *
+newtype Scope (n::S) = Scope { fromScope :: ScopeFrag VoidS n }
 
 instance Category ScopeFrag where
   id = UnsafeMakeScope mempty
@@ -135,7 +135,7 @@ instance IsString NameHint where
 withFresh :: forall n c a. Distinct n
           => NameHint -> NameColorRep c -> Scope n
           -> (forall l. (Ext n l, Distinct l) => NameBinder c n l -> a) -> a
-withFresh hint rep (UnsafeMakeScope scope) cont =
+withFresh hint rep (Scope (UnsafeMakeScope scope)) cont =
   withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
       cont $ UnsafeMakeBinder freshName
@@ -336,13 +336,7 @@ data EnvFrag
   deriving (Generic)
 deriving instance (forall c. Show (v c o)) => Show (EnvFrag v i i' o)
 
-type Env v i o = EnvFrag v VoidS i o
-
-lookupEnv :: Env v i o -> Name s i -> v s o
-lookupEnv (UnsafeMakeEnv m _) (UnsafeMakeName rep rawName) =
-  case M.lookup rawName m of
-    Nothing -> error "Env lookup failed (this should never happen)"
-    Just d -> fromEnvVal rep d
+-- === environments and scopes ===
 
 lookupEnvFrag :: EnvFrag v i i' o -> Name s (i:=>:i') -> v s o
 lookupEnvFrag (UnsafeMakeEnv m _) (UnsafeMakeName rep rawName) =
@@ -350,16 +344,15 @@ lookupEnvFrag (UnsafeMakeEnv m _) (UnsafeMakeName rep rawName) =
     Nothing -> error "Env lookup failed (this should never happen)"
     Just d -> fromEnvVal rep d
 
-emptyEnv :: EnvFrag v i i o
-emptyEnv = UnsafeMakeEnv mempty mempty
+emptyEnvFrag :: EnvFrag v i i o
+emptyEnvFrag = UnsafeMakeEnv mempty mempty
 
 singletonEnv :: NameBinder c i i' -> v c o -> EnvFrag v i i' o
 singletonEnv (UnsafeMakeBinder (UnsafeMakeName rep name)) x =
   UnsafeMakeEnv (M.singleton name $ EnvVal rep x) (S.singleton name)
 
-infixl 1 <.>
-(<.>) :: EnvFrag v i1 i2 o -> EnvFrag v i2 i3 o -> EnvFrag v i1 i3 o
-(<.>) (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
+catEnvFrags :: EnvFrag v i1 i2 o -> EnvFrag v i2 i3 o -> EnvFrag v i1 i3 o
+catEnvFrags (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
   UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
 
 fmapEnvFrag :: InjectableV v
@@ -370,8 +363,8 @@ fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
                withNameColorRep rep $
                  EnvVal rep $ f (UnsafeMakeName rep k) val
 
-envAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
-envAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
+envFragAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
+envFragAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
 
 -- === iterating through env pairs ===
 
@@ -390,11 +383,6 @@ toEnvPairs (UnsafeMakeEnv m _) =
     go :: [EnvPair v o UnsafeS UnsafeS] -> Nest (EnvPair v o) i i'
     go [] = unsafeCoerceB Empty
     go (EnvPair b val : rest) = Nest (EnvPair (unsafeCoerceB b) val) $ go rest
-
-fromEnvPairs :: Nest (EnvPair v o) i i' -> EnvFrag v i i' o
-fromEnvPairs Empty = emptyEnv
-fromEnvPairs (Nest (EnvPair b v) rest) =
-  singletonEnv b v <.> fromEnvPairs rest
 
 data Nest (binder::B) (n::S) (l::S) where
   Nest  :: binder n h -> Nest binder h l -> Nest binder n l

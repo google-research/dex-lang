@@ -267,7 +267,7 @@ instance SubstB Name BinderWithInfo
 instance BindsBindings BinderWithInfo where
   boundBindings (BinderWithInfo (b:>ty) info) =
     withExtEvidence b $
-      b @> inject (AtomNameBinding ty info)
+      RecEnvFrag $ b @> inject (AtomNameBinding ty info)
 
 withFreshAtomBinder :: (Scopable m, SubstE Name e)
                     => NameHint -> Type n -> AtomBinderInfo n

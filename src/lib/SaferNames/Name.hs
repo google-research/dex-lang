@@ -13,17 +13,19 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE DerivingVia #-}
 
 module SaferNames.Name (
-  Name (..), RawName, S (..), C (..), Env, (<.>), EnvFrag (..), NameBinder (..),
+  Name (..), RawName, S (..), C (..), (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), FromName (..), Distinct, DistinctWitness (..),
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy,
-  NameFunction (..), emptyNameFunction, idNameFunction, newNameFunction,
+  Env (..), idEnv, newEnv, envFromFrag,
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
   Inplace, liftInplace, runInplace,
-  E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..),
+  E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..), RecEnv (..),
+  MaterializedEnv (..), MaterializedRecEnv (..), lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), ListE (..), ComposeE (..),
@@ -40,8 +42,9 @@ module SaferNames.Name (
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>), emptyEnv, envAsScope,
-  EmptyAbs, pattern EmptyAbs, SubstVal (..), lookupEnv,
+  withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>),
+  envFragAsScope,
+  EmptyAbs, pattern EmptyAbs, SubstVal (..),
   NameGen (..), fmapG, NameGenT (..), traverseEnvFrag, forEachNestItem,
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
@@ -50,7 +53,9 @@ module SaferNames.Name (
   pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
   splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
-  ExtWitness (..), idExt, injectExt
+  ExtWitness (..), idExt, injectExt,
+  InFrag (..), InMap (..), OutFrag (..), OutMap (..),
+  fromEnvPairs
   ) where
 
 import Prelude hiding (id, (.))
@@ -70,22 +75,114 @@ import SaferNames.NameCore
 import Util (zipErr, onFst, onSnd)
 import Err
 
--- === environments and scopes ===
 
-data NameFunction v i o where
-  NameFunction
-    :: (forall c. Name c hidden -> v c o)
-    -> EnvFrag v hidden i o
-    -> NameFunction v i o
+-- === category-like classes for envs, scopes etc ===
 
-newNameFunction :: (forall c. Name c i -> v c o) -> NameFunction v i o
-newNameFunction f = NameFunction f emptyEnv
+data Env v i o where
+  Env :: (forall c. Name c hidden -> v c o)
+      -> EnvFrag v hidden i o
+      -> Env v i o
 
-emptyNameFunction :: NameFunction v VoidS o
-emptyNameFunction = newNameFunction absurdNameFunction
+newEnv :: (forall c. Name c i -> v c o) -> Env v i o
+newEnv f = Env f emptyEnvFrag
 
-idNameFunction :: FromName v => NameFunction v n n
-idNameFunction = newNameFunction fromName
+envFromFrag :: EnvFrag v VoidS i o -> Env v i o
+envFromFrag frag = Env absurdNameFunction frag
+
+idEnv :: FromName v => Env v n n
+idEnv = newEnv fromName
+
+infixl 9 !
+(!) :: Env v i o -> Name c i -> v c o
+(!) (Env f env) name =
+  case lookupEnvFragProjected env name of
+    Left name' -> f name'
+    Right val -> val
+
+infixl 1 <.>
+(<.>) :: InFrag envFrag => envFrag i1 i2 o -> envFrag i2 i3 o -> envFrag i1 i3 o
+(<.>) = catInFrags
+
+infixl 1 <>>
+(<>>) :: InMap env envFrag => env i o -> envFrag i i' o -> env i' o
+(<>>) = extendInMap
+
+class InFrag (envFrag :: S -> S -> S -> *) where
+  emptyInFrag :: envFrag i i o
+  catInFrags  :: envFrag i1 i2 o -> envFrag i2 i3 o -> envFrag i1 i3 o
+
+class InMap (env :: S -> S -> *) (envFrag :: S -> S -> S -> *) | env -> envFrag where
+  emptyInMap :: env VoidS o
+  extendInMap :: env i o -> envFrag i i' o -> env i' o
+
+class OutFrag (scopeFrag :: S -> S -> *) where
+  emptyOutFrag :: scopeFrag n n
+  catOutFrags  :: Distinct n3 => scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
+
+class OutFrag scopeFrag
+      => OutMap (scope :: S -> *) (scopeFrag :: S -> S -> *) | scope -> scopeFrag where
+  emptyOutMap :: scope VoidS
+  extendOutMap :: Distinct l => scope n -> scopeFrag n l -> scope l
+
+instance InFrag (EnvFrag v) where
+  emptyInFrag = emptyEnvFrag
+  catInFrags = catEnvFrags
+
+instance InMap (Env v) (EnvFrag v) where
+  emptyInMap = newEnv absurdNameFunction
+  extendInMap (Env f frag) frag' = Env f $ frag <.> frag'
+
+instance OutFrag ScopeFrag where
+  emptyOutFrag = id
+  catOutFrags = (>>>)
+
+instance OutMap Scope ScopeFrag where
+  emptyOutMap = Scope id
+  extendOutMap (Scope scope) frag = Scope $ scope >>> frag
+
+-- outvar version of EnvFrag/Env, where the query name space and the result name
+-- space are the same (thus recursive)
+newtype RecEnv      (v::V) o    = RecEnv     { fromRecEnv     :: Env     v o o     } deriving Generic
+newtype RecEnvFrag  (v::V) o o' = RecEnvFrag { fromRecEnvFrag :: EnvFrag v o o' o' } deriving Generic
+
+instance InjectableV v => OutFrag (RecEnvFrag v) where
+  emptyOutFrag = RecEnvFrag $ emptyInFrag
+  catOutFrags (RecEnvFrag frag1) (RecEnvFrag frag2) = RecEnvFrag $
+    withExtEvidence (toExtEvidence (RecEnvFrag frag2)) $
+      inject frag1 `catInFrags` frag2
+
+instance InjectableV v => OutMap (RecEnv v) (RecEnvFrag v) where
+  emptyOutMap = RecEnv emptyInMap
+  extendOutMap (RecEnv env) (RecEnvFrag frag) = RecEnv $
+    withExtEvidence (toExtEvidence (RecEnvFrag frag)) $
+      inject env <>> frag
+
+deriving instance (forall c. Show (v c o')) => Show (RecEnvFrag v o o')
+
+-- Like Env, but stores the mapping as data rather than (partially) as a
+-- function. Suitable for Show/Store instances.
+newtype MaterializedEnv (v::V) (i::S) (o::S) =
+  MaterializedEnv { fromMaterializedEnv :: EnvFrag v VoidS i o }
+  deriving (Generic)
+
+newtype MaterializedRecEnv (v::V) (o::S) =
+  MaterializedRecEnv { fromMaterializedRecEnv :: RecEnvFrag v VoidS o }
+  deriving (Generic)
+
+instance InMap (MaterializedEnv v) (EnvFrag v) where
+  emptyInMap = MaterializedEnv emptyInFrag
+  extendInMap (MaterializedEnv frag) frag' = MaterializedEnv $ frag <.> frag'
+
+instance InjectableV v => OutMap (MaterializedRecEnv v) (RecEnvFrag v) where
+  emptyOutMap = MaterializedRecEnv emptyOutFrag
+  extendOutMap (MaterializedRecEnv frag) frag' =
+    MaterializedRecEnv $ frag `catOutFrags` frag'
+
+lookupMaterializedEnv :: MaterializedEnv v i o -> Name c i -> v c o
+lookupMaterializedEnv (MaterializedEnv frag) name =
+  case lookupEnvFragProjected frag name of
+    Left name' -> absurdNameFunction name'
+    Right val -> val
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -111,19 +208,19 @@ class ScopeGetter m => ScopeExtender (m::MonadKind1) where
   extendScope :: Distinct l => ScopeFrag n l -> (Ext n l => m l r) -> m n r
 
 class (InjectableV v, Monad2 m) => EnvReader (v::V) (m::MonadKind2) | m -> v where
-   getEnv :: m i o (NameFunction v i o)
-   withEnv :: NameFunction v i' o -> m i' o a -> m i o a
+   getEnv :: m i o (Env v i o)
+   withEnv :: Env v i' o -> m i' o a -> m i o a
 
 lookupEnvM :: EnvReader v m => Name c i -> m i o (v c o)
 lookupEnvM name = (!name) <$> getEnv
 
 dropSubst :: (EnvReader v m, FromName v) => m o o r -> m i o r
-dropSubst cont = withEnv idNameFunction cont
+dropSubst cont = withEnv idEnv cont
 
 extendEnv :: EnvReader v m => EnvFrag v i i' o -> m i' o r -> m i o r
 extendEnv frag cont = do
-  newEnv <- (<>>frag) <$> getEnv
-  withEnv newEnv cont
+  env <- (<>>frag) <$> getEnv
+  withEnv env cont
 
 -- === extending envs with name-only substitutions ===
 
@@ -152,9 +249,6 @@ data BinderP (b::B) (ann::E) (n::S) (l::S) =
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
-
--- wraps an EnvFrag as a kind suitable for SubstB instances etc
-newtype RecEnvFrag (v::V) n l = RecEnvFrag { fromRecEnvFrag :: EnvFrag v n l l }
 
 -- Proof object that a given scope is void
 data IsVoidS n where
@@ -229,7 +323,7 @@ getScopeProxy = return UnitE
 traverseNames :: forall m v e i o.
                  (Monad m, SubstE v e)
               => Distinct o => Scope o -> (forall c. Name c i -> m (v c o)) -> e i -> m (e o)
-traverseNames scope f e = substE (newNameFunction f', scope) e
+traverseNames scope f e = substE (newEnv f', scope) e
   where f' :: forall c. Name c i -> MonadicVal m v c o
         f' x = MonadicVal $ f x
 
@@ -270,7 +364,7 @@ instance (NameColor c, InjectableV v) => InjectableE (MonadicVal m v c) where
   injectionProofE = undefined
 
 type SubstTraversalEnv (m::MonadKind) (v::V) (i::S) (o::S) =
-       (NameFunction (MonadicVal m v) i o, Scope o)
+       (Env (MonadicVal m v) i o, Scope o)
 
 lookupSustTraversalEnv :: SubstTraversalEnv m v i o -> Name c i -> m (v c o)
 lookupSustTraversalEnv (env, _) v = fromMonadicVal $ env ! v
@@ -316,7 +410,7 @@ instance (InjectableV v, FromName v) => SubstB v (NameBinder c) where
     let rep = getNameColorRep $ nameBinderName b
     withFresh (getNameHint b) rep scope \b' -> do
       let env' = inject env <>> b @> (MonadicVal $ return $ fromName $ binderName b')
-      let scope' = scope >>> singletonScope b'
+      let scope' = extendOutMap scope $ singletonScope b'
       cont (env', scope') b'
 
 substM :: (EnvReader v m, ScopeReader2 m, SubstE v e, FromName v)
@@ -433,14 +527,14 @@ class BindsNameList (b::B) (c::C) | b -> c where
   (@@>) :: b i i' -> [v c o] -> EnvFrag v i i' o
 
 instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
-  (@@>) Empty [] = emptyEnv
+  (@@>) Empty [] = emptyEnvFrag
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
 applySubst :: (ScopeReader m, SubstE v e, InjectableV v, FromName v)
            => EnvFrag v o i o -> e i -> m o (e o)
 applySubst substFrag x = do
-  let fullSubst = idNameFunction <>> substFrag
+  let fullSubst = idEnv <>> substFrag
   WithScope scope fullSubst' <- addScope fullSubst
   injectM $ fmapNames scope (fullSubst' !) x
 
@@ -453,22 +547,16 @@ applyNaryAbs :: ( InjectableV v, FromName v, ScopeReader m, BindsNameList b c, S
              => Abs b e n -> [v c n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 
-infixl 9 !
-(!) :: NameFunction v i o -> Name c i -> v c o
-(!) (NameFunction f env) name =
-  case lookupEnvFragProjected env name of
-    Left name' -> f name'
-    Right val -> val
-
-infixl 1 <>>
-(<>>) :: NameFunction v i o -> EnvFrag v i i' o -> NameFunction v i' o
-(<>>) (NameFunction f frag) frag' = NameFunction f $ frag <.> frag'
-
 lookupEnvFragProjected :: EnvFrag v i i' o -> Name c i' -> Either (Name c i) (v c o)
 lookupEnvFragProjected m name =
-  case projectName (envAsScope m) name of
+  case projectName (envFragAsScope m) name of
     Left  name' -> Left name'
     Right name' -> Right $ lookupEnvFrag m name'
+
+fromEnvPairs :: Nest (EnvPair v o) i i' -> EnvFrag v i i' o
+fromEnvPairs Empty = emptyEnvFrag
+fromEnvPairs (Nest (EnvPair b v) rest) =
+  singletonEnv b v `catEnvFrags`fromEnvPairs rest
 
 forEachNestItem :: Monad m
                 => Nest b i i'
@@ -626,7 +714,7 @@ checkAlphaEq e1 e2 = do
   WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
   liftExcept $
     runScopeReaderT scope $
-      flip runReaderT (emptyNameFunction, emptyNameFunction) $ runZipEnvReaderT $
+      flip runReaderT (emptyInMap, emptyInMap) $ runZipEnvReaderT $
         withEmptyZipEnv $ alphaEqE e1' e2'
 
 instance AlphaEqV Name
@@ -706,30 +794,29 @@ instance Monad m => ScopeGetter (ScopeReaderT m) where
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
   extendScope frag m = ScopeReaderT $ withReaderT
-    (\(_, scope) -> (getDistinctEvidence, scope >>> frag)) $
+    (\(_, scope) -> (getDistinctEvidence, extendOutMap scope frag)) $
         withExtEvidence (toExtEvidence frag) $
           runScopeReaderT' m
 
 -- === EnvReaderT transformer ===
 
 newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
-  EnvReaderT { runEnvReaderT' :: ReaderT (NameFunction v i o) (m o) a }
+  EnvReaderT { runEnvReaderT' :: ReaderT (Env v i o) (m o) a }
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
 type ScopedEnvReader (v::V) = EnvReaderT v (ScopeReaderT Identity) :: MonadKind2
 
-runScopedEnvReader :: Distinct o => Scope o -> NameFunction v i o
+runScopedEnvReader :: Distinct o => Scope o -> Env v i o
                    -> ScopedEnvReader v i o a -> a
 runScopedEnvReader scope env m =
   runIdentity $ runScopeReaderT scope $ runEnvReaderT env m
 
-runEnvReaderT :: NameFunction v i o -> EnvReaderT v m i o a -> m o a
+runEnvReaderT :: Env v i o -> EnvReaderT v m i o a -> m o a
 runEnvReaderT env m = runReaderT (runEnvReaderT' m) env
-
 
 instance (InjectableV v, Monad1 m) => EnvReader v (EnvReaderT v m) where
   getEnv = EnvReaderT ask
-  withEnv newEnv (EnvReaderT cont) = EnvReaderT $ withReaderT (const newEnv) cont
+  withEnv env (EnvReaderT cont) = EnvReaderT $ withReaderT (const env) cont
 
 instance ScopeReader m => ScopeReader (EnvReaderT v m i) where
   addScope e = EnvReaderT $ lift $ addScope e
@@ -794,7 +881,7 @@ newtype ZipEnvReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a:: *) =
   ZipEnvReaderT { runZipEnvReaderT :: ReaderT (ZipEnv i1 i2 o) (m o) a }
   deriving (Functor, Applicative, Monad, Fallible, MonadFail)
 
-type ZipEnv i1 i2 o = (NameFunction Name i1 o, NameFunction Name i2 o)
+type ZipEnv i1 i2 o = (Env Name i1 o, Env Name i2 o)
 
 instance ScopeReader m => ScopeReader (ZipEnvReaderT m i1 i2) where
   addScope e = ZipEnvReaderT $ lift $ addScope e
@@ -823,7 +910,7 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
   extendZipEnvSnd frag (ZipEnvReaderT cont) = ZipEnvReaderT $ withReaderT (onSnd (<>>frag)) cont
 
   withEmptyZipEnv (ZipEnvReaderT cont) =
-    ZipEnvReaderT $ withReaderT (const (newNameFunction id, newNameFunction id)) cont
+    ZipEnvReaderT $ withReaderT (const (newEnv id, newEnv id)) cont
 
 -- === monadish thing for computations that produce names ===
 
@@ -931,12 +1018,11 @@ instance HasNameColor (NameBinder c n l) c where
 
 -- === instances ===
 
-instance InjectableV v => InjectableE (NameFunction v i) where
-  injectionProofE fresh (NameFunction f m) =
-    NameFunction (\name ->
-                      withNameColorRep (getNameColorRep name)  $
-                        injectionProofE fresh $ f name)
-                 (injectionProofE fresh m)
+instance InjectableV v => InjectableE (Env v i) where
+  injectionProofE fresh (Env f m) =
+    Env (\name -> withNameColorRep (getNameColorRep name)  $
+                    injectionProofE fresh $ f name)
+        (injectionProofE fresh m)
 
 instance InjectableE atom => InjectableV (SubstVal (cMatch::C) (atom::E))
 instance InjectableE atom => InjectableE (SubstVal (cMatch::C) (atom::E) (c::C)) where
@@ -1107,7 +1193,7 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
 
 instance ProvesExt  (RecEnvFrag v) where
 instance BindsNames (RecEnvFrag v) where
-  toScopeFrag env = envAsScope $ fromRecEnvFrag env
+  toScopeFrag env = envFragAsScope $ fromRecEnvFrag env
 
 -- Traversing a recursive set of bindings is a bit tricky because we have to do
 -- two passes: first we rename the binders, then we go and subst the payloads.
@@ -1148,6 +1234,21 @@ instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance Store (const n) => Store (ConstE const ignored n)
 instance (Store (b n l), Store (ann n)) => Store (BinderP b ann n l)
+
+instance ( forall c. NameColor c => Store (v c o')
+         , forall c. NameColor c => Generic (v c o'))
+         => Store (RecEnvFrag v o o')
+
+instance ( forall c. NameColor c => Store (v c o)
+         , forall c. NameColor c => Generic (v c o))
+         => Store (MaterializedEnv v i o)
+
+instance ( forall c. NameColor c => Store (v c o)
+         , forall c. NameColor c => Generic (v c o))
+         => Store (MaterializedRecEnv v o)
+
+deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnvFrag v o o')
+
 
 type EE = EitherE
 

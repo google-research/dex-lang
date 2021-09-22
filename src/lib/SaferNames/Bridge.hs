@@ -69,15 +69,15 @@ data TopStateEx where
 data JointTopState n = JointTopState
   { topStateD   :: D.TopState
   , topStateS   :: S.TopState n
-  , topToSafeMap   :: ToSafeNameMap n
-  , topFromSafeMap :: FromSafeNameMap n }
+  , topToSafeMap   :: ToSafeEnv n
+  , topFromSafeMap :: FromSafeEnv n }
 
 initTopState :: TopStateEx
 initTopState = TopStateEx $ JointTopState
     D.emptyTopState
     S.emptyTopState
-    (ToSafeNameMap mempty)
-    (FromSafeNameMap emptyEnv)
+    (ToSafeEnv mempty)
+    (FromSafeEnv emptyEnv)
 
 extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
@@ -112,8 +112,8 @@ instance Pretty (JointTopState n) where
 instance GenericE JointTopState where
   type RepE JointTopState = LiftE D.TopState `PairE`
                             S.TopState       `PairE`
-                            ToSafeNameMap    `PairE`
-                            FromSafeNameMap
+                            ToSafeEnv        `PairE`
+                            FromSafeEnv
   fromE (JointTopState stateD stateS toSafeMap fromSafeMap) =
     (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap)
   toE (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap) =
@@ -172,12 +172,12 @@ fromSafe = ()
 -- This is pretty horrible. The name system isn't really designed for creating
 -- bijections, so we have to do a lot of things manually.
 nameBijectionFromDBindings
-    :: MonadToSafe m => FromSafeNameMap n -> D.Bindings
-    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
+    :: MonadToSafe m => FromSafeEnv n -> D.Bindings
+    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeEnv l -> FromSafeEnv l -> m l a)
     -> m n a
 nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do
-    toSafeMap' <- getToSafeNameMap
+    toSafeMap' <- getToSafeEnv
     Distinct <- getDistinct
     scope <- getScope
     let bindingsFrag = makeBindingsFrag scope bindings toSafeMap' fromSafeMap' scopeFrag
@@ -186,15 +186,15 @@ nameBijectionFromDBindings fromSafeMap bindings cont = do
 type ConstEnv n l = EnvFrag (ConstE UnitE) n l VoidS
 
 makeBindingsFrag :: forall n l. Distinct l
-                 => S.Scope l -> D.Bindings -> ToSafeNameMap l -> FromSafeNameMap l
+                 => S.Scope l -> D.Bindings -> ToSafeEnv l -> FromSafeEnv l
                  -> ConstEnv n l -> BindingsFrag n l
-makeBindingsFrag scope bindings toSafeMap (FromSafeNameMap fromSafeMap) constEnv =
-  fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
+makeBindingsFrag scope bindings toSafeMap (FromSafeEnv fromSafeMap) constEnv =
+  RecEnvFrag $ fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
   where
     getSafeBinding :: S.Name c (n:=>:l) -> Binding c l
     getSafeBinding name = do
       let Just name' = getName $ fromUnsafeNameE
-            ((emptyNameFunction <>> fromSafeMap) S.! injectNamesR name)
+                         (lookupMaterializedEnv fromSafeMap (injectNamesR name))
       let binderInfo = bindings D.! name'
       case runToSafeM toSafeMap scope $ toSafeE binderInfo of
         EnvVal rep binding ->
@@ -202,17 +202,17 @@ makeBindingsFrag scope bindings toSafeMap (FromSafeNameMap fromSafeMap) constEnv
             Just EqNameColor -> binding
 
 withFreshSafeRec :: MonadToSafe m
-                 => FromSafeNameMap n
+                 => FromSafeEnv n
                  -> [(D.Name, D.AnyBinderInfo)]
-                 -> (forall l. Distinct l => ConstEnv n l -> FromSafeNameMap l -> m l a)
+                 -> (forall l. Distinct l => ConstEnv n l -> FromSafeEnv l -> m l a)
                  -> m n a
 withFreshSafeRec fromSafeMap [] cont = do
   Distinct <- getDistinct
-  cont emptyEnv fromSafeMap
-withFreshSafeRec (FromSafeNameMap fromSafeMap) ((vD,info):rest) cont = do
+  cont emptyInFrag fromSafeMap
+withFreshSafeRec (FromSafeEnv fromSafeMap) ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
     frag <- return $ b S.@> ConstE UnitE
-    withFreshSafeRec (FromSafeNameMap $ fromSafeMap <.> (b S.@> UnsafeNameE valD)) rest
+    withFreshSafeRec (FromSafeEnv $ fromSafeMap <>> (b S.@> UnsafeNameE valD)) rest
       \frag' fromSafeMap' -> do
         cont (frag <.> frag') fromSafeMap'
 
@@ -222,7 +222,7 @@ withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
 withFreshBijectionD name info cont =
   asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
     withFreshM (getNameHint name) rep \b ->
-      extendToSafeNameMap name' (binderName b) $
+      extendToSafeEnv name' (binderName b) $
         cont b name'
 
 extendTopStateS :: JointTopState n -> S.EvaluatedModule n -> TopStateEx
@@ -233,31 +233,31 @@ extendTopStateS = error "not implemented"
 class ( S.ScopeReader m, S.ScopeExtender m
       , MonadFail1 m, Monad1 m)
       => MonadToSafe (m::MonadKind1) where
-  getToSafeNameMap :: m o (ToSafeNameMap o)
-  extendToSafeNameMap :: UnsafeName c -> S.Name c o -> m o a -> m o a
+  getToSafeEnv :: m o (ToSafeEnv o)
+  extendToSafeEnv :: UnsafeName c -> S.Name c o -> m o a -> m o a
 
-newtype ToSafeNameMap (o::S) = ToSafeNameMap (D.Env (EnvVal S.Name o))
+newtype ToSafeEnv (o::S) = ToSafeEnv (D.Env (EnvVal S.Name o))
   deriving (Show, Pretty, Generic)
 
 newtype ToSafeM o a =
-  ToSafeM { runToSafeM' :: ReaderT (ToSafeNameMap o) (ScopeReaderT Identity o) a }
+  ToSafeM { runToSafeM' :: ReaderT (ToSafeEnv o) (ScopeReaderT Identity o) a }
   deriving (Functor, Applicative, Monad)
 
-runToSafeM :: Distinct o => ToSafeNameMap o -> S.Scope o -> ToSafeM o a -> a
+runToSafeM :: Distinct o => ToSafeEnv o -> S.Scope o -> ToSafeM o a -> a
 runToSafeM nameMap scope m =
   runIdentity $ runScopeReaderT scope $
     flip runReaderT nameMap $
       runToSafeM' m
 
 instance MonadToSafe ToSafeM where
-  getToSafeNameMap = ToSafeM ask
-  extendToSafeNameMap (UnsafeName rep v) v' (ToSafeM m) = ToSafeM $ flip withReaderT m
-    \(ToSafeNameMap env) -> ToSafeNameMap $ env <> (v D.@> EnvVal rep v')
+  getToSafeEnv = ToSafeM ask
+  extendToSafeEnv (UnsafeName rep v) v' (ToSafeM m) = ToSafeM $ flip withReaderT m
+    \(ToSafeEnv env) -> ToSafeEnv $ env <> (v D.@> EnvVal rep v')
 
 -- === monad for translating from safe to unsafe names ===
 
 class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
-  lookupFromSafeNameMap :: S.Name c i -> m i (UnsafeName c)
+  lookupFromSafeEnv :: S.Name c i -> m i (UnsafeName c)
   getUnsafeBindings :: m i (D.Bindings)
   withFreshUnsafeName :: S.NameHint -> D.AnyBinderInfo
                       -> (D.Name -> m i a) -> m i a
@@ -266,21 +266,21 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 
 data UnsafeNameE (c::C) (n::S) = UnsafeNameE { fromUnsafeNameE :: UnsafeName c}
 
-newtype FromSafeNameMap i = FromSafeNameMap (S.Env UnsafeNameE i VoidS)
-  deriving (Pretty, Generic)
+newtype FromSafeEnv i = FromSafeEnv (S.MaterializedEnv UnsafeNameE i VoidS)
+  deriving (Generic)
 
 newtype FromSafeM i a =
-  FromSafeM { runFromSafeM' :: ReaderT (FromSafeNameMap i) (Reader D.Bindings) a }
+  FromSafeM { runFromSafeM' :: ReaderT (FromSafeEnv i) (Reader D.Bindings) a }
   deriving (Functor, Applicative, Monad)
 
-runFromSafeM :: FromSafeNameMap i -> D.Bindings -> FromSafeM i a -> a
+runFromSafeM :: FromSafeEnv i -> D.Bindings -> FromSafeM i a -> a
 runFromSafeM nameMap bindings m =
   flip runReader bindings $ flip runReaderT nameMap $ runFromSafeM' m
 
 instance MonadFromSafe FromSafeM where
-  lookupFromSafeNameMap v = FromSafeM do
-    FromSafeNameMap env <- ask
-    return $ fromUnsafeNameE $ ((emptyNameFunction <>> env) S.! v)
+  lookupFromSafeEnv v = FromSafeM do
+    FromSafeEnv env <- ask
+    return $ fromUnsafeNameE $ lookupMaterializedEnv env v
   getUnsafeBindings = FromSafeM $ lift ask
   withFreshUnsafeName hint info f =
     FromSafeM $ ReaderT \m -> do
@@ -292,7 +292,7 @@ instance MonadFromSafe FromSafeM where
         runReaderT (runFromSafeM' (f v')) m
 
   extendFromSafeMap b v (FromSafeM m) = FromSafeM $ flip withReaderT m
-    \(FromSafeNameMap env) -> FromSafeNameMap $ env <.> b S.@> UnsafeNameE v
+    \(FromSafeEnv env) -> FromSafeEnv $ env <>> b S.@> UnsafeNameE v
 
 -- === --- ===
 
@@ -327,22 +327,22 @@ instance HasSafeVersionE (UnsafeName c) where
   type SafeVersionE (UnsafeName c) = S.Name c
   toSafeE (UnsafeName rep name) = do
     let Just name' = getName name
-    ToSafeNameMap m <- getToSafeNameMap
+    ToSafeEnv m <- getToSafeEnv
     case m D.! name' of
       EnvVal rep' safeName ->
         case eqNameColorRep rep rep' of
           Just EqNameColor -> return safeName
           Nothing -> error "mismatched name colors!"
-  fromSafeE name = lookupFromSafeNameMap name
+  fromSafeE name = lookupFromSafeEnv name
 
 instance HasSafeVersionE D.EvaluatedModule where
   type SafeVersionE D.EvaluatedModule = S.EvaluatedModule
   toSafeE (D.EvaluatedModule bindings scs sourceMap) =
-    toSafeB (DRecEnvFrag bindings) \(S.RecEnvFrag bindings') ->
+    toSafeB (DRecEnvFrag bindings) \bindings' ->
       S.EvaluatedModule bindings' <$> toSafeE scs <*> toSafeE sourceMap
 
   fromSafeE (S.EvaluatedModule bindings scs sourceMap) =
-    fromSafeB (S.RecEnvFrag bindings) \(DRecEnvFrag bindings') ->
+    fromSafeB bindings \(DRecEnvFrag bindings') ->
       D.EvaluatedModule bindings' <$> fromSafeE scs <*> fromSafeE sourceMap
 
 newtype DRecEnvFrag = DRecEnvFrag D.Bindings
@@ -391,7 +391,7 @@ instance HasSafeVersionB DRecEnvFrag where
       renameBindersEnvPair name info cont =
         asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
           withFreshM (S.Hint name) rep \b ->
-            extendToSafeNameMap name' (binderName b) $
+            extendToSafeEnv name' (binderName b) $
               cont $ TempPair b info
 
   fromSafeB (RecEnvFrag env) cont = do
@@ -596,7 +596,7 @@ instance HasSafeVersionB D.Binder where
   toSafeB (Bind (b D.:> ty)) cont = do
     ty' <- toSafeE ty
     withFreshM (getNameHint b) nameColorRep \b' -> do
-      extendToSafeNameMap (UnsafeName AtomNameRep b) (S.binderName b') $
+      extendToSafeEnv (UnsafeName AtomNameRep b) (S.binderName b') $
         cont (b' S.:> ty')
 
   fromSafeB (b S.:> ty) cont = do
@@ -636,7 +636,7 @@ toSafeNamedDataDef (name, def) =
 
 fromSafeNamedDataDef :: MonadFromSafe m => S.NamedDataDef i -> m i D.NamedDataDef
 fromSafeNamedDataDef (name, def) = do
-  UnsafeName DataDefNameRep name' <- lookupFromSafeNameMap name
+  UnsafeName DataDefNameRep name' <- lookupFromSafeEnv name
   def' <- fromSafeE def
   return (name', def')
 
@@ -817,10 +817,10 @@ instance Pretty (UnsafeNameE s n) where
 instance Pretty (UnsafeName n) where
   pretty (UnsafeName _ name) = pretty name
 
-instance Store (ToSafeNameMap n)
-instance InjectableE ToSafeNameMap where
+instance Store (ToSafeEnv n)
+instance InjectableE ToSafeEnv where
   injectionProofE = undefined
-instance Store (FromSafeNameMap n)
+instance Store (FromSafeEnv n)
 
 deriving instance NameColor c => Generic (UnsafeName  c)
 deriving instance NameColor c => Generic (UnsafeNameE c n)
