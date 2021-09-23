@@ -23,7 +23,7 @@ module SaferNames.Name (
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  InplaceT, emitInplace, addOutMapInplace, runInplaceT, scopedInplace,
+  InplaceT, emitInplace, emitFreshInplace, addOutMapInplace, runInplaceT, scopedInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), MaterializedRecEnv (..), lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
@@ -35,9 +35,9 @@ module SaferNames.Name (
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
-  lookupEnvM, dropSubst, extendEnv,
+  lookupEnvM, dropSubst, extendEnv, freeNames,
   MonadKind, MonadKind1, MonadKind2,
-  Monad1, Monad2, Fallible1, Fallible2, MonadFail1, MonadFail2,
+  Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
@@ -65,6 +65,7 @@ import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
+import qualified Data.Set as S
 import Data.String
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
@@ -607,6 +608,9 @@ getDistinct = do
   d <- getDistinctEvidenceM
   return $ withDistinctEvidence d Distinct
 
+freeNames :: HasNamesE e => NameColorRep c -> e n -> S.Set (Name c n)
+freeNames = undefined
+
 -- === versions of monad constraints with scope params ===
 
 type MonadKind  =           * -> *
@@ -618,6 +622,9 @@ type Monad2 (m :: MonadKind2) = forall (n::S) (l::S) . Monad (m n l)
 
 type Fallible1 (m :: MonadKind1) = forall (n::S)        . Fallible (m n  )
 type Fallible2 (m :: MonadKind2) = forall (n::S) (l::S) . Fallible (m n l)
+
+type CtxReader1 (m :: MonadKind1) = forall (n::S)        . CtxReader (m n  )
+type CtxReader2 (m :: MonadKind2) = forall (n::S) (l::S) . CtxReader (m n l)
 
 type MonadFail1 (m :: MonadKind1) = forall (n::S)        . MonadFail (m n  )
 type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
@@ -958,12 +965,25 @@ data WithOutMap (bindings::E) (e::E) (n::S) where
 data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
   { unsafeRunInplaceT :: Distinct n => Scope n -> bindings n -> m (a, decls UnsafeS UnsafeS) }
 
-emitInplace :: (Monad m, OutMap bindings decls, BindsNames decls, HasNamesB decls, HasNamesE e)
-            => Abs decls e n -> InplaceT bindings decls m n (e n)
-emitInplace (Abs b body) = UnsafeMakeInplaceT \scope _ ->
-  return $ runIdentity $ substB (emptyNameTraversalEnv scope) b \env b' -> do
-    body' <- substE env body
-    return (unsafeCoerceE body', unsafeCoerceB b')
+class (ScopeReader m, OutMap bindings decls, BindsNames decls, HasNamesB decls)
+      => Inplace (m::MonadKind1) (bindings::E) (decls::B) | m -> bindings, m -> decls where
+  emitInplace :: HasNamesE e => Abs decls e n -> m n (e n)
+  addOutMapInplace :: InjectableE e => e n -> m n (WithOutMap bindings e n)
+
+instance (Monad m, OutMap bindings decls, BindsNames decls, HasNamesB decls)
+         => Inplace (InplaceT bindings decls m) bindings decls where
+  -- TODO: this means that emission is always associated with a full substition,
+  -- which isn't great (easily N^2 in nesting depth). So maybe we should make
+  -- `emitFreshInplace` the fundamental operation and build `emitInplace` on
+  -- top? Alternatively, we could find a way to pass around distinctness
+  -- evidence safely.
+  emitInplace (Abs b body) = UnsafeMakeInplaceT \scope _ ->
+    return $ runIdentity $ substB (emptyNameTraversalEnv scope) b \env b' -> do
+      body' <- substE env body
+      return (unsafeCoerceE body', unsafeCoerceB b')
+
+  addOutMapInplace e = UnsafeMakeInplaceT \scope bindings ->
+    return (WithOutMap scope bindings e, emptyOutFrag)
 
 runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
             => Scope n -> bindings n
@@ -972,11 +992,6 @@ runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
 runInplaceT scope bindings (UnsafeMakeInplaceT f) = do
   (result, decls) <- f scope bindings
   return $ Abs (unsafeCoerceB decls) (unsafeCoerceE result)
-
-addOutMapInplace :: (InjectableB decls, InjectableE e, OutMap bindings decls, Monad m)
-                 => e n -> InplaceT bindings decls m n (WithOutMap bindings e n)
-addOutMapInplace e = UnsafeMakeInplaceT \scope bindings ->
-  return (WithOutMap scope bindings e, emptyOutFrag)
 
 -- It's a shame that we have to implement this unsafely. The problem is that the
 -- `addBindings` style of giving partial access to bindings-like things doesn't
@@ -991,14 +1006,28 @@ scopedInplace cont = UnsafeMakeInplaceT \scope bindings -> do
 liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
 liftInplace m = UnsafeMakeInplaceT \_ _ -> (,emptyOutFrag) <$> m
 
-instance (OutMap bindings decls, BindsNames decls, Monad m) => Functor (InplaceT bindings decls m n) where
+emitFreshInplace
+  :: (Inplace m bindings decls, NameColor c, InjectableE e)
+  => NameHint -> e o
+  -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> decls n l)
+  -> m o (Name c o)
+emitFreshInplace hint e buildDecls = do
+  WithScope scope e' <- addScope e
+  withFresh hint nameColorRep scope \b -> do
+    ab <- injectM $ Abs (buildDecls b e') (binderName b)
+    emitInplace ab
+
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+         => Functor (InplaceT bindings decls m n) where
   fmap = liftM
 
-instance (OutMap bindings decls, BindsNames decls, Monad m) => Applicative (InplaceT bindings decls m n) where
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+         => Applicative (InplaceT bindings decls m n) where
   pure = return
   liftA2 = liftM2
 
-instance (OutMap bindings decls, BindsNames decls, Monad m) => Monad (InplaceT bindings decls m n) where
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+         => Monad (InplaceT bindings decls m n) where
   return x = UnsafeMakeInplaceT \_ _ ->
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (x, emptyOutFrag)
@@ -1010,23 +1039,23 @@ instance (OutMap bindings decls, BindsNames decls, Monad m) => Monad (InplaceT b
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (y, b1 `catOutFrags` b2)
 
-instance (OutMap bindings decls, InjectableB decls, BindsNames decls, Monad m)
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
   getDistinctEvidenceM = UnsafeMakeInplaceT \_ _ -> return (getDistinctEvidence, emptyOutFrag)
   addScope e = do
     WithOutMap scope _ e' <- addOutMapInplace e
     return $ WithScope scope e'
 
-instance (OutMap bindings decls, BindsNames decls, Monad m, MonadFail m)
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
   fail s = liftInplace $ fail s
 
-instance (OutMap bindings decls, BindsNames decls, Monad m, Fallible m)
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
   throwErrs = undefined
   addErrCtx = undefined
 
-instance (OutMap bindings decls, BindsNames decls, Monad m, CtxReader m)
+instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = undefined
 

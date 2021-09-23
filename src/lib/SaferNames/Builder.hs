@@ -117,19 +117,15 @@ runBuilderT scope bindings cont = do
 instance MonadFail m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
-    BuilderT $ withStale hint AtomNameRep \b -> do
-      let decl = Let ann (b:>ty) expr
-      let name = binderName b
-      emitInplace $ Abs (BuilderEmissions $ Nest (LeftB decl) Empty) name
+    BuilderT $
+      emitFreshInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
+        let decl = Let ann (b:>ty') expr'
+        BuilderEmissions $ Nest (LeftB decl) Empty
 
   emitBinding hint binding = BuilderT do
-    WithScope scope binding' <- addScope binding
-    let ab = withFresh hint nameColorRep scope \b -> do
-               let name = binderName b
-               let frag = RecEnvFrag $ b @> inject binding'
-               Abs (BuilderEmissions $ Nest (RightB frag) Empty) name
-    ab' <- injectM ab
-    emitInplace ab'
+    emitFreshInplace hint binding \b binding' -> do
+      let frag = RecEnvFrag $ b @> inject binding'
+      BuilderEmissions $ Nest (RightB frag) Empty
 
   buildScoped cont = BuilderT do
     Abs emissions result <- scopedInplace do
