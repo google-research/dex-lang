@@ -118,12 +118,12 @@ instance MonadFail m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
     BuilderT $
-      emitFreshInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
+      emitInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
         let decl = Let ann (b:>ty') expr'
         BuilderEmissions $ Nest (LeftB decl) Empty
 
   emitBinding hint binding = BuilderT do
-    emitFreshInplace hint binding \b binding' -> do
+    emitInplace hint binding \b binding' -> do
       let frag = RecEnvFrag $ b @> inject binding'
       BuilderEmissions $ Nest (RightB frag) Empty
 

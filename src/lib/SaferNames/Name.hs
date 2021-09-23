@@ -23,7 +23,7 @@ module SaferNames.Name (
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  InplaceT, emitInplace, emitFreshInplace, addOutMapInplace, runInplaceT, scopedInplace,
+  InplaceT, emitInplace, runInplaceT, scopedInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), MaterializedRecEnv (..), lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
@@ -35,7 +35,7 @@ module SaferNames.Name (
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
-  lookupEnvM, dropSubst, extendEnv, freeNames,
+  lookupEnvM, dropSubst, extendEnv, freeNames, emptyNameTraversalEnv,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
@@ -965,25 +965,30 @@ data WithOutMap (bindings::E) (e::E) (n::S) where
 data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
   { unsafeRunInplaceT :: Distinct n => Scope n -> bindings n -> m (a, decls UnsafeS UnsafeS) }
 
-class (ScopeReader m, OutMap bindings decls, BindsNames decls, HasNamesB decls)
+class (ScopeReader m, OutMap bindings decls, BindsNames decls, InjectableB decls)
       => Inplace (m::MonadKind1) (bindings::E) (decls::B) | m -> bindings, m -> decls where
-  emitInplace :: HasNamesE e => Abs decls e n -> m n (e n)
-  addOutMapInplace :: InjectableE e => e n -> m n (WithOutMap bindings e n)
+  doInplace
+    :: (InjectableE e, InjectableE e')
+    => e n
+    -> (forall l. Distinct l => Scope l -> bindings l -> e l -> (DistinctAbs decls e' l))
+    -> m n (e' n)
+  scopedInplace
+    :: InjectableE e
+    => (forall l. (Distinct l, Ext n l) => m l (e l))
+    -> m n (Abs decls e n)
 
-instance (Monad m, OutMap bindings decls, BindsNames decls, HasNamesB decls)
+instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
          => Inplace (InplaceT bindings decls m) bindings decls where
-  -- TODO: this means that emission is always associated with a full substition,
-  -- which isn't great (easily N^2 in nesting depth). So maybe we should make
-  -- `emitFreshInplace` the fundamental operation and build `emitInplace` on
-  -- top? Alternatively, we could find a way to pass around distinctness
-  -- evidence safely.
-  emitInplace (Abs b body) = UnsafeMakeInplaceT \scope _ ->
-    return $ runIdentity $ substB (emptyNameTraversalEnv scope) b \env b' -> do
-      body' <- substE env body
-      return (unsafeCoerceE body', unsafeCoerceB b')
+  doInplace e cont = UnsafeMakeInplaceT \scope bindings -> do
+    DistinctAbs decls e' <- return $ cont scope bindings e
+    return (unsafeCoerceE e', unsafeCoerceB decls)
 
-  addOutMapInplace e = UnsafeMakeInplaceT \scope bindings ->
-    return (WithOutMap scope bindings e, emptyOutFrag)
+  -- It's a shame that we have to implement this unsafely. The problem is that
+  -- the `addBindings` style of giving partial access to bindings-like things
+  -- doesn't let you offer the more powerful `forall l. Ext n l => ..` style of API.
+  scopedInplace cont = UnsafeMakeInplaceT \scope bindings -> do
+    (result, decls) <- unsafeRunInplaceT cont scope bindings
+    return (Abs (unsafeCoerceB decls) (unsafeCoerceE result), emptyOutFrag)
 
 runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
             => Scope n -> bindings n
@@ -993,40 +998,30 @@ runInplaceT scope bindings (UnsafeMakeInplaceT f) = do
   (result, decls) <- f scope bindings
   return $ Abs (unsafeCoerceB decls) (unsafeCoerceE result)
 
--- It's a shame that we have to implement this unsafely. The problem is that the
--- `addBindings` style of giving partial access to bindings-like things doesn't
--- let you offer the more powerful `forall l. Ext n l => ..` style of API.
-scopedInplace :: (Monad m, OutMap bindings decls, BindsNames decls, HasNamesB decls, HasNamesE e)
-              => (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
-              -> InplaceT bindings decls m n (Abs decls e n)
-scopedInplace cont = UnsafeMakeInplaceT \scope bindings -> do
-  (result, decls) <- unsafeRunInplaceT cont scope bindings
-  return (Abs (unsafeCoerceB decls) (unsafeCoerceE result), emptyOutFrag)
 
 liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
 liftInplace m = UnsafeMakeInplaceT \_ _ -> (,emptyOutFrag) <$> m
 
-emitFreshInplace
+emitInplace
   :: (Inplace m bindings decls, NameColor c, InjectableE e)
   => NameHint -> e o
   -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> decls n l)
   -> m o (Name c o)
-emitFreshInplace hint e buildDecls = do
-  WithScope scope e' <- addScope e
-  withFresh hint nameColorRep scope \b -> do
-    ab <- injectM $ Abs (buildDecls b e') (binderName b)
-    emitInplace ab
+emitInplace hint e buildDecls = do
+  doInplace e \scope _ e' ->
+    withFresh hint nameColorRep scope \b ->
+      DistinctAbs (buildDecls b e') (binderName b)
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Functor (InplaceT bindings decls m n) where
   fmap = liftM
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Applicative (InplaceT bindings decls m n) where
   pure = return
   liftA2 = liftM2
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where
   return x = UnsafeMakeInplaceT \_ _ ->
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
@@ -1039,23 +1034,21 @@ instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (y, b1 `catOutFrags` b2)
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
   getDistinctEvidenceM = UnsafeMakeInplaceT \_ _ -> return (getDistinctEvidence, emptyOutFrag)
-  addScope e = do
-    WithOutMap scope _ e' <- addOutMapInplace e
-    return $ WithScope scope e'
+  addScope e = doInplace e \scope _ e' -> DistinctAbs emptyOutFrag (WithScope scope e')
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m, MonadFail m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
   fail s = liftInplace $ fail s
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m, Fallible m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
   throwErrs = undefined
   addErrCtx = undefined
 
-instance (OutMap bindings decls, BindsNames decls, HasNamesB decls, Monad m, CtxReader m)
+instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = undefined
 
