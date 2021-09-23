@@ -23,7 +23,7 @@ module SaferNames.Name (
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  Inplace, liftInplace, runInplace,
+  InplaceT, emitInplace, addOutMapInplace, runInplaceT, scopedInplace,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), MaterializedRecEnv (..), lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
@@ -40,7 +40,7 @@ module SaferNames.Name (
   Monad1, Monad2, Fallible1, Fallible2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
-  checkAlphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
+  checkAlphaEq, alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>),
   envFragAsScope,
@@ -54,7 +54,7 @@ module SaferNames.Name (
   splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt,
-  InFrag (..), InMap (..), OutFrag (..), OutMap (..),
+  InFrag (..), InMap (..), OutFrag (..), OutMap (..), WithOutMap (..),
   fromEnvPairs
   ) where
 
@@ -74,7 +74,6 @@ import Data.Store (Store)
 import SaferNames.NameCore
 import Util (zipErr, onFst, onSnd)
 import Err
-
 
 -- === category-like classes for envs, scopes etc ===
 
@@ -183,6 +182,10 @@ lookupMaterializedEnv (MaterializedEnv frag) name =
   case lookupEnvFragProjected frag name of
     Left name' -> absurdNameFunction name'
     Right val -> val
+
+instance OutFrag (Nest b) where
+  emptyOutFrag = id
+  catOutFrags = (>>>)
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -368,6 +371,9 @@ type SubstTraversalEnv (m::MonadKind) (v::V) (i::S) (o::S) =
 
 lookupSustTraversalEnv :: SubstTraversalEnv m v i o -> Name c i -> m (v c o)
 lookupSustTraversalEnv (env, _) v = fromMonadicVal $ env ! v
+
+emptyNameTraversalEnv :: Monad m => Scope n -> SubstTraversalEnv m Name n n
+emptyNameTraversalEnv scope = (newEnv (MonadicVal . return), scope)
 
 class (FromName v, InjectableE e) => SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
@@ -708,6 +714,10 @@ class ( InjectableV v
       , forall c. NameColor c => AlphaEqE (v c))
       => AlphaEqV (v::V) where
 
+alphaEq :: (AlphaEqE e, ScopeReader m)
+        => e n -> e n -> m n Bool
+alphaEq = undefined
+
 checkAlphaEq :: (AlphaEqE e, Fallible1 m, ScopeReader m)
              => e n -> e n -> m n ()
 checkAlphaEq e1 e2 = do
@@ -802,7 +812,7 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
 
 newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   EnvReaderT { runEnvReaderT' :: ReaderT (Env v i o) (m o) a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible, CtxReader)
 
 type ScopedEnvReader (v::V) = EnvReaderT v (ScopeReaderT Identity) :: MonadKind2
 
@@ -942,51 +952,83 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
 
 -- === in-place scope updating monad ===
 
--- [NoteInplaceMonad]
+data WithOutMap (bindings::E) (e::E) (n::S) where
+  WithOutMap :: (Distinct l, Ext l n) => Scope l -> bindings l -> e l -> WithOutMap bindings e n
 
-data Inplace (m :: E -> S -> *) (n::S) (a:: *) =
-  UnsafeMakeInplace { unsafeRunInplace :: (m (LiftE a) UnsafeS) }
+data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
+  { unsafeRunInplaceT :: Distinct n => Scope n -> bindings n -> m (a, decls UnsafeS UnsafeS) }
 
-instance NameGen m => Functor (Inplace m n) where
+emitInplace :: (Monad m, OutMap bindings decls, BindsNames decls, HasNamesB decls, HasNamesE e)
+            => Abs decls e n -> InplaceT bindings decls m n (e n)
+emitInplace (Abs b body) = UnsafeMakeInplaceT \scope _ ->
+  return $ runIdentity $ substB (emptyNameTraversalEnv scope) b \env b' -> do
+    body' <- substE env body
+    return (unsafeCoerceE body', unsafeCoerceB b')
+
+runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
+            => Scope n -> bindings n
+            -> (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
+            -> m (Abs decls e n)
+runInplaceT scope bindings (UnsafeMakeInplaceT f) = do
+  (result, decls) <- f scope bindings
+  return $ Abs (unsafeCoerceB decls) (unsafeCoerceE result)
+
+addOutMapInplace :: (InjectableB decls, InjectableE e, OutMap bindings decls, Monad m)
+                 => e n -> InplaceT bindings decls m n (WithOutMap bindings e n)
+addOutMapInplace e = UnsafeMakeInplaceT \scope bindings ->
+  return (WithOutMap scope bindings e, emptyOutFrag)
+
+-- It's a shame that we have to implement this unsafely. The problem is that the
+-- `addBindings` style of giving partial access to bindings-like things doesn't
+-- let you offer the more powerful `forall l. Ext n l => ..` style of API.
+scopedInplace :: (Monad m, OutMap bindings decls, BindsNames decls, HasNamesB decls, HasNamesE e)
+              => (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
+              -> InplaceT bindings decls m n (Abs decls e n)
+scopedInplace cont = UnsafeMakeInplaceT \scope bindings -> do
+  (result, decls) <- unsafeRunInplaceT cont scope bindings
+  return (Abs (unsafeCoerceB decls) (unsafeCoerceE result), emptyOutFrag)
+
+liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
+liftInplace m = UnsafeMakeInplaceT \_ _ -> (,emptyOutFrag) <$> m
+
+instance (OutMap bindings decls, BindsNames decls, Monad m) => Functor (InplaceT bindings decls m n) where
   fmap = liftM
 
-instance NameGen m => Applicative (Inplace m n) where
-  pure x = UnsafeMakeInplace (returnG (LiftE x))
+instance (OutMap bindings decls, BindsNames decls, Monad m) => Applicative (InplaceT bindings decls m n) where
+  pure = return
   liftA2 = liftM2
 
-instance NameGen m => Monad (Inplace m n) where
-  return = pure
-  UnsafeMakeInplace m >>= f = UnsafeMakeInplace $
-    m `bindG` \(LiftE x) ->
-      let UnsafeMakeInplace m' = f x
-      in unsafeCoerceE $ m'
+instance (OutMap bindings decls, BindsNames decls, Monad m) => Monad (InplaceT bindings decls m n) where
+  return x = UnsafeMakeInplaceT \_ _ ->
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+      return (x, emptyOutFrag)
+  m >>= f = UnsafeMakeInplaceT \scope outMap -> do
+    (x, b1) <- unsafeRunInplaceT m scope outMap
+    let outMap' = outMap `extendOutMap` unsafeCoerceB b1
+    let scope' = scope `extendOutMap` toScopeFrag (unsafeCoerceB b1)
+    (y, b2) <- unsafeRunInplaceT (f x) scope' outMap'
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+      return (y, b1 `catOutFrags` b2)
 
--- XXX: this might not be completely safe. For example, the caller might use it
--- to smuggle out a data representation of the `Ext n l`, along with, say, a
--- `Scope l`, and then use it to generate a lookup that will fail. We should
--- think about whether there's a way to plug that hole.
-liftInplace :: forall m e n.
-               (NameGen m, InjectableE e)
-            => (forall l. Ext n l => m e l)
-            -> Inplace m n (e n)
-liftInplace cont = UnsafeMakeInplace $
-  withExtEvidence (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
-    cont `bindG` \result ->
-    returnG $ LiftE $ unsafeCoerceE result
+instance (OutMap bindings decls, InjectableB decls, BindsNames decls, Monad m)
+         => ScopeReader (InplaceT bindings decls m) where
+  getDistinctEvidenceM = UnsafeMakeInplaceT \_ _ -> return (getDistinctEvidence, emptyOutFrag)
+  addScope e = do
+    WithOutMap scope _ e' <- addOutMapInplace e
+    return $ WithScope scope e'
 
-runInplace :: (NameGen m, InjectableE e)
-           => (forall l. (Distinct l, Ext n l) => Inplace m l (e l))
-           -> m e n
-runInplace cont =
-  runInplace' \distinct ext ->
-  withDistinctEvidence distinct $ withExtEvidence ext cont
+instance (OutMap bindings decls, BindsNames decls, Monad m, MonadFail m)
+         => MonadFail (InplaceT bindings decls m n) where
+  fail s = liftInplace $ fail s
 
-runInplace' :: (NameGen m, InjectableE e)
-            => (forall l. DistinctEvidence l -> ExtEvidence n l -> Inplace m l (e l))
-            -> m e n
-runInplace' cont = unsafeCoerceE $
-  unsafeRunInplace (cont FabricateDistinctEvidence FabricateExtEvidence) `bindG` \(LiftE e) ->
-  returnG $ unsafeCoerceE e
+instance (OutMap bindings decls, BindsNames decls, Monad m, Fallible m)
+         => Fallible (InplaceT bindings decls m n) where
+  throwErrs = undefined
+  addErrCtx = undefined
+
+instance (OutMap bindings decls, BindsNames decls, Monad m, CtxReader m)
+         => CtxReader (InplaceT bindings decls m n) where
+  getErrCtx = undefined
 
 -- === name hints ===
 
@@ -1054,6 +1096,27 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (PairB b1 b2) where
     substB env b1 \env' b1' ->
       substB env' b2 \env'' b2' ->
         cont env'' $ PairB b1' b2'
+
+instance (BindsNames b1, BindsNames b2) => ProvesExt  (EitherB b1 b2) where
+instance (BindsNames b1, BindsNames b2) => BindsNames (EitherB b1 b2) where
+  toScopeFrag (LeftB  b) = toScopeFrag b
+  toScopeFrag (RightB b) = toScopeFrag b
+
+instance (InjectableB b1, InjectableB b2) => InjectableB (EitherB b1 b2) where
+  injectionProofB fresh (LeftB b) cont =
+    injectionProofB fresh b \fresh' b' ->
+      cont fresh' (LeftB b')
+  injectionProofB fresh (RightB b) cont =
+    injectionProofB fresh b \fresh' b' ->
+      cont fresh' (RightB b')
+
+instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
+  substB env (LeftB b) cont =
+    substB env b \env' b' ->
+      cont env' $ LeftB b'
+  substB env (RightB b) cont =
+    substB env b \env' b' ->
+      cont env' $ RightB b'
 
 instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
   injectionProofB fresh (b:>ann) cont = do
@@ -1272,25 +1335,3 @@ pattern Case3 e = RightE (RightE (RightE (LeftE e)))
 
 pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
 pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
-
--- === notes ===
-
-{-
-
-[NoteInplaceMonad]
-
-The Inplace monad wraps a NameGen monad and hides its ever-changing scope
-parameter. Instead it exposes a scope parameter that doesn't change, so we can
-have an ordinary Monad instance instead of using bindG/returnG. When the scope
-parameter for the underlying NameGen monad is extended, we just implicitly
-inject all the existing values into the new name space. This is fine as long as
-we enforce two invariants. First, we make sure that the actual underlying
-parameter is only updated by fresh extension. This is already guaranteed by
-`NameGen`. Second, we only produce values which are covariant in their scope
-parameter. We enforce this with the InjectableE constraint to `liftInplace`.
-This is the condition that lets us update all the existing values "in place".
-Otherwise you could get access to, say, a `Bindings n`. If you then generated a
-new name, `Name n`, you'd expect to be able to look it up in the bindings, but
-it would fail!
-
--}

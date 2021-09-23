@@ -12,7 +12,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module SaferNames.NameCore (
-  S (..), C (..), RawName, Name (..), withFresh, inject, injectNamesR, projectName,
+  S (..), C (..), RawName, Name (..), withFresh, withStale, inject, injectNamesR, projectName,
   NameBinder (..), ScopeFrag (..), Scope (..), singletonScope, catEnvFrags,
   EnvFrag (..), singletonEnv, emptyEnvFrag, envFragAsScope, lookupEnvFrag,
   E, B, V, InjectableE (..), InjectableB (..), InjectableV,
@@ -141,12 +141,17 @@ withFresh hint rep (Scope (UnsafeMakeScope scope)) cont =
       cont $ UnsafeMakeBinder freshName
   where
     freshName :: Name c UnsafeS
-    freshName = UnsafeMakeName rep $ freshRawName (D.nameTag rawNameHint) scope
+    freshName = UnsafeMakeName rep $ freshRawName (D.nameTag $ hintToRawName hint) scope
 
-    rawNameHint :: RawName
-    rawNameHint = case hint of
-      Hint v -> v
-      NoHint -> "v"
+withStale :: NameHint
+          -> NameColorRep c
+          -> (forall l. NameBinder c n l -> a) -> a
+withStale hint rep cont = cont (UnsafeMakeBinder (UnsafeMakeName rep $ hintToRawName hint))
+
+hintToRawName :: NameHint -> RawName
+hintToRawName hint = case hint of
+  Hint v -> v
+  NoHint -> "v"
 
 freshRawName :: D.Tag -> S.Set RawName -> RawName
 freshRawName tag usedNames = D.Name D.GenName tag nextNum

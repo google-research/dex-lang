@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
@@ -21,16 +22,15 @@ module SaferNames.Builder (
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
-  getDataDef, getClassDef, getDataCon, liftBuilderNameGenT, atomAsBlock,
+  getDataDef, getClassDef, getDataCon, atomAsBlock,
   Emits, EmitsTop, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
-  emitBlock
+  emitBlock, BuilderEmissions (..),
   ) where
 
 import Prelude hiding ((.), id)
-import Control.Category
 import Control.Monad
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -50,7 +50,7 @@ import Util (enumerate)
 class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   emitDecl :: Emits n => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
-  emitBinding :: EmitsTop n => NameHint -> Binding c n -> m n (Name c n)
+  emitBinding :: (EmitsTop n, NameColor c) => NameHint -> Binding c n -> m n (Name c n)
   buildScoped :: HasNamesE e
               => (forall l. (Emits l, Ext n l) => m l (e l))
               -> m n (Abs (Nest Decl) e n)
@@ -72,109 +72,103 @@ emitOp op = Var <$> emit (Op op)
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
 emitBlock = undefined
 
--- === BuilderNameGenT ===
-
-newtype BuilderNameGenT (decl::B) (m::MonadKind1) (e::E) (n::S) =
-  BuilderNameGenT { runBuilderNameGenT :: m n (DistinctAbs (Nest decl) e n) }
-
-instance (BindingsReader m, BindingsExtender m, Monad1 m, BindsBindings decl)
-         => NameGen (BuilderNameGenT decl m) where
-  returnG e = BuilderNameGenT $ do
-    Distinct <- getDistinct
-    return (DistinctAbs Empty e)
-  bindG (BuilderNameGenT m) f = BuilderNameGenT do
-    DistinctAbs decls  e  <- m
-    DistinctAbs decls' e' <- extendBindings (boundBindings decls) $ runBuilderNameGenT $ f e
-    return $ DistinctAbs (decls >>> decls') e'
-  getDistinctEvidenceG = BuilderNameGenT do
-    Distinct <- getDistinct
-    return $ DistinctAbs Empty getDistinctEvidence
-
-liftBuilderNameGenT :: ScopeReader m => m n (e n) -> BuilderNameGenT decl m e n
-liftBuilderNameGenT m = BuilderNameGenT do
-  Distinct <- getDistinct
-  result <- m
-  return $ DistinctAbs Empty result
-
 -- === BuilderT ===
 
-newtype BuilderT (m::MonadKind1) (n::S) (a:: *) =
-  BuilderT { runBuilderT' :: Inplace (BuilderNameGenT Decl m) n a }
+-- newtype just for the different OutMap instance
+newtype BuilderBindings n = BuilderBindings (Bindings n)
+-- newtype because we have a slightly different OutFrag instance
+newtype BuilderEmissions n l =
+  BuilderEmissions (Nest (EitherB Decl BindingsFrag) n l)
+  deriving (InjectableB, SubstB Name, ProvesExt, BindsNames, BindsBindings)
+instance OutFrag BuilderEmissions where
+  emptyOutFrag = BuilderEmissions Empty
+  -- TODO: this is a hack. It would be better to somehow avoid losing the
+  -- `Distinct l` constraint. It's just hard to make it safe.
+  -- We merge/inject bindings fragments here rather than later because later we
+  -- won't have access to `Distinct l` later. We could still do a renaming subst
+  -- would get expensive with deeply nested scopes.
+  catOutFrags (BuilderEmissions (Nest (RightB frag) Empty))
+              (BuilderEmissions (Nest (RightB frag') rest)) =
+    withSubscopeDistinct (toExtEvidence rest) $
+      BuilderEmissions $ Nest (RightB (catOutFrags frag frag')) rest
+  catOutFrags (BuilderEmissions nest) (BuilderEmissions nest') =
+    BuilderEmissions $ catOutFrags nest nest'
+
+instance OutMap BuilderBindings BuilderEmissions where
+  emptyOutMap = BuilderBindings emptyOutMap
+  extendOutMap (BuilderBindings bindings) emissions =
+    BuilderBindings $ bindings `extendOutMap` boundBindings emissions
+
+newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
+  BuilderT { runBuilderT' :: InplaceT BuilderBindings BuilderEmissions m n a }
   deriving (Functor, Applicative, Monad)
 
 runBuilderT
-  :: ( BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m , HasNamesE e)
-  => (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
-  -> m n (e n)
-runBuilderT cont = do
-  DistinctAbs decls result <- runBuilderNameGenT $ runInplace $ runBuilderT' cont
-  -- this should always succeed because we don't supply the `Emits` predicate to
-  -- the continuation
-  fromConstAbs $ Abs decls result
+  :: (MonadFail m, Distinct n)
+  => Distinct n => Scope n -> Bindings n
+  -> (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
+  -> m (e n)
+runBuilderT scope bindings cont = do
+  Abs decls result <- runInplaceT scope (BuilderBindings bindings) $ runBuilderT' cont
+  case decls of
+    BuilderEmissions Empty -> return result
+    _ -> error "shouldn't have produced any decls"
 
-runBuilderTWithEmits
-  :: ( BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m, HasNamesE e)
-  => (forall l. (Emits l, Distinct l, Ext n l) => BuilderT m l (e l))
-  -> m n (Abs (Nest Decl) e n)
-runBuilderTWithEmits cont = do
-  DistinctAbs decls result <- runBuilderNameGenT $ runInplace $ runBuilderT' do
-    evidence <- fabricateEmitsEvidenceM
-    withEmitsEvidence evidence do
-      cont
-  return $ Abs decls result
+instance MonadFail m => Builder (BuilderT m) where
+  emitDecl hint ann expr = do
+    ty <- getType expr
+    BuilderT $ withStale hint AtomNameRep \b -> do
+      let decl = Let ann (b:>ty) expr
+      let name = binderName b
+      emitInplace $ Abs (BuilderEmissions $ Nest (LeftB decl) Empty) name
 
--- TODO: should be able to get away with `Scopable m` instead of `BindingsExtender m`
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
-         => Builder (BuilderT m) where
-  emitDecl hint ann expr = BuilderT $
-    liftInplace $ BuilderNameGenT do
-      expr' <- injectM expr
-      ty <- getType expr'
-      let binderInfo = LetBound ann expr'
-      withFreshBinder hint ty binderInfo \b -> do
-        return $ DistinctAbs (Nest (Let ann b expr') Empty) (binderName b)
+  emitBinding hint binding = BuilderT do
+    WithScope scope binding' <- addScope binding
+    let ab = withFresh hint nameColorRep scope \b -> do
+               let name = binderName b
+               let frag = RecEnvFrag $ b @> inject binding'
+               Abs (BuilderEmissions $ Nest (RightB frag) Empty) name
+    ab' <- injectM ab
+    emitInplace ab'
 
-  emitBinding _ = undefined
+  buildScoped cont = BuilderT do
+    Abs emissions result <- scopedInplace do
+      evidence <- fabricateEmitsEvidenceM
+      withEmitsEvidence evidence $ runBuilderT' cont
+    Just decls <- return $ fromBuilderDecls emissions
+    return (Abs decls result)
 
-  buildScoped cont = do
-    ext1 <- idExt
-    BuilderT $ liftInplace $ BuilderNameGenT do
-      ext2 <- injectExt ext1
-      result <- runBuilderTWithEmits do
-                  ExtW <- injectExt ext2
-                  cont
-      Distinct <- getDistinct
-      return $ DistinctAbs id result
+  buildScopedTop cont = BuilderT do
+    Abs emissions result <- scopedInplace do
+      evidence <- fabricateEmitsTopEvidenceM
+      withEmitsTopEvidence evidence $ runBuilderT' cont
+    Just decls <- return $ fromBuilderBindings emissions
+    return (Abs decls result)
 
-  buildScopedTop _ = undefined
   getAllowedEffects = undefined
   withAllowedEffects _ _ = undefined
 
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
-         => MonadFail (BuilderT m n) where
-  fail = undefined
+fromBuilderDecls :: BuilderEmissions n l -> Maybe (Nest Decl n l)
+fromBuilderDecls (BuilderEmissions nest) = case nest of
+  Nest builderDecl rest -> case builderDecl of
+    LeftB decl -> Nest decl <$> fromBuilderDecls (BuilderEmissions rest)
+    RightB _ -> Nothing
+  Empty -> return Empty
 
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
-         => ScopeReader (BuilderT m) where
-  getDistinctEvidenceM = BuilderT $
-    liftInplace $ liftBuilderNameGenT getDistinctEvidenceM
-  addScope e = BuilderT $
-    liftInplace $
-      liftBuilderNameGenT do
-        e' <- injectM e
-        addScope e'
+fromBuilderBindings :: BuilderEmissions n l -> Maybe (BindingsFrag n l)
+-- Expect a singleton nest, because of the special case we handle in
+-- the OutFrag instance for BuilderEmissions
+fromBuilderBindings (BuilderEmissions (Nest (RightB frag) Empty)) = return frag
+fromBuilderBindings _ = Nothing
 
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
-         => BindingsReader (BuilderT m) where
-  addBindings e = BuilderT $
-    liftInplace $
-      liftBuilderNameGenT do
-        e' <- injectM e
-        addBindings e'
+deriving instance MonadFail m => MonadFail (BuilderT m n)
+deriving instance MonadFail m => ScopeReader (BuilderT m)
 
-instance (BindingsReader m, BindingsGetter m, BindingsExtender m, MonadFail1 m)
-         => Scopable (BuilderT m) where
-  withBindings  _ _ = undefined
+instance MonadFail m => BindingsReader (BuilderT m) where
+  addBindings _ = undefined
+
+instance MonadFail m => Scopable (BuilderT m) where
+  withBindings _ _ = undefined
 
 -- === Emits predicate ===
 
@@ -209,16 +203,16 @@ class EmitsTop (n::S)
 
 instance EmitsTop UnsafeS
 
-_withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
-_withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
+withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
+withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
  ( unsafeCoerce ( WrapWithEmitsTop cont :: WrapWithEmitsTop n       a
                                       ) :: WrapWithEmitsTop UnsafeS a)
 
 newtype WrapWithEmitsTop n r =
   WrapWithEmitsTop { fromWrapWithEmitsTop :: EmitsTop n => r }
 
-_fabricateEmitsTopEvidenceM :: Monad1 m => m n (EmitsTopEvidence n)
-_fabricateEmitsTopEvidenceM = return FabricateEmitsTopEvidence
+fabricateEmitsTopEvidenceM :: Monad1 m => m n (EmitsTopEvidence n)
+fabricateEmitsTopEvidenceM = return FabricateEmitsTopEvidence
 
 -- === lambda-like things ===
 
