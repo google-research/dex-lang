@@ -11,8 +11,8 @@
 
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
-            Fallible (..), FallibleM (..), HardFailM (..),
-            runHardFail, throw, throwIf,
+            Fallible (..), FallibleM (..), HardFailM (..), CtxReader (..),
+            runFallibleM, runHardFail, throw, throwIf,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
@@ -107,6 +107,9 @@ instance FallibleApplicative IO where
     result1 <- catchIOExcept m1
     result2 <- catchIOExcept m2
     liftExcept $ mergeErrs result1 result2
+
+runFallibleM :: FallibleM a -> Except a
+runFallibleM m = runReaderT (fromFallibleM m) mempty
 
 -- === Except type ===
 

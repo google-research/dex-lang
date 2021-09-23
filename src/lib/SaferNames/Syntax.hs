@@ -47,7 +47,7 @@ module SaferNames.Syntax (
     CmdName (..), LogLevel (..), PassName, OutFormat (..),
     NamedDataDef, TopBindings, fromTopBindings, ScopedBindings,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
-    refreshBinders, withFreshBinder, withFreshBinding,
+    BindingDecl (..), refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
@@ -146,6 +146,7 @@ data AtomBinderInfo (n::S) =
  | PiBound
  | MiscBound
  | InferenceName
+ | SkolemName
    deriving (Show, Generic)
 
 -- We inline the definition for compatibility with the unsafe IR.
@@ -224,6 +225,9 @@ data Binding (c::C) (n::S) where
   SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
 deriving instance Show (Binding c n)
+
+data BindingDecl n l where
+  BindingDecl :: NameColor c => NameBinder c n l -> Binding c n -> BindingDecl n l
 
 type BindingsFrag = RecEnvFrag Binding :: S -> S -> *
 type Bindings     = RecEnv     Binding :: S -> *
@@ -1295,6 +1299,17 @@ instance AlphaEqB Decl
 instance ProvesExt  Decl
 instance BindsNames Decl
 
+instance InjectableB BindingDecl where
+  injectionProofB _ _ _ = undefined
+instance SubstB Name BindingDecl where
+  substB _ _ _ = undefined
+instance ProvesExt  BindingDecl where
+  toExtEvidence = undefined
+instance BindsNames BindingDecl where
+  toScopeFrag = undefined
+instance BindsBindings BindingDecl where
+  boundBindings = undefined
+
 instance Pretty Arrow where
   pretty arr = case arr of
     PlainArrow     -> "->"
@@ -1415,6 +1430,11 @@ instance (BindsBindings b1, BindsBindings b2)
 instance BindsBindings b => (BindsBindings (Nest b)) where
   boundBindings Empty = emptyOutFrag
   boundBindings (Nest b rest) = boundBindings $ PairB b rest
+
+instance (BindsBindings b1, BindsBindings b2)
+         => (BindsBindings (EitherB b1 b2)) where
+  boundBindings (LeftB  b) = boundBindings b
+  boundBindings (RightB b) = boundBindings b
 
 instance BindsBindings (RecEnvFrag Binding) where
   boundBindings frag = frag

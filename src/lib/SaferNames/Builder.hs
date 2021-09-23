@@ -27,7 +27,7 @@ module SaferNames.Builder (
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
-  emitBlock, BuilderEmissions (..),
+  emitBlock, BuilderEmissions (..), emitAtomToName,
   ) where
 
 import Prelude hiding ((.), id)
@@ -71,6 +71,10 @@ emitOp op = Var <$> emit (Op op)
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
 emitBlock = undefined
+
+emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
+emitAtomToName (Var v) = return v
+emitAtomToName x = emit (Atom x)
 
 -- === BuilderT ===
 

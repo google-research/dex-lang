@@ -23,7 +23,7 @@ module SaferNames.Name (
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  InplaceT, emitInplace, runInplaceT, scopedInplace,
+  Inplace (..), InplaceT, emitInplace, runInplaceT, withInplaceOutEnv,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), MaterializedRecEnv (..), lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
@@ -35,7 +35,7 @@ module SaferNames.Name (
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
-  lookupEnvM, dropSubst, extendEnv, freeNames, emptyNameTraversalEnv,
+  lookupEnvM, dropSubst, extendEnv, freeNames, emptyNameTraversalEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
@@ -1012,6 +1012,15 @@ emitInplace hint e buildDecls = do
     withFresh hint nameColorRep scope \b ->
       DistinctAbs (buildDecls b e') (binderName b)
 
+withInplaceOutEnv
+  :: (Inplace m bindings decls, InjectableE e, InjectableE e')
+  => e n
+  -> (forall l. Distinct l => Scope l -> bindings l -> e l -> e' l)
+  -> m n (e' n)
+withInplaceOutEnv eIn cont = doInplace eIn \scope bindings eIn' ->
+  let eOut = cont scope bindings eIn'
+  in DistinctAbs emptyOutFrag eOut
+
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Functor (InplaceT bindings decls m n) where
   fmap = liftM
@@ -1051,6 +1060,14 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, F
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = undefined
+
+instance (Inplace m bindings decls, InjectableV v)
+         => Inplace (EnvReaderT v m i) bindings decls where
+  doInplace e cont = EnvReaderT $ lift $ doInplace e cont
+  scopedInplace cont = EnvReaderT $ ReaderT \env ->
+    scopedInplace do
+      env' <- injectM env
+      runReaderT (runEnvReaderT' cont) env'
 
 -- === name hints ===
 

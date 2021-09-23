@@ -15,7 +15,7 @@ module SaferNames.Type (
   HasType (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices, tryReduceBlock,
-  caseAltsBinderTys) where
+  caseAltsBinderTys, tryGetType) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -58,6 +58,13 @@ getType e = do
   Distinct <- getDistinct
   WithBindings bindings scope e' <- addBindings e
   injectM $ runHardFail $ runTyperT (scope, bindings) $ getTypeE e'
+
+tryGetType :: (BindingsReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
+tryGetType e = do
+  Distinct <- getDistinct
+  WithBindings bindings scope e' <- addBindings e
+  ty <- liftExcept $ runTyperT (scope, bindings) $ getTypeE e'
+  injectM ty
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
 instantiatePi (PiType _ b eff body) x = do
