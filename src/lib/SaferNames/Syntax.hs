@@ -44,8 +44,7 @@ module SaferNames.Syntax (
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..),
     SourceUModule (..), UType,
-    CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    NamedDataDef, TopBindings, fromTopBindings, ScopedBindings,
+    CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     BindingDecl (..), refreshBinders, withFreshBinder, withFreshBinding,
     Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
@@ -233,7 +232,7 @@ type BindingsFrag = RecEnvFrag Binding :: S -> S -> *
 type Bindings     = RecEnv     Binding :: S -> *
 
 data WithBindings (e::E) (n::S) where
-  WithBindings :: (Distinct l, Ext l n) => Bindings l -> Scope l -> e l -> WithBindings e n
+  WithBindings :: (Distinct l, Ext l n) => Bindings l -> e l -> WithBindings e n
 
 class ScopeReader m => BindingsReader (m::MonadKind1) where
   addBindings :: InjectableE e => e n -> m n (WithBindings e n)
@@ -277,19 +276,19 @@ instance (InjectableE e, ScopeReader m, BindingsExtender m)
       cont env'
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
-  BindingsReaderT {runBindingsReaderT' :: ReaderT (Bindings n) (ScopeReaderT m n) a }
+  BindingsReaderT {runBindingsReaderT' :: ReaderT (DistinctEvidence n, Bindings n) m a }
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
-runBindingsReaderT :: Distinct n => (Scope n, Bindings n) -> (BindingsReaderT m n a) -> m a
-runBindingsReaderT (scope, bindings) cont =
-  runScopeReaderT scope $ runReaderT (runBindingsReaderT' cont) bindings
+runBindingsReaderT :: Distinct n => Bindings n -> (BindingsReaderT m n a) -> m a
+runBindingsReaderT bindings cont =
+  runReaderT (runBindingsReaderT' cont) (getDistinctEvidence, bindings)
 
 instance Monad m => BindingsReader (BindingsReaderT m) where
   addBindings e = BindingsReaderT do
-    bindings <- ask
-    scope <- lift $ getScope
-    Distinct <- lift $ getDistinct
-    return $ WithBindings bindings scope e
+    bindings <- asks snd
+    d <- asks fst
+    withDistinctEvidence d $
+      return $ WithBindings bindings e
 
 instance Monad m => Scopable (BindingsReaderT m) where
    withBindings (Abs b name) cont =
@@ -300,21 +299,24 @@ instance Monad m => Scopable (BindingsReaderT m) where
          return $ Abs b' result
 
 instance Monad m => BindingsGetter (BindingsReaderT m) where
-  getBindings = BindingsReaderT ask
+  getBindings = BindingsReaderT $ asks snd
 
 instance Monad m => BindingsExtender (BindingsReaderT m) where
   extendBindings frag m =
-    BindingsReaderT $ ReaderT \bindings -> do
-       extendScope (toScopeFrag frag) do
-         let BindingsReaderT (ReaderT f) = m
-         f (bindings `extendOutMap` frag)
+    withExtEvidence (toExtEvidence frag) $
+      BindingsReaderT $ ReaderT \(_, bindings) -> do
+        let BindingsReaderT (ReaderT f) = m
+        f (getDistinctEvidence, bindings `extendOutMap` frag)
 
 instance Monad m => ScopeReader (BindingsReaderT m) where
-  addScope e = BindingsReaderT $ lift $ addScope e
-  getDistinctEvidenceM = BindingsReaderT $ lift $ getDistinctEvidenceM
+  addScope e = BindingsReaderT do
+    (d, bindings) <- ask
+    withDistinctEvidence d $
+      return $ WithScope (toScope bindings) e
+  getDistinctEvidenceM = BindingsReaderT $ asks fst
 
 instance Monad m => ScopeGetter (BindingsReaderT m) where
-  getScope = BindingsReaderT $ lift $ getScope
+  getScope = (toScope . snd) <$> BindingsReaderT ask
 
 instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
   addBindings e = EnvReaderT $ lift $ addBindings e
@@ -337,8 +339,8 @@ class BindsNames b => BindsBindings (b::B) where
 
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
-  WithBindings bindings _ v' <- addBindings v
-  injectM $ fromRecEnv bindings ! v'
+  WithBindings bindings v' <- addBindings v
+  injectM $ lookupTerminalEnvFrag (fromRecEnv bindings) v'
 
 withFreshBinding
   :: (NameColor c, BindingsReader m, BindingsExtender m)
@@ -567,18 +569,10 @@ data SourceBlock' =
   deriving (Show, Generic)
 
 data TopState n = TopState
-  { topBindings        :: TopBindings n
+  { topBindings        :: Bindings n
   , topSynthCandidates :: SynthCandidates n
   , topSourceMap       :: SourceMap   n }
   deriving (Generic)
-
-type TopBindings = MaterializedRecEnv Binding
-
-type ScopedBindings n = (Scope n, Bindings n)
-
-fromTopBindings :: forall n. TopBindings n -> ScopedBindings n
-fromTopBindings (MaterializedRecEnv (RecEnvFrag frag)) =
-  (Scope (envFragAsScope frag), RecEnv (envFromFrag frag))
 
 emptyTopState :: TopState VoidS
 emptyTopState = TopState emptyOutMap mempty (SourceMap mempty)
@@ -1449,9 +1443,9 @@ instance SubstE Name UVar where
     UMethodVar  v -> UMethodVar  <$> substE env v
 
 instance InjectableE e => InjectableE (WithBindings e) where
-  injectionProofE (fresh::InjectionCoercion n l) (WithBindings bindings (scope::Scope h) e) =
+  injectionProofE (fresh::InjectionCoercion n l) (WithBindings (bindings :: Bindings h) e) =
     withExtEvidence (injectionProofE fresh ext) $
-      WithBindings bindings scope e
+      WithBindings bindings e
     where ext = getExtEvidence :: ExtEvidence h n
 
 instance InjectableE UVar where

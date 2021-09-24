@@ -34,8 +34,8 @@ import LabeledItems
 import Err
 import Util
 
-inferModule :: Distinct n => Scope n -> Bindings n -> UModule n -> Except (Module n)
-inferModule scope bindings uModule = runInfererM scope bindings do
+inferModule :: Distinct n => Bindings n -> UModule n -> Except (Module n)
+inferModule bindings uModule = runInfererM bindings do
   UModule decl sourceMap <- injectM uModule
   if isTopDecl decl
     then do
@@ -122,6 +122,9 @@ instance OutFrag InfOutFrag where
     withExtEvidence (toExtEvidence em') $
       InfOutFrag (catOutFrags em em') (inject ss <> ss')
 
+instance HasScope InfOutMap where
+  toScope (InfOutMap bindings _) = toScope bindings
+
 instance OutMap InfOutMap InfOutFrag where
   emptyOutMap  = InfOutMap emptyOutMap mempty
   extendOutMap (InfOutMap bindings solverSubst) (InfOutFrag em solverSubst') =
@@ -135,18 +138,18 @@ newtype InfererM (i::S) (o::S) (a:: *) = InfererM
             ScopeReader, Fallible, CtxReader, EnvReader Name)
 
 runInfererM :: Distinct n
-            => Scope n -> Bindings n
+            => Bindings n
             -> (forall l. Ext n l => InfererM l l (e l))
             -> Except (e n)
-runInfererM scope bindings cont = do
+runInfererM bindings cont = do
   Abs (InfOutFrag Empty _) result <-
-    runFallibleM $ runInplaceT scope (InfOutMap bindings mempty) $
+    runFallibleM $ runInplaceT (InfOutMap bindings mempty) $
       runEnvReaderT idEnv $ runInfererM' $ cont
   return result
 
 instance Inferer InfererM where
   extendSolverSubst v ty = InfererM $
-    void $ doInplace (PairE v ty) \_ _ (PairE v' ty') ->
+    void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
       DistinctAbs (InfOutFrag Empty (singletonSolverSubst v' ty')) UnitE
 
   freshInferenceName kind = InfererM $
@@ -157,8 +160,8 @@ instance Inferer InfererM where
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) mempty
 
-  zonk e = InfererM $ withInplaceOutEnv e \scope (InfOutMap _ solverSubst) e' ->
-    fmapNames scope (lookupSolverSubst solverSubst) e'
+  zonk e = InfererM $ withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
+    fmapNames (toScope bindings) (lookupSolverSubst solverSubst) e'
 
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do

@@ -98,6 +98,9 @@ instance OutFrag BuilderEmissions where
   catOutFrags (BuilderEmissions nest) (BuilderEmissions nest') =
     BuilderEmissions $ catOutFrags nest nest'
 
+instance HasScope BuilderBindings where
+  toScope = undefined
+
 instance OutMap BuilderBindings BuilderEmissions where
   emptyOutMap = BuilderBindings emptyOutMap
   extendOutMap (BuilderBindings bindings) emissions =
@@ -109,11 +112,11 @@ newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
 
 runBuilderT
   :: (MonadFail m, Distinct n)
-  => Distinct n => Scope n -> Bindings n
+  => Distinct n => Bindings n
   -> (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
   -> m (e n)
-runBuilderT scope bindings cont = do
-  Abs decls result <- runInplaceT scope (BuilderBindings bindings) $ runBuilderT' cont
+runBuilderT bindings cont = do
+  Abs decls result <- runInplaceT (BuilderBindings bindings) $ runBuilderT' cont
   case decls of
     BuilderEmissions Empty -> return result
     _ -> error "shouldn't have produced any decls"

@@ -24,8 +24,8 @@ module SaferNames.Name (
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
   Inplace (..), InplaceT, emitInplace, runInplaceT, withInplaceOutEnv,
-  E, B, V, HasNamesE, HasNamesB, BindsNames (..), RecEnvFrag (..), RecEnv (..),
-  MaterializedEnv (..), MaterializedRecEnv (..), lookupMaterializedEnv,
+  E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecEnvFrag (..), RecEnv (..),
+  MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), ListE (..), ComposeE (..),
@@ -119,7 +119,7 @@ class OutFrag (scopeFrag :: S -> S -> *) where
   emptyOutFrag :: scopeFrag n n
   catOutFrags  :: Distinct n3 => scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
 
-class OutFrag scopeFrag
+class (OutFrag scopeFrag, HasScope scope)
       => OutMap (scope :: S -> *) (scopeFrag :: S -> S -> *) | scope -> scopeFrag where
   emptyOutMap :: scope VoidS
   extendOutMap :: Distinct l => scope n -> scopeFrag n l -> scope l
@@ -136,14 +136,17 @@ instance OutFrag ScopeFrag where
   emptyOutFrag = id
   catOutFrags = (>>>)
 
+instance HasScope Scope where
+  toScope = id
+
 instance OutMap Scope ScopeFrag where
   emptyOutMap = Scope id
   extendOutMap (Scope scope) frag = Scope $ scope >>> frag
 
 -- outvar version of EnvFrag/Env, where the query name space and the result name
 -- space are the same (thus recursive)
-newtype RecEnv      (v::V) o    = RecEnv     { fromRecEnv     :: Env     v o o     } deriving Generic
-newtype RecEnvFrag  (v::V) o o' = RecEnvFrag { fromRecEnvFrag :: EnvFrag v o o' o' } deriving Generic
+newtype RecEnv      (v::V) o    = RecEnv     { fromRecEnv     :: EnvFrag v VoidS o o } deriving Generic
+newtype RecEnvFrag  (v::V) o o' = RecEnvFrag { fromRecEnvFrag :: EnvFrag v o o' o'   } deriving Generic
 
 instance InjectableV v => OutFrag (RecEnvFrag v) where
   emptyOutFrag = RecEnvFrag $ emptyInFrag
@@ -151,11 +154,14 @@ instance InjectableV v => OutFrag (RecEnvFrag v) where
     withExtEvidence (toExtEvidence (RecEnvFrag frag2)) $
       inject frag1 `catInFrags` frag2
 
+instance HasScope (RecEnv v) where
+  toScope = undefined
+
 instance InjectableV v => OutMap (RecEnv v) (RecEnvFrag v) where
-  emptyOutMap = RecEnv emptyInMap
+  emptyOutMap = RecEnv emptyInFrag
   extendOutMap (RecEnv env) (RecEnvFrag frag) = RecEnv $
     withExtEvidence (toExtEvidence (RecEnvFrag frag)) $
-      inject env <>> frag
+      inject env <.> frag
 
 deriving instance (forall c. Show (v c o')) => Show (RecEnvFrag v o o')
 
@@ -165,24 +171,19 @@ newtype MaterializedEnv (v::V) (i::S) (o::S) =
   MaterializedEnv { fromMaterializedEnv :: EnvFrag v VoidS i o }
   deriving (Generic)
 
-newtype MaterializedRecEnv (v::V) (o::S) =
-  MaterializedRecEnv { fromMaterializedRecEnv :: RecEnvFrag v VoidS o }
-  deriving (Generic)
-
 instance InMap (MaterializedEnv v) (EnvFrag v) where
   emptyInMap = MaterializedEnv emptyInFrag
   extendInMap (MaterializedEnv frag) frag' = MaterializedEnv $ frag <.> frag'
 
-instance InjectableV v => OutMap (MaterializedRecEnv v) (RecEnvFrag v) where
-  emptyOutMap = MaterializedRecEnv emptyOutFrag
-  extendOutMap (MaterializedRecEnv frag) frag' =
-    MaterializedRecEnv $ frag `catOutFrags` frag'
-
-lookupMaterializedEnv :: MaterializedEnv v i o -> Name c i -> v c o
-lookupMaterializedEnv (MaterializedEnv frag) name =
+lookupTerminalEnvFrag :: EnvFrag v VoidS i o -> Name c i -> v c o
+lookupTerminalEnvFrag frag name =
   case lookupEnvFragProjected frag name of
     Left name' -> absurdNameFunction name'
     Right val -> val
+
+lookupMaterializedEnv :: MaterializedEnv v i o -> Name c i -> v c o
+lookupMaterializedEnv (MaterializedEnv frag) name =
+  lookupTerminalEnvFrag frag name
 
 instance OutFrag (Nest b) where
   emptyOutFrag = id
@@ -278,6 +279,9 @@ instance ProvesExt ExtEvidence where
 instance ProvesExt ScopeFrag
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
+
+class HasScope (bindings :: S -> *) where
+  toScope :: bindings n -> Scope n
 
 withExtEvidence :: ProvesExt b => b n l -> (Ext n l => a) -> a
 withExtEvidence b cont = withExtEvidence' (toExtEvidence b) cont
@@ -963,14 +967,14 @@ data WithOutMap (bindings::E) (e::E) (n::S) where
   WithOutMap :: (Distinct l, Ext l n) => Scope l -> bindings l -> e l -> WithOutMap bindings e n
 
 data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
-  { unsafeRunInplaceT :: Distinct n => Scope n -> bindings n -> m (a, decls UnsafeS UnsafeS) }
+  { unsafeRunInplaceT :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS) }
 
 class (ScopeReader m, OutMap bindings decls, BindsNames decls, InjectableB decls)
       => Inplace (m::MonadKind1) (bindings::E) (decls::B) | m -> bindings, m -> decls where
   doInplace
     :: (InjectableE e, InjectableE e')
     => e n
-    -> (forall l. Distinct l => Scope l -> bindings l -> e l -> (DistinctAbs decls e' l))
+    -> (forall l. Distinct l => bindings l -> e l -> (DistinctAbs decls e' l))
     -> m n (e' n)
   scopedInplace
     :: InjectableE e
@@ -979,28 +983,28 @@ class (ScopeReader m, OutMap bindings decls, BindsNames decls, InjectableB decls
 
 instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
          => Inplace (InplaceT bindings decls m) bindings decls where
-  doInplace e cont = UnsafeMakeInplaceT \scope bindings -> do
-    DistinctAbs decls e' <- return $ cont scope bindings e
+  doInplace e cont = UnsafeMakeInplaceT \bindings -> do
+    DistinctAbs decls e' <- return $ cont bindings e
     return (unsafeCoerceE e', unsafeCoerceB decls)
 
   -- It's a shame that we have to implement this unsafely. The problem is that
   -- the `addBindings` style of giving partial access to bindings-like things
   -- doesn't let you offer the more powerful `forall l. Ext n l => ..` style of API.
-  scopedInplace cont = UnsafeMakeInplaceT \scope bindings -> do
-    (result, decls) <- unsafeRunInplaceT cont scope bindings
+  scopedInplace cont = UnsafeMakeInplaceT \bindings -> do
+    (result, decls) <- unsafeRunInplaceT cont bindings
     return (Abs (unsafeCoerceB decls) (unsafeCoerceE result), emptyOutFrag)
 
 runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
-            => Scope n -> bindings n
+            => bindings n
             -> (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
             -> m (Abs decls e n)
-runInplaceT scope bindings (UnsafeMakeInplaceT f) = do
-  (result, decls) <- f scope bindings
+runInplaceT bindings (UnsafeMakeInplaceT f) = do
+  (result, decls) <- f bindings
   return $ Abs (unsafeCoerceB decls) (unsafeCoerceE result)
 
 
 liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
-liftInplace m = UnsafeMakeInplaceT \_ _ -> (,emptyOutFrag) <$> m
+liftInplace m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
 
 emitInplace
   :: (Inplace m bindings decls, NameColor c, InjectableE e)
@@ -1008,17 +1012,17 @@ emitInplace
   -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> decls n l)
   -> m o (Name c o)
 emitInplace hint e buildDecls = do
-  doInplace e \scope _ e' ->
-    withFresh hint nameColorRep scope \b ->
+  doInplace e \bindings e' ->
+    withFresh hint nameColorRep (toScope bindings) \b ->
       DistinctAbs (buildDecls b e') (binderName b)
 
 withInplaceOutEnv
   :: (Inplace m bindings decls, InjectableE e, InjectableE e')
   => e n
-  -> (forall l. Distinct l => Scope l -> bindings l -> e l -> e' l)
+  -> (forall l. Distinct l => bindings l -> e l -> e' l)
   -> m n (e' n)
-withInplaceOutEnv eIn cont = doInplace eIn \scope bindings eIn' ->
-  let eOut = cont scope bindings eIn'
+withInplaceOutEnv eIn cont = doInplace eIn \bindings eIn' ->
+  let eOut = cont bindings eIn'
   in DistinctAbs emptyOutFrag eOut
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
@@ -1032,21 +1036,22 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where
-  return x = UnsafeMakeInplaceT \_ _ ->
+  return x = UnsafeMakeInplaceT \_ ->
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (x, emptyOutFrag)
-  m >>= f = UnsafeMakeInplaceT \scope outMap -> do
-    (x, b1) <- unsafeRunInplaceT m scope outMap
+  m >>= f = UnsafeMakeInplaceT \outMap -> do
+    (x, b1) <- unsafeRunInplaceT m outMap
     let outMap' = outMap `extendOutMap` unsafeCoerceB b1
-    let scope' = scope `extendOutMap` toScopeFrag (unsafeCoerceB b1)
-    (y, b2) <- unsafeRunInplaceT (f x) scope' outMap'
+    (y, b2) <- unsafeRunInplaceT (f x) outMap'
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (y, b1 `catOutFrags` b2)
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
-  getDistinctEvidenceM = UnsafeMakeInplaceT \_ _ -> return (getDistinctEvidence, emptyOutFrag)
-  addScope e = doInplace e \scope _ e' -> DistinctAbs emptyOutFrag (WithScope scope e')
+  getDistinctEvidenceM = UnsafeMakeInplaceT \_ ->
+    return (getDistinctEvidence, emptyOutFrag)
+  addScope e = doInplace e \bindings e' ->
+    DistinctAbs emptyOutFrag (WithScope (toScope bindings) e')
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
@@ -1343,11 +1348,11 @@ instance ( forall c. NameColor c => Store (v c o')
 
 instance ( forall c. NameColor c => Store (v c o)
          , forall c. NameColor c => Generic (v c o))
-         => Store (MaterializedEnv v i o)
+         => Store (RecEnv v o)
 
 instance ( forall c. NameColor c => Store (v c o)
          , forall c. NameColor c => Generic (v c o))
-         => Store (MaterializedRecEnv v o)
+         => Store (MaterializedEnv v i o)
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnvFrag v o o')
 

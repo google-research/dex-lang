@@ -39,31 +39,31 @@ import SaferNames.PPrint ()
 
 -- === top-level API ===
 
-checkModule :: (Distinct n, Fallible m) => TopBindings n -> Module n -> m ()
-checkModule env m =
+checkModule :: (Distinct n, Fallible m) => Bindings n -> Module n -> m ()
+checkModule bindings m =
   addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
-    runBindingsReaderT (fromTopBindings env) $
+    runBindingsReaderT bindings $
       checkTypes m
 
 checkTypes :: (BindingsReader m, Fallible1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = do
   Distinct <- getDistinct
-  WithBindings bindings scope e' <- addBindings e
-  liftExcept $ runTyperT (scope, bindings) $ void $ checkE e'
+  WithBindings bindings e' <- addBindings e
+  liftExcept $ runTyperT bindings $ void $ checkE e'
 
 getType :: (BindingsReader m, HasType e)
            => e n -> m n (Type n)
 getType e = do
   Distinct <- getDistinct
-  WithBindings bindings scope e' <- addBindings e
-  injectM $ runHardFail $ runTyperT (scope, bindings) $ getTypeE e'
+  WithBindings bindings e' <- addBindings e
+  injectM $ runHardFail $ runTyperT bindings $ getTypeE e'
 
 tryGetType :: (BindingsReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = do
   Distinct <- getDistinct
-  WithBindings bindings scope e' <- addBindings e
-  ty <- liftExcept $ runTyperT (scope, bindings) $ getTypeE e'
+  WithBindings bindings e' <- addBindings e
+  ty <- liftExcept $ runTyperT bindings $ getTypeE e'
   injectM ty
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
@@ -94,9 +94,9 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , BindingsGetter, BindingsExtender)
 
 runTyperT :: (Fallible m, Distinct n)
-          => ScopedBindings n -> TyperT m n n a -> m a
-runTyperT scope m = do
-  runBindingsReaderT scope $
+          => Bindings n -> TyperT m n n a -> m a
+runTyperT bindings m = do
+  runBindingsReaderT bindings $
     runOutReaderT Pure $
       runEnvReaderT idEnv $
         runTyperT' m

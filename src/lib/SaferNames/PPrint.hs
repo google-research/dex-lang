@@ -268,7 +268,7 @@ instance Pretty (ClassDef n) where
     "Class" <+> pretty classSourceName <+> pretty methodNames
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedEnv v i o)
-deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedRecEnv v o)
+deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnv v o)
 
 instance Pretty (TopState n) where
   pretty s =
