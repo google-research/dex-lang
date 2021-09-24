@@ -77,27 +77,26 @@ initTopState = TopStateEx $ JointTopState
     D.emptyTopState
     S.emptyTopState
     (ToSafeEnv mempty)
-    (FromSafeEnv emptyEnv)
+    (FromSafeEnv emptyInMap)
 
 extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
   let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
   case topStateS jointTopState of
-    S.TopState (TopBindings bindingsS) scsS sourceMapS -> do
+    S.TopState bindingsS scsS sourceMapS -> do
       -- ensure the internal bindings are fresh wrt top bindings
       let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
-      runToSafeM (topToSafeMap jointTopState) (envAsScope bindingsS) do
+      runToSafeM (topToSafeMap jointTopState) (toScope bindingsS) do
         nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
          \bindingsFrag toSafeMap' fromSafeMap' -> do
-           withExtEvidence (toExtEvidence $ envAsScope bindingsFrag) do
-             scsS'       <- toSafeE scsD'
-             sourceMapS' <- toSafeE sourceMapD'
+           withExtEvidence (toExtEvidence bindingsFrag) do
+             scsS'         <- toSafeE scsD'
+             sourceMapS'   <- toSafeE sourceMapD'
              sourceMapSInj <- injectM sourceMapS
-             bindingsSInj  <- injectM bindingsS
              scsSInj       <- injectM scsS
              return $ TopStateEx $ JointTopState
                (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
-               (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
+               (S.TopState (bindingsS `extendOutMap` bindingsFrag)
                            (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
                toSafeMap'
                fromSafeMap'
@@ -122,9 +121,8 @@ instance GenericE JointTopState where
 toSafe :: (Distinct n, HasSafeVersionE e)
        => JointTopState n -> e -> SafeVersionE e n
 toSafe jointTopState e =
-  case S.topBindings $ topStateS $ jointTopState of
-    TopBindings bindings ->
-      runToSafeM (topToSafeMap jointTopState) (envAsScope bindings) $ toSafeE e
+  let scope = toScope $ S.topBindings $ topStateS $ jointTopState
+  in runToSafeM (topToSafeMap jointTopState) scope $ toSafeE e
 
 fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
 fromSafe jointTopState e =
@@ -267,7 +265,7 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 data UnsafeNameE (c::C) (n::S) = UnsafeNameE { fromUnsafeNameE :: UnsafeName c}
 
 newtype FromSafeEnv i = FromSafeEnv (S.MaterializedEnv UnsafeNameE i VoidS)
-  deriving (Generic)
+  deriving (Generic, Pretty)
 
 newtype FromSafeM i a =
   FromSafeM { runFromSafeM' :: ReaderT (FromSafeEnv i) (Reader D.Bindings) a }

@@ -368,6 +368,7 @@ fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
                withNameColorRep rep $
                  EnvVal rep $ f (UnsafeMakeName rep k) val
 
+
 envFragAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
 envFragAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
 

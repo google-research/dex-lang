@@ -55,7 +55,7 @@ module SaferNames.Name (
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt,
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), WithOutMap (..),
-  fromEnvPairs
+  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   ) where
 
 import Prelude hiding (id, (.))
@@ -155,7 +155,7 @@ instance InjectableV v => OutFrag (RecEnvFrag v) where
       inject frag1 `catInFrags` frag2
 
 instance HasScope (RecEnv v) where
-  toScope = undefined
+  toScope (RecEnv envFrag) = Scope $ envFragAsScope envFrag
 
 instance InjectableV v => OutMap (RecEnv v) (RecEnvFrag v) where
   emptyOutMap = RecEnv emptyInFrag
@@ -1326,6 +1326,32 @@ renameEnvPairBinders env (Nest (EnvPair b v) rest) cont =
   substB env b \env' b' ->
     renameEnvPairBinders env' rest \env'' rest' ->
       cont env'' (Nest (EnvPair b' v) rest')
+
+refreshRecEnvFrag :: (Distinct o,  InjectableV v, InjectableV substVal, SubstV substVal v)
+                  => Scope o
+                  -> Env substVal i o
+                  -> RecEnvFrag v i i'
+                  -> DistinctAbs (RecEnvFrag v) (Env substVal i') o
+refreshRecEnvFrag scope env (RecEnvFrag frag) =
+  renameEnvPairBindersPure scope env (toEnvPairs frag) \scope' env' pairs ->
+    let frag' = fmapEnvFrag (\_ val -> fmapNames scope' (env'!) val) (fromEnvPairs pairs)
+    in DistinctAbs (RecEnvFrag frag') env'
+
+renameEnvPairBindersPure
+  :: (Distinct o, InjectableV v, InjectableV substVal, FromName substVal)
+  => Scope o
+  -> Env substVal i o
+  -> Nest (EnvPair v ignored) i i'
+  -> (forall o'. Distinct o' => Scope o' -> Env substVal i' o' -> Nest (EnvPair v ignored) o o' -> a)
+  -> a
+renameEnvPairBindersPure scope env Empty cont = cont scope env Empty
+renameEnvPairBindersPure scope env (Nest (EnvPair b v) rest) cont = do
+  let rep = getNameColorRep $ nameBinderName b
+  withFresh (getNameHint b) rep scope \b' -> do
+    let env' = inject env <>> b @> (fromName $ binderName b')
+    let scope' = extendOutMap scope $ singletonScope b'
+    renameEnvPairBindersPure scope' env' rest \scope'' env'' rest' ->
+      cont scope'' env'' $ Nest (EnvPair b' v) rest'
 
 instance InjectableV v => InjectableB (RecEnvFrag v) where
   injectionProofB _ _ _ = undefined

@@ -90,6 +90,8 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
         (BindingsReaderT m)) i o a }
   deriving ( Functor, Applicative, Monad
            , EnvReader Name
+           , MonadFail
+           , Fallible
            , ScopeReader, ScopeGetter, BindingsReader
            , BindingsGetter, BindingsExtender)
 
@@ -100,13 +102,6 @@ runTyperT bindings m = do
     runOutReaderT Pure $
       runEnvReaderT idEnv $
         runTyperT' m
-
-instance Fallible m => MonadFail (TyperT m i o) where
-  fail = undefined
-
-instance Fallible m => Fallible (TyperT m i o) where
-  throwErrs = undefined
-  addErrCtx = undefined
 
 instance Fallible m => Typer (TyperT m) where
   declareEffs eff = TyperT do
@@ -187,18 +182,81 @@ instance CheckableE SynthCandidates where
                     <*> mapM checkE zs
 
 instance CheckableB (RecEnvFrag Binding) where
-  checkB _ _ = undefined
-  -- checkB recEnv cont = do
-  --   WithScopeSubstFrag _ envFrag recEnv' <- do
-  --     Distinct <- getDistinct
-  --     env <- getEnv
-  --     scope <- getScope
-  --     return $ runScopedEnvReader scope env $ runSubstGenT $ substB recEnv
-  --   void $ extendBindings (boundBindings recEnv') $ dropSubst $
-  --     traverseEnvFrag checkE (fromRecEnvFrag recEnv')
-  --   extendBindings (boundBindings recEnv') $
-  --     extendEnv envFrag $
-  --        cont recEnv'
+  checkB frag cont = do
+    scope <- getScope
+    env <- getEnv
+    Distinct <- getDistinct
+    DistinctAbs frag' env' <- return $ refreshRecEnvFrag scope env frag
+    extendBindings frag' do
+      void $ dropSubst $ traverseEnvFrag checkE $ fromRecEnvFrag frag'
+      withEnv env' $
+        cont frag'
+
+--     renameEnvPairs (toEnvPairs frag) \pairs -> do
+
+--       let fragRenamedLhs = fromEnvPairs pairs
+--       fragRenamedRhs <- fmapEnvFrag (applySubst scope subst) fragRenamedLhs
+
+
+--       flip traverseEnvFrag frag'
+
+--     refreshRecEnvFrag frag \frag' -> do
+--       checkDistinctRecFrag frag'
+--       cont frag'
+
+-- checkDistinctRecFrag
+--   :: (EnvReader Name m, BindingsReader2 m)
+--   => BindingsFrag prev o
+--   -> m i o ()
+-- checkDistinctRecFrag _ = undefined
+
+-- refreshRecEnvFrag
+--   :: (EnvReader Name m, BindingsReader2 m)
+--   => BindingsFrag i i'
+--   -> (forall o'. Ext o o' => BindingsFrag o o' -> m i' o' a)
+--   -> m i o a
+-- refreshRecEnvFrag (RecEnv frag) cont =
+
+-- renameEnvPairBinders
+--   :: (EnvReader Name m, BindingsReader2 m, Distinct o)
+--   => Nest (EnvPair Binding ignored) i i'
+--   -> (forall o'. Distinct o'
+--               => Nest (EnvPair v ignored) o o'
+--               -> m i' o' a)
+--   -> m i o a
+-- renameEnvPairBinders Empty cont = cont Empty
+-- -- renameEnvPairBinders env (Nest (EnvPair b v) rest) cont =
+
+
+
+
+-- Nest (EnvPair v i') i i' -> Nest (EnvPair v i') o o'
+
+
+--     substBM frag \frag' ->
+--       extendBindings frag' $
+--         cont frag'
+
+    -- First, refresh the whole thing so we have distinct names
+    -- Then we add the bindings to the env
+    -- Then check each element
+    -- make a substition fragment mapping
+    -- -- the RecEnvFrag's names to new names. Then we apply that subst to the rhs 
+    -- toEnvPairs frag
+
+
+
+  --   extendBindings bindingsFrag cont
+    -- WithScopeSubstFrag _ envFrag recEnv' <- do
+    --   Distinct <- getDistinct
+    --   env <- getEnv
+    --   scope <- getScope
+    --   return $ runScopedEnvReader scope env $ runSubstGenT $ substB recEnv
+    -- void $ extendBindings (boundBindings recEnv') $ dropSubst $
+    --   traverseEnvFrag checkE (fromRecEnvFrag recEnv')
+    -- extendBindings (boundBindings recEnv') $
+    --   extendEnv envFrag $
+    --      cont recEnv'
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
@@ -212,6 +270,7 @@ instance NameColor c => CheckableE (Binding c) where
         PiBound       -> return PiBound
         MiscBound     -> return MiscBound
         InferenceName -> return InferenceName
+        SkolemName    -> return SkolemName
       return $ AtomNameBinding ty' info'
     DataDefBinding    dataDef         -> DataDefBinding  <$> checkE dataDef
     TyConBinding      dataDefName     -> TyConBinding    <$> substM dataDefName
