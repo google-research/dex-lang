@@ -28,6 +28,7 @@ module SaferNames.Builder (
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions (..), emitAtomToName,
+  withEmitsEvidence, fabricateEmitsEvidenceM,
   ) where
 
 import Prelude hiding ((.), id)

@@ -1059,8 +1059,9 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, M
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
-  throwErrs = undefined
-  addErrCtx = undefined
+  throwErrs errs = UnsafeMakeInplaceT \_ -> throwErrs errs
+  addErrCtx ctx cont = UnsafeMakeInplaceT \bindings ->
+    addErrCtx ctx $ unsafeRunInplaceT cont bindings
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where

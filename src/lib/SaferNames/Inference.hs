@@ -14,7 +14,7 @@ import Prelude hiding ((.), id)
 import Control.Category
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Trans
+import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Data.Foldable (toList)
 import Data.List (sortOn)
@@ -176,13 +176,35 @@ instance Builder (InfererM i) where
       let frag = RecEnvFrag $ b @> inject binding'
       InfOutFrag (Nest (InfTopBinding frag) Empty) mempty
 
-  buildScoped _ = undefined
+  buildScoped cont = do
+    ab <- InfererM $ scopedInplace do
+      evidence <- fabricateEmitsEvidenceM
+      withEmitsEvidence evidence do
+        runInfererM' cont
+    hoistInfState ab
+
   buildScopedTop _ = undefined
   getAllowedEffects = undefined
   withAllowedEffects = undefined
 
+hoistInfState :: Inferer m => Abs InfOutFrag e o -> m i o (Abs (Nest Decl) e o)
+hoistInfState (Abs (InfOutFrag emissions subst) e) = undefined
+  -- First, we can DCE all the new inf vars that have been solved already. These
+  -- shouldn't appear in the subst RHS because they've been solved already. And
+  -- they won't appear in the decls after we zonk them. And we know they don't
+  -- appear in any outer scope. So we're free to remove them and their entries
+  -- in the subst map. This is more than just an optimization. If we didn't do
+  -- it, we'd have variables escaping their scope, if one of the already-solved
+  -- vars has a solution that mentions local variables.
+
+  -- Second, we try to hoist the solver subst above the decls, along with the
+  -- new inf vars that haven't been solved. This might produce a scope-escape
+  -- error.
+
 instance BindingsReader (InfererM i) where
-  addBindings = undefined
+  addBindings e = InfererM do
+    withInplaceOutEnv e \(InfOutMap bindings _) e' ->
+      WithBindings bindings e'
 
 instance Scopable (InfererM i) where
   withBindings _ _ = undefined

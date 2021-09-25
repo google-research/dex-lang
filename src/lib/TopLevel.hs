@@ -62,9 +62,13 @@ import MLIR.Eval
 
 import SaferNames.Bridge
 
-import qualified SaferNames.Name   as S
-import qualified SaferNames.Syntax as S
-import qualified SaferNames.Type   as S
+import qualified SaferNames.Name                 as S
+import qualified SaferNames.Parser               as S
+import qualified SaferNames.Syntax               as S
+import qualified SaferNames.Type                 as S
+import qualified SaferNames.ResolveImplicitNames as S
+import qualified SaferNames.SourceRename         as S
+import qualified SaferNames.Inference            as S
 
 -- === shared effects ===
 
@@ -128,7 +132,7 @@ runPassesM bench opts env m = do
 
 -- ======
 
-evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
+evalSourceBlockIO :: EvalConfig -> TopStateEx -> S.SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
   (ans, env') <- runInterblockM opts env $ evalSourceBlock block
   if mayUpdateTopState block
@@ -137,9 +141,9 @@ evalSourceBlockIO opts env block = do
     -- state hasn't changed.
     else return (ans, Nothing)
 
-evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
+evalSourceText :: MonadInterblock m => String -> m [(S.SourceBlock, Result)]
 evalSourceText source = do
-  let sourceBlocks = parseProg source
+  let sourceBlocks = S.parseProg source
   results <- mapM evalSourceBlock  sourceBlocks
   return $ zip sourceBlocks results
 
@@ -154,14 +158,14 @@ liftPassesM_ bench m = do
   (maybeAns, outs) <- liftPassesM bench m
   return $ Result outs maybeAns
 
-evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
+evalSourceBlock :: MonadInterblock m => S.SourceBlock -> m Result
 evalSourceBlock block = do
   result <- withCompileTime $ evalSourceBlock' block
   return $ filterLogs block $ addResultCtx block $ result
 
-evalSourceBlock' :: MonadInterblock m => SourceBlock -> m Result
-evalSourceBlock' block = case sbContents block of
-  RunModule m -> do
+evalSourceBlock' :: MonadInterblock m => S.SourceBlock -> m Result
+evalSourceBlock' block = case S.sbContents block of
+  S.RunModule m -> do
     (maybeEvaluatedModule, outs) <- liftPassesM (requiresBench block) $ evalUModule m
     case maybeEvaluatedModule of
       Failure err -> return $ Result outs $ Failure err
@@ -169,7 +173,7 @@ evalSourceBlock' block = case sbContents block of
         TopStateEx curState <- getTopStateEx
         setTopStateEx $ extendTopStateD curState evaluatedModule
         return $ Result outs $ Success ()
-  Command cmd (v, m) -> liftPassesM_ (requiresBench block) case cmd of
+  S.Command cmd (v, m) -> liftPassesM_ (requiresBench block) case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal v m
       case fmt of
@@ -190,7 +194,7 @@ evalSourceBlock' block = case sbContents block of
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal v m
       logTop $ TextOut $ pprint $ getType val
-  GetNameType v -> liftPassesM_ False do
+  S.GetNameType v -> liftPassesM_ False do
     (S.Distinct, topState) <- getTopState
     let SourceMap m = topSourceMap $ topStateD topState
     case M.lookup v m of
@@ -200,7 +204,7 @@ evalSourceBlock' block = case sbContents block of
         case nameToAtom bindings (sourceNameDefName v') of
           Just x -> logTop $ TextOut $ pprint $ getType x
           Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
-  ImportModule moduleName -> do
+  S.ImportModule moduleName -> do
     moduleStatus <- getImportStatus moduleName
     case moduleStatus of
       Just CurrentlyImporting -> liftPassesM_ False $ throw MiscErr $
@@ -210,34 +214,34 @@ evalSourceBlock' block = case sbContents block of
         fullPath <- findModulePath moduleName
         source <- liftIO $ readFile fullPath
         setImportStatus moduleName CurrentlyImporting
-        results <- mapM evalSourceBlock $ parseProg source
+        results <- mapM evalSourceBlock $ S.parseProg source
         setImportStatus moduleName FullyImported
         return $ summarizeModuleResults results
-  ProseBlock _ -> return emptyResult
-  CommentLine  -> return emptyResult
-  EmptyLines   -> return emptyResult
-  UnParseable _ s -> liftPassesM_ False (throw ParseErr s)
+  S.ProseBlock _ -> return emptyResult
+  S.CommentLine  -> return emptyResult
+  S.EmptyLines   -> return emptyResult
+  S.UnParseable _ s -> liftPassesM_ False (throw ParseErr s)
 
-requiresBench :: SourceBlock -> Bool
-requiresBench block = case sbLogLevel block of
+requiresBench :: S.SourceBlock -> Bool
+requiresBench block = case S.sbLogLevel block of
   PrintBench _ -> True
   _            -> False
 
-mayUpdateTopState :: SourceBlock -> Bool
-mayUpdateTopState block = case sbContents block of
-  RunModule _     -> True
-  ImportModule _  -> True
-  Command _ _     -> False
-  GetNameType _   -> False
-  ProseBlock _    -> False
-  CommentLine     -> False
-  EmptyLines      -> False
-  UnParseable _ _ -> False
+mayUpdateTopState :: S.SourceBlock -> Bool
+mayUpdateTopState block = case S.sbContents block of
+  S.RunModule _     -> True
+  S.ImportModule _  -> True
+  S.Command _ _     -> False
+  S.GetNameType _   -> False
+  S.ProseBlock _    -> False
+  S.CommentLine     -> False
+  S.EmptyLines      -> False
+  S.UnParseable _ _ -> False
 
-filterLogs :: SourceBlock -> Result -> Result
+filterLogs :: S.SourceBlock -> Result -> Result
 filterLogs block (Result outs err) = let
   (logOuts, requiredOuts) = partition isLogInfo outs
-  outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
+  outs' = requiredOuts ++ processLogs (S.sbLogLevel block) logOuts
   in Result outs' err
 
 summarizeModuleResults :: [Result] -> Result
@@ -250,7 +254,7 @@ summarizeModuleResults results =
 emptyResult :: Result
 emptyResult = Result [] (Success ())
 
-evalFile :: MonadInterblock m => FilePath -> m [(SourceBlock, Result)]
+evalFile :: MonadInterblock m => FilePath -> m [(S.SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
 
 processLogs :: LogLevel -> [Output] -> [Output]
@@ -288,7 +292,7 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m n Atom
+evalUModuleVal :: MonadPasses m => S.SourceName -> S.SourceUModule -> m n Atom
 evalUModuleVal v m = do
    evaluated <- evalUModule m
    (S.Distinct, env) <- getTopState
@@ -311,23 +315,22 @@ lookupSourceName (TopStateEx topState) v =
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalUModule :: MonadPasses m => SourceUModule -> m n EvaluatedModule
+evalUModule :: MonadPasses m => S.SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
   (S.Distinct, topState) <- getTopState
-  let D.TopState bindings synthCandidates sourceMap = topStateD topState
+  let D.TopState bindingsD synthCandidatesD _ = topStateD topState
+  let S.TopState bindingsS _ sourceMapS = topStateS topState
   logPass Parse sourceModule
-  renamed <- renameSourceNames bindings sourceMap sourceModule
+  renamed <- S.renameSourceNames (S.toScope bindingsS) sourceMapS sourceModule
   logPass RenamePass renamed
-  typed <- liftExcept $ inferModule bindings renamed
-  -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
-  -- safer names system while we're staging it in.
-  checkPass TypePass typed
-  typed' <- roundtripSaferNamesPass typed
-  checkPass TypePass typed'
-  synthed <- liftExcept $ synthModule bindings synthCandidates typed'
+  typed <- liftExcept $ S.inferModule bindingsS renamed
+  checkPassS TypePass typed
+  let typedUnsafe = fromSafe topState typed
+  checkPass TypePass typedUnsafe
+  synthed <- liftExcept $ synthModule bindingsD synthCandidatesD typedUnsafe
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
-  let defunctionalized = simplifyModule bindings synthed
+  let defunctionalized = simplifyModule bindingsD synthed
   checkPass SimpPass defunctionalized
   let stdOptimized = optimizeModule defunctionalized
   -- Apply backend specific optimizations
@@ -341,7 +344,7 @@ evalUModule sourceModule = do
     Module _ Empty result->
       return result
     _ -> do
-      let (block, rest) = splitSimpModule bindings optimized
+      let (block, rest) = splitSimpModule bindingsD optimized
       result <- evalBackend block
       evaluated <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty evaluated
@@ -424,6 +427,14 @@ withCompileTime m = do
   (Result outs err, t) <- measureSeconds m
   return $ Result (outs ++ [TotalTime t]) err
 
+checkPassS :: (MonadPasses m, Pretty (e n), S.CheckableE e) => PassName -> e n -> m n ()
+checkPassS name x = undefined
+  -- (S.Distinct, topState) <- getTopState
+  -- let scope = topBindings $ topStateD topState
+  -- logPass name x
+  -- liftExcept $ checkValid scope x
+  -- logTop $ MiscLog $ pprint name ++ " checks passed"
+
 checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m n ()
 checkPass name x = do
   (S.Distinct, topState) <- getTopState
@@ -435,9 +446,9 @@ checkPass name x = do
 logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
 logPass passName x = logTop $ PassInfo passName $ pprint x
 
-addResultCtx :: SourceBlock -> Result -> Result
+addResultCtx :: S.SourceBlock -> Result -> Result
 addResultCtx block (Result outs errs) =
-  Result outs (addSrcTextContext (sbOffset block) (sbText block) errs)
+  Result outs (addSrcTextContext (S.sbOffset block) (S.sbText block) errs)
 
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]

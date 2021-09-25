@@ -12,7 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
 module SaferNames.Type (
-  HasType (..),
+  HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices, tryReduceBlock,
   caseAltsBinderTys, tryGetType) where

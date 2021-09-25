@@ -24,7 +24,7 @@ module SaferNames.Syntax (
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
-    BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
+    BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), EvaluatedModule (..), SynthCandidates (..), TopState (..),
     emptyTopState, BindsBindings (..), WithBindings (..), Scopable (..),
@@ -93,7 +93,7 @@ import Syntax
   , BlockId, ReachedEOF, ModuleName, CmdName (..), LogLevel (..)
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
-  , PassName, OutFormat (..))
+  , PassName, OutFormat (..), Output (..), Result (..))
 
 import SaferNames.NameCore
 import SaferNames.Name
@@ -535,6 +535,8 @@ pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
 
 -- === top-level modules ===
+
+type LitProg = [(SourceBlock, Result)]
 
 type SourceName = String
 

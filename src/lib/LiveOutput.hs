@@ -105,17 +105,18 @@ tryEvalBlocksCached blocks@(block:rest) = do
       return (block':evaluated, remaining)
 
 evalBlock :: WithId SourceBlock -> DriverM ()
-evalBlock (WithId blockId block) = do
-  oldState <- gets fst
-  opts <- asks fst
-  (result, maybeNewState) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
-  resultsChan <- asks snd
-  resultsChan `send` oneResult blockId result
-  newState <- case maybeNewState of
-    Nothing -> return $ oldState
-    Just s -> makeNewStateId s
-  updateTopState newState
-  insertCache (block, oldState) (blockId, newState)
+evalBlock = undefined
+-- evalBlock (WithId blockId block) = do
+--   oldState <- gets fst
+--   opts <- asks fst
+--   (result, maybeNewState) <- liftIO $ evalSourceBlockIO opts (withoutId oldState) block
+--   resultsChan <- asks snd
+--   resultsChan `send` oneResult blockId result
+--   newState <- case maybeNewState of
+--     Nothing -> return $ oldState
+--     Just s -> makeNewStateId s
+--   updateTopState newState
+--   insertCache (block, oldState) (blockId, newState)
 
 -- === DriverM utils ===
 

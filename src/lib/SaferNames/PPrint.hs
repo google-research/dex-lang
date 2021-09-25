@@ -279,6 +279,9 @@ instance Pretty (TopState n) where
     <> "source map: "
     <>   indented (pretty (topSourceMap s))
 
+instance Pretty SourceBlock where
+  pretty block = pretty (sbText block)
+
 instance Pretty (Module n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Module n) where
   prettyPrec (Module variant decls result) = atPrec ArgPrec $
@@ -288,6 +291,13 @@ instance PrettyPrec (Module n) where
            <>   indented (prettyLines (fromNest decls))
            <> "evaluated bindings:"
            <>   indented (p result)
+
+instance Pretty (UModule n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UModule n) where
+  prettyPrec _ = atPrec ArgPrec "<todo: Pretty instance for UModule>"
+
+instance Pretty SourceUModule where
+  pretty _ = "<todo: Pretty instance for SourceUModule>"
 
 instance Pretty (EvaluatedModule n) where
   pretty (EvaluatedModule bindings synthCandidates sourceMap) =

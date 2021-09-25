@@ -26,7 +26,6 @@ import Resources
 import Syntax  hiding (sizeOf)
 import Type
 import TopLevel
-import Parser (parseExpr, exprAsModule)
 import Env hiding (Tag)
 import PPrint
 import Err
@@ -34,6 +33,9 @@ import Err
 import Dex.Foreign.Util
 
 import SaferNames.Bridge
+
+import SaferNames.Parser (parseExpr, exprAsModule)
+import qualified SaferNames.Syntax as S
 
 data Context = Context EvalConfig TopStateEx
 
@@ -93,7 +95,7 @@ dexEvalExpr ctxPtr sourcePtr = do
   case parseExpr source of
     Success expr -> do
       let (v, m) = exprAsModule expr
-      let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
+      let block = S.SourceBlock 0 0 LogNothing source (S.RunModule m) Nothing
       (Result [] maybeErr, newState) <- runInterblockM evalConfig env $ evalSourceBlock block
       case maybeErr of
         Success () -> do
