@@ -23,6 +23,27 @@ juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))
 juliaize(x::Atom) = juliaize(x.ptr)
 Base.convert(::Type{T}, atom::Atom) where {T<:Number} = convert(T, juliaize(atom))
 
+"""
+    dexize(x)
+
+Get the corresponding Dex object from some output of Julia.
+
+NB: this is currently a hack that goes via string processing.
+"""
+function dexize(x::Float32, _module=PRELUDE, env=_module)
+    isnan(x) && return evaluate("nan", _module, env)
+    x === Inf32 && return evaluate("infinity", _module, env)
+    x === -Inf32 && return evaluate("-infinity", _module, env)
+
+    str = repr(x)
+    if endswith(str, "f0")
+        evaluate(str[1:end-2], _module, env)
+    else
+        # convert "123f45" into "123 * (intpow 10.0 45)"
+        evaluate(replace(str, "f"=> " * (intpow 10.0 ") * ")", _module, env)
+    end
+end
+
 
 function (self::Atom)(args...)
     # TODO: Make those calls more hygenic
