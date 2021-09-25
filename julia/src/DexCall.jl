@@ -1,5 +1,6 @@
 "Calling Dex from Julia"
 module DexCall
+    using ChainRulesCore
     using CombinedParsers
     using CombinedParsers.Regexp
 
@@ -9,6 +10,7 @@ module DexCall
     include("api.jl")
     include("evaluate.jl")
     include("native_function.jl")
+    include("chainrules.jl")
     
     # use this to disable free'ing haskell objects after we have closed the RTS
     const NO_FREE = Ref(false)

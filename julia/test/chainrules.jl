@@ -1,50 +1,31 @@
-using Pkg: Pkg
-Pkg.activate(dirname(@__DIR__))
-using Test
-using DexCall
-using DexCall: Atom, insert
+const double_dex = evaluate(raw"\x:Float. 2.0 * x")
 
-double_dex = evaluate(
-    raw"\x:Float. 2.0 * x"
-)
-
-function frule_2(darg::Atom, primal_f::Atom, arg::Atom)
-    env = primal_f.ctx
-    env = insert(env, "primal_f", primal_f.ptr)
-    env = insert(env, "darg", darg.ptr)
-    env = insert(env, "arg", arg.ptr)
-
-    m = DexModule(raw"""
-    (primal_out, pushforward) = linearize primal_f arg
-    tangent_out = pushforward darg
-    """,
-    env
-    )
-    return m.primal_out, m.tangent_out
-end
-@test frule_2(evaluate("1.5"), double_dex, evaluate("4.0")) .|> juliaize == (8f0, 3f0)
-
-
-function rrule_1(primal_f::Atom, arg::Atom)
-    env = primal_f.ctx
-    env = insert(env, "primal_f", primal_f.ptr)
-    env = insert(env, "arg", arg.ptr)
-
-    m = DexModule(raw"""
-    (primal_out, pushforward) = linearize primal_f arg
-    pullback = transposeLinear pushforward
-    """,
-    env
-    )
-
-    dex_pullback = m.pullback
-    function pullback(d_out::Atom)
-        return dex_pullback(d_out)
-    end
-    return m.primal_out, pullback
+@testset "frule: dexize, evaluate, juliaize" begin
+    a, ȧ = frule((NoTangent(), 10f0), dexize, 1.5f0)
+    b, ḃ = frule((NoTangent(), ȧ), double_dex, a)
+    c, ċ = frule((NoTangent(), ḃ), juliaize, b)
+    @test c === 3.0f0
+    @test ċ === 20f0
 end
 
-val, pb = rrule_1(double_dex, evaluate("4.0"))
-@test juliaize(val) == 8f0
+@testset "rrule: dexize, evaluate, juliaize" begin
+    x = 1.5f0
+    a, a_pb = rrule(dexize, x)
+    b, b_pb = rrule(double_dex, a)
+    c, c_pb = rrule(juliaize, b)
+    
+    @test c === 3.0f0
+    c̄ = 10f0
+    _, b̄ = c_pb(c̄)
+    _, ā = b_pb(b̄)
+    _, x̄ = a_pb(ā)
 
-@test juliaize(pb(evaluate("1.5"))) == 3f0
+    @test x̄ === 20f0
+end
+
+@testset "Integration Test: Zygote.jl" begin
+    double_via_dex = juliaize ∘ double_dex ∘ dexize
+    y, pb= Zygote.pullback(double_via_dex, 1.5f0)
+    @test y == 3f0
+    @test pb(1f0) == (2f0,)
+end
