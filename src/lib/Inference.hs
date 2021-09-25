@@ -652,6 +652,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
     when (length argBs /= length ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                              ++ " got " ++ show (length ps)
+    -- BUGGY! doesn't account for dependence between binders
     params <- lift $ mapM (freshType . binderType) $ toList paramBs
     lift $ constrainEq (TypeCon def params) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
@@ -949,6 +950,8 @@ checkLeaks tvs m = do
   unless (null $ resultTypeLeaks) $
     throw TypeErr $ "Leaked local variable `" ++ pprint (head resultTypeLeaks) ++
                     "` in result type " ++ pprint (getType ans)
+  -- BUGGY! we don't check whether the kinds of the solverVars mention any local
+  -- names
   forM_ (solverSub env) \ty ->
     forM_ tvs \tv ->
       throwIf (tv `occursIn` ty) TypeErr $ "Leaked type variable: " ++ pprint tv
