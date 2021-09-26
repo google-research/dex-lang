@@ -93,7 +93,13 @@ function DexModule(source::AbstractString, parent_ctx=PRELUDE)
     ctx == C_NULL && throw_from_dex()
     m =  DexModule(ctx)
     finalizer(m) do _m
-        destroy_context(getfield(_m, :ctx))
+        # TODO: Undo commenting this out. But for now this causes a lot of problems.
+        # DexModule will often go out of scope, while a Atom attached to that context still
+        # exists. Possibly we need to make the ctx a mutable struct everywhere, and then
+        # attach the finalizer there.
+        #(also will let us delete some manual destroys in other palces)
+        
+        #destroy_context(getfield(_m, :ctx))
     end
     return m
 end

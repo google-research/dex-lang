@@ -87,6 +87,32 @@ end
 ArrayBuilder{T}(size) where T = ArrayBuilder{T,length(size)}(size)
 
 
+"representation of this as it would appear in a dex `def` function signature"
+repr_sig(binders::AbstractVector{Binder}) = join(Iterators.map(repr_sig, binders), "->")
+function repr_sig(binder::Binder)
+    str = "($(binder.name):$(repr_sig(binder.type)))"
+    if binder.implicit
+        str *= "?"
+    end
+    return str
+end
+function repr_sig(builder::ArrayBuilder{T}) where {T}
+    sizes_repr = Iterators.map(size_element -> "Fin $size_element", builder.size) 
+    return join(sizes_repr, "=>") * "=>" * repr_sig(T)
+end
+
+# For most types, like Int32 and Float64 Dex and Julia use identical names
+# and for Symbols represent implicts they are also are made into strings by `string`
+repr_sig(x) = string(x)
+# TODO: Word8, Char etc?
+
+
+"representation of this as it would appear in the result part of a dex `def` function signature"
+repr_result_sig(x) = repr_sig(x)
+function repr_result_sig(binders::AbstractVector{Binder})
+    return "(" * join(Iterators.map(repr_result_sig, binders), "&") * ")"
+end
+repr_result_sig(binder::Binder) = repr_result_sig(binder.type)
 
 """
     NativeFunction{R}
@@ -98,14 +124,14 @@ Usually constructed using [`@dex_func_str`](@ref),
 or via `NativeFunction(atom)` on some [`DexCall.Atom`](@ref).
 """
 struct NativeFunction{R} <: Function
-    c_func_ptr::Ptr{Nothing}
+    atom::Atom  # non-compiled Atom form of this function
+    c_func_ptr::Ptr{Nothing}  # compiled C API form of this function
     argument_signature::Vector{Binder}
     result_signature::Vector{Binder}
 end
 
-NativeFunction(atom::Atom, jit=JIT) = NativeFunction(atom.ptr, atom.ctx, jit)
-function NativeFunction(atom::Ptr{HsAtom}, ctx=PRELUDE, jit=JIT)
-    c_func_ptr = compile(ctx, atom, jit)
+function NativeFunction(atom::Atom, ctx=atom.ctx, jit=JIT)
+    c_func_ptr = compile(ctx, atom.ptr, jit)
     sig_ptr = get_function_signature(c_func_ptr, jit)
     sig_ptr == C_NULL && error("Failed to retrieve the function signature")
 
@@ -114,6 +140,7 @@ function NativeFunction(atom::Ptr{HsAtom}, ctx=PRELUDE, jit=JIT)
         result_signature = parse_sig(signature.res)
         R = result_type(result_signature)
         f = NativeFunction{R}(
+            atom,
             c_func_ptr,
             parse_sig(signature.arg),
             result_signature
@@ -295,6 +322,7 @@ function parse_sig(sig)
             parser("i32"=>Int32),
             parser("i64"=>Int64),
             parser("i8"=>Int8),
+            # TODO: Word8, Char etc?
         )
         size_ele = NumericParser(Int) | name
         sizes = join(Repeat(size_ele),",")
