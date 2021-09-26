@@ -685,7 +685,7 @@ fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
 fromNonDepPiType arr ty = do
   Pi (PiType arr' (b:>argTy) eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
-  PairE eff' resultTy' <- fromConstAbs $ Abs b (PairE eff resultTy)
+  PairE eff' resultTy' <- fromConstAbsM $ Abs b (PairE eff resultTy)
   return $ (argTy, eff', resultTy')
 
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)

@@ -228,7 +228,7 @@ buildBlockAux cont = do
     (result, aux) <- cont
     ty <- getType result
     return $ result `PairE` ty `PairE` LiftE aux
-  ty' <- fromConstAbs $ Abs decls ty
+  ty' <- fromConstAbsM $ Abs decls ty
   return (Block ty' decls $ Atom result, aux)
 
 buildBlockReduced :: Builder m

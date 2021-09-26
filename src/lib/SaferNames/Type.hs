@@ -353,7 +353,7 @@ instance HasType Atom where
       depTy <- refreshBinders b \b' -> do
         bodyTy <- getTypeE body
         return $ Abs b' bodyTy
-      fromConstAbs depTy
+      fromConstAbsM depTy
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -647,7 +647,7 @@ typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ f -> do
     Pi (PiType _ b eff eltTy) <- getTypeE f
-    eff' <- fromConstAbs $ Abs b eff
+    eff' <- fromConstAbsM $ Abs b eff
     declareEffs eff'
     return $ Pi $ PiType TabArrow b Pure eltTy
   Tile dim fT fS -> do
@@ -680,18 +680,18 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy tabTy $ mkConsListTy accTys
   While body -> do
     FunTy (b:>UnitTy) eff condTy <- getTypeE body
-    PairE eff' condTy' <- fromConstAbs $ Abs b $ PairE eff condTy
+    PairE eff' condTy' <- fromConstAbsM $ Abs b $ PairE eff condTy
     declareEffs eff'
     checkAlphaEq (BaseTy $ Scalar Word8Type) condTy'
     return UnitTy
   Linearize f -> do
     FunTy (binder:>a) Pure b <- getTypeE f
-    b' <- fromConstAbs $ Abs binder b
+    b' <- fromConstAbsM $ Abs binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
   Transpose f -> do
     Pi (PiType LinArrow (binder:>a) Pure b) <- getTypeE f
-    b' <- fromConstAbs $ Abs binder b
+    b' <- fromConstAbsM $ Abs binder b
     b' --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f
@@ -711,12 +711,12 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy resultTy stateTy
   RunIO f -> do
     Pi (PiType PlainArrow (b:>UnitTy) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- fromConstAbs $ Abs b $ PairE eff resultTy
+    PairE eff' resultTy' <- fromConstAbsM $ Abs b $ PairE eff resultTy
     extendAllowedEffect IOEffect $ declareEffs eff'
     return resultTy'
   CatchException f -> do
     Pi (PiType PlainArrow (b:>UnitTy) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- fromConstAbs $ Abs b $ PairE eff resultTy
+    PairE eff' resultTy' <- fromConstAbsM $ Abs b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
 
@@ -730,8 +730,8 @@ checkRWSAction rws f = do
         regionName <- injectM $ binderName regionBinder'
         extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff'
   _ :> RefTy _ referentTy <- return refBinder
-  referentTy' <- fromConstAbs $ Abs regionBinder referentTy
-  resultTy' <- fromConstAbs $ Abs (PairB regionBinder refBinder) resultTy
+  referentTy' <- fromConstAbsM $ Abs regionBinder referentTy
+  resultTy' <- fromConstAbsM $ Abs (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
@@ -743,7 +743,7 @@ checkEmpty _  = throw TypeErr "Not empty"
 nonDepBinderNestTypes :: Typer m => Nest Binder o o' -> m i o [Type o]
 nonDepBinderNestTypes Empty = return []
 nonDepBinderNestTypes (Nest (b:>ty) rest) = do
-  Abs rest' UnitE <- fromConstAbs $ Abs b (Abs rest UnitE)
+  Abs rest' UnitE <- fromConstAbsM $ Abs b (Abs rest UnitE)
   restTys <- nonDepBinderNestTypes rest'
   return $ ty : restTys
 
@@ -978,7 +978,7 @@ indices = undefined
 
 getBaseMonoidType :: MonadFail1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
-  Pi (PiType _ b _ resultTy) -> fromConstAbs (Abs b resultTy)
+  Pi (PiType _ b _ resultTy) -> fromConstAbsM (Abs b resultTy)
   _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]

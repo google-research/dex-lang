@@ -33,7 +33,7 @@ module SaferNames.Name (
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
-  fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
+  fromConstAbsM, fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv, freeNames, emptyNameTraversalEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
@@ -342,11 +342,16 @@ fmapNames scope f e = runIdentity $ traverseNames scope (return . f) e
 
 -- This may become expensive. It traverses the body of the Abs to check for
 -- leaked variables.
-fromConstAbs :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
+fromConstAbsM :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
              => Abs b e n -> m n (e n)
-fromConstAbs ab = do
-  WithScope scope (Abs b e) <- addScope ab
-  injectM =<< traverseNames scope (tryProjectName $ toScopeFrag b) e
+fromConstAbsM ab = do
+  WithScope scope ab <- addScope ab
+  injectM =<< fromConstAbs scope ab
+
+fromConstAbs :: (Distinct n, MonadFail m, InjectableB b, BindsNames b, HasNamesE e)
+             => Scope n -> Abs b e n -> m (e n)
+fromConstAbs scope (Abs b e) =
+  traverseNames scope (tryProjectName $ toScopeFrag b) e
 
 tryProjectName :: MonadFail m => ScopeFrag n l -> Name c l -> m (Name c n)
 tryProjectName names name =

@@ -165,7 +165,8 @@ instance Inferer InfererM where
 
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do
-    ty <- getType expr
+    expr' <- zonk expr
+    ty <- getType expr'
     InfererM $
       emitInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
         let decl = Let ann (b:>ty') expr'
@@ -187,19 +188,81 @@ instance Builder (InfererM i) where
   getAllowedEffects = undefined
   withAllowedEffects = undefined
 
+
+data HoistedSolverState e n where
+  HoistedSolverState
+    :: (Distinct n, Distinct l1, Distinct l2)
+    => Nest Binder n l1  -- inference names
+    -> SolverSubst l1    -- new solver subst
+    -> Nest Decl l1 l2   -- emitted decls
+    -> e l2              -- result (usually an Atom)
+    -> HoistedSolverState e n
+
+-- TODO: we can't actually implement this! The distinct constraint means that
+-- it's absolutely not injectable. I think we're going to need a separate
+-- `Projectable{E,B}`.
+instance SubstE Name (HoistedSolverState e) where
+  substE = undefined
+
+instance InjectableE (HoistedSolverState e) where
+  injectionProofE = undefined
+
+-- just a wrapper to derive the `Distict l1` and `Distinct l2` contstraints
+makeHoistedSolverState
+  :: Distinct l2
+  => Nest Binder n l1
+  -> SolverSubst l1
+  -> Nest Decl l1 l2
+  -> e l2
+  -> HoistedSolverState e n
+makeHoistedSolverState infVars subst decls result = undefined
+
+
+hoistInfStateRec :: (Fallible m, Distinct l)
+                 => Scope n
+                 -> Nest InfEmission n l -> SolverSubst l -> e l
+                 -> m (HoistedSolverState e n)
+hoistInfStateRec _ Empty subst result =
+  return $ HoistedSolverState Empty subst Empty result
+hoistInfStateRec scope emissions@(Nest infEmission rest) subst result = do
+  withSubscopeDistinct (toExtEvidence emissions) do
+    withSubscopeDistinct (toExtEvidence rest) do
+      HoistedSolverState infVars subst' decls result <-
+        hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst result
+      case infEmission of
+        InfInferenceName (b:>ty) ->
+          withExtEvidence (toExtEvidence infVars) $
+            case deleteFromSubst subst' (inject $ binderName b) of
+              Just subst'' ->
+                -- TODO: if this fails, it should be reported as a compiler
+                -- error. It shouldn't appear anywhere else if it's already been
+                -- solved.
+                fromConstAbs scope $ Abs b (HoistedSolverState infVars subst'' decls result)
+              Nothing ->
+                -- TODO: zonk type annotation on b
+                return $ makeHoistedSolverState (Nest (b:>ty) infVars) subst' decls result
+        InfDecl decl -> do
+          withSubscopeDistinct (toExtEvidence emissions) do
+            DistinctAbs (PairB (PairB infVars' (UnitB :> subst'')) decl') (DistinctAbs decls result) <-
+              -- TODO: if this fails, we should report a user-facing error
+              trySwapBinders scope $ Abs (PairB decl  (PairB infVars (UnitB :> subst'))) (DistinctAbs decls result)
+            -- TODO: avoid this repeated traversal by caching the free vars
+            -- TODO: zonk expr with subst!
+            return $ makeHoistedSolverState infVars' subst'' (Nest decl' decls) result
+
+trySwapBinders :: (Distinct n, Fallible m)
+               => Scope n
+               -> Abs (PairB b1 b2) e n
+               -> m (DistinctAbs (PairB b2 b1) e n)
+trySwapBinders = undefined
+
+-- When we finish building a block of decls we need to hoist the local solver
+-- information into the outer scope. If the local solver state mentions local
+-- variables which are about to go out of scope then we emit a "escaped scope"
+-- error. To avoid false positives, we clean up as much dead (i.e. solved)
+-- solver state as possible.
 hoistInfState :: Inferer m => Abs InfOutFrag e o -> m i o (Abs (Nest Decl) e o)
 hoistInfState (Abs (InfOutFrag emissions subst) e) = undefined
-  -- First, we can DCE all the new inf vars that have been solved already. These
-  -- shouldn't appear in the subst RHS because they've been solved already. And
-  -- they won't appear in the decls after we zonk them. And we know they don't
-  -- appear in any outer scope. So we're free to remove them and their entries
-  -- in the subst map. This is more than just an optimization. If we didn't do
-  -- it, we'd have variables escaping their scope, if one of the already-solved
-  -- vars has a solution that mentions local variables.
-
-  -- Second, we try to hoist the solver subst above the decls, along with the
-  -- new inf vars that haven't been solved. This might produce a scope-escape
-  -- error.
 
 instance BindingsReader (InfererM i) where
   addBindings e = InfererM do
@@ -255,11 +318,11 @@ instantiateSigma f = do
   case ty of
     Pi (PiType ImplicitArrow b _ _) -> do
       x <- freshType $ binderType b
-      ans <- emitZonked $ App f x
+      ans <- emit $ App f x
       instantiateSigma $ Var ans
     Pi (PiType ClassArrow b _ _) -> do
       ctx <- srcPosCtx <$> getErrCtx
-      ans <- emitZonked $ App f (Con $ ClassDictHole ctx $ binderType b)
+      ans <- emit $ App f (Con $ ClassDictHole ctx $ binderType b)
       instantiateSigma $ Var ans
     _ -> return f
 
@@ -286,7 +349,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Check _ (Pi piType) -> checkULam uLamExpr piType
       Check _ _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
-    result <- liftM Var $ emitZonked $ Hof $ For (RegularFor dir) lam
+    result <- liftM Var $ emit $ Hof $ For (RegularFor dir) lam
     matchRequirement result
   UApp arr f x@(WithSrcE xPos _) -> do
     f' <- inferRho f
@@ -303,7 +366,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Just (_, argTy, effs, _) -> do
         x' <- checkSigma x Suggest argTy
         addEffects effs
-        appVal <- emitZonked $ App f' x'
+        appVal <- emit $ App f' x'
         instantiateSigma (Var appVal) >>= matchRequirement
       Nothing -> do
         maybeX <- buildBlockReduced do
@@ -317,7 +380,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           Just x' -> do
             (effs, _) <- instantiatePi piTy x'
             addEffects effs
-            appVal <- emitZonked $ App f' x'
+            appVal <- emit $ App f' x'
             instantiateSigma (Var appVal) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
@@ -369,8 +432,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
-      OpExpr  e -> Var <$> emitZonked (Op e)
-      HofExpr e -> Var <$> emitZonked (Hof e)
+      OpExpr  e -> Var <$> emit (Op e)
+      HofExpr e -> Var <$> emit (Hof e)
     matchRequirement val
   URecord (Ext items Nothing) -> do
     items' <- mapM inferRho items
@@ -860,7 +923,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (nestLength ps) <> " patterns."
-    xs <- forM idxs \i -> emitZonked $ App (Var v) i
+    xs <- forM idxs \i -> emit $ App (Var v) i
     bindLamPats ps xs cont
 
 checkAnn :: Inferer m => Maybe (UType i) -> m i o (Type o)
@@ -915,7 +978,7 @@ inferTabCon xs reqTy = do
         _           -> error "Missing case"
       xs' <- mapM (flip checkRho elemTy) xs
       return (tabTy, xs')
-  liftM Var $ emitZonked $ Op $ TabCon tabTy xs'
+  liftM Var $ emit $ Op $ TabCon tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Inferer m => Bool -> Arrow -> Type o -> m i o (PiType o)
@@ -935,9 +998,6 @@ fromPairType ty = do
   b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
-
-emitZonked :: (Emits o, Inferer m) => Expr o -> m i o (AtomName o)
-emitZonked expr = zonk expr >>= emit
 
 addEffects :: Inferer m => EffectRow o -> m i o ()
 addEffects eff = do
@@ -976,6 +1036,14 @@ lookupSolverSubst (SolverSubst m) name =
     Just EqNameColor -> case M.lookup name m of
       Nothing -> Rename name
       Just ty -> SubstVal ty
+
+deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
+deleteFromSubst (SolverSubst m) v
+  | M.member v m = Just $ SolverSubst $ M.delete v m
+  | otherwise    = Nothing
+
+alreadySolved :: SolverSubst n -> AtomName n -> Bool
+alreadySolved (SolverSubst m) v = M.member v m
 
 instance InjectableE SolverSubst where
   injectionProofE = undefined
