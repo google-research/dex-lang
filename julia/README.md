@@ -2,7 +2,7 @@
 
 DexCall provides a mechanism for calling dex-lang code from JuliaLang.
 Three main mechanism are provided for this: `evaluate`, `DexModule` and the `dex_func` string macro.
-Two helper methods are also provided: `juliaize` and `NativeFunction`.
+Several helper methods are also provided: `dexize`, `juliaize` and `NativeFunction`.
 
 ## `evaluate`: just run a single Dex expression.
 `evaluate` takes in a Dex expression as a string and runs it, returning a `Atom` (see below).
@@ -53,20 +53,20 @@ julia> m.addTwo(m.y)
 "[44., 44., 44.]"
 ```
 
-## Atoms: `juliaize`, `NativeFunction`
+## Atoms: `dexize`, `juliaize`, `NativeFunction`
 
 `evaluate` and the contents of a `DexModule` are returned as `Atom`s.
 These can be displayed, but not much else.
 
 ```julia
 julia> typeof(m.x)
-DexCall.Atom
+Atom
 
 julia> typeof(m.addTwo)
-DexCall.Atom
+Atom
 ```
 
-To convert scalars into julia typed scalars used `juliaize`.
+To convert scalar `Atom`s into julia typed scalars used `juliaize`.
 ```julia
 julia> juliaize(m.x)
 42
@@ -75,16 +75,22 @@ julia> typeof(juliaize(m.x))
 Int32
 ```
 
-It is not presently possible to `juliaize` arrays (but you can get them as the output of functions, see below).
+It is not presently possible to `juliaize`/`dexize` arrays (but you can use them / get them as the input/output of `NativeFunction`s, see below).
 
-You can also use [`convert`](https://docs.julialang.org/en/v1/manual/conversion-and-promotion/#Conversion) to convert the atom to a Julia object.
-In which case it will make the minimal change from the Dex type to get to the type you requested
+You can also use [`convert`](https://docs.julialang.org/en/v1/manual/conversion-and-promotion/#Conversion) to convert between `Atom`sand Julia objects.
+When converting to a Julia typeit will make the minimal change from the Dex type to get to the type you requested.
 ```julia
 julia> typeof(convert(Integer, m.x))
 Int32
 
 julia> typeof(convert(Int64, m.x))
 Int64
+
+julia> convert(Atom, 1.5)
+"1.5"
+
+julia> convert(Number, convert(Atom, 1.5))
+1.5
 ```
 
 To convert function `Atom`s into something you can execute as if it was a regular julia function use `NativeFunction`.

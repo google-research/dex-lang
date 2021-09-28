@@ -17,9 +17,19 @@
     @testset "evaluate juliaize" begin
         @test juliaize(evaluate("1")) === Int32(1)
         @test juliaize(evaluate("1.5")) === 1.5f0
-
         @test juliaize(evaluate("IToW8 65")) === Int8(65)
     end
+
+    @testset "juliaize-dexize round-trip" begin
+        @test juliaize(dexize(Int64(3))) === Int64(3)
+        @test juliaize(dexize(Int32(3))) === Int32(3)
+        @test juliaize(dexize(Int8(3))) === Int8(3)
+        @test juliaize(dexize(Float64(3))) === Float64(3)
+        @test juliaize(dexize(Float32(3))) === Float32(3)
+        @test juliaize(dexize(UInt64(3))) === UInt64(3)
+        @test juliaize(dexize(UInt32(3))) === UInt32(3)
+    end
+
 
     @testset "Atom function call" begin
         m = DexModule("""
@@ -34,12 +44,12 @@
     end
 
     @testset "convert Atom" begin
-        atom = evaluate("1.0")
+        atom = convert(Atom, 1f0)
         @test convert(Number, atom) === 1f0
         @test convert(Real, atom) === 1f0
         @test convert(Float64, atom) === 1.0
 
-        atom = evaluate("2")
+        atom = convert(Atom, Int32(2))
         @test convert(Number, atom) === Int32(2)
         @test convert(Real, atom) === Int32(2)
         @test convert(Float64, atom) === 2.0
