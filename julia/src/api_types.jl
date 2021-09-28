@@ -55,11 +55,3 @@ function CAtom(atm::Ptr{HsAtom})
     iszero(success) && throw_from_dex()
     return result[]
 end
-
-"""
-    juliaize(x)
-
-Get the corresponding Julia object from some output of Dex.
-"""
-juliaize(x::CAtom) = bust_union(x)
-juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))

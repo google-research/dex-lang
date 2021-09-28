@@ -13,6 +13,13 @@ end
 
 Base.show(io::IO, atom::Atom) = show(io, print(atom.ptr))
 
+"""
+    juliaize(x)
+
+Get the corresponding Julia object from some output of Dex.
+"""
+juliaize(x::CAtom) = bust_union(x)
+juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))
 juliaize(x::Atom) = juliaize(x.ptr)
 Base.convert(::Type{T}, atom::Atom) where {T<:Number} = convert(T, juliaize(atom))
 
