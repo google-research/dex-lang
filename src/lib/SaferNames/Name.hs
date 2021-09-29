@@ -56,6 +56,7 @@ module SaferNames.Name (
   ExtWitness (..), idExt, injectExt,
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), WithOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
+  tryHoistExpr, tryExchangeBs, RestrictableE (..), RestrictableB (..),
   ) where
 
 import Prelude hiding (id, (.))
@@ -340,25 +341,6 @@ fmapNames :: forall v e i o.
           => Distinct o => Scope o -> (forall c. Name c i -> v c o) -> e i -> e o
 fmapNames scope f e = runIdentity $ traverseNames scope (return . f) e
 
--- This may become expensive. It traverses the body of the Abs to check for
--- leaked variables.
-fromConstAbsM :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
-             => Abs b e n -> m n (e n)
-fromConstAbsM ab = do
-  WithScope scope ab <- addScope ab
-  injectM =<< fromConstAbs scope ab
-
-fromConstAbs :: (Distinct n, MonadFail m, InjectableB b, BindsNames b, HasNamesE e)
-             => Scope n -> Abs b e n -> m (e n)
-fromConstAbs scope (Abs b e) =
-  traverseNames scope (tryProjectName $ toScopeFrag b) e
-
-tryProjectName :: MonadFail m => ScopeFrag n l -> Name c l -> m (Name c n)
-tryProjectName names name =
-  case projectName names name of
-    Left name' -> return name'
-    Right _    -> fail $ "Escaped name: " <> pprint name
-
 toConstAbs :: (InjectableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
 toConstAbs rep body = do
@@ -435,6 +417,61 @@ substM e = do
   env <- getEnv
   WithScope scope env' <- addScope env
   injectM $ fmapNames scope (env'!) e
+
+-- === projections ===
+
+tryHoistExpr :: (BindsNames b, RestrictableE e, HasNamesE e)
+             => b n l -> e l -> Maybe (e n)
+tryHoistExpr b e = do
+  WithRestrictedScopeE _ e' <- hoistWithRestrictedScopeE (toScopeFrag b) $ restrictScopeE e
+  return $ injectR e'
+
+-- does this require a new type class?
+tryExchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, InjectableB b2, RestrictableB b2)
+              => PairB b1 b2 n l
+              -> Maybe (PairB b2 b1 n l)
+tryExchangeBs (PairB b1 b2) = do
+  PairB' (WithRestrictedScopeB _ b2') b1' <- hoistWithRestrictedScopeB $
+                                               PairB' b1 (restrictScopeB b2)
+  return $ PairB (injectRB b2') b1'
+
+-- This may become expensive. It traverses the body of the Abs to check for
+-- leaked variables.
+fromConstAbsM :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
+             => Abs b e n -> m n (e n)
+fromConstAbsM ab = do
+  WithScope scope ab <- addScope ab
+  injectM =<< fromConstAbs scope ab
+
+fromConstAbs :: (Distinct n, MonadFail m, InjectableB b, BindsNames b, HasNamesE e)
+             => Scope n -> Abs b e n -> m (e n)
+fromConstAbs scope (Abs b e) =
+  traverseNames scope (tryProjectName $ toScopeFrag b) e
+
+tryProjectName :: MonadFail m => ScopeFrag n l -> Name c l -> m (Name c n)
+tryProjectName names name =
+  case projectName names name of
+    Left name' -> return name'
+    Right _    -> fail $ "Escaped name: " <> pprint name
+
+class RestrictableE (e::E) where
+  restrictScopeE :: e n -> WithRestrictedScopeE e n
+  default restrictScopeE :: (GenericE e, RestrictableE (RepE e))
+                         => e n -> WithRestrictedScopeE e n
+  restrictScopeE e =
+    case restrictScopeE (fromE e) of
+      WithRestrictedScopeE scope e' ->
+        WithRestrictedScopeE scope $ toE e'
+
+class RestrictableB (b::B) where
+  restrictScopeB :: b n l -> WithRestrictedScopeB b n l
+  default restrictScopeB :: (GenericB b, RestrictableB (RepB b))
+                         => b n l -> WithRestrictedScopeB b n l
+  restrictScopeB b =
+    case restrictScopeB (fromB b) of
+      WithRestrictedScopeB scope b' ->
+        WithRestrictedScopeB scope $ toB b'
+
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -1127,6 +1164,9 @@ instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
     injectionProofB fresh b \fresh' b' ->
       Abs b' (injectionProofE fresh' body)
 
+instance (RestrictableB b, RestrictableE e) => RestrictableE (Abs b e) where
+  restrictScopeE = undefined
+
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE env (Abs b body) = do
     substB env b \env' b' -> Abs b' <$> substE env' body
@@ -1140,6 +1180,9 @@ instance (InjectableB b1, InjectableB b2) => InjectableB (PairB b1 b2) where
     injectionProofB fresh b1 \fresh' b1' ->
       injectionProofB fresh' b2 \fresh'' b2' ->
         cont fresh'' (PairB b1' b2')
+
+instance (RestrictableB b1, RestrictableB b2) => RestrictableB (PairB b1 b2) where
+  restrictScopeB = undefined
 
 instance (SubstB v b1, SubstB v b2) => SubstB v (PairB b1 b2) where
   substB env (PairB b1 b2) cont =
@@ -1174,6 +1217,9 @@ instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
     injectionProofB fresh b \fresh' b' ->
       cont fresh' $ b':>ann'
 
+instance (RestrictableB b, RestrictableE ann) => RestrictableB (BinderP b ann) where
+  restrictScopeB = undefined
+
 instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
    substB env (b:>ann) cont = do
      ann' <- substE env ann
@@ -1189,6 +1235,9 @@ instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
 
+instance RestrictableB b => RestrictableB (Nest b) where
+  restrictScopeB = undefined
+
 instance SubstB v b => SubstB v (Nest b) where
   substB env (Nest b bs) cont =
     substB env b \env' b' ->
@@ -1199,11 +1248,17 @@ instance SubstB v b => SubstB v (Nest b) where
 instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE
 
+instance RestrictableE UnitE where
+  restrictScopeE = undefined
+
 instance FromName v => SubstE v UnitE where
   substE _ UnitE = return UnitE
 
 instance (Functor f, InjectableE e) => InjectableE (ComposeE f e) where
   injectionProofE fresh (ComposeE xs) = ComposeE $ fmap (injectionProofE fresh) xs
+
+instance (Functor f, RestrictableE e) => RestrictableE (ComposeE f e) where
+  restrictScopeE = undefined
 
 instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
   substE env (ComposeE xs) = ComposeE <$> mapM (substE env) xs
@@ -1215,6 +1270,9 @@ instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
 
 instance InjectableB UnitB where
   injectionProofB fresh UnitB cont = cont fresh UnitB
+
+instance RestrictableB UnitB where
+  restrictScopeB = undefined
 
 instance ProvesExt  UnitB where
 instance BindsNames UnitB where
@@ -1230,6 +1288,9 @@ instance InjectableE const => InjectableE (ConstE const ignored) where
 instance InjectableE VoidE where
   injectionProofE _ _ = error "impossible"
 
+instance RestrictableE VoidE where
+  restrictScopeE = undefined
+
 instance AlphaEqE VoidE where
   alphaEqE _ _ = error "impossible"
 
@@ -1240,6 +1301,9 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
   injectionProofE fresh (PairE e1 e2) =
     PairE (injectionProofE fresh e1) (injectionProofE fresh e2)
 
+instance (RestrictableE e1, RestrictableE e2) => RestrictableE (PairE e1 e2) where
+  restrictScopeE (PairE e1 e2) = undefined
+
 instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE env (PairE x y) =
     PairE <$> substE env x <*> substE env y
@@ -1248,12 +1312,19 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (EitherE e1 e2) where
   injectionProofE fresh (LeftE  e) = LeftE  (injectionProofE fresh e)
   injectionProofE fresh (RightE e) = RightE (injectionProofE fresh e)
 
+instance (RestrictableE e1, RestrictableE e2) => RestrictableE (EitherE e1 e2) where
+  restrictScopeE (LeftE  e) = undefined
+  restrictScopeE (RightE e) = undefined
+
 instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
   substE env (LeftE  x) = LeftE  <$> substE env x
   substE env (RightE x) = RightE <$> substE env x
 
 instance InjectableE e => InjectableE (ListE e) where
   injectionProofE fresh (ListE xs) = ListE $ map (injectionProofE fresh) xs
+
+instance RestrictableE e => RestrictableE (ListE e) where
+  restrictScopeE (ListE xs) = undefined
 
 instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
@@ -1262,6 +1333,9 @@ instance AlphaEqE e => AlphaEqE (ListE e) where
 
 instance InjectableE (LiftE a) where
   injectionProofE _ (LiftE x) = LiftE x
+
+instance RestrictableE (LiftE a) where
+  restrictScopeE = undefined
 
 instance FromName v => SubstE v (LiftE a) where
   substE _ (LiftE x) = return $ LiftE x
@@ -1364,6 +1438,12 @@ instance InjectableV v => InjectableB (RecEnvFrag v) where
 
 instance SubstV substVal v => SubstE substVal (EnvVal v) where
   substE env (EnvVal rep v) = withNameColorRep rep $ EnvVal rep <$> substE env v
+
+instance RestrictableB (NameBinder c) where
+  restrictScopeB = undefined
+
+instance RestrictableE (Name c) where
+  restrictScopeE = undefined
 
 instance Store (UnitE n)
 instance Store (VoidE n)

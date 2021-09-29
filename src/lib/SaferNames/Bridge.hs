@@ -192,7 +192,7 @@ makeBindingsFrag scope bindings toSafeMap (FromSafeEnv fromSafeMap) constEnv =
     getSafeBinding :: S.Name c (n:=>:l) -> Binding c l
     getSafeBinding name = do
       let Just name' = getName $ fromUnsafeNameE
-                         (lookupMaterializedEnv fromSafeMap (injectNamesR name))
+                         (lookupMaterializedEnv fromSafeMap (injectR name))
       let binderInfo = bindings D.! name'
       case runToSafeM toSafeMap scope $ toSafeE binderInfo of
         EnvVal rep binding ->

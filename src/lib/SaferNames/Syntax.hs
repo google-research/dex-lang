@@ -901,6 +901,7 @@ instance GenericE DataDef where
 deriving instance Show (DataDef n)
 deriving via WrapE DataDef n instance Generic (DataDef n)
 instance InjectableE DataDef
+instance RestrictableE DataDef
 instance SubstE Name DataDef
 instance SubstE AtomSubstVal DataDef
 instance AlphaEqE DataDef
@@ -910,6 +911,7 @@ instance GenericE DataConDef where
   fromE (DataConDef name ab) = PairE (LiftE name) ab
   toE   (PairE (LiftE name) ab) = DataConDef name ab
 instance InjectableE DataConDef
+instance RestrictableE DataConDef
 instance SubstE Name DataConDef
 instance SubstE AtomSubstVal DataConDef
 instance AlphaEqE DataConDef
@@ -922,6 +924,7 @@ instance GenericE ClassDef where
   toE (PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)) =
         ClassDef className methodNames (dataDefName, dataDef)
 instance InjectableE         ClassDef
+instance RestrictableE       ClassDef
 instance SubstE Name         ClassDef
 instance SubstE AtomSubstVal ClassDef
 
@@ -930,6 +933,7 @@ instance GenericB DataConRefBinding where
   fromB (DataConRefBinding b val) = b :> val
   toB   (b :> val) = DataConRefBinding b val
 instance InjectableB DataConRefBinding
+instance RestrictableB DataConRefBinding
 instance ProvesExt  DataConRefBinding
 instance BindsNames DataConRefBinding
 instance SubstB Name DataConRefBinding
@@ -1043,6 +1047,7 @@ instance GenericE Atom where
     _ -> error "impossible"
 
 instance InjectableE Atom
+instance RestrictableE Atom
 instance AlphaEqE Atom
 instance SubstE Name Atom
 
@@ -1089,10 +1094,11 @@ instance GenericE Expr where
     Case4 (ComposeE hof)                    -> Hof hof
     _ -> error "impossible"
 
-instance InjectableE Expr where
+instance InjectableE Expr
+instance RestrictableE Expr
 instance AlphaEqE Expr
-instance SubstE Name Expr where
-instance SubstE AtomSubstVal Expr where
+instance SubstE Name Expr
+instance SubstE AtomSubstVal Expr
 
 instance GenericE (ExtLabeledItemsE e1 e2) where
   type RepE (ExtLabeledItemsE e1 e2) = EitherE (ComposeE LabeledItems e1)
@@ -1104,6 +1110,7 @@ instance GenericE (ExtLabeledItemsE e1 e2) where
   toE (RightE (ComposeE items `PairE` t)) = ExtLabeledItemsE (Ext items (Just t))
 
 instance (InjectableE e1, InjectableE e2) => InjectableE (ExtLabeledItemsE e1 e2)
+instance (RestrictableE e1, RestrictableE e2) => RestrictableE (ExtLabeledItemsE e1 e2)
 instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2)
 instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
 
@@ -1125,6 +1132,7 @@ instance GenericE Block where
   fromE (Block ty decls result) = PairE ty (Abs decls result)
   toE   (PairE ty (Abs decls result)) = Block ty decls result
 instance InjectableE Block
+instance RestrictableE Block
 instance AlphaEqE Block
 instance SubstE Name Block
 instance SubstE AtomSubstVal Block
@@ -1136,6 +1144,7 @@ instance GenericE LamExpr where
   fromE (LamExpr arr b effs block) = PairE (LiftE arr) (Abs b (PairE effs block))
   toE   (PairE (LiftE arr) (Abs b (PairE effs block))) = LamExpr arr b effs block
 instance InjectableE LamExpr
+instance RestrictableE LamExpr
 instance AlphaEqE LamExpr
 instance SubstE Name LamExpr
 instance SubstE AtomSubstVal LamExpr
@@ -1147,6 +1156,7 @@ instance GenericE PiType where
   fromE (PiType arr b effs ty) = PairE (LiftE arr) (Abs b (PairE effs ty))
   toE   (PairE (LiftE arr) (Abs b (PairE effs ty))) = PiType arr b effs ty
 instance InjectableE PiType
+instance RestrictableE PiType
 instance AlphaEqE PiType
 instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
@@ -1166,8 +1176,9 @@ instance GenericE (EffectP name) where
     RightE (LiftE (Left  ())) -> ExceptionEffect
     RightE (LiftE (Right ())) -> IOEffect
 
-instance InjectableE name => InjectableE (EffectP name)
-instance AlphaEqE    name => AlphaEqE    (EffectP name)
+instance InjectableE   name => InjectableE   (EffectP name)
+instance RestrictableE name => RestrictableE (EffectP name)
+instance AlphaEqE      name => AlphaEqE      (EffectP name)
 instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
   substE env eff = case eff of
@@ -1191,6 +1202,7 @@ instance OrdE name => GenericE (EffectRowP name) where
                              _ -> error "impossible"
 
 instance InjectableE (EffectRowP AtomName)
+instance RestrictableE (EffectRowP AtomName)
 instance SubstE Name (EffectRowP AtomName)
 instance AlphaEqE    (EffectRowP AtomName)
 
@@ -1212,6 +1224,7 @@ instance GenericE SynthCandidates where
   toE   (PairE (ListE xs) (PairE (ListE ys) (ListE zs))) = SynthCandidates xs ys zs
 
 instance InjectableE SynthCandidates
+instance RestrictableE SynthCandidates
 instance SubstE Name SynthCandidates
 instance SubstE AtomSubstVal SynthCandidates
 
@@ -1240,6 +1253,7 @@ instance GenericE AtomBinderInfo where
     _ -> error "impossible"
 
 instance InjectableE AtomBinderInfo
+instance RestrictableE AtomBinderInfo
 instance SubstE Name AtomBinderInfo
 instance SubstE AtomSubstVal AtomBinderInfo
 instance AlphaEqE AtomBinderInfo
@@ -1289,6 +1303,7 @@ instance GenericB Decl where
   toB   (b :> PairE (LiftE ann) expr) = Let ann b expr
 
 instance InjectableB Decl
+instance RestrictableB Decl
 instance SubstB AtomSubstVal Decl
 instance SubstB Name Decl
 instance AlphaEqB Decl

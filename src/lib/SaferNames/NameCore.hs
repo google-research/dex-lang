@@ -12,7 +12,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module SaferNames.NameCore (
-  S (..), C (..), RawName, Name (..), withFresh, withStale, inject, injectNamesR, projectName,
+  S (..), C (..), RawName, Name (..), withFresh, withStale, inject,
+  injectR, injectRB, projectName,
   NameBinder (..), ScopeFrag (..), Scope (..), singletonScope, catEnvFrags,
   EnvFrag (..), singletonEnv, emptyEnvFrag, envFragAsScope, lookupEnvFrag,
   E, B, V, InjectableE (..), InjectableB (..), InjectableV,
@@ -23,7 +24,10 @@ module SaferNames.NameCore (
   NameColorRep (..), NameColor (..), EqNameColor (..), eqNameColorRep, tryAsColor,
   Distinct, DistinctEvidence (..), withDistinctEvidence, getDistinctEvidence,
   Ext, ExtEvidence (..), withExtEvidence', getExtEvidence, scopeFragToExtEvidence,
-  NameHint (..)) where
+  NameHint (..),
+  WithRestrictedScopeE (..), WithRestrictedScopeB (..),
+  hoistWithRestrictedScopeE, hoistWithRestrictedScopeB,
+  PairB' (..)) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -267,8 +271,11 @@ scopeFragToExtEvidence _ = FabricateExtEvidence
 inject :: (InjectableE e, Distinct l, Ext n l) => e n -> e l
 inject x = unsafeCoerceE x
 
-injectNamesR :: InjectableE e => e (n:=>:l) -> e l
-injectNamesR = unsafeCoerceE
+injectR :: InjectableE e => e (n:=>:l) -> e l
+injectR = unsafeCoerceE
+
+injectRB :: InjectableB b => b (h:=>:n) (h:=>:l) -> b n l
+injectRB = unsafeCoerceB
 
 class InjectableE (e::E) where
   injectionProofE :: InjectionCoercion n l -> e n -> e l
@@ -320,6 +327,37 @@ instance InjectableE DistinctEvidence where
 
 instance InjectableE (ExtEvidence n) where
   injectionProofE _ _ = FabricateExtEvidence
+
+-- === projections ===
+
+data WithRestrictedScopeE (e::E) (n::S) where
+  WithRestrictedScopeE :: ScopeFrag h n -> e (h:=>:n) -> WithRestrictedScopeE e n
+
+data WithRestrictedScopeB (b::B) (n::S) (l::S) where
+  WithRestrictedScopeB :: ScopeFrag h n -> b (h:=>:n) (h:=>:l) -> WithRestrictedScopeB b n l
+
+restrictScopeName :: Name c n -> WithRestrictedScopeE (Name c) n
+restrictScopeName = undefined
+
+restrictScopeBinder :: NameBinder c n l -> WithRestrictedScopeB (NameBinder c) n l
+restrictScopeBinder = undefined
+
+hoistWithRestrictedScopeE
+  :: InjectableE e
+  => ScopeFrag n l
+  -> WithRestrictedScopeE e l
+  -> Maybe (WithRestrictedScopeE e n)
+hoistWithRestrictedScopeE = undefined
+
+-- TODO: just merge NameCore/Name so we can have access to `PairB` here
+data PairB' (b1::B) (b2::B) (n::S) (l::S) where
+  PairB' :: b1 n l' -> b2 l' l -> PairB' b1 b2 n l
+
+hoistWithRestrictedScopeB
+  :: (Distinct l, InjectableB b1, InjectableB b2)
+  => PairB' b1 (WithRestrictedScopeB b2) n l
+  -> Maybe (PairB' (WithRestrictedScopeB b2) b1 n l)
+hoistWithRestrictedScopeB = undefined
 
 -- === environments ===
 

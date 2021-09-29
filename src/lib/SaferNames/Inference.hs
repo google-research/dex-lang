@@ -188,14 +188,13 @@ instance Builder (InfererM i) where
   getAllowedEffects = undefined
   withAllowedEffects = undefined
 
-
 data HoistedSolverState e n where
   HoistedSolverState
     :: (Distinct n, Distinct l1, Distinct l2)
-    => Nest Binder n l1  -- inference names
-    -> SolverSubst l1    -- new solver subst
-    -> Nest Decl l1 l2   -- emitted decls
-    -> e l2              -- result (usually an Atom)
+    => Nest Binder n l1   -- inference names
+    ->   SolverSubst l1   -- new solver subst
+    ->   Nest Decl l1 l2  -- emitted decls
+    ->     e l2           -- result (usually an Atom)
     -> HoistedSolverState e n
 
 -- TODO: we can't actually implement this! The distinct constraint means that
@@ -207,6 +206,9 @@ instance SubstE Name (HoistedSolverState e) where
 instance InjectableE (HoistedSolverState e) where
   injectionProofE = undefined
 
+instance RestrictableE (HoistedSolverState e) where
+  restrictScopeE = undefined
+
 -- just a wrapper to derive the `Distict l1` and `Distinct l2` contstraints
 makeHoistedSolverState
   :: Distinct l2
@@ -216,7 +218,6 @@ makeHoistedSolverState
   -> e l2
   -> HoistedSolverState e n
 makeHoistedSolverState infVars subst decls result = undefined
-
 
 hoistInfStateRec :: (Fallible m, Distinct l)
                  => Scope n
@@ -234,27 +235,23 @@ hoistInfStateRec scope emissions@(Nest infEmission rest) subst result = do
           withExtEvidence (toExtEvidence infVars) $
             case deleteFromSubst subst' (inject $ binderName b) of
               Just subst'' ->
-                -- TODO: if this fails, it should be reported as a compiler
-                -- error. It shouldn't appear anywhere else if it's already been
-                -- solved.
-                fromConstAbs scope $ Abs b (HoistedSolverState infVars subst'' decls result)
+                case tryHoistExpr b (HoistedSolverState infVars subst'' decls result) of
+                  Just hoisted -> return hoisted
+                  -- TODO: report *which* variables leaked
+                  Nothing -> throw TypeErr "Leaked local variable"
               Nothing ->
-                -- TODO: zonk type annotation on b
+                -- TODO: zonk type annotation on b!
                 return $ makeHoistedSolverState (Nest (b:>ty) infVars) subst' decls result
         InfDecl decl -> do
           withSubscopeDistinct (toExtEvidence emissions) do
-            DistinctAbs (PairB (PairB infVars' (UnitB :> subst'')) decl') (DistinctAbs decls result) <-
-              -- TODO: if this fails, we should report a user-facing error
-              trySwapBinders scope $ Abs (PairB decl  (PairB infVars (UnitB :> subst'))) (DistinctAbs decls result)
-            -- TODO: avoid this repeated traversal by caching the free vars
-            -- TODO: zonk expr with subst!
-            return $ makeHoistedSolverState infVars' subst'' (Nest decl' decls) result
-
-trySwapBinders :: (Distinct n, Fallible m)
-               => Scope n
-               -> Abs (PairB b1 b2) e n
-               -> m (DistinctAbs (PairB b2 b1) e n)
-trySwapBinders = undefined
+            -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
+            --       above by using `WithRestrictedScope` to cache free vars.
+            case tryExchangeBs $ PairB decl (PairB infVars (UnitB :> subst')) of
+              -- TODO: better error message
+              Nothing -> throw TypeErr "Leaked local variable"
+              Just (PairB (PairB infVars' (UnitB :> subst'')) decl') ->
+                -- TODO: zonk expr with subst!
+                return $ makeHoistedSolverState infVars' subst'' (Nest decl' decls) result
 
 -- When we finish building a block of decls we need to hoist the local solver
 -- information into the outer scope. If the local solver state mentions local
@@ -1047,6 +1044,9 @@ alreadySolved (SolverSubst m) v = M.member v m
 
 instance InjectableE SolverSubst where
   injectionProofE = undefined
+
+instance RestrictableE SolverSubst where
+  restrictScopeE = undefined
 
 instance Monoid (SolverSubst n) where
   mempty = SolverSubst mempty
