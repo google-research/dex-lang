@@ -256,9 +256,8 @@ sourceRenameUBinder ubinder = case ubinder of
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) nameColorRep \freshName -> do
       Distinct <- getDistinct
-      let frag = (singletonScope freshName)
       let sourceMap' = SourceMap (M.singleton b (EnvVal nameColorRep $ nameBinderName freshName))
-      return $ RenamerContent frag sourceMap' $ UBind freshName
+      return $ RenamerContent (toScopeFrag freshName) sourceMap' $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> returnG UIgnore
 

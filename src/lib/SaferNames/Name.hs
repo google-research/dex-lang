@@ -22,7 +22,8 @@ module SaferNames.Name (
   Env (..), idEnv, newEnv, envFromFrag,
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
-  Scope, ScopeFrag (..), SubstE (..), SubstB (..), SubstV, MonadicVal (..), lookupSustTraversalEnv,
+  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
+  SubstV, MonadicVal (..), lookupSustTraversalEnv,
   Inplace (..), InplaceT, emitInplace, runInplaceT, withInplaceOutEnv,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
@@ -59,8 +60,8 @@ module SaferNames.Name (
   tryHoistExpr, tryExchangeBs, RestrictableE (..), RestrictableB (..),
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
-  unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..), singletonScope,
-  eqNameColorRep, getNameColorRep, withNameColorRep, injectR, fmapEnvFrag
+  unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
+  eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag
   ) where
 
 import Prelude hiding (id, (.))
@@ -95,7 +96,7 @@ data Env v i o where
       -> Env v i o
 
 newEnv :: (forall c. Name c i -> v c o) -> Env v i o
-newEnv f = Env f emptyEnvFrag
+newEnv f = Env f emptyInFrag
 
 envFromFrag :: EnvFrag v VoidS i o -> Env v i o
 envFromFrag frag = Env absurdNameFunction frag
@@ -134,10 +135,6 @@ class (OutFrag scopeFrag, HasScope scope)
       => OutMap (scope :: S -> *) (scopeFrag :: S -> S -> *) | scope -> scopeFrag where
   emptyOutMap :: scope VoidS
   extendOutMap :: Distinct l => scope n -> scopeFrag n l -> scope l
-
-instance InFrag (EnvFrag v) where
-  emptyInFrag = emptyEnvFrag
-  catInFrags = catEnvFrags
 
 instance InMap (Env v) (EnvFrag v) where
   emptyInMap = newEnv absurdNameFunction
@@ -257,6 +254,10 @@ extendRenamer frag = extendEnv (fmapEnvFrag (const fromName) frag)
 data Abs (binder::B) (body::E) (n::S) where
   Abs :: binder n l -> body l -> Abs binder body n
 deriving instance (ShowB b, ShowE e) => Show (Abs b e n)
+
+data Nest (binder::B) (n::S) (l::S) where
+  Nest  :: binder n h -> Nest binder h l -> Nest binder n l
+  Empty ::                                  Nest binder n n
 
 data BinderP (b::B) (ann::E) (n::S) (l::S) =
   (:>) (b n l) (ann n)
@@ -415,10 +416,10 @@ instance SubstE Name (Name c) where
 
 instance (InjectableV v, FromName v) => SubstB v (NameBinder c) where
   substB (env, scope) b cont = do
-    let rep = getNameColorRep $ nameBinderName b
+    let rep = getNameColor $ nameBinderName b
     withFresh (getNameHint b) rep scope \b' -> do
       let env' = inject env <>> b @> (MonadicVal $ return $ fromName $ binderName b')
-      let scope' = extendOutMap scope $ singletonScope b'
+      let scope' = extendOutMap scope $ toScopeFrag b'
       cont (env', scope') b'
 
 substM :: (EnvReader v m, ScopeReader2 m, SubstE v e, FromName v)
@@ -441,8 +442,8 @@ tryExchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, InjectableB b2, Res
               => PairB b1 b2 n l
               -> Maybe (PairB b2 b1 n l)
 tryExchangeBs (PairB b1 b2) = do
-  PairB' (WithRestrictedScopeB _ b2') b1' <- hoistWithRestrictedScopeB $
-                                               PairB' b1 (restrictScopeB b2)
+  PairB (WithRestrictedScopeB _ b2') b1' <- hoistWithRestrictedScopeB $
+                                              PairB b1 (restrictScopeB b2)
   return $ PairB (injectRB b2') b1'
 
 -- This may become expensive. It traverses the body of the Abs to check for
@@ -450,8 +451,8 @@ tryExchangeBs (PairB b1 b2) = do
 fromConstAbsM :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
              => Abs b e n -> m n (e n)
 fromConstAbsM ab = do
-  WithScope scope ab <- addScope ab
-  injectM =<< fromConstAbs scope ab
+  WithScope scope ab' <- addScope ab
+  injectM =<< fromConstAbs scope ab'
 
 fromConstAbs :: (Distinct n, MonadFail m, InjectableB b, BindsNames b, HasNamesE e)
              => Scope n -> Abs b e n -> m (e n)
@@ -559,6 +560,31 @@ type LiftB (e::E) = BinderP UnitB e :: B
 pattern LiftB :: e n -> LiftB e n n
 pattern LiftB e = UnitB :> e
 
+-- === variant of Generic suited for E-kind and B-kind things ===
+
+class GenericE (e::E) where
+  type RepE e :: S -> Type
+  fromE :: e n -> RepE e n
+  toE   :: RepE e n -> e n
+
+class GenericB (b::B) where
+  type RepB b :: S -> S -> Type
+  fromB :: b n l -> RepB b n l
+  toB   :: RepB b n l -> b n l
+
+newtype WrapE (e::E) (n::S) = WrapE { fromWrapE :: e n }
+newtype WrapB (b::B) (n::S) (l::S) = WrapB { fromWrapB :: b n l}
+
+instance (GenericE e, Generic (RepE e n)) => Generic (WrapE e n) where
+  type Rep (WrapE e n) = Rep (RepE e n)
+  from e = from $ fromE $ fromWrapE e
+  to e = WrapE $ toE $ to e
+
+instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
+  type Rep (WrapB b n l) = Rep (RepB b n l)
+  from b = from $ fromB $ fromWrapB b
+  to b = WrapB $ toB $ to b
+
 -- -- === various convenience utilities ===
 
 infixr 7 @>
@@ -570,8 +596,6 @@ class BindsAtMostOneName (b::B) (c::C)
   binderName :: b i i' -> Name c i'
 
 instance ProvesExt  (NameBinder c) where
-instance BindsNames (NameBinder c) where
-  toScopeFrag b = singletonScope b
 
 instance BindsAtMostOneName (NameBinder c) c where
   b @> x = singletonEnv b x
@@ -590,7 +614,7 @@ class BindsNameList (b::B) (c::C) | b -> c where
   (@@>) :: b i i' -> [v c o] -> EnvFrag v i i' o
 
 instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
-  (@@>) Empty [] = emptyEnvFrag
+  (@@>) Empty [] = emptyInFrag
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
@@ -617,9 +641,9 @@ lookupEnvFragProjected m name =
     Right name' -> Right $ lookupEnvFrag m name'
 
 fromEnvPairs :: Nest (EnvPair v o) i i' -> EnvFrag v i i' o
-fromEnvPairs Empty = emptyEnvFrag
+fromEnvPairs Empty = emptyInFrag
 fromEnvPairs (Nest (EnvPair b v) rest) =
-  singletonEnv b v `catEnvFrags`fromEnvPairs rest
+  singletonEnv b v `catInFrags`fromEnvPairs rest
 
 forEachNestItem :: Monad m
                 => Nest b i i'
@@ -654,7 +678,6 @@ splitNestAt n (Nest b rest) =
 
 binderAnn :: BinderP b ann n l -> ann n
 binderAnn (_:>ann) = ann
-
 
 data DistinctWitness (n::S) where
   Distinct :: Distinct n => DistinctWitness n
@@ -707,7 +730,7 @@ withFreshM hint rep cont = do
   Distinct <- getDistinct
   m <- getScope
   withFresh hint rep m \b' -> do
-    extendScope (singletonScope b') $
+    extendScope (toScopeFrag b') $
       cont b'
 
 withFreshLike
@@ -1149,17 +1172,99 @@ instance HasNameHint String where
 class HasNameColor a c | a -> c where
   getNameColor :: a -> NameColorRep c
 
-instance HasNameColor (Name c n) c where
-  getNameColor = getNameColorRep
-
 instance HasNameColor (NameBinder c n l) c where
-  getNameColor b = getNameColorRep $ nameBinderName b
+  getNameColor b = getNameColor $ nameBinderName b
+
+-- === handling the dynamic/heterogeneous stuff for Env ===
+
+data EnvVal (v::V) (n::S) where
+  EnvVal :: NameColorRep c -> v c n -> EnvVal v n
+
+deriving instance (forall c. Show (v c n)) => Show (EnvVal v n)
+
+fromEnvVal ::  NameColorRep c -> EnvVal v o -> v c o
+fromEnvVal rep (EnvVal rep' val) =
+  case eqNameColorRep rep rep' of
+    Just EqNameColor -> val
+    _ -> error "type mismatch"
+
+data NameColorRep (c::C) where
+  AtomNameRep       :: NameColorRep AtomNameC
+  DataDefNameRep    :: NameColorRep DataDefNameC
+  TyConNameRep      :: NameColorRep TyConNameC
+  DataConNameRep    :: NameColorRep DataConNameC
+  ClassNameRep      :: NameColorRep ClassNameC
+  SuperclassNameRep :: NameColorRep SuperclassNameC
+  MethodNameRep     :: NameColorRep MethodNameC
+
+deriving instance Show (NameColorRep c)
+deriving instance Eq   (NameColorRep c)
+
+data DynamicColor
+   atomNameVal
+   dataDefNameVal
+   tyConNameVal
+   dataConNameVal
+   classNameVal
+   superclassNameVal
+   methodNameVal
+ =
+   AtomNameVal       atomNameVal
+ | DataDefNameVal    dataDefNameVal
+ | TyConNameVal      tyConNameVal
+ | DataConNameVal    dataConNameVal
+ | ClassNameVal      classNameVal
+ | SuperclassNameVal superclassNameVal
+ | MethodNameVal     methodNameVal
+   deriving (Show, Generic)
+
+data EqNameColor (c1::C) (c2::C) where
+  EqNameColor :: EqNameColor c c
+
+eqNameColorRep :: NameColorRep c1 -> NameColorRep c2 -> Maybe (EqNameColor c1 c2)
+eqNameColorRep rep1 rep2 = case (rep1, rep2) of
+  (AtomNameRep      , AtomNameRep      ) -> Just EqNameColor
+  (DataDefNameRep   , DataDefNameRep   ) -> Just EqNameColor
+  (TyConNameRep     , TyConNameRep     ) -> Just EqNameColor
+  (DataConNameRep   , DataConNameRep   ) -> Just EqNameColor
+  (ClassNameRep     , ClassNameRep     ) -> Just EqNameColor
+  (SuperclassNameRep, SuperclassNameRep) -> Just EqNameColor
+  (MethodNameRep    , MethodNameRep    ) -> Just EqNameColor
+  _ -> Nothing
+
+-- gets the NameColorRep implicitly, like Typeable
+class NameColor c where nameColorRep :: NameColorRep c
+instance NameColor AtomNameC       where nameColorRep = AtomNameRep
+instance NameColor DataDefNameC    where nameColorRep = DataDefNameRep
+instance NameColor TyConNameC      where nameColorRep = TyConNameRep
+instance NameColor DataConNameC    where nameColorRep = DataConNameRep
+instance NameColor ClassNameC      where nameColorRep = ClassNameRep
+instance NameColor SuperclassNameC where nameColorRep = SuperclassNameRep
+instance NameColor MethodNameC     where nameColorRep = MethodNameRep
+
+tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
+              (NameColor c1, NameColor c2) => v c1 n -> Maybe (v c2 n)
+tryAsColor x = case eqNameColorRep (nameColorRep :: NameColorRep c1)
+                                   (nameColorRep :: NameColorRep c2) of
+  Just EqNameColor -> Just x
+  Nothing -> Nothing
+
+withNameColorRep :: NameColorRep c -> (NameColor c => a) -> a
+withNameColorRep rep cont = case rep of
+  AtomNameRep       -> cont
+  DataDefNameRep    -> cont
+  TyConNameRep      -> cont
+  DataConNameRep    -> cont
+  ClassNameRep      -> cont
+  SuperclassNameRep -> cont
+  MethodNameRep     -> cont
+
 
 -- === instances ===
 
 instance InjectableV v => InjectableE (Env v i) where
   injectionProofE fresh (Env f m) =
-    Env (\name -> withNameColorRep (getNameColorRep name)  $
+    Env (\name -> withNameColorRep (getNameColor name)  $
                     injectionProofE fresh $ f name)
         (injectionProofE fresh m)
 
@@ -1436,10 +1541,10 @@ renameEnvPairBindersPure
   -> a
 renameEnvPairBindersPure scope env Empty cont = cont scope env Empty
 renameEnvPairBindersPure scope env (Nest (EnvPair b v) rest) cont = do
-  let rep = getNameColorRep $ nameBinderName b
+  let rep = getNameColor $ nameBinderName b
   withFresh (getNameHint b) rep scope \b' -> do
     let env' = inject env <>> b @> (fromName $ binderName b')
-    let scope' = extendOutMap scope $ singletonScope b'
+    let scope' = extendOutMap scope $ toScopeFrag b'
     renameEnvPairBindersPure scope' env' rest \scope'' env'' rest' ->
       cont scope'' env'' $ Nest (EnvPair b' v) rest'
 
@@ -1448,12 +1553,6 @@ instance InjectableV v => InjectableB (RecEnvFrag v) where
 
 instance SubstV substVal v => SubstE substVal (EnvVal v) where
   substE env (EnvVal rep v) = withNameColorRep rep $ EnvVal rep <$> substE env v
-
-instance RestrictableB (NameBinder c) where
-  restrictScopeB = undefined
-
-instance RestrictableE (Name c) where
-  restrictScopeE = undefined
 
 instance Store (UnitE n)
 instance Store (VoidE n)
@@ -1570,9 +1669,9 @@ instance Category ScopeFrag where
   id = UnsafeMakeScope mempty
   UnsafeMakeScope s2 . UnsafeMakeScope s1 = UnsafeMakeScope $ s1 <> s2
 
-singletonScope :: NameBinder s i i' -> ScopeFrag i i'
-singletonScope (UnsafeMakeBinder (UnsafeMakeName _ v)) =
-  UnsafeMakeScope (S.singleton v)
+instance BindsNames (NameBinder c) where
+  toScopeFrag (UnsafeMakeBinder (UnsafeMakeName _ v)) =
+    UnsafeMakeScope (S.singleton v)
 
 absurdNameFunction :: Name v VoidS -> a
 absurdNameFunction _ = error "Void names shouldn't exist"
@@ -1609,11 +1708,6 @@ withFresh hint rep (Scope (UnsafeMakeScope scope)) cont =
   where
     freshName :: Name c UnsafeS
     freshName = UnsafeMakeName rep $ freshRawName (D.nameTag $ hintToRawName hint) scope
-
-withStale :: NameHint
-          -> NameColorRep c
-          -> (forall l. NameBinder c n l -> a) -> a
-withStale hint rep cont = cont (UnsafeMakeBinder (UnsafeMakeName rep $ hintToRawName hint))
 
 hintToRawName :: NameHint -> RawName
 hintToRawName hint = case hint of
@@ -1667,33 +1761,8 @@ withSubscopeDistinct ext cont =
 getRawName :: Name c n -> RawName
 getRawName (UnsafeMakeName _ rawName) = rawName
 
-getNameColorRep :: Name c n -> NameColorRep c
-getNameColorRep (UnsafeMakeName rep _) = rep
-
--- === variant of Generic suited for E-kind and B-kind things ===
-
-class GenericE (e::E) where
-  type RepE e :: S -> Type
-  fromE :: e n -> RepE e n
-  toE   :: RepE e n -> e n
-
-class GenericB (b::B) where
-  type RepB b :: S -> S -> Type
-  fromB :: b n l -> RepB b n l
-  toB   :: RepB b n l -> b n l
-
-newtype WrapE (e::E) (n::S) = WrapE { fromWrapE :: e n }
-newtype WrapB (b::B) (n::S) (l::S) = WrapB { fromWrapB :: b n l}
-
-instance (GenericE e, Generic (RepE e n)) => Generic (WrapE e n) where
-  type Rep (WrapE e n) = Rep (RepE e n)
-  from e = from $ fromE $ fromWrapE e
-  to e = WrapE $ toE $ to e
-
-instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
-  type Rep (WrapB b n l) = Rep (RepB b n l)
-  from b = from $ fromB $ fromWrapB b
-  to b = WrapB $ toB $ to b
+instance HasNameColor (Name c n) c where
+  getNameColor (UnsafeMakeName rep _) = rep
 
 -- === injections ===
 
@@ -1727,9 +1796,6 @@ instance Category ExtEvidence where
   -- Unfortunately, we can't write the class version of this transitivity axiom
   -- because the intermediate type would be ambiguous.
   FabricateExtEvidence . FabricateExtEvidence = FabricateExtEvidence
-
-scopeFragToExtEvidence :: ScopeFrag n l -> ExtEvidence n l
-scopeFragToExtEvidence _ = FabricateExtEvidence
 
 inject :: (InjectableE e, Distinct l, Ext n l) => e n -> e l
 inject x = unsafeCoerceE x
@@ -1799,11 +1865,11 @@ data WithRestrictedScopeE (e::E) (n::S) where
 data WithRestrictedScopeB (b::B) (n::S) (l::S) where
   WithRestrictedScopeB :: ScopeFrag h n -> b (h:=>:n) (h:=>:l) -> WithRestrictedScopeB b n l
 
-restrictScopeName :: Name c n -> WithRestrictedScopeE (Name c) n
-restrictScopeName = undefined
+instance RestrictableE (Name c) where
+  restrictScopeE = undefined
 
-restrictScopeBinder :: NameBinder c n l -> WithRestrictedScopeB (NameBinder c) n l
-restrictScopeBinder = undefined
+instance RestrictableB (NameBinder c) where
+  restrictScopeB = undefined
 
 hoistWithRestrictedScopeE
   :: InjectableE e
@@ -1812,14 +1878,10 @@ hoistWithRestrictedScopeE
   -> Maybe (WithRestrictedScopeE e n)
 hoistWithRestrictedScopeE = undefined
 
--- TODO: just merge NameCore/Name so we can have access to `PairB` here
-data PairB' (b1::B) (b2::B) (n::S) (l::S) where
-  PairB' :: b1 n l' -> b2 l' l -> PairB' b1 b2 n l
-
 hoistWithRestrictedScopeB
   :: (Distinct l, InjectableB b1, InjectableB b2)
-  => PairB' b1 (WithRestrictedScopeB b2) n l
-  -> Maybe (PairB' (WithRestrictedScopeB b2) b1 n l)
+  => PairB b1 (WithRestrictedScopeB b2) n l
+  -> Maybe (PairB (WithRestrictedScopeB b2) b1 n l)
 hoistWithRestrictedScopeB = undefined
 
 -- === environments ===
@@ -1850,16 +1912,14 @@ lookupEnvFrag (UnsafeMakeEnv m _) (UnsafeMakeName rep rawName) =
     Nothing -> error "Env lookup failed (this should never happen)"
     Just d -> fromEnvVal rep d
 
-emptyEnvFrag :: EnvFrag v i i o
-emptyEnvFrag = UnsafeMakeEnv mempty mempty
+instance InFrag (EnvFrag v) where
+  emptyInFrag = UnsafeMakeEnv mempty mempty
+  catInFrags (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
+    UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
 
 singletonEnv :: NameBinder c i i' -> v c o -> EnvFrag v i i' o
 singletonEnv (UnsafeMakeBinder (UnsafeMakeName rep name)) x =
   UnsafeMakeEnv (M.singleton name $ EnvVal rep x) (S.singleton name)
-
-catEnvFrags :: EnvFrag v i1 i2 o -> EnvFrag v i2 i3 o -> EnvFrag v i1 i3 o
-catEnvFrags (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
-  UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
 
 fmapEnvFrag :: InjectableV v
             => (forall c. NameColor c => Name c (i:=>:i') -> v c o -> v' c o')
@@ -1891,99 +1951,11 @@ toEnvPairs (UnsafeMakeEnv m _) =
     go [] = unsafeCoerceB Empty
     go (EnvPair b val : rest) = Nest (EnvPair (unsafeCoerceB b) val) $ go rest
 
-data Nest (binder::B) (n::S) (l::S) where
-  Nest  :: binder n h -> Nest binder h l -> Nest binder n l
-  Empty ::                                  Nest binder n n
-
 instance Category (Nest b) where
   id = Empty
   nest' . nest = case nest of
     Empty -> nest'
     Nest b rest -> Nest b $ rest >>> nest'
-
--- === handling the dynamic/heterogeneous stuff for Env ===
-
-data EnvVal (v::V) (n::S) where
-  EnvVal :: NameColorRep c -> v c n -> EnvVal v n
-
-deriving instance (forall c. Show (v c n)) => Show (EnvVal v n)
-
-fromEnvVal ::  NameColorRep c -> EnvVal v o -> v c o
-fromEnvVal rep (EnvVal rep' val) =
-  case eqNameColorRep rep rep' of
-    Just EqNameColor -> val
-    _ -> error "type mismatch"
-
-data NameColorRep (c::C) where
-  AtomNameRep       :: NameColorRep AtomNameC
-  DataDefNameRep    :: NameColorRep DataDefNameC
-  TyConNameRep      :: NameColorRep TyConNameC
-  DataConNameRep    :: NameColorRep DataConNameC
-  ClassNameRep      :: NameColorRep ClassNameC
-  SuperclassNameRep :: NameColorRep SuperclassNameC
-  MethodNameRep     :: NameColorRep MethodNameC
-
-deriving instance Show (NameColorRep c)
-deriving instance Eq   (NameColorRep c)
-
-data DynamicColor
-   atomNameVal
-   dataDefNameVal
-   tyConNameVal
-   dataConNameVal
-   classNameVal
-   superclassNameVal
-   methodNameVal
- =
-   AtomNameVal       atomNameVal
- | DataDefNameVal    dataDefNameVal
- | TyConNameVal      tyConNameVal
- | DataConNameVal    dataConNameVal
- | ClassNameVal      classNameVal
- | SuperclassNameVal superclassNameVal
- | MethodNameVal     methodNameVal
-   deriving (Show, Generic)
-
-data EqNameColor (c1::C) (c2::C) where
-  EqNameColor :: EqNameColor c c
-
-eqNameColorRep :: NameColorRep c1 -> NameColorRep c2 -> Maybe (EqNameColor c1 c2)
-eqNameColorRep rep1 rep2 = case (rep1, rep2) of
-  (AtomNameRep      , AtomNameRep      ) -> Just EqNameColor
-  (DataDefNameRep   , DataDefNameRep   ) -> Just EqNameColor
-  (TyConNameRep     , TyConNameRep     ) -> Just EqNameColor
-  (DataConNameRep   , DataConNameRep   ) -> Just EqNameColor
-  (ClassNameRep     , ClassNameRep     ) -> Just EqNameColor
-  (SuperclassNameRep, SuperclassNameRep) -> Just EqNameColor
-  (MethodNameRep    , MethodNameRep    ) -> Just EqNameColor
-  _ -> Nothing
-
--- gets the NameColorRep implicitly, like Typeable
-class NameColor c where nameColorRep :: NameColorRep c
-instance NameColor AtomNameC       where nameColorRep = AtomNameRep
-instance NameColor DataDefNameC    where nameColorRep = DataDefNameRep
-instance NameColor TyConNameC      where nameColorRep = TyConNameRep
-instance NameColor DataConNameC    where nameColorRep = DataConNameRep
-instance NameColor ClassNameC      where nameColorRep = ClassNameRep
-instance NameColor SuperclassNameC where nameColorRep = SuperclassNameRep
-instance NameColor MethodNameC     where nameColorRep = MethodNameRep
-
-tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
-              (NameColor c1, NameColor c2) => v c1 n -> Maybe (v c2 n)
-tryAsColor x = case eqNameColorRep (nameColorRep :: NameColorRep c1)
-                                   (nameColorRep :: NameColorRep c2) of
-  Just EqNameColor -> Just x
-  Nothing -> Nothing
-
-withNameColorRep :: NameColorRep c -> (NameColor c => a) -> a
-withNameColorRep rep cont = case rep of
-  AtomNameRep       -> cont
-  DataDefNameRep    -> cont
-  TyConNameRep      -> cont
-  DataConNameRep    -> cont
-  ClassNameRep      -> cont
-  SuperclassNameRep -> cont
-  MethodNameRep     -> cont
 
 -- === instances ===
 

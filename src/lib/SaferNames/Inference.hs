@@ -1027,7 +1027,7 @@ singletonSolverSubst v ty = SolverSubst $ M.singleton v ty
 -- have to think about `eqNameColorRep` just to implement a partial map.
 lookupSolverSubst :: forall c n. SolverSubst n -> Name c n -> AtomSubstVal c n
 lookupSolverSubst (SolverSubst m) name =
-  case eqNameColorRep AtomNameRep (getNameColorRep name) of
+  case eqNameColorRep AtomNameRep (getNameColor name) of
     Nothing -> Rename name
     Just EqNameColor -> case M.lookup name m of
       Nothing -> Rename name
