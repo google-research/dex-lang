@@ -23,7 +23,6 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.Builder
 import SaferNames.Syntax

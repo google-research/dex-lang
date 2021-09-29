@@ -19,7 +19,6 @@ import qualified Data.Map.Strict as M
 -- import Env
 import Err
 import LabeledItems
-import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.ResolveImplicitNames
 import SaferNames.Syntax

@@ -36,7 +36,6 @@ import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
                prettyFromPrettyPrec, DocPrec, fromInfix, pAppArg)
 import Env (nameTag)
 
-import SaferNames.NameCore (unsafeCoerceE, unsafeCoerceB, getRawName)
 import SaferNames.Name
 import SaferNames.Syntax
 

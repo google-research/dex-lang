@@ -95,7 +95,6 @@ import Syntax
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
   , PassName, OutFormat (..), Output (..), Result (..))
 
-import SaferNames.NameCore
 import SaferNames.Name
 import PPrint ()
 import Err

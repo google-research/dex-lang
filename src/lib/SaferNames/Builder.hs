@@ -39,7 +39,6 @@ import Data.Maybe (fromJust)
 
 import Unsafe.Coerce
 
-import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.Syntax
 import SaferNames.Type

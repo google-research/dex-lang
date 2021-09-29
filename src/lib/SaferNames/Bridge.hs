@@ -42,7 +42,6 @@ import Type.Reflection
 
 import qualified Data.Map.Strict as M
 
-import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.Syntax
 import SaferNames.LazyMap as LM
@@ -54,7 +53,6 @@ import qualified Syntax as D  -- D for Danger
 import qualified Type   as D
 import qualified Env    as D
 
-import qualified SaferNames.NameCore  as S
 import qualified SaferNames.Name      as S
 import qualified SaferNames.Syntax    as S
 

@@ -59,7 +59,7 @@ library
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec, Export
                        Err, LabeledItems, SourceRename,
-                       SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
+                       SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
