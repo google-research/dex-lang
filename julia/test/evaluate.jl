@@ -17,13 +17,13 @@
     @testset "evaluate juliaize" begin
         @test juliaize(evaluate("1")) === Int32(1)
         @test juliaize(evaluate("1.5")) === 1.5f0
-        @test juliaize(evaluate("IToW8 65")) === Int8(65)
+        @test juliaize(evaluate("IToW8 65")) === UInt8(65)
     end
 
     @testset "juliaize-dexize round-trip" begin
         @test juliaize(dexize(Int64(3))) === Int64(3)
         @test juliaize(dexize(Int32(3))) === Int32(3)
-        @test juliaize(dexize(Int8(3))) === Int8(3)
+        @test juliaize(dexize(UInt8(3))) === UInt8(3)
         @test juliaize(dexize(Float64(3))) === Float64(3)
         @test juliaize(dexize(Float32(3))) === Float32(3)
         @test juliaize(dexize(UInt64(3))) === UInt64(3)

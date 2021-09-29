@@ -41,7 +41,7 @@ function force_reinterpret(::Type{T}, raw) where T
 end
 
 
-struct CLit <: TaggedUnion{Tuple{Int64, Int32, Int8, Float64, Float32, UInt32, UInt64}}
+struct CLit <: TaggedUnion{Tuple{Int64, Int32, UInt8, Float64, Float32, UInt32, UInt64}}
     tag::UInt64
     payload::NTuple{8, UInt8}  # actually the Union, needs to be big enough to hold largest which is an Int64
 end
@@ -49,7 +49,7 @@ CLit(x) = CLit(CLit_tag(x), force_reinterpret(NTuple{8, UInt8}, x))
 
 CLit_tag(::Int64) = 0x0000_0000_0000_0000
 CLit_tag(::Int32) = 0x0000_0000_0000_0001
-CLit_tag(::Int8) = 0x0000_0000_0000_0002
+CLit_tag(::UInt8) = 0x0000_0000_0000_0002
 CLit_tag(::Float64) = 0x0000_0000_0000_0003
 CLit_tag(::Float32) = 0x0000_0000_0000_0004
 CLit_tag(::UInt32) = 0x0000_0000_0000_0005
