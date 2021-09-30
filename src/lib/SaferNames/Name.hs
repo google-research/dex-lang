@@ -34,7 +34,7 @@ module SaferNames.Name (
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
-  fromConstAbsM, fromConstAbs, toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
+  toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv, freeNames, emptyNameTraversalEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
@@ -57,7 +57,7 @@ module SaferNames.Name (
   ExtWitness (..), idExt, injectExt,
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), WithOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag, refreshAbs,
-  tryHoistExpr, tryExchangeBs, RestrictableE (..), RestrictableB (..),
+  hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..),
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
   unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
@@ -431,57 +431,29 @@ substM e = do
 
 -- === projections ===
 
-tryHoistExpr :: (BindsNames b, RestrictableE e, InjectableE e)
-             => b n l -> e l -> Maybe (e n)
-tryHoistExpr b e = do
-  WithRestrictedScopeE _ e' <- hoistWithRestrictedScopeE (toScopeFrag b) $ restrictScopeE e
-  return $ injectR e'
+fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> Maybe (e n)
+fromConstAbs (Abs b e) = hoist b e
 
--- does this require a new type class?
-tryExchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, InjectableB b2, RestrictableB b2)
+hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> Maybe (e n)
+hoist b e = hoistWithFreeVars (toScopeFrag b) (withFreeVarsE e)
+
+exchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, HoistableB b2)
               => PairB b1 b2 n l
               -> Maybe (PairB b2 b1 n l)
-tryExchangeBs (PairB b1 b2) = do
-  PairB (WithRestrictedScopeB _ b2') b1' <- hoistWithRestrictedScopeB $
-                                              PairB b1 (restrictScopeB b2)
-  return $ PairB (injectRB b2') b1'
+exchangeBs (PairB b1 b2) =
+  exchangeWithFreeVars (toScopeFrag b1) b1 (withFreeVarsB b2)
 
--- This may become expensive. It traverses the body of the Abs to check for
--- leaked variables.
-fromConstAbsM :: (ScopeReader m, MonadFail1 m, InjectableB b, BindsNames b, HasNamesE e)
-             => Abs b e n -> m n (e n)
-fromConstAbsM ab = do
-  WithScope scope ab' <- addScope ab
-  injectM =<< fromConstAbs scope ab'
 
-fromConstAbs :: (Distinct n, MonadFail m, InjectableB b, BindsNames b, HasNamesE e)
-             => Scope n -> Abs b e n -> m (e n)
-fromConstAbs scope (Abs b e) =
-  traverseNames scope (tryProjectName $ toScopeFrag b) e
+-- XXX: we need another constraint analogous to `InjectableE`, which says that
+--      we can do the actual hoisting by coercion. But we can't use
+--      `InjectableE` itself because `Distinct` can't implement it. For now,
+--      we just have to be careful about only giving `HoistableE` instances to
+--      the right types.
+class HoistableE (e::E) where
+  withFreeVarsE :: e n-> WithFreeVarsE e n
 
-tryProjectName :: MonadFail m => ScopeFrag n l -> Name c l -> m (Name c n)
-tryProjectName names name =
-  case projectName names name of
-    Left name' -> return name'
-    Right _    -> fail $ "Escaped name: " <> pprint name
-
-class RestrictableE (e::E) where
-  restrictScopeE :: e n -> WithRestrictedScopeE e n
-  default restrictScopeE :: (GenericE e, RestrictableE (RepE e))
-                         => e n -> WithRestrictedScopeE e n
-  restrictScopeE e =
-    case restrictScopeE (fromE e) of
-      WithRestrictedScopeE scope e' ->
-        WithRestrictedScopeE scope $ toE e'
-
-class RestrictableB (b::B) where
-  restrictScopeB :: b n l -> WithRestrictedScopeB b n l
-  default restrictScopeB :: (GenericB b, RestrictableB (RepB b))
-                         => b n l -> WithRestrictedScopeB b n l
-  restrictScopeB b =
-    case restrictScopeB (fromB b) of
-      WithRestrictedScopeB scope b' ->
-        WithRestrictedScopeB scope $ toB b'
+class HoistableB (b::B) where
+  withFreeVarsB :: b n l -> WithFreeVarsB b n l
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -1278,8 +1250,8 @@ instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
     injectionProofB fresh b \fresh' b' ->
       Abs b' (injectionProofE fresh' body)
 
-instance (RestrictableB b, RestrictableE e) => RestrictableE (Abs b e) where
-  restrictScopeE = undefined
+instance (HoistableB b, HoistableE e) => HoistableE (Abs b e) where
+  withFreeVarsE = undefined
 
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE env (Abs b body) = do
@@ -1295,8 +1267,8 @@ instance (InjectableB b1, InjectableB b2) => InjectableB (PairB b1 b2) where
       injectionProofB fresh' b2 \fresh'' b2' ->
         cont fresh'' (PairB b1' b2')
 
-instance (RestrictableB b1, RestrictableB b2) => RestrictableB (PairB b1 b2) where
-  restrictScopeB = undefined
+instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
+  withFreeVarsB = undefined
 
 instance (SubstB v b1, SubstB v b2) => SubstB v (PairB b1 b2) where
   substB env (PairB b1 b2) cont =
@@ -1331,8 +1303,8 @@ instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
     injectionProofB fresh b \fresh' b' ->
       cont fresh' $ b':>ann'
 
-instance (RestrictableB b, RestrictableE ann) => RestrictableB (BinderP b ann) where
-  restrictScopeB = undefined
+instance (HoistableB b, HoistableE ann) => HoistableB (BinderP b ann) where
+  withFreeVarsB = undefined
 
 instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
    substB env (b:>ann) cont = do
@@ -1349,8 +1321,8 @@ instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
 
-instance RestrictableB b => RestrictableB (Nest b) where
-  restrictScopeB = undefined
+instance HoistableB b => HoistableB (Nest b) where
+  withFreeVarsB = undefined
 
 instance SubstB v b => SubstB v (Nest b) where
   substB env (Nest b bs) cont =
@@ -1362,8 +1334,8 @@ instance SubstB v b => SubstB v (Nest b) where
 instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE
 
-instance RestrictableE UnitE where
-  restrictScopeE = undefined
+instance HoistableE UnitE where
+  withFreeVarsE = undefined
 
 instance FromName v => SubstE v UnitE where
   substE _ UnitE = return UnitE
@@ -1371,8 +1343,8 @@ instance FromName v => SubstE v UnitE where
 instance (Functor f, InjectableE e) => InjectableE (ComposeE f e) where
   injectionProofE fresh (ComposeE xs) = ComposeE $ fmap (injectionProofE fresh) xs
 
-instance (Functor f, RestrictableE e) => RestrictableE (ComposeE f e) where
-  restrictScopeE = undefined
+instance (Functor f, HoistableE e) => HoistableE (ComposeE f e) where
+  withFreeVarsE = undefined
 
 instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
   substE env (ComposeE xs) = ComposeE <$> mapM (substE env) xs
@@ -1385,8 +1357,8 @@ instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
 instance InjectableB UnitB where
   injectionProofB fresh UnitB cont = cont fresh UnitB
 
-instance RestrictableB UnitB where
-  restrictScopeB = undefined
+instance HoistableB UnitB where
+  withFreeVarsB = undefined
 
 instance ProvesExt  UnitB where
 instance BindsNames UnitB where
@@ -1402,8 +1374,8 @@ instance InjectableE const => InjectableE (ConstE const ignored) where
 instance InjectableE VoidE where
   injectionProofE _ _ = error "impossible"
 
-instance RestrictableE VoidE where
-  restrictScopeE = undefined
+instance HoistableE VoidE where
+  withFreeVarsE = undefined
 
 instance AlphaEqE VoidE where
   alphaEqE _ _ = error "impossible"
@@ -1415,8 +1387,8 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
   injectionProofE fresh (PairE e1 e2) =
     PairE (injectionProofE fresh e1) (injectionProofE fresh e2)
 
-instance (RestrictableE e1, RestrictableE e2) => RestrictableE (PairE e1 e2) where
-  restrictScopeE (PairE e1 e2) = undefined
+instance (HoistableE e1, HoistableE e2) => HoistableE (PairE e1 e2) where
+  withFreeVarsE (PairE e1 e2) = undefined
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE env (PairE x y) =
@@ -1426,9 +1398,9 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (EitherE e1 e2) where
   injectionProofE fresh (LeftE  e) = LeftE  (injectionProofE fresh e)
   injectionProofE fresh (RightE e) = RightE (injectionProofE fresh e)
 
-instance (RestrictableE e1, RestrictableE e2) => RestrictableE (EitherE e1 e2) where
-  restrictScopeE (LeftE  e) = undefined
-  restrictScopeE (RightE e) = undefined
+instance (HoistableE e1, HoistableE e2) => HoistableE (EitherE e1 e2) where
+  withFreeVarsE (LeftE  e) = undefined
+  withFreeVarsE (RightE e) = undefined
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
   substE env (LeftE  x) = LeftE  <$> substE env x
@@ -1437,8 +1409,8 @@ instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
 instance InjectableE e => InjectableE (ListE e) where
   injectionProofE fresh (ListE xs) = ListE $ map (injectionProofE fresh) xs
 
-instance RestrictableE e => RestrictableE (ListE e) where
-  restrictScopeE (ListE xs) = undefined
+instance HoistableE e => HoistableE (ListE e) where
+  withFreeVarsE (ListE xs) = undefined
 
 instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
@@ -1448,8 +1420,8 @@ instance AlphaEqE e => AlphaEqE (ListE e) where
 instance InjectableE (LiftE a) where
   injectionProofE _ (LiftE x) = LiftE x
 
-instance RestrictableE (LiftE a) where
-  restrictScopeE = undefined
+instance HoistableE (LiftE a) where
+  withFreeVarsE = undefined
 
 instance FromName v => SubstE v (LiftE a) where
   substE _ (LiftE x) = return $ LiftE x
@@ -1864,32 +1836,44 @@ instance InjectableE DistinctEvidence where
 instance InjectableE (ExtEvidence n) where
   injectionProofE _ _ = FabricateExtEvidence
 
--- === projections ===
+-- === projections -- the unsafe bits ===
 
-data WithRestrictedScopeE (e::E) (n::S) where
-  WithRestrictedScopeE :: ScopeFrag h n -> e (h:=>:n) -> WithRestrictedScopeE e n
+hoistWithFreeVars :: HoistableE e => ScopeFrag n l -> WithFreeVarsE e l -> Maybe (e n)
+hoistWithFreeVars
+    (UnsafeMakeScope frag)
+    (UnsafeMakeWithFreeVarsE e (Scope (UnsafeMakeScope narrowScope))) =
+  if null $ S.intersection frag narrowScope
+    then Just $ unsafeCoerceE e
+    else Nothing
 
-data WithRestrictedScopeB (b::B) (n::S) (l::S) where
-  WithRestrictedScopeB :: ScopeFrag h n -> b (h:=>:n) (h:=>:l) -> WithRestrictedScopeB b n l
+-- What about preserving the free vars in the result?
+exchangeWithFreeVars :: (Distinct n3, InjectableB b1, HoistableB b2)
+                     => ScopeFrag n1 n2
+                     -> b1 n1 n2
+                     -> WithFreeVarsB b2 n2 n3
+                     -> Maybe (PairB b2 b1 n1 n3)
+exchangeWithFreeVars
+    (UnsafeMakeScope frag)
+    b1
+    (UnsafeMakeWithFreeVarsB b2 (Scope (UnsafeMakeScope narrowScope)) (UnsafeMakeScope _)) =
+  if null $ S.intersection frag narrowScope
+    then Just $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
+    else Nothing
 
-instance RestrictableE (Name c) where
-  restrictScopeE = undefined
+data WithFreeVarsE (e::E) (n::S) where
+  UnsafeMakeWithFreeVarsE :: e n -> Scope (h:=>:n) -> WithFreeVarsE e n
 
-instance RestrictableB (NameBinder c) where
-  restrictScopeB = undefined
+data WithFreeVarsB (b::B) (n::S) (l::S) where
+  UnsafeMakeWithFreeVarsB :: b n l
+                          -> Scope (h:=>:n)
+                          -> ScopeFrag (h:=>:n) (h:=>:l)
+                          -> WithFreeVarsB b n l
 
-hoistWithRestrictedScopeE
-  :: InjectableE e
-  => ScopeFrag n l
-  -> WithRestrictedScopeE e l
-  -> Maybe (WithRestrictedScopeE e n)
-hoistWithRestrictedScopeE = undefined
+instance HoistableB (NameBinder c) where
+  withFreeVarsB = undefined
 
-hoistWithRestrictedScopeB
-  :: (Distinct l, InjectableB b1, InjectableB b2)
-  => PairB b1 (WithRestrictedScopeB b2) n l
-  -> Maybe (PairB (WithRestrictedScopeB b2) b1 n l)
-hoistWithRestrictedScopeB = undefined
+instance HoistableE (Name c) where
+  withFreeVarsE = undefined
 
 -- === environments ===
 

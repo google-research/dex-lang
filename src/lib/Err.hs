@@ -14,7 +14,7 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             Fallible (..), FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwIf,
             addContext, addSrcContext, addSrcTextContext,
-            catchIOExcept, liftExcept,
+            catchIOExcept, liftExcept, liftMaybe,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
             FallibleApplicativeWrapper, traverseMergingErrs) where
 
@@ -194,6 +194,10 @@ catchIOExcept m = liftIO $ (liftM Success m) `catches`
   , Handler \(e::IOError)       -> return $ Failure $ Errs [Err DataIOErr   mempty $ show e]
   , Handler \(e::SomeException) -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
   ]
+
+liftMaybe :: MonadFail m => Maybe a -> m a
+liftMaybe Nothing = fail ""
+liftMaybe (Just x) = return x
 
 liftExcept :: Fallible m => Except a -> m a
 liftExcept (Failure errs) = throwErrs errs

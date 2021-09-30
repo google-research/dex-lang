@@ -46,6 +46,7 @@ import SaferNames.PPrint ()
 
 import LabeledItems
 import Util (enumerate)
+import Err
 
 class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
@@ -227,7 +228,7 @@ buildBlockAux cont = do
     (result, aux) <- cont
     ty <- getType result
     return $ result `PairE` ty `PairE` LiftE aux
-  ty' <- fromConstAbsM $ Abs decls ty
+  ty' <- liftMaybe $ hoist decls ty
   return (Block ty' decls $ Atom result, aux)
 
 buildBlockReduced :: Builder m

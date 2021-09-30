@@ -195,7 +195,8 @@ instance Builder (InfererM i) where
 
 data HoistedSolverState e n where
   HoistedSolverState
-    :: Nest Binder n l1   -- inference names
+    :: (Distinct l2, Distinct l1, Distinct n)
+    => Nest Binder n l1   -- inference names
     ->   SolverSubst l1   -- new solver subst
     ->   Nest Decl l1 l2  -- emitted decls
     ->     e l2           -- result (usually an Atom)
@@ -204,38 +205,40 @@ data HoistedSolverState e n where
 instance InjectableE (HoistedSolverState e) where
   injectionProofE = undefined
 
-instance RestrictableE (HoistedSolverState e) where
-  restrictScopeE = undefined
+instance HoistableE (HoistedSolverState e) where
+  withFreeVarsE = undefined
 
-hoistInfStateRec :: (Fallible m, Distinct l)
+hoistInfStateRec :: (Fallible m, Distinct n, Distinct l)
                  => Scope n
                  -> Nest InfEmission n l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
 hoistInfStateRec _ Empty subst result =
   return $ HoistedSolverState Empty subst Empty result
 hoistInfStateRec scope emissions@(Nest infEmission rest) subst result = do
-  HoistedSolverState infVars subst' decls result <-
-     hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst result
-  case infEmission of
-    InfInferenceName (b:>ty) ->
-      withExtEvidence infVars $
-        case deleteFromSubst subst' (inject $ binderName b) of
-          Just subst'' ->
-            case tryHoistExpr b (HoistedSolverState infVars subst'' decls result) of
-              Just hoisted -> return hoisted
-              -- TODO: report *which* variables leaked
-              Nothing -> throw TypeErr "Leaked local variable"
-          Nothing -> do
-            return $ HoistedSolverState (Nest (b:>ty) infVars) subst' decls result
-    InfDecl decl -> do
-      -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
-      --       above by using `WithRestrictedScope` to cache free vars.
-      case tryExchangeBs $ PairB decl (PairB infVars (UnitB :> subst')) of
-        -- TODO: better error message
-        Nothing -> throw TypeErr "Leaked local variable"
-        Just (PairB (PairB infVars' (UnitB :> subst'')) (Let b ann expr)) -> do
-          let decl' = Let b ann $ applySolverSubst scope subst'' expr
-          return $ HoistedSolverState infVars' subst'' (Nest decl' decls) result
+  withSubscopeDistinct rest do
+    HoistedSolverState infVars subst' decls result <-
+       hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst result
+    case infEmission of
+      InfInferenceName (b:>ty) ->
+        withExtEvidence infVars $
+          case deleteFromSubst subst' (inject $ binderName b) of
+            Just subst'' ->
+              case hoist b (HoistedSolverState infVars subst'' decls result) of
+                Just hoisted -> return hoisted
+                -- TODO: report *which* variables leaked
+                Nothing -> throw TypeErr "Leaked local variable"
+            Nothing -> do
+              return $ HoistedSolverState (Nest (b:>ty) infVars) subst' decls result
+      InfDecl decl -> do
+        -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
+        --       above by using `WithRestrictedScope` to cache free vars.
+        case exchangeBs $ PairB decl (PairB infVars (UnitB :> subst')) of
+          -- TODO: better error message
+          Nothing -> throw TypeErr "Leaked local variable"
+          Just (PairB (PairB infVars' (UnitB :> subst'')) (Let b ann expr)) -> do
+            let expr' = applySolverSubst (scope `extendOutMap` toScopeFrag infVars') subst'' expr
+            let decl' = Let b ann expr'
+            return $ HoistedSolverState infVars' subst'' (Nest decl' decls) result
 
 -- When we finish building a block of decls we need to hoist the local solver
 -- information into the outer scope. If the local solver state mentions local
@@ -1046,8 +1049,8 @@ instance InjectableE SolverSubst where
 instance SubstE Name SolverSubst where
   substE = undefined
 
-instance RestrictableE SolverSubst where
-  restrictScopeE = undefined
+instance HoistableE SolverSubst where
+  withFreeVarsE = undefined
 
 instance Monoid (SolverSubst n) where
   mempty = SolverSubst mempty
