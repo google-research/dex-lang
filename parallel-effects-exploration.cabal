@@ -24,6 +24,7 @@ library
       src
   build-depends:
       base >=4.7 && <5
+    , random >=1.1
   default-language: Haskell2010
 
 executable parallel-effects-exploration-exe

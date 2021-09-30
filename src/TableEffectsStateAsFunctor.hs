@@ -34,9 +34,11 @@ import Data.Semigroup
 
 import Table
 import TableEffects
+import TableEffectsSimplerHandlers
 import Data.Foldable
 
 import Debug.Trace
+import Table (someTableFromList)
 
 -- Some example signatures.
 
@@ -83,35 +85,6 @@ seqEithers tab = -- note: a log(n) parallel version exists
 -----------------------------
 
 data AccumOutImpl m a = AccumOutImpl m a
-
-runAccumSlow :: Monoid m => EffComp (Accum m `EffCons` c) a -> EffComp c (m, a)
-runAccumSlow comp = do
-  AccumOutImpl m a <- handleWithRet WithRetEffHandler
-    { retR = return . AccumOutImpl mempty
-    , handleR = \(Tell m) cont -> do
-        AccumOutImpl m' v <- cont ()
-        return $ AccumOutImpl (m <> m') v
-    , parallelR = \iterResults cont -> do
-        let ms = fmap (\(AccumOutImpl m _) -> m) iterResults
-        let as = fmap (\(AccumOutImpl _ a) -> a) iterResults
-        AccumOutImpl m' b <- cont as
-        return $ AccumOutImpl (fold ms <> m') b
-    } comp
-  return (m, a)
-
--- Using the helper to thread through state.
-runAccumFast :: Monoid m => EffComp (Accum m `EffCons` c) a -> EffComp c (m, a)
-runAccumFast comp = do
-  AccumOutImpl m a <- handleForkStateWithRet ForkStateWithRetEffHandler
-    { retFR = \m r -> return $ AccumOutImpl m r
-    , handleFR = \m (Tell m') cont -> cont (m <> m') ()
-    , parallelFR = \m iters cont -> do
-        iterResults <- iters =<< for (const $ return mempty)
-        let ms = fmap (\(AccumOutImpl m _) -> m) iterResults
-        let as = fmap (\(AccumOutImpl _ a) -> a) iterResults
-        cont (m <> fold ms) as
-    } mempty comp
-  return (m, a)
 
 -- Encoding of runAccum that threads state through manually.
 newtype ManualStateAccumOutImpl effs s a = ManualStateAccumOutImpl (s -> effs (s, a))
@@ -200,7 +173,7 @@ runAmb :: EffComp (Amb `EffCons` c) a -> EffComp c [a]
 runAmb = handleWithRet WithRetEffHandler
     { retR = \x -> return [x]
     , handleR = \op cont -> case op of
-        Amb lst -> case fromList lst of
+        Amb lst -> case someTableFromList lst of
           SomeTable (tab@(UnsafeFromList _) :: Table ix a) -> do
             allRes <- for @ix \i -> cont (tableIndex tab i)
             return $ concat allRes
@@ -213,7 +186,7 @@ runAmb = handleWithRet WithRetEffHandler
         -- Now, transform each Cartesian product into a table.
         buildTable lst = purefor @ix \i -> lst !! i
         listOfTables = buildTable <$> allOptions
-        in case fromList listOfTables of
+        in case someTableFromList listOfTables of
           SomeTable (tableOfTables :: Table n (Table ix a)) -> do
             allRes <- for @n \i -> cont $ tableIndex tableOfTables i
             return $ concat allRes
@@ -230,17 +203,17 @@ myDemoFunc :: forall ix key effs
               , KnownNat ix)
            => Maybe Int -> EffComp effs Int
 myDemoFunc throwHere = do
-  k <- effect $ NextKey @key
-  effect $ Tell [k]
+  k <- perform $ NextKey @key
+  perform $ Tell [k]
   vals <- for @ix \i -> if Just i == throwHere
-    then effect $ Throw $
+    then perform $ Throw $
       "Exception at iteration " <> show i
     else do
-      k' <- effect $ NextKey @key
-      effect $ Tell [k']
+      k' <- perform $ NextKey @key
+      perform $ Tell [k']
       return i
-  k <- effect $ NextKey @key
-  effect $ Tell [k]
+  k <- perform $ NextKey @key
+  perform $ Tell [k]
   let theSum = sum vals
   return theSum
 

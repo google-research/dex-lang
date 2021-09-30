@@ -37,8 +37,8 @@ deriving instance Show a => Show (Table n a)
 
 data SomeTable a = forall n. KnownNat n => SomeTable (Table n a)
 
-fromList :: [a] -> SomeTable a
-fromList lst = case someNatVal $ fromIntegral (length lst) of
+someTableFromList :: [a] -> SomeTable a
+someTableFromList lst = case someNatVal $ fromIntegral (length lst) of
   Just (SomeNat (_ :: Proxy n)) -> SomeTable (UnsafeFromList @n lst)
   Nothing -> error "impossible"
 
