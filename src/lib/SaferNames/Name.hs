@@ -56,7 +56,7 @@ module SaferNames.Name (
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt,
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), WithOutMap (..),
-  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
+  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag, refreshAbs,
   tryHoistExpr, tryExchangeBs, RestrictableE (..), RestrictableB (..),
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
@@ -431,7 +431,7 @@ substM e = do
 
 -- === projections ===
 
-tryHoistExpr :: (BindsNames b, RestrictableE e, HasNamesE e)
+tryHoistExpr :: (BindsNames b, RestrictableE e, InjectableE e)
              => b n l -> e l -> Maybe (e n)
 tryHoistExpr b e = do
   WithRestrictedScopeE _ e' <- hoistWithRestrictedScopeE (toScopeFrag b) $ restrictScopeE e
@@ -482,7 +482,6 @@ class RestrictableB (b::B) where
     case restrictScopeB (fromB b) of
       WithRestrictedScopeB scope b' ->
         WithRestrictedScopeB scope $ toB b'
-
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -1532,6 +1531,14 @@ refreshRecEnvFrag scope env (RecEnvFrag frag) =
     let frag' = fmapEnvFrag (\_ val -> fmapNames scope' (env'!) val) (fromEnvPairs pairs)
     in DistinctAbs (RecEnvFrag frag') env'
 
+refreshAbs :: (Distinct n, SubstB Name b, SubstE Name e)
+           => Scope n -> Abs b e n -> DistinctAbs b e n
+refreshAbs scope (Abs b e) =
+  runIdentity $ substB env b \env' b' -> do
+    e' <- substE env' e
+    return $ DistinctAbs b' e'
+  where env = emptyNameTraversalEnv scope
+
 renameEnvPairBindersPure
   :: (Distinct o, InjectableV v, InjectableV substVal, FromName substVal)
   => Scope o
@@ -1749,11 +1756,11 @@ newtype WrapWithDistinct n r =
   WrapWithDistinct { fromWrapWithDistinct :: Distinct n => r }
 
 
-withSubscopeDistinct :: forall n l a.
-                        Distinct l
-                     => ExtEvidence n l -> ((Ext n l, Distinct n) => a) -> a
-withSubscopeDistinct ext cont =
-  withExtEvidence' ext $
+withSubscopeDistinct :: forall n l b a.
+                        (Distinct l, ProvesExt b)
+                     => b n l -> ((Ext n l, Distinct n) => a) -> a
+withSubscopeDistinct b cont =
+  withExtEvidence' (toExtEvidence b) $
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence n) $
       cont
 
