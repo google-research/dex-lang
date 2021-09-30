@@ -22,7 +22,7 @@ end
 Represents a tagged union over types `A`, `B` etc.
 Must have a first field `tag::UInt64`
 and a second field `payload` which must be some isbits type that can hold the largest 
-element of the union, which you can (e.g.) declare as a custom `primative`.
+element of the union, which you can (e.g.) declare as a custom `primitive`.
 This is required as Julia doens't directly support Unions in the mapping to-from C
 so we store the data as arbitary bits then force it to be reinterpretted based on the tag
 """
