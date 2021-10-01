@@ -428,7 +428,7 @@ withCompileTime m = do
   return $ Result (outs ++ [TotalTime t]) err
 
 checkPassS :: (MonadPasses m, Pretty (e n), S.CheckableE e) => PassName -> e n -> m n ()
-checkPassS name x = undefined
+checkPassS name x = return ()
   -- (S.Distinct, topState) <- getTopState
   -- let scope = topBindings $ topStateD topState
   -- logPass name x

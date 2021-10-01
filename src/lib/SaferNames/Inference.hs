@@ -59,10 +59,6 @@ isTopDecl decl = case decl of
 
 class (MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m, EnvReader Name m)
       => Inferer (m::MonadKind2) where
-  extendSolverState :: SubstE Name e
-                    => Abs (Nest Binder) (PairE SolverSubst e) o
-                    -> m i o (e o)
-  -- TODO: these three can all be implemented in terms of `extendSolverState`
   extendSolverSubst :: AtomName o -> Type o -> m i o ()
   freshInferenceName :: Kind o -> m i o (AtomName o)
   freshSkolemName    :: Kind o -> m i o (AtomName o)
@@ -96,17 +92,22 @@ newtype BuilderEmissions n l =
   deriving (InjectableB, SubstB Name, ProvesExt, BindsNames, BindsBindings)
 
 instance GenericB InfEmission where
-  type RepB InfEmission = Decl
-                `EitherB` BindingDecl
-                `EitherB` Binder
-                `EitherB` Binder
-  toB = undefined
-  fromB = undefined
+  type RepB InfEmission = EitherB4 Decl BindingsFrag Binder Binder
+  fromB emission = case emission of
+    InfDecl decl       -> CaseB0 decl
+    InfTopBinding frag -> CaseB1 frag
+    InfInferenceName b -> CaseB2 b
+    InfSkolemName    b -> CaseB3 b
+  toB emissionRep = case emissionRep of
+    CaseB0 decl -> InfDecl decl
+    CaseB1 frag -> InfTopBinding frag
+    CaseB2 b    -> InfInferenceName b
+    CaseB3 b    -> InfSkolemName    b
 
 instance GenericB InfOutFrag where
   type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
-  toB = undefined
-  fromB = undefined
+  fromB (InfOutFrag emissions solverSubst) = PairB emissions (UnitB :> solverSubst)
+  toB (PairB emissions (UnitB :> solverSubst)) = InfOutFrag emissions solverSubst
 
 instance ProvesExt   InfEmission
 instance SubstB Name InfEmission
@@ -122,20 +123,22 @@ instance BindsNames  InfOutFrag
 instance InjectableB InfOutFrag
 
 instance OutFrag InfOutFrag where
-  emptyOutFrag = InfOutFrag Empty mempty
-  catOutFrags (InfOutFrag em ss) (InfOutFrag em' ss') =
+  emptyOutFrag = InfOutFrag Empty emptySolverSubst
+  catOutFrags scope (InfOutFrag em ss) (InfOutFrag em' ss') =
     withExtEvidence em' $
-      InfOutFrag (catOutFrags em em') (inject ss <> ss')
+      InfOutFrag (em >>> em') (catSolverSubsts scope (inject ss) ss')
 
 instance HasScope InfOutMap where
   toScope (InfOutMap bindings _) = toScope bindings
 
 instance OutMap InfOutMap InfOutFrag where
-  emptyOutMap  = InfOutMap emptyOutMap mempty
+  emptyOutMap  = InfOutMap emptyOutMap emptySolverSubst
   extendOutMap (InfOutMap bindings solverSubst) (InfOutFrag em solverSubst') =
-    withExtEvidence em $
-    InfOutMap (extendOutMap bindings (boundBindings em))
-              (inject solverSubst <> solverSubst')
+    withExtEvidence em do
+      let finalBindings = extendOutMap bindings (boundBindings em)
+      let finalSolverSubst = catSolverSubsts (toScope finalBindings)
+                               (inject solverSubst) solverSubst'
+      InfOutMap finalBindings finalSolverSubst
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
   { runInfererM' :: EnvReaderT Name (InplaceT InfOutMap InfOutFrag FallibleM) i o a }
@@ -148,7 +151,7 @@ runInfererM :: Distinct n
             -> Except (e n)
 runInfererM bindings cont = do
   Abs (InfOutFrag Empty _) result <-
-    runFallibleM $ runInplaceT (InfOutMap bindings mempty) $
+    runFallibleM $ runInplaceT (InfOutMap bindings emptySolverSubst) $
       runEnvReaderT idEnv $ runInfererM' $ cont
   return result
 
@@ -159,11 +162,11 @@ instance Inferer InfererM where
 
   freshInferenceName kind = InfererM $
     emitInplace "?" kind \b kind' ->
-      InfOutFrag (Nest (InfInferenceName (b:>kind')) Empty) mempty
+      InfOutFrag (Nest (InfInferenceName (b:>kind')) Empty) emptySolverSubst
 
   freshSkolemName kind = InfererM $
     emitInplace "?" kind \b kind' ->
-      InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) mempty
+      InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) emptySolverSubst
 
   zonk e = InfererM $ withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
     applySolverSubst (toScope bindings) solverSubst e'
@@ -175,39 +178,56 @@ instance Builder (InfererM i) where
     InfererM $
       emitInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
         let decl = Let ann (b:>ty') expr'
-        InfOutFrag (Nest (InfDecl decl) Empty) mempty
+        InfOutFrag (Nest (InfDecl decl) Empty) emptySolverSubst
 
   emitBinding hint binding = InfererM do
     emitInplace hint binding \b binding' -> do
       let frag = RecEnvFrag $ b @> inject binding'
-      InfOutFrag (Nest (InfTopBinding frag) Empty) mempty
+      InfOutFrag (Nest (InfTopBinding frag) Empty) emptySolverSubst
 
-  buildScoped cont = do
-    ab <- InfererM $ scopedInplace do
+  buildScoped cont = InfererM do
+    ab <- scopedInplace do
       evidence <- fabricateEmitsEvidenceM
       withEmitsEvidence evidence do
         runInfererM' cont
-    hoistInfState ab
+    doInplaceExcept ab \infOutMap (Abs infOutFrag result) ->
+      hoistInfState (toScope infOutMap) (Abs infOutFrag result)
 
   buildScopedTop _ = undefined
   getAllowedEffects = undefined
   withAllowedEffects = undefined
 
+
+type InferenceNameBinders = Nest Binder
+
 data HoistedSolverState e n where
   HoistedSolverState
     :: (Distinct l2, Distinct l1, Distinct n)
-    => Nest Binder n l1   -- inference names
-    ->   SolverSubst l1   -- new solver subst
-    ->   Nest Decl l1 l2  -- emitted decls
-    ->     e l2           -- result (usually an Atom)
+    => InferenceNameBinders n l1
+    ->   SolverSubst l1
+    ->   Nest Decl l1 l2
+    ->     e l2
     -> HoistedSolverState e n
-
-instance InjectableE (HoistedSolverState e) where
-  injectionProofE = undefined
 
 instance HoistableE (HoistedSolverState e) where
   withFreeVarsE = undefined
 
+-- When we finish building a block of decls we need to hoist the local solver
+-- information into the outer scope. If the local solver state mentions local
+-- variables which are about to go out of scope then we emit a "escaped scope"
+-- error. To avoid false positives, we clean up as much dead (i.e. solved)
+-- solver state as possible.
+hoistInfState :: (SubstE Name e, Distinct n)
+              => Scope n -> Abs InfOutFrag e n
+              -> Except (DistinctAbs InfOutFrag (Abs (Nest Decl) e) n)
+hoistInfState scope ab = do
+  -- TODO: it's a shame to have to do this renaming pass to prove distinctness
+  -- because we know it's already distinct in the way that matters. Can we
+  -- have scopedInplace preserve distinctness a bit better?
+  DistinctAbs (InfOutFrag emissions subst) result <- return $ refreshAbs scope ab
+  HoistedSolverState infNames subst decls result' <- hoistInfStateRec scope emissions subst result
+  return $ DistinctAbs (InfOutFrag (infNamesToEmissions infNames) subst)
+                       (Abs decls result')
 hoistInfStateRec :: (Fallible m, Distinct n, Distinct l)
                  => Scope n
                  -> Nest InfEmission n l -> SolverSubst l -> e l
@@ -235,27 +255,15 @@ hoistInfStateRec scope emissions@(Nest infEmission rest) subst result = do
         case exchangeBs $ PairB decl (PairB infVars (UnitB :> subst')) of
           -- TODO: better error message
           Nothing -> throw TypeErr "Leaked local variable"
-          Just (PairB (PairB infVars' (UnitB :> subst'')) (Let b ann expr)) -> do
-            let expr' = applySolverSubst (scope `extendOutMap` toScopeFrag infVars') subst'' expr
-            let decl' = Let b ann expr'
-            return $ HoistedSolverState infVars' subst'' (Nest decl' decls) result
+          Just (PairB (PairB infVars' (UnitB :> subst'')) (Let ann b expr)) -> do
+            withSubscopeDistinct b $ do
+              let expr' = applySolverSubst (scope `extendOutMap` toScopeFrag infVars') subst'' expr
+              let decl' = Let ann b expr'
+              return $ HoistedSolverState infVars' subst'' (Nest decl' decls) result
 
--- When we finish building a block of decls we need to hoist the local solver
--- information into the outer scope. If the local solver state mentions local
--- variables which are about to go out of scope then we emit a "escaped scope"
--- error. To avoid false positives, we clean up as much dead (i.e. solved)
--- solver state as possible.
-hoistInfState :: (Inferer m, SubstE Name e)
-              => Abs InfOutFrag e o -> m i o (Abs (Nest Decl) e o)
-hoistInfState ab = do
-  WithScope scope ab' <- addScope ab
-  -- TODO: it's a shame to have to do this renaming pass to prove distinctness
-  -- because we know it's already distinct in the way that matters. Can we
-  -- have scopedInplace preserve distinctness a bit better?
-  DistinctAbs (InfOutFrag emissions subst) e <- return $ refreshAbs scope ab'
-  hoisted <- hoistInfStateRec scope emissions subst e
-  HoistedSolverState infVars subst' decls result <- injectM hoisted
-  extendSolverState $ Abs infVars (PairE subst' (Abs decls result))
+infNamesToEmissions :: InferenceNameBinders n l -> Nest InfEmission n l
+infNamesToEmissions Empty = Empty
+infNamesToEmissions (Nest b rest) = Nest (InfInferenceName b) $ infNamesToEmissions rest
 
 instance BindingsReader (InfererM i) where
   addBindings e = InfererM do
@@ -1017,8 +1025,15 @@ openEffectRow effRow = return effRow
 
 newtype SolverSubst n = SolverSubst (M.Map (AtomName n) (Type n))
 
+emptySolverSubst :: SolverSubst n
+emptySolverSubst = SolverSubst mempty
+
 singletonSolverSubst :: AtomName n -> Type n -> SolverSubst n
 singletonSolverSubst v ty = SolverSubst $ M.singleton v ty
+
+catSolverSubsts :: Distinct n => Scope n -> SolverSubst n -> SolverSubst n -> SolverSubst n
+catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) = SolverSubst $ s1' <> s2
+  where s1' = fmap (applySolverSubst scope (SolverSubst s2)) s1
 
 -- TODO: put this pattern and friends in the Name library? Don't really want to
 -- have to think about `eqNameColorRep` just to implement a partial map.
@@ -1043,21 +1058,23 @@ deleteFromSubst (SolverSubst m) v
 alreadySolved :: SolverSubst n -> AtomName n -> Bool
 alreadySolved (SolverSubst m) v = M.member v m
 
+
+instance GenericE SolverSubst where
+  -- XXX: this is a bit sketchy because it's not actually bijective...
+  type RepE SolverSubst = ListE (PairE AtomName Type)
+  fromE (SolverSubst m) = ListE $ map (uncurry PairE) $ M.toList m
+  toE (ListE pairs) = SolverSubst $ M.fromList $ map fromPairE pairs
+
 instance InjectableE SolverSubst where
-  injectionProofE = undefined
-
 instance SubstE Name SolverSubst where
-  substE = undefined
+instance HoistableE SolverSubst
 
-instance HoistableE SolverSubst where
-  withFreeVarsE = undefined
+-- instance Monoid (SolverSubst n) where
+--   mempty = SolverSubst mempty
+--   mappend = (<>)
 
-instance Monoid (SolverSubst n) where
-  mempty = SolverSubst mempty
-  mappend = (<>)
-
-instance Semigroup (SolverSubst n) where
-  (<>) = undefined
+-- instance Semigroup (SolverSubst n) where
+--   (<>) = undefined
 
 constrainEq :: Inferer m => Type o -> Type o -> m i o ()
 constrainEq t1 t2 = do

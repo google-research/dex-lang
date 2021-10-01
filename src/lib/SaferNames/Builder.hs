@@ -31,6 +31,7 @@ module SaferNames.Builder (
   withEmitsEvidence, fabricateEmitsEvidenceM,
   ) where
 
+import Control.Category
 import Prelude hiding ((.), id)
 import Control.Monad
 import Data.Foldable (toList)
@@ -92,12 +93,12 @@ instance OutFrag BuilderEmissions where
   -- We merge/inject bindings fragments here rather than later because later we
   -- won't have access to `Distinct l` later. We could still do a renaming subst
   -- would get expensive with deeply nested scopes.
-  catOutFrags (BuilderEmissions (Nest (RightB frag) Empty))
-              (BuilderEmissions (Nest (RightB frag') rest)) =
+  catOutFrags _ (BuilderEmissions (Nest (RightB frag) Empty))
+                    (BuilderEmissions (Nest (RightB frag') rest)) =
     withSubscopeDistinct (toExtEvidence rest) $
-      BuilderEmissions $ Nest (RightB (catOutFrags frag frag')) rest
-  catOutFrags (BuilderEmissions nest) (BuilderEmissions nest') =
-    BuilderEmissions $ catOutFrags nest nest'
+      BuilderEmissions $ Nest (RightB (catRecEnvFrags frag frag')) rest
+  catOutFrags _ (BuilderEmissions nest) (BuilderEmissions nest') =
+    BuilderEmissions $ nest >>> nest'
 
 instance HasScope BuilderBindings where
   toScope = undefined

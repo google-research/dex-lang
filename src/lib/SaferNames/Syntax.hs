@@ -1435,7 +1435,7 @@ instance (BindsBindings b1, BindsBindings b2)
     let bindings2 = boundBindings b2
     let ext = toExtEvidence bindings2
     withSubscopeDistinct ext do
-      boundBindings b1 `catOutFrags` bindings2
+      boundBindings b1 `catRecEnvFrags` bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
   boundBindings Empty = emptyOutFrag
@@ -1468,10 +1468,11 @@ instance InjectableE UVar where
   injectionProofE = undefined
 
 instance HasNameHint (UPat n l) where
-  getNameHint = undefined
+  getNameHint (WithSrcB _ (UPatBinder b)) = getNameHint b
+  getNameHint _ = "pat"
 
 instance HasNameHint (UBinder c n l) where
-  getNameHint = undefined
+  getNameHint b = fromString $ pprint b
 
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
