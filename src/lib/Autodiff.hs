@@ -417,7 +417,7 @@ tangentFunAsLambda m = do
   DerivWrt activeVars effs <- ask
   let hs = map (Bind . (:>TyKind) . effectRegion) effs
   liftM (PairVal ans) $ lift $ do
-    buildNestedLam PureArrow hs \hVals -> do
+    buildNaryLam PureArrow (toNest hs) \hVals -> do
       let hVarNames = map (\(Var (v:>_)) -> v) hVals
       -- TODO: handle exception effect too
       let effs' = zipWith (\(RWSEffect rws _) v -> RWSEffect rws v) effs hVarNames
@@ -425,7 +425,7 @@ tangentFunAsLambda m = do
       let regionMap = newEnv (map ((:>()) . effectRegion) effs) hVals
       -- TODO: Only bind tangents for free variables?
       let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
-      buildNestedLam PureArrow activeVarBinders \activeVarArgs ->
+      buildNaryLam PureArrow (toNest activeVarBinders) \activeVarArgs ->
         buildLam (Ignore UnitTy) (PlainArrow $ EffectRow (S.fromList effs') Nothing) \_ ->
           runReaderT tanFun $ TangentEnv
                 (newEnv (envNames activeVars) activeVarArgs) hVarNames

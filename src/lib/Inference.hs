@@ -367,8 +367,19 @@ inferUDecl (UInterface paramBs superclasses methodTys className methodNames) = d
                 paramBs superclasses methodTys
   className' <- withNameHint className $ emitClassDef classDef
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
-  methodNames' <- forM (enumerate (toList methodNames)) \(i, name) ->
-                    withNameHint name $ emitMethodType className' i
+  methodNames' <- forM (enumerate $ zip (toList methodNames) methodTys) \(i, (name, ty)) -> do
+    paramVs <- forM (toList paramBs) \(UAnnBinder v _) -> case v of
+      UBind n -> return $ UInternalVar n
+      _       -> throw CompilerErr "Unexpected interface binder. Please open a bug report!"
+    explicits <- case uMethodExplicitBs ty of
+      []               -> return $ replicate (length paramBs) False
+      e | e == paramVs -> return $ replicate (length paramBs) True
+      e -> case unexpected of
+        []    -> throw CompilerErr "Permuted or incomplete explicit type binders are not supported yet."
+        (h:_) -> throw TypeErr $ "Explicit type binder `" ++ pprint h ++ "` in method " ++
+                                 pprint name ++ " is not a type parameter of its interface"
+        where unexpected = filter (not . (`elem` paramVs)) e
+    withNameHint name $ emitMethodType explicits className' i
   return $  className @> Rename className'
          <> newEnv methodNames (map Rename methodNames')
 inferUDecl (UInstance argBinders ~(UInternalVar className) params methods maybeName) = do
@@ -391,11 +402,11 @@ inferDataDef (UDataDef (tyConName, paramBs) dataCons) =
     return $ DataDef tyConName paramBs' dataCons'
 
 inferInterfaceDataDef :: SourceName -> [SourceName] -> Nest UAnnBinder
-                      -> [UType] -> [UType] -> UInferM ClassDef
+                      -> [UType] -> [UMethodType] -> UInferM ClassDef
 inferInterfaceDataDef className methodNames paramBs superclasses methods = do
   dictDef <- withNestedBinders paramBs \paramBs' -> do
     superclasses' <- mapM checkUType superclasses
-    methods'     <- mapM checkUType methods
+    methods'      <- mapM checkUType $ uMethodType <$> methods
     let dictContents = PairTy (ProdTy superclasses') (ProdTy methods')
     return $ DataDef className paramBs'
                [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]

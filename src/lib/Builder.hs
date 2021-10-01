@@ -18,7 +18,7 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 app,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
-                fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
+                fpow, flog, fLitLike, recGetHead, buildNaryLam,
                 select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
                 fromPair, getFst, getSnd, getProj, getProjRef,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
@@ -48,6 +48,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
+import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
@@ -261,34 +262,33 @@ emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
   emitBinding $ SuperclassName dataDef idx getter
 
-emitMethodType :: MonadBuilder m => ClassDefName -> Int -> m Name
-emitMethodType classDef idx = do
-  getter <- makeMethodGetter classDef idx
+emitMethodType :: MonadBuilder m => [Bool] -> ClassDefName -> Int -> m Name
+emitMethodType explicit classDef idx = do
+  getter <- makeMethodGetter explicit classDef idx
   emitBinding $ MethodName classDef idx getter
 
-makeMethodGetter :: MonadBuilder m => ClassDefName -> Int -> m Atom
-makeMethodGetter classDefName methodIdx = do
+makeMethodGetter :: MonadBuilder m => [Bool] -> ClassDefName -> Int -> m Atom
+makeMethodGetter explicit classDefName methodIdx = do
   ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
-  buildImplicitNaryLam paramBs \params -> do
+  let arrows = explicit <&> \case True -> PureArrow; False -> ImplicitArrow
+  let bs = toNest $ zip (toList paramBs) arrows
+  buildNestedLam bs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [1, 0] dict
 
 makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
 makeSuperclassGetter classDefName methodIdx = do
   ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
-  buildImplicitNaryLam paramBs \params -> do
+  buildNaryLam ImplicitArrow paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [0, 0] dict
-
-buildImplicitNaryLam :: MonadBuilder m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
-buildImplicitNaryLam bs body = buildNaryLam ImplicitArrow bs body
 
 buildNaryLam :: MonadBuilder m => Arrow -> (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
 buildNaryLam _   Empty       body = body []
 buildNaryLam arr (Nest b bs) body =
   buildLam b arr \x -> do
     bs' <- substBuilder (b@>SubstVal x) bs
-    buildImplicitNaryLam bs' \xs -> body $ x:xs
+    buildNaryLam arr bs' \xs -> body $ x:xs
 
 recGetHead :: Label -> Atom -> Atom
 recGetHead l x = do
@@ -544,10 +544,10 @@ buildNestedFor specs body = go specs []
     go []        indices = body $ reverse indices
     go ((d,b):t) indices = buildFor d b $ \i -> go t (i:indices)
 
-buildNestedLam :: MonadBuilder m => Arrow -> [Binder] -> ([Atom] -> m Atom) -> m Atom
-buildNestedLam _ [] f = f []
-buildNestedLam arr (b:bs) f =
-  buildLam b arr \x -> buildNestedLam arr bs \xs -> f (x:xs)
+buildNestedLam :: MonadBuilder m => Nest (Binder, Arrow) -> ([Atom] -> m Atom) -> m Atom
+buildNestedLam Empty f = f []
+buildNestedLam (Nest (b, arr) t) f =
+  buildLam b arr \x -> buildNestedLam t \xs -> f (x:xs)
 
 tabGet :: MonadBuilder m => Atom -> Atom -> m Atom
 tabGet tab idx = emit $ App tab idx
