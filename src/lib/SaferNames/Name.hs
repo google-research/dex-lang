@@ -24,7 +24,8 @@ module SaferNames.Name (
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  Inplace (..), InplaceT, emitInplace, doInplaceExcept, runInplaceT, withInplaceOutEnv,
+  Inplace (..), InplaceT, emitInplace, doInplaceExcept,
+  scopedInplaceExcept, runInplaceT, withInplaceOutEnv,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
@@ -46,7 +47,7 @@ module SaferNames.Name (
   withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>),
   envFragAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..),
-  NameGen (..), fmapG, NameGenT (..), traverseEnvFrag, forEachNestItem,
+  NameGen (..), fmapG, NameGenT (..), traverseEnvFrag, fmapNest, forEachNestItem,
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..), ColorsEqual (..),
@@ -633,6 +634,12 @@ fromEnvPairs Empty = emptyInFrag
 fromEnvPairs (Nest (EnvPair b v) rest) =
   singletonEnv b v `catInFrags`fromEnvPairs rest
 
+fmapNest :: (forall ii ii'. b ii ii' -> b' ii ii')
+         -> Nest b  i i'
+         -> Nest b' i i'
+fmapNest _ Empty = Empty
+fmapNest f (Nest b rest) = Nest (f b) $ fmapNest f rest
+
 forEachNestItem :: Monad m
                 => Nest b i i'
                 -> (forall ii ii'. b ii ii' -> m (b' ii ii'))
@@ -790,16 +797,24 @@ class ( InjectableV v
 
 alphaEq :: (AlphaEqE e, ScopeReader m)
         => e n -> e n -> m n Bool
-alphaEq = undefined
+alphaEq e1 e2 = do
+  WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
+  return $ case checkAlphaEqPure scope e1' e2' of
+    Success _ -> True
+    Failure _ -> False
 
 checkAlphaEq :: (AlphaEqE e, Fallible1 m, ScopeReader m)
              => e n -> e n -> m n ()
 checkAlphaEq e1 e2 = do
   WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
-  liftExcept $
-    runScopeReaderT scope $
-      flip runReaderT (emptyInMap, emptyInMap) $ runZipEnvReaderT $
-        withEmptyZipEnv $ alphaEqE e1' e2'
+  liftExcept $ checkAlphaEqPure scope e1' e2'
+
+checkAlphaEqPure :: (AlphaEqE e, Distinct n)
+                 => Scope n -> e n -> e n -> Except ()
+checkAlphaEqPure scope e1 e2 =
+  runScopeReaderT scope $
+    flip runReaderT (emptyInMap, emptyInMap) $ runZipEnvReaderT $
+      withEmptyZipEnv $ alphaEqE e1 e2
 
 instance AlphaEqV Name
 instance AlphaEqE (Name c) where
@@ -1040,9 +1055,10 @@ class (ScopeReader m, OutMap bindings decls, BindsNames decls, InjectableB decls
     -> (forall l. Distinct l => bindings l -> e l -> DistinctAbs decls e' l)
     -> m n (e' n)
   scopedInplace
-    :: InjectableE e
-    => (forall l. (Distinct l, Ext n l) => m l (e l))
-    -> m n (Abs decls e n)
+    :: (InjectableE e, InjectableE e')
+    => (forall l. Distinct l => bindings l -> DistinctAbs decls e l -> e' l)
+    -> (forall l. (Distinct l, Ext n l) => m l (e l))
+    -> m n (e' n)
 
 instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
          => Inplace (InplaceT bindings decls m) bindings decls where
@@ -1050,12 +1066,12 @@ instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
     DistinctAbs decls e' <- return $ cont bindings e
     return (unsafeCoerceE e', unsafeCoerceB decls)
 
-  -- It's a shame that we have to implement this unsafely. The problem is that
-  -- the `addBindings` style of giving partial access to bindings-like things
-  -- doesn't let you offer the more powerful `forall l. Ext n l => ..` style of API.
-  scopedInplace cont = UnsafeMakeInplaceT \bindings -> do
+  scopedInplace handleResult cont = UnsafeMakeInplaceT \bindings -> do
     (result, decls) <- unsafeRunInplaceT cont bindings
-    return (Abs (unsafeCoerceB decls) (unsafeCoerceE result), emptyOutFrag)
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
+      let bindings' = bindings `extendOutMap` unsafeCoerceB decls
+      let result' = handleResult bindings' $ DistinctAbs decls $ unsafeCoerceE result
+      return (unsafeCoerceE result', emptyOutFrag)
 
 runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
             => bindings n
@@ -1092,6 +1108,13 @@ doInplaceExcept eIn cont = do
   case result of
     LeftE (LiftE errs) -> throwErrs errs
     RightE ans -> return ans
+
+scopedInplaceExcept
+  :: (Inplace m bindings decls, Fallible1 m, InjectableE e, InjectableE e')
+  => (forall l. Distinct l => bindings l -> DistinctAbs decls e l -> Except (e' l))
+  -> (forall l. (Distinct l, Ext n l) => m l (e l))
+  -> m n (e' n)
+scopedInplaceExcept _ _ = undefined
 
 withInplaceOutEnv
   :: (Inplace m bindings decls, InjectableE e, InjectableE e')
@@ -1147,8 +1170,8 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, C
 instance (Inplace m bindings decls, InjectableV v)
          => Inplace (EnvReaderT v m i) bindings decls where
   doInplace e cont = EnvReaderT $ lift $ doInplace e cont
-  scopedInplace cont = EnvReaderT $ ReaderT \env ->
-    scopedInplace do
+  scopedInplace processResult cont = EnvReaderT $ ReaderT \env ->
+    scopedInplace processResult do
       env' <- injectM env
       runReaderT (runEnvReaderT' cont) env'
 

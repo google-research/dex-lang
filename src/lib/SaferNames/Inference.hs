@@ -186,13 +186,10 @@ instance Builder (InfererM i) where
       InfOutFrag (Nest (InfTopBinding frag) Empty) emptySolverSubst
 
   buildScoped cont = InfererM do
-    ab <- scopedInplace do
+    scopedInplaceExcept (\bindings ab -> hoistInfState (toScope bindings) ab) do
       evidence <- fabricateEmitsEvidenceM
       withEmitsEvidence evidence do
         runInfererM' cont
-    doInplaceExcept ab \infOutMap (Abs infOutFrag result) ->
-      hoistInfState (toScope infOutMap) (Abs infOutFrag result)
-
   buildScopedTop _ = undefined
   getAllowedEffects = undefined
   withAllowedEffects = undefined
@@ -218,13 +215,9 @@ instance HoistableE (HoistedSolverState e) where
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
 hoistInfState :: (SubstE Name e, Distinct n)
-              => Scope n -> Abs InfOutFrag e n
+              => Scope n -> DistinctAbs InfOutFrag e n
               -> Except (DistinctAbs InfOutFrag (Abs (Nest Decl) e) n)
-hoistInfState scope ab = do
-  -- TODO: it's a shame to have to do this renaming pass to prove distinctness
-  -- because we know it's already distinct in the way that matters. Can we
-  -- have scopedInplace preserve distinctness a bit better?
-  DistinctAbs (InfOutFrag emissions subst) result <- return $ refreshAbs scope ab
+hoistInfState scope (DistinctAbs (InfOutFrag emissions subst) result) = do
   HoistedSolverState infNames subst decls result' <- hoistInfStateRec scope emissions subst result
   return $ DistinctAbs (InfOutFrag (infNamesToEmissions infNames) subst)
                        (Abs decls result')
@@ -1068,13 +1061,6 @@ instance GenericE SolverSubst where
 instance InjectableE SolverSubst where
 instance SubstE Name SolverSubst where
 instance HoistableE SolverSubst
-
--- instance Monoid (SolverSubst n) where
---   mempty = SolverSubst mempty
---   mappend = (<>)
-
--- instance Semigroup (SolverSubst n) where
---   (<>) = undefined
 
 constrainEq :: Inferer m => Type o -> Type o -> m i o ()
 constrainEq t1 t2 = do

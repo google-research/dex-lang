@@ -83,22 +83,11 @@ emitAtomToName x = emit (Atom x)
 -- newtype just for the different OutMap instance
 newtype BuilderBindings n = BuilderBindings (Bindings n)
 -- newtype because we have a slightly different OutFrag instance
-newtype BuilderEmissions n l =
-  BuilderEmissions (Nest (EitherB Decl BindingsFrag) n l)
-  deriving (InjectableB, SubstB Name, ProvesExt, BindsNames, BindsBindings)
-instance OutFrag BuilderEmissions where
-  emptyOutFrag = BuilderEmissions Empty
-  -- TODO: this is a hack. It would be better to somehow avoid losing the
-  -- `Distinct l` constraint. It's just hard to make it safe.
-  -- We merge/inject bindings fragments here rather than later because later we
-  -- won't have access to `Distinct l` later. We could still do a renaming subst
-  -- would get expensive with deeply nested scopes.
-  catOutFrags _ (BuilderEmissions (Nest (RightB frag) Empty))
-                    (BuilderEmissions (Nest (RightB frag') rest)) =
-    withSubscopeDistinct (toExtEvidence rest) $
-      BuilderEmissions $ Nest (RightB (catRecEnvFrags frag frag')) rest
-  catOutFrags _ (BuilderEmissions nest) (BuilderEmissions nest') =
-    BuilderEmissions $ nest >>> nest'
+type BuilderEmissions = Nest BuilderEmission
+
+data BuilderEmission n l =
+   BuilderEmitDecl (Decl n l)
+ | BuilderEmitBindingsFrag (BindingsFrag n l)
 
 instance HasScope BuilderBindings where
   toScope = undefined
@@ -107,6 +96,17 @@ instance OutMap BuilderBindings BuilderEmissions where
   emptyOutMap = BuilderBindings emptyOutMap
   extendOutMap (BuilderBindings bindings) emissions =
     BuilderBindings $ bindings `extendOutMap` boundBindings emissions
+
+instance GenericB BuilderEmission where
+  type RepB BuilderEmission = EitherB Decl BindingsFrag
+  toB = undefined
+  fromB = undefined
+
+instance ProvesExt     BuilderEmission
+instance BindsNames    BuilderEmission
+instance BindsBindings BuilderEmission
+instance InjectableB   BuilderEmission
+instance HoistableB    BuilderEmission
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT BuilderBindings BuilderEmissions m n a }
@@ -120,7 +120,7 @@ runBuilderT
 runBuilderT bindings cont = do
   Abs decls result <- runInplaceT (BuilderBindings bindings) $ runBuilderT' cont
   case decls of
-    BuilderEmissions Empty -> return result
+    Empty -> return result
     _ -> error "shouldn't have produced any decls"
 
 instance MonadFail m => Builder (BuilderT m) where
@@ -129,42 +129,43 @@ instance MonadFail m => Builder (BuilderT m) where
     BuilderT $
       emitInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
         let decl = Let ann (b:>ty') expr'
-        BuilderEmissions $ Nest (LeftB decl) Empty
+        Nest (BuilderEmitDecl decl) Empty
 
   emitBinding hint binding = BuilderT do
     emitInplace hint binding \b binding' -> do
       let frag = RecEnvFrag $ b @> inject binding'
-      BuilderEmissions $ Nest (RightB frag) Empty
+      Nest (BuilderEmitBindingsFrag frag) Empty
 
   buildScoped cont = BuilderT do
-    Abs emissions result <- scopedInplace do
+    scopedInplace (const fromBuilderDecls) do
       evidence <- fabricateEmitsEvidenceM
       withEmitsEvidence evidence $ runBuilderT' cont
-    Just decls <- return $ fromBuilderDecls emissions
-    return (Abs decls result)
 
   buildScopedTop cont = BuilderT do
-    Abs emissions result <- scopedInplace do
+    scopedInplace (const fromBuilderBindings) do
       evidence <- fabricateEmitsTopEvidenceM
       withEmitsTopEvidence evidence $ runBuilderT' cont
-    Just decls <- return $ fromBuilderBindings emissions
-    return (Abs decls result)
 
   getAllowedEffects = undefined
   withAllowedEffects _ _ = undefined
 
-fromBuilderDecls :: BuilderEmissions n l -> Maybe (Nest Decl n l)
-fromBuilderDecls (BuilderEmissions nest) = case nest of
-  Nest builderDecl rest -> case builderDecl of
-    LeftB decl -> Nest decl <$> fromBuilderDecls (BuilderEmissions rest)
-    RightB _ -> Nothing
-  Empty -> return Empty
+fromBuilderDecls :: DistinctAbs BuilderEmissions e n -> Abs (Nest Decl) e n
+fromBuilderDecls (DistinctAbs emissions result) =
+  Abs (fromJust $ forEachNestItem emissions fromBuilderDecl) result
+  where
+    fromBuilderDecl :: BuilderEmission n l -> Maybe (Decl n l)
+    fromBuilderDecl (BuilderEmitDecl decl) = return decl
+    fromBuilderDecl _ = Nothing
 
-fromBuilderBindings :: BuilderEmissions n l -> Maybe (BindingsFrag n l)
--- Expect a singleton nest, because of the special case we handle in
--- the OutFrag instance for BuilderEmissions
-fromBuilderBindings (BuilderEmissions (Nest (RightB frag) Empty)) = return frag
-fromBuilderBindings _ = Nothing
+fromBuilderBindings :: DistinctAbs BuilderEmissions e n -> Abs BindingsFrag e n
+fromBuilderBindings (DistinctAbs emissions result) =
+  Abs (fromBuilderBindings' emissions) result
+
+fromBuilderBindings' :: Distinct l => BuilderEmissions n l -> BindingsFrag n l
+fromBuilderBindings' Empty = emptyOutFrag
+fromBuilderBindings' (Nest emission rest) = case emission of
+  BuilderEmitDecl _ -> error "Expected bindings fragment emission"
+  BuilderEmitBindingsFrag frag -> frag `catRecEnvFrags` fromBuilderBindings' rest
 
 deriving instance MonadFail m => MonadFail (BuilderT m n)
 deriving instance MonadFail m => ScopeReader (BuilderT m)
