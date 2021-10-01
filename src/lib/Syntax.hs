@@ -42,7 +42,7 @@ module Syntax (
     monMapSingle, monMapLookup, Direction (..), Limit (..),
     SourceName, SourceMap (..), UExpr, UExpr' (..), UType, UPatAnn (..),
     UAnnBinder (..), UVar (..), UBinder (..), UMethodDef (..),
-    UMethodTypeDef, UPatAnnArrow (..), UVars,
+    UMethodType (..), UPatAnnArrow (..), UVars,
     UPat, UPat' (..), SourceUModule (..), SourceNameDef (..), sourceNameDefName,
     UModule (..), UDecl (..), UDataDef (..), UArrow, arrowEff,
     UEffect, UEffectRow, UEffArrow,
@@ -283,7 +283,7 @@ data UDecl =
  | UInterface
      (Nest UAnnBinder)  -- parameter binders
         [UType]         -- superclasses
-        [UType]         -- method types
+        [UMethodType]   -- method types
      UBinder            -- class name
        (Nest UBinder)   -- method names
  | UInstance
@@ -299,7 +299,8 @@ type UEffect    = EffectP    UVar
 type UEffectRow = EffectRowP UVar
 type UEffArrow = ArrowP UEffectRow
 
-type UMethodTypeDef = (UBinder, UType)
+data UMethodType = UMethodType { uMethodExplicitBs :: [UVar], uMethodType :: UType }
+                   deriving (Show, Generic)
 data UMethodDef = UMethodDef UVar UExpr deriving (Show, Generic)
 
 data UPatAnn      = UPatAnn      UPat    (Maybe UType)  deriving (Show, Generic)
@@ -823,7 +824,7 @@ instance HasUVars UDecl where
   freeUVars (UDataDefDecl dataDef bTyCon bDataCons) =
     freeUVars dataDef <> freeUVars (Abs bTyCon bDataCons)
   freeUVars (UInterface paramBs superclasses methods _ _) =
-    freeUVars $ Abs paramBs (superclasses, methods)
+    freeUVars $ Abs paramBs (superclasses, uMethodType <$> methods)
   freeUVars (UInstance bs className params methods _) =
     freeUVars $ Abs bs ((className, params), methods)
 

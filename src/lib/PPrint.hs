@@ -684,11 +684,13 @@ instance Pretty UDecl where
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
   pretty (UDataDefDecl (UDataDef bParams dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p bParams
-       <+> "where" <> nest 2 (hardline <> prettyLines (zip (toList bDataCons) dataCons))
+      <+> "where" <> nest 2 (hardline <> prettyLines (zip (toList bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
-     let methods = [UAnnBinder b ty | (b, ty) <- zip (toList methodNames) methodTys]
-     in "interface" <+> p params <+> p superclasses <+> p interfaceName
-         <> hardline <> prettyLines methods
+    "interface" <+> p params <+> p superclasses <+> p interfaceName
+      <> hardline <> foldMap (<>hardline) methods
+    where
+      methods = [hsep (p <$> e) <+> p (UAnnBinder b ty) |
+                 (b, UMethodType e ty) <- zip (toList methodNames) methodTys]
   pretty (UInstance bs className params methods Nothing) =
     "instance" <+> p bs <+> p className <+> p params <+> hardline <> prettyLines methods
   pretty (UInstance bs className params methods (Just v)) =

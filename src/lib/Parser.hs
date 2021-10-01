@@ -239,8 +239,9 @@ interfaceDef = do
   (tyConName, tyConParams) <- tyConDef
   (methodNames, methodTys) <- unzip <$> onePerLine do
     v <- anyName
+    explicit <- many anyName
     ty <- annot uType
-    return (fromString v, ty)
+    return (fromString v, UMethodType (USourceVar <$> explicit) ty)
   let methodNames' = toNest methodNames
   let tyConParams' = tyConParams
   return $ UInterface tyConParams' superclasses methodTys (fromString tyConName) methodNames'
@@ -947,7 +948,8 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
-               "instance", "named-instance", "where", "if", "then", "else", "do", "view", "import"]
+               "instance", "named-instance", "where", "if", "then", "else",
+               "do", "view", "import"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

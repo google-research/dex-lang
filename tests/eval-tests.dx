@@ -880,3 +880,51 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 -- This will compile extremely slowly if non-inlining is broken
 :p f6 0
 > 100000
+
+interface AssociatedInt a
+  value a : Int
+
+instance AssociatedInt Int
+  value = 2
+
+instance AssociatedInt Float
+  value = 4
+
+value Int
+> 2
+value Float
+> 4
+
+interface AssociatedWithTwo a c
+  value2 a c : Int
+
+instance AssociatedWithTwo Int Float
+  value2 = 8
+
+value2 Int Float
+> 8
+value2 Float Int
+> Type error:Couldn't synthesize a class dictionary for: (AssociatedWithTwo Float32 Int32)
+>
+> value2 Float Int
+> ^^^^^^^^^^^^^^^^
+
+-- TODO: This is a really bad error message
+interface BadAssociatedName a
+  value2 c : Int
+> Error: variable not in scope: c
+
+-- Technically the two tests below are not incorrect, but we don't implement them yet.
+interface AssociatedSubsetOfParams a c
+  badValue1 a : Int
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Permuted or incomplete explicit type binders are not supported yet.
+
+interface AssociatedPermutedParams a c
+  badValue2 c a : Int
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Permuted or incomplete explicit type binders are not supported yet.

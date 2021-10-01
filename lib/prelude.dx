@@ -676,38 +676,30 @@ def castPtr (ptr: Ptr a) : Ptr b =
   (MkPtr rawPtr) = ptr
   MkPtr rawPtr
 
--- Is there a better way to select the right instance for `storageSize`??
-data TypeVehicle a = MkTypeVehicle
-def typeVehicle (a:Type) : TypeVehicle a = MkTypeVehicle
-
 interface Storable a
   store : Ptr a -> a -> {IO} Unit
   load  : Ptr a ->      {IO} a
-  storageSize_ : TypeVehicle a -> Int
-
-def storageSize (a:Type) -> (d:Storable a) ?=> : Int =
-  tv : TypeVehicle a = MkTypeVehicle
-  storageSize_ tv
+  storageSize a : Int
 
 instance Storable Word8
   store = \(MkPtr ptr) x. %ptrStore ptr x
   load  = \(MkPtr ptr)  . %ptrLoad  ptr
-  storageSize_ = const 1
+  storageSize = 1
 
 instance Storable Int32
   store = \(MkPtr ptr) x. %ptrStore (internalCast %Int32Ptr ptr) x
   load  = \(MkPtr ptr)  . %ptrLoad  (internalCast %Int32Ptr ptr)
-  storageSize_ = const 4
+  storageSize = 4
 
 instance Storable Float32
   store = \(MkPtr ptr) x. %ptrStore (internalCast %Float32Ptr ptr) x
   load = \(MkPtr ptr)   . %ptrLoad  (internalCast %Float32Ptr ptr)
-  storageSize_ = const 4
+  storageSize = 4
 
 instance Storable (Ptr a)
   store = \(MkPtr ptr) (MkPtr x).         %ptrStore (internalCast %PtrPtr ptr) x
   load  = \(MkPtr ptr)          . MkPtr $ %ptrLoad  (internalCast %PtrPtr ptr)
-  storageSize_ = const 8  -- TODO: something more portable?
+  storageSize = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
 

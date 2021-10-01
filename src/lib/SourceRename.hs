@@ -188,6 +188,10 @@ instance SourceRenamableB UDecl where
       instanceName' <- mapM sourceRenameB instanceName
       return $ UInstance conditions' className' params' methodDefs' instanceName'
 
+instance SourceRenamableE UMethodType where
+  sourceRenameE (UMethodType expl ty) =
+    UMethodType <$> traverse sourceRenameE expl <*> sourceRenameE ty
+
 sourceRenameUBinderNest :: Renamer m => (Name -> SourceNameDef)
                         -> Nest UBinder -> WithEnv RenameEnv m (Nest UBinder)
 sourceRenameUBinderNest _ Empty = return Empty
