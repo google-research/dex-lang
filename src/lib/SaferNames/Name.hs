@@ -64,7 +64,8 @@ module SaferNames.Name (
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
   unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
-  eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags
+  eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
+  DeferredInjection (..), LocallyDistinctAbs, finishInjection, ignoreLocalDistinctness,
   ) where
 
 import Prelude hiding (id, (.))
@@ -312,11 +313,36 @@ injectM e = do
   Distinct <- getDistinct
   return $ inject e
 
+-- since the injection is deferred, we can have an InjectableE instance even
+-- when `e` itself is not injectable. It's useful when we need to pass around
+-- things like `DistinctAbs`.
+data DeferredInjection (e::E) (n::S) where
+  DeferredInjection :: ExtWitness n' n -> e n' -> DeferredInjection e n
+
+type LocallyDistinctAbs (b::B) (e::E) = DeferredInjection (DistinctAbs b e)
+
+ignoreLocalDistinctness :: (Distinct n, InjectableB b, InjectableE e)
+                        => LocallyDistinctAbs b e n -> Abs b e n
+ignoreLocalDistinctness (DeferredInjection ExtW (DistinctAbs b e)) =
+  finishInjection $ DeferredInjection ExtW (Abs b e)
+
+finishInjection :: (Distinct n, InjectableE e) => DeferredInjection e n -> e n
+finishInjection (DeferredInjection ExtW e) = inject e
+
+instance InjectableE (DeferredInjection e) where
+  injectionProofE fresh (DeferredInjection extW e) =
+    DeferredInjection (injectionProofE fresh extW) e
+
 data ExtWitness (n::S) (l::S) where
   ExtW :: Ext n l => ExtWitness n l
 
 instance ProvesExt ExtWitness where
   toExtEvidence ExtW = getExtEvidence
+
+instance InjectableE (ExtWitness n) where
+  injectionProofE :: forall n' n l. InjectionCoercion n l -> ExtWitness n' n -> ExtWitness n' l
+  injectionProofE fresh ExtW =
+    withExtEvidence (injectionProofE fresh (getExtEvidence :: ExtEvidence n' n)) ExtW
 
 instance Category ExtWitness where
   id :: forall n. ExtWitness n n
@@ -1055,10 +1081,9 @@ class (ScopeReader m, OutMap bindings decls, BindsNames decls, InjectableB decls
     -> (forall l. Distinct l => bindings l -> e l -> DistinctAbs decls e' l)
     -> m n (e' n)
   scopedInplace
-    :: (InjectableE e, InjectableE e')
-    => (forall l. Distinct l => bindings l -> DistinctAbs decls e l -> e' l)
-    -> (forall l. (Distinct l, Ext n l) => m l (e l))
-    -> m n (e' n)
+    :: InjectableE e
+    => (forall l. (Distinct l, Ext n l) => m l (e l))
+    -> m n (LocallyDistinctAbs decls e n)
 
 instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
          => Inplace (InplaceT bindings decls m) bindings decls where
@@ -1066,12 +1091,14 @@ instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
     DistinctAbs decls e' <- return $ cont bindings e
     return (unsafeCoerceE e', unsafeCoerceB decls)
 
-  scopedInplace handleResult cont = UnsafeMakeInplaceT \bindings -> do
-    (result, decls) <- unsafeRunInplaceT cont bindings
-    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
-      let bindings' = bindings `extendOutMap` unsafeCoerceB decls
-      let result' = handleResult bindings' $ DistinctAbs decls $ unsafeCoerceE result
-      return (unsafeCoerceE result', emptyOutFrag)
+  scopedInplace cont = do
+    UnitE :: UnitE n <- getScopeProxy
+    UnsafeMakeInplaceT \bindings -> do
+      (result, decls) <- unsafeRunInplaceT cont bindings
+      withExtEvidence (FabricateExtEvidence :: ExtEvidence UnsafeS n) do
+        withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
+          let ab = DistinctAbs decls (unsafeCoerceE result)
+          return (DeferredInjection ExtW ab, emptyOutFrag)
 
 runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
             => bindings n
@@ -1170,8 +1197,8 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, C
 instance (Inplace m bindings decls, InjectableV v)
          => Inplace (EnvReaderT v m i) bindings decls where
   doInplace e cont = EnvReaderT $ lift $ doInplace e cont
-  scopedInplace processResult cont = EnvReaderT $ ReaderT \env ->
-    scopedInplace processResult do
+  scopedInplace cont = EnvReaderT $ ReaderT \env ->
+    scopedInplace do
       env' <- injectM env
       runReaderT (runEnvReaderT' cont) env'
 

@@ -55,11 +55,11 @@ class (BindingsReader m, Scopable m, MonadFail1 m)
   emitBinding :: (EmitsTop n, NameColor c) => NameHint -> Binding c n -> m n (Name c n)
   buildScoped :: HasNamesE e
               => (forall l. (Emits l, Ext n l) => m l (e l))
-              -> m n (Abs (Nest Decl) e n)
+              -> m n (LocallyDistinctAbs (Nest Decl) e n)
 
   buildScopedTop :: HasNamesE e
                  => (forall l. (EmitsTop l, Ext n l) => m l (e l))
-                 -> m n (Abs (RecEnvFrag Binding) e n)
+                 -> m n (LocallyDistinctAbs (RecEnvFrag Binding) e n)
   getAllowedEffects :: m n (EffectRow n)
   withAllowedEffects :: EffectRow n -> m n a -> m n a
 
@@ -137,35 +137,36 @@ instance MonadFail m => Builder (BuilderT m) where
       Nest (BuilderEmitBindingsFrag frag) Empty
 
   buildScoped cont = BuilderT do
-    scopedInplace (const fromBuilderDecls) do
-      evidence <- fabricateEmitsEvidenceM
-      withEmitsEvidence evidence $ runBuilderT' cont
+    DeferredInjection ExtW (DistinctAbs emissions result) <-
+      scopedInplace do
+        evidence <- fabricateEmitsEvidenceM
+        withEmitsEvidence evidence $ runBuilderT' cont
+    return $ DeferredInjection ExtW $
+      DistinctAbs (fromBuilderDecls emissions) result
 
   buildScopedTop cont = BuilderT do
-    scopedInplace (const fromBuilderBindings) do
-      evidence <- fabricateEmitsTopEvidenceM
-      withEmitsTopEvidence evidence $ runBuilderT' cont
+    DeferredInjection ExtW (DistinctAbs emissions result) <-
+      scopedInplace do
+        evidence <- fabricateEmitsTopEvidenceM
+        withEmitsTopEvidence evidence $ runBuilderT' cont
+    return $ DeferredInjection ExtW $
+      DistinctAbs (fromBuilderBindings emissions) result
 
   getAllowedEffects = undefined
   withAllowedEffects _ _ = undefined
 
-fromBuilderDecls :: DistinctAbs BuilderEmissions e n -> Abs (Nest Decl) e n
-fromBuilderDecls (DistinctAbs emissions result) =
-  Abs (fromJust $ forEachNestItem emissions fromBuilderDecl) result
+fromBuilderDecls :: Distinct l => BuilderEmissions n l -> Nest Decl n l
+fromBuilderDecls emissions = fromJust $ forEachNestItem emissions fromBuilderDecl
   where
     fromBuilderDecl :: BuilderEmission n l -> Maybe (Decl n l)
     fromBuilderDecl (BuilderEmitDecl decl) = return decl
     fromBuilderDecl _ = Nothing
 
-fromBuilderBindings :: DistinctAbs BuilderEmissions e n -> Abs BindingsFrag e n
-fromBuilderBindings (DistinctAbs emissions result) =
-  Abs (fromBuilderBindings' emissions) result
-
-fromBuilderBindings' :: Distinct l => BuilderEmissions n l -> BindingsFrag n l
-fromBuilderBindings' Empty = emptyOutFrag
-fromBuilderBindings' (Nest emission rest) = case emission of
+fromBuilderBindings :: Distinct l => BuilderEmissions n l -> BindingsFrag n l
+fromBuilderBindings Empty = emptyOutFrag
+fromBuilderBindings (Nest emission rest) = case emission of
   BuilderEmitDecl _ -> error "Expected bindings fragment emission"
-  BuilderEmitBindingsFrag frag -> frag `catRecEnvFrags` fromBuilderBindings' rest
+  BuilderEmitBindingsFrag frag -> frag `catRecEnvFrags` fromBuilderBindings rest
 
 deriving instance MonadFail m => MonadFail (BuilderT m n)
 deriving instance MonadFail m => ScopeReader (BuilderT m)
@@ -226,10 +227,12 @@ buildBlockAux :: Builder m
            => (forall l. (Emits l, Ext n l) => m l (Atom l, a))
            -> m n (Block n, a)
 buildBlockAux cont = do
-  Abs decls (result `PairE` ty `PairE` LiftE aux) <- buildScoped do
+  Distinct <- getDistinct
+  Abs decls results <- ignoreLocalDistinctness <$> buildScoped do
     (result, aux) <- cont
     ty <- getType result
     return $ result `PairE` ty `PairE` LiftE aux
+  let (result `PairE` ty `PairE` LiftE aux) = results
   ty' <- liftMaybe $ hoist decls ty
   return (Block ty' decls $ Atom result, aux)
 
