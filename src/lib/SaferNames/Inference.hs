@@ -186,24 +186,32 @@ instance Builder (InfererM i) where
       InfOutFrag (Nest (InfTopBinding frag) Empty) emptySolverSubst
 
   buildScoped cont = InfererM do
-    scopedInplaceExcept (\bindings ab -> hoistInfState (toScope bindings) ab) do
-      evidence <- fabricateEmitsEvidenceM
-      withEmitsEvidence evidence do
-        runInfererM' cont
-  buildScopedTop _ = undefined
+    ScopedResult infOutMap emissions result <- scopedInplace $
+      withFabricatedEmitsEvidence $ runInfererM' cont
+    DistinctAbs outFrag (DistinctAbs builderEmissions result') <-
+      hoistInfState (toScope infOutMap) emissions result
+    let decls = fromBuilderDecls builderEmissions
+    extendInplace =<< injectM (Abs outFrag $ Abs decls result')
+
+  buildScopedTop cont = InfererM do
+    ScopedResult infOutMap emissions result <- scopedInplace $
+      withFabricatedEmitsTopEvidence $ runInfererM' cont
+    DistinctAbs outFrag (DistinctAbs builderEmissions result') <-
+      hoistInfState (toScope infOutMap) emissions result
+    let bindingsFrag = fromBuilderBindings builderEmissions
+    extendInplace =<< injectM (Abs outFrag $ Abs bindingsFrag result')
+
   getAllowedEffects = undefined
   withAllowedEffects = undefined
-
 
 type InferenceNameBinders = Nest Binder
 
 data HoistedSolverState e n where
   HoistedSolverState
-    :: (Distinct l2, Distinct l1, Distinct n)
+    :: (Distinct l1, Distinct n)
     => InferenceNameBinders n l1
     ->   SolverSubst l1
-    ->   Nest Decl l1 l2
-    ->     e l2
+    ->   DistinctAbs (Nest BuilderEmission) e l1
     -> HoistedSolverState e n
 
 instance HoistableE (HoistedSolverState e) where
@@ -214,34 +222,36 @@ instance HoistableE (HoistedSolverState e) where
 -- variables which are about to go out of scope then we emit a "escaped scope"
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
-hoistInfState :: (SubstE Name e, Distinct n)
-              => Scope n -> DistinctAbs InfOutFrag e n
-              -> Except (DistinctAbs InfOutFrag (Abs (Nest Decl) e) n)
-hoistInfState scope (DistinctAbs (InfOutFrag emissions subst) result) = do
-  HoistedSolverState infNames subst decls result' <- hoistInfStateRec scope emissions subst result
-  return $ DistinctAbs (InfOutFrag (infNamesToEmissions infNames) subst)
-                       (Abs decls result')
+hoistInfState
+  :: (Fallible m, SubstE Name e, Distinct l)
+  => Scope n -> InfOutFrag n l -> e l
+  -> m (DistinctAbs InfOutFrag (DistinctAbs (Nest BuilderEmission) e) n)
+hoistInfState scope (InfOutFrag emissions subst) result = do
+  withSubscopeDistinct emissions do
+    HoistedSolverState infNames subst result' <- hoistInfStateRec scope emissions subst result
+    return $ DistinctAbs (InfOutFrag (infNamesToEmissions infNames) subst) result'
+
 hoistInfStateRec :: (Fallible m, Distinct n, Distinct l)
                  => Scope n
                  -> Nest InfEmission n l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
-hoistInfStateRec _ Empty subst result =
-  return $ HoistedSolverState Empty subst Empty result
-hoistInfStateRec scope emissions@(Nest infEmission rest) subst result = do
+hoistInfStateRec _ Empty subst e =
+  return $ HoistedSolverState Empty subst (DistinctAbs Empty e)
+hoistInfStateRec scope emissions@(Nest infEmission rest) subst e = do
   withSubscopeDistinct rest do
-    HoistedSolverState infVars subst' decls result <-
-       hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst result
+    HoistedSolverState infVars subst' result <-
+       hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst e
     case infEmission of
       InfInferenceName (b:>ty) ->
         withExtEvidence infVars $
           case deleteFromSubst subst' (inject $ binderName b) of
             Just subst'' ->
-              case hoist b (HoistedSolverState infVars subst'' decls result) of
+              case hoist b (HoistedSolverState infVars subst'' result) of
                 Just hoisted -> return hoisted
                 -- TODO: report *which* variables leaked
                 Nothing -> throw TypeErr "Leaked local variable"
             Nothing -> do
-              return $ HoistedSolverState (Nest (b:>ty) infVars) subst' decls result
+              return $ HoistedSolverState (Nest (b:>ty) infVars) subst' result
       InfDecl decl -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
@@ -251,8 +261,9 @@ hoistInfStateRec scope emissions@(Nest infEmission rest) subst result = do
           Just (PairB (PairB infVars' (UnitB :> subst'')) (Let ann b expr)) -> do
             withSubscopeDistinct b $ do
               let expr' = applySolverSubst (scope `extendOutMap` toScopeFrag infVars') subst'' expr
-              let decl' = Let ann b expr'
-              return $ HoistedSolverState infVars' subst'' (Nest decl' decls) result
+              let decl' = BuilderEmitDecl $ Let ann b expr'
+              DistinctAbs decls e' <- return result
+              return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest decl' decls) e')
 
 infNamesToEmissions :: InferenceNameBinders n l -> Nest InfEmission n l
 infNamesToEmissions Empty = Empty

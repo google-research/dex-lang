@@ -28,7 +28,9 @@ module SaferNames.Builder (
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions (..), emitAtomToName,
-  withEmitsEvidence, fabricateEmitsEvidenceM,
+  withFabricatedEmitsEvidence, withFabricatedEmitsTopEvidence,
+  WithDecls, WithBuilderEmissions, BuilderEmission (..),
+  fromBuilderDecls, fromBuilderBindings,
   ) where
 
 import Control.Category
@@ -53,13 +55,16 @@ class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   emitDecl :: Emits n => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
   emitBinding :: (EmitsTop n, NameColor c) => NameHint -> Binding c n -> m n (Name c n)
-  buildScoped :: HasNamesE e
-              => (forall l. (Emits l, Ext n l) => m l (e l))
-              -> m n (LocallyDistinctAbs (Nest Decl) e n)
+  buildScoped
+    :: HasNamesE e
+    => (forall l. (Emits l, Ext n l) => m l (e l))
+    -> m n (Abs (Nest Decl) e n)
 
-  buildScopedTop :: HasNamesE e
-                 => (forall l. (EmitsTop l, Ext n l) => m l (e l))
-                 -> m n (LocallyDistinctAbs (RecEnvFrag Binding) e n)
+  buildScopedTop
+    :: HasNamesE e
+    => (forall l. (EmitsTop l, Ext n l) => m l (e l))
+    -> m n (Abs (RecEnvFrag Binding) e n)
+
   getAllowedEffects :: m n (EffectRow n)
   withAllowedEffects :: EffectRow n -> m n a -> m n a
 
@@ -84,6 +89,9 @@ emitAtomToName x = emit (Atom x)
 newtype BuilderBindings n = BuilderBindings (Bindings n)
 -- newtype because we have a slightly different OutFrag instance
 type BuilderEmissions = Nest BuilderEmission
+
+type WithBuilderEmissions = Abs (Nest BuilderEmission)
+type WithDecls = Abs (Nest Decl)
 
 data BuilderEmission n l =
    BuilderEmitDecl (Decl n l)
@@ -137,25 +145,19 @@ instance MonadFail m => Builder (BuilderT m) where
       Nest (BuilderEmitBindingsFrag frag) Empty
 
   buildScoped cont = BuilderT do
-    DeferredInjection ExtW (DistinctAbs emissions result) <-
-      scopedInplace do
-        evidence <- fabricateEmitsEvidenceM
-        withEmitsEvidence evidence $ runBuilderT' cont
-    return $ DeferredInjection ExtW $
-      DistinctAbs (fromBuilderDecls emissions) result
+    ScopedResult (BuilderBindings bindings) emissions result <-
+      scopedInplace $ withFabricatedEmitsEvidence $ runBuilderT' cont
+    injectM $ Abs (fromBuilderDecls emissions) result
 
   buildScopedTop cont = BuilderT do
-    DeferredInjection ExtW (DistinctAbs emissions result) <-
-      scopedInplace do
-        evidence <- fabricateEmitsTopEvidenceM
-        withEmitsTopEvidence evidence $ runBuilderT' cont
-    return $ DeferredInjection ExtW $
-      DistinctAbs (fromBuilderBindings emissions) result
+    ScopedResult (BuilderBindings bindings) emissions result <-
+      scopedInplace $ withFabricatedEmitsTopEvidence $ runBuilderT' cont
+    injectM $ Abs (fromBuilderBindings emissions) result
 
   getAllowedEffects = undefined
   withAllowedEffects _ _ = undefined
 
-fromBuilderDecls :: Distinct l => BuilderEmissions n l -> Nest Decl n l
+fromBuilderDecls :: BuilderEmissions n l -> Nest Decl n l
 fromBuilderDecls emissions = fromJust $ forEachNestItem emissions fromBuilderDecl
   where
     fromBuilderDecl :: BuilderEmission n l -> Maybe (Decl n l)
@@ -189,6 +191,11 @@ class Emits (n::S)
 
 instance Emits UnsafeS
 
+withFabricatedEmitsEvidence :: forall n m a. Monad1 m => (Emits n => m n a) -> m n a
+withFabricatedEmitsEvidence cont = do
+  evidence <- fabricateEmitsEvidenceM
+  withEmitsEvidence evidence cont
+
 withEmitsEvidence :: forall n a. EmitsEvidence n -> (Emits n => a) -> a
 withEmitsEvidence _ cont = fromWrapWithEmits
  ( unsafeCoerce ( WrapWithEmits cont :: WrapWithEmits n       a
@@ -210,6 +217,11 @@ class EmitsTop (n::S)
 
 instance EmitsTop UnsafeS
 
+withFabricatedEmitsTopEvidence :: forall n m a. Monad1 m => (EmitsTop n => m n a) -> m n a
+withFabricatedEmitsTopEvidence cont = do
+  evidence <- fabricateEmitsTopEvidenceM
+  withEmitsTopEvidence evidence cont
+
 withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
 withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
  ( unsafeCoerce ( WrapWithEmitsTop cont :: WrapWithEmitsTop n       a
@@ -227,8 +239,7 @@ buildBlockAux :: Builder m
            => (forall l. (Emits l, Ext n l) => m l (Atom l, a))
            -> m n (Block n, a)
 buildBlockAux cont = do
-  Distinct <- getDistinct
-  Abs decls results <- ignoreLocalDistinctness <$> buildScoped do
+  Abs decls results <- buildScoped do
     (result, aux) <- cont
     ty <- getType result
     return $ result `PairE` ty `PairE` LiftE aux
