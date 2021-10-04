@@ -107,11 +107,14 @@ instance OutMap BuilderBindings BuilderEmissions where
 
 instance GenericB BuilderEmission where
   type RepB BuilderEmission = EitherB Decl BindingsFrag
-  toB = undefined
-  fromB = undefined
+  fromB (BuilderEmitDecl         decl) = LeftB  decl
+  fromB (BuilderEmitBindingsFrag frag) = RightB frag
+  toB (LeftB  decl) = BuilderEmitDecl         decl
+  toB (RightB frag) = BuilderEmitBindingsFrag frag
 
 instance ProvesExt     BuilderEmission
 instance BindsNames    BuilderEmission
+instance SubstB Name   BuilderEmission
 instance BindsBindings BuilderEmission
 instance InjectableB   BuilderEmission
 instance HoistableB    BuilderEmission
@@ -177,7 +180,7 @@ instance MonadFail m => BindingsReader (BuilderT m) where
   addBindings _ = undefined
 
 instance MonadFail m => Scopable (BuilderT m) where
-  withBindings _ _ = undefined
+  withBindings ab cont = undefined
 
 -- === Emits predicate ===
 

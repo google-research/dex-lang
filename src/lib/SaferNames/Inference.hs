@@ -82,40 +82,35 @@ data InfOutMap (n::S) = InfOutMap (Bindings n) (SolverSubst n)
 data InfOutFrag (n::S) (l::S) = InfOutFrag (Nest InfEmission n l) (SolverSubst l)
 
 data InfEmission n l =
-    InfDecl          (Decl n l)         -- only permissible with `Emits` constraint
-  | InfTopBinding    (BindingsFrag n l) -- only permissible with `EmitsTop` constraint
-  | InfInferenceName (Binder n l)
-  | InfSkolemName    (Binder n l)
+    InfBuilderEmission (BuilderEmission n l)
+  | InfInferenceName   (Binder n l)
+  | InfSkolemName      (Binder n l)
 
 newtype BuilderEmissions n l =
   BuilderEmissions (Nest (EitherB Decl BindingsFrag) n l)
   deriving (InjectableB, SubstB Name, ProvesExt, BindsNames, BindsBindings)
 
 instance GenericB InfEmission where
-  type RepB InfEmission = EitherB4 Decl BindingsFrag Binder Binder
+  type RepB InfEmission = EitherB3 BuilderEmission Binder Binder
   fromB emission = case emission of
-    InfDecl decl       -> CaseB0 decl
-    InfTopBinding frag -> CaseB1 frag
-    InfInferenceName b -> CaseB2 b
-    InfSkolemName    b -> CaseB3 b
+    InfBuilderEmission b -> CaseB0 b
+    InfInferenceName   b -> CaseB1 b
+    InfSkolemName      b -> CaseB2 b
   toB emissionRep = case emissionRep of
-    CaseB0 decl -> InfDecl decl
-    CaseB1 frag -> InfTopBinding frag
-    CaseB2 b    -> InfInferenceName b
-    CaseB3 b    -> InfSkolemName    b
-
-instance GenericB InfOutFrag where
-  type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
-  fromB (InfOutFrag emissions solverSubst) = PairB emissions (UnitB :> solverSubst)
-  toB (PairB emissions (UnitB :> solverSubst)) = InfOutFrag emissions solverSubst
+    CaseB0 b -> InfBuilderEmission b
+    CaseB1 b -> InfInferenceName   b
+    CaseB2 b -> InfSkolemName      b
 
 instance ProvesExt   InfEmission
 instance SubstB Name InfEmission
 instance BindsNames  InfEmission
 instance InjectableB InfEmission
-
 instance BindsBindings InfEmission where
-  boundBindings = undefined
+
+instance GenericB InfOutFrag where
+  type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
+  fromB (InfOutFrag emissions solverSubst) = PairB emissions (UnitB :> solverSubst)
+  toB (PairB emissions (UnitB :> solverSubst)) = InfOutFrag emissions solverSubst
 
 instance ProvesExt   InfOutFrag
 instance SubstB Name InfOutFrag
@@ -177,13 +172,14 @@ instance Builder (InfererM i) where
     ty <- getType expr'
     InfererM $
       emitInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
-        let decl = Let ann (b:>ty') expr'
-        InfOutFrag (Nest (InfDecl decl) Empty) emptySolverSubst
+        let emission = InfBuilderEmission $ BuilderEmitDecl $ Let ann (b:>ty') expr'
+        InfOutFrag (Nest emission Empty) emptySolverSubst
 
   emitBinding hint binding = InfererM do
     emitInplace hint binding \b binding' -> do
       let frag = RecEnvFrag $ b @> inject binding'
-      InfOutFrag (Nest (InfTopBinding frag) Empty) emptySolverSubst
+      let emission = InfBuilderEmission $ BuilderEmitBindingsFrag frag
+      InfOutFrag (Nest emission Empty) emptySolverSubst
 
   buildScoped cont = InfererM do
     ScopedResult infOutMap emissions result <- scopedInplace $
@@ -252,18 +248,28 @@ hoistInfStateRec scope emissions@(Nest infEmission rest) subst e = do
                 Nothing -> throw TypeErr "Leaked local variable"
             Nothing -> do
               return $ HoistedSolverState (Nest (b:>ty) infVars) subst' result
-      InfDecl decl -> do
+      InfBuilderEmission emission -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
-        case exchangeBs $ PairB decl (PairB infVars (UnitB :> subst')) of
+        case exchangeBs $ PairB emission (PairB infVars (UnitB :> subst')) of
           -- TODO: better error message
           Nothing -> throw TypeErr "Leaked local variable"
-          Just (PairB (PairB infVars' (UnitB :> subst'')) (Let ann b expr)) -> do
-            withSubscopeDistinct b $ do
-              let expr' = applySolverSubst (scope `extendOutMap` toScopeFrag infVars') subst'' expr
-              let decl' = BuilderEmitDecl $ Let ann b expr'
-              DistinctAbs decls e' <- return result
-              return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest decl' decls) e')
+          Just (PairB (PairB infVars' (UnitB :> subst'')) emission') -> do
+            withSubscopeDistinct emission' $ do
+              let scope' = scope `extendOutMap` toScopeFrag infVars'
+              let emission'' = applySolverSubstBuilderEmission scope' subst'' emission'
+              DistinctAbs rest e' <- return result
+              return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest emission'' rest) e')
+
+applySolverSubstBuilderEmission :: Distinct l => Scope n -> SolverSubst n
+                                -> BuilderEmission n l -> BuilderEmission n l
+applySolverSubstBuilderEmission scope subst emission = case emission of
+  BuilderEmitDecl (Let ann (b:>ty) expr) ->
+    withSubscopeDistinct emission do
+      let ty'   = applySolverSubst scope subst ty
+      let expr' = applySolverSubst scope subst expr
+      BuilderEmitDecl $ Let ann (b:>ty') expr'
+  BuilderEmitBindingsFrag _ -> undefined
 
 infNamesToEmissions :: InferenceNameBinders n l -> Nest InfEmission n l
 infNamesToEmissions Empty = Empty
@@ -275,7 +281,7 @@ instance BindingsReader (InfererM i) where
       WithBindings bindings e'
 
 instance Scopable (InfererM i) where
-  withBindings _ _ = undefined
+  withBindings ab cont = undefined
 
 -- === actual inference pass ===
 
