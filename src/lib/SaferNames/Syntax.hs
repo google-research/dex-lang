@@ -367,8 +367,6 @@ withFreshBinder hint ty info cont =
     Distinct <- getDistinct
     cont $ b :> ty
 
--- TODO: maybe delete this? If we're moving to the in-place version of scopeful
--- monads then we can't access binders directly like this anyway.
 refreshBinders
   :: ( InjectableV v, BindingsExtender2 m, FromName v
      , EnvReader v m, SubstB v b, BindsBindings b)
@@ -1448,6 +1446,9 @@ instance (BindsBindings b1, BindsBindings b2)
 
 instance BindsBindings (RecEnvFrag Binding) where
   boundBindings frag = frag
+
+instance BindsBindings UnitB where
+  boundBindings UnitB = emptyOutFrag
 
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where

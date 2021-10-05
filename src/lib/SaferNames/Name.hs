@@ -24,8 +24,8 @@ module SaferNames.Name (
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  Inplace (..), InplaceT, emitInplace, extendInplace,
-  runInplaceT, withInplaceOutEnv,
+  InplaceT, emitInplace, withInplaceOutEnv, extendInplace,
+  runInplaceT, embedInplaceT, doInplace, scopedInplaceGeneral,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
@@ -58,14 +58,14 @@ module SaferNames.Name (
   splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt,
-  InFrag (..), InMap (..), OutFrag (..), OutMap (..), WithOutMap (..),
-  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag, refreshAbs,
+  InFrag (..), InMap (..), OutFrag (..), OutMap (..),
+  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag, refreshAbs, refreshAbsM,
   hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..),
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
   unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
-  DeferredInjection (..), ScopedResult (..), finishInjection, scopedResultAsAbs,
+  DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
   ) where
 
 import Prelude hiding (id, (.))
@@ -131,7 +131,7 @@ class InMap (env :: S -> S -> *) (envFrag :: S -> S -> S -> *) | env -> envFrag 
   emptyInMap :: env VoidS o
   extendInMap :: env i o -> envFrag i i' o -> env i' o
 
-class OutFrag (scopeFrag :: S -> S -> *) where
+class (InjectableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -> S -> *) where
   emptyOutFrag :: scopeFrag n n
   -- The scope is here because solver subst concatenation needs it
   catOutFrags  :: Distinct n3 => Scope n3 -> scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
@@ -144,6 +144,9 @@ class (OutFrag scopeFrag, HasScope scope)
 instance InMap (Env v) (EnvFrag v) where
   emptyInMap = newEnv absurdNameFunction
   extendInMap (Env f frag) frag' = Env f $ frag <.> frag'
+
+instance InjectableB ScopeFrag where
+  injectionProofB _ _ _ = undefined
 
 instance OutFrag ScopeFrag where
   emptyOutFrag = id
@@ -202,7 +205,7 @@ lookupMaterializedEnv :: MaterializedEnv v i o -> Name c i -> v c o
 lookupMaterializedEnv (MaterializedEnv frag) name =
   lookupTerminalEnvFrag frag name
 
-instance OutFrag (Nest b) where
+instance (InjectableB b, BindsNames b) => OutFrag (Nest b) where
   emptyOutFrag = id
   catOutFrags _ = (>>>)
 
@@ -288,6 +291,9 @@ class ProvesExt (b :: B) where
   default toExtEvidence :: BindsNames b => b n l -> ExtEvidence n l
   toExtEvidence b = toExtEvidence $ toScopeFrag b
 
+toExtWitness :: ProvesExt b => b n l -> ExtWitness n l
+toExtWitness b = withExtEvidence (toExtEvidence b) ExtW
+
 class ProvesExt b => BindsNames (b :: B) where
   toScopeFrag :: b n l -> ScopeFrag n l
 
@@ -322,6 +328,11 @@ data DeferredInjection (e::E) (n::S) where
 finishInjection :: (Distinct n, InjectableE e) => DeferredInjection e n -> e n
 finishInjection (DeferredInjection ExtW e) = inject e
 
+finishInjectionM :: (ScopeReader m, InjectableE e) => DeferredInjection e n -> m n (e n)
+finishInjectionM (DeferredInjection ExtW e) = do
+  Distinct <- getDistinct
+  return $ inject e
+
 instance InjectableE (DeferredInjection e) where
   injectionProofE fresh (DeferredInjection extW e) =
     DeferredInjection (injectionProofE fresh extW) e
@@ -355,6 +366,11 @@ injectExt ext = do
   ext' <- injectM $ toExtEvidence ext
   withExtEvidence ext' $
     return ExtW
+
+injectExtTo :: forall ext e n1 n2 n3. (ProvesExt ext, Ext n2 n3, Distinct n3)
+            => e n3 -> ext n1 n2 -> (ExtWitness n1 n3)
+injectExtTo _ ext =
+  withExtEvidence (inject (toExtEvidence ext) :: ExtEvidence n1 n3) $ ExtW
 
 -- Uses `proxy n2` to provide the type `n2` to use as the intermediate scope.
 injectMVia :: forall n1 n2 n3 m proxy e.
@@ -1060,88 +1076,114 @@ instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) wher
 
 -- === in-place scope updating monad ===
 
-data WithOutMap (bindings::E) (e::E) (n::S) where
-  WithOutMap :: (Distinct l, Ext l n) => Scope l -> bindings l -> e l -> WithOutMap bindings e n
-
 data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
   { unsafeRunInplaceT :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS) }
 
-class (ScopeReader m, OutMap bindings decls, BindsNames decls, InjectableB decls)
-      => Inplace (m::MonadKind1) (bindings::E) (decls::B) | m -> bindings, m -> decls where
-  doInplace
-    :: (InjectableE e, InjectableE e')
-    => e n
-    -> (forall l. Distinct l => bindings l -> e l -> DistinctAbs decls e' l)
-    -> m n (e' n)
-  scopedInplace
-    :: InjectableE e
-    => (forall l. (Distinct l, Ext n l) => m l (e l))
-    -> m n (ScopedResult bindings decls e n)
-
-data ScopedResult (bindings::E) (decls::B) (e::E) (n::S) where
-  ScopedResult :: (Distinct l, Ext n' n)
-               => bindings n' -> decls n' l -> e l
-               -> ScopedResult bindings decls e n
-
-extendInplace
-  :: (Inplace m bindings decls, SubstB Name decls, SubstE Name e)
-  => Abs decls e n
-  -> m n (e n)
-extendInplace withDecls = do
-  doInplace withDecls \bindings withDecls' ->
-    refreshAbs (toScope bindings) withDecls'
-
-scopedResultAsAbs :: (Distinct n, InjectableB decls, InjectableE e)
-                  => ScopedResult bindings decls e n -> Abs decls e n
-scopedResultAsAbs (ScopedResult _ decls result) =
-  inject $ Abs decls result
-
-instance (Monad m, OutMap bindings decls, BindsNames decls, InjectableB decls)
-         => Inplace (InplaceT bindings decls m) bindings decls where
-  doInplace e cont = UnsafeMakeInplaceT \bindings -> do
-    DistinctAbs decls e' <- return $ cont bindings e
-    return (unsafeCoerceE e', unsafeCoerceB decls)
-
-  scopedInplace cont = do
-    UnitE :: UnitE n <- getScopeProxy
-    UnsafeMakeInplaceT \bindings -> do
-      (result, decls) <- unsafeRunInplaceT cont bindings
-      -- TODO: switch to state+writer instead of reader+writer, so we have this already computed.
-      withExtEvidence (FabricateExtEvidence :: ExtEvidence UnsafeS n) do
-        withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
-          return (ScopedResult (unsafeCoerceE bindings) decls $
-                    unsafeCoerceE result, emptyOutFrag)
-
-runInplaceT :: (Distinct n, OutMap bindings decls, Monad m)
-            => bindings n
-            -> (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
-            -> m (Abs decls e n)
+runInplaceT
+  :: (Distinct n, OutMap bindings decls, Monad m)
+  => bindings n
+  -> (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
+  -> m (DistinctAbs decls e n)
 runInplaceT bindings (UnsafeMakeInplaceT f) = do
   (result, decls) <- f bindings
-  return $ Abs (unsafeCoerceB decls) (unsafeCoerceE result)
+  return $ unsafeMakeDistinctAbs (unsafeCoerceB decls) (unsafeCoerceE result)
 
+unsafeMakeDistinctAbs :: forall b e n l. b n l -> e l -> DistinctAbs b e n
+unsafeMakeDistinctAbs b e =
+  withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence l) $
+    DistinctAbs b e
+
+-- This is mildly unsafe. You have to be a little devious, but it's possible to
+-- break the invariants if you return the `Ext n l` along with a `bindings l`,
+-- and hide the `l` existentially. Then you can create new names in-place, and
+-- use the `Ext n l`, to inject those names into `l`, at which point you can
+-- look them up in the bindings and see a failure. Previously we tried to
+-- prevent this by doing the injection for you rather than giving access to
+-- `Ext` directly, but as long as we allow `Ext` itself to be injectable, you
+-- can still do the same thing.
+embedInplaceT
+  :: (InjectableE e, InjectableB decls, OutMap bindings decls, Monad m)
+  => (forall l. (Ext n l, Distinct l) => bindings l -> m (DistinctAbs decls e l))
+  -> InplaceT bindings decls m n (e n)
+embedInplaceT cont = UnsafeMakeInplaceT \bindings -> do
+  DistinctAbs decls e <- cont bindings
+  return (unsafeCoerceE e, unsafeCoerceB decls)
+
+-- === safely implemented helpers on top of InPlaceT ===
+
+doInplace
+  :: (InjectableE e, InjectableE e', OutMap bindings decls, Monad m)
+  => e n
+  -> (forall l. Distinct l => bindings l -> e l -> DistinctAbs decls e' l)
+  -> InplaceT bindings decls m n (e' n)
+doInplace e cont = do
+  embedInplaceT \bindings ->
+    return $ cont bindings $ inject e
+
+data ScopedResult (bindings::E) (b::B) (e::E) (n::S) where
+  ScopedResult :: (Distinct l, Ext n' n)
+               => bindings n' -> b n' l -> e l
+               -> ScopedResult bindings b e n
+
+instance InjectableE (ScopedResult bindings b e) where
+  injectionProofE = undefined
+
+scopedInplaceGeneral
+  :: ( SubstE Name e, SubstB Name b, ProvesExt b, InjectableE e', OutMap bindings decls
+     , Monad m, InjectableB decls)
+  => (forall n' l'. Distinct l' => bindings n' -> b n' l' -> bindings l')
+  -> Abs b e n
+  -> (forall l. (Ext n l, Distinct l) => e l -> InplaceT bindings decls m l (e' l))
+  -> InplaceT bindings decls m n
+       (ScopedResult bindings (PairB b decls) e' n)
+scopedInplaceGeneral extender ab cont = do
+  ext1 <- idExt
+  embedInplaceT \bindings -> do
+    let ext2 = injectExtTo bindings ext1
+    DistinctAbs b e <- return $ refreshAbs (toScope bindings) $ inject ab
+    let ext3 = ext2 >>> toExtWitness b
+    let bindings' = extender bindings b
+    DistinctAbs decls result <- runInplaceT bindings' do
+      ExtW <- injectExt ext3
+      cont $ inject e
+    return $ DistinctAbs emptyOutFrag $
+      ScopedResult bindings (PairB b decls) result
 
 liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
 liftInplace m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
 
 emitInplace
-  :: (Inplace m bindings decls, NameColor c, InjectableE e)
+  :: (NameColor c, InjectableE e, OutMap bindings decls, Monad m)
   => NameHint -> e o
   -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> decls n l)
-  -> m o (Name c o)
+  -> InplaceT bindings decls m o (Name c o)
 emitInplace hint e buildDecls = do
   doInplace e \bindings e' ->
     withFresh hint nameColorRep (toScope bindings) \b ->
       DistinctAbs (buildDecls b e') (binderName b)
 
 withInplaceOutEnv
-  :: (Inplace m bindings decls, InjectableE e, InjectableE e')
+  :: (InjectableE e, InjectableE e', OutMap bindings decls, Monad m)
   => e n
   -> (forall l. Distinct l => bindings l -> e l -> e' l)
-  -> m n (e' n)
+  -> InplaceT bindings decls m n (e' n)
 withInplaceOutEnv eIn cont = doInplace eIn \bindings eIn' ->
   let eOut = cont bindings eIn'
   in DistinctAbs emptyOutFrag eOut
+
+-- TODO: can we have a version of this that takes a deferred distinct abs avoids
+-- the refreshAbs pass?
+extendInplace
+  :: (SubstB Name decls, SubstE Name e, OutMap bindings decls, Monad m)
+  => Abs decls e n
+  -> InplaceT bindings decls m n (e n)
+extendInplace withDecls = do
+  doInplace withDecls \bindings withDecls' ->
+    refreshAbs (toScope bindings) withDecls'
+
+data WithExtContravariantly thing n l where
+
+-- === InplaceT instances ===
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Functor (InplaceT bindings decls m n) where
@@ -1184,14 +1226,6 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, F
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = undefined
-
-instance (Inplace m bindings decls, InjectableV v)
-         => Inplace (EnvReaderT v m i) bindings decls where
-  doInplace e cont = EnvReaderT $ lift $ doInplace e cont
-  scopedInplace cont = EnvReaderT $ ReaderT \env ->
-    scopedInplace do
-      env' <- injectM env
-      runReaderT (runEnvReaderT' cont) env'
 
 -- === name hints ===
 
@@ -1583,6 +1617,12 @@ refreshAbs scope (Abs b e) =
     e' <- substE env' e
     return $ DistinctAbs b' e'
   where env = emptyNameTraversalEnv scope
+
+refreshAbsM :: (ScopeReader m, SubstB Name b, SubstE Name e)
+            => Abs b e n -> m n (DeferredInjection (DistinctAbs b e) n)
+refreshAbsM ab = do
+  WithScope scope ab' <- addScope ab
+  return $ DeferredInjection ExtW $ refreshAbs scope ab'
 
 renameEnvPairBindersPure
   :: (Distinct o, InjectableV v, InjectableV substVal, FromName substVal)

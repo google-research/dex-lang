@@ -105,7 +105,14 @@ instance ProvesExt   InfEmission
 instance SubstB Name InfEmission
 instance BindsNames  InfEmission
 instance InjectableB InfEmission
+
 instance BindsBindings InfEmission where
+  boundBindings b = case b of
+    InfBuilderEmission b -> boundBindings b
+    InfInferenceName (b:>ty) ->
+      RecEnvFrag $ b @> AtomNameBinding ty' InferenceName
+      where ty' = withExtEvidence b $ inject ty
+    InfSkolemName      b -> undefined
 
 instance GenericB InfOutFrag where
   type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
@@ -145,62 +152,78 @@ runInfererM :: Distinct n
             -> (forall l. Ext n l => InfererM l l (e l))
             -> Except (e n)
 runInfererM bindings cont = do
-  Abs (InfOutFrag Empty _) result <-
+  DistinctAbs (InfOutFrag Empty _) result <-
     runFallibleM $ runInplaceT (InfOutMap bindings emptySolverSubst) $
       runEnvReaderT idEnv $ runInfererM' $ cont
   return result
 
 instance Inferer InfererM where
-  extendSolverSubst v ty = InfererM $
+  extendSolverSubst v ty = InfererM $ EnvReaderT $ lift $
     void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
       DistinctAbs (InfOutFrag Empty (singletonSolverSubst v' ty')) UnitE
 
-  freshInferenceName kind = InfererM $
+  freshInferenceName kind = InfererM $ EnvReaderT $ lift $
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfInferenceName (b:>kind')) Empty) emptySolverSubst
 
-  freshSkolemName kind = InfererM $
+  freshSkolemName kind = InfererM $ EnvReaderT $ lift $
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) emptySolverSubst
 
-  zonk e = InfererM $ withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
-    applySolverSubst (toScope bindings) solverSubst e'
+  zonk e = InfererM $ EnvReaderT $ lift $
+             withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
+               applySolverSubst (toScope bindings) solverSubst e'
 
 instance Builder (InfererM i) where
-  emitDecl hint ann expr = do
-    expr' <- zonk expr
-    ty <- getType expr'
-    InfererM $
-      emitInplace hint (PairE expr ty) \b (PairE expr' ty') -> do
-        let emission = InfBuilderEmission $ BuilderEmitDecl $ Let ann (b:>ty') expr'
-        InfOutFrag (Nest emission Empty) emptySolverSubst
+  emitBuilder hint rhs = InfererM $ EnvReaderT $ ReaderT \_ -> do
+    emitInplace hint rhs \b rhs' ->
+      InfOutFrag
+        (Nest (InfBuilderEmission $ makeBuilderEmission b rhs') Empty)
+        emptySolverSubst
+  buildScopedGeneral ab cont = InfererM $ EnvReaderT $ ReaderT \env -> do
+    scopedResults <- scopedInplaceGeneral
+      (\(InfOutMap bs ss) b ->
+           InfOutMap (bs `extendOutMap` boundBindings b)
+                     (withExtEvidence b $ inject ss))
+      ab
+      (\e -> flip runReaderT (inject env) $ runEnvReaderT' $ runInfererM' $ cont e)
+    ScopedResult (InfOutMap bindings _) bs result <- return scopedResults
+    Abs outFrag resultAbs <- hoistInfState (toScope bindings) bs result
+    DeferredInjection ExtW (DistinctAbs bs'' result) <-
+        refreshAbsM =<< extendInplace =<< injectM (Abs outFrag resultAbs)
+    return $ ScopedBuilderResult bs'' result
 
-  emitBinding hint binding = InfererM do
-    emitInplace hint binding \b binding' -> do
-      let frag = RecEnvFrag $ b @> inject binding'
-      let emission = InfBuilderEmission $ BuilderEmitBindingsFrag frag
-      InfOutFrag (Nest emission Empty) emptySolverSubst
-
-  buildScoped cont = InfererM do
-    ScopedResult infOutMap emissions result <- scopedInplace $
-      withFabricatedEmitsEvidence $ runInfererM' cont
-    DistinctAbs outFrag (DistinctAbs builderEmissions result') <-
-      hoistInfState (toScope infOutMap) emissions result
-    let decls = fromBuilderDecls builderEmissions
-    extendInplace =<< injectM (Abs outFrag $ Abs decls result')
-
-  buildScopedTop cont = InfererM do
-    ScopedResult infOutMap emissions result <- scopedInplace $
-      withFabricatedEmitsTopEvidence $ runInfererM' cont
-    DistinctAbs outFrag (DistinctAbs builderEmissions result') <-
-      hoistInfState (toScope infOutMap) emissions result
-    let bindingsFrag = fromBuilderBindings builderEmissions
-    extendInplace =<< injectM (Abs outFrag $ Abs bindingsFrag result')
-
+instance EffectsReader (InfererM i) where
   getAllowedEffects = undefined
-  withAllowedEffects = undefined
+  withAllowedEffects _ = id  -- TODO!
 
 type InferenceNameBinders = Nest Binder
+
+-- When we finish building a block of decls we need to hoist the local solver
+-- information into the outer scope. If the local solver state mentions local
+-- variables which are about to go out of scope then we emit a "escaped scope"
+-- error. To avoid false positives, we clean up as much dead (i.e. solved)
+-- solver state as possible.
+hoistInfState
+  :: ( Fallible m, SubstE Name e, Distinct n2, InjectableB b, BindsNames b)
+  => Scope n1
+  -> PairB b InfOutFrag n1 n2
+  -> e n2
+  -> m (Abs InfOutFrag (Abs (PairB b (Nest BuilderEmission)) e) n1)
+hoistInfState scope (PairB b (InfOutFrag emissions subst)) result = do
+  withSubscopeDistinct emissions do
+    HoistedSolverState infVars subst (DistinctAbs decls result') <-
+      hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions subst result
+    case exchangeBs $ PairB b (PairB infVars (UnitB :> subst)) of
+      -- TODO: better error message
+      Nothing -> throw TypeErr "Leaked local variable"
+      Just (PairB (PairB infVars' (UnitB :> subst')) b') -> do
+        -- TODO: do we need to zonk here so that any type annotations in b' get
+        -- substituted? Or do we leave that up to the caller? Unlike with the
+        -- decls, we don't need to do it for the sake of our local leak
+        -- checking.
+        return $ Abs (InfOutFrag (infNamesToEmissions infVars') subst') $
+                   Abs (PairB b' decls) result'
 
 data HoistedSolverState e n where
   HoistedSolverState
@@ -212,20 +235,6 @@ data HoistedSolverState e n where
 
 instance HoistableE (HoistedSolverState e) where
   withFreeVarsE = undefined
-
--- When we finish building a block of decls we need to hoist the local solver
--- information into the outer scope. If the local solver state mentions local
--- variables which are about to go out of scope then we emit a "escaped scope"
--- error. To avoid false positives, we clean up as much dead (i.e. solved)
--- solver state as possible.
-hoistInfState
-  :: (Fallible m, SubstE Name e, Distinct l)
-  => Scope n -> InfOutFrag n l -> e l
-  -> m (DistinctAbs InfOutFrag (DistinctAbs (Nest BuilderEmission) e) n)
-hoistInfState scope (InfOutFrag emissions subst) result = do
-  withSubscopeDistinct emissions do
-    HoistedSolverState infNames subst result' <- hoistInfStateRec scope emissions subst result
-    return $ DistinctAbs (InfOutFrag (infNamesToEmissions infNames) subst) result'
 
 hoistInfStateRec :: (Fallible m, Distinct n, Distinct l)
                  => Scope n
@@ -276,12 +285,14 @@ infNamesToEmissions Empty = Empty
 infNamesToEmissions (Nest b rest) = Nest (InfInferenceName b) $ infNamesToEmissions rest
 
 instance BindingsReader (InfererM i) where
-  addBindings e = InfererM do
+  addBindings e = InfererM $ EnvReaderT $ lift do
     withInplaceOutEnv e \(InfOutMap bindings _) e' ->
       WithBindings bindings e'
 
 instance Scopable (InfererM i) where
-  withBindings ab cont = undefined
+  withBindings ab cont = do
+    ScopedBuilderResult (PairB b Empty) result <- buildScopedGeneral ab \x -> cont x
+    injectM $ Abs b result
 
 -- === actual inference pass ===
 
