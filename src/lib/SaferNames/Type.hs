@@ -131,7 +131,7 @@ class SubstE Name e => HasType (e::E) where
     checkAlphaEq reqTy ty
     return e'
 
-class HasNamesE e => CheckableE (e::E) where
+class SubstE Name e => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
 
 class HasNamesB b => CheckableB (b::B) where
@@ -1056,5 +1056,6 @@ labeledRowDifference (Ext (LabeledItems items) rest)
 
 -- === reducing types ===
 
+-- TODO!
 tryReduceBlock :: BindingsReader m => Block n -> m n (Maybe (Atom n))
-tryReduceBlock = undefined
+tryReduceBlock (Block _ Empty (Atom atom)) = return $ Just atom

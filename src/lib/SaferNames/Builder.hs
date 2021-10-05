@@ -59,7 +59,7 @@ class (BindingsReader m, EffectsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   emitBuilder :: NameColor c => NameHint -> BuilderEmissionRHS c n -> m n (Name c n)
   buildScopedGeneral
-    :: ( SubstE Name e, SubstE Name e', SubstB Name b, BindsBindings b)
+    :: ( SubstE Name e, HasNamesE e', SubstB Name b, BindsBindings b)
     => Abs b e n
     -> (forall l. (Ext n l, Distinct l) => e l -> m l (e' l))
     -> m n (ScopedBuilderResult b e' n)
@@ -148,9 +148,9 @@ instance GenericB BuilderEmission where
 instance ProvesExt     BuilderEmission
 instance BindsNames    BuilderEmission
 instance SubstB Name   BuilderEmission
-instance BindsBindings BuilderEmission
 instance InjectableB   BuilderEmission
 instance HoistableB    BuilderEmission
+instance BindsBindings BuilderEmission
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT BuilderBindings BuilderEmissions m n a }
@@ -320,7 +320,7 @@ instance BindsBindings BinderWithInfo where
     withExtEvidence b $
       RecEnvFrag $ b @> inject (AtomNameBinding ty info)
 
-withFreshAtomBinder :: (Scopable m, SubstE Name e)
+withFreshAtomBinder :: (Scopable m, HasNamesE e)
                     => NameHint -> Type n -> AtomBinderInfo n
                     -> (forall l. Ext n l => AtomName l -> m l (e l))
                     -> m n (Abs Binder e n)
@@ -421,7 +421,7 @@ buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
   return (effs', resultTy')
 
 buildAbs
-  :: (Builder m, HasNamesE e)
+  :: (Builder m, HasNamesE e, HoistableE e)
   => Type n
   -> (forall l. Ext n l => AtomName l -> m l (e l))
   -> m n (Abs Binder e n)

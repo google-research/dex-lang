@@ -16,6 +16,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
@@ -71,6 +72,7 @@ module SaferNames.Syntax (
 import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
+import Control.Monad.Trans.Maybe
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -240,7 +242,7 @@ class ScopeReader m => BindingsReader (m::MonadKind1) where
 class (ScopeReader m, Monad1 m)
       => Scopable (m::MonadKind1) where
   withBindings :: ( SubstB Name b, BindsBindings b
-                  , HasNamesE e , HasNamesE e')
+                  , HasNamesE e , HasNamesE e', HoistableE e')
                => Abs b e n
                -> (forall l. Ext n l => e l -> m l (e' l))
                -> m n (Abs b e' n)
@@ -335,6 +337,10 @@ instance (InjectableV v, ScopeGetter m, BindingsExtender m)
 -- like we do with `SubstE Name`, `SubstE AtomSubstVal`, etc?
 class BindsNames b => BindsBindings (b::B) where
   boundBindings :: Distinct l => b n l -> BindingsFrag n l
+
+  default boundBindings :: (GenericB b, BindsBindings (RepB b))
+                        => Distinct l => b n l -> BindingsFrag n l
+  boundBindings b = boundBindings $ fromB b
 
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
@@ -673,9 +679,10 @@ nonDepPiType arr argTy eff resultTy =
     Abs b (PairE eff' resultTy') ->
       return $ PiType arr (b:>argTy) eff' resultTy'
 
-considerNonDepPiType :: ScopeReader m
-                     => PiType n -> m n (Maybe (Arrow, Type n, EffectRow n, Type n))
-considerNonDepPiType = undefined
+considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
+considerNonDepPiType (PiType arr (b:>argTy) eff resultTy) = do
+  PairE eff' resultTy' <- hoist b (PairE eff resultTy)
+  return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
                  => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
@@ -1344,6 +1351,7 @@ deriving via WrapE SourceMap n instance Generic (SourceMap n)
 
 instance InjectableE SourceMap
 instance SubstE Name SourceMap
+instance HoistableE  SourceMap
 
 instance Pretty (SourceMap n) where
   pretty (SourceMap m) =

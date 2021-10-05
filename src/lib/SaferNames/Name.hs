@@ -37,7 +37,7 @@ module SaferNames.Name (
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
-  lookupEnvM, dropSubst, extendEnv, freeNames, emptyNameTraversalEnv, fmapNames,
+  lookupEnvM, dropSubst, extendEnv, emptyNameTraversalEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   ScopeReader2, ScopeExtender2,
@@ -66,6 +66,7 @@ module SaferNames.Name (
   unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
+  freeVarsE, freeVarsList, isFreeIn,
   ) where
 
 import Prelude hiding (id, (.))
@@ -78,6 +79,7 @@ import Control.Monad.Writer.Strict
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Foldable (fold)
+import Data.Maybe (catMaybes)
 import Data.Kind (Type)
 import Data.String
 import Data.Text.Prettyprint.Doc  hiding (nest)
@@ -450,7 +452,7 @@ class ( FromName substVal, InjectableV v
       , forall c. NameColor c => SubstE substVal (v c))
       => SubstV (substVal::V) (v::V)
 
-type HasNamesE = SubstE Name
+type HasNamesE e = (SubstE Name e, HoistableE e)
 type HasNamesB = SubstB Name
 
 instance SubstV Name Name where
@@ -472,36 +474,8 @@ substM e = do
   WithScope scope env' <- addScope env
   injectM $ fmapNames scope (env'!) e
 
--- === projections ===
-
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> Maybe (e n)
 fromConstAbs (Abs b e) = hoist b e
-
-hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> Maybe (e n)
-hoist b e = hoistWithFreeVars (toScopeFrag b) (withFreeVarsE e)
-
-exchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, HoistableB b2)
-              => PairB b1 b2 n l
-              -> Maybe (PairB b2 b1 n l)
-exchangeBs (PairB b1 b2) =
-  exchangeWithFreeVars (toScopeFrag b1) b1 (withFreeVarsB b2)
-
-
--- XXX: we need another constraint analogous to `InjectableE`, which says that
---      we can do the actual hoisting by coercion. But we can't use
---      `InjectableE` itself because `Distinct` can't implement it. For now,
---      we just have to be careful about only giving `HoistableE` instances to
---      the right types.
-class HoistableE (e::E) where
-  withFreeVarsE :: e n-> WithFreeVarsE e n
-
-  default withFreeVarsE :: (GenericE e, HoistableE (RepE e))
-                       => e n -> WithFreeVarsE e n
-  withFreeVarsE e = UnsafeMakeWithFreeVarsE (toE repE) fvs
-    where UnsafeMakeWithFreeVarsE repE fvs = withFreeVarsE $ fromE e
-
-class HoistableB (b::B) where
-  withFreeVarsB :: b n l -> WithFreeVarsB b n l
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -716,9 +690,6 @@ getDistinct :: ScopeReader m => m n (DistinctWitness n)
 getDistinct = do
   d <- getDistinctEvidenceM
   return $ withDistinctEvidence d Distinct
-
-freeNames :: HasNamesE e => NameColorRep c -> e n -> S.Set (Name c n)
-freeNames = undefined
 
 -- === versions of monad constraints with scope params ===
 
@@ -1276,6 +1247,7 @@ data NameColorRep (c::C) where
 
 deriving instance Show (NameColorRep c)
 deriving instance Eq   (NameColorRep c)
+deriving instance Ord  (NameColorRep c)
 
 data DynamicColor
    atomNameVal
@@ -1357,7 +1329,10 @@ instance (InjectableB b, InjectableE e) => InjectableE (Abs b e) where
       Abs b' (injectionProofE fresh' body)
 
 instance (HoistableB b, HoistableE e) => HoistableE (Abs b e) where
-  withFreeVarsE = undefined
+  freeVarsE (Abs b e) = freeVarsB b <> hoistNameSet b (freeVarsE e)
+
+instance (HoistableB b, HoistableE e) => HoistableE (DistinctAbs b e) where
+  freeVarsE (DistinctAbs b e) = freeVarsE (Abs b e)
 
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE env (Abs b body) = do
@@ -1383,6 +1358,10 @@ instance (BindsNames b1, BindsNames b2) => ProvesExt  (EitherB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (EitherB b1 b2) where
   toScopeFrag (LeftB  b) = toScopeFrag b
   toScopeFrag (RightB b) = toScopeFrag b
+
+instance (HoistableB b1, HoistableB b2) => HoistableB (EitherB b1 b2) where
+  freeVarsB (LeftB  b) = freeVarsB b
+  freeVarsB (RightB b) = freeVarsB b
 
 instance (InjectableB b1, InjectableB b2) => InjectableB (EitherB b1 b2) where
   injectionProofB fresh (LeftB b) cont =
@@ -1432,7 +1411,7 @@ instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE
 
 instance HoistableE UnitE where
-  withFreeVarsE = undefined
+  freeVarsE UnitE = mempty
 
 instance FromName v => SubstE v UnitE where
   substE _ UnitE = return UnitE
@@ -1440,8 +1419,8 @@ instance FromName v => SubstE v UnitE where
 instance (Functor f, InjectableE e) => InjectableE (ComposeE f e) where
   injectionProofE fresh (ComposeE xs) = ComposeE $ fmap (injectionProofE fresh) xs
 
-instance (Functor f, HoistableE e) => HoistableE (ComposeE f e) where
-  withFreeVarsE = undefined
+instance (Traversable f, HoistableE e) => HoistableE (ComposeE f e) where
+  freeVarsE (ComposeE xs) = foldMap freeVarsE xs
 
 instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
   substE env (ComposeE xs) = ComposeE <$> mapM (substE env) xs
@@ -1469,7 +1448,7 @@ instance BindsNames VoidB where
   toScopeFrag _ = error "impossible"
 
 instance HoistableB VoidB where
-  withFreeVarsB = undefined
+  freeVarsB _ = error "impossible"
 
 instance AlphaEqB VoidB where
   withAlphaEqB _ _ _ = error "impossible"
@@ -1485,7 +1464,7 @@ instance InjectableE VoidE where
   injectionProofE _ _ = error "impossible"
 
 instance HoistableE VoidE where
-  withFreeVarsE = undefined
+  freeVarsE _ = error "impossible"
 
 instance AlphaEqE VoidE where
   alphaEqE _ _ = error "impossible"
@@ -1498,7 +1477,7 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (PairE e1 e2) where
     PairE (injectionProofE fresh e1) (injectionProofE fresh e2)
 
 instance (HoistableE e1, HoistableE e2) => HoistableE (PairE e1 e2) where
-  withFreeVarsE (PairE e1 e2) = undefined
+  freeVarsE (PairE e1 e2) = freeVarsE e1 <> freeVarsE e2
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE env (PairE x y) =
@@ -1509,8 +1488,8 @@ instance (InjectableE e1, InjectableE e2) => InjectableE (EitherE e1 e2) where
   injectionProofE fresh (RightE e) = RightE (injectionProofE fresh e)
 
 instance (HoistableE e1, HoistableE e2) => HoistableE (EitherE e1 e2) where
-  withFreeVarsE (LeftE  e) = undefined
-  withFreeVarsE (RightE e) = undefined
+  freeVarsE (LeftE  e) = freeVarsE e
+  freeVarsE (RightE e) = freeVarsE e
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
   substE env (LeftE  x) = LeftE  <$> substE env x
@@ -1528,7 +1507,7 @@ instance InjectableE (LiftE a) where
   injectionProofE _ (LiftE x) = LiftE x
 
 instance HoistableE (LiftE a) where
-  withFreeVarsE = undefined
+  freeVarsE (LiftE x) = mempty
 
 instance FromName v => SubstE v (LiftE a) where
   substE _ (LiftE x) = return $ LiftE x
@@ -1574,6 +1553,8 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
 instance ProvesExt  (RecEnvFrag v) where
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envFragAsScope $ fromRecEnvFrag env
+instance HoistableB (RecEnvFrag v) where
+  freeVarsB =  undefined
 
 -- Traversing a recursive set of bindings is a bit tricky because we have to do
 -- two passes: first we rename the binders, then we go and subst the payloads.
@@ -1645,6 +1626,9 @@ instance InjectableV v => InjectableB (RecEnvFrag v) where
 
 instance SubstV substVal v => SubstE substVal (EnvVal v) where
   substE env (EnvVal rep v) = withNameColorRep rep $ EnvVal rep <$> substE env v
+
+instance (forall c. HoistableE (v c)) => HoistableE (EnvVal v) where
+  freeVarsE (EnvVal _ v) = freeVarsE v
 
 instance Store (UnitE n)
 instance Store (VoidE n)
@@ -1972,70 +1956,84 @@ instance InjectableE DistinctEvidence where
 instance InjectableE (ExtEvidence n) where
   injectionProofE _ _ = FabricateExtEvidence
 
--- === projections -- the unsafe bits ===
+-- === projections ===
 
-hoistWithFreeVars :: HoistableE e => ScopeFrag n l -> WithFreeVarsE e l -> Maybe (e n)
-hoistWithFreeVars
-    (UnsafeMakeScope frag)
-    (UnsafeMakeWithFreeVarsE e freeVars) =
-  if null $ S.intersection frag freeVars
+data SomeNameColor (n::S) where
+  SomeNameColor :: NameColorRep c -> SomeNameColor n
+
+type NameSet n = M.Map RawName (SomeNameColor n)
+
+unsafeCoerceNameSet :: NameSet n -> NameSet l
+unsafeCoerceNameSet = TrulyUnsafe.unsafeCoerce
+
+-- XXX: we need another constraint analogous to `InjectableE`, which says that
+--      we can do the actual hoisting by coercion. But we can't use
+--      `InjectableE` itself because `Distinct` can't implement it. For now,
+--      we just have to be careful about only giving `HoistableE` instances to
+--      the right types.
+-- XXX: there are privileged functions that depend on `HoistableE` instances
+--      being correct.
+class HoistableE (e::E) where
+  freeVarsE :: e n-> NameSet n
+  default freeVarsE :: (GenericE e, HoistableE (RepE e)) => e n -> NameSet n
+  freeVarsE e = freeVarsE $ fromE e
+
+class BindsNames b => HoistableB (b::B) where
+  freeVarsB :: b n l -> NameSet n
+  default freeVarsB :: (GenericB b, HoistableB (RepB b)) => b n l -> NameSet n
+  freeVarsB b = freeVarsB $ fromB b
+
+hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> Maybe (e n)
+hoist b e =
+  if null $ S.intersection frag (M.keysSet $ freeVarsE e)
     then Just $ unsafeCoerceE e
     else Nothing
+  where UnsafeMakeScope frag = toScopeFrag b
 
--- What about preserving the free vars in the result?
-exchangeWithFreeVars :: (Distinct n3, InjectableB b1, HoistableB b2)
-                     => ScopeFrag n1 n2
-                     -> b1 n1 n2
-                     -> WithFreeVarsB b2 n2 n3
-                     -> Maybe (PairB b2 b1 n1 n3)
-exchangeWithFreeVars
-    (UnsafeMakeScope frag)
-    b1
-    (UnsafeMakeWithFreeVarsB b2 freeVars _) =
-  if null $ S.intersection frag freeVars
+freeVarsList :: HoistableE e => NameColorRep c -> e n -> [Name c n]
+freeVarsList c e =
+  catMaybes $ flip map (M.toList $ freeVarsE e) \(rawName, (SomeNameColor c')) ->
+   case eqNameColorRep c c' of
+     Just EqNameColor -> Just $ UnsafeMakeName c rawName
+     Nothing -> Nothing
+
+isFreeIn :: HoistableE e => Name c n -> e n -> Bool
+isFreeIn v e = getRawName v `M.member` freeVarsE e
+
+exchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, HoistableB b2)
+              => PairB b1 b2 n l
+              -> Maybe (PairB b2 b1 n l)
+exchangeBs (PairB b1 b2) =
+  if null $ S.intersection frag (M.keysSet $ freeVarsB b2)
     then Just $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
     else Nothing
+  where UnsafeMakeScope frag = toScopeFrag b1
 
-data WithFreeVarsE (e::E) (n::S) where
-  UnsafeMakeWithFreeVarsE :: e n -> S.Set RawName -> WithFreeVarsE e n
-
-data WithFreeVarsB (b::B) (n::S) (l::S) where
-  UnsafeMakeWithFreeVarsB :: b n l
-                          -> S.Set RawName
-                          -> ScopeFrag n l
-                          -> WithFreeVarsB b n l
-
--- TODO: make a FunctorB class for this pattern?
-fmapWithFresVarsB :: (forall n' l'. b n' l' -> b' n' l')
-                  -> WithFreeVarsB b n l -> WithFreeVarsB b' n l
-fmapWithFresVarsB f (UnsafeMakeWithFreeVarsB b fvs frag) =
-  UnsafeMakeWithFreeVarsB (f b) fvs frag
+hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
+hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` fragAsMap
+  where
+    UnsafeMakeScope frag = toScopeFrag b
+    fragAsMap = M.fromList $ map (,()) $ S.toList frag
 
 instance HoistableB (NameBinder c) where
-  withFreeVarsB = undefined
+  freeVarsB _ = mempty
 
 instance HoistableE (Name c) where
-  withFreeVarsE = undefined
+  freeVarsE name =
+    M.singleton (getRawName name) (SomeNameColor $ getNameColor name)
 
 instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
-  withFreeVarsB (PairB b1 b2) =
-    UnsafeMakeWithFreeVarsB (PairB b1' b2') (S.union s1 s2) (f1 >>> f2)
-    where
-      UnsafeMakeWithFreeVarsB b1' s1 f1 = withFreeVarsB b1
-      UnsafeMakeWithFreeVarsB b2' s2 f2 = withFreeVarsB b2
+  freeVarsB (PairB b1 b2) =
+    freeVarsB b1 <> hoistNameSet b1 (freeVarsB b2)
 
 instance (HoistableB b, HoistableE ann) => HoistableB (BinderP b ann) where
-  withFreeVarsB (b:>ann) = UnsafeMakeWithFreeVarsB (b':>ann') (S.union s1 s2) f
-    where
-      UnsafeMakeWithFreeVarsE ann' s1   = withFreeVarsE ann
-      UnsafeMakeWithFreeVarsB b'   s2 f = withFreeVarsB b
+  freeVarsB (b:>ann) = freeVarsB b <> freeVarsE ann
 
 instance HoistableB UnitB where
-  withFreeVarsB UnitB = UnsafeMakeWithFreeVarsB UnitB mempty id
+  freeVarsB = mempty
 
 instance HoistableE e => HoistableE (ListE e) where
-  withFreeVarsE (ListE xs) = UnsafeMakeWithFreeVarsE (ListE xs') $ fold fvss
-    where (xs', fvss) = unzip [(x, fvs) | UnsafeMakeWithFreeVarsE x fvs <- map withFreeVarsE xs]
+  freeVarsE (ListE xs) = foldMap freeVarsE xs
 
 -- === environments ===
 
@@ -2168,10 +2166,8 @@ instance InjectableB b => InjectableB (Nest b) where
         cont fresh'' (Nest b' rest')
 
 instance HoistableB b => HoistableB (Nest b) where
-  withFreeVarsB Empty = fmapWithFresVarsB (\UnitB -> Empty) $ withFreeVarsB UnitB
-  withFreeVarsB (Nest b rest) =
-    fmapWithFresVarsB (\(PairB b' rest') -> Nest b' rest') $
-      withFreeVarsB (PairB b rest)
+  freeVarsB Empty = mempty
+  freeVarsB (Nest b rest) = freeVarsB (PairB b rest)
 
 instance (forall c n. Pretty (v c n)) => Pretty (EnvFrag v i i' o) where
   pretty (UnsafeMakeEnv m _) =

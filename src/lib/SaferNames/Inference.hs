@@ -74,7 +74,7 @@ typeReduceAtom :: Inferer m => Atom o -> m i o (Atom o)
 typeReduceAtom atom = return atom  -- TODO!
 
 makeReqCon :: Inferer m => Type o -> m i o SuggestionStrength
-makeReqCon = undefined
+makeReqCon _ = return Suggest -- TODO!
 
 -- === Concrete Inferer monad ===
 
@@ -205,7 +205,7 @@ type InferenceNameBinders = Nest Binder
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
 hoistInfState
-  :: ( Fallible m, SubstE Name e, Distinct n2, InjectableB b, BindsNames b)
+  :: ( Fallible m, SubstE Name e, HoistableE e, Distinct n2, InjectableB b, BindsNames b)
   => Scope n1
   -> PairB b InfOutFrag n1 n2
   -> e n2
@@ -233,10 +233,11 @@ data HoistedSolverState e n where
     ->   DistinctAbs (Nest BuilderEmission) e l1
     -> HoistedSolverState e n
 
-instance HoistableE (HoistedSolverState e) where
-  withFreeVarsE = undefined
+instance HoistableE e => HoistableE (HoistedSolverState e) where
+  freeVarsE (HoistedSolverState infVars subst ab) =
+    freeVarsE (Abs infVars (PairE subst ab))
 
-hoistInfStateRec :: (Fallible m, Distinct n, Distinct l)
+hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
                  => Scope n
                  -> Nest InfEmission n l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
@@ -384,7 +385,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     --     is safe and doesn't make the type checking depend on the program order.
     infTy <- getType =<< zonk f'
     piTy  <- addSrcContext (srcPos f) $ fromPiType True arr infTy
-    considerNonDepPiType piTy >>= \case
+    case considerNonDepPiType piTy of
       Just (_, argTy, effs, _) -> do
         x' <- checkSigma x Suggest argTy
         addEffects effs
@@ -1168,13 +1169,11 @@ isSkolemName v = lookupBindings v >>= \case
 
 bindQ :: Inferer m => AtomName o -> Type o -> m i o ()
 bindQ v t = do
-  when (v `S.member` freeAtomNames t) $ throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
+  when (v `isFreeIn` t) $ throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
   -- TODO: is this skolem check actually correct/necessary?
-  forM_ (freeAtomNames t) \fv -> whenM (isSkolemName fv) $ throw TypeErr $ "Can't unify with skolem vars"
+  forM_ (freeVarsList AtomNameRep t) \fv ->
+    whenM (isSkolemName fv) $ throw TypeErr $ "Can't unify with skolem vars"
   extendSolverSubst v t
-
-freeAtomNames :: HasNamesE e => e n -> S.Set (AtomName n)
-freeAtomNames = freeNames AtomNameRep
 
 renameForPrinting :: (Type n, Type n) -> ((Type n, Type n), [AtomName n])
 renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
