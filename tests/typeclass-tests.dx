@@ -48,3 +48,12 @@ instance InterfaceTest4 Float
   foo = 1
   bar = \_. 1
 
+outer = 1.0
+-- Should be able to shadow a variable with the parameter
+interface InterfaceTest5 outer
+  value outer : Int
+
+-- Shouldn't be able to bind a parameter variable twice
+interface InterfaceTest6 a a
+  f : a -> Int
+> Error: variable already defined within pattern: a
