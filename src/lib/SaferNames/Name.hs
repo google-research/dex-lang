@@ -1835,22 +1835,27 @@ type B = S -> S -> *  -- binder-y things, covariant in the first param and
 type V = C -> E       -- value-y things that we might look up in an environment
                       -- with a `Name c n`, parameterized by the name's color.
 
-newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScope (S.Set RawName)
+data SomeNameColor (n::S) where
+  SomeNameColor :: NameColorRep c -> SomeNameColor n
+
+type NameSet n = M.Map RawName (SomeNameColor n)
+
+newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScopeFrag (NameSet UnsafeS)
 newtype Scope (n::S) = Scope { fromScope :: ScopeFrag VoidS n }
 
 instance Category ScopeFrag where
-  id = UnsafeMakeScope mempty
-  UnsafeMakeScope s2 . UnsafeMakeScope s1 = UnsafeMakeScope $ s1 <> s2
+  id = UnsafeMakeScopeFrag mempty
+  UnsafeMakeScopeFrag s2 . UnsafeMakeScopeFrag s1 = UnsafeMakeScopeFrag $ s1 <> s2
 
 instance BindsNames (NameBinder c) where
-  toScopeFrag (UnsafeMakeBinder (UnsafeMakeName _ v)) =
-    UnsafeMakeScope (S.singleton v)
+  toScopeFrag (UnsafeMakeBinder (UnsafeMakeName rep v)) =
+    UnsafeMakeScopeFrag (M.singleton v $ SomeNameColor rep)
 
 absurdNameFunction :: Name v VoidS -> a
 absurdNameFunction _ = error "Void names shouldn't exist"
 
 scopeFragToEnvFrag :: ScopeFrag n l -> EnvFrag (ConstE UnitE) n l VoidS
-scopeFragToEnvFrag (UnsafeMakeScope s) = undefined
+scopeFragToEnvFrag (UnsafeMakeScopeFrag s) = undefined
   -- UnsafeMakeEnv $ M.fromList [(v, ConstE UnitE) | v <- S.toList s]
 
 -- TODO: we reuse the old `Name` to make use of the GlobalName name space while
@@ -1878,7 +1883,7 @@ instance IsString NameHint where
 withFresh :: forall n c a. Distinct n
           => NameHint -> NameColorRep c -> Scope n
           -> (forall l. (Ext n l, Distinct l) => NameBinder c n l -> a) -> a
-withFresh hint rep (Scope (UnsafeMakeScope scope)) cont =
+withFresh hint rep (Scope (UnsafeMakeScopeFrag scope)) cont =
   withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
       cont $ UnsafeMakeBinder freshName
@@ -1891,11 +1896,11 @@ hintToRawName hint = case hint of
   Hint v -> v
   NoHint -> "v"
 
-freshRawName :: D.Tag -> S.Set RawName -> RawName
+freshRawName :: D.Tag -> M.Map RawName a -> RawName
 freshRawName tag usedNames = D.Name D.GenName tag nextNum
   where
-    nextNum = case S.lookupLT (D.Name D.GenName tag bigInt) usedNames of
-                Just (D.Name D.GenName tag' i)
+    nextNum = case M.lookupLT (D.Name D.GenName tag bigInt) usedNames of
+                Just (D.Name D.GenName tag' i, _)
                   | tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
@@ -1903,8 +1908,8 @@ freshRawName tag usedNames = D.Name D.GenName tag nextNum
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
 projectName :: ScopeFrag n l -> Name s l -> Either (Name s n) (Name s (n:=>:l))
-projectName (UnsafeMakeScope scope) (UnsafeMakeName rep rawName)
-  | S.member rawName scope = Right $ UnsafeMakeName rep rawName
+projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rep rawName)
+  | M.member rawName scope = Right $ UnsafeMakeName rep rawName
   | otherwise              = Left  $ UnsafeMakeName rep rawName
 
 -- proves that the names in n are distinct
@@ -2036,11 +2041,6 @@ instance InjectableE (ExtEvidence n) where
 
 -- === projections ===
 
-data SomeNameColor (n::S) where
-  SomeNameColor :: NameColorRep c -> SomeNameColor n
-
-type NameSet n = M.Map RawName (SomeNameColor n)
-
 unsafeCoerceNameSet :: NameSet n -> NameSet l
 unsafeCoerceNameSet = TrulyUnsafe.unsafeCoerce
 
@@ -2063,10 +2063,10 @@ class BindsNames b => HoistableB (b::B) where
 
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> Maybe (e n)
 hoist b e =
-  if null $ S.intersection frag (M.keysSet $ freeVarsE e)
+  if null $ M.intersection frag (freeVarsE e)
     then Just $ unsafeCoerceE e
     else Nothing
-  where UnsafeMakeScope frag = toScopeFrag b
+  where UnsafeMakeScopeFrag frag = toScopeFrag b
 
 freeVarsList :: HoistableE e => NameColorRep c -> e n -> [Name c n]
 freeVarsList c e =
@@ -2082,16 +2082,14 @@ exchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, HoistableB b2)
               => PairB b1 b2 n l
               -> Maybe (PairB b2 b1 n l)
 exchangeBs (PairB b1 b2) =
-  if null $ S.intersection frag (M.keysSet $ freeVarsB b2)
+  if null $ M.intersection frag (freeVarsB b2)
     then Just $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
     else Nothing
-  where UnsafeMakeScope frag = toScopeFrag b1
+  where UnsafeMakeScopeFrag frag = toScopeFrag b1
 
 hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
-hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` fragAsMap
-  where
-    UnsafeMakeScope frag = toScopeFrag b
-    fragAsMap = M.fromList $ map (,()) $ S.toList frag
+hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` frag
+  where UnsafeMakeScopeFrag frag = toScopeFrag b
 
 instance HoistableB (NameBinder c) where
   freeVarsB _ = mempty
@@ -2126,41 +2124,39 @@ data EnvFrag
   (i ::S)  -- starting scope parameter for names we can look up in this env
   (i'::S)  -- ending   scope parameter for names we can look up in this env
   (o ::S)  -- scope parameter for the values stored in the env
-  = UnsafeMakeEnv
-      (M.Map RawName (EnvVal v o))
-      (S.Set RawName)  -- cached name set as an optimization, to avoid the O(n)
-                       -- map-to-set conversion
+  = UnsafeMakeEnv (M.Map RawName (EnvVal v o))
   deriving (Generic)
 deriving instance (forall c. Show (v c o)) => Show (EnvFrag v i i' o)
 
 -- === environments and scopes ===
 
 lookupEnvFrag :: EnvFrag v i i' o -> Name s (i:=>:i') -> v s o
-lookupEnvFrag (UnsafeMakeEnv m _) (UnsafeMakeName rep rawName) =
+lookupEnvFrag (UnsafeMakeEnv m) (UnsafeMakeName rep rawName) =
   case M.lookup rawName m of
     Nothing -> error "Env lookup failed (this should never happen)"
     Just d -> fromEnvVal rep d
 
 instance InFrag (EnvFrag v) where
-  emptyInFrag = UnsafeMakeEnv mempty mempty
-  catInFrags (UnsafeMakeEnv m1 s1) (UnsafeMakeEnv m2 s2) =
-    UnsafeMakeEnv (m2 <> m1) (s2 <> s1)  -- flipped because Data.Map uses a left-biased `<>`
+  emptyInFrag = UnsafeMakeEnv mempty
+  catInFrags (UnsafeMakeEnv m1) (UnsafeMakeEnv m2) =
+    UnsafeMakeEnv (m2 <> m1) -- flipped because Data.Map uses a left-biased `<>`
 
 singletonEnv :: NameBinder c i i' -> v c o -> EnvFrag v i i' o
 singletonEnv (UnsafeMakeBinder (UnsafeMakeName rep name)) x =
-  UnsafeMakeEnv (M.singleton name $ EnvVal rep x) (S.singleton name)
+  UnsafeMakeEnv (M.singleton name $ EnvVal rep x)
 
 fmapEnvFrag :: InjectableV v
             => (forall c. NameColor c => Name c (i:=>:i') -> v c o -> v' c o')
             -> EnvFrag v i i' o -> EnvFrag v' i i' o'
-fmapEnvFrag f (UnsafeMakeEnv m s) = UnsafeMakeEnv m' s
+fmapEnvFrag f (UnsafeMakeEnv m) = UnsafeMakeEnv m'
   where m' = flip M.mapWithKey m \k (EnvVal rep val) ->
                withNameColorRep rep $
                  EnvVal rep $ f (UnsafeMakeName rep k) val
 
 
 envFragAsScope :: EnvFrag v i i' o -> ScopeFrag i i'
-envFragAsScope (UnsafeMakeEnv _ s) = UnsafeMakeScope s
+envFragAsScope (UnsafeMakeEnv m) = UnsafeMakeScopeFrag $
+  fmap (\(EnvVal rep _) -> SomeNameColor rep) m
 
 -- === iterating through env pairs ===
 
@@ -2168,7 +2164,7 @@ data EnvPair (v::V) (o::S) (i::S) (i'::S) where
   EnvPair :: NameColor c => NameBinder c i i' -> v c o -> EnvPair v o i i'
 
 toEnvPairs :: forall v i i' o . EnvFrag v i i' o -> Nest (EnvPair v o) i i'
-toEnvPairs (UnsafeMakeEnv m _) =
+toEnvPairs (UnsafeMakeEnv m) =
   go $ M.elems $ M.mapWithKey mkPair m
   where
     mkPair :: RawName -> EnvVal v o -> EnvPair v o UnsafeS UnsafeS
@@ -2248,7 +2244,7 @@ instance HoistableB b => HoistableB (Nest b) where
   freeVarsB (Nest b rest) = freeVarsB (PairB b rest)
 
 instance (forall c n. Pretty (v c n)) => Pretty (EnvFrag v i i' o) where
-  pretty (UnsafeMakeEnv m _) =
+  pretty (UnsafeMakeEnv m) =
     fold [ pretty v <+> "@>" <+> pretty x <> hardline
          | (v, EnvVal _ x) <- M.toList m ]
 
