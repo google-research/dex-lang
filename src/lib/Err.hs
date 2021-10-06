@@ -86,7 +86,8 @@ newtype FallibleM a =
   deriving (Functor, Applicative, Monad)
 
 instance Fallible FallibleM where
-  throwErrs errs = FallibleM $ lift $ throwErrs errs
+  throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
+    throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
 
 instance FallibleApplicative FallibleM where
