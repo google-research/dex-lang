@@ -350,17 +350,6 @@ evalUModule sourceModule = do
       checkPass ResultPass $ Module Evaluated Empty evaluated
       return evaluated
 
-roundtripSaferNamesPass :: MonadPasses m => Module -> m n Module
-roundtripSaferNamesPass m = do
-#ifdef DEX_SAFE_NAMES
-  (S.Distinct, env) <- getTopState
-  let m' = toSafe env $ m
-  S.checkModule (S.topBindings $ topStateS env) m'
-  return $ fromSafe env m'
-#else
-  return m
-#endif
-
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
 evalMLIR :: MonadPasses m => Block -> m n Atom
@@ -428,12 +417,12 @@ withCompileTime m = do
   return $ Result (outs ++ [TotalTime t]) err
 
 checkPassS :: (MonadPasses m, Pretty (e n), S.CheckableE e) => PassName -> e n -> m n ()
-checkPassS name x = return ()
-  -- (S.Distinct, topState) <- getTopState
-  -- let scope = topBindings $ topStateD topState
-  -- logPass name x
-  -- liftExcept $ checkValid scope x
-  -- logTop $ MiscLog $ pprint name ++ " checks passed"
+checkPassS name x = do
+  (S.Distinct, topState) <- getTopState
+  let S.TopState bindingsS _ _ = topStateS topState
+  logPass name x
+  liftExcept $ S.runBindingsReaderT bindingsS $ S.checkTypes x
+  logTop $ MiscLog $ pprint name ++ " checks passed"
 
 checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m n ()
 checkPass name x = do

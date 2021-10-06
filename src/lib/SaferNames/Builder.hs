@@ -28,12 +28,11 @@ module SaferNames.Builder (
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
-  emitBlock, BuilderEmissions (..), emitAtomToName,
+  emitBlock, BuilderEmissions, emitAtomToName,
   withFabricatedEmitsEvidence, withFabricatedEmitsTopEvidence,
   BuilderEmission (..), fromBuilderDecls, fromBuilderBindings, makeBuilderEmission,
   ) where
 
-import Control.Category
 import Prelude hiding ((.), id)
 import Control.Monad
 import Data.Foldable (toList)
@@ -108,7 +107,8 @@ emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
-emitBlock = undefined
+emitBlock (Block _ Empty (Atom result)) = return result
+emitBlock _ = undefined
 
 emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
 emitAtomToName (Var v) = return v
@@ -171,6 +171,8 @@ runBuilderT bindings cont = do
     _ -> error "shouldn't have produced any decls"
 
 instance MonadFail m => EffectsReader (BuilderT m) where
+  getAllowedEffects = undefined
+  withAllowedEffects = undefined
 
 instance MonadFail m => Builder (BuilderT m) where
   emitBuilder hint rhs = BuilderT $

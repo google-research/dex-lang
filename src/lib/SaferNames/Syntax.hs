@@ -72,7 +72,6 @@ module SaferNames.Syntax (
 import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.Trans.Maybe
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -95,7 +94,7 @@ import Syntax
   , BlockId, ReachedEOF, ModuleName, CmdName (..), LogLevel (..)
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
-  , PassName, OutFormat (..), Output (..), Result (..))
+  , PassName, OutFormat (..), Result (..))
 
 import SaferNames.Name
 import PPrint ()
@@ -375,12 +374,19 @@ withFreshBinder hint ty info cont =
     cont $ b :> ty
 
 refreshBinders
-  :: ( InjectableV v, BindingsExtender2 m, FromName v
+  :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
      , EnvReader v m, SubstB v b, BindsBindings b)
   => b i i'
   -> (forall o'. Ext o o' => b o o' -> m i' o' r)
   -> m i o r
-refreshBinders _ _ = undefined
+refreshBinders b cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  env <- getEnv
+  DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idEnvFrag b)
+  extendBindings (boundBindings b') do
+    extendEnv envFrag do
+      cont b'
 
 freshBinderNamePair :: (ScopeReader m, NameColor c)
                     => NameHint
@@ -1240,21 +1246,26 @@ instance GenericE AtomBinderInfo where
         (LiftE Arrow)
         UnitE
         UnitE
-        UnitE
+        (EitherE2
+           UnitE
+           UnitE)
 
   fromE = \case
     LetBound ann e -> Case0 (PairE (LiftE ann) e)
     LamBound arr   -> Case1 (LiftE arr)
     PiBound        -> Case2 UnitE
     MiscBound      -> Case3 UnitE
-    InferenceName  -> Case4 UnitE
+    InferenceName  -> Case4 (Case0 UnitE)
+    SkolemName     -> Case4 (Case1 UnitE)
 
   toE = \case
     Case0 (PairE (LiftE ann) e) -> LetBound ann e
     Case1 (LiftE arr)           -> LamBound arr
     Case2 UnitE                 -> PiBound
     Case3 UnitE                 -> MiscBound
-    Case4 UnitE                 -> InferenceName
+    Case4 (Case0 UnitE)         -> InferenceName
+    Case4 (Case1 UnitE)         -> SkolemName
+    Case4 _                     -> error "impossible"
     _ -> error "impossible"
 
 instance InjectableE AtomBinderInfo
@@ -1296,9 +1307,11 @@ instance NameColor c => GenericE (Binding c) where
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
 instance InjectableV         Binding
+instance HoistableV          Binding
 instance SubstV Name         Binding
 instance SubstV AtomSubstVal Binding
 instance NameColor c => InjectableE         (Binding c)
+instance NameColor c => HoistableE          (Binding c)
 instance NameColor c => SubstE Name         (Binding c)
 instance NameColor c => SubstE AtomSubstVal (Binding c)
 
@@ -1316,7 +1329,7 @@ instance ProvesExt  Decl
 instance BindsNames Decl
 
 instance InjectableB BindingDecl where
-  injectionProofB _ _ _ = undefined
+  injectionProofB _ _ _ = todoInjectableProof
 
 instance SubstB Name BindingDecl where
   substB _ _ _ = undefined
@@ -1477,7 +1490,7 @@ instance InjectableE e => InjectableE (WithBindings e) where
     where ext = getExtEvidence :: ExtEvidence h n
 
 instance InjectableE UVar where
-  injectionProofE = undefined
+  injectionProofE = todoInjectableProof
 
 instance HasNameHint (UPat n l) where
   getNameHint (WithSrcB _ (UPatBinder b)) = getNameHint b
@@ -1496,7 +1509,7 @@ instance BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x
 
 instance InjectableE UModule where
-  injectionProofE = undefined
+  injectionProofE = todoInjectableProof
 
 instance Pretty (UBinder c n l) where
   pretty (UBindSource v) = pretty v
@@ -1505,4 +1518,3 @@ instance Pretty (UBinder c n l) where
 
 instance Pretty (UType n) where
   pretty = undefined
-

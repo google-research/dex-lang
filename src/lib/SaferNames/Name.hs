@@ -19,7 +19,7 @@ module SaferNames.Name (
   Name (..), RawName, S (..), C (..), (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), FromName (..), Distinct, DistinctWitness (..),
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy,
-  Env (..), idEnv, newEnv, envFromFrag,
+  Env (..), idEnv, idEnvFrag, newEnv, envFromFrag,
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
@@ -60,14 +60,15 @@ module SaferNames.Name (
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..), idExt, injectExt,
   InFrag (..), InMap (..), OutFrag (..), OutMap (..),
-  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag, refreshAbs, refreshAbsM,
-  hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..),
+  toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
+  substAbsDistinct, refreshAbs, refreshAbsM,
+  hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
   unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
-  freeVarsE, freeVarsList, isFreeIn,
+  freeVarsList, isFreeIn, todoInjectableProof,
   ) where
 
 import Prelude hiding (id, (.))
@@ -77,7 +78,6 @@ import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
-import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 import Data.Foldable (fold)
 import Data.Maybe (catMaybes)
@@ -111,8 +111,9 @@ envFromFrag frag = Env absurdNameFunction frag
 idEnv :: FromName v => Env v n n
 idEnv = newEnv fromName
 
-idEnvFrag :: (Distinct l, FromName v) => ScopeFrag n l -> EnvFrag v n l l
-idEnvFrag frag = fmapEnvFrag (\v _ -> fromName $ injectR v) $ scopeFragToEnvFrag frag
+idEnvFrag :: (BindsNames b, FromName v) => b n l -> EnvFrag v n l l
+idEnvFrag b =
+  fmapEnvFrag (\v _ -> fromName $ injectR v) $ scopeFragToEnvFrag (toScopeFrag b)
 
 infixl 9 !
 (!) :: Env v i o -> Name c i -> v c o
@@ -147,12 +148,16 @@ class (OutFrag scopeFrag, HasScope scope)
   emptyOutMap :: scope VoidS
   extendOutMap :: Distinct l => scope n -> scopeFrag n l -> scope l
 
+todoInjectableProof :: a
+todoInjectableProof =
+  error "This will never be called. But we should really finish these proofs."
+
 instance InMap (Env v) (EnvFrag v) where
   emptyInMap = newEnv absurdNameFunction
   extendInMap (Env f frag) frag' = Env f $ frag <.> frag'
 
 instance InjectableB ScopeFrag where
-  injectionProofB _ _ _ = undefined
+  injectionProofB _ _ _ = todoInjectableProof
 
 instance OutFrag ScopeFrag where
   emptyOutFrag = id
@@ -313,6 +318,9 @@ instance ProvesExt ScopeFrag
 instance BindsNames ScopeFrag where
   toScopeFrag s = s
 
+instance HoistableB ScopeFrag where
+  freeVarsB _ = mempty
+
 class HasScope (bindings :: S -> *) where
   toScope :: bindings n -> Scope n
 
@@ -350,9 +358,9 @@ instance ProvesExt ExtWitness where
   toExtEvidence ExtW = getExtEvidence
 
 instance InjectableE (ExtWitness n) where
-  injectionProofE :: forall n' n l. InjectionCoercion n l -> ExtWitness n' n -> ExtWitness n' l
+  injectionProofE :: forall l l'. InjectionCoercion l l' -> ExtWitness n l -> ExtWitness n l'
   injectionProofE fresh ExtW =
-    withExtEvidence (injectionProofE fresh (getExtEvidence :: ExtEvidence n' n)) ExtW
+    withExtEvidence (injectionProofE fresh (getExtEvidence :: ExtEvidence n l)) ExtW
 
 instance Category ExtWitness where
   id :: forall n. ExtWitness n n
@@ -414,7 +422,7 @@ newtype MonadicVal (m::MonadKind) (v::V) (c::C) (n::S) =
 
 instance InjectableV v => InjectableV (MonadicVal m v)
 instance (NameColor c, InjectableV v) => InjectableE (MonadicVal m v c) where
-  injectionProofE = undefined
+  injectionProofE = todoInjectableProof
 
 newtype SubstTraversalEnv (m::MonadKind) (v::V) (i::S) (o::S) =
   SubstTraversalEnv (Env (MonadicVal m v) i o)
@@ -715,6 +723,13 @@ traverseEnvFrag :: forall v v' i i' o o' m .
 traverseEnvFrag f frag = liftM fromEnvPairs $
   forEachNestItem (toEnvPairs frag) \(EnvPair b val) ->
     EnvPair b <$> f val
+
+foldMapEnvFrag
+  :: forall v i i' o accum . Monoid accum
+  => (forall c. NameColor c => v c o -> accum)
+  -> EnvFrag v i i' o -> accum
+foldMapEnvFrag f frag =
+  execWriter $ traverseEnvFrag (\x -> tell (f x) >> return x) frag
 
 nestLength :: Nest b n l -> Int
 nestLength Empty = 0
@@ -1145,7 +1160,7 @@ data ScopedResult (bindings::E) (b::B) (e::E) (n::S) where
                -> ScopedResult bindings b e n
 
 instance InjectableE (ScopedResult bindings b e) where
-  injectionProofE = undefined
+  injectionProofE = todoInjectableProof
 
 scopedInplaceGeneral
   :: ( SubstE Name e, SubstB Name b, ProvesExt b, InjectableE e'
@@ -1201,8 +1216,6 @@ extendInplace withDecls = do
   doInplace withDecls \bindings withDecls' ->
     refreshAbs (toScope bindings) withDecls'
 
-data WithExtContravariantly thing n l where
-
 -- === InplaceT instances ===
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
@@ -1245,7 +1258,7 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, F
 
 instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
-  getErrCtx = undefined
+  getErrCtx = liftInplace getErrCtx
 
 -- === name hints ===
 
@@ -1466,14 +1479,18 @@ instance BindsNames b => BindsNames (Nest b) where
   toScopeFrag Empty = id
   toScopeFrag (Nest b rest) = toScopeFrag b >>> toScopeFrag rest
 
-instance SubstB v b => SubstB v (Nest b) where
+instance (BindsNames b, SubstB v b, InjectableV v)
+         => SubstB v (Nest b) where
   substB env (Nest b bs) cont =
     substB env b \env' b' ->
       substB env' bs \env'' bs' ->
         cont env'' $ Nest b' bs'
   substB env Empty cont = cont env Empty
 
-  substBDistinct env (Nest b bs) = undefined
+  substBDistinct _ Empty = return Empty
+  substBDistinct env (Nest b bs) = do
+    PairB b' bs' <- substBDistinct env $ PairB b bs
+    return $ Nest b' bs'
 
 instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE
@@ -1577,7 +1594,7 @@ instance InjectableE (LiftE a) where
   injectionProofE _ (LiftE x) = LiftE x
 
 instance HoistableE (LiftE a) where
-  freeVarsE (LiftE x) = mempty
+  freeVarsE (LiftE _) = mempty
 
 instance FromName v => SubstE v (LiftE a) where
   substE _ (LiftE x) = return $ LiftE x
@@ -1623,8 +1640,8 @@ instance ( Store   (b1 UnsafeS UnsafeS), Store   (b2 UnsafeS UnsafeS)
 instance ProvesExt  (RecEnvFrag v) where
 instance BindsNames (RecEnvFrag v) where
   toScopeFrag env = envFragAsScope $ fromRecEnvFrag env
-instance HoistableB (RecEnvFrag v) where
-  freeVarsB =  undefined
+instance HoistableV v => HoistableB (RecEnvFrag v) where
+  freeVarsB (RecEnvFrag env) = freeVarsE (Abs (envFragAsScope env) env)
 
 -- Traversing a recursive set of bindings is a bit tricky because we have to do
 -- two passes: first we rename the binders, then we go and subst the payloads.
@@ -1632,10 +1649,16 @@ instance (InjectableV substVal, SubstV substVal v) => SubstB substVal (RecEnvFra
   substB env (RecEnvFrag recEnv) cont = do
     let pairs = toEnvPairs recEnv
     renameEnvPairBinders env pairs \env' pairs' -> do
-      pairs'' <- forEachNestItem  pairs' \(EnvPair b x) -> EnvPair b <$> substE env' x
+      pairs'' <- forEachNestItem pairs' \(EnvPair b x) -> EnvPair b <$> substE env' x
       cont env' $ RecEnvFrag $ fromEnvPairs pairs''
-
-  substBDistinct = undefined
+  substBDistinct (scope, env) (RecEnvFrag recEnv) = do
+    let scopeFrag = toScopeFrag (RecEnvFrag recEnv)
+    withExtEvidence scopeFrag do
+      let scope' = scope `extendOutMap` scopeFrag
+      let env' = inject env <>> idEnvFrag scopeFrag
+      pairs' <- forEachNestItem (toEnvPairs recEnv) \(EnvPair b x) ->
+        EnvPair b <$> substE (scope', env') x
+      return $ RecEnvFrag $ fromEnvPairs pairs'
 
 renameEnvPairBinders
   :: (Distinct o, Monad m, InjectableV v, InjectableV substVal, FromName substVal)
@@ -1663,14 +1686,18 @@ refreshRecEnvFrag scope env (RecEnvFrag frag) =
     let frag' = fmapEnvFrag (\_ val -> fmapNames scope' (env'!) val) (fromEnvPairs pairs)
     in DistinctAbs (RecEnvFrag frag') env'
 
+substAbsDistinct
+  :: (Distinct o, SubstB v b, SubstE v e, FromName v)
+  => Scope o -> Env v i o -> Abs b e i -> DistinctAbs b e o
+substAbsDistinct scope env (Abs b e) =
+  runIdentity $ substB (scope, newSubstTraversalEnv (return . (env!))) b \env' b' -> do
+    e' <- substE env' e
+    return $ DistinctAbs b' e'
+
 refreshAbs :: forall n b e.
               (Distinct n, SubstB Name b, SubstE Name e)
            => Scope n -> Abs b e n -> DistinctAbs b e n
-refreshAbs scope (Abs b e) =
-  runIdentity $ substB env b \env' b' -> do
-    e' <- substE env' e
-    return $ DistinctAbs b' e'
-  where env = (scope, idSubstTraversalEnv :: SubstTraversalEnv Identity Name n n)
+refreshAbs scope ab = substAbsDistinct scope (idEnv :: Env Name n n) ab
 
 refreshAbsM :: (ScopeReader m, SubstB Name b, InjectableE e, SubstE Name e)
             => Abs b e n -> m n (DeferredInjection (DistinctAbs b e) n)
@@ -1695,14 +1722,15 @@ renameEnvPairBindersPure scope env (Nest (EnvPair b v) rest) cont = do
       cont scope'' env'' $ Nest (EnvPair b' v) rest'
 
 instance InjectableV v => InjectableB (RecEnvFrag v) where
-  injectionProofB _ _ _ = undefined
+  injectionProofB _ _ _ = todoInjectableProof
 
 instance SubstV substVal v => SubstE substVal (EnvVal v) where
   substE env (EnvVal rep v) =
     withNameColorRep rep $ EnvVal rep <$> substE env v
 
-instance (forall c. HoistableE (v c)) => HoistableE (EnvVal v) where
-  freeVarsE (EnvVal _ v) = freeVarsE v
+instance HoistableV v => HoistableE (EnvVal v) where
+  freeVarsE (EnvVal rep v) =
+    withNameColorRep rep $ freeVarsE v
 
 instance Store (UnitE n)
 instance Store (VoidE n)
@@ -1855,8 +1883,8 @@ absurdNameFunction :: Name v VoidS -> a
 absurdNameFunction _ = error "Void names shouldn't exist"
 
 scopeFragToEnvFrag :: ScopeFrag n l -> EnvFrag (ConstE UnitE) n l VoidS
-scopeFragToEnvFrag (UnsafeMakeScopeFrag s) = undefined
-  -- UnsafeMakeEnv $ M.fromList [(v, ConstE UnitE) | v <- S.toList s]
+scopeFragToEnvFrag (UnsafeMakeScopeFrag m) =
+  UnsafeMakeEnv $ M.map (\(SomeNameColor c) -> EnvVal c (ConstE UnitE)) m
 
 -- TODO: we reuse the old `Name` to make use of the GlobalName name space while
 -- we're using both the old and new systems together.
@@ -1985,9 +2013,6 @@ inject x = unsafeCoerceE x
 injectR :: InjectableE e => e (n:=>:l) -> e l
 injectR = unsafeCoerceE
 
-injectRB :: InjectableB b => b (h:=>:n) (h:=>:l) -> b n l
-injectRB = unsafeCoerceB
-
 class InjectableE (e::E) where
   injectionProofE :: InjectionCoercion n l -> e n -> e l
 
@@ -2013,10 +2038,15 @@ class InjectableB (b::B) where
 class (forall c. NameColor c => InjectableE (v c))
       => InjectableV (v::V)
 
+class (forall c. NameColor c => HoistableE (v c))
+      => HoistableV (v::V)
+
 data InjectionCoercion (n::S) (l::S) where
   InjectionCoercion :: (forall s. Name s n -> Name s l) -> InjectionCoercion n l
 
 instance InjectableV Name
+instance HoistableV  Name
+
 instance InjectableE (Name c) where
   injectionProofE (InjectionCoercion f) name = f name
 
@@ -2211,6 +2241,12 @@ instance Show (Name s n) where
 instance InjectableV v => InjectableE (EnvFrag v i i') where
   injectionProofE fresh m = fmapEnvFrag (\(UnsafeMakeName _ _) v -> injectionProofE fresh v) m
 
+instance HoistableV v => HoistableE (EnvFrag v i i') where
+  freeVarsE frag = foldMapEnvFrag freeVarsE frag
+
+instance SubstV substVal v => SubstE substVal (EnvFrag v i i') where
+   substE env frag = traverseEnvFrag (substE env) frag
+
 -- === unsafe coercions ===
 
 -- Sometimes we need to break the glass. But at least these are slightly safer
@@ -2308,7 +2344,7 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (EnvVal v n) where
 
 instance (forall c. NameColor c => Store (v c n)) => Store (EnvVal v n)
 instance InjectableV v => InjectableE (EnvVal v) where
-  injectionProofE = undefined
+  injectionProofE = todoInjectableProof
 
 instance ( forall c. NameColor c => Store (v c o)
          , forall c. NameColor c => Generic (v c o))

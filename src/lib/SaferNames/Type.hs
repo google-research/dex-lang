@@ -192,72 +192,6 @@ instance CheckableB (RecEnvFrag Binding) where
       withEnv env' $
         cont frag'
 
---     renameEnvPairs (toEnvPairs frag) \pairs -> do
-
---       let fragRenamedLhs = fromEnvPairs pairs
---       fragRenamedRhs <- fmapEnvFrag (applySubst scope subst) fragRenamedLhs
-
-
---       flip traverseEnvFrag frag'
-
---     refreshRecEnvFrag frag \frag' -> do
---       checkDistinctRecFrag frag'
---       cont frag'
-
--- checkDistinctRecFrag
---   :: (EnvReader Name m, BindingsReader2 m)
---   => BindingsFrag prev o
---   -> m i o ()
--- checkDistinctRecFrag _ = undefined
-
--- refreshRecEnvFrag
---   :: (EnvReader Name m, BindingsReader2 m)
---   => BindingsFrag i i'
---   -> (forall o'. Ext o o' => BindingsFrag o o' -> m i' o' a)
---   -> m i o a
--- refreshRecEnvFrag (RecEnv frag) cont =
-
--- renameEnvPairBinders
---   :: (EnvReader Name m, BindingsReader2 m, Distinct o)
---   => Nest (EnvPair Binding ignored) i i'
---   -> (forall o'. Distinct o'
---               => Nest (EnvPair v ignored) o o'
---               -> m i' o' a)
---   -> m i o a
--- renameEnvPairBinders Empty cont = cont Empty
--- -- renameEnvPairBinders env (Nest (EnvPair b v) rest) cont =
-
-
-
-
--- Nest (EnvPair v i') i i' -> Nest (EnvPair v i') o o'
-
-
---     substBM frag \frag' ->
---       extendBindings frag' $
---         cont frag'
-
-    -- First, refresh the whole thing so we have distinct names
-    -- Then we add the bindings to the env
-    -- Then check each element
-    -- make a substition fragment mapping
-    -- -- the RecEnvFrag's names to new names. Then we apply that subst to the rhs 
-    -- toEnvPairs frag
-
-
-
-  --   extendBindings bindingsFrag cont
-    -- WithScopeSubstFrag _ envFrag recEnv' <- do
-    --   Distinct <- getDistinct
-    --   env <- getEnv
-    --   scope <- getScope
-    --   return $ runScopedEnvReader scope env $ runSubstGenT $ substB recEnv
-    -- void $ extendBindings (boundBindings recEnv') $ dropSubst $
-    --   traverseEnvFrag checkE (fromRecEnvFrag recEnv')
-    -- extendBindings (boundBindings recEnv') $
-    --   extendEnv envFrag $
-    --      cont recEnv'
-
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
     AtomNameBinding   ty info         -> do
@@ -409,7 +343,7 @@ instance CheckableB Decl where
       extendRenamer (b @> binderName b') $
         cont $ Let ann b' expr'
 
-instance CheckableB b => CheckableB (Nest b) where
+instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
   checkB nest cont = case nest of
     Empty -> cont Empty
     Nest b rest ->
@@ -1059,3 +993,4 @@ labeledRowDifference (Ext (LabeledItems items) rest)
 -- TODO!
 tryReduceBlock :: BindingsReader m => Block n -> m n (Maybe (Atom n))
 tryReduceBlock (Block _ Empty (Atom atom)) = return $ Just atom
+tryReduceBlock _ = undefined

@@ -62,7 +62,7 @@ class (MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m, EnvReader Name m)
       => Inferer (m::MonadKind2) where
   extendSolverSubst :: AtomName o -> Type o -> m i o ()
   freshInferenceName :: Kind o -> m i o (AtomName o)
-  freshSkolemName    :: Kind o -> m i o (AtomName o)
+  _freshSkolemName    :: Kind o -> m i o (AtomName o)
   zonk :: (SubstE AtomSubstVal e, InjectableE e) => e o -> m i o (e o)
 
 freshType :: Inferer m => Kind o -> m i o (Type o)
@@ -97,6 +97,7 @@ instance GenericB InfEmission where
     CaseB0 b -> InfBuilderEmission b
     CaseB1 b -> InfInferenceName   b
     CaseB2 b -> InfSkolemName      b
+    _ -> error "impossible"
 
 instance ProvesExt   InfEmission
 instance SubstB Name InfEmission
@@ -104,12 +105,12 @@ instance BindsNames  InfEmission
 instance InjectableB InfEmission
 
 instance BindsBindings InfEmission where
-  boundBindings b = case b of
+  boundBindings binding = case binding of
     InfBuilderEmission b -> boundBindings b
     InfInferenceName (b:>ty) ->
       RecEnvFrag $ b @> AtomNameBinding ty' InferenceName
       where ty' = withExtEvidence b $ inject ty
-    InfSkolemName      b -> undefined
+    InfSkolemName _ -> undefined
 
 instance GenericB InfOutFrag where
   type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
@@ -163,7 +164,7 @@ instance Inferer InfererM where
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfInferenceName (b:>kind')) Empty) emptySolverSubst
 
-  freshSkolemName kind = InfererM $ EnvReaderT $ lift $
+  _freshSkolemName kind = InfererM $ EnvReaderT $ lift $
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) emptySolverSubst
 
@@ -186,9 +187,9 @@ instance Builder (InfererM i) where
       (\e -> flip runReaderT (inject env) $ runEnvReaderT' $ runInfererM' $ cont e)
     ScopedResult (InfOutMap bindings _) bs result <- return scopedResults
     Abs outFrag resultAbs <- hoistInfState (toScope bindings) bs result
-    DeferredInjection ExtW (DistinctAbs bs'' result) <-
+    DeferredInjection ExtW (DistinctAbs bs'' result') <-
         refreshAbsM =<< extendInplace =<< injectM (Abs outFrag resultAbs)
-    return $ ScopedBuilderResult bs'' result
+    return $ ScopedBuilderResult bs'' result'
 
 instance EffectsReader (InfererM i) where
   getAllowedEffects = undefined
@@ -209,17 +210,17 @@ hoistInfState
   -> m (Abs InfOutFrag (Abs (PairB b (Nest BuilderEmission)) e) n1)
 hoistInfState scope (PairB b (InfOutFrag emissions subst)) result = do
   withSubscopeDistinct emissions do
-    HoistedSolverState infVars subst (DistinctAbs decls result') <-
+    HoistedSolverState infVars subst' (DistinctAbs decls result') <-
       hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions subst result
-    case exchangeBs $ PairB b (PairB infVars (UnitB :> subst)) of
+    case exchangeBs $ PairB b (PairB infVars (UnitB :> subst')) of
       -- TODO: better error message
       Nothing -> throw TypeErr "Leaked local variable"
-      Just (PairB (PairB infVars' (UnitB :> subst')) b') -> do
+      Just (PairB (PairB infVars' (UnitB :> subst'')) b') -> do
         -- TODO: do we need to zonk here so that any type annotations in b' get
         -- substituted? Or do we leave that up to the caller? Unlike with the
         -- decls, we don't need to do it for the sake of our local leak
         -- checking.
-        return $ Abs (InfOutFrag (infNamesToEmissions infVars') subst') $
+        return $ Abs (InfOutFrag (infNamesToEmissions infVars') subst'') $
                    Abs (PairB b' decls) result'
 
 data HoistedSolverState e n where
@@ -240,7 +241,7 @@ hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
                  -> m (HoistedSolverState e n)
 hoistInfStateRec _ Empty subst e =
   return $ HoistedSolverState Empty subst (DistinctAbs Empty e)
-hoistInfStateRec scope emissions@(Nest infEmission rest) subst e = do
+hoistInfStateRec scope (Nest infEmission rest) subst e = do
   withSubscopeDistinct rest do
     HoistedSolverState infVars subst' result <-
        hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst e
@@ -265,8 +266,9 @@ hoistInfStateRec scope emissions@(Nest infEmission rest) subst e = do
             withSubscopeDistinct emission' $ do
               let scope' = scope `extendOutMap` toScopeFrag infVars'
               let emission'' = applySolverSubstB scope' subst'' emission'
-              DistinctAbs rest e' <- return result
-              return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest emission'' rest) e')
+              DistinctAbs rest' e' <- return result
+              return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest emission'' rest') e')
+      InfSkolemName _ -> undefined
 
 infNamesToEmissions :: InferenceNameBinders n l -> Nest InfEmission n l
 infNamesToEmissions Empty = Empty
@@ -1069,9 +1071,6 @@ deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
 deleteFromSubst (SolverSubst m) v
   | M.member v m = Just $ SolverSubst $ M.delete v m
   | otherwise    = Nothing
-
-alreadySolved :: SolverSubst n -> AtomName n -> Bool
-alreadySolved (SolverSubst m) v = M.member v m
 
 instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...
