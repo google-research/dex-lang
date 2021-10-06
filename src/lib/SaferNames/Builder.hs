@@ -153,6 +153,7 @@ instance SubstB Name   BuilderEmission
 instance InjectableB   BuilderEmission
 instance HoistableB    BuilderEmission
 instance BindsBindings BuilderEmission
+instance SubstB AtomSubstVal BuilderEmission
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT BuilderBindings BuilderEmissions m n a }

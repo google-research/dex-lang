@@ -1057,7 +1057,7 @@ instance AlphaEqE Atom
 instance SubstE Name Atom
 
 instance SubstE AtomSubstVal Atom where
-  substE env atom = case fromE atom of
+  substE (scope, env) atom = case fromE atom of
     LeftE specialCase -> case specialCase of
       -- Var
       Case0 v -> do
@@ -1074,7 +1074,7 @@ instance SubstE AtomSubstVal Atom where
         return $ getProjection (NE.toList idxs) v'
       Case1 _ -> error "impossible"
       _ -> error "impossible"
-    RightE rest -> (toE . RightE) <$> substE env rest
+    RightE rest -> (toE . RightE) <$> substE (scope, env) rest
 
 instance GenericE Expr where
   type RepE Expr =
@@ -1120,8 +1120,8 @@ instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2
 instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
 
 instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
-  substE env (ExtLabeledItemsE (Ext items maybeExt)) = do
-    items' <- mapM (substE env) items
+  substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
+    items' <- mapM (substE (scope, env)) items
     ext <- case maybeExt of
       Nothing -> return $ NoExt NoLabeledItems
       Just v ->
@@ -1186,7 +1186,7 @@ instance HoistableE    name => HoistableE    (EffectP name)
 instance AlphaEqE      name => AlphaEqE      (EffectP name)
 instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
-  substE env eff = case eff of
+  substE (_, env) eff = case eff of
     RWSEffect rws v -> do
       v' <- lookupSustTraversalEnv env v >>= \case
               Rename        v'  -> return v'
@@ -1216,7 +1216,7 @@ instance SubstE AtomSubstVal (EffectRowP AtomName) where
     effs' <- S.fromList <$> mapM (substE env) (S.toList effs)
     tailEffRow <- case tailVar of
       Nothing -> return $ EffectRow mempty Nothing
-      Just v -> lookupSustTraversalEnv env v >>= \case
+      Just v -> lookupSustTraversalEnv (snd env) v >>= \case
         Rename        v'  -> return $ EffectRow mempty (Just v')
         SubstVal (Var v') -> return $ EffectRow mempty (Just v')
         SubstVal (Eff r)  -> return r
@@ -1317,8 +1317,10 @@ instance BindsNames Decl
 
 instance InjectableB BindingDecl where
   injectionProofB _ _ _ = undefined
+
 instance SubstB Name BindingDecl where
   substB _ _ _ = undefined
+  substBDistinct = undefined
 instance ProvesExt  BindingDecl where
   toExtEvidence = undefined
 instance BindsNames BindingDecl where

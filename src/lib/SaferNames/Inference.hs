@@ -14,6 +14,7 @@ import Prelude hiding ((.), id)
 import Control.Category
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Data.Foldable (toList)
@@ -85,10 +86,6 @@ data InfEmission n l =
     InfBuilderEmission (BuilderEmission n l)
   | InfInferenceName   (Binder n l)
   | InfSkolemName      (Binder n l)
-
-newtype BuilderEmissions n l =
-  BuilderEmissions (Nest (EitherB Decl BindingsFrag) n l)
-  deriving (InjectableB, SubstB Name, ProvesExt, BindsNames, BindsBindings)
 
 instance GenericB InfEmission where
   type RepB InfEmission = EitherB3 BuilderEmission Binder Binder
@@ -172,7 +169,7 @@ instance Inferer InfererM where
 
   zonk e = InfererM $ EnvReaderT $ lift $
              withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
-               applySolverSubst (toScope bindings) solverSubst e'
+               applySolverSubstE (toScope bindings) solverSubst e'
 
 instance Builder (InfererM i) where
   emitBuilder hint rhs = InfererM $ EnvReaderT $ ReaderT \_ -> do
@@ -267,19 +264,9 @@ hoistInfStateRec scope emissions@(Nest infEmission rest) subst e = do
           Just (PairB (PairB infVars' (UnitB :> subst'')) emission') -> do
             withSubscopeDistinct emission' $ do
               let scope' = scope `extendOutMap` toScopeFrag infVars'
-              let emission'' = applySolverSubstBuilderEmission scope' subst'' emission'
+              let emission'' = applySolverSubstB scope' subst'' emission'
               DistinctAbs rest e' <- return result
               return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest emission'' rest) e')
-
-applySolverSubstBuilderEmission :: Distinct l => Scope n -> SolverSubst n
-                                -> BuilderEmission n l -> BuilderEmission n l
-applySolverSubstBuilderEmission scope subst emission = case emission of
-  BuilderEmitDecl (Let ann (b:>ty) expr) ->
-    withSubscopeDistinct emission do
-      let ty'   = applySolverSubst scope subst ty
-      let expr' = applySolverSubst scope subst expr
-      BuilderEmitDecl $ Let ann (b:>ty') expr'
-  BuilderEmitBindingsFrag _ -> undefined
 
 infNamesToEmissions :: InferenceNameBinders n l -> Nest InfEmission n l
 infNamesToEmissions Empty = Empty
@@ -1055,7 +1042,7 @@ singletonSolverSubst v ty = SolverSubst $ M.singleton v ty
 
 catSolverSubsts :: Distinct n => Scope n -> SolverSubst n -> SolverSubst n -> SolverSubst n
 catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) = SolverSubst $ s1' <> s2
-  where s1' = fmap (applySolverSubst scope (SolverSubst s2)) s1
+  where s1' = fmap (applySolverSubstE scope (SolverSubst s2)) s1
 
 -- TODO: put this pattern and friends in the Name library? Don't really want to
 -- have to think about `eqNameColorRep` just to implement a partial map.
@@ -1067,10 +1054,16 @@ lookupSolverSubst (SolverSubst m) name =
       Nothing -> Rename name
       Just ty -> SubstVal ty
 
-applySolverSubst :: (SubstE (SubstVal AtomNameC Atom) e, Distinct n)
-                 => Scope n -> SolverSubst n -> e n -> e n
-applySolverSubst scope solverSubst e =
+applySolverSubstE :: (SubstE (SubstVal AtomNameC Atom) e, Distinct n)
+                  => Scope n -> SolverSubst n -> e n -> e n
+applySolverSubstE scope solverSubst e =
   fmapNames scope (lookupSolverSubst solverSubst) e
+
+applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
+                  => Scope n -> SolverSubst n -> b n l -> b n l
+applySolverSubstB scope solverSubst e =
+  runIdentity $ substBDistinct (scope, env) e
+  where env = newSubstTraversalEnv (return . lookupSolverSubst solverSubst)
 
 deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
 deleteFromSubst (SolverSubst m) v
@@ -1079,7 +1072,6 @@ deleteFromSubst (SolverSubst m) v
 
 alreadySolved :: SolverSubst n -> AtomName n -> Bool
 alreadySolved (SolverSubst m) v = M.member v m
-
 
 instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...
