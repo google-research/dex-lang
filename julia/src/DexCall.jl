@@ -3,7 +3,8 @@ module DexCall
     using CombinedParsers
     using CombinedParsers.Regexp
 
-    export evaluate, DexError, DexModule, juliaize, NativeFunction, @dex_func_str
+    export evaluate, DexError, DexModule, NativeFunction, @dex_func_str
+    export Atom, dexize, juliaize, NativeFunction
 
     include("api_types.jl")
     include("api.jl")

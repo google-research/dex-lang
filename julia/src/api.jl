@@ -61,3 +61,4 @@ free_function_signature(s) = NO_FREE[] || @ccall libdex.dexFreeFunctionSignature
 
 
 to_CAtom(src, dest) = @ccall libdex.dexToCAtom(src::Ptr{HsAtom}, dest::Ptr{CAtom})::Int32
+from_CAtom(src) = @ccall libdex.dexFromCAtom(src::Ptr{CAtom})::Ptr{HsAtom}
