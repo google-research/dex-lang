@@ -59,7 +59,9 @@ class (BindingsReader m, EffectsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   emitBuilder :: NameColor c => NameHint -> BuilderEmissionRHS c n -> m n (Name c n)
   buildScopedGeneral
-    :: ( SubstE Name e, HasNamesE e', SubstB Name b, BindsBindings b)
+    :: ( SubstE Name e , InjectableE e
+       , HasNamesE   e', InjectableE e'
+       , SubstB Name b, BindsBindings b)
     => Abs b e n
     -> (forall l. (Ext n l, Distinct l) => e l -> m l (e' l))
     -> m n (ScopedBuilderResult b e' n)
@@ -78,7 +80,7 @@ emitBinding :: (Builder m, EmitsTop n, NameColor c) => NameHint -> Binding c n -
 emitBinding hint binding = emitBuilder hint $ BuilderEmitBindingRHS binding
 
 buildScoped
-  :: (HasNamesE e, Builder m)
+  :: (HasNamesE e, InjectableE e, Builder m)
   => (forall l. (Emits l, Ext n l) => m l (e l))
   -> m n (Abs (Nest Decl) e n)
 buildScoped cont = do
@@ -88,7 +90,7 @@ buildScoped cont = do
   injectM $ Abs (fromBuilderDecls emissions) result
 
 buildScopedTop
-  :: (HasNamesE e, Builder m)
+  :: (HasNamesE e, InjectableE e, Builder m)
   => (forall l. (EmitsTop l, Ext n l) => m l (e l))
   -> m n (Abs (RecEnvFrag Binding) e n)
 buildScopedTop cont = do
@@ -320,7 +322,7 @@ instance BindsBindings BinderWithInfo where
     withExtEvidence b $
       RecEnvFrag $ b @> inject (AtomNameBinding ty info)
 
-withFreshAtomBinder :: (Scopable m, HasNamesE e)
+withFreshAtomBinder :: (Scopable m, InjectableE e, HasNamesE e)
                     => NameHint -> Type n -> AtomBinderInfo n
                     -> (forall l. Ext n l => AtomName l -> m l (e l))
                     -> m n (Abs Binder e n)
@@ -421,7 +423,7 @@ buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
   return (effs', resultTy')
 
 buildAbs
-  :: (Builder m, HasNamesE e, HoistableE e)
+  :: (Builder m, InjectableE e, HasNamesE e, HoistableE e)
   => Type n
   -> (forall l. Ext n l => AtomName l -> m l (e l))
   -> m n (Abs Binder e n)
@@ -438,7 +440,7 @@ singletonBinderNest ty = do
   return $ EmptyAbs (Nest b Empty)
 
 buildNaryAbs
-  :: (Builder m, HasNamesE e)
+  :: (Builder m, InjectableE e, HasNamesE e)
   => EmptyAbs (Nest Binder) n
   -> (forall l. Ext n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)

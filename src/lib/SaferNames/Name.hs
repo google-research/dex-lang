@@ -423,7 +423,7 @@ lookupSustTraversalEnv (env, _) v = fromMonadicVal $ env ! v
 emptyNameTraversalEnv :: Monad m => Scope n -> SubstTraversalEnv m Name n n
 emptyNameTraversalEnv scope = (newEnv (MonadicVal . return), scope)
 
-class (FromName v, InjectableE e) => SubstE (v::V) (e::E) where
+class FromName v => SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
   substE :: (Monad m, Distinct o)
          => SubstTraversalEnv m v i o -> e i -> m (e o)
@@ -467,7 +467,7 @@ instance (InjectableV v, FromName v) => SubstB v (NameBinder c) where
       let scope' = extendOutMap scope $ toScopeFrag b'
       cont (env', scope') b'
 
-substM :: (EnvReader v m, ScopeReader2 m, SubstE v e, FromName v)
+substM :: (EnvReader v m, ScopeReader2 m, InjectableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
 substM e = do
   env <- getEnv
@@ -616,14 +616,15 @@ instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
   (@@>) _ _ = error "length mismatch"
 
-applySubst :: (ScopeReader m, SubstE v e, InjectableV v, FromName v)
+applySubst :: (ScopeReader m, SubstE v e, InjectableE e, InjectableV v, FromName v)
            => EnvFrag v o i o -> e i -> m o (e o)
 applySubst substFrag x = do
   let fullSubst = idEnv <>> substFrag
   WithScope scope fullSubst' <- addScope fullSubst
   injectM $ fmapNames scope (fullSubst' !) x
 
-applyAbs :: (InjectableV v, FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
+applyAbs :: ( InjectableV v, InjectableE e
+            , FromName v, ScopeReader m, BindsOneName b c, SubstE v e)
          => Abs b e n -> v c n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (b@>x) body
 
@@ -1100,7 +1101,8 @@ instance InjectableE (ScopedResult bindings b e) where
   injectionProofE = undefined
 
 scopedInplaceGeneral
-  :: ( SubstE Name e, SubstB Name b, ProvesExt b, InjectableE e', OutMap bindings decls
+  :: ( SubstE Name e, SubstB Name b, ProvesExt b, InjectableE e'
+     , InjectableE e, OutMap bindings decls
      , Monad m, InjectableB decls)
   => (forall n' l'. Distinct l' => bindings n' -> b n' l' -> bindings l')
   -> Abs b e n
@@ -1145,7 +1147,7 @@ withInplaceOutEnv eIn cont = doInplace eIn \bindings eIn' ->
 -- TODO: can we have a version of this that takes a deferred distinct abs avoids
 -- the refreshAbs pass?
 extendInplace
-  :: (SubstB Name decls, SubstE Name e, OutMap bindings decls, Monad m)
+  :: (SubstB Name decls, InjectableE e, SubstE Name e, OutMap bindings decls, Monad m)
   => Abs decls e n
   -> InplaceT bindings decls m n (e n)
 extendInplace withDecls = do
@@ -1385,7 +1387,8 @@ instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
     injectionProofB fresh b \fresh' b' ->
       cont fresh' $ b':>ann'
 
-instance (SubstB v b, SubstE v ann) => SubstB v (BinderP b ann) where
+instance (SubstB v b, InjectableE ann, SubstE v ann)
+         => SubstB v (BinderP b ann) where
    substB env (b:>ann) cont = do
      ann' <- substE env ann
      substB env b \env' b' -> do
@@ -1599,7 +1602,7 @@ refreshAbs scope (Abs b e) =
     return $ DistinctAbs b' e'
   where env = emptyNameTraversalEnv scope
 
-refreshAbsM :: (ScopeReader m, SubstB Name b, SubstE Name e)
+refreshAbsM :: (ScopeReader m, SubstB Name b, InjectableE e, SubstE Name e)
             => Abs b e n -> m n (DeferredInjection (DistinctAbs b e) n)
 refreshAbsM ab = do
   WithScope scope ab' <- addScope ab

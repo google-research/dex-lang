@@ -242,7 +242,8 @@ class ScopeReader m => BindingsReader (m::MonadKind1) where
 class (ScopeReader m, Monad1 m)
       => Scopable (m::MonadKind1) where
   withBindings :: ( SubstB Name b, BindsBindings b
-                  , HasNamesE e , HasNamesE e', HoistableE e')
+                  , HasNamesE e , InjectableE e
+                  , HasNamesE e', InjectableE e', HoistableE e')
                => Abs b e n
                -> (forall l. Ext n l => e l -> m l (e' l))
                -> m n (Abs b e' n)

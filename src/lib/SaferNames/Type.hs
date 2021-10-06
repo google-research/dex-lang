@@ -118,7 +118,7 @@ instance Fallible m => Typer (TyperT m) where
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class SubstE Name e => HasType (e::E) where
+class (InjectableE e, SubstE Name e) => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -131,7 +131,7 @@ class SubstE Name e => HasType (e::E) where
     checkAlphaEq reqTy ty
     return e'
 
-class SubstE Name e => CheckableE (e::E) where
+class (InjectableE e, SubstE Name e) => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
 
 class HasNamesB b => CheckableB (b::B) where

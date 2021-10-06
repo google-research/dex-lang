@@ -62,7 +62,7 @@ class (MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m, EnvReader Name m)
   extendSolverSubst :: AtomName o -> Type o -> m i o ()
   freshInferenceName :: Kind o -> m i o (AtomName o)
   freshSkolemName    :: Kind o -> m i o (AtomName o)
-  zonk :: SubstE AtomSubstVal e => e o -> m i o (e o)
+  zonk :: (SubstE AtomSubstVal e, InjectableE e) => e o -> m i o (e o)
 
 freshType :: Inferer m => Kind o -> m i o (Type o)
 freshType k = Var <$> freshInferenceName k
@@ -681,7 +681,7 @@ inferInterfaceDataDef className methodNames paramBs superclasses methods = do
   defName <- emitDataDef dictDef
   return $ ClassDef className methodNames (defName, dictDef)
 
-withNestedUBinders :: (Inferer m, HasNamesE e)
+withNestedUBinders :: (Inferer m, HasNamesE e, InjectableE e)
                   => Nest (UAnnBinder AtomNameC) i i'
                   -> (forall o'. Ext o o' => [AtomName o'] -> m i' o' (e o'))
                   -> m i o (Abs (Nest Binder) e o)
@@ -697,7 +697,7 @@ withNestedUBinders bs cont = case bs of
         cont (name':names)
     return $ Abs (Nest b' rest') body
 
-withUBinder :: (Inferer m, HasNamesE e)
+withUBinder :: (Inferer m, HasNamesE e, InjectableE e)
             => UAnnBinder AtomNameC i i'
             -> (forall o'. Ext o o' => AtomName o' -> m i' o' (e o'))
             -> m i o (Abs Binder e o)
@@ -868,7 +868,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
       bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-inferParams :: (Inferer m, HasNamesE e)
+inferParams :: (Inferer m, HasNamesE e, InjectableE e)
             => Abs (Nest Binder) e o -> m i o ([Type o], e o)
 inferParams (Abs Empty body) = return ([], body)
 inferParams (Abs (Nest (b:>ty) bs) body) = do
