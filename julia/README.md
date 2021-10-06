@@ -2,7 +2,7 @@
 
 DexCall provides a mechanism for calling dex-lang code from JuliaLang.
 Three main mechanism are provided for this: `evaluate`, `DexModule` and the `dex_func` string macro.
-Two helper methods are also provided: `juliaize` and `NativeFunction`.
+Several helper methods are also provided: `juliaize`, `dexize`, and `NativeFunction`.
 
 ## `evaluate`: just run a single Dex expression.
 `evaluate` takes in a Dex expression as a string and runs it, returning a `Atom` (see below).
@@ -53,7 +53,7 @@ julia> m.addTwo(m.y)
 "[44., 44., 44.]"
 ```
 
-## Atoms: `juliaize`, `NativeFunction`
+## Atoms: `juliaize`, `dexize` and `NativeFunction`
 
 `evaluate` and the contents of a `DexModule` are returned as `Atom`s.
 These can be displayed, but not much else.
@@ -86,6 +86,8 @@ Int32
 julia> typeof(convert(Int64, m.x))
 Int64
 ```
+
+The inverse of `juliaize` is `dexize`, it is currently very limited.
 
 To convert function `Atom`s into something you can execute as if it was a regular julia function use `NativeFunction`.
 This will compile it and handing inputs and outputs without needing to del with `Atom`s directly.

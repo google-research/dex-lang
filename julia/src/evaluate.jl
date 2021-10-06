@@ -13,8 +13,36 @@ end
 
 Base.show(io::IO, atom::Atom) = show(io, print(atom.ptr))
 
+"""
+    juliaize(x)
+
+Get the corresponding Julia object from some output of Dex.
+"""
+juliaize(x::CAtom) = bust_union(x)
+juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))
 juliaize(x::Atom) = juliaize(x.ptr)
 Base.convert(::Type{T}, atom::Atom) where {T<:Number} = convert(T, juliaize(atom))
+
+"""
+    dexize(x)
+
+Get the corresponding Dex object from some output of Julia.
+
+NB: this is currently a hack that goes via string processing.
+"""
+function dexize(x::Float32, _module=PRELUDE, env=_module)
+    isnan(x) && return evaluate("nan", _module, env)
+    x === Inf32 && return evaluate("infinity", _module, env)
+    x === -Inf32 && return evaluate("-infinity", _module, env)
+
+    str = repr(x)
+    if endswith(str, "f0")
+        evaluate(str[1:end-2], _module, env)
+    else
+        # convert "123f45" into "123 * (intpow 10.0 45)"
+        evaluate(replace(str, "f"=> " * (intpow 10.0 ") * ")", _module, env)
+    end
+end
 
 
 function (self::Atom)(args...)
@@ -60,12 +88,18 @@ julia> m.y
 "84"
 ```
 """
-function DexModule(source::AbstractString)
-    ctx = dex_eval(PRELUDE, source)
+function DexModule(source::AbstractString, parent_ctx=PRELUDE)
+    ctx = dex_eval(parent_ctx, source)
     ctx == C_NULL && throw_from_dex()
     m =  DexModule(ctx)
     finalizer(m) do _m
-        destroy_context(getfield(_m, :ctx))
+        # TODO: Undo commenting this out. But for now this causes a lot of problems.
+        # DexModule will often go out of scope, while a Atom attached to that context still
+        # exists. Possibly we need to make the ctx a mutable struct everywhere, and then
+        # attach the finalizer there.
+        #(also will let us delete some manual destroys in other palces)
+        
+        #destroy_context(getfield(_m, :ctx))
     end
     return m
 end

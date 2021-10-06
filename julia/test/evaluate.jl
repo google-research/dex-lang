@@ -21,6 +21,16 @@
         @test juliaize(evaluate("IToW8 65")) === Int8(65)
     end
 
+    @testset "dexize" begin
+        @test juliaize(dexize(0f0)) === 0f0
+        @test juliaize(dexize(42f0)) === 42f0
+        @test juliaize(dexize(123f15)) === 123f15
+        @test dexize(123f15) isa DexCall.Atom
+        @test isnan(juliaize(dexize(NaN32)))
+        @test (juliaize(dexize(Inf32))) == Inf32
+        @test (juliaize(dexize(-Inf32))) == -Inf32
+    end
+
     @testset "Atom function call" begin
         m = DexModule("""
         def addOne (x: Float) : Float = x + 1.0

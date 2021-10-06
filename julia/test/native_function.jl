@@ -1,6 +1,7 @@
 
 @testset "native_function.jl" begin
     @testset "signature parser" begin
+        # Testing Implementation details, can remove if implementation changes
         @testset "$example" for example in (
             "arg0:f32",
             "arg0:f32,arg1:f32",
@@ -16,6 +17,20 @@
             # later integration tests will show it has the right behavour.
             @test DexCall.parse_sig(example) isa Vector{DexCall.Binder}
         end
+    end
+    
+    @testset "signature repr" begin
+        # Testing Implementation details, can remove if implementation changes
+        as_in_dex_sig = DexCall.repr_sig ∘ DexCall.parse_sig
+        @test as_in_dex_sig("arg0:f32") == "(arg0:Float32)"
+        @test as_in_dex_sig("arg0:f32,arg1:f32") == "(arg0:Float32)->(arg1:Float32)"
+        @test as_in_dex_sig("arg0:i64,arg1:i32") == "(arg0:Int64)->(arg1:Int32)"
+        @test as_in_dex_sig("arg0:f32[10]") == "(arg0:Fin 10=>Float32)"
+        @test as_in_dex_sig("?arg0:i32,arg1:f32[arg0]") == "(arg0:Int32)?->(arg1:Fin arg0=>Float32)"
+        @test as_in_dex_sig("arg2:f32[arg0]") == "(arg2:Fin arg0=>Float32)"
+        @test as_in_dex_sig("?arg0:i32,?arg1:i32,arg2:f32[arg0,arg1]") == "(arg0:Int32)?->(arg1:Int32)?->(arg2:Fin arg0=>Fin arg1=>Float32)"
+        @test as_in_dex_sig("arg3:f32[arg1,arg0]") == "(arg3:Fin arg1=>Fin arg0=>Float32)"
+        @test as_in_dex_sig("arg0:f32,?arg1:i32,arg2:f32[arg1]") == "(arg0:Float32)->(arg1:Int32)?->(arg2:Fin arg1=>Float32)"
     end
 
     @testset "dex_func anon funcs" begin
