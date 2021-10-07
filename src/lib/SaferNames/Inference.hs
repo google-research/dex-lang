@@ -7,6 +7,7 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module SaferNames.Inference (inferModule) where
 
@@ -16,7 +17,6 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
-import Control.Monad.Trans.Maybe
 import Data.Foldable (toList)
 import Data.List (sortOn)
 import Data.String (fromString)
@@ -58,18 +58,9 @@ isTopDecl decl = case decl of
 
 -- === Inferer interface ===
 
-class (MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m, EnvReader Name m)
+class ( MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m
+      , EnvReader Name m, Solver2 m)
       => Inferer (m::MonadKind2) where
-  extendSolverSubst :: AtomName o -> Type o -> m i o ()
-  freshInferenceName :: Kind o -> m i o (AtomName o)
-  _freshSkolemName    :: Kind o -> m i o (AtomName o)
-  zonk :: (SubstE AtomSubstVal e, InjectableE e) => e o -> m i o (e o)
-
-freshType :: Inferer m => Kind o -> m i o (Type o)
-freshType k = Var <$> freshInferenceName k
-
-freshEff :: Inferer m => m i o (EffectRow o)
-freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
 typeReduceAtom :: Inferer m => Atom o -> m i o (Atom o)
 typeReduceAtom atom = return atom  -- TODO!
@@ -110,7 +101,9 @@ instance BindsBindings InfEmission where
     InfInferenceName (b:>ty) ->
       RecEnvFrag $ b @> AtomNameBinding ty' InferenceName
       where ty' = withExtEvidence b $ inject ty
-    InfSkolemName _ -> undefined
+    InfSkolemName (b:>ty) ->
+      RecEnvFrag $ b @> AtomNameBinding ty' SkolemName
+      where ty' = withExtEvidence b $ inject ty
 
 instance GenericB InfOutFrag where
   type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
@@ -155,22 +148,24 @@ runInfererM bindings cont = do
       runEnvReaderT idEnv $ runInfererM' $ cont
   return result
 
-instance Inferer InfererM where
+instance Solver (InfererM i) where
   extendSolverSubst v ty = InfererM $ EnvReaderT $ lift $
     void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
       DistinctAbs (InfOutFrag Empty (singletonSolverSubst v' ty')) UnitE
+
+  zonk e = InfererM $ EnvReaderT $ lift $
+             withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
+               applySolverSubstE (toScope bindings) solverSubst e'
 
   freshInferenceName kind = InfererM $ EnvReaderT $ lift $
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfInferenceName (b:>kind')) Empty) emptySolverSubst
 
-  _freshSkolemName kind = InfererM $ EnvReaderT $ lift $
+  freshSkolemName kind = InfererM $ EnvReaderT $ lift $
     emitInplace "?" kind \b kind' ->
       InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) emptySolverSubst
 
-  zonk e = InfererM $ EnvReaderT $ lift $
-             withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
-               applySolverSubstE (toScope bindings) solverSubst e'
+instance Inferer InfererM where
 
 instance Builder (InfererM i) where
   emitBuilder hint rhs = InfererM $ EnvReaderT $ ReaderT \_ -> do
@@ -1036,6 +1031,15 @@ openEffectRow effRow = return effRow
 
 newtype SolverSubst n = SolverSubst (M.Map (AtomName n) (Type n))
 
+class BindingsReader m => Solver (m::MonadKind1) where
+  zonk :: (SubstE AtomSubstVal e, InjectableE e) => e n -> m n (e n)
+  extendSolverSubst :: AtomName n -> Type n -> m n ()
+  freshInferenceName :: Kind n -> m n (AtomName n)
+  freshSkolemName    :: Kind n -> m n (AtomName n)
+
+type Solver2 (m::MonadKind2) = forall i. Solver (m i)
+type MonadPlus1 (m::MonadKind1) = forall n. MonadPlus (m n)
+
 emptySolverSubst :: SolverSubst n
 emptySolverSubst = SolverSubst mempty
 
@@ -1083,70 +1087,134 @@ instance SubstE Name SolverSubst where
 instance HoistableE SolverSubst
 
 constrainEq :: Inferer m => Type o -> Type o -> m i o ()
-constrainEq t1 t2 = do
-  t1' <- zonk t1
-  t2' <- zonk t2
-  let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
-  let msg =   "Expected: " ++ pprint t1Pretty
-         ++ "\n  Actual: " ++ pprint t2Pretty
-         ++ (if null infVars then "" else
-               "\n(Solving for: " ++ pprint infVars ++ ")")
-  addContext msg $ unify t1' t2'
+constrainEq = undefined
+-- constrainEq t1 t2 = do
+--   t1' <- zonk t1
+--   t2' <- zonk t2
+--   let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
+--   let msg =   "Expected: " ++ pprint t1Pretty
+--          ++ "\n  Actual: " ++ pprint t2Pretty
+--          ++ (if null infVars then "" else
+--                "\n(Solving for: " ++ pprint infVars ++ ")")
+--   addContext msg $ unify t1' t2'
 
-unify :: Inferer m
-      => Type o -> Type o -> m i o ()
-unify t1 t2 = do
-  t1' <- zonk t1
-  t2' <- zonk t2
-  -- TODO: We had to refactor this from the straightforward case analysis we had
-  -- previously because the alphaEq and isInferenceName checks are now monadic.
-  -- But we can probably just give a MonadPlus instance to the inferer monad and
-  -- avoid the MaybeT wrapping.
-  liftRunMaybeT $   tryUnifyEq t1' t2'
-                <|> tryUnifyDirectSubst t2' t1'
-                <|> tryUnifyDirectSubst t1' t2'
-                <|> tryUnifyRecur t1' t2'
+class (MonadPlus1 m, Fallible1 m, Solver m) => Unifier m
 
-throwMaybeT :: Monad m => MaybeT m a
-throwMaybeT = fail ""
+class (AlphaEqE e, InjectableE e, SubstE AtomSubstVal e) => Unifiable (e::E) where
+  unifyZonked :: Unifier m => e n -> e n -> m n ()
 
-tryUnifyEq :: Inferer m => Type o -> Type o -> MaybeT (m i o) ()
-tryUnifyEq t1 t2 = do
-  eq <- lift $ alphaEq t1 t2
-  unless eq throwMaybeT
+unify :: (Unifier m, Unifiable e) => e n -> e n -> m n ()
+unify e1 e2 = do
+  e1 <- zonk e1
+  e2 <- zonk e2
+  unifyEq e1 e2 <|> unifyZonked e1 e2
 
-tryUnifyDirectSubst :: Inferer m => Type o -> Type o -> MaybeT (m i o) ()
-tryUnifyDirectSubst (Var v) t = lift (isInferenceName v) >>= \case
-  True  -> lift $ bindQ v t
-  False -> throwMaybeT
-tryUnifyDirectSubst _ _ = throwMaybeT
+instance Unifiable Atom where
+  unifyZonked e1 e2 =
+        unifyDirect e2 e1
+    <|> unifyDirect e1 e2
+    <|> unifyZip e1 e2
+   where
+     unifyDirect :: Unifier m => Type n -> Type n -> m n ()
+     unifyDirect (Var v) t = extendSolution v t
+     unifyDirect _ _ = mzero
 
-tryUnifyRecur :: Inferer m => Type o -> Type o -> MaybeT (m i o) ()
-tryUnifyRecur t1 t2 = case (t1, t2) of
-  -- (Pi piTy, Pi piTy') -> do
-  --    unify (absArgType piTy) (absArgType piTy')
-  --    let v = Var $ freshSkolemName (piTy, piTy') (absArgType piTy)
-  --    -- TODO: think very hard about the leak checks we need to add here
-  --    let (arr , resultTy ) = applyAbs piTy  v
-  --    let (arr', resultTy') = applyAbs piTy' v
-  --    when (void arr /= void arr') $ throw TypeErr ""
-  --    unify resultTy resultTy'
-  --    unifyEff (arrowEff arr) (arrowEff arr')
-  -- (RecordTy  items, RecordTy  items') ->
-  --   unifyExtLabeledItems items items'
-  -- (VariantTy items, VariantTy items') ->
-  --   unifyExtLabeledItems items items'
-  -- (TypeCon f xs, TypeCon f' xs')
-  --   | f == f' && length xs == length xs' -> zipWithM_ unify xs xs'
-  (TC con, TC con') | void con == void con' ->
-    lift $ zipWithM_ unify (toList con) (toList con')
-  -- (Eff eff, Eff eff') -> unifyEff eff eff'
-  _ -> throwMaybeT
+     unifyZip :: Unifier m => Type n -> Type n -> m n ()
+     unifyZip t1 t2 = case (t1, t2) of
+       (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
+       (RecordTy  xs, RecordTy  xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
+       (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
+       (TypeCon (c,_) xs, TypeCon (c',_) xs') ->
+         unless (c == c') mzero >> unifyFoldable xs xs'
+       (TC con, TC con') -> unifyFoldable con con'
+       (Eff eff, Eff eff') -> unify eff eff'
+       _ -> mzero
 
-liftRunMaybeT :: Fallible m => MaybeT m a -> m a
-liftRunMaybeT cont = runMaybeT cont >>= \case
-  Just a  -> return a
-  Nothing -> throw TypeErr ""
+instance Unifiable (EffectRowP AtomName) where
+  unifyZonked r1 r2 =
+        unifyDirect r1 r2
+    <|> unifyDirect r2 r1
+    <|> unifyZip r1 r2
+
+   where
+     unifyDirect :: Unifier m => EffectRow n -> EffectRow n -> m n ()
+     unifyDirect r (EffectRow effs (Just v)) | S.null effs = extendSolution v (Eff r)
+     unifyDirect _ _ = mzero
+
+     unifyZip :: Unifier m => EffectRow n -> EffectRow n -> m n ()
+     unifyZip t1 t2 = case (t1, t2) of
+      (EffectRow effs1 t1, EffectRow effs2 t2) | not (S.null effs1 || S.null effs2) -> do
+        let extras1 = effs1 `S.difference` effs2
+        let extras2 = effs2 `S.difference` effs1
+        newRow <- freshEff
+        unify (EffectRow mempty t1) (extendEffRow extras2 newRow)
+        unify (extendEffRow extras1 newRow) (EffectRow mempty t2)
+      _ -> mzero
+
+instance Unifiable (ExtLabeledItemsE Type AtomName) where
+  unifyZonked r1 r2 =
+        unifyDirect r1 r2
+    <|> unifyDirect r2 r1
+    <|> unifyZip r1 r2
+
+   where
+     unifyDirect :: Unifier m => ExtLabeledItemsE Type AtomName n
+                              -> ExtLabeledItemsE Type AtomName n -> m n ()
+     unifyDirect (ExtLabeledItemsE r) (ExtLabeledItemsE (Ext NoLabeledItems (Just v))) =
+       extendSolution v (LabeledRow r)
+     unifyDirect _ _ = mzero
+
+     unifyZip :: Unifier m => ExtLabeledItemsE Type AtomName n -> ExtLabeledItemsE Type AtomName n -> m n ()
+     unifyZip (ExtLabeledItemsE r1) (ExtLabeledItemsE r2) = case (r1, r2) of
+       (_, Ext NoLabeledItems _) -> mzero
+       (Ext NoLabeledItems _, _) -> mzero
+       (Ext (LabeledItems items1) t1, Ext (LabeledItems items2) t2) -> do
+         let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ NE.zip tys1 tys2
+         sequence_ $ M.intersectionWith unifyPrefixes items1 items2
+         let diffDrop xs ys = NE.nonEmpty $ NE.drop (length ys) xs
+         let extras1 = M.differenceWith diffDrop items1 items2
+         let extras2 = M.differenceWith diffDrop items2 items1
+         newTail <- freshInferenceName LabeledRowKind
+         unify (ExtLabeledItemsE (Ext NoLabeledItems t1))
+               (ExtLabeledItemsE (Ext (LabeledItems extras2) (Just newTail)))
+         unify (ExtLabeledItemsE (Ext NoLabeledItems t2))
+               (ExtLabeledItemsE (Ext (LabeledItems extras1) (Just newTail)))
+
+unifyFoldable :: (Eq (f ()), Functor f, Foldable f, Unifiable e, Unifier m)
+              => f (e n) -> f (e n) -> m n ()
+unifyFoldable xs ys = do
+  unless (void xs == void ys) mzero
+  zipWithM_ unify (toList xs) (toList ys)
+
+unifyEq :: (AlphaEqE e, Unifier m) => e n -> e n -> m n ()
+unifyEq e1 e2 = do
+  eq <- alphaEq e1 e2
+  unless eq mzero
+
+unifyPiType :: Unifier m => PiType n -> PiType n -> m n ()
+unifyPiType (PiType arr1 (b1:>ann1) eff1 ty1)
+            (PiType arr2 (b2:>ann2) eff2 ty2) = do
+  unless (arr1 == arr2) mzero
+  unify ann1 ann2
+  v <- freshSkolemName ann1
+  PairE eff1' ty1' <- applyAbs (Abs b1 (PairE eff1 ty1)) v
+  PairE eff2' ty2' <- applyAbs (Abs b2 (PairE eff2 ty2)) v
+  unify ty1'  ty2'
+  unify eff1' eff2'
+
+extendSolution :: Unifier m => AtomName n -> Type n -> m n ()
+extendSolution v t =
+  isInferenceName v >>= \case
+    True -> do
+      when (v `isFreeIn` t) $ throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
+      -- When we unify under a pi binder we replace its occurrences with a
+      -- skolem variable. We don't want to unify with terms containing these
+      -- variables because that would mean inferring dependence, which is a can
+      -- of worms.
+      forM_ (freeVarsList AtomNameRep t) \fv ->
+        whenM (isSkolemName fv) $ throw TypeErr $ "Can't unify with skolem vars"
+      extendSolverSubst v t
+    False -> mzero
 
 isInferenceName :: BindingsReader m => AtomName n -> m n Bool
 isInferenceName v = lookupBindings v >>= \case
@@ -1158,13 +1226,11 @@ isSkolemName v = lookupBindings v >>= \case
   AtomNameBinding _ SkolemName -> return True
   _ -> return False
 
-bindQ :: Inferer m => AtomName o -> Type o -> m i o ()
-bindQ v t = do
-  when (v `isFreeIn` t) $ throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
-  -- TODO: is this skolem check actually correct/necessary?
-  forM_ (freeVarsList AtomNameRep t) \fv ->
-    whenM (isSkolemName fv) $ throw TypeErr $ "Can't unify with skolem vars"
-  extendSolverSubst v t
+freshType :: Solver m => Kind n -> m n (Type n)
+freshType k = Var <$> freshInferenceName k
+
+freshEff :: Solver m => m n (EffectRow n)
+freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
 renameForPrinting :: (Type n, Type n) -> ((Type n, Type n), [AtomName n])
 renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!

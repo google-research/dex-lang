@@ -44,7 +44,7 @@ module SaferNames.Syntax (
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..),
-    SourceUModule (..), UType,
+    SourceUModule (..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     BindingDecl (..), refreshBinders, withFreshBinder, withFreshBinding,
@@ -54,7 +54,8 @@ module SaferNames.Syntax (
     considerNonDepPiType,
     fromNonDepTabTy, binderType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    freshBinderNamePair, piArgType, piArrow, extendEffRow,
+    freshBinderNamePair, withFreshAtomBinder, BinderWithInfo (..),
+    piArgType, piArrow, extendEffRow,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -395,6 +396,32 @@ freshBinderNamePair hint = do
   WithScope scope UnitE <- addScope UnitE
   withFresh hint nameColorRep scope \b ->
     injectM $ Abs b (binderName b)
+data BinderWithInfo n l =
+  BinderWithInfo (Binder n l) (AtomBinderInfo n)
+
+instance GenericB BinderWithInfo where
+  type RepB BinderWithInfo = BinderP Binder AtomBinderInfo
+  fromB (BinderWithInfo b info) = b:>info
+  toB   (b:>info) = BinderWithInfo b info
+
+instance ProvesExt   BinderWithInfo
+instance BindsNames  BinderWithInfo
+instance InjectableB BinderWithInfo
+instance SubstB Name BinderWithInfo
+instance BindsBindings BinderWithInfo where
+  boundBindings (BinderWithInfo (b:>ty) info) =
+    withExtEvidence b $
+      RecEnvFrag $ b @> inject (AtomNameBinding ty info)
+
+withFreshAtomBinder :: (Scopable m, InjectableE e, HasNamesE e)
+                    => NameHint -> Type n -> AtomBinderInfo n
+                    -> (forall l. Ext n l => AtomName l -> m l (e l))
+                    -> m n (Abs Binder e n)
+withFreshAtomBinder hint ty info cont = do
+  Abs b name <- freshBinderNamePair hint
+  Abs (BinderWithInfo b' _) body <-
+    withBindings (Abs (BinderWithInfo (b:>ty) info) name) cont
+  return $ Abs b' body
 
 -- === front-end language AST ===
 
