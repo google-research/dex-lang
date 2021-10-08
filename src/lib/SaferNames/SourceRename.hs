@@ -123,7 +123,7 @@ instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
       Nothing    -> throw UnboundVarErr $ pprint sourceName
       Just (EnvVal rep val) ->
         case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
-          Just EqNameColor -> return $ InternalName val
+          Just ColorsEqual -> return $ InternalName val
           Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 

@@ -71,44 +71,42 @@ makeReqCon _ = return Suggest -- TODO!
 -- === Concrete Inferer monad ===
 
 data InfOutMap (n::S) = InfOutMap (Bindings n) (SolverSubst n)
-data InfOutFrag (n::S) (l::S) = InfOutFrag (Nest InfEmission n l) (SolverSubst l)
+data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (SolverSubst l)
 
-data InfEmission n l =
-    InfBuilderEmission (BuilderEmission n l)
-  | InfInferenceName   (Binder n l)
-  | InfSkolemName      (Binder n l)
+type InfEmissions = Nest (SomeDecl InfEmission)
+data InfEmission c n where
+  InfBuilderEmission :: BuilderEmission c n -> InfEmission c         n
+  InfSolverEmission  :: SolverBinding n     -> InfEmission AtomNameC n
 
-instance GenericB InfEmission where
-  type RepB InfEmission = EitherB3 BuilderEmission Binder Binder
-  fromB emission = case emission of
-    InfBuilderEmission b -> CaseB0 b
-    InfInferenceName   b -> CaseB1 b
-    InfSkolemName      b -> CaseB2 b
-  toB emissionRep = case emissionRep of
-    CaseB0 b -> InfBuilderEmission b
-    CaseB1 b -> InfInferenceName   b
-    CaseB2 b -> InfSkolemName      b
-    _ -> error "impossible"
+instance NameColor c => GenericE (InfEmission c) where
+  type RepE (InfEmission c) = EitherE (BuilderEmission c) SolverBinding
+  fromE (InfBuilderEmission b) = LeftE  b
+  fromE (InfSolverEmission  b) = RightE b
 
-instance ProvesExt   InfEmission
-instance SubstB Name InfEmission
-instance BindsNames  InfEmission
-instance InjectableB InfEmission
+  toE (LeftE  b) = InfBuilderEmission b
+  toE (RightE b) =
+    case eqNameColorRep (nameColorRep::NameColorRep c)
+                        (nameColorRep::NameColorRep AtomNameC) of
+      Just ColorsEqual -> InfSolverEmission b
+      Nothing -> error "shouldn't happen"
 
-instance BindsBindings InfEmission where
-  boundBindings binding = case binding of
-    InfBuilderEmission b -> boundBindings b
-    InfInferenceName (b:>ty) ->
-      RecEnvFrag $ b @> AtomNameBinding ty' InferenceName
-      where ty' = withExtEvidence b $ inject ty
-    InfSkolemName (b:>ty) ->
-      RecEnvFrag $ b @> AtomNameBinding ty' SkolemName
-      where ty' = withExtEvidence b $ inject ty
+instance InjectableV         InfEmission
+instance HoistableV          InfEmission
+instance SubstV Name         InfEmission
+instance SubstV AtomSubstVal InfEmission
+instance NameColor c => InjectableE         (InfEmission c)
+instance NameColor c => HoistableE          (InfEmission c)
+instance NameColor c => SubstE Name         (InfEmission c)
+instance NameColor c => SubstE AtomSubstVal (InfEmission c)
+
+instance NameColor c => ToBinding (InfEmission c) c where
+  toBinding (InfBuilderEmission b) = toBinding b
+  toBinding (InfSolverEmission  b) = toBinding b
 
 instance GenericB InfOutFrag where
-  type RepB InfOutFrag = PairB (Nest InfEmission) (BinderP UnitB SolverSubst)
-  fromB (InfOutFrag emissions solverSubst) = PairB emissions (UnitB :> solverSubst)
-  toB (PairB emissions (UnitB :> solverSubst)) = InfOutFrag emissions solverSubst
+  type RepB InfOutFrag = PairB InfEmissions (LiftB SolverSubst)
+  fromB (InfOutFrag emissions solverSubst) = PairB emissions (LiftB solverSubst)
+  toB (PairB emissions (LiftB solverSubst)) = InfOutFrag emissions solverSubst
 
 instance ProvesExt   InfOutFrag
 instance SubstB Name InfOutFrag
@@ -148,6 +146,12 @@ runInfererM bindings cont = do
       runEnvReaderT idEnv $ runInfererM' $ cont
   return result
 
+emitInfererM :: NameColor c
+             => NameHint -> InfEmission c o -> InfererM i o (Name c o)
+emitInfererM hint emission = InfererM $ EnvReaderT $ lift $
+  emitInplace hint emission \b emission' ->
+    InfOutFrag (Nest (SomeDecl b emission') Empty) emptySolverSubst
+
 instance Solver (InfererM i) where
   extendSolverSubst v ty = InfererM $ EnvReaderT $ lift $
     void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
@@ -157,22 +161,13 @@ instance Solver (InfererM i) where
              withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
                applySolverSubstE (toScope bindings) solverSubst e'
 
-  freshInferenceName kind = InfererM $ EnvReaderT $ lift $
-    emitInplace "?" kind \b kind' ->
-      InfOutFrag (Nest (InfInferenceName (b:>kind')) Empty) emptySolverSubst
-
-  freshSkolemName kind = InfererM $ EnvReaderT $ lift $
-    emitInplace "?" kind \b kind' ->
-      InfOutFrag (Nest (InfSkolemName (b:>kind')) Empty) emptySolverSubst
+  emitSolver binding = emitInfererM "?" $ InfSolverEmission binding
 
 instance Inferer InfererM where
 
 instance Builder (InfererM i) where
-  emitBuilder hint rhs = InfererM $ EnvReaderT $ ReaderT \_ -> do
-    emitInplace hint rhs \b rhs' ->
-      InfOutFrag
-        (Nest (InfBuilderEmission $ makeBuilderEmission b rhs') Empty)
-        emptySolverSubst
+  unsafeEmitBuilder hint rhs = emitInfererM hint $ InfBuilderEmission rhs
+
   buildScopedGeneral ab cont = InfererM $ EnvReaderT $ ReaderT \env -> do
     scopedResults <- scopedInplaceGeneral
       (\(InfOutMap bs ss) b ->
@@ -202,15 +197,15 @@ hoistInfState
   => Scope n1
   -> PairB b InfOutFrag n1 n2
   -> e n2
-  -> m (Abs InfOutFrag (Abs (PairB b (Nest BuilderEmission)) e) n1)
+  -> m (Abs InfOutFrag (Abs (PairB b BuilderEmissions) e) n1)
 hoistInfState scope (PairB b (InfOutFrag emissions subst)) result = do
   withSubscopeDistinct emissions do
     HoistedSolverState infVars subst' (DistinctAbs decls result') <-
       hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions subst result
-    case exchangeBs $ PairB b (PairB infVars (UnitB :> subst')) of
+    case exchangeBs $ PairB b (PairB infVars (LiftB subst')) of
       -- TODO: better error message
       Nothing -> throw TypeErr "Leaked local variable"
-      Just (PairB (PairB infVars' (UnitB :> subst'')) b') -> do
+      Just (PairB (PairB infVars' (LiftB subst'')) b') -> do
         -- TODO: do we need to zonk here so that any type annotations in b' get
         -- substituted? Or do we leave that up to the caller? Unlike with the
         -- decls, we don't need to do it for the sake of our local leak
@@ -223,7 +218,7 @@ data HoistedSolverState e n where
     :: (Distinct l1, Distinct n)
     => InferenceNameBinders n l1
     ->   SolverSubst l1
-    ->   DistinctAbs (Nest BuilderEmission) e l1
+    ->   DistinctAbs BuilderEmissions e l1
     -> HoistedSolverState e n
 
 instance HoistableE e => HoistableE (HoistedSolverState e) where
@@ -232,16 +227,16 @@ instance HoistableE e => HoistableE (HoistedSolverState e) where
 
 hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
                  => Scope n
-                 -> Nest InfEmission n l -> SolverSubst l -> e l
+                 -> InfEmissions n l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
 hoistInfStateRec _ Empty subst e =
   return $ HoistedSolverState Empty subst (DistinctAbs Empty e)
-hoistInfStateRec scope (Nest infEmission rest) subst e = do
+hoistInfStateRec scope (Nest (SomeDecl b infEmission) rest) subst e = do
   withSubscopeDistinct rest do
     HoistedSolverState infVars subst' result <-
-       hoistInfStateRec (extendOutMap scope (toScopeFrag infEmission)) rest subst e
+       hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest subst e
     case infEmission of
-      InfInferenceName (b:>ty) ->
+      InfSolverEmission (InfVarBound ty) ->
         withExtEvidence infVars $
           case deleteFromSubst subst' (inject $ binderName b) of
             Just subst'' ->
@@ -251,23 +246,26 @@ hoistInfStateRec scope (Nest infEmission rest) subst e = do
                 Nothing -> throw TypeErr "Leaked local variable"
             Nothing -> do
               return $ HoistedSolverState (Nest (b:>ty) infVars) subst' result
+      InfSolverEmission (SkolemBound _) -> undefined
       InfBuilderEmission emission -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
-        case exchangeBs $ PairB emission (PairB infVars (UnitB :> subst')) of
+        case exchangeBs $ PairB (b:>emission) (PairB infVars (LiftB subst')) of
           -- TODO: better error message
           Nothing -> throw TypeErr "Leaked local variable"
-          Just (PairB (PairB infVars' (UnitB :> subst'')) emission') -> do
-            withSubscopeDistinct emission' $ do
+          Just (PairB (PairB infVars' (LiftB subst'')) (b':>emission')) -> do
+            withSubscopeDistinct b' $ do
               let scope' = scope `extendOutMap` toScopeFrag infVars'
-              let emission'' = applySolverSubstB scope' subst'' emission'
+              let emission'' = applySolverSubstE scope' subst'' emission'
               DistinctAbs rest' e' <- return result
-              return $ HoistedSolverState infVars' subst'' (DistinctAbs (Nest emission'' rest') e')
-      InfSkolemName _ -> undefined
+              return $ HoistedSolverState infVars' subst'' $
+                         DistinctAbs (Nest (SomeDecl b' emission'') rest') e'
 
-infNamesToEmissions :: InferenceNameBinders n l -> Nest InfEmission n l
+infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions Empty = Empty
-infNamesToEmissions (Nest b rest) = Nest (InfInferenceName b) $ infNamesToEmissions rest
+infNamesToEmissions (Nest (b:>ty) rest) = do
+  let emission = InfSolverEmission $ InfVarBound ty
+  Nest (SomeDecl b emission) $ infNamesToEmissions rest
 
 instance BindingsReader (InfererM i) where
   addBindings e = InfererM $ EnvReaderT $ lift do
@@ -1034,8 +1032,14 @@ newtype SolverSubst n = SolverSubst (M.Map (AtomName n) (Type n))
 class BindingsReader m => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, InjectableE e) => e n -> m n (e n)
   extendSolverSubst :: AtomName n -> Type n -> m n ()
-  freshInferenceName :: Kind n -> m n (AtomName n)
-  freshSkolemName    :: Kind n -> m n (AtomName n)
+  emitSolver :: SolverBinding n -> m n (AtomName n)
+
+
+freshInferenceName :: Solver m => Kind n -> m n (AtomName n)
+freshInferenceName k = emitSolver $ InfVarBound k
+
+freshSkolemName :: Solver m => Kind n -> m n (AtomName n)
+freshSkolemName k = emitSolver $ SkolemBound k
 
 type Solver2 (m::MonadKind2) = forall i. Solver (m i)
 type MonadPlus1 (m::MonadKind1) = forall n. MonadPlus (m n)
@@ -1056,7 +1060,7 @@ lookupSolverSubst :: forall c n. SolverSubst n -> Name c n -> AtomSubstVal c n
 lookupSolverSubst (SolverSubst m) name =
   case eqNameColorRep AtomNameRep (getNameColor name) of
     Nothing -> Rename name
-    Just EqNameColor -> case M.lookup name m of
+    Just ColorsEqual -> case M.lookup name m of
       Nothing -> Rename name
       Just ty -> SubstVal ty
 
@@ -1065,9 +1069,9 @@ applySolverSubstE :: (SubstE (SubstVal AtomNameC Atom) e, Distinct n)
 applySolverSubstE scope solverSubst e =
   fmapNames scope (lookupSolverSubst solverSubst) e
 
-applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
-                  => Scope n -> SolverSubst n -> b n l -> b n l
-applySolverSubstB scope solverSubst e =
+_applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
+                   => Scope n -> SolverSubst n -> b n l -> b n l
+_applySolverSubstB scope solverSubst e =
   runIdentity $ substBDistinct (scope, env) e
   where env = newSubstTraversalEnv (return . lookupSolverSubst solverSubst)
 
@@ -1105,9 +1109,10 @@ class (AlphaEqE e, InjectableE e, SubstE AtomSubstVal e) => Unifiable (e::E) whe
 
 unify :: (Unifier m, Unifiable e) => e n -> e n -> m n ()
 unify e1 e2 = do
-  e1 <- zonk e1
-  e2 <- zonk e2
-  unifyEq e1 e2 <|> unifyZonked e1 e2
+  e1' <- zonk e1
+  e2' <- zonk e2
+  (     unifyEq e1' e2'
+    <|> unifyZonked e1' e2' )
 
 instance Unifiable Atom where
   unifyZonked e1 e2 =
@@ -1131,10 +1136,10 @@ instance Unifiable Atom where
        _ -> mzero
 
 instance Unifiable (EffectRowP AtomName) where
-  unifyZonked r1 r2 =
-        unifyDirect r1 r2
-    <|> unifyDirect r2 r1
-    <|> unifyZip r1 r2
+  unifyZonked x1 x2 =
+        unifyDirect x1 x2
+    <|> unifyDirect x2 x1
+    <|> unifyZip x1 x2
 
    where
      unifyDirect :: Unifier m => EffectRow n -> EffectRow n -> m n ()
@@ -1142,7 +1147,7 @@ instance Unifiable (EffectRowP AtomName) where
      unifyDirect _ _ = mzero
 
      unifyZip :: Unifier m => EffectRow n -> EffectRow n -> m n ()
-     unifyZip t1 t2 = case (t1, t2) of
+     unifyZip r1 r2 = case (r1, r2) of
       (EffectRow effs1 t1, EffectRow effs2 t2) | not (S.null effs1 || S.null effs2) -> do
         let extras1 = effs1 `S.difference` effs2
         let extras2 = effs2 `S.difference` effs1
@@ -1152,10 +1157,10 @@ instance Unifiable (EffectRowP AtomName) where
       _ -> mzero
 
 instance Unifiable (ExtLabeledItemsE Type AtomName) where
-  unifyZonked r1 r2 =
-        unifyDirect r1 r2
-    <|> unifyDirect r2 r1
-    <|> unifyZip r1 r2
+  unifyZonked x1 x2 =
+        unifyDirect x1 x2
+    <|> unifyDirect x2 x1
+    <|> unifyZip x1 x2
 
    where
      unifyDirect :: Unifier m => ExtLabeledItemsE Type AtomName n
@@ -1218,12 +1223,12 @@ extendSolution v t =
 
 isInferenceName :: BindingsReader m => AtomName n -> m n Bool
 isInferenceName v = lookupBindings v >>= \case
-  AtomNameBinding _ InferenceName -> return True
+  AtomNameBinding (SolverBound (InfVarBound _)) -> return True
   _ -> return False
 
 isSkolemName :: BindingsReader m => AtomName n -> m n Bool
 isSkolemName v = lookupBindings v >>= \case
-  AtomNameBinding _ SkolemName -> return True
+  AtomNameBinding (SolverBound (SkolemBound _)) -> return True
   _ -> return False
 
 freshType :: Solver m => Kind n -> m n (Type n)

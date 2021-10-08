@@ -194,24 +194,24 @@ instance CheckableB (RecEnvFrag Binding) where
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
-    AtomNameBinding   ty info         -> do
-      ty' <-checkTypeE TyKind ty
-      info' <- case info of
-        LetBound ann expr -> do
-          expr' <- checkTypeE ty' expr
-          return $ LetBound ann expr'
-        LamBound arr  -> return $ LamBound arr
-        PiBound       -> return PiBound
-        MiscBound     -> return MiscBound
-        InferenceName -> return InferenceName
-        SkolemName    -> return SkolemName
-      return $ AtomNameBinding ty' info'
+    AtomNameBinding   atomNameBinding -> AtomNameBinding <$> checkE atomNameBinding
     DataDefBinding    dataDef         -> DataDefBinding  <$> checkE dataDef
     TyConBinding      dataDefName     -> TyConBinding    <$> substM dataDefName
     DataConBinding    dataDefName idx -> DataConBinding  <$> substM dataDefName <*> pure idx
     ClassBinding      classDef        -> ClassBinding    <$> substM classDef
     SuperclassBinding className idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
     MethodBinding     className idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
+
+instance CheckableE AtomBinding where
+  checkE binding = case binding of
+    LetBound letBinding -> LetBound    <$> checkE letBinding
+    LamBound lamBinding -> LamBound    <$> checkE lamBinding
+    MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
+    SolverBound b       -> SolverBound <$> checkE b
+
+instance CheckableE SolverBinding where
+  checkE (InfVarBound ty) = InfVarBound <$> checkTypeE TyKind ty
+  checkE (SkolemBound ty) = SkolemBound <$> checkTypeE TyKind ty
 
 instance CheckableE DataDef where
   checkE = substM -- TODO
@@ -225,20 +225,9 @@ instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> do
       name' <- substM name
-      AtomNameBinding ty _ <- lookupBindings name'
-      return ty
-    Lam (LamExpr arr b eff body) -> do
-      checkArrowAndEffects arr eff
-      checkB b \b' -> do
-        eff' <- checkEffRow eff
-        bodyTy <- withAllowedEff eff' $ getTypeE body
-        return $ Pi $ PiType arr b' eff' bodyTy
-    Pi (PiType arr b eff resultTy) -> do
-      checkArrowAndEffects arr eff
-      checkB b \_ -> do
-        void $ checkEffRow eff
-        resultTy|:TyKind
-      return TyKind
+      bindingType <$> lookupBindings name'
+    Lam lamExpr -> getTypeE lamExpr
+    Pi piType -> getTypeE piType
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkEffRow eff $> EffKind
@@ -310,12 +299,13 @@ instance HasType Atom where
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
 
-instance CheckableB Binder where
-  checkB (b:>ty) cont = do
-    ty' <- checkTypeE TyKind ty
-    withFreshBinder (getNameHint b) ty' MiscBound \b' ->
+instance (NameColor c, ToBinding ann c, CheckableE ann)
+         => CheckableB (BinderP c ann) where
+  checkB (b:>ann) cont = do
+    ann' <- checkE ann
+    withFreshNameBinder (getNameHint b) (toBinding ann') \b' ->
       extendRenamer (b@>binderName b') $
-        cont b'
+        cont $ b' :> ann'
 
 instance HasType Expr where
   getTypeE expr = case expr of
@@ -336,12 +326,35 @@ instance HasType Block where
     return tyReq
 
 instance CheckableB Decl where
-  checkB (Let ann (b:>ty) expr) cont = do
+  checkB (Let b binding) cont =
+    checkB (b:>binding) \(b':>binding') -> cont $ Let b' binding'
+
+instance CheckableE DeclBinding where
+  checkE (DeclBinding ann ty expr) = do
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
-    withFreshBinder (getNameHint b) ty' (LetBound ann expr') \b' ->
-      extendRenamer (b @> binderName b') $
-        cont $ Let ann b' expr'
+    return $ DeclBinding ann ty' expr'
+
+instance CheckableE LamBinding where
+  checkE (LamBinding arr ty) = do
+    ty' <- checkTypeE TyKind ty
+    return $ LamBinding arr ty'
+
+instance HasType LamExpr where
+  getTypeE (LamExpr b@(_:>LamBinding arr _) eff body) = do
+    checkArrowAndEffects arr eff
+    checkB b \(b':>LamBinding _ ty) -> do
+      eff' <- checkEffRow eff
+      bodyTy <- withAllowedEff eff' $ getTypeE body
+      return $ Pi $ PiType arr (b':>ty) eff' bodyTy
+
+instance HasType PiType where
+  getTypeE (PiType arr b eff resultTy) = do
+    checkArrowAndEffects arr eff
+    checkB b \_ -> do
+      void $ checkEffRow eff
+      resultTy|:TyKind
+    return TyKind
 
 instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
   checkB nest cont = case nest of
@@ -929,7 +942,7 @@ checkEffRow effRow@(EffectRow effs effTail) = do
     IOEffect        -> return ()
   forM_ effTail \v -> do
     v' <- substM v
-    AtomNameBinding ty _ <- lookupBindings v'
+    ty <- bindingType <$> lookupBindings v'
     checkAlphaEq EffKind ty
   substM effRow
 
@@ -959,7 +972,7 @@ checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
   forM_ rest \name -> do
     name' <- lookupEnvM name
-    AtomNameBinding ty _ <- lookupBindings name'
+    ty <- bindingType <$> lookupBindings name'
     checkAlphaEq LabeledRowKind ty
 
 labeledRowDifference :: Typer m

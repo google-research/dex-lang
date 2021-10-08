@@ -195,7 +195,7 @@ makeBindingsFrag scope bindings toSafeMap (FromSafeEnv fromSafeMap) constEnv =
       case runToSafeM toSafeMap scope $ toSafeE binderInfo of
         EnvVal rep binding ->
           case eqNameColorRep rep (getNameColor name) of
-            Just EqNameColor -> binding
+            Just ColorsEqual -> binding
 
 withFreshSafeRec :: MonadToSafe m
                  => FromSafeEnv n
@@ -327,7 +327,7 @@ instance HasSafeVersionE (UnsafeName c) where
     case m D.! name' of
       EnvVal rep' safeName ->
         case eqNameColorRep rep rep' of
-          Just EqNameColor -> return safeName
+          Just ColorsEqual -> return safeName
           Nothing -> error "mismatched name colors!"
   fromSafeE name = lookupFromSafeEnv name
 
@@ -363,7 +363,7 @@ instance HasSafeVersionB DRecEnvFrag where
       nest' <- forEachNestItem nest \(TempPair b info) -> do
         EnvVal rep info' <- toSafeE info
         case eqNameColorRep rep (getNameColor b) of
-          Just EqNameColor ->
+          Just ColorsEqual ->
             withNameColorRep rep $ return $ EnvPair b $ info'
           Nothing -> error $ "color mismatch: " <> pprint rep <> " vs " <> pprint (getNameColor b)
       cont $ RecEnvFrag $ fromEnvPairs nest'
@@ -419,7 +419,7 @@ data DEnvPair n where
 instance HasSafeVersionE AnyBinderInfo where
   type SafeVersionE AnyBinderInfo = EnvVal Binding
   toSafeE anyInfo = case anyInfo of
-    AtomBinderInfo ty info -> EnvVal nameColorRep <$> (AtomNameBinding <$> toSafeE ty <*> toSafeE info)
+    AtomBinderInfo ty info -> EnvVal nameColorRep <$> (AtomNameBinding <$> toSafeE (TypedBinderInfo ty info))
     DataDefName def        -> EnvVal nameColorRep <$> (DataDefBinding  <$> toSafeE def)
     TyConName def          -> EnvVal nameColorRep <$> (TyConBinding    <$> toSafeE (UnsafeName nameColorRep def))
     DataConName def idx    -> EnvVal nameColorRep <$> (DataConBinding  <$> toSafeE (UnsafeName nameColorRep def) <*> pure idx)
@@ -432,7 +432,9 @@ instance HasSafeVersionE AnyBinderInfo where
 
 topBindingToAnyBinderInfo :: MonadFromSafe m => NameColorRep c -> Binding c n -> m n D.AnyBinderInfo
 topBindingToAnyBinderInfo rep binding = case binding of
-  AtomNameBinding ty info -> AtomBinderInfo <$> fromSafeE ty <*> fromSafeE info
+  AtomNameBinding info -> do
+    TypedBinderInfo ty' info' <- fromSafeE info
+    return $ AtomBinderInfo ty' info'
   DataDefBinding def      -> DataDefName <$> fromSafeE def
   TyConBinding   defName  -> TyConName <$> fromUnsafeName <$> fromSafeE defName
   DataConBinding defName idx -> DataConName <$> (fromUnsafeName <$> fromSafeE defName) <*> pure idx
@@ -495,10 +497,10 @@ instance HasSafeVersionE D.Atom where
   toSafeE atom = case atom of
     D.Var (v D.:> _) -> S.Var <$> toSafeAtomName v
     D.Lam (D.Abs b (arr, body)) -> do
-      toSafeB b \b' -> do
+      toSafeB b \(b' S.:> ty') -> do
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
-        return $ S.Lam $ S.LamExpr arr' b' eff' body'
+        return $ S.Lam $ S.LamExpr (b' S.:> LamBinding arr' ty') eff' body'
     D.Pi (D.Abs b (arr, body)) ->
       toSafeB b \b' -> do
         (arr', eff') <- toSafeArrow arr
@@ -533,8 +535,8 @@ instance HasSafeVersionE D.Atom where
 
   fromSafeE atom = case atom of
     S.Var v -> D.Var <$> fromSafeAtomNameVar v
-    S.Lam (S.LamExpr arr b eff body) -> do
-      fromSafeB b \b' -> do
+    S.Lam (S.LamExpr (b S.:> LamBinding arr ty) eff body) -> do
+      fromSafeB (b S.:> ty) \b' -> do
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body
         return $ D.Lam $ D.Abs b' (arr', body')
@@ -691,12 +693,12 @@ instance HasSafeVersionB D.Decl where
   type SafeVersionB D.Decl = S.Decl
   toSafeB (D.Let ann b expr) cont = do
     expr' <- toSafeE expr
-    toSafeB b \b' ->
-      cont $ S.Let ann b' expr'
+    toSafeB b \(b' S.:> ty') ->
+      cont $ S.Let b' (S.DeclBinding ann ty' expr')
 
-  fromSafeB (S.Let ann b expr) cont = do
+  fromSafeB (S.Let b (S.DeclBinding ann ty expr)) cont = do
     expr' <- fromSafeE expr
-    fromSafeB b \b' -> do
+    fromSafeB (b S.:>ty) \b' -> do
       cont $ D.Let ann b' expr'
 
 instance HasSafeVersionE D.Effect where
@@ -738,30 +740,42 @@ instance HasSafeVersionB b => HasSafeVersionB (D.Nest b) where
         fromSafeB rest \rest' ->
            cont $ D.Nest b' rest'
 
-instance HasSafeVersionE BinderInfo where
-  type SafeVersionE BinderInfo = AtomBinderInfo
-  toSafeE info = case info of
-    D.LetBound ann expr -> S.LetBound ann <$> toSafeE expr
-    D.LamBound arr  -> return (S.LamBound arr')
-      where arr' = case arr of
-                     D.PlainArrow () -> S.PlainArrow
-                     D.ImplicitArrow -> S.ImplicitArrow
-                     D.LinArrow      -> S.LinArrow
-                     D.TabArrow      -> S.TabArrow
-                     D.ClassArrow    -> S.ClassArrow
-    D.PiBound       -> return S.PiBound
-    D.UnknownBinder -> return S.MiscBound
+data TypedBinderInfo = TypedBinderInfo D.Type D.BinderInfo
+
+instance HasSafeVersionE TypedBinderInfo where
+  type SafeVersionE TypedBinderInfo = AtomBinding
+  toSafeE (TypedBinderInfo ty info) = do
+    ty' <- toSafeE ty
+    case info of
+      D.LetBound ann expr -> do
+        expr' <- toSafeE expr
+        return $ S.LetBound $ S.DeclBinding ann ty' expr'
+      D.LamBound arr -> return $ S.LamBound $ S.LamBinding arr' ty'
+        where arr' = case arr of
+                       D.PlainArrow () -> S.PlainArrow
+                       D.ImplicitArrow -> S.ImplicitArrow
+                       D.LinArrow      -> S.LinArrow
+                       D.TabArrow      -> S.TabArrow
+                       D.ClassArrow    -> S.ClassArrow
+      D.PiBound       -> return $ S.MiscBound ty'
+      D.UnknownBinder -> return $ S.MiscBound ty'
   fromSafeE info = case info of
-    S.LetBound ann expr -> D.LetBound ann <$> fromSafeE expr
-    S.LamBound arr  -> return (D.LamBound arr')
+    S.LetBound (S.DeclBinding ann ty expr) -> do
+      ty'   <- fromSafeE ty
+      expr' <- fromSafeE expr
+      return $ TypedBinderInfo ty' $ D.LetBound ann expr'
+    S.LamBound (S.LamBinding arr ty) -> do
+      ty' <- fromSafeE ty
+      return $ TypedBinderInfo ty' $ D.LamBound arr'
       where arr' = case arr of
                      S.PlainArrow    -> D.PlainArrow ()
                      S.ImplicitArrow -> D.ImplicitArrow
                      S.LinArrow      -> D.LinArrow
                      S.TabArrow      -> D.TabArrow
                      S.ClassArrow    -> D.ClassArrow
-    S.PiBound       -> return D.PiBound
-    S.MiscBound     -> return D.UnknownBinder
+    S.MiscBound ty -> do
+      ty' <- fromSafeE ty
+      return $ TypedBinderInfo ty' D.UnknownBinder
 
 traverseSet :: (Ord a, Ord b, Monad m) => (a -> m b) -> Set.Set a -> m (Set.Set b)
 traverseSet f s = Set.fromList <$> mapM f (Set.toList s)

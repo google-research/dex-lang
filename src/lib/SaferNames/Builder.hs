@@ -30,7 +30,7 @@ module SaferNames.Builder (
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions, emitAtomToName,
   withFabricatedEmitsEvidence, withFabricatedEmitsTopEvidence,
-  BuilderEmission (..), fromBuilderDecls, fromBuilderBindings, makeBuilderEmission,
+  BuilderEmission (..), fromBuilderDecls, fromBuilderBindings,
   ) where
 
 import Prelude hiding ((.), id)
@@ -56,7 +56,9 @@ class EffectsReader (m::MonadKind1) where
 
 class (BindingsReader m, EffectsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
-  emitBuilder :: NameColor c => NameHint -> BuilderEmissionRHS c n -> m n (Name c n)
+  -- This is unsafe because it doesn't require the Emits predicate. `emitDecl`
+  -- and `emitBinding` wrap it safely.
+  unsafeEmitBuilder :: NameColor c => NameHint -> BuilderEmission c n -> m n (Name c n)
   buildScopedGeneral
     :: ( SubstE Name e , InjectableE e
        , HasNamesE   e', InjectableE e'
@@ -67,16 +69,16 @@ class (BindingsReader m, EffectsReader m, Scopable m, MonadFail1 m)
 
 data ScopedBuilderResult (b::B) (e::E) (n::S) where
   ScopedBuilderResult :: (Distinct l2, Ext l1 n)
-                      => PairB b (Nest BuilderEmission) l1 l2 -> e l2
+                      => PairB b BuilderEmissions l1 l2 -> e l2
                       -> ScopedBuilderResult b e n
 
 emitDecl :: (Builder m, Emits n) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitDecl hint ann expr = do
   ty <- getType expr
-  emitBuilder hint $ BuilderEmitDeclRHS ann ty expr
+  unsafeEmitBuilder hint $ BuilderEmitDecl $ DeclBinding ann ty expr
 
 emitBinding :: (Builder m, EmitsTop n, NameColor c) => NameHint -> Binding c n -> m n (Name c n)
-emitBinding hint binding = emitBuilder hint $ BuilderEmitBindingRHS binding
+emitBinding hint binding = unsafeEmitBuilder hint $ BuilderEmitTopDecl binding
 
 buildScoped
   :: (HasNamesE e, InjectableE e, Builder m)
@@ -118,19 +120,11 @@ emitAtomToName x = emit (Atom x)
 
 -- newtype just for the different OutMap instance
 newtype BuilderBindings n = BuilderBindings (Bindings n)
--- newtype because we have a slightly different OutFrag instance
-type BuilderEmissions = Nest BuilderEmission
+type BuilderEmissions = Nest (SomeDecl BuilderEmission)
 
-data BuilderEmissionRHS c n where
- BuilderEmitDeclRHS    :: Emits n =>  LetAnn -> Type n -> Expr n   -> BuilderEmissionRHS AtomNameC n
- BuilderEmitBindingRHS :: (EmitsTop n, NameColor c) => Binding c n -> BuilderEmissionRHS c n
-
-instance InjectableE (BuilderEmissionRHS c) where
-  injectionProofE = undefined
-
-data BuilderEmission n l =
-   BuilderEmitDecl (Decl n l)
- | BuilderEmitBindingsFrag (BindingsFrag n l)
+data BuilderEmission c n where
+  BuilderEmitDecl    :: DeclBinding n -> BuilderEmission AtomNameC n
+  BuilderEmitTopDecl :: Binding c n   -> BuilderEmission c         n
 
 instance HasScope BuilderBindings where
   toScope (BuilderBindings bindings) = toScope bindings
@@ -140,20 +134,29 @@ instance OutMap BuilderBindings BuilderEmissions where
   extendOutMap (BuilderBindings bindings) emissions =
     BuilderBindings $ bindings `extendOutMap` boundBindings emissions
 
-instance GenericB BuilderEmission where
-  type RepB BuilderEmission = EitherB Decl BindingsFrag
-  fromB (BuilderEmitDecl         decl) = LeftB  decl
-  fromB (BuilderEmitBindingsFrag frag) = RightB frag
-  toB (LeftB  decl) = BuilderEmitDecl         decl
-  toB (RightB frag) = BuilderEmitBindingsFrag frag
+instance NameColor c => GenericE (BuilderEmission c) where
+  type RepE (BuilderEmission c) = EitherE DeclBinding (Binding c)
+  fromE (BuilderEmitDecl    x) = LeftE  x
+  fromE (BuilderEmitTopDecl x) = RightE x
 
-instance ProvesExt     BuilderEmission
-instance BindsNames    BuilderEmission
-instance SubstB Name   BuilderEmission
-instance InjectableB   BuilderEmission
-instance HoistableB    BuilderEmission
-instance BindsBindings BuilderEmission
-instance SubstB AtomSubstVal BuilderEmission
+  toE (LeftE x) =
+    case eqNameColorRep (nameColorRep::NameColorRep c)
+                        (nameColorRep::NameColorRep AtomNameC) of
+      Just ColorsEqual -> BuilderEmitDecl x
+      Nothing -> error "shouldn't happen"
+  toE (RightE x) = BuilderEmitTopDecl x
+
+instance NameColor c => ToBinding (BuilderEmission c) c where
+  toBinding = undefined
+
+instance InjectableV         BuilderEmission
+instance HoistableV          BuilderEmission
+instance SubstV Name         BuilderEmission
+instance SubstV AtomSubstVal BuilderEmission
+instance NameColor c => InjectableE         (BuilderEmission c)
+instance NameColor c => HoistableE          (BuilderEmission c)
+instance NameColor c => SubstE Name         (BuilderEmission c)
+instance NameColor c => SubstE AtomSubstVal (BuilderEmission c)
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT BuilderBindings BuilderEmissions m n a }
@@ -175,8 +178,8 @@ instance MonadFail m => EffectsReader (BuilderT m) where
   withAllowedEffects = undefined
 
 instance MonadFail m => Builder (BuilderT m) where
-  emitBuilder hint rhs = BuilderT $
-    emitInplace hint rhs \b rhs' -> Nest (makeBuilderEmission b rhs') Empty
+  unsafeEmitBuilder hint rhs = BuilderT $
+    emitInplace hint rhs \b rhs' -> Nest (SomeDecl b rhs') Empty
   buildScopedGeneral ab cont = BuilderT do
     scopedResult <- scopedInplaceGeneral
       (\(BuilderBindings bindings) b ->
@@ -186,29 +189,20 @@ instance MonadFail m => Builder (BuilderT m) where
     ScopedResult _ (PairB b emissions) result <- return scopedResult
     return $ ScopedBuilderResult (PairB b emissions) result
 
-makeBuilderEmission
-  :: Distinct l
-  => NameBinder c n l -> BuilderEmissionRHS c n -> BuilderEmission n l
-makeBuilderEmission b rhs = withExtEvidence b $
-  case rhs of
-    BuilderEmitDeclRHS ann ty expr ->
-      BuilderEmitDecl (Let ann (b:>ty) expr)
-    BuilderEmitBindingRHS binding -> do
-      let frag = RecEnvFrag $ b @> inject binding
-      BuilderEmitBindingsFrag frag
-
 fromBuilderDecls :: BuilderEmissions n l -> Nest Decl n l
 fromBuilderDecls emissions = fromJust $ forEachNestItem emissions fromBuilderDecl
   where
-    fromBuilderDecl :: BuilderEmission n l -> Maybe (Decl n l)
-    fromBuilderDecl (BuilderEmitDecl decl) = return decl
-    fromBuilderDecl _ = Nothing
+    fromBuilderDecl :: SomeDecl BuilderEmission n l -> Maybe (Decl n l)
+    fromBuilderDecl (SomeDecl b emission) = case emission of
+      BuilderEmitDecl declBinding -> return $ Let b declBinding
+      BuilderEmitTopDecl _ -> Nothing
 
 fromBuilderBindings :: Distinct l => BuilderEmissions n l -> BindingsFrag n l
 fromBuilderBindings Empty = emptyOutFrag
-fromBuilderBindings (Nest emission rest) = case emission of
+fromBuilderBindings (Nest (SomeDecl b emission) rest) = case emission of
   BuilderEmitDecl _ -> error "Expected bindings fragment emission"
-  BuilderEmitBindingsFrag frag -> frag `catRecEnvFrags` fromBuilderBindings rest
+  BuilderEmitTopDecl binding -> withSubscopeDistinct rest $
+    boundBindings (b:>binding) `catRecEnvFrags` fromBuilderBindings rest
 
 deriving instance MonadFail m => MonadFail (BuilderT m n)
 deriving instance MonadFail m => ScopeReader (BuilderT m)
@@ -317,7 +311,7 @@ buildLamGeneral
   -> m n (Atom n, a)
 buildLamGeneral arr ty fEff fBody = do
   ext1 <- idExt
-  ab <- withFreshAtomBinder NoHint ty (LamBound arr) \v -> do
+  ab <- withFreshBinder NoHint (LamBinding arr ty) \v -> do
     ext2 <- injectExt ext1
     effs <- fEff v
     withAllowedEffects effs do
@@ -327,7 +321,7 @@ buildLamGeneral arr ty fEff fBody = do
         fBody v'
       return $ effs `PairE` body `PairE` LiftE aux
   Abs b (effs `PairE` body `PairE` LiftE aux) <- return ab
-  return (Lam $ LamExpr arr b effs body, aux)
+  return (Lam $ LamExpr b effs body, aux)
 
 buildPureLam :: Builder m
              => Arrow
@@ -384,7 +378,7 @@ buildPi :: (Fallible1 m, Builder m)
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (Type n)
 buildPi arr ty body = do
-  ab <- withFreshAtomBinder NoHint ty PiBound \v -> do
+  ab <- withFreshBinder NoHint ty \v -> do
     withAllowedEffects Pure do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy
@@ -399,13 +393,12 @@ buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
   return (effs', resultTy')
 
 buildAbs
-  :: (Builder m, InjectableE e, HasNamesE e, HoistableE e)
-  => Type n
-  -> (forall l. Ext n l => AtomName l -> m l (e l))
-  -> m n (Abs Binder e n)
-buildAbs ty body = do
-  withFreshAtomBinder NoHint ty MiscBound \v -> do
-    body v
+  :: ( Builder m, InjectableE e, HasNamesE e, HoistableE e
+     , NameColor c, ToBinding binding c)
+  => binding n
+  -> (forall l. Ext n l => Name c l -> m l (e l))
+  -> m n (Abs (BinderP c binding) e n)
+buildAbs binding body = withFreshBinder NoHint binding body
 
 singletonBinder :: Builder m => Type n -> m n (EmptyAbs Binder n)
 singletonBinder ty = buildAbs ty \_ -> return UnitE

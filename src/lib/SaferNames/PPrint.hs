@@ -75,7 +75,8 @@ fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 
-instance Pretty (Binder n l) where pretty (b:>_) = p b
+instance Pretty (BinderP c ann n l)
+  where pretty (b:>_) = p b
 
 instance Pretty (Expr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr n) where
@@ -106,23 +107,27 @@ instance PrettyPrecE e => PrettyPrec (Abs Binder e n) where
 instance PrettyPrecE e => Pretty (PrimCon (e n)) where pretty = prettyFromPrettyPrec
 instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
 
+instance Pretty (DeclBinding n) where
+  pretty = undefined
+
 instance Pretty (Decl n l) where
   pretty decl = case decl of
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let ann b rhs -> align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Let b (DeclBinding ann ty rhs) ->
+      align $ p ann <+> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    Lam lamExpr@(LamExpr TabArrow _ _ _) ->
+    Lam lamExpr@(LamExpr (_:>(LamBinding TabArrow _)) _ _) ->
       atPrec LowestPrec $ "\\for"
       <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
-    Lam lamExpr@(LamExpr arr _ _ _) ->
+    Lam lamExpr@(LamExpr (_:>(LamBinding arr _)) _ _) ->
       atPrec LowestPrec $ "\\"
       <> prettyLamHelper lamExpr (PrettyLam arr)
-    Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
+    Pi piType -> atPrec LowestPrec $ align $ p piType
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
@@ -191,23 +196,23 @@ forStr (RegularFor Fwd) = "for"
 forStr (RegularFor Rev) = "rof"
 forStr ParallelFor      = "pfor"
 
-prettyPiTypeHelper :: PiType n -> Doc ann
-prettyPiTypeHelper (PiType arr binder _ body) = let
-  prettyBinder = parens $ p binder
-  prettyBody = case body of
-    Pi subpi -> prettyPiTypeHelper subpi
-    _ -> pLowest body
-  in prettyBinder <> (group $ line <> p arr <+> prettyBody)
+instance Pretty (PiType n) where
+  pretty (PiType arr binder _ body) = let
+    prettyBinder = parens $ p binder
+    prettyBody = case body of
+      Pi subpi -> pretty subpi
+      _ -> pLowest body
+    in prettyBinder <> (group $ line <> p arr <+> prettyBody)
 
 data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 
 prettyLamHelper :: LamExpr n -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
   rec :: LamExpr n -> Bool -> (Doc ann, Block n)
-  rec (LamExpr _ binder _ body') first =
-    let thisOne = (if first then "" else line) <> p binder
+  rec (LamExpr (b:>LamBinding _ ty) _ body') first =
+    let thisOne = (if first then "" else line) <> p (b:>ty)
     in case body' of
-      Block _ Empty (Atom (Lam next@(LamExpr arr' _ _ _)))
+      Block _ Empty (Atom (Lam next@(LamExpr (_:> (LamBinding arr' _)) _ _)))
         | lamType == PrettyLam arr' ->
             let (binders', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE block)
@@ -239,14 +244,12 @@ instance Pretty (Effect n) where
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
-instance Pretty (AtomBinderInfo n) where
+instance Pretty (AtomBinding n) where
   pretty = undefined
 
 instance Pretty (Binding s n) where
   pretty b = case b of
-    AtomNameBinding   ty info ->
-          "Atom name type:" <+> pretty ty
-      <+> "binder info:" <+> pretty info
+    AtomNameBinding   info -> "Atom name:" <+> pretty info
     DataDefBinding    dataDef -> pretty dataDef
     TyConBinding      dataDefName -> "Type constructor:" <+> pretty dataDefName
     DataConBinding    dataDefName idx ->

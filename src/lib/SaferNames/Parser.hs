@@ -470,7 +470,6 @@ wrapUStatements statements = case statements of
     LeftB  d -> UDecl $ UDeclExpr d $ wrapUStatements rest
     RightB (LiftB e) -> UDecl $ UDeclExpr d $ wrapUStatements rest
       where d = ULet PlainLet (UPatAnn (nsB UPatIgnore) Nothing) e
-    _ -> error "impossible"
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser (UStatement VoidS VoidS)

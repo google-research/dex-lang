@@ -1,4 +1,4 @@
--- Copyright 2021 Google LLC
+ -- Copyright 2021 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -51,7 +51,7 @@ module SaferNames.Name (
   NameGen (..), fmapG, NameGenT (..), traverseEnvFrag, fmapNest, forEachNestItem,
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
-  GenericE (..), GenericB (..), ColorsEqual (..),
+  GenericE (..), GenericB (..),
   EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
     pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
   EitherB1, EitherB2, EitherB3, EitherB4, EitherB5,
@@ -65,7 +65,7 @@ module SaferNames.Name (
   hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
-  unsafeCoerceE, unsafeCoerceB, getRawName, EqNameColor (..),
+  unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
   freeVarsList, isFreeIn, todoInjectableProof,
@@ -282,8 +282,8 @@ data Nest (binder::B) (n::S) (l::S) where
   Nest  :: binder n h -> Nest binder h l -> Nest binder n l
   Empty ::                                  Nest binder n n
 
-data BinderP (b::B) (ann::E) (n::S) (l::S) =
-  (:>) (b n l) (ann n)
+data BinderP (c::C) (ann::E) (n::S) (l::S) =
+  (:>) (NameBinder c n l) (ann n)
   deriving (Show, Generic)
 
 type EmptyAbs b = Abs b UnitE :: E
@@ -611,10 +611,8 @@ pattern JustB b = LeftB b
 pattern NothingB :: MaybeB b n n
 pattern NothingB = RightB UnitB
 
-type LiftB (e::E) = BinderP UnitB e :: B
-
-pattern LiftB :: e n -> LiftB e n n
-pattern LiftB e = UnitB :> e
+data LiftB (e::E) (n::S) (l::S) where
+  LiftB :: e n -> LiftB e n n
 
 -- === variant of Generic suited for E-kind and B-kind things ===
 
@@ -659,10 +657,10 @@ instance BindsAtMostOneName (NameBinder c) c where
 instance BindsOneName (NameBinder c) c where
   binderName = nameBinderName
 
-instance BindsAtMostOneName b c => BindsAtMostOneName (BinderP b ann) c where
+instance BindsAtMostOneName (BinderP c ann) c where
   (b:>_) @> x = b @> x
 
-instance BindsOneName b c => BindsOneName (BinderP b ann) c where
+instance BindsOneName (BinderP c ann) c where
   binderName (b:>_) = binderName b
 
 infixr 7 @@>
@@ -746,7 +744,7 @@ splitNestAt n (Nest b rest) =
   case splitNestAt (n-1) rest of
     PairB xs ys -> PairB (Nest b xs) ys
 
-binderAnn :: BinderP b ann n l -> ann n
+binderAnn :: BinderP c ann n l -> ann n
 binderAnn (_:>ann) = ann
 
 data DistinctWitness (n::S) where
@@ -808,8 +806,6 @@ withFreshLike
 withFreshLike hint cont =
   withFreshM (getNameHint hint) (getNameColor hint) cont
 
-data ColorsEqual (a::C) (b::C) where
-  ColorsEqual :: ColorsEqual a a
 class ColorsNotEqual a b where
   notEqProof :: ColorsEqual a b -> r
 
@@ -925,7 +921,10 @@ instance (AlphaEqB b1, AlphaEqB b2) => AlphaEqB (PairB b1 b2) where
 instance (AlphaEqB b, AlphaEqE e) => AlphaEqE (Abs b e) where
   alphaEqE (Abs b1 e1) (Abs b2 e2) = withAlphaEqB b1 b2 $ alphaEqE e1 e2
 
-instance (AlphaEqB b, AlphaEqE ann) => AlphaEqB (BinderP b ann) where
+instance AlphaEqE e => AlphaEqB (LiftB e) where
+  withAlphaEqB (LiftB e1) (LiftB e2) cont = alphaEqE e1 e2 >> cont
+
+instance AlphaEqE ann => AlphaEqB (BinderP c ann) where
   withAlphaEqB (b1:>ann1) (b2:>ann2) cont = do
     alphaEqE ann1 ann2
     withAlphaEqB b1 b2 $ cont
@@ -1295,7 +1294,7 @@ deriving instance (forall c. Show (v c n)) => Show (EnvVal v n)
 fromEnvVal ::  NameColorRep c -> EnvVal v o -> v c o
 fromEnvVal rep (EnvVal rep' val) =
   case eqNameColorRep rep rep' of
-    Just EqNameColor -> val
+    Just ColorsEqual -> val
     _ -> error "type mismatch"
 
 data NameColorRep (c::C) where
@@ -1329,18 +1328,18 @@ data DynamicColor
  | MethodNameVal     methodNameVal
    deriving (Show, Generic)
 
-data EqNameColor (c1::C) (c2::C) where
-  EqNameColor :: EqNameColor c c
+data ColorsEqual (c1::C) (c2::C) where
+  ColorsEqual :: ColorsEqual c c
 
-eqNameColorRep :: NameColorRep c1 -> NameColorRep c2 -> Maybe (EqNameColor c1 c2)
+eqNameColorRep :: NameColorRep c1 -> NameColorRep c2 -> Maybe (ColorsEqual c1 c2)
 eqNameColorRep rep1 rep2 = case (rep1, rep2) of
-  (AtomNameRep      , AtomNameRep      ) -> Just EqNameColor
-  (DataDefNameRep   , DataDefNameRep   ) -> Just EqNameColor
-  (TyConNameRep     , TyConNameRep     ) -> Just EqNameColor
-  (DataConNameRep   , DataConNameRep   ) -> Just EqNameColor
-  (ClassNameRep     , ClassNameRep     ) -> Just EqNameColor
-  (SuperclassNameRep, SuperclassNameRep) -> Just EqNameColor
-  (MethodNameRep    , MethodNameRep    ) -> Just EqNameColor
+  (AtomNameRep      , AtomNameRep      ) -> Just ColorsEqual
+  (DataDefNameRep   , DataDefNameRep   ) -> Just ColorsEqual
+  (TyConNameRep     , TyConNameRep     ) -> Just ColorsEqual
+  (DataConNameRep   , DataConNameRep   ) -> Just ColorsEqual
+  (ClassNameRep     , ClassNameRep     ) -> Just ColorsEqual
+  (SuperclassNameRep, SuperclassNameRep) -> Just ColorsEqual
+  (MethodNameRep    , MethodNameRep    ) -> Just ColorsEqual
   _ -> Nothing
 
 -- gets the NameColorRep implicitly, like Typeable
@@ -1357,7 +1356,7 @@ tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
               (NameColor c1, NameColor c2) => v c1 n -> Maybe (v c2 n)
 tryAsColor x = case eqNameColorRep (nameColorRep :: NameColorRep c1)
                                    (nameColorRep :: NameColorRep c2) of
-  Just EqNameColor -> Just x
+  Just ColorsEqual -> Just x
   Nothing -> Nothing
 
 withNameColorRep :: NameColorRep c -> (NameColor c => a) -> a
@@ -1425,6 +1424,23 @@ instance ( BindsNames b1, SubstB v b1
         b2' <- substBDistinct (scope', env') b2
         return $ PairB b1' b2'
 
+instance InjectableE e => InjectableB (LiftB e) where
+  injectionProofB fresh (LiftB e) cont = cont fresh $ LiftB $ injectionProofE fresh e
+
+instance ProvesExt (LiftB e) where
+instance BindsNames (LiftB e) where
+  toScopeFrag (LiftB _) = id
+
+instance HoistableE e => HoistableB (LiftB e) where
+  freeVarsB (LiftB e) = freeVarsE e
+
+instance (InjectableE e, SubstE v e) => SubstB v (LiftB e) where
+  substB env (LiftB e) cont = do
+    e' <- substE env e
+    cont env $ LiftB e'
+
+  substBDistinct env (LiftB e) = LiftB <$> substE env e
+
 instance (BindsNames b1, BindsNames b2) => ProvesExt  (EitherB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (EitherB b1 b2) where
   toScopeFrag (LeftB  b) = toScopeFrag b
@@ -1453,26 +1469,15 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
   substBDistinct env (LeftB  b) = LeftB  <$> substBDistinct env b
   substBDistinct env (RightB b) = RightB <$> substBDistinct env b
 
-instance (InjectableB b, InjectableE ann) => InjectableB (BinderP b ann) where
-  injectionProofB fresh (b:>ann) cont = do
-    let ann' = injectionProofE fresh ann
-    injectionProofB fresh b \fresh' b' ->
-      cont fresh' $ b':>ann'
+instance GenericB (BinderP c ann) where
+  type RepB (BinderP c ann) = PairB (LiftB ann) (NameBinder c)
+  toB = undefined
+  fromB = undefined
 
-instance (ProvesExt b, SubstB v b, InjectableE ann, SubstE v ann)
-         => SubstB v (BinderP b ann) where
-   substB env (b:>ann) cont = do
-     ann' <- substE env ann
-     substB env b \env' b' -> do
-       cont env' (b':>ann')
-
-   substBDistinct env (b:>ann) =
-     withSubscopeDistinct b $
-       (:>) <$> substBDistinct env b <*> substE env ann
-
-instance BindsNames b => ProvesExt  (BinderP b ann) where
-instance BindsNames b => BindsNames (BinderP b ann) where
-  toScopeFrag (b:>_) = toScopeFrag b
+instance InjectableE ann => InjectableB (BinderP c ann)
+instance (InjectableE ann, SubstE v ann, InjectableV v) => SubstB v (BinderP c ann)
+instance ProvesExt  (BinderP c ann)
+instance BindsNames (BinderP c ann)
 
 instance BindsNames b => ProvesExt  (Nest b) where
 instance BindsNames b => BindsNames (Nest b) where
@@ -1739,7 +1744,7 @@ instance (Store (e1 n), Store (e2 n)) => Store (EitherE e1 e2 n)
 instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance Store (const n) => Store (ConstE const ignored n)
-instance (Store (b n l), Store (ann n)) => Store (BinderP b ann n l)
+instance (NameColor c, Store (ann n)) => Store (BinderP c ann n l)
 
 instance ( forall c. NameColor c => Store (v c o')
          , forall c. NameColor c => Generic (v c o'))
@@ -2102,7 +2107,7 @@ freeVarsList :: HoistableE e => NameColorRep c -> e n -> [Name c n]
 freeVarsList c e =
   catMaybes $ flip map (M.toList $ freeVarsE e) \(rawName, (SomeNameColor c')) ->
    case eqNameColorRep c c' of
-     Just EqNameColor -> Just $ UnsafeMakeName c rawName
+     Just ColorsEqual -> Just $ UnsafeMakeName c rawName
      Nothing -> Nothing
 
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
@@ -2132,7 +2137,7 @@ instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
   freeVarsB (PairB b1 b2) =
     freeVarsB b1 <> hoistNameSet b1 (freeVarsB b2)
 
-instance (HoistableB b, HoistableE ann) => HoistableB (BinderP b ann) where
+instance HoistableE ann => HoistableB (BinderP c ann) where
   freeVarsB (b:>ann) = freeVarsB b <> freeVarsE ann
 
 instance HoistableB UnitB where
