@@ -41,7 +41,7 @@ module SaferNames.Name (
   newSubstTraversalEnv, idSubstTraversalEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
-  ScopeReader2, ScopeExtender2,
+  Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
@@ -767,6 +767,9 @@ type Monad2 (m :: MonadKind2) = forall (n::S) (l::S) . Monad (m n l)
 type Fallible1 (m :: MonadKind1) = forall (n::S)        . Fallible (m n  )
 type Fallible2 (m :: MonadKind2) = forall (n::S) (l::S) . Fallible (m n l)
 
+type Searcher1 (m :: MonadKind1) = forall (n::S)        . Searcher (m n  )
+type Searcher2 (m :: MonadKind2) = forall (n::S) (l::S) . Searcher (m n l)
+
 type CtxReader1 (m :: MonadKind1) = forall (n::S)        . CtxReader (m n  )
 type CtxReader2 (m :: MonadKind2) = forall (n::S) (l::S) . CtxReader (m n l)
 
@@ -1259,12 +1262,18 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, C
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = liftInplace getErrCtx
 
-instance ( OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m
+instance ( OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
          , Alternative m)
          => Alternative (InplaceT bindings decls m n) where
   empty = liftInplace empty
   UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
     f1 bindings <|> f2 bindings
+
+instance ( OutMap bindings decls, BindsNames decls, InjectableB decls,
+           Monad m, Alternative m, Searcher m)
+         => Searcher (InplaceT bindings decls m n) where
+  UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
+    f1 bindings <!> f2 bindings
 
 -- === name hints ===
 

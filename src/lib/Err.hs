@@ -16,11 +16,13 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftMaybe,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
-            FallibleApplicativeWrapper, traverseMergingErrs, liftFallibleM) where
+            FallibleApplicativeWrapper, traverseMergingErrs, liftFallibleM,
+            SearcherM (..), Searcher (..), runSearcherM) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -55,8 +57,7 @@ data ErrType = NoErr
              | EscapedNameErr
              | ModuleImportErr
              | MonadFailErr
-             -- We use RecoverableErr for the Alternative instance of FallibleM.
-             | RecoverableErr
+             | SearchFailureErr
                deriving (Show, Eq)
 
 type SrcPosCtx  = Maybe SrcPos
@@ -91,20 +92,6 @@ instance Fallible FallibleM where
   throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
     throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
-
-instance Alternative FallibleM where
-  empty = throwErrs (Errs [])
-  FallibleM (ReaderT f1) <|> FallibleM (ReaderT f2) =
-    FallibleM $ ReaderT \ctx ->
-      case f1 ctx of
-        Failure (Errs errs) | all isRecoverable errs -> f2 ctx
-        result -> result
-
-    where
-      isRecoverable :: Err -> Bool
-      isRecoverable (Err RecoverableErr _ _) = True
-      isRecoverable _ = False
-
 
 instance FallibleApplicative FallibleM where
   mergeErrs (FallibleM (ReaderT f1)) (FallibleM (ReaderT f2)) =
@@ -239,6 +226,44 @@ assertEq x y s = if x == y then return ()
 asCompilerErr :: Fallible m => m a -> m a
 asCompilerErr cont = addContext "(This is a compiler error!)" cont
 
+-- === search monad ===
+
+infix 0 <!>
+class (Monad m, Alternative m) => Searcher m where
+  -- Runs the second computation when the first yields an empty set of results.
+  -- It's a bit like `<?>` in parser combinators.
+  (<!>) :: m a -> m a -> m a
+
+newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT Except a }
+  deriving (Functor, Applicative, Monad)
+
+runSearcherM :: SearcherM a -> Except a
+runSearcherM m =
+  runMaybeT (runSearcherM' m) >>= \case
+    Nothing -> throw SearchFailureErr ""
+    Just x -> return x
+
+instance MonadFail SearcherM where
+  fail _ = SearcherM $ MaybeT $ return Nothing
+
+instance Fallible SearcherM where
+  throwErrs e = SearcherM $ lift $ throwErrs e
+  addErrCtx ctx (SearcherM (MaybeT m)) = SearcherM $ MaybeT $
+    addErrCtx ctx $ m
+
+instance Alternative SearcherM where
+  empty = SearcherM $ MaybeT $ return Nothing
+  SearcherM (MaybeT m1) <|> SearcherM (MaybeT m2) = SearcherM $ MaybeT do
+    m1 >>= \case
+      Just ans -> return $ Just ans
+      Nothing -> m2
+
+instance Searcher SearcherM where
+  SearcherM (MaybeT m) <!> handler = SearcherM $ MaybeT do
+    m >>= \case
+      Just ans -> return $ Just ans
+      Nothing -> runMaybeT $ runSearcherM' handler
+
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
 
@@ -325,7 +350,7 @@ instance Pretty ErrType where
     EscapedNameErr    -> "Escaped name"
     ModuleImportErr   -> "Module import error"
     MonadFailErr      -> "MonadFail error (internal error)"
-    RecoverableErr    -> "Recoverable error (internal error)"
+    SearchFailureErr  -> "Search failure (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs

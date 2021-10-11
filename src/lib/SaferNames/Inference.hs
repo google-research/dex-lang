@@ -172,7 +172,7 @@ instance Solver (InfererM i) where
 instance Inferer InfererM where
   liftSolverM m = InfererM $ EnvReaderT $ ReaderT \_ -> do
     ext1 <- idExt
-    embedInplaceT \bindings -> liftFallibleM do
+    embedInplaceT \bindings -> liftExcept $ runSearcherM do
       let ext2 = injectExtTo bindings ext1
       DistinctAbs solverEmissions result <- runInplaceT (SolverOutMap bindings) do
         ExtW <- injectExt ext2
@@ -1077,9 +1077,9 @@ instance OutMap SolverOutMap SolverOutFrag where
     SolverOutMap $ extendOutMap infOutMap $ liftSolverOutFrag outFrag
 
 newtype SolverM (n::S) (a:: *) =
-  SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag FallibleM n a }
-  deriving (Functor, Applicative, Monad, MonadFail, Alternative,
-            ScopeReader, Fallible, CtxReader)
+  SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag SearcherM n a }
+  deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
+            ScopeReader, Fallible)
 
 instance BindingsReader SolverM where
   addBindings e = SolverM do
@@ -1177,7 +1177,7 @@ constrainEq t1 t2 = do
   void $ addContext msg $
     liftSolverM $ unify (inject t1') (inject t2') >> return UnitE
 
-class (Alternative1 m, Fallible1 m, Solver m) => Unifier m
+class (Alternative1 m, Searcher1 m, Fallible1 m, Solver m) => Unifier m
 
 class (AlphaEqE e, InjectableE e, SubstE AtomSubstVal e) => Unifiable (e::E) where
   unifyZonked :: Unifier m => e n -> e n -> m n ()
@@ -1187,7 +1187,8 @@ unify e1 e2 = do
   e1' <- zonk e1
   e2' <- zonk e2
   (     unifyEq e1' e2'
-    <|> unifyZonked e1' e2' )
+    <|> unifyZonked e1' e2'
+    <!> throw TypeErr "")
 
 instance Unifiable Atom where
   unifyZonked e1 e2 =
