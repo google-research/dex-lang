@@ -16,7 +16,7 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftMaybe,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
-            FallibleApplicativeWrapper, traverseMergingErrs) where
+            FallibleApplicativeWrapper, traverseMergingErrs, liftFallibleM) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
@@ -55,6 +55,8 @@ data ErrType = NoErr
              | EscapedNameErr
              | ModuleImportErr
              | MonadFailErr
+             -- We use RecoverableErr for the Alternative instance of FallibleM.
+             | RecoverableErr
                deriving (Show, Eq)
 
 type SrcPosCtx  = Maybe SrcPos
@@ -89,6 +91,20 @@ instance Fallible FallibleM where
   throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
     throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
+
+instance Alternative FallibleM where
+  empty = throwErrs (Errs [])
+  FallibleM (ReaderT f1) <|> FallibleM (ReaderT f2) =
+    FallibleM $ ReaderT \ctx ->
+      case f1 ctx of
+        Failure (Errs errs) | all isRecoverable errs -> f2 ctx
+        result -> result
+
+    where
+      isRecoverable :: Err -> Bool
+      isRecoverable (Err RecoverableErr _ _) = True
+      isRecoverable _ = False
+
 
 instance FallibleApplicative FallibleM where
   mergeErrs (FallibleM (ReaderT f1)) (FallibleM (ReaderT f2)) =
@@ -204,6 +220,9 @@ liftExcept :: Fallible m => Except a -> m a
 liftExcept (Failure errs) = throwErrs errs
 liftExcept (Success ans) = return ans
 
+liftFallibleM :: Fallible m => FallibleM a -> m a
+liftFallibleM m = liftExcept $ runFallibleM m
+
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Failure e) = error $ pprint e
 ignoreExcept (Success x) = x
@@ -306,6 +325,7 @@ instance Pretty ErrType where
     EscapedNameErr    -> "Escaped name"
     ModuleImportErr   -> "Module import error"
     MonadFailErr      -> "MonadFail error (internal error)"
+    RecoverableErr    -> "Recoverable error (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs

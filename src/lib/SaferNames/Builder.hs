@@ -147,7 +147,8 @@ instance NameColor c => GenericE (BuilderEmission c) where
   toE (RightE x) = BuilderEmitTopDecl x
 
 instance NameColor c => ToBinding (BuilderEmission c) c where
-  toBinding = undefined
+  toBinding (BuilderEmitDecl declBinding) = toBinding declBinding
+  toBinding (BuilderEmitTopDecl binding) = binding
 
 instance InjectableV         BuilderEmission
 instance HoistableV          BuilderEmission

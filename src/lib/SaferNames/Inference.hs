@@ -61,6 +61,12 @@ isTopDecl decl = case decl of
 class ( MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m
       , EnvReader Name m, Solver2 m)
       => Inferer (m::MonadKind2) where
+  -- TODO: it shouldn't be necessary to introduce the new name space, o',
+  -- because SolverM is in on the same in-place scheme as Inferer. But I don't
+  -- know how to make it work.
+  liftSolverM :: InjectableE e
+              => (forall o'. (Distinct o', Ext o o') => SolverM o' (e o'))
+              -> m i o (e o)
 
 typeReduceAtom :: Inferer m => Atom o -> m i o (Atom o)
 typeReduceAtom atom = return atom  -- TODO!
@@ -164,6 +170,14 @@ instance Solver (InfererM i) where
   emitSolver binding = emitInfererM "?" $ InfSolverEmission binding
 
 instance Inferer InfererM where
+  liftSolverM m = InfererM $ EnvReaderT $ ReaderT \_ -> do
+    ext1 <- idExt
+    embedInplaceT \bindings -> liftFallibleM do
+      let ext2 = injectExtTo bindings ext1
+      DistinctAbs solverEmissions result <- runInplaceT (SolverOutMap bindings) do
+        ExtW <- injectExt ext2
+        runSolverM' m
+      return $ DistinctAbs (liftSolverOutFrag solverEmissions) result
 
 instance Builder (InfererM i) where
   unsafeEmitBuilder hint rhs = emitInfererM hint $ InfBuilderEmission rhs
@@ -1034,15 +1048,66 @@ class BindingsReader m => Solver (m::MonadKind1) where
   extendSolverSubst :: AtomName n -> Type n -> m n ()
   emitSolver :: SolverBinding n -> m n (AtomName n)
 
+newtype SolverOutMap (n::S) =
+  SolverOutMap { fromSolverOutMap :: InfOutMap n }
+  deriving (HasScope)
+
+data SolverOutFrag (n::S) (l::S) =
+  SolverOutFrag (SolverEmissions n l) (SolverSubst l)
+
+type SolverEmissions = Nest (BinderP AtomNameC SolverBinding)
+
+instance GenericB SolverOutFrag where
+  type RepB SolverOutFrag = PairB SolverEmissions (LiftB SolverSubst)
+
+instance ProvesExt   SolverOutFrag
+instance SubstB Name SolverOutFrag
+instance BindsNames  SolverOutFrag
+instance InjectableB SolverOutFrag
+
+instance OutFrag SolverOutFrag where
+  emptyOutFrag = SolverOutFrag Empty emptySolverSubst
+  catOutFrags scope (SolverOutFrag em ss) (SolverOutFrag em' ss') =
+    withExtEvidence em' $
+      SolverOutFrag (em >>> em') (catSolverSubsts scope (inject ss) ss')
+
+instance OutMap SolverOutMap SolverOutFrag where
+  emptyOutMap = SolverOutMap emptyOutMap
+  extendOutMap (SolverOutMap infOutMap) outFrag =
+    SolverOutMap $ extendOutMap infOutMap $ liftSolverOutFrag outFrag
+
+newtype SolverM (n::S) (a:: *) =
+  SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag FallibleM n a }
+  deriving (Functor, Applicative, Monad, MonadFail, Alternative,
+            ScopeReader, Fallible, CtxReader)
+
+instance BindingsReader SolverM where
+  addBindings e = SolverM do
+    withInplaceOutEnv e \(SolverOutMap (InfOutMap bindings _)) e' ->
+      WithBindings bindings e'
+
+instance Solver SolverM where
+  extendSolverSubst v ty = SolverM $
+    void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
+      DistinctAbs (SolverOutFrag Empty (singletonSolverSubst v' ty')) UnitE
+
+  zonk e = SolverM $
+   withInplaceOutEnv e \(SolverOutMap (InfOutMap bindings solverSubst)) e' ->
+     applySolverSubstE (toScope bindings) solverSubst e'
+
+  emitSolver binding = undefined
+
+instance Unifier SolverM
 
 freshInferenceName :: Solver m => Kind n -> m n (AtomName n)
 freshInferenceName k = emitSolver $ InfVarBound k
 
+-- TODO: clean up skolem vars!
 freshSkolemName :: Solver m => Kind n -> m n (AtomName n)
 freshSkolemName k = emitSolver $ SkolemBound k
 
 type Solver2 (m::MonadKind2) = forall i. Solver (m i)
-type MonadPlus1 (m::MonadKind1) = forall n. MonadPlus (m n)
+type Alternative1 (m::MonadKind1) = forall n. Alternative (m n)
 
 emptySolverSubst :: SolverSubst n
 emptySolverSubst = SolverSubst mempty
@@ -1080,6 +1145,16 @@ deleteFromSubst (SolverSubst m) v
   | M.member v m = Just $ SolverSubst $ M.delete v m
   | otherwise    = Nothing
 
+liftSolverOutFrag :: Distinct l => SolverOutFrag n l -> InfOutFrag n l
+liftSolverOutFrag (SolverOutFrag emissions subst) =
+  InfOutFrag (liftSolverEmissions emissions) subst
+
+liftSolverEmissions :: Distinct l => SolverEmissions n l -> InfEmissions n l
+liftSolverEmissions Empty = Empty
+liftSolverEmissions (Nest (b:>emission) rest) =
+  Nest (SomeDecl b $ InfSolverEmission emission) rest'
+  where rest' = liftSolverEmissions rest
+
 instance GenericE SolverSubst where
   -- XXX: this is a bit sketchy because it's not actually bijective...
   type RepE SolverSubst = ListE (PairE AtomName Type)
@@ -1091,18 +1166,18 @@ instance SubstE Name SolverSubst where
 instance HoistableE SolverSubst
 
 constrainEq :: Inferer m => Type o -> Type o -> m i o ()
-constrainEq = undefined
--- constrainEq t1 t2 = do
---   t1' <- zonk t1
---   t2' <- zonk t2
---   let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
---   let msg =   "Expected: " ++ pprint t1Pretty
---          ++ "\n  Actual: " ++ pprint t2Pretty
---          ++ (if null infVars then "" else
---                "\n(Solving for: " ++ pprint infVars ++ ")")
---   addContext msg $ unify t1' t2'
+constrainEq t1 t2 = do
+  t1' <- zonk t1
+  t2' <- zonk t2
+  let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
+  let msg =   "Expected: " ++ pprint t1Pretty
+         ++ "\n  Actual: " ++ pprint t2Pretty
+         ++ (if null infVars then "" else
+               "\n(Solving for: " ++ pprint infVars ++ ")")
+  void $ addContext msg $
+    liftSolverM $ unify (inject t1') (inject t2') >> return UnitE
 
-class (MonadPlus1 m, Fallible1 m, Solver m) => Unifier m
+class (Alternative1 m, Fallible1 m, Solver m) => Unifier m
 
 class (AlphaEqE e, InjectableE e, SubstE AtomSubstVal e) => Unifiable (e::E) where
   unifyZonked :: Unifier m => e n -> e n -> m n ()
@@ -1122,7 +1197,7 @@ instance Unifiable Atom where
    where
      unifyDirect :: Unifier m => Type n -> Type n -> m n ()
      unifyDirect (Var v) t = extendSolution v t
-     unifyDirect _ _ = mzero
+     unifyDirect _ _ = empty
 
      unifyZip :: Unifier m => Type n -> Type n -> m n ()
      unifyZip t1 t2 = case (t1, t2) of
@@ -1130,10 +1205,10 @@ instance Unifiable Atom where
        (RecordTy  xs, RecordTy  xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
        (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
        (TypeCon (c,_) xs, TypeCon (c',_) xs') ->
-         unless (c == c') mzero >> unifyFoldable xs xs'
+         unless (c == c') empty >> unifyFoldable xs xs'
        (TC con, TC con') -> unifyFoldable con con'
        (Eff eff, Eff eff') -> unify eff eff'
-       _ -> mzero
+       _ -> empty
 
 instance Unifiable (EffectRowP AtomName) where
   unifyZonked x1 x2 =
@@ -1144,7 +1219,7 @@ instance Unifiable (EffectRowP AtomName) where
    where
      unifyDirect :: Unifier m => EffectRow n -> EffectRow n -> m n ()
      unifyDirect r (EffectRow effs (Just v)) | S.null effs = extendSolution v (Eff r)
-     unifyDirect _ _ = mzero
+     unifyDirect _ _ = empty
 
      unifyZip :: Unifier m => EffectRow n -> EffectRow n -> m n ()
      unifyZip r1 r2 = case (r1, r2) of
@@ -1154,7 +1229,7 @@ instance Unifiable (EffectRowP AtomName) where
         newRow <- freshEff
         unify (EffectRow mempty t1) (extendEffRow extras2 newRow)
         unify (extendEffRow extras1 newRow) (EffectRow mempty t2)
-      _ -> mzero
+      _ -> empty
 
 instance Unifiable (ExtLabeledItemsE Type AtomName) where
   unifyZonked x1 x2 =
@@ -1167,12 +1242,12 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
                               -> ExtLabeledItemsE Type AtomName n -> m n ()
      unifyDirect (ExtLabeledItemsE r) (ExtLabeledItemsE (Ext NoLabeledItems (Just v))) =
        extendSolution v (LabeledRow r)
-     unifyDirect _ _ = mzero
+     unifyDirect _ _ = empty
 
      unifyZip :: Unifier m => ExtLabeledItemsE Type AtomName n -> ExtLabeledItemsE Type AtomName n -> m n ()
      unifyZip (ExtLabeledItemsE r1) (ExtLabeledItemsE r2) = case (r1, r2) of
-       (_, Ext NoLabeledItems _) -> mzero
-       (Ext NoLabeledItems _, _) -> mzero
+       (_, Ext NoLabeledItems _) -> empty
+       (Ext NoLabeledItems _, _) -> empty
        (Ext (LabeledItems items1) t1, Ext (LabeledItems items2) t2) -> do
          let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ NE.zip tys1 tys2
          sequence_ $ M.intersectionWith unifyPrefixes items1 items2
@@ -1188,18 +1263,18 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
 unifyFoldable :: (Eq (f ()), Functor f, Foldable f, Unifiable e, Unifier m)
               => f (e n) -> f (e n) -> m n ()
 unifyFoldable xs ys = do
-  unless (void xs == void ys) mzero
+  unless (void xs == void ys) empty
   zipWithM_ unify (toList xs) (toList ys)
 
 unifyEq :: (AlphaEqE e, Unifier m) => e n -> e n -> m n ()
 unifyEq e1 e2 = do
   eq <- alphaEq e1 e2
-  unless eq mzero
+  unless eq empty
 
 unifyPiType :: Unifier m => PiType n -> PiType n -> m n ()
 unifyPiType (PiType arr1 (b1:>ann1) eff1 ty1)
             (PiType arr2 (b2:>ann2) eff2 ty2) = do
-  unless (arr1 == arr2) mzero
+  unless (arr1 == arr2) empty
   unify ann1 ann2
   v <- freshSkolemName ann1
   PairE eff1' ty1' <- applyAbs (Abs b1 (PairE eff1 ty1)) v
@@ -1219,7 +1294,7 @@ extendSolution v t =
       forM_ (freeVarsList AtomNameRep t) \fv ->
         whenM (isSkolemName fv) $ throw TypeErr $ "Can't unify with skolem vars"
       extendSolverSubst v t
-    False -> mzero
+    False -> empty
 
 isInferenceName :: BindingsReader m => AtomName n -> m n Bool
 isInferenceName v = lookupBindings v >>= \case

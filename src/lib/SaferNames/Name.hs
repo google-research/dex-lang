@@ -58,7 +58,7 @@ module SaferNames.Name (
     pattern CaseB0, pattern CaseB1, pattern CaseB2, pattern CaseB3, pattern CaseB4,
   splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
-  ExtWitness (..), idExt, injectExt,
+  ExtWitness (..), idExt, injectExt, injectExtTo,
   InFrag (..), InMap (..), OutFrag (..), OutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
@@ -1259,6 +1259,13 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, C
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = liftInplace getErrCtx
 
+instance ( OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m
+         , Alternative m)
+         => Alternative (InplaceT bindings decls m n) where
+  empty = liftInplace empty
+  UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
+    f1 bindings <|> f2 bindings
+
 -- === name hints ===
 
 class HasNameHint a where
@@ -1471,8 +1478,8 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
 
 instance GenericB (BinderP c ann) where
   type RepB (BinderP c ann) = PairB (LiftB ann) (NameBinder c)
-  toB = undefined
-  fromB = undefined
+  fromB (b:>ann) = PairB (LiftB ann) b
+  toB   (PairB (LiftB ann) b) = b:>ann
 
 instance InjectableE ann => InjectableB (BinderP c ann)
 instance (InjectableE ann, SubstE v ann, InjectableV v) => SubstB v (BinderP c ann)

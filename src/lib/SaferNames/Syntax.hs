@@ -235,7 +235,6 @@ data SolverBinding (n::S) =
  | SkolemBound (Type n)
    deriving (Show, Generic)
 
-
 type BindingsFrag = RecEnvFrag Binding :: S -> S -> *
 type Bindings     = RecEnv     Binding :: S -> *
 
@@ -430,24 +429,29 @@ data SomeDecl (binding::V) (n::S) (l::S) where
   SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
 
 instance ProvesExt (SomeDecl binding) where
-  toExtEvidence = undefined
+  toExtEvidence (SomeDecl b _) = toExtEvidence b
 
-instance SubstV v binding => SubstB v (SomeDecl binding) where
-  substB _ _ _ = undefined
+instance (InjectableV v, SubstV v binding)
+         => SubstB v (SomeDecl binding) where
+  substB env (SomeDecl b binding) cont = do
+    binding' <- substE env binding
+    substB env b \env' b' -> cont env' $ SomeDecl b' binding'
   substBDistinct _ _ = undefined
 
 instance HoistableV binding => HoistableB (SomeDecl binding) where
-  freeVarsB = undefined
+  freeVarsB (SomeDecl _ binding) = freeVarsE binding
 
 instance InjectableV binding => InjectableB (SomeDecl binding) where
   injectionProofB _ _ _ = undefined
 
 instance BindsNames (SomeDecl binding) where
-  toScopeFrag = undefined
+  toScopeFrag (SomeDecl b _) = toScopeFrag b
 
 instance (forall c. NameColor c => ToBinding (binding c) c)
          => BindsBindings (SomeDecl binding) where
-  boundBindings = undefined
+  boundBindings (SomeDecl b binding) =
+    withExtEvidence b $
+      RecEnvFrag $ b @> inject (toBinding binding)
 
 -- === front-end language AST ===
 
