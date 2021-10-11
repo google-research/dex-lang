@@ -45,6 +45,7 @@ import SaferNames.Name
 import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
+import SaferNames.CheapReduction
 
 import LabeledItems
 import Util (enumerate)
@@ -289,7 +290,7 @@ buildBlockReduced :: Builder m
                   -> m n (Maybe (Atom n))
 buildBlockReduced cont = do
   block <- buildBlock cont
-  tryReduceBlock block
+  cheapReduceBlockToAtom block
 
 buildBlock :: Builder m
            => (forall l. (Emits l, Ext n l) => m l (Atom l))

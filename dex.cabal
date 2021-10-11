@@ -63,7 +63,8 @@ library
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
-                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference
+                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
+                       SaferNames.CheapReduction
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

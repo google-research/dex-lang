@@ -14,7 +14,7 @@
 module SaferNames.Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, applyDataDefParams, indices, tryReduceBlock,
+  instantiatePi, checkExtends, applyDataDefParams, indices,
   caseAltsBinderTys, tryGetType) where
 
 import Prelude hiding (id)
@@ -1000,10 +1000,3 @@ labeledRowDifference (Ext (LabeledItems items) rest)
     _ -> throw TypeErr $ "Row tail " ++ pprint subrest
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
-
--- === reducing types ===
-
--- TODO!
-tryReduceBlock :: BindingsReader m => Block n -> m n (Maybe (Atom n))
-tryReduceBlock (Block _ Empty (Atom atom)) = return $ Just atom
-tryReduceBlock _ = undefined

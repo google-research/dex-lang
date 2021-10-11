@@ -29,6 +29,7 @@ import SaferNames.Builder
 import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
+import SaferNames.CheapReduction
 
 import LabeledItems
 import Err
@@ -67,9 +68,6 @@ class ( MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m
   liftSolverM :: InjectableE e
               => (forall o'. (Distinct o', Ext o o') => SolverM o' (e o'))
               -> m i o (e o)
-
-typeReduceAtom :: Inferer m => Atom o -> m i o (Atom o)
-typeReduceAtom atom = return atom  -- TODO!
 
 makeReqCon :: Inferer m => Type o -> m i o SuggestionStrength
 makeReqCon _ = return Suggest -- TODO!
@@ -447,7 +445,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     val' <- checkSigma val reqCon ty'
     matchRequirement val'
   UPrimExpr prim -> do
-    prim' <- forM prim $ inferRho >=> typeReduceAtom
+    prim' <- forM prim $ inferRho >=> cheapReduce
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
