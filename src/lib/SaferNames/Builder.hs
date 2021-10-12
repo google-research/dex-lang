@@ -312,13 +312,10 @@ buildLamGeneral
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l, a))
   -> m n (Atom n, a)
 buildLamGeneral arr ty fEff fBody = do
-  ext1 <- idExt
   ab <- withFreshBinder NoHint (LamBinding arr ty) \v -> do
-    ext2 <- injectExt ext1
     effs <- fEff v
     withAllowedEffects effs do
       (body, aux) <- buildBlockAux do
-        ExtW <- injectExt ext2
         v' <- injectM v
         fBody v'
       return $ effs `PairE` body `PairE` LiftE aux
@@ -364,13 +361,10 @@ buildPureNaryLam :: Builder m
                  -> m n (Atom n)
 buildPureNaryLam _ (EmptyAbs Empty) cont = cont []
 buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
-  ext1 <- idExt
   buildPureLam arr ty \x -> do
-    ext2 <- injectExt ext1
     restAbs <- injectM $ Abs b $ EmptyAbs rest
     rest' <- applyAbs restAbs x
     buildPureNaryLam arr rest' \xs -> do
-      ExtW <- injectExt ext2
       x' <- injectM x
       cont (x':xs)
 buildPureNaryLam _ _ _ = error "impossible"
@@ -417,14 +411,11 @@ buildNaryAbs
   -> m n (Abs (Nest Binder) e n)
 buildNaryAbs (EmptyAbs Empty) body = Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
-  ext1 <- idExt
   Abs b' (Abs bs' body') <-
     buildAbs ty \v -> do
-      ext2 <- injectExt ext1
       ab <- injectM $ Abs b (EmptyAbs bs)
       bs' <- applyAbs ab v
       buildNaryAbs bs' \vs -> do
-        ExtW <- injectExt ext2
         v' <- injectM v
         body $ v' : vs
   return $ Abs (Nest b' bs') body'
@@ -436,11 +427,8 @@ buildAlt
   -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
   -> m n (Alt n)
 buildAlt bs body = do
-  ext1 <- idExt
   buildNaryAbs bs \xs -> do
-    ext2 <- injectExt ext1
     buildBlock do
-      ExtW <- injectExt ext2
       xs' <- mapM injectM xs
       body xs'
 
@@ -476,14 +464,11 @@ buildCase :: (Emits n, Builder m)
           -> (forall l. (Emits l, Ext n l) => Int -> [AtomName l] -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
-  ext1 <- idExt
   scrutTy <- getType scrut
   altsBinderTys <- caseAltsBinderTys scrutTy
   alts <- forM (enumerate altsBinderTys) \(i, bs) -> do
     buildNaryAbs bs \xs -> do
-      ext2 <- injectExt ext1
       buildBlock do
-        ExtW <- injectExt ext2
         ListE xs' <- injectM $ ListE xs
         indexedAltBody i xs'
   liftM Var $ emit $ Case scrut alts resultTy

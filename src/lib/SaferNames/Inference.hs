@@ -8,6 +8,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module SaferNames.Inference (inferModule) where
 
@@ -169,11 +170,8 @@ instance Solver (InfererM i) where
 
 instance Inferer InfererM where
   liftSolverM m = InfererM $ EnvReaderT $ ReaderT \_ -> do
-    ext1 <- idExt
     embedInplaceT \bindings -> liftExcept $ runSearcherM do
-      let ext2 = injectExtTo bindings ext1
       DistinctAbs solverEmissions result <- runInplaceT (SolverOutMap bindings) do
-        ExtW <- injectExt ext2
         runSolverM' m
       return $ DistinctAbs (liftSolverOutFrag solverEmissions) result
 
@@ -682,11 +680,8 @@ withNestedUBinders :: (Inferer m, HasNamesE e, InjectableE e)
 withNestedUBinders bs cont = case bs of
   Empty -> Abs Empty <$> cont []
   Nest b rest -> do
-    ext1 <- idExt
     Abs b' (Abs rest' body) <- withUBinder b \name -> do
-      ext2 <- injectExt ext1
       withNestedUBinders rest \names -> do
-        ExtW <- injectExt ext2
         name' <- injectM name
         cont (name':names)
     return $ Abs (Nest b' rest') body
@@ -738,12 +733,9 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
     ClassArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
   argTy <- checkAnn ann
-  ext1 <- idExt
   buildLam arrow argTy Pure \v -> do
-    ext2 <- injectExt ext1
     bindLamPat p v $
       checkInstanceArgs rest do
-        ExtW <- injectExt ext2
         cont
 
 checkInstanceBody :: (Emits o, Inferer m)

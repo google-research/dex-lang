@@ -702,11 +702,10 @@ dataConFunType name con = do
     Abs argBinders' UnitE ->
       dropSubst $
         buildNaryPiType ImplicitArrow paramBinders \params -> do
-          proxy <- getScopeProxy
           buildNaryPiType PlainArrow argBinders' \_ -> do
             params' <- mapM injectM params
-            name'   <- injectMVia proxy name
-            def'    <- injectMVia proxy def
+            name'   <- injectM name
+            def'    <- injectM def
             return $ TypeCon (name', def') params'
 
 typeConFunType :: Typer m => Name DataDefNameC o -> m i o (Type o)
@@ -723,11 +722,8 @@ buildNaryPiType :: Typer m
                 -> m i o (Type o)
 buildNaryPiType _ Empty cont = cont []
 buildNaryPiType arr (Nest b rest) cont = do
-  ext1 <- idExt
   refreshBinders b \b' -> do
-    ext2 <- injectExt ext1
     Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \params -> do
-      ExtW <- injectExt ext2
       param <- Var <$> injectM (binderName b')
       cont (param : params)
 

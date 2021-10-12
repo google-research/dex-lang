@@ -45,7 +45,7 @@ module SaferNames.Name (
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  withFreshM, withFreshLike, inject, injectM, injectMVia, (!), (<>>),
+  withFreshM, withFreshLike, inject, injectM, (!), (<>>),
   envFragAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..),
   NameGen (..), fmapG, NameGenT (..), traverseEnvFrag, fmapNest, forEachNestItem,
@@ -58,7 +58,7 @@ module SaferNames.Name (
     pattern CaseB0, pattern CaseB1, pattern CaseB2, pattern CaseB3, pattern CaseB4,
   splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
-  ExtWitness (..), idExt, injectExt, injectExtTo,
+  ExtWitness (..),
   InFrag (..), InMap (..), OutFrag (..), OutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
@@ -363,36 +363,8 @@ instance InjectableE (ExtWitness n) where
     withExtEvidence (injectionProofE fresh (getExtEvidence :: ExtEvidence n l)) ExtW
 
 instance Category ExtWitness where
-  id :: forall n. ExtWitness n n
-  id = withExtEvidence (id::ExtEvidence n n) ExtW
-
-  (.) :: forall n1 n2 n3. ExtWitness n2 n3 -> ExtWitness n1 n2 -> ExtWitness n1 n3
-  (.) ExtW ExtW = withExtEvidence (ext1 >>> ext2) ExtW
-     where ext1 = getExtEvidence :: ExtEvidence n1 n2
-           ext2 = getExtEvidence :: ExtEvidence n2 n3
-
-idExt :: Monad1 m => m n (ExtWitness n n)
-idExt = return id
-
-injectExt :: (ProvesExt ext, Ext n2 n3, ScopeReader m)
-          => ext n1 n2 -> m n3 (ExtWitness n1 n3)
-injectExt ext = do
-  ext' <- injectM $ toExtEvidence ext
-  withExtEvidence ext' $
-    return ExtW
-
-injectExtTo :: forall ext e n1 n2 n3. (ProvesExt ext, Ext n2 n3, Distinct n3)
-            => e n3 -> ext n1 n2 -> (ExtWitness n1 n3)
-injectExtTo _ ext =
-  withExtEvidence (inject (toExtEvidence ext) :: ExtEvidence n1 n3) $ ExtW
-
--- Uses `proxy n2` to provide the type `n2` to use as the intermediate scope.
-injectMVia :: forall n1 n2 n3 m proxy e.
-              (Ext n1 n2, Ext n2 n3, ScopeReader m, InjectableE e)
-           => proxy n2 -> e n1 -> m n3 (e n3)
-injectMVia _ e = withExtEvidence (extL >>> extR) $ injectM e
-  where extL = getExtEvidence :: ExtEvidence n1 n2
-        extR = getExtEvidence :: ExtEvidence n2 n3
+  id = ExtW
+  ExtW . ExtW = ExtW
 
 getScopeProxy :: Monad (m n) => m n (UnitE n)
 getScopeProxy = return UnitE
@@ -1174,14 +1146,11 @@ scopedInplaceGeneral
   -> InplaceT bindings decls m n
        (ScopedResult bindings (PairB b decls) e' n)
 scopedInplaceGeneral extender ab cont = do
-  ext1 <- idExt
   embedInplaceT \bindings -> do
-    let ext2 = injectExtTo bindings ext1
     DistinctAbs b e <- return $ refreshAbs (toScope bindings) $ inject ab
-    let ext3 = ext2 >>> toExtWitness b
+    ExtW <- return $ toExtWitness b
     let bindings' = extender bindings b
     DistinctAbs decls result <- runInplaceT bindings' do
-      ExtW <- injectExt ext3
       cont $ inject e
     return $ DistinctAbs emptyOutFrag $
       ScopedResult bindings (PairB b decls) result
@@ -2003,9 +1972,13 @@ instance HasNameColor (Name c n) c where
 -- `Distinct l` is still needed to further prove that). Unlike `ScopeFrag`
 -- (which is also proof) it doesn't actually carry any data, so we can unsafely
 -- create one from nothing when we need to.
-class Ext (n::S) (l::S)
+class    (ExtEnd n => ExtEnd l) => Ext n l
+instance (ExtEnd n => ExtEnd l) => Ext n l
 
-instance Ext (n::S) (n::S)
+-- ExtEnd is just a dummy class we use to encode the transitivity and
+-- reflexivity of `Ext` in a way that GHC understands.
+class ExtEnd (n::S)
+instance ExtEnd VoidS
 
 getExtEvidence :: Ext n l => ExtEvidence n l
 getExtEvidence = FabricateExtEvidence
