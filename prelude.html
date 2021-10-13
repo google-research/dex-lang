@@ -2065,8 +2065,8 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
       <span class="type-name">False</span> <span class="symbol">-&gt;</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> idivCeil (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> idiv x y <span class="symbol">+</span> <span class="type-name">BToI</span> (rem x y <span class="symbol">/=</span> 0)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intdiv2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %shr x 1
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow2 (power<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %shl 1 power
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intdiv2 (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %shr x (1 <span class="symbol">:</span> <span class="type-name">Int</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> intpow2 (power<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %shl (1 <span class="symbol">:</span> <span class="type-name">Int</span>) power
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isOdd  (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> rem x 2 <span class="symbol">==</span> 1
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isEven (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> rem x 2 <span class="symbol">==</span> 0
 </div></div><div class="cell"><div class="code-block">
@@ -2087,7 +2087,7 @@ Such as <code>randMat</code> with samples from the distribution of floating poin
         <span class="keyword">if</span> x <span class="symbol">&gt;=</span> (get cmpRef)
           <span class="keyword">then</span>
             ansRef <span class="symbol">:=</span> (get ansRef) <span class="symbol">+</span> 1
-            cmpRef <span class="symbol">:=</span> %shl (get cmpRef) 1
+            cmpRef <span class="symbol">:=</span> %shl (get cmpRef) (1 <span class="symbol">:</span> <span class="type-name">Int</span>)
             <span class="type-name">True</span>
           <span class="keyword">else</span>
             <span class="type-name">False</span>
