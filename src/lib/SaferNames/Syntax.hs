@@ -249,7 +249,7 @@ class (ScopeReader m, Monad1 m)
       => Scopable (m::MonadKind1) where
   withBindings :: ( SubstB Name b, BindsBindings b
                   , HasNamesE e , InjectableE e
-                  , HasNamesE e', InjectableE e', HoistableE e')
+                  , HasNamesE e', InjectableE e', HoistableE e', SubstE AtomSubstVal e')
                => Abs b e n
                -> (forall l. Ext n l => e l -> m l (e' l))
                -> m n (Abs b e' n)
@@ -332,6 +332,8 @@ instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
 instance BindingsGetter m => BindingsGetter (EnvReaderT v m i) where
   getBindings = EnvReaderT $ lift getBindings
 
+instance (InjectableV v, Scopable m) => Scopable (EnvReaderT v m i) where
+
 instance (InjectableV v, ScopeGetter m, BindingsExtender m)
          => BindingsExtender (EnvReaderT v m i) where
   extendBindings frag m = EnvReaderT $ ReaderT \env ->
@@ -373,6 +375,10 @@ instance ToBinding Atom AtomNameC where
 
 instance ToBinding SolverBinding AtomNameC where
   toBinding = toBinding . SolverBound
+
+instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
+  toBinding (LeftE  e) = toBinding e
+  toBinding (RightE e) = toBinding e
 
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
@@ -417,7 +423,7 @@ freshBinderNamePair hint = do
     injectM $ Abs b (binderName b)
 
 withFreshBinder :: ( NameColor c, Scopable m, InjectableE e
-                   , HasNamesE e, ToBinding binding c)
+                   , HasNamesE e, SubstE AtomSubstVal e,  ToBinding binding c)
                 => NameHint -> binding n
                 -> (forall l. Ext n l => Name c l -> m l (e l))
                 -> m n (Abs (BinderP c binding) e n)
@@ -1425,6 +1431,7 @@ instance SubstB Name Decl
 instance AlphaEqB Decl
 instance ProvesExt  Decl
 instance BindsNames Decl
+instance BindsBindings Decl
 
 instance Pretty Arrow where
   pretty arr = case arr of

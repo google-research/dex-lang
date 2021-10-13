@@ -581,7 +581,7 @@ typeCheckPrimOp op = case op of
     x |: Word8Ty
     TypeCon namedDef [] <- checkTypeE TyKind t
     DataDefBinding (DataDef _ _ dataConDefs) <- lookupBindings $ fst namedDef
-    forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmpty binders
+    forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
     return $ TypeCon namedDef []
   SumToVariant x -> do
     SumTy cases <- getTypeE x
@@ -683,9 +683,9 @@ checkRWSAction rws f = do
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
 -- from GADT+monad type inference.
-checkEmpty :: Fallible m => Nest b n l -> m ()
-checkEmpty Empty = return ()
-checkEmpty _  = throw TypeErr "Not empty"
+checkEmptyNest :: Fallible m => Nest b n l -> m ()
+checkEmptyNest Empty = return ()
+checkEmptyNest _  = throw TypeErr "Not empty"
 
 nonDepBinderNestTypes :: Typer m => Nest Binder o o' -> m i o [Type o]
 nonDepBinderNestTypes Empty = return []

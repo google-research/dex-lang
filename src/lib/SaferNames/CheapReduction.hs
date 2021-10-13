@@ -52,7 +52,17 @@ instance CheaplyReducible Atom where
     x -> substM x
 
 instance CheaplyReducible Expr where
-  cheapReduceE (Atom atom) = Atom <$> cheapReduceE atom
+  cheapReduceE expr = case expr of
+    Atom atom -> Atom <$> cheapReduceE atom
+    App f x -> do
+      f' <- cheapReduceE f
+      x' <- cheapReduceE x
+      -- TODO: Worry about variable capture. Should really carry a substitution.
+      case f' of
+        Lam _ -> error "todo"
+        TypeCon con xs -> return $ Atom $ TypeCon con $ xs ++ [x']
+        _ -> substM expr
+    _ -> substM expr
 
 instance CheaplyReducible Block where
   cheapReduceE (Block ty Empty result) = do

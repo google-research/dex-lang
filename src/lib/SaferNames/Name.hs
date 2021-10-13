@@ -1,4 +1,4 @@
- -- Copyright 2021 Google LLC
+-- Copyright 2021 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -59,7 +59,7 @@ module SaferNames.Name (
   splitNestAt, nestLength, nestToList, binderAnn,
   OutReaderT (..), OutReader (..), runOutReaderT, getDistinct,
   ExtWitness (..),
-  InFrag (..), InMap (..), OutFrag (..), OutMap (..),
+  InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
   hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..), HoistableV,
@@ -68,7 +68,7 @@ module SaferNames.Name (
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
-  freeVarsList, isFreeIn, todoInjectableProof,
+  freeVarsList, isFreeIn, todoInjectableProof, liftBetweenInplaceTs, checkEmpty,
   ) where
 
 import Prelude hiding (id, (.))
@@ -143,9 +143,11 @@ class (InjectableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -
   -- The scope is here because solver subst concatenation needs it
   catOutFrags  :: Distinct n3 => Scope n3 -> scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
 
-class (OutFrag scopeFrag, HasScope scope)
-      => OutMap (scope :: S -> *) (scopeFrag :: S -> S -> *) | scope -> scopeFrag where
+class HasScope scope => OutMap scope where
   emptyOutMap :: scope VoidS
+
+class (OutFrag scopeFrag, OutMap scope)
+      => ExtOutMap (scope :: S -> *) (scopeFrag :: S -> S -> *) where
   extendOutMap :: Distinct l => scope n -> scopeFrag n l -> scope l
 
 todoInjectableProof :: a
@@ -166,8 +168,10 @@ instance OutFrag ScopeFrag where
 instance HasScope Scope where
   toScope = id
 
-instance OutMap Scope ScopeFrag where
+instance OutMap Scope where
   emptyOutMap = Scope id
+
+instance ExtOutMap Scope ScopeFrag where
   extendOutMap (Scope scope) frag = Scope $ scope >>> frag
 
 -- outvar version of EnvFrag/Env, where the query name space and the result name
@@ -188,8 +192,10 @@ catRecEnvFrags (RecEnvFrag frag1) (RecEnvFrag frag2) = RecEnvFrag $
 instance HasScope (RecEnv v) where
   toScope (RecEnv envFrag) = Scope $ envFragAsScope envFrag
 
-instance InjectableV v => OutMap (RecEnv v) (RecEnvFrag v) where
+instance InjectableV v => OutMap (RecEnv v) where
   emptyOutMap = RecEnv emptyInFrag
+
+instance InjectableV v => ExtOutMap (RecEnv v) (RecEnvFrag v) where
   extendOutMap (RecEnv env) (RecEnvFrag frag) = RecEnv $
     withExtEvidence (toExtEvidence (RecEnvFrag frag)) $
       inject env <.> frag
@@ -310,6 +316,13 @@ class ProvesExt b => BindsNames (b :: B) where
 
   default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
   toScopeFrag b = toScopeFrag $ fromB b
+
+checkEmpty :: BindsNames b => b n l -> Maybe (UnitB n l)
+checkEmpty b =
+  let UnsafeMakeScopeFrag frag = toScopeFrag b
+  in if null frag
+    then Just $ unsafeCoerceB UnitB
+    else Nothing
 
 instance ProvesExt ExtEvidence where
   toExtEvidence = id
@@ -1088,7 +1101,7 @@ data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMa
   { unsafeRunInplaceT :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS) }
 
 runInplaceT
-  :: (Distinct n, OutMap bindings decls, Monad m)
+  :: (Distinct n, ExtOutMap bindings decls, Monad m)
   => bindings n
   -> (forall l. (Distinct l, Ext n l) => InplaceT bindings decls m l (e l))
   -> m (DistinctAbs decls e n)
@@ -1110,7 +1123,7 @@ unsafeMakeDistinctAbs b e =
 -- `Ext` directly, but as long as we allow `Ext` itself to be injectable, you
 -- can still do the same thing.
 embedInplaceT
-  :: (InjectableE e, InjectableB decls, OutMap bindings decls, Monad m)
+  :: (InjectableE e, InjectableB decls, ExtOutMap bindings decls, Monad m)
   => (forall l. (Ext n l, Distinct l) => bindings l -> m (DistinctAbs decls e l))
   -> InplaceT bindings decls m n (e n)
 embedInplaceT cont = UnsafeMakeInplaceT \bindings -> do
@@ -1120,7 +1133,7 @@ embedInplaceT cont = UnsafeMakeInplaceT \bindings -> do
 -- === safely implemented helpers on top of InPlaceT ===
 
 doInplace
-  :: (InjectableE e, InjectableE e', OutMap bindings decls, Monad m)
+  :: (InjectableE e, InjectableE e', ExtOutMap bindings decls, Monad m)
   => e n
   -> (forall l. Distinct l => bindings l -> e l -> DistinctAbs decls e' l)
   -> InplaceT bindings decls m n (e' n)
@@ -1138,7 +1151,7 @@ instance InjectableE (ScopedResult bindings b e) where
 
 scopedInplaceGeneral
   :: ( SubstE Name e, SubstB Name b, ProvesExt b, InjectableE e'
-     , InjectableE e, OutMap bindings decls
+     , InjectableE e, ExtOutMap bindings decls
      , Monad m, InjectableB decls)
   => (forall n' l'. Distinct l' => bindings n' -> b n' l' -> bindings l')
   -> Abs b e n
@@ -1158,8 +1171,22 @@ scopedInplaceGeneral extender ab cont = do
 liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
 liftInplace m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
 
+
+liftBetweenInplaceTs
+  :: Monad m
+  => (forall a'. m' a' -> m a')
+  -> (forall l    . Distinct l  => bs  l    -> bs' l   )
+  -> (forall l l' . Distinct l' => ds' l l' -> ds  l l')
+  -> InplaceT bs' ds' m' n a
+  -> InplaceT bs  ds  m  n a
+liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
+  UnsafeMakeInplaceT \bindingsOuter -> do
+    (result, declsInner) <- liftInner $ f $ lowerBindings bindingsOuter
+    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+      return (result, liftDecls declsInner)
+
 emitInplace
-  :: (NameColor c, InjectableE e, OutMap bindings decls, Monad m)
+  :: (NameColor c, InjectableE e, ExtOutMap bindings decls, Monad m)
   => NameHint -> e o
   -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> decls n l)
   -> InplaceT bindings decls m o (Name c o)
@@ -1169,7 +1196,7 @@ emitInplace hint e buildDecls = do
       DistinctAbs (buildDecls b e') (binderName b)
 
 withInplaceOutEnv
-  :: (InjectableE e, InjectableE e', OutMap bindings decls, Monad m)
+  :: (InjectableE e, InjectableE e', ExtOutMap bindings decls, Monad m)
   => e n
   -> (forall l. Distinct l => bindings l -> e l -> e' l)
   -> InplaceT bindings decls m n (e' n)
@@ -1180,7 +1207,7 @@ withInplaceOutEnv eIn cont = doInplace eIn \bindings eIn' ->
 -- TODO: can we have a version of this that takes a deferred distinct abs avoids
 -- the refreshAbs pass?
 extendInplace
-  :: (SubstB Name decls, InjectableE e, SubstE Name e, OutMap bindings decls, Monad m)
+  :: (SubstB Name decls, InjectableE e, SubstE Name e, ExtOutMap bindings decls, Monad m)
   => Abs decls e n
   -> InplaceT bindings decls m n (e n)
 extendInplace withDecls = do
@@ -1189,16 +1216,16 @@ extendInplace withDecls = do
 
 -- === InplaceT instances ===
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Functor (InplaceT bindings decls m n) where
   fmap = liftM
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Applicative (InplaceT bindings decls m n) where
   pure = return
   liftA2 = liftM2
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where
   return x = UnsafeMakeInplaceT \_ ->
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
@@ -1210,35 +1237,35 @@ instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
     withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (y, catOutFrags (unsafeCoerceE (toScope outMap')) b1 b2)
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
   getDistinctEvidenceM = UnsafeMakeInplaceT \_ ->
     return (getDistinctEvidence, emptyOutFrag)
   addScope e = doInplace e \bindings e' ->
     DistinctAbs emptyOutFrag (WithScope (toScope bindings) e')
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
   fail s = liftInplace $ fail s
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, Fallible m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
   throwErrs errs = UnsafeMakeInplaceT \_ -> throwErrs errs
   addErrCtx ctx cont = UnsafeMakeInplaceT \bindings ->
     addErrCtx ctx $ unsafeRunInplaceT cont bindings
 
-instance (OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
   getErrCtx = liftInplace getErrCtx
 
-instance ( OutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
          , Alternative m)
          => Alternative (InplaceT bindings decls m n) where
   empty = liftInplace empty
   UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
     f1 bindings <|> f2 bindings
 
-instance ( OutMap bindings decls, BindsNames decls, InjectableB decls,
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls,
            Monad m, Alternative m, Searcher m)
          => Searcher (InplaceT bindings decls m n) where
   UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->

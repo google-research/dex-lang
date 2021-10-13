@@ -15,7 +15,7 @@
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
   buildPureLam, BuilderT, Builder (..), Builder2, EffectsReader (..),
-  emitDecl, emitBinding, buildScoped, buildScopedTop, ScopedBuilderResult (..),
+  emitDecl, emitBinding, buildScoped,
   runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
@@ -24,17 +24,17 @@ module SaferNames.Builder (
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   getDataDef, getClassDef, getDataCon, atomAsBlock,
-  Emits, EmitsTop, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
+  Emits, buildPi, buildNonDepPi, buildLam, buildDepEffLam,
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions, emitAtomToName,
-  withFabricatedEmitsEvidence, withFabricatedEmitsTopEvidence,
-  BuilderEmission (..), fromBuilderDecls, fromBuilderBindings,
+  withFabricatedEmitsEvidence, BuilderEmission (..),
+  TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
   ) where
 
-import Prelude hiding ((.), id)
 import Control.Monad
+import Control.Monad.Trans
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
@@ -51,57 +51,24 @@ import LabeledItems
 import Util (enumerate)
 import Err
 
-class EffectsReader (m::MonadKind1) where
-  getAllowedEffects :: m n (EffectRow n)
-  withAllowedEffects :: EffectRow n -> m n a -> m n a
+-- === Ordinary (local) builder class ===
 
 class (BindingsReader m, EffectsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   -- This is unsafe because it doesn't require the Emits predicate. `emitDecl`
   -- and `emitBinding` wrap it safely.
-  unsafeEmitBuilder :: NameColor c => NameHint -> BuilderEmission c n -> m n (Name c n)
+  emitDecl
+    :: (Builder m, Emits n)
+    => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
   buildScopedGeneral
     :: ( SubstE Name e , InjectableE e
-       , HasNamesE   e', InjectableE e'
+       , HasNamesE   e', InjectableE e', SubstE AtomSubstVal e'
        , SubstB Name b, BindsBindings b)
     => Abs b e n
-    -> (forall l. (Ext n l, Distinct l) => e l -> m l (e' l))
-    -> m n (ScopedBuilderResult b e' n)
+    -> (forall l. (Ext n l, Distinct l, Emits l) => e l -> m l (e' l))
+    -> m n (Abs b (Abs (Nest Decl) e') n)
 
-data ScopedBuilderResult (b::B) (e::E) (n::S) where
-  ScopedBuilderResult :: (Distinct l2, Ext l1 n)
-                      => PairB b BuilderEmissions l1 l2 -> e l2
-                      -> ScopedBuilderResult b e n
-
-emitDecl :: (Builder m, Emits n) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
-emitDecl hint ann expr = do
-  ty <- getType expr
-  unsafeEmitBuilder hint $ BuilderEmitDecl $ DeclBinding ann ty expr
-
-emitBinding :: (Builder m, EmitsTop n, NameColor c) => NameHint -> Binding c n -> m n (Name c n)
-emitBinding hint binding = unsafeEmitBuilder hint $ BuilderEmitTopDecl binding
-
-buildScoped
-  :: (HasNamesE e, InjectableE e, Builder m)
-  => (forall l. (Emits l, Ext n l) => m l (e l))
-  -> m n (Abs (Nest Decl) e n)
-buildScoped cont = do
-  scopedResult <- buildScopedGeneral (Abs UnitB UnitE) \UnitE ->
-      withFabricatedEmitsEvidence cont
-  ScopedBuilderResult (PairB UnitB emissions) result <- return scopedResult
-  injectM $ Abs (fromBuilderDecls emissions) result
-
-buildScopedTop
-  :: (HasNamesE e, InjectableE e, Builder m)
-  => (forall l. (EmitsTop l, Ext n l) => m l (e l))
-  -> m n (Abs (RecEnvFrag Binding) e n)
-buildScopedTop cont = do
-  scopedResult <- buildScopedGeneral (Abs UnitB UnitE) \UnitE ->
-    withFabricatedEmitsTopEvidence cont
-  ScopedBuilderResult (PairB UnitB emissions) result <- return scopedResult
-  injectM $ Abs (fromBuilderBindings emissions) result
-
-type Builder2       (m :: MonadKind2) = forall i. Builder (m i)
+type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
 
 emit :: (Builder m, Emits n) => Expr n -> m n (AtomName n)
 emit expr = emitDecl NoHint PlainLet expr
@@ -117,23 +84,82 @@ emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
 emitAtomToName (Var v) = return v
 emitAtomToName x = emit (Atom x)
 
+buildScoped
+  :: (HasNamesE e, InjectableE e, SubstE AtomSubstVal e, Builder m)
+  => (forall l. (Emits l, Ext n l) => m l (e l))
+  -> m n (Abs (Nest Decl) e n)
+buildScoped cont = do
+  Abs UnitB declsAndResult <- buildScopedGeneral (Abs UnitB UnitE) \UnitE ->
+    withFabricatedEmitsEvidence cont
+  return declsAndResult
+
+-- === Top-level builder class ===
+
+class (BindingsReader m, EffectsReader m, MonadFail1 m)
+      => TopBuilder (m::MonadKind1) where
+  emitBinding :: NameColor c => NameHint -> Binding c n -> m n (Name c n)
+  liftLocalBuilder :: BuilderT FallibleM n a -> m n a
+
+
+newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
+  TopBuilderT { runTopBuilderT' :: InplaceT Bindings BindingsFrag m n a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , CtxReader, ScopeReader)
+
+instance Fallible m => BindingsReader (TopBuilderT m) where
+  addBindings e = TopBuilderT $
+    withInplaceOutEnv e \bindings e' -> WithBindings bindings e'
+
+instance Fallible m => TopBuilder (TopBuilderT m) where
+  emitBinding hint binding = TopBuilderT $
+    emitInplace hint binding \b binding' -> boundBindings (b:>binding')
+  liftLocalBuilder m = TopBuilderT $
+    liftBetweenInplaceTs
+      liftFallibleM
+      id
+      (\Empty -> emptyOutFrag)
+      (runBuilderT' m)
+
+
+instance TopBuilder m => TopBuilder (EnvReaderT v m i) where
+  emitBinding hint binding = EnvReaderT $ lift $ emitBinding hint binding
+  liftLocalBuilder m = EnvReaderT $ lift $ liftLocalBuilder m
+
+instance Fallible m => EffectsReader (TopBuilderT m) where
+
+runTopBuilderT
+  :: (Fallible m, Distinct n)
+  => Bindings n
+  -> (forall l. (Distinct l, Ext n l) => TopBuilderT m l (e l))
+  -> m (DistinctAbs BindingsFrag e n)
+runTopBuilderT bindings cont =
+  runInplaceT bindings $ runTopBuilderT' $ cont
+
+type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
+
+-- === Tracking effects ===
+
+-- Should we just merge this into BindingsReader and friends?
+
+class EffectsReader (m::MonadKind1) where
+  getAllowedEffects :: m n (EffectRow n)
+  withAllowedEffects :: EffectRow n -> m n a -> m n a
+
+instance EffectsReader m => EffectsReader (EnvReaderT v m i)
+
 -- === BuilderT ===
 
--- newtype just for the different OutMap instance
-newtype BuilderBindings n = BuilderBindings (Bindings n)
-type BuilderEmissions = Nest (SomeDecl BuilderEmission)
+-- Only one element of the pair should be populated. We could have used
+-- `EitherB` instead but its monoid instance is more awkward.
+type BuilderEmissions = Nest Decl
 
 data BuilderEmission c n where
   BuilderEmitDecl    :: DeclBinding n -> BuilderEmission AtomNameC n
   BuilderEmitTopDecl :: Binding c n   -> BuilderEmission c         n
 
-instance HasScope BuilderBindings where
-  toScope (BuilderBindings bindings) = toScope bindings
-
-instance OutMap BuilderBindings BuilderEmissions where
-  emptyOutMap = BuilderBindings emptyOutMap
-  extendOutMap (BuilderBindings bindings) emissions =
-    BuilderBindings $ bindings `extendOutMap` boundBindings emissions
+instance ExtOutMap Bindings BuilderEmissions where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` boundBindings emissions
 
 instance NameColor c => GenericE (BuilderEmission c) where
   type RepE (BuilderEmission c) = EitherE DeclBinding (Binding c)
@@ -161,61 +187,43 @@ instance NameColor c => SubstE Name         (BuilderEmission c)
 instance NameColor c => SubstE AtomSubstVal (BuilderEmission c)
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
-  BuilderT { runBuilderT' :: InplaceT BuilderBindings BuilderEmissions m n a }
-  deriving (Functor, Applicative, Monad)
+  BuilderT { runBuilderT' :: InplaceT Bindings BuilderEmissions m n a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , CtxReader, ScopeReader)
 
 runBuilderT
   :: (MonadFail m, Distinct n)
-  => Distinct n => Bindings n
+  => Bindings n
   -> (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
   -> m (e n)
 runBuilderT bindings cont = do
-  DistinctAbs decls result <- runInplaceT (BuilderBindings bindings) $ runBuilderT' cont
+  DistinctAbs decls result <- runInplaceT bindings $ runBuilderT' cont
   case decls of
     Empty -> return result
     _ -> error "shouldn't have produced any decls"
 
 instance MonadFail m => EffectsReader (BuilderT m) where
   getAllowedEffects = undefined
-  withAllowedEffects = undefined
+  withAllowedEffects _ = id  -- TODO!
 
 instance MonadFail m => Builder (BuilderT m) where
-  unsafeEmitBuilder hint rhs = BuilderT $
-    emitInplace hint rhs \b rhs' -> Nest (SomeDecl b rhs') Empty
   buildScopedGeneral ab cont = BuilderT do
     scopedResult <- scopedInplaceGeneral
-      (\(BuilderBindings bindings) b ->
-           BuilderBindings $ bindings `extendOutMap` boundBindings b)
+      (\bindings b -> bindings `extendOutMap` boundBindings b)
       ab
-      (\e -> runBuilderT' $ cont e)
+      (\e -> runBuilderT' $ withFabricatedEmitsEvidence $ cont e)
     ScopedResult _ (PairB b emissions) result <- return scopedResult
-    return $ ScopedBuilderResult (PairB b emissions) result
-
-fromBuilderDecls :: BuilderEmissions n l -> Nest Decl n l
-fromBuilderDecls emissions = fromJust $ forEachNestItem emissions fromBuilderDecl
-  where
-    fromBuilderDecl :: SomeDecl BuilderEmission n l -> Maybe (Decl n l)
-    fromBuilderDecl (SomeDecl b emission) = case emission of
-      BuilderEmitDecl declBinding -> return $ Let b declBinding
-      BuilderEmitTopDecl _ -> Nothing
-
-fromBuilderBindings :: Distinct l => BuilderEmissions n l -> BindingsFrag n l
-fromBuilderBindings Empty = emptyOutFrag
-fromBuilderBindings (Nest (SomeDecl b emission) rest) = case emission of
-  BuilderEmitDecl _ -> error "Expected bindings fragment emission"
-  BuilderEmitTopDecl binding -> withSubscopeDistinct rest $
-    boundBindings (b:>binding) `catRecEnvFrags` fromBuilderBindings rest
-
-deriving instance MonadFail m => MonadFail (BuilderT m n)
-deriving instance MonadFail m => ScopeReader (BuilderT m)
+    injectM $ Abs b $ Abs emissions result
+  emitDecl = undefined
 
 instance MonadFail m => BindingsReader (BuilderT m) where
-  addBindings _ = undefined
+  addBindings e = BuilderT $
+    withInplaceOutEnv e \bindings e' -> WithBindings bindings e'
 
 instance MonadFail m => Scopable (BuilderT m) where
   withBindings ab cont = do
-    ScopedBuilderResult (PairB b Empty) result <- buildScopedGeneral ab \x -> cont x
-    injectM $ Abs b result
+    Abs b (Abs Empty result) <- buildScopedGeneral ab \x -> cont x
+    return $ Abs b result
 
 -- === Emits predicate ===
 
@@ -245,37 +253,12 @@ newtype WrapWithEmits n r =
 fabricateEmitsEvidenceM :: Monad1 m => m n (EmitsEvidence n)
 fabricateEmitsEvidenceM = return FabricateEmitsEvidence
 
--- === EmitsTop predicate ===
-
--- permission to emit top-level bindings
-
-data EmitsTopEvidence (n::S) = FabricateEmitsTopEvidence
-
-class EmitsTop (n::S)
-
-instance EmitsTop UnsafeS
-
-withFabricatedEmitsTopEvidence :: forall n m a. Monad1 m => (EmitsTop n => m n a) -> m n a
-withFabricatedEmitsTopEvidence cont = do
-  evidence <- fabricateEmitsTopEvidenceM
-  withEmitsTopEvidence evidence cont
-
-withEmitsTopEvidence :: forall n a. EmitsTopEvidence n -> (EmitsTop n => a) -> a
-withEmitsTopEvidence _ cont = fromWrapWithEmitsTop
- ( unsafeCoerce ( WrapWithEmitsTop cont :: WrapWithEmitsTop n       a
-                                      ) :: WrapWithEmitsTop UnsafeS a)
-
-newtype WrapWithEmitsTop n r =
-  WrapWithEmitsTop { fromWrapWithEmitsTop :: EmitsTop n => r }
-
-fabricateEmitsTopEvidenceM :: Monad1 m => m n (EmitsTopEvidence n)
-fabricateEmitsTopEvidenceM = return FabricateEmitsTopEvidence
-
 -- === lambda-like things ===
 
-buildBlockAux :: Builder m
-           => (forall l. (Emits l, Ext n l) => m l (Atom l, a))
-           -> m n (Block n, a)
+buildBlockAux
+  :: Builder m
+  => (forall l. (Emits l, Ext n l) => m l (Atom l, a))
+  -> m n (Block n, a)
 buildBlockAux cont = do
   Abs decls results <- buildScoped do
     (result, aux) <- cont
@@ -285,9 +268,10 @@ buildBlockAux cont = do
   ty' <- liftMaybe $ hoist decls ty
   return (Block ty' decls $ Atom result, aux)
 
-buildBlockReduced :: Builder m
-                  => (forall l. (Emits l, Ext n l) => m l (Atom l))
-                  -> m n (Maybe (Atom n))
+buildBlockReduced
+  :: Builder m
+  => (forall l. (Emits l, Ext n l) => m l (Atom l))
+  -> m n (Maybe (Atom n))
 buildBlockReduced cont = do
   block <- buildBlock cont
   cheapReduceBlockToAtom block
@@ -389,7 +373,7 @@ buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
   return (effs', resultTy')
 
 buildAbs
-  :: ( Builder m, InjectableE e, HasNamesE e, HoistableE e
+  :: ( Builder m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e, HoistableE e
      , NameColor c, ToBinding binding c)
   => binding n
   -> (forall l. Ext n l => Name c l -> m l (e l))
@@ -405,7 +389,7 @@ singletonBinderNest ty = do
   return $ EmptyAbs (Nest b Empty)
 
 buildNaryAbs
-  :: (Builder m, InjectableE e, HasNamesE e)
+  :: (Builder m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e)
   => EmptyAbs (Nest Binder) n
   -> (forall l. Ext n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
@@ -486,70 +470,74 @@ buildSplitCase tys scrut resultTy match fallback = do
       1 -> fallback v
       _ -> error "should only have two cases"
 
--- === builder versions of common ops ===
+-- === builder versions of common top-level emissions ===
 
-emitDataDef :: (EmitsTop n, Builder m) => DataDef n -> m n (DataDefName n)
+emitDataDef :: TopBuilder m => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef =
   emitBinding NoHint $ DataDefBinding dataDef
 
-emitClassDef :: (EmitsTop n, Builder m) => ClassDef n -> m n (Name ClassNameC n)
+emitClassDef :: TopBuilder m => ClassDef n -> m n (Name ClassNameC n)
 emitClassDef classDef@(ClassDef name _ _) =
   emitBinding (getNameHint name) $ ClassBinding classDef
 
-emitDataConName :: (EmitsTop n, Builder m) => DataDefName n -> Int -> m n (Name DataConNameC n)
+emitDataConName :: TopBuilder m => DataDefName n -> Int -> m n (Name DataConNameC n)
 emitDataConName dataDefName conIdx = do
   DataDef _ _ dataCons <- getDataDef dataDefName
   let (DataConDef name _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx
 
-emitSuperclass :: (EmitsTop n, Builder m)
+emitSuperclass :: TopBuilder m
                => ClassName n -> Int -> m n (Name SuperclassNameC n)
 emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
   emitBinding NoHint $ SuperclassBinding dataDef idx getter
 
-makeSuperclassGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
+makeSuperclassGetter :: TopBuilder m => Name ClassNameC n -> Int -> m n (Atom n)
 makeSuperclassGetter classDefName methodIdx = do
   ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
-  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
-    defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
+  liftLocalBuilder do
+    buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+      defName' <- injectM defName
+      def'     <- injectM def
+      buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
+        return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
-emitMethodType :: (EmitsTop n, Builder m)
+emitMethodType :: TopBuilder m
                => NameHint -> ClassName n -> Int -> m n (Name MethodNameC n)
 emitMethodType hint classDef idx = do
   getter <- makeMethodGetter classDef idx
   emitBinding hint $ MethodBinding classDef idx getter
 
-makeMethodGetter :: Builder m => Name ClassNameC n -> Int -> m n (Atom n)
+makeMethodGetter :: TopBuilder m => Name ClassNameC n -> Int -> m n (Atom n)
 makeMethodGetter classDefName methodIdx = do
   ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
-  buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
-    defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
-      return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
+  liftLocalBuilder do
+    buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+      defName' <- injectM defName
+      def'     <- injectM def
+      buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
+        return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
 
-emitTyConName :: (EmitsTop n, Builder m) => DataDefName n -> m n (Name TyConNameC n)
+emitTyConName :: TopBuilder m => DataDefName n -> m n (Name TyConNameC n)
 emitTyConName dataDefName =
   emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName
 
-getDataDef :: Builder m => DataDefName n -> m n (DataDef n)
+getDataDef :: BindingsReader m => DataDefName n -> m n (DataDef n)
 getDataDef v = do
-  DataDefBinding def <- lookupBindings v
+  ~(DataDefBinding def) <- lookupBindings v
   return def
 
-getDataCon :: Builder m => Name DataConNameC n -> m n (DataDefName n, Int)
+getDataCon :: BindingsReader m => Name DataConNameC n -> m n (DataDefName n, Int)
 getDataCon v = do
-  DataConBinding defName idx <- lookupBindings v
+  ~(DataConBinding defName idx) <- lookupBindings v
   return (defName, idx)
 
 getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
   ~(ClassBinding classDef) <- lookupBindings classDefName
   return classDef
+
+-- === builder versions of common local ops ===
 
 recGetHead :: BindingsReader m => Label -> Atom n -> m n (Atom n)
 recGetHead l x = do
@@ -648,13 +636,6 @@ getProjRef i r = emitOp $ ProjRef i r
 -- equivalent types spelled differently).
 getUnpacked :: (Builder m, Emits n) => Atom n -> m n [Atom n]
 getUnpacked = undefined
--- getUnpacked (ProdVal xs) = return xs
--- getUnpacked atom = do
---   scope <- getScope
---   let len = projectLength $ getType atom
---       atom' = typeReduceAtom scope atom
---       res = map (\i -> getProjection [i] atom') [0..(len-1)]
---   return res
 
 -- TODO: should we just make all of these return names instead of atoms?
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
