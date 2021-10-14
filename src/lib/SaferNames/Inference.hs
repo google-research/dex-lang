@@ -207,7 +207,7 @@ instance Builder (InfererM i) where
     injectM $ Abs b $ Abs decls result'
 
 instance EffectsReader (InfererM i) where
-  getAllowedEffects = undefined
+  getAllowedEffects = return Pure  -- TODO!
   withAllowedEffects _ = id  -- TODO!
 
 type InferenceNameBinders = Nest Binder
@@ -261,7 +261,7 @@ hoistInfStateRec scope Empty subst e = do
   return $ HoistedSolverState Empty subst (DistinctAbs Empty e')
 hoistInfStateRec scope (Nest (b :> infEmission) rest) subst e = do
   withSubscopeDistinct rest do
-    HoistedSolverState infVars subst' result <-
+    solverState@(HoistedSolverState infVars subst' result) <-
        hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest subst e
     case infEmission of
       RightE (InfVarBound ty) ->
@@ -274,7 +274,10 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) subst e = do
                 Nothing -> throw TypeErr "Leaked local variable"
             Nothing -> do
               return $ HoistedSolverState (Nest (b:>ty) infVars) subst' result
-      RightE (SkolemBound _) -> undefined
+      RightE (SkolemBound _) ->
+        case hoist b solverState of
+          Just hoisted -> return hoisted
+          Nothing -> error "probably shouldn't happen?"
       LeftE emission -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
@@ -1108,7 +1111,9 @@ instance Solver SolverM where
    withInplaceOutEnv e \(SolverOutMap (InfOutMap bindings solverSubst)) e' ->
      applySolverSubstE (toScope bindings) solverSubst e'
 
-  emitSolver binding = undefined
+  emitSolver binding = SolverM $
+    emitInplace "?" binding \b binding' ->
+      SolverOutFrag (Nest (b:>binding') Empty) emptySolverSubst
 
 instance Unifier SolverM
 

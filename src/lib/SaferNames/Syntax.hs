@@ -50,13 +50,13 @@ module SaferNames.Syntax (
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     ToBinding (..), refreshBinders, withFreshBinder, withFreshNameBinder,
     BindingsFrag, lookupBindings, runBindingsReaderT,
-    BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2,
+    BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
     fromNonDepTabTy, binderType, bindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
-    bindingsFragToSynthCandidates,
+    bindingsFragToSynthCandidates, refreshBinders2,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -299,6 +299,7 @@ class ScopeGetter m => BindingsExtender (m::MonadKind1) where
   extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
 
 type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
+type Scopable2         (m::MonadKind2) = forall (n::S). Scopable         (m n)
 type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
 type BindingsGetter2   (m::MonadKind2) = forall (n::S). BindingsGetter   (m n)
 
@@ -371,6 +372,10 @@ instance BindingsGetter m => BindingsGetter (EnvReaderT v m i) where
   getBindingsM = EnvReaderT $ lift getBindingsM
 
 instance (InjectableV v, Scopable m) => Scopable (EnvReaderT v m i) where
+  withBindings ab cont = EnvReaderT $ ReaderT \env ->
+    withBindings ab \e -> do
+      env' <- injectM env
+      runReaderT (runEnvReaderT' $ cont e) env'
 
 instance (InjectableV v, ScopeGetter m, BindingsExtender m)
          => BindingsExtender (EnvReaderT v m i) where
@@ -468,6 +473,20 @@ withFreshBinder :: ( NameColor c, Scopable m, InjectableE e
 withFreshBinder hint binding cont = do
   Abs b name <- freshBinderNamePair hint
   withBindings (Abs (b:>binding) name) $ cont
+
+-- This version works with the in-place api. TODO: remove the other version.
+refreshBinders2
+  :: ( InjectableV v, SubstV Name v, HoistableV v, SubstV v v, FromName v
+     , InjectableE e, HoistableE e, SubstE Name e, SubstE AtomSubstVal e
+     , EnvReader v m, BindingsReader2 m, Scopable2 m
+     , SubstB Name b, SubstB v b, BindsBindings b)
+  => b i i'
+  -> (forall o'. Ext o o' => m i' o' (e o'))
+  -> m i o (Abs b e o)
+refreshBinders2 b cont = do
+  ab <- substM $ Abs b (idEnvFrag b)
+  withBindings ab \substFrag ->
+    extendEnv substFrag $ cont
 
 data SomeDecl (binding::V) (n::S) (l::S) where
   SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l

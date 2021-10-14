@@ -11,7 +11,8 @@ import LabeledItems
 import SaferNames.Name
 import SaferNames.Syntax
 
-cheapReduceBlockToAtom :: BindingsReader m => Block n -> m n (Maybe (Atom n))
+cheapReduceBlockToAtom :: (BindingsReader m, Scopable m)
+                       => Block n -> m n (Maybe (Atom n))
 cheapReduceBlockToAtom block = fromAtomicBlock <$> cheapReduce block
 
 fromAtomicBlock :: Block n -> Maybe (Atom n)
@@ -22,11 +23,13 @@ fromAtomicExpr :: Expr n -> Maybe (Atom n)
 fromAtomicExpr (Atom atom) = Just atom
 fromAtomicExpr _ = Nothing
 
-cheapReduce :: (CheaplyReducible e, BindingsReader m) => e n -> m n (e n)
+cheapReduce :: (CheaplyReducible e, BindingsReader m, Scopable m)
+            => e n -> m n (e n)
 cheapReduce x = runEnvReaderT idEnv $ cheapReduceE x
 
 class CheaplyReducible (e::E) where
-  cheapReduceE :: (EnvReader Name m, BindingsReader2 m) => e i -> m i o (e o)
+  cheapReduceE :: (EnvReader Name m, BindingsReader2 m, Scopable2 m)
+               => e i -> m i o (e o)
 
 instance CheaplyReducible Atom where
   cheapReduceE = \case
@@ -74,3 +77,11 @@ instance CheaplyReducible Block where
     ty' <- substM ty
     result' <- cheapReduceE result
     return $ Block ty' Empty result'
+  cheapReduceE (Block ty decls result) = do
+    ty' <- substM ty
+    Abs decls' result' <-
+      refreshBinders2 decls do
+        cheapReduceE result
+    case hoist decls' result' of
+      Just result'' -> return $ Block ty' Empty result''
+      Nothing       -> return $ Block ty' decls' result'
