@@ -15,7 +15,7 @@ module SaferNames.Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices,
-  caseAltsBinderTys, tryGetType) where
+  caseAltsBinderTys, tryGetType, projectLength) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -996,3 +996,13 @@ labeledRowDifference (Ext (LabeledItems items) rest)
     _ -> throw TypeErr $ "Row tail " ++ pprint subrest
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
+
+
+projectLength :: (MonadFail1 m, ScopeReader m) => Type n -> m n Int
+projectLength ty = case ty of
+  TypeCon (_, def) params -> do
+    [DataConDef _ (Abs bs UnitE)] <- applyDataDefParams def params
+    return $ nestLength bs
+  RecordTy (NoExt types) -> return $ length types
+  ProdTy tys -> return $ length tys
+  _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty

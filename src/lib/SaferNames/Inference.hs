@@ -434,7 +434,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         case decls of
           Empty -> return (effs', ty')
           -- TODO: make an acceptable user-facing error
-          _ -> error "pi type shouldn't require decls to normalize"
+          _ -> error $ "pi type shouldn't require decls to normalize: "
+                        <> pprint decls
     matchRequirement piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy

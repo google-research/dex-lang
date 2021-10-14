@@ -635,7 +635,11 @@ getProjRef i r = emitOp $ ProjRef i r
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
 -- equivalent types spelled differently).
 getUnpacked :: (Builder m, Emits n) => Atom n -> m n [Atom n]
-getUnpacked = undefined
+getUnpacked atom = do
+  atom' <- cheapReduce atom
+  ty <- getType atom'
+  len <- projectLength ty
+  return $ map (\i -> getProjection [i] atom') [0..(len-1)]
 
 -- TODO: should we just make all of these return names instead of atoms?
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
