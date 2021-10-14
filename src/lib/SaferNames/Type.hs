@@ -711,7 +711,7 @@ dataConFunType name con = do
 typeConFunType :: Typer m => Name DataDefNameC o -> m i o (Type o)
 typeConFunType name = do
   DataDefBinding (DataDef _ paramBinders _) <- lookupBindings name
-  dropSubst $ buildNaryPiType ImplicitArrow paramBinders \_ ->
+  dropSubst $ buildNaryPiType PlainArrow paramBinders \_ ->
     return TyKind
 
 -- TODO: put this in Builder?

@@ -37,7 +37,7 @@ import Err
 import Util
 
 inferModule :: Distinct n => Bindings n -> UModule n -> Except (Module n)
-inferModule bindings uModule@(UModule decl _) =
+inferModule bindings uModule@(UModule decl _) = do
   if isTopDecl decl
     then do
       DistinctAbs bindingsFrag sourceMap <- runTopInfererM bindings do
@@ -45,13 +45,17 @@ inferModule bindings uModule@(UModule decl _) =
         inferUDeclTop decl' $ substM sourceMap
       return $ Module Typed id $
         EvaluatedModule bindingsFrag mempty sourceMap
-    else runInfererM bindings do
-      UModule decl' sourceMap <- return uModule
-      Abs decls (ZonkableSM sourceMap') <-
-        buildScoped $ inferUDeclLocal decl' $
-          ZonkableSM <$> substM sourceMap
+    else do
+      ab <- runInfererM bindings do
+        UModule decl' sourceMap <- return uModule
+        Abs decls (ZonkableSM sourceMap') <- buildScoped $
+          inferUDeclLocal decl' $
+            ZonkableSM <$> substM sourceMap
+        return $ Abs decls sourceMap'
+      DistinctAbs decls sourceMap <- return $ refreshAbs (toScope bindings) ab
+      let scs = bindingsFragToSynthCandidates $ boundBindings decls
       return $ Module Typed decls $
-        EvaluatedModule emptyOutFrag mempty sourceMap'
+        EvaluatedModule emptyOutFrag scs sourceMap
 
 isTopDecl :: UDecl n l -> Bool
 isTopDecl decl = case decl of
