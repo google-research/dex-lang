@@ -1627,8 +1627,11 @@ instance InjectableE e => InjectableE (WithBindings e) where
 instance InjectableE UVar where
   injectionProofE = todoInjectableProof
 
-instance HasNameHint (UPat n l) where
-  getNameHint (WithSrcB _ (UPatBinder b)) = getNameHint b
+instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
+  getNameHint (WithSrcB _ b) = getNameHint b
+
+instance HasNameHint (UPat' n l) where
+  getNameHint (UPatBinder b) = getNameHint b
   getNameHint _ = "pat"
 
 instance HasNameHint (UBinder c n l) where

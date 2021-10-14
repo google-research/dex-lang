@@ -299,13 +299,14 @@ atomAsBlock x = do
 
 buildLamGeneral
   :: Builder m
-  => Arrow
+  => NameHint
+  -> Arrow
   -> Type n
   -> (forall l. (         Ext n l) => AtomName l -> m l (EffectRow l))
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l, a))
   -> m n (Atom n, a)
-buildLamGeneral arr ty fEff fBody = do
-  ab <- withFreshBinder NoHint (LamBinding arr ty) \v -> do
+buildLamGeneral hint arr ty fEff fBody = do
+  ab <- withFreshBinder hint (LamBinding arr ty) \v -> do
     effs <- fEff v
     withAllowedEffects effs do
       (body, aux) <- buildBlockAux do
@@ -316,34 +317,37 @@ buildLamGeneral arr ty fEff fBody = do
   return (Lam $ LamExpr b effs body, aux)
 
 buildPureLam :: Builder m
-             => Arrow
+             => NameHint
+             -> Arrow
              -> Type n
              -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
              -> m n (Atom n)
-buildPureLam arr ty body =
-  fst <$> buildLamGeneral arr ty (const $ return Pure) \x ->
+buildPureLam hint arr ty body =
+  fst <$> buildLamGeneral hint arr ty (const $ return Pure) \x ->
     withAllowedEffects Pure do
       result <- body x
       return (result, ())
 
 buildLam
   :: Builder m
-  => Arrow
+  => NameHint
+  -> Arrow
   -> Type n
   -> EffectRow n
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildLam arr ty eff body = buildDepEffLam arr ty (const $ injectM eff) body
+buildLam hint arr ty eff body = buildDepEffLam hint arr ty (const $ injectM eff) body
 
 buildDepEffLam
   :: Builder m
-  => Arrow
+  => NameHint
+  -> Arrow
   -> Type n
   -> (forall l. (         Ext n l) => AtomName l -> m l (EffectRow l))
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildDepEffLam arr ty effBuilder body =
-  fst <$> buildLamGeneral arr ty effBuilder (\v -> (,()) <$> body v)
+buildDepEffLam hint arr ty effBuilder body =
+  fst <$> buildLamGeneral hint arr ty effBuilder (\v -> (,()) <$> body v)
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
@@ -354,7 +358,7 @@ buildPureNaryLam :: Builder m
                  -> m n (Atom n)
 buildPureNaryLam _ (EmptyAbs Empty) cont = cont []
 buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
-  buildPureLam arr ty \x -> do
+  buildPureLam (getNameHint b) arr ty \x -> do
     restAbs <- injectM $ Abs b $ EmptyAbs rest
     rest' <- applyAbs restAbs x
     buildPureNaryLam arr rest' \xs -> do
@@ -363,11 +367,11 @@ buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
 buildPureNaryLam _ _ _ = error "impossible"
 
 buildPi :: (Fallible1 m, Builder m)
-        => Arrow -> Type n
+        => NameHint -> Arrow -> Type n
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (Type n)
-buildPi arr ty body = do
-  ab <- withFreshBinder NoHint ty \v -> do
+buildPi hint arr ty body = do
+  ab <- withFreshBinder hint ty \v -> do
     withAllowedEffects Pure do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy
@@ -375,8 +379,9 @@ buildPi arr ty body = do
   return $ Pi $ PiType arr b effs resultTy
 
 buildNonDepPi :: (Fallible1 m, Builder m)
-              => Arrow -> Type n -> EffectRow n -> Type n -> m n (Type n)
-buildNonDepPi arr argTy effs resultTy = buildPi arr argTy \_ -> do
+              => NameHint -> Arrow -> Type n -> EffectRow n -> Type n
+              -> m n (Type n)
+buildNonDepPi hint arr argTy effs resultTy = buildPi hint arr argTy \_ -> do
   resultTy' <- injectM resultTy
   effs'     <- injectM effs
   return (effs', resultTy')
@@ -508,7 +513,7 @@ makeSuperclassGetter classDefName methodIdx = do
     buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
       defName' <- injectM defName
       def'     <- injectM def
-      buildPureLam PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
+      buildPureLam "subclassDict" PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
         return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
 emitMethodType :: TopBuilder m
@@ -524,7 +529,7 @@ makeMethodGetter classDefName methodIdx = do
     buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
       defName' <- injectM defName
       def'     <- injectM def
-      buildPureLam ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
+      buildPureLam "dict" ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
         return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
 
 emitTyConName :: TopBuilder m => DataDefName n -> m n (Name TyConNameC n)

@@ -319,7 +319,7 @@ checkSigma :: (Emits o, Inferer m) => UExpr i
            -> SuggestionStrength
            -> SigmaType o -> m i o (Atom o)
 checkSigma expr reqCon sTy = case sTy of
-  Pi piTy@(PiType arrow _ _ _)
+  Pi piTy@(PiType arrow b _ _)
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _))
           | arrow == arrow' ->
@@ -328,7 +328,7 @@ checkSigma expr reqCon sTy = case sTy of
         -- we have to add the lambda argument corresponding to the implicit pi
         -- type argument
         _ -> do
-          buildPureLam arrow (piArgType piTy) \x -> do
+          buildPureLam (getNameHint b)  arrow (piArgType piTy) \x -> do
             piTy' <- injectM piTy
             (Pure, bodyTy) <- instantiatePi piTy' (Var x)
             checkSigma expr reqCon bodyTy
@@ -423,8 +423,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       UPatBinder UIgnore -> do
         effs' <- checkUEffRow effs
         ty' <- checkUType ty
-        buildNonDepPi arr ann' effs' ty'
-      _ -> buildPi arr ann' \v -> do
+        buildNonDepPi "_" arr ann' effs' ty'
+      _ -> buildPi (getNameHint pat) arr ann' \v -> do
         PairE effs' ty' <- buildScopedReduceDecls do
           v' <- injectM v
           bindLamPat (WithSrcB pos' pat) v' do
@@ -720,7 +720,7 @@ checkUBinders _ = error "impossible"
 inferULam :: (Emits o, Inferer m) => EffectRow o -> ULamExpr i -> m i o (Atom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
   argTy <- checkAnn ann
-  buildLam arrow argTy effs \v ->
+  buildLam (getNameHint p) arrow argTy effs \v ->
     bindLamPat p v $ inferSigma body
 
 checkULam :: (Emits o, Inferer m) => ULamExpr i -> PiType o -> m i o (Atom o)
@@ -729,7 +729,7 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
   checkAnn ann >>= constrainEq argTy
   -- XXX: we're ignoring the ULam arrow here. Should we be checking that it's
   -- consistent with the arrow supplied by the pi type?
-  buildDepEffLam (piArrow piTy) argTy
+  buildDepEffLam (getNameHint p) (piArrow piTy) argTy
     (\v -> do
         piTy' <- injectM piTy
         fst <$> instantiatePi piTy' (Var v) )
@@ -750,7 +750,7 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
     ClassArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
   argTy <- checkAnn ann
-  buildLam arrow argTy Pure \v -> do
+  buildLam (getNameHint p) arrow argTy Pure \v -> do
     bindLamPat p v $
       checkInstanceArgs rest do
         cont

@@ -1287,6 +1287,9 @@ instance HasNameHint RawName where
 instance HasNameHint String where
   getNameHint = fromString
 
+instance HasNameHint (BinderP c ann n l) where
+  getNameHint (b:>_) = getNameHint b
+
 -- === getting name colors ===
 
 class HasNameColor a c | a -> c where
