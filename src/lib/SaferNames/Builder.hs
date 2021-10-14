@@ -15,7 +15,7 @@
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
   buildPureLam, BuilderT, Builder (..), Builder2, EffectsReader (..),
-  emitDecl, emitBinding, buildScoped,
+  emitDecl, emitBinding, buildScoped, buildScopedReduceDecls,
   runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
@@ -92,6 +92,15 @@ buildScoped cont = do
   Abs UnitB declsAndResult <- buildScopedGeneral (Abs UnitB UnitE) \UnitE ->
     withFabricatedEmitsEvidence cont
   return declsAndResult
+
+buildScopedReduceDecls
+  :: ( Builder m
+     , CheaplyReducible e, HoistableE e, InjectableE e, SubstE Name e
+     , SubstE AtomSubstVal e)
+  => (forall l. (Emits l, Ext n l) => m l (e l))
+  -> m n (e n)
+buildScopedReduceDecls cont = buildScoped cont >>= cheapReduceDecls
+
 
 -- === Top-level builder class ===
 

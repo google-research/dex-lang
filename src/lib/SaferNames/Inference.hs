@@ -425,17 +425,13 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         ty' <- checkUType ty
         buildNonDepPi arr ann' effs' ty'
       _ -> buildPi arr ann' \v -> do
-        Abs decls (PairE effs' ty') <- buildScoped do
+        PairE effs' ty' <- buildScopedReduceDecls do
           v' <- injectM v
           bindLamPat (WithSrcB pos' pat) v' do
             effs' <- checkUEffRow effs
             ty'   <- checkUType   ty
             return $ PairE effs' ty'
-        case decls of
-          Empty -> return (effs', ty')
-          -- TODO: make an acceptable user-facing error
-          _ -> error $ "pi type shouldn't require decls to normalize: "
-                        <> pprint decls
+        return (effs', ty')
     matchRequirement piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy

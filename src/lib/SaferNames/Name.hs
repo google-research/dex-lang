@@ -38,7 +38,7 @@ module SaferNames.Name (
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv,
-  newSubstTraversalEnv, idSubstTraversalEnv, fmapNames,
+  newSubstTraversalEnv, idSubstTraversalEnv, fmapNames, traverseNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
@@ -382,8 +382,7 @@ instance Category ExtWitness where
 getScopeProxy :: Monad (m n) => m n (UnitE n)
 getScopeProxy = return UnitE
 
-traverseNames :: forall m v e i o.
-                 (Monad m, SubstE v e)
+traverseNames :: (Monad m, SubstE v e)
               => Distinct o => Scope o -> (forall c. Name c i -> m (v c o)) -> e i -> m (e o)
 traverseNames scope f e = substE (scope, newSubstTraversalEnv f) e
 
