@@ -319,7 +319,7 @@ evalUModule :: MonadPasses m => S.SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
   (S.Distinct, topState) <- getTopState
   let D.TopState bindingsD synthCandidatesD _ = topStateD topState
-  let S.TopState bindingsS _ sourceMapS = topStateS topState
+  let bindingsS@(S.Bindings _ _ sourceMapS) = topStateS topState
   logPass Parse sourceModule
   renamed <- S.renameSourceNames (S.toScope bindingsS) sourceMapS sourceModule
   logPass RenamePass renamed
@@ -419,7 +419,7 @@ withCompileTime m = do
 checkPassS :: (MonadPasses m, Pretty (e n), S.CheckableE e) => PassName -> e n -> m n ()
 checkPassS name x = do
   (S.Distinct, topState) <- getTopState
-  let S.TopState bindingsS _ _ = topStateS topState
+  let bindingsS = topStateS topState
   logPass name x
   liftExcept $ S.runBindingsReaderT bindingsS $ S.checkTypes x
   logTop $ MiscLog $ pprint name ++ " checks passed"

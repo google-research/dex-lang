@@ -73,7 +73,7 @@ data JointTopState n = JointTopState
 initTopState :: TopStateEx
 initTopState = TopStateEx $ JointTopState
     D.emptyTopState
-    S.emptyTopState
+    S.emptyOutMap
     (ToSafeEnv mempty)
     (FromSafeEnv emptyInMap)
 
@@ -81,7 +81,7 @@ extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStat
 extendTopStateD jointTopState evaluated = do
   let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
   case topStateS jointTopState of
-    S.TopState bindingsS scsS sourceMapS -> do
+    S.Bindings bindingsS scsS sourceMapS -> do
       -- ensure the internal bindings are fresh wrt top bindings
       let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
       runToSafeM (topToSafeMap jointTopState) (toScope bindingsS) do
@@ -94,8 +94,9 @@ extendTopStateD jointTopState evaluated = do
              scsSInj       <- injectM scsS
              return $ TopStateEx $ JointTopState
                (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
-               (S.TopState (bindingsS `extendOutMap` bindingsFrag)
-                           (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
+               (S.Bindings (bindingsS `extendOutMap` bindingsFrag)
+                           (scsSInj <> scsS')
+                           (sourceMapSInj <> sourceMapS'))
                toSafeMap'
                fromSafeMap'
 
@@ -119,7 +120,7 @@ instance GenericE JointTopState where
 toSafe :: (Distinct n, HasSafeVersionE e)
        => JointTopState n -> e -> SafeVersionE e n
 toSafe jointTopState e =
-  let scope = toScope $ S.topBindings $ topStateS $ jointTopState
+  let scope = toScope $ S.getBindings $ topStateS $ jointTopState
   in runToSafeM (topToSafeMap jointTopState) scope $ toSafeE e
 
 fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e

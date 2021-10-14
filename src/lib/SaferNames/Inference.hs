@@ -43,7 +43,8 @@ inferModule bindings uModule@(UModule decl _) =
       DistinctAbs bindingsFrag sourceMap <- runTopInfererM bindings do
         UModule decl' sourceMap <- injectM uModule
         inferUDeclTop decl' $ substM sourceMap
-      return $ Module Typed id $ EvaluatedModule bindingsFrag mempty sourceMap
+      return $ Module Typed id $
+        EvaluatedModule bindingsFrag mempty sourceMap
     else runInfererM bindings do
       UModule decl' sourceMap <- return uModule
       Abs decls (ZonkableSM sourceMap') <-

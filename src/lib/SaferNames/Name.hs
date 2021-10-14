@@ -2233,6 +2233,12 @@ instance Category (Nest b) where
     Empty -> nest'
     Nest b rest -> Nest b $ rest >>> nest'
 
+instance ProvesExt (EnvPair v o) where
+  toExtEvidence (EnvPair b _) = toExtEvidence b
+
+instance BindsNames (EnvPair v o) where
+  toScopeFrag (EnvPair b _) = toScopeFrag b
+
 -- === instances ===
 
 instance Show (NameBinder s n l) where

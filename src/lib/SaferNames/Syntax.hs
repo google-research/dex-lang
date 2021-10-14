@@ -28,8 +28,8 @@ module SaferNames.Syntax (
     PiType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
-    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), TopState (..),
-    emptyTopState, BindsBindings (..), WithBindings (..), Scopable (..),
+    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..), TopState,
+    BindsBindings (..), WithBindings (..), Scopable (..),
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -49,13 +49,14 @@ module SaferNames.Syntax (
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     ToBinding (..), refreshBinders, withFreshBinder, withFreshNameBinder,
-    Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
+    BindingsFrag, lookupBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
     fromNonDepTabTy, binderType, bindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
+    bindingsFragToSynthCandidates,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -73,6 +74,7 @@ module SaferNames.Syntax (
 import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
+import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -211,7 +213,7 @@ type IndexStructure = Nest Binder
 
 type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
--- === bindings - static information we carry about names ===
+-- === bindings - static information we carry about a lexical scope ===
 
 data Binding (c::C) (n::S) where
   AtomNameBinding   :: AtomBinding n                      -> Binding AtomNameC       n
@@ -236,7 +238,43 @@ data SolverBinding (n::S) =
    deriving (Show, Generic)
 
 type BindingsFrag = RecEnvFrag Binding :: S -> S -> *
-type Bindings     = RecEnv     Binding :: S -> *
+
+data Bindings (n::S) = Bindings
+  { getBindings        :: RecEnv Binding n
+  , getSynthCandidates :: SynthCandidates n
+  , getSourceMap       :: SourceMap n }
+  deriving (Generic)
+
+instance HasScope Bindings where
+  toScope = toScope . getBindings
+
+instance OutMap Bindings where
+  emptyOutMap = Bindings emptyOutMap mempty (SourceMap mempty)
+
+instance ExtOutMap Bindings BindingsFrag where
+  extendOutMap (Bindings bindings scs sourceMap) frag =
+    withExtEvidence frag $
+      Bindings
+        (bindings `extendOutMap` frag)
+        (inject scs <> bindingsFragToSynthCandidates frag)
+        (inject sourceMap)
+
+bindingsFragToSynthCandidates :: Distinct l => BindingsFrag n l -> SynthCandidates l
+bindingsFragToSynthCandidates (RecEnvFrag frag) =
+  execWriter $ bindingsFragToSynthCandidates' $ toEnvPairs frag
+
+bindingsFragToSynthCandidates' :: Distinct l => Nest (EnvPair Binding l) n l
+                               -> Writer (SynthCandidates l) ()
+bindingsFragToSynthCandidates' nest = case nest of
+  Empty -> return ()
+  Nest (EnvPair b binding) rest -> do
+    case binding of
+      -- TODO: superclasses!
+       AtomNameBinding (LetBound (DeclBinding InstanceLet _ _)) -> do
+         withExtEvidence rest $
+           tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+       _ -> return ()
+    bindingsFragToSynthCandidates' rest
 
 data WithBindings (e::E) (n::S) where
   WithBindings :: (Distinct l, Ext l n) => Bindings l -> e l -> WithBindings e n
@@ -255,7 +293,7 @@ class (ScopeReader m, Monad1 m)
                -> m n (Abs b e' n)
 
 class (BindingsReader m, ScopeGetter m) => BindingsGetter (m::MonadKind1) where
-  getBindings :: m n (Bindings n)
+  getBindingsM :: m n (Bindings n)
 
 class ScopeGetter m => BindingsExtender (m::MonadKind1) where
   extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
@@ -273,7 +311,7 @@ instance (InjectableE e, BindingsReader m)
 
 instance (InjectableE e, BindingsGetter m)
          => BindingsGetter (OutReaderT e m) where
-  getBindings = OutReaderT $ lift getBindings
+  getBindingsM = OutReaderT $ lift getBindingsM
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
@@ -307,7 +345,7 @@ instance Monad m => Scopable (BindingsReaderT m) where
          return $ Abs b' result
 
 instance Monad m => BindingsGetter (BindingsReaderT m) where
-  getBindings = BindingsReaderT $ asks snd
+  getBindingsM = BindingsReaderT $ asks snd
 
 instance Monad m => BindingsExtender (BindingsReaderT m) where
   extendBindings frag m =
@@ -324,13 +362,13 @@ instance Monad m => ScopeReader (BindingsReaderT m) where
   getDistinctEvidenceM = BindingsReaderT $ asks fst
 
 instance Monad m => ScopeGetter (BindingsReaderT m) where
-  getScope = (toScope . snd) <$> BindingsReaderT ask
+  getScope = toScope <$> snd <$> BindingsReaderT ask
 
 instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
   addBindings e = EnvReaderT $ lift $ addBindings e
 
 instance BindingsGetter m => BindingsGetter (EnvReaderT v m i) where
-  getBindings = EnvReaderT $ lift getBindings
+  getBindingsM = EnvReaderT $ lift getBindingsM
 
 instance (InjectableV v, Scopable m) => Scopable (EnvReaderT v m i) where
 
@@ -382,7 +420,7 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
-  WithBindings bindings v' <- addBindings v
+  WithBindings (Bindings bindings _ _) v' <- addBindings v
   injectM $ lookupTerminalEnvFrag (fromRecEnv bindings) v'
 
 withFreshNameBinder
@@ -643,14 +681,7 @@ data SourceBlock' =
  | UnParseable ReachedEOF String
   deriving (Show, Generic)
 
-data TopState n = TopState
-  { topBindings        :: Bindings n
-  , topSynthCandidates :: SynthCandidates n
-  , topSourceMap       :: SourceMap   n }
-  deriving (Generic)
-
-emptyTopState :: TopState VoidS
-emptyTopState = TopState emptyOutMap mempty (SourceMap mempty)
+type TopState = Bindings
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
@@ -665,9 +696,10 @@ data Module n where
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
-    :: BindingsFrag n l     -- Evaluated bindings
-    -> SynthCandidates l    -- Values considered in scope for dictionary synthesis
-    -> SourceMap l          -- Mapping of module's source names to internal names
+    :: BindingsFrag n l   -- Evaluated bindings
+       -- TODO: we don't need this here because it's redundant with bindingsfrag
+    -> SynthCandidates l  -- Values considered in scope for dictionary synthesis
+    -> SourceMap l        -- Mapping of module's source names to internal names
     -> EvaluatedModule n
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.

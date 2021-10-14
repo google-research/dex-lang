@@ -272,14 +272,14 @@ instance Pretty (ClassDef n) where
 deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedEnv v i o)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnv v o)
 
-instance Pretty (TopState n) where
+instance Pretty (Bindings n) where
   pretty s =
        "bindings: "
-    <>   indented (pretty (topBindings s))
+    <>   indented (pretty (getBindings s))
     <> "synth candidates:"
-    <>   indented (pretty (topSynthCandidates s))
+    <>   indented (pretty (getSynthCandidates s))
     <> "source map: "
-    <>   indented (pretty (topSourceMap s))
+    <>   indented (pretty (getSourceMap s))
 
 instance Pretty SourceBlock where
   pretty block = pretty (sbText block)
