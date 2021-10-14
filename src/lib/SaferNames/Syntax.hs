@@ -80,7 +80,7 @@ import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import Data.Int
 import Data.String (IsString, fromString)
-import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
 import Data.Word
 import Foreign.Ptr
 import Data.Maybe (fromJust)
@@ -100,7 +100,6 @@ import Syntax
   , PassName, OutFormat (..), Result (..))
 
 import SaferNames.Name
-import PPrint ()
 import Err
 import LabeledItems
 import Util ((...))
@@ -488,6 +487,7 @@ refreshBinders2 b cont = do
   withBindings ab \substFrag ->
     extendEnv substFrag $ cont
 
+
 data SomeDecl (binding::V) (n::S) (l::S) where
   SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
 
@@ -613,7 +613,7 @@ data UDecl (n::S) (l::S) where
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
     -> UDecl n l
 
-type UType  = UExpr
+type UType = UExpr
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
@@ -1632,7 +1632,10 @@ instance HasNameHint (UPat n l) where
   getNameHint _ = "pat"
 
 instance HasNameHint (UBinder c n l) where
-  getNameHint b = fromString $ pprint b
+  getNameHint b = case b of
+    UBindSource v -> getNameHint v
+    UIgnore       -> fromString "_"
+    UBind v       -> getNameHint v
 
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
@@ -1645,11 +1648,3 @@ instance BindsAtMostOneName (UAnnBinder c) c where
 
 instance InjectableE UModule where
   injectionProofE = todoInjectableProof
-
-instance Pretty (UBinder c n l) where
-  pretty (UBindSource v) = pretty v
-  pretty UIgnore         = "_"
-  pretty (UBind v)       = pretty v
-
-instance Pretty (UType n) where
-  pretty = undefined

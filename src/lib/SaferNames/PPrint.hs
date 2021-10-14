@@ -39,7 +39,8 @@ import Env (nameTag)
 import SaferNames.Name
 import SaferNames.Syntax
 
-type PrettyPrecE e = (forall (n::S). PrettyPrec (e n)) :: Constraint
+type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
+type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
 
 pprintList :: Pretty a => [a] -> String
 pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
@@ -294,12 +295,167 @@ instance PrettyPrec (Module n) where
            <> "evaluated bindings:"
            <>   indented (p result)
 
-instance Pretty (UModule n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UModule n) where
-  prettyPrec _ = atPrec ArgPrec "<todo: Pretty instance for UModule>"
+instance Pretty (UModule n) where
+  pretty (UModule decl sm) =
+    "UModule" <> hardline <>
+    p decl    <> hardline <>
+    p sm      <> hardline
 
 instance Pretty SourceUModule where
-  pretty _ = "<todo: Pretty instance for SourceUModule>"
+  pretty (SourceUModule decl) = p decl
+
+instance Pretty (UVar n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UVar n) where
+  prettyPrec uvar = atPrec ArgPrec case uvar of
+    UAtomVar    v -> p v
+    UTyConVar   v -> p v
+    UDataConVar v -> p v
+    UClassVar   v -> p v
+    UMethodVar  v -> p v
+
+instance NameColor c => Pretty (UBinder c n l) where pretty = prettyFromPrettyPrec
+instance NameColor c => PrettyPrec (UBinder c n l) where
+  prettyPrec b = atPrec ArgPrec case b of
+    UBindSource v -> p v
+    UIgnore       -> "_"
+    UBind v       -> p v
+
+instance PrettyE e => Pretty (WithSrcE e n) where
+  pretty (WithSrcE _ x) = p x
+
+instance PrettyPrecE e => PrettyPrec (WithSrcE e n) where
+  prettyPrec (WithSrcE _ x) = prettyPrec x
+
+instance PrettyB b => Pretty (WithSrcB b n l) where
+  pretty (WithSrcB _ x) = p x
+
+instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where
+  prettyPrec (WithSrcB _ x) = prettyPrec x
+
+instance PrettyE e => Pretty (SourceNameOr e n) where
+  pretty (SourceName   v) = p v
+  pretty (InternalName x) = p x
+
+instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (ULamExpr n) where
+  prettyPrec (ULamExpr arr pat body) = atPrec LowestPrec $ align $
+    "\\" <> p pat <> punctuation <+> nest 2 (pLowest body)
+    where punctuation = case arr of
+                          PlainArrow -> "."
+                          _          -> " " <> p arr
+
+instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UPiExpr n) where
+  prettyPrec (UPiExpr arr pat Pure ty) = atPrec LowestPrec $ align $
+    p pat <+> pretty arr <+> pLowest ty
+
+instance Pretty (UDeclExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UDeclExpr n) where
+  prettyPrec (UDeclExpr decl body) = atPrec LowestPrec $ align $
+    p decl <> hardline <> pLowest body
+
+instance Pretty (UExpr' n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UExpr' n) where
+  prettyPrec expr = case expr of
+    UVar v -> atPrec ArgPrec $ p v
+    ULam lam -> prettyPrec lam
+    UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
+    UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
+    UFor dir (UForExpr binder body) ->
+      atPrec LowestPrec $ kw <+> p binder <> "."
+                             <+> nest 2 (pLowest body)
+      where kw = case dir of Fwd -> "for"
+                             Rev -> "rof"
+    UPi piType -> prettyPrec piType
+    UDecl declExpr -> prettyPrec declExpr
+    UHole -> atPrec ArgPrec "_"
+    UTypeAnn v ty -> atPrec LowestPrec $
+      group $ pApp v <> line <> ":" <+> pApp ty
+    UTabCon xs -> atPrec ArgPrec $ p xs
+    UIndexRange low high -> atPrec LowestPrec $ low' <> ".." <> high'
+      where
+        low'  = case low of  InclusiveLim x -> pApp x
+                             ExclusiveLim x -> pApp x <> "<"
+                             Unlimited      -> ""
+        high' = case high of InclusiveLim x -> pApp x
+                             ExclusiveLim x -> "<" <> pApp x
+                             Unlimited      -> ""
+    UPrimExpr prim -> prettyPrec prim
+    UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
+      nest 2 (hardline <> prettyLines alts)
+    URecord items -> prettyExtLabeledItems items (line' <> ",") " ="
+    URecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
+    UVariant labels label value -> prettyVariant labels label value
+    UVariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+    UVariantLift labels value -> prettyVariantLift labels value
+    UIntLit   v -> atPrec ArgPrec $ p v
+    UFloatLit v -> atPrec ArgPrec $ p v
+
+prettyVariantLift :: PrettyPrec a
+  => LabeledItems () -> a -> DocPrec ann
+prettyVariantLift labels value = atPrec ArgPrec $
+      "{|" <> left <+> "..." <> pLowest value <+> "|}"
+      where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
+            plabel (l, _) = p l <> "|"
+
+instance Pretty (UAlt n) where
+  pretty (UAlt pat body) = p pat <+> "->" <+> p body
+
+instance Pretty (UDecl n l) where
+  pretty (ULet ann b rhs) =
+    align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+  pretty (UDataDefDecl (UDataDef bParams dataCons) bTyCon bDataCons) =
+    "data" <+> p bTyCon <+> p bParams
+       <+> "where" <> nest 2
+       (hardline <> prettyLines (zip (toList $ fromNest bDataCons) dataCons))
+  pretty (UInterface params superclasses methodTys interfaceName methodNames) =
+     let methods = [UAnnBinder b (unsafeCoerceE ty)
+                   | (b, ty) <- zip (toList $ fromNest methodNames) methodTys]
+     in "interface" <+> p params <+> p superclasses <+> p interfaceName
+         <> hardline <> prettyLines methods
+  pretty (UInstance className bs params methods (RightB UnitB)) =
+    "instance" <+> prettyBinderNest bs <+> p className <+> spaced params <+>
+       hardline <> prettyLines methods
+  pretty (UInstance bs className params methods (LeftB v)) =
+    "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
+        <> hardline <> prettyLines methods
+
+prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
+prettyBinderNest bs = spaced $ fromNest bs
+
+instance Pretty (UDataDefTrail n) where
+  pretty (UDataDefTrail bs) = p $ fromNest bs
+
+instance Pretty (UPatAnnArrow n l) where
+  pretty (UPatAnnArrow b arr) = p b <> ":" <> p arr
+
+instance NameColor c => Pretty (UAnnBinder c n l) where
+  pretty (UAnnBinder b ty) = p b <> ":" <> p ty
+
+instance Pretty (UMethodDef n) where
+  pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs
+
+instance Pretty (UPat' n l) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UPat' n l) where
+  prettyPrec pat = case pat of
+    UPatBinder x -> atPrec ArgPrec $ p x
+    UPatPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
+    UPatUnit UnitB -> atPrec ArgPrec $ "()"
+    UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
+    UPatRecord labels _ ->
+      prettyExtLabeledItems labels (line' <> ",") " ="
+    UPatVariant labels label value -> prettyVariant labels label value
+    UPatVariantLift labels value -> prettyVariantLift labels value
+    UPatTable pats -> atPrec ArgPrec $ p pats
+
+spaced :: (Foldable f, Pretty a) => f a -> Doc ann
+spaced xs = hsep $ map p $ toList xs
+
+instance Pretty (UPatAnn n l) where
+  pretty (UPatAnn pat ann) = p pat <> annDoc where
+    annDoc = case ann of
+      Just ty -> ":" <> pApp ty
+      Nothing -> mempty
 
 instance Pretty (EvaluatedModule n) where
   pretty (EvaluatedModule bindings synthCandidates sourceMap) =
