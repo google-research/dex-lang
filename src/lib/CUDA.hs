@@ -15,10 +15,11 @@ hasCUDA = True
 
 foreign import ccall "dex_cuMemcpyDtoH"    cuMemcpyDToH    :: Int64 -> Ptr () -> Ptr () -> IO ()
 foreign import ccall "dex_synchronizeCUDA" synchronizeCUDA :: IO ()
+foreign import ccall "dex_ensure_has_cuda_context" ensureHasCUDAContext :: IO ()
 foreign import ccall "dex_get_cuda_architecture" dex_getCudaArchitecture :: Int -> CString -> IO ()
 
 getCudaArchitecture :: Int -> IO String
-getCudaArchitecture dev = 
+getCudaArchitecture dev =
   withCString "sm_00" $ \cs ->
       dex_getCudaArchitecture dev cs >> peekCString cs
 #else
@@ -30,9 +31,14 @@ cuMemcpyDToH = error "Dex built without CUDA support"
 synchronizeCUDA :: IO ()
 synchronizeCUDA = return ()
 
+ensureHasCUDAContext :: IO ()
+ensureHasCUDAContext = return ()
+
 getCudaArchitecture :: Int -> IO String
 getCudaArchitecture _ = error "Dex built without CUDA support"
 #endif
 
 loadCUDAArray :: Ptr () -> Ptr () -> Int -> IO ()
-loadCUDAArray hostPtr devicePtr bytes = cuMemcpyDToH (fromIntegral bytes) devicePtr hostPtr
+loadCUDAArray hostPtr devicePtr bytes = do
+  ensureHasCUDAContext
+  cuMemcpyDToH (fromIntegral bytes) devicePtr hostPtr

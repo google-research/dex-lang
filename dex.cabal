@@ -132,6 +132,8 @@ executable dex
   hs-source-dirs:      src
   default-extensions:  CPP, LambdaCase, BlockArguments
   ghc-options:         -threaded -optP-Wno-nonportable-include-path
+  if flag(cuda)
+    cpp-options:       -DDEX_CUDA
   if flag(live)
     cpp-options:       -DDEX_LIVE
   if flag(optimized)

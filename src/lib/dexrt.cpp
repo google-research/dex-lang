@@ -225,9 +225,6 @@ void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
 
 extern "C" {
 
-void load_cuda_array(void* host_ptr, void* device_ptr, int64_t bytes) {
-  CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
-}
 
 void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
