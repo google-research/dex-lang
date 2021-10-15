@@ -43,8 +43,9 @@ inferModule bindings uModule@(UModule decl _) = do
       DistinctAbs bindingsFrag sourceMap <- runTopInfererM bindings do
         UModule decl' sourceMap <- injectM uModule
         inferUDeclTop decl' $ substM sourceMap
+      let scs = bindingsFragToSynthCandidates bindingsFrag
       return $ Module Typed id $
-        EvaluatedModule bindingsFrag mempty sourceMap
+        EvaluatedModule bindingsFrag scs sourceMap
     else do
       ab <- runInfererM bindings do
         UModule decl' sourceMap <- return uModule

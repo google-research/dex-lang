@@ -266,12 +266,12 @@ bindingsFragToSynthCandidates' :: Distinct l => Nest (EnvPair Binding l) n l
                                -> Writer (SynthCandidates l) ()
 bindingsFragToSynthCandidates' nest = case nest of
   Empty -> return ()
-  Nest (EnvPair b binding) rest -> do
+  Nest (EnvPair b binding) rest -> withExtEvidence rest do
     case binding of
-      -- TODO: superclasses!
        AtomNameBinding (LetBound (DeclBinding InstanceLet _ _)) -> do
-         withExtEvidence rest $
-           tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+         tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+       SuperclassBinding _ _ getter ->
+         tell $ inject (SynthCandidates [] [getter] [])
        _ -> return ()
     bindingsFragToSynthCandidates' rest
 

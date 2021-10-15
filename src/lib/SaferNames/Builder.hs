@@ -487,8 +487,9 @@ buildSplitCase tys scrut resultTy match fallback = do
 -- === builder versions of common top-level emissions ===
 
 emitDataDef :: TopBuilder m => DataDef n -> m n (DataDefName n)
-emitDataDef dataDef =
-  emitBinding NoHint $ DataDefBinding dataDef
+emitDataDef dataDef@(DataDef sourceName _ _) =
+  emitBinding hint $ DataDefBinding dataDef
+  where hint = getNameHint $ "Def" <> sourceName
 
 emitClassDef :: TopBuilder m => ClassDef n -> m n (Name ClassNameC n)
 emitClassDef classDef@(ClassDef name _ _) =
@@ -504,7 +505,8 @@ emitSuperclass :: TopBuilder m
                => ClassName n -> Int -> m n (Name SuperclassNameC n)
 emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
-  emitBinding NoHint $ SuperclassBinding dataDef idx getter
+  emitBinding hint $ SuperclassBinding dataDef idx getter
+  where hint = getNameHint $ "Proj" <> show idx <> pprint dataDef
 
 makeSuperclassGetter :: TopBuilder m => Name ClassNameC n -> Int -> m n (Atom n)
 makeSuperclassGetter classDefName methodIdx = do

@@ -807,6 +807,7 @@ instance (ColorsNotEqual cMatch c)
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
 instance ColorsNotEqual AtomNameC ClassNameC   where notEqProof = \case
+instance ColorsNotEqual AtomNameC SuperclassNameC where notEqProof = \case
 
 -- === alpha-renaming-invariant equality checking ===
 
