@@ -96,8 +96,9 @@ instance CheaplyReducible Expr where
       case f' of
         Lam (LamExpr (LamBinder b _ arr Pure) body)
           | arr == PlainArrow || arr == ImplicitArrow -> do
-              body' <- applyAbs (Abs b body) $ SubstVal x'
-              case fromAtomicBlock body' of
+              body' <- applyAbs (Abs b body) (SubstVal x')
+              body'' <- dropSubst $ cheapReduceE body'
+              case fromAtomicBlock body'' of
                 Just reduced -> return $ Atom reduced
                 Nothing -> substM expr
         TypeCon con xs -> return $ Atom $ TypeCon con $ xs ++ [x']
