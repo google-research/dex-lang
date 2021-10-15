@@ -136,8 +136,12 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
+  <|> dumpEnv
   <|> explicitCommand
   <?> "top-level command"
+
+dumpEnv :: Parser SourceBlock'
+dumpEnv = string ":env" $> DumpEnv
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do

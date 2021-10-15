@@ -217,6 +217,9 @@ evalSourceBlock' block = case S.sbContents block of
         results <- mapM evalSourceBlock $ S.parseProg source
         setImportStatus moduleName FullyImported
         return $ summarizeModuleResults results
+  S.DumpEnv -> liftPassesM_ False do
+    (_, curState) <- getTopState
+    logTop $ TextOut $ pprint $ curState
   S.ProseBlock _ -> return emptyResult
   S.CommentLine  -> return emptyResult
   S.EmptyLines   -> return emptyResult
@@ -234,6 +237,7 @@ mayUpdateTopState block = case S.sbContents block of
   S.Command _ _     -> False
   S.GetNameType _   -> False
   S.ProseBlock _    -> False
+  S.DumpEnv         -> False
   S.CommentLine     -> False
   S.EmptyLines      -> False
   S.UnParseable _ _ -> False

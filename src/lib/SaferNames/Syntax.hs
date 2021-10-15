@@ -694,6 +694,7 @@ data SourceBlock' =
  | GetNameType SourceName
  -- TODO Add a color for module names?
  | ImportModule ModuleName
+ | DumpEnv
  | ProseBlock String
  | CommentLine
  | EmptyLines

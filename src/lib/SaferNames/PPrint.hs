@@ -251,7 +251,7 @@ instance Pretty (Effect n) where
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
 instance Pretty (AtomBinding n) where
-  pretty = undefined
+  pretty _ = "<todo: atom binding pprint>"
 
 instance Pretty (Binding s n) where
   pretty b = case b of
