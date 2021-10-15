@@ -761,7 +761,7 @@ checkInstanceBody :: (Emits o, Inferer m)
                   -> [UMethodDef i]
                   -> m i o (Atom o)
 checkInstanceBody className params methods = do
-  ClassDef _ methodNames def <- getClassDef className
+  ClassDef _ methodNames def@(_, DataDef tcNameHint _ _) <- getClassDef className
   params' <- mapM checkUType params
   Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params'
   PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
@@ -772,7 +772,8 @@ checkInstanceBody className params methods = do
     throw TypeErr $ "Duplicate method: " ++ pprint (methodNames!!i)
   forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
-  return $ DataCon "instance-dict" def params' 0 [PairVal (ProdVal superclassHoles)
+  let dataConNameHint = "Mk" <> tcNameHint
+  return $ DataCon dataConNameHint def params' 0 [PairVal (ProdVal superclassHoles)
                                                           (ProdVal methods')]
 
 checkMethodDef :: (Emits o, Inferer m)

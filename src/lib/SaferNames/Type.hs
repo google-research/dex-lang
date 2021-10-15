@@ -219,7 +219,7 @@ instance CheckableE DataDef where
 -- === type checking core ===
 
 instance CheckableE Atom where
-  checkE atom = snd <$> getTypeAndSubstE atom
+  checkE atom = fst <$> getTypeAndSubstE atom
 
 instance HasType Atom where
   getTypeE atom = case atom of

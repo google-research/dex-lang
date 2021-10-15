@@ -76,8 +76,8 @@ fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 
-instance Pretty (BinderP c ann n l)
-  where pretty (b:>_) = p b
+instance PrettyE ann => Pretty (BinderP c ann n l)
+  where pretty (b:>ty) = p b <> ":" <> p ty
 
 instance Pretty (Expr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr n) where
@@ -109,7 +109,7 @@ instance PrettyPrecE e => Pretty (PrimCon (e n)) where pretty = prettyFromPretty
 instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
 
 instance Pretty (DeclBinding n) where
-  pretty = undefined
+  pretty (DeclBinding ann ty expr) = "DeclBinding" <+> p ann <+> p ty <+> p expr
 
 instance Pretty (Decl n l) where
   pretty decl = case decl of
@@ -118,16 +118,21 @@ instance Pretty (Decl n l) where
     Let b (DeclBinding ann ty rhs) ->
       align $ p ann <+> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
+instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (LamExpr n) where
+  prettyPrec lamExpr = case lamExpr of
+    LamExpr (_:>(LamBinding TabArrow _)) _ _ ->
+      atPrec LowestPrec $ "\\for"
+      <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
+    LamExpr (_:>(LamBinding arr _)) _ _ ->
+      atPrec LowestPrec $ "\\"
+      <> prettyLamHelper lamExpr (PrettyLam arr)
+
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
-    Lam lamExpr@(LamExpr (_:>(LamBinding TabArrow _)) _ _) ->
-      atPrec LowestPrec $ "\\for"
-      <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
-    Lam lamExpr@(LamExpr (_:>(LamBinding arr _)) _ _) ->
-      atPrec LowestPrec $ "\\"
-      <> prettyLamHelper lamExpr (PrettyLam arr)
+    Lam lamExpr -> prettyPrec lamExpr
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
