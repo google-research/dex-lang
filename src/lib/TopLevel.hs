@@ -323,7 +323,7 @@ evalUModule :: MonadPasses m => S.SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
   (S.Distinct, topState) <- getTopState
   let D.TopState bindingsD synthCandidatesD _ = topStateD topState
-  let bindingsS@(S.Bindings _ _ sourceMapS) = topStateS topState
+  let bindingsS@(S.Bindings _ _ sourceMapS _) = topStateS topState
   logPass Parse sourceModule
   renamed <- S.renameSourceNames (S.toScope bindingsS) sourceMapS sourceModule
   logPass RenamePass renamed

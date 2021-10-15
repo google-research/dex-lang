@@ -79,39 +79,24 @@ instantiatePi (PiType _ b eff body) x = do
 class ( Monad2 m, Fallible2 m, EnvReader Name m
       , BindingsGetter2 m, BindingsExtender2 m)
      => Typer (m::MonadKind2) where
-  declareEffs :: EffectRow o -> m i o ()
-  extendAllowedEffect :: Effect o -> m i o () -> m i o ()
-  withAllowedEff :: EffectRow o -> m i o a -> m i o a
 
 newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
-  TyperT { runTyperT' ::
-    EnvReaderT Name
-      (OutReaderT EffectRow
-        (BindingsReaderT m)) i o a }
+  TyperT { runTyperT' :: EnvReaderT Name (BindingsReaderT m) i o a }
   deriving ( Functor, Applicative, Monad
            , EnvReader Name
            , MonadFail
            , Fallible
            , ScopeReader, ScopeGetter, BindingsReader
-           , BindingsGetter, BindingsExtender)
+           , BindingsGetter, Scopable, BindingsExtender)
 
 runTyperT :: (Fallible m, Distinct n)
           => Bindings n -> TyperT m n n a -> m a
 runTyperT bindings m = do
   runBindingsReaderT bindings $
-    runOutReaderT Pure $
-      runEnvReaderT idEnv $
-        runTyperT' m
+    runEnvReaderT idEnv $
+      runTyperT' m
 
 instance Fallible m => Typer (TyperT m) where
-  declareEffs eff = TyperT do
-    allowedEffs <- askOutReader
-    checkExtends allowedEffs eff
-  extendAllowedEffect eff (TyperT m) = TyperT do
-    curEffs <- askOutReader
-    localOutReader (extendEffect eff curEffs) m
-  withAllowedEff eff (TyperT m) = TyperT $
-    localOutReader eff m
 
 -- === typeable things ===
 
@@ -181,16 +166,17 @@ instance CheckableE SynthCandidates where
                     <*> mapM checkE ys
                     <*> mapM checkE zs
 
-instance CheckableB (RecEnvFrag Binding) where
-  checkB frag cont = do
+instance CheckableB BindingsFrag where
+  checkB (BindingsFrag frag effs) cont = do
     scope <- getScope
     env <- getEnv
     Distinct <- getDistinct
     DistinctAbs frag' env' <- return $ refreshRecEnvFrag scope env frag
-    extendBindings frag' do
+    extendBindings (BindingsFrag frag' Nothing) do
       void $ dropSubst $ traverseEnvFrag checkE $ fromRecEnvFrag frag'
-      withEnv env' $
-        cont frag'
+      withEnv env' do
+        effs' <- mapM checkE effs
+        cont $ BindingsFrag frag' effs'
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
@@ -230,7 +216,7 @@ instance HasType Atom where
     Pi piType -> getTypeE piType
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
-    Eff eff  -> checkEffRow eff $> EffKind
+    Eff eff  -> checkE eff $> EffKind
     DataCon _ (name,_) params con args -> do
       name' <- substM name
       funTy <- dataConFunType name' con
@@ -340,19 +326,28 @@ instance CheckableE LamBinding where
     ty' <- checkTypeE TyKind ty
     return $ LamBinding arr ty'
 
+instance CheckableB LamBinder where
+  checkB (LamBinder b ty arr effs) cont = do
+    ty' <- checkTypeE TyKind ty
+    let binding = toBinding $ LamBinding arr ty'
+    withFreshNameBinder (getNameHint b) binding \b' -> do
+      extendRenamer (b@>binderName b') do
+        effs' <- checkE effs
+        extendBindings (BindingsFrag emptyOutFrag (Just effs')) $
+          cont $ LamBinder b' ty' arr effs'
+
 instance HasType LamExpr where
-  getTypeE (LamExpr b@(_:>LamBinding arr _) eff body) = do
-    checkArrowAndEffects arr eff
-    checkB b \(b':>LamBinding _ ty) -> do
-      eff' <- checkEffRow eff
-      bodyTy <- withAllowedEff eff' $ getTypeE body
+  getTypeE (LamExpr b body) = do
+    checkB b \(LamBinder b' ty arr eff') -> do
+      bodyTy <- getTypeE body
       return $ Pi $ PiType arr (b':>ty) eff' bodyTy
 
 instance HasType PiType where
-  getTypeE (PiType arr b eff resultTy) = do
+  getTypeE (PiType arr b@(_:>ty) eff resultTy) = do
+    ty|:TyKind
     checkArrowAndEffects arr eff
     checkB b \_ -> do
-      void $ checkEffRow eff
+      void $ checkE eff
       resultTy|:TyKind
     return TyKind
 
@@ -930,20 +925,30 @@ applyDataDefParams (DataDef _ bs cons) params =
 
 -- === effects ===
 
-checkEffRow :: Typer m => EffectRow i -> m i o (EffectRow o)
-checkEffRow effRow@(EffectRow effs effTail) = do
-  forM_ effs \eff -> case eff of
-    RWSEffect _ v -> Var v |: TyKind
-    ExceptionEffect -> return ()
-    IOEffect        -> return ()
-  forM_ effTail \v -> do
-    v' <- substM v
-    ty <- bindingType <$> lookupBindings v'
-    checkAlphaEq EffKind ty
-  substM effRow
+instance CheckableE EffectRow where
+  checkE effRow@(EffectRow effs effTail) = do
+    forM_ effs \eff -> case eff of
+      RWSEffect _ v -> Var v |: TyKind
+      ExceptionEffect -> return ()
+      IOEffect        -> return ()
+    forM_ effTail \v -> do
+      v' <- substM v
+      ty <- bindingType <$> lookupBindings v'
+      checkAlphaEq EffKind ty
+    substM effRow
 
 declareEff :: Typer m => Effect o -> m i o ()
 declareEff eff = declareEffs $ oneEffect eff
+
+declareEffs :: Typer m => EffectRow o -> m i o ()
+declareEffs effs = do
+  allowedEffects <- getAllowedEffects
+  checkExtends allowedEffects effs
+
+extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
+extendAllowedEffect newEff cont = do
+  effs <- getAllowedEffects
+  withAllowedEffects (extendEffect newEff effs) cont
 
 checkExtends :: Fallible m => EffectRow n -> EffectRow n -> m ()
 checkExtends allowed (EffectRow effs effTail) = do

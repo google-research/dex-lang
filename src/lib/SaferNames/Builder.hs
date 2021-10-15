@@ -14,8 +14,8 @@
 
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
-  buildPureLam, BuilderT, Builder (..), Builder2, EffectsReader (..),
-  emitDecl, emitBinding, buildScoped, buildScopedReduceDecls,
+  buildPureLam, BuilderT, Builder (..), Builder2,
+  buildScoped, buildScopedReduceDecls,
   runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
@@ -53,7 +53,7 @@ import Err
 
 -- === Ordinary (local) builder class ===
 
-class (BindingsReader m, EffectsReader m, Scopable m, MonadFail1 m)
+class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
   -- This is unsafe because it doesn't require the Emits predicate. `emitDecl`
   -- and `emitBinding` wrap it safely.
@@ -78,7 +78,17 @@ emitOp op = Var <$> emit (Op op)
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
 emitBlock (Block _ Empty (Atom result)) = return result
-emitBlock _ = undefined
+emitBlock (Block _ decls result) = runEnvReaderT idEnv $ emitBlock' decls result
+
+emitBlock' :: (Builder m, Emits o)
+           => Nest Decl i i' -> Expr i' -> EnvReaderT Name m i o (Atom o)
+emitBlock' Empty expr = do
+  v <- substM expr >>= emit
+  return $ Var v
+emitBlock' (Nest (Let b (DeclBinding ann _ expr)) rest) result = do
+  expr' <- substM expr
+  v <- emitDecl (getNameHint b) ann expr'
+  extendEnv (b @> v) $ emitBlock' rest result
 
 emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
 emitAtomToName (Var v) = return v
@@ -104,7 +114,7 @@ buildScopedReduceDecls cont = buildScoped cont >>= cheapReduceDecls
 
 -- === Top-level builder class ===
 
-class (BindingsReader m, EffectsReader m, MonadFail1 m)
+class (BindingsReader m, MonadFail1 m)
       => TopBuilder (m::MonadKind1) where
   emitBinding :: NameColor c => NameHint -> Binding c n -> m n (Name c n)
   liftLocalBuilder :: BuilderT FallibleM n a -> m n a
@@ -129,12 +139,9 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
       (\Empty -> emptyOutFrag)
       (runBuilderT' m)
 
-
 instance TopBuilder m => TopBuilder (EnvReaderT v m i) where
   emitBinding hint binding = EnvReaderT $ lift $ emitBinding hint binding
   liftLocalBuilder m = EnvReaderT $ lift $ liftLocalBuilder m
-
-instance Fallible m => EffectsReader (TopBuilderT m) where
 
 runTopBuilderT
   :: (Fallible m, Distinct n)
@@ -145,16 +152,6 @@ runTopBuilderT bindings cont =
   runInplaceT bindings $ runTopBuilderT' $ cont
 
 type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
-
--- === Tracking effects ===
-
--- Should we just merge this into BindingsReader and friends?
-
-class EffectsReader (m::MonadKind1) where
-  getAllowedEffects :: m n (EffectRow n)
-  withAllowedEffects :: EffectRow n -> m n a -> m n a
-
-instance EffectsReader m => EffectsReader (EnvReaderT v m i)
 
 -- === BuilderT ===
 
@@ -211,10 +208,6 @@ runBuilderT bindings cont = do
     Empty -> return result
     _ -> error "shouldn't have produced any decls"
 
-instance MonadFail m => EffectsReader (BuilderT m) where
-  getAllowedEffects = undefined
-  withAllowedEffects _ = id  -- TODO!
-
 instance MonadFail m => Builder (BuilderT m) where
   buildScopedGeneral ab cont = BuilderT do
     scopedResult <- scopedInplaceGeneral
@@ -233,6 +226,12 @@ instance MonadFail m => Scopable (BuilderT m) where
   withBindings ab cont = do
     Abs b (Abs Empty result) <- buildScopedGeneral ab \x -> cont x
     return $ Abs b result
+  extendNamelessBindings frag cont = BuilderT do
+    Distinct <- getDistinct
+    liftBetweenInplaceTs id (\bindings -> extendOutMap bindings frag) id $ runBuilderT' cont
+
+instance (InjectableV v, Builder m) => Builder (EnvReaderT v m i) where
+  emitDecl hint ann expr = EnvReaderT $ lift $ emitDecl hint ann expr
 
 -- === Emits predicate ===
 
@@ -306,15 +305,14 @@ buildLamGeneral
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l, a))
   -> m n (Atom n, a)
 buildLamGeneral hint arr ty fEff fBody = do
-  ab <- withFreshBinder hint (LamBinding arr ty) \v -> do
-    effs <- fEff v
-    withAllowedEffects effs do
-      (body, aux) <- buildBlockAux do
-        v' <- injectM v
-        fBody v'
-      return $ effs `PairE` body `PairE` LiftE aux
-  Abs b (effs `PairE` body `PairE` LiftE aux) <- return ab
-  return (Lam $ LamExpr b effs body, aux)
+  effAbs <- withFreshBinder hint ty fEff
+  ab <- withFreshLamBinder hint (LamBinding arr ty) effAbs \v -> do
+    (body, aux) <- buildBlockAux do
+      v' <- injectM v
+      fBody v'
+    return $ body `PairE` LiftE aux
+  Abs b (body `PairE` LiftE aux) <- return ab
+  return (Lam $ LamExpr b body, aux)
 
 buildPureLam :: Builder m
              => NameHint
@@ -322,7 +320,7 @@ buildPureLam :: Builder m
              -> Type n
              -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
              -> m n (Atom n)
-buildPureLam hint arr ty body =
+buildPureLam hint arr ty body = do
   fst <$> buildLamGeneral hint arr ty (const $ return Pure) \x ->
     withAllowedEffects Pure do
       result <- body x
@@ -372,7 +370,6 @@ buildPi :: (Fallible1 m, Builder m)
         -> m n (Type n)
 buildPi hint arr ty body = do
   ab <- withFreshBinder hint ty \v -> do
-    withAllowedEffects Pure do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy
   Abs b (PairE effs resultTy) <- return ab
@@ -659,7 +656,9 @@ getUnpacked atom = do
 
 -- TODO: should we just make all of these return names instead of atoms?
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
-emitUnpacked =  undefined
+emitUnpacked tup = do
+  xs <- getUnpacked tup
+  forM xs \x -> emit $ Atom x
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 app x i = Var <$> emit (App x i)

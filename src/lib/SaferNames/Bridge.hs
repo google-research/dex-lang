@@ -81,12 +81,13 @@ extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStat
 extendTopStateD jointTopState evaluated = do
   let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
   case topStateS jointTopState of
-    S.Bindings bindingsS scsS sourceMapS -> do
+    -- We ignore the effects because there are none at the top level
+    S.Bindings bindingsS scsS sourceMapS _ -> do
       -- ensure the internal bindings are fresh wrt top bindings
       let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
       runToSafeM (topToSafeMap jointTopState) (toScope bindingsS) do
         nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
-         \bindingsFrag toSafeMap' fromSafeMap' -> do
+         \(BindingsFrag bindingsFrag _) toSafeMap' fromSafeMap' -> do
            withExtEvidence (toExtEvidence bindingsFrag) do
              scsS'         <- toSafeE scsD'
              sourceMapS'   <- toSafeE sourceMapD'
@@ -96,7 +97,8 @@ extendTopStateD jointTopState evaluated = do
                (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD'))
                (S.Bindings (bindingsS `extendOutMap` bindingsFrag)
                            (scsSInj <> scsS')
-                           (sourceMapSInj <> sourceMapS'))
+                           (sourceMapSInj <> sourceMapS')
+                           S.Pure)
                toSafeMap'
                fromSafeMap'
 
@@ -186,7 +188,7 @@ makeBindingsFrag :: forall n l. Distinct l
                  => S.Scope l -> D.Bindings -> ToSafeEnv l -> FromSafeEnv l
                  -> ConstEnv n l -> BindingsFrag n l
 makeBindingsFrag scope bindings toSafeMap (FromSafeEnv fromSafeMap) constEnv =
-  RecEnvFrag $ fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
+  BindingsFrag (RecEnvFrag $ fmapEnvFrag (\name _ -> getSafeBinding name) constEnv) Nothing
   where
     getSafeBinding :: S.Name c (n:=>:l) -> Binding c l
     getSafeBinding name = do
@@ -336,9 +338,10 @@ instance HasSafeVersionE D.EvaluatedModule where
   type SafeVersionE D.EvaluatedModule = S.EvaluatedModule
   toSafeE (D.EvaluatedModule bindings scs sourceMap) =
     toSafeB (DRecEnvFrag bindings) \bindings' ->
-      S.EvaluatedModule bindings' <$> toSafeE scs <*> toSafeE sourceMap
+      S.EvaluatedModule (S.BindingsFrag bindings' Nothing)
+        <$> toSafeE scs <*> toSafeE sourceMap
 
-  fromSafeE (S.EvaluatedModule bindings scs sourceMap) =
+  fromSafeE (S.EvaluatedModule (S.BindingsFrag bindings _) scs sourceMap) =
     fromSafeB bindings \(DRecEnvFrag bindings') ->
       D.EvaluatedModule bindings' <$> fromSafeE scs <*> fromSafeE sourceMap
 
@@ -501,7 +504,7 @@ instance HasSafeVersionE D.Atom where
       toSafeB b \(b' S.:> ty') -> do
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
-        return $ S.Lam $ S.LamExpr (b' S.:> LamBinding arr' ty') eff' body'
+        return $ S.Lam $ S.LamExpr (S.LamBinder b' ty' arr' eff') body'
     D.Pi (D.Abs b (arr, body)) ->
       toSafeB b \b' -> do
         (arr', eff') <- toSafeArrow arr
@@ -536,7 +539,7 @@ instance HasSafeVersionE D.Atom where
 
   fromSafeE atom = case atom of
     S.Var v -> D.Var <$> fromSafeAtomNameVar v
-    S.Lam (S.LamExpr (b S.:> LamBinding arr ty) eff body) -> do
+    S.Lam (S.LamExpr (LamBinder b ty arr eff) body) -> do
       fromSafeB (b S.:> ty) \b' -> do
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body

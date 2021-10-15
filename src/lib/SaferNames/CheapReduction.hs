@@ -94,7 +94,7 @@ instance CheaplyReducible Expr where
       x' <- cheapReduceE x
       -- TODO: Worry about variable capture. Should really carry a substitution.
       case f' of
-        Lam (LamExpr b@(_:>LamBinding arr _) Pure body)
+        Lam (LamExpr (LamBinder b _ arr Pure) body)
           | arr == PlainArrow || arr == ImplicitArrow -> do
               body' <- applyAbs (Abs b body) $ SubstVal x'
               case fromAtomicBlock body' of

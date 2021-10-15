@@ -1171,11 +1171,10 @@ scopedInplaceGeneral extender ab cont = do
 liftInplace :: (Monad m, OutFrag decls) => m a -> InplaceT bindings decls m n a
 liftInplace m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
 
-
 liftBetweenInplaceTs
   :: Monad m
   => (forall a'. m' a' -> m a')
-  -> (forall l    . Distinct l  => bs  l    -> bs' l   )
+  -> (bs n -> bs' n)
   -> (forall l l' . Distinct l' => ds' l l' -> ds  l l')
   -> InplaceT bs' ds' m' n a
   -> InplaceT bs  ds  m  n a

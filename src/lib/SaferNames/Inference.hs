@@ -76,8 +76,7 @@ class ( MonadFail2 m, Fallible2 m, CtxReader2 m, TopBuilder2 m
 newtype TopInfererM i o a = TopInfererM
   { runTopInfererM' :: EnvReaderT Name (TopBuilderT FallibleM) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail, ScopeReader
-           , Fallible, CtxReader, EnvReader Name
-           , EffectsReader, BindingsReader, TopBuilder)
+           , Fallible, CtxReader, EnvReader Name, BindingsReader, TopBuilder)
 
 instance TopInferer TopInfererM where
   liftLocalInferer cont = do
@@ -207,10 +206,6 @@ instance Builder (InfererM i) where
         refreshAbsM =<< extendInplace =<< injectM (Abs outFrag resultAbs)
     injectM $ Abs b $ Abs decls result'
 
-instance EffectsReader (InfererM i) where
-  getAllowedEffects = return Pure  -- TODO!
-  withAllowedEffects _ = id  -- TODO!
-
 type InferenceNameBinders = Nest Binder
 
 -- When we finish building a block of decls we need to hoist the local solver
@@ -306,6 +301,12 @@ instance Scopable (InfererM i) where
   withBindings ab cont = do
     Abs b (Abs Empty result) <- buildScopedGeneral ab \x -> cont x
     return $ Abs b result
+
+  extendNamelessBindings frag cont = InfererM $ EnvReaderT $ ReaderT \env -> do
+    Distinct <- getDistinct
+    liftBetweenInplaceTs id (\(InfOutMap bindings ss) ->
+                               InfOutMap (extendOutMap bindings frag) ss) id $
+       runEnvReaderT env $ runInfererM' $ cont
 
 -- === actual inference pass ===
 

@@ -121,10 +121,10 @@ instance Pretty (Decl n l) where
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
   prettyPrec lamExpr = case lamExpr of
-    LamExpr (_:>(LamBinding TabArrow _)) _ _ ->
+    LamExpr (LamBinder _ _ TabArrow _) _ ->
       atPrec LowestPrec $ "\\for"
       <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
-    LamExpr (_:>(LamBinding arr _)) _ _ ->
+    LamExpr (LamBinder _ _ arr _) _ ->
       atPrec LowestPrec $ "\\"
       <> prettyLamHelper lamExpr (PrettyLam arr)
 
@@ -215,10 +215,10 @@ data PrettyLamType = PrettyLam Arrow | PrettyFor ForAnn deriving (Eq)
 prettyLamHelper :: LamExpr n -> PrettyLamType -> Doc ann
 prettyLamHelper lamExpr lamType = let
   rec :: LamExpr n -> Bool -> (Doc ann, Block n)
-  rec (LamExpr (b:>LamBinding _ ty) _ body') first =
+  rec (LamExpr (LamBinder b ty _ _) body') first =
     let thisOne = (if first then "" else line) <> p (b:>ty)
     in case body' of
-      Block _ Empty (Atom (Lam next@(LamExpr (_:> (LamBinding arr' _)) _ _)))
+      Block _ Empty (Atom (Lam next@(LamExpr (LamBinder _ _ arr' _) _)))
         | lamType == PrettyLam arr' ->
             let (binders', block) = rec next False
             in (thisOne <> binders', unsafeCoerceE block)
@@ -353,6 +353,8 @@ instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
   prettyPrec (UPiExpr arr pat Pure ty) = atPrec LowestPrec $ align $
     p pat <+> pretty arr <+> pLowest ty
+  prettyPrec (UPiExpr arr pat _ ty) = atPrec LowestPrec $ align $
+    p pat <+> pretty arr <+> "{todo: pretty effects}" <+> pLowest ty
 
 instance Pretty (UDeclExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UDeclExpr n) where
@@ -461,6 +463,11 @@ instance Pretty (UPatAnn n l) where
     annDoc = case ann of
       Just ty -> ":" <> pApp ty
       Nothing -> mempty
+
+instance Pretty (BindingsFrag n l) where
+  pretty (BindingsFrag bindings effects) =
+       "Partial bindings:" <> indented (p bindings)
+    <> "Effects candidates:" <+> p effects
 
 instance Pretty (EvaluatedModule n) where
   pretty (EvaluatedModule bindings synthCandidates sourceMap) =
