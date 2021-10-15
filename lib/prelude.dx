@@ -602,14 +602,14 @@ def lbeta [Add a, Floating a] : a -> a -> a = \x y. lgamma x + lgamma y - lgamma
 -- Todo: better numerics for very large and small values.
 -- Using %exp here to avoid circular definition problems.
 def float32_sinh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) 2.0
-def float32_cosh (x:Float32) : Float32 = %fdiv ((%exp x) + (%exp (%fsub 0.0 x))) 2.0
-def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) ((%exp x) + (%exp (%fsub 0.0 x)))
+def float32_cosh (x:Float32) : Float32 = %fdiv (%fadd (%exp x) (%exp (%fsub 0.0 x))) 2.0
+def float32_tanh (x:Float32) : Float32 = %fdiv (%fsub (%exp x) (%exp (%fsub 0.0 x))) (%fadd (%exp x) (%exp (%fsub 0.0 x)))
 
 -- Todo: unify this with float32 functions.
 def float64_sinh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
-def float64_cosh (x:Float64) : Float64 = %fdiv ((%exp x) + (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
-def float64_tanh (x:Float64) : Float64 = %fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x))) ((%exp x) + (%exp (%fsub (FToF64 0.0) x)))
-
+def float64_cosh (x:Float64) : Float64 = %fdiv (%fadd (%exp x) (%exp (%fsub (FToF64 0.0) x))) (FToF64 2.0)
+def float64_tanh (x:Float64) : Float64 = (%fdiv (%fsub (%exp x) (%exp (%fsub (FToF64 0.0) x)))
+                                                (%fadd (%exp x) (%exp (%fsub (FToF64 0.0) x))))
 
 instance Floating Float64
   exp    = \x. %exp x
