@@ -380,7 +380,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Infer   -> inferULam Pure lamExpr
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
-    let uLamExpr = ULamExpr TabArrow b body
+    let uLamExpr = ULamExpr PlainArrow b body
     lam <- case reqTy of
       Check _ (Pi piType) -> checkULam uLamExpr piType
       Check _ _ -> inferULam allowedEff uLamExpr
