@@ -750,15 +750,16 @@ uIsoSugar = withSrc (char '#' *> options) where
         )
 
 uPatRecordLit :: [(Label, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
-uPatRecordLit labelsPats ext = nsB
+uPatRecordLit labelsPats ext = nsB do
   let (labels, pats) = unzip labelsPats
-  in case ext of
-       Nothing ->
-         UPatRecord (NoExt (foldMap (\s -> labeledSingleton s ()) labels))
-                    (PairB (toNestParsed $ pats) NothingB)
-       Just tailPat ->
-         UPatRecord (Ext undefined (Just ()))
-                    (PairB (toNestParsed $ pats) (JustB tailPat))
+  let labeledPart = foldMap (\s -> labeledSingleton s ()) labels
+  case ext of
+    Nothing ->
+      UPatRecord (NoExt labeledPart )
+                 (PairB (toNestParsed $ pats) NothingB)
+    Just tailPat ->
+      UPatRecord (Ext labeledPart (Just ()))
+                 (PairB (toNestParsed $ pats) (JustB tailPat))
 
 parseLabeledItems
   :: String -> String -> Parser a
