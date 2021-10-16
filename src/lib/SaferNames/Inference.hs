@@ -17,6 +17,8 @@ import Control.Category
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Identity
+import Control.Monad.State (get, modify, runState)
+import Control.Monad.Writer.Strict (execWriterT, tell)
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.List (sortOn)
@@ -106,7 +108,13 @@ makeReqCon _ = return Suggest -- TODO!
 
 -- === Concrete Inferer monad ===
 
-data InfOutMap (n::S) = InfOutMap (Bindings n) (SolverSubst n)
+data InfOutMap (n::S) =
+  InfOutMap
+    (Bindings n)
+    (SolverSubst n)
+    -- names whose bindings may contain inference vars
+    (UnsolvedBindings n)
+
 data InfOutFrag (n::S) (l::S) = InfOutFrag (InfEmissions n l) (SolverSubst l)
 
 type InfEmission  = EitherE DeclBinding SolverBinding
@@ -129,18 +137,65 @@ instance OutFrag InfOutFrag where
       InfOutFrag (em >>> em') (catSolverSubsts scope (inject ss) ss')
 
 instance HasScope InfOutMap where
-  toScope (InfOutMap bindings _) = toScope bindings
+  toScope (InfOutMap bindings _ _) = toScope bindings
 
 instance OutMap InfOutMap where
-  emptyOutMap  = InfOutMap emptyOutMap emptySolverSubst
+  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst emptyUnsolved
+
+instance ExtOutMap InfOutMap BindingsFrag where
+  extendOutMap (InfOutMap bindings ss unsolved) frag =
+    withExtEvidence frag do
+      let newUnsolved = UnsolvedBindings $ fromUnsolvedBindings (inject unsolved)
+                                         <> getAtomNames frag
+      zonkInfOutMap $
+        InfOutMap (bindings `extendOutMap` frag) (inject ss) newUnsolved
+
+newtype UnsolvedBindings (n::S) =
+  UnsolvedBindings { fromUnsolvedBindings :: S.Set (AtomName n) }
+
+instance InjectableE UnsolvedBindings where
+  injectionProofE = undefined
+
+getAtomNames :: Distinct l => BindingsFrag n l -> S.Set (AtomName l)
+getAtomNames frag = S.fromList $ nameSetToList AtomNameRep $ toNameSet $ toScopeFrag frag
+
+emptyUnsolved :: UnsolvedBindings n
+emptyUnsolved = UnsolvedBindings mempty
+
+-- query each binding rhs for inference names and add it to the set if needed
+
+extendInfOutMapSolver :: Distinct n => InfOutMap n -> SolverSubst n -> InfOutMap n
+extendInfOutMapSolver (InfOutMap bindings ss un) ss' = do
+  let ssFinal = catSolverSubsts (toScope bindings) ss ss'
+  zonkInfOutMap $ InfOutMap bindings ssFinal un
+
+-- TODO: zonk the allowed effects and synth candidates in the bindings too
+zonkInfOutMap :: Distinct n => InfOutMap n -> InfOutMap n
+zonkInfOutMap outMap@(InfOutMap initBindings ss (UnsolvedBindings un)) =
+  InfOutMap finalBindings ss (UnsolvedBindings un')
+  where
+    (un', finalBindings) =
+      flip runState initBindings $ execWriterT do
+        forM_ (S.toList un) \v -> do
+          rhs <- flip lookupBindingsPure v <$> get
+          let rhs' = zonkWithOutMap outMap rhs
+          modify \bindings ->
+            updateBindings v rhs' bindings
+          when (hasInferenceVars initBindings rhs') $
+            tell (S.singleton v)
+
+hasInferenceVars :: HoistableE e => Bindings n -> e n -> Bool
+hasInferenceVars bs e = any isInferenceVar $ freeVarsList AtomNameRep e
+  where isInferenceVar v =
+          case lookupBindingsPure bs v of
+            AtomNameBinding (SolverBound _) -> True
+            _                               -> False
 
 instance ExtOutMap InfOutMap InfOutFrag where
-  extendOutMap (InfOutMap bindings solverSubst) (InfOutFrag em solverSubst') =
-    withExtEvidence em do
-      let finalBindings = extendOutMap bindings (boundBindings em)
-      let finalSolverSubst = catSolverSubsts (toScope finalBindings)
-                               (inject solverSubst) solverSubst'
-      InfOutMap finalBindings finalSolverSubst
+  extendOutMap infOutMap (InfOutFrag em solverSubst) = do
+    flip extendInfOutMapSolver solverSubst $
+      flip extendOutMap (boundBindings em) $
+        infOutMap
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
   { runInfererM' :: EnvReaderT Name (InplaceT InfOutMap InfOutFrag FallibleM) i o a }
@@ -161,8 +216,9 @@ runSubstInfererM
   -> Except (e o)
 runSubstInfererM bindings env cont = do
   DistinctAbs (InfOutFrag Empty _) result <-
-    runFallibleM $ runInplaceT (InfOutMap bindings emptySolverSubst) $
-      runEnvReaderT (inject env) $ runInfererM' $ cont
+    runFallibleM $
+      runInplaceT (InfOutMap bindings emptySolverSubst $ UnsolvedBindings mempty) $
+        runEnvReaderT (inject env) $ runInfererM' $ cont
   return result
 
 emitInfererM :: NameHint -> InfEmission o -> InfererM i o (AtomName o)
@@ -176,32 +232,29 @@ instance Solver (InfererM i) where
       DistinctAbs (InfOutFrag Empty (singletonSolverSubst v' ty')) UnitE
 
   zonk e = InfererM $ EnvReaderT $ lift $
-             withInplaceOutEnv e \(InfOutMap bindings solverSubst) e' ->
-               applySolverSubstE (toScope bindings) solverSubst e'
+             withInplaceOutEnv e zonkWithOutMap
 
   emitSolver binding = emitInfererM "?" $ RightE binding
 
 instance Inferer InfererM where
   liftSolverM m = InfererM $ EnvReaderT $ lift $
-    liftBetweenInplaceTs (liftExcept . runSearcherM) SolverOutMap liftSolverOutFrag $
+    liftBetweenInplaceTs (liftExcept . runSearcherM) id liftSolverOutFrag $
       runSolverM' m
 
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do
     expr' <- zonk expr
-    ty <- zonk =<< getType expr'
+    ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
 
   buildScopedGeneral ab cont = InfererM $ EnvReaderT $ ReaderT \env -> do
     scopedResults <- scopedInplaceGeneral
-      (\(InfOutMap bs ss) b ->
-           InfOutMap (bs `extendOutMap` boundBindings b)
-                     (withExtEvidence b $ inject ss))
+      (\outMap b -> outMap `extendOutMap` boundBindings b)
       ab
       (\e -> flip runReaderT (inject env) $ runEnvReaderT' $ runInfererM' $
                withFabricatedEmitsEvidence $ cont e)
-    ScopedResult (InfOutMap bindings _) bs result <- return scopedResults
-    Abs outFrag resultAbs <- hoistInfState (toScope bindings) bs result
+    ScopedResult outMap bs result <- return scopedResults
+    Abs outFrag resultAbs <- hoistInfState (toScope outMap) bs result
     DeferredInjection ExtW (DistinctAbs (PairB b decls) result') <-
         refreshAbsM =<< extendInplace =<< injectM (Abs outFrag resultAbs)
     injectM $ Abs b $ Abs decls result'
@@ -294,7 +347,7 @@ infNamesToEmissions emissions =
 
 instance BindingsReader (InfererM i) where
   addBindings e = InfererM $ EnvReaderT $ lift do
-    withInplaceOutEnv e \(InfOutMap bindings _) e' ->
+    withInplaceOutEnv e \(InfOutMap bindings _ _) e' ->
       WithBindings bindings e'
 
 instance Scopable (InfererM i) where
@@ -304,8 +357,8 @@ instance Scopable (InfererM i) where
 
   extendNamelessBindings frag cont = InfererM $ EnvReaderT $ ReaderT \env -> do
     Distinct <- getDistinct
-    liftBetweenInplaceTs id (\(InfOutMap bindings ss) ->
-                               InfOutMap (extendOutMap bindings frag) ss) id $
+    liftBetweenInplaceTs id (\(InfOutMap bindings ss un) ->
+                               InfOutMap (extendOutMap bindings frag) ss un) id $
        runEnvReaderT env $ runInfererM' $ cont
 
 -- === actual inference pass ===
@@ -398,7 +451,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     --     is dependent. Also, the Pi binder is never considered to be in scope for
     --     inference variables, so they cannot get unified with it. Hence, this zonk
     --     is safe and doesn't make the type checking depend on the program order.
-    infTy <- zonk =<< getType =<< zonk f'
+    infTy <- getType =<< zonk f'
     piTy  <- addSrcContext (srcPos f) $ fromPiType True arr infTy
     case considerNonDepPiType piTy of
       Just (_, argTy, effs, _) -> do
@@ -1073,9 +1126,7 @@ class BindingsReader m => Solver (m::MonadKind1) where
   extendSolverSubst :: AtomName n -> Type n -> m n ()
   emitSolver :: SolverBinding n -> m n (AtomName n)
 
-newtype SolverOutMap (n::S) =
-  SolverOutMap { fromSolverOutMap :: InfOutMap n }
-  deriving (HasScope)
+type SolverOutMap = InfOutMap
 
 data SolverOutFrag (n::S) (l::S) =
   SolverOutFrag (SolverEmissions n l) (SolverSubst l)
@@ -1096,12 +1147,9 @@ instance OutFrag SolverOutFrag where
     withExtEvidence em' $
       SolverOutFrag (em >>> em') (catSolverSubsts scope (inject ss) ss')
 
-instance OutMap SolverOutMap where
-  emptyOutMap = SolverOutMap emptyOutMap
-
-instance ExtOutMap SolverOutMap SolverOutFrag where
-  extendOutMap (SolverOutMap infOutMap) outFrag =
-    SolverOutMap $ extendOutMap infOutMap $ liftSolverOutFrag outFrag
+instance ExtOutMap InfOutMap SolverOutFrag where
+  extendOutMap infOutMap outFrag =
+    extendOutMap infOutMap $ liftSolverOutFrag outFrag
 
 newtype SolverM (n::S) (a:: *) =
   SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag SearcherM n a }
@@ -1110,7 +1158,7 @@ newtype SolverM (n::S) (a:: *) =
 
 instance BindingsReader SolverM where
   addBindings e = SolverM do
-    withInplaceOutEnv e \(SolverOutMap (InfOutMap bindings _)) e' ->
+    withInplaceOutEnv e \(InfOutMap bindings _ _) e' ->
       WithBindings bindings e'
 
 instance Solver SolverM where
@@ -1118,9 +1166,7 @@ instance Solver SolverM where
     void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
       DistinctAbs (SolverOutFrag Empty (singletonSolverSubst v' ty')) UnitE
 
-  zonk e = SolverM $
-   withInplaceOutEnv e \(SolverOutMap (InfOutMap bindings solverSubst)) e' ->
-     applySolverSubstE (toScope bindings) solverSubst e'
+  zonk e = SolverM $ withInplaceOutEnv e zonkWithOutMap
 
   emitSolver binding = SolverM $
     emitInplace "?" binding \b binding' ->
@@ -1144,6 +1190,9 @@ emptySolverSubst = SolverSubst mempty
 singletonSolverSubst :: AtomName n -> Type n -> SolverSubst n
 singletonSolverSubst v ty = SolverSubst $ M.singleton v ty
 
+-- We apply the rhs subst over the full lhs subst. We could try tracking
+-- metadata about which name->type mappings contain no inference variables and
+-- can be skipped.
 catSolverSubsts :: Distinct n => Scope n -> SolverSubst n -> SolverSubst n -> SolverSubst n
 catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) = SolverSubst $ s1' <> s2
   where s1' = fmap (applySolverSubstE scope (SolverSubst s2)) s1
@@ -1162,6 +1211,11 @@ applySolverSubstE :: (SubstE (SubstVal AtomNameC Atom) e, Distinct n)
                   => Scope n -> SolverSubst n -> e n -> e n
 applySolverSubstE scope solverSubst e =
   fmapNames scope (lookupSolverSubst solverSubst) e
+
+zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
+               => InfOutMap n -> e n -> e n
+zonkWithOutMap (InfOutMap bindings solverSubst _) e =
+  applySolverSubstE (toScope bindings) solverSubst e
 
 _applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
                    => Scope n -> SolverSubst n -> b n l -> b n l

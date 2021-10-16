@@ -69,6 +69,7 @@ module SaferNames.Name (
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
   freeVarsList, isFreeIn, todoInjectableProof, liftBetweenInplaceTs, checkEmpty,
+  updateEnvFrag, nameSetToList, toNameSet,
   ) where
 
 import Prelude hiding (id, (.))
@@ -225,6 +226,10 @@ lookupMaterializedEnv (MaterializedEnv frag) name =
 instance (InjectableB b, BindsNames b) => OutFrag (Nest b) where
   emptyOutFrag = id
   catOutFrags _ = (>>>)
+
+updateEnvFrag :: Name c i -> v c o -> EnvFrag v VoidS i o -> EnvFrag v VoidS i o
+updateEnvFrag (UnsafeMakeName rep v) rhs (UnsafeMakeEnv m) =
+  UnsafeMakeEnv $ M.insert v (EnvVal rep rhs) m
 
 -- === monadic type classes for reading and extending envs and scopes ===
 
@@ -2122,11 +2127,17 @@ hoist b e =
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
 freeVarsList :: HoistableE e => NameColorRep c -> e n -> [Name c n]
-freeVarsList c e =
-  catMaybes $ flip map (M.toList $ freeVarsE e) \(rawName, (SomeNameColor c')) ->
-   case eqNameColorRep c c' of
-     Just ColorsEqual -> Just $ UnsafeMakeName c rawName
-     Nothing -> Nothing
+freeVarsList c e = nameSetToList c $ freeVarsE e
+
+nameSetToList :: NameColorRep c -> NameSet n -> [Name c n]
+nameSetToList c nameSet =
+  catMaybes $ flip map (M.toList nameSet) \(rawName, (SomeNameColor c')) ->
+    case eqNameColorRep c c' of
+      Just ColorsEqual -> Just $ UnsafeMakeName c rawName
+      Nothing -> Nothing
+
+toNameSet :: ScopeFrag n l -> NameSet l
+toNameSet (UnsafeMakeScopeFrag s) = fmap unsafeCoerceE s
 
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
 isFreeIn v e = getRawName v `M.member` freeVarsE e

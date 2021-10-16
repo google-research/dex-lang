@@ -50,7 +50,7 @@ module SaferNames.Syntax (
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     ToBinding (..), refreshBinders, withFreshBinder, withFreshLamBinder,
     withFreshNameBinder,
-    BindingsFrag (..), lookupBindings, runBindingsReaderT,
+    BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
@@ -485,8 +485,17 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
-  WithBindings (Bindings bindings _ _ _) v' <- addBindings v
-  injectM $ lookupTerminalEnvFrag (fromRecEnv bindings) v'
+  WithBindings bindings v' <- addBindings v
+  injectM $ lookupBindingsPure bindings v'
+
+lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
+lookupBindingsPure (Bindings bindings _ _ _) v =
+  lookupTerminalEnvFrag (fromRecEnv bindings) v
+
+updateBindings :: Name c n -> Binding c n -> Bindings n -> Bindings n
+updateBindings v rhs bindings =
+  bindings { getBindings = RecEnv $ updateEnvFrag v rhs bs }
+  where (RecEnv bs) = getBindings bindings
 
 withFreshNameBinder
   :: (NameColor c, BindingsReader m, BindingsExtender m)
