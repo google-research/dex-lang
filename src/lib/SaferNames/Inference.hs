@@ -189,7 +189,7 @@ instance Inferer InfererM where
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do
     expr' <- zonk expr
-    ty <- getType expr'
+    ty <- zonk =<< getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
 
   buildScopedGeneral ab cont = InfererM $ EnvReaderT $ ReaderT \env -> do
@@ -398,7 +398,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     --     is dependent. Also, the Pi binder is never considered to be in scope for
     --     inference variables, so they cannot get unified with it. Hence, this zonk
     --     is safe and doesn't make the type checking depend on the program order.
-    infTy <- getType =<< zonk f'
+    infTy <- zonk =<< getType =<< zonk f'
     piTy  <- addSrcContext (srcPos f) $ fromPiType True arr infTy
     case considerNonDepPiType piTy of
       Just (_, argTy, effs, _) -> do
