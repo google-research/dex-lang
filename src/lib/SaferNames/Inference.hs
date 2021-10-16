@@ -382,7 +382,9 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
     lam <- case reqTy of
-      Check _ (Pi piType) -> checkULam uLamExpr piType
+      Check _ (Pi tabPiTy) -> do
+        lamPiTy <- buildForTypeFromTabType allowedEff tabPiTy
+        checkULam uLamExpr lamPiTy
       Check _ _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
     result <- liftM Var $ emit $ Hof $ For (RegularFor dir) lam
@@ -434,7 +436,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
             ty'   <- checkUType   ty
             return $ PairE effs' ty'
         return (effs', ty')
-    matchRequirement piTy
+    matchRequirement $ Pi piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
   UCase scrut alts -> do
@@ -618,6 +620,15 @@ inferUVar = \case
   UMethodVar v -> do
     ~(MethodBinding _ _ getter) <- lookupBindings v
     return getter
+
+buildForTypeFromTabType :: (Fallible1 m, Builder m)
+                        => EffectRow n -> PiType n -> m n (PiType n)
+buildForTypeFromTabType effs tabPiTy@(PiType arr (bPi:>piArgTy) _ _) = do
+  unless (arr == TabArrow) $ throw TypeErr $ "Not an table arrow type: " ++ pprint arr
+  buildPi (getNameHint bPi) PlainArrow piArgTy \i -> do
+    Distinct <- getDistinct
+    (_, resultTy) <- instantiatePi (inject tabPiTy) $ Var i
+    return (inject effs, resultTy)
 
 inferUDeclLocal ::  (Emits o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
 inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do

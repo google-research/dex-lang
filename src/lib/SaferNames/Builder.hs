@@ -367,17 +367,17 @@ buildPureNaryLam _ _ _ = error "impossible"
 buildPi :: (Fallible1 m, Builder m)
         => NameHint -> Arrow -> Type n
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
-        -> m n (Type n)
+        -> m n (PiType n)
 buildPi hint arr ty body = do
   ab <- withFreshBinder hint ty \v -> do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy
   Abs b (PairE effs resultTy) <- return ab
-  return $ Pi $ PiType arr b effs resultTy
+  return $ PiType arr b effs resultTy
 
 buildNonDepPi :: (Fallible1 m, Builder m)
               => NameHint -> Arrow -> Type n -> EffectRow n -> Type n
-              -> m n (Type n)
+              -> m n (PiType n)
 buildNonDepPi hint arr argTy effs resultTy = buildPi hint arr argTy \_ -> do
   resultTy' <- injectM resultTy
   effs'     <- injectM effs
