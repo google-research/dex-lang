@@ -140,18 +140,20 @@ instance HasScope InfOutMap where
   toScope (InfOutMap bindings _ _) = toScope bindings
 
 instance OutMap InfOutMap where
-  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst emptyUnsolved
+  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst mempty
 
 instance ExtOutMap InfOutMap BindingsFrag where
-  extendOutMap (InfOutMap bindings ss unsolved) frag =
+  extendOutMap (InfOutMap bindings ss oldUn) frag =
     withExtEvidence frag do
-      let newUnsolved = UnsolvedBindings $ fromUnsolvedBindings (inject unsolved)
-                                         <> getAtomNames frag
-      zonkInfOutMap $
-        InfOutMap (bindings `extendOutMap` frag) (inject ss) newUnsolved
+      let newUn = UnsolvedBindings $ getAtomNames frag
+      -- as an optimization, only do the zonking for the new stuff
+      let newBindings = bindings `extendOutMap` frag
+      let (zonkedUn, zonkedBindings) = zonkUnsolvedBindings (inject ss) newUn newBindings
+      InfOutMap zonkedBindings (inject ss) (inject oldUn <> zonkedUn)
 
 newtype UnsolvedBindings (n::S) =
   UnsolvedBindings { fromUnsolvedBindings :: S.Set (AtomName n) }
+  deriving (Semigroup, Monoid)
 
 instance InjectableE UnsolvedBindings where
   injectionProofE = undefined
@@ -159,30 +161,29 @@ instance InjectableE UnsolvedBindings where
 getAtomNames :: Distinct l => BindingsFrag n l -> S.Set (AtomName l)
 getAtomNames frag = S.fromList $ nameSetToList AtomNameRep $ toNameSet $ toScopeFrag frag
 
-emptyUnsolved :: UnsolvedBindings n
-emptyUnsolved = UnsolvedBindings mempty
-
 -- query each binding rhs for inference names and add it to the set if needed
 
 extendInfOutMapSolver :: Distinct n => InfOutMap n -> SolverSubst n -> InfOutMap n
 extendInfOutMapSolver (InfOutMap bindings ss un) ss' = do
+  let (un', bindings') = zonkUnsolvedBindings ss' un bindings
   let ssFinal = catSolverSubsts (toScope bindings) ss ss'
-  zonkInfOutMap $ InfOutMap bindings ssFinal un
+  InfOutMap bindings' ssFinal un'
+
+substIsEmpty :: SolverSubst n -> Bool
+substIsEmpty (SolverSubst subst) = null subst
 
 -- TODO: zonk the allowed effects and synth candidates in the bindings too
-zonkInfOutMap :: Distinct n => InfOutMap n -> InfOutMap n
-zonkInfOutMap outMap@(InfOutMap initBindings ss (UnsolvedBindings un)) =
-  InfOutMap finalBindings ss (UnsolvedBindings un')
-  where
-    (un', finalBindings) =
-      flip runState initBindings $ execWriterT do
-        forM_ (S.toList un) \v -> do
-          rhs <- flip lookupBindingsPure v <$> get
-          let rhs' = zonkWithOutMap outMap rhs
-          modify \bindings ->
-            updateBindings v rhs' bindings
-          when (hasInferenceVars initBindings rhs') $
-            tell (S.singleton v)
+zonkUnsolvedBindings :: Distinct n => SolverSubst n -> UnsolvedBindings n -> Bindings n
+                     -> (UnsolvedBindings n, Bindings n)
+zonkUnsolvedBindings ss un bindings | substIsEmpty ss = (un, bindings)
+zonkUnsolvedBindings ss unsolved bindings =
+  flip runState bindings $ execWriterT do
+    forM_ (S.toList $ fromUnsolvedBindings unsolved) \v -> do
+      rhs <- flip lookupBindingsPure v <$> get
+      let rhs' = zonkWithOutMap (InfOutMap bindings ss mempty) rhs
+      modify $ updateBindings v rhs'
+      when (hasInferenceVars bindings rhs') $
+        tell $ UnsolvedBindings $ S.singleton v
 
 hasInferenceVars :: HoistableE e => Bindings n -> e n -> Bool
 hasInferenceVars bs e = any isInferenceVar $ freeVarsList AtomNameRep e
