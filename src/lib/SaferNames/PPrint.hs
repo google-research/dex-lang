@@ -34,7 +34,6 @@ import LabeledItems
 
 import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
                prettyFromPrettyPrec, DocPrec, fromInfix, pAppArg)
-import Env (nameTag)
 
 import SaferNames.Name
 import SaferNames.Syntax
@@ -109,7 +108,8 @@ instance PrettyPrecE e => Pretty (PrimCon (e n)) where pretty = prettyFromPretty
 instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
 
 instance Pretty (DeclBinding n) where
-  pretty (DeclBinding ann ty expr) = "DeclBinding" <+> p ann <+> p ty <+> p expr
+  pretty (DeclBinding ann ty expr) =
+    "Decl" <> p ann <> indented ("type:" <+> p ty <> hardline <> "value" <+> p expr)
 
 instance Pretty (Decl n l) where
   pretty decl = case decl of
@@ -142,9 +142,9 @@ instance PrettyPrec (Atom n) where
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
-    TypeCon (name, _) params -> case params of
+    TypeCon (_, DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
-      [l, r] | Just sym <- fromInfix (nameTag (getRawName name)) ->
+      [l, r] | Just sym <- fromInfix (fromString name) ->
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) params
@@ -251,7 +251,19 @@ instance Pretty (Effect n) where
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
 instance Pretty (AtomBinding n) where
-  pretty _ = "<todo: atom binding pprint>"
+  pretty binding = case binding of
+    LetBound    b -> p b
+    LamBound    b -> p b
+    MiscBound   t -> p t
+    SolverBound b -> p b
+
+instance Pretty (LamBinding n) where
+  pretty (LamBinding arr ty) =
+    "Lambda binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
+
+instance Pretty (SolverBinding n) where
+  pretty (InfVarBound ty) = "Inference variable of type:" <+> p ty
+  pretty (SkolemBound ty) = "Skolem variable of type:"    <+> p ty
 
 instance Pretty (Binding s n) where
   pretty b = case b of
@@ -269,11 +281,11 @@ instance Pretty (Binding s n) where
 
 instance Pretty (DataDef n) where
   pretty (DataDef dataDefSourceName _ _) =
-    "Data def" <+> pretty dataDefSourceName
+    "Data def:" <+> pretty dataDefSourceName
 
 instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =
-    "Class" <+> pretty classSourceName <+> pretty methodNames
+    "Class:" <+> pretty classSourceName <+> pretty methodNames
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedEnv v i o)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnv v o)

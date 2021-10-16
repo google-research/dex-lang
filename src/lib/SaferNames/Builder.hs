@@ -486,7 +486,7 @@ buildSplitCase tys scrut resultTy match fallback = do
 emitDataDef :: TopBuilder m => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =
   emitBinding hint $ DataDefBinding dataDef
-  where hint = getNameHint $ "Def" <> sourceName
+  where hint = getNameHint sourceName
 
 emitClassDef :: TopBuilder m => ClassDef n -> m n (Name ClassNameC n)
 emitClassDef classDef@(ClassDef name _ _) =
