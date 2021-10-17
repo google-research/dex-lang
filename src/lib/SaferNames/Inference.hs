@@ -16,7 +16,6 @@ import Prelude hiding ((.), id)
 import Control.Category
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Identity
 import Control.Monad.State (get, modify, runState)
 import Control.Monad.Writer.Strict (execWriterT, tell)
 import Control.Monad.Reader
@@ -1220,9 +1219,8 @@ zonkWithOutMap (InfOutMap bindings solverSubst _) e =
 
 _applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
                    => Scope n -> SolverSubst n -> b n l -> b n l
-_applySolverSubstB scope solverSubst e =
-  runIdentity $ substBDistinct (scope, env) e
-  where env = newSubstTraversalEnv (return . lookupSolverSubst solverSubst)
+_applySolverSubstB scope solverSubst e = substBDistinct (scope, env) e
+  where env = newEnv $ lookupSolverSubst solverSubst
 
 deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
 deleteFromSubst (SolverSubst m) v
@@ -1413,13 +1411,11 @@ newtype ZonkableSourceMap (n::S) =
   deriving (HoistableE, InjectableE)
 
 instance SubstE Name ZonkableSourceMap where
-  substE env (ZonkableSM e) = ZonkableSM <$> substE env e
+  substE env (ZonkableSM e) = ZonkableSM $ substE env e
 
 instance SubstE AtomSubstVal ZonkableSourceMap where
   substE (scope, env) e = substE (scope, env') e
-    where env' = newSubstTraversalEnv \v -> do
-            substVal <- lookupSustTraversalEnv env v
-            case substVal of
-              SubstVal (Var v') -> return v'
-              SubstVal _ -> error "shouldn't happen"
-              Rename v' -> return v'
+    where env' = newEnv \v -> case env ! v of
+                   SubstVal (Var v') -> v'
+                   SubstVal _ -> error "shouldn't happen"
+                   Rename v' -> v'

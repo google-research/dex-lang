@@ -583,7 +583,7 @@ instance ProvesExt (SomeDecl binding) where
 instance (InjectableV v, SubstV v binding)
          => SubstB v (SomeDecl binding) where
   substB env (SomeDecl b binding) cont = do
-    binding' <- substE env binding
+    let binding' = substE env binding
     substB env b \env' b' -> cont env' $ SomeDecl b' binding'
   substBDistinct _ _ = undefined
 
@@ -1288,20 +1288,18 @@ instance SubstE AtomSubstVal Atom where
     LeftE specialCase -> case specialCase of
       -- Var
       Case0 v -> do
-        substVal <- lookupSustTraversalEnv env v
-        case substVal of
-          Rename v' -> return $ Var v'
-          SubstVal x -> return x
+        case env ! v of
+          Rename v' -> Var v'
+          SubstVal x -> x
       -- ProjectElt
       Case1 (PairE (LiftE idxs) v) -> do
-        substVal <- lookupSustTraversalEnv env v
-        v' <- case substVal of
-          SubstVal x -> return x
-          Rename v'  -> return $ Var v'
-        return $ getProjection (NE.toList idxs) v'
+        let v' = case env ! v of
+                   SubstVal x -> x
+                   Rename v''  -> Var v''
+        getProjection (NE.toList idxs) v'
       Case1 _ -> error "impossible"
       _ -> error "impossible"
-    RightE rest -> (toE . RightE) <$> substE (scope, env) rest
+    RightE rest -> (toE . RightE) $ substE (scope, env) rest
 
 instance GenericE Expr where
   type RepE Expr =
@@ -1348,16 +1346,15 @@ instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2
 
 instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
   substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
-    items' <- mapM (substE (scope, env)) items
-    ext <- case maybeExt of
-      Nothing -> return $ NoExt NoLabeledItems
-      Just v ->
-        lookupSustTraversalEnv env v >>= \case
-          Rename        v'  -> return $ Ext NoLabeledItems $ Just v'
-          SubstVal (Var v') -> return $ Ext NoLabeledItems $ Just v'
-          SubstVal (LabeledRow row) -> return row
-          _ -> error "Not a valid labeled row substitution"
-    return $ ExtLabeledItemsE $ prefixExtLabeledItems items' ext
+    let items' = fmap (substE (scope, env)) items
+    let ext = case maybeExt of
+                Nothing -> NoExt NoLabeledItems
+                Just v -> case env ! v of
+                  Rename        v'  -> Ext NoLabeledItems $ Just v'
+                  SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
+                  SubstVal (LabeledRow row) -> row
+                  _ -> error "Not a valid labeled row substitution"
+    ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
 instance GenericE Block where
   type RepE Block = PairE Type (Abs (Nest Decl) Expr)
@@ -1453,13 +1450,13 @@ instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
   substE (_, env) eff = case eff of
     RWSEffect rws v -> do
-      v' <- lookupSustTraversalEnv env v >>= \case
-              Rename        v'  -> return v'
-              SubstVal (Var v') -> return v'
-              SubstVal _ -> error "Heap parameter must be a name"
-      return $ RWSEffect rws v'
-    ExceptionEffect -> return ExceptionEffect
-    IOEffect        -> return IOEffect
+      let v' = case env ! v of
+                 Rename        v''  -> v''
+                 SubstVal (Var v'') -> v''
+                 SubstVal _ -> error "Heap parameter must be a name"
+      RWSEffect rws v'
+    ExceptionEffect -> ExceptionEffect
+    IOEffect        -> IOEffect
 
 instance OrdE name => GenericE (EffectRowP name) where
   type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE name)
@@ -1478,15 +1475,15 @@ instance AlphaEqE    (EffectRowP AtomName)
 
 instance SubstE AtomSubstVal (EffectRowP AtomName) where
   substE env (EffectRow effs tailVar) = do
-    effs' <- S.fromList <$> mapM (substE env) (S.toList effs)
-    tailEffRow <- case tailVar of
-      Nothing -> return $ EffectRow mempty Nothing
-      Just v -> lookupSustTraversalEnv (snd env) v >>= \case
-        Rename        v'  -> return $ EffectRow mempty (Just v')
-        SubstVal (Var v') -> return $ EffectRow mempty (Just v')
-        SubstVal (Eff r)  -> return r
-        _ -> error "Not a valid effect substitution"
-    return $ extendEffRow effs' tailEffRow
+    let effs' = S.fromList $ map (substE env) (S.toList effs)
+    let tailEffRow = case tailVar of
+          Nothing -> EffectRow mempty Nothing
+          Just v -> case snd env ! v of
+            Rename        v'  -> EffectRow mempty (Just v')
+            SubstVal (Var v') -> EffectRow mempty (Just v')
+            SubstVal (Eff r)  -> r
+            _ -> error "Not a valid effect substitution"
+    extendEffRow effs' tailEffRow
 
 instance GenericE SynthCandidates where
   type RepE SynthCandidates = PairE (ListE Atom) (PairE (ListE Atom) (ListE Atom))
@@ -1751,11 +1748,11 @@ instance BindsBindings UnitB where
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where
   substE env = \case
-    UAtomVar    v -> UAtomVar    <$> substE env v
-    UTyConVar   v -> UTyConVar   <$> substE env v
-    UDataConVar v -> UDataConVar <$> substE env v
-    UClassVar   v -> UClassVar   <$> substE env v
-    UMethodVar  v -> UMethodVar  <$> substE env v
+    UAtomVar    v -> UAtomVar    $ substE env v
+    UTyConVar   v -> UTyConVar   $ substE env v
+    UDataConVar v -> UDataConVar $ substE env v
+    UClassVar   v -> UClassVar   $ substE env v
+    UMethodVar  v -> UMethodVar  $ substE env v
 
 instance InjectableE e => InjectableE (WithBindings e) where
   injectionProofE (fresh::InjectionCoercion n l) (WithBindings (bindings :: Bindings h) e) =

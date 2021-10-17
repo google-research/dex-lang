@@ -364,7 +364,7 @@ instance HasSafeVersionB DRecEnvFrag where
   type SafeVersionB DRecEnvFrag = RecEnvFrag S.Binding
   toSafeB (DRecEnvFrag env) cont =
     renameBinders (envPairs env) \nest -> do
-      nest' <- forEachNestItem nest \(TempPair b info) -> do
+      nest' <- forEachNestItemM nest \(TempPair b info) -> do
         EnvVal rep info' <- toSafeE info
         case eqNameColorRep rep (getNameColor b) of
           Just ColorsEqual ->

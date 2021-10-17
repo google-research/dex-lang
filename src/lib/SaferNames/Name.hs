@@ -19,12 +19,11 @@ module SaferNames.Name (
   Name (..), RawName, S (..), C (..), (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), FromName (..), Distinct, DistinctWitness (..),
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence, getScopeProxy,
-  Env (..), idEnv, idEnvFrag, newEnv, envFromFrag,
+  Env (..), idEnv, idEnvFrag, newEnv, envFromFrag, traverseEnvFrag,
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
-  SubstV, MonadicVal (..), lookupSustTraversalEnv,
-  InplaceT, emitInplace, withInplaceOutEnv, extendInplace,
+  SubstV, InplaceT, emitInplace, withInplaceOutEnv, extendInplace,
   runInplaceT, embedInplaceT, doInplace, scopedInplaceGeneral,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
@@ -37,8 +36,7 @@ module SaferNames.Name (
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
-  lookupEnvM, dropSubst, extendEnv,
-  newSubstTraversalEnv, idSubstTraversalEnv, fmapNames, traverseNames,
+  lookupEnvM, dropSubst, extendEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
@@ -48,7 +46,7 @@ module SaferNames.Name (
   withFreshM, withFreshLike, inject, injectM, (!), (<>>),
   envFragAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..),
-  NameGen (..), fmapG, NameGenT (..), traverseEnvFrag, fmapNest, forEachNestItem,
+  NameGen (..), fmapG, NameGenT (..), fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..),
@@ -388,14 +386,9 @@ instance Category ExtWitness where
 getScopeProxy :: Monad (m n) => m n (UnitE n)
 getScopeProxy = return UnitE
 
-traverseNames :: (Monad m, SubstE v e)
-              => Distinct o => Scope o -> (forall c. Name c i -> m (v c o)) -> e i -> m (e o)
-traverseNames scope f e = substE (scope, newSubstTraversalEnv f) e
-
-fmapNames :: forall v e i o.
-             SubstE v e
-          => Distinct o => Scope o -> (forall c. Name c i -> v c o) -> e i -> e o
-fmapNames scope f e = runIdentity $ traverseNames scope (return . f) e
+fmapNames :: (SubstE v e, Distinct o)
+          => Scope o -> (forall c. Name c i -> v c o) -> e i -> e o
+fmapNames scope f e = substE (scope, newEnv f) e
 
 toConstAbs :: (InjectableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
@@ -406,79 +399,46 @@ toConstAbs rep body = do
 
 -- === type classes for traversing names ===
 
--- composes a monad-kinded type with a V-kinded type
-newtype MonadicVal (m::MonadKind) (v::V) (c::C) (n::S) =
-  MonadicVal { fromMonadicVal :: (m (v c n)) }
-
-instance InjectableV v => InjectableV (MonadicVal m v)
-instance (NameColor c, InjectableV v) => InjectableE (MonadicVal m v c) where
-  injectionProofE = todoInjectableProof
-
-newtype SubstTraversalEnv (m::MonadKind) (v::V) (i::S) (o::S) =
-  SubstTraversalEnv (Env (MonadicVal m v) i o)
-
-instance (InjectableV v, Monad m) => InMap (SubstTraversalEnv m v) (EnvFrag v) where
-  emptyInMap = SubstTraversalEnv emptyInMap
-  extendInMap (SubstTraversalEnv env) frag =
-    SubstTraversalEnv $ env <>> fmapEnvFrag (\_ x -> MonadicVal $ return x) frag
-
-instance InjectableV v => InjectableE (SubstTraversalEnv m v i) where
-  injectionProofE fresh (SubstTraversalEnv env) =
-    SubstTraversalEnv $ injectionProofE fresh env
-
-newSubstTraversalEnv :: (forall c. Name c i -> m (v c o)) -> SubstTraversalEnv m v i o
-newSubstTraversalEnv f = SubstTraversalEnv $ newEnv (MonadicVal . f)
-
-idSubstTraversalEnv :: (FromName v, Monad m) => SubstTraversalEnv m v n n
-idSubstTraversalEnv = newSubstTraversalEnv (return . fromName)
-
-lookupSustTraversalEnv :: SubstTraversalEnv m v i o -> Name c i -> m (v c o)
-lookupSustTraversalEnv (SubstTraversalEnv env) v = fromMonadicVal $ env ! v
-
 class FromName v => SubstE (v::V) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
-  substE :: (Monad m, Distinct o)
-         => (Scope o, SubstTraversalEnv m v i o)
-         -> e i -> m (e o)
+  substE :: Distinct o => (Scope o, Env v i o) -> e i -> e o
 
-  default substE :: (GenericE e, SubstE v (RepE e))
-                 => (Monad m, Distinct o)
-                 => (Scope o, SubstTraversalEnv m v i o)
-                 -> e i -> m (e o)
-  substE env e = toE <$> substE env (fromE e)
+  default substE :: (GenericE e, SubstE v (RepE e), Distinct o)
+                 => (Scope o, Env v i o) -> e i -> e o
+  substE env e = toE $ substE env (fromE e)
 
 class (FromName v, InjectableB b) => SubstB (v::V) (b::B) where
   substB
-    :: (Monad m, Distinct o)
-    => (Scope o, SubstTraversalEnv m v i o)
+    :: Distinct o
+    => (Scope o, Env v i o)
     -> b i i'
-    -> (forall o'. Distinct o' => (Scope o', SubstTraversalEnv m v i' o') -> b o o' -> m a)
-    -> m a
+    -> (forall o'. Distinct o' => (Scope o', Env v i' o') -> b o o' -> a)
+    -> a
 
   default substB
     :: (GenericB b, SubstB v (RepB b))
-    => (Monad m, Distinct o)
-    => (Scope o, SubstTraversalEnv m v i o)
+    => Distinct o
+    => (Scope o, Env v i o)
     -> b i i'
-    -> (forall o'. Distinct o' => (Scope o', SubstTraversalEnv m v i' o') -> b o o' -> m a)
-    -> m a
+    -> (forall o'. Distinct o' => (Scope o', Env v i' o') -> b o o' -> a)
+    -> a
   substB env b cont =
     substB env (fromB b) \env' b' ->
       cont env' $ toB b'
 
   substBDistinct
-    :: (Monad m, Distinct l)
-    => (Scope n, SubstTraversalEnv m v n n)
+    :: Distinct l
+    => (Scope n, Env v n n)
     -> b n l
-    -> m (b n l)
+    -> b n l
 
   default substBDistinct
     :: (GenericB b, SubstB v (RepB b))
-    => (Monad m, Distinct l)
-    => (Scope n, SubstTraversalEnv m v n n)
+    => Distinct l
+    => (Scope n, Env v n n)
     -> b n l
-    -> m (b n l)
-  substBDistinct env b = liftM toB $ substBDistinct env $ fromB b
+    -> b n l
+  substBDistinct env b = toB $ substBDistinct env $ fromB b
 
 class ( FromName substVal, InjectableV v
       , forall c. NameColor c => SubstE substVal (v c))
@@ -489,7 +449,7 @@ type HasNamesB = SubstB Name
 
 instance SubstV Name Name where
 instance SubstE Name (Name c) where
-  substE (_, env) name = lookupSustTraversalEnv env name
+  substE (_, env) name = env ! name
 
 instance (InjectableV v, FromName v) => SubstB v (NameBinder c) where
   substB (scope, env) b cont = do
@@ -499,7 +459,7 @@ instance (InjectableV v, FromName v) => SubstB v (NameBinder c) where
       let env' = inject env <>> b @> (fromName $ binderName b')
       cont (scope', env') b'
 
-  substBDistinct _ b = return b
+  substBDistinct _ b = b
 
 substM :: (EnvReader v m, ScopeReader2 m, InjectableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
@@ -518,9 +478,7 @@ data DistinctAbs (b::B) (e::E) (n::S) where
 
 instance (SubstB v b, SubstE v e) => SubstE v (DistinctAbs b e) where
   substE env (DistinctAbs b e) =
-    substB env b \env' b' -> do
-      e' <- substE env' e
-      return $ DistinctAbs b' e'
+    substB env b \env' b' -> DistinctAbs b' $ substE env' e
 
 instance (HoistableB b, HoistableE e) => HoistableE (DistinctAbs b e) where
   freeVarsE (DistinctAbs b e) = freeVarsE (Abs b e)
@@ -696,12 +654,17 @@ fmapNest :: (forall ii ii'. b ii ii' -> b' ii ii')
 fmapNest _ Empty = Empty
 fmapNest f (Nest b rest) = Nest (f b) $ fmapNest f rest
 
-forEachNestItem :: Monad m
+forEachNestItemM :: Monad m
                 => Nest b i i'
                 -> (forall ii ii'. b ii ii' -> m (b' ii ii'))
                 -> m (Nest b' i i')
-forEachNestItem Empty _ = return Empty
-forEachNestItem (Nest b rest) f = Nest <$> f b <*> forEachNestItem rest f
+forEachNestItemM Empty _ = return Empty
+forEachNestItemM (Nest b rest) f = Nest <$> f b <*> forEachNestItemM rest f
+
+forEachNestItem :: Nest b i i'
+                -> (forall ii ii'. b ii ii' -> b' ii ii')
+                -> Nest b' i i'
+forEachNestItem nest f = runIdentity $ forEachNestItemM nest (return . f)
 
 -- TODO: make a more general E-kinded Traversable?
 traverseEnvFrag :: forall v v' i i' o o' m .
@@ -709,7 +672,7 @@ traverseEnvFrag :: forall v v' i i' o o' m .
                 => (forall c. NameColor c => v c o -> m (v' c o'))
                 -> EnvFrag v i i' o  -> m (EnvFrag v' i i' o')
 traverseEnvFrag f frag = liftM fromEnvPairs $
-  forEachNestItem (toEnvPairs frag) \(EnvPair b val) ->
+  forEachNestItemM (toEnvPairs frag) \(EnvPair b val) ->
     EnvPair b <$> f val
 
 foldMapEnvFrag
@@ -804,10 +767,9 @@ class ColorsNotEqual a b where
 
 instance (ColorsNotEqual cMatch c)
          => (SubstE (SubstVal cMatch atom) (Name c)) where
-  substE (_, env) name = do
-    substVal <- lookupSustTraversalEnv env name
-    case substVal of
-      Rename name' -> return name'
+  substE (_, env) name =
+    case env ! name of
+      Rename name' -> name'
       SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
 
 -- TODO: we can fill out the full (N^2) set of instances if we need to
@@ -1414,7 +1376,7 @@ instance (HoistableB b, HoistableE e) => HoistableE (Abs b e) where
 
 instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
   substE env (Abs b body) = do
-    substB env b \env' b' -> Abs b' <$> substE env' body
+    substB env b \env' b' -> Abs b' $ substE env' body
 
 instance (BindsNames b1, BindsNames b2) => ProvesExt  (PairB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (PairB b1 b2) where
@@ -1438,11 +1400,11 @@ instance ( BindsNames b1, SubstB v b1
   substBDistinct (scope, env) (PairB b1 b2) = do
     withSubscopeDistinct b2 do
       withExtEvidence b1 do
-        b1' <- substBDistinct (scope, env) b1
+        let b1' = substBDistinct (scope, env) b1
         let scope' = scope `extendOutMap` toScopeFrag b1
         let env' = inject env <>> idEnvFrag (toScopeFrag b1)
-        b2' <- substBDistinct (scope', env') b2
-        return $ PairB b1' b2'
+        let b2' = substBDistinct (scope', env') b2
+        PairB b1' b2'
 
 instance InjectableE e => InjectableB (LiftB e) where
   injectionProofB fresh (LiftB e) cont = cont fresh $ LiftB $ injectionProofE fresh e
@@ -1455,11 +1417,8 @@ instance HoistableE e => HoistableB (LiftB e) where
   freeVarsB (LiftB e) = freeVarsE e
 
 instance (InjectableE e, SubstE v e) => SubstB v (LiftB e) where
-  substB env (LiftB e) cont = do
-    e' <- substE env e
-    cont env $ LiftB e'
-
-  substBDistinct env (LiftB e) = LiftB <$> substE env e
+  substB env (LiftB e) cont = cont env $ LiftB $ substE env e
+  substBDistinct env (LiftB e) = LiftB $ substE env e
 
 instance (BindsNames b1, BindsNames b2) => ProvesExt  (EitherB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (EitherB b1 b2) where
@@ -1486,8 +1445,8 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
     substB env b \env' b' ->
       cont env' $ RightB b'
 
-  substBDistinct env (LeftB  b) = LeftB  <$> substBDistinct env b
-  substBDistinct env (RightB b) = RightB <$> substBDistinct env b
+  substBDistinct env (LeftB  b) = LeftB  $ substBDistinct env b
+  substBDistinct env (RightB b) = RightB $ substBDistinct env b
 
 instance GenericB (BinderP c ann) where
   type RepB (BinderP c ann) = PairB (LiftB ann) (NameBinder c)
@@ -1512,10 +1471,10 @@ instance (BindsNames b, SubstB v b, InjectableV v)
         cont env'' $ Nest b' bs'
   substB env Empty cont = cont env Empty
 
-  substBDistinct _ Empty = return Empty
-  substBDistinct env (Nest b bs) = do
-    PairB b' bs' <- substBDistinct env $ PairB b bs
-    return $ Nest b' bs'
+  substBDistinct _ Empty = Empty
+  substBDistinct env (Nest b bs) =
+    case substBDistinct env $ PairB b bs of
+      PairB b' bs' -> Nest b' bs'
 
 instance InjectableE UnitE where
   injectionProofE _ UnitE = UnitE
@@ -1524,7 +1483,7 @@ instance HoistableE UnitE where
   freeVarsE UnitE = mempty
 
 instance FromName v => SubstE v UnitE where
-  substE _ UnitE = return UnitE
+  substE _ UnitE = UnitE
 
 instance (Functor f, InjectableE e) => InjectableE (ComposeE f e) where
   injectionProofE fresh (ComposeE xs) = ComposeE $ fmap (injectionProofE fresh) xs
@@ -1533,7 +1492,7 @@ instance (Traversable f, HoistableE e) => HoistableE (ComposeE f e) where
   freeVarsE (ComposeE xs) = foldMap freeVarsE xs
 
 instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
-  substE env (ComposeE xs) = ComposeE <$> mapM (substE env) xs
+  substE env (ComposeE xs) = ComposeE $ fmap (substE env) xs
 
 -- alternatively we could use Zippable, but we'd want to be able to derive it
 -- (e.g. via generic) for the many-armed cases like PrimOp.
@@ -1549,7 +1508,7 @@ instance BindsNames UnitB where
 
 instance FromName v => SubstB v UnitB where
   substB env UnitB cont = cont env UnitB
-  substBDistinct _ UnitB = return UnitB
+  substBDistinct _ UnitB = UnitB
 
 instance InjectableB VoidB where
   injectionProofB _ _ _ = error "impossible"
@@ -1592,8 +1551,7 @@ instance (HoistableE e1, HoistableE e2) => HoistableE (PairE e1 e2) where
   freeVarsE (PairE e1 e2) = freeVarsE e1 <> freeVarsE e2
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
-  substE env (PairE x y) =
-    PairE <$> substE env x <*> substE env y
+  substE env (PairE x y) = PairE (substE env x) (substE env y)
 
 instance (InjectableE e1, InjectableE e2) => InjectableE (EitherE e1 e2) where
   injectionProofE fresh (LeftE  e) = LeftE  (injectionProofE fresh e)
@@ -1604,8 +1562,8 @@ instance (HoistableE e1, HoistableE e2) => HoistableE (EitherE e1 e2) where
   freeVarsE (RightE e) = freeVarsE e
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
-  substE env (LeftE  x) = LeftE  <$> substE env x
-  substE env (RightE x) = RightE <$> substE env x
+  substE env (LeftE  x) = LeftE  $ substE env x
+  substE env (RightE x) = RightE $ substE env x
 
 instance InjectableE e => InjectableE (ListE e) where
   injectionProofE fresh (ListE xs) = ListE $ map (injectionProofE fresh) xs
@@ -1622,13 +1580,13 @@ instance HoistableE (LiftE a) where
   freeVarsE (LiftE _) = mempty
 
 instance FromName v => SubstE v (LiftE a) where
-  substE _ (LiftE x) = return $ LiftE x
+  substE _ (LiftE x) = LiftE x
 
 instance Eq a => AlphaEqE (LiftE a) where
   alphaEqE (LiftE x) (LiftE y) = unless (x == y) zipErr
 
 instance SubstE v e => SubstE v (ListE e) where
-  substE env (ListE xs) = ListE <$> mapM (substE env) xs
+  substE env (ListE xs) = ListE $ map (substE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"
@@ -1674,27 +1632,29 @@ instance (InjectableV substVal, SubstV substVal v) => SubstB substVal (RecEnvFra
   substB env (RecEnvFrag recEnv) cont = do
     let pairs = toEnvPairs recEnv
     renameEnvPairBinders env pairs \env' pairs' -> do
-      pairs'' <- forEachNestItem pairs' \(EnvPair b x) -> EnvPair b <$> substE env' x
+      let pairs'' = forEachNestItem pairs' \(EnvPair b x) ->
+                      EnvPair b $ substE env' x
       cont env' $ RecEnvFrag $ fromEnvPairs pairs''
+
   substBDistinct (scope, env) (RecEnvFrag recEnv) = do
     let scopeFrag = toScopeFrag (RecEnvFrag recEnv)
     withExtEvidence scopeFrag do
       let scope' = scope `extendOutMap` scopeFrag
       let env' = inject env <>> idEnvFrag scopeFrag
-      pairs' <- forEachNestItem (toEnvPairs recEnv) \(EnvPair b x) ->
-        EnvPair b <$> substE (scope', env') x
-      return $ RecEnvFrag $ fromEnvPairs pairs'
+      let pairs' = forEachNestItem (toEnvPairs recEnv) \(EnvPair b x) ->
+                     EnvPair b $ substE (scope', env') x
+      RecEnvFrag $ fromEnvPairs pairs'
 
 renameEnvPairBinders
-  :: (Distinct o, Monad m, InjectableV v, InjectableV substVal, FromName substVal)
-  => (Scope o, SubstTraversalEnv m substVal i o)
+  :: (Distinct o, InjectableV v, InjectableV substVal, FromName substVal)
+  => (Scope o, Env substVal i o)
   -> Nest (EnvPair v ignored) i i'
   -> (forall o'.
          Distinct o'
-      => (Scope o', SubstTraversalEnv m substVal i' o')
+      => (Scope o', Env substVal i' o')
       -> Nest (EnvPair v ignored) o o'
-      -> m a)
-  -> m a
+      -> a)
+  -> a
 renameEnvPairBinders env Empty cont = cont env Empty
 renameEnvPairBinders env (Nest (EnvPair b v) rest) cont =
   substB env b \env' b' ->
@@ -1715,9 +1675,8 @@ substAbsDistinct
   :: (Distinct o, SubstB v b, SubstE v e, FromName v)
   => Scope o -> Env v i o -> Abs b e i -> DistinctAbs b e o
 substAbsDistinct scope env (Abs b e) =
-  runIdentity $ substB (scope, newSubstTraversalEnv (return . (env!))) b \env' b' -> do
-    e' <- substE env' e
-    return $ DistinctAbs b' e'
+  substB (scope, env) b \env' b' ->
+    DistinctAbs b' $ substE env' e
 
 refreshAbs :: forall n b e.
               (Distinct n, SubstB Name b, SubstE Name e)
@@ -1751,7 +1710,7 @@ instance InjectableV v => InjectableB (RecEnvFrag v) where
 
 instance SubstV substVal v => SubstE substVal (EnvVal v) where
   substE env (EnvVal rep v) =
-    withNameColorRep rep $ EnvVal rep <$> substE env v
+    withNameColorRep rep $ EnvVal rep $ substE env v
 
 instance HoistableV v => HoistableE (EnvVal v) where
   freeVarsE (EnvVal rep v) =
@@ -2295,7 +2254,7 @@ instance HoistableV v => HoistableE (EnvFrag v i i') where
   freeVarsE frag = foldMapEnvFrag freeVarsE frag
 
 instance SubstV substVal v => SubstE substVal (EnvFrag v i i') where
-   substE env frag = traverseEnvFrag (substE env) frag
+   substE env frag = fmapEnvFrag (\_ val -> substE env val) frag
 
 -- === unsafe coercions ===
 
