@@ -62,14 +62,15 @@ module SaferNames.Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
-  hoist, fromConstAbs, exchangeBs, HoistableE (..), HoistableB (..), HoistableV,
+  hoist, hoistToTop, fromConstAbs, exchangeBs, HoistableE (..),
+  HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
   freeVarsList, isFreeIn, todoInjectableProof, liftBetweenInplaceTs, checkEmpty,
-  updateEnvFrag, nameSetToList, toNameSet,
+  updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence
   ) where
 
 import Prelude hiding (id, (.))
@@ -2008,14 +2009,17 @@ instance HasNameColor (Name c n) c where
 -- create one from nothing when we need to.
 class    (ExtEnd n => ExtEnd l) => Ext n l
 instance (ExtEnd n => ExtEnd l) => Ext n l
+instance ExtEnd VoidS => ExtEnd n
 
 -- ExtEnd is just a dummy class we use to encode the transitivity and
 -- reflexivity of `Ext` in a way that GHC understands.
 class ExtEnd (n::S)
-instance ExtEnd VoidS
 
 getExtEvidence :: Ext n l => ExtEvidence n l
 getExtEvidence = FabricateExtEvidence
+
+absurdExtEvidence :: ExtEvidence VoidS n
+absurdExtEvidence = FabricateExtEvidence
 
 -- We give this one a ' because the more general one defined in Name is the
 -- version we usually want to use.
@@ -2125,6 +2129,12 @@ hoist b e =
     then Just $ unsafeCoerceE e
     else Nothing
   where UnsafeMakeScopeFrag frag = toScopeFrag b
+
+hoistToTop :: HoistableE e => e n -> Maybe (e VoidS)
+hoistToTop e =
+  if null $ freeVarsE e
+    then Just $ unsafeCoerceE e
+    else Nothing
 
 freeVarsList :: HoistableE e => NameColorRep c -> e n -> [Name c n]
 freeVarsList c e = nameSetToList c $ freeVarsE e

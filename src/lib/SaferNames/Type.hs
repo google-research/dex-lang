@@ -23,6 +23,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
+import Data.Int
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -417,17 +418,13 @@ typeCheckPrimCon con = case con of
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
-  TabCon ty _xs -> do
-    ty |: TyKind
-    substM ty
-    -- TODO! We can't do this until we have the interpreter working again so we
-    -- ty'@(Pi (PiType TabArrow (b:>idxTy) Pure bodyTy)) <- substM ty
-    -- can call `indices`
-    -- idxs <- indices idxTy
-    -- forMZipped_ xs idxs \x i -> do
-    --   eltTy <- applyAbs (Abs b bodyTy) i
-    --   x |: eltTy
-    -- return ty'
+  TabCon ty xs -> do
+    ty'@(TabTyAbs piTy) <- checkTypeE TyKind ty
+    idxs <- indices $ piArgType piTy
+    forMZipped_ xs idxs \x i -> do
+      (_, eltTy) <- instantiatePi piTy i
+      x |: eltTy
+    return ty'
   ScalarBinOp binop x y -> do
     xTy <- typeCheckBaseType x
     yTy <- typeCheckBaseType y
@@ -902,15 +899,29 @@ checkUnOp op x = do
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
-_indexSetConcreteSize :: Type n -> Maybe Int
-_indexSetConcreteSize ty = case ty of
-  FixedIntRange low high -> Just $ fromIntegral $ high - low
-  _                      -> Nothing
-
 -- === built-in index set type class ===
 
+-- These only work for index set types without free variables. It's redundant
+-- with the more general index set classs in Builder but this way we avoid the
+-- dependency cycle. And we intend to make index sets a user-defined thing soon
+-- anyway.
+
 indices :: BindingsReader m => Type n -> m n [Atom n]
-indices = undefined
+indices ty = do
+  Distinct <- getDistinct
+  case hoistToTop ty of
+    Just ty' -> return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
+    Nothing -> error "can't get index literals from type with free vars"
+
+litIdxSetSize :: Type VoidS -> Int32
+litIdxSetSize ty = case ty of
+  FixedIntRange low high -> fromIntegral $ high - low
+  _ -> error $ "Not an (implemented) index set: " ++ pprint ty
+
+litFromOrdinal :: Type VoidS -> Int32 -> Atom VoidS
+litFromOrdinal ty i = case ty of
+  TC (IntRange low high) -> Con $ IntRangeVal low high $ IdxRepVal i
+  _ -> error $ "Not an (implemented) index set: " ++ pprint ty
 
 -- === various helpers for querying types ===
 
