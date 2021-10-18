@@ -1,3 +1,4 @@
+
 # Dex [![Test status](https://github.com/google-research/dex-lang/workflows/Tests/badge.svg)](https://github.com/google-research/dex-lang/actions?query=workflow%3ATests)
 Dex (named for "index") is a research language for typed, functional array
 processing. The goal of the project is to explore:
