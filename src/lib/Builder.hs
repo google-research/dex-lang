@@ -12,9 +12,9 @@
 
 module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux, buildPi,
                 getAllowedEffects, withEffects, modifyAllowedEffects,
-                buildLam, BuilderT, Builder, MonadBuilder, buildScoped, runBuilderT,
-                runSubstBuilder, runBuilder, getScope, getSynthCandidates,
-                builderLook, liftBuilder,
+                buildLam, BuilderT, Builder, MonadBuilder (..), buildScoped, runBuilderT,
+                runSubstBuilder, runBuilder, runBuilderT', getScope, getSynthCandidates,
+                liftBuilder,
                 app,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
@@ -24,8 +24,8 @@ module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
-                singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
-                builderExtend, unpackLeftLeaningConsList, unpackRightLeaningConsList,
+                singletonTypeVal, scopedDecls, extendScope, checkBuilder,
+                unpackLeftLeaningConsList, unpackRightLeaningConsList,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
@@ -682,6 +682,21 @@ instance MonadReader r m => MonadReader r (BuilderT m) where
     envC <- builderLook
     envR <- builderAsk
     (ans, envC') <- lift $ local r $ runBuilderT' m (envR, envC)
+    builderExtend envC'
+    return ans
+
+instance MonadWriter w m => MonadWriter w (BuilderT m) where
+  tell = lift . tell
+  listen m = do
+    envC <- builderLook
+    envR <- builderAsk
+    ((ans, envC'), w) <- lift $ listen $ runBuilderT' m (envR, envC)
+    builderExtend envC'
+    return (ans, w)
+  pass m = do
+    envC <- builderLook
+    envR <- builderAsk
+    (ans, envC') <- lift $ pass $ (\((a, wf), e) -> ((a, e), wf)) <$> runBuilderT' m (envR, envC)
     builderExtend envC'
     return ans
 

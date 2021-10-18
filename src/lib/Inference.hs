@@ -15,7 +15,8 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Data.Maybe (fromJust)
+import Control.Monad.Writer.Strict hiding (Alt)
+import Data.Maybe (fromJust, maybeToList)
 import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
@@ -23,7 +24,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
-import Data.List (sortOn)
+import Data.List (nubBy, partition, sortOn)
 
 import LabeledItems
 import Syntax
@@ -849,7 +850,23 @@ extInferSubst ext = local (\e -> e { inferSubst = inferSubst e <> ext })
 -- We have two variants here because at the top level we want error messages and
 -- internally we want to consider all alternatives.
 type SynthPassM = SubstBuilderT Except
-type SynthDictM = SubstBuilderT []
+type SynthDictM = SubstBuilderT (ReaderT NormalizedGivens (WriterT DerivationKind []))
+
+type SuperclassProjection = Atom  -- A function projecting a superclass from a dictionary
+type Given = Block  -- A block that can produce a given of the corresponding type
+
+newtype NormalizedGivens = NormalizedGivens [Given]
+instance Semigroup NormalizedGivens where
+  (NormalizedGivens a) <> (NormalizedGivens b) = NormalizedGivens $ uniqGivens $ a ++ b
+instance Monoid NormalizedGivens where
+  mempty = NormalizedGivens []
+
+data DerivationKind = OnlyGivens | UsedInstance deriving Eq
+instance Semigroup DerivationKind where
+  OnlyGivens <> OnlyGivens = OnlyGivens
+  _          <> _          = UsedInstance
+instance Monoid DerivationKind where
+  mempty = OnlyGivens
 
 synthModule :: Scope -> SynthCandidates -> Module -> Except Module
 synthModule scope scs (Module Typed decls result) = do
@@ -865,12 +882,47 @@ synthDictTop :: SrcPosCtx -> Type -> SynthPassM Atom
 synthDictTop ctx ty = do
   scope <- getScope
   scs <- getSynthCandidates
-  let solutions = runSubstBuilderT scope scs $ synthDict ty
-  addSrcContext ctx $ case solutions of
-    [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-    [(ans, env)] -> builderExtend env $> ans
-    _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
-           ++ "\n" ++ pprint solutions
+  let baseGivens = foldMap (normalizeGiven scope scs (superclassGetters scs)) $
+        Block Empty . Atom <$> lambdaDicts scs
+  let (solutionsGivens, solutionsInstance) = partition ((== OnlyGivens) . snd) $
+        runWriterT $ runReaderT (runSubstBuilderT scope scs $ synthDict ty) baseGivens
+  addSrcContext ctx $ do
+    unless (length solutionsInstance <= 1) $
+      throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+    case solutionsGivens ++ solutionsInstance of
+      [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+      ((ans, env), _):_ -> builderExtend env $> ans
+
+normalizeGiven :: Scope -> SynthCandidates -> [SuperclassProjection] -> Given -> NormalizedGivens
+normalizeGiven scope scs projs initGivens = NormalizedGivens $ superclassClosure [initGivens]
+  where
+    superclassClosure :: [Given] -> [Given]
+    superclassClosure givens = case length givens == length nextGivens of
+      True  -> givens
+      False -> superclassClosure nextGivens
+      where nextGivens = uniqGivens $ givens ++ superclassStep givens
+
+    superclassStep :: [Given] -> [Given]
+    superclassStep givens = do
+      p <- projs
+      g <- givens
+      maybeToList $ tryApply p g
+
+    tryApply :: Atom -> Block -> Maybe Block
+    tryApply f xb = case res of
+      Failure _      -> Nothing
+      Success (b, _) -> Just b
+      where
+        res = runUInferM mempty scope scs (error "Shouldn't need protolude here") $ do
+          buildScoped $ do
+            f' <- instantiateSigma f
+            Pi (Abs b _) <- return $ getType f'
+            constrainEq (binderType b) (getType xb)
+            x <- emitBlock xb
+            emitZonked $ App f' x
+
+uniqGivens :: [Given] -> [Given]
+uniqGivens = nubBy (\x y -> getType x == getType y)
 
 traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
               => (SrcPosCtx -> Type -> m Atom) -> TraversalDef m
@@ -885,14 +937,21 @@ synthDict :: Type -> SynthDictM Atom
 synthDict ty = case ty of
   PiTy b arr body -> synthesizeNow <|> introFirst
     where
-      introFirst = buildDepEffLam b
-                      (\x -> extendR (b @> SubstVal x) $ substBuilderR arr)
-                      (\x -> extendR (b @> SubstVal x) $ substBuilderR body >>= synthDict)
+      introFirst = do
+        buildDepEffLam b
+          (\x -> extendR (b @> SubstVal x) $ substBuilderR arr)
+          (\x -> extendR (b @> SubstVal x) $ do
+            givens         <- lift $ lift $ ask
+            superclassProj <- superclassGetters <$> getSynthCandidates
+            scope <- getScope
+            scs <- getSynthCandidates
+            let newGivens = case arr of
+                  ClassArrow -> givens <> normalizeGiven scope scs superclassProj (Block Empty $ Atom x)
+                  _          -> givens
+            withGivens newGivens $ substBuilderR body >>= synthDict)
   _ -> synthesizeNow
   where
-    synthesizeNow = do
-          (getSynthCandidate instanceDicts >>= trySynth)
-      <|> (getSynthCandidate lambdaDicts >>= withSuperclasses >>= trySynth)
+    synthesizeNow = (getGiven <|> getInstance) >>= trySynth
     trySynth step = do
       block <- buildScoped $ inferToSynth $ instantiateAndCheck ty step
       -- NOTE: It's ok to emit unconditionally here. It will only ever emit
@@ -901,17 +960,27 @@ synthDict ty = case ty of
       --       it's an error!
       traverseBlock (traverseHoles (const synthDict)) block >>= emitBlock
 
--- TODO: this doesn't de-dup, so we'll get multiple results if we have a
--- diamond-shaped hierarchy.
-withSuperclasses :: Atom -> SynthDictM Atom
-withSuperclasses dict = return dict <|> do
-  f <- getSynthCandidate superclassGetters
-  inferToSynth $ tryApply f dict
+tryEachCandidate :: [a] -> SynthDictM a
+tryEachCandidate = lift . lift . lift . lift
 
-getSynthCandidate :: (SynthCandidates -> [a]) -> SynthDictM a
-getSynthCandidate f = do
-  scs <- getSynthCandidates
-  lift $ lift $ f scs
+getInstance :: SynthDictM Atom
+getInstance = do
+  tell UsedInstance
+  (instanceDicts <$> getSynthCandidates) >>= tryEachCandidate
+
+getGiven :: SynthDictM Atom
+getGiven = do
+  NormalizedGivens givens <- lift $ lift $ ask
+  tryEachCandidate givens >>= emitBlock
+
+withGivens :: NormalizedGivens -> SynthDictM a -> SynthDictM a
+withGivens givens m = do
+  buildC <- builderLook
+  buildR <- builderAsk
+  scope <- ask
+  (ans, ext) <- lift $ lift $ local (const givens) $ runBuilderT' (runReaderT m scope) (buildR, buildC)
+  builderExtend ext
+  return ans
 
 inferToSynth :: (Pretty a, HasVars a, Subst a) => UInferM a -> SynthDictM a
 inferToSynth m = do
@@ -922,13 +991,6 @@ inferToSynth m = do
     Success (x, (_, decls)) -> do
       mapM_ emitDecl decls
       return x
-
-tryApply :: Atom -> Atom -> UInferM Atom
-tryApply f x = do
-  f' <- instantiateSigma f
-  Pi (Abs b _) <- return $ getType f'
-  constrainEq (binderType b) (getType x)
-  emitZonked $ App f' x
 
 instantiateAndCheck :: Type -> Atom -> UInferM Atom
 instantiateAndCheck ty x = do
