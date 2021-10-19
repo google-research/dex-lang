@@ -215,11 +215,16 @@ runSubstInfererM
   -> (forall o'. Ext o o' => InfererM i o' (e o'))
   -> Except (e o)
 runSubstInfererM bindings env cont = do
-  DistinctAbs (InfOutFrag Empty _) result <-
+  DistinctAbs (InfOutFrag unsolvedInfNames _) result <-
     runFallibleM $
       runInplaceT (InfOutMap bindings emptySolverSubst $ UnsolvedBindings mempty) $
         runEnvReaderT (inject env) $ runInfererM' $ cont
-  return result
+  case unsolvedInfNames of
+    Empty -> return result
+    Nest (_:>RightE (InfVarBound _ ctx)) _ ->
+      addSrcContext ctx $
+        throw TypeErr $ "Ambiguous type variable"
+    _ -> error "not possible?"
 
 emitInfererM :: NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = InfererM $ EnvReaderT $ lift $
@@ -259,7 +264,7 @@ instance Builder (InfererM i) where
         refreshAbsM =<< extendInplace =<< injectM (Abs outFrag resultAbs)
     injectM $ Abs b $ Abs decls result'
 
-type InferenceNameBinders = Nest Binder
+type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
 -- When we finish building a block of decls we need to hoist the local solver
 -- information into the outer scope. If the local solver state mentions local
@@ -313,7 +318,7 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) subst e = do
     solverState@(HoistedSolverState infVars subst' result) <-
        hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest subst e
     case infEmission of
-      RightE (InfVarBound ty) ->
+      RightE binding@(InfVarBound _ _) ->
         withExtEvidence infVars $
           case deleteFromSubst subst' (inject $ binderName b) of
             Just subst'' ->
@@ -322,7 +327,7 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) subst e = do
                 -- TODO: report *which* variables leaked
                 Nothing -> throw TypeErr "Leaked local variable"
             Nothing -> do
-              return $ HoistedSolverState (Nest (b:>ty) infVars) subst' result
+              return $ HoistedSolverState (Nest (b:>binding) infVars) subst' result
       RightE (SkolemBound _) ->
         case hoist b solverState of
           Just hoisted -> return hoisted
@@ -343,7 +348,7 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) subst e = do
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions emissions =
-  fmapNest (\(b:>ty) -> b :> RightE (InfVarBound ty)) emissions
+  fmapNest (\(b:>binding) -> b :> RightE binding) emissions
 
 instance BindingsReader (InfererM i) where
   addBindings e = InfererM $ EnvReaderT $ lift do
@@ -1118,7 +1123,7 @@ openEffectRow effRow = return effRow
 
 newtype SolverSubst n = SolverSubst (M.Map (AtomName n) (Type n))
 
-class BindingsReader m => Solver (m::MonadKind1) where
+class (CtxReader1 m, BindingsReader m) => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, InjectableE e) => e n -> m n (e n)
   -- We require the `Emits` constraint to emit solver stuff to ensure that we
   -- don't do it at the top level. It might be better to have a solver-specific
@@ -1154,7 +1159,7 @@ instance ExtOutMap InfOutMap SolverOutFrag where
 newtype SolverM (n::S) (a:: *) =
   SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag SearcherM n a }
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
-            ScopeReader, Fallible)
+            ScopeReader, Fallible, CtxReader)
 
 instance BindingsReader SolverM where
   addBindings e = SolverM do
@@ -1175,7 +1180,9 @@ instance Solver SolverM where
 instance Unifier SolverM
 
 freshInferenceName :: Solver m => Kind n -> m n (AtomName n)
-freshInferenceName k = emitSolver $ InfVarBound k
+freshInferenceName k = do
+  ctx <- srcPosCtx <$> getErrCtx
+  emitSolver $ InfVarBound k ctx
 
 -- TODO: clean up skolem vars!
 freshSkolemName :: Solver m => Kind n -> m n (AtomName n)
@@ -1381,7 +1388,7 @@ extendSolution v t =
 
 isInferenceName :: BindingsReader m => AtomName n -> m n Bool
 isInferenceName v = lookupBindings v >>= \case
-  AtomNameBinding (SolverBound (InfVarBound _)) -> return True
+  AtomNameBinding (SolverBound (InfVarBound _ _)) -> return True
   _ -> return False
 
 isSkolemName :: BindingsReader m => AtomName n -> m n Bool

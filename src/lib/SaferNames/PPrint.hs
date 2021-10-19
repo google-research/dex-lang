@@ -262,8 +262,8 @@ instance Pretty (LamBinding n) where
     "Lambda binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
 
 instance Pretty (SolverBinding n) where
-  pretty (InfVarBound ty) = "Inference variable of type:" <+> p ty
-  pretty (SkolemBound ty) = "Skolem variable of type:"    <+> p ty
+  pretty (InfVarBound ty _) = "Inference variable of type:" <+> p ty
+  pretty (SkolemBound ty  ) = "Skolem variable of type:"    <+> p ty
 
 instance Pretty (Binding s n) where
   pretty b = case b of

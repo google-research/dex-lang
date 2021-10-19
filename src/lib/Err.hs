@@ -234,12 +234,12 @@ class (Monad m, Alternative m) => Searcher m where
   -- It's a bit like `<?>` in parser combinators.
   (<!>) :: m a -> m a -> m a
 
-newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT Except a }
+newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT FallibleM a }
   deriving (Functor, Applicative, Monad)
 
 runSearcherM :: SearcherM a -> Except a
 runSearcherM m =
-  runMaybeT (runSearcherM' m) >>= \case
+  runFallibleM $ runMaybeT (runSearcherM' m) >>= \case
     Nothing -> throw SearchFailureErr ""
     Just x -> return x
 
@@ -263,6 +263,9 @@ instance Searcher SearcherM where
     m >>= \case
       Just ans -> return $ Just ans
       Nothing -> runMaybeT $ runSearcherM' handler
+
+instance CtxReader SearcherM where
+  getErrCtx = SearcherM $ lift getErrCtx
 
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons

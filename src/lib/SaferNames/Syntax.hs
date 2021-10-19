@@ -238,7 +238,7 @@ data AtomBinding (n::S) =
    deriving (Show, Generic)
 
 data SolverBinding (n::S) =
-   InfVarBound (Type n)
+   InfVarBound (Type n) SrcPosCtx
  | SkolemBound (Type n)
    deriving (Show, Generic)
 
@@ -883,7 +883,7 @@ bindingType (AtomNameBinding b) = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
   MiscBound   ty                   -> ty
-  SolverBound (InfVarBound ty)     -> ty
+  SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
 
 binderType :: ToBinding ann AtomNameC => AtomBinderP ann n l -> Type n
@@ -1523,14 +1523,14 @@ instance SubstE AtomSubstVal AtomBinding
 instance AlphaEqE AtomBinding
 
 instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE2 Type Type
+  type RepE SolverBinding = EitherE2 (PairE Type (LiftE SrcPosCtx)) Type
   fromE = \case
-    InfVarBound ty -> Case0 ty
-    SkolemBound ty -> Case1 ty
+    InfVarBound ty ctx -> Case0 (PairE ty (LiftE ctx))
+    SkolemBound ty     -> Case1 ty
 
   toE = \case
-    Case0 ty -> InfVarBound ty
-    Case1 ty -> SkolemBound ty
+    Case0 (PairE ty (LiftE ct)) -> InfVarBound ty ct
+    Case1 ty                    -> SkolemBound ty
     _ -> error "impossible"
 
 instance InjectableE SolverBinding

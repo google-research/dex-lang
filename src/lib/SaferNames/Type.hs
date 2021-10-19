@@ -197,8 +197,8 @@ instance CheckableE AtomBinding where
     SolverBound b       -> SolverBound <$> checkE b
 
 instance CheckableE SolverBinding where
-  checkE (InfVarBound ty) = InfVarBound <$> checkTypeE TyKind ty
-  checkE (SkolemBound ty) = SkolemBound <$> checkTypeE TyKind ty
+  checkE (InfVarBound ty ctx) = InfVarBound <$> checkTypeE TyKind ty <*> pure ctx
+  checkE (SkolemBound ty    ) = SkolemBound <$> checkTypeE TyKind ty
 
 instance CheckableE DataDef where
   checkE = substM -- TODO
