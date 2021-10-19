@@ -959,7 +959,7 @@ data BinderInfo =
         -- (or we could put the effect tag on the let annotation)
       | PatBound
       | LetBound LetAnn Expr
-      | PiBound
+      | PiBound (ArrowP ())
       | UnknownBinder
         deriving (Show, Generic)
 

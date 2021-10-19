@@ -202,7 +202,7 @@ instance NameColor c => CheckableE (Binding c) where
           expr' <- checkTypeE ty' expr
           return $ LetBound ann expr'
         LamBound arr  -> return $ LamBound arr
-        PiBound       -> return PiBound
+        PiBound  arr  -> return $ PiBound  arr
         MiscBound     -> return MiscBound
         InferenceName -> return InferenceName
       return $ AtomNameBinding ty' info'

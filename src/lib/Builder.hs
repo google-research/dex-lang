@@ -142,12 +142,15 @@ freshNestedBindersRec substEnv (Nest b bs) = do
   return $ Nest v vs
 
 buildPi :: (Fallible m, MonadBuilder m)
-        => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
-buildPi b f = do
+        => Binder -> (Atom -> m Arrow) -> (Atom -> m Type) -> m Atom
+buildPi b fArr fTy = do
   scope <- getScope
   (ans, decls) <- scopedDecls $ do
-     v <- withNameHint b $ freshVarE PiBound $ binderType b
-     (arr, ans) <- f $ Var v
+     v <- withNameHint b $ freshVarE UnknownBinder $ binderType b
+     arr <- fArr $ Var v
+     -- overwriting the previous binder info know that we know more
+     extendScope $ v @> AtomBinderInfo (varType v) (PiBound (void arr))
+     ans <- fTy $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   let block = wrapDecls decls ans
   case typeReduceBlock scope block of

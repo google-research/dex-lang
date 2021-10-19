@@ -1115,7 +1115,7 @@ typeReduceAtom scope x = case x of
     _ -> x
   TC con -> TC $ fmap (typeReduceAtom scope) con
   Pi (Abs b (arr, ty)) ->
-    Pi $ Abs b' (arr, typeReduceAtom (scope <> (fmap (flip AtomBinderInfo PiBound) $ binderAsEnv b')) ty)
+    Pi $ Abs b' (arr, typeReduceAtom (scope <> (fmap (flip AtomBinderInfo (PiBound $ void arr)) $ binderAsEnv b')) ty)
     where b' = fmap (typeReduceAtom scope) b
   TypeCon (name, def) params -> TypeCon (name, reduceDataDef def) (fmap rec params)
   RecordTy (Ext tys ext) -> RecordTy $ Ext (fmap rec tys) ext

@@ -746,26 +746,28 @@ instance HasSafeVersionE BinderInfo where
   type SafeVersionE BinderInfo = AtomBinderInfo
   toSafeE info = case info of
     D.LetBound ann expr -> S.LetBound ann <$> toSafeE expr
-    D.LamBound arr  -> return (S.LamBound arr')
-      where arr' = case arr of
-                     D.PlainArrow () -> S.PlainArrow
-                     D.ImplicitArrow -> S.ImplicitArrow
-                     D.LinArrow      -> S.LinArrow
-                     D.TabArrow      -> S.TabArrow
-                     D.ClassArrow    -> S.ClassArrow
-    D.PiBound       -> return S.PiBound
+    D.LamBound arr  -> return (S.LamBound $ asSafe arr)
+    D.PiBound  arr  -> return (S.PiBound  $ asSafe arr)
     D.UnknownBinder -> return S.MiscBound
+    where
+      asSafe = \case
+        D.PlainArrow () -> S.PlainArrow
+        D.ImplicitArrow -> S.ImplicitArrow
+        D.LinArrow      -> S.LinArrow
+        D.TabArrow      -> S.TabArrow
+        D.ClassArrow    -> S.ClassArrow
   fromSafeE info = case info of
     S.LetBound ann expr -> D.LetBound ann <$> fromSafeE expr
-    S.LamBound arr  -> return (D.LamBound arr')
-      where arr' = case arr of
-                     S.PlainArrow    -> D.PlainArrow ()
-                     S.ImplicitArrow -> D.ImplicitArrow
-                     S.LinArrow      -> D.LinArrow
-                     S.TabArrow      -> D.TabArrow
-                     S.ClassArrow    -> D.ClassArrow
-    S.PiBound       -> return D.PiBound
+    S.LamBound arr  -> return (D.LamBound $ asUnsafe arr)
+    S.PiBound  arr  -> return (D.PiBound  $ asUnsafe arr)
     S.MiscBound     -> return D.UnknownBinder
+    where
+      asUnsafe = \case
+        S.PlainArrow    -> D.PlainArrow ()
+        S.ImplicitArrow -> D.ImplicitArrow
+        S.LinArrow      -> D.LinArrow
+        S.TabArrow      -> D.TabArrow
+        S.ClassArrow    -> D.ClassArrow
 
 traverseSet :: (Ord a, Ord b, Monad m) => (a -> m b) -> Set.Set a -> m (Set.Set b)
 traverseSet f s = Set.fromList <$> mapM f (Set.toList s)
