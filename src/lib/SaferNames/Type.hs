@@ -914,9 +914,26 @@ indices ty = do
     Nothing -> error "can't get index literals from type with free vars"
 
 litIdxSetSize :: Type VoidS -> Int32
-litIdxSetSize ty = case ty of
-  FixedIntRange low high -> fromIntegral $ high - low
+litIdxSetSize (TC ty) = case ty of
+  IntRange (IdxRepVal low) (IdxRepVal high) -> fromIntegral $ high - low
+  IndexRange n low high -> high' - low'
+    where
+      low' = case low of
+        InclusiveLim x -> litToOrdinal x
+        ExclusiveLim x -> litToOrdinal x + 1
+        Unlimited      -> 0
+      high' = case high of
+        InclusiveLim x -> litToOrdinal x + 1
+        ExclusiveLim x -> litToOrdinal x
+        Unlimited      -> litIdxSetSize n
+  ProdType tys -> product $ fmap litIdxSetSize tys
   _ -> error $ "Not an (implemented) index set: " ++ pprint ty
+
+litToOrdinal :: Atom VoidS -> Int32
+litToOrdinal x = case x of
+  Con (IntRangeVal   _ _   (IdxRepVal i)) -> i
+  Con (IndexRangeVal _ _ _ (IdxRepVal i)) -> i
+  _ -> error $ "Not an (implemented) index: " ++ pprint x
 
 litFromOrdinal :: Type VoidS -> Int32 -> Atom VoidS
 litFromOrdinal ty i = case ty of

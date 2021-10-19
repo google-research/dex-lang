@@ -102,8 +102,10 @@ class ( MonadFail2 m, Fallible2 m, CtxReader2 m, Builder2 m
       => Inferer (m::MonadKind2) where
   liftSolverM :: SolverM o a -> m i o a
 
-makeReqCon :: Inferer m => Type o -> m i o SuggestionStrength
-makeReqCon _ = return Suggest -- TODO!
+inferSuggestionStrength :: Type n -> SuggestionStrength
+inferSuggestionStrength ty = case hoistToTop ty of
+  Nothing -> Suggest
+  Just _  -> Concrete
 
 -- === Concrete Inferer monad ===
 
@@ -517,8 +519,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     Check _ ty -> freshType ty
   UTypeAnn val ty -> do
     ty' <- zonk =<< checkUType ty
-    reqCon <- makeReqCon ty'
-    val' <- checkSigma val reqCon ty'
+    val' <- checkSigma val (inferSuggestionStrength ty') ty'
     matchRequirement val'
   UPrimExpr prim -> do
     prim' <- forM prim $ inferRho >=> cheapReduce
@@ -694,8 +695,7 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
     Nothing -> inferSigma rhs
     Just ty -> do
       ty' <- zonk =<< checkUType ty
-      reqCon <- makeReqCon ty'
-      checkSigma rhs reqCon ty'
+      checkSigma rhs (inferSuggestionStrength ty') ty'
   expr <- zonk $ Atom val
   var <- emitDecl (getNameHint p) letAnn expr
   bindLamPat p var cont
