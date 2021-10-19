@@ -193,10 +193,11 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     -- TODO: check leaks
     ann' <- checkAnn ann
     piTy <- addSrcContext' pos' case pat of
-      UPatBinder UIgnore -> buildPi (Ignore ann') $ const $
-                          (,) <$> mapM checkUEffRow arr <*> checkUType ty
-      _ -> withNameHint ("pat" :: Name) $ buildPi b \(Var v) ->
-        withBindPat (WithSrc pos' pat) v $ (,) <$> mapM checkUEffRow arr <*> checkUType ty
+      UPatBinder UIgnore -> buildPi (Ignore ann') (const $ mapM checkUEffRow arr)
+                                                  (const $ checkUType ty)
+      _ -> withNameHint ("pat" :: Name) $ buildPi b
+        (\(Var v) -> withBindPat (WithSrc pos' pat) v $ mapM checkUEffRow arr)
+        (\(Var v) -> withBindPat (WithSrc pos' pat) v $ checkUType ty)
         where b = case pat of
                     -- Note: The binder name becomes part of the type, so we
                     -- need to keep the same name used in the pattern.

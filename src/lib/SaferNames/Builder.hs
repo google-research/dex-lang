@@ -355,7 +355,7 @@ buildPi :: (Fallible1 m, Builder m)
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (Type n)
 buildPi arr ty body = do
-  ab <- withFreshAtomBinder NoHint ty PiBound \v -> do
+  ab <- withFreshAtomBinder NoHint ty (PiBound arr) \v -> do
     withAllowedEffects Pure do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy

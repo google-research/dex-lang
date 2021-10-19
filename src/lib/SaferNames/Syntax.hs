@@ -143,7 +143,7 @@ data Expr n =
 data AtomBinderInfo (n::S) =
    LetBound LetAnn (Expr n)
  | LamBound Arrow
- | PiBound
+ | PiBound  Arrow
  | MiscBound
  | InferenceName
    deriving (Show, Generic)
@@ -1222,21 +1222,21 @@ instance GenericE AtomBinderInfo where
      EitherE5
         (PairE (LiftE LetAnn) Expr)
         (LiftE Arrow)
-        UnitE
+        (LiftE Arrow)
         UnitE
         UnitE
 
   fromE = \case
     LetBound ann e -> Case0 (PairE (LiftE ann) e)
     LamBound arr   -> Case1 (LiftE arr)
-    PiBound        -> Case2 UnitE
+    PiBound  arr   -> Case2 (LiftE arr)
     MiscBound      -> Case3 UnitE
     InferenceName  -> Case4 UnitE
 
   toE = \case
     Case0 (PairE (LiftE ann) e) -> LetBound ann e
     Case1 (LiftE arr)           -> LamBound arr
-    Case2 UnitE                 -> PiBound
+    Case2 (LiftE arr)           -> PiBound  arr
     Case3 UnitE                 -> MiscBound
     Case4 UnitE                 -> InferenceName
     _ -> error "impossible"

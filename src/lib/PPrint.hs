@@ -571,7 +571,7 @@ instance Pretty BinderInfo where
   pretty b = case b of
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
-    PiBound       -> "<pi binder>"
+    PiBound  _    -> "<pi binder>"
     UnknownBinder -> "<unknown binder>"
     PatBound      -> "<pattern binder>"
 
