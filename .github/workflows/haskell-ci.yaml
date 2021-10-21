@@ -34,6 +34,8 @@ jobs:
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
+        echo "Adding ${{ matrix.path_extension }} to PATH"
+        ${{ matrix.path_extension }}/llvm-config -ldflags
         echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
 
     - name: Get example files
