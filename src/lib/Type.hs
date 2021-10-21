@@ -1138,19 +1138,30 @@ typeReduceAtom scope x = case x of
                    (scope <> (foldMap (fmap (flip AtomBinderInfo UnknownBinder) . binderAsEnv) bs))) cons)
     reduceDataConDef s (DataConDef n bs) = DataConDef n $ reduceNest s bs
 
+-- XXX: The handling of dict holes below is a little hacky, because subsituting holes
+-- is dangerous: even though they might represent terms of types that can be projected
+-- from, they cause a crash when attempting to actually extract the projection.
+-- There are two fixes for that:
+--   (1) Add a class dict specific projection form to our core AST. This is obviously
+--       a bad workaround and I would like to avoid messing with the core IR just to
+--       resolve inference-specific concerns.
+--   (2) Stop using class dict holes. Replace them with "synthesis variables" which are
+--       regular Var atoms, but within inference we remember the set of variables that
+--       will have to be replaced with synthesis results. Those could be projected
+--       from without any trouble. Still I decided to avoid implementing that just yet,
+--       since we'll have to rewrite the inference in the safer names system as well.
 typeReduceExpr :: Scope -> Expr -> Maybe Atom
 typeReduceExpr scope expr = case expr of
   Atom val -> return $ typeReduceAtom scope val
   App f x -> do
     let f' = typeReduceAtom scope f
     let x' = typeReduceAtom scope x
+    let appWithDictHole = case x' of Con (ClassDictHole _ _) -> True; _ -> False
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    case x' of
-      -- Class dict holes shouldn't ever be substituted because they can cause
-      -- issues due to Syntax.getProjection in Atom's substitution rule.
-      Con (ClassDictHole _ _) -> Nothing
-      _ -> case f' of
-        Lam (Abs b (arr, block)) | arr == PureArrow || arr == ImplicitArrow || arr == ClassArrow ->
+    case f' of
+        Lam (Abs b (arr, block))
+          |  (arr == PureArrow || arr == ImplicitArrow || arr == ClassArrow)
+          && (not appWithDictHole || not (b `isin` freeVars block)) ->
           -- TODO: We might want to make this more fine grained?
           case typeReduceBlock scope $ subst (b@>SubstVal x', scope) block of
             Left  _   -> Nothing
