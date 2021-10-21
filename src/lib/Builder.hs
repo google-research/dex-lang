@@ -156,7 +156,7 @@ buildPi b fArr fTy = do
   case typeReduceBlock scope block of
     Right piTy -> return piTy
     Left _ -> throw CompilerErr $
-      "Unexpected irreducible decls in pi type: " ++ pprint decls
+      "Unexpected irreducible decls in pi type: " ++ pprint block
 
 buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
 buildAbsAux b f = do
