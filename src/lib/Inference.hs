@@ -183,7 +183,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
                     "evaluated expressions. Bind the argument to a name " ++
                     "before you apply the function."
           xValRed <- typeReductionAsAtom xPos msg =<<
-            (getScope <&> \s -> typeReduceBlock s (Block xDecls (Atom xVal)))
+            typeReduceBlockWithWanteds (Block xDecls (Atom xVal))
           return (xValRed, fst $ applyAbs piTy xValRed)
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal'
@@ -661,7 +661,8 @@ checkAnn ann = case ann of
 
 checkUType :: UType -> UInferM Type
 checkUType ty@(WithSrc ctx _) =
-  typeReduceScoped (withEffects Pure $ checkRho ty TyKind) >>=
+  (buildScoped $ withEffects Pure $ checkRho ty TyKind) >>=
+  typeReduceBlockWithWanteds >>=
   typeReductionAsAtom ctx "Failed to reduce type annotation"
 
 -- Delayed unification task. When performing its solve, it tries to perform
@@ -706,17 +707,32 @@ instance IsDelayedSolve EvalAndUnif where
         constrainEq ans eafExpected
       Left  _   -> throwErr eafErr
 
-typeReductionAsAtom :: SrcPosCtx -> String -> Either (Scope, Atom) Atom -> UInferM Atom
-typeReductionAsAtom ctx msg reduced =
+data DelayedSynthesis = DelayedSynthesis SrcPosCtx SynthCandidates Type
+instance HasVars DelayedSynthesis where
+  freeVars (DelayedSynthesis _ scs ty) = freeVars ty <> freeVars scs
+instance Subst DelayedSynthesis where
+  subst env (DelayedSynthesis ctx scs ty) = DelayedSynthesis ctx (subst env scs) (subst env ty)
+instance IsDelayedSolve DelayedSynthesis where
+  performDelayedSolve (DelayedSynthesis ctx scs ty) =
+    case runSubstBuilderT mempty scs $ synthDictTop ctx ty of
+      Failure errs -> throwErrs errs
+      Success _    -> return ()
+
+typeReductionAsAtom :: SrcPosCtx -> String -> (Either Block Atom, [(SrcPosCtx, Type)]) -> UInferM Atom
+typeReductionAsAtom ctx msg (reduced, wanteds) =
   case reduced of
-    Right ty'         -> return $ ty'
-    Left (localScope, ty') -> do
-      outerScope <- getScope
-      env <- forM (localScope `envIntersect` freeVars ty') \(AtomBinderInfo ty _) ->
-        freshInferenceName ty <&> (:> ty)
-      resTy <- substBuilder (env <&> Rename . varName) ty'
+    Right ty -> do
       scs <- getSynthCandidates
-      delaySolve $ EvalAndUnif outerScope localScope ty' scs resTy $
+      forM_ wanteds \(wctx, wty) -> delaySolve $ DelayedSynthesis wctx scs wty
+      return $ ty
+    Left (Block decls ~(Atom ty)) -> do
+      outerScope <- getScope
+      let localScope = foldMap boundVars decls
+      env <- forM (localScope `envIntersect` freeVars ty) \(AtomBinderInfo ty' _) ->
+        freshInferenceName ty' <&> (:> ty')
+      resTy <- substBuilder (env <&> Rename . varName) ty
+      scs <- getSynthCandidates
+      delaySolve $ EvalAndUnif outerScope localScope ty scs resTy $
         Err TypeErr (ErrCtx Nothing ctx []) msg
       return resTy
 
@@ -1252,8 +1268,23 @@ instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty mempty mempty
   mappend = (<>)
 
-typeReduceScoped :: MonadBuilder m => m Atom -> m (Either (Scope, Atom) Atom)
-typeReduceScoped m = do
-  block <- buildScoped m
+typeReduceBlockWithWanteds :: (MonadSolver m, MonadBuilder m)
+                            => Block -> m (Either Block Atom, [(SrcPosCtx, Type)])
+typeReduceBlockWithWanteds block@(Block decls _) = do
   scope <- getScope
-  return $ typeReduceBlock scope block
+  -- We're lifting expressions from the inside of the block, so we need to make sure
+  -- that we're not leaking any internal vars. Note that thanks to laziness the error
+  -- will not get raised unless we actually consume the wanteds downstream.
+  let safeWanteds = case null $ foldMap (freeVars . snd) wanteds `envDiff` scope of
+        True -> wanteds
+        False -> error "Not implemented yet!"
+  return $ (,safeWanteds) $ case typeReduceBlock scope block of
+    Left (_, ans) -> Left $ Block decls $ Atom ans
+    Right ans     -> Right ans
+  where
+    -- XXX: This might leak types that refer to block binders
+    wanteds = execWriter $ runSubstBuilderT mempty mempty holeFindingTraversal
+    holeFindingTraversal = traverseBlock (traverseHoles recordHole) block
+    recordHole ctx ty = do
+      v <- freshVarE UnknownBinder ty
+      tell [(ctx, ty)] $> Var v

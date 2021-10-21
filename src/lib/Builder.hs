@@ -735,6 +735,7 @@ extendScope scope = builderExtend $ asFst (scope, scs)
 binderInfoAsSynthCandidates :: Name -> AnyBinderInfo -> SynthCandidates
 binderInfoAsSynthCandidates name binfo = case binfo of
   AtomBinderInfo ty (LamBound ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
+  AtomBinderInfo ty (PiBound  ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
   SuperclassName _ _ superclassGetter        -> mempty { superclassGetters = [superclassGetter]}
   AtomBinderInfo ty (LetBound InstanceLet _) -> mempty { instanceDicts     = [Var (name:>ty)]}
   _ -> mempty
