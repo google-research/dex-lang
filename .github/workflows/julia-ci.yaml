@@ -27,7 +27,7 @@ jobs:
         enable-stack: true
         stack-no-global: true
         stack-version: 'latest'
-    
+
     - name: Setup Julia
       uses: julia-actions/setup-julia@ee66464cb7897ffcc5322800f4b18d449794af30  # v1.6.1
       with:
@@ -41,16 +41,16 @@ jobs:
           ~/.stack
           $GITHUB_WORKSPACE/.stack-work
           ~/.julia/artifacts
-        key: ${{ runner.os }}-julia-${{ hashFiles('**/*.cabal', 'stack*.yaml', '**/Project.toml') }}
+        key: ${{ runner.os }}-v2-julia-${{ hashFiles('**/*.cabal', 'stack*.yaml', '**/Project.toml') }}
         restore-keys: |
-          ${{ runner.os }}-julia-
-          ${{ runner.os }}-
+          ${{ runner.os }}-v2-julia-
+          ${{ runner.os }}-v2-
 
     - name: Build DexCall.jl
       uses: julia-actions/julia-buildpkg@f995fa4149fed4a8e9b95ba82f54cc107c1d832a  #v1.2.0
       with:
         project: "julia/"
-    
+
     - name: Test DexCall.jl
       uses: julia-actions/julia-runtest@eda4346d69c0d1653e483c397a83c7f32f4ef2ac  # v1.6.0
       with:
