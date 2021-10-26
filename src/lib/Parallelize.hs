@@ -140,7 +140,7 @@ buildParallelBlock ablock@(ABlock decls result) = do
 unflattenIndexBundle :: MonadBuilder m => [Var] -> Atom -> m Atom
 unflattenIndexBundle []  arr = return arr
 unflattenIndexBundle [_] arr = return arr
-unflattenIndexBundle ivs arr = buildNestedLam TabArrow (fmap Bind ivs) $ app arr . fst . mkBundle
+unflattenIndexBundle ivs arr = buildNaryLam TabArrow (toNest $ fmap Bind ivs) $ app arr . fst . mkBundle
 
 type Loop = Abs Binder Block
 data NestDecision = Emit | Split (Nest Decl) (Binder, Loop) (Nest Decl)

@@ -31,8 +31,9 @@ foreign export ccall "dexEvalExpr" dexEvalExpr :: Ptr Context -> CString   -> IO
 foreign export ccall "dexLookup"   dexLookup   :: Ptr Context -> CString   -> IO (Ptr Atom)
 
 -- Serialization
-foreign export ccall "dexPrint"    dexPrint    :: Ptr Atom                 -> IO CString
-foreign export ccall "dexToCAtom"  dexToCAtom  :: Ptr Atom    -> Ptr CAtom -> IO CInt
+foreign export ccall "dexPrint"     dexPrint      :: Ptr Atom                      -> IO CString
+foreign export ccall "dexToCAtom"   dexToCAtom    :: Ptr Atom    -> Ptr CAtom      -> IO CInt
+foreign export ccall "dexFromCAtom" dexFromCAtom  :: Ptr CAtom                     -> IO (Ptr Atom)
 
 -- JIT
 foreign export ccall "dexCreateJIT"  dexCreateJIT  :: IO (Ptr JIT)

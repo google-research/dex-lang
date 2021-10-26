@@ -177,8 +177,8 @@ instance SourceRenamableB UDecl where
       dataConNames' <- mapM (sourceRenameUBinder SrcDataConName) dataConNames
       return $ UDataDefDecl dataDef' tyConName' dataConNames'
     UInterface paramBs superclasses methodTys className methodNames -> do
-      Abs paramBs' (superclasses', methodTys') <-
-        lift $ sourceRenameE $ Abs paramBs (superclasses, methodTys)
+      (paramBs', bsEnv) <- lift $ setMayShadow True $ runWithEnv $ runPatRenamerT $ sourceRenamePat paramBs
+      (superclasses', methodTys') <- lift $ local (<>bsEnv) $ sourceRenameE $ (superclasses, methodTys)
       className' <- sourceRenameUBinder SrcClassName className
       methodNames' <- sourceRenameUBinderNest SrcMethodName methodNames
       return $ UInterface paramBs' superclasses' methodTys' className' methodNames'
@@ -187,6 +187,10 @@ instance SourceRenamableB UDecl where
         lift $ sourceRenameE $ Abs conditions ((className, params), methodDefs)
       instanceName' <- mapM sourceRenameB instanceName
       return $ UInstance conditions' className' params' methodDefs' instanceName'
+
+instance SourceRenamableE UMethodType where
+  sourceRenameE (UMethodType expl ty) =
+    UMethodType <$> traverse sourceRenameE expl <*> sourceRenameE ty
 
 sourceRenameUBinderNest :: Renamer m => (Name -> SourceNameDef)
                         -> Nest UBinder -> WithEnv RenameEnv m (Nest UBinder)
@@ -259,6 +263,12 @@ instance SourceRenamablePat UBinder where
         extendEnv $ S.singleton b
       _ -> return ()
     liftPatRenamerT $ sourceRenameB ubinder
+
+instance SourceRenamablePat UAnnBinder where
+  sourceRenamePat (UAnnBinder b ty) = do
+    ty' <- liftPatRenamerT $ lift $ sourceRenameE ty
+    b' <- sourceRenamePat b
+    return $ UAnnBinder b' ty'
 
 instance SourceRenamablePat UPat' where
   sourceRenamePat pat = case pat of

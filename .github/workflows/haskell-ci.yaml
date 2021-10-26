@@ -52,8 +52,8 @@ jobs:
           $GITHUB_WORKSPACE/examples/t10k-images-idx3-ubyte
           $GITHUB_WORKSPACE/examples/t10k-labels-idx1-ubyte
 
-        key: ${{ runner.os }}-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
-        restore-keys: ${{ runner.os }}-
+        key: ${{ runner.os }}-v2-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        restore-keys: ${{ runner.os }}-v2-
 
     # This step is a workaround.
     # See issue for context: https://github.com/actions/cache/issues/445

@@ -10,22 +10,22 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
+module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux, buildPi,
                 getAllowedEffects, withEffects, modifyAllowedEffects,
-                buildLam, BuilderT, Builder, MonadBuilder, buildScoped, runBuilderT,
-                runSubstBuilder, runBuilder, getScope, getSynthCandidates,
-                builderLook, liftBuilder,
+                buildLam, BuilderT, Builder, MonadBuilder (..), buildScoped, runBuilderT,
+                runSubstBuilder, runBuilder, runBuilderT', getScope, getSynthCandidates,
+                liftBuilder,
                 app,
                 add, mul, sub, neg, div',
                 iadd, imul, isub, idiv, ilt, ieq,
-                fpow, flog, fLitLike, recGetHead, buildImplicitNaryLam, buildNaryLam,
+                fpow, flog, fLitLike, recGetHead, buildNaryLam,
                 select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
                 fromPair, getFst, getSnd, getProj, getProjRef,
                 naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
                 buildFor, buildForAux, buildForAnn, buildForAnnAux,
                 emitBlock, unzipTab, isSingletonType, withNameHint,
-                singletonTypeVal, scopedDecls, builderScoped, extendScope, checkBuilder,
-                builderExtend, unpackLeftLeaningConsList, unpackRightLeaningConsList,
+                singletonTypeVal, scopedDecls, extendScope, checkBuilder,
+                unpackLeftLeaningConsList, unpackRightLeaningConsList,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
@@ -39,7 +39,7 @@ module Builder (emit, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
                 clampPositive, buildNAbs, buildNAbsAux, buildNestedLam,
                 transformModuleAsBlock, dropSub, appReduceTraversalDef,
                 indexSetSizeE, indexToIntE, intToIndexE, freshVarE,
-                catMaybesE, runMaybeWhile) where
+                catMaybesE, runMaybeWhile, makeClassDataDef) where
 
 import Control.Applicative
 import Control.Monad
@@ -48,6 +48,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
+import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
@@ -141,17 +142,20 @@ freshNestedBindersRec substEnv (Nest b bs) = do
   return $ Nest v vs
 
 buildPi :: (Fallible m, MonadBuilder m)
-        => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
-buildPi b f = do
+        => Binder -> (Atom -> m Arrow) -> (Atom -> m Type) -> m Atom
+buildPi b fArr fTy = do
   scope <- getScope
   (ans, decls) <- scopedDecls $ do
-     v <- withNameHint b $ freshVarE PiBound $ binderType b
-     (arr, ans) <- f $ Var v
+     v <- withNameHint b $ freshVarE UnknownBinder $ binderType b
+     arr <- fArr $ Var v
+     -- overwriting the previous binder info know that we know more
+     extendScope $ v @> AtomBinderInfo (varType v) (PiBound (void arr))
+     ans <- fTy $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   let block = wrapDecls decls ans
   case typeReduceBlock scope block of
-    Just piTy -> return piTy
-    Nothing -> throw CompilerErr $
+    Right piTy -> return piTy
+    Left _ -> throw CompilerErr $
       "Unexpected irreducible decls in pi type: " ++ pprint decls
 
 buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
@@ -261,34 +265,33 @@ emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
   emitBinding $ SuperclassName dataDef idx getter
 
-emitMethodType :: MonadBuilder m => ClassDefName -> Int -> m Name
-emitMethodType classDef idx = do
-  getter <- makeMethodGetter classDef idx
+emitMethodType :: MonadBuilder m => [Bool] -> ClassDefName -> Int -> m Name
+emitMethodType explicit classDef idx = do
+  getter <- makeMethodGetter explicit classDef idx
   emitBinding $ MethodName classDef idx getter
 
-makeMethodGetter :: MonadBuilder m => ClassDefName -> Int -> m Atom
-makeMethodGetter classDefName methodIdx = do
+makeMethodGetter :: MonadBuilder m => [Bool] -> ClassDefName -> Int -> m Atom
+makeMethodGetter explicit classDefName methodIdx = do
   ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
-  buildImplicitNaryLam paramBs \params -> do
+  let arrows = explicit <&> \case True -> PureArrow; False -> ImplicitArrow
+  let bs = toNest $ zip (toList paramBs) arrows
+  buildNestedLam bs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [1, 0] dict
 
 makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
 makeSuperclassGetter classDefName methodIdx = do
   ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
-  buildImplicitNaryLam paramBs \params -> do
+  buildNaryLam ImplicitArrow paramBs \params -> do
     buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
       return $ getProjection [methodIdx] $ getProjection [0, 0] dict
-
-buildImplicitNaryLam :: MonadBuilder m => (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
-buildImplicitNaryLam bs body = buildNaryLam ImplicitArrow bs body
 
 buildNaryLam :: MonadBuilder m => Arrow -> (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
 buildNaryLam _   Empty       body = body []
 buildNaryLam arr (Nest b bs) body =
   buildLam b arr \x -> do
     bs' <- substBuilder (b@>SubstVal x) bs
-    buildImplicitNaryLam bs' \xs -> body $ x:xs
+    buildNaryLam arr bs' \xs -> body $ x:xs
 
 recGetHead :: Label -> Atom -> Atom
 recGetHead l x = do
@@ -544,10 +547,10 @@ buildNestedFor specs body = go specs []
     go []        indices = body $ reverse indices
     go ((d,b):t) indices = buildFor d b $ \i -> go t (i:indices)
 
-buildNestedLam :: MonadBuilder m => Arrow -> [Binder] -> ([Atom] -> m Atom) -> m Atom
-buildNestedLam _ [] f = f []
-buildNestedLam arr (b:bs) f =
-  buildLam b arr \x -> buildNestedLam arr bs \xs -> f (x:xs)
+buildNestedLam :: MonadBuilder m => Nest (Binder, Arrow) -> ([Atom] -> m Atom) -> m Atom
+buildNestedLam Empty f = f []
+buildNestedLam (Nest (b, arr) t) f =
+  buildLam b arr \x -> buildNestedLam t \xs -> f (x:xs)
 
 tabGet :: MonadBuilder m => Atom -> Atom -> m Atom
 tabGet tab idx = emit $ App tab idx
@@ -685,6 +688,21 @@ instance MonadReader r m => MonadReader r (BuilderT m) where
     builderExtend envC'
     return ans
 
+instance MonadWriter w m => MonadWriter w (BuilderT m) where
+  tell = lift . tell
+  listen m = do
+    envC <- builderLook
+    envR <- builderAsk
+    ((ans, envC'), w) <- lift $ listen $ runBuilderT' m (envR, envC)
+    builderExtend envC'
+    return (ans, w)
+  pass m = do
+    envC <- builderLook
+    envR <- builderAsk
+    (ans, envC') <- lift $ pass $ (\((a, wf), e) -> ((a, e), wf)) <$> runBuilderT' m (envR, envC)
+    builderExtend envC'
+    return ans
+
 instance MonadState s m => MonadState s (BuilderT m) where
   get = lift get
   put = lift . put
@@ -717,6 +735,7 @@ extendScope scope = builderExtend $ asFst (scope, scs)
 binderInfoAsSynthCandidates :: Name -> AnyBinderInfo -> SynthCandidates
 binderInfoAsSynthCandidates name binfo = case binfo of
   AtomBinderInfo ty (LamBound ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
+  AtomBinderInfo ty (PiBound  ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
   SuperclassName _ _ superclassGetter        -> mempty { superclassGetters = [superclassGetter]}
   AtomBinderInfo ty (LetBound InstanceLet _) -> mempty { instanceDicts     = [Var (name:>ty)]}
   _ -> mempty
@@ -1114,3 +1133,8 @@ runMaybeWhile lam = do
   emitIf hadError
     (return $ NothingAtom UnitTy)
     (return $ JustAtom    UnitTy UnitVal)
+
+makeClassDataDef :: SourceName -> Nest Binder -> [Type] -> [Type] -> DataDef
+makeClassDataDef className params superclasses methods =
+  DataDef className params [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
+  where dictContents = PairTy (ProdTy superclasses) (ProdTy methods)

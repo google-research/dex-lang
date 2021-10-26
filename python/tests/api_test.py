@@ -39,6 +39,8 @@ class APITest(unittest.TestCase):
   def test_scalar_conversions(self):
     assert float(dex.eval("5.0")) == 5.0
     assert int(dex.eval("5")) == 5
+    assert str(dex.Atom(5)) == "5"
+    assert str(dex.Atom(5.0)) == "5."
 
 
 if __name__ == "__main__":

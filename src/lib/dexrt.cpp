@@ -225,9 +225,6 @@ void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
 
 extern "C" {
 
-void load_cuda_array(void* host_ptr, void* device_ptr, int64_t bytes) {
-  CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
-}
 
 void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
@@ -310,13 +307,13 @@ void dex_ensure_has_cuda_context() {
 
 void dex_get_cuda_architecture(int device, char* arch) {
   int majorVersion, minorVersion;
-  cuInit(0);
   CUdevice dev;
+  CHECK(cuInit, 0);
   CHECK(cuDeviceGet, &dev, device);
-  cuDeviceGetAttribute(&majorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
-  cuDeviceGetAttribute(&minorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+  CHECK(cuDeviceGetAttribute, &majorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+  CHECK(cuDeviceGetAttribute, &minorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
   if (majorVersion > 9 || majorVersion < 0 || minorVersion > 9 || minorVersion < 0) {
-    printf("Invalid CUDA architecture version: %d.%d", majorVersion, minorVersion);
+    printf("Unsupported CUDA architecture version: %d.%d", majorVersion, minorVersion);
     std::abort();
   }
   // Cap CUDA architecture version at 7.5, the latest supported by LLVM 9

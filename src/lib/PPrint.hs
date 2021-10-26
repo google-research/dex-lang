@@ -571,7 +571,7 @@ instance Pretty BinderInfo where
   pretty b = case b of
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
-    PiBound       -> "<pi binder>"
+    PiBound  _    -> "<pi binder>"
     UnknownBinder -> "<unknown binder>"
     PatBound      -> "<pattern binder>"
 
@@ -589,6 +589,10 @@ instance Pretty AnyBinderInfo where
     LocalUExprBound      -> "UExpr name"
     ImpBound             -> "Imp name"
     TrulyUnknownBinder   -> "<unknown binder (really)>"
+
+instance Pretty a => Pretty (SubstVal a) where
+  pretty (SubstVal x) = "subst with" <+> p x
+  pretty (Rename   n) = "rename to" <+> p n
 
 instance Pretty DataDef where
   pretty (DataDef name bs cons) =
@@ -684,11 +688,13 @@ instance Pretty UDecl where
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
   pretty (UDataDefDecl (UDataDef bParams dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p bParams
-       <+> "where" <> nest 2 (hardline <> prettyLines (zip (toList bDataCons) dataCons))
+      <+> "where" <> nest 2 (hardline <> prettyLines (zip (toList bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
-     let methods = [UAnnBinder b ty | (b, ty) <- zip (toList methodNames) methodTys]
-     in "interface" <+> p params <+> p superclasses <+> p interfaceName
-         <> hardline <> prettyLines methods
+    "interface" <+> p params <+> p superclasses <+> p interfaceName
+      <> hardline <> foldMap (<>hardline) methods
+    where
+      methods = [hsep (p <$> e) <+> p (UAnnBinder b ty) |
+                 (b, UMethodType e ty) <- zip (toList methodNames) methodTys]
   pretty (UInstance bs className params methods Nothing) =
     "instance" <+> p bs <+> p className <+> p params <+> hardline <> prettyLines methods
   pretty (UInstance bs className params methods (Just v)) =

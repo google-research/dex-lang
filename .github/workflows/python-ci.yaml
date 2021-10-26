@@ -46,10 +46,10 @@ jobs:
           ~/.stack
           ~/.cache/pip
           $GITHUB_WORKSPACE/.stack-work
-        key: ${{ runner.os }}-python-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
+        key: ${{ runner.os }}-v2-python-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: |
-          ${{ runner.os }}-python-
-          ${{ runner.os }}-
+          ${{ runner.os }}-v2-python-
+          ${{ runner.os }}-v2-
 
     - name: Build
       run: make build-ffis

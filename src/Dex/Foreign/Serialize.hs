@@ -6,7 +6,7 @@
 
 module Dex.Foreign.Serialize (
   CAtom,
-  dexPrint, dexToCAtom
+  dexPrint, dexToCAtom, dexFromCAtom
   ) where
 
 import Data.Word
@@ -79,3 +79,12 @@ dexToCAtom atomPtr resultPtr = do
     _ -> notSerializable
   where
     notSerializable = setError "Unserializable atom" $> 0
+
+dexFromCAtom :: Ptr CAtom -> IO (Ptr Atom)
+dexFromCAtom catomPtr = do
+  catom <- peek catomPtr
+  case catom of
+    CLit lit         -> toStablePtr $ Con $ Lit lit
+    CRectArray _ _ _ -> unsupported
+  where
+    unsupported = setError "Unsupported CAtom" $> nullPtr

@@ -124,13 +124,13 @@ mean y
   lets consider how it works. Critically, one cannot
   simply index an table with an integer.
 
-r = x.2
+r = x.(2 : Int)
 > Type error:
 > Expected: (Fin 3)
 >   Actual: Int32
 >
-> r = x.2
->       ^
+> r = x.(2 : Int)
+>          ^^
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator.

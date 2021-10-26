@@ -90,7 +90,7 @@ install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
-	$(STACK) build $(PROF) --flag dex:-foreign
+	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:-foreign
 
 # For some reason stack fails to detect modifications to foreign library files
 build-ffis: dexrt-llvm
@@ -136,8 +136,8 @@ all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
 
 quine-test-targets = $(all-names:%=run-%)
 
-update-test-targets    = $(test-names:%=update-tests-%)
-update-example-targets = $(example-names:%=update-examples-%)
+update-test-targets    = $(test-names:%=update-tests/%)
+update-example-targets = $(example-names:%=update-examples/%)
 
 doc-example-names = $(example-names:%=doc/examples/%.html)
 
@@ -164,11 +164,11 @@ update-%: export DEX_TEST_MODE=t
 
 update-all: $(update-test-targets) $(update-example-targets)
 
-update-tests-%: tests/%.dx build
+update-tests/%: tests/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-update-examples-%: examples/%.dx build
+update-examples/%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 

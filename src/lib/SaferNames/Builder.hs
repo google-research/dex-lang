@@ -337,6 +337,7 @@ buildPi :: (Fallible1 m, Builder m)
         -> m n (PiType n)
 buildPi hint arr ty body = do
   ab <- withFreshBinder hint ty \v -> do
+    withAllowedEffects Pure do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy
   Abs b (PairE effs resultTy) <- return ab

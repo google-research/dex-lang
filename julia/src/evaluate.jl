@@ -13,8 +13,28 @@ end
 
 Base.show(io::IO, atom::Atom) = show(io, print(atom.ptr))
 
+"""
+    juliaize(x)
+
+Get the corresponding Julia object from some Dex object.
+The inverse of [`dexize`](@ref).
+"""
+juliaize(x::CAtom) = bust_union(x)
+juliaize(x::Ptr{HsAtom}) = juliaize(CAtom(x))
 juliaize(x::Atom) = juliaize(x.ptr)
 Base.convert(::Type{T}, atom::Atom) where {T<:Number} = convert(T, juliaize(atom))
+
+"""
+    dexize(x)
+
+Get the corresponding Dex object from some Julia object.
+The inverse of [`juliaize`](@ref).
+"""
+dexize(x) = Atom(from_CAtom(Ref(CAtom(x))), PRELUDE) 
+# ^ Always defined in PRELUDE as it could be defined anywhere that has all the bindings,
+# but because it has no bindings anywhere will do
+
+Base.convert(::Type{Atom}, atom::Number) = dexize(atom)
 
 
 function (self::Atom)(args...)
