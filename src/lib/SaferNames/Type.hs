@@ -79,7 +79,7 @@ instantiatePi (PiType _ b eff body) x = do
 -- MonadAtomSubst.
 class ( Monad2 m, Fallible2 m, EnvReader Name m
       , BindingsGetter2 m, BindingsExtender2 m)
-     => Typer (m::MonadKind2) where
+     => Typer (m::MonadKind2)
 
 newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
   TyperT { runTyperT' :: EnvReaderT Name (BindingsReaderT m) i o a }
@@ -97,7 +97,7 @@ runTyperT bindings m = do
     runEnvReaderT idEnv $
       runTyperT' m
 
-instance Fallible m => Typer (TyperT m) where
+instance Fallible m => Typer (TyperT m)
 
 -- === typeable things ===
 

@@ -21,6 +21,7 @@ import Control.Monad.Writer.Strict (execWriterT, tell)
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.List (sortOn)
+import Data.Maybe (fromJust)
 import Data.String (fromString)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -174,6 +175,12 @@ substIsEmpty :: SolverSubst n -> Bool
 substIsEmpty (SolverSubst subst) = null subst
 
 -- TODO: zonk the allowed effects and synth candidates in the bindings too
+-- TODO: the reason we need this is that `getType` uses the bindings to obtain
+-- type information, and we need this information when we emit decls. For
+-- example, if we emit `f x` and we don't know that `f` has a type of the form
+-- `a -> b` then `getType` will crash. But we control the inference-specific
+-- implementation of `emitDecl`, so maybe we could instead do something like
+-- emit a fresh inference variable in the case thea `getType` fails.
 zonkUnsolvedBindings :: Distinct n => SolverSubst n -> UnsolvedBindings n -> Bindings n
                      -> (UnsolvedBindings n, Bindings n)
 zonkUnsolvedBindings ss un bindings | substIsEmpty ss = (un, bindings)
@@ -245,11 +252,15 @@ instance Solver (InfererM i) where
 
 instance Inferer InfererM where
   liftSolverM m = InfererM $ EnvReaderT $ lift $
-    liftBetweenInplaceTs (liftExcept . runSearcherM) id liftSolverOutFrag $
+    liftBetweenInplaceTs (liftExcept . liftM fromJust . runSearcherM) id liftSolverOutFrag $
       runSolverM' m
 
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do
+    -- This zonking, and the zonking of the bindings elsewhere, is only to
+    -- prevent `getType` from failing. But maybe we should just catch the
+    -- failure if it occurs and generate a fresh inference name for the type in
+    -- that case?
     expr' <- zonk expr
     ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
@@ -278,7 +289,7 @@ hoistInfState
      , HoistableE e, Distinct n2, InjectableB b, BindsNames b)
   => Scope n1
   -> PairB b InfOutFrag n1 n2
-  -> e n2
+  ->   e n2
   -> m (Abs InfOutFrag (Abs (PairB b (Nest Decl)) e) n1)
 hoistInfState scope (PairB b (InfOutFrag emissions subst)) result = do
   withSubscopeDistinct emissions do
@@ -324,8 +335,10 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) subst e = do
         withExtEvidence infVars $
           case deleteFromSubst subst' (inject $ binderName b) of
             Just subst'' ->
+              -- do we need to zonk here? (if not, say why not)
               case hoist b (HoistedSolverState infVars subst'' result) of
                 Just hoisted -> return hoisted
+                -- TODO: is this actually a compiler error?
                 -- TODO: report *which* variables leaked
                 Nothing -> throw TypeErr "Leaked local variable"
             Nothing -> do
@@ -1125,9 +1138,6 @@ newtype SolverSubst n = SolverSubst (M.Map (AtomName n) (Type n))
 
 class (CtxReader1 m, BindingsReader m) => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, InjectableE e) => e n -> m n (e n)
-  -- We require the `Emits` constraint to emit solver stuff to ensure that we
-  -- don't do it at the top level. It might be better to have a solver-specific
-  -- version of `Emits`.
   extendSolverSubst :: AtomName n -> Type n -> m n ()
   emitSolver :: SolverBinding n -> m n (AtomName n)
 

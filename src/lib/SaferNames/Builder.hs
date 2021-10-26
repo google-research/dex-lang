@@ -29,7 +29,7 @@ module SaferNames.Builder (
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions, emitAtomToName,
-  withFabricatedEmitsEvidence, BuilderEmission (..),
+  withFabricatedEmitsEvidence,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
   ) where
 
@@ -55,8 +55,6 @@ import Err
 
 class (BindingsReader m, Scopable m, MonadFail1 m)
       => Builder (m::MonadKind1) where
-  -- This is unsafe because it doesn't require the Emits predicate. `emitDecl`
-  -- and `emitBinding` wrap it safely.
   emitDecl
     :: (Builder m, Emits n)
     => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
@@ -155,42 +153,11 @@ type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
 
 -- === BuilderT ===
 
--- Only one element of the pair should be populated. We could have used
--- `EitherB` instead but its monoid instance is more awkward.
 type BuilderEmissions = Nest Decl
-
-data BuilderEmission c n where
-  BuilderEmitDecl    :: DeclBinding n -> BuilderEmission AtomNameC n
-  BuilderEmitTopDecl :: Binding c n   -> BuilderEmission c         n
 
 instance ExtOutMap Bindings BuilderEmissions where
   extendOutMap bindings emissions =
     bindings `extendOutMap` boundBindings emissions
-
-instance NameColor c => GenericE (BuilderEmission c) where
-  type RepE (BuilderEmission c) = EitherE DeclBinding (Binding c)
-  fromE (BuilderEmitDecl    x) = LeftE  x
-  fromE (BuilderEmitTopDecl x) = RightE x
-
-  toE (LeftE x) =
-    case eqNameColorRep (nameColorRep::NameColorRep c)
-                        (nameColorRep::NameColorRep AtomNameC) of
-      Just ColorsEqual -> BuilderEmitDecl x
-      Nothing -> error "shouldn't happen"
-  toE (RightE x) = BuilderEmitTopDecl x
-
-instance NameColor c => ToBinding (BuilderEmission c) c where
-  toBinding (BuilderEmitDecl declBinding) = toBinding declBinding
-  toBinding (BuilderEmitTopDecl binding) = binding
-
-instance InjectableV         BuilderEmission
-instance HoistableV          BuilderEmission
-instance SubstV Name         BuilderEmission
-instance SubstV AtomSubstVal BuilderEmission
-instance NameColor c => InjectableE         (BuilderEmission c)
-instance NameColor c => HoistableE          (BuilderEmission c)
-instance NameColor c => SubstE Name         (BuilderEmission c)
-instance NameColor c => SubstE AtomSubstVal (BuilderEmission c)
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Bindings BuilderEmissions m n a }

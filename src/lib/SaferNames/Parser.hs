@@ -141,7 +141,7 @@ topLevelCommand =
   <?> "top-level command"
 
 dumpEnv :: Parser SourceBlock'
-dumpEnv = string ":env" $> DumpEnv
+dumpEnv = string ":debug-env" $> DumpEnv
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do

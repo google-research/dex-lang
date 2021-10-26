@@ -57,7 +57,6 @@ data ErrType = NoErr
              | EscapedNameErr
              | ModuleImportErr
              | MonadFailErr
-             | SearchFailureErr
                deriving (Show, Eq)
 
 type SrcPosCtx  = Maybe SrcPos
@@ -231,17 +230,18 @@ asCompilerErr cont = addContext "(This is a compiler error!)" cont
 infix 0 <!>
 class (Monad m, Alternative m) => Searcher m where
   -- Runs the second computation when the first yields an empty set of results.
-  -- It's a bit like `<?>` in parser combinators.
+  -- This is just `<|>` for greedy searchers like `Maybe`, but in other cases,
+  -- like the list monad, it matters that the second computation isn't run if
+  -- the first succeeds.
   (<!>) :: m a -> m a -> m a
 
+-- Adds an extra error case to `FallibleM` so we can give it an Alternative
+-- instance with an identity element.
 newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT FallibleM a }
   deriving (Functor, Applicative, Monad)
 
-runSearcherM :: SearcherM a -> Except a
-runSearcherM m =
-  runFallibleM $ runMaybeT (runSearcherM' m) >>= \case
-    Nothing -> throw SearchFailureErr ""
-    Just x -> return x
+runSearcherM :: SearcherM a -> Except (Maybe a)
+runSearcherM m = runFallibleM $ runMaybeT (runSearcherM' m)
 
 instance MonadFail SearcherM where
   fail _ = SearcherM $ MaybeT $ return Nothing
@@ -259,10 +259,7 @@ instance Alternative SearcherM where
       Nothing -> m2
 
 instance Searcher SearcherM where
-  SearcherM (MaybeT m) <!> handler = SearcherM $ MaybeT do
-    m >>= \case
-      Just ans -> return $ Just ans
-      Nothing -> runMaybeT $ runSearcherM' handler
+  (<!>) = (<|>)
 
 instance CtxReader SearcherM where
   getErrCtx = SearcherM $ lift getErrCtx
@@ -353,7 +350,6 @@ instance Pretty ErrType where
     EscapedNameErr    -> "Escaped name"
     ModuleImportErr   -> "Module import error"
     MonadFailErr      -> "MonadFail error (internal error)"
-    SearchFailureErr  -> "Search failure (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs

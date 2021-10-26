@@ -92,7 +92,6 @@ instance CheaplyReducible Expr where
     App f x -> do
       f' <- cheapReduceE f
       x' <- cheapReduceE x
-      -- TODO: Worry about variable capture. Should really carry a substitution.
       case f' of
         Lam (LamExpr (LamBinder b _ arr Pure) body)
           | arr == PlainArrow || arr == ImplicitArrow -> do
