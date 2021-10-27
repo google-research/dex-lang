@@ -203,8 +203,8 @@ forStr (RegularFor Rev) = "rof"
 forStr ParallelFor      = "pfor"
 
 instance Pretty (PiType n) where
-  pretty (PiType arr binder _ body) = let
-    prettyBinder = parens $ p binder
+  pretty (PiType (PiBinder b ty arr) _ body) = let
+    prettyBinder = parens $ p (b:>ty)
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
@@ -254,12 +254,17 @@ instance Pretty (AtomBinding n) where
   pretty binding = case binding of
     LetBound    b -> p b
     LamBound    b -> p b
+    PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
     "Lambda binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
+
+instance Pretty (PiBinding n) where
+  pretty (PiBinding arr ty) =
+    "Pi binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
 
 instance Pretty (SolverBinding n) where
   pretty (InfVarBound ty _) = "Inference variable of type:" <+> p ty

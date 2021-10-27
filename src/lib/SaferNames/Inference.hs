@@ -394,7 +394,7 @@ checkSigma :: (Emits o, Inferer m) => UExpr i
            -> SuggestionStrength
            -> SigmaType o -> m i o (Atom o)
 checkSigma expr reqCon sTy = case sTy of
-  Pi piTy@(PiType arrow b _ _)
+  Pi piTy@(PiType (PiBinder b _ arrow) _ _)
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _))
           | arrow == arrow' ->
@@ -425,13 +425,13 @@ instantiateSigma :: (Emits o, Inferer m) => Atom o -> m i o (Atom o)
 instantiateSigma f = do
   ty <- tryGetType f
   case ty of
-    Pi (PiType ImplicitArrow b _ _) -> do
-      x <- freshType $ binderType b
+    Pi (PiType (PiBinder _ argTy ImplicitArrow) _ _) -> do
+      x <- freshType argTy
       ans <- emit $ App f x
       instantiateSigma $ Var ans
-    Pi (PiType ClassArrow b _ _) -> do
+    Pi (PiType (PiBinder _ argTy ClassArrow) _ _) -> do
       ctx <- srcPosCtx <$> getErrCtx
-      ans <- emit $ App f (Con $ ClassDictHole ctx $ binderType b)
+      ans <- emit $ App f (Con $ ClassDictHole ctx argTy)
       instantiateSigma $ Var ans
     _ -> return f
 
@@ -695,7 +695,7 @@ inferUVar = \case
 
 buildForTypeFromTabType :: (Fallible1 m, Builder m)
                         => EffectRow n -> PiType n -> m n (PiType n)
-buildForTypeFromTabType effs tabPiTy@(PiType arr (bPi:>piArgTy) _ _) = do
+buildForTypeFromTabType effs tabPiTy@(PiType (PiBinder bPi piArgTy arr) _ _) = do
   unless (arr == TabArrow) $ throw TypeErr $ "Not an table arrow type: " ++ pprint arr
   buildPi (getNameHint bPi) PlainArrow piArgTy \i -> do
     Distinct <- getDistinct
@@ -1150,6 +1150,8 @@ type SolverEmissions = Nest (BinderP AtomNameC SolverBinding)
 
 instance GenericB SolverOutFrag where
   type RepB SolverOutFrag = PairB SolverEmissions (LiftB SolverSubst)
+  fromB = error "not implemented"
+  toB   = error "not implemented"
 
 instance ProvesExt   SolverOutFrag
 instance SubstB Name SolverOutFrag
@@ -1372,8 +1374,8 @@ unifyEq e1 e2 = do
   unless eq empty
 
 unifyPiType :: (Emits n, Unifier m) => PiType n -> PiType n -> m n ()
-unifyPiType (PiType arr1 (b1:>ann1) eff1 ty1)
-            (PiType arr2 (b2:>ann2) eff2 ty2) = do
+unifyPiType (PiType (PiBinder b1 ann1 arr1) eff1 ty1)
+            (PiType (PiBinder b2 ann2 arr2) eff2 ty2) = do
   unless (arr1 == arr2) empty
   unify ann1 ann2
   v <- freshSkolemName ann1

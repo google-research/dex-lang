@@ -25,11 +25,12 @@ module SaferNames.Syntax (
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
+    PiBinding (..), PiBinder (..),
     PiType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..), TopState,
-    BindsBindings (..), WithBindings (..), Scopable (..),
+    BindsBindings (..), BindsOneAtomName (..), WithBindings (..), Scopable (..),
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -48,7 +49,8 @@ module SaferNames.Syntax (
     SourceUModule (..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
-    ToBinding (..), refreshBinders, withFreshBinder, withFreshLamBinder,
+    ToBinding (..), refreshBinders, withFreshBinder,
+    withFreshLamBinder, withFreshPiBinder,
     withFreshNameBinder,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
@@ -65,11 +67,10 @@ module SaferNames.Syntax (
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern TyKind,
-    pattern Pure, pattern LabeledRowKind, pattern EffKind,
-    pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
+    pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTy, pattern TabTyAbs,
-    pattern SumTy, pattern SumVal, pattern MaybeTy,
+    pattern TabTyAbs,
+    pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern NothingAtom, pattern JustAtom,
     (-->), (?-->), (--@), (==>) ) where
 
@@ -194,8 +195,15 @@ data LamBinder (n::S) (l::S) =
 data LamExpr (n::S) where
   LamExpr :: LamBinder n l -> Block l -> LamExpr n
 
+data PiBinding (n::S) = PiBinding Arrow (Type n)
+  deriving (Show, Generic)
+
+data PiBinder (n::S) (l::S) =
+  PiBinder (NameBinder AtomNameC n l) (Type n) Arrow
+  deriving (Show, Generic)
+
 data PiType  (n::S) where
-  PiType :: Arrow -> Binder n l -> EffectRow l -> Type  l -> PiType n
+  PiType :: PiBinder n l -> EffectRow l -> Type  l -> PiType n
 
 data Arrow =
    PlainArrow
@@ -233,6 +241,7 @@ deriving instance Show (Binding c n)
 data AtomBinding (n::S) =
    LetBound    (DeclBinding   n)
  | LamBound    (LamBinding    n)
+ | PiBound     (PiBinding     n)
  | MiscBound   (Type          n)
  | SolverBound (SolverBinding n)
    deriving (Show, Generic)
@@ -454,6 +463,15 @@ class BindsNames b => BindsBindings (b::B) where
                         => Distinct l => b n l -> BindingsFrag n l
   boundBindings b = boundBindings $ fromB b
 
+-- We're really just defining this so we can have a polymorphic `binderType`.
+-- But maybe we don't need one. Or maybe we can make one using just
+-- `BindsOneName b AtomNameC` and `BindsBindings b`.
+class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
+  boundAtomBinding :: b n l -> AtomBinding n
+
+binderType :: BindsOneAtomName b => b n l -> Type n
+binderType b =  bindingType $ toBinding $ boundAtomBinding b
+
 instance (InjectableE ann, ToBinding ann c) => BindsBindings (BinderP c ann) where
   boundBindings (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
     where ann' = withExtEvidence b $ inject ann
@@ -472,6 +490,9 @@ instance ToBinding DeclBinding AtomNameC where
 
 instance ToBinding LamBinding AtomNameC where
   toBinding = toBinding . LamBound
+
+instance ToBinding PiBinding AtomNameC where
+  toBinding = toBinding . PiBound
 
 instance ToBinding Atom AtomNameC where
   toBinding = toBinding . MiscBound
@@ -558,6 +579,16 @@ withFreshLamBinder hint (LamBinding arr ty) effAbs cont = do
       return $ PairE result effs
   Abs (LamBinder b' ty' arr' _) (PairE e eff) <- return ab
   return $ Abs (LamBinder b' ty' arr' eff) e
+
+withFreshPiBinder
+  :: (Scopable m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e)
+  => NameHint -> PiBinding n
+  -> (forall l. Ext n l => AtomName l -> m l (e l))
+  -> m n (Abs PiBinder e n)
+withFreshPiBinder hint (PiBinding arr ty) cont = do
+  Abs b name <- freshBinderNamePair hint
+  withBindings (Abs (PiBinder b ty arr) name) \v -> do
+    withAllowedEffects Pure $ cont v
 
 -- This version works with the in-place api. TODO: remove the other version.
 refreshBinders2
@@ -882,42 +913,40 @@ bindingType :: Binding AtomNameC n -> Type n
 bindingType (AtomNameBinding b) = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
+  PiBound     (PiBinding   _ ty)   -> ty
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
-
-binderType :: ToBinding ann AtomNameC => AtomBinderP ann n l -> Type n
-binderType (_:>binding) = bindingType $ toBinding binding
 
 infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
 piArgType :: PiType n -> Type n
-piArgType (PiType _ b _ _) = binderType b
+piArgType (PiType (PiBinder _ ty _) _ _) = ty
 
 piArrow :: PiType n -> Arrow
-piArrow (PiType arr _ _ _) = arr
+piArrow (PiType (PiBinder _ _ arr) _ _) = arr
 
 nonDepPiType :: ScopeReader m
              => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
-      return $ PiType arr (b:>argTy) eff' resultTy'
+      return $ PiType (PiBinder b argTy arr) eff' resultTy'
 
 considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
-considerNonDepPiType (PiType arr b eff resultTy) = do
+considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
   PairE eff' resultTy' <- hoist b (PairE eff resultTy)
-  return (arr, binderType b, eff', resultTy')
+  return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
                  => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
 fromNonDepPiType arr ty = do
-  Pi (PiType arr' b eff resultTy) <- return ty
+  Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
   PairE eff' resultTy' <- liftMaybe $ hoist b (PairE eff resultTy)
-  return $ (binderType b, eff', resultTy')
+  return $ (argTy, eff', resultTy')
 
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
 naryNonDepPiType _ Pure [] resultTy = return resultTy
@@ -1027,11 +1056,8 @@ pattern RefTy r a = TC (RefType (Just r) a)
 pattern RawRefTy :: Type n -> Type n
 pattern RawRefTy a = TC (RefType Nothing a)
 
-pattern TabTy :: Binder n l -> Type l -> Type n
-pattern TabTy i a = Pi (PiType TabArrow i Pure a)
-
 pattern TabTyAbs :: PiType n -> Type n
-pattern TabTyAbs a <- Pi a@(PiType TabArrow _ _ _)
+pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
@@ -1047,6 +1073,9 @@ pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
 pattern Fin :: Atom n -> Type n
 pattern Fin n = TC (IntRange (IdxRepVal 0) n)
+
+pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
+pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
 mkConsListTy :: [Type n] -> Type n
 mkConsListTy = foldr PairTy UnitTy
@@ -1100,12 +1129,6 @@ mkBundleTy = bundleFold UnitTy PairTy
 
 mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
-
-pattern FunTy :: Binder n l -> EffectRow l -> Type l -> Type n
-pattern FunTy b eff bodyTy = Pi (PiType PlainArrow b eff bodyTy)
-
-pattern BinaryFunTy :: Binder n l -> Binder l l' -> EffectRow l' -> Type l' -> Type n
-pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 pattern MaybeTy :: Type n -> Type n
 pattern MaybeTy a = SumTy [UnitTy, a]
@@ -1386,6 +1409,16 @@ instance BindsBindings LamBinder where
       BindingsFrag (RecEnvFrag $ b @> binding)
                    (Just $ inject effects)
 
+instance BindsAtMostOneName LamBinder AtomNameC where
+  LamBinder b _ _ _ @> x = b @> x
+
+instance BindsOneName LamBinder AtomNameC where
+  binderName (LamBinder b _ _ _) = binderName b
+
+instance BindsOneAtomName LamBinder where
+  boundAtomBinding (LamBinder _ ty arr _) =
+    LamBound $ LamBinding arr ty
+
 instance ProvesExt  LamBinder
 instance BindsNames LamBinder
 instance InjectableB LamBinder
@@ -1418,10 +1451,51 @@ instance SubstE AtomSubstVal LamExpr
 deriving instance Show (LamExpr n)
 deriving via WrapE LamExpr n instance Generic (LamExpr n)
 
+instance GenericE PiBinding where
+  type RepE PiBinding = PairE (LiftE Arrow) Type
+  fromE (PiBinding arr ty) = PairE (LiftE arr) ty
+  toE   (PairE (LiftE arr) ty) = PiBinding arr ty
+
+instance InjectableE PiBinding
+instance HoistableE  PiBinding
+instance SubstE Name PiBinding
+instance SubstE AtomSubstVal PiBinding
+instance AlphaEqE PiBinding
+
+instance GenericB PiBinder where
+  type RepB PiBinder = BinderP AtomNameC (PairE Type (LiftE Arrow))
+  fromB (PiBinder b ty arr) = b :> PairE ty (LiftE arr)
+  toB   (b :> PairE ty (LiftE arr)) = PiBinder b ty arr
+
+instance BindsAtMostOneName PiBinder AtomNameC where
+  PiBinder b _ _ @> x = b @> x
+
+instance BindsOneName PiBinder AtomNameC where
+  binderName (PiBinder b _ _) = binderName b
+
+instance BindsOneAtomName PiBinder where
+  boundAtomBinding (PiBinder _ ty arr) =
+    PiBound $ PiBinding arr ty
+
+instance BindsBindings PiBinder where
+  boundBindings (PiBinder b ty arr) =
+    withExtEvidence b do
+      let binding = toBinding $ inject $ PiBinding arr ty
+      BindingsFrag (RecEnvFrag $ b @> binding) (Just Pure)
+
+instance ProvesExt  PiBinder
+instance BindsNames PiBinder
+instance InjectableB PiBinder
+instance HoistableB  PiBinder
+instance SubstB Name PiBinder
+instance SubstB AtomSubstVal PiBinder
+instance AlphaEqB PiBinder
+
 instance GenericE PiType where
-  type RepE PiType = PairE (LiftE Arrow) (Abs Binder (PairE EffectRow Type))
-  fromE (PiType arr b effs ty) = PairE (LiftE arr) (Abs b (PairE effs ty))
-  toE   (PairE (LiftE arr) (Abs b (PairE effs ty))) = PiType arr b effs ty
+  type RepE PiType = Abs PiBinder (PairE EffectRow Type)
+  fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
+  toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
+
 instance InjectableE PiType
 instance HoistableE  PiType
 instance AlphaEqE PiType
@@ -1497,23 +1571,26 @@ instance SubstE AtomSubstVal SynthCandidates
 
 instance GenericE AtomBinding where
   type RepE AtomBinding =
-     EitherE4
+     EitherE5
         DeclBinding
         LamBinding
+        PiBinding
         Type
         SolverBinding
 
   fromE = \case
     LetBound    x -> Case0 x
     LamBound    x -> Case1 x
-    MiscBound   x -> Case2 x
-    SolverBound x -> Case3 x
+    PiBound     x -> Case2 x
+    MiscBound   x -> Case3 x
+    SolverBound x -> Case4 x
 
   toE = \case
     Case0 x -> LetBound x
     Case1 x -> LamBound x
-    Case2 x -> MiscBound x
-    Case3 x -> SolverBound x
+    Case2 x -> PiBound  x
+    Case3 x -> MiscBound x
+    Case4 x -> SolverBound x
     _ -> error "impossible"
 
 instance InjectableE AtomBinding
@@ -1666,6 +1743,8 @@ instance Store (DataConDef n)
 instance Store (Block n)
 instance Store (LamBinder n l)
 instance Store (LamExpr n)
+instance Store (PiBinding n)
+instance Store (PiBinder n l)
 instance Store (PiType  n)
 instance Store Arrow
 instance Store (ClassDef       n)

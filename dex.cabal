@@ -40,7 +40,7 @@ flag foreign
 
 flag safe-names
   description:         Enables building with safe names checks
-  default:             True
+  default:             False
 
 library dex-resources
   if os(darwin)

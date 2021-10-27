@@ -33,8 +33,6 @@ import RenderHtml
 import LiveOutput
 #endif
 
-import qualified SaferNames.Syntax as S
-import qualified SaferNames.Parser as S
 import SaferNames.Bridge
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
@@ -96,7 +94,7 @@ evalPrelude fname = do
 
 replLoop :: String -> InputT InterblockM ()
 replLoop prompt = do
-  sourceBlock <- readMultiline prompt S.parseTopDeclRepl
+  sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift getTopStateEx
   result <- lift $ evalSourceBlock sourceBlock
   case result of Result _ (Failure _) -> lift $ setTopStateEx env
@@ -136,7 +134,7 @@ readMultiline prompt parse = loop prompt ""
 simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
-printLitProg :: DocFmt -> S.LitProg -> IO ()
+printLitProg :: DocFmt -> LitProg -> IO ()
 printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
 #ifdef DEX_LIVE
 printLitProg HTMLDoc prog = putStr $ progHtml prog

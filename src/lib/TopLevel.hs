@@ -371,9 +371,7 @@ evalUModule sourceModule = do
   -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
   -- safer names system while we're staging it in.
   checkPass TypePass typed
-  typed' <- roundtripSaferNamesPass typed
-  checkPass TypePass typed'
-  synthed <- liftExcept $ synthModule bindings synthCandidates typed'
+  synthed <- liftExcept $ synthModule bindings synthCandidates typed
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
   let defunctionalized = simplifyModule bindings synthed
@@ -395,17 +393,6 @@ evalUModule sourceModule = do
       evaluated <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
       checkPass ResultPass $ Module Evaluated Empty evaluated
       return evaluated
-
-roundtripSaferNamesPass :: MonadPasses m => Module -> m n Module
-roundtripSaferNamesPass m = do
-#ifdef DEX_SAFE_NAMES
-  (S.Distinct, env) <- getTopState
-  let m' = toSafe env $ m
-  S.checkModule (S.topBindings $ topStateS env) m'
-  return $ fromSafe env m'
-#else
-  return m
-#endif
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!

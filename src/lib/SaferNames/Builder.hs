@@ -11,6 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
@@ -199,6 +200,7 @@ instance MonadFail m => Scopable (BuilderT m) where
 
 instance (InjectableV v, Builder m) => Builder (EnvReaderT v m i) where
   emitDecl hint ann expr = EnvReaderT $ lift $ emitDecl hint ann expr
+  buildScopedGeneral _ _ = undefined
 
 -- === Emits predicate ===
 
@@ -336,12 +338,12 @@ buildPi :: (Fallible1 m, Builder m)
         -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (PiType n)
 buildPi hint arr ty body = do
-  ab <- withFreshBinder hint ty \v -> do
+  ab <- withFreshPiBinder hint (PiBinding arr ty) \v -> do
     withAllowedEffects Pure do
       (effs, resultTy) <- body v
       return $ PairE effs resultTy
   Abs b (PairE effs resultTy) <- return ab
-  return $ PiType arr b effs resultTy
+  return $ PiType b effs resultTy
 
 buildNonDepPi :: (Fallible1 m, Builder m)
               => NameHint -> Arrow -> Type n -> EffectRow n -> Type n

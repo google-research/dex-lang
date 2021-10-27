@@ -68,7 +68,7 @@ tryGetType e = do
   injectM ty
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
-instantiatePi (PiType _ b eff body) x = do
+instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 
@@ -193,6 +193,7 @@ instance CheckableE AtomBinding where
   checkE binding = case binding of
     LetBound letBinding -> LetBound    <$> checkE letBinding
     LamBound lamBinding -> LamBound    <$> checkE lamBinding
+    PiBound  piBinding  -> PiBound     <$> checkE piBinding
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
 
@@ -327,6 +328,11 @@ instance CheckableE LamBinding where
     ty' <- checkTypeE TyKind ty
     return $ LamBinding arr ty'
 
+instance CheckableE PiBinding where
+  checkE (PiBinding arr ty) = do
+    ty' <- checkTypeE TyKind ty
+    return $ PiBinding arr ty'
+
 instance CheckableB LamBinder where
   checkB (LamBinder b ty arr effs) cont = do
     ty' <- checkTypeE TyKind ty
@@ -341,16 +347,24 @@ instance HasType LamExpr where
   getTypeE (LamExpr b body) = do
     checkB b \(LamBinder b' ty arr eff') -> do
       bodyTy <- getTypeE body
-      return $ Pi $ PiType arr (b':>ty) eff' bodyTy
+      return $ Pi $ PiType (PiBinder b' ty arr) eff' bodyTy
 
 instance HasType PiType where
-  getTypeE (PiType arr b@(_:>ty) eff resultTy) = do
-    ty|:TyKind
+  getTypeE (PiType b@(PiBinder _ _ arr) eff resultTy) = do
     checkArrowAndEffects arr eff
     checkB b \_ -> do
       void $ checkE eff
       resultTy|:TyKind
     return TyKind
+
+instance CheckableB PiBinder where
+  checkB (PiBinder b ty arr) cont = do
+    ty' <- checkTypeE TyKind ty
+    let binding = toBinding $ PiBinding arr ty'
+    withFreshNameBinder (getNameHint b) binding \b' -> do
+      extendRenamer (b@>binderName b') do
+        extendBindings (BindingsFrag emptyOutFrag (Just Pure)) $
+          cont $ PiBinder b' ty' arr
 
 instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
   checkB nest cont = case nest of
@@ -395,8 +409,9 @@ typeCheckPrimCon con = case con of
     (PtrTy (_, b)) <- getTypeE p
     return $ RawRefTy $ BaseTy b
   TabRef tabTy -> do
-    TabTy b (RawRefTy a) <- getTypeE tabTy
-    return $ RawRefTy $ TabTy b a
+    Pi (PiType binder Pure (RawRefTy a)) <- getTypeE tabTy
+    PiBinder _ _ TabArrow <- return binder
+    return $ RawRefTy $ Pi $ PiType binder Pure a
   ConRef conRef -> case conRef of
     ProdCon xs -> RawRefTy <$> (ProdTy <$> mapM typeCheckRef xs)
     IntRangeVal     l h i -> do
@@ -465,7 +480,7 @@ typeCheckPrimOp op = case op of
         updaterTy <- s --> s
         x|:updaterTy >> declareEff (RWSEffect Writer h') $> UnitTy
   IndexRef ref i -> do
-    RefTy h (Pi (PiType TabArrow (b:>iTy) Pure eltTy)) <- getTypeE ref
+    RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) <- getTypeE ref
     i' <- checkTypeE iTy i
     eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
     return $ RefTy h eltTy'
@@ -585,10 +600,10 @@ typeCheckPrimOp op = case op of
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ f -> do
-    Pi (PiType _ b eff eltTy) <- getTypeE f
+    Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
     eff' <- liftMaybe $ hoist b eff
     declareEffs eff'
-    return $ Pi $ PiType TabArrow b Pure eltTy
+    return $ Pi $ PiType (PiBinder b argTy TabArrow) Pure eltTy
   Tile dim fT fS -> do
     (TC (IndexSlice n l), effT, tr) <- getTypeE fT >>= fromNonDepPiType PlainArrow
     (sTy                , effS, sr) <- getTypeE fS >>= fromNonDepPiType PlainArrow
@@ -618,18 +633,18 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     -- PTileReduce n mapping : (n=>a, (acc1, ..., acc{n}))
     return $ PairTy tabTy $ mkConsListTy accTys
   While body -> do
-    FunTy (b:>UnitTy) eff condTy <- getTypeE body
+    Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
     PairE eff' condTy' <- liftMaybe $ hoist b $ PairE eff condTy
     declareEffs eff'
     checkAlphaEq (BaseTy $ Scalar Word8Type) condTy'
     return UnitTy
   Linearize f -> do
-    FunTy (binder:>a) Pure b <- getTypeE f
+    Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
     b' <- liftMaybe $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
   Transpose f -> do
-    Pi (PiType LinArrow (binder:>a) Pure b) <- getTypeE f
+    Pi (PiType (PiBinder binder a LinArrow) Pure b) <- getTypeE f
     b' <- liftMaybe $ hoist binder b
     b' --@ a
   RunReader r f -> do
@@ -649,12 +664,12 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     s |: stateTy
     return $ PairTy resultTy stateTy
   RunIO f -> do
-    Pi (PiType PlainArrow (b:>UnitTy) eff resultTy) <- getTypeE f
+    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
     PairE eff' resultTy' <- liftMaybe $ hoist b $ PairE eff resultTy
     extendAllowedEffect IOEffect $ declareEffs eff'
     return resultTy'
   CatchException f -> do
-    Pi (PiType PlainArrow (b:>UnitTy) eff resultTy) <- getTypeE f
+    Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
     PairE eff' resultTy' <- liftMaybe $ hoist b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
@@ -668,7 +683,7 @@ checkRWSAction rws f = do
         eff' <- substM eff
         regionName <- injectM $ binderName regionBinder'
         extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff'
-  _ :> RefTy _ referentTy <- return refBinder
+  PiBinder _ (RefTy _ referentTy) _ <- return refBinder
   referentTy' <- liftMaybe $ hoist regionBinder referentTy
   resultTy' <- liftMaybe $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
@@ -713,9 +728,9 @@ buildNaryPiType :: Typer m
                 -> (forall o'. Ext o o' => [Type o'] -> m i' o' (Type o'))
                 -> m i o (Type o)
 buildNaryPiType _ Empty cont = cont []
-buildNaryPiType arr (Nest b rest) cont = do
-  refreshBinders b \b' -> do
-    Pi <$> PiType arr b' Pure <$> buildNaryPiType arr rest \params -> do
+buildNaryPiType arr (Nest (b:>argTy) rest) cont = do
+  refreshBinders (PiBinder b argTy arr) \b' -> do
+    Pi <$> PiType b' Pure <$> buildNaryPiType arr rest \params -> do
       param <- Var <$> injectM (binderName b')
       cont (param : params)
 
@@ -772,7 +787,7 @@ checkAlt resultTyReq reqBs (Abs bs body) = do
 
 checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
 checkApp fTy x = do
-  Pi (PiType _ (b:>argTy) eff resultTy) <- return fTy
+  Pi (PiType (PiBinder b argTy _) eff resultTy) <- return fTy
   x' <- checkTypeE argTy x
   PairE eff' resultTy' <- applyAbs (Abs b (PairE eff resultTy)) (SubstVal x')
   declareEffs eff'
@@ -928,6 +943,7 @@ litIdxSetSize (TC ty) = case ty of
         Unlimited      -> litIdxSetSize n
   ProdType tys -> product $ fmap litIdxSetSize tys
   _ -> error $ "Not an (implemented) index set: " ++ pprint ty
+litIdxSetSize _ = error "not a literal index set"
 
 litToOrdinal :: Atom VoidS -> Int32
 litToOrdinal x = case x of
@@ -944,7 +960,7 @@ litFromOrdinal ty i = case ty of
 
 getBaseMonoidType :: MonadFail1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
-  Pi (PiType _ b _ resultTy) -> liftMaybe $ hoist b resultTy
+  Pi (PiType b _ resultTy) -> liftMaybe $ hoist b resultTy
   _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]

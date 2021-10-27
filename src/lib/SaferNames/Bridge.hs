@@ -42,7 +42,6 @@ import Type.Reflection
 
 import qualified Data.Map.Strict as M
 
-import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.Syntax
 import SaferNames.LazyMap as LM
@@ -54,7 +53,6 @@ import qualified Syntax as D  -- D for Danger
 import qualified Type   as D
 import qualified Env    as D
 
-import qualified SaferNames.NameCore  as S
 import qualified SaferNames.Name      as S
 import qualified SaferNames.Syntax    as S
 
@@ -69,36 +67,41 @@ data TopStateEx where
 data JointTopState n = JointTopState
   { topStateD   :: D.TopState
   , topStateS   :: S.TopState n
-  , topToSafeMap   :: ToSafeNameMap n
-  , topFromSafeMap :: FromSafeNameMap n }
+  , topToSafeMap   :: ToSafeEnv n
+  , topFromSafeMap :: FromSafeEnv n }
 
 emptyTopStateEx :: D.ProtoludeScope -> TopStateEx
 emptyTopStateEx proto = TopStateEx $ JointTopState
-    D.emptyTopState proto
-    S.emptyTopState
-    (ToSafeNameMap mempty)
-    (FromSafeNameMap emptyEnv)
+    (D.emptyTopState proto)
+    S.emptyOutMap
+    (ToSafeEnv mempty)
+    (FromSafeEnv emptyInMap)
 
 extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
   let D.TopState bindingsD scsD sourceMapD protoD = topStateD jointTopState
   case topStateS jointTopState of
-    S.TopState (TopBindings bindingsS) scsS sourceMapS -> do
+    -- We ignore the effects because there are none at the top level
+    S.Bindings bindingsS scsS sourceMapS _ -> do
       -- ensure the internal bindings are fresh wrt top bindings
       let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
-      runToSafeM (topToSafeMap jointTopState) (envAsScope bindingsS) do
+      runToSafeM (topToSafeMap jointTopState) (toScope bindingsS) do
         nameBijectionFromDBindings (topFromSafeMap jointTopState) bindingsD'
-         \bindingsFrag toSafeMap' fromSafeMap' -> do
-           withExtEvidence (toExtEvidence $ envAsScope bindingsFrag) do
-             scsS'       <- toSafeE scsD'
-             sourceMapS' <- toSafeE sourceMapD'
+         \(BindingsFrag bindingsFrag _) toSafeMap' fromSafeMap' -> do
+           withExtEvidence (toExtEvidence bindingsFrag) do
+             scsS'         <- toSafeE scsD'
+             sourceMapS'   <- toSafeE sourceMapD'
              sourceMapSInj <- injectM sourceMapS
-             bindingsSInj  <- injectM bindingsS
              scsSInj       <- injectM scsS
              return $ TopStateEx $ JointTopState
-               (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD') protoD)
-               (S.TopState (TopBindings (bindingsSInj <.> bindingsFrag))
-                           (scsSInj <> scsS') (sourceMapSInj <> sourceMapS'))
+               (D.TopState (bindingsD <> bindingsD')
+                           (scsD <> scsD')
+                           (sourceMapD <> sourceMapD')
+                           protoD)
+               (S.Bindings (bindingsS `extendOutMap` bindingsFrag)
+                           (scsSInj <> scsS')
+                           (sourceMapSInj <> sourceMapS')
+                           S.Pure)
                toSafeMap'
                fromSafeMap'
 
@@ -112,8 +115,8 @@ instance Pretty (JointTopState n) where
 instance GenericE JointTopState where
   type RepE JointTopState = LiftE D.TopState `PairE`
                             S.TopState       `PairE`
-                            ToSafeNameMap    `PairE`
-                            FromSafeNameMap
+                            ToSafeEnv        `PairE`
+                            FromSafeEnv
   fromE (JointTopState stateD stateS toSafeMap fromSafeMap) =
     (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap)
   toE (LiftE stateD `PairE` stateS `PairE` toSafeMap `PairE` fromSafeMap) =
@@ -122,9 +125,8 @@ instance GenericE JointTopState where
 toSafe :: (Distinct n, HasSafeVersionE e)
        => JointTopState n -> e -> SafeVersionE e n
 toSafe jointTopState e =
-  case S.topBindings $ topStateS $ jointTopState of
-    TopBindings bindings ->
-      runToSafeM (topToSafeMap jointTopState) (envAsScope bindings) $ toSafeE e
+  let scope = toScope $ S.getBindings $ topStateS $ jointTopState
+  in runToSafeM (topToSafeMap jointTopState) scope $ toSafeE e
 
 fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
 fromSafe jointTopState e =
@@ -172,12 +174,12 @@ fromSafe = ()
 -- This is pretty horrible. The name system isn't really designed for creating
 -- bijections, so we have to do a lot of things manually.
 nameBijectionFromDBindings
-    :: MonadToSafe m => FromSafeNameMap n -> D.Bindings
-    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeNameMap l -> FromSafeNameMap l -> m l a)
+    :: MonadToSafe m => FromSafeEnv n -> D.Bindings
+    -> (forall l. Distinct l => BindingsFrag n l -> ToSafeEnv l -> FromSafeEnv l -> m l a)
     -> m n a
 nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do
-    toSafeMap' <- getToSafeNameMap
+    toSafeMap' <- getToSafeEnv
     Distinct <- getDistinct
     scope <- getScope
     let bindingsFrag = makeBindingsFrag scope bindings toSafeMap' fromSafeMap' scopeFrag
@@ -186,33 +188,33 @@ nameBijectionFromDBindings fromSafeMap bindings cont = do
 type ConstEnv n l = EnvFrag (ConstE UnitE) n l VoidS
 
 makeBindingsFrag :: forall n l. Distinct l
-                 => S.Scope l -> D.Bindings -> ToSafeNameMap l -> FromSafeNameMap l
+                 => S.Scope l -> D.Bindings -> ToSafeEnv l -> FromSafeEnv l
                  -> ConstEnv n l -> BindingsFrag n l
-makeBindingsFrag scope bindings toSafeMap (FromSafeNameMap fromSafeMap) constEnv =
-  fmapEnvFrag (\name _ -> getSafeBinding name) constEnv
+makeBindingsFrag scope bindings toSafeMap (FromSafeEnv fromSafeMap) constEnv =
+  BindingsFrag (RecEnvFrag $ fmapEnvFrag (\name _ -> getSafeBinding name) constEnv) Nothing
   where
     getSafeBinding :: S.Name c (n:=>:l) -> Binding c l
     getSafeBinding name = do
       let Just name' = getName $ fromUnsafeNameE
-            ((emptyNameFunction <>> fromSafeMap) S.! injectNamesR name)
+                         (lookupMaterializedEnv fromSafeMap (injectR name))
       let binderInfo = bindings D.! name'
       case runToSafeM toSafeMap scope $ toSafeE binderInfo of
         EnvVal rep binding ->
           case eqNameColorRep rep (getNameColor name) of
-            Just EqNameColor -> binding
+            Just ColorsEqual -> binding
 
 withFreshSafeRec :: MonadToSafe m
-                 => FromSafeNameMap n
+                 => FromSafeEnv n
                  -> [(D.Name, D.AnyBinderInfo)]
-                 -> (forall l. Distinct l => ConstEnv n l -> FromSafeNameMap l -> m l a)
+                 -> (forall l. Distinct l => ConstEnv n l -> FromSafeEnv l -> m l a)
                  -> m n a
 withFreshSafeRec fromSafeMap [] cont = do
   Distinct <- getDistinct
-  cont emptyEnv fromSafeMap
-withFreshSafeRec (FromSafeNameMap fromSafeMap) ((vD,info):rest) cont = do
+  cont emptyInFrag fromSafeMap
+withFreshSafeRec (FromSafeEnv fromSafeMap) ((vD,info):rest) cont = do
   withFreshBijectionD vD info \b valD -> do
     frag <- return $ b S.@> ConstE UnitE
-    withFreshSafeRec (FromSafeNameMap $ fromSafeMap <.> (b S.@> UnsafeNameE valD)) rest
+    withFreshSafeRec (FromSafeEnv $ fromSafeMap <>> (b S.@> UnsafeNameE valD)) rest
       \frag' fromSafeMap' -> do
         cont (frag <.> frag') fromSafeMap'
 
@@ -222,7 +224,7 @@ withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
 withFreshBijectionD name info cont =
   asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
     withFreshM (getNameHint name) rep \b ->
-      extendToSafeNameMap name' (binderName b) $
+      extendToSafeEnv name' (binderName b) $
         cont b name'
 
 extendTopStateS :: JointTopState n -> S.EvaluatedModule n -> TopStateEx
@@ -233,31 +235,31 @@ extendTopStateS = error "not implemented"
 class ( S.ScopeReader m, S.ScopeExtender m
       , MonadFail1 m, Monad1 m)
       => MonadToSafe (m::MonadKind1) where
-  getToSafeNameMap :: m o (ToSafeNameMap o)
-  extendToSafeNameMap :: UnsafeName c -> S.Name c o -> m o a -> m o a
+  getToSafeEnv :: m o (ToSafeEnv o)
+  extendToSafeEnv :: UnsafeName c -> S.Name c o -> m o a -> m o a
 
-newtype ToSafeNameMap (o::S) = ToSafeNameMap (D.Env (EnvVal S.Name o))
+newtype ToSafeEnv (o::S) = ToSafeEnv (D.Env (EnvVal S.Name o))
   deriving (Show, Pretty, Generic)
 
 newtype ToSafeM o a =
-  ToSafeM { runToSafeM' :: ReaderT (ToSafeNameMap o) (ScopeReaderT Identity o) a }
+  ToSafeM { runToSafeM' :: ReaderT (ToSafeEnv o) (ScopeReaderT Identity o) a }
   deriving (Functor, Applicative, Monad)
 
-runToSafeM :: Distinct o => ToSafeNameMap o -> S.Scope o -> ToSafeM o a -> a
+runToSafeM :: Distinct o => ToSafeEnv o -> S.Scope o -> ToSafeM o a -> a
 runToSafeM nameMap scope m =
   runIdentity $ runScopeReaderT scope $
     flip runReaderT nameMap $
       runToSafeM' m
 
 instance MonadToSafe ToSafeM where
-  getToSafeNameMap = ToSafeM ask
-  extendToSafeNameMap (UnsafeName rep v) v' (ToSafeM m) = ToSafeM $ flip withReaderT m
-    \(ToSafeNameMap env) -> ToSafeNameMap $ env <> (v D.@> EnvVal rep v')
+  getToSafeEnv = ToSafeM ask
+  extendToSafeEnv (UnsafeName rep v) v' (ToSafeM m) = ToSafeM $ flip withReaderT m
+    \(ToSafeEnv env) -> ToSafeEnv $ env <> (v D.@> EnvVal rep v')
 
 -- === monad for translating from safe to unsafe names ===
 
 class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
-  lookupFromSafeNameMap :: S.Name c i -> m i (UnsafeName c)
+  lookupFromSafeEnv :: S.Name c i -> m i (UnsafeName c)
   getUnsafeBindings :: m i (D.Bindings)
   withFreshUnsafeName :: S.NameHint -> D.AnyBinderInfo
                       -> (D.Name -> m i a) -> m i a
@@ -266,21 +268,21 @@ class (MonadFail1 m, Monad1 m) => MonadFromSafe (m::MonadKind1) where
 
 data UnsafeNameE (c::C) (n::S) = UnsafeNameE { fromUnsafeNameE :: UnsafeName c}
 
-newtype FromSafeNameMap i = FromSafeNameMap (S.Env UnsafeNameE i VoidS)
-  deriving (Pretty, Generic)
+newtype FromSafeEnv i = FromSafeEnv (S.MaterializedEnv UnsafeNameE i VoidS)
+  deriving (Generic, Pretty)
 
 newtype FromSafeM i a =
-  FromSafeM { runFromSafeM' :: ReaderT (FromSafeNameMap i) (Reader D.Bindings) a }
+  FromSafeM { runFromSafeM' :: ReaderT (FromSafeEnv i) (Reader D.Bindings) a }
   deriving (Functor, Applicative, Monad)
 
-runFromSafeM :: FromSafeNameMap i -> D.Bindings -> FromSafeM i a -> a
+runFromSafeM :: FromSafeEnv i -> D.Bindings -> FromSafeM i a -> a
 runFromSafeM nameMap bindings m =
   flip runReader bindings $ flip runReaderT nameMap $ runFromSafeM' m
 
 instance MonadFromSafe FromSafeM where
-  lookupFromSafeNameMap v = FromSafeM do
-    FromSafeNameMap env <- ask
-    return $ fromUnsafeNameE $ ((emptyNameFunction <>> env) S.! v)
+  lookupFromSafeEnv v = FromSafeM do
+    FromSafeEnv env <- ask
+    return $ fromUnsafeNameE $ lookupMaterializedEnv env v
   getUnsafeBindings = FromSafeM $ lift ask
   withFreshUnsafeName hint info f =
     FromSafeM $ ReaderT \m -> do
@@ -292,7 +294,7 @@ instance MonadFromSafe FromSafeM where
         runReaderT (runFromSafeM' (f v')) m
 
   extendFromSafeMap b v (FromSafeM m) = FromSafeM $ flip withReaderT m
-    \(FromSafeNameMap env) -> FromSafeNameMap $ env <.> b S.@> UnsafeNameE v
+    \(FromSafeEnv env) -> FromSafeEnv $ env <>> b S.@> UnsafeNameE v
 
 -- === --- ===
 
@@ -327,22 +329,23 @@ instance HasSafeVersionE (UnsafeName c) where
   type SafeVersionE (UnsafeName c) = S.Name c
   toSafeE (UnsafeName rep name) = do
     let Just name' = getName name
-    ToSafeNameMap m <- getToSafeNameMap
+    ToSafeEnv m <- getToSafeEnv
     case m D.! name' of
       EnvVal rep' safeName ->
         case eqNameColorRep rep rep' of
-          Just EqNameColor -> return safeName
+          Just ColorsEqual -> return safeName
           Nothing -> error "mismatched name colors!"
-  fromSafeE name = lookupFromSafeNameMap name
+  fromSafeE name = lookupFromSafeEnv name
 
 instance HasSafeVersionE D.EvaluatedModule where
   type SafeVersionE D.EvaluatedModule = S.EvaluatedModule
   toSafeE (D.EvaluatedModule bindings scs sourceMap) =
-    toSafeB (DRecEnvFrag bindings) \(S.RecEnvFrag bindings') ->
-      S.EvaluatedModule bindings' <$> toSafeE scs <*> toSafeE sourceMap
+    toSafeB (DRecEnvFrag bindings) \bindings' ->
+      S.EvaluatedModule (S.BindingsFrag bindings' Nothing)
+        <$> toSafeE scs <*> toSafeE sourceMap
 
-  fromSafeE (S.EvaluatedModule bindings scs sourceMap) =
-    fromSafeB (S.RecEnvFrag bindings) \(DRecEnvFrag bindings') ->
+  fromSafeE (S.EvaluatedModule (S.BindingsFrag bindings _) scs sourceMap) =
+    fromSafeB bindings \(DRecEnvFrag bindings') ->
       D.EvaluatedModule bindings' <$> fromSafeE scs <*> fromSafeE sourceMap
 
 newtype DRecEnvFrag = DRecEnvFrag D.Bindings
@@ -364,10 +367,10 @@ instance HasSafeVersionB DRecEnvFrag where
   type SafeVersionB DRecEnvFrag = RecEnvFrag S.Binding
   toSafeB (DRecEnvFrag env) cont =
     renameBinders (envPairs env) \nest -> do
-      nest' <- forEachNestItem nest \(TempPair b info) -> do
+      nest' <- forEachNestItemM nest \(TempPair b info) -> do
         EnvVal rep info' <- toSafeE info
         case eqNameColorRep rep (getNameColor b) of
-          Just EqNameColor ->
+          Just ColorsEqual ->
             withNameColorRep rep $ return $ EnvPair b $ info'
           Nothing -> error $ "color mismatch: " <> pprint rep <> " vs " <> pprint (getNameColor b)
       cont $ RecEnvFrag $ fromEnvPairs nest'
@@ -391,7 +394,7 @@ instance HasSafeVersionB DRecEnvFrag where
       renameBindersEnvPair name info cont =
         asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
           withFreshM (S.Hint name) rep \b ->
-            extendToSafeNameMap name' (binderName b) $
+            extendToSafeEnv name' (binderName b) $
               cont $ TempPair b info
 
   fromSafeB (RecEnvFrag env) cont = do
@@ -423,7 +426,7 @@ data DEnvPair n where
 instance HasSafeVersionE AnyBinderInfo where
   type SafeVersionE AnyBinderInfo = EnvVal Binding
   toSafeE anyInfo = case anyInfo of
-    AtomBinderInfo ty info -> EnvVal nameColorRep <$> (AtomNameBinding <$> toSafeE ty <*> toSafeE info)
+    AtomBinderInfo ty info -> EnvVal nameColorRep <$> (AtomNameBinding <$> toSafeE (TypedBinderInfo ty info))
     DataDefName def        -> EnvVal nameColorRep <$> (DataDefBinding  <$> toSafeE def)
     TyConName def          -> EnvVal nameColorRep <$> (TyConBinding    <$> toSafeE (UnsafeName nameColorRep def))
     DataConName def idx    -> EnvVal nameColorRep <$> (DataConBinding  <$> toSafeE (UnsafeName nameColorRep def) <*> pure idx)
@@ -436,7 +439,9 @@ instance HasSafeVersionE AnyBinderInfo where
 
 topBindingToAnyBinderInfo :: MonadFromSafe m => NameColorRep c -> Binding c n -> m n D.AnyBinderInfo
 topBindingToAnyBinderInfo rep binding = case binding of
-  AtomNameBinding ty info -> AtomBinderInfo <$> fromSafeE ty <*> fromSafeE info
+  AtomNameBinding info -> do
+    TypedBinderInfo ty' info' <- fromSafeE info
+    return $ AtomBinderInfo ty' info'
   DataDefBinding def      -> DataDefName <$> fromSafeE def
   TyConBinding   defName  -> TyConName <$> fromUnsafeName <$> fromSafeE defName
   DataConBinding defName idx -> DataConName <$> (fromUnsafeName <$> fromSafeE defName) <*> pure idx
@@ -499,15 +504,15 @@ instance HasSafeVersionE D.Atom where
   toSafeE atom = case atom of
     D.Var (v D.:> _) -> S.Var <$> toSafeAtomName v
     D.Lam (D.Abs b (arr, body)) -> do
-      toSafeB b \b' -> do
+      toSafeB b \(b' S.:> ty') -> do
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
-        return $ S.Lam $ S.LamExpr arr' b' eff' body'
+        return $ S.Lam $ S.LamExpr (S.LamBinder b' ty' arr' eff') body'
     D.Pi (D.Abs b (arr, body)) ->
-      toSafeB b \b' -> do
+      toSafeB b \(b' S.:> argTy) -> do
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
-        return $ S.Pi $ S.PiType arr' b' eff' body'
+        return $ S.Pi $ S.PiType (S.PiBinder b' argTy arr') eff' body'
     D.DataCon def@(_, D.DataDef printName _ _) params con args ->
       S.DataCon printName <$>
         toSafeNamedDataDef def <*>
@@ -537,13 +542,13 @@ instance HasSafeVersionE D.Atom where
 
   fromSafeE atom = case atom of
     S.Var v -> D.Var <$> fromSafeAtomNameVar v
-    S.Lam (S.LamExpr arr b eff body) -> do
-      fromSafeB b \b' -> do
+    S.Lam (S.LamExpr (LamBinder b ty arr eff) body) -> do
+      fromSafeB (b S.:> ty) \b' -> do
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body
         return $ D.Lam $ D.Abs b' (arr', body')
-    S.Pi (S.PiType arr b eff body) -> do
-      fromSafeB b \b' -> do
+    S.Pi (S.PiType (S.PiBinder b argTy arr) eff body) -> do
+      fromSafeB (b S.:> argTy) \b' -> do
         arr' <- fromSafeArrow arr eff
         body' <- fromSafeE body
         return $ D.Pi $ D.Abs b' (arr', body')
@@ -596,7 +601,7 @@ instance HasSafeVersionB D.Binder where
   toSafeB (Bind (b D.:> ty)) cont = do
     ty' <- toSafeE ty
     withFreshM (getNameHint b) nameColorRep \b' -> do
-      extendToSafeNameMap (UnsafeName AtomNameRep b) (S.binderName b') $
+      extendToSafeEnv (UnsafeName AtomNameRep b) (S.binderName b') $
         cont (b' S.:> ty')
 
   fromSafeB (b S.:> ty) cont = do
@@ -636,7 +641,7 @@ toSafeNamedDataDef (name, def) =
 
 fromSafeNamedDataDef :: MonadFromSafe m => S.NamedDataDef i -> m i D.NamedDataDef
 fromSafeNamedDataDef (name, def) = do
-  UnsafeName DataDefNameRep name' <- lookupFromSafeNameMap name
+  UnsafeName DataDefNameRep name' <- lookupFromSafeEnv name
   def' <- fromSafeE def
   return (name', def')
 
@@ -695,12 +700,12 @@ instance HasSafeVersionB D.Decl where
   type SafeVersionB D.Decl = S.Decl
   toSafeB (D.Let ann b expr) cont = do
     expr' <- toSafeE expr
-    toSafeB b \b' ->
-      cont $ S.Let ann b' expr'
+    toSafeB b \(b' S.:> ty') ->
+      cont $ S.Let b' (S.DeclBinding ann ty' expr')
 
-  fromSafeB (S.Let ann b expr) cont = do
+  fromSafeB (S.Let b (S.DeclBinding ann ty expr)) cont = do
     expr' <- fromSafeE expr
-    fromSafeB b \b' -> do
+    fromSafeB (b S.:>ty) \b' -> do
       cont $ D.Let ann b' expr'
 
 instance HasSafeVersionE D.Effect where
@@ -742,32 +747,46 @@ instance HasSafeVersionB b => HasSafeVersionB (D.Nest b) where
         fromSafeB rest \rest' ->
            cont $ D.Nest b' rest'
 
-instance HasSafeVersionE BinderInfo where
-  type SafeVersionE BinderInfo = AtomBinderInfo
-  toSafeE info = case info of
-    D.LetBound ann expr -> S.LetBound ann <$> toSafeE expr
-    D.LamBound arr  -> return (S.LamBound $ asSafe arr)
-    D.PiBound  arr  -> return (S.PiBound  $ asSafe arr)
-    D.UnknownBinder -> return S.MiscBound
-    where
-      asSafe = \case
-        D.PlainArrow () -> S.PlainArrow
-        D.ImplicitArrow -> S.ImplicitArrow
-        D.LinArrow      -> S.LinArrow
-        D.TabArrow      -> S.TabArrow
-        D.ClassArrow    -> S.ClassArrow
+data TypedBinderInfo = TypedBinderInfo D.Type D.BinderInfo
+
+instance HasSafeVersionE TypedBinderInfo where
+  type SafeVersionE TypedBinderInfo = AtomBinding
+  toSafeE (TypedBinderInfo ty info) = do
+    ty' <- toSafeE ty
+    case info of
+      D.LetBound ann expr -> do
+        expr' <- toSafeE expr
+        return $ S.LetBound $ S.DeclBinding ann ty' expr'
+      D.LamBound arr -> return $ S.LamBound $ S.LamBinding (toSafeUnitArrow arr) ty'
+      D.PiBound arr   -> return $ S.PiBound $ S.PiBinding  (toSafeUnitArrow arr) ty'
+      D.UnknownBinder -> return $ S.MiscBound ty'
   fromSafeE info = case info of
-    S.LetBound ann expr -> D.LetBound ann <$> fromSafeE expr
-    S.LamBound arr  -> return (D.LamBound $ asUnsafe arr)
-    S.PiBound  arr  -> return (D.PiBound  $ asUnsafe arr)
-    S.MiscBound     -> return D.UnknownBinder
-    where
-      asUnsafe = \case
-        S.PlainArrow    -> D.PlainArrow ()
-        S.ImplicitArrow -> D.ImplicitArrow
-        S.LinArrow      -> D.LinArrow
-        S.TabArrow      -> D.TabArrow
-        S.ClassArrow    -> D.ClassArrow
+    S.LetBound (S.DeclBinding ann ty expr) -> do
+      ty'   <- fromSafeE ty
+      expr' <- fromSafeE expr
+      return $ TypedBinderInfo ty' $ D.LetBound ann expr'
+    S.LamBound (S.LamBinding arr ty) -> do
+      ty' <- fromSafeE ty
+      return $ TypedBinderInfo ty' $ D.LamBound $ fromSafeUnitArrow arr
+    S.MiscBound ty -> do
+      ty' <- fromSafeE ty
+      return $ TypedBinderInfo ty' D.UnknownBinder
+
+toSafeUnitArrow :: D.ArrowP () -> S.Arrow
+toSafeUnitArrow arr = case arr of
+  D.PlainArrow () -> S.PlainArrow
+  D.ImplicitArrow -> S.ImplicitArrow
+  D.LinArrow      -> S.LinArrow
+  D.TabArrow      -> S.TabArrow
+  D.ClassArrow    -> S.ClassArrow
+
+fromSafeUnitArrow :: S.Arrow -> D.ArrowP ()
+fromSafeUnitArrow arr = case arr of
+  S.PlainArrow    -> D.PlainArrow ()
+  S.ImplicitArrow -> D.ImplicitArrow
+  S.LinArrow      -> D.LinArrow
+  S.TabArrow      -> D.TabArrow
+  S.ClassArrow    -> D.ClassArrow
 
 traverseSet :: (Ord a, Ord b, Monad m) => (a -> m b) -> Set.Set a -> m (Set.Set b)
 traverseSet f s = Set.fromList <$> mapM f (Set.toList s)
@@ -819,10 +838,10 @@ instance Pretty (UnsafeNameE s n) where
 instance Pretty (UnsafeName n) where
   pretty (UnsafeName _ name) = pretty name
 
-instance Store (ToSafeNameMap n)
-instance InjectableE ToSafeNameMap where
+instance Store (ToSafeEnv n)
+instance InjectableE ToSafeEnv where
   injectionProofE = undefined
-instance Store (FromSafeNameMap n)
+instance Store (FromSafeEnv n)
 
 deriving instance NameColor c => Generic (UnsafeName  c)
 deriving instance NameColor c => Generic (UnsafeNameE c n)
