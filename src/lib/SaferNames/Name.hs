@@ -60,7 +60,7 @@ module SaferNames.Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
-  hoist, hoistToTop, fromConstAbs, exchangeBs, HoistableE (..),
+  hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
@@ -2094,6 +2094,9 @@ hoistToTop e =
   if null $ freeVarsE e
     then Just $ unsafeCoerceE e
     else Nothing
+
+injectFromTop :: InjectableE e => e VoidS -> e n
+injectFromTop = unsafeCoerceE
 
 freeVarsList :: HoistableE e => NameColorRep c -> e n -> [Name c n]
 freeVarsList c e = nameSetToList c $ freeVarsE e

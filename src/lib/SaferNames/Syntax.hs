@@ -1866,3 +1866,9 @@ instance BindsAtMostOneName (UAnnBinder c) c where
 
 instance InjectableE UModule where
   injectionProofE = todoInjectableProof
+
+instance Eq SourceBlock where
+  x == y = sbText x == sbText y
+
+instance Ord SourceBlock where
+  compare x y = compare (sbText x) (sbText y)

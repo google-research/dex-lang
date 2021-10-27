@@ -29,11 +29,12 @@ import TopLevel
 import Env hiding (Tag)
 import PPrint
 import Err
-import Parser
 
 import Dex.Foreign.Util
 
 import SaferNames.Bridge
+import qualified SaferNames.Syntax as S
+import qualified SaferNames.Parser as S
 
 
 data Context = Context EvalConfig TopStateEx
@@ -91,10 +92,10 @@ dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
 dexEvalExpr ctxPtr sourcePtr = do
   Context evalConfig env <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
-  case parseExpr source of
+  case S.parseExpr source of
     Success expr -> do
-      let (v, m) = exprAsModule expr
-      let block = SourceBlock 0 0 LogNothing source (RunModule m) Nothing
+      let (v, m) = S.exprAsModule expr
+      let block = S.SourceBlock 0 0 LogNothing source (S.RunModule m) Nothing
       (Result [] maybeErr, newState) <- runInterblockM evalConfig env $ evalSourceBlock block
       case maybeErr of
         Success () -> do

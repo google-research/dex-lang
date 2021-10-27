@@ -105,9 +105,6 @@ build-ci: dexrt-llvm
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
 
-build-safe-names: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
-
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp

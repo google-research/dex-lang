@@ -38,10 +38,6 @@ flag foreign
   description:         Build the C interface to Dex
   default:             True
 
-flag safe-names
-  description:         Enables building with safe names checks
-  default:             False
-
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
@@ -82,9 +78,6 @@ library
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE
     cxx-options:       -DDEX_LIVE
-  if flag(safe-names)
-    cpp-options:       -DDEX_SAFE_NAMES
-    cxx-options:       -DDEX_SAFE_NAMES
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources

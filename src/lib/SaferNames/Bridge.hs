@@ -58,8 +58,6 @@ import qualified SaferNames.Syntax    as S
 
 import PPrint
 
-#ifdef DEX_SAFE_NAMES
-
 -- Hides the `n` parameter as an existential
 data TopStateEx where
   TopStateEx :: Distinct n => JointTopState n -> TopStateEx
@@ -132,44 +130,6 @@ fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
 fromSafe jointTopState e =
   runFromSafeM (topFromSafeMap jointTopState) bindings $ fromSafeE e
   where bindings = D.topBindings $ topStateD $ jointTopState
-
-
-#else
-
--- Hides the `n` parameter as an existential
-data TopStateEx where
-  TopStateEx :: Distinct n => JointTopState n -> TopStateEx
-
-data JointTopState (n::S) = JointTopState
-  { topStateD   :: D.TopState }
-
-emptyTopStateEx :: D.ProtoludeScope -> TopStateEx
-emptyTopStateEx proto = TopStateEx $ (JointTopState (D.emptyTopState proto) :: JointTopState VoidS)
-
-extendTopStateD :: forall n. Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
-extendTopStateD jointTopState evaluated = do
-  let D.TopState bindingsD scsD sourceMapD protoD = topStateD jointTopState
-  let D.EvaluatedModule bindingsD' scsD' sourceMapD' = D.subst (mempty, bindingsD) evaluated
-  TopStateEx $
-    ((JointTopState (D.TopState (bindingsD <> bindingsD') (scsD <> scsD') (sourceMapD <> sourceMapD') protoD))
-         :: JointTopState n)
-
-instance Pretty (JointTopState n) where
-  pretty s =
-    "topState :"   <> nest 2 (hardline <> pretty (topStateD s))
-
-instance GenericE JointTopState where
-  type RepE JointTopState = LiftE D.TopState
-  fromE (JointTopState stateD) = LiftE stateD
-  toE (LiftE stateD) = JointTopState stateD
-
-toSafe :: ()
-toSafe = ()
-
-fromSafe :: ()
-fromSafe = ()
-
-#endif
 
 -- This is pretty horrible. The name system isn't really designed for creating
 -- bijections, so we have to do a lot of things manually.

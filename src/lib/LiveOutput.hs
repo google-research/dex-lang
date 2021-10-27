@@ -30,16 +30,18 @@ import System.IO
 import Cat
 import Syntax
 import Actor
-import Parser
 import TopLevel
 import RenderHtml
 import PPrint
+
+import qualified SaferNames.Parser as S
+import qualified SaferNames.Syntax as S
 
 type NodeId = Int
 data WithId a = WithId { getNodeId :: NodeId
                        , withoutId :: a }
 data RFragment = RFragment (SetVal [NodeId])
-                           (M.Map NodeId SourceBlock)
+                           (M.Map NodeId S.SourceBlock)
                            (M.Map NodeId Result)
 
 runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
@@ -71,7 +73,7 @@ type DriverM = ReaderT DriverCfg
                  (StateT DriverState
                      (Actor SourceContents))
 
-type EvalCache = M.Map (SourceBlock, WithId TopStateEx) (NodeId, WithId TopStateEx)
+type EvalCache = M.Map (S.SourceBlock, WithId TopStateEx) (NodeId, WithId TopStateEx)
 data CacheState = CacheState
        { nextBlockId :: NodeId
        , nextStateId :: NodeId
@@ -87,12 +89,12 @@ runDriver cfg env =
 
 evalSource :: SourceContents -> DriverM ()
 evalSource source = withLocalTopState do
-    (evaluated, remaining) <- tryEvalBlocksCached $ parseProg source
+    (evaluated, remaining) <- tryEvalBlocksCached $ S.parseProg source
     remaining' <- mapM makeNewBlockId remaining
     updateResultList $ map getNodeId $ evaluated ++ remaining'
     mapM_ evalBlock remaining'
 
-tryEvalBlocksCached :: [SourceBlock] -> DriverM ([WithId SourceBlock], [SourceBlock])
+tryEvalBlocksCached :: [S.SourceBlock] -> DriverM ([WithId S.SourceBlock], [S.SourceBlock])
 tryEvalBlocksCached [] = return ([], [])
 tryEvalBlocksCached blocks@(block:rest) = do
   (env, cache) <- get
@@ -104,7 +106,7 @@ tryEvalBlocksCached blocks@(block:rest) = do
       (evaluated, remaining) <- tryEvalBlocksCached rest
       return (block':evaluated, remaining)
 
-evalBlock :: WithId SourceBlock -> DriverM ()
+evalBlock :: WithId S.SourceBlock -> DriverM ()
 evalBlock (WithId blockId block) = do
   oldState <- gets fst
   opts <- asks fst
@@ -122,7 +124,7 @@ evalBlock (WithId blockId block) = do
 updateTopState :: WithId TopStateEx -> DriverM ()
 updateTopState s = modify \(_,c) -> (s, c)
 
-makeNewBlockId :: SourceBlock -> DriverM (WithId SourceBlock)
+makeNewBlockId :: S.SourceBlock -> DriverM (WithId S.SourceBlock)
 makeNewBlockId block = do
   newId <- gets $ nextBlockId . snd
   modify \(s, cache) -> (s, cache {nextBlockId = newId + 1 })
@@ -136,7 +138,7 @@ makeNewStateId env = do
   modify \(s, cache) -> (s, cache {nextStateId = newId + 1 })
   return $ WithId newId env
 
-insertCache :: (SourceBlock, WithId TopStateEx) -> (NodeId, WithId TopStateEx) -> DriverM ()
+insertCache :: (S.SourceBlock, WithId TopStateEx) -> (NodeId, WithId TopStateEx) -> DriverM ()
 insertCache key val = modify \(s, cache) ->
   (s, cache { evalCache = M.insert key val $ evalCache cache })
 
@@ -157,7 +159,7 @@ updateResultList ids = do
 oneResult :: NodeId -> Result -> RFragment
 oneResult k r = RFragment mempty mempty (M.singleton k r)
 
-oneSourceBlock :: NodeId -> SourceBlock -> RFragment
+oneSourceBlock :: NodeId -> S.SourceBlock -> RFragment
 oneSourceBlock k b = RFragment mempty (M.singleton k b) mempty
 
 -- === serving results via web ===
