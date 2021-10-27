@@ -15,7 +15,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              measureSeconds,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
-             iota) where
+             iota, whenM) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
@@ -215,6 +215,11 @@ measureSeconds m = do
   ans <- m
   t2 <- liftIO $ getCPUTime
   return (ans, (fromIntegral $ t2 - t1) / 1e12)
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM test doit = test >>= \case
+  True -> doit
+  False -> return ()
 
 -- === zippable class ===
 

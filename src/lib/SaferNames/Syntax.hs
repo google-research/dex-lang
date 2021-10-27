@@ -16,19 +16,22 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
-    Binder, Block (..), Decl (..),
+    Binder, Block (..), Decl (..), DeclBinding (..),
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
-    PrimHof (..), LamExpr (..), PiType (..), LetAnn (..),
-    BinOp (..), UnOp (..), CmpOp (..), SourceMap (..),
+    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
+    LamBinding (..), LamBinder (..), LamExpr (..),
+    PiBinding (..), PiBinder (..),
+    PiType (..), LetAnn (..), SomeDecl (..),
+    BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
-    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), TopState (..),
-    emptyTopState, BindsBindings (..), WithBindings (..), Scopable (..),
-    DataConRefBinding (..), AltP, Alt, AtomBinderInfo (..),
+    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..), TopState,
+    BindsBindings (..), BindsOneAtomName (..), WithBindings (..), Scopable (..),
+    DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
     Direction (..), Limit (..), DataDef (..), DataConDef (..), Nest (..), IndexStructure,
@@ -43,41 +46,44 @@ module SaferNames.Syntax (
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..),
-    SourceUModule (..), UType,
-    CmdName (..), LogLevel (..), PassName, OutFormat (..),
-    TopBindings (..), NamedDataDef, fromTopBindings, ScopedBindings,
+    SourceUModule (..), UType, ExtLabeledItemsE (..),
+    CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
-    refreshBinders, withFreshBinder, withFreshBinding,
-    Bindings, BindingsFrag, lookupBindings, runBindingsReaderT,
-    BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2,
+    ToBinding (..), refreshBinders, withFreshBinder,
+    withFreshLamBinder, withFreshPiBinder,
+    withFreshNameBinder,
+    BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
+    BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
-    fromNonDepTabTy, binderType, getProjection,
+    fromNonDepTabTy, binderType, bindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
+    bindingsFragToSynthCandidates, refreshBinders2,
+    getAllowedEffects, withAllowedEffects,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
     pattern PairVal, pattern TyKind,
-    pattern Pure, pattern LabeledRowKind, pattern EffKind,
-    pattern FunTy, pattern BinaryFunTy, pattern UPatIgnore,
+    pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTy, pattern TabTyAbs,
-    pattern SumTy, pattern SumVal, pattern MaybeTy,
+    pattern TabTyAbs,
+    pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern NothingAtom, pattern JustAtom,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
+import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import Data.Int
 import Data.String (IsString, fromString)
-import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
 import Data.Word
 import Foreign.Ptr
 import Data.Maybe (fromJust)
@@ -94,11 +100,9 @@ import Syntax
   , BlockId, ReachedEOF, ModuleName, CmdName (..), LogLevel (..)
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
-  , PassName, OutFormat (..))
+  , PassName, OutFormat (..), Result (..))
 
-import SaferNames.NameCore
 import SaferNames.Name
-import PPrint ()
 import Err
 import LabeledItems
 import Util ((...))
@@ -140,28 +144,23 @@ data Expr n =
  | Hof (Hof n)
    deriving (Show, Generic)
 
-data AtomBinderInfo (n::S) =
-   LetBound LetAnn (Expr n)
- | LamBound Arrow
- | PiBound  Arrow
- | MiscBound
- | InferenceName
-   deriving (Show, Generic)
-
 -- We inline the definition for compatibility with the unsafe IR.
 -- TODO: remove once we don't need the bridge anymore
 type NamedDataDef n = (DataDefName n, DataDef n)
 
-data Decl n l = Let LetAnn (Binder n l) (Expr n)
-                deriving (Show, Generic)
+data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
+     deriving (Show, Generic)
+data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
+     deriving (Show, Generic)
 
 type AtomName    = Name AtomNameC
 type DataDefName = Name DataDefNameC
 type ClassName   = Name ClassNameC
 
-type Binder = BinderP (NameBinder AtomNameC) Type
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
+type AtomBinderP = BinderP AtomNameC
+type Binder = AtomBinderP Type
 type AltP (e::E) = Abs (Nest Binder) e :: E
 type Alt = AltP Block                  :: E
 
@@ -186,11 +185,25 @@ data ClassDef n =
 data Block n where
   Block :: Type n -> Nest Decl n l -> Expr l -> Block n
 
+data LamBinding (n::S) = LamBinding Arrow (Type n)
+  deriving (Show, Generic)
+
+data LamBinder (n::S) (l::S) =
+  LamBinder (NameBinder AtomNameC n l) (Type n) Arrow (EffectRow l)
+  deriving (Show, Generic)
+
 data LamExpr (n::S) where
-  LamExpr :: Arrow -> Binder n l -> EffectRow l -> Block l -> LamExpr n
+  LamExpr :: LamBinder n l -> Block l -> LamExpr n
+
+data PiBinding (n::S) = PiBinding Arrow (Type n)
+  deriving (Show, Generic)
+
+data PiBinder (n::S) (l::S) =
+  PiBinder (NameBinder AtomNameC n l) (Type n) Arrow
+  deriving (Show, Generic)
 
 data PiType  (n::S) where
-  PiType :: Arrow -> Binder n l -> EffectRow l -> Type  l -> PiType n
+  PiType :: PiBinder n l -> EffectRow l -> Type  l -> PiType n
 
 data Arrow =
    PlainArrow
@@ -213,10 +226,10 @@ type IndexStructure = Nest Binder
 
 type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
--- === bindings - static information we carry about names ===
+-- === bindings - static information we carry about a lexical scope ===
 
 data Binding (c::C) (n::S) where
-  AtomNameBinding   :: Type n -> AtomBinderInfo n         -> Binding AtomNameC       n
+  AtomNameBinding   :: AtomBinding n                      -> Binding AtomNameC       n
   DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
   TyConBinding      :: DataDefName n                      -> Binding TyConNameC      n
   DataConBinding    :: DataDefName n -> Int               -> Binding DataConNameC    n
@@ -225,11 +238,82 @@ data Binding (c::C) (n::S) where
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
 deriving instance Show (Binding c n)
 
-type Bindings n = NameFunction Binding n n
-type BindingsFrag n l = EnvFrag Binding n l l
+data AtomBinding (n::S) =
+   LetBound    (DeclBinding   n)
+ | LamBound    (LamBinding    n)
+ | PiBound     (PiBinding     n)
+ | MiscBound   (Type          n)
+ | SolverBound (SolverBinding n)
+   deriving (Show, Generic)
+
+data SolverBinding (n::S) =
+   InfVarBound (Type n) SrcPosCtx
+ | SkolemBound (Type n)
+   deriving (Show, Generic)
+
+data BindingsFrag (n::S) (l::S) =
+  BindingsFrag (RecEnvFrag Binding n l) (Maybe (EffectRow l))
+
+data Bindings (n::S) = Bindings
+  { getBindings        :: RecEnv Binding n
+  , getSynthCandidates :: SynthCandidates n
+  , getSourceMap       :: SourceMap n
+  , getEffects         :: EffectRow n}
+  deriving (Generic)
+
+instance HasScope Bindings where
+  toScope = toScope . getBindings
+
+catBindingsFrags :: Distinct n3
+                 => BindingsFrag n1 n2 -> BindingsFrag n2 n3 -> BindingsFrag n1 n3
+catBindingsFrags (BindingsFrag (RecEnvFrag frag1) maybeEffs1)
+                 (BindingsFrag (RecEnvFrag frag2) maybeEffs2) =
+  withExtEvidence (toExtEvidence (RecEnvFrag frag2)) do
+     let fragOut = inject frag1 `catInFrags` frag2
+     let effsOut = case maybeEffs2 of
+                     Nothing    -> fmap inject maybeEffs1
+                     Just effs2 -> Just effs2
+     BindingsFrag (RecEnvFrag fragOut) effsOut
+
+instance OutFrag BindingsFrag where
+  emptyOutFrag = BindingsFrag emptyOutFrag Nothing
+  catOutFrags _ frag1 frag2 = catBindingsFrags frag1 frag2
+
+instance OutMap Bindings where
+  emptyOutMap = Bindings emptyOutMap mempty (SourceMap mempty) Pure
+
+instance ExtOutMap Bindings BindingsFrag where
+  extendOutMap (Bindings bindings scs sm oldEff) frag =
+    withExtEvidence frag do
+      let BindingsFrag newBindings maybeNewEff = frag
+      let newEff = case maybeNewEff of
+                     Nothing  -> inject oldEff
+                     Just eff -> eff
+      Bindings
+        (bindings `extendOutMap` newBindings)
+        (inject scs <> bindingsFragToSynthCandidates frag)
+        (inject sm)
+        newEff
+
+bindingsFragToSynthCandidates :: Distinct l => BindingsFrag n l -> SynthCandidates l
+bindingsFragToSynthCandidates (BindingsFrag (RecEnvFrag frag) _) =
+  execWriter $ bindingsFragToSynthCandidates' $ toEnvPairs frag
+
+bindingsFragToSynthCandidates' :: Distinct l => Nest (EnvPair Binding l) n l
+                               -> Writer (SynthCandidates l) ()
+bindingsFragToSynthCandidates' nest = case nest of
+  Empty -> return ()
+  Nest (EnvPair b binding) rest -> withExtEvidence rest do
+    case binding of
+       AtomNameBinding (LetBound (DeclBinding InstanceLet _ _)) -> do
+         tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+       SuperclassBinding _ _ getter ->
+         tell $ inject (SynthCandidates [] [getter] [])
+       _ -> return ()
+    bindingsFragToSynthCandidates' rest
 
 data WithBindings (e::E) (n::S) where
-  WithBindings :: (Distinct l, Ext l n) => Bindings l -> Scope l -> e l -> WithBindings e n
+  WithBindings :: (Distinct l, Ext l n) => Bindings l -> e l -> WithBindings e n
 
 class ScopeReader m => BindingsReader (m::MonadKind1) where
   addBindings :: InjectableE e => e n -> m n (WithBindings e n)
@@ -238,23 +322,46 @@ class ScopeReader m => BindingsReader (m::MonadKind1) where
 class (ScopeReader m, Monad1 m)
       => Scopable (m::MonadKind1) where
   withBindings :: ( SubstB Name b, BindsBindings b
-                  , HasNamesE e , HasNamesE e')
+                  , HasNamesE e , InjectableE e
+                  , HasNamesE e', InjectableE e', HoistableE e', SubstE AtomSubstVal e')
                => Abs b e n
                -> (forall l. Ext n l => e l -> m l (e' l))
                -> m n (Abs b e' n)
+  extendNamelessBindings :: BindingsFrag n n -> m n a -> m n a
 
 class (BindingsReader m, ScopeGetter m) => BindingsGetter (m::MonadKind1) where
-  getBindings :: m n (Bindings n)
+  getBindingsM :: m n (Bindings n)
 
-class ScopeGetter m => BindingsExtender (m::MonadKind1) where
+class (Scopable m, ScopeGetter m) => BindingsExtender (m::MonadKind1) where
   extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
 
 type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
+type Scopable2         (m::MonadKind2) = forall (n::S). Scopable         (m n)
 type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
 type BindingsGetter2   (m::MonadKind2) = forall (n::S). BindingsGetter   (m n)
 
+withBindingsFromExtender
+  :: ( BindingsExtender m, ScopeReader m, ScopeGetter m
+     , SubstB Name b, BindsBindings b , HasNamesE e , InjectableE e
+     , HasNamesE e', InjectableE e', HoistableE e', SubstE AtomSubstVal e')
+  => Abs b e n
+  -> (forall l. Ext n l => e l -> m l (e' l))
+  -> m n (Abs b e' n)
+withBindingsFromExtender ab cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  DistinctAbs b e <- return $ refreshAbs scope ab
+  e' <- extendBindings (boundBindings b) $ cont e
+  return $ Abs b e'
+
+instance Monad m => Scopable (ScopeReaderT m) where
+  withBindings = withBindingsFromExtender
+  extendNamelessBindings frag cont = do
+    Distinct <- getDistinct
+    extendBindings frag cont
+
 instance Monad m => BindingsExtender (ScopeReaderT m) where
-  extendBindings frag = extendScope (envAsScope frag)
+  extendBindings frag = extendScope (toScopeFrag frag)
 
 instance (InjectableE e, BindingsReader m)
          => BindingsReader (OutReaderT e m) where
@@ -262,7 +369,14 @@ instance (InjectableE e, BindingsReader m)
 
 instance (InjectableE e, BindingsGetter m)
          => BindingsGetter (OutReaderT e m) where
-  getBindings = OutReaderT $ lift getBindings
+  getBindingsM = OutReaderT $ lift getBindingsM
+
+instance (InjectableE e, ScopeReader m, BindingsExtender m)
+         => Scopable (OutReaderT e m) where
+  withBindings = withBindingsFromExtender
+  extendNamelessBindings frag cont = do
+    Distinct <- getDistinct
+    extendBindings frag cont
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
@@ -273,52 +387,64 @@ instance (InjectableE e, ScopeReader m, BindingsExtender m)
       cont env'
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
-  BindingsReaderT {runBindingsReaderT' :: ReaderT (Bindings n) (ScopeReaderT m n) a }
+  BindingsReaderT {runBindingsReaderT' :: ReaderT (DistinctEvidence n, Bindings n) m a }
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
-runBindingsReaderT :: Distinct n => (Scope n, Bindings n) -> (BindingsReaderT m n a) -> m a
-runBindingsReaderT (scope, bindings) cont =
-  runScopeReaderT scope $ runReaderT (runBindingsReaderT' cont) bindings
+runBindingsReaderT :: Distinct n => Bindings n -> (BindingsReaderT m n a) -> m a
+runBindingsReaderT bindings cont =
+  runReaderT (runBindingsReaderT' cont) (getDistinctEvidence, bindings)
 
 instance Monad m => BindingsReader (BindingsReaderT m) where
   addBindings e = BindingsReaderT do
-    bindings <- ask
-    scope <- lift $ getScope
-    Distinct <- lift $ getDistinct
-    return $ WithBindings bindings scope e
+    bindings <- asks snd
+    d <- asks fst
+    withDistinctEvidence d $
+      return $ WithBindings bindings e
 
 instance Monad m => Scopable (BindingsReaderT m) where
    withBindings (Abs b name) cont =
-     runEnvReaderT (idNameFunction :: NameFunction Name n n) $
+     runEnvReaderT (idEnv :: Env Name n n) $
        refreshBinders b \b' -> do
          name' <- substM name
          result <- EnvReaderT $ lift $ cont name'
          return $ Abs b' result
+   extendNamelessBindings frag cont = do
+     Distinct <- getDistinct
+     extendBindings frag cont
 
 instance Monad m => BindingsGetter (BindingsReaderT m) where
-  getBindings = BindingsReaderT ask
+  getBindingsM = BindingsReaderT $ asks snd
 
 instance Monad m => BindingsExtender (BindingsReaderT m) where
   extendBindings frag m =
-    BindingsReaderT $ ReaderT \bindings -> do
-       let scopeFrag = envAsScope frag
-       extendScope scopeFrag do
-         let BindingsReaderT (ReaderT f) = m
-         bindings' <- injectM bindings
-         f (bindings' <>> frag)
+    withExtEvidence (toExtEvidence frag) $
+      BindingsReaderT $ ReaderT \(_, bindings) -> do
+        let BindingsReaderT (ReaderT f) = m
+        f (getDistinctEvidence, bindings `extendOutMap` frag)
 
 instance Monad m => ScopeReader (BindingsReaderT m) where
-  addScope e = BindingsReaderT $ lift $ addScope e
-  getDistinctEvidenceM = BindingsReaderT $ lift $ getDistinctEvidenceM
+  addScope e = BindingsReaderT do
+    (d, bindings) <- ask
+    withDistinctEvidence d $
+      return $ WithScope (toScope bindings) e
+  getDistinctEvidenceM = BindingsReaderT $ asks fst
 
 instance Monad m => ScopeGetter (BindingsReaderT m) where
-  getScope = BindingsReaderT $ lift $ getScope
+  getScope = toScope <$> snd <$> BindingsReaderT ask
 
 instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
   addBindings e = EnvReaderT $ lift $ addBindings e
 
 instance BindingsGetter m => BindingsGetter (EnvReaderT v m i) where
-  getBindings = EnvReaderT $ lift getBindings
+  getBindingsM = EnvReaderT $ lift getBindingsM
+
+instance (InjectableV v, Scopable m) => Scopable (EnvReaderT v m i) where
+  withBindings ab cont = EnvReaderT $ ReaderT \env ->
+    withBindings ab \e -> do
+      env' <- injectM env
+      runReaderT (runEnvReaderT' $ cont e) env'
+  extendNamelessBindings frag cont = EnvReaderT $ ReaderT \env ->
+    extendNamelessBindings frag $ runReaderT (runEnvReaderT' $ cont) env
 
 instance (InjectableV v, ScopeGetter m, BindingsExtender m)
          => BindingsExtender (EnvReaderT v m i) where
@@ -333,46 +459,93 @@ instance (InjectableV v, ScopeGetter m, BindingsExtender m)
 class BindsNames b => BindsBindings (b::B) where
   boundBindings :: Distinct l => b n l -> BindingsFrag n l
 
+  default boundBindings :: (GenericB b, BindsBindings (RepB b))
+                        => Distinct l => b n l -> BindingsFrag n l
+  boundBindings b = boundBindings $ fromB b
+
+-- We're really just defining this so we can have a polymorphic `binderType`.
+-- But maybe we don't need one. Or maybe we can make one using just
+-- `BindsOneName b AtomNameC` and `BindsBindings b`.
+class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
+  boundAtomBinding :: b n l -> AtomBinding n
+
+binderType :: BindsOneAtomName b => b n l -> Type n
+binderType b =  bindingType $ toBinding $ boundAtomBinding b
+
+instance (InjectableE ann, ToBinding ann c) => BindsBindings (BinderP c ann) where
+  boundBindings (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
+    where ann' = withExtEvidence b $ inject ann
+
+class (SubstE Name e, InjectableE e) => ToBinding (e::E) (c::C) | e -> c where
+  toBinding :: e n -> Binding c n
+
+instance NameColor c => ToBinding (Binding c) c where
+  toBinding = id
+
+instance ToBinding AtomBinding AtomNameC where
+  toBinding = AtomNameBinding
+
+instance ToBinding DeclBinding AtomNameC where
+  toBinding = toBinding . LetBound
+
+instance ToBinding LamBinding AtomNameC where
+  toBinding = toBinding . LamBound
+
+instance ToBinding PiBinding AtomNameC where
+  toBinding = toBinding . PiBound
+
+instance ToBinding Atom AtomNameC where
+  toBinding = toBinding . MiscBound
+
+instance ToBinding SolverBinding AtomNameC where
+  toBinding = toBinding . SolverBound
+
+instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
+  toBinding (LeftE  e) = toBinding e
+  toBinding (RightE e) = toBinding e
+
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
 lookupBindings v = do
-  WithBindings bindings _ v' <- addBindings v
-  injectM $ bindings ! v'
+  WithBindings bindings v' <- addBindings v
+  injectM $ lookupBindingsPure bindings v'
 
-withFreshBinding
+lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
+lookupBindingsPure (Bindings bindings _ _ _) v =
+  lookupTerminalEnvFrag (fromRecEnv bindings) v
+
+updateBindings :: Name c n -> Binding c n -> Bindings n -> Bindings n
+updateBindings v rhs bindings =
+  bindings { getBindings = RecEnv $ updateEnvFrag v rhs bs }
+  where (RecEnv bs) = getBindings bindings
+
+withFreshNameBinder
   :: (NameColor c, BindingsReader m, BindingsExtender m)
   => NameHint
   -> Binding c o
   -> (forall o'. (Distinct o', Ext o o') => NameBinder c o o' -> m o' a)
   -> m o a
-withFreshBinding hint binding cont = do
+withFreshNameBinder hint binding cont = do
   scope <- getScope
   Distinct <- getDistinct
   withFresh hint nameColorRep scope \b' -> do
     let binding' = inject binding
-    extendBindings (b' @> binding') $
+    extendBindings (BindingsFrag (RecEnvFrag (b' @> binding')) Nothing) $
       cont b'
 
-withFreshBinder
-  :: (BindingsGetter m, BindingsExtender m)
-  => NameHint
-  -> Type o
-  -> AtomBinderInfo o
-  -> (forall o'. (Distinct o', Ext o o') => Binder o o' -> m o' a)
-  -> m o a
-withFreshBinder hint ty info cont =
-  withFreshBinding hint (AtomNameBinding ty info) \b -> do
-    Distinct <- getDistinct
-    cont $ b :> ty
-
--- TODO: maybe delete this? If we're moving to the in-place version of scopeful
--- monads then we can't access binders directly like this anyway.
 refreshBinders
-  :: ( InjectableV v, BindingsExtender2 m, FromName v
+  :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
      , EnvReader v m, SubstB v b, BindsBindings b)
   => b i i'
   -> (forall o'. Ext o o' => b o o' -> m i' o' r)
   -> m i o r
-refreshBinders _ _ = undefined
+refreshBinders b cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  env <- getEnv
+  DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idEnvFrag b)
+  extendBindings (boundBindings b') do
+    extendEnv envFrag do
+      cont b'
 
 freshBinderNamePair :: (ScopeReader m, NameColor c)
                     => NameHint
@@ -381,6 +554,95 @@ freshBinderNamePair hint = do
   WithScope scope UnitE <- addScope UnitE
   withFresh hint nameColorRep scope \b ->
     injectM $ Abs b (binderName b)
+
+withFreshBinder :: ( NameColor c, Scopable m, InjectableE e
+                   , HasNamesE e, SubstE AtomSubstVal e,  ToBinding binding c)
+                => NameHint -> binding n
+                -> (forall l. Ext n l => Name c l -> m l (e l))
+                -> m n (Abs (BinderP c binding) e n)
+withFreshBinder hint binding cont = do
+  Abs b name <- freshBinderNamePair hint
+  withBindings (Abs (b:>binding) name) $ cont
+
+withFreshLamBinder
+  :: (Scopable m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e)
+  => NameHint -> LamBinding n -> Abs Binder EffectRow n
+  -> (forall l. Ext n l => AtomName l -> m l (e l))
+  -> m n (Abs LamBinder e n)
+withFreshLamBinder hint (LamBinding arr ty) effAbs cont = do
+  Abs b name <- freshBinderNamePair hint
+  ab <- withBindings (Abs (LamBinder b ty arr Pure) name) \v -> do
+    Distinct <- getDistinct
+    effs <- applyAbs (inject effAbs) v
+    withAllowedEffects effs do
+      result <- cont v
+      return $ PairE result effs
+  Abs (LamBinder b' ty' arr' _) (PairE e eff) <- return ab
+  return $ Abs (LamBinder b' ty' arr' eff) e
+
+withFreshPiBinder
+  :: (Scopable m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e)
+  => NameHint -> PiBinding n
+  -> (forall l. Ext n l => AtomName l -> m l (e l))
+  -> m n (Abs PiBinder e n)
+withFreshPiBinder hint (PiBinding arr ty) cont = do
+  Abs b name <- freshBinderNamePair hint
+  withBindings (Abs (PiBinder b ty arr) name) \v -> do
+    withAllowedEffects Pure $ cont v
+
+-- This version works with the in-place api. TODO: remove the other version.
+refreshBinders2
+  :: ( InjectableV v, SubstV Name v, HoistableV v, SubstV v v, FromName v
+     , InjectableE e, HoistableE e, SubstE Name e, SubstE AtomSubstVal e
+     , EnvReader v m, BindingsReader2 m, Scopable2 m
+     , SubstB Name b, SubstB v b, BindsBindings b)
+  => b i i'
+  -> (forall o'. Ext o o' => m i' o' (e o'))
+  -> m i o (Abs b e o)
+refreshBinders2 b cont = do
+  ab <- substM $ Abs b (idEnvFrag b)
+  withBindings ab \substFrag ->
+    extendEnv substFrag $ cont
+
+
+data SomeDecl (binding::V) (n::S) (l::S) where
+  SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
+
+instance ProvesExt (SomeDecl binding) where
+  toExtEvidence (SomeDecl b _) = toExtEvidence b
+
+instance (InjectableV v, SubstV v binding)
+         => SubstB v (SomeDecl binding) where
+  substB env (SomeDecl b binding) cont = do
+    let binding' = substE env binding
+    substB env b \env' b' -> cont env' $ SomeDecl b' binding'
+  substBDistinct _ _ = undefined
+
+instance HoistableV binding => HoistableB (SomeDecl binding) where
+  freeVarsB (SomeDecl _ binding) = freeVarsE binding
+
+instance InjectableV binding => InjectableB (SomeDecl binding) where
+  injectionProofB _ _ _ = undefined
+
+instance BindsNames (SomeDecl binding) where
+  toScopeFrag (SomeDecl b _) = toScopeFrag b
+
+instance (forall c. NameColor c => ToBinding (binding c) c)
+         => BindsBindings (SomeDecl binding) where
+  boundBindings (SomeDecl b binding) =
+    withExtEvidence b $
+      BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
+
+-- === Tracking effects ===
+
+getAllowedEffects :: BindingsReader m => m n (EffectRow n)
+getAllowedEffects = do
+  WithBindings (Bindings _ _ _ effs) UnitE <- addBindings UnitE
+  injectM effs
+
+withAllowedEffects :: Scopable m => EffectRow n -> m n a -> m n a
+withAllowedEffects effs cont =
+  extendNamelessBindings (BindingsFrag emptyOutFrag $ Just effs) cont
 
 -- === front-end language AST ===
 
@@ -479,7 +741,7 @@ data UDecl (n::S) (l::S) where
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
     -> UDecl n l
 
-type UType  = UExpr
+type UType = UExpr
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
@@ -532,6 +794,8 @@ pattern UPatIgnore = UPatBinder UIgnore
 
 -- === top-level modules ===
 
+type LitProg = [(SourceBlock, Result)]
+
 type SourceName = String
 
 -- body must only contain SourceName version of names and binders
@@ -558,28 +822,14 @@ data SourceBlock' =
  | GetNameType SourceName
  -- TODO Add a color for module names?
  | ImportModule ModuleName
+ | DumpEnv
  | ProseBlock String
  | CommentLine
  | EmptyLines
  | UnParseable ReachedEOF String
   deriving (Show, Generic)
 
-data TopState n = TopState
-  { topBindings        :: TopBindings n
-  , topSynthCandidates :: SynthCandidates n
-  , topSourceMap       :: SourceMap   n }
-  deriving (Show, Generic)
-
-data TopBindings n = TopBindings (Env Binding n n)
-     deriving (Show, Generic)
-
-type ScopedBindings n = (Scope n, Bindings n)
-
-fromTopBindings :: TopBindings n -> ScopedBindings n
-fromTopBindings (TopBindings env) = (envAsScope env, emptyNameFunction <>> env)
-
-emptyTopState :: TopState VoidS
-emptyTopState = TopState (TopBindings emptyEnv) mempty (SourceMap mempty)
+type TopState = Bindings
 
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
@@ -594,9 +844,10 @@ data Module n where
 
 data EvaluatedModule (n::S) where
   EvaluatedModule
-    :: BindingsFrag n l     -- Evaluated bindings
-    -> SynthCandidates l    -- Values considered in scope for dictionary synthesis
-    -> SourceMap l          -- Mapping of module's source names to internal names
+    :: BindingsFrag n l   -- Evaluated bindings
+       -- TODO: we don't need this here because it's redundant with bindingsfrag
+    -> SynthCandidates l  -- Values considered in scope for dictionary synthesis
+    -> SourceMap l        -- Mapping of module's source names to internal names
     -> EvaluatedModule n
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
@@ -658,36 +909,43 @@ applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
 -- === Synonyms ===
 
-binderType :: Binder n l -> Type n
-binderType = binderAnn
+bindingType :: Binding AtomNameC n -> Type n
+bindingType (AtomNameBinding b) = case b of
+  LetBound    (DeclBinding _ ty _) -> ty
+  LamBound    (LamBinding  _ ty)   -> ty
+  PiBound     (PiBinding   _ ty)   -> ty
+  MiscBound   ty                   -> ty
+  SolverBound (InfVarBound ty _)   -> ty
+  SolverBound (SkolemBound ty)     -> ty
 
 infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
 piArgType :: PiType n -> Type n
-piArgType (PiType _ (_:>ty) _ _) = ty
+piArgType (PiType (PiBinder _ ty _) _ _) = ty
 
 piArrow :: PiType n -> Arrow
-piArrow (PiType arr _ _ _) = arr
+piArrow (PiType (PiBinder _ _ arr) _ _) = arr
 
 nonDepPiType :: ScopeReader m
              => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
-      return $ PiType arr (b:>argTy) eff' resultTy'
+      return $ PiType (PiBinder b argTy arr) eff' resultTy'
 
-considerNonDepPiType :: ScopeReader m
-                     => PiType n -> m n (Maybe (Arrow, Type n, EffectRow n, Type n))
-considerNonDepPiType = undefined
+considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
+considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
+  PairE eff' resultTy' <- hoist b (PairE eff resultTy)
+  return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
                  => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
 fromNonDepPiType arr ty = do
-  Pi (PiType arr' (b:>argTy) eff resultTy) <- return ty
+  Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
-  PairE eff' resultTy' <- fromConstAbs $ Abs b (PairE eff resultTy)
+  PairE eff' resultTy' <- liftMaybe $ hoist b (PairE eff resultTy)
   return $ (argTy, eff', resultTy')
 
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
@@ -798,11 +1056,8 @@ pattern RefTy r a = TC (RefType (Just r) a)
 pattern RawRefTy :: Type n -> Type n
 pattern RawRefTy a = TC (RefType Nothing a)
 
-pattern TabTy :: Binder n l -> Type l -> Type n
-pattern TabTy i a = Pi (PiType TabArrow i Pure a)
-
 pattern TabTyAbs :: PiType n -> Type n
-pattern TabTyAbs a <- Pi a@(PiType TabArrow _ _ _)
+pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
@@ -818,6 +1073,9 @@ pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
 pattern Fin :: Atom n -> Type n
 pattern Fin n = TC (IntRange (IdxRepVal 0) n)
+
+pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
+pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
 mkConsListTy :: [Type n] -> Type n
 mkConsListTy = foldr PairTy UnitTy
@@ -872,12 +1130,6 @@ mkBundleTy = bundleFold UnitTy PairTy
 mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
 
-pattern FunTy :: Binder n l -> EffectRow l -> Type l -> Type n
-pattern FunTy b eff bodyTy = Pi (PiType PlainArrow b eff bodyTy)
-
-pattern BinaryFunTy :: Binder n l -> Binder l l' -> EffectRow l' -> Type l' -> Type n
-pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
-
 pattern MaybeTy :: Type n -> Type n
 pattern MaybeTy a = SumTy [UnitTy, a]
 
@@ -903,6 +1155,7 @@ instance GenericE DataDef where
 deriving instance Show (DataDef n)
 deriving via WrapE DataDef n instance Generic (DataDef n)
 instance InjectableE DataDef
+instance HoistableE  DataDef
 instance SubstE Name DataDef
 instance SubstE AtomSubstVal DataDef
 instance AlphaEqE DataDef
@@ -912,6 +1165,7 @@ instance GenericE DataConDef where
   fromE (DataConDef name ab) = PairE (LiftE name) ab
   toE   (PairE (LiftE name) ab) = DataConDef name ab
 instance InjectableE DataConDef
+instance HoistableE  DataConDef
 instance SubstE Name DataConDef
 instance SubstE AtomSubstVal DataConDef
 instance AlphaEqE DataConDef
@@ -924,14 +1178,17 @@ instance GenericE ClassDef where
   toE (PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)) =
         ClassDef className methodNames (dataDefName, dataDef)
 instance InjectableE         ClassDef
+instance HoistableE        ClassDef
 instance SubstE Name         ClassDef
 instance SubstE AtomSubstVal ClassDef
 
 instance GenericB DataConRefBinding where
-  type RepB DataConRefBinding = BinderP Binder Atom
-  fromB (DataConRefBinding b val) = b :> val
-  toB   (b :> val) = DataConRefBinding b val
+  type RepB DataConRefBinding = PairB (LiftB Atom) Binder
+  fromB (DataConRefBinding b val) = PairB (LiftB val) b
+  toB   (PairB (LiftB val) b) = DataConRefBinding b val
+
 instance InjectableB DataConRefBinding
+instance HoistableB DataConRefBinding
 instance ProvesExt  DataConRefBinding
 instance BindsNames DataConRefBinding
 instance SubstB Name DataConRefBinding
@@ -1045,28 +1302,27 @@ instance GenericE Atom where
     _ -> error "impossible"
 
 instance InjectableE Atom
+instance HoistableE  Atom
 instance AlphaEqE Atom
 instance SubstE Name Atom
 
 instance SubstE AtomSubstVal Atom where
-  substE env atom = case fromE atom of
+  substE (scope, env) atom = case fromE atom of
     LeftE specialCase -> case specialCase of
       -- Var
       Case0 v -> do
-        substVal <- lookupSustTraversalEnv env v
-        case substVal of
-          Rename v' -> return $ Var v'
-          SubstVal x -> return x
+        case env ! v of
+          Rename v' -> Var v'
+          SubstVal x -> x
       -- ProjectElt
       Case1 (PairE (LiftE idxs) v) -> do
-        substVal <- lookupSustTraversalEnv env v
-        v' <- case substVal of
-          SubstVal x -> return x
-          Rename v'  -> return $ Var v'
-        return $ getProjection (NE.toList idxs) v'
+        let v' = case env ! v of
+                   SubstVal x -> x
+                   Rename v''  -> Var v''
+        getProjection (NE.toList idxs) v'
       Case1 _ -> error "impossible"
       _ -> error "impossible"
-    RightE rest -> (toE . RightE) <$> substE env rest
+    RightE rest -> (toE . RightE) $ substE (scope, env) rest
 
 instance GenericE Expr where
   type RepE Expr =
@@ -1091,10 +1347,11 @@ instance GenericE Expr where
     Case4 (ComposeE hof)                    -> Hof hof
     _ -> error "impossible"
 
-instance InjectableE Expr where
+instance InjectableE Expr
+instance HoistableE  Expr
 instance AlphaEqE Expr
-instance SubstE Name Expr where
-instance SubstE AtomSubstVal Expr where
+instance SubstE Name Expr
+instance SubstE AtomSubstVal Expr
 
 instance GenericE (ExtLabeledItemsE e1 e2) where
   type RepE (ExtLabeledItemsE e1 e2) = EitherE (ComposeE LabeledItems e1)
@@ -1106,49 +1363,141 @@ instance GenericE (ExtLabeledItemsE e1 e2) where
   toE (RightE (ComposeE items `PairE` t)) = ExtLabeledItemsE (Ext items (Just t))
 
 instance (InjectableE e1, InjectableE e2) => InjectableE (ExtLabeledItemsE e1 e2)
+instance (HoistableE  e1, HoistableE  e2) => HoistableE  (ExtLabeledItemsE e1 e2)
 instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2)
 instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
 
 instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
-  substE env (ExtLabeledItemsE (Ext items maybeExt)) = do
-    items' <- mapM (substE env) items
-    ext <- case maybeExt of
-      Nothing -> return $ NoExt NoLabeledItems
-      Just v ->
-        lookupSustTraversalEnv env v >>= \case
-          Rename        v'  -> return $ Ext NoLabeledItems $ Just v'
-          SubstVal (Var v') -> return $ Ext NoLabeledItems $ Just v'
-          SubstVal (LabeledRow row) -> return row
-          _ -> error "Not a valid labeled row substitution"
-    return $ ExtLabeledItemsE $ prefixExtLabeledItems items' ext
+  substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
+    let items' = fmap (substE (scope, env)) items
+    let ext = case maybeExt of
+                Nothing -> NoExt NoLabeledItems
+                Just v -> case env ! v of
+                  Rename        v'  -> Ext NoLabeledItems $ Just v'
+                  SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
+                  SubstVal (LabeledRow row) -> row
+                  _ -> error "Not a valid labeled row substitution"
+    ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
 instance GenericE Block where
   type RepE Block = PairE Type (Abs (Nest Decl) Expr)
   fromE (Block ty decls result) = PairE ty (Abs decls result)
   toE   (PairE ty (Abs decls result)) = Block ty decls result
 instance InjectableE Block
+instance HoistableE  Block
 instance AlphaEqE Block
 instance SubstE Name Block
 instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
 deriving via WrapE Block n instance Generic (Block n)
 
+instance GenericB LamBinder where
+  type RepB LamBinder =         LiftB (PairE Type (LiftE Arrow))
+                        `PairB` NameBinder AtomNameC
+                        `PairB` LiftB EffectRow
+  fromB (LamBinder b ty arr effs) = LiftB (PairE ty (LiftE arr))
+                            `PairB` b
+                            `PairB` LiftB effs
+  toB (       LiftB (PairE ty (LiftE arr))
+      `PairB` b
+      `PairB` LiftB effs) = LamBinder b ty arr effs
+
+instance BindsBindings LamBinder where
+  boundBindings (LamBinder b ty arrow effects) =
+    withExtEvidence b do
+      let binding = toBinding $ inject $ LamBinding arrow ty
+      BindingsFrag (RecEnvFrag $ b @> binding)
+                   (Just $ inject effects)
+
+instance BindsAtMostOneName LamBinder AtomNameC where
+  LamBinder b _ _ _ @> x = b @> x
+
+instance BindsOneName LamBinder AtomNameC where
+  binderName (LamBinder b _ _ _) = binderName b
+
+instance BindsOneAtomName LamBinder where
+  boundAtomBinding (LamBinder _ ty arr _) =
+    LamBound $ LamBinding arr ty
+
+instance ProvesExt  LamBinder
+instance BindsNames LamBinder
+instance InjectableB LamBinder
+instance HoistableB  LamBinder
+instance SubstB Name LamBinder
+instance SubstB AtomSubstVal LamBinder
+instance AlphaEqB LamBinder
+
+instance GenericE LamBinding where
+  type RepE LamBinding = PairE (LiftE Arrow) Type
+  fromE (LamBinding arr ty) = PairE (LiftE arr) ty
+  toE   (PairE (LiftE arr) ty) = LamBinding arr ty
+
+instance InjectableE LamBinding
+instance HoistableE  LamBinding
+instance SubstE Name LamBinding
+instance SubstE AtomSubstVal LamBinding
+instance AlphaEqE LamBinding
+
 instance GenericE LamExpr where
-  type RepE LamExpr = PairE (LiftE Arrow) (Abs Binder (PairE EffectRow Block))
-  fromE (LamExpr arr b effs block) = PairE (LiftE arr) (Abs b (PairE effs block))
-  toE   (PairE (LiftE arr) (Abs b (PairE effs block))) = LamExpr arr b effs block
+  type RepE LamExpr = Abs LamBinder Block
+  fromE (LamExpr b block) = Abs b block
+  toE   (Abs b block) = LamExpr b block
+
 instance InjectableE LamExpr
+instance HoistableE  LamExpr
 instance AlphaEqE LamExpr
 instance SubstE Name LamExpr
 instance SubstE AtomSubstVal LamExpr
 deriving instance Show (LamExpr n)
 deriving via WrapE LamExpr n instance Generic (LamExpr n)
 
+instance GenericE PiBinding where
+  type RepE PiBinding = PairE (LiftE Arrow) Type
+  fromE (PiBinding arr ty) = PairE (LiftE arr) ty
+  toE   (PairE (LiftE arr) ty) = PiBinding arr ty
+
+instance InjectableE PiBinding
+instance HoistableE  PiBinding
+instance SubstE Name PiBinding
+instance SubstE AtomSubstVal PiBinding
+instance AlphaEqE PiBinding
+
+instance GenericB PiBinder where
+  type RepB PiBinder = BinderP AtomNameC (PairE Type (LiftE Arrow))
+  fromB (PiBinder b ty arr) = b :> PairE ty (LiftE arr)
+  toB   (b :> PairE ty (LiftE arr)) = PiBinder b ty arr
+
+instance BindsAtMostOneName PiBinder AtomNameC where
+  PiBinder b _ _ @> x = b @> x
+
+instance BindsOneName PiBinder AtomNameC where
+  binderName (PiBinder b _ _) = binderName b
+
+instance BindsOneAtomName PiBinder where
+  boundAtomBinding (PiBinder _ ty arr) =
+    PiBound $ PiBinding arr ty
+
+instance BindsBindings PiBinder where
+  boundBindings (PiBinder b ty arr) =
+    withExtEvidence b do
+      let binding = toBinding $ inject $ PiBinding arr ty
+      BindingsFrag (RecEnvFrag $ b @> binding) (Just Pure)
+
+instance ProvesExt  PiBinder
+instance BindsNames PiBinder
+instance InjectableB PiBinder
+instance HoistableB  PiBinder
+instance SubstB Name PiBinder
+instance SubstB AtomSubstVal PiBinder
+instance AlphaEqB PiBinder
+
 instance GenericE PiType where
-  type RepE PiType = PairE (LiftE Arrow) (Abs Binder (PairE EffectRow Type))
-  fromE (PiType arr b effs ty) = PairE (LiftE arr) (Abs b (PairE effs ty))
-  toE   (PairE (LiftE arr) (Abs b (PairE effs ty))) = PiType arr b effs ty
+  type RepE PiType = Abs PiBinder (PairE EffectRow Type)
+  fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
+  toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
+
 instance InjectableE PiType
+instance HoistableE  PiType
 instance AlphaEqE PiType
 instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
@@ -1168,19 +1517,20 @@ instance GenericE (EffectP name) where
     RightE (LiftE (Left  ())) -> ExceptionEffect
     RightE (LiftE (Right ())) -> IOEffect
 
-instance InjectableE name => InjectableE (EffectP name)
-instance AlphaEqE    name => AlphaEqE    (EffectP name)
+instance InjectableE   name => InjectableE   (EffectP name)
+instance HoistableE    name => HoistableE    (EffectP name)
+instance AlphaEqE      name => AlphaEqE      (EffectP name)
 instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
-  substE env eff = case eff of
+  substE (_, env) eff = case eff of
     RWSEffect rws v -> do
-      v' <- lookupSustTraversalEnv env v >>= \case
-              Rename        v'  -> return v'
-              SubstVal (Var v') -> return v'
-              SubstVal _ -> error "Heap parameter must be a name"
-      return $ RWSEffect rws v'
-    ExceptionEffect -> return ExceptionEffect
-    IOEffect        -> return IOEffect
+      let v' = case env ! v of
+                 Rename        v''  -> v''
+                 SubstVal (Var v'') -> v''
+                 SubstVal _ -> error "Heap parameter must be a name"
+      RWSEffect rws v'
+    ExceptionEffect -> ExceptionEffect
+    IOEffect        -> IOEffect
 
 instance OrdE name => GenericE (EffectRowP name) where
   type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE name)
@@ -1193,20 +1543,21 @@ instance OrdE name => GenericE (EffectRowP name) where
                              _ -> error "impossible"
 
 instance InjectableE (EffectRowP AtomName)
+instance HoistableE  (EffectRowP AtomName)
 instance SubstE Name (EffectRowP AtomName)
 instance AlphaEqE    (EffectRowP AtomName)
 
 instance SubstE AtomSubstVal (EffectRowP AtomName) where
   substE env (EffectRow effs tailVar) = do
-    effs' <- S.fromList <$> mapM (substE env) (S.toList effs)
-    tailEffRow <- case tailVar of
-      Nothing -> return $ EffectRow mempty Nothing
-      Just v -> lookupSustTraversalEnv env v >>= \case
-        Rename        v'  -> return $ EffectRow mempty (Just v')
-        SubstVal (Var v') -> return $ EffectRow mempty (Just v')
-        SubstVal (Eff r)  -> return r
-        _ -> error "Not a valid effect substitution"
-    return $ extendEffRow effs' tailEffRow
+    let effs' = S.fromList $ map (substE env) (S.toList effs)
+    let tailEffRow = case tailVar of
+          Nothing -> EffectRow mempty Nothing
+          Just v -> case snd env ! v of
+            Rename        v'  -> EffectRow mempty (Just v')
+            SubstVal (Var v') -> EffectRow mempty (Just v')
+            SubstVal (Eff r)  -> r
+            _ -> error "Not a valid effect substitution"
+    extendEffRow effs' tailEffRow
 
 instance GenericE SynthCandidates where
   type RepE SynthCandidates = PairE (ListE Atom) (PairE (ListE Atom) (ListE Atom))
@@ -1214,43 +1565,62 @@ instance GenericE SynthCandidates where
   toE   (PairE (ListE xs) (PairE (ListE ys) (ListE zs))) = SynthCandidates xs ys zs
 
 instance InjectableE SynthCandidates
+instance HoistableE  SynthCandidates
 instance SubstE Name SynthCandidates
 instance SubstE AtomSubstVal SynthCandidates
 
-instance GenericE AtomBinderInfo where
-  type RepE AtomBinderInfo =
+instance GenericE AtomBinding where
+  type RepE AtomBinding =
      EitherE5
-        (PairE (LiftE LetAnn) Expr)
-        (LiftE Arrow)
-        (LiftE Arrow)
-        UnitE
-        UnitE
+        DeclBinding
+        LamBinding
+        PiBinding
+        Type
+        SolverBinding
 
   fromE = \case
-    LetBound ann e -> Case0 (PairE (LiftE ann) e)
-    LamBound arr   -> Case1 (LiftE arr)
-    PiBound  arr   -> Case2 (LiftE arr)
-    MiscBound      -> Case3 UnitE
-    InferenceName  -> Case4 UnitE
+    LetBound    x -> Case0 x
+    LamBound    x -> Case1 x
+    PiBound     x -> Case2 x
+    MiscBound   x -> Case3 x
+    SolverBound x -> Case4 x
 
   toE = \case
-    Case0 (PairE (LiftE ann) e) -> LetBound ann e
-    Case1 (LiftE arr)           -> LamBound arr
-    Case2 (LiftE arr)           -> PiBound  arr
-    Case3 UnitE                 -> MiscBound
-    Case4 UnitE                 -> InferenceName
+    Case0 x -> LetBound x
+    Case1 x -> LamBound x
+    Case2 x -> PiBound  x
+    Case3 x -> MiscBound x
+    Case4 x -> SolverBound x
     _ -> error "impossible"
 
-instance InjectableE AtomBinderInfo
-instance SubstE Name AtomBinderInfo
-instance SubstE AtomSubstVal AtomBinderInfo
-instance AlphaEqE AtomBinderInfo
+instance InjectableE AtomBinding
+instance HoistableE  AtomBinding
+instance SubstE Name AtomBinding
+instance SubstE AtomSubstVal AtomBinding
+instance AlphaEqE AtomBinding
+
+instance GenericE SolverBinding where
+  type RepE SolverBinding = EitherE2 (PairE Type (LiftE SrcPosCtx)) Type
+  fromE = \case
+    InfVarBound ty ctx -> Case0 (PairE ty (LiftE ctx))
+    SkolemBound ty     -> Case1 ty
+
+  toE = \case
+    Case0 (PairE ty (LiftE ct)) -> InfVarBound ty ct
+    Case1 ty                    -> SkolemBound ty
+    _ -> error "impossible"
+
+instance InjectableE SolverBinding
+instance HoistableE  SolverBinding
+instance SubstE Name SolverBinding
+instance SubstE AtomSubstVal SolverBinding
+instance AlphaEqE SolverBinding
 
 instance NameColor c => GenericE (Binding c) where
   type RepE (Binding c) =
     EitherE2
       (EitherE5
-          (Type `PairE` AtomBinderInfo)
+          AtomBinding
           DataDef
           DataDefName
           (DataDefName `PairE` LiftE Int)
@@ -1259,7 +1629,7 @@ instance NameColor c => GenericE (Binding c) where
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom))
   fromE binding = case binding of
-    AtomNameBinding   ty info         -> Case0 $ Case0 $ ty `PairE` info
+    AtomNameBinding   tyinfo          -> Case0 $ Case0 $ tyinfo
     DataDefBinding    dataDef         -> Case0 $ Case1 $ dataDef
     TyConBinding      dataDefName     -> Case0 $ Case2 $ dataDefName
     DataConBinding    dataDefName idx -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx
@@ -1268,7 +1638,7 @@ instance NameColor c => GenericE (Binding c) where
     MethodBinding     className idx e -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
 
   toE rep = case rep of
-    Case0 (Case0 (ty `PairE` info))                       -> fromJust $ tryAsColor $ AtomNameBinding   ty info
+    Case0 (Case0 tyinfo)                                  -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
     Case0 (Case1 dataDef)                                 -> fromJust $ tryAsColor $ DataDefBinding    dataDef
     Case0 (Case2 dataDefName)                             -> fromJust $ tryAsColor $ TyConBinding      dataDefName
     Case0 (Case3 (dataDefName `PairE` LiftE idx))         -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx
@@ -1279,23 +1649,38 @@ instance NameColor c => GenericE (Binding c) where
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
 instance InjectableV         Binding
+instance HoistableV          Binding
 instance SubstV Name         Binding
 instance SubstV AtomSubstVal Binding
 instance NameColor c => InjectableE         (Binding c)
+instance NameColor c => HoistableE          (Binding c)
 instance NameColor c => SubstE Name         (Binding c)
 instance NameColor c => SubstE AtomSubstVal (Binding c)
 
+instance GenericE DeclBinding where
+  type RepE DeclBinding = LiftE LetAnn `PairE` Type `PairE` Expr
+  fromE (DeclBinding ann ty expr) = LiftE ann `PairE` ty `PairE` expr
+  toE   (LiftE ann `PairE` ty `PairE` expr) = DeclBinding ann ty expr
+
+instance InjectableE DeclBinding
+instance HoistableE  DeclBinding
+instance SubstE Name DeclBinding
+instance SubstE AtomSubstVal DeclBinding
+instance AlphaEqE DeclBinding
+
 instance GenericB Decl where
-  type RepB Decl = BinderP Binder (PairE (LiftE LetAnn) Expr)
-  fromB (Let ann b expr) = b :> PairE (LiftE ann) expr
-  toB   (b :> PairE (LiftE ann) expr) = Let ann b expr
+  type RepB Decl = AtomBinderP DeclBinding
+  fromB (Let b binding) = b :> binding
+  toB   (b :> binding) = Let b binding
 
 instance InjectableB Decl
+instance HoistableB  Decl
 instance SubstB AtomSubstVal Decl
 instance SubstB Name Decl
 instance AlphaEqB Decl
 instance ProvesExt  Decl
 instance BindsNames Decl
+instance BindsBindings Decl
 
 instance Pretty Arrow where
   pretty arr = case arr of
@@ -1323,6 +1708,7 @@ deriving via WrapE SourceMap n instance Generic (SourceMap n)
 
 instance InjectableE SourceMap
 instance SubstE Name SourceMap
+instance HoistableE  SourceMap
 
 instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
@@ -1347,12 +1733,18 @@ instance SubstE Name EvaluatedModule
 
 instance Store (Atom n)
 instance Store (Expr n)
-instance Store (AtomBinderInfo n)
+instance Store (SolverBinding n)
+instance Store (AtomBinding n)
+instance Store (LamBinding  n)
+instance Store (DeclBinding n)
 instance Store (Decl n l)
 instance Store (DataDef n)
 instance Store (DataConDef n)
 instance Store (Block n)
+instance Store (LamBinder n l)
 instance Store (LamExpr n)
+instance Store (PiBinding n)
+instance Store (PiBinder n l)
 instance Store (PiType  n)
 instance Store Arrow
 instance Store (ClassDef       n)
@@ -1362,7 +1754,6 @@ instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
 instance Store (TopState n)
-instance Store (TopBindings n)
 instance NameColor c => Store (Binding c n)
 
 instance IsString (SourceNameOr a VoidS) where
@@ -1396,74 +1787,82 @@ deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 
-instance BindsBindings Binder where
-  boundBindings (b:>ty) = b @> AtomNameBinding ty' MiscBound
-    where ty' = withExtEvidence b $ inject ty
-
-instance BindsBindings Decl where
-  boundBindings (Let ann (b:>ty) expr) =
-    withExtEvidence b do
-      let ty'   = inject ty
-      let expr' = inject expr
-      b @> AtomNameBinding ty' (LetBound ann expr')
-
 instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (PairB b1 b2)) where
   boundBindings (PairB b1 b2) = do
     let bindings2 = boundBindings b2
-    let ext = toExtEvidence $ envAsScope bindings2
+    let ext = toExtEvidence bindings2
     withSubscopeDistinct ext do
-      let bindings1 = boundBindings b1
-      inject bindings1 <.> bindings2
+      boundBindings b1 `catBindingsFrags` bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
-  boundBindings Empty = emptyEnv
+  boundBindings Empty = emptyOutFrag
   boundBindings (Nest b rest) = boundBindings $ PairB b rest
 
-instance BindsBindings (RecEnvFrag Binding) where
-  boundBindings (RecEnvFrag frag) = frag
+instance (BindsBindings b1, BindsBindings b2)
+         => (BindsBindings (EitherB b1 b2)) where
+  boundBindings (LeftB  b) = boundBindings b
+  boundBindings (RightB b) = boundBindings b
+
+instance GenericB BindingsFrag where
+  type RepB BindingsFrag = PairB (RecEnvFrag Binding) (LiftB (MaybeE EffectRow))
+  fromB (BindingsFrag frag (Just effs)) = PairB frag (LiftB (JustE effs))
+  fromB (BindingsFrag frag Nothing    ) = PairB frag (LiftB NothingE)
+  toB   (PairB frag (LiftB (JustE effs))) = BindingsFrag frag (Just effs)
+  toB   (PairB frag (LiftB NothingE    )) = BindingsFrag frag Nothing
+  toB   _ = error "impossible" -- GHC exhaustiveness bug?
+
+instance InjectableB         BindingsFrag
+instance ProvesExt           BindingsFrag
+instance BindsNames          BindingsFrag
+instance SubstB Name         BindingsFrag
+instance SubstB AtomSubstVal BindingsFrag
+
+instance BindsBindings BindingsFrag where
+  boundBindings frag = frag
+
+instance BindsBindings UnitB where
+  boundBindings UnitB = emptyOutFrag
 
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where
   substE env = \case
-    UAtomVar    v -> UAtomVar    <$> substE env v
-    UTyConVar   v -> UTyConVar   <$> substE env v
-    UDataConVar v -> UDataConVar <$> substE env v
-    UClassVar   v -> UClassVar   <$> substE env v
-    UMethodVar  v -> UMethodVar  <$> substE env v
+    UAtomVar    v -> UAtomVar    $ substE env v
+    UTyConVar   v -> UTyConVar   $ substE env v
+    UDataConVar v -> UDataConVar $ substE env v
+    UClassVar   v -> UClassVar   $ substE env v
+    UMethodVar  v -> UMethodVar  $ substE env v
 
 instance InjectableE e => InjectableE (WithBindings e) where
-  injectionProofE (fresh::InjectionCoercion n l) (WithBindings bindings (scope::Scope h) e) =
+  injectionProofE (fresh::InjectionCoercion n l) (WithBindings (bindings :: Bindings h) e) =
     withExtEvidence (injectionProofE fresh ext) $
-      WithBindings bindings scope e
+      WithBindings bindings e
     where ext = getExtEvidence :: ExtEvidence h n
 
 instance InjectableE UVar where
-  injectionProofE = undefined
+  injectionProofE = todoInjectableProof
 
-instance HasNameHint (UPat n l) where
-  getNameHint = undefined
+instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
+  getNameHint (WithSrcB _ b) = getNameHint b
+
+instance HasNameHint (UPat' n l) where
+  getNameHint (UPatBinder b) = getNameHint b
+  getNameHint _ = "pat"
 
 instance HasNameHint (UBinder c n l) where
-  getNameHint = undefined
+  getNameHint b = case b of
+    UBindSource v -> getNameHint v
+    UIgnore       -> fromString "_"
+    UBind v       -> getNameHint v
 
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
-    UBindSource _ -> emptyEnv
-    UIgnore       -> emptyEnv
+    UBindSource _ -> emptyInFrag
+    UIgnore       -> emptyInFrag
     UBind b'      -> b' @> x
 
 instance BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x
 
 instance InjectableE UModule where
-  injectionProofE = undefined
-
-instance Pretty (UBinder c n l) where
-  pretty (UBindSource v) = pretty v
-  pretty UIgnore         = "_"
-  pretty (UBind v)       = pretty v
-
-instance Pretty (UType n) where
-  pretty = undefined
-
+  injectionProofE = todoInjectableProof

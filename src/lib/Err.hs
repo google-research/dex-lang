@@ -11,16 +11,18 @@
 
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
-            Fallible (..), FallibleM (..), HardFailM (..),
-            runHardFail, throw, throwErr, throwIf,
+            Fallible (..), FallibleM (..), HardFailM (..), CtxReader (..),
+            runFallibleM, runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
-            catchIOExcept, liftExcept,
+            catchIOExcept, liftExcept, liftMaybe,
             assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
-            FallibleApplicativeWrapper, traverseMergingErrs) where
+            FallibleApplicativeWrapper, traverseMergingErrs, liftFallibleM,
+            SearcherM (..), Searcher (..), runSearcherM) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -86,7 +88,8 @@ newtype FallibleM a =
   deriving (Functor, Applicative, Monad)
 
 instance Fallible FallibleM where
-  throwErrs errs = FallibleM $ lift $ throwErrs errs
+  throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
+    throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
 
 instance FallibleApplicative FallibleM where
@@ -107,6 +110,9 @@ instance FallibleApplicative IO where
     result1 <- catchIOExcept m1
     result2 <- catchIOExcept m2
     liftExcept $ mergeErrs result1 result2
+
+runFallibleM :: FallibleM a -> Except a
+runFallibleM m = runReaderT (fromFallibleM m) mempty
 
 -- === Except type ===
 
@@ -195,9 +201,16 @@ catchIOExcept m = liftIO $ (liftM Success m) `catches`
   , Handler \(e::SomeException) -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
   ]
 
+liftMaybe :: MonadFail m => Maybe a -> m a
+liftMaybe Nothing = fail ""
+liftMaybe (Just x) = return x
+
 liftExcept :: Fallible m => Except a -> m a
 liftExcept (Failure errs) = throwErrs errs
 liftExcept (Success ans) = return ans
+
+liftFallibleM :: Fallible m => FallibleM a -> m a
+liftFallibleM m = liftExcept $ runFallibleM m
 
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Failure e) = error $ pprint e
@@ -214,6 +227,45 @@ assertEq x y s = if x == y then return ()
 -- backwards-compatibility shim.
 asCompilerErr :: Fallible m => m a -> m a
 asCompilerErr cont = addContext "(This is a compiler error!)" cont
+
+-- === search monad ===
+
+infix 0 <!>
+class (Monad m, Alternative m) => Searcher m where
+  -- Runs the second computation when the first yields an empty set of results.
+  -- This is just `<|>` for greedy searchers like `Maybe`, but in other cases,
+  -- like the list monad, it matters that the second computation isn't run if
+  -- the first succeeds.
+  (<!>) :: m a -> m a -> m a
+
+-- Adds an extra error case to `FallibleM` so we can give it an Alternative
+-- instance with an identity element.
+newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT FallibleM a }
+  deriving (Functor, Applicative, Monad)
+
+runSearcherM :: SearcherM a -> Except (Maybe a)
+runSearcherM m = runFallibleM $ runMaybeT (runSearcherM' m)
+
+instance MonadFail SearcherM where
+  fail _ = SearcherM $ MaybeT $ return Nothing
+
+instance Fallible SearcherM where
+  throwErrs e = SearcherM $ lift $ throwErrs e
+  addErrCtx ctx (SearcherM (MaybeT m)) = SearcherM $ MaybeT $
+    addErrCtx ctx $ m
+
+instance Alternative SearcherM where
+  empty = SearcherM $ MaybeT $ return Nothing
+  SearcherM (MaybeT m1) <|> SearcherM (MaybeT m2) = SearcherM $ MaybeT do
+    m1 >>= \case
+      Just ans -> return $ Just ans
+      Nothing -> m2
+
+instance Searcher SearcherM where
+  (<!>) = (<|>)
+
+instance CtxReader SearcherM where
+  getErrCtx = SearcherM $ lift getErrCtx
 
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons

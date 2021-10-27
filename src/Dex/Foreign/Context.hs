@@ -26,14 +26,15 @@ import Resources
 import Syntax  hiding (sizeOf)
 import Type
 import TopLevel
-import Parser (parseExpr, exprAsModule)
 import Env hiding (Tag)
 import PPrint
 import Err
+import Parser
 
 import Dex.Foreign.Util
 
 import SaferNames.Bridge
+
 
 data Context = Context EvalConfig TopStateEx
 

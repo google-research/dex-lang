@@ -136,8 +136,12 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
+  <|> dumpEnv
   <|> explicitCommand
   <?> "top-level command"
+
+dumpEnv :: Parser SourceBlock'
+dumpEnv = string ":debug-env" $> DumpEnv
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do
@@ -470,7 +474,6 @@ wrapUStatements statements = case statements of
     LeftB  d -> UDecl $ UDeclExpr d $ wrapUStatements rest
     RightB (LiftB e) -> UDecl $ UDeclExpr d $ wrapUStatements rest
       where d = ULet PlainLet (UPatAnn (nsB UPatIgnore) Nothing) e
-    _ -> error "impossible"
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser (UStatement VoidS VoidS)
@@ -747,15 +750,16 @@ uIsoSugar = withSrc (char '#' *> options) where
         )
 
 uPatRecordLit :: [(Label, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
-uPatRecordLit labelsPats ext = nsB
+uPatRecordLit labelsPats ext = nsB do
   let (labels, pats) = unzip labelsPats
-  in case ext of
-       Nothing ->
-         UPatRecord (NoExt (foldMap (\s -> labeledSingleton s ()) labels))
-                    (PairB (toNestParsed $ pats) NothingB)
-       Just tailPat ->
-         UPatRecord (Ext undefined (Just ()))
-                    (PairB (toNestParsed $ pats) (JustB tailPat))
+  let labeledPart = foldMap (\s -> labeledSingleton s ()) labels
+  case ext of
+    Nothing ->
+      UPatRecord (NoExt labeledPart )
+                 (PairB (toNestParsed $ pats) NothingB)
+    Just tailPat ->
+      UPatRecord (Ext labeledPart (Just ()))
+                 (PairB (toNestParsed $ pats) (JustB tailPat))
 
 parseLabeledItems
   :: String -> String -> Parser a

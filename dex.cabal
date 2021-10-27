@@ -59,11 +59,12 @@ library
                        Autodiff, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec, Export
                        Err, LabeledItems, SourceRename,
-                       SaferNames.NameCore, SaferNames.Name, SaferNames.LazyMap,
+                       SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
-                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference
+                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
+                       SaferNames.CheapReduction
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

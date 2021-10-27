@@ -22,7 +22,9 @@ import Text.Megaparsec.Char as C
 
 import Resources (cssSource, javascriptSource)
 import Syntax
+import qualified SaferNames.Syntax as S
 import PPrint
+import SaferNames.PPrint ()
 import Parser
 import Serialize ()
 import Err
@@ -30,7 +32,7 @@ import Err
 pprintHtml :: ToMarkup a => a -> String
 pprintHtml x = renderHtml $ toMarkup x
 
-progHtml :: LitProg -> String
+progHtml :: (ToMarkup a, ToMarkup b) => [(a, b)] -> String
 progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
   where toHtmlBlock (block,result) = toMarkup block <> toMarkup result
 
@@ -64,6 +66,11 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
     ProseBlock s -> cdiv "prose-block" $ mdToHtml s
+    _ -> cdiv "code-block" $ highlightSyntax (pprint block)
+
+instance ToMarkup S.SourceBlock where
+  toMarkup block = case S.sbContents block of
+    S.ProseBlock s -> cdiv "prose-block" $ mdToHtml s
     _ -> cdiv "code-block" $ highlightSyntax (pprint block)
 
 mdToHtml :: String -> Html

@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module SaferNames.SourceRename (renameSourceNames) where
 
@@ -18,52 +19,43 @@ import qualified Data.Map.Strict as M
 -- import Env
 import Err
 import LabeledItems
-import SaferNames.NameCore
 import SaferNames.Name
 import SaferNames.ResolveImplicitNames
 import SaferNames.Syntax
 
-renameSourceNames :: Fallible m => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
--- renameSourceNames scope sourceMap m =
---   runReaderT (runReaderT (renameSourceNames' m) (scope, sourceMap)) False
-renameSourceNames = undefined
+renameSourceNames :: (Distinct n, Fallible m)
+                  => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
+renameSourceNames scope sourceMap sourceModule =
+  liftExcept $ runFallibleM $ runScopeReaderT scope $
+    runOutReaderT (RenamerEnv sourceMap False) $ runRenamerM $
+      renameSourceNames' sourceModule
 
--- type RenameEnv (n::S) = (Scope n, SourceMap n)
+data RenamerEnv n = RenamerEnv { renamerSourceMap :: SourceMap n
+                               , renamerMayShadow :: Bool }
 
--- We have this class because we want to read some extra context (whether
--- shadowing is allowed) but we've already used up the MonadReader
--- (we can't add a field because we want it to be monoidal).
+newtype RenamerM (n::S) (a:: *) =
+  RenamerM { runRenamerM :: OutReaderT RenamerEnv (ScopeReaderT FallibleM) n a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , ScopeReader, ScopeGetter, ScopeExtender)
+
 class (Monad1 m, ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
   askSourceMap :: m n (SourceMap n)
   extendSourceMap :: (SourceMap n) -> m n a -> m n a
 
--- -- Will implement Renamer directly (with a newtype)
--- data RenamerData (n::S) a
+instance Renamer RenamerM where
+  askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
+  askSourceMap = RenamerM $ renamerSourceMap <$> askOutReader
+  setMayShadow mayShadow (RenamerM cont) = RenamerM do
+    RenamerEnv sm _ <- askOutReader
+    localOutReader (RenamerEnv sm mayShadow) cont
+  extendSourceMap sourceMap (RenamerM cont) = RenamerM do
+    RenamerEnv sm mayShadow <- askOutReader
+    localOutReader (RenamerEnv (sm <> sourceMap) mayShadow) cont
 
--- instance Functor (RenamerData n) where
-
--- instance Applicative (RenamerData n) where
-
--- instance Monad (RenamerData n) where
-
--- instance ScopeReader RenamerData where
-
--- instance ScopeExtender RenamerData where
-
--- instance Fallibleor Err (RenamerData n) where
-
--- instance Renamer RenamerData where
-
--- instance Fallible m => Renamer n (ReaderT (RenameEnv n) (ReaderT Bool m)) where
---   askMayShadow = lift ask
---   setMayShadow mayShadow cont = do
---     env <- ask
---     lift $ local (const mayShadow) (runReaderT cont env)
-
-_renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
-_renameSourceNames' (SourceUModule decl) = do
+renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
+renameSourceNames' (SourceUModule decl) = do
   (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $
     sourceRenameB $ resolveImplicitTopDecl decl
   return $ UModule decl' sourceMap
@@ -131,7 +123,7 @@ instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
       Nothing    -> throw UnboundVarErr $ pprint sourceName
       Just (EnvVal rep val) ->
         case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
-          Just EqNameColor -> return $ InternalName val
+          Just ColorsEqual -> return $ InternalName val
           Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
@@ -264,9 +256,8 @@ sourceRenameUBinder ubinder = case ubinder of
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) nameColorRep \freshName -> do
       Distinct <- getDistinct
-      let frag = (singletonScope freshName)
       let sourceMap' = SourceMap (M.singleton b (EnvVal nameColorRep $ nameBinderName freshName))
-      return $ RenamerContent frag sourceMap' $ UBind freshName
+      return $ RenamerContent (toScopeFrag freshName) sourceMap' $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> returnG UIgnore
 
@@ -400,3 +391,8 @@ instance SourceRenamablePat p => SourceRenamablePat (Nest p) where
 instance SourceRenamableB UPat' where
   sourceRenameB pat = RenamerNameGenT $ snd <$> action where
     action = runPatRenamerNameGenT $ sourceRenamePat mempty pat
+
+-- === misc instance ===
+
+instance InjectableE RenamerEnv where
+  injectionProofE = undefined

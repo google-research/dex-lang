@@ -781,7 +781,7 @@ instance Pretty ImpBlock where
                        [] -> ""
                        _  -> hardline <> "return" <+> p results
 
-printLitBlock :: Bool -> SourceBlock -> Result -> String
+printLitBlock :: Pretty block => Bool -> block -> Result -> String
 printLitBlock isatty block (Result outs result) =
   pprint block ++ concat (map (printOutput isatty) outs) ++ printResult isatty result
 
