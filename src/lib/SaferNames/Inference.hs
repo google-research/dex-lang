@@ -32,7 +32,6 @@ import SaferNames.Builder
 import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
-import SaferNames.CheapReduction
 
 import LabeledItems
 import Err
@@ -335,9 +334,9 @@ hoistInfState
   -> m (Abs InfOutFrag (Abs (PairB b (Nest Decl)) e) n1)
 hoistInfState scope (PairB b (InfOutFrag emissions defaults subst)) result = do
   withSubscopeDistinct emissions do
-    HoistedSolverState infVars (defaults', subst') (DistinctAbs decls result') <-
+    HoistedSolverState infVars defaults' subst' (DistinctAbs decls result') <-
       hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions
-                       (defaults, subst) result
+                       defaults subst result
     case exchangeBs $ PairB b (PairB infVars (LiftB (PairE defaults' subst'))) of
       -- TODO: better error message
       Nothing -> throw TypeErr "Leaked local variable"
@@ -353,39 +352,40 @@ data HoistedSolverState e n where
   HoistedSolverState
     :: (Distinct l1, Distinct n)
     => InferenceNameBinders n l1
-    ->   (Defaults l1, SolverSubst l1)
+    ->   Defaults l1
+    ->   SolverSubst l1
     ->   DistinctAbs (Nest Decl) e l1
     -> HoistedSolverState e n
 
 instance HoistableE e => HoistableE (HoistedSolverState e) where
-  freeVarsE (HoistedSolverState infVars (defaults, subst) ab) =
+  freeVarsE (HoistedSolverState infVars defaults subst ab) =
     freeVarsE (Abs infVars (PairE (PairE defaults subst) ab))
 
 hoistInfStateRec :: ( Fallible m, Distinct n, Distinct l
                     , HoistableE e, SubstE AtomSubstVal e)
                  => Scope n
-                 -> InfEmissions n l -> (Defaults l, SolverSubst l) -> e l
+                 -> InfEmissions n l -> Defaults l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
-hoistInfStateRec scope Empty (defaults, subst) e = do
+hoistInfStateRec scope Empty defaults subst e = do
   let e'        = applySolverSubstE scope subst e
   let defaults' = applySolverSubstE scope subst defaults
-  return $ HoistedSolverState Empty (defaults', subst) (DistinctAbs Empty e')
-hoistInfStateRec scope (Nest (b :> infEmission) rest) (defaults, subst) e = do
+  return $ HoistedSolverState Empty defaults' subst (DistinctAbs Empty e')
+hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
   withSubscopeDistinct rest do
-    solverState@(HoistedSolverState infVars (defaults', subst') result) <-
-       hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest (defaults, subst) e
+    solverState@(HoistedSolverState infVars defaults' subst' result) <-
+       hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest defaults subst e
     case infEmission of
       RightE binding@(InfVarBound _ _) ->
         withExtEvidence infVars $
           case deleteFromSubst subst' (inject $ binderName b) of
             Just subst'' ->
               -- do we need to zonk here? (if not, say why not)
-              case hoist b (HoistedSolverState infVars (defaults', subst'') result) of
+              case hoist b (HoistedSolverState infVars defaults' subst'' result) of
                 Just hoisted -> return hoisted
                 Nothing -> error "this shouldn't happen"
             Nothing -> do
               return $ HoistedSolverState (Nest (b:>binding) infVars)
-                                          (defaults', subst') result
+                                          defaults' subst' result
       RightE (SkolemBound _) ->
         case hoist b solverState of
           Just hoisted -> return hoisted
@@ -393,18 +393,24 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) (defaults, subst) e = do
       LeftE emission -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
-        let defaultsAndSubst = PairE defaults' subst'
-        case exchangeBs $ PairB (b:>emission) (PairB infVars (LiftB defaultsAndSubst)) of
-          -- TODO: better error message
-          Nothing -> throw TypeErr "Leaked local variable"
-          Just (PairB (PairB infVars' (LiftB (PairE defaults'' subst'')))
-                      (b':>emission')) -> do
-            withSubscopeDistinct b' $ do
-              let scope' = scope `extendOutMap` toScopeFrag infVars'
-              let emission'' = applySolverSubstE scope' subst'' emission'
-              DistinctAbs rest' e' <- return result
-              return $ HoistedSolverState infVars' (defaults'', subst'') $
-                         DistinctAbs (Nest (Let b' emission'') rest') e'
+        PairB infVars' (b':>emission') <- liftMaybeErr TypeErr "Leaked local variable" $
+                                            exchangeBs (PairB (b:>emission) infVars)
+        subst'' <- liftMaybeErr TypeErr "Leaked local variable" $ hoist b' subst'
+        let defaults'' = hoistDefaults b' defaults'
+        withSubscopeDistinct b' $ do
+            let scope' = scope `extendOutMap` toScopeFrag infVars'
+            let emission'' = applySolverSubstE scope' subst'' emission'
+            DistinctAbs rest' e' <- return result
+            return $ HoistedSolverState infVars' defaults'' subst'' $
+                        DistinctAbs (Nest (Let b' emission'') rest') e'
+
+hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
+hoistDefaults b (Defaults defaults) =
+  flip foldMap defaults \(t1, t2) ->
+    case hoist b t1 of
+      Nothing -> Defaults []
+      Just t1' -> Defaults [(t1', t2)]
+
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions emissions =
