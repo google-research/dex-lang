@@ -580,7 +580,10 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     val' <- checkSigma val (inferSuggestionStrength ty') ty'
     matchRequirement val'
   UPrimExpr prim -> do
-    prim' <- forM prim $ inferRho >=> cheapReduce
+    -- This line used to have a cheapReduce too, like this: prim' <- forM prim $
+    --     inferRho >=> cheapReduce But that meant we inlined (and duplicated)
+    --     lambda args to built-in HOFS. I don't see why it was necessary...
+    prim' <- forM prim $ inferRho
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e

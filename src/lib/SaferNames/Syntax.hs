@@ -50,7 +50,7 @@ module SaferNames.Syntax (
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     ToBinding (..), refreshBinders, withFreshBinder,
-    withFreshLamBinder, withFreshPiBinder,
+    withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
     withFreshNameBinder,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
@@ -589,6 +589,9 @@ withFreshPiBinder hint (PiBinding arr ty) cont = do
   Abs b name <- freshBinderNamePair hint
   withBindings (Abs (PiBinder b ty arr) name) \v -> do
     withAllowedEffects Pure $ cont v
+
+piBinderToLamBinder :: PiBinder n l -> EffectRow l -> LamBinder n l
+piBinderToLamBinder (PiBinder b ty arr) eff = LamBinder b ty arr eff
 
 -- This version works with the in-place api. TODO: remove the other version.
 refreshBinders2
