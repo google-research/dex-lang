@@ -11,7 +11,8 @@
 
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
-            Fallible (..), FallibleM (..), HardFailM (..), CtxReader (..),
+            Fallible (..), Catchable (..),
+            FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftMaybe,
@@ -73,6 +74,9 @@ class MonadFail m => Fallible m where
   throwErrs :: Errs -> m a
   addErrCtx :: ErrCtx -> m a -> m a
 
+class Fallible m => Catchable m where
+  catchErr :: m a -> (Errs -> m a) -> m a
+
 -- We have this in its own class because IO and `Except` can't implement it
 -- (but FallibleM can)
 class Fallible m => CtxReader m where
@@ -91,6 +95,12 @@ instance Fallible FallibleM where
   throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
     throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
+
+instance Catchable FallibleM where
+  FallibleM m `catchErr` handler = FallibleM $ ReaderT \ctx ->
+    case runReaderT m ctx of
+      Failure errs -> runReaderT (fromFallibleM $ handler errs) ctx
+      Success ans  -> return ans
 
 instance FallibleApplicative FallibleM where
   mergeErrs (FallibleM (ReaderT f1)) (FallibleM (ReaderT f2)) =
@@ -357,6 +367,10 @@ instance Pretty ErrType where
 instance Fallible m => Fallible (ReaderT r m) where
   throwErrs errs = lift $ throwErrs errs
   addErrCtx ctx (ReaderT f) = ReaderT \r -> addErrCtx ctx $ f r
+
+instance Catchable m => Catchable (ReaderT r m) where
+  ReaderT f `catchErr` handler = ReaderT \r ->
+    f r `catchErr` \e -> runReaderT (handler e) r
 
 instance FallibleApplicative m => FallibleApplicative (ReaderT r m) where
   mergeErrs (ReaderT f1) (ReaderT f2) =
