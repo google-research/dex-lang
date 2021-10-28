@@ -23,7 +23,7 @@ module SaferNames.Name (
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..), ScopeGetter (..),
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
-  SubstV, InplaceT, emitInplace, withInplaceOutEnv, extendInplace,
+  SubstV, InplaceT, emitInplace, withInplaceOutEnv, extendInplace, extendTrivialInplace,
   runInplaceT, embedInplaceT, doInplace, scopedInplaceGeneral,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecEnvFrag (..), RecEnv (..),
   MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
@@ -38,7 +38,8 @@ module SaferNames.Name (
   runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
-  Monad1, Monad2, Fallible1, Fallible2, CtxReader1, CtxReader2, MonadFail1, MonadFail2,
+  Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2,
+  CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
@@ -720,6 +721,9 @@ type Monad2 (m :: MonadKind2) = forall (n::S) (l::S) . Monad (m n l)
 type Fallible1 (m :: MonadKind1) = forall (n::S)        . Fallible (m n  )
 type Fallible2 (m :: MonadKind2) = forall (n::S) (l::S) . Fallible (m n l)
 
+type Catchable1 (m :: MonadKind1) = forall (n::S)        . Catchable (m n  )
+type Catchable2 (m :: MonadKind2) = forall (n::S) (l::S) . Catchable (m n l)
+
 type Searcher1 (m :: MonadKind1) = forall (n::S)        . Searcher (m n  )
 type Searcher2 (m :: MonadKind2) = forall (n::S) (l::S) . Searcher (m n l)
 
@@ -928,7 +932,7 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
 
 newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   EnvReaderT { runEnvReaderT' :: ReaderT (Env v i o) (m o) a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible, CtxReader)
+  deriving (Functor, Applicative, Monad, MonadFail, Catchable, Fallible, CtxReader)
 
 type ScopedEnvReader (v::V) = EnvReaderT v (ScopeReaderT Identity) :: MonadKind2
 
@@ -1181,6 +1185,17 @@ extendInplace withDecls = do
   doInplace withDecls \bindings withDecls' ->
     refreshAbs (toScope bindings) withDecls'
 
+-- Special case of extending without introducing new names
+extendTrivialInplace
+  :: (ExtOutMap bindings decls, Monad m)
+  => decls n n
+  -> InplaceT bindings decls m n ()
+extendTrivialInplace decls = do
+  Distinct <- getDistinct
+  void $ doInplace UnitE \_ UnitE ->
+    unsafeCoerceE $ DistinctAbs decls UnitE
+  return ()
+
 -- === InplaceT instances ===
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m)
@@ -1237,6 +1252,13 @@ instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls,
          => Searcher (InplaceT bindings decls m n) where
   UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
     f1 bindings <!> f2 bindings
+
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls,
+           Catchable m)
+         => Catchable (InplaceT bindings decls m n) where
+  catchErr (UnsafeMakeInplaceT f1) handler = UnsafeMakeInplaceT \bindings ->
+    f1 bindings `catchErr` \err -> case handler err of
+      UnsafeMakeInplaceT f2 -> f2 bindings
 
 -- === name hints ===
 

@@ -677,12 +677,16 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
 checkRWSAction :: Typer m => RWS -> Atom i -> m i o (Type o, Type o)
 checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
+  allowed <- getAllowedEffects
   dropSubst $
     refreshBinders regionBinder \regionBinder' ->
       refreshBinders refBinder \_ -> do
-        eff' <- substM eff
+        allowed'   <- injectM allowed
+        eff'       <- injectM eff
         regionName <- injectM $ binderName regionBinder'
-        extendAllowedEffect (RWSEffect rws regionName) $ declareEffs eff'
+        withAllowedEffects allowed' $
+          extendAllowedEffect (RWSEffect rws regionName) $
+            declareEffs eff'
   PiBinder _ (RefTy _ referentTy) _ <- return refBinder
   referentTy' <- liftMaybe $ hoist regionBinder referentTy
   resultTy' <- liftMaybe $ hoist (PairB regionBinder refBinder) resultTy
