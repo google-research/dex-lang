@@ -1,0 +1,75 @@
+-- Based on TFP's Kalman filter, written by Dave Moore and others:
+-- https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/distributions/linear_gaussian_ssm.py
+
+import linalg
+
+def LogProb : Type = Float
+def Vec (n:Type)          : Type = n=>Float
+def Mat (n:Type) (m:Type) : Type = n=>m=>Float
+def SqMat (n:Type)        : Type = n=>n=>Float
+def Gaussian (n:Type)     : Type =
+  { mean       : Vec n
+  & covariance : SqMat n }
+def GaussianTransition (i:Type) (o:Type) : Type =
+ { transitionMat : Mat o i
+ & transitionNoise : Gaussian o }
+
+def applyTransition (t:GaussianTransition i o) (g:Gaussian i) : Gaussian o =
+  todo
+
+-- TODO: avoid redundant computation (or rely on compiler CSE?)
+def kalmanGain (_:Gaussian i) (_:GaussianTransition i o) : Mat i o =
+ todo
+
+def condition (_:Gaussian i) (_:GaussianTransition i o) (_:Vec o) : Gaussian i =
+  todo
+
+def convolveGaussians (g1:Gaussian n) (g2:Gaussian n) : Gaussian n = todo
+
+def logDensity (g:Gaussian n) (x:Vec n) : LogProb = todo
+
+def Model (latentsIx:Type) (obsIx:Type) : Type =
+ { transition : GaussianTransition latentsIx latentsIx
+ & obsModel   : GaussianTransition latentsIx obsIx
+ -- distribution prior to first step (before conditioning on any observation)
+ & latentsPrior     : Gaussian latentsIx }
+
+def LoopState (latentsIx:Type) (obsIx:Type) : Type =
+  {
+  -- The log probability of an observation conditioned on all previous observations
+  marginalEvidence : Float
+  -- posterior on latents conditioned on everything up to and including this time step
+  & filteredLatents  : Gaussian latentsIx
+  -- posterior on next step's latents conditioned on everything up to and
+  -- including this time step's observations and applying the subsequent
+  -- dynamics once
+  & predictedLatents : Gaussian latentsIx
+  -- excludes the observation at this time step (otherwise it would collapse to
+  -- a delta)
+  & filteredObs : Gaussian obsIx
+  }
+
+def kalmanFilterStep
+      (model:Model latentsIx obsIx)
+      (obs:Vec obsIx)
+      (predictedLatents:Gaussian latentsIx)
+      : LoopState latentsIx obsIx =
+  -- TODO: obsProb is redundant because it's computed internally within condition
+  obsProb : Gaussian obsIx =
+    applyTransition (getAt #obsModel model) predictedLatents
+  filteredLatents : Gaussian latentsIx =
+    condition predictedLatents (getAt #obsModel model) obs
+  { marginalEvidence = logDensity obsProb obs
+  , filteredLatents  = filteredLatents
+  , predictedLatents = applyTransition (getAt #transition model) filteredLatents
+  , filteredObs      = obsProb }
+
+def kalmanFilter
+      (obs : timeIx => Vec obsIx)
+      (model : Model latentsIx obsIx)
+      : timeIx => LoopState latentsIx obsIx =
+  withState (getAt #latentsPrior model) \latentsRef.
+    for i.
+      stepResult = kalmanFilterStep model obs.i (get latentsRef)
+      latentsRef := getAt #predictedLatents stepResult
+      stepResult
