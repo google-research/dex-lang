@@ -244,8 +244,9 @@ interfaceDef = do
   (tyConName, tyConParams) <- tyConDef
   (methodNames, methodTys) <- unzip <$> onePerLine do
     v <- anyName
+    explicit <- many anyName
     ty <- annot uType
-    return (fromString v, ty)
+    return (fromString v, UMethodType (Left $ explicit) ty)
   let methodNames' :: Nest (UBinder MethodNameC) VoidS VoidS
       methodNames' = toNest methodNames
   let tyConParams' = tyConParams

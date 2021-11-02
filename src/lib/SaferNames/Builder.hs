@@ -36,6 +36,7 @@ module SaferNames.Builder (
 
 import Control.Monad
 import Control.Monad.Trans
+import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
@@ -319,19 +320,18 @@ buildDepEffLam hint arr ty effBuilder body =
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
 buildPureNaryLam :: Builder m
-                 => Arrow
-                 -> EmptyAbs (Nest Binder) n
+                 => EmptyAbs (Nest PiBinder) n
                  -> (forall l. Ext n l => [AtomName l] -> m l (Atom l))
                  -> m n (Atom n)
-buildPureNaryLam _ (EmptyAbs Empty) cont = cont []
-buildPureNaryLam arr (EmptyAbs (Nest (b:>ty) rest)) cont = do
+buildPureNaryLam (EmptyAbs Empty) cont = cont []
+buildPureNaryLam (EmptyAbs (Nest (PiBinder b ty arr) rest)) cont = do
   buildPureLam (getNameHint b) arr ty \x -> do
     restAbs <- injectM $ Abs b $ EmptyAbs rest
     rest' <- applyAbs restAbs x
-    buildPureNaryLam arr rest' \xs -> do
+    buildPureNaryLam rest' \xs -> do
       x' <- injectM x
       cont (x':xs)
-buildPureNaryLam _ _ _ = error "impossible"
+buildPureNaryLam _ _ = error "impossible"
 
 buildPi :: (Fallible1 m, Builder m)
         => NameHint -> Arrow -> Type n
@@ -475,27 +475,39 @@ emitSuperclass dataDef idx = do
   emitBinding hint $ SuperclassBinding dataDef idx getter
   where hint = getNameHint $ "Proj" <> show idx <> pprint dataDef
 
+zipNest :: (forall ii ii'. a -> b ii ii' -> b' ii ii')
+        -> [a]
+        -> Nest b  i i'
+        -> Nest b' i i'
+zipNest _ _ Empty = Empty
+zipNest f (x:t) (Nest b rest) = Nest (f x b) $ zipNest f t rest
+zipNest _ _ _ = error "List too short!"
+
+zipPiBinders :: [Arrow] -> Nest Binder i i' -> Nest PiBinder i i'
+zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
+
 makeSuperclassGetter :: TopBuilder m => Name ClassNameC n -> Int -> m n (Atom n)
 makeSuperclassGetter classDefName methodIdx = do
   ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
   liftLocalBuilder do
-    buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+    buildPureNaryLam (EmptyAbs $ zipPiBinders (repeat ImplicitArrow) paramBs) \params -> do
       defName' <- injectM defName
       def'     <- injectM def
       buildPureLam "subclassDict" PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
         return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
 emitMethodType :: TopBuilder m
-               => NameHint -> ClassName n -> Int -> m n (Name MethodNameC n)
-emitMethodType hint classDef idx = do
-  getter <- makeMethodGetter classDef idx
+               => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
+emitMethodType hint classDef explicit idx = do
+  getter <- makeMethodGetter classDef explicit idx
   emitBinding hint $ MethodBinding classDef idx getter
 
-makeMethodGetter :: TopBuilder m => Name ClassNameC n -> Int -> m n (Atom n)
-makeMethodGetter classDefName methodIdx = do
+makeMethodGetter :: TopBuilder m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom n)
+makeMethodGetter classDefName explicit methodIdx = do
   ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName
+  let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
   liftLocalBuilder do
-    buildPureNaryLam ImplicitArrow (EmptyAbs paramBs) \params -> do
+    buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
       defName' <- injectM defName
       def'     <- injectM def
       buildPureLam "dict" ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
