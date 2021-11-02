@@ -33,6 +33,7 @@ import SaferNames.Builder
 import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
+import SaferNames.CheapReduction (cheapReduce)
 
 import LabeledItems
 import Err
@@ -587,10 +588,11 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     val' <- checkSigma val (inferSuggestionStrength ty') ty'
     matchRequirement val'
   UPrimExpr prim -> do
-    -- This line used to have a cheapReduce too, like this: prim' <- forM prim $
-    --     inferRho >=> cheapReduce But that meant we inlined (and duplicated)
-    --     lambda args to built-in HOFS. I don't see why it was necessary...
-    prim' <- forM prim $ inferRho
+    prim' <- forM prim \x -> do
+      x' <- inferRho x
+      getType x' >>= \case
+        TyKind -> cheapReduce x'
+        _ -> return x'
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
