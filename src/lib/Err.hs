@@ -356,7 +356,9 @@ instance Pretty ErrType where
     RepeatedVarErr    -> "Error: variable already defined: "
     RepeatedPatVarErr -> "Error: variable already defined within pattern: "
     InvalidPatternErr -> "Error: not a valid pattern: "
-    NotImplementedErr -> "Not implemented:"
+    NotImplementedErr ->
+      "Not implemented:" <> line <>
+      "Please report this at github.com/google-research/dex-lang/issues\n" <> line
     CompilerErr       ->
       "Compiler bug!" <> line <>
       "Please report this at github.com/google-research/dex-lang/issues\n" <> line

@@ -220,15 +220,37 @@ instance SourceRenamableB UDecl where
         returnG $ UDataDefDecl dataDef' tyConName' dataConNames'
     UInterface paramBs superclasses methodTys className methodNames -> do
       Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
-        sourceRenameE $ Abs paramBs $ PairE (ListE superclasses) (ListE methodTys)
+        withSourceRenameB paramBs \paramBs' -> do
+          superclasses' <- mapM sourceRenameE superclasses
+          methodTys' <- zipWithM (renameMethodType paramBs) methodTys methodSourceNames
+          return $ Abs paramBs' (PairE (ListE superclasses') (ListE methodTys'))
       runRenamerNameGenT $ sourceRenameUBinder className `bindG` \className' ->
         sourceRenameUBinderNest methodNames `bindG` \methodNames' ->
         returnG $ UInterface paramBs' superclasses' methodTys' className' methodNames'
+      where methodSourceNames = nestToList (\(UBindSource n) -> n) methodNames
     UInstance className conditions params methodDefs instanceName -> do
       className' <- sourceRenameE className
       Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       runRenamerNameGenT $ UInstance className' conditions' params' methodDefs' `fmapG` sourceRenameB instanceName
+
+renameMethodType :: (Fallible1 m, Renamer m)
+                 => Nest (UAnnBinder AtomNameC) i' i
+                 -> UMethodType i
+                 -> SourceName
+                 -> m o (UMethodType o)
+renameMethodType paramBinders (UMethodType ~(Left explicitNames) ty) methodName = do
+  explicitFlags <- case explicitNames of
+    [] -> return $ replicate (nestLength paramBinders) False
+    _ | paramNames == explicitNames -> return $ replicate (nestLength paramBinders) True
+    _ -> case unexpected of
+      []    -> throw NotImplementedErr "Permuted or incomplete explicit type binders are not supported yet."
+      (h:_) -> throw TypeErr $ "Explicit type binder `" ++ pprint h ++ "` in method " ++
+                                pprint methodName ++ " is not a type parameter of its interface"
+      where unexpected = filter (not . (`elem` paramNames)) explicitNames
+  UMethodType (Right explicitFlags) <$> sourceRenameE ty
+  where
+    paramNames = nestToList (\(UAnnBinder (UBindSource n) _) -> n) paramBinders
 
 instance SourceRenamableB UnitB where
   sourceRenameB UnitB = returnG UnitB

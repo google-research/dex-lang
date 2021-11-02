@@ -20,6 +20,7 @@ import Control.Monad.State (get, modify, runState)
 import Control.Monad.Writer.Strict (execWriterT, tell)
 import Control.Monad.Reader
 import Data.Foldable (toList)
+import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
@@ -794,8 +795,9 @@ inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) 
                 paramBs superclasses methodTys
   className' <- emitClassDef classDef
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
-  methodNames' <- forM (enumerate methodPrettyNames) \(i, prettyName) ->
-                    emitMethodType (getNameHint prettyName) className' i
+  methodNames' <- forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
+    let UMethodType (Right explicits) _ = ty
+    emitMethodType (getNameHint prettyName) className' explicits i
   extendEnv (className @> className' <.> methodNames @@> methodNames') cont
 inferUDeclTop _ _ = error "not a top decl"
 
@@ -815,7 +817,7 @@ inferDataCon (sourceName, UDataDefTrail argBs) = do
 inferInterfaceDataDef :: TopInferer m
                       => SourceName -> [SourceName]
                       -> Nest (UAnnBinder AtomNameC) i i'
-                      -> [UType i'] -> [UType i']
+                      -> [UType i'] -> [UMethodType i']
                       -> m i o (ClassDef o)
 inferInterfaceDataDef className methodNames paramBs superclasses methods = do
   dictDef <- liftLocalInferer do
@@ -823,8 +825,8 @@ inferInterfaceDataDef className methodNames paramBs superclasses methods = do
     buildNewtype className paramBs' \params -> do
       extendEnv (paramBs @@> params) do
         superclasses' <- mapM checkUType superclasses
-        methods'      <- mapM checkUType methods
-        return $ PairTy (ProdTy superclasses') (ProdTy methods')
+        methodsTys'   <- mapM checkUType $ methods <&> \(UMethodType _ ty) -> ty
+        return $ PairTy (ProdTy superclasses') (ProdTy methodsTys')
   defName <- emitDataDef dictDef
   return $ ClassDef className methodNames (defName, dictDef)
 

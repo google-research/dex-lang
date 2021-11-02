@@ -46,7 +46,7 @@ module SaferNames.Syntax (
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..),
-    SourceUModule (..), UType, ExtLabeledItemsE (..),
+    SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
     ToBinding (..), refreshBinders, withFreshBinder,
@@ -731,7 +731,7 @@ data UDecl (n::S) (l::S) where
   UInterface
     :: Nest (UAnnBinder AtomNameC) n p     -- parameter binders
     ->  [UType p]                          -- superclasses
-    ->  [UType p]                          -- method types
+    ->  [UMethodType p]                    -- method types
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UDecl n l
@@ -745,6 +745,10 @@ data UDecl (n::S) (l::S) where
     -> UDecl n l
 
 type UType = UExpr
+
+data UMethodType (n::S) where
+  UMethodType :: Either [SourceName] [Bool] -> UType s -> UMethodType s
+  deriving (Show, Generic)
 
 data UForExpr (n::S) where
   UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n

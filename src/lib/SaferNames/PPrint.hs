@@ -433,10 +433,12 @@ instance Pretty (UDecl n l) where
        <+> "where" <> nest 2
        (hardline <> prettyLines (zip (toList $ fromNest bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
-     let methods = [UAnnBinder b (unsafeCoerceE ty)
-                   | (b, ty) <- zip (toList $ fromNest methodNames) methodTys]
-     in "interface" <+> p params <+> p superclasses <+> p interfaceName
-         <> hardline <> prettyLines methods
+     "interface" <+> p params <+> p superclasses <+> p interfaceName
+         <> hardline <> foldMap (<>hardline) methods
+     where
+       methods = [ hsep (case e of Left e' -> p <$> e'; Right e' -> p <$> e') <+>
+                   p (UAnnBinder b (unsafeCoerceE ty))
+                 | (b, UMethodType e ty) <- zip (toList $ fromNest methodNames) methodTys]
   pretty (UInstance className bs params methods (RightB UnitB)) =
     "instance" <+> prettyBinderNest bs <+> p className <+> spaced params <+>
        hardline <> prettyLines methods
