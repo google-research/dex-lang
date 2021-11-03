@@ -473,8 +473,9 @@ instance HasSafeVersionE D.Atom where
         (arr', eff') <- toSafeArrow arr
         body' <- toSafeE body
         return $ S.Pi $ S.PiType (S.PiBinder b' argTy arr') eff' body'
-    D.DataCon def@(_, D.DataDef printName _ _) params con args ->
-      S.DataCon printName <$>
+    D.DataCon def@(_, D.DataDef _ _ cons) params con args -> do
+      let (D.DataConDef name _) = cons !! con
+      S.DataCon name <$>
         toSafeNamedDataDef def <*>
         mapM toSafeE params <*> pure con <*> mapM toSafeE args
     D.TypeCon def params ->
