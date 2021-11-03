@@ -1256,9 +1256,9 @@ data SolverOutFrag (n::S) (l::S) =
 type SolverEmissions = Nest (BinderP AtomNameC SolverBinding)
 
 instance GenericB SolverOutFrag where
-  type RepB SolverOutFrag = PairB SolverEmissions (LiftB SolverSubst)
-  fromB = error "not implemented"
-  toB   = error "not implemented"
+  type RepB SolverOutFrag = PairB SolverEmissions (LiftB (PairE Defaults SolverSubst))
+  fromB (SolverOutFrag em ds subst) = PairB em (LiftB (PairE ds subst))
+  toB   (PairB em (LiftB (PairE ds subst))) = SolverOutFrag em ds subst
 
 instance ProvesExt   SolverOutFrag
 instance SubstB Name SolverOutFrag
@@ -1281,6 +1281,21 @@ newtype SolverM (n::S) (a:: *) =
   SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag SearcherM n a }
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
             ScopeReader, Fallible, CtxReader)
+
+runSolverM :: ( SubstE AtomSubstVal e, InjectableE e, HoistableE e
+              , Distinct n)
+           => Bindings n
+           -> (forall l. Ext n l => SolverM l (e l))
+           -> Except (e n)
+runSolverM bindings cont = do
+  maybeAbs <- runSearcherM $ runInplaceT (initInfOutMap bindings) $
+                runSolverM' $ cont >>= zonk
+  case maybeAbs of
+    Nothing -> throw TypeErr "No solution"
+    Just (DistinctAbs bs result) ->
+      case hoist bs result of
+        Nothing -> throw EscapedNameErr "Unsolved vars in runSolverM"
+        Just result' -> return result'
 
 instance BindingsReader SolverM where
   addBindings e = SolverM do
@@ -1567,17 +1582,24 @@ trySynthDict ty = do
   WithBindings bindings ty' <- addBindings ty
   if hasInferenceVars bindings ty'
     then return Nothing
-    else case runSyntherM bindings $ synthDict $ inject ty' of
-      [d] -> do
-        dBlock <- injectM d
-        cheapReduceBlockToAtom dBlock >>= \case
-          Nothing -> error "this shouldn't happen"
-          Just d' -> return $ Just d'
-      _ -> return Nothing
+    else do
+      let dicts = runSyntherM bindings $
+                    fromJust <$> buildBlockReduced do
+                      ty'' <- injectM ty'
+                      synthDict ty''
+      case dicts of
+        [d] -> Just <$> injectM d
+        _ -> return Nothing
 
 class (Alternative1 m, Searcher1 m, Builder m)
       => Synther m where
   tryEachCandidate :: [a] -> m n a
+  -- TODO: just expose `unsafeGetBindings` etc to avoid this silly rank-2 dance
+  liftSolverSynth
+    :: (SubstE AtomSubstVal e', HoistableE e', InjectableE e, InjectableE e')
+    => e n
+    -> (forall l. e l -> SolverM l (e' l))
+    -> m n (e' n)
 
 newtype SyntherM (n::S) (a:: *) = SyntherM
   { runSyntherM' :: BuilderT [] n a }
@@ -1587,6 +1609,14 @@ newtype SyntherM (n::S) (a:: *) = SyntherM
 
 instance Synther SyntherM where
   tryEachCandidate xs = SyntherM $ BuilderT $ liftInplace xs
+  liftSolverSynth e cont = do
+    WithBindings bindings e' <- addBindings e
+    let result = runSolverM bindings do
+                   e'' <- injectM e'
+                   cont e''
+    case result of
+      Success result' -> injectM result'
+      Failure _ -> empty
 
 instance Builder SyntherM where
   emitDecl hint ann expr = SyntherM $ emitDecl hint ann expr
@@ -1600,29 +1630,41 @@ runSyntherM :: Distinct n
             -> [e n]
 runSyntherM bindings cont = runBuilderT bindings $ runSyntherM' cont
 
-synthDict :: Synther m => Type n -> m n (Block n)
-synthDict ty = buildBlock do
-  candidate <- getGiven <|> getInstance
+synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
+synthDict ty = do
+  polyDict <- getGiven <|> getInstance
   ty' <- injectM ty
-  instantiateAndCheck ty' candidate
+  polyTy <- getType polyDict
+  (params, reqDictTys) <- instantiateDictParams ty' polyTy
+  reqDicts <- mapM synthDict reqDictTys
+  naryApp polyDict $ params ++ reqDicts
 
+instantiateDictParams :: Synther m => Type n -> Type n -> m n ([Atom n], [Type n])
+instantiateDictParams monoTy polyTy = do
+  PairE (ListE params) (ListE tys) <-
+    liftSolverSynth (PairE monoTy polyTy) \(PairE monoTy' polyTy') -> do
+      (params, tys) <- instantiateDictParamsRec monoTy' polyTy'
+      return $ PairE (ListE params) (ListE tys)
+  return (params, tys)
 
-instantiateAndCheck :: (Emits n, Synther m) => Type n -> Atom n -> m n (Atom n)
-instantiateAndCheck ty x = do
-  Distinct <- getDistinct
-  WithBindings bindings (PairE ty' x') <- addBindings $ PairE ty x
-  result <- return $ runInfererM bindings do
-    buildBlock do
-      Distinct <- getDistinct
-      -- XXX: this just leaves it up to inference to synthesize any dictionaries
-      -- required as arguments to this one.
-      xInst <- instantiateSigma $ inject x'
-      xTy <- getType xInst
-      constrainEq (inject ty') xTy
-      return xInst
-  case result of
-    Success result' -> emitBlock $ inject result'
-    Failure _ -> empty
+instantiateDictParamsRec :: Unifier m => Type n -> Type n -> m n ([Atom n], [Type n])
+instantiateDictParamsRec monoTy polyTy = case polyTy of
+  Pi (PiType (PiBinder b argTy ImplicitArrow) _ resultTy) -> do
+    param <- freshInferenceName argTy
+    resultTy' <- applyAbs (Abs b resultTy) param
+    (params, dictTys) <- instantiateDictParamsRec monoTy resultTy'
+    return (Var param : params, dictTys)
+  Pi (PiType (PiBinder b dictTy ClassArrow) _ resultTy) -> do
+    case fromConstAbs (Abs b resultTy) of
+      Just resultTy' -> do
+        (params, dictTys) <- instantiateDictParamsRec monoTy resultTy'
+        case params of
+          [] -> return ([], dictTy:dictTys)
+          _ -> error "Not implemented: interleaved params and class constraints"
+      Nothing -> error "shouldn't have dependent class arrow"
+  _ -> do
+    unify monoTy polyTy
+    return ([], [])
 
 getGiven :: Synther m => m n (Atom n)
 getGiven = (lambdaDicts <$> getSynthCandidatesM) >>= tryEachCandidate
