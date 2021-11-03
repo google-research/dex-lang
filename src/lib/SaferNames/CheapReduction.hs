@@ -18,6 +18,7 @@ import Err
 
 -- === api ===
 
+-- TODO: shouldn't need scopable here (not taking a monadic computation as an argument)
 cheapReduceBlockToAtom :: (BindingsReader m, Scopable m)
                        => Block n -> m n (Maybe (Atom n))
 cheapReduceBlockToAtom block = fromAtomicBlock <$> cheapReduce block

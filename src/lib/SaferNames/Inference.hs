@@ -24,6 +24,7 @@ import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
+import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -33,7 +34,7 @@ import SaferNames.Builder
 import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
-import SaferNames.CheapReduction (cheapReduce)
+import SaferNames.CheapReduction
 
 import LabeledItems
 import Err
@@ -384,6 +385,17 @@ instance HoistableE e => HoistableE (HoistedSolverState e) where
   freeVarsE (HoistedSolverState infVars defaults subst ab) =
     freeVarsE (Abs infVars (PairE (PairE defaults subst) ab))
 
+dceIfSolved :: (HoistableE e, SubstE AtomSubstVal e)
+            => NameBinder AtomNameC n l -> HoistedSolverState e l -> Maybe (HoistedSolverState e n)
+dceIfSolved b (HoistedSolverState infVars defaults subst result) =
+  case deleteFromSubst subst (inject $ binderName b) of
+    Just subst' ->
+      -- do we need to zonk here? (if not, say why not)
+      case hoist b (HoistedSolverState infVars defaults subst' result) of
+        Just hoisted -> Just hoisted
+        Nothing -> error "this shouldn't happen"
+    Nothing -> Nothing
+
 hoistInfStateRec :: ( Fallible m, Distinct n, Distinct l
                     , HoistableE e, SubstE AtomSubstVal e)
                  => Scope n
@@ -399,21 +411,19 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
        hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest defaults subst e
     case infEmission of
       RightE binding@(InfVarBound _ _) ->
-        withExtEvidence infVars $
-          case deleteFromSubst subst' (inject $ binderName b) of
-            Just subst'' ->
-              -- do we need to zonk here? (if not, say why not)
-              case hoist b (HoistedSolverState infVars defaults' subst'' result) of
-                Just hoisted -> return hoisted
-                Nothing -> error "this shouldn't happen"
-            Nothing -> do
-              return $ HoistedSolverState (Nest (b:>binding) infVars)
-                                          defaults' subst' result
+        case dceIfSolved b solverState of
+          Just solverState' -> return solverState'
+          Nothing -> return $ HoistedSolverState (Nest (b:>binding) infVars)
+                                                 defaults' subst' result
       RightE (DictVarBound ty ctx) ->
-        case hoist b solverState of
-          Just hoisted -> return hoisted
-          Nothing -> addSrcContext ctx $
-           throw TypeErr $ "Couldn't synthesize dictionary: " ++ pprint ty
+        case dceIfSolved b solverState of
+          Just solverState' -> return solverState'
+          Nothing ->
+            case hoist b solverState of
+              Just hoisted -> return hoisted
+              Nothing -> addSrcContext ctx $ do
+                throw TypeErr $ "Couldn't synthesize dictionary: " ++ pprint ty
+                     ++ "\n" ++ pprint subst
       RightE (SkolemBound _) ->
         case hoist b solverState of
           Just hoisted -> return hoisted
@@ -510,7 +520,8 @@ instantiateSigma f = do
       instantiateSigma $ Var ans
     Pi (PiType (PiBinder _ argTy ClassArrow) _ _) -> do
       dict <- trySynthDict argTy >>= \case
-                Nothing -> Var <$> freshDictName argTy
+                Nothing -> do
+                  Var <$> freshDictName argTy
                 Just d -> return d
       ans <- emit $ App f dict
       instantiateSigma $ Var ans
@@ -1226,6 +1237,9 @@ openEffectRow effRow = return effRow
 
 newtype SolverSubst n = SolverSubst (M.Map (AtomName n) (Type n))
 
+instance Pretty (SolverSubst n) where
+  pretty (SolverSubst m) = pretty $ M.toList m
+
 class (CtxReader1 m, BindingsReader m) => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, InjectableE e) => e n -> m n (e n)
   extendSolverSubst :: AtomName n -> Type n -> m n ()
@@ -1537,7 +1551,7 @@ renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
 
 -- === dictionary synthesis ===
 
-attemptSynthesis :: (Emits o, Inferer m) => m i o ()
+attemptSynthesis :: Inferer m => m i o ()
 attemptSynthesis = do
   ListE svs <- getSynthVars
   forM_ svs \sv -> do
@@ -1547,14 +1561,19 @@ attemptSynthesis = do
       Just d -> extendSolverSubst sv d
 
 -- main entrypoint to dictionary synthesizer
-trySynthDict :: (Emits n, Builder m) => Type n -> m n (Maybe (Atom n))
+trySynthDict :: (Scopable m, BindingsReader m)
+             => Type n -> m n (Maybe (Atom n))
 trySynthDict ty = do
   WithBindings bindings ty' <- addBindings ty
-  case runSyntherM bindings $ synthDict $ inject ty' of
-    [d] -> do
-      d' <- injectM d >>= emitBlock
-      return $ Just d'
-    _ -> return Nothing
+  if hasInferenceVars bindings ty'
+    then return Nothing
+    else case runSyntherM bindings $ synthDict $ inject ty' of
+      [d] -> do
+        dBlock <- injectM d
+        cheapReduceBlockToAtom dBlock >>= \case
+          Nothing -> error "this shouldn't happen"
+          Just d' -> return $ Just d'
+      _ -> return Nothing
 
 class (Alternative1 m, Searcher1 m, Builder m)
       => Synther m where
@@ -1586,6 +1605,7 @@ synthDict ty = buildBlock do
   candidate <- getGiven <|> getInstance
   ty' <- injectM ty
   instantiateAndCheck ty' candidate
+
 
 instantiateAndCheck :: (Emits n, Synther m) => Type n -> Atom n -> m n (Atom n)
 instantiateAndCheck ty x = do

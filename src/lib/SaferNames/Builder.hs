@@ -186,7 +186,10 @@ instance MonadFail m => Builder (BuilderT m) where
       (\e -> runBuilderT' $ withFabricatedEmitsEvidence $ cont e)
     ScopedResult _ (PairB b emissions) result <- return scopedResult
     injectM $ Abs b $ Abs emissions result
-  emitDecl = undefined
+  emitDecl hint ann expr = do
+    ty <- getType expr
+    BuilderT $ emitInplace hint (DeclBinding ann ty expr) \b rhs ->
+      Nest (Let b rhs) Empty
 
 instance MonadFail m => BindingsReader (BuilderT m) where
   addBindings e = BuilderT $
