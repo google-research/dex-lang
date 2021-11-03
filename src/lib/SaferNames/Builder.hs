@@ -15,7 +15,7 @@
 
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
-  buildPureLam, BuilderT, Builder (..), Builder2,
+  buildPureLam, BuilderT (..), Builder (..), Builder2,
   buildScoped, buildScopedReduceDecls,
   runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
@@ -34,6 +34,7 @@ module SaferNames.Builder (
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
   ) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans
 import Data.Functor ((<&>))
@@ -164,7 +165,7 @@ instance ExtOutMap Bindings BuilderEmissions where
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Bindings BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader)
+           , CtxReader, ScopeReader, Alternative, Searcher)
 
 runBuilderT
   :: (MonadFail m, Distinct n)

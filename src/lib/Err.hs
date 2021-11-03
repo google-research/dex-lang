@@ -281,6 +281,10 @@ instance Searcher SearcherM where
 instance CtxReader SearcherM where
   getErrCtx = SearcherM $ lift getErrCtx
 
+instance Searcher [] where
+  [] <!> m = m
+  m  <!> _ = m
+
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
 

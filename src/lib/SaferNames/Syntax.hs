@@ -60,7 +60,7 @@ module SaferNames.Syntax (
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates, refreshBinders2,
-    getAllowedEffects, withAllowedEffects,
+    getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -248,6 +248,7 @@ data AtomBinding (n::S) =
 
 data SolverBinding (n::S) =
    InfVarBound (Type n) SrcPosCtx
+ | DictVarBound (Type n) SrcPosCtx
  | SkolemBound (Type n)
    deriving (Show, Generic)
 
@@ -307,6 +308,8 @@ bindingsFragToSynthCandidates' nest = case nest of
     case binding of
        AtomNameBinding (LetBound (DeclBinding InstanceLet _ _)) -> do
          tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+       AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
+         tell $ inject (SynthCandidates [Var $ binderName b] [] [])
        SuperclassBinding _ _ getter ->
          tell $ inject (SynthCandidates [] [getter] [])
        _ -> return ()
@@ -636,7 +639,12 @@ instance (forall c. NameColor c => ToBinding (binding c) c)
     withExtEvidence b $
       BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
 
--- === Tracking effects ===
+-- === Querying static env ===
+
+getSynthCandidatesM :: BindingsReader m => m n (SynthCandidates n)
+getSynthCandidatesM = do
+  WithBindings (Bindings _ scs _ _) UnitE <- addBindings UnitE
+  injectM scs
 
 getAllowedEffects :: BindingsReader m => m n (EffectRow n)
 getAllowedEffects = do
@@ -923,6 +931,7 @@ bindingType (AtomNameBinding b) = case b of
   PiBound     (PiBinding   _ ty)   -> ty
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
+  SolverBound (DictVarBound ty _)  -> ty
   SolverBound (SkolemBound ty)     -> ty
 
 infixr 1 -->
@@ -1607,14 +1616,19 @@ instance SubstE AtomSubstVal AtomBinding
 instance AlphaEqE AtomBinding
 
 instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE2 (PairE Type (LiftE SrcPosCtx)) Type
+  type RepE SolverBinding = EitherE3
+                              (PairE Type (LiftE SrcPosCtx))
+                              (PairE Type (LiftE SrcPosCtx))
+                              Type
   fromE = \case
-    InfVarBound ty ctx -> Case0 (PairE ty (LiftE ctx))
-    SkolemBound ty     -> Case1 ty
+    InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
+    DictVarBound ty ctx -> Case1 (PairE ty (LiftE ctx))
+    SkolemBound  ty     -> Case2 ty
 
   toE = \case
-    Case0 (PairE ty (LiftE ct)) -> InfVarBound ty ct
-    Case1 ty                    -> SkolemBound ty
+    Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
+    Case1 (PairE ty (LiftE ct)) -> DictVarBound ty ct
+    Case2 ty                    -> SkolemBound  ty
     _ -> error "impossible"
 
 instance InjectableE SolverBinding

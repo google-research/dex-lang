@@ -68,8 +68,8 @@ module SaferNames.Name (
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
   DeferredInjection (..), ScopedResult (..), finishInjection, finishInjectionM,
-  freeVarsList, isFreeIn, todoInjectableProof, liftBetweenInplaceTs, checkEmpty,
-  updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence
+  freeVarsList, isFreeIn, todoInjectableProof, liftBetweenInplaceTs, liftInplace,
+  checkEmpty, updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence
   ) where
 
 import Prelude hiding (id, (.))
@@ -1594,6 +1594,12 @@ instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
     | length xs == length ys = mapM_ (uncurry alphaEqE) (zip xs ys)
     | otherwise              = zipErr
+
+instance Monoid (ListE e n) where
+  mempty = ListE []
+
+instance Semigroup (ListE e n) where
+  ListE xs <> ListE ys = ListE $ xs <> ys
 
 instance InjectableE (LiftE a) where
   injectionProofE _ (LiftE x) = LiftE x

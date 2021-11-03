@@ -370,7 +370,7 @@ lookupSourceName (TopStateEx topState) v =
 evalUModule :: MonadPasses m => S.SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
   (S.Distinct, topState) <- getTopState
-  let D.TopState bindingsD synthCandidatesD _ _ = topStateD topState
+  let D.TopState bindingsD _ _ _ = topStateD topState
   let bindingsS@(S.Bindings _ _ sourceMapS _) = topStateS topState
   logPass Parse sourceModule
   renamed <- S.renameSourceNames (S.toScope bindingsS) sourceMapS sourceModule
@@ -379,10 +379,7 @@ evalUModule sourceModule = do
   checkPassS TypePass typed
   let typedUnsafe = fromSafe topState typed
   checkPass TypePass typedUnsafe
-  synthed <- liftExcept $ synthModule bindingsD synthCandidatesD typedUnsafe
-  -- TODO: check that the type of module exports doesn't change from here on
-  checkPass SynthPass synthed
-  let defunctionalized = simplifyModule bindingsD synthed
+  let defunctionalized = simplifyModule bindingsD typedUnsafe
   checkPass SimpPass defunctionalized
   let stdOptimized = optimizeModule defunctionalized
   -- Apply backend specific optimizations
