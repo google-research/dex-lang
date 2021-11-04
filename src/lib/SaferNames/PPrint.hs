@@ -109,7 +109,8 @@ instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
 
 instance Pretty (DeclBinding n) where
   pretty (DeclBinding ann ty expr) =
-    "Decl" <> p ann <> indented ("type:" <+> p ty <> hardline <> "value" <+> p expr)
+    "Decl" <> p ann <> indented (               "type: " <+> p ty
+                                 <> hardline <> "value:" <+> p expr)
 
 instance Pretty (Decl n l) where
   pretty decl = case decl of

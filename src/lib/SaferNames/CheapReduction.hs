@@ -95,7 +95,7 @@ instance CheaplyReducible Expr where
       x' <- cheapReduceE x
       case f' of
         Lam (LamExpr (LamBinder b _ arr Pure) body)
-          | arr == PlainArrow || arr == ImplicitArrow -> do
+          | arr == PlainArrow || arr == ImplicitArrow || arr == ClassArrow -> do
               body' <- applyAbs (Abs b body) (SubstVal x')
               body'' <- dropSubst $ cheapReduceE body'
               case fromAtomicBlock body'' of
