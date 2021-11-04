@@ -1,13 +1,20 @@
 module LinearA where
 
-import Data.List (intercalate)
 import Prelude hiding (lookup)
+import Control.Monad
+import Control.Monad.Except
+import Data.Foldable
+import Data.List (intercalate)
+import Data.Functor.Identity
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import Data.Map.Strict ((!))
 
 type Var = String
 data MixedType = MixedType [Type] [Type]
+                 deriving Eq
 data Type = FloatType | TupleType [Type]
+            deriving Eq
 data Expr = Ret [Var] [Var]
           | LetMixed     [Var] [Var] Expr Expr
           | LetUnpack    [Var]       Var  Expr
@@ -31,7 +38,7 @@ data UnOp  = Sin | Cos | Exp
 data BinOp = Add | Mul
 
 type FuncName = String
-data FuncDef = FuncDef [Var] [Var] MixedType Expr
+data FuncDef = FuncDef [(Var, Type)] [(Var, Type)] MixedType Expr
 data Program = Program (M.Map FuncName FuncDef)
 
 data Value = FloatVal Float | TupleVal [Value]
@@ -68,7 +75,7 @@ eval prog@(Program defs) env expr = case expr of
     let FuncDef formals linFormals _ funcExpr = defs ! funcName
     let argVals = (env !) <$> args
     let linArgVals = (env !) <$> linArgs
-    let appEnv = envExt mempty (formals ++ linFormals) (argVals ++ linArgVals)
+    let appEnv = envExt mempty (fst <$> (formals ++ linFormals)) (argVals ++ linArgVals)
     eval prog appEnv funcExpr
   -- Nonlinear expressions
   Var v     -> result $ env ! v
@@ -107,9 +114,6 @@ eval prog@(Program defs) env expr = case expr of
     Result [] [v, v]
   Drop  _ -> Result [] []
   where
-    envExt :: EvalEnv -> [Var] -> [Value] -> EvalEnv
-    envExt env vs vals = foldl (\env (k, v) -> M.insert k v env) env $ zip vs vals
-
     result :: Value -> Result
     result v = Result [v] []
 
@@ -123,3 +127,90 @@ eval prog@(Program defs) env expr = case expr of
     fromLinResult :: Result -> Value
     fromLinResult (Result [] [v]) = v
     fromLinResult _ = error "Unexpected result type"
+
+-------------------- Free variable querying --------------------
+
+freeVars :: Expr -> (S.Set Var, S.Set Var)
+freeVars expr = case expr of
+  Ret vs linVs -> (S.fromList vs, S.fromList linVs)
+  LetMixed vs linVs e1 e2 ->
+    ( freeE1 `S.union` (freeE2 `S.difference` S.fromList vs)
+    , freeLinE1 `S.union` (freeLinE2 `S.difference` S.fromList linVs)
+    )
+    where
+      (freeE1, freeLinE1) = freeVars e1
+      (freeE2, freeLinE2) = freeVars e2
+  Lit _ -> (mempty, mempty)
+  Var v -> (S.singleton v, mempty)
+  LVar v -> (mempty, S.singleton v)
+  _ -> undefined
+
+-------------------- Type checking --------------------
+
+type TypeEnv = (M.Map Var Type, M.Map Var Type)
+typecheck :: Program -> TypeEnv -> Expr -> Either String MixedType
+typecheck prog tenv@(env, linEnv) expr = case expr of
+  Ret vs linVs -> do
+    check "Ret non-linear environment mismatched" $ S.fromList vs == M.keysSet env
+    check "Repeated linear returns" $ unique linVs
+    check "Ret linear environment mismatched" $ S.fromList linVs == M.keysSet linEnv
+    return $ MixedType ((env !) <$> vs) ((linEnv !) <$> linVs)
+  LetMixed vs linVs e1 e2 -> do
+    let (freeE1, freeLinE1) = freeVars e1
+    let (freeE2, freeLinE2) = freeVars e2
+    check "shadowing in binders" $ unique (vs ++ linVs)
+    check "LetMixed: non-linear environment mismatched" $
+      S.union freeE1 (freeE2 `S.difference` S.fromList vs) == M.keysSet env
+    check "LetMixed: linear variable consumed twice" $
+      S.disjoint freeLinE1 (freeLinE2 `S.difference` S.fromList linVs)
+    check "LetMixed: linear environment mismatched" $
+      S.union freeLinE1 (freeLinE2 `S.difference` S.fromList linVs) == M.keysSet linEnv
+    let e1Env = (env `M.restrictKeys` freeE1, linEnv `M.restrictKeys` freeLinE1)
+    MixedType vTys linVTys <- typecheck prog e1Env e1
+    let e2Env = ( envExt (env `M.restrictKeys` freeE2) vs vTys
+                , envExt (linEnv `M.restrictKeys` freeLinE2) linVs linVTys)
+    typecheck prog e2Env e2
+  Lit f -> do
+    check "Lit: non-empty environments" $ null env && null linEnv
+    return $ MixedType [FloatType] []
+  Var v -> do
+    check "Var: non-empty linear env" $ null linEnv
+    check "Var: non-singleton env" $ (S.singleton v == M.keysSet env)
+    return $ MixedType [env ! v] []
+  LVar v -> do
+    check "LVar: non-empty env" $ null env
+    check "LVar: non-singleton linear env" $ S.singleton v == M.keysSet linEnv
+    return $ MixedType [] [linEnv ! v]
+  _ -> undefined
+  -- TODO:
+  -- LetUnpack    [Var]       Var  Expr
+  -- LetUnpackLin [Var]       Var  Expr
+  -- App FuncName [Var] [Var]
+  -- Tuple [Expr]
+  -- UnOp  UnOp  Expr
+  -- BinOp BinOp Expr Expr
+  -- LTuple [Expr]
+  -- LAdd   Expr Expr
+  -- LScale Expr Expr
+  -- LZero  [Var]
+  -- Dup  Expr
+  -- Drop Expr
+
+isFuncTypeCorrect :: Program -> FuncName -> Bool
+isFuncTypeCorrect prog@(Program funcMap) name = case typecheck prog env body of
+  Left  _  -> False
+  Right ty -> ty == resultType
+  where
+    FuncDef formals linFormals resultType body = funcMap ! name
+    env = (M.fromList formals, M.fromList linFormals)
+
+-------------------- Helpers --------------------
+
+unique :: Foldable f => f Var -> Bool
+unique vs = S.size (S.fromList $ toList vs) == length vs
+
+envExt :: Ord k => M.Map k v -> [k] -> [v] -> M.Map k v
+envExt env vs vals = foldl (\env (k, v) -> M.insert k v env) env $ zip vs vals
+
+check :: MonadError e m => e -> Bool -> m ()
+check err cond = unless cond $ throwError err
