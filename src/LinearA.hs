@@ -130,34 +130,52 @@ eval prog@(Program defs) env expr = case expr of
 
 -------------------- Free variable querying --------------------
 
-freeVars :: Expr -> (S.Set Var, S.Set Var)
+data FreeVars = FV (S.Set Var) (S.Set Var)
+instance Semigroup FreeVars where
+  (FV v lv) <> (FV v' lv') = FV (v <> v') (lv <> lv')
+instance Monoid FreeVars where
+  mempty = FV mempty mempty
+
+freeVars :: Expr -> FreeVars
 freeVars expr = case expr of
-  Ret vs linVs -> (S.fromList vs, S.fromList linVs)
-  LetMixed vs linVs e1 e2 ->
-    ( freeE1 `S.union` (freeE2 `S.difference` S.fromList vs)
-    , freeLinE1 `S.union` (freeLinE2 `S.difference` S.fromList linVs)
-    )
+  Ret vs linVs -> FV (S.fromList vs) (S.fromList linVs)
+  LetMixed vs linVs e1 e2 -> FV
+    (freeE1    `S.union` (freeE2    `S.difference` S.fromList vs   ))
+    (freeLinE1 `S.union` (freeLinE2 `S.difference` S.fromList linVs))
     where
-      (freeE1, freeLinE1) = freeVars e1
-      (freeE2, freeLinE2) = freeVars e2
-  Lit _ -> (mempty, mempty)
-  Var v -> (S.singleton v, mempty)
-  LVar v -> (mempty, S.singleton v)
-  _ -> undefined
+      FV freeE1 freeLinE1 = freeVars e1
+      FV freeE2 freeLinE2 = freeVars e2
+  Lit _  -> FV mempty mempty
+  Var v  -> FV (S.singleton v) mempty
+  LVar v -> FV mempty (S.singleton v)
+  LetUnpack vs v e -> FV (S.singleton v <> (free `S.difference` S.fromList vs)) freeLin
+    where FV free freeLin = freeVars e
+  LetUnpackLin vs v e -> FV free (S.singleton v <> (freeLin `S.difference` S.fromList vs))
+    where FV free freeLin = freeVars e
+  App _ vs linVs -> FV (S.fromList vs) (S.fromList linVs)
+  Tuple es       -> foldMap freeVars es
+  UnOp  _ e      -> freeVars e
+  BinOp _ le re  -> freeVars le <> freeVars re
+  LTuple es      -> foldMap freeVars es
+  LAdd    le re  -> freeVars le <> freeVars re
+  LScale  se le  -> freeVars se <> freeVars le
+  LZero   vs     -> FV mempty $ S.fromList vs
+  Dup  e -> freeVars e
+  Drop e -> freeVars e
 
 -------------------- Type checking --------------------
 
 type TypeEnv = (M.Map Var Type, M.Map Var Type)
 typecheck :: Program -> TypeEnv -> Expr -> Either String MixedType
-typecheck prog tenv@(env, linEnv) expr = case expr of
+typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
   Ret vs linVs -> do
     check "Ret non-linear environment mismatched" $ S.fromList vs == M.keysSet env
     check "Repeated linear returns" $ unique linVs
     check "Ret linear environment mismatched" $ S.fromList linVs == M.keysSet linEnv
     return $ MixedType ((env !) <$> vs) ((linEnv !) <$> linVs)
   LetMixed vs linVs e1 e2 -> do
-    let (freeE1, freeLinE1) = freeVars e1
-    let (freeE2, freeLinE2) = freeVars e2
+    let FV freeE1 freeLinE1 = freeVars e1
+    let FV freeE2 freeLinE2 = freeVars e2
     check "shadowing in binders" $ unique (vs ++ linVs)
     check "LetMixed: non-linear environment mismatched" $
       S.union freeE1 (freeE2 `S.difference` S.fromList vs) == M.keysSet env
@@ -181,12 +199,28 @@ typecheck prog tenv@(env, linEnv) expr = case expr of
     check "LVar: non-empty env" $ null env
     check "LVar: non-singleton linear env" $ S.singleton v == M.keysSet linEnv
     return $ MixedType [] [linEnv ! v]
+  App f args linArgs -> do
+    let FuncDef formals linFormals resTy _ = progMap ! f
+    -- Use (L)Tuple checking rules to verify that references to args are valid
+    typecheck prog tenv $ Tuple $ Var <$> args
+    typecheck prog tenv $ LTuple $ LVar <$> linArgs
+    return $ resTy
+  Tuple es -> do
+    let (free, freeLin) = unzip $ ((\(FV a b) -> (a, b)) . freeVars) <$> es
+    check "Tuple: non-linear environment mismatched" $ fold free == M.keysSet env
+    check "Tuple: linear variable consumed twice" $ S.size (fold freeLin) == sum (S.size <$> freeLin)
+    check "Tuple: linear environment mismatched" $ fold freeLin == M.keysSet linEnv
+    tys <- forM (zip3 free freeLin es) $ \(f, fl, e) -> do
+      let eEnv = (env `M.restrictKeys` f, linEnv `M.restrictKeys` fl)
+      eTy <- typecheck prog eEnv e
+      case eTy of
+        MixedType [ty] [] -> return ty
+        _ -> throwError "Tuple: unexpected element type"
+    return $ MixedType tys []
   _ -> undefined
   -- TODO:
   -- LetUnpack    [Var]       Var  Expr
   -- LetUnpackLin [Var]       Var  Expr
-  -- App FuncName [Var] [Var]
-  -- Tuple [Expr]
   -- UnOp  UnOp  Expr
   -- BinOp BinOp Expr Expr
   -- LTuple [Expr]
