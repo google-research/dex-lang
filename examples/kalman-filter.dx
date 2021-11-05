@@ -9,24 +9,69 @@ def Mat (n:Type) (m:Type) : Type = n=>m=>Float
 def SqMat (n:Type)        : Type = n=>n=>Float
 def Gaussian (n:Type)     : Type =
   { mean       : Vec n
-  & covariance : SqMat n }
+  & covariance : SqMat n
+  & precision  : SqMat n
+  & logDetCov  : Float }
+
 def GaussianTransition (i:Type) (o:Type) : Type =
  { transitionMat : Mat o i
  & transitionNoise : Gaussian o }
 
+def makeGaussianFromPrecision (mean:Vec n) (precision: SqMat n) : Gaussian n =
+  covariance = invert precision
+  {   mean = mean
+    , covariance = covariance
+    , precision  = precision
+    , logDetCov = snd $ sign_and_log_determinant covariance }
+
+def makeGaussianFromCovariance (mean:Vec n) (covariance: SqMat n) : Gaussian n =
+  precision = invert covariance
+  {   mean = mean
+    , covariance = covariance
+    , precision  = precision
+    , logDetCov = snd $ sign_and_log_determinant covariance }
+
+def scaleGaussian (scaleMat:Mat o i) (g:Gaussian i) : Gaussian o =
+  newMean = scaleMat **. getAt#mean g
+  newCov = (scaleMat ** getAt#covariance g) ** transpose scaleMat
+  makeGaussianFromCovariance newMean newCov
+
+def convolveGaussians (g1:Gaussian n) (g2:Gaussian n) : Gaussian n =
+  newMean = getAt#mean g1 + getAt#mean g2
+  newCov  = getAt#covariance g1 + getAt#covariance g2
+  makeGaussianFromCovariance newMean newCov
+
 def applyTransition (t:GaussianTransition i o) (g:Gaussian i) : Gaussian o =
-  todo
+  g |>
+    scaleGaussian (getAt #transitionMat t) |>
+    convolveGaussians (getAt #transitionNoise t)
 
 -- TODO: avoid redundant computation (or rely on compiler CSE?)
-def kalmanGain (_:Gaussian i) (_:GaussianTransition i o) : Mat i o =
- todo
+def kalmanGain (g:Gaussian i) (t:GaussianTransition i o) : Mat i o =
+  priorCov = getAt #covariance g
+  h = getAt #transitionMat t
+  g' = applyTransition t g
+  expectedPrecision = getAt #precision g'
+  priorCov ** transpose h ** expectedPrecision
 
-def condition (_:Gaussian i) (_:GaussianTransition i o) (_:Vec o) : Gaussian i =
-  todo
+def condition (g:Gaussian i) (t:GaussianTransition i o) (obs:Vec o) : Gaussian i =
+  priorMean = getAt #mean g
+  priorCov  = getAt #covariance g
+  h = getAt #transitionMat t
+  g' = applyTransition t g
+  k = kalmanGain g t
+  expectedMean = getAt #mean g'
+  posteriorMean = priorMean + k **. (obs - expectedMean)
+  r = getAt #covariance $ getAt #transitionNoise t
+  tmp = eye - k ** h
+  posteriorCov = tmp ** priorCov ** transpose tmp +
+                 k ** r ** transpose k
+  makeGaussianFromCovariance posteriorMean posteriorCov
 
-def convolveGaussians (g1:Gaussian n) (g2:Gaussian n) : Gaussian n = todo
-
-def logDensity (g:Gaussian n) (x:Vec n) : LogProb = todo
+def logDensity (g:Gaussian n) (x:Vec n) : LogProb =
+   d = x - getAt #mean g
+   normalizer = - (IToF (size n) / 2.0) * log (2.0 * pi) - 0.5 * getAt #logDetCov g
+   -0.5 * (d `vdot` (getAt #precision g **. d)) + normalizer
 
 def Model (latentsIx:Type) (obsIx:Type) : Type =
  { transition : GaussianTransition latentsIx latentsIx
@@ -64,12 +109,71 @@ def kalmanFilterStep
   , predictedLatents = applyTransition (getAt #transition model) filteredLatents
   , filteredObs      = obsProb }
 
+-- Workaround for a Dex bug with references to records
+def gaussianToTup (g:Gaussian n) : (Vec n & SqMat n & SqMat n & Float) =
+  ( getAt #mean g
+  , getAt #covariance g
+  , getAt #precision  g
+  , getAt #logDetCov  g )
+
+def tupToGaussian
+      ((mean, covariance, precision, logDetCov):(Vec n & SqMat n & SqMat n & Float))
+      : Gaussian n =
+  { mean       = mean
+  , covariance = covariance
+  , precision  = precision
+  , logDetCov  = logDetCov }
+
 def kalmanFilter
       (obs : timeIx => Vec obsIx)
       (model : Model latentsIx obsIx)
       : timeIx => LoopState latentsIx obsIx =
-  withState (getAt #latentsPrior model) \latentsRef.
+  withState (gaussianToTup (getAt #latentsPrior model)) \latentsRef.
     for i.
-      stepResult = kalmanFilterStep model obs.i (get latentsRef)
-      latentsRef := getAt #predictedLatents stepResult
+      stepResult = kalmanFilterStep model obs.i  $
+                      tupToGaussian (get latentsRef)
+      latentsRef := gaussianToTup $ getAt #predictedLatents stepResult
       stepResult
+
+myGaussian = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.0],
+                                                   [0.0, 2.0]]
+myGaussian2 = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.2],
+                                                    [0.2, 2.0]]
+
+logDensity myGaussian [1.0, 2.0]
+> -1.991303
+
+logDensity myGaussian2 [1.0, 2.0]
+> -2.001405
+
+scaleGaussian (2.0 .* eye) myGaussian
+
+def isotropic (scale:Float) : Gaussian n =
+  makeGaussianFromCovariance zero (sq scale .* eye)
+
+def isotropicDrift (scale:Float) : GaussianTransition n n =
+  { transitionMat = eye
+  , transitionNoise = isotropic scale }
+
+
+myModel : Model (Fin 4) (Fin 4) =
+  { transition   = isotropicDrift 1.0
+  , obsModel     = isotropicDrift 1.0
+  , latentsPrior = isotropic      1.0 }
+
+myObs = for i:(Fin 1000).
+  (for j:(Fin 4). IToF $ ordinal i)
+
+:p
+  prior = makeGaussianFromPrecision [10.0] [[2.0]]
+  noise = makeGaussianFromPrecision [ 0.0] [[2.0]]
+  trans = { transitionMat = eye, transitionNoise = noise }
+  condition prior trans [100.0]
+
+
+%time
+results = kalmanFilter myObs myModel
+
+-- :p
+--   for i.
+--     (getAt #mean $ getAt #filteredLatents results.i)
