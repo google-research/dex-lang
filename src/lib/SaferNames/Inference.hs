@@ -1566,7 +1566,7 @@ renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
 
 -- === dictionary synthesis ===
 
-attemptSynthesis :: Inferer m => m i o ()
+attemptSynthesis :: (Emits o, Inferer m) => m i o ()
 attemptSynthesis = do
   ListE svs <- getSynthVars
   forM_ svs \sv -> do
@@ -1576,19 +1576,20 @@ attemptSynthesis = do
       Just d -> extendSolverSubst sv d
 
 -- main entrypoint to dictionary synthesizer
-trySynthDict :: (Scopable m, BindingsReader m)
+trySynthDict :: (Emits n, Builder m, Scopable m, BindingsReader m)
              => Type n -> m n (Maybe (Atom n))
 trySynthDict ty = do
   WithBindings bindings ty' <- addBindings ty
   if hasInferenceVars bindings ty'
     then return Nothing
     else do
-      let dicts = runSyntherM bindings $
-                    fromJust <$> buildBlockReduced do
+      let dicts = runSyntherM bindings $ buildBlock do
                       ty'' <- injectM ty'
                       synthDict ty''
       case dicts of
-        [d] -> Just <$> injectM d
+        [d] -> do
+          d' <- injectM d
+          Just <$> emitBlock d'
         _ -> return Nothing
 
 class (Alternative1 m, Searcher1 m, Builder m)
