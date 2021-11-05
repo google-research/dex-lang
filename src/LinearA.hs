@@ -145,7 +145,7 @@ freeVars expr = case expr of
     where
       FV freeE1 freeLinE1 = freeVars e1
       FV freeE2 freeLinE2 = freeVars e2
-  Lit _  -> FV mempty mempty
+  Lit _  -> mempty
   Var v  -> FV (S.singleton v) mempty
   LVar v -> FV mempty (S.singleton v)
   LetUnpack vs v e -> FV (S.singleton v <> (free `S.difference` S.fromList vs)) freeLin
@@ -202,8 +202,8 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
   App f args linArgs -> do
     let FuncDef formals linFormals resTy _ = progMap ! f
     -- Use (L)Tuple checking rules to verify that references to args are valid
-    typecheck prog tenv $ Tuple $ Var <$> args
-    typecheck prog tenv $ LTuple $ LVar <$> linArgs
+    typecheck prog (env, mempty)    $ Tuple  $ Var  <$> args
+    typecheck prog (mempty, linEnv) $ LTuple $ LVar <$> linArgs
     return $ resTy
   Tuple es -> do
     let (free, freeLin) = unzip $ ((\(FV a b) -> (a, b)) . freeVars) <$> es
@@ -216,7 +216,7 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
       case eTy of
         MixedType [ty] [] -> return ty
         _ -> throwError "Tuple: unexpected element type"
-    return $ MixedType tys []
+    return $ MixedType [TupleType tys] []
   _ -> undefined
   -- TODO:
   -- LetUnpack    [Var]       Var  Expr
