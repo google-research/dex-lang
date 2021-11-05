@@ -5,6 +5,7 @@ import Control.Monad
 import Control.Monad.Except
 import Data.Foldable
 import Data.List (intercalate)
+import Data.Functor ((<&>))
 import Data.Functor.Identity
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -205,30 +206,48 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     typecheck prog (env, mempty)    $ Tuple  $ Var  <$> args
     typecheck prog (mempty, linEnv) $ LTuple $ LVar <$> linArgs
     return $ resTy
-  Tuple es -> do
-    let (free, freeLin) = unzip $ ((\(FV a b) -> (a, b)) . freeVars) <$> es
-    check "Tuple: non-linear environment mismatched" $ fold free == M.keysSet env
-    check "Tuple: linear variable consumed twice" $ S.size (fold freeLin) == sum (S.size <$> freeLin)
-    check "Tuple: linear environment mismatched" $ fold freeLin == M.keysSet linEnv
-    tys <- forM (zip3 free freeLin es) $ \(f, fl, e) -> do
-      let eEnv = (env `M.restrictKeys` f, linEnv `M.restrictKeys` fl)
-      eTy <- typecheck prog eEnv e
+  Tuple exprs -> do
+    envs <- splitEnv exprs
+    tys <- forM (zip envs exprs) $ \(env, expr) -> do
+      eTy <- typecheck prog env expr
       case eTy of
         MixedType [ty] [] -> return ty
         _ -> throwError "Tuple: unexpected element type"
     return $ MixedType [TupleType tys] []
+  LTuple exprs -> do
+    envs <- splitEnv exprs
+    tys <- forM (zip envs exprs) $ \(env, expr) -> do
+      eTy <- typecheck prog env expr
+      case eTy of
+        MixedType [] [ty] -> return ty
+        _ -> throwError "Tuple: unexpected element type"
+    return $ MixedType [] [TupleType tys]
+  LAdd le re -> do
+    ~[lenv, renv] <- splitEnv [le, re]
+    lty <- typecheck prog lenv le
+    check "LAdd: expected float" $ lty == (MixedType [] [FloatType])
+    rty <- typecheck prog renv re
+    check "LAdd: expected float" $ rty == (MixedType [] [FloatType])
+    return $ MixedType [] [FloatType]
   _ -> undefined
   -- TODO:
   -- LetUnpack    [Var]       Var  Expr
   -- LetUnpackLin [Var]       Var  Expr
   -- UnOp  UnOp  Expr
   -- BinOp BinOp Expr Expr
-  -- LTuple [Expr]
-  -- LAdd   Expr Expr
   -- LScale Expr Expr
   -- LZero  [Var]
   -- Dup  Expr
   -- Drop Expr
+  where
+    splitEnv :: [Expr] -> Either String [TypeEnv]
+    splitEnv exprs = do
+      let (free, freeLin) = unzip $ ((\(FV a b) -> (a, b)) . freeVars) <$> exprs
+      check "unbound or unconsumed non-linear variable found" $ fold free == M.keysSet env
+      check "linear variable consumed twice" $ S.size (fold freeLin) == sum (S.size <$> freeLin)
+      check "unbound or unconsumed linear variable found" $ fold freeLin == M.keysSet linEnv
+      return $ zip free freeLin <&> \(f, fl) ->
+        (env `M.restrictKeys` f, linEnv `M.restrictKeys` fl)
 
 isFuncTypeCorrect :: Program -> FuncName -> Bool
 isFuncTypeCorrect prog@(Program funcMap) name = case typecheck prog env body of

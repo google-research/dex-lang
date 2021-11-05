@@ -67,3 +67,23 @@ spec = do
             LetMixed [] ["y"] (Ret [] ["x"]) $
             Ret [] ["x", "y"])
         ]
+
+  describe "general type checker" $ do
+    it "type checks an application" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [("x", FloatType)] [("y", FloatType)]
+                        (MixedType [FloatType, FloatType] [FloatType]) $
+            Ret ["x", "x"] ["y"])
+        , ("g", FuncDef [("x", FloatType)] [("y", FloatType)]
+                        (MixedType [FloatType, FloatType] [FloatType]) $
+            App "f" ["x"] ["y"])
+        ]
+
+    it "rejects a dup in an application" $ do
+      shouldNotTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["z"] (LAdd (LVar "x") (LVar "y")) $
+            Ret [] ["z"])
+        , ("g", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
+            App "f" [] ["x", "x"])
+        ]
