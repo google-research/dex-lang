@@ -18,6 +18,12 @@ instance Fractional Expr where
   fromRational = Lit . fromRational
   (/) = undefined
 
+shouldTypeCheck :: Program -> Expectation
+shouldTypeCheck prog = isProgramTypeCorrect prog `shouldBe` True
+
+shouldNotTypeCheck :: Program -> Expectation
+shouldNotTypeCheck prog = isProgramTypeCorrect prog `shouldBe` False
+
 spec :: Spec
 spec = do
   describe "evaluation" $ do
@@ -35,33 +41,29 @@ spec = do
 
   describe "non-linear type checker" $ do
     it "accepts an implicit dup" $ do
-      let prog = Program $ M.fromList
-            [ ("id", FuncDef [("x", FloatType)] [] (MixedType [FloatType, FloatType] []) $
-                LetMixed ["y"] [] (Ret ["x"][] ) $
-                Ret ["x", "y"] [])
-            ]
-      isFuncTypeCorrect prog "id" `shouldBe` True
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("id", FuncDef [("x", FloatType)] [] (MixedType [FloatType, FloatType] []) $
+            LetMixed ["y"] [] (Ret ["x"][] ) $
+            Ret ["x", "y"] [])
+        ]
 
     it "rejects an implicit drop" $ do
-      let prog = Program $ M.fromList
-            [ ("drop", FuncDef [("x", FloatType)] [] (MixedType [] []) $
-                Ret [] [])
-            ]
-      isFuncTypeCorrect prog "drop" `shouldBe` False
+      shouldNotTypeCheck $ Program $ M.fromList
+        [ ("drop", FuncDef [("x", FloatType)] [] (MixedType [] []) $
+            Ret [] [])
+        ]
 
   describe "linear type checker" $ do
     it "type checks a linear identity" $ do
-      let prog = Program $ M.fromList
-            [ ("id", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
-                LetMixed [] ["y"] (Ret [] ["x"]) $
-                Ret [] ["y"])
-            ]
-      isFuncTypeCorrect prog "id" `shouldBe` True
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("id", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["y"] (Ret [] ["x"]) $
+            Ret [] ["y"])
+        ]
 
     it "rejects an implicit linear dup" $ do
-      let prog = Program $ M.fromList
-            [ ("dup", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType, FloatType]) $
-                LetMixed [] ["y"] (Ret [] ["x"]) $
-                Ret [] ["x", "y"])
-            ]
-      isFuncTypeCorrect prog "dup" `shouldBe` False
+      shouldNotTypeCheck $ Program $ M.fromList
+        [ ("dup", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType, FloatType]) $
+            LetMixed [] ["y"] (Ret [] ["x"]) $
+            Ret [] ["x", "y"])
+        ]

@@ -238,6 +238,9 @@ isFuncTypeCorrect prog@(Program funcMap) name = case typecheck prog env body of
     FuncDef formals linFormals resultType body = funcMap ! name
     env = (M.fromList formals, M.fromList linFormals)
 
+isProgramTypeCorrect :: Program -> Bool
+isProgramTypeCorrect prog@(Program progMap) = foldl (&&) True $ isFuncTypeCorrect prog <$> M.keys progMap
+
 -------------------- Helpers --------------------
 
 unique :: Foldable f => f Var -> Bool
