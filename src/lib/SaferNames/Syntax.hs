@@ -1750,6 +1750,7 @@ instance GenericE EvaluatedModule where
   toE = undefined
 
 instance InjectableE EvaluatedModule
+instance HoistableE EvaluatedModule
 instance SubstE Name EvaluatedModule
 
 instance Store (Atom n)
