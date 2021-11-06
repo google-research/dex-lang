@@ -199,7 +199,6 @@ instance CheckableE AtomBinding where
 
 instance CheckableE SolverBinding where
   checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
-  checkE (DictVarBound ty ctx) = DictVarBound <$> checkTypeE TyKind ty <*> pure ctx
   checkE (SkolemBound  ty    ) = SkolemBound  <$> checkTypeE TyKind ty
 
 instance CheckableE DataDef where
@@ -597,6 +596,7 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  SynthesizeDict _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of

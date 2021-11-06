@@ -41,7 +41,7 @@ traverseAtomDefault atom = case atom of
   Lam (LamExpr (LamBinder b ty arr eff) body) -> do
     ty' <- tge ty
     let hint = getNameHint b
-    effAbs <- withFreshBinder hint ty' \v -> extendRenamer (b@>v) $ tge eff
+    effAbs <- withFreshBinder hint ty' \v -> extendRenamer (b@>v) $ substM eff
     Abs b' body' <- withFreshLamBinder hint (LamBinding arr ty') effAbs \v -> do
                     extendRenamer (b@>v) $ tge body
     return $ Lam $ LamExpr b' body'
@@ -94,8 +94,6 @@ instance GenericallyTraversableE Block where
     Abs decls' result' <- buildScoped $ traverseDeclNest decls $
                             traverseExpr result
     return $ Block ty' decls' result'
-
-instance GenericallyTraversableE EffectRow where
 
 traverseDeclNest
   :: (GenericTraverser m, Emits o)

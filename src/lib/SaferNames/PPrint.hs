@@ -269,7 +269,6 @@ instance Pretty (PiBinding n) where
 
 instance Pretty (SolverBinding n) where
   pretty (InfVarBound  ty _) = "Inference variable of type:" <+> p ty
-  pretty (DictVarBound ty _) = "Dictionary variable of type:" <+> p ty
   pretty (SkolemBound  ty  ) = "Skolem variable of type:"    <+> p ty
 
 instance Pretty (Binding s n) where

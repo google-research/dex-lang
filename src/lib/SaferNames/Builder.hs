@@ -36,7 +36,7 @@ module SaferNames.Builder (
 
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Trans
+import Control.Monad.Reader
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -205,7 +205,9 @@ instance MonadFail m => Scopable (BuilderT m) where
 
 instance (InjectableV v, Builder m) => Builder (EnvReaderT v m i) where
   emitDecl hint ann expr = EnvReaderT $ lift $ emitDecl hint ann expr
-  buildScopedGeneral _ _ = undefined
+  buildScopedGeneral ab cont = EnvReaderT $ ReaderT \env ->
+    buildScopedGeneral ab \x ->
+      runReaderT (runEnvReaderT' $ cont x) (inject env)
 
 -- === Emits predicate ===
 

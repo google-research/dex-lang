@@ -248,7 +248,6 @@ data AtomBinding (n::S) =
 
 data SolverBinding (n::S) =
    InfVarBound (Type n) SrcPosCtx
- | DictVarBound (Type n) SrcPosCtx
  | SkolemBound (Type n)
    deriving (Show, Generic)
 
@@ -931,7 +930,6 @@ bindingType (AtomNameBinding b) = case b of
   PiBound     (PiBinding   _ ty)   -> ty
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
-  SolverBound (DictVarBound ty _)  -> ty
   SolverBound (SkolemBound ty)     -> ty
 
 infixr 1 -->
@@ -1616,19 +1614,16 @@ instance SubstE AtomSubstVal AtomBinding
 instance AlphaEqE AtomBinding
 
 instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE3
-                              (PairE Type (LiftE SrcPosCtx))
+  type RepE SolverBinding = EitherE2
                               (PairE Type (LiftE SrcPosCtx))
                               Type
   fromE = \case
     InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
-    DictVarBound ty ctx -> Case1 (PairE ty (LiftE ctx))
-    SkolemBound  ty     -> Case2 ty
+    SkolemBound  ty     -> Case1 ty
 
   toE = \case
     Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
-    Case1 (PairE ty (LiftE ct)) -> DictVarBound ty ct
-    Case2 ty                    -> SkolemBound  ty
+    Case1 ty                    -> SkolemBound  ty
     _ -> error "impossible"
 
 instance InjectableE SolverBinding
@@ -1744,10 +1739,9 @@ instance InjectableE Module
 instance SubstE Name Module
 
 instance GenericE EvaluatedModule where
-  type RepE EvaluatedModule = Abs (RecEnvFrag Binding)
-                                  (PairE SynthCandidates SourceMap)
-  fromE = undefined
-  toE = undefined
+  type RepE EvaluatedModule = Abs BindingsFrag (PairE SynthCandidates SourceMap)
+  fromE (EvaluatedModule bs scs sm) = Abs bs (PairE scs sm)
+  toE   (Abs bs (PairE scs sm)) = EvaluatedModule bs scs sm
 
 instance InjectableE EvaluatedModule
 instance HoistableE EvaluatedModule
@@ -1835,6 +1829,7 @@ instance GenericB BindingsFrag where
   toB   _ = error "impossible" -- GHC exhaustiveness bug?
 
 instance InjectableB         BindingsFrag
+instance HoistableB          BindingsFrag
 instance ProvesExt           BindingsFrag
 instance BindsNames          BindingsFrag
 instance SubstB Name         BindingsFrag

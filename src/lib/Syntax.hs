@@ -429,6 +429,7 @@ data PrimOp e =
       | SumToVariant e
       -- Pointer to the stdout-like output stream
       | OutputStreamPtr
+      | SynthesizeDict SrcPosCtx e  -- Only used during type inference
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =

@@ -10,7 +10,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SaferNames.Inference (inferModule) where
+module SaferNames.Inference (inferModule, synthModule) where
 
 import Prelude hiding ((.), id)
 import Control.Category
@@ -35,6 +35,7 @@ import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.PPrint ()
 import SaferNames.CheapReduction
+import SaferNames.GenericTraversal
 
 import LabeledItems
 import Err
@@ -48,7 +49,7 @@ inferModule bindings uModule@(UModule decl _) = do
         UModule decl' sourceMap <- injectM uModule
         inferUDeclTop decl' $ substM sourceMap
       let scs = bindingsFragToSynthCandidates bindingsFrag
-      return $ Module Core id $
+      return $ Module Typed id $
         EvaluatedModule bindingsFrag scs sourceMap
     else do
       ab <- runInfererM bindings do
@@ -60,7 +61,7 @@ inferModule bindings uModule@(UModule decl _) = do
         return $ Abs decls sourceMap'
       DistinctAbs decls sourceMap <- return $ refreshAbs (toScope bindings) ab
       let scs = bindingsFragToSynthCandidates $ boundBindings decls
-      return $ Module Core decls $
+      return $ Module Typed decls $
         EvaluatedModule emptyOutFrag scs sourceMap
 
 isTopDecl :: UDecl n l -> Bool
@@ -131,9 +132,6 @@ data InfOutMap (n::S) =
     -- inference vars (this is so we can avoid zonking everything in scope when
     -- we zonk bindings)
     (UnsolvedBindings n)
-    (SynthesisVars n)
-
-type SynthesisVars = ListE AtomName
 
 newtype Defaults (n::S) = Defaults [(Atom n, Atom VoidS)]
         deriving (Semigroup, Monoid, Show)
@@ -172,19 +170,19 @@ instance OutFrag InfOutFrag where
       InfOutFrag (em >>> em') (inject ds <> ds') (catSolverSubsts scope (inject ss) ss')
 
 instance HasScope InfOutMap where
-  toScope (InfOutMap bindings _ _ _ _) = toScope bindings
+  toScope (InfOutMap bindings _ _ _) = toScope bindings
 
 instance OutMap InfOutMap where
-  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst mempty mempty mempty
+  emptyOutMap = InfOutMap emptyOutMap emptySolverSubst mempty mempty
 
 instance ExtOutMap InfOutMap BindingsFrag where
-  extendOutMap (InfOutMap bindings ss dd oldUn svs) frag =
+  extendOutMap (InfOutMap bindings ss dd oldUn) frag =
     withExtEvidence frag do
       let newUn = UnsolvedBindings $ getAtomNames frag
       -- as an optimization, only do the zonking for the new stuff
       let newBindings = bindings `extendOutMap` frag
       let (zonkedUn, zonkedBindings) = zonkUnsolvedBindings (inject ss) newUn newBindings
-      InfOutMap zonkedBindings (inject ss) (inject dd) (inject oldUn <> zonkedUn) (inject svs)
+      InfOutMap zonkedBindings (inject ss) (inject dd) (inject oldUn <> zonkedUn)
 
 newtype UnsolvedBindings (n::S) =
   UnsolvedBindings { fromUnsolvedBindings :: S.Set (AtomName n) }
@@ -199,10 +197,10 @@ getAtomNames frag = S.fromList $ nameSetToList AtomNameRep $ toNameSet $ toScope
 -- query each binding rhs for inference names and add it to the set if needed
 
 extendInfOutMapSolver :: Distinct n => InfOutMap n -> SolverSubst n -> InfOutMap n
-extendInfOutMapSolver (InfOutMap bindings ss dd un svs) ss' = do
+extendInfOutMapSolver (InfOutMap bindings ss dd un) ss' = do
   let (un', bindings') = zonkUnsolvedBindings ss' un bindings
   let ssFinal = catSolverSubsts (toScope bindings) ss ss'
-  InfOutMap bindings' ssFinal dd un' svs
+  InfOutMap bindings' ssFinal dd un'
 
 substIsEmpty :: SolverSubst n -> Bool
 substIsEmpty (SolverSubst subst) = null subst
@@ -221,7 +219,7 @@ zonkUnsolvedBindings ss unsolved bindings =
   flip runState bindings $ execWriterT do
     forM_ (S.toList $ fromUnsolvedBindings unsolved) \v -> do
       rhs <- flip lookupBindingsPure v <$> get
-      let rhs' = zonkWithOutMap (InfOutMap bindings ss mempty mempty mempty) rhs
+      let rhs' = zonkWithOutMap (InfOutMap bindings ss mempty mempty) rhs
       modify $ updateBindings v rhs'
       when (hasInferenceVars bindings rhs') $
         tell $ UnsolvedBindings $ S.singleton v
@@ -237,20 +235,12 @@ instance ExtOutMap InfOutMap InfOutFrag where
   extendOutMap infOutMap (InfOutFrag em ds solverSubst) = do
     extendDefaults ds $
       flip extendInfOutMapSolver solverSubst $
-        extendSynthVars em $
-          flip extendOutMap (boundBindings em) $
-            infOutMap
-
-extendSynthVars :: Distinct l => InfEmissions n l -> InfOutMap l -> InfOutMap l
-extendSynthVars Empty outMap = outMap
-extendSynthVars (Nest (b :> RightE (DictVarBound _ _)) rest) outMap =
-  InfOutMap bs ss ds un (ListE [inject (binderName b)] <> svs)
-  where InfOutMap bs ss ds un svs = extendSynthVars rest outMap
-extendSynthVars (Nest _ rest) outMap = extendSynthVars rest outMap
+        flip extendOutMap (boundBindings em) $
+          infOutMap
 
 extendDefaults :: Defaults n -> InfOutMap n -> InfOutMap n
-extendDefaults ds' (InfOutMap bindings ss ds un svs) =
-  InfOutMap bindings ss (ds <> ds') un svs
+extendDefaults ds' (InfOutMap bindings ss ds un) =
+  InfOutMap bindings ss (ds <> ds') un
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
   { runInfererM' :: EnvReaderT Name (InplaceT InfOutMap InfOutFrag FallibleM) i o a }
@@ -283,7 +273,7 @@ runSubstInfererM bindings env cont = do
 
 initInfOutMap :: Bindings n -> InfOutMap n
 initInfOutMap bindings =
-  InfOutMap bindings emptySolverSubst mempty (UnsolvedBindings mempty) mempty
+  InfOutMap bindings emptySolverSubst mempty (UnsolvedBindings mempty)
 
 emitInfererM :: NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = InfererM $ EnvReaderT $ lift $
@@ -305,12 +295,8 @@ instance Solver (InfererM i) where
     where defaults = Defaults [(t1, t2)]
 
   getDefaults = InfererM $ EnvReaderT $ lift $
-    withInplaceOutEnv UnitE \(InfOutMap _ _ defaults _ _) UnitE ->
+    withInplaceOutEnv UnitE \(InfOutMap _ _ defaults _) UnitE ->
       inject defaults
-
-  getSynthVars = InfererM $ EnvReaderT $ lift $
-    withInplaceOutEnv UnitE \(InfOutMap _ _ _ _ svs) UnitE ->
-      inject svs
 
 instance Inferer InfererM where
   liftSolverM m = InfererM $ EnvReaderT $ lift $
@@ -334,7 +320,6 @@ instance Builder (InfererM i) where
       (\e -> flip runReaderT (inject env) $ runEnvReaderT' $ runInfererM' $
                withFabricatedEmitsEvidence $ do
                  result <- cont e
-                 attemptSynthesis
                  return result)
     ScopedResult outMap bs result <- return scopedResults
     Abs outFrag resultAbs <- hoistInfState (toScope outMap) bs result
@@ -415,15 +400,6 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
           Just solverState' -> return solverState'
           Nothing -> return $ HoistedSolverState (Nest (b:>binding) infVars)
                                                  defaults' subst' result
-      RightE (DictVarBound ty ctx) ->
-        case dceIfSolved b solverState of
-          Just solverState' -> return solverState'
-          Nothing ->
-            case hoist b solverState of
-              Just hoisted -> return hoisted
-              Nothing -> addSrcContext ctx $ do
-                throw TypeErr $ "Couldn't synthesize dictionary: " ++ pprint ty
-                     ++ "\n" ++ pprint subst
       RightE (SkolemBound _) ->
         case hoist b solverState of
           Just hoisted -> return hoisted
@@ -449,14 +425,13 @@ hoistDefaults b (Defaults defaults) =
       Nothing -> Defaults []
       Just t1' -> Defaults [(t1', t2)]
 
-
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions emissions =
   fmapNest (\(b:>binding) -> b :> RightE binding) emissions
 
 instance BindingsReader (InfererM i) where
   addBindings e = InfererM $ EnvReaderT $ lift do
-    withInplaceOutEnv e \(InfOutMap bindings _ _ _ _) e' ->
+    withInplaceOutEnv e \(InfOutMap bindings _ _ _) e' ->
       WithBindings bindings e'
 
 instance Scopable (InfererM i) where
@@ -466,8 +441,8 @@ instance Scopable (InfererM i) where
 
   extendNamelessBindings frag cont = InfererM $ EnvReaderT $ ReaderT \env -> do
     Distinct <- getDistinct
-    liftBetweenInplaceTs id (\(InfOutMap bindings ss ds un svs) ->
-                               InfOutMap (extendOutMap bindings frag) ss ds un svs) id $
+    liftBetweenInplaceTs id (\(InfOutMap bindings ss ds un) ->
+                               InfOutMap (extendOutMap bindings frag) ss ds un) id $
        runEnvReaderT env $ runInfererM' $ cont
 
 -- === actual inference pass ===
@@ -519,11 +494,9 @@ instantiateSigma f = do
       ans <- emit $ App f x
       instantiateSigma $ Var ans
     Pi (PiType (PiBinder _ argTy ClassArrow) _ _) -> do
-      dict <- trySynthDict argTy >>= \case
-                Nothing -> do
-                  Var <$> freshDictName argTy
-                Just d -> return d
-      ans <- emit $ App f dict
+      ctx <- srcPosCtx <$> getErrCtx
+      dict <- emit $ Op $ SynthesizeDict ctx argTy
+      ans <- emit $ App f $ Var dict
       instantiateSigma $ Var ans
     _ -> return f
 
@@ -1246,7 +1219,6 @@ class (CtxReader1 m, BindingsReader m) => Solver (m::MonadKind1) where
   emitSolver :: SolverBinding n -> m n (AtomName n)
   addDefault :: Type n -> Type VoidS -> m n ()
   getDefaults :: m n (Defaults n)
-  getSynthVars :: m n (SynthesisVars n)
 
 type SolverOutMap = InfOutMap
 
@@ -1299,7 +1271,7 @@ runSolverM bindings cont = do
 
 instance BindingsReader SolverM where
   addBindings e = SolverM do
-    withInplaceOutEnv e \(InfOutMap bindings _ _ _ _) e' ->
+    withInplaceOutEnv e \(InfOutMap bindings _ _ _) e' ->
       WithBindings bindings e'
 
 instance Solver SolverM where
@@ -1318,12 +1290,8 @@ instance Solver SolverM where
     where defaults = Defaults [(t1, t2)]
 
   getDefaults = SolverM do
-    withInplaceOutEnv UnitE \(InfOutMap _ _ defaults _ _) UnitE ->
+    withInplaceOutEnv UnitE \(InfOutMap _ _ defaults _) UnitE ->
       inject defaults
-
-  getSynthVars = SolverM do
-    withInplaceOutEnv UnitE \(InfOutMap _ _ _ _ svs) UnitE ->
-      inject svs
 
 instance Unifier SolverM
 
@@ -1331,11 +1299,6 @@ freshInferenceName :: Solver m => Kind n -> m n (AtomName n)
 freshInferenceName k = do
   ctx <- srcPosCtx <$> getErrCtx
   emitSolver $ InfVarBound k ctx
-
-freshDictName :: Solver m => Type n -> m n (AtomName n)
-freshDictName ty = do
-  ctx <- srcPosCtx <$> getErrCtx
-  emitSolver $ DictVarBound ty ctx
 
 -- TODO: clean up skolem vars!
 freshSkolemName :: Solver m => Kind n -> m n (AtomName n)
@@ -1374,7 +1337,7 @@ applySolverSubstE scope solverSubst e =
 
 zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
                => InfOutMap n -> e n -> e n
-zonkWithOutMap (InfOutMap bindings solverSubst _ _ _) e =
+zonkWithOutMap (InfOutMap bindings solverSubst _ _) e =
   applySolverSubstE (toScope bindings) solverSubst e
 
 _applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
@@ -1566,15 +1529,6 @@ renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
 
 -- === dictionary synthesis ===
 
-attemptSynthesis :: (Emits o, Inferer m) => m i o ()
-attemptSynthesis = do
-  ListE svs <- getSynthVars
-  forM_ svs \sv -> do
-    ~(AtomNameBinding (SolverBound (DictVarBound ty _))) <- lookupBindings sv
-    trySynthDict ty >>= \case
-      Nothing -> return ()
-      Just d -> extendSolverSubst sv d
-
 -- main entrypoint to dictionary synthesizer
 trySynthDict :: (Emits n, Builder m, Scopable m, BindingsReader m)
              => Type n -> m n (Maybe (Atom n))
@@ -1672,6 +1626,44 @@ getGiven = (lambdaDicts <$> getSynthCandidatesM) >>= tryEachCandidate
 
 getInstance :: Synther m => m n (Atom n)
 getInstance = (instanceDicts <$> getSynthCandidatesM) >>= tryEachCandidate
+
+-- === Dictionary synthesis traversal ===
+
+synthModule :: Distinct n => Bindings n -> Module n -> Except (Module n)
+synthModule bindings m = do
+  Module _ decls result <- runDictSynthTraverserM bindings $
+                             traverseGenericE $ inject m
+  return $ Module Core decls result
+
+runDictSynthTraverserM
+  :: Distinct n => Bindings n
+  -> (forall l. (Distinct l, Ext n l) => DictSynthTraverserM l l (e l))
+  -> Except (e n)
+runDictSynthTraverserM bindings m =
+   runFallibleM $ runBuilderT bindings do
+     runEnvReaderT idEnv $ runDictSynthTraverserM' m
+
+newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
+  DictSynthTraverserM
+    { runDictSynthTraverserM' :: EnvReaderT Name (BuilderT FallibleM) i o a }
+    deriving ( Functor, Applicative, Monad, EnvReader Name
+             , BindingsReader, ScopeReader, Scopable, MonadFail, Fallible)
+
+instance GenericTraverser DictSynthTraverserM where
+  traverseExpr (Op (SynthesizeDict ctx ty)) = do
+    ty' <- substM ty
+    trySynthDict ty' >>= \case
+      Just d  -> return $ Atom d
+      Nothing -> addSrcContext ctx $
+        throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty'
+  traverseExpr expr = traverseExprDefault expr
+
+-- TODO: need to figure out why this one isn't derivable
+instance Builder (DictSynthTraverserM i) where
+  emitDecl hint ann expr =
+    DictSynthTraverserM $ emitDecl hint ann expr
+  buildScopedGeneral ab cont =
+    DictSynthTraverserM $ buildScopedGeneral ab \x -> runDictSynthTraverserM' $ cont x
 
 -- === Zonkable source map hack ===
 

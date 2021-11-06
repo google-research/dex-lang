@@ -377,7 +377,9 @@ evalUModule sourceModule = do
   logPass RenamePass renamed
   typed <- liftExcept $ S.inferModule bindingsS renamed
   checkPassS TypePass typed
-  let typedUnsafe = fromSafe topState typed
+  synthed <- liftExcept $ S.synthModule bindingsS typed
+  checkPassS SynthPass synthed
+  let typedUnsafe = fromSafe topState synthed
   checkPass TypePass typedUnsafe
   let defunctionalized = simplifyModule bindingsD typedUnsafe
   checkPass SimpPass defunctionalized
