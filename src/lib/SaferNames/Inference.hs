@@ -10,7 +10,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SaferNames.Inference (inferModule, synthModule) where
+module SaferNames.Inference (inferModule, synthModule,
+                             trySynthDict, trySynthDictBlock) where
 
 import Prelude hiding ((.), id)
 import Control.Category
@@ -1533,6 +1534,12 @@ renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
 trySynthDict :: (Emits n, Builder m, Scopable m, BindingsReader m)
              => Type n -> m n (Maybe (Atom n))
 trySynthDict ty = do
+  trySynthDictBlock ty >>= \case
+    Just block -> Just <$> emitBlock block
+    Nothing -> return $ Nothing
+
+trySynthDictBlock :: BindingsReader m => Type n -> m n (Maybe (Block n))
+trySynthDictBlock ty = do
   WithBindings bindings ty' <- addBindings ty
   if hasInferenceVars bindings ty'
     then return Nothing
@@ -1541,9 +1548,7 @@ trySynthDict ty = do
                       ty'' <- injectM ty'
                       synthDict ty''
       case dicts of
-        [d] -> do
-          d' <- injectM d
-          Just <$> emitBlock d'
+        [d] -> Just <$> injectM d
         _ -> return Nothing
 
 class (Alternative1 m, Searcher1 m, Builder m)

@@ -1127,9 +1127,8 @@ getProjection (i:is) a = case getProjection is a of
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ _ xs -> xs !! i
   Record items -> toList items !! i
-  PairVal x _ | i == 0 -> x
-  PairVal _ y | i == 1 -> y
-  _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
+  Con (ProdCon xs) -> xs !! i
+  a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
 bundleFold empty pair els = case els of

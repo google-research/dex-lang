@@ -14,6 +14,7 @@ import Control.Monad.Identity
 
 import SaferNames.Name
 import SaferNames.Syntax
+import {-# SOURCE #-} SaferNames.Inference (trySynthDictBlock)
 import Err
 
 -- === api ===
@@ -103,6 +104,11 @@ instance CheaplyReducible Expr where
                 Nothing -> substM expr
         TypeCon con xs -> return $ Atom $ TypeCon con $ xs ++ [x']
         _ -> substM expr
+    Op (SynthesizeDict ctx ty) -> do
+      ty' <- substM ty
+      trySynthDictBlock ty' >>= \case
+        Just (Block _ Empty d) -> return d
+        Nothing -> return $ Op $ SynthesizeDict ctx ty'
     _ -> substM expr
 
 instance CheaplyReducible Block where
