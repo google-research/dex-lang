@@ -27,6 +27,8 @@ import System.Console.ANSI
 import System.Directory
 import System.IO
 
+import Paths_dex  (getDataFileName)
+
 import Cat
 import Syntax
 import Actor
@@ -175,8 +177,9 @@ serveResults results request respond = do
     _ -> respond $ responseLBS status404
            [("Content-Type", "text/plain")] "404 - Not Found"
   where
-    respondWith fname ctype = respond $ responseFile status200
-                               [("Content-Type", ctype)] fname Nothing
+    respondWith dataFname ctype = do
+      fname <- getDataFileName dataFname
+      respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
 
 resultStream :: ToJSON a => ReqChan a -> StreamingBody
 resultStream resultsRequest write flush = runActor $ do
