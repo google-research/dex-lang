@@ -62,6 +62,7 @@ module SaferNames.Syntax (
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates, refreshBinders2,
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
+    FallibleT1, runFallibleT1,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -80,6 +81,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
+import qualified Control.Monad.Trans.Except as MTE
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -646,6 +648,33 @@ instance (forall c. NameColor c => ToBinding (binding c) c)
   boundBindings (SomeDecl b binding) =
     withExtEvidence b $
       BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
+
+-- === FallibleT transformer ===
+
+newtype FallibleT1 (m::MonadKind1) (n::S) a =
+  FallibleT1 { fromFallibleT :: ReaderT ErrCtx (MTE.ExceptT Errs (m n)) a }
+  deriving (Functor, Applicative, Monad)
+
+runFallibleT1 :: Monad1 m => FallibleT1 m n a -> m n (Except a)
+runFallibleT1 m =
+  MTE.runExceptT (runReaderT (fromFallibleT m) mempty) >>= \case
+    Right ans -> return $ Success ans
+    Left errs -> return $ Failure errs
+
+instance Monad1 m => MonadFail (FallibleT1 m n) where
+  fail s = throw MonadFailErr s
+
+instance Monad1 m => Fallible (FallibleT1 m n) where
+  throwErrs (Errs errs) = FallibleT1 $ ReaderT \ambientCtx ->
+    MTE.throwE $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
+  addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
+
+instance ScopeReader m => ScopeReader (FallibleT1 m) where
+  addScope e = FallibleT1 $ lift $ lift $ addScope e
+  getDistinctEvidenceM = FallibleT1 $ lift $ lift $ getDistinctEvidenceM
+
+instance BindingsReader m => BindingsReader (FallibleT1 m) where
+  addBindings e = FallibleT1 $ lift $ lift $ addBindings e
 
 -- === Querying static env ===
 

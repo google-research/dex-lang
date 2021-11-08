@@ -25,6 +25,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
+import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Text (unpack)
@@ -284,6 +285,9 @@ instance CtxReader SearcherM where
 instance Searcher [] where
   [] <!> m = m
   m  <!> _ = m
+
+instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
+  WriterT m1 <!> WriterT m2 = WriterT (m1 <!> m2)
 
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons

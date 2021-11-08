@@ -1023,6 +1023,11 @@ instance Searcher1 m => Searcher (OutReaderT e m n) where
     OutReaderT $ ReaderT \env ->
       f1 env <!> f2 env
 
+instance MonadWriter w (m n) => MonadWriter w (OutReaderT e m n) where
+  tell w = OutReaderT $ lift $ tell w
+  listen = undefined
+  pass = undefined
+
 -- === ZipEnvReaderT transformer ===
 
 newtype ZipEnvReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a:: *) =
@@ -1277,6 +1282,13 @@ instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls,
   catchErr (UnsafeMakeInplaceT f1) handler = UnsafeMakeInplaceT \bindings ->
     f1 bindings `catchErr` \err -> case handler err of
       UnsafeMakeInplaceT f2 -> f2 bindings
+
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
+         , MonadWriter w m)
+         => MonadWriter w (InplaceT bindings decls m n) where
+  tell w = liftInplace $ tell w
+  listen = undefined
+  pass = undefined
 
 -- === name hints ===
 

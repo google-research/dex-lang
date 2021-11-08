@@ -6,6 +6,7 @@
 
 module SaferNames.Inference (trySynthDictBlock) where
 
+import SaferNames.Name
 import SaferNames.Syntax
 
-trySynthDictBlock :: BindingsReader m => Type n -> m n (Maybe (Block n))
+trySynthDictBlock :: (Fallible1 m, BindingsReader m) => Type n -> m n (Block n)

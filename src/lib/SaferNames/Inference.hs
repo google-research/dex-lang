@@ -18,7 +18,7 @@ import Control.Category
 import Control.Applicative
 import Control.Monad
 import Control.Monad.State
-import Control.Monad.Writer.Strict (execWriterT, tell)
+import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
 import Data.Foldable (toList, asum)
 import Data.Functor ((<&>))
@@ -920,11 +920,7 @@ checkInstanceBody className params methods = do
   params' <- mapM checkUType params
   Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params'
   PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
-  superclassDicts <- forM superclassTys \ty -> trySynthDict ty >>= \case
-    Nothing ->
-      -- TODO: do we need to defer this failure and try again later?
-      throw TypeErr $ "Couldn't construct superclass instance: " <> pprint ty
-    Just d -> return d
+  superclassDicts <- mapM trySynthDict superclassTys
   methodsChecked <- mapM (checkMethodDef className methodTys) methods
   let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
   forM_ (repeated idxs) \i ->
@@ -1531,25 +1527,26 @@ renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
 -- === dictionary synthesis ===
 
 -- main entrypoint to dictionary synthesizer
-trySynthDict :: (Emits n, Builder m, Scopable m, BindingsReader m)
-             => Type n -> m n (Maybe (Atom n))
-trySynthDict ty = do
-  trySynthDictBlock ty >>= \case
-    Just block -> Just <$> emitBlock block
-    Nothing -> return $ Nothing
+trySynthDict :: (Emits n, Builder m, Fallible1 m, Scopable m, BindingsReader m)
+             => Type n -> m n (Atom n)
+trySynthDict ty = trySynthDictBlock ty >>= emitBlock
 
-trySynthDictBlock :: BindingsReader m => Type n -> m n (Maybe (Block n))
+trySynthDictBlock :: (Fallible1 m, BindingsReader m) => Type n -> m n (Block n)
 trySynthDictBlock ty = do
   WithBindings bindings ty' <- addBindings ty
   if hasInferenceVars bindings ty'
-    then return Nothing
+    then
+      throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
     else do
-      let dicts = runSyntherM bindings $ buildBlock do
-                    ty'' <- injectM ty'
-                    synthDict ty''
-      case dicts of
-        [d] -> Just <$> injectM d
-        _ -> return Nothing
+      let solutions = runSyntherM bindings $ buildBlock do
+                        ty'' <- injectM ty'
+                        synthDict ty''
+      let solutionsInstance = filter ((== UsedInstance) . snd) solutions
+      unless (length solutionsInstance <= 1) $
+        throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+      case solutions of
+        [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+        (d, _):_ -> injectM d
 
 -- TODO: we'd rather have something like this:
 --   data Givens n = Givens (M.Set (Type n) (Given n))
@@ -1558,10 +1555,19 @@ data Givens n = Givens [Type n] [Given n]
 
 type Given = Block
 
+data DerivationKind = OnlyGivens | UsedInstance deriving Eq
+
+instance Semigroup DerivationKind where
+  OnlyGivens <> OnlyGivens = OnlyGivens
+  _          <> _          = UsedInstance
+instance Monoid DerivationKind where
+  mempty = OnlyGivens
+
 class (Alternative1 m, Searcher1 m, Builder m)
       => Synther m where
   getGivens :: m n (Givens n)
   withGivens :: Givens n -> m n a -> m n a
+  declareUsedInstance :: m n ()
   -- TODO: just expose `unsafeGetBindings` etc to avoid this silly rank-2 dance
   liftSolverSynth
     :: (SubstE AtomSubstVal e', HoistableE e', InjectableE e, InjectableE e')
@@ -1570,13 +1576,15 @@ class (Alternative1 m, Searcher1 m, Builder m)
     -> m n (e' n)
 
 newtype SyntherM (n::S) (a:: *) = SyntherM
-  { runSyntherM' :: OutReaderT Givens (BuilderT []) n a }
+  { runSyntherM' :: OutReaderT Givens (BuilderT (WriterT DerivationKind [])) n a }
   deriving ( Functor, Applicative, Monad, BindingsReader
            , Scopable, ScopeReader, MonadFail
            , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
   getGivens = askOutReader
+
+  declareUsedInstance = SyntherM $ tell UsedInstance
 
   withGivens givens cont = do
     localOutReader givens cont
@@ -1599,9 +1607,9 @@ instance Builder SyntherM where
 runSyntherM :: Distinct n
             => Bindings n
             -> (forall l. (Distinct l, Ext n l) => SyntherM l (e l))
-            -> [e n]
+            -> [(e n, DerivationKind)]
 runSyntherM bindings cont = do
-  runBuilderT bindings do
+  runWriterT $ runBuilderT bindings do
     initGivens <- givensFromBindings
     runOutReaderT initGivens $ runSyntherM' cont
 
@@ -1708,6 +1716,7 @@ getGiven = do
 getInstance :: Synther m => m n (Atom n)
 getInstance = do
   instances <- instanceDicts <$> getSynthCandidatesM
+  declareUsedInstance
   asum $ map pure instances
 
 synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
@@ -1786,10 +1795,7 @@ newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
 instance GenericTraverser DictSynthTraverserM where
   traverseExpr (Op (SynthesizeDict ctx ty)) = do
     ty' <- substM ty
-    trySynthDict ty' >>= \case
-      Just d  -> return $ Atom d
-      Nothing -> addSrcContext ctx $
-        throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty'
+    addSrcContext ctx $ Atom <$> trySynthDict ty'
   traverseExpr expr = traverseExprDefault expr
 
 -- TODO: need to figure out why this one isn't derivable

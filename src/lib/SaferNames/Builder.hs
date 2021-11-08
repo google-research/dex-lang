@@ -36,6 +36,7 @@ module SaferNames.Builder (
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
@@ -165,7 +166,7 @@ instance ExtOutMap Bindings BuilderEmissions where
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Bindings BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader, Alternative, Searcher)
+           , CtxReader, ScopeReader, Alternative, Searcher, MonadWriter w)
 
 runBuilderT
   :: (MonadFail m, Distinct n)
