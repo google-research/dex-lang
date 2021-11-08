@@ -108,7 +108,7 @@ instance CheaplyReducible Expr where
       ty' <- substM ty
       trySynthDictBlock ty' >>= \case
         Just (Block _ Empty d) -> return d
-        Nothing -> return $ Op $ SynthesizeDict ctx ty'
+        _ -> return $ Op $ SynthesizeDict ctx ty'
     _ -> substM expr
 
 instance CheaplyReducible Block where

@@ -377,10 +377,13 @@ instance (InjectableE e, BindingsGetter m)
 
 instance (InjectableE e, ScopeReader m, Scopable m)
          => Scopable (OutReaderT e m) where
-  -- withBindings = withBindingsFromExtender
-  -- extendNamelessBindings frag cont = do
-  --   Distinct <- getDistinct
-  --   extendBindings frag cont
+  withBindings ab cont = OutReaderT $ ReaderT \env ->
+    withBindings ab \e -> do
+      env' <- injectM env
+      runReaderT (runOutReaderT' $ cont e) env'
+  extendNamelessBindings frag (OutReaderT (ReaderT f)) =
+    OutReaderT $ ReaderT \env ->
+      extendNamelessBindings frag (f env)
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
