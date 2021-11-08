@@ -209,6 +209,14 @@ instance (InjectableV v, Builder m) => Builder (EnvReaderT v m i) where
     buildScopedGeneral ab \x ->
       runReaderT (runEnvReaderT' $ cont x) (inject env)
 
+instance (InjectableE e, Builder m) => Builder (OutReaderT e m) where
+  emitDecl hint ann expr =
+    OutReaderT $ lift $ emitDecl hint ann expr
+
+  buildScopedGeneral ab cont = OutReaderT $ ReaderT \env ->
+    buildScopedGeneral ab \x ->
+      runReaderT (runOutReaderT' $ cont x) (inject env)
+
 -- === Emits predicate ===
 
 -- We use the `Emits` predicate on scope parameters to indicate that we may emit

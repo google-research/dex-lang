@@ -41,8 +41,8 @@ module SaferNames.Name (
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2,
   CtxReader1, CtxReader2, MonadFail1, MonadFail2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
-  applyAbs, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
-  checkAlphaEq, alphaEq, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
+  applyAbs, applySubst, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
+  checkAlphaEq, alphaEq, alphaElem, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   withFreshM, withFreshLike, inject, injectM, (!), (<>>),
   envFragAsScope,
@@ -844,6 +844,13 @@ checkAlphaEqPure scope e1 e2 =
     flip runReaderT (emptyInMap, emptyInMap) $ runZipEnvReaderT $
       withEmptyZipEnv $ alphaEqE e1 e2
 
+alphaElem :: AlphaEqE e => ScopeReader m => e n -> [e n] -> m n Bool
+alphaElem _ [] = return False
+alphaElem e1 (e2:rest) =
+  alphaEq e1 e2 >>= \case
+    True -> return True
+    False -> alphaElem e1 rest
+
 instance AlphaEqV Name
 instance AlphaEqE (Name c) where
   alphaEqE v1 v2 = do
@@ -1004,6 +1011,17 @@ instance OutReader e m => OutReader e (EnvReaderT v m i) where
   askOutReader = EnvReaderT $ ReaderT $ const askOutReader
   localOutReader e (EnvReaderT (ReaderT f)) = EnvReaderT $ ReaderT $ \env ->
     localOutReader e $ f env
+
+instance (Monad1 m, Alternative (m n)) => Alternative (OutReaderT e m n) where
+  empty = OutReaderT $ lift empty
+  OutReaderT (ReaderT f1) <|> OutReaderT (ReaderT f2) =
+    OutReaderT $ ReaderT \env ->
+      f1 env <|> f2 env
+
+instance Searcher1 m => Searcher (OutReaderT e m n) where
+  OutReaderT (ReaderT f1) <!> OutReaderT (ReaderT f2) =
+    OutReaderT $ ReaderT \env ->
+      f1 env <!> f2 env
 
 -- === ZipEnvReaderT transformer ===
 

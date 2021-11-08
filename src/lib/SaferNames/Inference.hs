@@ -17,10 +17,10 @@ import Prelude hiding ((.), id)
 import Control.Category
 import Control.Applicative
 import Control.Monad
-import Control.Monad.State (get, modify, runState)
+import Control.Monad.State
 import Control.Monad.Writer.Strict (execWriterT, tell)
 import Control.Monad.Reader
-import Data.Foldable (toList)
+import Data.Foldable (toList, asum)
 import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust)
@@ -32,7 +32,7 @@ import qualified Data.Set as S
 
 import SaferNames.Name
 import SaferNames.Builder
-import SaferNames.Syntax
+import SaferNames.Syntax hiding (State)
 import SaferNames.Type
 import SaferNames.PPrint ()
 import SaferNames.CheapReduction
@@ -1545,15 +1545,23 @@ trySynthDictBlock ty = do
     then return Nothing
     else do
       let dicts = runSyntherM bindings $ buildBlock do
-                      ty'' <- injectM ty'
-                      synthDict ty''
+                    ty'' <- injectM ty'
+                    synthDict ty''
       case dicts of
         [d] -> Just <$> injectM d
         _ -> return Nothing
 
+-- TODO: we'd rather have something like this:
+--   data Givens n = Givens (M.Set (Type n) (Given n))
+-- but we need an Ord or Hashable instance on types
+data Givens n = Givens [Type n] [Given n]
+
+type Given = Block
+
 class (Alternative1 m, Searcher1 m, Builder m)
       => Synther m where
-  tryEachCandidate :: [a] -> m n a
+  getGivens :: m n (Givens n)
+  withGivens :: Givens n -> m n a -> m n a
   -- TODO: just expose `unsafeGetBindings` etc to avoid this silly rank-2 dance
   liftSolverSynth
     :: (SubstE AtomSubstVal e', HoistableE e', InjectableE e, InjectableE e')
@@ -1562,13 +1570,17 @@ class (Alternative1 m, Searcher1 m, Builder m)
     -> m n (e' n)
 
 newtype SyntherM (n::S) (a:: *) = SyntherM
-  { runSyntherM' :: BuilderT [] n a }
+  { runSyntherM' :: OutReaderT Givens (BuilderT []) n a }
   deriving ( Functor, Applicative, Monad, BindingsReader
            , Scopable, ScopeReader, MonadFail
-           , Alternative, Searcher)
+           , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
-  tryEachCandidate xs = SyntherM $ BuilderT $ liftInplace xs
+  getGivens = askOutReader
+
+  withGivens givens cont = do
+    localOutReader givens cont
+
   liftSolverSynth e cont = do
     WithBindings bindings e' <- addBindings e
     let result = runSolverM bindings do
@@ -1588,9 +1600,127 @@ runSyntherM :: Distinct n
             => Bindings n
             -> (forall l. (Distinct l, Ext n l) => SyntherM l (e l))
             -> [e n]
-runSyntherM bindings cont = runBuilderT bindings $ runSyntherM' cont
+runSyntherM bindings cont = do
+  runBuilderT bindings do
+    initGivens <- givensFromBindings
+    runOutReaderT initGivens $ runSyntherM' cont
+
+givensFromBindings :: BindingsReader m => m n (Givens n)
+givensFromBindings = do
+  WithBindings bindings UnitE <- addBindings UnitE
+  let (SynthCandidates givens projs _) = getSynthCandidates bindings
+  let givensBlocks = runBindingsReaderM bindings $ mapM atomAsBlock givens
+  injectM $ getSuperclassClosure bindings projs (Givens [] []) givensBlocks
+
+extendGivens :: Synther m => [Given n] -> m n a -> m n a
+extendGivens newGivens cont = do
+  prevGivens <- getGivens
+  projs <- superclassGetters <$> getSynthCandidatesM
+  finalGivens <- getSuperclassClosureM projs prevGivens newGivens
+  withGivens finalGivens cont
+
+getSuperclassClosureM
+  :: BindingsReader m
+  => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
+getSuperclassClosureM projs givens newGivens = do
+  WithBindings bindings (ListE projs' `PairE` givens' `PairE` ListE newGivens') <-
+    addBindings $ ListE projs `PairE` givens `PairE` ListE newGivens
+  injectM $ getSuperclassClosure bindings projs' givens' newGivens'
+
+getSuperclassClosure
+  :: forall n. Distinct n
+  => Bindings n -> [Atom n] -> Givens n -> [Given n] -> Givens n
+getSuperclassClosure bindings projs givens newGivens =
+  execState (mapM_ visitGiven newGivens) givens
+  where
+    visitGiven :: Given n -> State (Givens n) ()
+    visitGiven x = alreadyVisited x >>= \case
+      True -> return ()
+      False -> do
+        markAsVisited x
+        forM_ projs \proj ->
+          case tryApply bindings proj x of
+            Just parent -> visitGiven parent
+            Nothing -> return ()
+
+    alreadyVisited :: Given n -> State (Givens n) Bool
+    alreadyVisited x = do
+      Givens tys _ <- get
+      return $ runBindingsReaderM bindings do
+        ty <- getType x
+        ty `alphaElem` tys
+
+    markAsVisited :: Given n -> State (Givens n) ()
+    markAsVisited x = do
+      let ty = runBindingsReaderM bindings $ getType x
+      modify \(Givens tys xs) -> Givens (ty:tys) (x:xs)
+
+tryApply :: Distinct n => Bindings n -> Atom n -> Given n -> Maybe (Given n)
+tryApply bindings proj dict = do
+  runBuilderT bindings do
+    Distinct <- getDistinct
+    tryApplyM (inject proj) (inject dict)
+
+tryApplyM :: (MonadFail1 m, Builder m)
+          => Atom n -> Given n -> m n (Given n)
+tryApplyM proj dict = do
+  dictTy <- getType dict
+  projTy <- getType proj
+  instantiateProjParams projTy dictTy >>= \case
+    Nothing -> fail "couldn't instantiate params"
+    Just params -> buildBlock do
+      Distinct <- getDistinct
+      instantiated <- naryApp (inject proj) (map inject params)
+      dictAtom <- emitBlock $ inject dict
+      app instantiated dictAtom
+
+-- TODO: we have lots of tedious functions like this one, just for converting
+-- between implicit and explicit handling of bindings. Would we be better of
+-- with something like
+--   `mildlyUnsafeGetBindings :: BindingsReader m => m n (Bindings n)` ?
+instantiateProjParams :: BindingsReader m => Type n -> Type n -> m n (Maybe [Atom n])
+instantiateProjParams projTy dictTy = do
+  WithBindings bindings (PairE projTy' dictTy') <- addBindings $ PairE projTy dictTy
+  let result = runSolverM bindings do
+                 Distinct <- getDistinct
+                 ListE <$> instantiateProjParamsM (inject projTy') (inject dictTy')
+  case result of
+    Success params -> (Just . fromListE) <$> injectM params
+    Failure _ -> return Nothing
+
+instantiateProjParamsM :: Unifier m => Type n -> Type n -> m n [Atom n]
+instantiateProjParamsM projTy dictTy = case projTy of
+  Pi (PiType (PiBinder b argTy ImplicitArrow) _ resultTy) -> do
+    param <- freshInferenceName argTy
+    resultTy' <- applyAbs (Abs b resultTy) param
+    params <- instantiateProjParamsM resultTy' dictTy
+    return $ Var param : params
+  Pi (PiType (PiBinder _ argTy PlainArrow) _ _) -> do
+    unify dictTy argTy
+    return []
+  _ -> error $ "unexpected projection type: " ++ pprint projTy
+
+getGiven :: (Synther m, Emits n) => m n (Atom n)
+getGiven = do
+  Givens _ givens <- getGivens
+  asum $ map emitBlock givens
+
+getInstance :: Synther m => m n (Atom n)
+getInstance = do
+  instances <- instanceDicts <$> getSynthCandidatesM
+  asum $ map pure instances
 
 synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
+synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =
+  buildPureLam (getNameHint b) arr argTy \v -> do
+    piTy' <- injectM piTy
+    (_, resultTy) <- instantiatePi piTy' $ Var v
+    newGivens <- case arr of
+      ClassArrow -> do
+        d <- atomAsBlock $ Var v
+        return [d]
+      _ -> return []
+    extendGivens newGivens $ synthDict resultTy
 synthDict ty = do
   polyDict <- getGiven <|> getInstance
   ty' <- injectM ty
@@ -1626,11 +1756,10 @@ instantiateDictParamsRec monoTy polyTy = case polyTy of
     unify monoTy polyTy
     return ([], [])
 
-getGiven :: Synther m => m n (Atom n)
-getGiven = (lambdaDicts <$> getSynthCandidatesM) >>= tryEachCandidate
+instance GenericE Givens where
+  type RepE Givens = PairE (ListE Type) (ListE Given)
 
-getInstance :: Synther m => m n (Atom n)
-getInstance = (instanceDicts <$> getSynthCandidatesM) >>= tryEachCandidate
+instance InjectableE Givens where
 
 -- === Dictionary synthesis traversal ===
 

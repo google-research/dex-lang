@@ -53,6 +53,7 @@ module SaferNames.Syntax (
     withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
     withFreshNameBinder,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
+    BindingsReaderM, runBindingsReaderM,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
@@ -76,6 +77,7 @@ module SaferNames.Syntax (
 
 import Data.Foldable (toList, fold)
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import qualified Data.List.NonEmpty    as NE
@@ -373,12 +375,12 @@ instance (InjectableE e, BindingsGetter m)
          => BindingsGetter (OutReaderT e m) where
   getBindingsM = OutReaderT $ lift getBindingsM
 
-instance (InjectableE e, ScopeReader m, BindingsExtender m)
+instance (InjectableE e, ScopeReader m, Scopable m)
          => Scopable (OutReaderT e m) where
-  withBindings = withBindingsFromExtender
-  extendNamelessBindings frag cont = do
-    Distinct <- getDistinct
-    extendBindings frag cont
+  -- withBindings = withBindingsFromExtender
+  -- extendNamelessBindings frag cont = do
+  --   Distinct <- getDistinct
+  --   extendBindings frag cont
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
@@ -391,6 +393,10 @@ instance (InjectableE e, ScopeReader m, BindingsExtender m)
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
   BindingsReaderT {runBindingsReaderT' :: ReaderT (DistinctEvidence n, Bindings n) m a }
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
+
+type BindingsReaderM = BindingsReaderT Identity
+runBindingsReaderM :: Distinct n => Bindings n -> BindingsReaderM n a -> a
+runBindingsReaderM bindings m = runIdentity $ runBindingsReaderT bindings m
 
 runBindingsReaderT :: Distinct n => Bindings n -> (BindingsReaderT m n a) -> m a
 runBindingsReaderT bindings cont =
