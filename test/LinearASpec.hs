@@ -68,6 +68,45 @@ spec = do
             Ret [] ["x", "y"])
         ]
 
+    it "accepts llam x. x + 0" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["y"] (LAdd (LVar "x") LZero) $
+            Ret [] ["y"])
+        ]
+
+    it "accepts llam x. x0 + x1" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["x0", "x1"] (Dup (LVar "x")) $
+            LetMixed [] ["y"] (LAdd (LVar "x0") (LVar "x1")) $
+            Ret [] ["y"])
+        ]
+
+    it "accepts llam x. x0 + (x1 + x2)" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["x0", "x"] (Dup (LVar "x")) $
+            LetMixed [] ["x1", "x2"] (Dup (LVar "x")) $
+            LetMixed [] ["y"] (LAdd (LVar "x0") (LAdd (LVar "x1") (LVar "x2"))) $
+            Ret [] ["y"])
+        ]
+
+    it "accepts llam x y. x + y" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["z"] (LAdd (LVar "x") (LVar "y")) $
+            Ret [] ["z"])
+        ]
+
+    it "accepts llam x y. 0" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] [] (Drop (LTuple [LVar "x", LVar "y"])) $
+            LetMixed [] ["z"] LZero $
+            Ret [] ["z"])
+        ]
+
   describe "general type checker" $ do
     it "type checks an application" $ do
       shouldTypeCheck $ Program $ M.fromList
@@ -86,4 +125,11 @@ spec = do
             Ret [] ["z"])
         , ("g", FuncDef [] [("x", FloatType)] (MixedType [] [FloatType]) $
             App "f" [] ["x", "x"])
+        ]
+
+    it "accepts a non-linear scaling" $ do
+      shouldTypeCheck $ Program $ M.fromList
+        [ ("f", FuncDef [("x", FloatType)] [("y", FloatType)] (MixedType [] [FloatType]) $
+            LetMixed [] ["z"] (LScale (Var "x") (LVar "y")) $
+            Ret [] ["z"])
         ]

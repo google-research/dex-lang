@@ -13,9 +13,9 @@ import Data.Map.Strict ((!))
 
 type Var = String
 data MixedType = MixedType [Type] [Type]
-                 deriving Eq
+                 deriving (Eq, Show)
 data Type = FloatType | TupleType [Type]
-            deriving Eq
+            deriving (Eq, Show)
 data Expr = Ret [Var] [Var]
           | LetMixed     [Var] [Var] Expr Expr
           | LetUnpack    [Var]       Var  Expr
@@ -32,7 +32,7 @@ data Expr = Ret [Var] [Var]
           | LTuple [Expr]
           | LAdd   Expr Expr
           | LScale Expr Expr
-          | LZero  [Var]
+          | LZero
           | Dup  Expr
           | Drop Expr
 data UnOp  = Sin | Cos | Exp
@@ -109,7 +109,7 @@ eval prog@(Program defs) env expr = case expr of
     let Result [FloatVal sv] [] = eval prog env se
     let Result [] [FloatVal lv] = eval prog env le
     linResult $ FloatVal $ sv * lv
-  LZero _ -> linResult $ FloatVal 0
+  LZero -> linResult $ FloatVal 0
   Dup   e -> do
     let Result [] [v] = eval prog env e
     Result [] [v, v]
@@ -160,7 +160,7 @@ freeVars expr = case expr of
   LTuple es      -> foldMap freeVars es
   LAdd    le re  -> freeVars le <> freeVars re
   LScale  se le  -> freeVars se <> freeVars le
-  LZero   vs     -> FV mempty $ S.fromList vs
+  LZero          -> mempty
   Dup  e -> freeVars e
   Drop e -> freeVars e
 
@@ -214,6 +214,14 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
         MixedType [ty] [] -> return ty
         _ -> throwError "Tuple: unexpected element type"
     return $ MixedType [TupleType tys] []
+  UnOp _ e -> do
+    typecheckEq tenv e $ MixedType [FloatType] []
+    return $ MixedType [FloatType] []
+  BinOp _ le re -> do
+    ~[lenv, renv] <- splitEnv [le, re]
+    typecheckEq lenv le $ MixedType [FloatType] []
+    typecheckEq renv re $ MixedType [FloatType] []
+    return $ MixedType [FloatType] []
   LTuple exprs -> do
     envs <- splitEnv exprs
     tys <- forM (zip envs exprs) $ \(env, expr) -> do
@@ -224,21 +232,29 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     return $ MixedType [] [TupleType tys]
   LAdd le re -> do
     ~[lenv, renv] <- splitEnv [le, re]
-    lty <- typecheck prog lenv le
-    check "LAdd: expected float" $ lty == (MixedType [] [FloatType])
-    rty <- typecheck prog renv re
-    check "LAdd: expected float" $ rty == (MixedType [] [FloatType])
+    typecheckEq lenv le $ MixedType [] [FloatType]
+    typecheckEq renv re $ MixedType [] [FloatType]
     return $ MixedType [] [FloatType]
+  LScale se le -> do
+    ~[senv, lenv] <- splitEnv [se, le]
+    typecheckEq senv se $ MixedType [FloatType] []
+    typecheckEq lenv le $ MixedType [] [FloatType]
+    return $ MixedType [] [FloatType]
+  LZero -> do
+    check "LZero: non-empty environment" $ null env && null linEnv
+    return $ MixedType [] [FloatType]
+  Dup e -> do
+    ty <- typecheck prog tenv e
+    case ty of
+      MixedType [] [lty] -> return $ MixedType [] [lty, lty]
+      _ -> throwError "Incorrect type in Dup"
+  Drop e -> do
+    _ <- typecheck prog tenv e
+    return $ MixedType [] []
   _ -> undefined
   -- TODO:
   -- LetUnpack    [Var]       Var  Expr
   -- LetUnpackLin [Var]       Var  Expr
-  -- UnOp  UnOp  Expr
-  -- BinOp BinOp Expr Expr
-  -- LScale Expr Expr
-  -- LZero  [Var]
-  -- Dup  Expr
-  -- Drop Expr
   where
     splitEnv :: [Expr] -> Either String [TypeEnv]
     splitEnv exprs = do
@@ -248,6 +264,11 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
       check "unbound or unconsumed linear variable found" $ fold freeLin == M.keysSet linEnv
       return $ zip free freeLin <&> \(f, fl) ->
         (env `M.restrictKeys` f, linEnv `M.restrictKeys` fl)
+
+    typecheckEq :: TypeEnv -> Expr -> MixedType -> Either String ()
+    typecheckEq te expr ty = do
+      ty' <- typecheck prog te expr
+      check ("expected " ++ show ty ++ ", got " ++ show ty') $ ty == ty'
 
 isFuncTypeCorrect :: Program -> FuncName -> Bool
 isFuncTypeCorrect prog@(Program funcMap) name = case typecheck prog env body of
