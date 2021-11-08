@@ -400,7 +400,7 @@ def withReader
       : {|eff} a =
     runReader init action
 
-def MonoidLifter (b:Type) (w:Type) : Type = h:Type -> AccumMonoid h b ?=> AccumMonoid h w
+def MonoidLifter (b:Type) (w:Type) : Type = h:Type ?-> AccumMonoid h b ?=> AccumMonoid h w
 
 def runAccum
       (mlift:MonoidLifter b w) ?=>
