@@ -15,7 +15,7 @@ module SaferNames.GenericTraversal
 import SaferNames.Name
 import SaferNames.Builder
 import SaferNames.Syntax
-import SaferNames.PPrint ()
+import SaferNames.PPrint
 
 import LabeledItems
 
@@ -72,8 +72,17 @@ traverseAtomDefault atom = case atom of
     items' <- mapM tge items
     rest'  <- mapM substM rest
     return $ RecordTy $ Ext items' rest'
+  Variant (Ext types rest) label i value -> do
+    types' <- mapM tge types
+    rest'  <- mapM substM rest
+    value' <- tge value
+    return $ Variant (Ext types' rest') label i value'
+  VariantTy (Ext items rest) -> do
+    items' <- mapM tge items
+    rest'  <- mapM substM rest
+    return $ VariantTy $ Ext items' rest'
   ProjectElt _ _ -> substM atom
-  _ -> error "todo"
+  _ -> error $ "not implemented: " ++ pprint atom
 
 tge :: (GenericallyTraversableE e, GenericTraverser m) => e i -> m i o (e o)
 tge = traverseGenericE
