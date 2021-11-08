@@ -34,6 +34,8 @@ traverseExprDefault expr = case expr of
   Atom x  -> Atom <$> tge x
   Op  op  -> Op   <$> mapM tge op
   Hof hof -> Hof  <$> mapM tge hof
+  Case scrut alts resultTy ->
+    Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy
 
 traverseAtomDefault :: GenericTraverser m => Atom i -> m i o (Atom o)
 traverseAtomDefault atom = case atom of
@@ -105,6 +107,19 @@ traverseDeclNest (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   expr' <- traverseExpr expr
   v <- emitDecl (getNameHint b) ann expr'
   extendEnv (b @> v) $ traverseDeclNest rest cont
+
+traverseAlt
+  :: GenericTraverser m
+  => Alt i
+  -> m i o (Alt o)
+traverseAlt (Abs Empty body) = Abs Empty <$> tge body
+traverseAlt (Abs (Nest (b:>ty) bs) body) = do
+  ty' <- tge ty
+  Abs b' (Abs bs' body') <-
+    buildAbs ty' \v -> do
+      extendRenamer (b@>v) $
+        traverseAlt $ Abs bs body
+  return $ Abs (Nest b' bs') body'
 
 -- === Faking SubstE ===
 
