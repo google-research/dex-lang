@@ -680,10 +680,10 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   allowed <- getAllowedEffects
   dropSubst $
-    refreshBinders regionBinder \regionBinder' ->
+    refreshBinders regionBinder \regionBinder' -> do
       refreshBinders refBinder \_ -> do
         allowed'   <- injectM allowed
-        eff'       <- injectM eff
+        eff'       <- substM eff
         regionName <- injectM $ binderName regionBinder'
         withAllowedEffects allowed' $
           extendAllowedEffect (RWSEffect rws regionName) $
@@ -926,12 +926,13 @@ checkUnOp op x = do
 -- dependency cycle. And we intend to make index sets a user-defined thing soon
 -- anyway.
 
-indices :: BindingsReader m => Type n -> m n [Atom n]
+indices :: forall n m. BindingsReader m => Type n -> m n [Atom n]
 indices ty = do
   Distinct <- getDistinct
-  case hoistToTop ty of
-    Just ty' -> return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
-    Nothing -> error "can't get index literals from type with free vars"
+  withExtEvidence (absurdExtEvidence :: ExtEvidence VoidS n) do
+    case hoistToTop ty of
+      Just ty' -> return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
+      Nothing -> error "can't get index literals from type with free vars"
 
 litIdxSetSize :: Type VoidS -> Int32
 litIdxSetSize (TC ty) = case ty of

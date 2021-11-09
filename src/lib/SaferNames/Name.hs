@@ -2026,7 +2026,6 @@ instance HasNameColor (Name c n) c where
 -- create one from nothing when we need to.
 class    (ExtEnd n => ExtEnd l) => Ext n l
 instance (ExtEnd n => ExtEnd l) => Ext n l
-instance ExtEnd VoidS => ExtEnd n
 
 -- ExtEnd is just a dummy class we use to encode the transitivity and
 -- reflexivity of `Ext` in a way that GHC understands.

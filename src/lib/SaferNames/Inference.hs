@@ -373,8 +373,9 @@ instance HoistableE e => HoistableE (HoistedSolverState e) where
 
 dceIfSolved :: (HoistableE e, SubstE AtomSubstVal e)
             => NameBinder AtomNameC n l -> HoistedSolverState e l -> Maybe (HoistedSolverState e n)
-dceIfSolved b (HoistedSolverState infVars defaults subst result) =
-  case deleteFromSubst subst (inject $ binderName b) of
+dceIfSolved b (HoistedSolverState infVars defaults subst result) = do
+  let v = withExtEvidence infVars $ inject $ binderName b
+  case deleteFromSubst subst v of
     Just subst' ->
       -- do we need to zonk here? (if not, say why not)
       case hoist b (HoistedSolverState infVars defaults subst' result) of
