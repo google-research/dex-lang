@@ -60,7 +60,8 @@ runMode evalMode preludeFile opts = do
   key <- case preludeFile of
            Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
            Just path -> show <$> getModificationTime path
-  env <- cachedWithSnapshot "prelude" key $
+  env <- cachedWithSnapshot "prelude" key do
+    putStrLn "Compiling the prelude. This may take some time."
     execInterblockM opts initTopState $ evalPrelude preludeFile
   case evalMode of
     ReplMode prompt -> do
