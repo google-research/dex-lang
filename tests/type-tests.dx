@@ -100,12 +100,15 @@ xr = map IToF arr
 
 :t [1, [2]]
 > Type error:Couldn't synthesize a class dictionary for: (FromInteger ((Fin 1) => Int32))
+>
+> :t [1, [2]]
+>     ^
 
 :t [[1, 2], [3, 4]]
 > ((Fin 2) => (Fin 2) => Int32)
 
 :t [[1, 2], [3]]
-> Type error:Table literal has 1 elements, but its inferred index set (((Fin 2) => Int32)) has a size of 2
+> Type error:Table type doesn't match annotation
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -243,7 +246,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > Type error:
 > Expected: (a & b)
 >   Actual: (NewPair Int32 Float32)
-> (Solving for: [a:Type, b:Type])
+> (Solving for: [a, b])
 >
 > :p fst newPair
 >        ^^^^^^^
