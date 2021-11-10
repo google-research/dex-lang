@@ -259,7 +259,17 @@ buildBlockAux cont = do
     return $ result `PairE` ty `PairE` LiftE aux
   let (result `PairE` ty `PairE` LiftE aux) = results
   ty' <- liftHoistExcept $ hoist decls ty
-  return (Block ty' decls $ Atom result, aux)
+  Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
+  return (Block ty' decls' result', aux)
+
+inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
+inlineLastDecl Empty result = Abs Empty result
+inlineLastDecl (Nest (Let b (DeclBinding _ _ expr)) Empty) (Atom (Var v))
+  | v == binderName b = Abs Empty expr
+inlineLastDecl (Nest decl rest) result =
+  case inlineLastDecl rest result of
+   Abs decls' result' ->
+     Abs (Nest decl decls') result'
 
 buildBlockReduced
   :: Builder m
