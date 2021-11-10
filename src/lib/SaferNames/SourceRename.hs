@@ -116,15 +116,19 @@ instance SourceRenamableE (SourceNameOr UVar) where
       Just (EnvVal SuperclassNameRep _) -> error "Shouldn't find these in source map"
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
+lookupSourceName :: Renamer m => SourceName -> m n (EnvVal Name n)
+lookupSourceName v = do
+  SourceMap sourceMap <- askSourceMap
+  case M.lookup v sourceMap of
+    Nothing     -> throw UnboundVarErr $ pprint v
+    Just envVal -> return envVal
+
 instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
   sourceRenameE (SourceName sourceName) = do
-    SourceMap sourceMap <- askSourceMap
-    case M.lookup sourceName sourceMap of
-      Nothing    -> throw UnboundVarErr $ pprint sourceName
-      Just (EnvVal rep val) ->
-        case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
-          Just ColorsEqual -> return $ InternalName val
-          Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
+    lookupSourceName sourceName >>= \case
+      EnvVal rep val -> case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
+        Just ColorsEqual -> return $ InternalName val
+        Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
@@ -303,8 +307,10 @@ instance SourceRenamableE e => SourceRenamableE (ListE e) where
   sourceRenameE (ListE xs) = ListE <$> mapM sourceRenameE xs
 
 instance SourceRenamableE UMethodDef where
-  sourceRenameE (UMethodDef v expr) =
-    UMethodDef <$> sourceRenameE v <*> sourceRenameE expr
+  sourceRenameE (UMethodDef ~(SourceName v) expr) = do
+    lookupSourceName v >>= \case
+      EnvVal MethodNameRep v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
+      _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
   sourceRenameB (Nest b bs) =
