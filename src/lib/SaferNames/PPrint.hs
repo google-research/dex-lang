@@ -204,8 +204,10 @@ forStr (RegularFor Rev) = "rof"
 forStr ParallelFor      = "pfor"
 
 instance Pretty (PiType n) where
-  pretty (PiType (PiBinder b ty arr) _ body) = let
-    prettyBinder = parens $ p (b:>ty)
+  pretty (PiType (PiBinder b ty arr) eff body) = let
+    prettyBinder = if binderName b `isFreeIn` PairE eff body
+                     then parens $ p (b:>ty)
+                     else p ty
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
