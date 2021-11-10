@@ -57,7 +57,7 @@ import Err
 
 -- === Ordinary (local) builder class ===
 
-class (BindingsReader m, Scopable m, MonadFail1 m)
+class (BindingsReader m, Scopable m, Fallible1 m)
       => Builder (m::MonadKind1) where
   emitDecl
     :: (Builder m, Emits n)
@@ -169,7 +169,7 @@ newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
            , CtxReader, ScopeReader, Alternative, Searcher, MonadWriter w)
 
 runBuilderT
-  :: (MonadFail m, Distinct n)
+  :: (Fallible m, Distinct n)
   => Bindings n
   -> (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
   -> m (e n)
@@ -179,7 +179,7 @@ runBuilderT bindings cont = do
     Empty -> return result
     _ -> error "shouldn't have produced any decls"
 
-instance MonadFail m => Builder (BuilderT m) where
+instance Fallible m => Builder (BuilderT m) where
   buildScopedGeneral ab cont = BuilderT do
     scopedResult <- scopedInplaceGeneral
       (\bindings b -> bindings `extendOutMap` boundBindings b)
@@ -192,11 +192,11 @@ instance MonadFail m => Builder (BuilderT m) where
     BuilderT $ emitInplace hint (DeclBinding ann ty expr) \b rhs ->
       Nest (Let b rhs) Empty
 
-instance MonadFail m => BindingsReader (BuilderT m) where
+instance Fallible m => BindingsReader (BuilderT m) where
   addBindings e = BuilderT $
     withInplaceOutEnv e \bindings e' -> WithBindings bindings e'
 
-instance MonadFail m => Scopable (BuilderT m) where
+instance Fallible m => Scopable (BuilderT m) where
   withBindings ab cont = do
     Abs b (Abs Empty result) <- buildScopedGeneral ab \x -> cont x
     return $ Abs b result

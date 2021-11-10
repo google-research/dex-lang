@@ -289,6 +289,18 @@ instance Searcher [] where
 instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
   WriterT m1 <!> WriterT m2 = WriterT (m1 <!> m2)
 
+instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
+  throwErrs errs = lift $ throwErrs errs
+  addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
+
+instance Fallible [] where
+  throwErrs _ = []
+  addErrCtx _ m = m
+
+instance Fallible Maybe where
+  throwErrs _ = Nothing
+  addErrCtx _ m = m
+
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
 

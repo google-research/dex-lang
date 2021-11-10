@@ -62,7 +62,7 @@ module SaferNames.Name (
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
   hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, liftHoistExceptErr, abstractFreeVars,
+  HoistExcept (..), liftHoistExcept, abstractFreeVars,
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), fromEnvVal,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
@@ -2160,18 +2160,9 @@ class BindsNames b => HoistableB (b::B) where
 
 data HoistExcept a = HoistSuccess a | HoistFailure [RawName]
 
--- TODO: most of the time we want the monadic version, so we end up calling
--- `liftHoistExcept . hoist` . If we had a usable scope-parameterized MaybeT
--- transformer then we could make the monadic hoist the main version, and drop
--- out of it as needed.
-liftHoistExcept :: MonadFail m => HoistExcept a -> m a
+liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
-liftHoistExcept (HoistFailure vs) = fail $ "Escaped names: " ++ pprint vs
-
--- TODO: can we avoid having both this version and the MonadFail version?
-liftHoistExceptErr :: Fallible m => HoistExcept a -> m a
-liftHoistExceptErr (HoistSuccess x) = return x
-liftHoistExceptErr (HoistFailure vs) = throw EscapedNameErr (pprint vs)
+liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
 
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =

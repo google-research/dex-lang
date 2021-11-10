@@ -966,7 +966,7 @@ litFromOrdinal ty i = case ty of
 
 -- === various helpers for querying types ===
 
-getBaseMonoidType :: MonadFail1 m => ScopeReader m => Type n -> m n (Type n)
+getBaseMonoidType :: Fallible1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
   Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
@@ -1055,7 +1055,7 @@ labeledRowDifference (Ext (LabeledItems items) rest)
   return $ Ext (LabeledItems diffitems) diffrest
 
 
-projectLength :: (MonadFail1 m, ScopeReader m) => Type n -> m n Int
+projectLength :: (Fallible1 m, ScopeReader m) => Type n -> m n Int
 projectLength ty = case ty of
   TypeCon (_, def) params -> do
     [DataConDef _ (Abs bs UnitE)] <- applyDataDefParams def params

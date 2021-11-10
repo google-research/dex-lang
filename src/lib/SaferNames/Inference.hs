@@ -343,7 +343,7 @@ hoistInfState scope (PairB b (InfOutFrag emissions defaults subst)) result = do
     HoistedSolverState infVars defaults' subst' (DistinctAbs decls result') <-
       hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions
                        defaults subst result
-    swapped <- liftHoistExceptErr $ exchangeBs $
+    swapped <- liftHoistExcept $ exchangeBs $
                  PairB b (PairB infVars (LiftB (PairE defaults' subst')))
     PairB (PairB infVars' (LiftB (PairE defaults'' subst''))) b' <- return swapped
     -- TODO: do we need to zonk here so that any type annotations in b' get
@@ -403,9 +403,9 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
       LeftE emission -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
-        PairB infVars' (b':>emission') <- liftHoistExceptErr $
+        PairB infVars' (b':>emission') <- liftHoistExcept $
                                             exchangeBs (PairB (b:>emission) infVars)
-        subst'' <- liftHoistExceptErr $ hoist b' subst'
+        subst'' <- liftHoistExcept $ hoist b' subst'
         let defaults'' = hoistDefaults b' defaults'
         withSubscopeDistinct b' $ do
             let scope' = scope `extendOutMap` toScopeFrag infVars'
@@ -1601,7 +1601,7 @@ class (Alternative1 m, Searcher1 m, Builder m)
 newtype SyntherM (n::S) (a:: *) = SyntherM
   { runSyntherM' :: OutReaderT Givens (BuilderT (WriterT DerivationKind [])) n a }
   deriving ( Functor, Applicative, Monad, BindingsReader
-           , Scopable, ScopeReader, MonadFail
+           , Scopable, ScopeReader, MonadFail, Fallible
            , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
