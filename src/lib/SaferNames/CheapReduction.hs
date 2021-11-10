@@ -71,7 +71,7 @@ cheapReduceAtomName v = do
   v' <- substM v
   lookupBindings v' >>= \case
     -- TODO: worry about effects!
-    AtomNameBinding (LetBound (DeclBinding PlainLet _ expr)) -> do
+    AtomNameBinding (LetBound (DeclBinding _ _ expr)) -> do
       expr' <- dropSubst $ cheapReduceE expr
       case fromAtomicExpr expr' of
         Nothing -> return $ Var v'
@@ -109,6 +109,10 @@ instance CheaplyReducible Expr where
       runFallibleT1 (trySynthDictBlock ty') >>= \case
         Success (Block _ Empty d) -> return d
         _ -> return $ Op $ SynthesizeDict ctx ty'
+    -- TODO: Other casts?
+    -- TODO: Make sure that this wraps correctly
+    Op (CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit v)))) ->
+      return $ Atom $ Con $ Lit $ Int32Lit $ fromIntegral v
     _ -> substM expr
 
 instance CheaplyReducible Block where
