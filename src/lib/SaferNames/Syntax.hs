@@ -1909,11 +1909,21 @@ instance HasNameHint (UBinder c n l) where
     UIgnore       -> fromString "_"
     UBind v       -> getNameHint v
 
+instance BindsNames (UBinder c) where
+  toScopeFrag (UBindSource _) = emptyOutFrag
+  toScopeFrag (UIgnore)       = emptyOutFrag
+  toScopeFrag (UBind b)       = toScopeFrag b
+
+instance ProvesExt (UBinder c) where
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
     UBindSource _ -> emptyInFrag
     UIgnore       -> emptyInFrag
     UBind b'      -> b' @> x
+
+instance ProvesExt (UAnnBinder c) where
+instance BindsNames (UAnnBinder c) where
+  toScopeFrag (UAnnBinder b _) = toScopeFrag b
 
 instance BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x

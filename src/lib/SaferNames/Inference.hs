@@ -226,11 +226,12 @@ zonkUnsolvedBindings ss unsolved bindings =
         tell $ UnsolvedBindings $ S.singleton v
 
 hasInferenceVars :: HoistableE e => Bindings n -> e n -> Bool
-hasInferenceVars bs e = any isInferenceVar $ freeVarsList AtomNameRep e
-  where isInferenceVar v =
-          case lookupBindingsPure bs v of
-            AtomNameBinding (SolverBound _) -> True
-            _                               -> False
+hasInferenceVars bs e = any (isInferenceVar bs) $ freeVarsList AtomNameRep e
+
+isInferenceVar :: Bindings n -> AtomName n -> Bool
+isInferenceVar bs v = case lookupBindingsPure bs v of
+  AtomNameBinding (SolverBound _) -> True
+  _                               -> False
 
 instance ExtOutMap InfOutMap InfOutFrag where
   extendOutMap infOutMap (InfOutFrag em ds solverSubst) = do
@@ -1370,11 +1371,12 @@ constrainEq :: Inferer m => Type o -> Type o -> m i o ()
 constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
+  Abs infVars (PairE t1Pretty t2Pretty) <- renameForPrinting $ PairE t1' t2'
   let msg =   "Expected: " ++ pprint t1Pretty
          ++ "\n  Actual: " ++ pprint t2Pretty
-         ++ (if null infVars then "" else
-               "\n(Solving for: " ++ pprint infVars ++ ")")
+         ++ (case infVars of
+               Empty -> ""
+               _ -> "\n(Solving for: " ++ pprint (nestToList pprint infVars) ++ ")")
   void $ addContext msg $ liftSolverM $ unify t1' t2'
 
 class (Alternative1 m, Searcher1 m, Fallible1 m, Solver m) => Unifier m
@@ -1522,8 +1524,25 @@ freshType k = Var <$> freshInferenceName k
 freshEff :: Solver m => m n (EffectRow n)
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
-renameForPrinting :: (Type n, Type n) -> ((Type n, Type n), [AtomName n])
-renameForPrinting (t1, t2) = ((t1, t2), []) -- TODO!
+renameForPrinting :: (BindingsReader m, HoistableE e, InjectableE e, SubstE Name e)
+                  => e n -> m n (Abs (Nest (NameBinder AtomNameC)) e n)
+renameForPrinting e = do
+  WithBindings bs e' <- addBindings e
+  injectM $ renameForPrinting' bs e'
+
+renameForPrinting' :: (Distinct n, HoistableE e, InjectableE e, SubstE Name e)
+                   => Bindings n -> e n -> Abs (Nest (NameBinder AtomNameC)) e n
+renameForPrinting' bindings e = do
+  let infVars = filter (isInferenceVar bindings) $ freeVarsList AtomNameRep e
+  let ab = abstractFreeVars infVars e
+  let scope = toScope bindings
+  let hints = take (length infVars) $ map fromString $
+                map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
+  withManyFresh hints AtomNameRep scope \bs' ->
+    runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
+      ab' <- injectM ab
+      e' <- applyNaryAbs ab' $ nestToList (inject . nameBinderName) bs'
+      return $ Abs bs' e'
 
 -- === dictionary synthesis ===
 

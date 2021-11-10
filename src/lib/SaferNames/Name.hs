@@ -35,7 +35,7 @@ module SaferNames.Name (
   LiftB, pattern LiftB,
   MaybeE, pattern JustE, pattern NothingE, MaybeB, pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
-  runScopeReaderT, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
+  runScopeReaderT, runScopeReaderM, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2,
@@ -44,7 +44,7 @@ module SaferNames.Name (
   applyAbs, applySubst, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, alphaElem, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
-  withFreshM, withFreshLike, inject, injectM, (!), (<>>),
+  withFreshM, withFreshLike, inject, injectM, (!), (<>>), withManyFresh,
   envFragAsScope,
   EmptyAbs, pattern EmptyAbs, SubstVal (..),
   NameGen (..), fmapG, NameGenT (..), fmapNest, forEachNestItem, forEachNestItemM,
@@ -61,7 +61,7 @@ module SaferNames.Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
-  hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
+  hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..), abstractFreeVars,
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   withDistinctEvidence, getDistinctEvidence,
@@ -687,9 +687,12 @@ nestLength :: Nest b n l -> Int
 nestLength Empty = 0
 nestLength (Nest _ rest) = 1 + nestLength rest
 
-nestToList :: (forall n' l'. b n' l' -> a) -> Nest b n l -> [a]
+nestToList :: BindsNames b
+           => (forall n' l'. Ext l' l => b n' l' -> a)
+           -> Nest b n l -> [a]
 nestToList _ Empty = []
-nestToList f (Nest b rest) = f b : nestToList f rest
+nestToList f (Nest b rest) = b' : nestToList f rest
+  where b' = withExtEvidence (toExtEvidence rest) $ f b
 
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs
@@ -708,6 +711,15 @@ getDistinct :: ScopeReader m => m n (DistinctWitness n)
 getDistinct = do
   d <- getDistinctEvidenceM
   return $ withDistinctEvidence d Distinct
+
+withManyFresh :: Distinct n
+              => [NameHint] -> NameColorRep c -> Scope n
+              -> (forall l. (Ext n l, Distinct l) => Nest (NameBinder c) n l -> a) -> a
+withManyFresh [] _ _ cont = cont Empty
+withManyFresh (h:hs) rep scope cont =
+  withFresh h rep scope \b ->
+    withManyFresh hs rep (scope `extendOutMap` toScopeFrag b) \bs ->
+      cont $ Nest b bs
 
 -- === versions of monad constraints with scope params ===
 
@@ -914,9 +926,14 @@ newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
   ScopeReaderT {runScopeReaderT' :: ReaderT (DistinctEvidence n, Scope n) m a}
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
+type ScopeReaderM = ScopeReaderT Identity
+
 runScopeReaderT :: Distinct n => Scope n -> ScopeReaderT m n a -> m a
 runScopeReaderT scope m =
   flip runReaderT (getDistinctEvidence, scope) $ runScopeReaderT' m
+
+runScopeReaderM :: Distinct n => Scope n -> ScopeReaderM n a -> a
+runScopeReaderM scope m = runIdentity $ runScopeReaderT scope m
 
 instance Monad m => ScopeReader (ScopeReaderT m) where
   getDistinctEvidenceM = ScopeReaderT $ asks fst
@@ -2184,6 +2201,10 @@ hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
+abstractFreeVars :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
+abstractFreeVars vs e = Abs bs e
+  where bs = unsafeCoerceB $ unsafeListToNest $ map (UnsafeMakeBinder . unsafeCoerceE) vs
+
 instance HoistableB (NameBinder c) where
   freeVarsB _ = mempty
 
@@ -2362,12 +2383,12 @@ instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
         Empty -> []
         Nest b rest -> unsafeCoerceB b : listFromNest rest
 
-  to = listToNest . to
-    where
-      listToNest :: [b UnsafeS UnsafeS] -> Nest b n l
-      listToNest l = case l of
-        [] -> unsafeCoerceB Empty
-        b:rest -> Nest (unsafeCoerceB b) $ listToNest rest
+  to = unsafeCoerceB . unsafeListToNest . to
+
+unsafeListToNest :: [b UnsafeS UnsafeS] -> Nest b UnsafeS UnsafeS
+unsafeListToNest l = case l of
+  [] -> unsafeCoerceB Empty
+  b:rest -> Nest (unsafeCoerceB b) $ unsafeListToNest rest
 
 instance NameColor c => Generic (NameColorRep c) where
   type Rep (NameColorRep c) = Rep ()
