@@ -343,16 +343,14 @@ hoistInfState scope (PairB b (InfOutFrag emissions defaults subst)) result = do
     HoistedSolverState infVars defaults' subst' (DistinctAbs decls result') <-
       hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions
                        defaults subst result
-    case exchangeBs $ PairB b (PairB infVars (LiftB (PairE defaults' subst'))) of
-      -- TODO: better error message
-      Nothing -> throw TypeErr "Leaked local variable"
-      Just (PairB (PairB infVars' (LiftB (PairE defaults'' subst''))) b') -> do
-        -- TODO: do we need to zonk here so that any type annotations in b' get
-        -- substituted? Or do we leave that up to the caller? Unlike with the
-        -- decls, we don't need to do it for the sake of our local leak
-        -- checking.
-        return $ Abs (InfOutFrag (infNamesToEmissions infVars') defaults'' subst'') $
-                   Abs (PairB b' decls) result'
+    swapped <- liftHoistExceptErr $ exchangeBs $
+                 PairB b (PairB infVars (LiftB (PairE defaults' subst')))
+    PairB (PairB infVars' (LiftB (PairE defaults'' subst''))) b' <- return swapped
+    -- TODO: do we need to zonk here so that any type annotations in b' get
+    -- substituted? Or do we leave that up to the caller? Unlike with the decls,
+    -- we don't need to do it for the sake of our local leak checking.
+    return $ Abs (InfOutFrag (infNamesToEmissions infVars') defaults'' subst'') $
+               Abs (PairB b' decls) result'
 
 data HoistedSolverState e n where
   HoistedSolverState
@@ -375,8 +373,8 @@ dceIfSolved b (HoistedSolverState infVars defaults subst result) = do
     Just subst' ->
       -- do we need to zonk here? (if not, say why not)
       case hoist b (HoistedSolverState infVars defaults subst' result) of
-        Just hoisted -> Just hoisted
-        Nothing -> error "this shouldn't happen"
+        HoistSuccess hoisted -> Just hoisted
+        HoistFailure _ -> error "this shouldn't happen"
     Nothing -> Nothing
 
 hoistInfStateRec :: ( Fallible m, Distinct n, Distinct l
@@ -400,14 +398,14 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
                                                  defaults' subst' result
       RightE (SkolemBound _) ->
         case hoist b solverState of
-          Just hoisted -> return hoisted
-          Nothing -> error "probably shouldn't happen?"
+          HoistSuccess hoisted -> return hoisted
+          HoistFailure _ -> error "probably shouldn't happen?"
       LeftE emission -> do
         -- TODO: avoid this repeated traversal here and in `tryHoistExpr`
         --       above by using `WithRestrictedScope` to cache free vars.
-        PairB infVars' (b':>emission') <- liftMaybeErr TypeErr "Leaked local variable" $
+        PairB infVars' (b':>emission') <- liftHoistExceptErr $
                                             exchangeBs (PairB (b:>emission) infVars)
-        subst'' <- liftMaybeErr TypeErr "Leaked local variable" $ hoist b' subst'
+        subst'' <- liftHoistExceptErr $ hoist b' subst'
         let defaults'' = hoistDefaults b' defaults'
         withSubscopeDistinct b' $ do
             let scope' = scope `extendOutMap` toScopeFrag infVars'
@@ -420,8 +418,8 @@ hoistDefaults :: BindsNames b => b n l -> Defaults l -> Defaults n
 hoistDefaults b (Defaults defaults) =
   flip foldMap defaults \(t1, t2) ->
     case hoist b t1 of
-      Nothing -> Defaults []
-      Just t1' -> Defaults [(t1', t2)]
+      HoistFailure _   -> Defaults []
+      HoistSuccess t1' -> Defaults [(t1', t2)]
 
 infNamesToEmissions :: InferenceNameBinders n l -> InfEmissions n l
 infNamesToEmissions emissions =
@@ -1269,8 +1267,9 @@ runSolverM bindings cont = do
     Nothing -> throw TypeErr "No solution"
     Just (DistinctAbs bs result) ->
       case hoist bs result of
-        Nothing -> throw EscapedNameErr "Unsolved vars in runSolverM"
-        Just result' -> return result'
+        HoistFailure vs ->
+          throw EscapedNameErr $ "Unsolved vars in runSolverM: " ++ pprint vs
+        HoistSuccess result' -> return result'
 
 instance BindingsReader SolverM where
   addBindings e = SolverM do
@@ -1779,12 +1778,12 @@ instantiateDictParamsRec monoTy polyTy = case polyTy of
     return (Var param : params, dictTys)
   Pi (PiType (PiBinder b dictTy ClassArrow) _ resultTy) -> do
     case fromConstAbs (Abs b resultTy) of
-      Just resultTy' -> do
+      HoistSuccess resultTy' -> do
         (params, dictTys) <- instantiateDictParamsRec monoTy resultTy'
         case params of
           [] -> return ([], dictTy:dictTys)
           _ -> error "Not implemented: interleaved params and class constraints"
-      Nothing -> error "shouldn't have dependent class arrow"
+      HoistFailure _ -> error "shouldn't have dependent class arrow"
   _ -> do
     unify monoTy polyTy
     return ([], [])

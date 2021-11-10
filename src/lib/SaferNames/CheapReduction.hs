@@ -127,8 +127,8 @@ instance CheaplyReducible Block where
       refreshBinders2 decls do
         cheapReduceE result
     case hoist decls' result' of
-      Just result'' -> return $ Block ty' Empty result''
-      Nothing       -> return $ Block ty' decls' result'
+      HoistSuccess result'' -> return $ Block ty' Empty result''
+      HoistFailure _        -> return $ Block ty' decls' result'
 
 instance (CheaplyReducible e1, CheaplyReducible e2)
          => CheaplyReducible (PairE e1 e2) where
@@ -139,4 +139,6 @@ cheapReduceDeclsE
      , CheaplyReducible e, HoistableE e, InjectableE e, SubstE Name e, SubstE AtomSubstVal e)
   => Abs (Nest Decl) e i -> m i o (Maybe (e o))
 cheapReduceDeclsE (Abs decls e) =
-  liftM fromConstAbs $ refreshBinders2 decls $ cheapReduceE e
+  liftM fromConstAbs (refreshBinders2 decls $ cheapReduceE e) >>= \case
+    HoistSuccess result -> return $ Just result
+    HoistFailure _ -> return Nothing

@@ -374,7 +374,7 @@ instance Pretty ErrType where
     MiscErr           -> "Error:"
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
-    EscapedNameErr    -> "Escaped name"
+    EscapedNameErr    -> "Leaked local variables:"
     ModuleImportErr   -> "Module import error"
     MonadFailErr      -> "MonadFail error (internal error)"
 

@@ -264,7 +264,7 @@ instance HasType Atom where
       depTy <- refreshBinders b \b' -> do
         bodyTy <- getTypeE body
         return $ Abs b' bodyTy
-      liftMaybe $ fromConstAbs depTy
+      liftHoistExcept $ fromConstAbs depTy
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -603,7 +603,7 @@ typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ f -> do
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
-    eff' <- liftMaybe $ hoist b eff
+    eff' <- liftHoistExcept $ hoist b eff
     declareEffs eff'
     return $ Pi $ PiType (PiBinder b argTy TabArrow) Pure eltTy
   Tile dim fT fS -> do
@@ -636,18 +636,18 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy tabTy $ mkConsListTy accTys
   While body -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
-    PairE eff' condTy' <- liftMaybe $ hoist b $ PairE eff condTy
+    PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy
     declareEffs eff'
     checkAlphaEq (BaseTy $ Scalar Word8Type) condTy'
     return UnitTy
   Linearize f -> do
     Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
-    b' <- liftMaybe $ hoist binder b
+    b' <- liftHoistExcept $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
   Transpose f -> do
     Pi (PiType (PiBinder binder a LinArrow) Pure b) <- getTypeE f
-    b' <- liftMaybe $ hoist binder b
+    b' <- liftHoistExcept $ hoist binder b
     b' --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f
@@ -667,12 +667,12 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy resultTy stateTy
   RunIO f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftMaybe $ hoist b $ PairE eff resultTy
+    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect IOEffect $ declareEffs eff'
     return resultTy'
   CatchException f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftMaybe $ hoist b $ PairE eff resultTy
+    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
 
@@ -690,8 +690,8 @@ checkRWSAction rws f = do
           extendAllowedEffect (RWSEffect rws regionName) $
             declareEffs eff'
   PiBinder _ (RefTy _ referentTy) _ <- return refBinder
-  referentTy' <- liftMaybe $ hoist regionBinder referentTy
-  resultTy' <- liftMaybe $ hoist (PairB regionBinder refBinder) resultTy
+  referentTy' <- liftHoistExcept $ hoist regionBinder referentTy
+  resultTy' <- liftHoistExcept $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
@@ -703,7 +703,7 @@ checkEmptyNest _  = throw TypeErr "Not empty"
 nonDepBinderNestTypes :: Typer m => Nest Binder o o' -> m i o [Type o]
 nonDepBinderNestTypes Empty = return []
 nonDepBinderNestTypes (Nest (b:>ty) rest) = do
-  Abs rest' UnitE <- liftMaybe $ hoist b $ Abs rest UnitE
+  Abs rest' UnitE <- liftHoistExcept $ hoist b $ Abs rest UnitE
   restTys <- nonDepBinderNestTypes rest'
   return $ ty : restTys
 
@@ -932,8 +932,9 @@ indices ty = do
   Distinct <- getDistinct
   withExtEvidence (absurdExtEvidence :: ExtEvidence VoidS n) do
     case hoistToTop ty of
-      Just ty' -> return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
-      Nothing -> error "can't get index literals from type with free vars"
+      HoistSuccess ty' ->
+        return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
+      HoistFailure _ -> error "can't get index literals from type with free vars"
 
 litIdxSetSize :: Type VoidS -> Int32
 litIdxSetSize (TC ty) = case ty of
@@ -967,7 +968,7 @@ litFromOrdinal ty i = case ty of
 
 getBaseMonoidType :: MonadFail1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
-  Pi (PiType b _ resultTy) -> liftMaybe $ hoist b resultTy
+  Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]

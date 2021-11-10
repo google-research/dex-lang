@@ -61,7 +61,8 @@ module SaferNames.Name (
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs, refreshAbsM,
-  hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..), abstractFreeVars,
+  hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
+  HoistExcept (..), liftHoistExcept, liftHoistExceptErr, abstractFreeVars,
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), fromEnvVal,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
@@ -470,7 +471,7 @@ substM e = do
   WithScope scope env' <- addScope env
   injectM $ fmapNames scope (env'!) e
 
-fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> Maybe (e n)
+fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
 fromConstAbs (Abs b e) = hoist b e
 
 -- === expresions carrying distinctness constraints ===
@@ -2157,18 +2158,33 @@ class BindsNames b => HoistableB (b::B) where
   default freeVarsB :: (GenericB b, HoistableB (RepB b)) => b n l -> NameSet n
   freeVarsB b = freeVarsB $ fromB b
 
-hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> Maybe (e n)
+data HoistExcept a = HoistSuccess a | HoistFailure [RawName]
+
+-- TODO: most of the time we want the monadic version, so we end up calling
+-- `liftHoistExcept . hoist` . If we had a usable scope-parameterized MaybeT
+-- transformer then we could make the monadic hoist the main version, and drop
+-- out of it as needed.
+liftHoistExcept :: MonadFail m => HoistExcept a -> m a
+liftHoistExcept (HoistSuccess x) = return x
+liftHoistExcept (HoistFailure vs) = fail $ "Escaped names: " ++ pprint vs
+
+-- TODO: can we avoid having both this version and the MonadFail version?
+liftHoistExceptErr :: Fallible m => HoistExcept a -> m a
+liftHoistExceptErr (HoistSuccess x) = return x
+liftHoistExceptErr (HoistFailure vs) = throw EscapedNameErr (pprint vs)
+
+hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
-  if null $ M.intersection frag (freeVarsE e)
-    then Just $ unsafeCoerceE e
-    else Nothing
+  case nameSetRawNames $ M.intersection frag (freeVarsE e) of
+    []          -> HoistSuccess $ unsafeCoerceE e
+    leakedNames -> HoistFailure leakedNames
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
-hoistToTop :: HoistableE e => e n -> Maybe (e VoidS)
+hoistToTop :: HoistableE e => e n -> HoistExcept (e VoidS)
 hoistToTop e =
-  if null $ freeVarsE e
-    then Just $ unsafeCoerceE e
-    else Nothing
+  case nameSetRawNames $ freeVarsE e of
+    []          -> HoistSuccess $ unsafeCoerceE e
+    leakedNames -> HoistFailure leakedNames
 
 injectFromTop :: InjectableE e => e VoidS -> e n
 injectFromTop = unsafeCoerceE
@@ -2186,16 +2202,19 @@ nameSetToList c nameSet =
 toNameSet :: ScopeFrag n l -> NameSet l
 toNameSet (UnsafeMakeScopeFrag s) = fmap unsafeCoerceE s
 
+nameSetRawNames :: NameSet n -> [RawName]
+nameSetRawNames m = M.keys m
+
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
 isFreeIn v e = getRawName v `M.member` freeVarsE e
 
 exchangeBs :: (Distinct l, BindsNames b1, InjectableB b1, HoistableB b2)
               => PairB b1 b2 n l
-              -> Maybe (PairB b2 b1 n l)
+              -> HoistExcept (PairB b2 b1 n l)
 exchangeBs (PairB b1 b2) =
-  if null $ M.intersection frag (freeVarsB b2)
-    then Just $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
-    else Nothing
+  case nameSetRawNames $ M.intersection frag (freeVarsB b2) of
+    []          -> HoistSuccess $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
+    leakedNames -> HoistFailure leakedNames
   where UnsafeMakeScopeFrag frag = toScopeFrag b1
 
 hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n

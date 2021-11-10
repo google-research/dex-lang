@@ -258,7 +258,7 @@ buildBlockAux cont = do
     ty <- getType result
     return $ result `PairE` ty `PairE` LiftE aux
   let (result `PairE` ty `PairE` LiftE aux) = results
-  ty' <- liftMaybe $ hoist decls ty
+  ty' <- liftHoistExcept $ hoist decls ty
   return (Block ty' decls $ Atom result, aux)
 
 buildBlockReduced

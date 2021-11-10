@@ -998,7 +998,7 @@ nonDepPiType arr argTy eff resultTy =
 
 considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
 considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
-  PairE eff' resultTy' <- hoist b (PairE eff resultTy)
+  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
@@ -1006,7 +1006,7 @@ fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
 fromNonDepPiType arr ty = do
   Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
-  PairE eff' resultTy' <- liftMaybe $ hoist b (PairE eff resultTy)
+  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return $ (argTy, eff', resultTy')
 
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
