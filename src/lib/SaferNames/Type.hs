@@ -318,10 +318,11 @@ instance CheckableB Decl where
     checkB (b:>binding) \(b':>binding') -> cont $ Let b' binding'
 
 instance CheckableE DeclBinding where
-  checkE (DeclBinding ann ty expr) = do
+  checkE rhs@(DeclBinding ann ty expr) = addContext msg do
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
     return $ DeclBinding ann ty' expr'
+    where msg = "Checking decl rhs:\n" ++ pprint rhs
 
 instance CheckableE LamBinding where
   checkE (LamBinding arr ty) = do

@@ -52,7 +52,8 @@ module SaferNames.Syntax (
     ToBinding (..), refreshBinders, withFreshBinder,
     withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
     withFreshNameBinder,
-    BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
+    BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
+    updateBindings, runBindingsReaderT,
     BindingsReaderM, runBindingsReaderM,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
@@ -521,6 +522,14 @@ lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c 
 lookupBindings v = do
   WithBindings bindings v' <- addBindings v
   injectM $ lookupBindingsPure bindings v'
+
+lookupSourceMap :: BindingsReader m
+                => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
+lookupSourceMap nameColor sourceName = do
+  WithBindings bindings UnitE <- addBindings UnitE
+  case M.lookup sourceName $ fromSourceMap $ getSourceMap bindings of
+    Just envVal -> Just <$> injectM (fromEnvVal nameColor envVal)
+    Nothing -> return Nothing
 
 lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
 lookupBindingsPure (Bindings bindings _ _ _) v =

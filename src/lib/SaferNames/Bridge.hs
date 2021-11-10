@@ -68,16 +68,16 @@ data JointTopState n = JointTopState
   , topToSafeMap   :: ToSafeEnv n
   , topFromSafeMap :: FromSafeEnv n }
 
-emptyTopStateEx :: D.ProtoludeScope -> TopStateEx
-emptyTopStateEx proto = TopStateEx $ JointTopState
-    (D.emptyTopState proto)
+emptyTopStateEx :: TopStateEx
+emptyTopStateEx = TopStateEx $ JointTopState
+    D.emptyTopState
     S.emptyOutMap
     (ToSafeEnv mempty)
     (FromSafeEnv emptyInMap)
 
 extendTopStateD :: Distinct n => JointTopState n -> D.EvaluatedModule -> TopStateEx
 extendTopStateD jointTopState evaluated = do
-  let D.TopState bindingsD scsD sourceMapD protoD = topStateD jointTopState
+  let D.TopState bindingsD scsD sourceMapD = topStateD jointTopState
   case topStateS jointTopState of
     -- We ignore the effects because there are none at the top level
     S.Bindings bindingsS scsS sourceMapS _ -> do
@@ -94,8 +94,7 @@ extendTopStateD jointTopState evaluated = do
              return $ TopStateEx $ JointTopState
                (D.TopState (bindingsD <> bindingsD')
                            (scsD <> scsD')
-                           (sourceMapD <> sourceMapD')
-                           protoD)
+                           (sourceMapD <> sourceMapD'))
                (S.Bindings (bindingsS `extendOutMap` bindingsFrag)
                            (scsSInj <> scsS')
                            (sourceMapSInj <> sourceMapS')

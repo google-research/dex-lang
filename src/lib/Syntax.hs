@@ -57,7 +57,6 @@ module Syntax (
     BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    ProtoludeScope (..),
     pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
     pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
@@ -213,15 +212,14 @@ data EvaluatedModule =
 data TopState = TopState
   { topBindings        :: Bindings
   , topSynthCandidates :: SynthCandidates
-  , topSourceMap       :: SourceMap
-  , topProtolude       :: ProtoludeScope }
+  , topSourceMap       :: SourceMap }
   deriving (Show, Generic)
-
-emptyTopState :: ProtoludeScope -> TopState
-emptyTopState = TopState mempty mempty mempty
 
 emptyEvaluatedModule :: EvaluatedModule
 emptyEvaluatedModule = EvaluatedModule mempty mempty mempty
+
+emptyTopState :: TopState
+emptyTopState = TopState mempty mempty mempty
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
@@ -660,15 +658,6 @@ ptrSize = 8
 
 vectorWidth :: Int
 vectorWidth = 4
-
--- === protolude ===
-
-data ProtoludeScope = ProtoludeScope
-  { protoludeFromIntegerIface  :: Name
-  , protoludeFromIntegerMethod :: Name
-  }
-  deriving (Show, Eq, Generic)
-
 
 -- === some handy monoids ===
 
@@ -1879,7 +1868,6 @@ instance Store DataConRefBinding
 instance Store SourceMap
 instance Store SynthCandidates
 instance Store SourceNameDef
-instance Store ProtoludeScope
 instance Store TopState
 
 instance IsString UVar where

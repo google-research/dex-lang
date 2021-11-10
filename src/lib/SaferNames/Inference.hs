@@ -640,7 +640,19 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emitOp (VariantLift prev value')
-  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int32Lit $ fromIntegral x
+  UIntLit x  -> do
+    lookupSourceMap MethodNameRep "fromInteger" >>= \case
+      Nothing ->
+        -- fallback for missing protolude
+        matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x
+      Just fromIntMethod -> do
+        ~(MethodBinding _ _ fromInt) <- lookupBindings fromIntMethod
+        fromInt' <- instantiateSigma fromInt
+        let i64Atom = Con $ Lit $ Int64Lit $ fromIntegral x
+        result <- matchRequirement =<< app fromInt' i64Atom
+        resultTy <- getType result
+        addDefault resultTy $ BaseTy (Scalar Int32Type)
+        return result
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
   where
