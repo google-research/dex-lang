@@ -117,11 +117,6 @@ class ( MonadFail2 m, Fallible2 m, Catchable2 m, CtxReader2 m, Builder2 m
       => Inferer (m::MonadKind2) where
   liftSolverM :: SolverM o a -> m i o a
 
-inferSuggestionStrength :: Type n -> SuggestionStrength
-inferSuggestionStrength ty = case hoistToTop ty of
-  Nothing -> Suggest
-  Just _  -> Concrete
-
 -- === Concrete Inferer monad ===
 
 data InfOutMap (n::S) =
@@ -452,15 +447,13 @@ instance Scopable (InfererM i) where
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
-data SuggestionStrength = Suggest | Concrete  deriving Show
-data RequiredTy (e::E) (n::S) = Check SuggestionStrength (e n)
+data RequiredTy (e::E) (n::S) = Check (e n)
                               | Infer
                                 deriving Show
 
 checkSigma :: (Emits o, Inferer m) => UExpr i
-           -> SuggestionStrength
            -> SigmaType o -> m i o (Atom o)
-checkSigma expr reqCon sTy = case sTy of
+checkSigma expr sTy = case sTy of
   Pi piTy@(PiType (PiBinder b _ arrow) _ _)
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _))
@@ -473,8 +466,8 @@ checkSigma expr reqCon sTy = case sTy of
           buildPureLam (getNameHint b)  arrow (piArgType piTy) \x -> do
             piTy' <- injectM piTy
             (Pure, bodyTy) <- instantiatePi piTy' (Var x)
-            checkSigma expr reqCon bodyTy
-  _ -> checkOrInferRho expr (Check reqCon sTy)
+            checkSigma expr bodyTy
+  _ -> checkOrInferRho expr (Check sTy)
 
 inferSigma :: (Emits o, Inferer m) => UExpr i -> m i o (Atom o)
 inferSigma (WithSrcE pos expr) = case expr of
@@ -483,7 +476,7 @@ inferSigma (WithSrcE pos expr) = case expr of
   _ -> inferRho (WithSrcE pos expr)
 
 checkRho :: (Emits o, Inferer m) => UExpr i -> RhoType o -> m i o (Atom o)
-checkRho expr ty = checkOrInferRho expr (Check Suggest ty)
+checkRho expr ty = checkOrInferRho expr (Check ty)
 
 inferRho :: (Emits o, Inferer m) => UExpr i -> m i o (Atom o)
 inferRho expr = checkOrInferRho expr Infer
@@ -516,17 +509,17 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     bindLamPat p v $ checkOrInferRho body reqTy
   ULam lamExpr ->
     case reqTy of
-      Check _ (Pi piTy) -> checkULam lamExpr piTy
-      Check _ _ -> inferULam Pure lamExpr >>= matchRequirement
+      Check (Pi piTy) -> checkULam lamExpr piTy
+      Check _ -> inferULam Pure lamExpr >>= matchRequirement
       Infer   -> inferULam Pure lamExpr
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
     lam <- case reqTy of
-      Check _ (Pi tabPiTy) -> do
+      Check (Pi tabPiTy) -> do
         lamPiTy <- buildForTypeFromTabType allowedEff tabPiTy
         checkULam uLamExpr lamPiTy
-      Check _ _ -> inferULam allowedEff uLamExpr
+      Check _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
     result <- liftM Var $ emit $ Hof $ For (RegularFor dir) lam
     matchRequirement result
@@ -543,14 +536,14 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     piTy  <- addSrcContext (srcPos f) $ fromPiType True arr infTy
     case considerNonDepPiType piTy of
       Just (_, argTy, effs, _) -> do
-        x' <- checkSigma x Suggest argTy
+        x' <- checkSigma x argTy
         addEffects effs
         appVal <- emit $ App f' x'
         instantiateSigma (Var appVal) >>= matchRequirement
       Nothing -> do
         maybeX <- buildBlockReduced do
           argTy' <- injectM $ piArgType piTy
-          checkSigma x Suggest argTy'
+          checkSigma x argTy'
         case maybeX of
           Nothing -> addSrcContext xPos $ do
             throw TypeErr $ "Dependent functions can only be applied to fully " ++
@@ -585,7 +578,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     scrutTy <- getType scrut'
     reqTy' <- case reqTy of
       Infer -> freshType TyKind
-      Check _ req -> return req
+      Check req -> return req
     alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
     scrut'' <- zonk scrut'
     buildSortedCase scrut'' alts' reqTy'
@@ -597,10 +590,10 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     matchRequirement $ TC $ IndexRange n low' high'
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
-    Check _ ty -> freshType ty
+    Check ty -> freshType ty
   UTypeAnn val ty -> do
     ty' <- zonk =<< checkUType ty
-    val' <- checkSigma val (inferSuggestionStrength ty') ty'
+    val' <- checkSigma val ty'
     matchRequirement val'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
@@ -660,7 +653,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     matchRequirement x = return x <*
       case reqTy of
         Infer -> return ()
-        Check _ req -> do
+        Check req -> do
           ty <- getType x
           constrainEq req ty
 
@@ -792,7 +785,7 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
     Nothing -> inferSigma rhs
     Just ty -> do
       ty' <- zonk =<< checkUType ty
-      checkSigma rhs (inferSuggestionStrength ty') ty'
+      checkSigma rhs ty'
   expr <- zonk $ Atom val
   var <- emitDecl (getNameHint p) letAnn expr
   bindLamPat p var cont
@@ -905,7 +898,7 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
      \v -> bindLamPat p v do
         piTy' <- injectM piTy
         (_, resultTy) <- instantiatePi piTy' (Var v)
-        checkSigma body Suggest resultTy
+        checkSigma body resultTy
 
 checkInstanceArgs
   :: (Emits o, Inferer m)
@@ -952,7 +945,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
   when (className /= className') $
     throw TypeErr $ pprint v ++ " is not a method of " ++ pprint className
   let methodTy = methodTys !! i
-  rhs' <- checkSigma rhs Suggest methodTy
+  rhs' <- checkSigma rhs methodTy
   return (i, rhs')
 
 checkUEffRow :: (Emits o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
@@ -1150,14 +1143,14 @@ checkExtLabeledRow (Ext types (Just ext)) = do
 inferTabCon :: (Emits o, Inferer m) => [UExpr i] -> RequiredTy RhoType o -> m i o (Atom o)
 inferTabCon xs reqTy = do
   (tabTy, xs') <- case reqTy of
-    Check Concrete tabTy@(TabTyAbs piTy) -> do
+    Check tabTy@(TabTyAbs piTy) | null $ freeVarsE (piArgType piTy) -> do
       idx <- indices $ piArgType piTy
       -- TODO: Check length!!
       unless (length idx == length xs) $
         throw TypeErr "Table type doesn't match annotation"
       xs' <- forM (zip xs idx) \(x, i) -> do
         (_, xTy) <- instantiatePi piTy i
-        checkOrInferRho x $ Check Concrete xTy
+        checkOrInferRho x $ Check xTy
       return (tabTy, xs')
     _ -> do
       elemTy <- case xs of
@@ -1165,14 +1158,13 @@ inferTabCon xs reqTy = do
         (x:_) -> getType =<< inferRho x
       tabTy <- FixedIntRange 0 (fromIntegral $ length xs) ==> elemTy
       case reqTy of
-        Check Suggest sTy -> addContext context $ constrainEq sTy tabTy
+        Check sTy -> addContext context $ constrainEq sTy tabTy
           where context = "If attempting to construct a fixed-size table not " <>
                           "indexed by 'Fin n' for some n, this error may " <>
                           "indicate there was not enough information to infer " <>
                           "a concrete index set; try adding an explicit " <>
                           "annotation."
         Infer       -> return ()
-        _           -> error "Missing case"
       xs' <- mapM (flip checkRho elemTy) xs
       return (tabTy, xs')
   liftM Var $ emit $ Op $ TabCon tabTy xs'
@@ -1799,6 +1791,8 @@ instantiateDictParamsRec monoTy polyTy = case polyTy of
 
 instance GenericE Givens where
   type RepE Givens = PairE (ListE Type) (ListE Given)
+  fromE (Givens tys givens) = PairE (ListE tys) (ListE givens)
+  toE   (PairE (ListE tys) (ListE givens)) = Givens tys givens
 
 instance InjectableE Givens where
 
