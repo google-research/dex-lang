@@ -288,8 +288,12 @@ instance Pretty (Binding s n) where
       "Method" <+> pretty idx <+> "of" <+> pretty className
 
 instance Pretty (DataDef n) where
-  pretty (DataDef dataDefSourceName _ _) =
-    "Data def:" <+> pretty dataDefSourceName
+  pretty (DataDef name bs cons) =
+    "data" <+> p name <+> p bs <> hardline <> prettyLines cons
+
+instance Pretty (DataConDef n) where
+  pretty (DataConDef name bs) =
+    p name <+> ":" <+> p bs
 
 instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =

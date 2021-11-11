@@ -200,7 +200,7 @@ evalSourceBlock' block = case S.sbContents block of
   S.GetNameType v -> liftPassesM_ False do
     (S.Distinct, topState) <- getTopState
     let bindings = topStateS topState
-    case getSourceNameType bindings v of
+    case S.runBindingsReaderT bindings $ S.sourceNameType v of
       Success ty -> logTop $ TextOut $ pprint ty
       Failure errs -> throwErrs errs
   S.ImportModule moduleName -> do
@@ -228,20 +228,6 @@ requiresBench :: S.SourceBlock -> Bool
 requiresBench block = case S.sbLogLevel block of
   PrintBench _ -> True
   _            -> False
-
--- TODO: expand this to offer information about names besides their type
--- (name color, source location etc.)
-getSourceNameType :: S.Bindings n -> S.SourceName -> S.Except (S.Type n)
-getSourceNameType bindings v = do
-  case M.lookup v $ S.fromSourceMap $ S.getSourceMap bindings of
-    Nothing -> throw UnboundVarErr $ pprint v
-    Just (S.EnvVal _ v') -> case S.lookupBindingsPure bindings v' of
-      S.AtomNameBinding  b -> return $ S.bindingType $ S.toBinding b
-      S.TyConBinding    _       -> error "not implemented"
-      S.DataConBinding  _ _     -> error "not implemented"
-      S.MethodBinding     _ _ _ -> error "not implemented"
-      S.ClassBinding      _     -> error "not implemented"
-      _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
 
 mayUpdateTopState :: S.SourceBlock -> Bool
 mayUpdateTopState block = case S.sbContents block of

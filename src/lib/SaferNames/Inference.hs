@@ -875,7 +875,8 @@ withUBinder :: (Inferer m, HasNamesE e, SubstE AtomSubstVal e, InjectableE e)
             -> m i o (Abs Binder e o)
 withUBinder (UAnnBinder b ann) cont = do
   ann' <- checkUType ann
-  buildAbs ann' \name -> extendEnv (b @> name) $ cont name
+  buildAbs (getNameHint b) ann' \name ->
+    extendEnv (b @> name) $ cont name
 
 checkUBinders :: Inferer m
               => EmptyAbs (Nest (UAnnBinder AtomNameC)) i

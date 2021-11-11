@@ -15,7 +15,8 @@ module SaferNames.Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices,
-  caseAltsBinderTys, tryGetType, projectLength) where
+  caseAltsBinderTys, tryGetType, projectLength,
+  sourceNameType) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -72,6 +73,26 @@ instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 
+sourceNameType :: (BindingsReader m, Fallible1 m)
+               => SourceName -> m n (Type n)
+sourceNameType v = do
+  sm <- getSourceMapM
+  case M.lookup v $ fromSourceMap sm of
+    Nothing -> throw UnboundVarErr $ pprint v
+    Just (EnvVal c v') ->
+      withNameColorRep c $ lookupBindings v' >>= bindingType
+
+  where
+    bindingType :: (BindingsReader m, Fallible1 m) => Binding c n -> m n (Type n)
+    bindingType binding = case binding of
+      AtomNameBinding b      -> return $ atomBindingType $ toBinding b
+      TyConBinding   def     -> liftTyperM $ typeConFunType def
+      DataConBinding def con -> liftTyperM $ dataConFunType def con
+      MethodBinding _ _ getter -> getType getter
+      ClassBinding (ClassDef _ _ (def, _)) -> liftTyperM $ typeConFunType def
+      _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+
+
 -- === the type checking/querying monad ===
 
 -- TODO: not clear why we need the explicit `Monad2` here since it should
@@ -90,12 +111,23 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , ScopeReader, ScopeGetter, BindingsReader
            , BindingsGetter, Scopable, BindingsExtender)
 
+type TyperM = TyperT Except
+
 runTyperT :: (Fallible m, Distinct n)
           => Bindings n -> TyperT m n n a -> m a
 runTyperT bindings m = do
   runBindingsReaderT bindings $
     runEnvReaderT idEnv $
       runTyperT' m
+
+
+liftTyperM :: (Fallible1 m, BindingsReader m)
+           => TyperM n n a
+           -> m n a
+liftTyperM cont = do
+  Distinct <- getDistinct
+  bindings <- unsafeGetBindings
+  liftExcept $ runTyperT bindings cont
 
 instance Fallible m => Typer (TyperT m)
 
@@ -213,7 +245,7 @@ instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> do
       name' <- substM name
-      bindingType <$> lookupBindings name'
+      atomBindingType <$> lookupBindings name'
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
     Con con  -> typeCheckPrimCon con
@@ -985,7 +1017,7 @@ instance CheckableE EffectRow where
       IOEffect        -> return ()
     forM_ effTail \v -> do
       v' <- substM v
-      ty <- bindingType <$> lookupBindings v'
+      ty <- atomBindingType <$> lookupBindings v'
       checkAlphaEq EffKind ty
     substM effRow
 
@@ -1025,7 +1057,7 @@ checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
   forM_ rest \name -> do
     name' <- lookupEnvM name
-    ty <- bindingType <$> lookupBindings name'
+    ty <- atomBindingType <$> lookupBindings name'
     checkAlphaEq LabeledRowKind ty
 
 labeledRowDifference :: Typer m

@@ -125,7 +125,7 @@ traverseAlt (Abs Empty body) = Abs Empty <$> tge body
 traverseAlt (Abs (Nest (b:>ty) bs) body) = do
   ty' <- tge ty
   Abs b' (Abs bs' body') <-
-    buildAbs ty' \v -> do
+    buildAbs (getNameHint b) ty' \v -> do
       extendRenamer (b@>v) $
         traverseAlt $ Abs bs body
   return $ Abs (Nest b' bs') body'

@@ -381,17 +381,18 @@ buildNonDepPi hint arr argTy effs resultTy = buildPi hint arr argTy \_ -> do
 buildAbs
   :: ( Builder m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e, HoistableE e
      , NameColor c, ToBinding binding c)
-  => binding n
+  => NameHint
+  -> binding n
   -> (forall l. Ext n l => Name c l -> m l (e l))
   -> m n (Abs (BinderP c binding) e n)
-buildAbs binding body = withFreshBinder NoHint binding body
+buildAbs hint binding body = withFreshBinder hint binding body
 
-singletonBinder :: Builder m => Type n -> m n (EmptyAbs Binder n)
-singletonBinder ty = buildAbs ty \_ -> return UnitE
+singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
+singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
 
-singletonBinderNest :: Builder m => Type n -> m n (EmptyAbs (Nest Binder) n)
-singletonBinderNest ty = do
-  EmptyAbs b <- singletonBinder ty
+singletonBinderNest :: Builder m => NameHint -> Type n -> m n (EmptyAbs (Nest Binder) n)
+singletonBinderNest hint ty = do
+  EmptyAbs b <- singletonBinder hint ty
   return $ EmptyAbs (Nest b Empty)
 
 buildNaryAbs
@@ -402,7 +403,7 @@ buildNaryAbs
 buildNaryAbs (EmptyAbs Empty) body = Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
   Abs b' (Abs bs' body') <-
-    buildAbs ty \v -> do
+    buildAbs (getNameHint b) ty \v -> do
       ab <- injectM $ Abs b (EmptyAbs bs)
       bs' <- applyAbs ab v
       buildNaryAbs bs' \vs -> do
@@ -428,7 +429,7 @@ buildUnaryAlt
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
 buildUnaryAlt ty body = do
-  bs <- singletonBinderNest ty
+  bs <- singletonBinderNest NoHint ty
   buildAlt bs \[v] -> body v
 
 buildNewtype :: Builder m
@@ -439,7 +440,7 @@ buildNewtype :: Builder m
 buildNewtype name paramBs body = do
   Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
     ty <- body params
-    singletonBinderNest ty
+    singletonBinderNest NoHint ty
   return $ DataDef name paramBs' [DataConDef ("mk" <> name) argBs]
 
 fromNewtype :: [DataConDef n]

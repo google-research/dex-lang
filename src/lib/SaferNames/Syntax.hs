@@ -49,16 +49,17 @@ module SaferNames.Syntax (
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
+    unsafeGetBindings,
     ToBinding (..), refreshBinders, withFreshBinder,
     withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
     withFreshNameBinder,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
-    updateBindings, runBindingsReaderT,
+    getSourceMapM, updateBindings, runBindingsReaderT,
     BindingsReaderM, runBindingsReaderM,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
-    fromNonDepTabTy, binderType, bindingType, getProjection,
+    fromNonDepTabTy, binderType, atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates, refreshBinders2,
@@ -484,7 +485,7 @@ class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
   boundAtomBinding :: b n l -> AtomBinding n
 
 binderType :: BindsOneAtomName b => b n l -> Type n
-binderType b =  bindingType $ toBinding $ boundAtomBinding b
+binderType b =  atomBindingType $ toBinding $ boundAtomBinding b
 
 instance (InjectableE ann, ToBinding ann c) => BindsBindings (BinderP c ann) where
   boundBindings (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
@@ -526,10 +527,15 @@ lookupBindings v = do
 lookupSourceMap :: BindingsReader m
                 => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
 lookupSourceMap nameColor sourceName = do
-  WithBindings bindings UnitE <- addBindings UnitE
-  case M.lookup sourceName $ fromSourceMap $ getSourceMap bindings of
-    Just envVal -> Just <$> injectM (fromEnvVal nameColor envVal)
+  sourceMap <- getSourceMapM
+  case M.lookup sourceName $ fromSourceMap sourceMap of
+    Just envVal -> return $ Just $ fromEnvVal nameColor envVal
     Nothing -> return Nothing
+
+getSourceMapM :: BindingsReader m => m n (SourceMap n)
+getSourceMapM = do
+  WithBindings bindings UnitE <- addBindings UnitE
+  injectM $ getSourceMap $ bindings
 
 lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
 lookupBindingsPure (Bindings bindings _ _ _) v =
@@ -684,6 +690,13 @@ instance ScopeReader m => ScopeReader (FallibleT1 m) where
 
 instance BindingsReader m => BindingsReader (FallibleT1 m) where
   addBindings e = FallibleT1 $ lift $ lift $ addBindings e
+
+-- TODO (dougalm): I think we should just use this more instead of doing the
+-- whole `addBindings` dance.
+unsafeGetBindings :: BindingsReader m => m n (Bindings n)
+unsafeGetBindings = do
+  WithBindings bindings UnitE <- addBindings UnitE
+  return $ unsafeCoerceE bindings
 
 -- === Querying static env ===
 
@@ -970,8 +983,8 @@ applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
 -- === Synonyms ===
 
-bindingType :: Binding AtomNameC n -> Type n
-bindingType (AtomNameBinding b) = case b of
+atomBindingType :: Binding AtomNameC n -> Type n
+atomBindingType (AtomNameBinding b) = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
   PiBound     (PiBinding   _ ty)   -> ty
