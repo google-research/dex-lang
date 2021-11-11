@@ -736,10 +736,12 @@ buildSortedCase scrut alts resultTy = do
 -- pattern's skipped types.
 checkNoTailOverlaps :: Fallible1 m => [IndexedAlt n] -> LabeledItems (Type n) ->  m n ()
 checkNoTailOverlaps alts (LabeledItems tys) = do
-  forM_ alts \(IndexedAlt (VariantAlt label i) _) ->
-    case M.lookup label tys of
-      Just tys' | i <= length tys' -> return ()
-      _ -> throw TypeErr "Variant explicit alternatives overlap with tail pattern."
+  forM_ alts \case
+    (IndexedAlt (VariantAlt label i) _) ->
+      case M.lookup label tys of
+        Just tys' | i <= length tys' -> return ()
+        _ -> throw TypeErr "Variant explicit alternatives overlap with tail pattern."
+    _ -> return ()
 
 isVariantTailAlt :: IndexedAlt n -> Bool
 isVariantTailAlt (IndexedAlt (VariantTailAlt _) _) = True
