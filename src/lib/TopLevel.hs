@@ -348,7 +348,10 @@ evalUModule sourceModule = do
   checkPass TypePass typedUnsafe
   let defunctionalized = simplifyModule bindingsD typedUnsafe
   checkPass SimpPass defunctionalized
-  let stdOptimized = optimizeModule defunctionalized
+  -- disabling due to a substitution bug that occurs in flipY in diagram.dx
+  -- (safe-names version should catch it)
+  -- let stdOptimized = optimizeModule defunctionalized
+  let stdOptimized = defunctionalized
   -- Apply backend specific optimizations
   backend <- backendName <$> getConfig
   let optimized = case backend of
