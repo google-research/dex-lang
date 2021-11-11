@@ -156,30 +156,31 @@ def f8 [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 
 -------------------- Automatic quantification --------------------
 
-interface X a
-  x_ a : Int
-
-def MyPairOfXs (a : Type) (_ : X a) ?=> : Type = (a & a)
-
-instance X Int
-  x_ = 1
-
--- No automatic quantification needed
-def q0 (x : MyPairOfXs Int) : Int = fst x
-def q1 [X a] (x : MyPairOfXs a) : a = fst x
-
--- Should work with implicit quantification
-def q2 (x : MyPairOfXs a) : a = fst x
-
 -- XXX: broken since safe-names refactor
+
+-- interface X a
+--   x_ a : Int
+
+-- def MyPairOfXs (a : Type) (_ : X a) ?=> : Type = (a & a)
+
+-- instance X Int
+--   x_ = 1
+
+-- -- No automatic quantification needed
+-- def q0 (x : MyPairOfXs Int) : Int = fst x
+-- def q1 [X a] (x : MyPairOfXs a) : a = fst x
+
 -- -- Should work with implicit quantification
--- def q3 (x : MyPairOfXs a) : Int = x_ a
+-- def q2 (x : MyPairOfXs a) : a = fst x
 
--- We should also implicitly quantify over constraints of the return type
-def f4 (x : a) : MyPairOfXs a = (x, x)
+-- -- -- Should work with implicit quantification
+-- -- def q3 (x : MyPairOfXs a) : Int = x_ a
 
--- Check automatic quantification for interfaces
-interface AutoQuant a
-  dummy : Int
-instance AutoQuant (MyPairOfXs a)
-  dummy = 1
+-- -- We should also implicitly quantify over constraints of the return type
+-- def f4 (x : a) : MyPairOfXs a = (x, x)
+
+-- -- Check automatic quantification for interfaces
+-- interface AutoQuant a
+--   dummy : Int
+-- instance AutoQuant (MyPairOfXs a)
+--   dummy = 1

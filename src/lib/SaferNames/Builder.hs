@@ -107,12 +107,12 @@ buildScoped cont = do
 
 buildScopedReduceDecls
   :: ( Builder m
-     , CheaplyReducible e, HoistableE e, InjectableE e, SubstE Name e
-     , SubstE AtomSubstVal e)
+     , HoistableE e, InjectableE e, SubstE Name e, SubstE AtomSubstVal e)
   => (forall l. (Emits l, Ext n l) => m l (e l))
-  -> m n (e n)
-buildScopedReduceDecls cont = buildScoped cont >>= cheapReduceDecls
-
+  -> m n (Maybe (e n))
+buildScopedReduceDecls cont = do
+  Abs decls result <- buildScoped cont
+  cheapReduceWithDecls decls result
 
 -- === Top-level builder class ===
 
@@ -276,8 +276,8 @@ buildBlockReduced
   => (forall l. (Emits l, Ext n l) => m l (Atom l))
   -> m n (Maybe (Atom n))
 buildBlockReduced cont = do
-  block <- buildBlock cont
-  cheapReduceBlockToAtom block
+  Block _ decls result <- buildBlock cont
+  cheapReduceToAtom $ Abs decls result
 
 buildBlock :: Builder m
            => (forall l. (Emits l, Ext n l) => m l (Atom l))

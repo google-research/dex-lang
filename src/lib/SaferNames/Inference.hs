@@ -561,13 +561,15 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         ty' <- checkUType ty
         buildNonDepPi "_" arr ann' effs' ty'
       _ -> buildPi (getNameHint pat) arr ann' \v -> do
-        PairE effs' ty' <- buildScopedReduceDecls do
+        maybePiResultTy <- buildScopedReduceDecls do
           v' <- injectM v
           bindLamPat (WithSrcB pos' pat) v' do
             effs' <- checkUEffRow effs
             ty'   <- checkUType   ty
             return $ PairE effs' ty'
-        return (effs', ty')
+        case maybePiResultTy of
+          Nothing -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+          Just (PairE effs' ty') -> return (effs', ty')
     matchRequirement $ Pi piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
@@ -595,10 +597,12 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     matchRequirement val'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
-      x' <- inferRho x
-      getType x' >>= \case
-        TyKind -> cheapReduce x'
-        _ -> return x'
+      xBlock <- buildBlock $ inferRho x
+      getType xBlock >>= \case
+        TyKind -> cheapReduceToAtom xBlock >>= \case
+          Nothing -> throw CompilerErr "Type args to primops must be reducible"
+          Just reduced -> return reduced
+        _ -> emitBlock xBlock
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
