@@ -216,13 +216,31 @@ evalSourceBlock' block = case S.sbContents block of
         results <- mapM evalSourceBlock $ S.parseProg source
         setImportStatus moduleName FullyImported
         return $ summarizeModuleResults results
-  S.DumpEnv -> liftPassesM_ False do
-    (_, curState) <- getTopState
-    logTop $ TextOut $ pprint $ curState
+  S.QueryEnv query -> liftPassesM_ False $ runEnvQuery query
   S.ProseBlock _ -> return emptyResult
   S.CommentLine  -> return emptyResult
   S.EmptyLines   -> return emptyResult
   S.UnParseable _ s -> liftPassesM_ False (throw ParseErr s)
+
+runEnvQuery :: MonadPasses m => S.EnvQuery -> m n ()
+runEnvQuery query = do
+  (_, curState) <- getTopState
+  let bindings = topStateS curState
+  case query of
+    S.DumpEnv -> logTop $ TextOut $ pprint $ curState
+    S.InternalNameInfo name ->
+      case S.lookupEnvFragRaw (S.fromRecEnv $ S.getBindings bindings) name of
+        Nothing -> throw UnboundVarErr $ pprint name
+        Just (S.EnvVal _ binding) ->
+          logTop $ TextOut $ pprint binding
+    S.SourceNameInfo name -> do
+      let S.SourceMap sourceMap = S.getSourceMap bindings
+      case M.lookup name sourceMap of
+        Nothing -> throw UnboundVarErr $ pprint name
+        Just (S.EnvVal _ name') -> do
+          let binding = S.lookupBindingsPure bindings name'
+          logTop $ TextOut $ "Internal name: " ++ pprint name'
+          logTop $ TextOut $ "Binding:\n"      ++ pprint binding
 
 requiresBench :: S.SourceBlock -> Bool
 requiresBench block = case S.sbLogLevel block of
@@ -236,7 +254,7 @@ mayUpdateTopState block = case S.sbContents block of
   S.Command _ _     -> False
   S.GetNameType _   -> False
   S.ProseBlock _    -> False
-  S.DumpEnv         -> False
+  S.QueryEnv _      -> False
   S.CommentLine     -> False
   S.EmptyLines      -> False
   S.UnParseable _ _ -> False

@@ -23,6 +23,8 @@ import Data.String (IsString, fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Text.Megaparsec.Debug
 
+import qualified Env as D
+
 import Err
 import LabeledItems
 import SaferNames.Name
@@ -136,12 +138,19 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
-  <|> dumpEnv
+  <|> (QueryEnv <$> envQuery)
   <|> explicitCommand
   <?> "top-level command"
 
-dumpEnv :: Parser SourceBlock'
-dumpEnv = string ":debug-env" $> DumpEnv
+envQuery :: Parser EnvQuery
+envQuery = string ":debug" >> sc >> (
+      (DumpEnv          <$  (string "env"   >> sc))
+  <|> (InternalNameInfo <$> (string "iname" >> sc >> rawName))
+  <|> (SourceNameInfo   <$> (string "sname" >> sc >> anyName)))
+       <* eol
+  where
+    rawName :: Parser RawName
+    rawName = D.Name D.GenName <$> (fromString <$> anyName) <*> intLit
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do

@@ -45,7 +45,7 @@ module SaferNames.Name (
   checkAlphaEq, alphaEq, alphaElem, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   withFreshM, withFreshLike, inject, injectM, (!), (<>>), withManyFresh,
-  envFragAsScope,
+  envFragAsScope, lookupEnvFrag, lookupEnvFragRaw,
   EmptyAbs, pattern EmptyAbs, SubstVal (..),
   NameGen (..), fmapG, NameGenT (..), fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedEnvReader, runScopedEnvReader,
@@ -2260,6 +2260,10 @@ lookupEnvFrag (UnsafeMakeEnv m) (UnsafeMakeName rep rawName) =
   case M.lookup rawName m of
     Nothing -> error "Env lookup failed (this should never happen)"
     Just d -> fromEnvVal rep d
+
+-- Just for debugging
+lookupEnvFragRaw :: EnvFrag v i i' o -> RawName -> Maybe (EnvVal v o)
+lookupEnvFragRaw (UnsafeMakeEnv m) rawName = M.lookup rawName m
 
 instance InFrag (EnvFrag v) where
   emptyInFrag = UnsafeMakeEnv mempty

@@ -45,7 +45,7 @@ module SaferNames.Syntax (
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
-    SourceBlock (..), SourceBlock' (..),
+    SourceBlock (..), SourceBlock' (..), EnvQuery (..),
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
@@ -896,12 +896,19 @@ data SourceBlock' =
  | GetNameType SourceName
  -- TODO Add a color for module names?
  | ImportModule ModuleName
- | DumpEnv
+ | QueryEnv EnvQuery
  | ProseBlock String
  | CommentLine
  | EmptyLines
  | UnParseable ReachedEOF String
   deriving (Show, Generic)
+
+data EnvQuery =
+   DumpEnv
+ | InternalNameInfo RawName
+ | SourceNameInfo   SourceName
+   deriving (Show, Generic)
+
 
 type TopState = Bindings
 
