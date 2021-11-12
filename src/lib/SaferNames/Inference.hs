@@ -1579,7 +1579,7 @@ trySynthDictBlock ty = do
         (d, _):_ -> injectM d
 
 -- TODO: we'd rather have something like this:
---   data Givens n = Givens (M.Set (Type n) (Given n))
+--   data Givens n = Givens (M.Map (Type n) (Given n))
 -- but we need an Ord or Hashable instance on types
 data Givens n = Givens [Type n] [Given n]
 

@@ -132,9 +132,10 @@ traverseAlt (Abs (Nest (b:>ty) bs) body) = do
 
 -- === Faking SubstE ===
 
--- We're pulling the same hack here as we do in inference. TODO: figure out
--- how to do scoped inference blocks without putting a `SubstE Atom`
--- on `buildScopedGeneral`.
+-- We're pulling the same hack here as we do in inference. (the "Zonkable source
+-- map hack")
+-- TODO: figure out how to do scoped inference blocks without putting
+-- a `SubstE Atom` on `buildScopedGeneral`.
 
 newtype SubstEvaluatedModule (n::S) =
   SubstEvaluatedModule (EvaluatedModule n)
