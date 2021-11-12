@@ -9,7 +9,7 @@
 module SaferNames.CheapReduction (
   CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapReduceToAtom) where
 
-import Control.Monad.Identity
+import Control.Applicative
 
 import SaferNames.Name
 import SaferNames.Syntax
@@ -23,10 +23,13 @@ cheapReduce :: (BindingsReader m, SubstE AtomSubstVal e, InjectableE e)
             => e n -> m n (e n)
 cheapReduce e = do
   WithBindings bindings e' <- addBindings e
-  injectM $ runCheapReducerM idEnv bindings $ cheapReduceFromSubst e'
+  injectM $ runBindingsReaderM bindings $
+    runEnvReaderT idEnv $ cheapReduceFromSubst e'
 
-cheapReduceWithDecls :: (BindingsReader m, SubstE AtomSubstVal e, InjectableE e)
-                     => Nest Decl n l -> e l -> m n (Maybe (e n))
+cheapReduceWithDecls
+  :: ( BindingsReader m
+     , HoistableE e, InjectableE e, SubstE AtomSubstVal e, SubstE Name e)
+  => Nest Decl n l -> e l -> m n (Maybe (e n))
 cheapReduceWithDecls decls result = do
   WithBindings bindings (Abs decls' result') <- addBindings $ Abs decls result
   let reduced = runCheapReducerM idEnv bindings $
@@ -45,12 +48,17 @@ cheapReduceToAtom e = do
 
 -- === internal ===
 
-type CheapReducerM = EnvReaderT AtomSubstVal BindingsReaderM
+type CheapReducerM = EnvReaderT AtomSubstVal (BindingsReaderT Maybe)
+
+class ( Alternative2 m, EnvReader AtomSubstVal m
+      , BindingsGetter2 m, BindingsExtender2 m) => CheapReducer m
+instance CheapReducer CheapReducerM
 
 runCheapReducerM :: Distinct o
-                 => Env AtomSubstVal i o -> Bindings o -> CheapReducerM i o a -> a
+                 => Env AtomSubstVal i o -> Bindings o -> CheapReducerM i o a
+                 -> Maybe a
 runCheapReducerM env bindings m =
-  runBindingsReaderM bindings $ runEnvReaderT env m
+  runBindingsReaderT bindings $ runEnvReaderT env m
 
 cheapReduceFromSubst
   :: ( EnvReader AtomSubstVal m, BindingsGetter2 m
@@ -71,45 +79,65 @@ cheapReduceName bindings v =
         SubstVal <$> cheapReduce x
       _ -> return $ Rename v
 
-cheapReduceWithDeclsB :: (EnvReader AtomSubstVal m, BindingsGetter2 m)
-                      => Nest Decl i i'
-                      -> m i' o a
-                      -> m i  o (Maybe a)
-cheapReduceWithDeclsB decls cont = case decls of
-    Empty -> Just <$> cont
-    Nest (Let b (DeclBinding _ _ expr)) rest -> do
-      cheapReduceE expr >>= \case
-        Nothing -> return Nothing
-        Just x -> extendEnv (b@>SubstVal x) $
-                    cheapReduceWithDeclsB rest cont
+cheapReduceWithDeclsB
+  :: ( CheapReducer m
+     , HoistableE e, InjectableE e, SubstE AtomSubstVal e, SubstE Name e)
+  => Nest Decl i i'
+  -> (forall o'. Ext o o' => m i' o' (e o'))
+  -> m i  o (e o)
+cheapReduceWithDeclsB decls cont = do
+  Abs irreducibleDecls result <- cheapReduceWithDeclsRec decls cont
+  case hoist irreducibleDecls result of
+    HoistSuccess result' -> return result'
+    HoistFailure _ -> empty
+
+cheapReduceWithDeclsRec
+  :: ( CheapReducer m
+     , HoistableE e, InjectableE e, SubstE AtomSubstVal e, SubstE Name e)
+  => Nest Decl i i'
+  -> (forall o'. Ext o o' => m i' o' (e o'))
+  -> m i o (Abs (Nest Decl) e o)
+cheapReduceWithDeclsRec decls cont = case decls of
+  Empty -> Abs Empty <$> cont
+  Nest (Let b binding@(DeclBinding _ _ expr)) rest -> do
+    optional (cheapReduceE expr) >>= \case
+      Nothing -> do
+        binding' <- substM binding
+        ab <- withFreshBinder (getNameHint b) binding' \v ->
+          extendEnv (b@>Rename v) $
+            cheapReduceWithDeclsRec rest cont
+        Abs (b':>binding'') (Abs decls' result) <- return ab
+        return $ Abs (Nest (Let b' binding'') decls') result
+      Just x ->
+        extendEnv (b@>SubstVal x) $
+          cheapReduceWithDeclsRec rest cont
 
 class CheaplyReducibleE (e::E) where
-  cheapReduceE :: (EnvReader AtomSubstVal m, BindingsGetter2 m)
-               => e i -> m i o (Maybe (Atom o))
+  cheapReduceE :: CheapReducer m => e i -> m i o (Atom o)
 
 instance CheaplyReducibleE e => CheaplyReducibleE (Abs (Nest Decl) e) where
   cheapReduceE (Abs decls result) =
-    join <$> (cheapReduceWithDeclsB decls $ cheapReduceE result)
+    cheapReduceWithDeclsB decls $ cheapReduceE result
 
 instance CheaplyReducibleE Block where
   cheapReduceE (Block _ decls result) = cheapReduceE $ Abs decls result
 
 instance CheaplyReducibleE Expr where
   cheapReduceE expr = cheapReduceFromSubst expr >>= \case
-    Atom atom -> return $ Just atom
+    Atom atom -> return atom
     App f x -> do
       case f of
         Lam (LamExpr (LamBinder b _ arr Pure) body)
           | arr == PlainArrow || arr == ImplicitArrow || arr == ClassArrow -> do
               dropSubst $ extendEnv (b@>SubstVal x) $ cheapReduceE body
-        TypeCon con xs -> return $ Just $ TypeCon con $ xs ++ [x]
-        _ -> return Nothing
+        TypeCon con xs -> return $ TypeCon con $ xs ++ [x]
+        _ -> empty
     Op (SynthesizeDict _ ty) -> do
       runFallibleT1 (trySynthDictBlock ty) >>= \case
-        Success (Block _ Empty (Atom d)) -> return $ Just d
-        _ -> return Nothing
+        Success (Block _ Empty (Atom d)) -> return d
+        _ -> empty
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?
     Op (CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit v)))) ->
-      return $ Just $ Con $ Lit $ Int32Lit $ fromIntegral v
-    _ -> return Nothing
+      return $ Con $ Lit $ Int32Lit $ fromIntegral v
+    _ -> empty

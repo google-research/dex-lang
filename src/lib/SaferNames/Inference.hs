@@ -561,14 +561,15 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         ty' <- checkUType ty
         buildNonDepPi "_" arr ann' effs' ty'
       _ -> buildPi (getNameHint pat) arr ann' \v -> do
-        maybePiResultTy <- buildScopedReduceDecls do
+        Abs decls piResult <- buildScoped do
           v' <- injectM v
           bindLamPat (WithSrcB pos' pat) v' do
             effs' <- checkUEffRow effs
             ty'   <- checkUType   ty
             return $ PairE effs' ty'
-        case maybePiResultTy of
-          Nothing -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+        cheapReduceWithDecls decls piResult >>= \case
+          Nothing -> throw TypeErr $ "Can't reduce type expression: " ++
+                       pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
           Just (PairE effs' ty') -> return (effs', ty')
     matchRequirement $ Pi piTy
   UDecl (UDeclExpr decl body) -> do
@@ -1314,7 +1315,6 @@ freshSkolemName :: Solver m => Kind n -> m n (AtomName n)
 freshSkolemName k = emitSolver $ SkolemBound k
 
 type Solver2 (m::MonadKind2) = forall i. Solver (m i)
-type Alternative1 (m::MonadKind1) = forall n. Alternative (m n)
 
 emptySolverSubst :: SolverSubst n
 emptySolverSubst = SolverSubst mempty

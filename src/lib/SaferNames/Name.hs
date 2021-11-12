@@ -39,7 +39,7 @@ module SaferNames.Name (
   lookupEnvM, dropSubst, extendEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2,
-  CtxReader1, CtxReader2, MonadFail1, MonadFail2,
+  CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applySubst, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, alphaElem, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
@@ -750,6 +750,9 @@ type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
 type ScopeReader2      (m::MonadKind2) = forall (n::S). ScopeReader      (m n)
 type ScopeExtender2    (m::MonadKind2) = forall (n::S). ScopeExtender    (m n)
 
+type Alternative1 (m::MonadKind1) = forall (n::S)        . Alternative (m n)
+type Alternative2 (m::MonadKind2) = forall (n::S) (l::S ). Alternative (m n l)
+
 -- === subst monad ===
 
 -- Only alllows non-trivial substitution with names that match the parameter
@@ -789,6 +792,11 @@ instance (ColorsNotEqual cMatch c)
     case env ! name of
       Rename name' -> name'
       SubstVal _ -> notEqProof (ColorsEqual :: ColorsEqual c cMatch)
+
+instance (SubstE (SubstVal cMatch atom) atom, NameColor c)
+         => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom c) where
+  substE (_, env) (Rename name) = env ! name
+  substE env (SubstVal val) = SubstVal $ substE env val
 
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
@@ -958,7 +966,8 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
 
 newtype EnvReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   EnvReaderT { runEnvReaderT' :: ReaderT (Env v i o) (m o) a }
-  deriving (Functor, Applicative, Monad, MonadFail, Catchable, Fallible, CtxReader)
+  deriving (Functor, Applicative, Monad, MonadFail, Catchable, Fallible, CtxReader,
+           Alternative)
 
 type ScopedEnvReader (v::V) = EnvReaderT v (ScopeReaderT Identity) :: MonadKind2
 

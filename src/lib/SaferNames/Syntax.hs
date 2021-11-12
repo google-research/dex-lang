@@ -79,6 +79,7 @@ module SaferNames.Syntax (
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
+import Control.Applicative
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -399,7 +400,7 @@ instance (InjectableE e, ScopeReader m, BindingsExtender m)
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
   BindingsReaderT {runBindingsReaderT' :: ReaderT (DistinctEvidence n, Bindings n) m a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible, Alternative)
 
 type BindingsReaderM = BindingsReaderT Identity
 runBindingsReaderM :: Distinct n => Bindings n -> BindingsReaderM n a -> a
@@ -634,7 +635,6 @@ refreshBinders2 b cont = do
   ab <- substM $ Abs b (idEnvFrag b)
   withBindings ab \substFrag ->
     extendEnv substFrag $ cont
-
 
 data SomeDecl (binding::V) (n::S) (l::S) where
   SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
@@ -1198,11 +1198,11 @@ getProjection (i:is) a = case getProjection is a of
   a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
-bundleFold empty pair els = case els of
-  []  -> (empty, 0)
+bundleFold emptyVal pair els = case els of
+  []  -> (emptyVal, 0)
   [e] -> (e, 1)
   h:t -> (pair h tb, td + 1)
-    where (tb, td) = bundleFold empty pair t
+    where (tb, td) = bundleFold emptyVal pair t
 
 mkBundleTy :: [Type n] -> (Type n, BundleDesc)
 mkBundleTy = bundleFold UnitTy PairTy
