@@ -196,7 +196,7 @@ def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
   myId = fst (\x. x, 2)
   f : a:Type -> a -> a = \a. \x. myId x
   f Int 1
-> Type error:Leaked type variable: a:Type
+> Leaked local variables:[a]
 >
 >   f : a:Type -> a -> a = \a. \x. myId x
 >                           ^^^^^^^^^^^^^
@@ -252,7 +252,11 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 > (1, 2)
 
 :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
-> Type error:Failed to infer the index set of an array literal. Please try adding a type annotation.
+> Type error:
+> Expected: ((Fin a & Fin 2) => Int32)
+>   Actual: ((Fin 4) => b)
+> (Solving for: [a, b])
+> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
 >
 > :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
 >    ^^^^^^^^^^^^^
@@ -265,10 +269,13 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p
   [a, b] = [1, 2, 3]
   (a, b)
-> Type error:Table literal has 3 elements, but its inferred index set (((Fin 2) => Int32)) has a size of 2
+> Type error:
+> Expected: ((Fin 3) => a)
+>   Actual: ((Fin 2) => b)
+> (Solving for: [a, b])
 >
 >   [a, b] = [1, 2, 3]
->            ^^^^^^^^^
+>   ^^^^^^^
 
 :p
   [[a, _], [_, d]] = [[1, 2], [3, 4]]
@@ -282,7 +289,7 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 > Type error:
 > Expected: ((Fin 2 & Fin 2) => Int32)
 >   Actual: ((Fin 4) => a)
-> (Solving for: [a:Type])
+> (Solving for: [a])
 >
 >   [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
 >   ^^^^^^^^^^^^^
@@ -298,7 +305,7 @@ def bug (n : Type) : Unit =
     w : n = todo
     for i:(w..). ()
   ()
-> Type error:Leaked local variable `w` in result type ((w..) => Unit)
+> Leaked local variables:[v]
 >
 >   for w':n.
 >   ^^^^

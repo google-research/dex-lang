@@ -133,52 +133,7 @@ runPassesM bench opts env m = do
 -- ======
 
 initTopState :: TopStateEx
-initTopState = case emptyTopStateEx protolude of
-  TopStateEx empty -> extendTopStateD empty protoludeModule
-  where
-    protoludeModule :: EvaluatedModule
-    protoludeModule = case null decls of
-      True  -> EvaluatedModule bindings scs sourceMap
-      False -> error "Unexpected decls in protolude!"
-
-    ((sourceMap, protolude), ((bindings, scs), decls)) = runBuilder mempty mempty do
-      -- interface FromInteger a
-      --   fromInteger : Int -> a
-      let a = "a" :> TyKind
-      let fromIntegerDataDef =
-            makeClassDataDef "FromInteger" (toNest [Bind a]) []
-              [ Int64Ty --> Var a ]
-      fromIntegerNamedData <- (,fromIntegerDataDef) <$> emitDataDef fromIntegerDataDef
-      fromIntegerIface <- emitClassDef $
-        ClassDef fromIntegerNamedData ["fromInteger"]
-      fromIntegerMethod <- emitMethodType [False] fromIntegerIface 0
-
-      let fromIntegerInstance fromIntegerImpl = do
-            implLam <- buildLam (Ignore Int64Ty) PureArrow fromIntegerImpl
-            let FunTy _ _ resultTy = getType implLam
-            let dict = DataCon fromIntegerNamedData [resultTy] 0
-                  [PairVal (ProdVal []) (ProdVal [implLam])]
-            void $ emitBinding $ AtomBinderInfo (TypeCon fromIntegerNamedData [resultTy]) $
-              LetBound InstanceLet (Atom dict)
-
-      -- instance FromInteger Int64
-      fromIntegerInstance return
-      -- instance FromInteger Int32
-      fromIntegerInstance $ emitOp . CastOp Int32Ty
-      -- instance FromInteger Float64
-      fromIntegerInstance $ emitOp . CastOp (BaseTy $ Scalar Float64Type)
-      -- instance FromInteger Float32
-      fromIntegerInstance $ emitOp . CastOp (BaseTy $ Scalar Float32Type)
-
-      let source = SourceMap $ M.fromList
-            [ ("FromInteger", SrcClassName fromIntegerIface)
-            , ("fromInteger", SrcMethodName fromIntegerMethod)
-            ]
-      let scope = ProtoludeScope
-            { protoludeFromIntegerIface  = fromIntegerIface
-            , protoludeFromIntegerMethod = fromIntegerMethod
-            }
-      return (source, scope)
+initTopState = emptyTopStateEx
 
 evalSourceBlockIO :: EvalConfig -> TopStateEx -> S.SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
@@ -244,14 +199,10 @@ evalSourceBlock' block = case S.sbContents block of
       logTop $ TextOut $ pprint $ getType val
   S.GetNameType v -> liftPassesM_ False do
     (S.Distinct, topState) <- getTopState
-    let SourceMap m = topSourceMap $ topStateD topState
-    case M.lookup v m of
-      Nothing -> throw UnboundVarErr $ pprint v
-      Just v' -> do
-        let bindings = topBindings $ topStateD topState
-        case nameToAtom bindings (sourceNameDefName v') of
-          Just x -> logTop $ TextOut $ pprint $ getType x
-          Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+    let bindings = topStateS topState
+    case S.runBindingsReaderT bindings $ S.sourceNameType v of
+      Success ty -> logTop $ TextOut $ pprint ty
+      Failure errs -> throwErrs errs
   S.ImportModule moduleName -> do
     moduleStatus <- getImportStatus moduleName
     case moduleStatus of
@@ -265,13 +216,31 @@ evalSourceBlock' block = case S.sbContents block of
         results <- mapM evalSourceBlock $ S.parseProg source
         setImportStatus moduleName FullyImported
         return $ summarizeModuleResults results
-  S.DumpEnv -> liftPassesM_ False do
-    (_, curState) <- getTopState
-    logTop $ TextOut $ pprint $ curState
+  S.QueryEnv query -> liftPassesM_ False $ runEnvQuery query
   S.ProseBlock _ -> return emptyResult
   S.CommentLine  -> return emptyResult
   S.EmptyLines   -> return emptyResult
   S.UnParseable _ s -> liftPassesM_ False (throw ParseErr s)
+
+runEnvQuery :: MonadPasses m => S.EnvQuery -> m n ()
+runEnvQuery query = do
+  (_, curState) <- getTopState
+  let bindings = topStateS curState
+  case query of
+    S.DumpEnv -> logTop $ TextOut $ pprint $ curState
+    S.InternalNameInfo name ->
+      case S.lookupEnvFragRaw (S.fromRecEnv $ S.getBindings bindings) name of
+        Nothing -> throw UnboundVarErr $ pprint name
+        Just (S.EnvVal _ binding) ->
+          logTop $ TextOut $ pprint binding
+    S.SourceNameInfo name -> do
+      let S.SourceMap sourceMap = S.getSourceMap bindings
+      case M.lookup name sourceMap of
+        Nothing -> throw UnboundVarErr $ pprint name
+        Just (S.EnvVal _ name') -> do
+          let binding = S.lookupBindingsPure bindings name'
+          logTop $ TextOut $ "Internal name: " ++ pprint name'
+          logTop $ TextOut $ "Binding:\n"      ++ pprint binding
 
 requiresBench :: S.SourceBlock -> Bool
 requiresBench block = case S.sbLogLevel block of
@@ -285,7 +254,7 @@ mayUpdateTopState block = case S.sbContents block of
   S.Command _ _     -> False
   S.GetNameType _   -> False
   S.ProseBlock _    -> False
-  S.DumpEnv         -> False
+  S.QueryEnv _      -> False
   S.CommentLine     -> False
   S.EmptyLines      -> False
   S.UnParseable _ _ -> False
@@ -356,7 +325,7 @@ evalUModuleVal v m = do
 
 lookupSourceName :: Fallible m => TopStateEx -> SourceName -> m AnyBinderInfo
 lookupSourceName (TopStateEx topState) v =
-  let D.TopState bindings _ (SourceMap sourceMap) _ = topStateD topState
+  let D.TopState bindings _ (SourceMap sourceMap) = topStateD topState
   in case M.lookup v sourceMap of
     Just name ->
       case envLookup bindings name of
@@ -370,21 +339,23 @@ lookupSourceName (TopStateEx topState) v =
 evalUModule :: MonadPasses m => S.SourceUModule -> m n EvaluatedModule
 evalUModule sourceModule = do
   (S.Distinct, topState) <- getTopState
-  let D.TopState bindingsD synthCandidatesD _ _ = topStateD topState
+  let D.TopState bindingsD _ _ = topStateD topState
   let bindingsS@(S.Bindings _ _ sourceMapS _) = topStateS topState
   logPass Parse sourceModule
   renamed <- S.renameSourceNames (S.toScope bindingsS) sourceMapS sourceModule
   logPass RenamePass renamed
   typed <- liftExcept $ S.inferModule bindingsS renamed
   checkPassS TypePass typed
-  let typedUnsafe = fromSafe topState typed
+  synthed <- liftExcept $ S.synthModule bindingsS typed
+  checkPassS SynthPass synthed
+  let typedUnsafe = fromSafe topState synthed
   checkPass TypePass typedUnsafe
-  synthed <- liftExcept $ synthModule bindingsD synthCandidatesD typedUnsafe
-  -- TODO: check that the type of module exports doesn't change from here on
-  checkPass SynthPass synthed
-  let defunctionalized = simplifyModule bindingsD synthed
+  let defunctionalized = simplifyModule bindingsD typedUnsafe
   checkPass SimpPass defunctionalized
-  let stdOptimized = optimizeModule defunctionalized
+  -- disabling due to a substitution bug that occurs in flipY in diagram.dx
+  -- (safe-names version should catch it)
+  -- let stdOptimized = optimizeModule defunctionalized
+  let stdOptimized = defunctionalized
   -- Apply backend specific optimizations
   backend <- backendName <$> getConfig
   let optimized = case backend of
@@ -473,7 +444,8 @@ checkPassS name x = do
   (S.Distinct, topState) <- getTopState
   let bindingsS = topStateS topState
   logPass name x
-  liftExcept $ S.runBindingsReaderT bindingsS $ S.checkTypes x
+  liftExcept $ addContext ("Checking :\n" ++ pprint x) $
+    S.runBindingsReaderT bindingsS $ S.checkTypes x
   logTop $ MiscLog $ pprint name ++ " checks passed"
 
 checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m n ()

@@ -60,7 +60,7 @@ library
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
                        SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
-                       SaferNames.CheapReduction
+                       SaferNames.CheapReduction, SaferNames.GenericTraversal
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

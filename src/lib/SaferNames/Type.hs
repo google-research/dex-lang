@@ -15,7 +15,8 @@ module SaferNames.Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices,
-  caseAltsBinderTys, tryGetType, projectLength) where
+  caseAltsBinderTys, tryGetType, projectLength,
+  sourceNameType) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -72,6 +73,26 @@ instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 
+sourceNameType :: (BindingsReader m, Fallible1 m)
+               => SourceName -> m n (Type n)
+sourceNameType v = do
+  sm <- getSourceMapM
+  case M.lookup v $ fromSourceMap sm of
+    Nothing -> throw UnboundVarErr $ pprint v
+    Just (EnvVal c v') ->
+      withNameColorRep c $ lookupBindings v' >>= bindingType
+
+  where
+    bindingType :: (BindingsReader m, Fallible1 m) => Binding c n -> m n (Type n)
+    bindingType binding = case binding of
+      AtomNameBinding b      -> return $ atomBindingType $ toBinding b
+      TyConBinding   def     -> liftTyperM $ typeConFunType def
+      DataConBinding def con -> liftTyperM $ dataConFunType def con
+      MethodBinding _ _ getter -> getType getter
+      ClassBinding (ClassDef _ _ (def, _)) -> liftTyperM $ typeConFunType def
+      _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+
+
 -- === the type checking/querying monad ===
 
 -- TODO: not clear why we need the explicit `Monad2` here since it should
@@ -90,12 +111,23 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , ScopeReader, ScopeGetter, BindingsReader
            , BindingsGetter, Scopable, BindingsExtender)
 
+type TyperM = TyperT Except
+
 runTyperT :: (Fallible m, Distinct n)
           => Bindings n -> TyperT m n n a -> m a
 runTyperT bindings m = do
   runBindingsReaderT bindings $
     runEnvReaderT idEnv $
       runTyperT' m
+
+
+liftTyperM :: (Fallible1 m, BindingsReader m)
+           => TyperM n n a
+           -> m n a
+liftTyperM cont = do
+  Distinct <- getDistinct
+  bindings <- unsafeGetBindings
+  liftExcept $ runTyperT bindings cont
 
 instance Fallible m => Typer (TyperT m)
 
@@ -198,8 +230,8 @@ instance CheckableE AtomBinding where
     SolverBound b       -> SolverBound <$> checkE b
 
 instance CheckableE SolverBinding where
-  checkE (InfVarBound ty ctx) = InfVarBound <$> checkTypeE TyKind ty <*> pure ctx
-  checkE (SkolemBound ty    ) = SkolemBound <$> checkTypeE TyKind ty
+  checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
+  checkE (SkolemBound  ty    ) = SkolemBound  <$> checkTypeE TyKind ty
 
 instance CheckableE DataDef where
   checkE = substM -- TODO
@@ -213,7 +245,7 @@ instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> do
       name' <- substM name
-      bindingType <$> lookupBindings name'
+      atomBindingType <$> lookupBindings name'
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
     Con con  -> typeCheckPrimCon con
@@ -264,7 +296,7 @@ instance HasType Atom where
       depTy <- refreshBinders b \b' -> do
         bodyTy <- getTypeE body
         return $ Abs b' bodyTy
-      liftMaybe $ fromConstAbs depTy
+      liftHoistExcept $ fromConstAbs depTy
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -318,10 +350,11 @@ instance CheckableB Decl where
     checkB (b:>binding) \(b':>binding') -> cont $ Let b' binding'
 
 instance CheckableE DeclBinding where
-  checkE (DeclBinding ann ty expr) = do
+  checkE rhs@(DeclBinding ann ty expr) = addContext msg do
     ty' <- checkTypeE TyKind ty
     expr' <- checkTypeE ty' expr
     return $ DeclBinding ann ty' expr'
+    where msg = "Checking decl rhs:\n" ++ pprint rhs
 
 instance CheckableE LamBinding where
   checkE (LamBinding arr ty) = do
@@ -596,12 +629,13 @@ typeCheckPrimOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  SynthesizeDict _ ty -> checkTypeE TyKind ty
 
 typeCheckPrimHof :: Typer m => PrimHof (Atom i) -> m i o (Type o)
 typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ f -> do
     Pi (PiType (PiBinder b argTy PlainArrow) eff eltTy) <- getTypeE f
-    eff' <- liftMaybe $ hoist b eff
+    eff' <- liftHoistExcept $ hoist b eff
     declareEffs eff'
     return $ Pi $ PiType (PiBinder b argTy TabArrow) Pure eltTy
   Tile dim fT fS -> do
@@ -634,18 +668,18 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy tabTy $ mkConsListTy accTys
   While body -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff condTy) <- getTypeE body
-    PairE eff' condTy' <- liftMaybe $ hoist b $ PairE eff condTy
+    PairE eff' condTy' <- liftHoistExcept $ hoist b $ PairE eff condTy
     declareEffs eff'
     checkAlphaEq (BaseTy $ Scalar Word8Type) condTy'
     return UnitTy
   Linearize f -> do
     Pi (PiType (PiBinder binder a PlainArrow) Pure b) <- getTypeE f
-    b' <- liftMaybe $ hoist binder b
+    b' <- liftHoistExcept $ hoist binder b
     fLinTy <- a --@ b'
     a --> PairTy b' fLinTy
   Transpose f -> do
     Pi (PiType (PiBinder binder a LinArrow) Pure b) <- getTypeE f
-    b' <- liftMaybe $ hoist binder b
+    b' <- liftHoistExcept $ hoist binder b
     b' --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkRWSAction Reader f
@@ -665,12 +699,12 @@ typeCheckPrimHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
     return $ PairTy resultTy stateTy
   RunIO f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftMaybe $ hoist b $ PairE eff resultTy
+    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect IOEffect $ declareEffs eff'
     return resultTy'
   CatchException f -> do
     Pi (PiType (PiBinder b UnitTy PlainArrow) eff resultTy) <- getTypeE f
-    PairE eff' resultTy' <- liftMaybe $ hoist b $ PairE eff resultTy
+    PairE eff' resultTy' <- liftHoistExcept $ hoist b $ PairE eff resultTy
     extendAllowedEffect ExceptionEffect $ declareEffs eff'
     return $ MaybeTy resultTy'
 
@@ -679,17 +713,17 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   allowed <- getAllowedEffects
   dropSubst $
-    refreshBinders regionBinder \regionBinder' ->
+    refreshBinders regionBinder \regionBinder' -> do
       refreshBinders refBinder \_ -> do
         allowed'   <- injectM allowed
-        eff'       <- injectM eff
+        eff'       <- substM eff
         regionName <- injectM $ binderName regionBinder'
         withAllowedEffects allowed' $
           extendAllowedEffect (RWSEffect rws regionName) $
             declareEffs eff'
   PiBinder _ (RefTy _ referentTy) _ <- return refBinder
-  referentTy' <- liftMaybe $ hoist regionBinder referentTy
-  resultTy' <- liftMaybe $ hoist (PairB regionBinder refBinder) resultTy
+  referentTy' <- liftHoistExcept $ hoist regionBinder referentTy
+  resultTy' <- liftHoistExcept $ hoist (PairB regionBinder refBinder) resultTy
   return (resultTy', referentTy')
 
 -- Having this as a separate helper function helps with "'b0' is untouchable" errors
@@ -701,7 +735,7 @@ checkEmptyNest _  = throw TypeErr "Not empty"
 nonDepBinderNestTypes :: Typer m => Nest Binder o o' -> m i o [Type o]
 nonDepBinderNestTypes Empty = return []
 nonDepBinderNestTypes (Nest (b:>ty) rest) = do
-  Abs rest' UnitE <- liftMaybe $ hoist b $ Abs rest UnitE
+  Abs rest' UnitE <- liftHoistExcept $ hoist b $ Abs rest UnitE
   restTys <- nonDepBinderNestTypes rest'
   return $ ty : restTys
 
@@ -925,12 +959,14 @@ checkUnOp op x = do
 -- dependency cycle. And we intend to make index sets a user-defined thing soon
 -- anyway.
 
-indices :: BindingsReader m => Type n -> m n [Atom n]
+indices :: forall n m. BindingsReader m => Type n -> m n [Atom n]
 indices ty = do
   Distinct <- getDistinct
-  case hoistToTop ty of
-    Just ty' -> return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
-    Nothing -> error "can't get index literals from type with free vars"
+  withExtEvidence (absurdExtEvidence :: ExtEvidence VoidS n) do
+    case hoistToTop ty of
+      HoistSuccess ty' ->
+        return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
+      HoistFailure _ -> error "can't get index literals from type with free vars"
 
 litIdxSetSize :: Type VoidS -> Int32
 litIdxSetSize (TC ty) = case ty of
@@ -962,9 +998,9 @@ litFromOrdinal ty i = case ty of
 
 -- === various helpers for querying types ===
 
-getBaseMonoidType :: MonadFail1 m => ScopeReader m => Type n -> m n (Type n)
+getBaseMonoidType :: Fallible1 m => ScopeReader m => Type n -> m n (Type n)
 getBaseMonoidType ty = case ty of
-  Pi (PiType b _ resultTy) -> liftMaybe $ hoist b resultTy
+  Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
 
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
@@ -981,7 +1017,7 @@ instance CheckableE EffectRow where
       IOEffect        -> return ()
     forM_ effTail \v -> do
       v' <- substM v
-      ty <- bindingType <$> lookupBindings v'
+      ty <- atomBindingType <$> lookupBindings v'
       checkAlphaEq EffKind ty
     substM effRow
 
@@ -1021,7 +1057,7 @@ checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
   forM_ rest \name -> do
     name' <- lookupEnvM name
-    ty <- bindingType <$> lookupBindings name'
+    ty <- atomBindingType <$> lookupBindings name'
     checkAlphaEq LabeledRowKind ty
 
 labeledRowDifference :: Typer m
@@ -1051,7 +1087,7 @@ labeledRowDifference (Ext (LabeledItems items) rest)
   return $ Ext (LabeledItems diffitems) diffrest
 
 
-projectLength :: (MonadFail1 m, ScopeReader m) => Type n -> m n Int
+projectLength :: (Fallible1 m, ScopeReader m) => Type n -> m n Int
 projectLength ty = case ty of
   TypeCon (_, def) params -> do
     [DataConDef _ (Abs bs UnitE)] <- applyDataDefParams def params

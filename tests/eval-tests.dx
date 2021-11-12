@@ -912,19 +912,19 @@ value2 Float Int
 -- TODO: This is a really bad error message
 interface BadAssociatedName a
   value2 c : Int
-> Error: variable not in scope: c
+> Type error:Explicit type binder `c` in method value2 is not a type parameter of its interface
 
 -- Technically the two tests below are not incorrect, but we don't implement them yet.
 interface AssociatedSubsetOfParams a c
   badValue1 a : Int
-> Compiler bug!
+> Not implemented:
 > Please report this at github.com/google-research/dex-lang/issues
 >
 > Permuted or incomplete explicit type binders are not supported yet.
 
 interface AssociatedPermutedParams a c
   badValue2 c a : Int
-> Compiler bug!
+> Not implemented:
 > Please report this at github.com/google-research/dex-lang/issues
 >
 > Permuted or incomplete explicit type binders are not supported yet.

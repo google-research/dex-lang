@@ -25,6 +25,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
+import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Text (unpack)
@@ -281,6 +282,25 @@ instance Searcher SearcherM where
 instance CtxReader SearcherM where
   getErrCtx = SearcherM $ lift getErrCtx
 
+instance Searcher [] where
+  [] <!> m = m
+  m  <!> _ = m
+
+instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
+  WriterT m1 <!> WriterT m2 = WriterT (m1 <!> m2)
+
+instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
+  throwErrs errs = lift $ throwErrs errs
+  addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
+
+instance Fallible [] where
+  throwErrs _ = []
+  addErrCtx _ m = m
+
+instance Fallible Maybe where
+  throwErrs _ = Nothing
+  addErrCtx _ m = m
+
 -- === small pretty-printing utils ===
 -- These are here instead of in PPrint.hs for import cycle reasons
 
@@ -366,7 +386,7 @@ instance Pretty ErrType where
     MiscErr           -> "Error:"
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
-    EscapedNameErr    -> "Escaped name"
+    EscapedNameErr    -> "Leaked local variables:"
     ModuleImportErr   -> "Module import error"
     MonadFailErr      -> "MonadFail error (internal error)"
 

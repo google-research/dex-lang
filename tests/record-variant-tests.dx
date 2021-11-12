@@ -156,7 +156,7 @@ def getTwoFoosAndABar (rest : Fields)?->
 > Type error:
 > Expected: {a: c & a: d & b: e}
 >   Actual: {a: a & b: b}
-> (Solving for: [a:Type, b:Type, c:Type, d:Type, e:Type])
+> (Solving for: [a, b, c, d, e])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^

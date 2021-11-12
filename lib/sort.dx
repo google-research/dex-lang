@@ -42,8 +42,8 @@ def mergeSortedLists [Ord a] (AsList nx xs: List a) (AsList ny ys: List a) : Lis
   -- Need this wrapper because Dex can't automatically weaken
   -- (a | b)=>c to ((Fin d)=>c)
   sorted = mergeSortedTables xs ys
-  newsize = (Fin (nx + ny)) 
-  AsList _ $ unsafeCastTable newsize sorted
+  newsize = nx + ny
+  AsList _ $ unsafeCastTable (Fin newsize) sorted
 
 def sort [Ord a] (xs: n=>a) : n=>a =
   -- Warning: Has quadratic runtime cost for now.

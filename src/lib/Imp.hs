@@ -93,7 +93,7 @@ toImpModule env backend cc entryName argBinders maybeDest block = do
     return (mainFunction, ImpModule allFunctions, reconAtom)
   where
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
-    inVarScope = binderScope <> destScope
+    inVarScope = env <> binderScope <> destScope
     binderScope = foldMap binderAsEnv $ fmap (fmap $ const ImpBound) argBinders
     destScope = fromMaybe mempty $ fmap freeVars maybeDest
     initCtx = ImpCtx backend CPU TopLevel

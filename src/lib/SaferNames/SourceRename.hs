@@ -116,15 +116,19 @@ instance SourceRenamableE (SourceNameOr UVar) where
       Just (EnvVal SuperclassNameRep _) -> error "Shouldn't find these in source map"
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
+lookupSourceName :: Renamer m => SourceName -> m n (EnvVal Name n)
+lookupSourceName v = do
+  SourceMap sourceMap <- askSourceMap
+  case M.lookup v sourceMap of
+    Nothing     -> throw UnboundVarErr $ pprint v
+    Just envVal -> return envVal
+
 instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
   sourceRenameE (SourceName sourceName) = do
-    SourceMap sourceMap <- askSourceMap
-    case M.lookup sourceName sourceMap of
-      Nothing    -> throw UnboundVarErr $ pprint sourceName
-      Just (EnvVal rep val) ->
-        case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
-          Just ColorsEqual -> return $ InternalName val
-          Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
+    lookupSourceName sourceName >>= \case
+      EnvVal rep val -> case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
+        Just ColorsEqual -> return $ InternalName val
+        Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
@@ -303,8 +307,10 @@ instance SourceRenamableE e => SourceRenamableE (ListE e) where
   sourceRenameE (ListE xs) = ListE <$> mapM sourceRenameE xs
 
 instance SourceRenamableE UMethodDef where
-  sourceRenameE (UMethodDef v expr) =
-    UMethodDef <$> sourceRenameE v <*> sourceRenameE expr
+  sourceRenameE (UMethodDef ~(SourceName v) expr) = do
+    lookupSourceName v >>= \case
+      EnvVal MethodNameRep v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
+      _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
   sourceRenameB (Nest b bs) =
@@ -320,35 +326,35 @@ instance SourceRenamableB b => SourceRenamableB (Nest b) where
 
 type SiblingSet = S.Set SourceName
 
--- TODO It seems this monad actually has no way for a downstream action
--- to check for membership in the sibling set produced by an upstream action?
--- Do we already have an ask/extend type of monad for this sort of thing?
--- Does it need to be re-kinded?
--- Alternately, should I just raise the error in `bindG` and be done with it?
-data PatRenamerNameGenT (m::MonadKind1) (e::E) (n::S) =
-  PatRenamerNameGenT { runPatRenamerNameGenT :: (m n (SiblingSet, RenamerContent e n)) }
+data PatRenamerNameGenT (m::MonadKind1) (e::E) (n::S) = PatRenamerNameGenT
+  { runPatRenamerNameGenT :: SiblingSet -> m n (SiblingSet, RenamerContent e n) }
+
+liftPatRenamerNameGenT :: Monad1 m => PatRenamerNameGenT m e n -> RenamerNameGenT m e n
+liftPatRenamerNameGenT m = RenamerNameGenT $ snd <$> runPatRenamerNameGenT m mempty
 
 instance (Renamer m) => NameGen (PatRenamerNameGenT m) where
-  returnG expr = PatRenamerNameGenT $ fmap (mempty,) $ runRenamerNameGenT $ returnG expr
-  bindG (PatRenamerNameGenT action) cont = PatRenamerNameGenT do
-    (sibs, RenamerContent frag sourceMap expr) <- action
+  returnG expr = PatRenamerNameGenT \_ ->
+                   fmap (mempty,) $ runRenamerNameGenT $ returnG expr
+  bindG (PatRenamerNameGenT action) cont = PatRenamerNameGenT \sibs -> do
+    (extraSibs1, RenamerContent frag sourceMap expr) <- action sibs
     extendScope frag $ extendSourceMap sourceMap $ do
-      (sibs', RenamerContent frag' sourceMap' expr') <- runPatRenamerNameGenT $ cont expr
+      (extraSibs2, RenamerContent frag' sourceMap' expr') <-
+          runPatRenamerNameGenT (cont expr) (sibs <> extraSibs1)
       withExtEvidence frag' do
         let sourceMap'' = inject sourceMap <> sourceMap'
-        return (sibs <> sibs', RenamerContent (frag >>> frag') sourceMap'' expr')
-  getDistinctEvidenceG = PatRenamerNameGenT do
+        return (extraSibs1 <> extraSibs2, RenamerContent (frag >>> frag') sourceMap'' expr')
+
+  getDistinctEvidenceG = PatRenamerNameGenT \_ -> do
     Distinct <- getDistinct
     return (mempty, RenamerContent id mempty getDistinctEvidence)
 
 class SourceRenamablePat (pat::B) where
   sourceRenamePat :: Renamer m
-                  => SiblingSet
-                  -> pat i i'
+                  => pat i i'
                   -> PatRenamerNameGenT m (pat o) o
 
 instance SourceRenamablePat (UBinder AtomNameC) where
-  sourceRenamePat siblingNames ubinder = PatRenamerNameGenT do
+  sourceRenamePat ubinder = PatRenamerNameGenT \siblingNames -> do
     newSibs <- case ubinder of
       UBindSource b -> do
         when (S.member b siblingNames) $ throw RepeatedPatVarErr $ pprint b
@@ -359,9 +365,9 @@ instance SourceRenamablePat (UBinder AtomNameC) where
     return $ (newSibs, ubinder')
 
 instance SourceRenamablePat UPat' where
-  sourceRenamePat siblingNames pat = case pat of
-    UPatBinder b -> UPatBinder `fmapG` sourceRenamePat siblingNames b
-    UPatCon ~(SourceName con) bs -> PatRenamerNameGenT do
+  sourceRenamePat pat = case pat of
+    UPatBinder b -> UPatBinder `fmapG` sourceRenamePat b
+    UPatCon ~(SourceName con) bs -> PatRenamerNameGenT \sibs -> do
       -- TODO Deduplicate this against the code for sourceRenameE of
       -- the SourceName case of SourceNameOr
       SourceMap sourceMap <- askSourceMap
@@ -369,50 +375,50 @@ instance SourceRenamablePat UPat' where
         Nothing    -> throw UnboundVarErr $ pprint con
         Just (EnvVal DataConNameRep name) -> return $ InternalName name
         Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
-      runPatRenamerNameGenT $ UPatCon con' `fmapG` sourceRenamePat siblingNames bs
+      runPatRenamerNameGenT (UPatCon con' `fmapG` sourceRenamePat bs) sibs
     UPatPair (PairB p1 p2) ->
-      sourceRenamePat siblingNames p1 `bindG` \p1' ->
-      sourceRenamePat siblingNames p2 `bindG` \p2' ->
+      sourceRenamePat p1 `bindG` \p1' ->
+      sourceRenamePat p2 `bindG` \p2' ->
       returnG $ UPatPair $ PairB p1' p2'
     UPatUnit UnitB -> returnG $ UPatUnit UnitB
-    UPatRecord labels ps -> UPatRecord labels `fmapG` sourceRenamePat siblingNames ps
-    UPatVariant labels label p -> UPatVariant labels label `fmapG` sourceRenamePat siblingNames p
-    UPatVariantLift labels p -> UPatVariantLift labels `fmapG` sourceRenamePat siblingNames p
-    UPatTable ps -> UPatTable `fmapG` sourceRenamePat siblingNames ps
+    UPatRecord labels ps -> UPatRecord labels `fmapG` sourceRenamePat ps
+    UPatVariant labels label p -> UPatVariant labels label `fmapG` sourceRenamePat p
+    UPatVariantLift labels p -> UPatVariantLift labels `fmapG` sourceRenamePat p
+    UPatTable ps -> UPatTable `fmapG` sourceRenamePat ps
 
 instance SourceRenamablePat UnitB where
-  sourceRenamePat _ UnitB = returnG UnitB
+  sourceRenamePat UnitB = returnG UnitB
 
 instance (SourceRenamablePat p1, SourceRenamablePat p2)
          => SourceRenamablePat (PairB p1 p2) where
-  sourceRenamePat sibs (PairB p1 p2) =
-    sourceRenamePat sibs p1 `bindG` \p1' ->
-    sourceRenamePat sibs p2 `bindG` \p2' ->
+  sourceRenamePat (PairB p1 p2) =
+    sourceRenamePat p1 `bindG` \p1' ->
+    sourceRenamePat p2 `bindG` \p2' ->
     returnG $ PairB p1' p2'
 
 instance (SourceRenamablePat p1, SourceRenamablePat p2)
          => SourceRenamablePat (EitherB p1 p2) where
-  sourceRenamePat sibs (LeftB p) =
-    sourceRenamePat sibs p `bindG` \p' ->
+  sourceRenamePat (LeftB p) =
+    sourceRenamePat p `bindG` \p' ->
     returnG $ LeftB p'
-  sourceRenamePat sibs (RightB p) =
-    sourceRenamePat sibs p `bindG` \p' ->
+  sourceRenamePat (RightB p) =
+    sourceRenamePat p `bindG` \p' ->
     returnG $ RightB p'
 
 instance SourceRenamablePat p => SourceRenamablePat (WithSrcB p) where
-  sourceRenamePat sibs (WithSrcB pos pat) = PatRenamerNameGenT $ addSrcContext pos $
-    runPatRenamerNameGenT $ (WithSrcB pos) `fmapG` sourceRenamePat sibs pat
+   sourceRenamePat (WithSrcB pos pat) = PatRenamerNameGenT \sibs ->
+     addSrcContext pos $
+       runPatRenamerNameGenT (WithSrcB pos `fmapG` sourceRenamePat pat) sibs
 
 instance SourceRenamablePat p => SourceRenamablePat (Nest p) where
-  sourceRenamePat sibs (Nest b bs) =
-    sourceRenamePat sibs b `bindG` \b' ->
-    sourceRenamePat sibs bs `bindG` \bs' ->
+  sourceRenamePat (Nest b bs) =
+    sourceRenamePat b `bindG` \b' ->
+    sourceRenamePat bs `bindG` \bs' ->
     returnG $ Nest b' bs'
-  sourceRenamePat _ Empty = returnG Empty
+  sourceRenamePat Empty = returnG Empty
 
 instance SourceRenamableB UPat' where
-  sourceRenameB pat = RenamerNameGenT $ snd <$> action where
-    action = runPatRenamerNameGenT $ sourceRenamePat mempty pat
+  sourceRenameB pat = liftPatRenamerNameGenT $ sourceRenamePat pat
 
 -- === misc instance ===
 

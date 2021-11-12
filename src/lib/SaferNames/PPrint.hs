@@ -109,7 +109,8 @@ instance Pretty (PrimCon (Atom n)) where pretty = prettyFromPrettyPrec
 
 instance Pretty (DeclBinding n) where
   pretty (DeclBinding ann ty expr) =
-    "Decl" <> p ann <> indented ("type:" <+> p ty <> hardline <> "value" <+> p expr)
+    "Decl" <> p ann <> indented (               "type: " <+> p ty
+                                 <> hardline <> "value:" <+> p expr)
 
 instance Pretty (Decl n l) where
   pretty decl = case decl of
@@ -203,8 +204,10 @@ forStr (RegularFor Rev) = "rof"
 forStr ParallelFor      = "pfor"
 
 instance Pretty (PiType n) where
-  pretty (PiType (PiBinder b ty arr) _ body) = let
-    prettyBinder = parens $ p (b:>ty)
+  pretty (PiType (PiBinder b ty arr) eff body) = let
+    prettyBinder = if binderName b `isFreeIn` PairE eff body
+                     then parens $ p (b:>ty)
+                     else p ty
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
@@ -267,8 +270,8 @@ instance Pretty (PiBinding n) where
     "Pi binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
 
 instance Pretty (SolverBinding n) where
-  pretty (InfVarBound ty _) = "Inference variable of type:" <+> p ty
-  pretty (SkolemBound ty  ) = "Skolem variable of type:"    <+> p ty
+  pretty (InfVarBound  ty _) = "Inference variable of type:" <+> p ty
+  pretty (SkolemBound  ty  ) = "Skolem variable of type:"    <+> p ty
 
 instance Pretty (Binding s n) where
   pretty b = case b of
@@ -285,8 +288,12 @@ instance Pretty (Binding s n) where
       "Method" <+> pretty idx <+> "of" <+> pretty className
 
 instance Pretty (DataDef n) where
-  pretty (DataDef dataDefSourceName _ _) =
-    "Data def:" <+> pretty dataDefSourceName
+  pretty (DataDef name bs cons) =
+    "data" <+> p name <+> p bs <> hardline <> prettyLines cons
+
+instance Pretty (DataConDef n) where
+  pretty (DataConDef name bs) =
+    p name <+> ":" <+> p bs
 
 instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =

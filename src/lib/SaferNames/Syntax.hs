@@ -45,22 +45,26 @@ module SaferNames.Syntax (
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
-    SourceBlock (..), SourceBlock' (..),
+    SourceBlock (..), SourceBlock' (..), EnvQuery (..),
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
+    unsafeGetBindings,
     ToBinding (..), refreshBinders, withFreshBinder,
     withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
     withFreshNameBinder,
-    BindingsFrag (..), lookupBindings, lookupBindingsPure, updateBindings, runBindingsReaderT,
+    BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
+    getSourceMapM, updateBindings, runBindingsReaderT,
+    BindingsReaderM, runBindingsReaderM,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
-    fromNonDepTabTy, binderType, bindingType, getProjection,
+    fromNonDepTabTy, binderType, atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     freshBinderNamePair, piArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates, refreshBinders2,
-    getAllowedEffects, withAllowedEffects,
+    getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
+    FallibleT1, runFallibleT1,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -75,9 +79,12 @@ module SaferNames.Syntax (
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
+import Control.Applicative
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
+import qualified Control.Monad.Trans.Except as MTE
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -307,6 +314,8 @@ bindingsFragToSynthCandidates' nest = case nest of
     case binding of
        AtomNameBinding (LetBound (DeclBinding InstanceLet _ _)) -> do
          tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+       AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
+         tell $ inject (SynthCandidates [Var $ binderName b] [] [])
        SuperclassBinding _ _ getter ->
          tell $ inject (SynthCandidates [] [getter] [])
        _ -> return ()
@@ -371,12 +380,15 @@ instance (InjectableE e, BindingsGetter m)
          => BindingsGetter (OutReaderT e m) where
   getBindingsM = OutReaderT $ lift getBindingsM
 
-instance (InjectableE e, ScopeReader m, BindingsExtender m)
+instance (InjectableE e, ScopeReader m, Scopable m)
          => Scopable (OutReaderT e m) where
-  withBindings = withBindingsFromExtender
-  extendNamelessBindings frag cont = do
-    Distinct <- getDistinct
-    extendBindings frag cont
+  withBindings ab cont = OutReaderT $ ReaderT \env ->
+    withBindings ab \e -> do
+      env' <- injectM env
+      runReaderT (runOutReaderT' $ cont e) env'
+  extendNamelessBindings frag (OutReaderT (ReaderT f)) =
+    OutReaderT $ ReaderT \env ->
+      extendNamelessBindings frag (f env)
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
@@ -388,7 +400,11 @@ instance (InjectableE e, ScopeReader m, BindingsExtender m)
 
 newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
   BindingsReaderT {runBindingsReaderT' :: ReaderT (DistinctEvidence n, Bindings n) m a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible, Alternative)
+
+type BindingsReaderM = BindingsReaderT Identity
+runBindingsReaderM :: Distinct n => Bindings n -> BindingsReaderM n a -> a
+runBindingsReaderM bindings m = runIdentity $ runBindingsReaderT bindings m
 
 runBindingsReaderT :: Distinct n => Bindings n -> (BindingsReaderT m n a) -> m a
 runBindingsReaderT bindings cont =
@@ -470,7 +486,7 @@ class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
   boundAtomBinding :: b n l -> AtomBinding n
 
 binderType :: BindsOneAtomName b => b n l -> Type n
-binderType b =  bindingType $ toBinding $ boundAtomBinding b
+binderType b =  atomBindingType $ toBinding $ boundAtomBinding b
 
 instance (InjectableE ann, ToBinding ann c) => BindsBindings (BinderP c ann) where
   boundBindings (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
@@ -508,6 +524,19 @@ lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c 
 lookupBindings v = do
   WithBindings bindings v' <- addBindings v
   injectM $ lookupBindingsPure bindings v'
+
+lookupSourceMap :: BindingsReader m
+                => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
+lookupSourceMap nameColor sourceName = do
+  sourceMap <- getSourceMapM
+  case M.lookup sourceName $ fromSourceMap sourceMap of
+    Just envVal -> return $ Just $ fromEnvVal nameColor envVal
+    Nothing -> return Nothing
+
+getSourceMapM :: BindingsReader m => m n (SourceMap n)
+getSourceMapM = do
+  WithBindings bindings UnitE <- addBindings UnitE
+  injectM $ getSourceMap $ bindings
 
 lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
 lookupBindingsPure (Bindings bindings _ _ _) v =
@@ -607,7 +636,6 @@ refreshBinders2 b cont = do
   withBindings ab \substFrag ->
     extendEnv substFrag $ cont
 
-
 data SomeDecl (binding::V) (n::S) (l::S) where
   SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
 
@@ -636,7 +664,46 @@ instance (forall c. NameColor c => ToBinding (binding c) c)
     withExtEvidence b $
       BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
 
--- === Tracking effects ===
+-- === FallibleT transformer ===
+
+newtype FallibleT1 (m::MonadKind1) (n::S) a =
+  FallibleT1 { fromFallibleT :: ReaderT ErrCtx (MTE.ExceptT Errs (m n)) a }
+  deriving (Functor, Applicative, Monad)
+
+runFallibleT1 :: Monad1 m => FallibleT1 m n a -> m n (Except a)
+runFallibleT1 m =
+  MTE.runExceptT (runReaderT (fromFallibleT m) mempty) >>= \case
+    Right ans -> return $ Success ans
+    Left errs -> return $ Failure errs
+
+instance Monad1 m => MonadFail (FallibleT1 m n) where
+  fail s = throw MonadFailErr s
+
+instance Monad1 m => Fallible (FallibleT1 m n) where
+  throwErrs (Errs errs) = FallibleT1 $ ReaderT \ambientCtx ->
+    MTE.throwE $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
+  addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
+
+instance ScopeReader m => ScopeReader (FallibleT1 m) where
+  addScope e = FallibleT1 $ lift $ lift $ addScope e
+  getDistinctEvidenceM = FallibleT1 $ lift $ lift $ getDistinctEvidenceM
+
+instance BindingsReader m => BindingsReader (FallibleT1 m) where
+  addBindings e = FallibleT1 $ lift $ lift $ addBindings e
+
+-- TODO (dougalm): I think we should just use this more instead of doing the
+-- whole `addBindings` dance.
+unsafeGetBindings :: BindingsReader m => m n (Bindings n)
+unsafeGetBindings = do
+  WithBindings bindings UnitE <- addBindings UnitE
+  return $ unsafeCoerceE bindings
+
+-- === Querying static env ===
+
+getSynthCandidatesM :: BindingsReader m => m n (SynthCandidates n)
+getSynthCandidatesM = do
+  WithBindings (Bindings _ scs _ _) UnitE <- addBindings UnitE
+  injectM scs
 
 getAllowedEffects :: BindingsReader m => m n (EffectRow n)
 getAllowedEffects = do
@@ -829,12 +896,19 @@ data SourceBlock' =
  | GetNameType SourceName
  -- TODO Add a color for module names?
  | ImportModule ModuleName
- | DumpEnv
+ | QueryEnv EnvQuery
  | ProseBlock String
  | CommentLine
  | EmptyLines
  | UnParseable ReachedEOF String
   deriving (Show, Generic)
+
+data EnvQuery =
+   DumpEnv
+ | InternalNameInfo RawName
+ | SourceNameInfo   SourceName
+   deriving (Show, Generic)
+
 
 type TopState = Bindings
 
@@ -916,8 +990,8 @@ applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
 -- === Synonyms ===
 
-bindingType :: Binding AtomNameC n -> Type n
-bindingType (AtomNameBinding b) = case b of
+atomBindingType :: Binding AtomNameC n -> Type n
+atomBindingType (AtomNameBinding b) = case b of
   LetBound    (DeclBinding _ ty _) -> ty
   LamBound    (LamBinding  _ ty)   -> ty
   PiBound     (PiBinding   _ ty)   -> ty
@@ -944,7 +1018,7 @@ nonDepPiType arr argTy eff resultTy =
 
 considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
 considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
-  PairE eff' resultTy' <- hoist b (PairE eff resultTy)
+  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
@@ -952,7 +1026,7 @@ fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
 fromNonDepPiType arr ty = do
   Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
-  PairE eff' resultTy' <- liftMaybe $ hoist b (PairE eff resultTy)
+  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return $ (argTy, eff', resultTy')
 
 naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
@@ -1120,16 +1194,15 @@ getProjection (i:is) a = case getProjection is a of
   ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
   DataCon _ _ _ _ xs -> xs !! i
   Record items -> toList items !! i
-  PairVal x _ | i == 0 -> x
-  PairVal _ y | i == 1 -> y
-  _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
+  Con (ProdCon xs) -> xs !! i
+  a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
-bundleFold empty pair els = case els of
-  []  -> (empty, 0)
+bundleFold emptyVal pair els = case els of
+  []  -> (emptyVal, 0)
   [e] -> (e, 1)
   h:t -> (pair h tb, td + 1)
-    where (tb, td) = bundleFold empty pair t
+    where (tb, td) = bundleFold emptyVal pair t
 
 mkBundleTy :: [Type n] -> (Type n, BundleDesc)
 mkBundleTy = bundleFold UnitTy PairTy
@@ -1607,14 +1680,16 @@ instance SubstE AtomSubstVal AtomBinding
 instance AlphaEqE AtomBinding
 
 instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE2 (PairE Type (LiftE SrcPosCtx)) Type
+  type RepE SolverBinding = EitherE2
+                              (PairE Type (LiftE SrcPosCtx))
+                              Type
   fromE = \case
-    InfVarBound ty ctx -> Case0 (PairE ty (LiftE ctx))
-    SkolemBound ty     -> Case1 ty
+    InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
+    SkolemBound  ty     -> Case1 ty
 
   toE = \case
-    Case0 (PairE ty (LiftE ct)) -> InfVarBound ty ct
-    Case1 ty                    -> SkolemBound ty
+    Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
+    Case1 ty                    -> SkolemBound  ty
     _ -> error "impossible"
 
 instance InjectableE SolverBinding
@@ -1730,12 +1805,12 @@ instance InjectableE Module
 instance SubstE Name Module
 
 instance GenericE EvaluatedModule where
-  type RepE EvaluatedModule = Abs (RecEnvFrag Binding)
-                                  (PairE SynthCandidates SourceMap)
-  fromE = undefined
-  toE = undefined
+  type RepE EvaluatedModule = Abs BindingsFrag (PairE SynthCandidates SourceMap)
+  fromE (EvaluatedModule bs scs sm) = Abs bs (PairE scs sm)
+  toE   (Abs bs (PairE scs sm)) = EvaluatedModule bs scs sm
 
 instance InjectableE EvaluatedModule
+instance HoistableE EvaluatedModule
 instance SubstE Name EvaluatedModule
 
 instance Store (Atom n)
@@ -1820,6 +1895,7 @@ instance GenericB BindingsFrag where
   toB   _ = error "impossible" -- GHC exhaustiveness bug?
 
 instance InjectableB         BindingsFrag
+instance HoistableB          BindingsFrag
 instance ProvesExt           BindingsFrag
 instance BindsNames          BindingsFrag
 instance SubstB Name         BindingsFrag
@@ -1862,11 +1938,21 @@ instance HasNameHint (UBinder c n l) where
     UIgnore       -> fromString "_"
     UBind v       -> getNameHint v
 
+instance BindsNames (UBinder c) where
+  toScopeFrag (UBindSource _) = emptyOutFrag
+  toScopeFrag (UIgnore)       = emptyOutFrag
+  toScopeFrag (UBind b)       = toScopeFrag b
+
+instance ProvesExt (UBinder c) where
 instance BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
     UBindSource _ -> emptyInFrag
     UIgnore       -> emptyInFrag
     UBind b'      -> b' @> x
+
+instance ProvesExt (UAnnBinder c) where
+instance BindsNames (UAnnBinder c) where
+  toScopeFrag (UAnnBinder b _) = toScopeFrag b
 
 instance BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x

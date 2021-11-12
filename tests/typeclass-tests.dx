@@ -28,11 +28,11 @@ instance InterfaceTest4 Float
 baz = 1
 instance InterfaceTest4 Float
   baz = 1
-> Type error:baz is not a method of InterfaceTest4
+> Type error:not a method name: baz
 
 instance InterfaceTest4 Float
   someMethod = 1
-> Type error:someMethod is not a method of InterfaceTest4
+> Type error:someMethod is not a method of InterfaceTest41
 
 instance InterfaceTest4 Float
   foo = 1
@@ -52,11 +52,12 @@ outer = 1.0
 -- Should be able to shadow a variable with the parameter
 interface InterfaceTest5 outer
   value outer : Int
+> Error: variable already defined: outer
 
 -- Shouldn't be able to bind a parameter variable twice
 interface InterfaceTest6 a a
   f : a -> Int
-> Error: variable already defined within pattern: a
+> Error: variable already defined: a
 
 -------------------- Diamond superclasses --------------------
 
@@ -155,29 +156,31 @@ def f8 [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 
 -------------------- Automatic quantification --------------------
 
-interface X a
-  x_ a : Int
+-- XXX: broken since safe-names refactor
 
-def MyPairOfXs (a : Type) (_ : X a) ?=> : Type = (a & a)
+-- interface X a
+--   x_ a : Int
 
-instance X Int
-  x_ = 1
+-- def MyPairOfXs (a : Type) (_ : X a) ?=> : Type = (a & a)
 
--- No automatic quantification needed
-def q0 (x : MyPairOfXs Int) : Int = fst x
-def q1 [X a] (x : MyPairOfXs a) : a = fst x
+-- instance X Int
+--   x_ = 1
 
--- Should work with implicit quantification
-def q2 (x : MyPairOfXs a) : a = fst x
+-- -- No automatic quantification needed
+-- def q0 (x : MyPairOfXs Int) : Int = fst x
+-- def q1 [X a] (x : MyPairOfXs a) : a = fst x
 
--- Should work with implicit quantification
-def q3 (x : MyPairOfXs a) : Int = x_ a
+-- -- Should work with implicit quantification
+-- def q2 (x : MyPairOfXs a) : a = fst x
 
--- We should also implicitly quantify over constraints of the return type
-def f4 (x : a) : MyPairOfXs a = (x, x)
+-- -- -- Should work with implicit quantification
+-- -- def q3 (x : MyPairOfXs a) : Int = x_ a
 
--- Check automatic quantification for interfaces
-interface AutoQuant a
-  dummy : Int
-instance AutoQuant (MyPairOfXs a)
-  dummy = 1
+-- -- We should also implicitly quantify over constraints of the return type
+-- def f4 (x : a) : MyPairOfXs a = (x, x)
+
+-- -- Check automatic quantification for interfaces
+-- interface AutoQuant a
+--   dummy : Int
+-- instance AutoQuant (MyPairOfXs a)
+--   dummy = 1

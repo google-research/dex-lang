@@ -15,7 +15,7 @@
 
 module SaferNames.Builder (
   emit, emitOp, buildLamGeneral,
-  buildPureLam, BuilderT, Builder (..), Builder2,
+  buildPureLam, BuilderT (..), Builder (..), Builder2,
   buildScoped, buildScopedReduceDecls,
   runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
@@ -34,8 +34,10 @@ module SaferNames.Builder (
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
   ) where
 
+import Control.Applicative
 import Control.Monad
-import Control.Monad.Trans
+import Control.Monad.Writer.Strict hiding (Alt)
+import Control.Monad.Reader
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
@@ -55,7 +57,7 @@ import Err
 
 -- === Ordinary (local) builder class ===
 
-class (BindingsReader m, Scopable m, MonadFail1 m)
+class (BindingsReader m, Scopable m, Fallible1 m)
       => Builder (m::MonadKind1) where
   emitDecl
     :: (Builder m, Emits n)
@@ -105,12 +107,12 @@ buildScoped cont = do
 
 buildScopedReduceDecls
   :: ( Builder m
-     , CheaplyReducible e, HoistableE e, InjectableE e, SubstE Name e
-     , SubstE AtomSubstVal e)
+     , HoistableE e, InjectableE e, SubstE Name e, SubstE AtomSubstVal e)
   => (forall l. (Emits l, Ext n l) => m l (e l))
-  -> m n (e n)
-buildScopedReduceDecls cont = buildScoped cont >>= cheapReduceDecls
-
+  -> m n (Maybe (e n))
+buildScopedReduceDecls cont = do
+  Abs decls result <- buildScoped cont
+  cheapReduceWithDecls decls result
 
 -- === Top-level builder class ===
 
@@ -164,10 +166,10 @@ instance ExtOutMap Bindings BuilderEmissions where
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Bindings BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader)
+           , CtxReader, ScopeReader, Alternative, Searcher, MonadWriter w)
 
 runBuilderT
-  :: (MonadFail m, Distinct n)
+  :: (Fallible m, Distinct n)
   => Bindings n
   -> (forall l. (Distinct l, Ext n l) => BuilderT m l (e l))
   -> m (e n)
@@ -177,7 +179,7 @@ runBuilderT bindings cont = do
     Empty -> return result
     _ -> error "shouldn't have produced any decls"
 
-instance MonadFail m => Builder (BuilderT m) where
+instance Fallible m => Builder (BuilderT m) where
   buildScopedGeneral ab cont = BuilderT do
     scopedResult <- scopedInplaceGeneral
       (\bindings b -> bindings `extendOutMap` boundBindings b)
@@ -185,13 +187,16 @@ instance MonadFail m => Builder (BuilderT m) where
       (\e -> runBuilderT' $ withFabricatedEmitsEvidence $ cont e)
     ScopedResult _ (PairB b emissions) result <- return scopedResult
     injectM $ Abs b $ Abs emissions result
-  emitDecl = undefined
+  emitDecl hint ann expr = do
+    ty <- getType expr
+    BuilderT $ emitInplace hint (DeclBinding ann ty expr) \b rhs ->
+      Nest (Let b rhs) Empty
 
-instance MonadFail m => BindingsReader (BuilderT m) where
+instance Fallible m => BindingsReader (BuilderT m) where
   addBindings e = BuilderT $
     withInplaceOutEnv e \bindings e' -> WithBindings bindings e'
 
-instance MonadFail m => Scopable (BuilderT m) where
+instance Fallible m => Scopable (BuilderT m) where
   withBindings ab cont = do
     Abs b (Abs Empty result) <- buildScopedGeneral ab \x -> cont x
     return $ Abs b result
@@ -201,7 +206,17 @@ instance MonadFail m => Scopable (BuilderT m) where
 
 instance (InjectableV v, Builder m) => Builder (EnvReaderT v m i) where
   emitDecl hint ann expr = EnvReaderT $ lift $ emitDecl hint ann expr
-  buildScopedGeneral _ _ = undefined
+  buildScopedGeneral ab cont = EnvReaderT $ ReaderT \env ->
+    buildScopedGeneral ab \x ->
+      runReaderT (runEnvReaderT' $ cont x) (inject env)
+
+instance (InjectableE e, Builder m) => Builder (OutReaderT e m) where
+  emitDecl hint ann expr =
+    OutReaderT $ lift $ emitDecl hint ann expr
+
+  buildScopedGeneral ab cont = OutReaderT $ ReaderT \env ->
+    buildScopedGeneral ab \x ->
+      runReaderT (runOutReaderT' $ cont x) (inject env)
 
 -- === Emits predicate ===
 
@@ -243,16 +258,26 @@ buildBlockAux cont = do
     ty <- getType result
     return $ result `PairE` ty `PairE` LiftE aux
   let (result `PairE` ty `PairE` LiftE aux) = results
-  ty' <- liftMaybe $ hoist decls ty
-  return (Block ty' decls $ Atom result, aux)
+  ty' <- liftHoistExcept $ hoist decls ty
+  Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
+  return (Block ty' decls' result', aux)
+
+inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
+inlineLastDecl Empty result = Abs Empty result
+inlineLastDecl (Nest (Let b (DeclBinding _ _ expr)) Empty) (Atom (Var v))
+  | v == binderName b = Abs Empty expr
+inlineLastDecl (Nest decl rest) result =
+  case inlineLastDecl rest result of
+   Abs decls' result' ->
+     Abs (Nest decl decls') result'
 
 buildBlockReduced
   :: Builder m
   => (forall l. (Emits l, Ext n l) => m l (Atom l))
   -> m n (Maybe (Atom n))
 buildBlockReduced cont = do
-  block <- buildBlock cont
-  cheapReduceBlockToAtom block
+  Block _ decls result <- buildBlock cont
+  cheapReduceToAtom $ Abs decls result
 
 buildBlock :: Builder m
            => (forall l. (Emits l, Ext n l) => m l (Atom l))
@@ -356,17 +381,18 @@ buildNonDepPi hint arr argTy effs resultTy = buildPi hint arr argTy \_ -> do
 buildAbs
   :: ( Builder m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e, HoistableE e
      , NameColor c, ToBinding binding c)
-  => binding n
+  => NameHint
+  -> binding n
   -> (forall l. Ext n l => Name c l -> m l (e l))
   -> m n (Abs (BinderP c binding) e n)
-buildAbs binding body = withFreshBinder NoHint binding body
+buildAbs hint binding body = withFreshBinder hint binding body
 
-singletonBinder :: Builder m => Type n -> m n (EmptyAbs Binder n)
-singletonBinder ty = buildAbs ty \_ -> return UnitE
+singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
+singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
 
-singletonBinderNest :: Builder m => Type n -> m n (EmptyAbs (Nest Binder) n)
-singletonBinderNest ty = do
-  EmptyAbs b <- singletonBinder ty
+singletonBinderNest :: Builder m => NameHint -> Type n -> m n (EmptyAbs (Nest Binder) n)
+singletonBinderNest hint ty = do
+  EmptyAbs b <- singletonBinder hint ty
   return $ EmptyAbs (Nest b Empty)
 
 buildNaryAbs
@@ -377,7 +403,7 @@ buildNaryAbs
 buildNaryAbs (EmptyAbs Empty) body = Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
   Abs b' (Abs bs' body') <-
-    buildAbs ty \v -> do
+    buildAbs (getNameHint b) ty \v -> do
       ab <- injectM $ Abs b (EmptyAbs bs)
       bs' <- applyAbs ab v
       buildNaryAbs bs' \vs -> do
@@ -403,7 +429,7 @@ buildUnaryAlt
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
 buildUnaryAlt ty body = do
-  bs <- singletonBinderNest ty
+  bs <- singletonBinderNest NoHint ty
   buildAlt bs \[v] -> body v
 
 buildNewtype :: Builder m
@@ -414,7 +440,7 @@ buildNewtype :: Builder m
 buildNewtype name paramBs body = do
   Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
     ty <- body params
-    singletonBinderNest ty
+    singletonBinderNest NoHint ty
   return $ DataDef name paramBs' [DataConDef ("mk" <> name) argBs]
 
 fromNewtype :: [DataConDef n]

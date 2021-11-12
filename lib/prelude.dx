@@ -47,6 +47,22 @@ def IToF (x:Int) : Float = internalCast _ x
 def FToI (x:Float) : Int = internalCast _ x
 def I64ToRawPtr (x:Int64 ) : RawPtr = internalCast _ x
 def RawPtrToI64 (x:RawPtr) : Int64  = internalCast _ x
+
+interface FromInteger a
+  fromInteger : Int64 -> a
+
+instance FromInteger Float32
+  fromInteger = \x. IToF $ I64ToI x
+
+instance FromInteger Int32
+  fromInteger = \x. I64ToI x
+
+instance FromInteger Float64
+  fromInteger = \x. FToF64 $ IToF $ I64ToI x
+
+instance FromInteger Int64
+  fromInteger = \x. x
+
 '## Bitwise operations
 
 interface Bits a
@@ -400,7 +416,7 @@ def withReader
       : {|eff} a =
     runReader init action
 
-def MonoidLifter (b:Type) (w:Type) : Type = h:Type -> AccumMonoid h b ?=> AccumMonoid h w
+def MonoidLifter (b:Type) (w:Type) : Type = h:Type ?-> AccumMonoid h b ?=> AccumMonoid h w
 
 def runAccum
       (mlift:MonoidLifter b w) ?=>

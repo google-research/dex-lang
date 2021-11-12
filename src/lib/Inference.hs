@@ -40,7 +40,6 @@ import Err
 data UInferEnv = UInferEnv
   { inferSubst        :: SubstEnv
   , srcCtx            :: SrcPosCtx
-  , protoludeScope    :: ProtoludeScope
   }
 type UInferM = ReaderT UInferEnv (BuilderT (SolverT Except))
 
@@ -57,9 +56,9 @@ pattern Check t <-
 
 {-# COMPLETE Infer, Check #-}
 
-inferModule :: Bindings -> SynthCandidates -> UModule -> ProtoludeScope -> Except Module
-inferModule scope scs (UModule uDecl sourceMap) protolude = do
-  (evaluated, ((bindings, synthCandidates), decls)) <- runUInferM mempty scope scs protolude do
+inferModule :: Bindings -> SynthCandidates -> UModule -> Except Module
+inferModule scope scs (UModule uDecl sourceMap) = do
+  (evaluated, ((bindings, synthCandidates), decls)) <- runUInferM mempty scope scs do
     substEnv <- inferUDecl uDecl
     substBuilder substEnv $ EvaluatedModule mempty mempty sourceMap
   let evaluated' = addSynthCandidates evaluated synthCandidates
@@ -91,10 +90,10 @@ addSynthCandidates (EvaluatedModule bindings scsPrev sourceMap) scs =
   EvaluatedModule bindings (scs <> scsPrev) sourceMap
 
 runUInferM :: (HasVars a, Subst a, Pretty a)
-           => SubstEnv -> Scope -> SynthCandidates -> ProtoludeScope
+           => SubstEnv -> Scope -> SynthCandidates
            -> UInferM a -> Except (a, ((Scope, SynthCandidates), Nest Decl))
-runUInferM env scope scs protolude m = runSolverT $ do
-  runBuilderT scope scs $ runReaderT m $ UInferEnv env Nothing protolude
+runUInferM env scope scs m = runSolverT $ do
+  runBuilderT scope scs $ runReaderT m $ UInferEnv env Nothing
 
 checkSigma :: UExpr -> (Type -> RequiredTy Type) -> SigmaType -> UInferM Atom
 checkSigma expr reqCon sTy = case sTy of
@@ -344,12 +343,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emit (Op $ VariantLift prev value')
-  UIntLit  x  -> do
-    fromIntegerName <- protoludeFromIntegerMethod <$> asks protoludeScope
-    fromIntegerFunc <- inferRho $ WithSrc Nothing $ UVar $ UInternalVar fromIntegerName
-    let FunTy _ _ a = getType fromIntegerFunc
-    registerDefault a Int32Ty
-    matchRequirement =<< app fromIntegerFunc (Con $ Lit  $ Int64Lit $ fromIntegral x)
+  UIntLit  _  -> error "not implemented"
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
   where
@@ -974,7 +968,7 @@ normalizeGiven scope scs projs initGivens = NormalizedGivens $ superclassClosure
       Failure _      -> Nothing
       Success (b, _) -> Just b
       where
-        res = runUInferM mempty scope scs (error "Shouldn't need protolude here") $ do
+        res = runUInferM mempty scope scs $ do
           buildScoped $ do
             f' <- instantiateSigma f
             Pi (Abs b _) <- return $ getType f'
@@ -1047,7 +1041,7 @@ inferToSynth :: (Pretty a, HasVars a, Subst a) => UInferM a -> SynthDictM a
 inferToSynth m = do
   scope <- getScope
   scs <- getSynthCandidates
-  case runUInferM mempty scope scs (error "Shouldn't need protolude here") m of
+  case runUInferM mempty scope scs m of
     Failure _ -> empty
     Success (x, (_, decls)) -> do
       mapM_ emitDecl decls
