@@ -16,7 +16,7 @@ module SaferNames.Type (
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices,
   caseAltsBinderTys, tryGetType, projectLength,
-  sourceNameType) where
+  sourceNameType, substEvalautedModuleM) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -1001,6 +1001,88 @@ litFromOrdinal :: Type VoidS -> Int32 -> Atom VoidS
 litFromOrdinal ty i = case ty of
   TC (IntRange low high) -> Con $ IntRangeVal low high $ IdxRepVal i
   _ -> error $ "Not an (implemented) index set: " ++ pprint ty
+
+-- === substituting evaluated modules ===
+
+substEvalautedModuleM
+  :: (EnvReader AtomSubstVal m, BindingsReader2 m)
+  => EvaluatedModule i
+  -> m i o (EvaluatedModule o)
+substEvalautedModuleM m = do
+  env <- getEnv
+  WithBindings bindings env' <- addBindings env
+  injectM $ atomSubstEvaluatedModule bindings env' m
+
+-- A module's source map is a name-to-name mapping, so we can't replace the rhs
+-- names with atoms. Instead, we create new bindings for the atoms we want to
+-- substitute with, and then substitute with the names of those bindings in the
+-- source map.
+atomSubstEvaluatedModule
+  :: forall i o.
+     Distinct o
+  => Bindings o -> Env AtomSubstVal i o -> EvaluatedModule i -> EvaluatedModule o
+atomSubstEvaluatedModule bindings env m = do
+  let scope = toScope bindings
+  case substAnything scope env m of
+    Abs bs (EvaluatedModule frag scs sm) ->
+      case refreshAbs scope $ Abs (PairB bs frag) (PairE scs sm) of
+        DistinctAbs (PairB bs' frag') (PairE scs' sm') ->
+          withSubscopeDistinct frag' do
+            let bs'' = atomNestToBindingsFrag bindings bs'
+            EvaluatedModule (bs'' `catBindingsFrags` frag') scs' sm'
+
+atomNestToBindingsFrag
+  :: Distinct o'
+  => Bindings o
+  -> Nest (BinderP AtomNameC Atom) o o'
+  -> BindingsFrag o o'
+atomNestToBindingsFrag _ Empty = emptyOutFrag
+atomNestToBindingsFrag bindings (Nest (b:>x) rest) =
+  withSubscopeDistinct rest $
+    withSubscopeDistinct b do
+      let frag = boundBindings (b :> atomToBinding bindings x)
+      let frag' = atomNestToBindingsFrag (bindings `extendOutMap` frag) rest
+      catBindingsFrags frag frag'
+
+atomToBinding :: Distinct n => Bindings n -> Atom n -> Binding AtomNameC n
+atomToBinding bindings x = do
+  let ty = runBindingsReaderM bindings $ getType x
+  AtomNameBinding $ LetBound $ DeclBinding PlainLet ty (Atom x)
+
+substAnything
+  :: ( Distinct o, InjectableE atom
+     , InjectableE e, SubstE Name e, HoistableE e)
+  => Scope o
+  -> Env (SubstVal c atom) i o
+  -> e i
+  -> Abs (Nest (BinderP c atom)) e o
+substAnything scope subst e =
+  substAnythingRec scope subst emptyInMap $ collectFreeVars e
+
+substAnythingRec
+  :: (Distinct o, InjectableE atom, InjectableE e, SubstE Name e)
+  => Scope o
+  -> Env (SubstVal c atom) i o
+  -> Env Name h o
+  -> WithRenamer e h i
+  -> Abs (Nest (BinderP c atom)) e o
+substAnythingRec scope atomSubst nameSubst (WithRenamer renamer e) =
+  case unConsEnv renamer of
+    EmptyEnv -> Abs Empty $ substE (scope, nameSubst) e
+    ConsEnv b v rest -> case atomSubst ! v of
+      Rename v' ->
+        substAnythingRec scope atomSubst nameSubst' $ WithRenamer rest e
+        where nameSubst' = nameSubst <>> b@>v'
+      SubstVal x ->
+        withFresh (getNameHint b) nameColorRep scope \b' -> do
+          let scope'     = scope `extendOutMap` toScopeFrag b'
+          let atomSubst' = inject atomSubst
+          let nameSubst' = inject nameSubst <>> b@> binderName b'
+          prependNestAbs (b':>x) $
+            substAnythingRec scope' atomSubst' nameSubst' $ WithRenamer rest e
+
+prependNestAbs :: b n l -> Abs (Nest b) e l -> Abs (Nest b) e n
+prependNestAbs b (Abs bs e) = Abs (Nest b bs) e
 
 -- === various helpers for querying types ===
 

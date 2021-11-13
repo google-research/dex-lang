@@ -50,7 +50,7 @@ module SaferNames.Syntax (
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
     ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder,
-    withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
+    withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
     BindingsReaderM, runBindingsReaderM,

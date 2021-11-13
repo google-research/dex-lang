@@ -65,7 +65,7 @@ module SaferNames.Name (
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs,
   hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars,
+  HoistExcept (..), liftHoistExcept, abstractFreeVars, WithRenamer (..),
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), fromEnvVal,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
@@ -2336,6 +2336,31 @@ toEnvPairs (UnsafeMakeEnv m) =
     go :: [EnvPair v o UnsafeS UnsafeS] -> Nest (EnvPair v o) i i'
     go [] = unsafeCoerceB Empty
     go (EnvPair b val : rest) = Nest (EnvPair (unsafeCoerceB b) val) $ go rest
+
+data WithRenamer e i o where
+  WithRenamer :: EnvFrag Name i i' o -> e i' -> WithRenamer e i o
+
+collectFreeVars :: HoistableE e => e n -> WithRenamer e VoidS n
+collectFreeVars e = WithRenamer idRenamerFrag e
+  where idRenamerFrag = UnsafeMakeEnv $
+          flip M.mapWithKey (freeVarsE e) \v (SomeNameColor c) ->
+            EnvVal c $ UnsafeMakeName c v
+
+-- Lets you process entries one by one, just as you'd traverse a list by pattern-matching
+-- on `:` and `[]`.
+unConsEnv :: EnvFrag v i i' o -> ConsEnv v i i' o
+unConsEnv (UnsafeMakeEnv m) =
+  case M.minViewWithKey m of
+    Nothing -> unsafeCoerceB EmptyEnv
+    Just ((v, EnvVal c x), rest)  ->
+      withNameColorRep c $
+        ConsEnv (UnsafeMakeBinder (UnsafeMakeName c v)) x (UnsafeMakeEnv rest)
+
+data ConsEnv v i i' o where
+  ConsEnv :: NameColor c
+          => NameBinder c i1 i2 -> v c o -> EnvFrag v i2 i3 o
+          -> ConsEnv v i1 i3 o
+  EmptyEnv :: ConsEnv v i i o
 
 instance Category (Nest b) where
   id = Empty

@@ -67,6 +67,7 @@ import qualified SaferNames.Type                 as S
 import qualified SaferNames.ResolveImplicitNames as S
 import qualified SaferNames.SourceRename         as S
 import qualified SaferNames.Inference            as S
+import qualified SaferNames.Simplify             as S
 
 -- === shared effects ===
 
@@ -346,14 +347,11 @@ evalUModule sourceModule = do
   checkPassS TypePass typed
   synthed <- liftExcept $ S.synthModule bindingsS typed
   checkPassS SynthPass synthed
-  let typedUnsafe = fromSafe topState synthed
-  checkPass TypePass typedUnsafe
-  let defunctionalized = simplifyModule bindingsD typedUnsafe
-  checkPass SimpPass defunctionalized
-  -- disabling due to a substitution bug that occurs in flipY in diagram.dx
-  -- (safe-names version should catch it)
-  -- let stdOptimized = optimizeModule defunctionalized
-  let stdOptimized = defunctionalized
+  let defunctionalized = S.simplifyModule bindingsS synthed
+  checkPassS SimpPass defunctionalized
+  let typedDefunctionalized = fromSafe topState defunctionalized
+  checkPass TypePass typedDefunctionalized
+  let stdOptimized = optimizeModule typedDefunctionalized
   -- Apply backend specific optimizations
   backend <- backendName <$> getConfig
   let optimized = case backend of
