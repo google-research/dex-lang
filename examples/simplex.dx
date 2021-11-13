@@ -462,24 +462,39 @@ def simplex (_:Eq cons) ?=>
               tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
               Continue
 
+'# Tests
+
 --=-=-=-=-=- Tests --=-=-=-=-=-
 -- An impossible problem.
-impossible_constraints : (Fin 3)=>Constraint (Fin 2) =
-  angles = linspace (Fin 3) 0.0 (2.0 * pi)
-  for i.
-    cs = [-(sin (angles.i)),
-          -(cos (angles.i))]
-    {coeffs=cs, offset=1.0, conType=GreaterThan}
+
+-- impossible_constraints : (Fin 3) => Constraint (Fin 2) =
+--   for i.
+--     angles = linspace (Fin 3) 0.0 (2.0 * pi)
+--     cs = [-(sin (angles.i)), -(cos (angles.i))]
+--     {coeffs=cs, offset=1.0, conType=GreaterThan}
+
+impossible_constraints = [
+  {coeffs = [-0., -1.],       offset=1.0, conType=GreaterThan},
+  {coeffs = [-0.866025, 0.5], offset=1.0, conType=GreaterThan},
+  {coeffs = [0.866025, 0.5], offset=1.0, conType=GreaterThan}
+]
 :p simplex impossible_constraints [1.0, 1.0] Maximize
 > Infeasible
 
 -- An unbounded problem.
-unbounded_constraints : (Fin 3)=>Constraint (Fin 2) =
-  angles = linspace (Fin 3) 0.0 1.0
-  for i.
-    cs = [-(sin (angles.i)),
-          -(cos (angles.i))]
-    {coeffs=cs, offset=-0.1, conType=LessThan}
+
+-- unbounded_constraints : (Fin 3)=>Constraint (Fin 2) =
+--   angles = linspace (Fin 3) 0.0 1.0
+--   for i.
+--     cs = [-(sin (angles.i)),
+--           -(cos (angles.i))]
+--     {coeffs=cs, offset=-0.1, conType=LessThan}
+
+unbounded_constraints = [
+  {coeffs = [-0., -1.],            offset=-0.1, conType=LessThan},
+  {coeffs = [-0.327195, -0.944957],offset=-0.1, conType=LessThan},
+  {coeffs = [-0.61837, -0.785887], offset=-0.1, conType=LessThan}
+]
 :p simplex unbounded_constraints [1.0, 1.0] Maximize
 > Unbounded
 
@@ -487,26 +502,39 @@ unbounded_constraints : (Fin 3)=>Constraint (Fin 2) =
 -- Introduction to Linear Optimization
 -- by D. Bertsimas and J. Tsitsiklis
 obj = [10.0, 12.0, 12.0]
-a = [[1., 2., 2.],
-     [2., 1., 2.],
-     [2., 2., 1.]]
-textbook_constraints : (Fin 3)=>Constraint (Fin 3) =
-  for i. {coeffs=a.i, offset=20.0, conType=LessThan}
+-- a = [[1., 2., 2.],
+--      [2., 1., 2.],
+--      [2., 2., 1.]]
+-- textbook_constraints : (Fin 3)=>Constraint (Fin 3) =
+--   for i. {coeffs=a.i, offset=20.0, conType=LessThan}
+
+textbook_constraints = [
+  {coeffs = [1., 2., 2.], offset=20.0, conType=LessThan},
+  {coeffs = [2., 1., 2.], offset=20.0, conType=LessThan},
+  {coeffs = [2., 2., 1.], offset=20.0, conType=LessThan}
+]
 :p simplex textbook_constraints obj Maximize
 > (Solution [4.0, 4.0, 4.0])
 
 
 -- A feasible problem from Waterloo notes
 obj' = [1., -1.,  1.]
-a' = [[ 2., -1.,  2.],
-     [ 2., -3.,  1.],
-     [-1.,  1., -2.]]
-b' = [4., -5., -1.]
-textbook_constraints' : (Fin 3)=>Constraint (Fin 3) =
-  for i. {coeffs=a'.i, offset=b'.i, conType=LessThan}
+-- a' = [[ 2., -1.,  2.],
+--      [ 2., -3.,  1.],
+--      [-1.,  1., -2.]]
+-- b' = [4., -5., -1.]
+-- textbook_constraints' : (Fin 3)=>Constraint (Fin 3) =
+--   for i. {coeffs=a'.i, offset=b'.i, conType=LessThan}
+
+textbook_constraints' = [
+  {coeffs = [ 2., -1.,  2.], offset=4.0,  conType=LessThan},
+  {coeffs = [ 2., -3.,  1.], offset=-5.0, conType=LessThan},
+  {coeffs = [-1.,  1., -2.], offset=-1.0, conType=LessThan}
+]
 :p simplex textbook_constraints' obj' Maximize
 
 
+'# Visual Example
 
 --=-=-=-=-=- Visual Example --=-=-=-=-=-
 
@@ -550,6 +578,7 @@ image3 = draw_point image x y
 :html imshow image3
 
 
+'# Debugging
 
 --=-=-=-=-=-=-=-=-=-=-= Debugging -=--=-==-=-==-
 
