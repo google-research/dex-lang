@@ -534,17 +534,24 @@ textbook_constraints' = [
 --=-=-=-=-=- Visual Example --=-=-=-=-=-
 
 -- Example problem, expressed in terms of inequalities.
-def polygon_constraints (num_sides: Int) (radius:Float)
-  (center:(Fin 2)=>Float) : (Fin num_sides)=>Constraint (Fin 2) =
-  angles = linspace (Fin num_sides) 0.0 (2.0 * pi)
-  for i.
-    cs = [-(sin (0.23 + angles.i)),
-          -(cos (0.23 + angles.i))]
-    {coeffs=cs,
-     offset=radius + (dot cs center),
-     conType=LessThan}
+-- def polygon_constraints (num_sides: Int) (radius:Float)
+--   (center:(Fin 2)=>Float) : (Fin num_sides)=>Constraint (Fin 2) =
+--   angles = linspace (Fin num_sides) 0.0 (2.0 * pi)
+--   for i.
+--     cs = [-(sin (0.23 + angles.i)),
+--           -(cos (0.23 + angles.i))]
+--     {coeffs=cs,
+--      offset=radius + (dot cs center),
+--      conType=LessThan}
+--
+-- pentagon = polygon_constraints 5 0.2 [0.5, 0.5]
 
-pentagon = polygon_constraints 5 0.2 [0.5, 0.5]
+pentagon = [
+  {coeffs = [-0.227978, -0.973666], conType = LessThan, offset = -0.400822}
+, {coeffs = [-0.996461, -0.08406], conType = LessThan, offset = -0.34026}
+, {coeffs = [-0.387869, 0.921715], conType = LessThan, offset = 0.466923}
+, {coeffs = [0.756744, 0.653711], conType = LessThan, offset = 0.905228}
+, {coeffs = [0.855563, -0.517699], conType = LessThan, offset = 0.368932} ]
 objective = [1.1, 1.2]
 
 image = for i:(Fin 100). for j:(Fin 100).
