@@ -61,7 +61,7 @@ library
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
                        SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
                        SaferNames.CheapReduction, SaferNames.GenericTraversal,
-                       SaferNames.Simplify
+                       SaferNames.Simplify, SaferNames.Imp
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

@@ -64,6 +64,8 @@ module SaferNames.Syntax (
     bindingsFragToSynthCandidates,
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
     FallibleT1, runFallibleT1,
+    IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
+    ImpModule (..), ImpFunction (..), ImpBlock (..), ImpDecl (..), ImpInstr (..),
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
@@ -868,6 +870,50 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 
 extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
+
+-- === imperative IR ===
+
+data IExpr n = ILit LitVal
+             -- We use AtomName because we convert between atoms and imp
+             -- expressions without chaning names. Maybe we shouldn't do that.
+             | IVar (AtomName n) BaseType
+               deriving (Show)
+
+data IBinder n l = IBinder (NameBinder AtomNameC n l) IType
+
+type IPrimOp n = PrimOp (IExpr n)
+type IVal = IExpr  -- only ILit and IRef constructors
+type IType = BaseType
+type Size = IExpr
+
+data IFunType = IFunType [IType] [IType] -- args, results
+                deriving (Show)
+
+-- TODO: make a new name color for imp functions
+data ImpModule n   = ImpModule [ImpFunction n]
+data ImpFunction n =
+  ImpFunction SourceName IFunType (Abs (Nest IBinder) ImpBlock n)
+
+data ImpBlock n where
+  ImpBlock :: Nest ImpDecl n l -> [IExpr l] -> ImpBlock n
+
+data ImpDecl n l = ImpLet (Nest IBinder n l) (ImpInstr n)
+
+data ImpInstr n =
+   IFor Direction (Size n) (Abs IBinder ImpBlock n)
+ | IWhile (ImpBlock n)
+ | ICond (IExpr n) (ImpBlock n) (ImpBlock n)
+ -- | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
+ | ISyncWorkgroup
+ -- | ILaunch IFunVar Size [IExpr]
+ -- | ICall IFunVar [IExpr]
+ | Store (IExpr n) (IExpr n)           -- dest, val
+ | Alloc AddressSpace IType (Size n)
+ | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
+ | Free (IExpr n)
+ | IThrowError  -- TODO: parameterize by a run-time string
+ | ICastOp IType (IExpr n)
+ | IPrimOp (IPrimOp n)
 
 -- === Helpers for function evaluation over fixed-width types ===
 
