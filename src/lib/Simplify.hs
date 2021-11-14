@@ -89,6 +89,7 @@ simplifyDecl (Let ann b expr) = do
 simplifyStandalone :: Expr -> SimplifyM Atom
 simplifyStandalone (Atom (LamVal b body)) = do
   b' <- mapM substBuilderR b
+  -- BUGGY: we assume the function is pure but we don't check it
   buildLam b' PureArrow \x ->
     extendR (b@>x) $ simplifyBlock body
 simplifyStandalone block =
@@ -310,7 +311,9 @@ simplifyExpr expr = case expr of
       TypeCon def params -> return $ TypeCon def params'
          where params' = params ++ [x']
       _ -> emit $ App f' x'
-  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Op  op  -> mapM simplifyAtom op >>= simplifyOp  -- BUGGY: double substitution!
+                                                  -- (or, simplifyOp assumes substitution,
+                                                  --  then the bugs are there)
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
   Case e alts resultTy -> do

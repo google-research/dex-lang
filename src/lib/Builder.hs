@@ -790,12 +790,14 @@ traverseAtom def@(_, _, fAtom) atom = case atom of
   Record items -> Record <$> traverse fAtom items
   RecordTy (Ext items rest) -> do
     items' <- traverse fAtom items
+    -- BUG: need to subst `rest`
     return $ RecordTy $ Ext items' rest
   Variant (Ext types rest) label i value -> do
     types' <- traverse fAtom types
     Variant (Ext types' rest) label i <$> fAtom value
   VariantTy (Ext items rest) -> do
     items' <- traverse fAtom items
+    -- BUG: need to subst `rest`
     return $ VariantTy $ Ext items' rest
   ACase e alts ty -> ACase <$> fAtom e <*> mapM traverseAAlt alts <*> fAtom ty
   DataConRef dataDef params args -> DataConRef dataDef <$>
