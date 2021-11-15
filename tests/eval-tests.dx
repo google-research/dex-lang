@@ -135,7 +135,7 @@ s = 1.0
    for i. xs.i + 10
 > [12, 11, 10]
 
-cumsumplus : n=>Float -> n=>Float =
+def cumsumplus {n} : n=>Float -> n=>Float =
  \xs. snd $ scan 0.0 \i c.
    ans = c + xs.i
    (ans, 1.0 + ans)
@@ -546,12 +546,12 @@ def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Float
 w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
 b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
 
-def flatten ((w,b):(Weights n m & Biases n)): Params n m =
+def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
     {| weights = (i,j) |} -> w.i.j
     {| biases  = i     |} -> b.i
 
-def unflatten (params:Params n m) : (Weights n m & Biases n) =
+def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
   ( for i. for j. params.({| weights = (i,j)|})
   , for i.        params.({| biases  = i    |}))
 

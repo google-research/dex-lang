@@ -58,7 +58,7 @@ library
                        SaferNames.Name, SaferNames.LazyMap,
                        SaferNames.Syntax, SaferNames.Bridge,
                        SaferNames.PPrint, SaferNames.Parser,
-                       SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
+                       SaferNames.SourceRename,
                        SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
                        SaferNames.CheapReduction, SaferNames.GenericTraversal
   if flag(live)

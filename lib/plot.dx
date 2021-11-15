@@ -22,7 +22,7 @@ def Plot (n:Type) (a:Type) (b:Type) (c:Type) : Type =
 
 def Color : Type = Fin 3 => Float
 
-def applyScale (s:Scale a) (x:a) : Maybe Float = getAt #mapping s x
+def applyScale {a} (s:Scale a) (x:a) : Maybe Float = getAt #mapping s x
 
 unitTypeScale : Scale Unit = { mapping = \(). Just 0.0
                              , range   = AsList _ [Singleton 0.0] }
@@ -36,20 +36,20 @@ unitIntervalScale : Scale Float =
   { mapping = projectUnitInterval
   , range   = AsList _ [Interval 0.0 1.0] }
 
-def mapScale (s:Scale a) (f: b -> a) : Scale b =
+def mapScale {a b} (s:Scale a) (f: b -> a) : Scale b =
   { mapping = \x. getAt #mapping s (f x)
   , range = getAt #range s }
 
 def floatScale (xmin:Float) (xmax:Float) : Scale Float =
   mapScale unitIntervalScale (\x. (x - xmin) / (xmax - xmin))
 
-def getScaled (sd:ScaledData n a) (i:n) : Maybe Float =
+def getScaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
   applyScale (getAt #scale sd) (getAt #dat sd).i
 
 lowColor  = [1.0, 0.5, 0.0]
 highColor = [0.0, 0.5, 1.0]
 
-def interpolate [VSpace a] (low:a) (high:a) (x:Float) : a =
+def interpolate {a} [VSpace a] (low:a) (high:a) (x:Float) : a =
   x' = clip (0.0, 1.0) x
   (x' .* low) + ((1.0 - x') .* high)
 
@@ -59,7 +59,7 @@ def makeRGBColor (c : Color) : HtmlColor =
 def colorScale (x:Float) : HtmlColor =
   makeRGBColor $ interpolate lowColor highColor x
 
-def plotToDiagram (plot:Plot n a b c) : Diagram =
+def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
   points = concatDiagrams for i.
     x = getScaled (getAt #xs plot) i
     y = getScaled (getAt #ys plot) i
@@ -76,39 +76,39 @@ def plotToDiagram (plot:Plot n a b c) : Diagram =
   boundingBox = moveXY (0.5, 0.5) $ rect 1.0 1.0
   boundingBox <> points
 
-def showPlot (plot:Plot n a b c) : String =
+def showPlot {a b c n} (plot:Plot n a b c) : String =
   renderSVG (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
 
-blankData : ScaledData n Unit = {scale = unitTypeScale, dat = for i. ()}
+def blankData {n} : ScaledData n Unit = {scale = unitTypeScale, dat = for i. ()}
 
-blankPlot : Plot n Unit Unit Unit = { xs = blankData
-                                    , ys = blankData
-                                    , cs = blankData }
+def blankPlot {n} : Plot n Unit Unit Unit = { xs = blankData
+                                            , ys = blankData
+                                            , cs = blankData }
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
-def autoScale (xs:n=>Float) : ScaledData n Float =
+def autoScale {n} (xs:n=>Float) : ScaledData n Float =
   {scale = floatScale (minimum xs) (maximum xs), dat = xs}
 
-def setXData (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c=
+def setXData {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c=
   -- We can't use `setAt` here because we're changing the type
   {xs = xs, ys = getAt #ys plot, cs = getAt #cs plot}
 
-def setYData (ys:ScaledData n new) (plot:Plot n a b c) : Plot n a new c =
+def setYData {n a b c new} (ys:ScaledData n new) (plot:Plot n a b c) : Plot n a new c =
   {xs = getAt #xs plot, ys = ys, cs = getAt #cs plot}
 
-def setCData (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
+def setCData {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
   {xs = getAt #xs plot, ys = getAt #ys plot, cs = cs}
 
-def xyPlot (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
+def xyPlot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
   blankPlot |> setXData (autoScale xs) |> setYData (autoScale ys)
 
-def xycPlot (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
+def xycPlot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
   blankPlot |>
     setXData (autoScale xs) |>
     setYData (autoScale ys) |>
     setCData (autoScale cs)
 
-def yPlot (ys:n=>Float) : Plot n Float Float Unit =
+def yPlot {n} (ys:n=>Float) : Plot n Float Float Unit =
   xs = for i. IToF $ ordinal i
   xyPlot xs ys
 
@@ -118,7 +118,7 @@ def yPlot (ys:n=>Float) : Plot n Float Float Unit =
 '## Heatmap-style plots
 
 -- TODO: scales
-def matshow (img:n=>m=>Float) : Html =
+def matshow {n m} (img:n=>m=>Float) : Html =
   low  = minimum  $ for (i,j). img.i.j
   high = maximum $ for (i,j). img.i.j
   range = high - low

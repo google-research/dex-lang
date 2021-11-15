@@ -20,7 +20,6 @@ import qualified Data.Map.Strict as M
 import Err
 import LabeledItems
 import SaferNames.Name
-import SaferNames.ResolveImplicitNames
 import SaferNames.Syntax
 
 renameSourceNames :: (Distinct n, Fallible m)
@@ -56,8 +55,7 @@ instance Renamer RenamerM where
 
 renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
 renameSourceNames' (SourceUModule decl) = do
-  (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $
-    sourceRenameB $ resolveImplicitTopDecl decl
+  (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $ sourceRenameB decl
   return $ UModule decl' sourceMap
 
 class SourceRenamableE e where

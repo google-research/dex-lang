@@ -116,8 +116,8 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
-                sgd psd tutorial kernelregression \
-                quaternions manifold-gradients schrodinger
+                sgd psd kernelregression \
+                quaternions manifold-gradients schrodinger tutorial
 # TODO: re-enable
 # fft vega-plotting
 

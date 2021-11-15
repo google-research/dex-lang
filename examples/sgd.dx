@@ -1,14 +1,14 @@
 
 '## Stochastic Gradient Descent with Momentum
 
-def sgd_step [VSpace a] (step_size: Float) (decay: Float) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
+def sgd_step {a} [VSpace a] (step_size: Float) (decay: Float) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
   g = gradfunc x iter
   new_m = decay .* m + g
   new_x = x - step_size .* new_m
   (new_x, new_m)
 
 -- In-place optimization loop.
-def sgd [VSpace a] (step_size:Float) (decay:Float) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
+def sgd {a} [VSpace a] (step_size:Float) (decay:Float) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
   m0 = zero
   (x_final, m_final) = yieldState (x0, m0) \state.
     for i:(Fin num_steps).
