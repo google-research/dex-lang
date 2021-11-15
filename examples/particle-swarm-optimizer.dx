@@ -30,15 +30,15 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
 
 ' ## Helper functions
 
-minbyfst : (Float & a) -> (Float & a) -> (Float & a) = minBy fst
+def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = minBy fst
 
-minimumbyfst : (n=>(Float & a)) -> (Float & a) = minimumBy fst
+def minimumbyfst {n a} : (n=>(Float & a)) -> (Float & a) = minimumBy fst
 
 ' ### Rand helpers
 
 ' make a random vector uniformly distributed between `lb` and `ub`
 
-randBounded : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
+def randBounded {d} : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
   \key lb ub.
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
@@ -57,6 +57,7 @@ We have **arguments**:
 ' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
 def optimize
+      {d}
       (np':Int)                                        -- number of particles
       (niter:Int)                                      -- number of iterations
       (key:Key)                                        -- random seed

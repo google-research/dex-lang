@@ -69,9 +69,9 @@ interface [A a] C a
   c_ : Int
 
 -- Diamond superclasses should be ok
-def f1 [B a, C a] (x : a) : Int = a_ x
+def f1 {a} [B a, C a] (x : a) : Int = a_ x
 -- Multiple binders are ok too
-def f2 [A a, A a] (x : a) : Int = a_ x
+def f2 {a} [A a, A a] (x : a) : Int = a_ x
 
 -------------------- Transitive superclasses --------------------
 
@@ -88,62 +88,62 @@ instance E Int
 instance F Int
   f_ = \_. 3
 
-def deriveDFromE [E a] (x:a) : Int = d_ x
-def deriveDFromF [F a] (x:a) : Int = d_ x
+def deriveDFromE {a} [E a] (x:a) : Int = d_ x
+def deriveDFromF {a} [F a] (x:a) : Int = d_ x
 
 -------------------- Overlapping instances --------------------
 
 -- Overlapping instances
 instance A Int
   a_ = \x. 1
-instance [A a] A (n=>a)
+instance {n a} [A a] A (n=>a)
   a_ = \x. a_ x.(0@_)
-instance A (n=>Int)
+instance {n} A (n=>Int)
   a_ = \x. 0
 
 -- There are two derivations for n=>Int
-def f3 (x : n=>Int) : Int = a_ x
+def f3 {n} (x : n=>Int) : Int = a_ x
 > Type error:Multiple candidate class dictionaries for: (A (n => Int32))
 >
-> def f3 (x : n=>Int) : Int = a_ x
->                             ^^^
+> def f3 {n} (x : n=>Int) : Int = a_ x
+>                                 ^^^
 -- Adding an explicit binder shouldn't change anything
-def f4 [A (n=>Int)] (x : n=>Int) : Int = a_ x
+def f4 {n} [A (n=>Int)] (x : n=>Int) : Int = a_ x
 > Type error:Multiple candidate class dictionaries for: (A (n => Int32))
 >
-> def f4 [A (n=>Int)] (x : n=>Int) : Int = a_ x
->                                          ^^^
+> def f4 {n} [A (n=>Int)] (x : n=>Int) : Int = a_ x
+>                                              ^^^
 
 -- TODO: This should fail! The choice of dictionary depends on instantiation
 --       of a (there's a generic one and a specific one for n=>Int)!
 --       This is reported in #669.
-def f5 [A a] (x : n=>a) : Int = a_ x
+def f5 {n a} [A a] (x : n=>a) : Int = a_ x
 
 interface Eq' a
   eq : a -> Int
 interface [Eq' a] Ord' a
   ord : a -> Int
 
-instance Eq' (n=>Int)
+instance {n} Eq' (n=>Int)
   eq = const 2
-instance [Eq' a] Eq' (n=>a)
+instance {n a} [Eq' a] Eq' (n=>a)
   eq = const 3
-instance [Ord' a] Ord' (n=>a)
+instance {n a} [Ord' a] Ord' (n=>a)
   ord = const 4
 
 -- Simplifiable constraints should be accepted
-def f6 [Eq' (n=>Int)] (x : n=>Int) : Int = eq x
-def f7 [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+def f6 {n} [Eq' (n=>Int)] (x : n=>Int) : Int = eq x
+def f7 {n} [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 
 -- This additional instance makes f7 ambiguous. Note that there's an easy way out
 -- in the form of the superclass of Ord', but we still check that there's no overlap.
 instance Eq' Int
   eq = const 0
-def f8 [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+def f8 {n} [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 > Type error:Multiple candidate class dictionaries for: (Eq' (n => Int32))
 >
-> def f8 [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
->                                             ^^^
+> def f8 {n} [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+>                                                 ^^^
 
 -- XXX: In Haskell overlap is determined entirely by instance heads, making it
 --      independent of other instances in scope. In Dex an instance might be ruled out,

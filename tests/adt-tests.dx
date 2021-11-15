@@ -187,7 +187,7 @@ xsList = AsList _ [1,2,3]
   (x, y)
 > (3, 4)
 
-def catLists (xs:List a) (ys:List a) : List a =
+def catLists {a} (xs:List a) (ys:List a) : List a =
   (AsList nx xs') = xs
   (AsList ny ys') = ys
   nz = nx + ny
@@ -213,7 +213,7 @@ def catLists (xs:List a) (ys:List a) : List a =
 
 
 
-def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
+def listToTable {a} ((AsList n xs): List a) : (Fin n)=>a = xs
 
 :t listToTable
 > ((a:Type) ?-> (pat:(List a)) -> (Fin (ProjectElt [0] pat)) => a)
@@ -223,7 +223,7 @@ def listToTable ((AsList n xs): List a) : (Fin n)=>a = xs
   sum $ listToTable l
 > 6
 
-def listToTable2 (l: List a) : (Fin (listLength l))=>a =
+def listToTable2 {a} (l: List a) : (Fin (listLength l))=>a =
   (AsList _ xs) = l
   xs
 
@@ -239,7 +239,7 @@ l2 = AsList _ [1, 2, 3]
 :p sum $ listToTable2 l2
 > 6
 
-def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
+def zerosLikeList {a} (l : List a) : (Fin (listLength l))=>Float =
   for i:(Fin $ listLength l). 0.0
 
 :p zerosLikeList l2
@@ -248,7 +248,7 @@ def zerosLikeList (l : List a) : (Fin (listLength l))=>Float =
 data Graph a:Type =
   MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
 
-def graphToAdjacencyMatrix ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
+def graphToAdjacencyMatrix {a} ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool =
   init = for i j. False
   yieldState init \mRef.
     for i:m.

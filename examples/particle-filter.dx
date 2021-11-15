@@ -7,11 +7,11 @@ def Model (state:Type) (observation:Type) : Type =
   & state -> Distribution state          -- dynamics
   & state -> Distribution observation)   -- observations
 
-def sample (d: Distribution a) (k: Key) : a =
+def sample {a} (d: Distribution a) (k: Key) : a =
   (sampler, _) = d
   sampler k
 
-def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
+def simulate {s v} (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
   (init, dynamics, observe) = model
   [key, subkey] = splitKey key
   s0 = sample init subkey
@@ -24,7 +24,7 @@ def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
       s_ref := s_next
       (s, v)
 
-def particleFilter
+def particleFilter {s a v}
     (num_particles: Int) (num_timesteps: Int)
     (model: Model s v)
     (summarize: (Fin num_particles => s) -> a)

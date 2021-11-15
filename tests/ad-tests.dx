@@ -1,6 +1,6 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum'  (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
+def sum' {n} (xs:n=>Float) : Float = yieldAccum (AddMonoid Float) \ref. for i. ref += xs.i
 
 :p
    f : Float -> Float = \x. x

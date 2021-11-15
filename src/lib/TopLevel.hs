@@ -64,7 +64,6 @@ import qualified SaferNames.Name                 as S
 import qualified SaferNames.Parser               as S
 import qualified SaferNames.Syntax               as S
 import qualified SaferNames.Type                 as S
-import qualified SaferNames.ResolveImplicitNames as S
 import qualified SaferNames.SourceRename         as S
 import qualified SaferNames.Inference            as S
 

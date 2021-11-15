@@ -314,12 +314,9 @@ instanceDef isNamed = do
   name <- case isNamed of
     False -> keyWord InstanceKW $> NothingB
     True  -> keyWord NamedInstanceKW *> (JustB . fromString <$> anyName) <* sym ":"
-  explicitArgs <- many defArg
-  constraints <- classConstraints
+  argBinders <- concat <$> many (defArg True)
   className <- upperName
   params <- many leafExpr
-  let argBinders = explicitArgs
-                 ++ [UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just c)) ClassArrow | c <- constraints]
   methods <- onePerLine instanceMethod
   return $ UInstance (fromString className) (toNestParsed argBinders) params methods name
 
@@ -344,28 +341,46 @@ funDefLet :: Parser (UExpr VoidS -> UDecl VoidS VoidS)
 funDefLet = label "function definition" $ mayBreak $ do
   keyWord DefKW
   v <- letPat
-  cs <- classConstraints
-  argBinders <- many defArg
+  argBinders <- concat <$> many (defArg True)
   (eff, ty) <- label "result type annotation" $ annot effectiveType
   when (null argBinders && eff /= Pure) $ fail "Nullary def can't have effects"
-  let bs = map classAsBinder cs ++ argBinders
-  let funTy = buildPiType bs eff ty
-  let letBinder = UPatAnn v (Just funTy)
-  let lamBinders = flip map bs \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
-  return \body -> ULet PlainLet letBinder (buildLam lamBinders body)
+  let funTy = buildPiType argBinders eff ty
+  let lamBinders = argBinders <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
+  return \body -> ULet PlainLet (UPatAnn v (Just funTy)) $ buildLam lamBinders body
+
+defArg :: Bool -> Parser [UPatAnnArrow VoidS VoidS]
+defArg allowIface = mayNotPair (
+      (lookAhead lParen >> defExplicitArg)
+  <|> (lookAhead lBrace >> defImplicitArg)
+  <|> (if allowIface then (lookAhead lBracket >> defInterfaceArg) else empty)
+  <?> "def argument")
   where
-    classAsBinder :: (UType (n::S)) -> UPatAnnArrow n n
-    classAsBinder ty = UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow
+    defExplicitArg = parens $ do
+      (p, ty) <- (,) <$> pat <*> annot uType
+      return $ [UPatAnnArrow (UPatAnn p (Just ty)) PlainArrow]
 
-defArg :: Parser (UPatAnnArrow VoidS VoidS)
-defArg = label "def arg" $ do
-  (p, ty) <- parens ((,) <$> pat <*> annot uType)
-  arr <- bareArrow <|> return PlainArrow
-  return $ UPatAnnArrow (UPatAnn p (Just ty)) arr
+    defImplicitArg = braces $ do
+      p <- pat
+      isSingle <- (lookAhead (sym ":") $> True) <|> return False
+      case isSingle of
+        True -> do
+          ty <- annot uType
+          return $ [UPatAnnArrow (UPatAnn p (Just ty)) ImplicitArrow]
+        False -> do
+          ps <- (pat `sepBy` sc) <|> return []
+          return $ (p : ps) <&> \x -> UPatAnnArrow (UPatAnn x Nothing) ImplicitArrow
 
-classConstraints :: Parser [(UType VoidS)]
-classConstraints = label "class constraints" $
-  optionalMonoid $ brackets $ mayNotPair $ uType `sepBy` sym ","
+    defInterfaceArg = brackets $ singleIfaceBinder <|> multipleIfaces
+
+    singleIfaceBinder = do
+      p <- try $ pat <* sym ":"
+      ty <- uType
+      return [UPatAnnArrow (UPatAnn p (Just ty)) ClassArrow]
+
+    multipleIfaces :: Parser [UPatAnnArrow VoidS VoidS]
+    multipleIfaces = do
+      tys <- uType `sepBy` sym ","
+      return $ tys <&> \ty -> UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow
 
 buildPiType :: [UPatAnnArrow VoidS VoidS] -> UEffectRow VoidS -> UType VoidS -> UType VoidS
 buildPiType [] Pure ty = ty
@@ -399,17 +414,11 @@ rwsName =   (keyWord WriteKW $> Writer)
 uLamExpr :: Parser (UExpr VoidS)
 uLamExpr = do
   sym "\\"
-  bs <- some patAnn
-  arrowType <-
-    (argTerm >> return PlainArrow)
-    <|> (bareArrow >>= \case
-          PlainArrow -> fail
-            "To construct an explicit lambda function, use '.' instead of '->'\n"
-          TabArrow -> fail
-            "To construct a table, use 'for i. body' instead of '\\i => body'\n"
-          arr -> return arr)
+  -- We don't allow interface binders in lambdas because they overlap with table patterns
+  bs <- concat <$> some ((try $ defArg False) <|> ((:[]) . flip UPatAnnArrow PlainArrow <$> patAnn))
+  argTerm
   body <- blockOrExpr
-  return $ buildLam (map (flip UPatAnnArrow arrowType) bs) body
+  return $ buildLam bs body
 
 -- TODO Does this generalize?  Swap list for Nest?
 buildLam :: [UPatAnnArrow VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
@@ -524,9 +533,6 @@ arrow p =   (sym "->"  >> liftM ((PlainArrow,) . Just) p)
         <|> (sym "?->" $> (ImplicitArrow, Nothing))
         <|> (sym "?=>" $> (ClassArrow, Nothing))
         <?> "arrow"
-
-bareArrow :: Parser Arrow
-bareArrow = fst <$> arrow (return ())
 
 caseExpr :: Parser (UExpr VoidS)
 caseExpr = withSrc $ do
