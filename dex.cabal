@@ -47,8 +47,8 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Env, Syntax, Type, Inference,
-                       Parser, Util, Imp, Imp.Builder, Imp.Optimize,
+  exposed-modules:     Env, Syntax, Type,
+                       Util, Imp, Imp.Builder, Imp.Optimize,
                        PPrint, Algebra, Parallelize, Optimize, Serialize
                        Builder, Cat,
                        Simplify, TopLevel,

@@ -39,7 +39,6 @@ import Builder
 import Env
 import SourceRename
 import Type
-import Inference
 import Interpreter
 import Simplify
 import Serialize
@@ -49,7 +48,6 @@ import JIT
 import Logging
 import LLVMExec
 import PPrint()
-import Parser
 import Util (measureSeconds, onFst, onSnd)
 import Optimize
 import Parallelize

@@ -25,7 +25,7 @@ import Syntax
 import qualified SaferNames.Syntax as S
 import PPrint
 import SaferNames.PPrint ()
-import Parser
+import SaferNames.Parser
 import Serialize ()
 import Err
 
