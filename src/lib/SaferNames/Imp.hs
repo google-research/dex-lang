@@ -7,8 +7,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module SaferNames.Imp (toImpModule, PtrBinder, impFunType) where
+module SaferNames.Imp (toImpModule, PtrBinder, impFunType, getIType) where
 
+import Control.Applicative
+import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Either
@@ -26,29 +28,60 @@ type AtomRecon = Abs (Nest Binder) Atom
 type PtrBinder = BinderP AtomNameC (LiftE IType)
 
 
-toImpModule :: Bindings n -> Backend -> CallingConvention
+toImpModule :: Distinct n
+            => Bindings n -> Backend -> CallingConvention
             -> SourceName
             -> Maybe (Dest n)
             -> Abs (Nest PtrBinder) Block n
             -> (ImpFunction n, ImpModule n, AtomRecon n)
-toImpModule = undefined
+toImpModule bindings _ _ mainFunName maybeDest absBlock =
+  (f', ImpModule [], recon')
+  where
+    PairE recon' f' = runImpM bindings do
+      (recon, f) <- translateTopLevel (fmap inject maybeDest) $
+                      inject absBlock
+      return $ PairE recon f
 
 -- === ImpM monad ===
 
-newtype ImpM (i::S) (o::S) (a:: *) =
-  ImpM { fromImpM' :: () }
+type ImpBuilderEmissions = Nest ImpDecl
 
-class (ImpBuilder2 m, EnvReader AtomSubstVal m, BindingsReader2 m, Fallible2 m)
+newtype ImpM (i::S) (o::S) (a:: *) =
+  ImpM { runImpM' ::
+           EnvReaderT AtomSubstVal
+             (InplaceT Bindings ImpBuilderEmissions Identity) i o a }
+  deriving ( Functor, Applicative, Monad, ScopeReader, EnvReader AtomSubstVal)
+
+instance ExtOutMap Bindings ImpBuilderEmissions where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` boundBindings emissions
+
+class (ImpBuilder2 m, EnvReader AtomSubstVal m, BindingsReader2 m)
       => Imper (m::MonadKind2) where
+
+instance BindingsReader (ImpM i) where
+
+instance ImpBuilder (ImpM i)
+
+instance Imper ImpM
+
+runImpM
+  :: Distinct n
+  => Bindings n
+  -> (forall l. (Distinct l, Ext n l) => ImpM l l (e l))
+  -> e n
+runImpM bindings cont = do
+  case runIdentity $ runInplaceT bindings $
+         runEnvReaderT idEnv $ runImpM' $ cont of
+    DistinctAbs Empty result -> result
+    _ -> error "shouldn't have produced any decls"
 
 -- === the actual pass ===
 
--- We don't emit any results when a destination is provided, since they are already
--- going to be available through the dest.
 translateTopLevel :: Imper m
                   => MaybeDest o
-                  -> Abs (Nest PtrBinder) Block o
-                  -> m i o (AtomRecon o, ImpBlock o)
+                  -> Abs (Nest PtrBinder) Block i
+                  -> m i o (AtomRecon o, ImpFunction o)
 translateTopLevel = undefined
 
 translateBlock :: forall m i o. (Imper m, Emits o)
@@ -150,3 +183,6 @@ toScalarAtom ie = case ie of
 
 impFunType :: ImpFunction n -> IFunType
 impFunType = undefined
+
+getIType :: IExpr n -> IType
+getIType = undefined

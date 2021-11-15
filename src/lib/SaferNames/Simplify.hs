@@ -7,7 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module SaferNames.Simplify (simplifyModule) where
+module SaferNames.Simplify (simplifyModule, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -68,6 +68,10 @@ simplifyModule bindings m@(Module Core _ _) = runSimplifyM bindings do
       AtomSubstEvaluatedModule <$> substEvalautedModuleM result
   return $ Module Simp decls' result'
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
+
+splitSimpModule :: Distinct n => Bindings n -> Module n
+                -> (Block n , Abs Binder Module n)
+splitSimpModule = undefined
 
 -- === All the bits of IR  ===
 

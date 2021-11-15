@@ -65,8 +65,12 @@ module SaferNames.Syntax (
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
     FallibleT1, runFallibleT1,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
-    ImpModule (..), ImpFunction (..), ImpBlock (..), ImpDecl (..), ImpInstr (..),
-    pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
+    ImpModule (..), ImpFunction (..), ImpBlock (..), ImpDecl (..),
+    ImpInstr (..), iBinderType,
+    IFunVar,
+    pattern IdxRepTy, pattern IdxRepVal,
+    pattern IIdxRepTy, pattern IIdxRepVal,
+    pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
@@ -108,7 +112,7 @@ import Syntax
   , BlockId, ReachedEOF, ModuleName, CmdName (..), LogLevel (..)
   , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
   , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
-  , PassName, OutFormat (..), Result (..))
+  , PassName, OutFormat (..), Result (..), CallingConvention (..))
 
 import SaferNames.Name
 import Err
@@ -886,13 +890,14 @@ type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
 type Size = IExpr
 
-data IFunType = IFunType [IType] [IType] -- args, results
-                deriving (Show)
+type IFunVar = (SourceName, IFunType)
+data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
+                deriving (Show, Eq)
 
--- TODO: make a new name color for imp functions
 data ImpModule n   = ImpModule [ImpFunction n]
 data ImpFunction n =
-  ImpFunction SourceName IFunType (Abs (Nest IBinder) ImpBlock n)
+   ImpFunction SourceName IFunType (Abs (Nest IBinder) ImpBlock n)
+ | FFIFunction IFunVar
 
 data ImpBlock n where
   ImpBlock :: Nest ImpDecl n l -> [IExpr l] -> ImpBlock n
@@ -903,10 +908,10 @@ data ImpInstr n =
    IFor Direction (Size n) (Abs IBinder ImpBlock n)
  | IWhile (ImpBlock n)
  | ICond (IExpr n) (ImpBlock n) (ImpBlock n)
- -- | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
+ | IQueryParallelism IFunVar (IExpr n) -- returns the number of available concurrent threads
  | ISyncWorkgroup
- -- | ILaunch IFunVar Size [IExpr]
- -- | ICall IFunVar [IExpr]
+ | ILaunch IFunVar (Size n) [IExpr n]
+ | ICall IFunVar [IExpr n]
  | Store (IExpr n) (IExpr n)           -- dest, val
  | Alloc AddressSpace IType (Size n)
  | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
@@ -914,6 +919,9 @@ data ImpInstr n =
  | IThrowError  -- TODO: parameterize by a run-time string
  | ICastOp IType (IExpr n)
  | IPrimOp (IPrimOp n)
+
+iBinderType :: IBinder n l -> IType
+iBinderType (IBinder _ ty) = ty
 
 -- === Helpers for function evaluation over fixed-width types ===
 
@@ -1044,6 +1052,12 @@ pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
 
 pattern IdxRepVal :: Int32 -> Atom n
 pattern IdxRepVal x = Con (Lit (Int32Lit x))
+
+pattern IIdxRepVal :: Int32 -> IExpr n
+pattern IIdxRepVal x = ILit (Int32Lit x)
+
+pattern IIdxRepTy :: IType
+pattern IIdxRepTy = Scalar Int32Type
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type n
@@ -1919,3 +1933,88 @@ instance Eq SourceBlock where
 
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
+
+instance GenericE ImpInstr where
+  type RepE ImpInstr = EitherE4
+      (EitherE4
+  {- IFor -}    (Size `PairE` Abs IBinder ImpBlock)
+  {- IWhile -}  (ImpBlock)
+  {- ICond -}   (IExpr `PairE` ImpBlock `PairE` ImpBlock)
+  {- IQuery -}  (LiftE IFunVar `PairE` IExpr)
+    ) (EitherE4
+  {- ISyncW -}  (UnitE)
+  {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
+  {- ICall -}   (LiftE IFunVar `PairE` ListE IExpr)
+  {- Store -}   (IExpr `PairE` IExpr)
+    ) (EitherE4
+  {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
+  {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
+  {- Free -}    (IExpr)
+  {- IThrowE -} (UnitE)
+    ) (EitherE2
+  {- ICastOp -} (LiftE IType `PairE` IExpr)
+  {- IPrimOp -} (ComposeE PrimOp IExpr)
+      )
+
+instance InjectableE ImpInstr
+instance HoistableE  ImpInstr
+instance AlphaEqE ImpInstr
+instance SubstE Name ImpInstr
+
+instance GenericE ImpBlock where
+  type RepE ImpBlock = Abs (Nest ImpDecl) (ListE IExpr)
+
+instance InjectableE ImpBlock
+instance HoistableE  ImpBlock
+instance AlphaEqE ImpBlock
+instance SubstE Name ImpBlock
+
+instance GenericE IExpr where
+  type RepE IExpr = EitherE2 (LiftE LitVal)
+                             (PairE AtomName (LiftE BaseType))
+
+instance InjectableE IExpr
+instance HoistableE  IExpr
+instance AlphaEqE IExpr
+instance SubstE Name IExpr
+
+instance GenericB IBinder where
+  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder AtomNameC)
+
+instance HasNameHint (IBinder n l) where
+  getNameHint (IBinder b _) = getNameHint b
+
+instance BindsBindings IBinder where
+  boundBindings = undefined
+
+instance BindsAtMostOneName IBinder AtomNameC where
+  IBinder b _ @> x = b @> x
+
+instance BindsOneName IBinder AtomNameC where
+  binderName (IBinder b _) = binderName b
+
+instance BindsNames IBinder where
+  toScopeFrag (IBinder b _) = toScopeFrag b
+
+instance ProvesExt  IBinder
+instance InjectableB IBinder
+instance HoistableB  IBinder
+instance SubstB Name IBinder
+instance SubstB AtomSubstVal IBinder
+instance AlphaEqB IBinder
+
+instance GenericB ImpDecl where
+  type RepB ImpDecl = PairB (LiftB ImpInstr) (Nest IBinder)
+  fromB (ImpLet bs instr) = PairB (LiftB instr) bs
+  toB   (PairB (LiftB instr) bs) = ImpLet bs instr
+
+instance InjectableB ImpDecl
+instance HoistableB  ImpDecl
+instance SubstB Name ImpDecl
+instance AlphaEqB ImpDecl
+instance ProvesExt  ImpDecl
+instance BindsNames ImpDecl
+
+instance BindsBindings ImpDecl where
+  boundBindings (ImpLet bs _) =
+    boundBindings bs

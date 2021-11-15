@@ -68,6 +68,7 @@ import qualified SaferNames.ResolveImplicitNames as S
 import qualified SaferNames.SourceRename         as S
 import qualified SaferNames.Inference            as S
 import qualified SaferNames.Simplify             as S
+import qualified SaferNames.Imp                  as S
 
 -- === shared effects ===
 
@@ -349,25 +350,34 @@ evalUModule sourceModule = do
   checkPassS SynthPass synthed
   let defunctionalized = S.simplifyModule bindingsS synthed
   checkPassS SimpPass defunctionalized
-  let typedDefunctionalized = fromSafe topState defunctionalized
-  checkPass TypePass typedDefunctionalized
-  let stdOptimized = optimizeModule typedDefunctionalized
   -- Apply backend specific optimizations
-  backend <- backendName <$> getConfig
-  let optimized = case backend of
-                    LLVMCUDA -> parallelizeModule stdOptimized
-                    LLVMMC   -> parallelizeModule stdOptimized
-                    _        -> stdOptimized
-  checkPass OptimPass optimized
+  -- backend <- backendName <$> getConfig
+  -- let optimized = case backend of
+  --                   LLVMCUDA -> parallelizeModule stdOptimized
+  --                   LLVMMC   -> parallelizeModule stdOptimized
+  --                   _        -> stdOptimized
+  -- checkPass OptimPass optimized
+  let optimized = defunctionalized
   case optimized of
-    Module _ Empty result->
-      return result
+    S.Module _ S.Empty result->
+      return $ evaluatedModuleSToD result
     _ -> do
-      let (block, rest) = splitSimpModule bindingsD optimized
+      let (block, rest) = S.splitSimpModule bindingsS optimized
       result <- evalBackend block
-      evaluated <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
+      let result' = atomSToD  result
+      let rest'   = reconSToD rest
+      evaluated <- liftIO $ evalModuleInterp mempty $ applyAbs rest' result'
       checkPass ResultPass $ Module Evaluated Empty evaluated
       return evaluated
+
+atomSToD :: S.Atom n -> Atom
+atomSToD = undefined
+
+reconSToD :: S.Abs S.Binder S.Module n -> Abs Binder Module
+reconSToD = undefined
+
+evaluatedModuleSToD :: S.EvaluatedModule n -> EvaluatedModule
+evaluatedModuleSToD = undefined
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
@@ -389,40 +399,40 @@ evalMLIR block' = do
 evalMLIR = error "Dex built without support for MLIR"
 #endif
 
-evalLLVM :: MonadPasses m => Block -> m n Atom
+evalLLVM :: MonadPasses m => S.Block n -> m n (S.Atom n)
 evalLLVM block = do
   (S.Distinct, topState) <- getTopState
-  let env = topBindings $ topStateD topState
+  let env = topStateS topState
   backend <- backendName <$> getConfig
   bench   <- requireBenchmark
   logger  <- getLogger
-  let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
+  let (blockAbs, ptrVals) = abstractPtrLiteralsS block
   let funcName = "entryFun"
-  let mainName = Name TopFunctionName (fromString funcName) 0
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
   let (mainFunc, impModuleUnoptimized, reconAtom) =
-        toImpModule env backend cc mainName ptrBinders Nothing block'
+        S.toImpModule env backend cc funcName Nothing blockAbs
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
   --       were not lifted from the kernels just yet. We should split the Imp IR
   --       into different levels so that we can check the output here!
   --checkPass ImpPass impModuleUnoptimized
   let impModule = case backend of
-                    LLVMCUDA -> liftCUDAAllocations impModuleUnoptimized
+                    -- LLVMCUDA -> liftCUDAAllocations impModuleUnoptimized
                     _        -> impModuleUnoptimized
-  checkPass ImpPass impModule
+  -- checkPass ImpPass impModule
   llvmAST <- liftIO $ impToLLVM logger impModule
-  let IFunType _ _ resultTypes = impFunType $ mainFunc
+  let S.IFunType _ _ resultTypes = S.impFunType $ mainFunc
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  resultVals <- liftM (map (Con . Lit)) $ liftIO $
+  resultVals <- liftM (map (S.Con . Lit)) $ liftIO $
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
-  return $ applyNaryAbs reconAtom resultVals
+  return $ S.runBindingsReaderM env $
+    S.applyNaryAbs reconAtom $ map S.SubstVal resultVals
 
-evalBackend :: MonadPasses m => Block -> m n Atom
+evalBackend :: MonadPasses m => S.Block n -> m n (S.Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
-               MLIR        -> evalMLIR
+               -- MLIR        -> evalMLIR
                LLVM        -> evalLLVM
                LLVMMC      -> evalLLVM
                LLVMCUDA    -> evalLLVM
@@ -461,6 +471,9 @@ addResultCtx block (Result outs errs) =
 
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
+
+abstractPtrLiteralsS :: S.Block n -> (S.Abs (S.Nest S.PtrBinder) S.Block n, [LitVal])
+abstractPtrLiteralsS block = (S.Abs S.Empty block, [])  -- TODO!
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do
