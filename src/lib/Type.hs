@@ -860,6 +860,7 @@ typeCheckOp op = case op of
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)
+  SynthesizeDict _ ty -> (ty |: TyKind) $> ty
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

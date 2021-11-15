@@ -25,7 +25,6 @@ import PPrint
 import Serialize
 import Resources
 import TopLevel
-import Parser  hiding (Parser)
 import Env (envNames)
 import Err
 import Export
@@ -114,7 +113,7 @@ dexCompletions (line, _) = do
   let (word, rest) = break (== ' ') line
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
   let candidates = (if null rest then startoflineKeywords else []) ++
-                   keyWordStrs ++ varNames
+                   S.keyWordStrs ++ varNames
   let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
   return (rest, completions)
 
