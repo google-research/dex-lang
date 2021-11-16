@@ -25,7 +25,7 @@ import SaferNames.Type
 
 type AtomRecon = Abs (Nest Binder) Atom
 
-type PtrBinder = BinderP AtomNameC (LiftE IType)
+type PtrBinder = IBinder
 
 
 toImpModule :: Distinct n
@@ -34,11 +34,11 @@ toImpModule :: Distinct n
             -> Maybe (Dest n)
             -> Abs (Nest PtrBinder) Block n
             -> (ImpFunction n, ImpModule n, AtomRecon n)
-toImpModule bindings _ _ mainFunName maybeDest absBlock =
+toImpModule bindings _ cc mainFunName maybeDest absBlock =
   (f', ImpModule [], recon')
   where
     PairE recon' f' = runImpM bindings do
-      (recon, f) <- translateTopLevel (fmap inject maybeDest) $
+      (recon, f) <- translateTopLevel cc (fmap inject maybeDest) $
                       inject absBlock
       return $ PairE recon f
 
@@ -79,10 +79,26 @@ runImpM bindings cont = do
 -- === the actual pass ===
 
 translateTopLevel :: Imper m
-                  => MaybeDest o
+                  => CallingConvention
+                  -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
                   -> m i o (AtomRecon o, ImpFunction o)
-translateTopLevel = undefined
+translateTopLevel cc maybeDest (Abs bs body) = do
+  let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
+  Abs bs' (Abs decls resultAtom) <- buildImpNaryAbs argTys \vs ->
+    extendEnv (bs @@> map Rename vs) do
+      maybeDest' <- mapM injectM maybeDest
+      translateBlock maybeDest' body
+  (results, recon) <- buildRecon (toScopeFrag (PairB bs' decls)) resultAtom
+  let funImpl = Abs bs' $ ImpBlock decls results
+  let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
+  return (recon, ImpFunction "mainFn" funTy funImpl)
+
+buildRecon :: BindingsReader m
+           => ScopeFrag n l
+           -> Atom l
+           -> m n ([IExpr l], AtomRecon n)
+buildRecon = undefined
 
 translateBlock :: forall m i o. (Imper m, Emits o)
                => MaybeDest o -> Block i -> m i o (Atom o)
@@ -147,6 +163,35 @@ class BindingsReader m => ImpBuilder (m::MonadKind1) where
 
 type ImpBuilder2 (m::MonadKind2) = forall i. ImpBuilder (m i)
 
+withFreshIBinder
+  :: (ImpBuilder m, InjectableE e , HasNamesE e, SubstE Name e)
+  => NameHint -> IType
+  -> (forall l. Ext n l => AtomName l -> m l (e l))
+  -> m n (Abs IBinder e n)
+withFreshIBinder hint ty cont = undefined
+
+buildImpAbs
+  :: ( ImpBuilder m, InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  => NameHint
+  -> IType
+  -> (forall l. (Emits l, Ext n l) => Name AtomNameC l -> m l (e l))
+  -> m n (Abs IBinder (Abs (Nest ImpDecl) e) n)
+buildImpAbs hint ty body =
+  withFreshIBinder hint ty \v -> buildScopedImp $ injectM v >>= body
+
+buildImpNaryAbs
+  :: ( ImpBuilder m, InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  => [(NameHint, IType)]
+  -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (e l))
+  -> m n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
+buildImpNaryAbs [] body = Abs Empty <$> buildScopedImp (body [])
+buildImpNaryAbs ((hint, ty):args) body = do
+  Abs b (Abs bs body) <- withFreshIBinder hint ty \v ->
+    buildImpNaryAbs args \vs -> do
+      v' <- injectM v
+      body (v':vs)
+  return $ Abs (Nest b bs) body
+
 emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do
   xs <- emitMultiReturnInstr instr
@@ -179,10 +224,17 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
+fromScalarType :: Type n -> IType
+fromScalarType (BaseTy b) =  b
+fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
+
+toScalarType :: IType -> Type n
+toScalarType b = BaseTy b
+
 -- === type checking imp programs ===
 
 impFunType :: ImpFunction n -> IFunType
-impFunType = undefined
+impFunType (ImpFunction _ ty _) = ty
 
 getIType :: IExpr n -> IType
-getIType = undefined
+getIType (ILit l) = litType l
