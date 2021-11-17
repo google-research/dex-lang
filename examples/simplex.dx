@@ -270,7 +270,7 @@ def isOptimal (tableau: AbstractTableau cons vars objs) : Bool =
   (basics, nonbasics, table) = tableau
   all for c:vars. table.{|objective=(0@_)|}.(nonbasics.c) <= 0.0 -- hack
 
-def extractSolution (tableau: Tableau cons vars) : vars=>Float =
+def extractSolution (tableau: AbstractTableau cons vars objs) : vars=>Float =
   (basics, nonbasics, table) = tableau  
   init_sol = (for i:vars. 0.0)  -- Original variables not in the basis are 0.
   yieldState init_sol \varRef.
@@ -318,10 +318,9 @@ def findPivotIndex (tableau: (AbstractTableau cons vars objs))
         Just pivotrow -> Just ({|objective|...pivotrow|}, pivotcol)
 
 
--- make this more polymorphic
 def pivot [Eq cons, Eq objs]
   (tableau: (AbstractTableau cons vars objs))
-  (pivotrow: RowIx cons objs) (pivotcol:ColIx cons vars)
+  (pivotrow: RowIx cons objs) (pivotcol: ColIx cons vars)
   : (AbstractTableau cons vars objs) =
   (basics, nonbasics, table) = tableau
 
@@ -343,10 +342,10 @@ def pivot [Eq cons, Eq objs]
 
   (newBasics, newNonbasics, newTable)
 
-def computeCost (tableau: FeasibilityTableau cons vars) : Float =
+def computeCost (tableau: AbstractTableau cons vars objs) : Float =
   (_, _, table) = tableau
   vars = extractAll tableau
-  sum for v. vars.v * table.{|objective={|artificialobj=()|}|}.v
+  sum for v. vars.v * table.{|objective=(0@_)|}.v -- hack
 
 def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
   (computeCost tableau) ~~ 0.0
@@ -369,6 +368,7 @@ def pivot_artificials [Eq cons]
                 pivrow = v'
                 pivcol = basics.v  -- TODO: check this rule is correct.
                 tRef := pivot (get tRef) pivrow pivcol
+              {|realvars=var|} -> ()
             {|slacks=var|} -> ()
         {|objective=_|} -> ()
 
@@ -473,7 +473,7 @@ impossible_constraints = [
   {coeffs = [-0.866025, 0.5], offset=1.0, conType=GreaterThan},
   {coeffs = [0.866025, 0.5], offset=1.0, conType=GreaterThan}
 ]
-:p simplex impossible_constraints [1.0, 1.0] Maximize
+-- :p simplex impossible_constraints [1.0, 1.0] Maximize
 > Infeasible
 
 -- An unbounded problem.
@@ -490,7 +490,7 @@ unbounded_constraints = [
   {coeffs = [-0.327195, -0.944957],offset=-0.1, conType=LessThan},
   {coeffs = [-0.61837, -0.785887], offset=-0.1, conType=LessThan}
 ]
-:p simplex unbounded_constraints [1.0, 1.0] Maximize
+-- :p simplex unbounded_constraints [1.0, 1.0] Maximize
 > Unbounded
 
 -- A feasible problem: Example 3.5 in
@@ -508,7 +508,7 @@ textbook_constraints = [
   {coeffs = [2., 1., 2.], offset=20.0, conType=LessThan},
   {coeffs = [2., 2., 1.], offset=20.0, conType=LessThan}
 ]
-:p simplex textbook_constraints obj Maximize
+-- :p simplex textbook_constraints obj Maximize
 > (Solution [4.0, 4.0, 4.0])
 
 
@@ -526,7 +526,7 @@ textbook_constraints' = [
   {coeffs = [ 2., -3.,  1.], offset=-5.0, conType=LessThan},
   {coeffs = [-1.,  1., -2.], offset=-1.0, conType=LessThan}
 ]
-:p simplex textbook_constraints' obj' Maximize
+-- :p simplex textbook_constraints' obj' Maximize
 
 
 '# Visual Example
@@ -569,7 +569,7 @@ bfa = pixToReal (fst best_ix) (snd best_ix)
 :p eval_objective objective bfa
 
 -- Now find optimum by simplex method
-maybeanswer = simplex pentagon objective Maximize
+-- maybeanswer = simplex pentagon objective Maximize
 :p maybeanswer
 
 -- Plot location of answer.
@@ -582,11 +582,14 @@ image3 = draw_point image x y
 
 '# Debugging
 
---=-=-=-=-=-=-=-=-=-=-= Debugging -=--=-==-=-==-
+--=-=-=-=-=-=-=-=-=-=-= Debugging -=-=-=-=-=-=-=-
 
 example_tableau = build_tableau pentagon objective Maximize
+
 :p example_tableau
+
 piv1 = fromJust $ findPivotIndex example_tableau
+
 :p piv1
 :p isOptimal example_tableau
 :p computeCost example_tableau
@@ -599,11 +602,8 @@ sol = extractSolution example_tableau
 -- Feasibility debugging
 
 
-
-
-
 ft1 = build_feasibility_tableau example_tableau
-:p ft1
+-- :p ft1
 :p isOptimal ft1  -- should be false
 :p computeCost ft1  -- should be nonzero
 
@@ -612,7 +612,7 @@ ft1 = build_feasibility_tableau example_tableau
 fpiv1 = fromJust $ findPivotIndex ft1
 :p fpiv1
 ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
-:p ft2
+-- :p ft2
 :p extractSolution ft2
 :p isOptimal         ft2
 :p computeCost ft2
@@ -620,47 +620,51 @@ ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
 fpiv3 = fromJust $ findPivotIndex ft2
 :p fpiv3
 
---ft3 = pivot ft2 (fst fpiv3) (snd fpiv3)
---:p ft3
---:p extractSolution ft3
---:p isOptimal         ft3
+ft3 = pivot ft2 (fst fpiv3) (snd fpiv3)
+
+:p ft3
+:p extractSolution ft3
+:p isOptimal ft3
 
 
 -- Feasibility debugging 2
 -- ==========================================================
 
--- et' = build_tableau textbook_constraints' obj' Maximize
--- :p et'
+et' = build_tableau textbook_constraints' obj' Maximize
+:p et'
 
--- fet' = build_feasibility_tableau et'
--- :p fet'
--- :p isOptimal fet'
--- :p computeCost fet'
+fet' = build_feasibility_tableau et'
+:p fet'
 
--- :p pivot fet' (0@_) (0@_)
+(snd (snd fet')).{|objective=(0@_)|}  -- should give -1 -1 -1 on artificialvars
 
--- t' = translate_tableau example_tableau for v:(Fin 2). 50.5
--- sol' = extractSolution example_tableau
--- (x', y') : (Fin 100 & Fin 100) = float2pix sol'
--- image3' = draw_point image x' y'
--- :plotmatcolor image3'
+:p isOptimal fet'
+:p computeCost fet'
+
+:p pivot fet' (0@_) (0@_)
+
+t' = translate_tableau example_tableau for v:(Fin 2). 50.5
+sol' = extractSolution example_tableau
+(x', y') : (Fin 100 & Fin 100) = float2pix sol'
+image3' = draw_point image x' y'
+:plotmatcolor image3'
 
 
--- ft1 = build_feasibility_tableau example_tableau
--- :p ft1
--- :p isOptimal ft1
--- :p computeCost ft1
+ft1 = build_feasibility_tableau example_tableau
+:p ft1
+:p isOptimal ft1
+:p computeCost ft1
 
--- fpiv1 = unMaybe $ findPivotIndex ft1
--- :p fpiv1
--- ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
--- :p ft2
--- :p extractSolution ft2
--- :p isOptimal         ft2
--- :p computeCost ft2
+fpiv1 = unMaybe $ findPivotIndex ft1
+:p fpiv1
+ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
+:p ft2
+:p extractSolution ft2
+:p isOptimal         ft2
+:p computeCost ft2
 
--- fpiv3 = unMaybe $ findPivotIndex ft2
--- :p fpiv3
+fpiv3 = unMaybe $ findPivotIndex ft2
+:p fpiv3
 
 
 
