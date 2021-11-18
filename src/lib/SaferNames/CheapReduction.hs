@@ -21,37 +21,36 @@ import Err
 
 cheapReduce :: (BindingsReader m, SubstE AtomSubstVal e, InjectableE e)
             => e n -> m n (e n)
-cheapReduce e = do
-  WithBindings bindings e' <- addBindings e
-  injectM $ runBindingsReaderM bindings $
+cheapReduce e = liftImmut do
+  DB bindings <- getDB
+  e' <- injectM e
+  return $ runBindingsReaderM bindings $
     runEnvReaderT idEnv $ cheapReduceFromSubst e'
 
 cheapReduceWithDecls
   :: ( BindingsReader m
      , HoistableE e, InjectableE e, SubstE AtomSubstVal e, SubstE Name e)
   => Nest Decl n l -> e l -> m n (Maybe (e n))
-cheapReduceWithDecls decls result = do
-  WithBindings bindings (Abs decls' result') <- addBindings $ Abs decls result
-  let reduced = runCheapReducerM idEnv bindings $
-                 cheapReduceWithDeclsB decls' $ cheapReduceFromSubst result'
-  case reduced of
-    Nothing -> return Nothing
-    Just x -> Just <$> injectM x
+cheapReduceWithDecls decls result = fromMaybeE <$> liftImmut do
+  Abs decls' result' <- injectM $ Abs decls result
+  DB bindings <- getDB
+  return $ toMaybeE $ runCheapReducerM idEnv bindings $
+    cheapReduceWithDeclsB decls' $
+      cheapReduceFromSubst result'
 
 cheapReduceToAtom :: (BindingsReader m, CheaplyReducibleE e, InjectableE e)
                   => e n -> m n (Maybe (Atom n))
-cheapReduceToAtom e = do
-  WithBindings bindings e' <- addBindings e
-  case runCheapReducerM idEnv bindings (cheapReduceE e') of
-    Nothing -> return Nothing
-    Just x -> Just <$> injectM x
+cheapReduceToAtom e = fromMaybeE <$> liftImmut do
+  DB bindings <- getDB
+  e' <- injectM e
+  return $ toMaybeE $ runCheapReducerM idEnv bindings (cheapReduceE e')
 
 -- === internal ===
 
 type CheapReducerM = EnvReaderT AtomSubstVal (BindingsReaderT Maybe)
 
-class ( Alternative2 m, EnvReader AtomSubstVal m
-      , BindingsGetter2 m, BindingsExtender2 m) => CheapReducer m
+class ( Alternative2 m, EnvReader AtomSubstVal m, AlwaysImmut2 m
+      , BindingsReader2 m, BindingsExtender2 m) => CheapReducer m
 instance CheapReducer CheapReducerM
 
 runCheapReducerM :: Distinct o
@@ -61,13 +60,13 @@ runCheapReducerM env bindings m =
   runBindingsReaderT bindings $ runEnvReaderT env m
 
 cheapReduceFromSubst
-  :: ( EnvReader AtomSubstVal m, BindingsGetter2 m
-     , InjectableE e, SubstE AtomSubstVal e)
+  :: ( EnvReader AtomSubstVal m, BindingsReader2 m
+     , AlwaysImmut2 m, InjectableE e, SubstE AtomSubstVal e)
   => e i -> m i o (e o)
 cheapReduceFromSubst e = do
   e' <- substM e
-  bindings <- getBindingsM
-  Distinct <- getDistinct
+  Immut <- getImmut
+  DB bindings <- getDB
   return $ fmapNames (toScope bindings) (cheapReduceName bindings) e'
 
 cheapReduceName :: Distinct n
@@ -103,11 +102,11 @@ cheapReduceWithDeclsRec decls cont = case decls of
     optional (cheapReduceE expr) >>= \case
       Nothing -> do
         binding' <- substM binding
-        ab <- withFreshBinder (getNameHint b) binding' \v ->
-          extendEnv (b@>Rename v) $
-            cheapReduceWithDeclsRec rest cont
-        Abs (b':>binding'') (Abs decls' result) <- return ab
-        return $ Abs (Nest (Let b' binding'') decls') result
+        Immut <- getImmut
+        withFreshBinder (getNameHint b) binding' \b' ->
+          extendEnv (b@>Rename (binderName b')) do
+            Abs decls' result <- cheapReduceWithDeclsRec rest cont
+            return $ Abs (Nest (Let b' binding') decls') result
       Just x ->
         extendEnv (b@>SubstVal x) $
           cheapReduceWithDeclsRec rest cont

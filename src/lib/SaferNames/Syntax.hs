@@ -30,7 +30,7 @@ module SaferNames.Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..), TopState,
-    BindsBindings (..), BindsOneAtomName (..), WithBindings (..), Scopable (..),
+    BindsBindings (..), BindsOneAtomName (..), WithBindings (..),
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -48,21 +48,20 @@ module SaferNames.Syntax (
     SourceBlock (..), SourceBlock' (..), EnvQuery (..),
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
-    BindingsReader (..), BindingsExtender (..),  Binding (..), BindingsGetter (..),
-    unsafeGetBindings,
-    ToBinding (..), refreshBinders, withFreshBinder,
+    BindingsReader (..), BindingsExtender (..),  Binding (..),
+    ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder,
     withFreshLamBinder, withFreshPiBinder, piBinderToLamBinder,
-    withFreshNameBinder,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
     BindingsReaderM, runBindingsReaderM,
-    BindingsReaderT (..), BindingsReader2, BindingsExtender2, BindingsGetter2, Scopable2,
+    BindingsReaderT (..), BindingsReader2, BindingsExtender2,
+    getDB, DistinctBindings (..),
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType,
     fromNonDepTabTy, binderType, atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    freshBinderNamePair, piArgType, piArrow, extendEffRow,
-    bindingsFragToSynthCandidates, refreshBinders2,
+    piArgType, piArrow, extendEffRow,
+    bindingsFragToSynthCandidates,
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
     FallibleT1, runFallibleT1,
     pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy,
@@ -262,14 +261,14 @@ data BindingsFrag (n::S) (l::S) =
   BindingsFrag (RecEnvFrag Binding n l) (Maybe (EffectRow l))
 
 data Bindings (n::S) = Bindings
-  { getBindings        :: RecEnv Binding n
+  { getNameBindings        :: RecEnv Binding n
   , getSynthCandidates :: SynthCandidates n
   , getSourceMap       :: SourceMap n
   , getEffects         :: EffectRow n}
   deriving (Generic)
 
 instance HasScope Bindings where
-  toScope = toScope . getBindings
+  toScope = toScope . getNameBindings
 
 catBindingsFrags :: Distinct n3
                  => BindingsFrag n1 n2 -> BindingsFrag n2 n3 -> BindingsFrag n1 n3
@@ -325,70 +324,29 @@ data WithBindings (e::E) (n::S) where
   WithBindings :: (Distinct l, Ext l n) => Bindings l -> e l -> WithBindings e n
 
 class ScopeReader m => BindingsReader (m::MonadKind1) where
-  addBindings :: InjectableE e => e n -> m n (WithBindings e n)
+  getBindings :: Immut n => m n (Bindings n)
 
--- Like BindingsExtender, but suitable for in-place scope monads
-class (ScopeReader m, Monad1 m)
-      => Scopable (m::MonadKind1) where
-  withBindings :: ( SubstB Name b, BindsBindings b
-                  , HasNamesE e , InjectableE e
-                  , HasNamesE e', InjectableE e', HoistableE e', SubstE AtomSubstVal e')
-               => Abs b e n
-               -> (forall l. Ext n l => e l -> m l (e' l))
-               -> m n (Abs b e' n)
-  extendNamelessBindings :: BindingsFrag n n -> m n a -> m n a
+getDB :: BindingsReader m => Immut n => m n (DistinctBindings n)
+getDB = do
+  Distinct <- getDistinct
+  bindings <- getBindings
+  return $ DB bindings
 
-class (BindingsReader m, ScopeGetter m) => BindingsGetter (m::MonadKind1) where
-  getBindingsM :: m n (Bindings n)
+data DistinctBindings n where
+  DB :: (Distinct n, Immut n) => Bindings n -> DistinctBindings n
 
-class (Scopable m, ScopeGetter m) => BindingsExtender (m::MonadKind1) where
+class (BindingsReader m, Monad1 m)
+      => BindingsExtender (m::MonadKind1) where
+  -- Note that we don't require `Immut l` here. So it's still possible to extend
+  -- with nameless fragments, of type `BindingsFrag n n`.
   extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
 
 type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
-type Scopable2         (m::MonadKind2) = forall (n::S). Scopable         (m n)
 type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
-type BindingsGetter2   (m::MonadKind2) = forall (n::S). BindingsGetter   (m n)
-
-withBindingsFromExtender
-  :: ( BindingsExtender m, ScopeReader m, ScopeGetter m
-     , SubstB Name b, BindsBindings b , HasNamesE e , InjectableE e
-     , HasNamesE e', InjectableE e', HoistableE e', SubstE AtomSubstVal e')
-  => Abs b e n
-  -> (forall l. Ext n l => e l -> m l (e' l))
-  -> m n (Abs b e' n)
-withBindingsFromExtender ab cont = do
-  scope <- getScope
-  Distinct <- getDistinct
-  DistinctAbs b e <- return $ refreshAbs scope ab
-  e' <- extendBindings (boundBindings b) $ cont e
-  return $ Abs b e'
-
-instance Monad m => Scopable (ScopeReaderT m) where
-  withBindings = withBindingsFromExtender
-  extendNamelessBindings frag cont = do
-    Distinct <- getDistinct
-    extendBindings frag cont
-
-instance Monad m => BindingsExtender (ScopeReaderT m) where
-  extendBindings frag = extendScope (toScopeFrag frag)
 
 instance (InjectableE e, BindingsReader m)
          => BindingsReader (OutReaderT e m) where
-  addBindings e = OutReaderT $ lift $ addBindings e
-
-instance (InjectableE e, BindingsGetter m)
-         => BindingsGetter (OutReaderT e m) where
-  getBindingsM = OutReaderT $ lift getBindingsM
-
-instance (InjectableE e, ScopeReader m, Scopable m)
-         => Scopable (OutReaderT e m) where
-  withBindings ab cont = OutReaderT $ ReaderT \env ->
-    withBindings ab \e -> do
-      env' <- injectM env
-      runReaderT (runOutReaderT' $ cont e) env'
-  extendNamelessBindings frag (OutReaderT (ReaderT f)) =
-    OutReaderT $ ReaderT \env ->
-      extendNamelessBindings frag (f env)
+  getBindings = OutReaderT $ lift $ getBindings
 
 instance (InjectableE e, ScopeReader m, BindingsExtender m)
          => BindingsExtender (OutReaderT e m) where
@@ -408,61 +366,32 @@ runBindingsReaderM bindings m = runIdentity $ runBindingsReaderT bindings m
 
 runBindingsReaderT :: Distinct n => Bindings n -> (BindingsReaderT m n a) -> m a
 runBindingsReaderT bindings cont =
-  runReaderT (runBindingsReaderT' cont) (getDistinctEvidence, bindings)
+  runReaderT (runBindingsReaderT' cont) (Distinct, bindings)
 
 instance Monad m => BindingsReader (BindingsReaderT m) where
-  addBindings e = BindingsReaderT do
-    bindings <- asks snd
-    d <- asks fst
-    withDistinctEvidence d $
-      return $ WithBindings bindings e
-
-instance Monad m => Scopable (BindingsReaderT m) where
-   withBindings (Abs b name) cont =
-     runEnvReaderT (idEnv :: Env Name n n) $
-       refreshBinders b \b' -> do
-         name' <- substM name
-         result <- EnvReaderT $ lift $ cont name'
-         return $ Abs b' result
-   extendNamelessBindings frag cont = do
-     Distinct <- getDistinct
-     extendBindings frag cont
-
-instance Monad m => BindingsGetter (BindingsReaderT m) where
-  getBindingsM = BindingsReaderT $ asks snd
+  getBindings = BindingsReaderT $ asks snd
 
 instance Monad m => BindingsExtender (BindingsReaderT m) where
-  extendBindings frag m =
-    withExtEvidence (toExtEvidence frag) $
-      BindingsReaderT $ ReaderT \(_, bindings) -> do
-        let BindingsReaderT (ReaderT f) = m
-        f (getDistinctEvidence, bindings `extendOutMap` frag)
+  extendBindings frag m = BindingsReaderT $ withReaderT
+    (\(_, bindings) -> (Distinct, extendOutMap bindings frag)) $
+        withExtEvidence (toExtEvidence frag) $
+          runBindingsReaderT' m
 
 instance Monad m => ScopeReader (BindingsReaderT m) where
-  addScope e = BindingsReaderT do
-    (d, bindings) <- ask
-    withDistinctEvidence d $
-      return $ WithScope (toScope bindings) e
-  getDistinctEvidenceM = BindingsReaderT $ asks fst
-
-instance Monad m => ScopeGetter (BindingsReaderT m) where
+  getDistinct = BindingsReaderT $ asks fst
   getScope = toScope <$> snd <$> BindingsReaderT ask
+  liftImmut cont = do
+    Immut <- getImmut
+    cont
 
-instance BindingsReader m => BindingsReader (EnvReaderT v m i) where
-  addBindings e = EnvReaderT $ lift $ addBindings e
+instance Monad m => AlwaysImmut (BindingsReaderT m) where
+  getImmut = BindingsReaderT $ ReaderT \(_, bindings) ->
+    return $ toImmutEvidence bindings
 
-instance BindingsGetter m => BindingsGetter (EnvReaderT v m i) where
-  getBindingsM = EnvReaderT $ lift getBindingsM
+instance (InjectableV v, BindingsReader m) => BindingsReader (EnvReaderT v m i) where
+  getBindings = EnvReaderT $ lift getBindings
 
-instance (InjectableV v, Scopable m) => Scopable (EnvReaderT v m i) where
-  withBindings ab cont = EnvReaderT $ ReaderT \env ->
-    withBindings ab \e -> do
-      env' <- injectM env
-      runReaderT (runEnvReaderT' $ cont e) env'
-  extendNamelessBindings frag cont = EnvReaderT $ ReaderT \env ->
-    extendNamelessBindings frag $ runReaderT (runEnvReaderT' $ cont) env
-
-instance (InjectableV v, ScopeGetter m, BindingsExtender m)
+instance (InjectableV v, ScopeReader m, BindingsExtender m)
          => BindingsExtender (EnvReaderT v m i) where
   extendBindings frag m = EnvReaderT $ ReaderT \env ->
     extendBindings frag do
@@ -473,11 +402,11 @@ instance (InjectableV v, ScopeGetter m, BindingsExtender m)
 -- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
 -- like we do with `SubstE Name`, `SubstE AtomSubstVal`, etc?
 class BindsNames b => BindsBindings (b::B) where
-  boundBindings :: Distinct l => b n l -> BindingsFrag n l
+  toBindingsFrag :: Distinct l => b n l -> BindingsFrag n l
 
-  default boundBindings :: (GenericB b, BindsBindings (RepB b))
+  default toBindingsFrag :: (GenericB b, BindsBindings (RepB b))
                         => Distinct l => b n l -> BindingsFrag n l
-  boundBindings b = boundBindings $ fromB b
+  toBindingsFrag b = toBindingsFrag $ fromB b
 
 -- We're really just defining this so we can have a polymorphic `binderType`.
 -- But maybe we don't need one. Or maybe we can make one using just
@@ -489,7 +418,7 @@ binderType :: BindsOneAtomName b => b n l -> Type n
 binderType b =  atomBindingType $ toBinding $ boundAtomBinding b
 
 instance (InjectableE ann, ToBinding ann c) => BindsBindings (BinderP c ann) where
-  boundBindings (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
+  toBindingsFrag (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
     where ann' = withExtEvidence b $ inject ann
 
 class (SubstE Name e, InjectableE e) => ToBinding (e::E) (c::C) | e -> c where
@@ -521,9 +450,10 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (RightE e) = toBinding e
 
 lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
-lookupBindings v = do
-  WithBindings bindings v' <- addBindings v
-  injectM $ lookupBindingsPure bindings v'
+lookupBindings v = liftImmut do
+  bindings <- getBindings
+  v' <- injectM v
+  return $ lookupBindingsPure bindings v'
 
 lookupSourceMap :: BindingsReader m
                 => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
@@ -534,9 +464,7 @@ lookupSourceMap nameColor sourceName = do
     Nothing -> return Nothing
 
 getSourceMapM :: BindingsReader m => m n (SourceMap n)
-getSourceMapM = do
-  WithBindings bindings UnitE <- addBindings UnitE
-  injectM $ getSourceMap $ bindings
+getSourceMapM = liftImmut $ getSourceMap <$> getBindings
 
 lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
 lookupBindingsPure (Bindings bindings _ _ _) v =
@@ -544,97 +472,79 @@ lookupBindingsPure (Bindings bindings _ _ _) v =
 
 updateBindings :: Name c n -> Binding c n -> Bindings n -> Bindings n
 updateBindings v rhs bindings =
-  bindings { getBindings = RecEnv $ updateEnvFrag v rhs bs }
-  where (RecEnv bs) = getBindings bindings
-
-withFreshNameBinder
-  :: (NameColor c, BindingsReader m, BindingsExtender m)
-  => NameHint
-  -> Binding c o
-  -> (forall o'. (Distinct o', Ext o o') => NameBinder c o o' -> m o' a)
-  -> m o a
-withFreshNameBinder hint binding cont = do
-  scope <- getScope
-  Distinct <- getDistinct
-  withFresh hint nameColorRep scope \b' -> do
-    let binding' = inject binding
-    extendBindings (BindingsFrag (RecEnvFrag (b' @> binding')) Nothing) $
-      cont b'
+  bindings { getNameBindings = RecEnv $ updateEnvFrag v rhs bs }
+  where (RecEnv bs) = getNameBindings bindings
 
 refreshBinders
   :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
      , EnvReader v m, SubstB v b, BindsBindings b)
+  => Immut o
   => b i i'
-  -> (forall o'. Ext o o' => b o o' -> m i' o' r)
-  -> m i o r
+  -> (forall o'. Ext o o' => b o o' -> m i' o' a)
+  -> m i o a
 refreshBinders b cont = do
   scope <- getScope
   Distinct <- getDistinct
   env <- getEnv
   DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idEnvFrag b)
-  extendBindings (boundBindings b') do
+  extendBindings (toBindingsFrag b') do
     extendEnv envFrag do
       cont b'
 
-freshBinderNamePair :: (ScopeReader m, NameColor c)
-                    => NameHint
-                    -> m n (Abs (NameBinder c) (Name c) n)
-freshBinderNamePair hint = do
-  WithScope scope UnitE <- addScope UnitE
-  withFresh hint nameColorRep scope \b ->
-    injectM $ Abs b (binderName b)
+-- Version of `refreshBinder` that gets its `Immut n` evidence from the monad.
+-- TODO: make it easy to go the other way (from refreshI to refresh) by having a
+-- `CarriesImmutT` transformer to add explicit Immut evidence when
+-- needed. Then this can be the main version.
+refreshBindersI
+  :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
+     , EnvReader v m, SubstB v b, BindsBindings b)
+  => AlwaysImmut2 m
+  => b i i'
+  -> (forall o'. Ext o o' => b o o' -> m i' o' a)
+  -> m i o a
+refreshBindersI b cont = do
+  Immut <- getImmut
+  refreshBinders b cont
 
-withFreshBinder :: ( NameColor c, Scopable m, InjectableE e
-                   , HasNamesE e, SubstE AtomSubstVal e,  ToBinding binding c)
-                => NameHint -> binding n
-                -> (forall l. Ext n l => Name c l -> m l (e l))
-                -> m n (Abs (BinderP c binding) e n)
+withFreshBinder
+  :: (NameColor c, BindingsExtender m, ToBinding binding c)
+  => Immut n
+  => NameHint -> binding n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => NameBinder c n l -> m l a)
+  -> m n a
 withFreshBinder hint binding cont = do
-  Abs b name <- freshBinderNamePair hint
-  withBindings (Abs (b:>binding) name) $ cont
+  scope    <- getScope
+  Distinct <- getDistinct
+  withFresh hint nameColorRep scope \b -> do
+    extendBindings (toBindingsFrag (b:>binding)) $
+      cont b
 
 withFreshLamBinder
-  :: (Scopable m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e)
-  => NameHint -> LamBinding n -> Abs Binder EffectRow n
-  -> (forall l. Ext n l => AtomName l -> m l (e l))
-  -> m n (Abs LamBinder e n)
-withFreshLamBinder hint (LamBinding arr ty) effAbs cont = do
-  Abs b name <- freshBinderNamePair hint
-  ab <- withBindings (Abs (LamBinder b ty arr Pure) name) \v -> do
-    Distinct <- getDistinct
-    effs <- applyAbs (inject effAbs) v
+  :: (BindingsExtender m)
+  => Immut n
+  => NameHint -> LamBinding n
+  -> Abs Binder EffectRow n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => LamBinder n l -> m l a)
+  -> m n a
+withFreshLamBinder hint binding@(LamBinding arr ty) effAbs cont = do
+  withFreshBinder hint binding \b -> do
+    effs <- applyAbs (inject effAbs) (binderName b)
     withAllowedEffects effs do
-      result <- cont v
-      return $ PairE result effs
-  Abs (LamBinder b' ty' arr' _) (PairE e eff) <- return ab
-  return $ Abs (LamBinder b' ty' arr' eff) e
+      cont $ LamBinder b ty arr effs
 
 withFreshPiBinder
-  :: (Scopable m, InjectableE e, HasNamesE e, SubstE AtomSubstVal e)
+  :: BindingsExtender m
+  => Immut n
   => NameHint -> PiBinding n
-  -> (forall l. Ext n l => AtomName l -> m l (e l))
-  -> m n (Abs PiBinder e n)
-withFreshPiBinder hint (PiBinding arr ty) cont = do
-  Abs b name <- freshBinderNamePair hint
-  withBindings (Abs (PiBinder b ty arr) name) \v -> do
-    withAllowedEffects Pure $ cont v
+  -> (forall l. (Immut l, Distinct l, Ext n l) => PiBinder n l -> m l a)
+  -> m n a
+withFreshPiBinder hint binding@(PiBinding arr ty) cont = do
+  withFreshBinder hint binding \b ->
+    withAllowedEffects Pure $
+      cont $ PiBinder b ty arr
 
 piBinderToLamBinder :: PiBinder n l -> EffectRow l -> LamBinder n l
 piBinderToLamBinder (PiBinder b ty arr) eff = LamBinder b ty arr eff
-
--- This version works with the in-place api. TODO: remove the other version.
-refreshBinders2
-  :: ( InjectableV v, SubstV Name v, HoistableV v, SubstV v v, FromName v
-     , InjectableE e, HoistableE e, SubstE Name e, SubstE AtomSubstVal e
-     , EnvReader v m, BindingsReader2 m, Scopable2 m
-     , SubstB Name b, SubstB v b, BindsBindings b)
-  => b i i'
-  -> (forall o'. Ext o o' => m i' o' (e o'))
-  -> m i o (Abs b e o)
-refreshBinders2 b cont = do
-  ab <- substM $ Abs b (idEnvFrag b)
-  withBindings ab \substFrag ->
-    extendEnv substFrag $ cont
 
 data SomeDecl (binding::V) (n::S) (l::S) where
   SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
@@ -660,7 +570,7 @@ instance BindsNames (SomeDecl binding) where
 
 instance (forall c. NameColor c => ToBinding (binding c) c)
          => BindsBindings (SomeDecl binding) where
-  boundBindings (SomeDecl b binding) =
+  toBindingsFrag (SomeDecl b binding) =
     withExtEvidence b $
       BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
 
@@ -685,34 +595,25 @@ instance Monad1 m => Fallible (FallibleT1 m n) where
   addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
 
 instance ScopeReader m => ScopeReader (FallibleT1 m) where
-  addScope e = FallibleT1 $ lift $ lift $ addScope e
-  getDistinctEvidenceM = FallibleT1 $ lift $ lift $ getDistinctEvidenceM
+  getScope = FallibleT1 $ lift $ lift getScope
+  getDistinct = FallibleT1 $ lift $ lift $ getDistinct
+  liftImmut _ = undefined
 
 instance BindingsReader m => BindingsReader (FallibleT1 m) where
-  addBindings e = FallibleT1 $ lift $ lift $ addBindings e
-
--- TODO (dougalm): I think we should just use this more instead of doing the
--- whole `addBindings` dance.
-unsafeGetBindings :: BindingsReader m => m n (Bindings n)
-unsafeGetBindings = do
-  WithBindings bindings UnitE <- addBindings UnitE
-  return $ unsafeCoerceE bindings
+  getBindings = FallibleT1 $ lift $ lift getBindings
 
 -- === Querying static env ===
 
 getSynthCandidatesM :: BindingsReader m => m n (SynthCandidates n)
-getSynthCandidatesM = do
-  WithBindings (Bindings _ scs _ _) UnitE <- addBindings UnitE
-  injectM scs
+getSynthCandidatesM = liftImmut $ getSynthCandidates <$> getBindings
 
 getAllowedEffects :: BindingsReader m => m n (EffectRow n)
-getAllowedEffects = do
-  WithBindings (Bindings _ _ _ effs) UnitE <- addBindings UnitE
-  injectM effs
+getAllowedEffects = liftImmut $ getEffects <$> getBindings
 
-withAllowedEffects :: Scopable m => EffectRow n -> m n a -> m n a
-withAllowedEffects effs cont =
-  extendNamelessBindings (BindingsFrag emptyOutFrag $ Just effs) cont
+withAllowedEffects :: BindingsExtender m => EffectRow n -> m n a -> m n a
+withAllowedEffects effs cont = do
+  Distinct <- getDistinct
+  extendBindings (BindingsFrag emptyOutFrag $ Just effs) cont
 
 -- === front-end language AST ===
 
@@ -1483,7 +1384,7 @@ instance GenericB LamBinder where
       `PairB` LiftB effs) = LamBinder b ty arr effs
 
 instance BindsBindings LamBinder where
-  boundBindings (LamBinder b ty arrow effects) =
+  toBindingsFrag (LamBinder b ty arrow effects) =
     withExtEvidence b do
       let binding = toBinding $ inject $ LamBinding arrow ty
       BindingsFrag (RecEnvFrag $ b @> binding)
@@ -1558,7 +1459,7 @@ instance BindsOneAtomName PiBinder where
     PiBound $ PiBinding arr ty
 
 instance BindsBindings PiBinder where
-  boundBindings (PiBinder b ty arr) =
+  toBindingsFrag (PiBinder b ty arr) =
     withExtEvidence b do
       let binding = toBinding $ inject $ PiBinding arr ty
       BindingsFrag (RecEnvFrag $ b @> binding) (Just Pure)
@@ -1871,20 +1772,20 @@ deriving instance Show (UAlt n)
 
 instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (PairB b1 b2)) where
-  boundBindings (PairB b1 b2) = do
-    let bindings2 = boundBindings b2
+  toBindingsFrag (PairB b1 b2) = do
+    let bindings2 = toBindingsFrag b2
     let ext = toExtEvidence bindings2
     withSubscopeDistinct ext do
-      boundBindings b1 `catBindingsFrags` bindings2
+      toBindingsFrag b1 `catBindingsFrags` bindings2
 
 instance BindsBindings b => (BindsBindings (Nest b)) where
-  boundBindings Empty = emptyOutFrag
-  boundBindings (Nest b rest) = boundBindings $ PairB b rest
+  toBindingsFrag Empty = emptyOutFrag
+  toBindingsFrag (Nest b rest) = toBindingsFrag $ PairB b rest
 
 instance (BindsBindings b1, BindsBindings b2)
          => (BindsBindings (EitherB b1 b2)) where
-  boundBindings (LeftB  b) = boundBindings b
-  boundBindings (RightB b) = boundBindings b
+  toBindingsFrag (LeftB  b) = toBindingsFrag b
+  toBindingsFrag (RightB b) = toBindingsFrag b
 
 instance GenericB BindingsFrag where
   type RepB BindingsFrag = PairB (RecEnvFrag Binding) (LiftB (MaybeE EffectRow))
@@ -1902,10 +1803,10 @@ instance SubstB Name         BindingsFrag
 instance SubstB AtomSubstVal BindingsFrag
 
 instance BindsBindings BindingsFrag where
-  boundBindings frag = frag
+  toBindingsFrag frag = frag
 
 instance BindsBindings UnitB where
-  boundBindings UnitB = emptyOutFrag
+  toBindingsFrag UnitB = emptyOutFrag
 
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where

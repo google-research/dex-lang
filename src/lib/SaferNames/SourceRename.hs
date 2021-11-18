@@ -36,9 +36,10 @@ data RenamerEnv n = RenamerEnv { renamerSourceMap :: SourceMap n
 newtype RenamerM (n::S) (a:: *) =
   RenamerM { runRenamerM :: OutReaderT RenamerEnv (ScopeReaderT FallibleM) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , ScopeReader, ScopeGetter, ScopeExtender)
+           , AlwaysImmut, ScopeReader, ScopeExtender)
 
-class (Monad1 m, ScopeExtender m, Fallible1 m) => Renamer m where
+class ( Monad1 m, AlwaysImmut m, ScopeReader m
+      , ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
   askSourceMap :: m n (SourceMap n)
@@ -92,7 +93,7 @@ instance (Renamer m) => NameGen (RenamerNameGenT m) where
         return $ RenamerContent (frag >>> frag2) sourceMap' expr2
   getDistinctEvidenceG = RenamerNameGenT do
     Distinct <- getDistinct
-    return $ RenamerContent id mempty getDistinctEvidence
+    return $ RenamerContent id mempty Distinct
 
 withSourceRenameB :: SourceRenamableB b
                   => Renamer m
@@ -346,7 +347,7 @@ instance (Renamer m) => NameGen (PatRenamerNameGenT m) where
 
   getDistinctEvidenceG = PatRenamerNameGenT \_ -> do
     Distinct <- getDistinct
-    return (mempty, RenamerContent id mempty getDistinctEvidence)
+    return (mempty, RenamerContent id mempty Distinct)
 
 class SourceRenamablePat (pat::B) where
   sourceRenamePat :: Renamer m

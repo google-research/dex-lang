@@ -25,11 +25,11 @@ class (Builder2 m, EnvReader Name m)
   traverseExpr :: Emits o => Expr i -> m i o (Expr o)
   traverseExpr = traverseExprDefault
 
-  traverseAtom :: Atom i -> m i o (Atom o)
+  traverseAtom :: Immut o => Atom i -> m i o (Atom o)
   traverseAtom = traverseAtomDefault
 
-traverseExprDefault :: GenericTraverser m => Emits o => Expr i -> m i o (Expr o)
-traverseExprDefault expr = case expr of
+traverseExprDefault :: Emits o => GenericTraverser m => Expr i -> m i o (Expr o)
+traverseExprDefault expr = liftImmut $ case expr of
   App g x -> App  <$> tge g <*> tge x
   Atom x  -> Atom <$> tge x
   Op  op  -> Op   <$> mapM tge op
@@ -37,23 +37,24 @@ traverseExprDefault expr = case expr of
   Case scrut alts resultTy ->
     Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy
 
-traverseAtomDefault :: GenericTraverser m => Atom i -> m i o (Atom o)
+traverseAtomDefault :: Immut o => GenericTraverser m => Atom i -> m i o (Atom o)
 traverseAtomDefault atom = case atom of
   Var v -> Var <$> substM v
   Lam (LamExpr (LamBinder b ty arr eff) body) -> do
     ty' <- tge ty
     let hint = getNameHint b
-    effAbs <- withFreshBinder hint ty' \v -> extendRenamer (b@>v) $ substM eff
-    Abs b' body' <- withFreshLamBinder hint (LamBinding arr ty') effAbs \v -> do
-                    extendRenamer (b@>v) $ tge body
-    return $ Lam $ LamExpr b' body'
+    effAbs <- withFreshBinder hint ty' \b' ->
+      extendRenamer (b@>binderName b') do
+        Abs (b':>ty') <$> substM eff
+    withFreshLamBinder hint (LamBinding arr ty') effAbs \b' -> do
+      extendRenamer (b@>binderName b') do
+        body' <- tge body
+        return $ Lam $ LamExpr b' body'
   Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
     ty' <- tge ty
-    ab <- withFreshPiBinder (getNameHint b) (PiBinding arr ty') \v -> do
-      extendRenamer (b@>v) $
-        PairE <$> substM eff <*> tge resultTy
-    Abs b' (PairE effs' resultTy') <- return ab
-    return $ Pi $ PiType b' effs' resultTy'
+    withFreshPiBinder (getNameHint b) (PiBinding arr ty') \b' -> do
+      extendRenamer (b@>binderName b') $
+        Pi <$> (PiType b' <$> substM eff <*> tge resultTy)
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
@@ -84,26 +85,27 @@ traverseAtomDefault atom = case atom of
   ProjectElt _ _ -> substM atom
   _ -> error $ "not implemented: " ++ pprint atom
 
-tge :: (GenericallyTraversableE e, GenericTraverser m) => e i -> m i o (e o)
+tge :: (Immut o, GenericallyTraversableE e, GenericTraverser m)
+    => e i -> m i o (e o)
 tge = traverseGenericE
 
 class GenericallyTraversableE (e::E) where
-  traverseGenericE :: GenericTraverser m => e i -> m i o (e o)
+  traverseGenericE :: Immut o => GenericTraverser m => e i -> m i o (e o)
 
 instance GenericallyTraversableE Atom where
   traverseGenericE = traverseAtom
 
 instance GenericallyTraversableE Module where
   traverseGenericE (Module ir decls result) = do
-    Abs decls' (SubstEvaluatedModule result') <- buildScoped $
-      traverseDeclNest decls $ substM $ SubstEvaluatedModule result
+    DistinctAbs decls' result' <- buildScoped $
+      traverseDeclNest decls $ substM result
     return $ Module ir decls' result'
 
 instance GenericallyTraversableE Block where
   traverseGenericE (Block ty decls result) = do
     ty' <- tge ty
-    Abs decls' result' <- buildScoped $ traverseDeclNest decls $
-                            traverseExpr result
+    DistinctAbs decls' result' <- buildScoped $ traverseDeclNest decls $
+                                    traverseExpr result
     return $ Block ty' decls' result'
 
 traverseDeclNest
@@ -118,7 +120,7 @@ traverseDeclNest (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   extendEnv (b @> v) $ traverseDeclNest rest cont
 
 traverseAlt
-  :: GenericTraverser m
+  :: (Immut o, GenericTraverser m)
   => Alt i
   -> m i o (Alt o)
 traverseAlt (Abs Empty body) = Abs Empty <$> tge body
@@ -129,24 +131,3 @@ traverseAlt (Abs (Nest (b:>ty) bs) body) = do
       extendRenamer (b@>v) $
         traverseAlt $ Abs bs body
   return $ Abs (Nest b' bs') body'
-
--- === Faking SubstE ===
-
--- We're pulling the same hack here as we do in inference. (the "Zonkable source
--- map hack")
--- TODO: figure out how to do scoped inference blocks without putting
--- a `SubstE Atom` on `buildScopedGeneral`.
-
-newtype SubstEvaluatedModule (n::S) =
-  SubstEvaluatedModule (EvaluatedModule n)
-  deriving (HoistableE, InjectableE)
-
-instance SubstE Name SubstEvaluatedModule where
-  substE env (SubstEvaluatedModule e) = SubstEvaluatedModule $ substE env e
-
-instance SubstE AtomSubstVal SubstEvaluatedModule where
-  substE (scope, env) e = substE (scope, env') e
-    where env' = newEnv \v -> case env ! v of
-                   SubstVal (Var v') -> v'
-                   SubstVal _ -> error "shouldn't happen"
-                   Rename v' -> v'

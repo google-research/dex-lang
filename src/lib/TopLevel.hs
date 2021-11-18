@@ -110,10 +110,10 @@ class ( forall n. Fallible (m n)
       , forall n. MonadIO (m n) )
       => MonadPasses (m::S.MonadKind1) where
   requireBenchmark :: m n Bool
-  getTopState :: m n (S.DistinctWitness n, JointTopState n)
+  getTopState :: m n (S.DistinctEvidence n, JointTopState n)
 
 newtype PassesM (n::S.S) a = PassesM
-  { runPassesM' :: ReaderT (Bool, EvalConfig, (S.DistinctWitness n, JointTopState n))
+  { runPassesM' :: ReaderT (Bool, EvalConfig, (S.DistinctEvidence n, JointTopState n))
                      (LoggerT [Output] IO) a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Fallible)
 
@@ -227,7 +227,7 @@ runEnvQuery query = do
   case query of
     S.DumpEnv -> logTop $ TextOut $ pprint $ curState
     S.InternalNameInfo name ->
-      case S.lookupEnvFragRaw (S.fromRecEnv $ S.getBindings bindings) name of
+      case S.lookupEnvFragRaw (S.fromRecEnv $ S.getNameBindings bindings) name of
         Nothing -> throw UnboundVarErr $ pprint name
         Just (S.EnvVal _ binding) ->
           logTop $ TextOut $ pprint binding

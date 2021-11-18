@@ -49,24 +49,24 @@ checkModule bindings m =
 
 checkTypes :: (BindingsReader m, Fallible1 m, CheckableE e)
            => e n -> m n ()
-checkTypes e = do
-  Distinct <- getDistinct
-  WithBindings bindings e' <- addBindings e
+checkTypes e = () <$ liftImmut do
+  DB bindings <- getDB
+  e' <- injectM e
   liftExcept $ runTyperT bindings $ void $ checkE e'
+  return UnitE
 
 getType :: (BindingsReader m, HasType e)
            => e n -> m n (Type n)
-getType e = do
-  Distinct <- getDistinct
-  WithBindings bindings e' <- addBindings e
-  injectM $ runHardFail $ runTyperT bindings $ getTypeE e'
+getType e = liftImmut do
+  DB bindings <- getDB
+  e' <- injectM e
+  return $ runHardFail $ runTyperT bindings $ getTypeE e'
 
 tryGetType :: (BindingsReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
-tryGetType e = do
-  Distinct <- getDistinct
-  WithBindings bindings e' <- addBindings e
-  ty <- liftExcept $ runTyperT bindings $ getTypeE e'
-  injectM ty
+tryGetType e = liftImmut do
+  DB bindings <- getDB
+  e' <- injectM e
+  liftExcept $ runTyperT bindings $ getTypeE e'
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
 instantiatePi (PiType b eff body) x = do
@@ -83,8 +83,9 @@ sourceNameType v = do
       withNameColorRep c $ lookupBindings v' >>= bindingType
 
   where
-    bindingType :: (BindingsReader m, Fallible1 m) => Binding c n -> m n (Type n)
-    bindingType binding = case binding of
+    bindingType :: (NameColor c, BindingsReader m, Fallible1 m)
+                => Binding c n -> m n (Type n)
+    bindingType binding = liftImmut $ injectM binding >>= \case
       AtomNameBinding b      -> return $ atomBindingType $ toBinding b
       TyConBinding   def     -> liftTyperM $ typeConFunType def
       DataConBinding def con -> liftTyperM $ dataConFunType def con
@@ -92,14 +93,13 @@ sourceNameType v = do
       ClassBinding (ClassDef _ _ (def, _)) -> liftTyperM $ typeConFunType def
       _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
 
-
 -- === the type checking/querying monad ===
 
 -- TODO: not clear why we need the explicit `Monad2` here since it should
 -- already be a superclass, transitively, through both Fallible2 and
 -- MonadAtomSubst.
 class ( Monad2 m, Fallible2 m, EnvReader Name m
-      , BindingsGetter2 m, BindingsExtender2 m)
+      , BindingsReader2 m, BindingsExtender2 m, AlwaysImmut2 m)
      => Typer (m::MonadKind2)
 
 newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
@@ -108,8 +108,9 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , EnvReader Name
            , MonadFail
            , Fallible
-           , ScopeReader, ScopeGetter, BindingsReader
-           , BindingsGetter, Scopable, BindingsExtender)
+           , AlwaysImmut
+           , ScopeReader
+           , BindingsReader, BindingsExtender)
 
 type TyperM = TyperT Except
 
@@ -121,12 +122,12 @@ runTyperT bindings m = do
       runTyperT' m
 
 
-liftTyperM :: (Fallible1 m, BindingsReader m)
+liftTyperM :: (Immut n, Fallible1 m, BindingsReader m)
            => TyperM n n a
            -> m n a
 liftTyperM cont = do
   Distinct <- getDistinct
-  bindings <- unsafeGetBindings
+  bindings <- getBindings
   liftExcept $ runTyperT bindings cont
 
 instance Fallible m => Typer (TyperT m)
@@ -201,6 +202,7 @@ instance CheckableE SynthCandidates where
 
 instance CheckableB BindingsFrag where
   checkB (BindingsFrag frag effs) cont = do
+    Immut <- getImmut
     scope <- getScope
     env <- getEnv
     Distinct <- getDistinct
@@ -293,7 +295,7 @@ instance HasType Atom where
       annTy' <- substM annTy
       checkAlphaEq annTy' (BaseTy t)
       numel |: IdxRepTy
-      depTy <- refreshBinders b \b' -> do
+      depTy <- refreshBindersI b \b' -> do
         bodyTy <- getTypeE body
         return $ Abs b' bodyTy
       liftHoistExcept $ fromConstAbs depTy
@@ -323,7 +325,8 @@ instance (NameColor c, ToBinding ann c, CheckableE ann)
          => CheckableB (BinderP c ann) where
   checkB (b:>ann) cont = do
     ann' <- checkE ann
-    withFreshNameBinder (getNameHint b) (toBinding ann') \b' ->
+    Immut <- getImmut
+    withFreshBinder (getNameHint b) (toBinding ann') \b' ->
       extendRenamer (b@>binderName b') $
         cont $ b' :> ann'
 
@@ -370,7 +373,8 @@ instance CheckableB LamBinder where
   checkB (LamBinder b ty arr effs) cont = do
     ty' <- checkTypeE TyKind ty
     let binding = toBinding $ LamBinding arr ty'
-    withFreshNameBinder (getNameHint b) binding \b' -> do
+    Immut <- getImmut
+    withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
         effs' <- checkE effs
         extendBindings (BindingsFrag emptyOutFrag (Just effs')) $
@@ -394,7 +398,8 @@ instance CheckableB PiBinder where
   checkB (PiBinder b ty arr) cont = do
     ty' <- checkTypeE TyKind ty
     let binding = toBinding $ PiBinding arr ty'
-    withFreshNameBinder (getNameHint b) binding \b' -> do
+    Immut <- getImmut
+    withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
         extendBindings (BindingsFrag emptyOutFrag (Just Pure)) $
           cont $ PiBinder b' ty' arr
@@ -713,11 +718,12 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   allowed <- getAllowedEffects
   dropSubst $
-    refreshBinders regionBinder \regionBinder' -> do
-      refreshBinders refBinder \_ -> do
+    refreshBindersI regionBinder \regionBinder' -> do
+      refreshBindersI refBinder \_ -> do
         allowed'   <- injectM allowed
         eff'       <- substM eff
         regionName <- injectM $ binderName regionBinder'
+        Immut <- getImmut
         withAllowedEffects allowed' $
           extendAllowedEffect (RWSEffect rws regionName) $
             declareEffs eff'
@@ -767,7 +773,7 @@ buildNaryPiType :: Typer m
                 -> m i o (Type o)
 buildNaryPiType _ Empty cont = cont []
 buildNaryPiType arr (Nest (b:>argTy) rest) cont = do
-  refreshBinders (PiBinder b argTy arr) \b' -> do
+  refreshBindersI (PiBinder b argTy arr) \b' -> do
     Pi <$> PiType b' Pure <$> buildNaryPiType arr rest \params -> do
       param <- Var <$> injectM (binderName b')
       cont (param : params)
@@ -819,7 +825,7 @@ checkAlt :: HasType body => Typer m
 checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
-  refreshBinders bs \_ -> do
+  refreshBindersI bs \_ -> do
     resultTyReq' <- injectM resultTyReq
     body |: resultTyReq'
 
@@ -1032,6 +1038,7 @@ declareEffs effs = do
 extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
 extendAllowedEffect newEff cont = do
   effs <- getAllowedEffects
+  Immut <- getImmut
   withAllowedEffects (extendEffect newEff effs) cont
 
 checkExtends :: Fallible m => EffectRow n -> EffectRow n -> m ()

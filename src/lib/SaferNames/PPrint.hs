@@ -305,7 +305,7 @@ deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnv v o)
 instance Pretty (Bindings n) where
   pretty s =
        "bindings: "
-    <>   indented (pretty (getBindings s))
+    <>   indented (pretty (getNameBindings s))
     <> "synth candidates:"
     <>   indented (pretty (getSynthCandidates s))
     <> "source map: "

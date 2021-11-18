@@ -122,7 +122,7 @@ instance GenericE JointTopState where
 toSafe :: (Distinct n, HasSafeVersionE e)
        => JointTopState n -> e -> SafeVersionE e n
 toSafe jointTopState e =
-  let scope = toScope $ S.getBindings $ topStateS $ jointTopState
+  let scope = toScope $ S.getNameBindings $ topStateS $ jointTopState
   in runToSafeM (topToSafeMap jointTopState) scope $ toSafeE e
 
 fromSafe :: HasSafeVersionE e => JointTopState n -> SafeVersionE e n -> e
@@ -140,6 +140,7 @@ nameBijectionFromDBindings fromSafeMap bindings cont = do
   withFreshSafeRec fromSafeMap (envPairs bindings) \scopeFrag fromSafeMap' -> do
     toSafeMap' <- getToSafeEnv
     Distinct <- getDistinct
+    Immut <- getImmut
     scope <- getScope
     let bindingsFrag = makeBindingsFrag scope bindings toSafeMap' fromSafeMap' scopeFrag
     cont bindingsFrag toSafeMap' fromSafeMap'
@@ -181,7 +182,8 @@ withFreshBijectionD :: MonadToSafe m => D.Name -> D.AnyBinderInfo
                     -> (forall l c. S.NameBinder c n l -> UnsafeName c -> m l a)
                     -> m n a
 withFreshBijectionD name info cont =
-  asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
+  asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) -> do
+    Immut <- getImmut
     withFreshM (getNameHint name) rep \b ->
       extendToSafeEnv name' (binderName b) $
         cont b name'
@@ -191,7 +193,7 @@ extendTopStateS = error "not implemented"
 
 -- === monad for translating from unsafe to safe names ===
 
-class ( S.ScopeReader m, S.ScopeExtender m
+class ( S.ScopeReader m, S.ScopeExtender m, S.AlwaysImmut m
       , MonadFail1 m, Monad1 m)
       => MonadToSafe (m::MonadKind1) where
   getToSafeEnv :: m o (ToSafeEnv o)
@@ -214,6 +216,9 @@ instance MonadToSafe ToSafeM where
   getToSafeEnv = ToSafeM ask
   extendToSafeEnv (UnsafeName rep v) v' (ToSafeM m) = ToSafeM $ flip withReaderT m
     \(ToSafeEnv env) -> ToSafeEnv $ env <> (v D.@> EnvVal rep v')
+
+instance AlwaysImmut ToSafeM where
+  getImmut = ToSafeM $ lift $ getImmut
 
 -- === monad for translating from safe to unsafe names ===
 
@@ -351,7 +356,8 @@ instance HasSafeVersionB DRecEnvFrag where
         -> (forall o'. TempPair o o' -> m o' r)
         -> m o r
       renameBindersEnvPair name info cont =
-        asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) ->
+        asUnsafeNameFromBinderInfo info name \name'@(UnsafeName rep _) -> do
+          Immut <- getImmut
           withFreshM (S.Hint name) rep \b ->
             extendToSafeEnv name' (binderName b) $
               cont $ TempPair b info
@@ -556,10 +562,12 @@ instance HasSafeVersionB D.Binder where
 
   toSafeB (Ignore ty) cont = do
     ty' <- toSafeE ty
+    Immut <- getImmut
     withFreshM S.NoHint nameColorRep \b' -> do
       cont (b' S.:> ty')
   toSafeB (Bind (b D.:> ty)) cont = do
     ty' <- toSafeE ty
+    Immut <- getImmut
     withFreshM (getNameHint b) nameColorRep \b' -> do
       extendToSafeEnv (UnsafeName AtomNameRep b) (S.binderName b') $
         cont (b' S.:> ty')
@@ -760,9 +768,9 @@ deriving via (WrapE JointTopState n) instance Generic (JointTopState n)
 instance Generic TopStateEx where
   type Rep TopStateEx = Rep (JointTopState UnsafeS)
   from (TopStateEx topState) = from (unsafeCoerceE topState :: JointTopState UnsafeS)
-  to rep =
-    withDistinctEvidence (FabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
-      TopStateEx (to rep :: JointTopState UnsafeS)
+  to rep = do
+    case fabricateDistinctEvidence :: DistinctEvidence UnsafeS of
+      Distinct -> TopStateEx (to rep :: JointTopState UnsafeS)
 
 instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch
@@ -770,10 +778,8 @@ instance HasPtrs TopStateEx where
   traversePtrs _ s = pure s
 
 instance ScopeReader ToSafeM where
-  addScope e = ToSafeM $ lift $ addScope e
-
-instance ScopeGetter ToSafeM where
   getScope = ToSafeM $ lift $ getScope
+  getDistinct = ToSafeM $ lift $ getDistinct
 
 instance ScopeExtender ToSafeM where
   extendScope frag m  =

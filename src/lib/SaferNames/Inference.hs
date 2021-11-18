@@ -29,6 +29,7 @@ import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import qualified Unsafe.Coerce as TrulyUnsafe
 
 import SaferNames.Name
 import SaferNames.Builder
@@ -47,21 +48,24 @@ inferModule bindings uModule@(UModule decl _) = do
   if isTopDecl decl
     then do
       DistinctAbs bindingsFrag sourceMap <- runTopInfererM bindings do
-        UModule decl' sourceMap <- injectM uModule
-        inferUDeclTop decl' $ substM sourceMap
+        Immut <- return $ toImmutEvidence bindings
+        localTopBuilder do
+          UModule decl' sourceMap <- return uModule
+          inferUDeclTop decl' $ substM sourceMap
       let scs = bindingsFragToSynthCandidates bindingsFrag
       return $ Module Typed id $
         EvaluatedModule bindingsFrag scs sourceMap
     else do
       ab <- runInfererM bindings do
         UModule decl' sourceMap <- return uModule
-        Abs decls (ZonkableSM sourceMap') <- buildScoped $
-          inferUDeclLocal decl' do
-            applyDefaults
-            ZonkableSM <$> substM sourceMap
-        return $ Abs decls sourceMap'
+        Immut <- return $ toImmutEvidence bindings
+        solveLocal $
+          buildDeclsInfUnzonked $
+            inferUDeclLocal decl' do
+              applyDefaults
+              substM sourceMap
       DistinctAbs decls sourceMap <- return $ refreshAbs (toScope bindings) ab
-      let scs = bindingsFragToSynthCandidates $ boundBindings decls
+      let scs = bindingsFragToSynthCandidates $ toBindingsFrag decls
       return $ Module Typed decls $
         EvaluatedModule emptyOutFrag scs sourceMap
 
@@ -76,9 +80,6 @@ isTopDecl decl = case decl of
 
 class ( MonadFail2 m, Fallible2 m, CtxReader2 m, TopBuilder2 m
       , EnvReader Name m) => TopInferer m where
-  liftLocalInferer :: (SubstE AtomSubstVal e, InjectableE e)
-                   => (forall o'. InfererM i o' (e o'))
-                   -> m i o (e o)
 
 newtype TopInfererM i o a = TopInfererM
   { runTopInfererM' :: EnvReaderT Name (TopBuilderT FallibleM) i o a }
@@ -86,25 +87,17 @@ newtype TopInfererM i o a = TopInfererM
            , Fallible, CtxReader, EnvReader Name, BindingsReader, TopBuilder)
 
 instance TopInferer TopInfererM where
-  liftLocalInferer cont = do
-    env <- getEnv
-    WithBindings bindings env' <- addBindings env
-    result <- liftExcept $ runSubstInfererM bindings env' do
-      ans <- cont
-      applyDefaults
-      zonk ans
-    injectM result
 
 runTopInfererM
   :: Distinct n
   => Bindings n
-  -> (forall l. Ext n l => TopInfererM l l (e l))
-  -> Except (DistinctAbs BindingsFrag e n)
+  -> TopInfererM n n a
+  -> Except a
 runTopInfererM bindings cont =
   runFallibleM $ runTopBuilderT bindings $ runEnvReaderT idEnv $
     runTopInfererM' $ cont
 
-applyDefaults :: Inferer m => m i o ()
+applyDefaults :: (EmitsInf o, Inferer m) => m i o ()
 applyDefaults = do
   Defaults defaults <- getDefaults
   forM_ defaults \(ty, ty') ->
@@ -112,10 +105,39 @@ applyDefaults = do
 
 -- === Inferer interface ===
 
-class ( MonadFail2 m, Fallible2 m, Catchable2 m, CtxReader2 m, Builder2 m
-      , EnvReader Name m, Solver2 m)
+class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
+      , Builder m)
+      => InfBuilder (m::MonadKind1) where
+
+  -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
+  -- except where it's not possible because the result isn't atom-substitutable,
+  -- such as the source map at the top level.
+  buildDeclsInfUnzonked
+    :: (InjectableE e, HoistableE e)
+    => EmitsInf n
+    => (forall l. (EmitsBoth l, Distinct l, Ext n l) => m l (e l))
+    -> m n (Abs (Nest Decl) e n)
+
+  buildAbsInf
+    :: (InjectableE e, HoistableE e, NameColor c, ToBinding binding c)
+    => EmitsInf n
+    => NameHint -> binding n
+    -> (forall l. (EmitsInf l, Distinct l, Ext n l) => Name c l -> m l (e l))
+    -> m n (Abs (BinderP c binding) e n)
+
+buildDeclsInf
+  :: (SubstE AtomSubstVal e, Solver m, InfBuilder m)
+  => (InjectableE e, HoistableE e)
+  => EmitsInf n
+  => (forall l. (EmitsBoth l, Distinct l, Ext n l) => m l (e l))
+  -> m n (Abs (Nest Decl) e n)
+buildDeclsInf cont = buildDeclsInfUnzonked $ cont >>= zonk
+
+type InfBuilder2 (m::MonadKind2) = forall i. InfBuilder (m i)
+
+class (EnvReader Name m, InfBuilder2 m, Solver2 m)
       => Inferer (m::MonadKind2) where
-  liftSolverM :: SolverM o a -> m i o a
+  liftSolverM :: EmitsInf o => SolverM o a -> m i o a
 
 -- === Concrete Inferer monad ===
 
@@ -158,6 +180,7 @@ instance ProvesExt   InfOutFrag
 instance SubstB Name InfOutFrag
 instance BindsNames  InfOutFrag
 instance InjectableB InfOutFrag
+instance HoistableB  InfOutFrag
 
 instance OutFrag InfOutFrag where
   emptyOutFrag = InfOutFrag Empty mempty emptySolverSubst
@@ -232,7 +255,7 @@ instance ExtOutMap InfOutMap InfOutFrag where
   extendOutMap infOutMap (InfOutFrag em ds solverSubst) = do
     extendDefaults ds $
       flip extendInfOutMapSolver solverSubst $
-        flip extendOutMap (boundBindings em) $
+        flip extendOutMap (toBindingsFrag em) $
           infOutMap
 
 extendDefaults :: Defaults n -> InfOutMap n -> InfOutMap n
@@ -244,56 +267,98 @@ newtype InfererM (i::S) (o::S) (a:: *) = InfererM
   deriving (Functor, Applicative, Monad, MonadFail,
             ScopeReader, Fallible, Catchable, CtxReader, EnvReader Name)
 
-runInfererM
-  :: Distinct n
-  => Bindings n
-  -> (forall l. Ext n l => InfererM n l (e l))
-  -> Except (e n)
+runInfererM :: Distinct n => Bindings n -> InfererM n n a -> Except a
 runInfererM bindings cont = runSubstInfererM bindings idEnv cont
 
-runSubstInfererM
-  :: Distinct o
-  => Bindings o -> Env Name i o
-  -> (forall o'. Ext o o' => InfererM i o' (e o'))
-  -> Except (e o)
+liftInfererM :: (Fallible2 m, CtxReader2 m, EnvReader Name m, BindingsReader2 m)
+             => Immut o
+             => InfererM i o a -> m i o a
+liftInfererM cont = do
+  DB bindings <- getDB
+  env <- getEnv
+  liftExcept $ runSubstInfererM bindings env cont
+
+runLocalInfererM
+  :: (Immut n, InjectableE e)
+  => (forall l. (EmitsInf l, Ext n l, Distinct l) => InfererM i l (e l))
+  -> InfererM i n (DistinctAbs InfOutFrag e n)
+runLocalInfererM cont = InfererM $ EnvReaderT $ ReaderT \env -> do
+  locallyMutableInplaceT do
+    Distinct <- getDistinct
+    EmitsInf <- fabricateEmitsInfEvidenceM
+    runEnvReaderT (inject env) $ runInfererM' cont
+
+runSubstInfererM :: Distinct o => Bindings o -> Env Name i o -> InfererM i o a -> Except a
 runSubstInfererM bindings env cont = do
-  DistinctAbs (InfOutFrag unsolvedInfNames _ _) result <-
-    runFallibleM $
+  (InfOutFrag Empty _ _, result) <-
+    runFallibleM do
+      Immut <- return $ toImmutEvidence bindings
       runInplaceT (initInfOutMap bindings) $
-        runEnvReaderT (inject env) $ runInfererM' $ cont
-  case unsolvedInfNames of
-    Empty -> return result
-    Nest (_:>RightE (InfVarBound _ ctx)) _ ->
-      addSrcContext ctx $
-        throw TypeErr $ "Ambiguous type variable"
-    _ -> error "not possible?"
+        runEnvReaderT env $ runInfererM' $ cont
+  return result
 
 initInfOutMap :: Bindings n -> InfOutMap n
 initInfOutMap bindings =
   InfOutMap bindings emptySolverSubst mempty (UnsolvedBindings mempty)
 
-emitInfererM :: NameHint -> InfEmission o -> InfererM i o (AtomName o)
+emitInfererM :: Mut o => NameHint -> InfEmission o -> InfererM i o (AtomName o)
 emitInfererM hint emission = InfererM $ EnvReaderT $ lift $
-  emitInplace hint emission \b emission' ->
+  emitInplaceT hint emission \b emission' ->
     InfOutFrag (Nest (b :> emission') Empty) mempty emptySolverSubst
 
 instance Solver (InfererM i) where
   extendSolverSubst v ty = InfererM $ EnvReaderT $ lift $
-    void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
-      DistinctAbs (InfOutFrag Empty mempty (singletonSolverSubst v' ty')) UnitE
+    void $ extendTrivialInplaceT $
+      InfOutFrag Empty mempty (singletonSolverSubst v ty)
 
-  zonk e = InfererM $ EnvReaderT $ lift $
-             withInplaceOutEnv e zonkWithOutMap
+  zonk e = InfererM $ EnvReaderT $ lift $ liftImmut do
+    Distinct <- getDistinct
+    solverOutMap <- getOutMapInplaceT
+    return $ zonkWithOutMap solverOutMap $ inject e
 
   emitSolver binding = emitInfererM "?" $ RightE binding
 
   addDefault t1 t2 = InfererM $ EnvReaderT $ lift $
-    extendTrivialInplace $ InfOutFrag Empty defaults emptySolverSubst
+    extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults [(t1, t2)]
 
-  getDefaults = InfererM $ EnvReaderT $ lift $
-    withInplaceOutEnv UnitE \(InfOutMap _ _ defaults _) UnitE ->
-      inject defaults
+  getDefaults = InfererM $ EnvReaderT $ lift $ liftImmut do
+    InfOutMap _ _ defaults _ <- getOutMapInplaceT
+    return defaults
+
+  solveLocal cont = do
+    DistinctAbs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
+    case unsolvedInfNames of
+      Empty -> return result
+      Nest (_:>RightE (InfVarBound _ ctx)) _ ->
+        addSrcContext ctx $
+          throw TypeErr $ "Ambiguous type variable"
+      _ -> error "not possible?"
+
+instance InfBuilder (InfererM i) where
+  buildDeclsInfUnzonked cont = do
+    InfererM $ EnvReaderT $ ReaderT \env -> extendInplaceT do
+      resultWithEmissions <- locallyMutableInplaceT do
+        Emits    <- fabricateEmitsEvidenceM
+        EmitsInf <- fabricateEmitsInfEvidenceM
+        runEnvReaderT (inject env) $ runInfererM' cont
+      DistinctAbs frag result <- return resultWithEmissions
+      scope <- getScope
+      hoistThroughDecls scope frag result
+
+  buildAbsInf hint binding cont = do
+    InfererM $ EnvReaderT $ ReaderT \env -> extendInplaceT do
+      scope <- getScope
+      withFresh hint nameColorRep scope \b -> do
+        let b' = b :> inject binding
+        let bExt = toBindingsFrag b'
+        extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
+          DistinctAbs infFrag result <- locallyMutableInplaceT do
+            EmitsInf <- fabricateEmitsInfEvidenceM
+            runEnvReaderT (inject env) $ runInfererM' $ cont $ inject $ binderName b
+          PairB infFrag' b'' <- liftHoistExcept $ exchangeBs $ PairB b' infFrag
+          withSubscopeDistinct b'' $
+            return $ DistinctAbs infFrag' (Abs b'' result)
 
 instance Inferer InfererM where
   liftSolverM m = InfererM $ EnvReaderT $ lift $
@@ -310,19 +375,7 @@ instance Builder (InfererM i) where
     ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
 
-  buildScopedGeneral ab cont = InfererM $ EnvReaderT $ ReaderT \env -> do
-    scopedResults <- scopedInplaceGeneral
-      (\outMap b -> outMap `extendOutMap` boundBindings b)
-      ab
-      (\e -> flip runReaderT (inject env) $ runEnvReaderT' $ runInfererM' $
-               withFabricatedEmitsEvidence $ do
-                 result <- cont e
-                 return result)
-    ScopedResult outMap bs result <- return scopedResults
-    Abs outFrag resultAbs <- hoistInfState (toScope outMap) bs result
-    DeferredInjection ExtW (DistinctAbs (PairB b decls) result') <-
-        refreshAbsM =<< extendInplace =<< injectM (Abs outFrag resultAbs)
-    injectM $ Abs b $ Abs decls result'
+  buildScoped _ = error "not implemented"
 
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
@@ -331,26 +384,18 @@ type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 -- variables which are about to go out of scope then we emit a "escaped scope"
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
-hoistInfState
-  :: ( Fallible m, SubstE Name e, SubstE AtomSubstVal e
-     , HoistableE e, Distinct n2, InjectableB b, BindsNames b)
-  => Scope n1
-  -> PairB b InfOutFrag n1 n2
-  ->   e n2
-  -> m (Abs InfOutFrag (Abs (PairB b (Nest Decl)) e) n1)
-hoistInfState scope (PairB b (InfOutFrag emissions defaults subst)) result = do
+hoistThroughDecls
+  :: (Fallible m, HoistableE e, Distinct l)
+  => Scope n
+  -> InfOutFrag n l
+  ->   e l
+  -> m (DistinctAbs InfOutFrag (Abs (Nest Decl) e) n)
+hoistThroughDecls scope (InfOutFrag emissions defaults subst) result = do
   withSubscopeDistinct emissions do
     HoistedSolverState infVars defaults' subst' (DistinctAbs decls result') <-
-      hoistInfStateRec (scope `extendOutMap` toScopeFrag b) emissions
-                       defaults subst result
-    swapped <- liftHoistExcept $ exchangeBs $
-                 PairB b (PairB infVars (LiftB (PairE defaults' subst')))
-    PairB (PairB infVars' (LiftB (PairE defaults'' subst''))) b' <- return swapped
-    -- TODO: do we need to zonk here so that any type annotations in b' get
-    -- substituted? Or do we leave that up to the caller? Unlike with the decls,
-    -- we don't need to do it for the sake of our local leak checking.
-    return $ Abs (InfOutFrag (infNamesToEmissions infVars') defaults'' subst'') $
-               Abs (PairB b' decls) result'
+      hoistInfStateRec scope emissions defaults subst result
+    let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' subst'
+    return $ DistinctAbs hoistedInfFrag $ Abs decls result'
 
 data HoistedSolverState e n where
   HoistedSolverState
@@ -365,8 +410,9 @@ instance HoistableE e => HoistableE (HoistedSolverState e) where
   freeVarsE (HoistedSolverState infVars defaults subst ab) =
     freeVarsE (Abs infVars (PairE (PairE defaults subst) ab))
 
-dceIfSolved :: (HoistableE e, SubstE AtomSubstVal e)
-            => NameBinder AtomNameC n l -> HoistedSolverState e l -> Maybe (HoistedSolverState e n)
+dceIfSolved :: HoistableE e
+            => NameBinder AtomNameC n l -> HoistedSolverState e l
+            -> Maybe (HoistedSolverState e n)
 dceIfSolved b (HoistedSolverState infVars defaults subst result) = do
   let v = withExtEvidence infVars $ inject $ binderName b
   case deleteFromSubst subst v of
@@ -374,18 +420,16 @@ dceIfSolved b (HoistedSolverState infVars defaults subst result) = do
       -- do we need to zonk here? (if not, say why not)
       case hoist b (HoistedSolverState infVars defaults subst' result) of
         HoistSuccess hoisted -> Just hoisted
-        HoistFailure _ -> error "this shouldn't happen"
+        HoistFailure err -> error $ "this shouldn't happen. Leaked var: " ++ pprint err
     Nothing -> Nothing
 
-hoistInfStateRec :: ( Fallible m, Distinct n, Distinct l
-                    , HoistableE e, SubstE AtomSubstVal e)
+hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
                  => Scope n
                  -> InfEmissions n l -> Defaults l -> SolverSubst l -> e l
                  -> m (HoistedSolverState e n)
 hoistInfStateRec scope Empty defaults subst e = do
-  let e'        = applySolverSubstE scope subst e
   let defaults' = applySolverSubstE scope subst defaults
-  return $ HoistedSolverState Empty defaults' subst (DistinctAbs Empty e')
+  return $ HoistedSolverState Empty defaults' subst (DistinctAbs Empty e)
 hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
   withSubscopeDistinct rest do
     solverState@(HoistedSolverState infVars defaults' subst' result) <-
@@ -426,20 +470,15 @@ infNamesToEmissions emissions =
   fmapNest (\(b:>binding) -> b :> RightE binding) emissions
 
 instance BindingsReader (InfererM i) where
-  addBindings e = InfererM $ EnvReaderT $ lift do
-    withInplaceOutEnv e \(InfOutMap bindings _ _ _) e' ->
-      WithBindings bindings e'
+  getBindings = do
+    InfOutMap bindings _ _ _ <- InfererM $ EnvReaderT $ lift $ getOutMapInplaceT
+    return bindings
 
-instance Scopable (InfererM i) where
-  withBindings ab cont = do
-    Abs b (Abs Empty result) <- buildScopedGeneral ab \x -> cont x
-    return $ Abs b result
-
-  extendNamelessBindings frag cont = InfererM $ EnvReaderT $ ReaderT \env -> do
-    Distinct <- getDistinct
-    liftBetweenInplaceTs id (\(InfOutMap bindings ss ds un) ->
-                               InfOutMap (extendOutMap bindings frag) ss ds un) id $
-       runEnvReaderT env $ runInfererM' $ cont
+instance BindingsExtender (InfererM i) where
+  extendBindings frag cont = InfererM $ EnvReaderT $ ReaderT \env ->
+    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
+      withExtEvidence (toExtEvidence frag) $
+        runEnvReaderT (inject env) (runInfererM' cont)
 
 -- === actual inference pass ===
 
@@ -449,7 +488,7 @@ data RequiredTy (e::E) (n::S) = Check (e n)
                               | Infer
                                 deriving Show
 
-checkSigma :: (Emits o, Inferer m) => UExpr i
+checkSigma :: (EmitsBoth o, Inferer m) => UExpr i
            -> SigmaType o -> m i o (Atom o)
 checkSigma expr sTy = case sTy of
   Pi piTy@(PiType (PiBinder b _ arrow) _ _)
@@ -461,25 +500,26 @@ checkSigma expr sTy = case sTy of
         -- we have to add the lambda argument corresponding to the implicit pi
         -- type argument
         _ -> do
-          buildPureLam (getNameHint b)  arrow (piArgType piTy) \x -> do
-            piTy' <- injectM piTy
-            (Pure, bodyTy) <- instantiatePi piTy' (Var x)
-            checkSigma expr bodyTy
+          buildLamInf (getNameHint b) arrow (piArgType piTy) (\_-> return Pure)
+            \x -> do
+              piTy' <- injectM piTy
+              (Pure, bodyTy) <- instantiatePi piTy' (Var x)
+              checkSigma expr bodyTy
   _ -> checkOrInferRho expr (Check sTy)
 
-inferSigma :: (Emits o, Inferer m) => UExpr i -> m i o (Atom o)
+inferSigma :: (EmitsBoth o, Inferer m) => UExpr i -> m i o (Atom o)
 inferSigma (WithSrcE pos expr) = case expr of
   ULam lam@(ULamExpr ImplicitArrow _ _) ->
     addSrcContext pos $ inferULam Pure lam
   _ -> inferRho (WithSrcE pos expr)
 
-checkRho :: (Emits o, Inferer m) => UExpr i -> RhoType o -> m i o (Atom o)
+checkRho :: (EmitsBoth o, Inferer m) => UExpr i -> RhoType o -> m i o (Atom o)
 checkRho expr ty = checkOrInferRho expr (Check ty)
 
-inferRho :: (Emits o, Inferer m) => UExpr i -> m i o (Atom o)
+inferRho :: (EmitsBoth o, Inferer m) => UExpr i -> m i o (Atom o)
 inferRho expr = checkOrInferRho expr Infer
 
-instantiateSigma :: (Emits o, Inferer m) => Atom o -> m i o (Atom o)
+instantiateSigma :: (EmitsBoth o, Inferer m) => Atom o -> m i o (Atom o)
 instantiateSigma f = do
   ty <- tryGetType f
   case ty of
@@ -495,7 +535,7 @@ instantiateSigma f = do
     _ -> return f
 
 checkOrInferRho :: forall m i o.
-                   (Emits o, Inferer m)
+                   (EmitsBoth o, Inferer m)
                 => UExpr i -> RequiredTy RhoType o -> m i o (Atom o)
 checkOrInferRho (WithSrcE pos expr) reqTy = do
  addSrcContext pos $ case expr of
@@ -539,10 +579,10 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         appVal <- emit $ App f' x'
         instantiateSigma (Var appVal) >>= matchRequirement
       Nothing -> do
-        maybeX <- buildBlockReduced do
+        Abs decls result <- buildDeclsInf do
           argTy' <- injectM $ piArgType piTy
           checkSigma x argTy'
-        case maybeX of
+        cheapReduceWithDecls decls result >>= \case
           Nothing -> addSrcContext xPos $ do
             throw TypeErr $ "Dependent functions can only be applied to fully " ++
                             "evaluated expressions. Bind the argument to a name " ++
@@ -560,8 +600,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         effs' <- checkUEffRow effs
         ty' <- checkUType ty
         buildNonDepPi "_" arr ann' effs' ty'
-      _ -> buildPi (getNameHint pat) arr ann' \v -> do
-        Abs decls piResult <- buildScoped do
+      _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
+        Abs decls piResult <- buildDeclsInf do
           v' <- injectM v
           bindLamPat (WithSrcB pos' pat) v' do
             effs' <- checkUEffRow effs
@@ -598,7 +638,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     matchRequirement val'
   UPrimExpr prim -> do
     prim' <- forM prim \x -> do
-      xBlock <- buildBlock $ inferRho x
+      xBlock <- buildBlockInf $ inferRho x
       getType xBlock >>= \case
         TyKind -> cheapReduceToAtom xBlock >>= \case
           Nothing -> throw CompilerErr "Type args to primops must be reducible"
@@ -784,15 +824,14 @@ buildForTypeFromTabType effs tabPiTy@(PiType (PiBinder bPi piArgTy arr) _ _) = d
     (_, resultTy) <- instantiatePi (inject tabPiTy) $ Var i
     return (inject effs, resultTy)
 
-inferUDeclLocal ::  (Emits o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
+inferUDeclLocal ::  (EmitsBoth o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
 inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   val <- case ann of
     Nothing -> inferSigma rhs
     Just ty -> do
       ty' <- zonk =<< checkUType ty
       checkSigma rhs ty'
-  expr <- zonk $ Atom val
-  var <- emitDecl (getNameHint p) letAnn expr
+  var <- emitDecl (getNameHint p) letAnn $ Atom val
   bindLamPat p var cont
 inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods maybeName) cont = do
   className' <- substM className
@@ -809,11 +848,12 @@ inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods m
     _ -> error "impossible"
 inferUDeclLocal _ _ = error "not a local decl"
 
-inferUDeclTop :: TopInferer m => UDecl i i' -> m i' o a -> m i o a
+inferUDeclTop :: (Mut o, TopInferer m) => UDecl i i' -> m i' o a -> m i o a
 inferUDeclTop (UDataDefDecl def tc dcs) cont = do
-  def' <- liftLocalInferer (inferDataDef def) >>= emitDataDef
-  tc' <- emitTyConName def'
-  dcs' <- mapM (emitDataConName def') [0..(nestLength dcs - 1)]
+  def' <- liftImmut $ liftInfererM $ solveLocal $ inferDataDef def
+  defName <- emitDataDef def'
+  tc' <- emitTyConName defName
+  dcs' <- mapM (emitDataConName defName) [0..(nestLength dcs - 1)]
   extendEnv (tc @> tc' <.> dcs @@> dcs') cont
 inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) cont = do
   let classPrettyName   = fromString (pprint className) :: SourceName
@@ -822,13 +862,14 @@ inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) 
                 paramBs superclasses methodTys
   className' <- emitClassDef classDef
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
-  methodNames' <- forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
-    let UMethodType (Right explicits) _ = ty
-    emitMethodType (getNameHint prettyName) className' explicits i
+  methodNames' <-
+    forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
+      let UMethodType (Right explicits) _ = ty
+      emitMethodType (getNameHint prettyName) className' explicits i
   extendEnv (className @> className' <.> methodNames @@> methodNames') cont
 inferUDeclTop _ _ = error "not a top decl"
 
-inferDataDef :: Inferer m => UDataDef i -> m i o (DataDef o)
+inferDataDef :: (EmitsInf o, Inferer m) => UDataDef i -> m i o (DataDef o)
 inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
   Abs paramBs' (ListE dataCons') <-
     withNestedUBinders paramBs \_ -> do
@@ -836,31 +877,34 @@ inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
       return $ ListE dataCons'
   return $ DataDef tyConName paramBs' dataCons'
 
-inferDataCon :: Inferer m => (SourceName, UDataDefTrail i) -> m i o (DataConDef o)
+inferDataCon :: (EmitsInf o, Inferer m)
+             => (SourceName, UDataDefTrail i) -> m i o (DataConDef o)
 inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
   return $ DataConDef sourceName argBs'
 
-inferInterfaceDataDef :: TopInferer m
+inferInterfaceDataDef :: (Mut o, TopInferer m)
                       => SourceName -> [SourceName]
                       -> Nest (UAnnBinder AtomNameC) i i'
                       -> [UType i'] -> [UMethodType i']
                       -> m i o (ClassDef o)
 inferInterfaceDataDef className methodNames paramBs superclasses methods = do
-  dictDef <- liftLocalInferer do
-    paramBs' <- checkUBinders $ EmptyAbs paramBs
-    buildNewtype className paramBs' \params -> do
-      extendEnv (paramBs @@> params) do
+  dictDef <- liftImmut $ liftInfererM do
+    paramBs' <- solveLocal $ checkUBinders $ EmptyAbs paramBs
+    buildNewtype className paramBs' \params -> solveLocal do
+      params' <- mapM injectM params
+      extendEnv (paramBs @@> params') do
         superclasses' <- mapM checkUType superclasses
         methodsTys'   <- mapM checkUType $ methods <&> \(UMethodType _ ty) -> ty
         return $ PairTy (ProdTy superclasses') (ProdTy methodsTys')
   defName <- emitDataDef dictDef
   return $ ClassDef className methodNames (defName, dictDef)
 
-withNestedUBinders :: (Inferer m, HasNamesE e, SubstE AtomSubstVal e, InjectableE e)
-                  => Nest (UAnnBinder AtomNameC) i i'
-                  -> (forall o'. Ext o o' => [AtomName o'] -> m i' o' (e o'))
-                  -> m i o (Abs (Nest Binder) e o)
+withNestedUBinders
+  :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, InjectableE e)
+  => Nest (UAnnBinder AtomNameC) i i'
+  -> (forall o'. (EmitsInf o', Ext o o') => [AtomName o'] -> m i' o' (e o'))
+  -> m i o (Abs (Nest Binder) e o)
 withNestedUBinders bs cont = case bs of
   Empty -> Abs Empty <$> cont []
   Nest b rest -> do
@@ -870,34 +914,34 @@ withNestedUBinders bs cont = case bs of
         cont (name':names)
     return $ Abs (Nest b' rest') body
 
-withUBinder :: (Inferer m, HasNamesE e, SubstE AtomSubstVal e, InjectableE e)
+withUBinder :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, InjectableE e)
             => UAnnBinder AtomNameC i i'
-            -> (forall o'. Ext o o' => AtomName o' -> m i' o' (e o'))
+            -> (forall o'. (EmitsInf o', Ext o o') => AtomName o' -> m i' o' (e o'))
             -> m i o (Abs Binder e o)
 withUBinder (UAnnBinder b ann) cont = do
   ann' <- checkUType ann
-  buildAbs (getNameHint b) ann' \name ->
+  buildAbsInf (getNameHint b) ann' \name ->
     extendEnv (b @> name) $ cont name
 
-checkUBinders :: Inferer m
+checkUBinders :: (EmitsInf o, Inferer m)
               => EmptyAbs (Nest (UAnnBinder AtomNameC)) i
               -> m i o (EmptyAbs (Nest Binder) o)
 checkUBinders (EmptyAbs bs) = withNestedUBinders bs \_ -> return UnitE
 checkUBinders _ = error "impossible"
 
-inferULam :: (Emits o, Inferer m) => EffectRow o -> ULamExpr i -> m i o (Atom o)
+inferULam :: (EmitsBoth o, Inferer m) => EffectRow o -> ULamExpr i -> m i o (Atom o)
 inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
   argTy <- checkAnn ann
-  buildLam (getNameHint p) arrow argTy effs \v ->
+  buildLamInf (getNameHint p) arrow argTy (\_ -> injectM effs) \v ->
     bindLamPat p v $ inferSigma body
 
-checkULam :: (Emits o, Inferer m) => ULamExpr i -> PiType o -> m i o (Atom o)
+checkULam :: (EmitsBoth o, Inferer m) => ULamExpr i -> PiType o -> m i o (Atom o)
 checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
   let argTy = piArgType piTy
   checkAnn ann >>= constrainEq argTy
   -- XXX: we're ignoring the ULam arrow here. Should we be checking that it's
   -- consistent with the arrow supplied by the pi type?
-  buildDepEffLam (getNameHint p) (piArrow piTy) argTy
+  buildLamInf (getNameHint p) (piArrow piTy) argTy
     (\v -> do
         piTy' <- injectM piTy
         fst <$> instantiatePi piTy' (Var v) )
@@ -907,9 +951,9 @@ checkULam (ULamExpr _ (UPatAnn p ann) body) piTy = do
         checkSigma body resultTy
 
 checkInstanceArgs
-  :: (Emits o, Inferer m)
+  :: (EmitsBoth o, Inferer m)
   => Nest UPatAnnArrow i i'
-  -> (forall o'. (Emits o', Ext o o') =>  m i' o' (Atom o'))
+  -> (forall o'. (EmitsBoth o', Ext o o') =>  m i' o' (Atom o'))
   -> m i o (Atom o)
 checkInstanceArgs Empty cont = cont
 checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
@@ -918,12 +962,12 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
     ClassArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
   argTy <- checkAnn ann
-  buildLam (getNameHint p) arrow argTy Pure \v -> do
+  buildLamInf (getNameHint p) arrow argTy (const $ return Pure) \v -> do
     bindLamPat p v $
       checkInstanceArgs rest do
         cont
 
-checkInstanceBody :: (Emits o, Inferer m)
+checkInstanceBody :: (EmitsBoth o, Inferer m)
                   => ClassName o
                   -> [UType i]
                   -> [UMethodDef i]
@@ -944,7 +988,7 @@ checkInstanceBody className params methods = do
   return $ DataCon dataConNameHint def params' 0 [PairVal (ProdVal superclassDicts)
                                                           (ProdVal methods')]
 
-checkMethodDef :: (Emits o, Inferer m)
+checkMethodDef :: (EmitsBoth o, Inferer m)
                => ClassName o -> [Type o] -> UMethodDef i -> m i o (Int, Atom o)
 checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
   MethodBinding className' i _ <- substM v >>= lookupBindings
@@ -954,7 +998,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
   rhs' <- checkSigma rhs methodTy
   return (i, rhs')
 
-checkUEffRow :: (Emits o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
+checkUEffRow :: (EmitsBoth o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
    t' <- forM t \(InternalName v) -> do
@@ -963,7 +1007,7 @@ checkUEffRow (EffectRow effs t) = do
             return v'
    return $ EffectRow effs' t'
 
-checkUEff :: (Emits o, Inferer m) => UEffect i -> m i o (Effect o)
+checkUEff :: (EmitsBoth o, Inferer m) => UEffect i -> m i o (Effect o)
 checkUEff eff = case eff of
   RWSEffect rws ~(InternalName region) -> do
     region' <- substM region
@@ -972,7 +1016,7 @@ checkUEff eff = case eff of
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
 
-constrainVarTy :: (Emits o, Inferer m) => AtomName o -> Type o -> m i o ()
+constrainVarTy :: (EmitsBoth o, Inferer m) => AtomName o -> Type o -> m i o ()
 constrainVarTy v tyReq = do
   varTy <- getType $ Var v
   constrainEq tyReq varTy
@@ -982,7 +1026,7 @@ data CaseAltIndex = ConAlt Int
                   | VariantTailAlt (LabeledItems ())
   deriving (Eq, Show)
 
-checkCaseAlt :: (Emits o, Inferer m)
+checkCaseAlt :: (EmitsBoth o, Inferer m)
              => RhoType o -> Type o -> UAlt i -> m i o (IndexedAlt o)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   alt <- checkCasePat pat scrutineeTy do
@@ -1005,10 +1049,10 @@ getCaseAltIndex (WithSrcB _ pat) = case pat of
     return (VariantTailAlt labels)
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-checkCasePat :: (Emits o, Inferer m)
+checkCasePat :: (EmitsBoth o, Inferer m)
              => UPat i i'
              -> Type o
-             -> (forall o'. (Emits o', Ext o o') => m i' o' (Atom o'))
+             -> (forall o'. (EmitsBoth o', Ext o o') => m i' o' (Atom o'))
              -> m i o (Alt o)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
   UPatCon ~(InternalName conName) ps -> do
@@ -1020,7 +1064,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
                                              ++ " got " ++ show (nestLength ps)
     (params, argBs') <- inferParams (Abs paramBs $ EmptyAbs argBs)
     constrainEq scrutineeTy $ TypeCon (dataDefName, dataDef) params
-    buildAlt argBs' \args ->
+    buildAltInf argBs' \args ->
       bindLamPats ps args $ cont
   UPatVariant labels label p -> do
     ty <- freshType TyKind
@@ -1029,7 +1073,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     let patTypes = prevTys <> labeledSingleton label ty
     let extPatTypes = Ext patTypes $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
-    buildUnaryAlt ty \x ->
+    buildUnaryAltInf ty \x ->
       bindLamPat p x cont
   UPatVariantLift labels p -> do
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -1037,11 +1081,11 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     let extPatTypes = Ext prevTys $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
     let ty = VariantTy $ Ext NoLabeledItems $ Just rest
-    buildUnaryAlt ty \x ->
+    buildUnaryAltInf ty \x ->
       bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-inferParams :: (Emits o, Inferer m, HasNamesE e, InjectableE e)
+inferParams :: (EmitsBoth o, Inferer m, HasNamesE e, InjectableE e)
             => Abs (Nest Binder) e o -> m i o ([Type o], e o)
 inferParams (Abs Empty body) = return ([], body)
 inferParams (Abs (Nest (b:>ty) bs) body) = do
@@ -1050,13 +1094,13 @@ inferParams (Abs (Nest (b:>ty) bs) body) = do
   (xs, body') <- inferParams rest
   return (Var x : xs, body')
 
-bindLamPats :: (Emits o, Inferer m)
+bindLamPats :: (EmitsBoth o, Inferer m)
             => Nest UPat i i' -> [AtomName o] -> m i' o a -> m i o a
 bindLamPats Empty [] cont = cont
 bindLamPats (Nest p ps) (x:xs) cont = bindLamPat p x $ bindLamPats ps xs cont
 bindLamPats _ _ _ = error "mismatched number of args"
 
-bindLamPat :: (Emits o, Inferer m) => UPat i i' -> AtomName o -> m i' o a -> m i o a
+bindLamPat :: (EmitsBoth o, Inferer m) => UPat i i' -> AtomName o -> m i' o a -> m i o a
 bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
   UPatBinder b -> extendEnv (b @> v) cont
   UPatUnit UnitB -> do
@@ -1122,19 +1166,19 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     xs <- forM idxs \i -> emit $ App (Var v) i
     bindLamPats ps xs cont
 
-checkAnn :: (Emits o, Inferer m) => Maybe (UType i) -> m i o (Type o)
+checkAnn :: (EmitsBoth o, Inferer m) => Maybe (UType i) -> m i o (Type o)
 checkAnn ann = case ann of
   Just ty -> checkUType ty
   Nothing -> freshType TyKind
 
-checkUType :: Inferer m => UType i -> m i o (Type o)
+checkUType :: EmitsInf o => Inferer m => UType i -> m i o (Type o)
 checkUType ty = do
-  reduced <- buildBlockReduced $ withAllowedEffects Pure $ checkRho ty TyKind
-  case reduced of
+  Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho ty TyKind
+  cheapReduceWithDecls decls result >>= \case
     Just ty' -> return $ ty'
     Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
 
-checkExtLabeledRow :: (Emits o, Inferer m)
+checkExtLabeledRow :: (EmitsBoth o, Inferer m)
                    => ExtLabeledItems (UExpr i) (UExpr i)
                    -> m i o (ExtLabeledItems (Type o) (AtomName o))
 checkExtLabeledRow (Ext types Nothing) = do
@@ -1146,7 +1190,7 @@ checkExtLabeledRow (Ext types (Just ext)) = do
   Var ext' <- checkRho ext LabeledRowKind
   return $ Ext types' $ Just ext'
 
-inferTabCon :: (Emits o, Inferer m) => [UExpr i] -> RequiredTy RhoType o -> m i o (Atom o)
+inferTabCon :: (EmitsBoth o, Inferer m) => [UExpr i] -> RequiredTy RhoType o -> m i o (Atom o)
 inferTabCon xs reqTy = do
   (tabTy, xs') <- case reqTy of
     Check tabTy@(TabTyAbs piTy) | null $ freeVarsE (piArgType piTy) -> do
@@ -1176,7 +1220,7 @@ inferTabCon xs reqTy = do
   liftM Var $ emit $ Op $ TabCon tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
-fromPiType :: (Emits o, Inferer m) => Bool -> Arrow -> Type o -> m i o (PiType o)
+fromPiType :: (EmitsBoth o, Inferer m) => Bool -> Arrow -> Type o -> m i o (PiType o)
 fromPiType _ _ (Pi piTy) = return piTy -- TODO: check arrow
 fromPiType expectPi arr ty = do
   a <- freshType TyKind
@@ -1186,7 +1230,7 @@ fromPiType expectPi arr ty = do
               else  constrainEq ty (Pi piTy)
   return piTy
 
-fromPairType :: (Emits o, Inferer m) => Type o -> m i o (Type o, Type o)
+fromPairType :: (EmitsBoth o, Inferer m) => Type o -> m i o (Type o, Type o)
 fromPairType (PairTy t1 t2) = return (t1, t2)
 fromPairType ty = do
   a <- freshType TyKind
@@ -1194,7 +1238,7 @@ fromPairType ty = do
   constrainEq (PairTy a b) ty
   return (a, b)
 
-addEffects :: (Emits o, Inferer m) => EffectRow o -> m i o ()
+addEffects :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o ()
 addEffects eff = do
   allowed <- checkAllowedUnconditionally eff
   unless allowed $ do
@@ -1211,7 +1255,7 @@ checkAllowedUnconditionally eff = do
     Failure _  -> False
     Success () -> True
 
-openEffectRow :: (Emits o, Inferer m) => EffectRow o -> m i o (EffectRow o)
+openEffectRow :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o (EffectRow o)
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
@@ -1225,9 +1269,12 @@ instance Pretty (SolverSubst n) where
 class (CtxReader1 m, BindingsReader m) => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, InjectableE e) => e n -> m n (e n)
   extendSolverSubst :: AtomName n -> Type n -> m n ()
-  emitSolver :: SolverBinding n -> m n (AtomName n)
+  emitSolver :: EmitsInf n => SolverBinding n -> m n (AtomName n)
   addDefault :: Type n -> Type VoidS -> m n ()
   getDefaults :: m n (Defaults n)
+  solveLocal :: (Immut n, InjectableE e)
+             => (forall l. (EmitsInf l, Ext n l, Distinct l) => m l (e l))
+             -> m n (e n)
 
 type SolverOutMap = InfOutMap
 
@@ -1263,55 +1310,61 @@ newtype SolverM (n::S) (a:: *) =
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
             ScopeReader, Fallible, CtxReader)
 
-runSolverM :: ( SubstE AtomSubstVal e, InjectableE e, HoistableE e
-              , Distinct n)
-           => Bindings n
-           -> (forall l. Ext n l => SolverM l (e l))
-           -> Except (e n)
+runSolverM :: Distinct n => Bindings n -> SolverM n a -> Except a
 runSolverM bindings cont = do
-  maybeAbs <- runSearcherM $ runInplaceT (initInfOutMap bindings) $
-                runSolverM' $ cont >>= zonk
-  case maybeAbs of
+  Immut <- return $ toImmutEvidence bindings
+  maybeResult <- runSearcherM $ runInplaceT (initInfOutMap bindings) $
+                   runSolverM' $ cont
+  case maybeResult of
     Nothing -> throw TypeErr "No solution"
-    Just (DistinctAbs bs result) ->
-      case hoist bs result of
-        HoistFailure vs ->
-          throw EscapedNameErr $ "Unsolved vars in runSolverM: " ++ pprint vs
-        HoistSuccess result' -> return result'
+    Just (_, result) -> return result
 
 instance BindingsReader SolverM where
-  addBindings e = SolverM do
-    withInplaceOutEnv e \(InfOutMap bindings _ _ _) e' ->
-      WithBindings bindings e'
+  getBindings = SolverM do
+    InfOutMap bindings _ _ _ <- getOutMapInplaceT
+    return bindings
 
 instance Solver SolverM where
   extendSolverSubst v ty = SolverM $
-    void $ doInplace (PairE v ty) \_ (PairE v' ty') ->
-      DistinctAbs (SolverOutFrag Empty mempty (singletonSolverSubst v' ty')) UnitE
+    void $ extendTrivialInplaceT $
+      SolverOutFrag Empty mempty (singletonSolverSubst v ty)
 
-  zonk e = SolverM $ withInplaceOutEnv e zonkWithOutMap
+  zonk e = SolverM $ liftImmut do
+    Distinct <- getDistinct
+    solverOutMap <- getOutMapInplaceT
+    return $ zonkWithOutMap solverOutMap $ inject e
 
   emitSolver binding = SolverM $
-    emitInplace "?" binding \b binding' ->
+    emitInplaceT "?" binding \b binding' ->
       SolverOutFrag (Nest (b:>binding') Empty) mempty emptySolverSubst
 
   addDefault t1 t2 = SolverM $
-    extendTrivialInplace $ SolverOutFrag Empty defaults emptySolverSubst
+    extendTrivialInplaceT $ SolverOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults [(t1, t2)]
 
-  getDefaults = SolverM do
-    withInplaceOutEnv UnitE \(InfOutMap _ _ defaults _) UnitE ->
-      inject defaults
+  getDefaults = SolverM $ liftImmut do
+    (InfOutMap _ _ defaults _) <- getOutMapInplaceT
+    return defaults
+
+  solveLocal cont = SolverM do
+    results <- locallyMutableInplaceT do
+      Distinct <- getDistinct
+      EmitsInf <- fabricateEmitsInfEvidenceM
+      runSolverM' cont
+    DistinctAbs (SolverOutFrag unsolvedInfNames _ _) result <- return results
+    case unsolvedInfNames of
+      Empty -> return result
+      Nest (_:>InfVarBound _ ctx) _ ->
+        addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
 
 instance Unifier SolverM
 
-freshInferenceName :: Solver m => Kind n -> m n (AtomName n)
+freshInferenceName :: (EmitsInf n, Solver m) => Kind n -> m n (AtomName n)
 freshInferenceName k = do
   ctx <- srcPosCtx <$> getErrCtx
   emitSolver $ InfVarBound k ctx
 
--- TODO: clean up skolem vars!
-freshSkolemName :: Solver m => Kind n -> m n (AtomName n)
+freshSkolemName :: (EmitsInf n, Solver m) => Kind n -> m n (AtomName n)
 freshSkolemName k = emitSolver $ SkolemBound k
 
 type Solver2 (m::MonadKind2) = forall i. Solver (m i)
@@ -1377,7 +1430,7 @@ instance InjectableE SolverSubst where
 instance SubstE Name SolverSubst where
 instance HoistableE SolverSubst
 
-constrainEq :: Inferer m => Type o -> Type o -> m i o ()
+constrainEq :: (EmitsInf o, Inferer m) => Type o -> Type o -> m i o ()
 constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
@@ -1392,15 +1445,15 @@ constrainEq t1 t2 = do
 class (Alternative1 m, Searcher1 m, Fallible1 m, Solver m) => Unifier m
 
 class (AlphaEqE e, InjectableE e, SubstE AtomSubstVal e) => Unifiable (e::E) where
-  unifyZonked :: Unifier m => e n -> e n -> m n ()
+  unifyZonked :: (EmitsInf n, Unifier m) => e n -> e n -> m n ()
 
-tryConstrainEq :: Inferer m => Type o -> Type o -> m i o ()
+tryConstrainEq :: (EmitsInf o, Inferer m) => Type o -> Type o -> m i o ()
 tryConstrainEq t1 t2 = do
   constrainEq t1 t2 `catchErr` \errs -> case errs of
     Errs [Err TypeErr _ _] -> return ()
     _ -> throwErrs errs
 
-unify :: (Unifier m, Unifiable e) => e n -> e n -> m n ()
+unify :: (EmitsInf n, Unifier m, Unifiable e) => e n -> e n -> m n ()
 unify e1 e2 = do
   e1' <- zonk e1
   e2' <- zonk e2
@@ -1418,7 +1471,7 @@ instance Unifiable Atom where
      unifyDirect (Var v) t = extendSolution v t
      unifyDirect _ _ = empty
 
-     unifyZip :: Unifier m => Type n -> Type n -> m n ()
+     unifyZip :: (EmitsInf n, Unifier m) => Type n -> Type n -> m n ()
      unifyZip t1 t2 = case (t1, t2) of
        (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
        (RecordTy  xs, RecordTy  xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
@@ -1436,11 +1489,11 @@ instance Unifiable (EffectRowP AtomName) where
     <|> unifyZip x1 x2
 
    where
-     unifyDirect :: Unifier m => EffectRow n -> EffectRow n -> m n ()
+     unifyDirect :: (EmitsInf n, Unifier m) => EffectRow n -> EffectRow n -> m n ()
      unifyDirect r (EffectRow effs (Just v)) | S.null effs = extendSolution v (Eff r)
      unifyDirect _ _ = empty
 
-     unifyZip :: Unifier m => EffectRow n -> EffectRow n -> m n ()
+     unifyZip :: (EmitsInf n, Unifier m) => EffectRow n -> EffectRow n -> m n ()
      unifyZip r1 r2 = case (r1, r2) of
       (EffectRow effs1 t1, EffectRow effs2 t2) | not (S.null effs1 || S.null effs2) -> do
         let extras1 = effs1 `S.difference` effs2
@@ -1457,14 +1510,14 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
     <|> unifyZip x1 x2
 
    where
-     unifyDirect :: Unifier m
+     unifyDirect :: (EmitsInf n, Unifier m)
                  => ExtLabeledItemsE Type AtomName n
                  -> ExtLabeledItemsE Type AtomName n -> m n ()
      unifyDirect (ExtLabeledItemsE r) (ExtLabeledItemsE (Ext NoLabeledItems (Just v))) =
        extendSolution v (LabeledRow r)
      unifyDirect _ _ = empty
 
-     unifyZip :: Unifier m
+     unifyZip :: (EmitsInf n, Unifier m)
               => ExtLabeledItemsE Type AtomName n
               -> ExtLabeledItemsE Type AtomName n -> m n ()
      unifyZip (ExtLabeledItemsE r1) (ExtLabeledItemsE r2) = case (r1, r2) of
@@ -1482,8 +1535,9 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
          unify (ExtLabeledItemsE (Ext NoLabeledItems t2))
                (ExtLabeledItemsE (Ext (LabeledItems extras1) (Just newTail)))
 
-unifyFoldable :: (Eq (f ()), Functor f, Foldable f, Unifiable e, Unifier m)
-              => f (e n) -> f (e n) -> m n ()
+unifyFoldable
+  :: (Eq (f ()), Functor f, Foldable f, Unifiable e, Unifier m, EmitsInf n)
+  => f (e n) -> f (e n) -> m n ()
 unifyFoldable xs ys = do
   unless (void xs == void ys) empty
   zipWithM_ unify (toList xs) (toList ys)
@@ -1493,7 +1547,7 @@ unifyEq e1 e2 = do
   eq <- alphaEq e1 e2
   unless eq empty
 
-unifyPiType :: Unifier m => PiType n -> PiType n -> m n ()
+unifyPiType :: (EmitsInf n, Unifier m) => PiType n -> PiType n -> m n ()
 unifyPiType (PiType (PiBinder b1 ann1 arr1) eff1 ty1)
             (PiType (PiBinder b2 ann2 arr2) eff2 ty2) = do
   unless (arr1 == arr2) empty
@@ -1528,17 +1582,18 @@ isSkolemName v = lookupBindings v >>= \case
   AtomNameBinding (SolverBound (SkolemBound _)) -> return True
   _ -> return False
 
-freshType :: Solver m => Kind n -> m n (Type n)
+freshType :: (EmitsInf n, Solver m) => Kind n -> m n (Type n)
 freshType k = Var <$> freshInferenceName k
 
-freshEff :: Solver m => m n (EffectRow n)
+freshEff :: (EmitsInf n, Solver m) => m n (EffectRow n)
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
 renameForPrinting :: (BindingsReader m, HoistableE e, InjectableE e, SubstE Name e)
                   => e n -> m n (Abs (Nest (NameBinder AtomNameC)) e n)
-renameForPrinting e = do
-  WithBindings bs e' <- addBindings e
-  injectM $ renameForPrinting' bs e'
+renameForPrinting e = liftImmut do
+  e' <- injectM e
+  DB bindings <- getDB
+  return $ renameForPrinting' bindings e'
 
 renameForPrinting' :: (Distinct n, HoistableE e, InjectableE e, SubstE Name e)
                    => Bindings n -> e n -> Abs (Nest (NameBinder AtomNameC)) e n
@@ -1557,13 +1612,14 @@ renameForPrinting' bindings e = do
 -- === dictionary synthesis ===
 
 -- main entrypoint to dictionary synthesizer
-trySynthDict :: (Emits n, Builder m, Fallible1 m, Scopable m, BindingsReader m)
+trySynthDict :: (Emits n, Builder m, Fallible1 m, BindingsExtender m, BindingsReader m)
              => Type n -> m n (Atom n)
 trySynthDict ty = trySynthDictBlock ty >>= emitBlock
 
 trySynthDictBlock :: (Fallible1 m, BindingsReader m) => Type n -> m n (Block n)
-trySynthDictBlock ty = do
-  WithBindings bindings ty' <- addBindings ty
+trySynthDictBlock ty = liftImmut do
+  DB bindings <- getDB
+  ty' <- injectM ty
   if hasInferenceVars bindings ty'
     then
       throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
@@ -1576,7 +1632,7 @@ trySynthDictBlock ty = do
         throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
       case solutions of
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-        (d, _):_ -> injectM d
+        (d, _):_ -> return d
 
 -- TODO: we'd rather have something like this:
 --   data Givens n = Givens (M.Map (Type n) (Given n))
@@ -1598,17 +1654,11 @@ class (Alternative1 m, Searcher1 m, Builder m)
   getGivens :: m n (Givens n)
   withGivens :: Givens n -> m n a -> m n a
   declareUsedInstance :: m n ()
-  -- TODO: just expose `unsafeGetBindings` etc to avoid this silly rank-2 dance
-  liftSolverSynth
-    :: (SubstE AtomSubstVal e', HoistableE e', InjectableE e, InjectableE e')
-    => e n
-    -> (forall l. e l -> SolverM l (e' l))
-    -> m n (e' n)
 
 newtype SyntherM (n::S) (a:: *) = SyntherM
   { runSyntherM' :: OutReaderT Givens (BuilderT (WriterT DerivationKind [])) n a }
-  deriving ( Functor, Applicative, Monad, BindingsReader
-           , Scopable, ScopeReader, MonadFail, Fallible
+  deriving ( Functor, Applicative, Monad, BindingsReader, BindingsExtender
+           , ScopeReader, MonadFail, Fallible
            , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
@@ -1619,36 +1669,25 @@ instance Synther SyntherM where
   withGivens givens cont = do
     localOutReader givens cont
 
-  liftSolverSynth e cont = do
-    WithBindings bindings e' <- addBindings e
-    let result = runSolverM bindings do
-                   e'' <- injectM e'
-                   cont e''
-    case result of
-      Success result' -> injectM result'
-      Failure _ -> empty
-
 instance Builder SyntherM where
   emitDecl hint ann expr = SyntherM $ emitDecl hint ann expr
-  buildScopedGeneral ab f = SyntherM $
-    buildScopedGeneral ab \e ->
-      runSyntherM' $ f e
+  buildScoped cont = SyntherM $ buildScoped $ runSyntherM' cont
 
 runSyntherM :: Distinct n
             => Bindings n
-            -> (forall l. (Distinct l, Ext n l) => SyntherM l (e l))
-            -> [(e n, DerivationKind)]
+            -> SyntherM n a
+            -> [(a, DerivationKind)]
 runSyntherM bindings cont = do
   runWriterT $ runBuilderT bindings do
     initGivens <- givensFromBindings
     runOutReaderT initGivens $ runSyntherM' cont
 
 givensFromBindings :: BindingsReader m => m n (Givens n)
-givensFromBindings = do
-  WithBindings bindings UnitE <- addBindings UnitE
+givensFromBindings = liftImmut do
+  DB bindings <- getDB
   let (SynthCandidates givens projs _) = getSynthCandidates bindings
   let givensBlocks = runBindingsReaderM bindings $ mapM atomAsBlock givens
-  injectM $ getSuperclassClosure bindings projs (Givens [] []) givensBlocks
+  return $ getSuperclassClosure bindings projs (Givens [] []) givensBlocks
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
@@ -1660,10 +1699,12 @@ extendGivens newGivens cont = do
 getSuperclassClosureM
   :: BindingsReader m
   => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
-getSuperclassClosureM projs givens newGivens = do
-  WithBindings bindings (ListE projs' `PairE` givens' `PairE` ListE newGivens') <-
-    addBindings $ ListE projs `PairE` givens `PairE` ListE newGivens
-  injectM $ getSuperclassClosure bindings projs' givens' newGivens'
+getSuperclassClosureM projs givens newGivens =  liftImmut do
+  DB bindings <- getDB
+  givens' <- injectM givens
+  ListE projs'     <- injectM $ ListE projs
+  ListE newGivens' <- injectM $ ListE newGivens
+  return $ getSuperclassClosure bindings projs' givens' newGivens'
 
 getSuperclassClosure
   :: forall n. Distinct n
@@ -1705,28 +1746,27 @@ tryApplyM proj dict = do
   dictTy <- getType dict
   projTy <- getType proj
   instantiateProjParams projTy dictTy >>= \case
-    Nothing -> fail "couldn't instantiate params"
-    Just params -> buildBlock do
+    NothingE -> fail "couldn't instantiate params"
+    JustE (ListE params) -> buildBlock do
       Distinct <- getDistinct
       instantiated <- naryApp (inject proj) (map inject params)
       dictAtom <- emitBlock $ inject dict
       app instantiated dictAtom
+    _ -> error "impossible"
 
--- TODO: we have lots of tedious functions like this one, just for converting
--- between implicit and explicit handling of bindings. Would we be better of
--- with something like
---   `mildlyUnsafeGetBindings :: BindingsReader m => m n (Bindings n)` ?
-instantiateProjParams :: BindingsReader m => Type n -> Type n -> m n (Maybe [Atom n])
-instantiateProjParams projTy dictTy = do
-  WithBindings bindings (PairE projTy' dictTy') <- addBindings $ PairE projTy dictTy
-  let result = runSolverM bindings do
-                 Distinct <- getDistinct
-                 ListE <$> instantiateProjParamsM (inject projTy') (inject dictTy')
+instantiateProjParams :: BindingsReader m => Type n -> Type n
+                      -> m n (MaybeE (ListE Atom) n)
+instantiateProjParams projTy dictTy = liftImmut do
+  DB bindings <- getDB
+  PairE projTy' dictTy' <- injectM $ PairE projTy dictTy
+  let result = runSolverM bindings $ solveLocal do
+                 params <- instantiateProjParamsM (inject projTy') (inject dictTy')
+                 zonk $ ListE params
   case result of
-    Success params -> (Just . fromListE) <$> injectM params
-    Failure _ -> return Nothing
+    Success params -> return $ JustE $ params
+    Failure _ -> return NothingE
 
-instantiateProjParamsM :: Unifier m => Type n -> Type n -> m n [Atom n]
+instantiateProjParamsM :: (EmitsInf n, Unifier m) => Type n -> Type n -> m n [Atom n]
 instantiateProjParamsM projTy dictTy = case projTy of
   Pi (PiType (PiBinder b argTy ImplicitArrow) _ resultTy) -> do
     param <- freshInferenceName argTy
@@ -1764,19 +1804,22 @@ synthDict ty = do
   polyDict <- getGiven <|> getInstance
   ty' <- injectM ty
   polyTy <- getType polyDict
-  (params, reqDictTys) <- instantiateDictParams ty' polyTy
+  PairE (ListE params) (ListE reqDictTys) <- instantiateDictParams ty' polyTy
   reqDicts <- mapM synthDict reqDictTys
   naryApp polyDict $ params ++ reqDicts
 
-instantiateDictParams :: Synther m => Type n -> Type n -> m n ([Atom n], [Type n])
-instantiateDictParams monoTy polyTy = do
-  PairE (ListE params) (ListE tys) <-
-    liftSolverSynth (PairE monoTy polyTy) \(PairE monoTy' polyTy') -> do
-      (params, tys) <- instantiateDictParamsRec monoTy' polyTy'
-      return $ PairE (ListE params) (ListE tys)
-  return (params, tys)
+instantiateDictParams :: (Fallible1 m, BindingsReader m)
+                      => Type n -> Type n -> m n (PairE (ListE Atom) (ListE Type) n)
+instantiateDictParams monoTy polyTy = liftImmut do
+  DB bindings <- getDB
+  liftExcept $ runSolverM bindings $ solveLocal do
+    monoTy' <- injectM monoTy
+    polyTy' <- injectM polyTy
+    (params, tys) <- instantiateDictParamsRec monoTy' polyTy'
+    zonk $ PairE (ListE params) (ListE tys)
 
-instantiateDictParamsRec :: Unifier m => Type n -> Type n -> m n ([Atom n], [Type n])
+instantiateDictParamsRec :: (EmitsInf n, Unifier m)
+                         => Type n -> Type n -> m n ([Atom n], [Type n])
 instantiateDictParamsRec monoTy polyTy = case polyTy of
   Pi (PiType (PiBinder b argTy ImplicitArrow) _ resultTy) -> do
     param <- freshInferenceName argTy
@@ -1806,14 +1849,15 @@ instance InjectableE Givens where
 
 synthModule :: Distinct n => Bindings n -> Module n -> Except (Module n)
 synthModule bindings m = do
+  Immut <- return $ toImmutEvidence bindings
   Module _ decls result <- runDictSynthTraverserM bindings $
-                             traverseGenericE $ inject m
+                             traverseGenericE m
   return $ Module Core decls result
 
 runDictSynthTraverserM
   :: Distinct n => Bindings n
-  -> (forall l. (Distinct l, Ext n l) => DictSynthTraverserM l l (e l))
-  -> Except (e n)
+  -> DictSynthTraverserM n n a
+  -> Except a
 runDictSynthTraverserM bindings m =
    runFallibleM $ runBuilderT bindings do
      runEnvReaderT idEnv $ runDictSynthTraverserM' m
@@ -1822,7 +1866,7 @@ newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
   DictSynthTraverserM
     { runDictSynthTraverserM' :: EnvReaderT Name (BuilderT FallibleM) i o a }
     deriving ( Functor, Applicative, Monad, EnvReader Name
-             , BindingsReader, ScopeReader, Scopable, MonadFail, Fallible)
+             , BindingsReader, ScopeReader, BindingsExtender, MonadFail, Fallible)
 
 instance GenericTraverser DictSynthTraverserM where
   traverseExpr (Op (SynthesizeDict ctx ty)) = do
@@ -1834,27 +1878,104 @@ instance GenericTraverser DictSynthTraverserM where
 instance Builder (DictSynthTraverserM i) where
   emitDecl hint ann expr =
     DictSynthTraverserM $ emitDecl hint ann expr
-  buildScopedGeneral ab cont =
-    DictSynthTraverserM $ buildScopedGeneral ab \x -> runDictSynthTraverserM' $ cont x
 
--- === Zonkable source map hack ===
+  buildScoped cont =
+    DictSynthTraverserM $ buildScoped $ runDictSynthTraverserM' cont
 
--- This is a hack to give a dummy `SubstE Atom` instance to SourceMap. We need
--- one because the inference machinery wants to zonk everything before
--- returning, but we can't give it a real one because it's just a name-to-name
--- mapping. We might be able to avoid this hack if we make inference names a
--- distinct name color.
+-- === Inference-specific builder patterns ===
 
-newtype ZonkableSourceMap (n::S) =
-  ZonkableSM (SourceMap n)
-  deriving (HoistableE, InjectableE)
+-- The higher-order functions in Builder, like `buildLam` can't be easily used
+-- in inference because they don't allow for the emission of inference
+-- variables, which must be handled each time we leave a scope. In an earlier
+-- version we tried to put this logic in the implementation of InfererM's
+-- instance of Builder, but it forced us to overfit the Builder API to satisfy
+-- the needs of inference, like adding `SubstE AtomSubstVal e` constraints in
+-- various places.
 
-instance SubstE Name ZonkableSourceMap where
-  substE env (ZonkableSM e) = ZonkableSM $ substE env e
+buildBlockInf
+  :: (EmitsInf n, Solver m, InfBuilder m)
+  => (forall l. (EmitsBoth l, Ext n l) => m l (Atom l))
+  -> m n (Block n)
+buildBlockInf cont = do
+  Abs decls (PairE result ty) <- buildDeclsInf do
+    result <- cont
+    ty <- getType result
+    return $ result `PairE` ty
+  ty' <- liftHoistExcept $ hoist decls ty
+  return $ Block ty' decls $ Atom result
 
-instance SubstE AtomSubstVal ZonkableSourceMap where
-  substE (scope, env) e = substE (scope, env') e
-    where env' = newEnv \v -> case env ! v of
-                   SubstVal (Var v') -> v'
-                   SubstVal _ -> error "shouldn't happen"
-                   Rename v' -> v'
+buildLamInf
+  :: (EmitsInf n, Solver m, InfBuilder m)
+  => NameHint -> Arrow -> Type n
+  -> (forall l. (EmitsInf  l, Ext n l) => AtomName l -> m l (EffectRow l))
+  -> (forall l. (EmitsBoth l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildLamInf hint arr ty fEff fBody = do
+  Abs (b:>_) (PairE effs body) <-
+    buildAbsInf hint (LamBinding arr ty) \v -> do
+      effs <- fEff v
+      body <- withAllowedEffects effs $ buildBlockInf $ injectM v >>= fBody
+      return $ PairE effs body
+  return $ Lam $ LamExpr (LamBinder b ty arr effs) body
+
+buildPiInf
+  :: (EmitsInf n, Solver m, InfBuilder m)
+  => NameHint -> Arrow -> Type n
+  -> (forall l. (EmitsInf l, Ext n l) => AtomName l -> m l (EffectRow l, Type l))
+  -> m n (PiType n)
+buildPiInf hint arr ty body = do
+  Abs (b:>_) (PairE effs resultTy) <-
+    buildAbsInf hint (PiBinding arr ty) \v ->
+      withAllowedEffects Pure do
+        (effs, resultTy) <- body v
+        return $ PairE effs resultTy
+  return $ PiType (PiBinder b ty arr) effs resultTy
+
+buildUnaryAltInf
+  :: (EmitsInf n, Solver m, InfBuilder m)
+  => Type n
+  -> (forall l. (EmitsBoth l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Alt n)
+buildUnaryAltInf ty body = do
+  bs <- liftBuilder $ singletonBinderNest NoHint $ inject ty
+  buildAltInf bs \[v] -> body v
+
+buildAltInf
+  :: (EmitsInf n, Solver m, InfBuilder m)
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (EmitsBoth l, Ext n l) => [AtomName l] -> m l (Atom l))
+  -> m n (Alt n)
+buildAltInf (Abs Empty UnitE) body =
+  Abs Empty <$> buildBlockInf (body [])
+buildAltInf (Abs (Nest (b:>ty) bs) UnitE) body = do
+  Abs b' (Abs bs' body') <-
+    buildAbsInf (getNameHint b) ty \v -> do
+      ab <- injectM $ Abs b (EmptyAbs bs)
+      bs' <- applyAbs ab v
+      buildAltInf bs' \vs -> do
+        v' <- injectM v
+        body $ v' : vs
+  return $ Abs (Nest b' bs') body'
+
+-- === EmitsInf predicate ===
+
+type EmitsBoth n = (EmitsInf n, Emits n)
+
+class Mut n => EmitsInf (n::S)
+data EmitsInfEvidence (n::S) where
+  EmitsInf :: EmitsInf n => EmitsInfEvidence n
+instance EmitsInf UnsafeS
+
+fabricateEmitsInfEvidence :: forall n. EmitsInfEvidence n
+fabricateEmitsInfEvidence =
+  withEmitsInfEvidence (error "pure fabrication" :: EmitsInfEvidence n) EmitsInf
+
+fabricateEmitsInfEvidenceM :: forall m n. Monad1 m => m n (EmitsInfEvidence n)
+fabricateEmitsInfEvidenceM = return fabricateEmitsInfEvidence
+
+withEmitsInfEvidence :: forall n a. EmitsInfEvidence n -> (EmitsInf n => a) -> a
+withEmitsInfEvidence _ cont = fromWrapWithEmitsInf
+ ( TrulyUnsafe.unsafeCoerce ( WrapWithEmitsInf cont :: WrapWithEmitsInf n       a
+                                                  ) :: WrapWithEmitsInf UnsafeS a)
+newtype WrapWithEmitsInf n r =
+  WrapWithEmitsInf { fromWrapWithEmitsInf :: EmitsInf n => r }
