@@ -42,7 +42,7 @@ instance [Eq cons, Eq a] Eq {constraints: cons | objective: Unit | extra:a}
     case r1 of
       {|objective=r1|} ->
         case r2 of
-          {|objective=r2|} -> True  -- czz: r1 == r2
+          {|objective=r2|} -> True
           {|extra=r2|} -> False
           {|constraints=r2|} -> False
       {|extra=r1|} ->
@@ -55,6 +55,38 @@ instance [Eq cons, Eq a] Eq {constraints: cons | objective: Unit | extra:a}
           {|objective=r2|} -> False
           {|extra=r2|} -> False
           {|constraints=r2|} -> r1 == r2
+
+instance [Eq vars, Eq cons] Eq {variables:vars | slacks:cons | value: Unit}
+  (==) = \r1 r2.
+    case r1 of
+      {|variables=r1|} ->
+        case r2 of
+          {|variables=r2|} -> r1 == r2
+          {|slacks=r2|} -> False
+          {|value=r2|} -> False
+      {|slacks=r1|} ->
+        case r2 of
+          {|variables=r2|} -> False
+          {|slacks=r2|} -> r1 == r2
+          {|value=r2|} -> False
+      {|value=r1|} ->
+        case r2 of
+          {|variables=r2|} -> False
+          {|slacks=r2|} -> False
+          {|value=r2|} -> True
+
+
+instance [Eq a, Eq b] Eq {artificials: a | realvars: b}
+  (==) = \r1 r2.
+    case r1 of
+      {|artificials=r1|} ->
+        case r2 of
+          {|artificials=r2|} -> r1 == r2
+          {|realvars=r2|} -> False
+      {|realvars=r1|} ->
+        case r2 of
+          {|artificials=r2|} -> False
+          {|realvars=r2|} -> r1 == r2
 
 
 def maybeArgmin [Ord o] (xs:n=>o) : Maybe n =
@@ -214,7 +246,6 @@ def build_tableau (_:Eq cons) ?=>
         Minimize -> -objective.j
       {|slacks=j|} -> 0.0  -- slack variables never contribute to loss.
       {|value=j|}  -> 0.0
-    -- {|extra=_|} -> for j. 0.0
     {|extra=_|} -> error "tag 1"
 
   basics    = for r:cons. {|slacks=r|}
@@ -259,14 +290,13 @@ def build_feasibility_tableau (_:Eq cons) ?=>
       {|variables=j|} ->
         case j of
           {|realvars=j|} -> 0.0 --sum_constraints.{|variables=j|}
-          {|artificials=j|} -> -1.0
+          {|artificials=j|} -> -1.0 --0.0
     {|extra=()|} -> for j. case j of
       {|slacks=j|}    -> table.{|objective=()|}.{|slacks=j|}
       {|value=j|}     -> table.{|objective=()|}.{|value=()|}
       {|variables=j|} -> case j of
         {|realvars=j|} -> table.{|objective=()|}.{|variables=j|}
         {|artificials=j|} -> 0.0
-    -- _ -> error "tag 2"
   
   fbasics = for r:cons. {|slacks=r|}
   fnonbasics = for r. case r of
@@ -278,7 +308,8 @@ def isOptimal (tableau: AbsTableau cons vars extra) : Bool =
   (basics, nonbasics, table) = tableau
   all for c:vars. table.{|objective=()|}.(nonbasics.c) <= 0.0
 
-def extractSolution (tableau: Tableau cons vars) : vars=>Float =
+-- def extractSolution (tableau: Tableau cons vars) : vars=>Float =
+def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
   (basics, nonbasics, table) = tableau  
   init_sol = (for i:vars. 0.0)  -- Original variables not in the basis are 0.
   yieldState init_sol \varRef.
@@ -311,21 +342,21 @@ def findPivotIndex (tableau: (AbsTableau cons vars extra))
   -- Chooses row and column to pivot around next.
   (basics, nonbasics, table) = tableau
   pivotcol = chooseColumn tableau  
-  unbounded = all for r. table.{|objective|...r|}.pivotcol <= 0.0
+  unbounded = all for r. table.{|objective|extra|...r|}.pivotcol <= 0.0
   case unbounded of
     True -> Nothing
     False ->
       -- pick row index minimizing the quotient amongst positive quotients
-      quotients = for r. table.{|objective|...r|}.{|value=()|} /
-                         table.{|objective|...r|}.pivotcol
-      cond = for r. table.{|objective|...r|}.pivotcol > 0.0
+      quotients = for r. table.{|objective|extra|...r|}.{|value=()|} /
+                         table.{|objective|extra|...r|}.pivotcol
+      cond = for r. table.{|objective|extra|...r|}.pivotcol > 0.0
       case argmin_suchthat2 quotients cond of
         Nothing -> todo  -- throw
-        Just pivotrow -> Just ({|objective|...pivotrow|}, pivotcol)
+        Just pivotrow -> Just ({|objective|extra|...pivotrow|}, pivotcol)
 
 
 -- make this more polymorphic
-def pivot (_:Eq cons) ?=> (_:Eq extra) ?=>
+def pivot (_:Eq cons) ?=> (_:Eq extra) ?=> (_:Eq vars) ?=>
           (tableau: (AbsTableau cons vars extra))
           (pivotrow:RowIx cons extra) (pivotcol:ColIx cons vars) :
           (AbsTableau cons vars extra) =
@@ -336,16 +367,18 @@ def pivot (_:Eq cons) ?=> (_:Eq extra) ?=>
       True  -> for col. table.row.col / table.row.pivotcol
       False -> for col. table.row.col - table.row.pivotcol * table.pivotrow.col / table.pivotrow.pivotcol
 
+  i' = fromJust $ (matchWith #?constraints) pivotrow
+
   -- Swap in new basic variable.
   newBasics = yieldState basics \ref.
-    i' = fromJust $ (matchWith #?constraints) pivotrow
     ref!i' := pivotcol
 
   -- Move old basic variable to nonbasics.
   newNonbasics = yieldState nonbasics \ref.
-    j' = fromJust $ (matchWith #?variables) pivotcol
-    i' = fromJust $ (matchWith #?constraints) pivotrow
-    ref!j' := basics.i'
+    for i.
+      case (get (ref!i)) == pivotcol of
+        True -> ref!i := basics.i'
+        False -> ()
 
   (newBasics, newNonbasics, newTable)
 
@@ -358,7 +391,7 @@ def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
   (computeCost tableau) ~~ 0.0
 
 
-def pivot_artificials (_:Eq cons) ?=>
+def pivot_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
   (tableau: FeasibilityTableau cons vars) : (FeasibilityTableau cons vars) =
   -- Pivot out all the artificial variables out of the basis
   yieldState tableau \tRef.
@@ -418,14 +451,14 @@ def eliminate_artificials (_:Eq cons) ?=>
   (newBasics, newNonbasics, t2)
 
 
-def feas_to_normal (_:Eq cons) ?=>
+def feas_to_normal (_:Eq cons) ?=> (_:Eq vars) ?=>
   (tableau: FeasibilityTableau cons vars)
   : (Tableau cons vars) =
   tableau = pivot_artificials tableau
   eliminate_artificials tableau
 
 
-def simplex (_:Eq cons) ?=>
+def simplex (_:Eq cons) ?=> (_:Eq vars) ?=>
   (ineqs: cons=>Constraint vars)
   (objective: vars=>Float)
   (objType:ObjectiveType) : SimplexResult vars =
@@ -443,9 +476,13 @@ def simplex (_:Eq cons) ?=>
     case isopt of
       True -> Done tableau
       False ->
+        -- piv = fromJust $ findPivotIndex (get tableauRef)
         piv = fromJust $ findPivotIndex (get tableauRef)
-        tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
-        Continue
+        case findPivotIndex (get tableauRef) of
+          Just piv ->
+            tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
+            Continue
+          Nothing -> error "tag 2"
 
   case checkFeasible feasibilityAns of
     False -> Infeasible
@@ -476,7 +513,7 @@ def simplex (_:Eq cons) ?=>
 impossible_constraints = [
   {coeffs = [-0., -1.],       offset=1.0, conType=GreaterThan},
   {coeffs = [-0.866025, 0.5], offset=1.0, conType=GreaterThan},
-  {coeffs = [0.866025, 0.5], offset=1.0, conType=GreaterThan}
+  {coeffs = [ 0.866025, 0.5], offset=1.0, conType=GreaterThan}
 ]
 :p simplex impossible_constraints [1.0, 1.0] Maximize
 > Infeasible
@@ -603,33 +640,30 @@ sol = extractSolution example_tableau
 
 -- Feasibility debugging
 
-
-
-
-
 ft1 = build_feasibility_tableau example_tableau
-:p ft1
 :p isOptimal ft1  -- should be false
-:p computeCost ft1  -- should be nonzero
-
-:p extractSolution ft1
-
 fpiv1 = fromJust $ findPivotIndex ft1
-:p fpiv1
+
 ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
-:p ft2
-:p extractSolution ft2
-:p isOptimal         ft2
-:p computeCost ft2
+:p isOptimal ft2
+fpiv2 = fromJust $ findPivotIndex ft2
 
-fpiv3 = fromJust $ findPivotIndex ft2
-:p fpiv3
+ft3 = pivot ft2 (fst fpiv2) (snd fpiv2)
+:p isOptimal ft3
+fpiv3 = fromJust $ findPivotIndex ft3
 
---ft3 = pivot ft2 (fst fpiv3) (snd fpiv3)
---:p ft3
---:p extractSolution ft3
---:p isOptimal         ft3
+ft4 = pivot ft3 (fst fpiv3) (snd fpiv3)
+isOptimal ft4
+fpiv4 = fromJust $ findPivotIndex ft4
 
+ft5 = pivot ft4 (fst fpiv4) (snd fpiv4)
+isOptimal ft5
+fpiv5 = fromJust $ findPivotIndex ft5
+
+ft6 = pivot ft5 (fst fpiv5) (snd fpiv5)
+isOptimal ft6
+fpiv6 = fromJust $ findPivotIndex ft6
+-- error!! fail boundedness test
 
 -- Feasibility debugging 2
 -- ==========================================================
