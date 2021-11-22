@@ -315,6 +315,8 @@ bindingsFragToSynthCandidates' nest = case nest of
          tell $ inject (SynthCandidates [] [] [Var $ binderName b])
        AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
          tell $ inject (SynthCandidates [Var $ binderName b] [] [])
+       AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
+         tell $ inject (SynthCandidates [Var $ binderName b] [] [])
        SuperclassBinding _ _ getter ->
          tell $ inject (SynthCandidates [] [getter] [])
        _ -> return ()
@@ -1843,7 +1845,7 @@ instance HasNameHint (UPat' n l) where
 instance HasNameHint (UBinder c n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
-    UIgnore       -> fromString "_"
+    UIgnore       -> fromString "_ign"
     UBind v       -> getNameHint v
 
 instance BindsNames (UBinder c) where
