@@ -1008,10 +1008,10 @@ substEvalautedModuleM
   :: (EnvReader AtomSubstVal m, BindingsReader2 m)
   => EvaluatedModule i
   -> m i o (EvaluatedModule o)
-substEvalautedModuleM m = do
+substEvalautedModuleM m = liftImmut do
   env <- getEnv
-  WithBindings bindings env' <- addBindings env
-  injectM $ atomSubstEvaluatedModule bindings env' m
+  DB bindings <- getDB
+  return $ atomSubstEvaluatedModule bindings env m
 
 -- A module's source map is a name-to-name mapping, so we can't replace the rhs
 -- names with atoms. Instead, we create new bindings for the atoms we want to
@@ -1040,7 +1040,7 @@ atomNestToBindingsFrag _ Empty = emptyOutFrag
 atomNestToBindingsFrag bindings (Nest (b:>x) rest) =
   withSubscopeDistinct rest $
     withSubscopeDistinct b do
-      let frag = boundBindings (b :> atomToBinding bindings x)
+      let frag = toBindingsFrag (b :> atomToBinding bindings x)
       let frag' = atomNestToBindingsFrag (bindings `extendOutMap` frag) rest
       catBindingsFrags frag frag'
 

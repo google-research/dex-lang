@@ -74,8 +74,9 @@ module SaferNames.Name (
   freeVarsList, isFreeIn, todoInjectableProof, liftInplaceT,
   locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
   checkEmpty, updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence,
-  Mut, Immut, ImmutEvidence (..), scopeToImmut, toImmutEvidence,
+  Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence,
+  collectFreeVars, unConsEnv, ConsEnv (..),
   ) where
 
 import Prelude hiding (id, (.))

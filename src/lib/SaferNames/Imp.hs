@@ -54,7 +54,7 @@ newtype ImpM (i::S) (o::S) (a:: *) =
 
 instance ExtOutMap Bindings ImpBuilderEmissions where
   extendOutMap bindings emissions =
-    bindings `extendOutMap` boundBindings emissions
+    bindings `extendOutMap` toBindingsFrag emissions
 
 class (ImpBuilder2 m, EnvReader AtomSubstVal m, BindingsReader2 m)
       => Imper (m::MonadKind2) where
@@ -68,13 +68,12 @@ instance Imper ImpM
 runImpM
   :: Distinct n
   => Bindings n
-  -> (forall l. (Distinct l, Ext n l) => ImpM l l (e l))
+  -> ImpM n n (e n)
   -> e n
-runImpM bindings cont = do
-  case runIdentity $ runInplaceT bindings $
-         runEnvReaderT idEnv $ runImpM' $ cont of
-    DistinctAbs Empty result -> result
-    _ -> error "shouldn't have produced any decls"
+runImpM bindings cont =
+  withImmutEvidence (toImmutEvidence bindings) $
+    case runIdentity $ runInplaceT bindings $ runEnvReaderT idEnv $ runImpM' $ cont of
+      (Empty, result) -> result
 
 -- === the actual pass ===
 

@@ -37,33 +37,32 @@ class (Builder2 m, EnvReader AtomSubstVal m) => Simplifier m
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM' :: EnvReaderT AtomSubstVal (BuilderT HardFailM) i o a }
-  deriving ( Functor, Applicative, Monad, ScopeReader, Scopable
+  deriving ( Functor, Applicative, Monad, ScopeReader, BindingsExtender
            , BindingsReader, EnvReader AtomSubstVal, MonadFail)
 
-runSimplifyM :: Distinct n
-             => Bindings n
-             -> (forall l. Ext n l => SimplifyM l l (e l))
-             -> e n
+runSimplifyM :: Distinct n => Bindings n -> SimplifyM n n (e n) -> e n
 runSimplifyM bindings cont =
-  runHardFail $
-    runBuilderT bindings $
-      runEnvReaderT idEnv $
-        runSimplifyM' cont
+  withImmutEvidence (toImmutEvidence bindings) $
+    runHardFail $
+      runBuilderT bindings $
+        runEnvReaderT idEnv $
+          runSimplifyM' cont
 
 instance Simplifier SimplifyM
+
+instance Fallible (SimplifyM i o) where
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance Builder (SimplifyM i) where
   emitDecl hint ann expr = SimplifyM $ emitDecl hint ann expr
-  buildScopedGeneral ab cont = SimplifyM $
-    buildScopedGeneral ab \x -> runSimplifyM' $ cont x
+  buildScoped _ = undefined
 
 -- === Top level ===
 
 simplifyModule :: Distinct n => Bindings n -> Module n -> Module n
-simplifyModule bindings m@(Module Core _ _) = runSimplifyM bindings do
-  Module _ decls result <- injectM m
-  Abs decls' (AtomSubstEvaluatedModule result') <-
+simplifyModule bindings (Module Core decls result) = runSimplifyM bindings do
+  Immut <- return $ toImmutEvidence bindings
+  DistinctAbs decls' (AtomSubstEvaluatedModule result') <-
     buildScoped $ simplifyDecls decls $
       AtomSubstEvaluatedModule <$> substEvalautedModuleM result
   return $ Module Simp decls' result'

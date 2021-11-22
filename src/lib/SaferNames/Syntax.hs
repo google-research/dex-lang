@@ -50,6 +50,7 @@ module SaferNames.Syntax (
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
     ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder,
+    withFreshLamBinder,
     withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
@@ -1985,7 +1986,7 @@ instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
 
 instance BindsBindings IBinder where
-  boundBindings = undefined
+  toBindingsFrag = undefined
 
 instance BindsAtMostOneName IBinder AtomNameC where
   IBinder b _ @> x = b @> x
@@ -2016,5 +2017,5 @@ instance ProvesExt  ImpDecl
 instance BindsNames ImpDecl
 
 instance BindsBindings ImpDecl where
-  boundBindings (ImpLet bs _) =
-    boundBindings bs
+  toBindingsFrag (ImpLet bs _) =
+    toBindingsFrag bs
