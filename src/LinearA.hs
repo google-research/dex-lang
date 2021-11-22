@@ -189,6 +189,30 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     let e2Env = ( envExt (env `M.restrictKeys` freeE2) vs vTys
                 , envExt (linEnv `M.restrictKeys` freeLinE2) linVs linVTys)
     typecheck prog e2Env e2
+  LetUnpack vs v e -> do
+    let FV free freeLin = freeVars e
+    check "shadowing in binders" $ unique vs
+    check "LetUnpack: non-linear environment mismatched" $
+      M.keysSet env == S.insert v (free `S.difference` S.fromList vs)
+    check "LetUnpack: linear environment mismatched" $
+      M.keysSet linEnv == freeLin
+    case env ! v of
+      TupleType tys -> do
+        check "" $ length tys == length vs
+        typecheck prog (envExt env vs tys, linEnv) e
+      _ -> throwError "Unpacking a non-tuple type"
+  LetUnpackLin vs v e -> do
+    let FV free freeLin = freeVars e
+    check "shadowing in binders" $ unique vs
+    check "LetUnpack: non-linear environment mismatched" $
+      M.keysSet env == free
+    check "LetUnpack: linear environment mismatched" $
+       (M.keysSet linEnv `S.difference` S.singleton v) `S.union` (S.fromList vs) == freeLin
+    case linEnv ! v of
+      TupleType tys -> do
+        check "" $ length tys == length vs
+        typecheck prog (env, envExt linEnv vs tys) e
+      _ -> throwError "Unpacking a non-tuple type"
   Lit f -> do
     check "Lit: non-empty environments" $ null env && null linEnv
     return $ MixedType [FloatType] []
@@ -251,10 +275,6 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
   Drop e -> do
     _ <- typecheck prog tenv e
     return $ MixedType [] []
-  _ -> undefined
-  -- TODO:
-  -- LetUnpack    [Var]       Var  Expr
-  -- LetUnpackLin [Var]       Var  Expr
   where
     splitEnv :: [Expr] -> Either String [TypeEnv]
     splitEnv exprs = do
