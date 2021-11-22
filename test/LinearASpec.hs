@@ -19,10 +19,12 @@ instance Fractional Expr where
   (/) = undefined
 
 shouldTypeCheck :: Program -> Expectation
-shouldTypeCheck prog = isProgramTypeCorrect prog `shouldBe` True
+shouldTypeCheck prog = typecheckProgram prog `shouldBe` (Right ())
 
 shouldNotTypeCheck :: Program -> Expectation
-shouldNotTypeCheck prog = isProgramTypeCorrect prog `shouldBe` False
+shouldNotTypeCheck prog = typecheckProgram prog `shouldSatisfy` \case
+  Left  _ -> True
+  Right _ -> False
 
 spec :: Spec
 spec = do
@@ -132,4 +134,13 @@ spec = do
         [ ("f", FuncDef [("x", FloatType)] [("y", FloatType)] (MixedType [] [FloatType]) $
             LetMixed [] ["z"] (LScale (Var "x") (LVar "y")) $
             Ret [] ["z"])
+        ]
+
+  describe "JVP" $ do
+    it "(sin x)^2 + (cos x)^2" $ do
+      shouldTypeCheck $ jvpProgram $ Program $ M.fromList
+        [ ("f", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+            LetMixed ["y"] [] (UnOp Sin (Var "x")) $
+            LetMixed ["z"] [] (UnOp Cos (Var "x")) $
+            (Var "y") * (Var "y") + (Var "z") * (Var "z"))
         ]

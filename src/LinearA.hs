@@ -6,12 +6,17 @@ import Control.Monad.Except
 import Data.Foldable
 import Data.List (intercalate)
 import Data.Functor ((<&>))
-import Data.Functor.Identity
+import Data.String (IsString(..))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Map.Strict ((!))
 
-type Var = String
+data Var = MkVar String Int
+         deriving (Eq, Ord)
+
+instance IsString Var where
+  fromString s = MkVar s 0
+
 data MixedType = MixedType [Type] [Type]
                  deriving (Eq, Show)
 data Type = FloatType | TupleType [Type]
@@ -213,7 +218,7 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
         check "" $ length tys == length vs
         typecheck prog (env, envExt linEnv vs tys) e
       _ -> throwError "Unpacking a non-tuple type"
-  Lit f -> do
+  Lit _ -> do
     check "Lit: non-empty environments" $ null env && null linEnv
     return $ MixedType [FloatType] []
   Var v -> do
@@ -225,10 +230,10 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     check "LVar: non-singleton linear env" $ S.singleton v == M.keysSet linEnv
     return $ MixedType [] [linEnv ! v]
   App f args linArgs -> do
-    let FuncDef formals linFormals resTy _ = progMap ! f
+    let FuncDef _ _ resTy _ = progMap ! f
     -- Use (L)Tuple checking rules to verify that references to args are valid
-    typecheck prog (env, mempty)    $ Tuple  $ Var  <$> args
-    typecheck prog (mempty, linEnv) $ LTuple $ LVar <$> linArgs
+    void $ typecheck prog (env, mempty)    $ Tuple  $ Var  <$> args
+    void $ typecheck prog (mempty, linEnv) $ LTuple $ LVar <$> linArgs
     return $ resTy
   Tuple exprs -> do
     envs <- splitEnv exprs
@@ -290,16 +295,131 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
       ty' <- typecheck prog te expr
       check ("expected " ++ show ty ++ ", got " ++ show ty') $ ty == ty'
 
-isFuncTypeCorrect :: Program -> FuncName -> Bool
-isFuncTypeCorrect prog@(Program funcMap) name = case typecheck prog env body of
-  Left  _  -> False
-  Right ty -> ty == resultType
+typecheckFunc :: Program -> FuncName -> Either String ()
+typecheckFunc prog@(Program funcMap) name = case typecheck prog env body of
+  Left  err -> Left err
+  Right ty  -> case ty == resultType of
+    True  -> Right ()
+    False -> Left "Return type mismatch"
   where
     FuncDef formals linFormals resultType body = funcMap ! name
     env = (M.fromList formals, M.fromList linFormals)
 
-isProgramTypeCorrect :: Program -> Bool
-isProgramTypeCorrect prog@(Program progMap) = foldl (&&) True $ isFuncTypeCorrect prog <$> M.keys progMap
+typecheckProgram :: Program -> Either String ()
+typecheckProgram prog@(Program progMap) = sequence_ $ typecheckFunc prog <$> M.keys progMap
+
+-------------------- JVP --------------------
+
+freshVar :: Scope -> Var
+freshVar s = case S.lookupMax s of
+  Nothing          -> MkVar "v" 0
+  Just (MkVar n i) -> MkVar n (i + 1)
+
+freshVars :: Scope -> [Var]
+freshVars s = x : freshVars (S.insert x s)
+  where x = freshVar s
+
+type Scope  = S.Set Var
+type TangentMap = M.Map Var Var
+type JVPFuncMap = M.Map FuncName FuncName
+
+jvpProgram :: Program -> Program
+jvpProgram (Program progMap) = Program $ jvpFunc jvpFuncMap <$> progMap
+  where jvpFuncMap = M.mapWithKey const progMap  -- identity name map
+
+jvpFunc :: JVPFuncMap -> FuncDef -> FuncDef
+jvpFunc funcEnv (FuncDef formalsWithTypes linFormals resultType body) =
+  case (linFormals, resultType) of
+    ([], MixedType tys []) ->
+      FuncDef formalsWithTypes (zip formals' formalTypes) (MixedType tys tys) $
+        jvp funcEnv
+         (formalsScope <> formals'Scope)
+         (M.fromList $ zip formals formals')
+         body
+      where
+        (formals, formalTypes) = unzip formalsWithTypes
+        formalsScope = S.fromList formals
+        formals'Scope = S.fromList formals'
+        formals' = take (length formals) $ freshVars formalsScope
+    _  -> error "Non-linear"
+
+jvp :: JVPFuncMap -> Scope -> TangentMap -> Expr -> Expr
+jvp funcEnv scope env e = case e of
+  Ret vs [] -> Ret vs ((env !) <$> vs)
+  Ret _  _  -> nonLinear
+  LetMixed vs [] e1 e2 ->
+    LetMixed vs vs' (rec scope env e1) $
+      rec (scope <> S.fromList (vs ++ vs')) (envExt env vs vs') e2
+    where vs' = take (length vs) $ freshVars scope
+  LetMixed _  _  _  _  -> nonLinear
+  LetUnpack vs v e ->
+    LetMixed [t] [t'] (rec scope env $ Var v) $
+    LetUnpack vs t $
+    LetUnpackLin vs' t' $
+      rec (scope <> S.fromList allFresh) (envExt env vs vs') e
+    where allFresh@(t : t' : vs') = take (length vs + 2) $ freshVars scope
+  Tuple xs -> shuffle scope $ rec scope env <$> xs
+  App f vs [] -> App (funcEnv ! f) vs ((env !) <$> vs)
+  App _ _  _  -> nonLinear
+  Var v -> Ret [v] [env ! v]
+  Lit v -> retExprs scope (Lit v) LZero
+  UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
+  UnOp Cos e -> jvpUnOp e Cos $ \v -> BinOp Mul (UnOp Sin (Var v)) (Lit (-1))
+  UnOp Exp e -> jvpUnOp e Exp $ UnOp Exp . Var
+  BinOp Add e1 e2 ->
+    LetMixed [v1] [v1'] (rec scope env e1) $
+    LetMixed [v2] [v2'] (rec (scope <> S.fromList [v1, v1']) env e2) $
+    retExprs (scope <> S.fromList [v1, v1', v2, v2'])
+      (BinOp Add (Var v1) (Var v2)) (LAdd (LVar v1') (LVar v2'))
+    where v1:v1':v2:v2':_ = freshVars scope
+  BinOp Mul e1 e2 ->
+    LetMixed [v1] [v1'] (rec scope env e1) $
+    LetMixed [v2] [v2'] (rec (scope <> S.fromList [v1, v1']) env e2) $
+    retExprs (scope <> S.fromList [v1, v1', v2, v2'])
+      (BinOp Mul (Var v1) (Var v2))
+      (BinOp Add (LScale (Var v2) (LVar v1'))
+                 (LScale (Var v1) (LVar v2')))
+    where v1:v1':v2:v2':_ = freshVars scope
+  Drop e -> Drop $ rec scope env e
+  Dup _ -> nonLinear
+  LTuple _ -> nonLinear
+  LetUnpackLin _ _ _ -> nonLinear
+  LVar _ -> nonLinear
+  LAdd _ _ -> nonLinear
+  LScale _ _ -> nonLinear
+  LZero -> nonLinear
+  where
+    rec = jvp funcEnv
+    nonLinear = error "JVP only applies to completely non-linear computations"
+
+    jvpUnOp :: Expr -> UnOp -> (Var -> Expr) -> Expr
+    jvpUnOp e primOp tanCoef =
+      LetMixed [v] [v'] (rec scope env e) $
+      retExprs (scope <> S.fromList [v, v'])
+        (UnOp primOp (Var v)) (LScale (tanCoef v) (LVar v'))
+      where v : v' : _ = freshVars scope
+
+retExprs :: Scope -> Expr -> Expr -> Expr
+retExprs scope e1 e2 =
+  LetMixed [v] []   e1 $
+  LetMixed []  [v'] e2 $
+  Ret [v] [v']
+  where v : v' : _ = freshVars scope
+
+-- | Take a bunch of expressions that produce mixed pairs and
+-- convert them into an expr that returns a mixed pair containing
+-- a tuple of their non-linear components and another with linear
+-- components.
+shuffle :: Scope -> [Expr] -> Expr
+shuffle scope es = go [] [] (freshVars scope) es
+  where
+    go :: [Expr] -> [Expr] -> [Var] -> [Expr] -> Expr
+    go n l (v:v':_)  []    =
+      LetMixed [v] []   (Tuple  n) $
+      LetMixed []  [v'] (LTuple l) $
+        Ret [v] [v']
+    go n l (v:v':vt) (e:t) = LetMixed [v] [v'] e $ go (Var v:n) (LVar v':l) vt t
+    go _ _ _ _ = error "Impossible"
 
 -------------------- Helpers --------------------
 
