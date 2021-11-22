@@ -603,10 +603,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     ann' <- checkAnn ann
     piTy <- addSrcContext pos' case pat of
-      UPatBinder UIgnore -> do
-        effs' <- checkUEffRow effs
-        ty' <- checkUType ty
-        buildNonDepPi "_" arr ann' effs' ty'
+      UPatBinder UIgnore ->
+        buildPiInf "_ign" arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
       _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
         Abs decls piResult <- buildDeclsInf do
           v' <- injectM v
@@ -1005,7 +1003,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
   rhs' <- checkSigma rhs methodTy
   return (i, rhs')
 
-checkUEffRow :: (EmitsBoth o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
+checkUEffRow :: (EmitsInf o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
    t' <- forM t \(InternalName v) -> do
@@ -1014,7 +1012,7 @@ checkUEffRow (EffectRow effs t) = do
             return v'
    return $ EffectRow effs' t'
 
-checkUEff :: (EmitsBoth o, Inferer m) => UEffect i -> m i o (Effect o)
+checkUEff :: (EmitsInf o, Inferer m) => UEffect i -> m i o (Effect o)
 checkUEff eff = case eff of
   RWSEffect rws ~(InternalName region) -> do
     region' <- substM region
@@ -1023,7 +1021,7 @@ checkUEff eff = case eff of
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
 
-constrainVarTy :: (EmitsBoth o, Inferer m) => AtomName o -> Type o -> m i o ()
+constrainVarTy :: (EmitsInf o, Inferer m) => AtomName o -> Type o -> m i o ()
 constrainVarTy v tyReq = do
   varTy <- getType $ Var v
   constrainEq tyReq varTy
