@@ -597,7 +597,14 @@ instance Monad1 m => Fallible (FallibleT1 m n) where
 instance ScopeReader m => ScopeReader (FallibleT1 m) where
   getScope = FallibleT1 $ lift $ lift getScope
   getDistinct = FallibleT1 $ lift $ lift $ getDistinct
-  liftImmut _ = undefined
+  liftImmut cont = FallibleT1 $ ReaderT \ctx -> do
+    exceptResult <- lift $ liftImmut do
+      MTE.runExceptT (runReaderT (fromFallibleT cont) ctx) >>= \case
+        Right x  -> return $ RightE x
+        Left err -> return $ LeftE (LiftE err)
+    case exceptResult of
+      RightE x -> return x
+      LeftE (LiftE err) -> MTE.throwE err
 
 instance BindingsReader m => BindingsReader (FallibleT1 m) where
   getBindings = FallibleT1 $ lift $ lift getBindings

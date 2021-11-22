@@ -362,6 +362,10 @@ instance Pretty ErrCtx where
            hardline <> pretty (highlightRegion (start - offset, stop - offset) text)
         _ -> mempty
 
+instance Pretty a => Pretty (Except a) where
+  pretty (Success x) = "Success:" <+> pretty x
+  pretty (Failure e) = "Failure:" <+> pretty e
+
 instance Pretty ErrType where
   pretty e = case e of
     -- NoErr tags a chunk of output that was promoted into the Err ADT

@@ -375,7 +375,14 @@ instance Builder (InfererM i) where
     ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
 
-  buildScoped _ = error "not implemented"
+  buildScoped cont = do
+    InfererM $ EnvReaderT $ ReaderT \env -> do
+      resultWithEmissions <- locallyMutableInplaceT do
+        Emits <- fabricateEmitsEvidenceM
+        runEnvReaderT (inject env) $ runInfererM' cont
+      DistinctAbs (InfOutFrag emissions _ _) result <- return resultWithEmissions
+      let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
+      return $ DistinctAbs decls result
 
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
@@ -1272,7 +1279,7 @@ class (CtxReader1 m, BindingsReader m) => Solver (m::MonadKind1) where
   emitSolver :: EmitsInf n => SolverBinding n -> m n (AtomName n)
   addDefault :: Type n -> Type VoidS -> m n ()
   getDefaults :: m n (Defaults n)
-  solveLocal :: (Immut n, InjectableE e)
+  solveLocal :: (Immut n, InjectableE e, HoistableE e)
              => (forall l. (EmitsInf l, Ext n l, Distinct l) => m l (e l))
              -> m n (e n)
 
@@ -1352,10 +1359,9 @@ instance Solver SolverM where
       EmitsInf <- fabricateEmitsInfEvidenceM
       runSolverM' cont
     DistinctAbs (SolverOutFrag unsolvedInfNames _ _) result <- return results
-    case unsolvedInfNames of
-      Empty -> return result
-      Nest (_:>InfVarBound _ ctx) _ ->
-        addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
+    case hoist unsolvedInfNames result of
+      HoistSuccess result' -> return result'
+      HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
 
 instance Unifier SolverM
 
