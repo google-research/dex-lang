@@ -638,7 +638,7 @@ typeCheckCon con = case con of
       return $ RawRefTy ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> return t
-  RecordRef _ -> error "Not implemented"
+  RecordRef xs -> (RawRefTy . RecordTy . NoExt) <$> traverse typeCheckRef xs
 
 typeCheckRef :: HasType a => a -> TypeM Type
 typeCheckRef x = do
