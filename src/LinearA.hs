@@ -9,13 +9,11 @@ import Data.Functor ((<&>))
 import Data.String (IsString(..))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.Map.Strict ((!))
+import GHC.Stack
+import Prettyprinter
 
 data Var = MkVar String Int
          deriving (Eq, Ord)
-
-instance IsString Var where
-  fromString s = MkVar s 0
 
 data MixedType = MixedType [Type] [Type]
                  deriving (Eq, Show)
@@ -40,24 +38,76 @@ data Expr = Ret [Var] [Var]
           | LZero
           | Dup  Expr
           | Drop Expr
-data UnOp  = Sin | Cos | Exp
-data BinOp = Add | Mul
+          deriving Show
+data UnOp  = Sin | Cos | Exp deriving Show
+data BinOp = Add | Mul deriving Show
 
 type FuncName = String
 data FuncDef = FuncDef [(Var, Type)] [(Var, Type)] MixedType Expr
+               deriving Show
 data Program = Program (M.Map FuncName FuncDef)
+               deriving Show
 
 data Value = FloatVal Float | TupleVal [Value]
              deriving Eq
 data Result = Result [Value] [Value]
               deriving Eq
 
+instance IsString Var where
+  fromString s = MkVar s 0
+
+instance Show Var where
+  show (MkVar s 0) = s
+  show (MkVar s n) = s ++ "#" ++ show n
 instance Show Value where
   show (FloatVal f) = show f
   show (TupleVal vs) = "(" ++ intercalate ", " (show <$> vs) ++ ")"
 instance Show Result where
   show (Result vs linVs) = "(" ++ intercalate ", " (show <$> vs) ++ "; "
                                ++ intercalate ", " (show <$> linVs) ++ ")"
+
+-------------------- Pretty printing --------------------
+
+instance Pretty Program where
+  pretty (Program progMap) = vcat $ M.toList progMap <&> \(fname, def) -> "def" <+> pretty fname <+> pretty def
+instance Pretty FuncDef where
+  pretty (FuncDef vs vs' (MixedType rtys rtys') body) =
+    parens (prettyFormals vs <> " ;" <+> prettyFormals vs') <+> (nest 2 $
+      softline' <> "->" <+> encloseSep "(" "" ", " (pretty <$> rtys) <>
+      "; " <> encloseSep "" ")" ", " (pretty <$> rtys') <+> "=" <> hardline <> pretty body)
+    where
+      prettyFormals vs = cat $ punctuate ", " $ vs <&> \(v, ty) -> pretty v <> ":" <> pretty ty
+instance Pretty Var where
+  pretty v = fromString $ show v
+instance Pretty Type where
+  pretty = \case
+    FloatType     -> "Float"
+    TupleType tys -> tupled $ pretty <$> tys
+instance Pretty Expr where
+  pretty = \case
+    Ret vs vs' -> prettyMixedVars vs vs'
+    LetMixed vs vs' e1 e2 -> "let" <+> prettyMixedVars vs vs' <+> "=" <> (nest 2 $ group $ line <> pretty e1) <> hardline <> pretty e2
+    LetUnpack vs v e -> "explode" <+> prettyMixedVars vs [] <+> "=" <+> pretty v <> hardline <> pretty e
+    LetUnpackLin vs' v e -> "explode" <+> prettyMixedVars [] vs' <+> "=" <+> pretty v <> hardline <> pretty e
+    App funcName vs vs' -> pretty funcName <> prettyMixedVars vs vs'
+    Var v -> pretty v
+    Lit v -> pretty v
+    Tuple es -> tupled $ pretty <$> es
+    UnOp Sin e -> "sin" <+> parens (pretty e)
+    UnOp Cos e -> "cos" <+> parens (pretty e)
+    UnOp Exp e -> "exp" <+> parens (pretty e)
+    BinOp Add e1 e2 -> parens (pretty e1) <+> "+" <+> parens (pretty e2)
+    BinOp Mul e1 e2 -> parens (pretty e1) <+> "*" <+> parens (pretty e2)
+    LVar v -> pretty v
+    LTuple es -> tupled $ pretty <$> es
+    LAdd e1 e2 -> pretty $ BinOp Add e1 e2
+    LScale es el -> pretty $ BinOp Mul es el
+    LZero -> "zero"
+    Dup e -> "dup" <+> parens (pretty e)
+    Drop e -> "drop" <+> parens (pretty e)
+    where
+      prettyMixedVars :: [Var] -> [Var] -> Doc ann
+      prettyMixedVars vs vs' = group $ "(" <> fillSep (pretty <$> vs) <> line' <> "; " <> fillSep (pretty <$> vs') <> ")"
 
 -------------------- Evaluation --------------------
 
@@ -136,7 +186,7 @@ eval prog@(Program defs) env expr = case expr of
 
 -------------------- Free variable querying --------------------
 
-data FreeVars = FV (S.Set Var) (S.Set Var)
+data FreeVars = FV { getFree :: (S.Set Var), getFreeLin :: (S.Set Var) }
 instance Semigroup FreeVars where
   (FV v lv) <> (FV v' lv') = FV (v <> v') (lv <> lv')
 instance Monoid FreeVars where
@@ -209,14 +259,14 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
   LetUnpackLin vs v e -> do
     let FV free freeLin = freeVars e
     check "shadowing in binders" $ unique vs
-    check "LetUnpack: non-linear environment mismatched" $
+    check "LetUnpackLin: non-linear environment mismatched" $
       M.keysSet env == free
-    check "LetUnpack: linear environment mismatched" $
+    check "LetUnpackLin: linear environment mismatched" $
        (M.keysSet linEnv `S.difference` S.singleton v) `S.union` (S.fromList vs) == freeLin
     case linEnv ! v of
       TupleType tys -> do
         check "" $ length tys == length vs
-        typecheck prog (env, envExt linEnv vs tys) e
+        typecheck prog (env, envExt (M.delete v linEnv) vs tys) e
       _ -> throwError "Unpacking a non-tuple type"
   Lit _ -> do
     check "Lit: non-empty environments" $ null env && null linEnv
@@ -319,9 +369,14 @@ freshVars :: Scope -> [Var]
 freshVars s = x : freshVars (S.insert x s)
   where x = freshVar s
 
-type Scope  = S.Set Var
+type Scope      = S.Set Var
+type Subst      = M.Map Var Var
 type TangentMap = M.Map Var Var
 type JVPFuncMap = M.Map FuncName FuncName
+
+-- TODO: Assert uniqeness
+scopeExt :: Scope -> [Var] -> Scope
+scopeExt sub vs = sub <> S.fromList vs
 
 jvpProgram :: Program -> Program
 jvpProgram (Program progMap) = Program $ jvpFunc jvpFuncMap <$> progMap
@@ -333,68 +388,105 @@ jvpFunc funcEnv (FuncDef formalsWithTypes linFormals resultType body) =
     ([], MixedType tys []) ->
       FuncDef formalsWithTypes (zip formals' formalTypes) (MixedType tys tys) $
         jvp funcEnv
-         (formalsScope <> formals'Scope)
+         (scopeExt formalsScope formals')
+         (M.fromList $ zip formals formals)
          (M.fromList $ zip formals formals')
          body
       where
         (formals, formalTypes) = unzip formalsWithTypes
-        formalsScope = S.fromList formals
-        formals'Scope = S.fromList formals'
+        formalsScope = scopeExt mempty formals
         formals' = take (length formals) $ freshVars formalsScope
     _  -> error "Non-linear"
 
-jvp :: JVPFuncMap -> Scope -> TangentMap -> Expr -> Expr
-jvp funcEnv scope env e = case e of
-  Ret vs [] -> Ret vs ((env !) <$> vs)
-  Ret _  _  -> nonLinear
-  LetMixed vs [] e1 e2 ->
-    LetMixed vs vs' (rec scope env e1) $
-      rec (scope <> S.fromList (vs ++ vs')) (envExt env vs vs') e2
-    where vs' = take (length vs) $ freshVars scope
-  LetMixed _  _  _  _  -> nonLinear
-  LetUnpack vs v e ->
-    LetMixed [t] [t'] (rec scope env $ Var v) $
-    LetUnpack vs t $
-    LetUnpackLin vs' t' $
-      rec (scope <> S.fromList allFresh) (envExt env vs vs') e
-    where allFresh@(t : t' : vs') = take (length vs + 2) $ freshVars scope
-  Tuple xs -> shuffle scope $ rec scope env <$> xs
-  App f vs [] -> App (funcEnv ! f) vs ((env !) <$> vs)
-  App _ _  _  -> nonLinear
-  Var v -> Ret [v] [env ! v]
+splitTangents :: Scope -> TangentMap -> [Expr] -> (Expr -> Expr, Scope, [TangentMap])
+splitTangents scope env es = go scope env (freeVars <$> es)
+  where
+    go scope _   [] = (id, scope, [])
+    go scope env (FV fvs fvs':tfvs) = case null fvs' of
+      False -> error "Linear variables in a JVPed expression"
+      True  -> case commonFvs of
+        [] -> (subcontext, subscope, (M.restrictKeys env fvs):submaps)
+          where (subcontext, subscope, submaps) = go scope (M.withoutKeys env fvs) tfvs
+        _  -> (context . subcontext, subscope, (M.fromList $ zip commonFvs dvs2'):submaps)
+          where
+            allFresh@(vst':vst2':allDvs') = take (2 + 2 * length commonFvs) $ freshVars scope
+            (dvs', dvs2') = splitAt (length commonFvs) allDvs'
+            (subcontext, subscope, submaps) =
+              go (scopeExt scope allFresh)
+                (envExt (M.withoutKeys env fvs) commonFvs dvs') tfvs
+            context = LetMixed [] [vst', vst2'] (Dup (LTuple $ LVar . (env !) <$> commonFvs)) .
+                      LetUnpackLin dvs'  vst' .
+                      LetUnpackLin dvs2' vst2'
+      where
+        commonFvsS = fvs `S.intersection` getFree (fold tfvs)
+        commonFvs  = toList commonFvsS
+
+jvp :: JVPFuncMap -> Scope -> Subst -> TangentMap -> Expr -> Expr
+jvp funcEnv scope subst env e = case e of
+  Ret vs_ [] -> ctx $ Ret ((subst !) <$> vs_) (zipWith (!) envs vs_)
+    where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
+  Ret _  _  -> expectNonLinear
+  LetMixed vs_ [] e1 e2 ->
+    ctx $ LetMixed vs vs' (rec ctxScope subst env1 e1) $
+      rec ctxScope (envExt subst vs_ vs) (envExt env2 vs_ vs') e2
+    where
+      allFresh  = take (2 * length vs_) $ freshVars scope
+      (vs, vs') = splitAt (length vs_) allFresh
+      (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) (envExt env vs_ vs') [e1, e2]
+  LetMixed _  _  _  _  -> expectNonLinear
+  LetUnpack _ _ _ -> undefined
+  -- TODO: Split envs
+  --LetUnpack vs v e ->
+    --LetMixed [t] [t'] (rec scope env $ Var v) $
+    --LetUnpack vs t $
+    --LetUnpackLin vs' t' $
+      --rec (scope <> S.fromList allFresh) (envExt env vs vs') e
+    --where allFresh@(t : t' : vs') = take (length vs + 2) $ freshVars scope
+  Tuple _ -> undefined
+  -- TODO: Is the scoping correct here?
+  --Tuple xs -> ctx $ shuffle ctxScope $ zipWith (uncurry $ rec ctxScope subst) envs xs
+    --where (ctx, ctxScope, envs) = splitTangents scope env xs
+  App f vs_ [] -> ctx $ App (funcEnv ! f) ((subst !) <$> vs_) (zipWith (!) envs vs_)
+    where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
+  App _ _  _  -> expectNonLinear
+  Var v -> Ret [subst ! v] [env ! v]
   Lit v -> retExprs scope (Lit v) LZero
   UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
   UnOp Cos e -> jvpUnOp e Cos $ \v -> BinOp Mul (UnOp Sin (Var v)) (Lit (-1))
   UnOp Exp e -> jvpUnOp e Exp $ UnOp Exp . Var
-  BinOp Add e1 e2 ->
-    LetMixed [v1] [v1'] (rec scope env e1) $
-    LetMixed [v2] [v2'] (rec (scope <> S.fromList [v1, v1']) env e2) $
-    retExprs (scope <> S.fromList [v1, v1', v2, v2'])
+  BinOp Add e1 e2 -> ctx $
+    LetMixed [v1] [v1'] (rec ctxScope subst env1 e1) $
+    LetMixed [v2] [v2'] (rec (ctxScope <> S.fromList [v1, v1']) subst env2 e2) $
+    retExprs (ctxScope <> S.fromList [v1, v1', v2, v2'])
       (BinOp Add (Var v1) (Var v2)) (LAdd (LVar v1') (LVar v2'))
-    where v1:v1':v2:v2':_ = freshVars scope
-  BinOp Mul e1 e2 ->
-    LetMixed [v1] [v1'] (rec scope env e1) $
-    LetMixed [v2] [v2'] (rec (scope <> S.fromList [v1, v1']) env e2) $
-    retExprs (scope <> S.fromList [v1, v1', v2, v2'])
+    where
+      (ctx, ctxScope, [env1, env2]) = splitTangents scope env [e1, e2]
+      v1:v1':v2:v2':_ = freshVars ctxScope
+  BinOp Mul e1 e2 -> ctx $
+    LetMixed [v1] [v1'] (rec ctxScope subst env1 e1) $
+    LetMixed [v2] [v2'] (rec (ctxScope <> S.fromList [v1, v1']) subst env2 e2) $
+    retExprs (ctxScope <> S.fromList [v1, v1', v2, v2'])
       (BinOp Mul (Var v1) (Var v2))
-      (BinOp Add (LScale (Var v2) (LVar v1'))
-                 (LScale (Var v1) (LVar v2')))
-    where v1:v1':v2:v2':_ = freshVars scope
-  Drop e -> Drop $ rec scope env e
-  Dup _ -> nonLinear
-  LTuple _ -> nonLinear
-  LetUnpackLin _ _ _ -> nonLinear
-  LVar _ -> nonLinear
-  LAdd _ _ -> nonLinear
-  LScale _ _ -> nonLinear
-  LZero -> nonLinear
+      (LAdd (LScale (Var v2) (LVar v1'))
+            (LScale (Var v1) (LVar v2')))
+    where
+      (ctx, ctxScope, [env1, env2]) = splitTangents scope env [e1, e2]
+      v1:v1':v2:v2':_ = freshVars ctxScope
+  Drop e -> Drop $ rec scope subst env e
+  Dup _              -> expectNonLinear
+  LTuple _           -> expectNonLinear
+  LetUnpackLin _ _ _ -> expectNonLinear
+  LVar _             -> expectNonLinear
+  LAdd _ _           -> expectNonLinear
+  LScale _ _         -> expectNonLinear
+  LZero              -> expectNonLinear
   where
     rec = jvp funcEnv
-    nonLinear = error "JVP only applies to completely non-linear computations"
+    expectNonLinear = error "JVP only applies to completely non-linear computations"
 
     jvpUnOp :: Expr -> UnOp -> (Var -> Expr) -> Expr
     jvpUnOp e primOp tanCoef =
-      LetMixed [v] [v'] (rec scope env e) $
+      LetMixed [v] [v'] (rec scope subst env e) $
       retExprs (scope <> S.fromList [v, v'])
         (UnOp primOp (Var v)) (LScale (tanCoef v) (LVar v'))
       where v : v' : _ = freshVars scope
@@ -431,3 +523,8 @@ envExt env vs vals = foldl (\env (k, v) -> M.insert k v env) env $ zip vs vals
 
 check :: MonadError e m => e -> Bool -> m ()
 check err cond = unless cond $ throwError err
+
+(!) :: (HasCallStack, Ord k, Show k, Show v) => M.Map k v -> k -> v
+m ! k = case M.lookup k m of
+  Just v -> v
+  Nothing -> error $ "Missing key: " ++ show k ++ " in " ++ show m

@@ -6,11 +6,11 @@ maintainer:         apaszke@google.com
 
 library
   exposed-modules:  LinearA
-  build-depends:    base ==4.*, containers, mtl
+  build-depends:    base ==4.*, containers, mtl, prettyprinter
   hs-source-dirs:   src
   default-language: Haskell2010
   ghc-options: -Wall -Wno-name-shadowing
-  default-extensions: OverloadedStrings
+  default-extensions: OverloadedStrings, LambdaCase
 
 test-suite spec
   type: exitcode-stdio-1.0
@@ -24,6 +24,7 @@ test-suite spec
     , hspec ==2.*
     , lollipops
     , containers
+    , prettyprinter
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover == 2.*
   default-extensions: OverloadedStrings, LambdaCase
