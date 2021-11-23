@@ -29,7 +29,7 @@ module SaferNames.Syntax (
     PiType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
-    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..), TopState,
+    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..),
     BindsBindings (..), BindsOneAtomName (..), WithBindings (..),
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -49,8 +49,8 @@ module SaferNames.Syntax (
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
-    ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder,
-    withFreshLamBinder,
+    ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
+    withFreshLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
@@ -268,7 +268,7 @@ data BindingsFrag (n::S) (l::S) =
   BindingsFrag (RecEnvFrag Binding n l) (Maybe (EffectRow l))
 
 data Bindings (n::S) = Bindings
-  { getNameBindings        :: RecEnv Binding n
+  { getNameBindings    :: RecEnv Binding n
   , getSynthCandidates :: SynthCandidates n
   , getSourceMap       :: SourceMap n
   , getEffects         :: EffectRow n}
@@ -371,9 +371,11 @@ type BindingsReaderM = BindingsReaderT Identity
 runBindingsReaderM :: Distinct n => Bindings n -> BindingsReaderM n a -> a
 runBindingsReaderM bindings m = runIdentity $ runBindingsReaderT bindings m
 
-runBindingsReaderT :: Distinct n => Bindings n -> (BindingsReaderT m n a) -> m a
+runBindingsReaderT :: Distinct n => Bindings n
+                   -> (Immut n => BindingsReaderT m n a) -> m a
 runBindingsReaderT bindings cont =
-  runReaderT (runBindingsReaderT' cont) (Distinct, bindings)
+  withImmutEvidence (toImmutEvidence bindings) $
+    runReaderT (runBindingsReaderT' cont) (Distinct, bindings)
 
 instance Monad m => BindingsReader (BindingsReaderT m) where
   getBindings = BindingsReaderT $ asks snd
@@ -482,12 +484,26 @@ updateBindings v rhs bindings =
   bindings { getNameBindings = RecEnv $ updateEnvFrag v rhs bs }
   where (RecEnv bs) = getNameBindings bindings
 
+refreshAbsM
+  :: ( SubstB Name b, SubstE Name e, Immut n, BindsBindings b
+     , BindingsReader m, BindingsExtender m)
+  => Abs b e n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => b n l -> e l -> m l a)
+  -> m n a
+refreshAbsM ab cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  DistinctAbs b e <- return $ refreshAbs scope ab
+  extendBindings (toBindingsFrag b) do
+    withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b) $
+      cont b e
+
 refreshBinders
   :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
      , EnvReader v m, SubstB v b, BindsBindings b)
   => Immut o
   => b i i'
-  -> (forall o'. Ext o o' => b o o' -> m i' o' a)
+  -> (forall o'. (Immut o', Ext o o') => b o o' -> m i' o' a)
   -> m i o a
 refreshBinders b cont = do
   scope <- getScope
@@ -495,8 +511,9 @@ refreshBinders b cont = do
   env <- getEnv
   DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idEnvFrag b)
   extendBindings (toBindingsFrag b') do
-    extendEnv envFrag do
-      cont b'
+    withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b') $
+      extendEnv envFrag do
+        cont b'
 
 -- Version of `refreshBinder` that gets its `Immut n` evidence from the monad.
 -- TODO: make it easy to go the other way (from refreshI to refresh) by having a
@@ -525,6 +542,25 @@ withFreshBinder hint binding cont = do
   withFresh hint nameColorRep scope \b -> do
     extendBindings (toBindingsFrag (b:>binding)) $
       cont b
+
+withFreshBinders
+  :: (NameColor c, BindingsExtender m, ToBinding binding c)
+  => Immut n
+  => [(NameHint, binding n)]
+  -> (forall l. (Immut l, Distinct l, Ext n l)
+              => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
+  -> m n a
+withFreshBinders [] cont = do
+  Distinct <- getDistinct
+  cont Empty []
+withFreshBinders ((hint,binding):rest) cont = do
+  scope    <- getScope
+  Distinct <- getDistinct
+  withFresh hint nameColorRep scope \b -> do
+    extendBindings (toBindingsFrag (b:>binding)) do
+      rest' <- forM rest \(hint, binding) -> (hint,) <$> injectM binding
+      withFreshBinders rest' \bs vs ->
+        cont (Nest (b:>binding) bs) (inject (binderName b) : vs)
 
 withFreshLamBinder
   :: (BindingsExtender m)
@@ -580,6 +616,24 @@ instance (forall c. NameColor c => ToBinding (binding c) c)
   toBindingsFrag (SomeDecl b binding) =
     withExtEvidence b $
       BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
+
+-- === reconstruction abstractions ===
+
+captureClosure
+  :: (HoistableB b, HoistableE e, NameColor c)
+  => b n l -> e l
+  -> ([Name c l], Abs (Nest (NameBinder c)) e n )
+captureClosure decls result = do
+  let vs = capturedVars decls result
+  let ab = abstractFreeVars vs result
+  case hoist decls ab of
+    HoistSuccess abHoisted -> (vs, abHoisted)
+    HoistFailure _ -> error "shouldn't happen"
+
+capturedVars :: (NameColor c, BindsNames b, HoistableE e)
+             => b n l -> e l -> [Name c l]
+capturedVars b e = nameSetToList nameColorRep nameSet
+  where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 -- === FallibleT transformer ===
 
@@ -824,9 +878,6 @@ data EnvQuery =
  | SourceNameInfo   SourceName
    deriving (Show, Generic)
 
-
-type TopState = Bindings
-
 data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
   deriving Show
@@ -841,8 +892,6 @@ data Module n where
 data EvaluatedModule (n::S) where
   EvaluatedModule
     :: BindingsFrag n l   -- Evaluated bindings
-       -- TODO: we don't need this here because it's redundant with bindingsfrag
-    -> SynthCandidates l  -- Values considered in scope for dictionary synthesis
     -> SourceMap l        -- Mapping of module's source names to internal names
     -> EvaluatedModule n
 
@@ -1774,9 +1823,9 @@ instance InjectableE Module
 instance SubstE Name Module
 
 instance GenericE EvaluatedModule where
-  type RepE EvaluatedModule = Abs BindingsFrag (PairE SynthCandidates SourceMap)
-  fromE (EvaluatedModule bs scs sm) = Abs bs (PairE scs sm)
-  toE   (Abs bs (PairE scs sm)) = EvaluatedModule bs scs sm
+  type RepE EvaluatedModule = Abs BindingsFrag SourceMap
+  fromE (EvaluatedModule bs sm) = Abs bs sm
+  toE   (Abs bs sm) = EvaluatedModule bs sm
 
 instance InjectableE EvaluatedModule
 instance HoistableE EvaluatedModule
@@ -1804,7 +1853,6 @@ instance Store (SynthCandidates n)
 instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
-instance Store (TopState n)
 instance NameColor c => Store (Binding c n)
 
 instance IsString (SourceNameOr a VoidS) where
@@ -1986,7 +2034,7 @@ instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
 
 instance BindsBindings IBinder where
-  toBindingsFrag = undefined
+  toBindingsFrag (IBinder b ty) = toBindingsFrag $ b :> BaseTy ty
 
 instance BindsAtMostOneName IBinder AtomNameC where
   IBinder b _ @> x = b @> x

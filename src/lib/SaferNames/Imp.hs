@@ -19,11 +19,11 @@ import Err
 import Syntax (CallingConvention, Backend)
 
 import SaferNames.Name
-import SaferNames.Builder (Emits)
+import SaferNames.Builder (Emits, EmitsEvidence (..), fabricateEmitsEvidenceM)
 import SaferNames.Syntax
 import SaferNames.Type
 
-type AtomRecon = Abs (Nest Binder) Atom
+type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
 type PtrBinder = IBinder
 
@@ -56,19 +56,51 @@ instance ExtOutMap Bindings ImpBuilderEmissions where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toBindingsFrag emissions
 
-class (ImpBuilder2 m, EnvReader AtomSubstVal m, BindingsReader2 m)
+class ( ImpBuilder2 m, EnvReader AtomSubstVal m
+      , BindingsReader2 m, BindingsExtender2 m)
       => Imper (m::MonadKind2) where
 
 instance BindingsReader (ImpM i) where
+  getBindings = ImpM $ EnvReaderT $ lift $ getOutMapInplaceT
 
-instance ImpBuilder (ImpM i)
+instance BindingsExtender (ImpM i) where
+  extendBindings frag cont = ImpM $ EnvReaderT $ ReaderT \env ->
+    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
+      withExtEvidence (toExtEvidence frag) $
+        runEnvReaderT (inject env) $ runImpM' cont
+
+instance ImpBuilder (ImpM i) where
+  emitMultiReturnInstr instr = do
+    let tys = impInstrTypes instr
+    ListE vs <- ImpM $ EnvReaderT $ ReaderT \env ->
+      extendInplaceT do
+        scope <- getScope
+        let hints = map (const "v") tys
+        withManyFresh hints AtomNameRep scope \bs -> do
+          let vs = nestToList (inject . nameBinderName) bs
+          let impBs = makeImpBinders bs tys
+          let decl = ImpLet impBs $ inject instr
+          return $ DistinctAbs (Nest decl Empty) (ListE vs)
+    return $ zipWith IVar vs tys
+    where
+     makeImpBinders :: Nest (NameBinder AtomNameC) n l -> [IType] -> Nest IBinder n l
+     makeImpBinders Empty [] = Empty
+     makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
+     makeImpBinders _ _ = error "zip error"
+
+  buildScopedImp cont = ImpM $ EnvReaderT $ ReaderT \env ->
+    locallyMutableInplaceT $
+      runEnvReaderT (inject env) $ runImpM' do
+        Emits <- fabricateEmitsEvidenceM
+        Distinct <- getDistinct
+        cont
 
 instance Imper ImpM
 
 runImpM
   :: Distinct n
   => Bindings n
-  -> ImpM n n (e n)
+  -> (Immut n => ImpM n n (e n))
   -> e n
 runImpM bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
@@ -77,27 +109,35 @@ runImpM bindings cont =
 
 -- === the actual pass ===
 
-translateTopLevel :: Imper m
+translateTopLevel :: (Immut o, Imper m)
                   => CallingConvention
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
                   -> m i o (AtomRecon o, ImpFunction o)
 translateTopLevel cc maybeDest (Abs bs body) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  Abs bs' (Abs decls resultAtom) <- buildImpNaryAbs argTys \vs ->
-    extendEnv (bs @@> map Rename vs) do
-      maybeDest' <- mapM injectM maybeDest
-      translateBlock maybeDest' body
-  (results, recon) <- buildRecon (toScopeFrag (PairB bs' decls)) resultAtom
+  DistinctAbs bs' (DistinctAbs decls resultAtom) <-
+    buildImpNaryAbs argTys \vs ->
+      extendEnv (bs @@> map Rename vs) do
+        maybeDest' <- mapM injectM maybeDest
+        translateBlock maybeDest' body
+  let localBindings = toBindingsFrag $ PairB bs' decls
+  (results, recon) <- extendBindings localBindings $
+                        buildRecon localBindings resultAtom
   let funImpl = Abs bs' $ ImpBlock decls results
   let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
   return (recon, ImpFunction "mainFn" funTy funImpl)
 
-buildRecon :: BindingsReader m
-           => ScopeFrag n l
+buildRecon :: (HoistableB b, BindingsReader m)
+           => b n l
            -> Atom l
-           -> m n ([IExpr l], AtomRecon n)
-buildRecon = undefined
+           -> m l ([IExpr l], AtomRecon n)
+buildRecon b x = do
+  let (vs, recon) = captureClosure b x
+  xs <- forM vs \v -> do
+    ~(BaseTy ty) <- getType $ Var v
+    return $ IVar v ty
+  return (xs, recon)
 
 translateBlock :: forall m i o. (Imper m, Emits o)
                => MaybeDest o -> Block i -> m i o (Atom o)
@@ -114,7 +154,13 @@ translateDecl maybeDest (Let b (DeclBinding _ _ expr)) cont = do
 
 translateExpr :: (Imper m, Emits o) => MaybeDest o -> Expr i -> m i o (Atom o)
 translateExpr maybeDest expr = case expr of
+  Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
+  _ -> error $ "not implemented: " ++ pprint expr
+  where
+    returnVal atom = case maybeDest of
+      Nothing   -> return atom
+      Just dest -> copyAtom dest atom >> return atom
 
 toImpOp :: (Imper m, Emits o) => MaybeDest o -> PrimOp (Atom o) -> m i o (Atom o)
 toImpOp maybeDest op = case op of
@@ -157,39 +203,45 @@ destToAtom (Con dest) = do
 class BindingsReader m => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
-    :: (forall l. (Emits l, Ext n l) => m l (e l))
-    -> m n (Abs (Nest ImpDecl) e n)
+    :: (InjectableE e, Immut n)
+    => (forall l. (Emits l, Ext n l) => m l (e l))
+    -> m n (DistinctAbs (Nest ImpDecl) e n)
 
 type ImpBuilder2 (m::MonadKind2) = forall i. ImpBuilder (m i)
 
 withFreshIBinder
-  :: (ImpBuilder m, InjectableE e , HasNamesE e, SubstE Name e)
+  :: (Immut n, ImpBuilder m)
   => NameHint -> IType
-  -> (forall l. Ext n l => AtomName l -> m l (e l))
-  -> m n (Abs IBinder e n)
+  -> (forall l. (Immut l, Distinct l, Ext n l) => IBinder n l -> m l a)
+  -> m n a
 withFreshIBinder hint ty cont = undefined
 
 buildImpAbs
-  :: ( ImpBuilder m, InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
-  => NameHint
-  -> IType
-  -> (forall l. (Emits l, Ext n l) => Name AtomNameC l -> m l (e l))
-  -> m n (Abs IBinder (Abs (Nest ImpDecl) e) n)
+  :: ( Immut n, ImpBuilder m
+     , InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  => NameHint -> IType
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (e l))
+  -> m n (DistinctAbs IBinder (DistinctAbs (Nest ImpDecl) e) n)
 buildImpAbs hint ty body =
-  withFreshIBinder hint ty \v -> buildScopedImp $ injectM v >>= body
+  withFreshIBinder hint ty \b -> do
+    ab <- buildScopedImp $ injectM (binderName b) >>= body
+    return $ DistinctAbs b ab
 
 buildImpNaryAbs
-  :: ( ImpBuilder m, InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  :: ( Immut n, ImpBuilder m
+     , InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => [(NameHint, IType)]
   -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (e l))
-  -> m n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
-buildImpNaryAbs [] body = Abs Empty <$> buildScopedImp (body [])
-buildImpNaryAbs ((hint, ty):args) body = do
-  Abs b (Abs bs body) <- withFreshIBinder hint ty \v ->
-    buildImpNaryAbs args \vs -> do
-      v' <- injectM v
-      body (v':vs)
-  return $ Abs (Nest b bs) body
+  -> m n (DistinctAbs (Nest IBinder) (DistinctAbs (Nest ImpDecl) e) n)
+buildImpNaryAbs [] body = do
+  Distinct <- getDistinct
+  DistinctAbs Empty <$> buildScopedImp (body [])
+-- buildImpNaryAbs ((hint, ty):args) body = do
+--   Abs b (Abs bs body) <- withFreshIBinder hint ty \v ->
+--     buildImpNaryAbs args \vs -> do
+--       v' <- injectM v
+--       body (v':vs)
+--   return $ Abs (Nest b bs) body
 
 emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do
@@ -237,3 +289,23 @@ impFunType (ImpFunction _ ty _) = ty
 
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
+
+impInstrTypes :: ImpInstr n -> [IType]
+impInstrTypes instr = case instr of
+  IPrimOp op      -> [impOpType op]
+
+-- TODO: reuse type rules in Type.hs
+impOpType :: IPrimOp n -> IType
+impOpType pop = case pop of
+  ScalarBinOp op x y -> ignoreExcept $ checkBinOp op (getIType x) (getIType y)
+  ScalarUnOp  op x   -> ignoreExcept $ checkUnOp  op (getIType x)
+  VectorBinOp op x y -> ignoreExcept $ checkBinOp op (getIType x) (getIType y)
+  Select  _ x  _     -> getIType x
+  VectorPack xs      -> Vector ty  where Scalar ty = getIType $ head xs
+  VectorIndex x _    -> Scalar ty  where Vector ty = getIType x
+  PtrLoad ref        -> ty  where PtrType (_, ty) = getIType ref
+  PtrOffset ref _    -> PtrType (addr, ty)  where PtrType (addr, ty) = getIType ref
+  OutputStreamPtr -> hostPtrTy $ hostPtrTy $ Scalar Word8Type
+    where hostPtrTy ty = PtrType (Heap CPU, ty)
+  _ -> unreachable
+  where unreachable = error $ "Not allowed in Imp IR: " ++ show pop

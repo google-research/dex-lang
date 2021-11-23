@@ -7,7 +7,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module SaferNames.Simplify (simplifyModule, splitSimpModule) where
+module SaferNames.Simplify
+  ( simplifyModule, splitSimpModule, applyDataResults) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -55,22 +56,41 @@ instance Fallible (SimplifyM i o) where
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance Builder (SimplifyM i) where
   emitDecl hint ann expr = SimplifyM $ emitDecl hint ann expr
-  buildScoped _ = undefined
+  buildScoped cont = SimplifyM $ EnvReaderT $ ReaderT \env ->
+    buildScoped $ runEnvReaderT (inject env) (runSimplifyM' cont)
 
 -- === Top level ===
 
 simplifyModule :: Distinct n => Bindings n -> Module n -> Module n
 simplifyModule bindings (Module Core decls result) = runSimplifyM bindings do
   Immut <- return $ toImmutEvidence bindings
-  DistinctAbs decls' (AtomSubstEvaluatedModule result') <-
+  DistinctAbs decls' result' <-
     buildScoped $ simplifyDecls decls $
-      AtomSubstEvaluatedModule <$> substEvalautedModuleM result
+      substEvaluatedModuleM result
   return $ Module Simp decls' result'
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
+type AbsEvaluatedModule n = Abs (Nest (NameBinder AtomNameC)) EvaluatedModule n
+
 splitSimpModule :: Distinct n => Bindings n -> Module n
-                -> (Block n , Abs Binder Module n)
-splitSimpModule = undefined
+                -> (Block n , AbsEvaluatedModule n)
+splitSimpModule bindings (Module _ decls result) = do
+  let (vs, recon) = captureClosure decls result
+  let result = Atom $ ProdVal $ map Var vs
+  let block = runHardFail $ runBindingsReaderT bindings $
+                refreshAbsM (Abs decls result) \decls' result' ->
+                  makeBlock decls' result'
+  (block, recon)
+
+applyDataResults :: Distinct n => Bindings n
+                 -> AbsEvaluatedModule n -> Atom n
+                 -> EvaluatedModule n
+applyDataResults bindings (Abs bs evaluated) x =
+  runHardFail $ runBindingsReaderT bindings $
+    runEnvReaderT idEnv do
+      xs <- getUnpacked $ inject x
+      extendEnv (bs @@> map SubstVal xs) $
+        substEvaluatedModuleM evaluated
 
 -- === All the bits of IR  ===
 
@@ -163,22 +183,3 @@ simplifyHof = undefined
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
-
--- === Substitutible module hack ===
-
--- See also: "zonkable source map hack" in inference ...
-
-newtype AtomSubstEvaluatedModule (n::S) =
-  AtomSubstEvaluatedModule (EvaluatedModule n)
-  deriving (HoistableE, InjectableE)
-
-instance SubstE Name AtomSubstEvaluatedModule where
-  substE env (AtomSubstEvaluatedModule e) =
-    AtomSubstEvaluatedModule $ substE env e
-
-instance SubstE AtomSubstVal AtomSubstEvaluatedModule where
-  substE (scope, env) e = substE (scope, env') e
-    where env' = newEnv \v -> case env ! v of
-                   SubstVal (Var v') -> v'
-                   SubstVal _ -> error "shouldn't happen"
-                   Rename v' -> v'

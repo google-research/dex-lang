@@ -16,7 +16,8 @@ module SaferNames.Type (
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices,
   caseAltsBinderTys, tryGetType, projectLength,
-  sourceNameType, substEvalautedModuleM) where
+  sourceNameType, substEvaluatedModuleM,
+  checkUnOp, checkBinOp) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -185,11 +186,10 @@ instance CheckableE Module where
           return $ Module ir decls' evaluated'
 
 instance CheckableE EvaluatedModule where
-  checkE (EvaluatedModule bindings scs sourceMap) =
+  checkE (EvaluatedModule bindings sourceMap) =
     checkB bindings \bindings' -> do
-      scs' <- checkE scs
       sourceMap' <- checkE sourceMap
-      return $ EvaluatedModule bindings' scs' sourceMap'
+      return $ EvaluatedModule bindings' sourceMap'
 
 instance CheckableE SourceMap where
   checkE sourceMap = substM sourceMap
@@ -1004,11 +1004,11 @@ litFromOrdinal ty i = case ty of
 
 -- === substituting evaluated modules ===
 
-substEvalautedModuleM
+substEvaluatedModuleM
   :: (EnvReader AtomSubstVal m, BindingsReader2 m)
   => EvaluatedModule i
   -> m i o (EvaluatedModule o)
-substEvalautedModuleM m = liftImmut do
+substEvaluatedModuleM m = liftImmut do
   env <- getEnv
   DB bindings <- getDB
   return $ atomSubstEvaluatedModule bindings env m
@@ -1017,6 +1017,9 @@ substEvalautedModuleM m = liftImmut do
 -- names with atoms. Instead, we create new bindings for the atoms we want to
 -- substitute with, and then substitute with the names of those bindings in the
 -- source map.
+-- Unfortunately we can't make this the `SubstE AtomSubstVal` instance for
+-- `EvaluatedModule` because we need the bindings (to query types), whereas
+-- `substE` only gives us scopes.
 atomSubstEvaluatedModule
   :: forall i o.
      Distinct o
@@ -1024,12 +1027,12 @@ atomSubstEvaluatedModule
 atomSubstEvaluatedModule bindings env m = do
   let scope = toScope bindings
   case substAnything scope env m of
-    Abs bs (EvaluatedModule frag scs sm) ->
-      case refreshAbs scope $ Abs (PairB bs frag) (PairE scs sm) of
-        DistinctAbs (PairB bs' frag') (PairE scs' sm') ->
+    Abs bs (EvaluatedModule frag sm) ->
+      case refreshAbs scope $ Abs (PairB bs frag) sm of
+        DistinctAbs (PairB bs' frag') sm' ->
           withSubscopeDistinct frag' do
             let bs'' = atomNestToBindingsFrag bindings bs'
-            EvaluatedModule (bs'' `catBindingsFrags` frag') scs' sm'
+            EvaluatedModule (bs'' `catBindingsFrags` frag') sm'
 
 atomNestToBindingsFrag
   :: Distinct o'

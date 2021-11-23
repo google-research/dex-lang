@@ -56,7 +56,7 @@ library
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec, Export
                        Err, LabeledItems, SourceRename,
                        SaferNames.Name, SaferNames.LazyMap,
-                       SaferNames.Syntax, SaferNames.Bridge,
+                       SaferNames.Syntax,
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.ResolveImplicitNames, SaferNames.SourceRename,
                        SaferNames.Type, SaferNames.Builder, SaferNames.Inference,

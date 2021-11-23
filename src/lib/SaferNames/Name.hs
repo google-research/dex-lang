@@ -71,12 +71,12 @@ module SaferNames.Name (
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
-  freeVarsList, isFreeIn, todoInjectableProof, liftInplaceT,
+  freeVarsList, isFreeIn, todoInjectableProof,
   locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
   checkEmpty, updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence,
-  collectFreeVars, unConsEnv, ConsEnv (..),
+  collectFreeVars, unConsEnv, ConsEnv (..), MonadTrans1 (..),
   ) where
 
 import Prelude hiding (id, (.))
@@ -740,6 +740,9 @@ type AlwaysImmut2     (m::MonadKind2) = forall (n::S). AlwaysImmut     (m n)
 type Alternative1 (m::MonadKind1) = forall (n::S)        . Alternative (m n)
 type Alternative2 (m::MonadKind2) = forall (n::S) (l::S ). Alternative (m n l)
 
+class MonadTrans1 (t :: MonadKind -> MonadKind1) where
+  lift1 :: Monad m => m a -> t m n a
+
 -- === subst monad ===
 
 -- Only alllows non-trivial substitution with names that match the parameter
@@ -1138,10 +1141,6 @@ runInplaceT bindings (UnsafeMakeInplaceT f) = do
   (result, d) <- f bindings
   return (unsafeCoerceB d, result)
 
-liftInplaceT :: (Monad m, OutFrag d, ExtOutMap b d)
-              => m a -> InplaceT b d m n a
-liftInplaceT m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
-
 -- Special case of extending without introducing new names
 -- (doesn't require `Mut n`)
 extendTrivialInplaceT
@@ -1307,7 +1306,7 @@ instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
-  fail s = liftInplaceT $ fail s
+  fail s = lift1 $ fail s
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
@@ -1317,12 +1316,12 @@ instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
-  getErrCtx = liftInplaceT getErrCtx
+  getErrCtx = lift1 getErrCtx
 
 instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
          , Alternative m)
          => Alternative (InplaceT bindings decls m n) where
-  empty = liftInplaceT empty
+  empty = lift1 empty
   UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
     f1 bindings <|> f2 bindings
 
@@ -1342,9 +1341,24 @@ instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls,
 instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
          , MonadWriter w m)
          => MonadWriter w (InplaceT bindings decls m n) where
-  tell w = liftInplaceT $ tell w
+  tell w = lift1 $ tell w
   listen = undefined
   pass = undefined
+
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls)
+         => MonadTrans1 (InplaceT bindings decls) where
+  lift1 m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
+
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
+         , MonadReader r m)
+         => MonadReader r (InplaceT bindings decls m n) where
+  ask = lift1 $ ask
+  local = undefined
+
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
+         , MonadIO m)
+         => MonadIO (InplaceT bindings decls m n) where
+  liftIO = lift1 . liftIO
 
 -- === name hints ===
 

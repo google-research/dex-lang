@@ -30,8 +30,9 @@ module SaferNames.Builder (
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
+  TopBindingsFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
-  singletonBinderNest, runBuilderM, liftBuilder,
+  singletonBinderNest, runBuilderM, liftBuilder, makeBlock
   ) where
 
 import Control.Applicative
@@ -98,28 +99,63 @@ emitAtomToName x = emit (Atom x)
 class (BindingsReader m, MonadFail1 m)
       => TopBuilder (m::MonadKind1) where
   emitBinding :: Mut n => NameColor c => NameHint -> Binding c n -> m n (Name c n)
+  emitBindings :: (Mut n, InjectableE e, SubstE Name e)
+               => Abs BindingsFrag e n -> m n (e n)
+  emitSourceMap :: SourceMap n -> m n ()
   localTopBuilder :: (Immut n, InjectableE e)
                   => (forall l. (Mut l, Ext n l) => m l (e l))
-                  -> m n (DistinctAbs BindingsFrag e n)
+                  -> m n (DistinctAbs TopBindingsFrag e n)
+
+data TopBindingsFrag n l = TopBindingsFrag (BindingsFrag n l) (SourceMap l)
+
+instance GenericB TopBindingsFrag where
+  type RepB TopBindingsFrag = PairB BindingsFrag (LiftB SourceMap)
+  fromB (TopBindingsFrag frag sm) = PairB frag (LiftB sm)
+  toB   (PairB frag (LiftB sm)) = TopBindingsFrag frag sm
+
+instance InjectableB TopBindingsFrag
+instance ProvesExt   TopBindingsFrag
+instance BindsNames  TopBindingsFrag
+
+instance OutFrag TopBindingsFrag where
+  emptyOutFrag = TopBindingsFrag emptyOutFrag mempty
+  catOutFrags scope (TopBindingsFrag frag1 sm1) (TopBindingsFrag frag2 sm2) =
+    TopBindingsFrag
+      (catOutFrags scope frag1 frag2)
+      (withExtEvidence frag2 $ (inject sm1 <> sm2))
+
+instance ExtOutMap Bindings TopBindingsFrag where
+  extendOutMap bindings  (TopBindingsFrag frag sm') =
+    Bindings bs scs (sm <> sm') effs
+    where (Bindings bs scs sm effs) = bindings `extendOutMap` frag
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
-  TopBuilderT { runTopBuilderT' :: InplaceT Bindings BindingsFrag m n a }
+  TopBuilderT { runTopBuilderT' :: InplaceT Bindings TopBindingsFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader)
+           , CtxReader, ScopeReader, MonadTrans1, MonadReader r, MonadIO)
 
 instance Fallible m => BindingsReader (TopBuilderT m) where
   getBindings = TopBuilderT $ getOutMapInplaceT
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
   emitBinding hint binding = TopBuilderT $
-    emitInplaceT hint binding \b binding' -> toBindingsFrag (b:>binding')
-
-  localTopBuilder cont = TopBuilderT do
+    emitInplaceT hint binding \b binding' ->
+      TopBindingsFrag (toBindingsFrag (b:>binding')) mempty
+  emitBindings ab = TopBuilderT do
+    extendInplaceT do
+      scope <- getScope
+      ab' <- injectM ab
+      DistinctAbs frag e <- return $ refreshAbs scope ab'
+      return $ DistinctAbs (TopBindingsFrag frag mempty) e
+  emitSourceMap sm = TopBuilderT do
+    extendTrivialInplaceT (TopBindingsFrag emptyOutFrag sm)
+  localTopBuilder cont = TopBuilderT $
     locallyMutableInplaceT $ runTopBuilderT' cont
 
 instance (InjectableV v, TopBuilder m) => TopBuilder (EnvReaderT v m i) where
   emitBinding hint binding = EnvReaderT $ lift $ emitBinding hint binding
-
+  emitBindings = undefined
+  emitSourceMap = undefined
   localTopBuilder cont = EnvReaderT $ ReaderT \env -> do
     localTopBuilder do
       Distinct <- getDistinct
@@ -146,7 +182,7 @@ instance ExtOutMap Bindings BuilderEmissions where
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Bindings BuilderEmissions m n a }
-  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+  deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
            , CtxReader, ScopeReader, Alternative, Searcher, MonadWriter w)
 
 type BuilderM = BuilderT HardFailM
@@ -248,6 +284,13 @@ buildBlock cont = liftImmut do
   ty' <- liftHoistExcept $ hoist decls ty
   Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
   return $ Block ty' decls' result'
+
+makeBlock :: (BindingsReader m, BindingsExtender m, Fallible1 m)
+          => Nest Decl n l -> Expr l -> m l (Block n)
+makeBlock decls expr = do
+  ty <- getType expr
+  ty' <- liftHoistExcept $ hoist decls ty
+  return $ Block ty' decls expr
 
 inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
 inlineLastDecl Empty result = Abs Empty result
@@ -619,7 +662,7 @@ getProjRef i r = emitOp $ ProjRef i r
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
 -- equivalent types spelled differently).
-getUnpacked :: (Builder m, Emits n) => Atom n -> m n [Atom n]
+getUnpacked :: (Fallible1 m, BindingsReader m) => Atom n -> m n [Atom n]
 getUnpacked atom = do
   atom' <- cheapReduce atom
   ty <- getType atom'

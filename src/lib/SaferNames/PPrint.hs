@@ -496,11 +496,9 @@ instance Pretty (BindingsFrag n l) where
     <> "Effects candidates:" <+> p effects
 
 instance Pretty (EvaluatedModule n) where
-  pretty (EvaluatedModule bindings synthCandidates sourceMap) =
+  pretty (EvaluatedModule bindings sourceMap) =
        "decls:"
     <>   indented (p bindings)
-    <> "Synthesis candidates:"
-    <>   indented (p synthCandidates)
     <> "Source map:"
     <>   indented (p sourceMap)
 
