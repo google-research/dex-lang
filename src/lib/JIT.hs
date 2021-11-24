@@ -350,7 +350,7 @@ compileInstr instr = case instr of
 
 -- TODO: use a careful naming discipline rather than strings
 topLevelFunName :: IFunVar -> L.Name
-topLevelFunName = undefined
+topLevelFunName (name, _) = fromString name
 
 makeFunSpec :: IFunVar -> ExternFunSpec
 makeFunSpec = undefined
@@ -624,16 +624,16 @@ _debugPrintfPtr s x = do
 
 compileBlock :: ImpBlock n -> Compile n [Operand]
 compileBlock (ImpBlock Empty result) = traverse compileExpr result
--- compileBlock (ImpBlock (Nest decl rest) result) = do
---   env <- compileDecl decl
---   extendOperands env $ compileBlock (ImpBlock rest result)
+compileBlock (ImpBlock (Nest decl rest) result) = do
+  env <- compileDecl decl
+  extendOperands env $ compileBlock (ImpBlock rest result)
 
--- compileDecl :: ImpDecl n l -> Compile n (OperandEnv l)
--- compileDecl (ImpLet bs instr) = do
---   results <- compileInstr instr
---   if length results == length bs
---     then return $ foldMap (uncurry (@>)) $ zip bs results
---     else error "Unexpected number of results"
+compileDecl :: ImpDecl n l -> Compile n (OperandEnvFrag n l)
+compileDecl (ImpLet bs instr) = do
+  results <- compileInstr instr
+  if length results == nestLength bs
+    then return $ bs @@> map (SubstVal . LiftE) results
+    else error "Unexpected number of results"
 
 compileVoidBlock :: ImpBlock n -> Compile n ()
 compileVoidBlock = void . compileBlock
@@ -835,9 +835,8 @@ asLLVMName :: D.Name -> L.Name
 asLLVMName name = fromString $ pprint name
 
 showName :: D.Name -> String
-showName = undefined
--- showName (Name GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
--- showName _ = error $ "All names in JIT should be from the GenName namespace"
+showName (D.Name D.GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
+showName _ = error $ "All names in JIT should be from the GenName namespace"
 
 asIntWidth :: Operand -> L.Type -> Compile n Operand
 asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
@@ -929,11 +928,11 @@ initializeOutputStream streamFD = do
 -- === Compile monad utilities ===
 
 runCompile :: Device -> Compile n a -> a
-runCompile = undefined
--- runCompile dev m = evalState (runReaderT m env) initState
---   where
---     env = CompileEnv mempty dev
---     initState = CompileState [] [] [] "start_block" mempty mempty mempty
+runCompile dev m = evalState (runReaderT m env) initState
+  where
+    -- TODO: figure out naming discipline properly
+    env = CompileEnv (unsafeCoerceE idEnv) dev
+    initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnvFrag i i' -> Compile i' a -> Compile i a
 extendOperands openv = withReaderT \env -> env { operandEnv = operandEnv env <>> openv }
@@ -942,8 +941,11 @@ opSubstVal :: Operand -> OperandSubstVal AtomNameC VoidS
 opSubstVal x = SubstVal (LiftE x)
 
 lookupImpVar :: AtomName n -> Compile n Operand
-lookupImpVar = undefined
--- lookupImpVar v = asks ((! v) . operandEnv)
+lookupImpVar v = do
+  env <- asks operandEnv
+  case env ! v of
+    SubstVal (LiftE x) -> return x
+    Rename _ -> error "shouldn't happen?"
 
 finishBlock :: L.Terminator -> L.Name -> Compile n ()
 finishBlock term newName = do
@@ -955,15 +957,18 @@ finishBlock term newName = do
          . setBlockName (const newName)
 
 freshName :: NameHint -> Compile n L.Name
-freshName = undefined
--- freshName v = do
---   used <- gets usedNames
---   let v' = D.genFresh v used
---   modify \s -> s { usedNames = used <> v' D.@> () }
---   return $ nameToLName v'
---   where
---     nameToLName :: D.Name -> L.Name
---     nameToLName name = L.Name $ toShort $ B.pack $ showName name
+freshName v = do
+  used <- gets usedNames
+  let v' = D.genFresh hint' used
+  modify \s -> s { usedNames = used <> v' D.@> () }
+  return $ nameToLName v'
+  where
+    nameToLName :: D.Name -> L.Name
+    nameToLName name = L.Name $ toShort $ B.pack $ showName name
+
+    hint' :: D.Name
+    hint' = case v of Hint s -> fromString $ pprint s
+                      NoHint -> "v"
 
 -- TODO: consider getting type from instruction rather than passing it explicitly
 emitInstr :: L.Type -> Instruction -> Compile n Operand

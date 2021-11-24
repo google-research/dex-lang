@@ -35,10 +35,10 @@ toImpModule :: Distinct n
             -> Abs (Nest PtrBinder) Block n
             -> (ImpFunction n, ImpModule n, AtomRecon n)
 toImpModule bindings _ cc mainFunName maybeDest absBlock =
-  (f', ImpModule [], recon')
+  (f', ImpModule [f'], recon')
   where
     PairE recon' f' = runImpM bindings do
-      (recon, f) <- translateTopLevel cc (fmap inject maybeDest) $
+      (recon, f) <- translateTopLevel cc mainFunName (fmap inject maybeDest) $
                       inject absBlock
       return $ PairE recon f
 
@@ -111,10 +111,11 @@ runImpM bindings cont =
 
 translateTopLevel :: (Immut o, Imper m)
                   => CallingConvention
+                  -> SourceName
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
                   -> m i o (AtomRecon o, ImpFunction o)
-translateTopLevel cc maybeDest (Abs bs body) = do
+translateTopLevel cc mainFunName maybeDest (Abs bs body) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
   DistinctAbs bs' (DistinctAbs decls resultAtom) <-
     buildImpNaryAbs argTys \vs ->
@@ -126,7 +127,7 @@ translateTopLevel cc maybeDest (Abs bs body) = do
                         buildRecon localBindings resultAtom
   let funImpl = Abs bs' $ ImpBlock decls results
   let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
-  return (recon, ImpFunction "mainFn" funTy funImpl)
+  return (recon, ImpFunction mainFunName funTy funImpl)
 
 buildRecon :: (HoistableB b, BindingsReader m)
            => b n l
@@ -292,6 +293,7 @@ impFunType (ImpFunction _ ty _) = ty
 
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
+getIType (IVar _ ty) = ty
 
 impInstrTypes :: ImpInstr n -> [IType]
 impInstrTypes instr = case instr of
