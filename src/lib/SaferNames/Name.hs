@@ -41,7 +41,7 @@ module SaferNames.Name (
   runScopeReaderT, runScopeReaderM, runEnvReaderT, ScopeReaderT (..), EnvReaderT (..),
   lookupEnvM, dropSubst, extendEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
-  Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2,
+  Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2, Monoid1,
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applySubst, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
@@ -738,6 +738,8 @@ type AlwaysImmut2     (m::MonadKind2) = forall (n::S). AlwaysImmut     (m n)
 
 type Alternative1 (m::MonadKind1) = forall (n::S)        . Alternative (m n)
 type Alternative2 (m::MonadKind2) = forall (n::S) (l::S ). Alternative (m n l)
+
+type Monoid1 (m :: E) = forall (n::S). Monoid (m n)
 
 -- === subst monad ===
 
