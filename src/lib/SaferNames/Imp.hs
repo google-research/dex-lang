@@ -284,6 +284,9 @@ toScalarType b = BaseTy b
 
 -- === type checking imp programs ===
 
+instance CheckableE ImpModule where
+  checkE m = substM m  -- TODO
+
 impFunType :: ImpFunction n -> IFunType
 impFunType (ImpFunction _ ty _) = ty
 

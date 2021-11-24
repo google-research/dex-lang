@@ -2067,3 +2067,19 @@ instance BindsNames ImpDecl
 instance BindsBindings ImpDecl where
   toBindingsFrag (ImpLet bs _) =
     toBindingsFrag bs
+
+instance GenericE ImpFunction where
+  type RepE ImpFunction = UnitE -- TODO
+
+instance InjectableE ImpFunction
+instance HoistableE  ImpFunction
+instance AlphaEqE    ImpFunction
+instance SubstE Name ImpFunction
+
+instance GenericE ImpModule where
+  type RepE ImpModule = ListE ImpFunction
+
+instance InjectableE ImpModule
+instance HoistableE  ImpModule
+instance AlphaEqE    ImpModule
+instance SubstE Name ImpModule

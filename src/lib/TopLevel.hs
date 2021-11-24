@@ -400,7 +400,7 @@ evalLLVM block = do
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
   --       were not lifted from the kernels just yet. We should split the Imp IR
   --       into different levels so that we can check the output here!
-  --checkPass ImpPass impModuleUnoptimized
+  checkPass ImpPass impModuleUnoptimized
   let impModule = case backend of
                     -- LLVMCUDA -> liftCUDAAllocations impModuleUnoptimized
                     _        -> impModuleUnoptimized

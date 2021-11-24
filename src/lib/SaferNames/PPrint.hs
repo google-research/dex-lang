@@ -510,3 +510,57 @@ instance Pretty (SynthCandidates n) where
 
 indented :: Doc ann -> Doc ann
 indented doc = nest 2 (hardline <> doc) <> hardline
+
+-- ==== Imp IR ===
+
+instance Pretty (IExpr n) where
+  pretty (ILit v) = p v
+  pretty (IVar v _) = p v
+
+instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance Pretty (ImpDecl n l) where
+  pretty (ImpLet Empty instr) = p instr
+  pretty (ImpLet (Nest b Empty) instr) = p b <+> "=" <+> p instr
+  pretty (ImpLet bs instr) = p bs <+> "=" <+> p instr
+
+instance Pretty IFunType where
+  pretty (IFunType cc argTys retTys) =
+    "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
+
+instance Pretty (ImpFunction n) where
+  pretty (ImpFunction f (IFunType cc _ _) (Abs bs body)) =
+    "def" <+> p f <+> p cc <+> p bs
+    <> nest 2 (hardline <> p body) <> hardline
+  pretty (FFIFunction f) = p f
+
+instance Pretty (ImpBlock n)  where
+  pretty (ImpBlock Empty expr) = group $ line <> pLowest expr
+  pretty (ImpBlock decls expr) = hardline <> prettyLines decls' <> pLowest expr
+    where decls' = fromNest decls
+
+instance Pretty (IBinder n l)  where
+  pretty (IBinder b ty) = p b <+> ":" <+> p ty
+
+instance Pretty (ImpInstr n)  where
+  pretty (IFor a n (Abs i block)) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
+                                      nest 4 (hardline <> p block)
+  pretty (IWhile body) = "while" <+> nest 2 (p body)
+  pretty (ICond predicate cons alt) =
+    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
+    hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (IQueryParallelism f s) = "queryParallelism" <+> p f <+> p s
+  pretty (ILaunch f size args) =
+    "launch" <+> p f <+> p size <+> spaced args
+  pretty (IPrimOp op)     = pLowest op
+  pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
+  pretty (Store dest val) = "store" <+> p dest <+> p val
+  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
+  pretty (Free ptr)       = "free"  <+> p ptr
+  pretty ISyncWorkgroup   = "syncWorkgroup"
+  pretty IThrowError      = "throwError"
+  pretty (ICall f args)   = "call" <+> p f <+> p args
+
+instance Pretty (ImpModule n) where
+  pretty (ImpModule fs) = "Imp module" <> indented (prettyLines fs)
