@@ -16,7 +16,7 @@
 module SaferNames.Builder (
   emit, emitOp,
   buildPureLam, BuilderT (..), Builder (..), Builder2,
-  runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
+  runBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
   emitMethodType, emitSuperclass,
@@ -257,14 +257,6 @@ inlineLastDecl (Nest decl rest) result =
   case inlineLastDecl rest result of
    Abs decls' result' ->
      Abs (Nest decl decls') result'
-
-buildBlockReduced
-  :: Builder m
-  => (forall l. (Emits l, Ext n l) => m l (Atom l))
-  -> m n (Maybe (Atom n))
-buildBlockReduced cont = do
-  Block _ decls result <- buildBlock cont
-  cheapReduceToAtom $ Abs decls result
 
 atomAsBlock :: BindingsReader m => Atom n -> m n (Block n)
 atomAsBlock x = do

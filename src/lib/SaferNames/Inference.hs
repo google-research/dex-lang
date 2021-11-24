@@ -590,15 +590,15 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           argTy' <- injectM $ piArgType piTy
           checkSigma x argTy'
         cheapReduceWithDecls decls result >>= \case
-          Nothing -> addSrcContext xPos $ do
-            throw TypeErr $ "Dependent functions can only be applied to fully " ++
-                            "evaluated expressions. Bind the argument to a name " ++
-                            "before you apply the function."
-          Just x' -> do
+          (Just x', Just []) -> do
             (effs, _) <- instantiatePi piTy x'
             addEffects effs
             appVal <- emit $ App f' x'
             instantiateSigma (Var appVal) >>= matchRequirement
+          _ -> addSrcContext xPos $ do
+            throw TypeErr $ "Dependent functions can only be applied to fully " ++
+                            "evaluated expressions. Bind the argument to a name " ++
+                            "before you apply the function."
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     ann' <- checkAnn ann
@@ -613,9 +613,9 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
             ty'   <- checkUType   ty
             return $ PairE effs' ty'
         cheapReduceWithDecls decls piResult >>= \case
-          Nothing -> throw TypeErr $ "Can't reduce type expression: " ++
+          (Just (PairE effs' ty'), Just []) -> return (effs', ty')
+          _ -> throw TypeErr $ "Can't reduce type expression: " ++
                        pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
-          Just (PairE effs' ty') -> return (effs', ty')
     matchRequirement $ Pi piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
@@ -646,8 +646,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       xBlock <- buildBlockInf $ inferRho x
       getType xBlock >>= \case
         TyKind -> cheapReduceToAtom xBlock >>= \case
-          Nothing -> throw CompilerErr "Type args to primops must be reducible"
-          Just reduced -> return reduced
+          (Just reduced, Just []) -> return reduced
+          _ -> throw CompilerErr "Type args to primops must be reducible"
         _ -> emitBlock xBlock
     val <- case prim' of
       TCExpr  e -> return $ TC e
@@ -1177,11 +1177,16 @@ checkAnn ann = case ann of
   Nothing -> freshType TyKind
 
 checkUType :: EmitsInf o => Inferer m => UType i -> m i o (Type o)
-checkUType ty = do
+checkUType ty@(WithSrcE pos _) = addSrcContext pos $ do
   Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho ty TyKind
   cheapReduceWithDecls decls result >>= \case
-    Just ty' -> return $ ty'
-    Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+    (_       , Just (d:_)) ->
+      throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint d
+    (_       , Nothing   ) ->
+      throw TypeErr $ "Couldn't synthesize a class dictionary required by: " ++ pprint ty
+    (Nothing , Just []   ) ->
+      throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+    (Just ty', Just []   ) -> return ty'
 
 checkExtLabeledRow :: (EmitsBoth o, Inferer m)
                    => ExtLabeledItems (UExpr i) (UExpr i)
