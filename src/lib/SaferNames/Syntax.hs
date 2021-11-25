@@ -29,7 +29,7 @@ module SaferNames.Syntax (
     PiType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
-    ClassDef (..), EvaluatedModule (..), SynthCandidates (..), Bindings (..),
+    ClassDef (..), SynthCandidates (..), Bindings (..),
     BindsBindings (..), BindsOneAtomName (..), WithBindings (..),
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -49,6 +49,7 @@ module SaferNames.Syntax (
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
     BindingsReader (..), BindingsExtender (..),  Binding (..),
+    TopBindingsFrag (..), EvaluatedModule,
     ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
     withFreshLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
@@ -279,14 +280,14 @@ instance HasScope Bindings where
 
 catBindingsFrags :: Distinct n3
                  => BindingsFrag n1 n2 -> BindingsFrag n2 n3 -> BindingsFrag n1 n3
-catBindingsFrags (BindingsFrag (RecEnvFrag frag1) maybeEffs1)
-                 (BindingsFrag (RecEnvFrag frag2) maybeEffs2) =
-  withExtEvidence (toExtEvidence (RecEnvFrag frag2)) do
-     let fragOut = inject frag1 `catInFrags` frag2
-     let effsOut = case maybeEffs2 of
+catBindingsFrags (BindingsFrag frag1 maybeEffs1)
+                 (BindingsFrag frag2 maybeEffs2) =
+  withExtEvidence (toExtEvidence frag2) do
+    let fragOut = catRecEnvFrags frag1 frag2
+    let effsOut = case maybeEffs2 of
                      Nothing    -> fmap inject maybeEffs1
                      Just effs2 -> Just effs2
-     BindingsFrag (RecEnvFrag fragOut) effsOut
+    BindingsFrag fragOut effsOut
 
 instance OutFrag BindingsFrag where
   emptyOutFrag = BindingsFrag emptyOutFrag Nothing
@@ -295,18 +296,24 @@ instance OutFrag BindingsFrag where
 instance OutMap Bindings where
   emptyOutMap = Bindings emptyOutMap mempty (SourceMap mempty) Pure
 
-instance ExtOutMap Bindings BindingsFrag where
-  extendOutMap (Bindings bindings scs sm oldEff) frag =
+instance ExtOutMap Bindings (RecEnvFrag Binding)  where
+  extendOutMap (Bindings bindings scs sm eff) frag =
     withExtEvidence frag do
-      let BindingsFrag newBindings maybeNewEff = frag
-      let newEff = case maybeNewEff of
-                     Nothing  -> inject oldEff
-                     Just eff -> eff
       Bindings
-        (bindings `extendOutMap` newBindings)
-        (inject scs <> bindingsFragToSynthCandidates frag)
+        (bindings `extendOutMap` frag)
+        (inject scs <> bindingsFragToSynthCandidates (BindingsFrag frag Nothing))
         (inject sm)
-        newEff
+        (inject eff)
+
+instance ExtOutMap Bindings BindingsFrag where
+  extendOutMap bindings frag = do
+    let BindingsFrag newBindings maybeNewEff = frag
+    case extendOutMap bindings newBindings of
+      Bindings bs scs sm oldEff -> do
+        let newEff = case maybeNewEff of
+                       Nothing  -> inject oldEff
+                       Just eff -> eff
+        Bindings bs scs sm newEff
 
 bindingsFragToSynthCandidates :: Distinct l => BindingsFrag n l -> SynthCandidates l
 bindingsFragToSynthCandidates (BindingsFrag (RecEnvFrag frag) _) =
@@ -885,15 +892,14 @@ data SourceMap (n::S) = SourceMap
 data Module n where
   Module
     :: IRVariant
-    -> Nest Decl n l      -- Unevaluated decls representing runtime work to be done
+    -> Nest Decl n l   -- Unevaluated decls representing runtime work to be done
     -> EvaluatedModule l
     -> Module n
 
-data EvaluatedModule (n::S) where
-  EvaluatedModule
-    :: BindingsFrag n l   -- Evaluated bindings
-    -> SourceMap l        -- Mapping of module's source names to internal names
-    -> EvaluatedModule n
+type EvaluatedModule = Abs TopBindingsFrag UnitE
+
+data TopBindingsFrag n l =
+  TopBindingsFrag (BindingsFrag n l) (SynthCandidates l) (SourceMap l)
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 data SynthCandidates n = SynthCandidates
@@ -1815,21 +1821,13 @@ instance Pretty (SourceMap n) where
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
 instance GenericE Module where
-  type RepE Module = LiftE IRVariant `PairE` Abs (Nest Decl) EvaluatedModule
+  type RepE Module =       LiftE IRVariant
+                   `PairE` Abs (Nest Decl) (Abs TopBindingsFrag UnitE)
   fromE = undefined
   toE = undefined
 
 instance InjectableE Module
 instance SubstE Name Module
-
-instance GenericE EvaluatedModule where
-  type RepE EvaluatedModule = Abs BindingsFrag SourceMap
-  fromE (EvaluatedModule bs sm) = Abs bs sm
-  toE   (Abs bs sm) = EvaluatedModule bs sm
-
-instance InjectableE EvaluatedModule
-instance HoistableE EvaluatedModule
-instance SubstE Name EvaluatedModule
 
 instance Store (Atom n)
 instance Store (Expr n)
@@ -2083,3 +2081,34 @@ instance InjectableE ImpModule
 instance HoistableE  ImpModule
 instance AlphaEqE    ImpModule
 instance SubstE Name ImpModule
+
+instance GenericB TopBindingsFrag where
+  type RepB TopBindingsFrag = PairB BindingsFrag
+                                    (LiftB (PairE SynthCandidates SourceMap))
+  fromB (TopBindingsFrag frag sc sm) = PairB frag (LiftB (PairE sc sm))
+  toB   (PairB frag (LiftB (PairE sc sm))) = TopBindingsFrag frag sc sm
+
+instance SubstB Name TopBindingsFrag
+instance HoistableB  TopBindingsFrag
+instance InjectableB TopBindingsFrag
+instance ProvesExt   TopBindingsFrag
+instance BindsNames  TopBindingsFrag
+
+instance OutFrag TopBindingsFrag where
+  emptyOutFrag = TopBindingsFrag emptyOutFrag mempty mempty
+  catOutFrags scope (TopBindingsFrag frag1 sc1 sm1) (TopBindingsFrag frag2 sc2 sm2) =
+    withExtEvidence frag2 $
+      TopBindingsFrag
+        (catOutFrags scope frag1 frag2)
+        (inject sc1 <> sc2)
+        (inject sm1 <> sm2)
+
+-- XXX: unlike `ExtOutMap Bindings BindingsFrag` instance, this once doesn't
+-- extend the synthesis candidates based on the annotated let-bound names. It
+-- only extends synth candidates when they're supplied explicitly.
+instance ExtOutMap Bindings TopBindingsFrag where
+  extendOutMap (Bindings bs scs sm effs)
+               (TopBindingsFrag (BindingsFrag frag _) scs' sm') =
+    withExtEvidence (toExtEvidence frag) $
+      Bindings (bs `extendOutMap` frag) (inject scs <> scs')
+               (inject sm <> sm') (inject effs)

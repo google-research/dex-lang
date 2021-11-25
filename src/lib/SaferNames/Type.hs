@@ -186,10 +186,11 @@ instance CheckableE Module where
           return $ Module ir decls' evaluated'
 
 instance CheckableE EvaluatedModule where
-  checkE (EvaluatedModule bindings sourceMap) =
+  checkE (Abs (TopBindingsFrag bindings scs sourceMap) UnitE) =
     checkB bindings \bindings' -> do
       sourceMap' <- checkE sourceMap
-      return $ EvaluatedModule bindings' sourceMap'
+      scs'       <- checkE scs
+      return $ Abs (TopBindingsFrag bindings' scs' sourceMap') UnitE
 
 instance CheckableE SourceMap where
   checkE sourceMap = substM sourceMap
@@ -200,8 +201,8 @@ instance CheckableE SynthCandidates where
                     <*> mapM checkE ys
                     <*> mapM checkE zs
 
-instance CheckableB BindingsFrag where
-  checkB (BindingsFrag frag effs) cont = do
+instance CheckableB (RecEnvFrag Binding) where
+  checkB frag cont = do
     Immut <- getImmut
     scope <- getScope
     env <- getEnv
@@ -210,8 +211,13 @@ instance CheckableB BindingsFrag where
     extendBindings (BindingsFrag frag' Nothing) do
       void $ dropSubst $ traverseEnvFrag checkE $ fromRecEnvFrag frag'
       withEnv env' do
-        effs' <- mapM checkE effs
-        cont $ BindingsFrag frag' effs'
+        cont frag'
+
+instance CheckableB BindingsFrag where
+  checkB (BindingsFrag frag effs) cont = do
+    checkB frag \frag' -> do
+      effs' <- mapM checkE effs
+      cont $ BindingsFrag frag' effs'
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
@@ -1004,15 +1010,6 @@ litFromOrdinal ty i = case ty of
 
 -- === substituting evaluated modules ===
 
-substEvaluatedModuleM
-  :: (EnvReader AtomSubstVal m, BindingsReader2 m)
-  => EvaluatedModule i
-  -> m i o (EvaluatedModule o)
-substEvaluatedModuleM m = liftImmut do
-  env <- getEnv
-  DB bindings <- getDB
-  return $ atomSubstEvaluatedModule bindings env m
-
 -- A module's source map is a name-to-name mapping, so we can't replace the rhs
 -- names with atoms. Instead, we create new bindings for the atoms we want to
 -- substitute with, and then substitute with the names of those bindings in the
@@ -1020,32 +1017,46 @@ substEvaluatedModuleM m = liftImmut do
 -- Unfortunately we can't make this the `SubstE AtomSubstVal` instance for
 -- `EvaluatedModule` because we need the bindings (to query types), whereas
 -- `substE` only gives us scopes.
-atomSubstEvaluatedModule
-  :: forall i o.
-     Distinct o
-  => Bindings o -> Env AtomSubstVal i o -> EvaluatedModule i -> EvaluatedModule o
-atomSubstEvaluatedModule bindings env m = do
-  let scope = toScope bindings
-  case substAnything scope env m of
-    Abs bs (EvaluatedModule frag sm) ->
-      case refreshAbs scope $ Abs (PairB bs frag) sm of
-        DistinctAbs (PairB bs' frag') sm' ->
-          withSubscopeDistinct frag' do
-            let bs'' = atomNestToBindingsFrag bindings bs'
-            EvaluatedModule (bs'' `catBindingsFrags` frag') sm'
+
+substEvaluatedModuleM
+  :: (EnvReader AtomSubstVal m, BindingsReader2 m)
+  => EvaluatedModule i
+  -> m i o (EvaluatedModule o)
+substEvaluatedModuleM m = liftImmut do
+  Abs (TopBindingsFrag (BindingsFrag bs eff) sc sm) UnitE <- return m
+  env <- getEnv
+  DB bindings <- getDB
+  let body = toMaybeE eff `PairE` sc `PairE` sm
+  Abs bs' body' <- return $ atomSubstAbsBindingsFrag bindings env $ Abs bs body
+  eff' `PairE` sc' `PairE` sm' <- return body'
+  return $ EmptyAbs (TopBindingsFrag (BindingsFrag bs' (fromMaybeE eff')) sc' sm')
+
+atomSubstAbsBindingsFrag
+  :: (Distinct o, InjectableE e, SubstE Name e, HoistableE e)
+  => Bindings o
+  -> Env AtomSubstVal i o
+  -> Abs (RecEnvFrag Binding) e i
+  -> Abs (RecEnvFrag Binding) e o
+atomSubstAbsBindingsFrag bindings env (Abs b e) =
+  substB (toScope bindings, env) b \(scope', env') b' ->
+    case substAnything scope' env' e of
+      DistinctAbs bNew e' -> do
+        let bindings' = extendOutMap bindings b'
+        let bOut = catRecEnvFrags b' (atomNestToBindingsFrag bindings' bNew)
+        Abs bOut e'
 
 atomNestToBindingsFrag
   :: Distinct o'
   => Bindings o
   -> Nest (BinderP AtomNameC Atom) o o'
-  -> BindingsFrag o o'
+  -> RecEnvFrag Binding o o'
 atomNestToBindingsFrag _ Empty = emptyOutFrag
 atomNestToBindingsFrag bindings (Nest (b:>x) rest) =
   withSubscopeDistinct rest $
     withSubscopeDistinct b do
-      let frag = toBindingsFrag (b :> atomToBinding bindings x)
+      let (BindingsFrag frag _) = toBindingsFrag (b :> atomToBinding bindings x)
       let frag' = atomNestToBindingsFrag (bindings `extendOutMap` frag) rest
-      catBindingsFrags frag frag'
+      catRecEnvFrags frag frag'
 
 atomToBinding :: Distinct n => Bindings n -> Atom n -> Binding AtomNameC n
 atomToBinding bindings x = do
@@ -1058,7 +1069,7 @@ substAnything
   => Scope o
   -> Env (SubstVal c atom) i o
   -> e i
-  -> Abs (Nest (BinderP c atom)) e o
+  -> DistinctAbs (Nest (BinderP c atom)) e o
 substAnything scope subst e =
   substAnythingRec scope subst emptyInMap $ collectFreeVars e
 
@@ -1068,10 +1079,10 @@ substAnythingRec
   -> Env (SubstVal c atom) i o
   -> Env Name h o
   -> WithRenamer e h i
-  -> Abs (Nest (BinderP c atom)) e o
+  -> DistinctAbs (Nest (BinderP c atom)) e o
 substAnythingRec scope atomSubst nameSubst (WithRenamer renamer e) =
   case unConsEnv renamer of
-    EmptyEnv -> Abs Empty $ substE (scope, nameSubst) e
+    EmptyEnv -> DistinctAbs Empty $ substE (scope, nameSubst) e
     ConsEnv b v rest -> case atomSubst ! v of
       Rename v' ->
         substAnythingRec scope atomSubst nameSubst' $ WithRenamer rest e
@@ -1084,8 +1095,8 @@ substAnythingRec scope atomSubst nameSubst (WithRenamer renamer e) =
           prependNestAbs (b':>x) $
             substAnythingRec scope' atomSubst' nameSubst' $ WithRenamer rest e
 
-prependNestAbs :: b n l -> Abs (Nest b) e l -> Abs (Nest b) e n
-prependNestAbs b (Abs bs e) = Abs (Nest b bs) e
+prependNestAbs :: b n l -> DistinctAbs (Nest b) e l -> DistinctAbs (Nest b) e n
+prependNestAbs b (DistinctAbs bs e) = DistinctAbs (Nest b bs) e
 
 -- === various helpers for querying types ===
 

@@ -164,10 +164,10 @@ evalSourceText source = do
   return $ zip sourceBlocks results
 
 liftPassesM :: MonadInterblock m
-            => Bool
+            => Bool -> Bool -- TODO: one bool is bad enough. but two!
             -> (forall n. Mut n => PassesM n ())
             -> m Result
-liftPassesM bench m = do
+liftPassesM mayUpdateState bench m = do
   opts <- getConfig
   TopStateEx env <- getTopStateEx
   (result, outs) <- liftIO $ runPassesM bench opts env do
@@ -175,7 +175,8 @@ liftPassesM bench m = do
     localTopBuilder $ m >> return UnitE
   case result of
     Success (DistinctAbs bindingsFrag UnitE) -> do
-      setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
+      when mayUpdateState $
+        setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
       return $ Result outs (Success ())
     Failure errs -> do
       return $ Result outs (Failure errs)
@@ -195,8 +196,9 @@ evalSourceBlock (SourceBlock _ _ _ _ (ImportModule moduleName) _) = do
       setImportStatus moduleName FullyImported
       return $ summarizeModuleResults results
 evalSourceBlock block = do
-  result <- withCompileTime $ liftPassesM (requiresBench block) $
-              evalSourceBlock' block
+  result <- withCompileTime $
+              liftPassesM (mayUpdateTopState block) (requiresBench block) $
+                evalSourceBlock' block
   return $ filterLogs block $ addResultCtx block $ result
 
 evalSourceBlock' :: (Mut n, MonadPasses m) => SourceBlock -> m n ()
@@ -336,9 +338,8 @@ lookupAtomName v =
 
 execUModule :: (Mut n, MonadPasses m) => SourceUModule -> m n ()
 execUModule m = do
-  EvaluatedModule frag sm <- liftImmut (evalUModule m)
-  sm' <- emitBindings $ Abs frag sm
-  emitSourceMap sm'
+  bs <- liftImmut $ evalUModule m
+  void $ emitBindings bs
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable

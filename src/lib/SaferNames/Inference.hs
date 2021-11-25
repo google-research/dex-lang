@@ -47,16 +47,16 @@ inferModule :: Distinct n => Bindings n -> UModule n -> Except (Module n)
 inferModule bindings uModule@(UModule decl _) = do
   if isTopDecl decl
     then do
-      DistinctAbs (TopBindingsFrag frag sm) UnitE <- runTopInfererM bindings do
+      DistinctAbs bs UnitE <- runTopInfererM bindings do
         Immut <- return $ toImmutEvidence bindings
         localTopBuilder do
           UModule decl' sourceMap <- return uModule
           inferUDeclTop decl' $
             substM sourceMap >>= emitSourceMap
           return UnitE
-      return $ Module Typed id $ EvaluatedModule frag sm
+      return $ Module Typed Empty $ Abs bs UnitE
     else do
-      Abs decls sm <- runInfererM bindings do
+      ab <- runInfererM bindings do
         UModule decl' sourceMap <- return uModule
         Immut <- return $ toImmutEvidence bindings
         solveLocal $
@@ -64,7 +64,9 @@ inferModule bindings uModule@(UModule decl _) = do
             inferUDeclLocal decl' do
               applyDefaults
               substM sourceMap
-      return $ Module Typed decls $ EvaluatedModule emptyOutFrag sm
+      DistinctAbs decls sm <- return $ refreshAbs (toScope bindings) ab
+      let scs = bindingsFragToSynthCandidates $ toBindingsFrag decls
+      return $ Module Typed decls $ Abs (TopBindingsFrag emptyOutFrag scs sm) UnitE
 
 isTopDecl :: UDecl n l -> Bool
 isTopDecl decl = case decl of

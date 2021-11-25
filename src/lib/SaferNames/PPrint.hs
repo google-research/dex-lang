@@ -493,12 +493,14 @@ instance Pretty (UPatAnn n l) where
 instance Pretty (BindingsFrag n l) where
   pretty (BindingsFrag bindings effects) =
        "Partial bindings:" <> indented (p bindings)
-    <> "Effects candidates:" <+> p effects
+    <> "Effects allowed:" <+> p effects
 
-instance Pretty (EvaluatedModule n) where
-  pretty (EvaluatedModule bindings sourceMap) =
-       "decls:"
+instance Pretty (TopBindingsFrag n l) where
+  pretty (TopBindingsFrag bindings scs sourceMap) =
+       "bindings:"
     <>   indented (p bindings)
+    <> "Synth candidats:"
+    <>   indented (p scs)
     <> "Source map:"
     <>   indented (p sourceMap)
 

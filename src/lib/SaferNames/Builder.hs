@@ -30,6 +30,7 @@ module SaferNames.Builder (
   buildCase, buildSplitCase,
   emitBlock, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
+   emitSourceMap, emitSynthCandidates,
   TopBindingsFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, runBuilderM, liftBuilder, makeBlock
@@ -98,36 +99,22 @@ emitAtomToName x = emit (Atom x)
 
 class (BindingsReader m, MonadFail1 m)
       => TopBuilder (m::MonadKind1) where
+  -- `emitBinding` is expressible in terms of `emitBindings` but it can be
+  -- implemented more efficiently by avoiding a double substitution
+  -- XXX: emitBinding/emitBindings don't extend the synthesis candidates
   emitBinding :: Mut n => NameColor c => NameHint -> Binding c n -> m n (Name c n)
   emitBindings :: (Mut n, InjectableE e, SubstE Name e)
-               => Abs BindingsFrag e n -> m n (e n)
-  emitSourceMap :: SourceMap n -> m n ()
+                  => Abs TopBindingsFrag e n -> m n (e n)
+  emitNamelessBindings :: TopBindingsFrag n n -> m n ()
   localTopBuilder :: (Immut n, InjectableE e)
                   => (forall l. (Mut l, Ext n l) => m l (e l))
                   -> m n (DistinctAbs TopBindingsFrag e n)
 
-data TopBindingsFrag n l = TopBindingsFrag (BindingsFrag n l) (SourceMap l)
+emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
+emitSourceMap sm = emitNamelessBindings $ TopBindingsFrag emptyOutFrag mempty sm
 
-instance GenericB TopBindingsFrag where
-  type RepB TopBindingsFrag = PairB BindingsFrag (LiftB SourceMap)
-  fromB (TopBindingsFrag frag sm) = PairB frag (LiftB sm)
-  toB   (PairB frag (LiftB sm)) = TopBindingsFrag frag sm
-
-instance InjectableB TopBindingsFrag
-instance ProvesExt   TopBindingsFrag
-instance BindsNames  TopBindingsFrag
-
-instance OutFrag TopBindingsFrag where
-  emptyOutFrag = TopBindingsFrag emptyOutFrag mempty
-  catOutFrags scope (TopBindingsFrag frag1 sm1) (TopBindingsFrag frag2 sm2) =
-    TopBindingsFrag
-      (catOutFrags scope frag1 frag2)
-      (withExtEvidence frag2 $ (inject sm1 <> sm2))
-
-instance ExtOutMap Bindings TopBindingsFrag where
-  extendOutMap bindings  (TopBindingsFrag frag sm') =
-    Bindings bs scs (sm <> sm') effs
-    where (Bindings bs scs sm effs) = bindings `extendOutMap` frag
+emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
+emitSynthCandidates sc = emitNamelessBindings $ TopBindingsFrag emptyOutFrag sc mempty
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Bindings TopBindingsFrag m n a }
@@ -140,22 +127,23 @@ instance Fallible m => BindingsReader (TopBuilderT m) where
 instance Fallible m => TopBuilder (TopBuilderT m) where
   emitBinding hint binding = TopBuilderT $
     emitInplaceT hint binding \b binding' ->
-      TopBindingsFrag (toBindingsFrag (b:>binding')) mempty
+      TopBindingsFrag (toBindingsFrag (b:>binding')) mempty mempty
+
   emitBindings ab = TopBuilderT do
     extendInplaceT do
       scope <- getScope
       ab' <- injectM ab
-      DistinctAbs frag e <- return $ refreshAbs scope ab'
-      return $ DistinctAbs (TopBindingsFrag frag mempty) e
-  emitSourceMap sm = TopBuilderT do
-    extendTrivialInplaceT (TopBindingsFrag emptyOutFrag sm)
+      return $ refreshAbs scope ab'
+
+  emitNamelessBindings bs = TopBuilderT $ extendTrivialInplaceT bs
+
   localTopBuilder cont = TopBuilderT $
     locallyMutableInplaceT $ runTopBuilderT' cont
 
 instance (InjectableV v, TopBuilder m) => TopBuilder (EnvReaderT v m i) where
   emitBinding hint binding = EnvReaderT $ lift $ emitBinding hint binding
-  emitBindings = undefined
-  emitSourceMap = undefined
+  emitBindings ab = EnvReaderT $ lift $ emitBindings ab
+  emitNamelessBindings bs = EnvReaderT $ lift $ emitNamelessBindings bs
   localTopBuilder cont = EnvReaderT $ ReaderT \env -> do
     localTopBuilder do
       Distinct <- getDistinct
@@ -505,6 +493,7 @@ emitSuperclass :: (Mut n ,TopBuilder m)
                => ClassName n -> Int -> m n (Name SuperclassNameC n)
 emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
+  emitSynthCandidates $ SynthCandidates [] [getter] []
   emitBinding hint $ SuperclassBinding dataDef idx getter
   where hint = getNameHint $ "Proj" <> show idx <> pprint dataDef
 
