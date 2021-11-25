@@ -21,7 +21,7 @@ import Control.Monad.State
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
 import Data.Foldable (toList, asum)
-import Data.Functor ((<&>))
+import Data.Functor ((<&>), ($>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
@@ -601,22 +601,34 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
                             "before you apply the function."
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
-    ann' <- checkAnn ann
-    piTy <- addSrcContext pos' case pat of
-      UPatBinder UIgnore ->
-        buildPiInf "_ign" arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
-      _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
-        Abs decls piResult <- buildDeclsInf do
-          v' <- injectM v
-          bindLamPat (WithSrcB pos' pat) v' do
-            effs' <- checkUEffRow effs
-            ty'   <- checkUType   ty
-            return $ PairE effs' ty'
-        cheapReduceWithDecls decls piResult >>= \case
-          (Just (PairE effs' ty'), Just []) -> return (effs', ty')
-          _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                       pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
-    matchRequirement $ Pi piTy
+    matchRequirement . Pi =<< checkAnnWithMissingDicts ann \missingDs getAnnType -> do
+      -- Note that we can't automatically quantify class Pis, because the class dict
+      -- might have been bound on the rhs of a let and it would get bound to the
+      -- inserted arguments instead of the desired dict. It's not a fundemental
+      -- limitation of our automatic quantification, but it's simpler not to deal with
+      -- that for now.
+      let checkNoMissing = addSrcContext pos' $ unless (null missingDs) $ throw TypeErr $
+            "Couldn't synthesize a class dictionary for: " ++ pprint (head missingDs)
+      autoDs <- case arr of
+        TabArrow   -> checkNoMissing $> mempty
+        ClassArrow -> checkNoMissing $> mempty
+        _          -> return $ missingDs
+      introDictTys autoDs $ do
+        ann' <- getAnnType
+        addSrcContext pos' case pat of
+          UPatBinder UIgnore ->
+            buildPiInf "_ign" arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
+          _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
+            Abs decls piResult <- buildDeclsInf do
+              v' <- injectM v
+              bindLamPat (WithSrcB pos' pat) v' do
+                effs' <- checkUEffRow effs
+                ty'   <- checkUType   ty
+                return $ PairE effs' ty'
+            cheapReduceWithDecls decls piResult >>= \case
+              (Just (PairE effs' ty'), Just []) -> return $ (effs', ty')
+              _ -> throw TypeErr $ "Can't reduce type expression: " ++
+                           pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
   UCase scrut alts -> do
@@ -841,8 +853,9 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
 inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods maybeName) cont = do
   className' <- substM className
   instanceDict <- checkInstanceArgs argBinders do
-                    className'' <- injectM className'
-                    checkInstanceBody className'' params methods
+                    checkInstanceParams params \params' -> do
+                      className'' <- injectM className'
+                      checkInstanceBody className'' params' methods
   case maybeName of
     RightB UnitB  -> do
       void $ emitDecl "instance" InstanceLet $ Atom instanceDict
@@ -966,21 +979,36 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
     ImplicitArrow -> return ()
     ClassArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
-  argTy <- checkAnn ann
-  buildLamInf (getNameHint p) arrow argTy (const $ return Pure) \v -> do
-    bindLamPat p v $
-      checkInstanceArgs rest do
-        cont
+  checkAnnWithMissingDicts ann \ds getArgTy -> do
+    introDicts ds $ do
+      argTy <- getArgTy
+      buildLamInf (getNameHint p) arrow argTy (const $ return Pure) \v -> do
+        bindLamPat p v $
+          checkInstanceArgs rest do
+            cont
+
+checkInstanceParams :: forall m i o. (EmitsBoth o, Inferer m)
+                    => [UType i]
+                    -> (forall o'. (EmitsBoth o', Ext o o') => [Type o'] -> m i o' (Atom o'))
+                    -> m i o (Atom o)
+checkInstanceParams params cont = go params []
+  where
+    go :: forall o'. (EmitsBoth o', Inferer m, Ext o o') => [UType i] -> [Type o'] -> m i o' (Atom o')
+    go []    ptys = cont $ reverse ptys
+    go (p:t) ptys = checkUTypeWithMissingDicts p \ds getParamType -> do
+      introDicts ds do
+        pty <- getParamType
+        ListE ptys' <- injectM $ ListE ptys
+        go t (pty:ptys')
 
 checkInstanceBody :: (EmitsBoth o, Inferer m)
                   => ClassName o
-                  -> [UType i]
+                  -> [Type o]
                   -> [UMethodDef i]
                   -> m i o (Atom o)
 checkInstanceBody className params methods = do
   ClassDef _ methodNames def@(_, DataDef tcNameHint _ _) <- getClassDef className
-  params' <- mapM checkUType params
-  Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params'
+  Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params
   PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
   superclassDicts <- mapM trySynthDict superclassTys
   methodsChecked <- mapM (checkMethodDef className methodTys) methods
@@ -990,8 +1018,26 @@ checkInstanceBody className params methods = do
   forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
   let dataConNameHint = "Mk" <> tcNameHint
-  return $ DataCon dataConNameHint def params' 0 [PairVal (ProdVal superclassDicts)
-                                                          (ProdVal methods')]
+  return $ DataCon dataConNameHint def params 0 [PairVal (ProdVal superclassDicts)
+                                                         (ProdVal methods')]
+
+introDicts :: forall m o. (EmitsBoth o, Solver m, InfBuilder m)
+           => [Type o]
+           -> (forall l. (EmitsBoth l, Ext o l) => m l (Atom l))
+           -> m o (Atom o)
+introDicts []    m = m
+introDicts (h:t) m = buildLamInf "_autoq" ClassArrow h (const $ return Pure) \_ -> do
+  ListE t' <- injectM $ ListE t
+  introDicts t' m
+
+introDictTys :: forall m o. (EmitsInf o, Solver m, InfBuilder m)
+             => [Type o]
+             -> (forall l. (EmitsInf l, Ext o l) => m l (PiType l))
+             -> m o (PiType o)
+introDictTys []    m = m
+introDictTys (h:t) m = buildPiInf "_autoq" ClassArrow h \_ -> do
+  ListE t' <- injectM $ ListE t
+  (Pure,) . Pi <$> (introDictTys t' m)
 
 checkMethodDef :: (EmitsBoth o, Inferer m)
                => ClassName o -> [Type o] -> UMethodDef i -> m i o (Int, Atom o)
@@ -1171,22 +1217,37 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     xs <- forM idxs \i -> emit $ App (Var v) i
     bindLamPats ps xs cont
 
-checkAnn :: (EmitsBoth o, Inferer m) => Maybe (UType i) -> m i o (Type o)
+checkAnn :: (EmitsInf o, Inferer m) => Maybe (UType i) -> m i o (Type o)
 checkAnn ann = case ann of
   Just ty -> checkUType ty
   Nothing -> freshType TyKind
 
-checkUType :: EmitsInf o => Inferer m => UType i -> m i o (Type o)
-checkUType ty@(WithSrcE pos _) = addSrcContext pos $ do
+checkAnnWithMissingDicts :: (EmitsInf o, Inferer m)
+                         => Maybe (UType i)
+                         -> ([Type o] -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
+                         -> m i o a
+checkAnnWithMissingDicts ann cont = case ann of
+  Just ty -> checkUTypeWithMissingDicts ty cont
+  Nothing -> cont [] (freshType TyKind)  -- Unannotated binders are never auto-quantified
+
+checkUType :: (EmitsInf o, Inferer m) => UType i -> m i o (Type o)
+checkUType ty@(WithSrcE pos _) = checkUTypeWithMissingDicts ty \ds resolve -> case ds of
+  [] -> resolve
+  (d:_) -> addSrcContext pos $ throw TypeErr $
+    "Couldn't synthesize a class dictionary for: " ++ pprint d
+
+checkUTypeWithMissingDicts :: (EmitsInf o, Inferer m)
+                           => UType i
+                           -> ([Type o] -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
+                           -> m i o a
+checkUTypeWithMissingDicts ty@(WithSrcE pos _) cont = do
   Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho ty TyKind
   cheapReduceWithDecls decls result >>= \case
-    (_       , Just (d:_)) ->
-      throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint d
-    (_       , Nothing   ) ->
-      throw TypeErr $ "Couldn't synthesize a class dictionary required by: " ++ pprint ty
-    (Nothing , Just []   ) ->
-      throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
-    (Just ty', Just []   ) -> return ty'
+    (_       , Nothing) -> addSrcContext pos $ throw NotImplementedErr $
+      "A type expression has interface constraints that depend on values local to the expression"
+    (Nothing , Just []) -> addSrcContext pos $ throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+    (Nothing , Just ds) -> cont ds $ checkUType ty  -- Atempt another reduction once ds are introduced
+    (Just ty', Just ds) -> cont ds $ injectM ty'    -- No need to resolve if we succeeded now
 
 checkExtLabeledRow :: (EmitsBoth o, Inferer m)
                    => ExtLabeledItems (UExpr i) (UExpr i)
