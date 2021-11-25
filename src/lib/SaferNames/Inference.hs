@@ -601,22 +601,36 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
                             "before you apply the function."
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
-    ann' <- checkAnn ann
-    piTy <- addSrcContext pos' case pat of
-      UPatBinder UIgnore ->
-        buildPiInf "_ign" arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
-      _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
-        Abs decls piResult <- buildDeclsInf do
-          v' <- injectM v
-          bindLamPat (WithSrcB pos' pat) v' do
-            effs' <- checkUEffRow effs
-            ty'   <- checkUType   ty
-            return $ PairE effs' ty'
-        cheapReduceWithDecls decls piResult >>= \case
-          (Just (PairE effs' ty'), Just []) -> return (effs', ty')
-          _ -> throw TypeErr $ "Can't reduce type expression: " ++
-                       pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
-    matchRequirement $ Pi piTy
+    matchRequirement . Pi =<< checkAnnWithMissingDicts ann \missingDs getAnnType -> do
+      let autoDs = case arr of
+                 TabArrow   -> mempty
+                 ClassArrow -> mempty -- TODO: Class types should never have dict requirements I think?
+                 _          -> ListE missingDs
+      introDicts autoDs $ do
+        ann' <- getAnnType
+        addSrcContext pos' case pat of
+          UPatBinder UIgnore ->
+            buildPiInf "_ign" arr ann' \_ -> (,) <$> checkUEffRow effs <*> checkUType ty
+          _ -> buildPiInf (getNameHint pat) arr ann' \v -> do
+            Abs decls piResult <- buildDeclsInf do
+              v' <- injectM v
+              bindLamPat (WithSrcB pos' pat) v' do
+                effs' <- checkUEffRow effs
+                ty'   <- checkUType   ty
+                return $ PairE effs' ty'
+            cheapReduceWithDecls decls piResult >>= \case
+              (Just (PairE effs' ty'), Just []) -> return $ (effs', ty')
+              _ -> throw TypeErr $ "Can't reduce type expression: " ++
+                           pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
+    where
+      introDicts :: forall m' o'. (EmitsInf o', Solver m', InfBuilder m')
+                 => ListE Type o'
+                 -> (forall l. (EmitsInf l, Ext o' l) => m' l (PiType l))
+                 -> m' o' (PiType o')
+      introDicts (ListE []   ) m = m
+      introDicts (ListE (h:t)) m = buildPiInf "_autoq" ClassArrow h \_ -> do
+        t' <- injectM $ ListE t
+        (Pure,) . Pi <$> (introDicts t' m)
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
   UCase scrut alts -> do
@@ -1171,22 +1185,36 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     xs <- forM idxs \i -> emit $ App (Var v) i
     bindLamPats ps xs cont
 
-checkAnn :: (EmitsBoth o, Inferer m) => Maybe (UType i) -> m i o (Type o)
+checkAnn :: (EmitsInf o, Inferer m) => Maybe (UType i) -> m i o (Type o)
 checkAnn ann = case ann of
   Just ty -> checkUType ty
   Nothing -> freshType TyKind
 
-checkUType :: EmitsInf o => Inferer m => UType i -> m i o (Type o)
-checkUType ty@(WithSrcE pos _) = addSrcContext pos $ do
+checkAnnWithMissingDicts :: (EmitsInf o, Inferer m)
+                         => Maybe (UType i)
+                         -> ([Type o] -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
+                         -> m i o a
+checkAnnWithMissingDicts ann cont = case ann of
+  Just ty -> checkUTypeWithMissingDicts ty cont
+  Nothing -> cont [] (freshType TyKind)  -- Unannotated binders are never auto-quantified
+
+checkUType :: (EmitsInf o, Inferer m) => UType i -> m i o (Type o)
+checkUType ty@(WithSrcE pos _) = checkUTypeWithMissingDicts ty \ds resolve -> case ds of
+  [] -> resolve
+  (d:_) -> addSrcContext pos $ throw TypeErr $
+    "Couldn't synthesize a class dictionary for: " ++ pprint d
+
+checkUTypeWithMissingDicts :: (EmitsInf o, Inferer m)
+                           => UType i
+                           -> ([Type o] -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
+                           -> m i o a
+checkUTypeWithMissingDicts ty@(WithSrcE pos _) cont = do
   Abs decls result <- buildDeclsInf $ withAllowedEffects Pure $ checkRho ty TyKind
   cheapReduceWithDecls decls result >>= \case
-    (_       , Just (d:_)) ->
-      throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint d
-    (_       , Nothing   ) ->
-      throw TypeErr $ "Couldn't synthesize a class dictionary required by: " ++ pprint ty
-    (Nothing , Just []   ) ->
-      throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
-    (Just ty', Just []   ) -> return ty'
+    (_       , Nothing) -> undefined
+    (Nothing , Just []) -> addSrcContext pos $ throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+    (Nothing , Just ds) -> cont ds $ checkUType ty  -- Atempt another reduction once ds are introduced
+    (Just ty', Just ds) -> cont ds $ injectM ty'    -- No need to resolve if we succeeded now
 
 checkExtLabeledRow :: (EmitsBoth o, Inferer m)
                    => ExtLabeledItems (UExpr i) (UExpr i)
