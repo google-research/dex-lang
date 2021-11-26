@@ -504,7 +504,7 @@ textbook_constraints' = [
   {coeffs = [-1.,  1., -2.], offset=-1.0, conType=LessThan}
 ]
 :p simplex textbook_constraints' obj' Maximize
-
+> (Solution [0., 2.8, 3.4])
 
 '# Visual Example
 
