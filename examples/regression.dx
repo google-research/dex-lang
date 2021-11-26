@@ -42,7 +42,7 @@ def regress {d n} (featurize: Float -> d=>Float) (xRaw:n=>Float) (y:n=>Float) : 
 
 'Fit a third-order polynomial
 
-def poly {d} (x:Float) : d=>Float =
+def poly {d} [Ix d] (x:Float) : d=>Float =
   for i. pow x (IToF (ordinal i))
 
 params : (Fin 4)=>Float = regress poly xs ys
@@ -64,6 +64,8 @@ def rmsErr {n} (truth:n=>Float) (pred:n=>Float) : Float =
 :p rmsErr ys (map predict xs)
 > 0.252695
 
+instance {n m} [Ix n, Ix m] Ix {left:n|right:m}
+  dummy_ix__ = 0
 
 def tabCat {n m a} (xs:n=>a) (ys:m=>a) : ({left:n|right:m})=>a =
   for i. case i of

@@ -70,7 +70,7 @@ inversionSamples = randVec numSamples (binomialSample n p) k0
 
 'The following variant is guaranteed to evaluate the CDF only once.
 
-def binomialBatch {a} (n:Int) (p:Prob) (k:Key) : a => Int =
+def binomialBatch {a} [Ix a] (n:Int) (p:Prob) (k:Key) : a => Int =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   map ordinal $ categoricalBatch logprobs k

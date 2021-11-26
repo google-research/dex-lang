@@ -400,7 +400,7 @@ instance Inferer InfererM where
     UnitE <- liftImmut do
       DB bindings <- getDB
       when (hasInferenceVars bindings (sink iface)) $ throw NotImplementedErr $
-        "Inference requires delayed interface resolution"
+        "Type inference of this program requires delayed interface resolution"
       return UnitE
     get >>= \case
       FailIfRequired    -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint iface
@@ -610,21 +610,24 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     argTy <- checkAnn ann
     v <- freshInferenceName argTy
     bindLamPat p v $ checkOrInferRho body reqTy
-  ULam lamExpr ->
-    case reqTy of
+  ULam lamExpr@(ULamExpr _ b _) -> do
+    ans@(Lam (LamExpr (LamBinder _ bty arr _) _)) <- case reqTy of
       Check (Pi piTy) -> checkULam lamExpr piTy
       Check _ -> inferULam Pure lamExpr >>= matchRequirement
       Infer   -> inferULam Pure lamExpr
+    when (arr == TabArrow) $ checkIx (annTypePos b) bty
+    return ans
   UFor dir (UForExpr b body) -> do
     allowedEff <- getAllowedEffects
     let uLamExpr = ULamExpr PlainArrow b body
-    lam <- case reqTy of
+    lam@(Lam (LamExpr b' _)) <- case reqTy of
       Check (Pi tabPiTy) -> do
         lamPiTy <- buildForTypeFromTabType allowedEff tabPiTy
         checkULam uLamExpr lamPiTy
       Check _ -> inferULam allowedEff uLamExpr
       Infer   -> inferULam allowedEff uLamExpr
     result <- liftM Var $ emit $ Hof $ For (RegularFor dir) lam
+    checkIx (annTypePos b) $ binderType b'
     matchRequirement result
   UApp _ _ _ -> do
     let (f, args) = asNaryApp $ WithSrcE pos expr
@@ -632,7 +635,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     inferNaryApp (srcPos f) f' (NE.fromList args) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
-    matchRequirement . Pi =<< checkAnnWithMissingDicts ann \missingDs getAnnType -> do
+    piTy@(PiType b _ _) <- checkAnnWithMissingDicts ann \missingDs getAnnType -> do
       -- Note that we can't automatically quantify class Pis, because the class dict
       -- might have been bound on the rhs of a let and it would get bound to the
       -- inserted arguments instead of the desired dict. It's not a fundemental
@@ -660,6 +663,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
               (Just (PairE effs' ty'), Just []) -> return $ (effs', ty')
               _ -> throw TypeErr $ "Can't reduce type expression: " ++
                      pprint (Block (BlockAnn TyKind) decls $ Atom $ snd $ fromPairE piResult)
+    when (arr == TabArrow) $ checkIx pos' $ binderType b
+    matchRequirement $ Pi piTy
   UDecl (UDeclExpr decl body) -> do
     inferUDeclLocal decl $ checkOrInferRho body reqTy
   UCase scrut alts -> do
@@ -748,6 +753,11 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           ty <- getType x
           constrainEq req ty
 
+    annTypePos :: UPatAnn n l -> SrcPosCtx
+    annTypePos = \case
+      UPatAnn _ (Just (WithSrcE annpos _)) -> annpos
+      UPatAnn (WithSrcB bpos _) _ -> bpos
+
 -- === n-ary applications ===
 
 -- The reason to infer n-ary applications rather than just handling nested
@@ -833,9 +843,10 @@ inferNaryAppArgs (NaryPiType (Nest b rest) bFinal effs resultTy) uArgs = do
 inferAppArg
   :: (EmitsBoth o, Inferer m)
   => Bool -> PiBinder o o' -> NonEmpty (UExprArg i) -> m i o (Atom o, [UExprArg i])
-inferAppArg isDependent b uArgs = getImplicitArg b >>= \case
+inferAppArg isDependent b@(PiBinder _ _ arr) uArgs = getImplicitArg b >>= \case
   Just x -> return $ (x, toList uArgs)
   Nothing -> do
+    when (arr == TabArrow) $ checkIx Nothing $ binderType b
     let (appCtx, argCtx, _, arg) :| restUArgs = uArgs
     liftM (,restUArgs) $ addSrcContext appCtx $
       if isDependent
@@ -1541,6 +1552,14 @@ checkAllowedUnconditionally eff = do
 openEffectRow :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o (EffectRow o)
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
+
+checkIx :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Type o -> m i o ()
+checkIx ctx ty = do
+  lookupSourceMap ClassNameRep "Ix" >>= \case
+    Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
+    Just ixInterfaceName -> do
+      ClassBinding (ClassDef _ _ dictDataDefName) _ <- lookupEnv ixInterfaceName
+      void $ emitOp $ SynthesizeDict ctx $ TypeCon "Ix" dictDataDefName [ty]
 
 -- === Solver ===
 

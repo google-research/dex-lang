@@ -108,11 +108,11 @@ def f3 {n} (x : n=>Int) : Int = a_ x
 > def f3 {n} (x : n=>Int) : Int = a_ x
 >                                 ^^^
 -- Adding an explicit binder shouldn't change anything
-def f4 {n} [A (n=>Int)] (x : n=>Int) : Int = a_ x
+def f4 {n} [Ix n, A (n=>Int)] (x : n=>Int) : Int = a_ x
 > Type error:Multiple candidate class dictionaries for: (A (n => Int32))
 >
-> def f4 {n} [A (n=>Int)] (x : n=>Int) : Int = a_ x
->                                              ^^^
+> def f4 {n} [Ix n, A (n=>Int)] (x : n=>Int) : Int = a_ x
+>                                                    ^^^
 
 -- TODO: This should fail! The choice of dictionary depends on instantiation
 --       of a (there's a generic one and a specific one for n=>Int)!
@@ -132,18 +132,18 @@ instance {n a} [Ord' a] Ord' (n=>a)
   ord = const 4
 
 -- Simplifiable constraints should be accepted
-def f6 {n} [Eq' (n=>Int)] (x : n=>Int) : Int = eq x
-def f7 {n} [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+def f6 {n} [Ix n, Eq' (n=>Int)] (x : n=>Int) : Int = eq x
+def f7 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 
 -- This additional instance makes f7 ambiguous. Note that there's an easy way out
 -- in the form of the superclass of Ord', but we still check that there's no overlap.
 instance Eq' Int
   eq = const 0
-def f8 {n} [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+def f8 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 > Type error:Multiple candidate class dictionaries for: (Eq' (n => Int32))
 >
-> def f8 {n} [Ord' (n=>Int)] (x : n=>Int) : Int = eq x
->                                                 ^^^
+> def f8 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+>                                                       ^^^
 
 -- XXX: In Haskell overlap is determined entirely by instance heads, making it
 --      independent of other instances in scope. In Dex an instance might be ruled out,

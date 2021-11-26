@@ -39,7 +39,7 @@ def meanAndCovariance {n d} (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
 
 MHParams : Type = Float  -- step size
 
-def mhStep {d}
+def mhStep {d} [Ix d]
       (stepSize: MHParams)
       (logProb: (d=>Float) -> LogProb)
       (k:Key)
@@ -67,7 +67,7 @@ def leapfrogIntegrate {a}
   p = p + (0.5 * dt) .* grad logProb x
   (x, p)
 
-def hmcStep {d}
+def hmcStep {d} [Ix d]
       (params: HMCParams)
       (logProb: (d=>Float) -> LogProb)
       (k:Key)

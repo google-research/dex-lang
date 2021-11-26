@@ -311,6 +311,9 @@ myStuff :(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_}) =
 
 'As index sets
 
+instance {n m} [Ix n, Ix m] Ix {a:n & b:m}
+  dummy_ix__ = 0
+
 :p size {a:Fin 10 & b:Fin 3}
 > 30
 :p ordinal {a=(7@Fin 10), b=(2@Fin 3)}
@@ -329,6 +332,9 @@ recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
 
 -- TODO: this still causes an error
 -- :p for i:(Fin 6). recordsAsIndices.((ordinal i) @ _)
+
+instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
+  dummy_ix__ = 0
 
 :p size {a:Fin 10 | b:Fin 3}
 > 13

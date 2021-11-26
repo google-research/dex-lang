@@ -10,6 +10,10 @@ it's doing bubble / insertion sort with quadratic time cost.
 However, if breaks the list in half recursively, it'll be doing parallel mergesort.
 Currently it'll do the quadratic time version.
 
+-- TODO(Ix)
+instance {a b} [Ix a, Ix b] Ix {left:a | right:b}
+  dummy_ix__ = 0
+
 def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ({left:a | right:b }=>v) =
   -- Note: It'd be nicer to use (a | b)=>v but it's not currently supported.
   for idx. case idx of
@@ -58,7 +62,7 @@ def sort {a n} [Ord a] (xs: n=>a) : n=>a =
   (AsList _ r) = reduce mempty mcombine xlists
   unsafeCastTable n r
 
-def (+|) {n} (i:n) (delta:Int) : n =
+def (+|) {n} [Ix n] (i:n) (delta:Int) : n =
   i' = ordinal i + delta
   fromOrdinal _ $ select (i' >= size n) (size n - 1) i'
 

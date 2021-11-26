@@ -163,7 +163,9 @@ when using a record type as an index set:
 > ((a:Type)
 >  ?-> (b:Type)
 >  ?-> (c:Type)
->  ?-> (v:Type) ?-> (Iso ({ &} & a) (b & c)) -> (a => v) -> b => c => v)
+>  ?-> (v:Type)
+>  ?-> (Ix b)
+>  ?=> (Ix c) ?=> (Iso ({ &} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
 
 -- :p
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -185,10 +187,18 @@ when using a record type as an index set:
 :t overLens
 > ((a:Type)
 >  ?-> (b:Type)
->  ?-> (c:Type) ?-> (v:Type) ?-> (Iso a (b & c)) -> (a => v) -> b => c => v)
+>  ?-> (c:Type)
+>  ?-> (v:Type)
+>  ?-> (Ix b)
+>  ?=> (Ix c) ?=> (Iso a (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
 
 '`overLens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.
+
+instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
+  dummy_ix__ = 0
+instance {m q} [Ix m, Ix q] Ix {b:m & c:q}
+  dummy_ix__ = 0
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -243,14 +253,21 @@ zipper isomorphisms:
 '`sliceFields` uses this to specific named variants from a variant-indexed
 table:
 
+instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
+  dummy_ix__ = 0
+instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
+  dummy_ix__ = 0
+instance {n q} [Ix n, Ix q] Ix {a:n | c:q}
+  dummy_ix__ = 0
+
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
   v1 = x
-  v2 = sliceFields (#|b) x
+  v2 = sliceFields (#|a &>> #|b) x
   v3 = sliceFields (#|a &>> #|c) x
   v4 = sliceFields (#|a &>> #|b &>> #|c) x
   (v1, v2, v3, v4)
 > ( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
-> , ( [2, 3]@{b: Fin 2}
+> , ( [0, 1, 2, 3]@{a: Fin 2 | b: Fin 2}
 > , ( [0, 1, 4, 5]@{a: Fin 2 | c: Fin 2}
 > , [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2} ) ) )

@@ -251,15 +251,16 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p (eitherFloor (Left 1), eitherFloor (Right 2.3))
 > (1, 2)
 
-:p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
-> Type error:
-> Expected: ((Fin a & Fin 2) => Int32)
->   Actual: ((Fin 4) => b)
-> (Solving for: [a, b])
-> If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
->
-> :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
->    ^^^^^^^^^^^^^
+-- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
+-- :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
+-- > Type error:
+-- > Expected: ((Fin a & Fin 2) => Int32)
+-- >   Actual: ((Fin 4) => b)
+-- > (Solving for: [a, b])
+-- > If attempting to construct a fixed-size table not indexed by 'Fin n' for some n, this error may indicate there was not enough information to infer a concrete index set; try adding an explicit annotation.
+-- >
+-- > :p [1, 2, 3, 4] : ((Fin _ & Fin 2) => Int)
+-- >    ^^^^^^^^^^^^^
 
 :p
   [(a, b), c] = [(1, 2), (3, 4)]
@@ -294,11 +295,12 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 >   [a, b, c, d] = [1, 2, 3, 4] : ((Fin 2 & Fin 2) => Int)
 >   ^^^^^^^^^^^^^
 
-:p
-  -- parentheses needed to stop the parser from reading "zero" as a binder name
-  [a, b, c, d] = (zero) : (_ => Int)
-  (a, b, c, d)
-> (0, (0, (0, 0)))
+-- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
+-- :p
+--   -- parentheses needed to stop the parser from reading "zero" as a binder name
+--   [a, b, c, d] = (zero) : (_ => Int)
+--   (a, b, c, d)
+-- > (0, (0, (0, 0)))
 
 def bug (n : Type) : Unit =
   for w':n.
