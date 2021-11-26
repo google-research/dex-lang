@@ -216,7 +216,7 @@ def constraints_satisfied (constraints: m=>Constraint n) (x: n=>Float) : Bool =
     case conType of
       LessThan    -> dot coeffs x <= offset
       GreaterThan -> dot coeffs x >= offset
-  constraints_ok && all for i:n. x.i >= 0.0
+  constraints_ok && all for i:n. x.i >= 0.0 || x.i ~~ 0.0
 
 def cononicalize_constraint (inequality: Constraint vars):
   (vars=>Float & Float) =
@@ -392,6 +392,91 @@ def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
   val ~~ 0.
 
 
+def pivot_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
+  (tableau: FeasibilityTableau cons vars) : (FeasibilityTableau cons vars) =
+  -- Pivot out all the artificial variables out of the basis
+  yieldState tableau \tRef.
+    (basics, nonbasics, table) = get tRef  -- todo: less copying
+    for v:(RowIx cons Unit).
+      v' = v
+      case v of
+        {|constraints=v|} ->
+          var = basics.v
+          case var of
+            {|variables=var|} -> case var of
+              {|artificials=var|} ->
+                pivrow = v'
+                pivcol = basics.v  -- TODO: check this rule is correct.
+                tRef := pivot (get tRef) pivrow pivcol
+              {|realvars=var|} -> ()
+            {|slacks=var|} -> ()
+        {|objective=()|} -> ()
+        {|extra=()|} -> ()
+
+
+def deduce_nonbasics [Eq cons, Eq vars]
+  (ftableau: FeasibilityTableau cons vars) : vars=>(ColIx cons vars) =
+  (fbasics, _) = ftableau
+  init_nonbasics = for r:vars. {|variables=r|}
+  yieldState init_nonbasics \nonbasics_ref.
+    withState (0@vars) \pointer.
+      for c:(ColIx cons vars).
+        in_fbasics = any for r.
+          case fbasics.r of
+            {|slacks=r|} -> case c of
+              {|slacks=c|} -> r == c
+              {|variables=_|} -> False
+              {|value=_|} -> True
+            {|variables=r|} -> case r of
+              {|realvars=r|} -> case c of
+                {|variables=c|} -> r == c
+                {|slacks=_|} -> False
+                {|value=_|} -> True
+              {|artificials=r|} -> error ("tag 4")
+        if not in_fbasics then
+          nonbasics_ref!(get pointer) := c
+          if (ordinal (get pointer) + 1) < (size vars) then
+            pointer := ((ordinal (get pointer)) + 1)@vars
+        ()
+    ()
+
+
+def eliminate_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
+  (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
+   -- copy to new tableau without the artificial columns
+  (basics, nonbasics, table) = tableau
+
+  newBasics = for r:cons. case basics.r of
+    {|slacks=r|} -> {|slacks=r|}
+    {|variables=r|} -> case r of
+      {|realvars=r|} -> {|variables=r|}
+      {|artificials=r|} -> error("tag 3")
+  newNonbasics = deduce_nonbasics tableau
+
+  -- keep real var only
+  t = for i. for j:(ColIx cons vars). case j of
+      {|slacks=j|}    -> table.i.{|slacks=j|}
+      {|value=j|}     -> table.i.{|value=()|}
+      {|variables=j|} -> table.i.{|variables={|realvars=j|}|}
+
+--2. replacing the equation for w with the original objective z expressed in terms of the nonbasic variables
+--identified in the isOptimal artificial Phase 1 dictionary (ie. x1, x5 and x6).
+  -- replace obj
+  t2 = for i:(RowIx cons Void). case i of
+    {|constraints=i|} -> t.{|constraints=i|}
+    {|objective=()|} -> t.{|extra=()|}  -- todo: should be extra!!
+    {|extra=_|} -> todo
+
+  (newBasics, newNonbasics, t2)
+
+
+def feas_to_normal (_:Eq cons) ?=> (_:Eq vars) ?=>
+  (tableau: FeasibilityTableau cons vars)
+  : (Tableau cons vars) =
+  tableau = pivot_artificials tableau
+  eliminate_artificials tableau
+
+
 def simplex (_:Eq cons) ?=> (_:Eq vars) ?=>
   (ineqs: cons=>Constraint vars)
   (objective: vars=>Float)
@@ -420,7 +505,7 @@ def simplex (_:Eq cons) ?=> (_:Eq vars) ?=>
   case checkFeasible feasibilityAns of
     False -> Infeasible
     True -> -- Optimize within the simplex.
-      tf = init_tableau
+      tf = feas_to_normal feasibilityAns
       withState tf \tableauRef. iter \_.
         tableau = get tableauRef
         isopt = isOptimal (get tableauRef)
@@ -484,6 +569,26 @@ textbook_constraints' =
 
 :p simplex textbook_constraints' obj' Maximize
 > (Solution [0., 2.8, 3.4])
+
+
+equal_obj = [1., -1.]
+equal_a = [[1., -2.], [1., -2.]]
+equal_b = [0.5, 0.5]
+equal_constraints =
+  [{coeffs=equal_a.(0@_), offset=equal_b.(0@_), conType=LessThan},
+  {coeffs=equal_a.(1@_), offset=equal_b.(1@_), conType=GreaterThan}]
+
+:p simplex equal_constraints equal_obj Minimize
+> (Solution [0.5, 0.])
+
+
+dup_constraints =
+  [{coeffs=equal_a.(0@_), offset=equal_b.(0@_), conType=LessThan},
+  {coeffs=equal_a.(1@_), offset=equal_b.(1@_), conType=GreaterThan},
+  {coeffs=equal_a.(1@_), offset=equal_b.(1@_), conType=GreaterThan}]
+
+:p simplex dup_constraints equal_obj Minimize
+> (Solution [0.5, 0.])
 
 '# Visual Example
 
