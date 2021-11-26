@@ -274,8 +274,8 @@ def build_feasibility_tableau (_:Eq cons) ?=>
   -- then the original problem is feasible.
   tableau' = negate_constraints_with_negative_offsets tableau
   (basics, nonbasics, table) = tableau'
-  --sum_constraints = for j.
-  --  sum for r:cons. table.{|constraints=r|}.j
+  sum_constraints = for j.
+   sum for r:cons. table.{|constraints=r|}.j
 
   ftable = for i. case i of
     {|constraints=i|} -> for j. case j of
@@ -283,14 +283,14 @@ def build_feasibility_tableau (_:Eq cons) ?=>
       {|value=j|}     -> table.{|constraints=i|}.{|value=()|}
       {|variables=j|} -> case j of
         {|realvars=j|} -> table.{|constraints=i|}.{|variables=j|}
-        {|artificials=j|} -> select (i == j) (-1.0) 0.0
+        {|artificials=j|} -> select (i == j) 1.0 0.0
     {|objective=()|} -> for j. case j of
-      {|slacks=j|} -> 0.0 --sum_constraints.{|slacks=j|}
-      {|value=j|}  -> 0.0 --sum_constraints.{|value=j|}
+      {|slacks=j|} -> sum_constraints.{|slacks=j|}
+      {|value=j|}  -> sum_constraints.{|value=j|}
       {|variables=j|} ->
         case j of
-          {|realvars=j|} -> 0.0 --sum_constraints.{|variables=j|}
-          {|artificials=j|} -> -1.0 --0.0
+          {|realvars=j|} -> sum_constraints.{|variables=j|}
+          {|artificials=j|} -> 0.0
     {|extra=()|} -> for j. case j of
       {|slacks=j|}    -> table.{|objective=()|}.{|slacks=j|}
       {|value=j|}     -> table.{|objective=()|}.{|value=()|}
@@ -298,15 +298,17 @@ def build_feasibility_tableau (_:Eq cons) ?=>
         {|realvars=j|} -> table.{|objective=()|}.{|variables=j|}
         {|artificials=j|} -> 0.0
   
-  fbasics = for r:cons. {|slacks=r|}
+  fbasics = for r:cons. {|variables={|artificials=r|}|}
   fnonbasics = for r. case r of
-    {|artificials=r|} -> {|variables={|artificials=r|}|}
+    {|artificials=r|} -> {|slacks=r|}
     {|realvars=r|} -> {|variables={|realvars=r|}|}
   (fbasics, fnonbasics, ftable)
 
 def isOptimal (tableau: AbsTableau cons vars extra) : Bool =
   (basics, nonbasics, table) = tableau
-  all for c:vars. table.{|objective=()|}.(nonbasics.c) <= 0.0
+  all for c:vars.
+    val = table.{|objective=()|}.(nonbasics.c)
+    val ~~ 0.0 || val < 0.0
 
 -- def extractSolution (tableau: Tableau cons vars) : vars=>Float =
 def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
@@ -342,7 +344,9 @@ def findPivotIndex (tableau: (AbsTableau cons vars extra))
   -- Chooses row and column to pivot around next.
   (basics, nonbasics, table) = tableau
   pivotcol = chooseColumn tableau  
-  unbounded = all for r. table.{|objective|extra|...r|}.pivotcol <= 0.0
+  unbounded = all for r. 
+    val = table.{|objective|extra|...r|}.pivotcol 
+    val <= 0.0
   case unbounded of
     True -> Nothing
     False ->
@@ -387,8 +391,13 @@ def computeCost (tableau: (AbsTableau cons vars extra)) : Float =
   vars = extractAll tableau
   sum for v. vars.v * table.{|objective=()|}.v
 
+-- def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
+--   (computeCost tableau) ~~ 0.0
+
 def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
-  (computeCost tableau) ~~ 0.0
+  (_, _, table) = tableau
+  val = table.{|objective=()|}.{|value=()|}
+  val ~~ 0.
 
 
 def pivot_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
@@ -407,6 +416,7 @@ def pivot_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
                 pivrow = v'
                 pivcol = basics.v  -- TODO: check this rule is correct.
                 tRef := pivot (get tRef) pivrow pivcol
+              {|realvars=var|} -> ()
             {|slacks=var|} -> ()
         {|objective=()|} -> ()
         {|extra=()|} -> ()
@@ -477,7 +487,6 @@ def simplex (_:Eq cons) ?=> (_:Eq vars) ?=>
       True -> Done tableau
       False ->
         -- piv = fromJust $ findPivotIndex (get tableauRef)
-        piv = fromJust $ findPivotIndex (get tableauRef)
         case findPivotIndex (get tableauRef) of
           Just piv ->
             tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
@@ -487,7 +496,8 @@ def simplex (_:Eq cons) ?=> (_:Eq vars) ?=>
   case checkFeasible feasibilityAns of
     False -> Infeasible
     True -> -- Optimize within the simplex.
-      tf = feas_to_normal feasibilityAns
+      -- tf = feas_to_normal feasibilityAns
+      tf = init_tableau
       withState tf \tableauRef. iter \_.
         tableau = get tableauRef
         isopt = isOptimal (get tableauRef)
@@ -517,6 +527,8 @@ impossible_constraints = [
 ]
 :p simplex impossible_constraints [1.0, 1.0] Maximize
 > Infeasible
+
+initft = build_feasibility_tableau $ build_tableau impossible_constraints [1.0, 1.0] Maximize
 
 -- An unbounded problem.
 
@@ -611,7 +623,7 @@ bfa = pixToReal (fst best_ix) (snd best_ix)
 :p eval_objective objective bfa
 
 -- Now find optimum by simplex method
-maybeanswer = simplex pentagon objective Maximize
+-- maybeanswer = simplex pentagon objective Maximize
 :p maybeanswer
 
 -- Plot location of answer.
@@ -626,55 +638,129 @@ image3 = draw_point image x y
 
 --=-=-=-=-=-=-=-=-=-=-= Debugging -=--=-==-=-==-
 
-example_tableau = build_tableau pentagon objective Maximize
-:p example_tableau
-piv1 = fromJust $ findPivotIndex example_tableau
-:p piv1
-:p isOptimal example_tableau
-:p computeCost example_tableau
-sol = extractSolution example_tableau
-:p sol
-:p dot sol objective
-:p constraints_satisfied pentagon sol
-
-
--- Feasibility debugging
-
-ft1 = build_feasibility_tableau example_tableau
-:p isOptimal ft1  -- should be false
-fpiv1 = fromJust $ findPivotIndex ft1
-
-ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
-:p isOptimal ft2
-fpiv2 = fromJust $ findPivotIndex ft2
-
-ft3 = pivot ft2 (fst fpiv2) (snd fpiv2)
-:p isOptimal ft3
-fpiv3 = fromJust $ findPivotIndex ft3
-
-ft4 = pivot ft3 (fst fpiv3) (snd fpiv3)
-isOptimal ft4
-fpiv4 = fromJust $ findPivotIndex ft4
-
-ft5 = pivot ft4 (fst fpiv4) (snd fpiv4)
-isOptimal ft5
-fpiv5 = fromJust $ findPivotIndex ft5
-
-ft6 = pivot ft5 (fst fpiv5) (snd fpiv5)
-isOptimal ft6
-fpiv6 = fromJust $ findPivotIndex ft6
--- error!! fail boundedness test
+-- example_tableau = build_tableau pentagon objective Maximize
+-- :p example_tableau
+-- piv1 = fromJust $ findPivotIndex example_tableau
+-- :p piv1
+-- :p isOptimal example_tableau
+-- :p computeCost example_tableau
+-- sol = extractSolution example_tableau
+-- :p sol
+-- :p dot sol objective
+-- :p constraints_satisfied pentagon sol
+-- 
+-- 
+-- -- Feasibility debugging
+-- 
+-- ft1 = build_feasibility_tableau example_tableau
+-- :p isOptimal ft1  -- should be false
+-- fpiv1 = fromJust $ findPivotIndex ft1
+-- 
+-- ft2 = pivot ft1 (fst fpiv1) (snd fpiv1)
+-- :p isOptimal ft2
+-- fpiv2 = fromJust $ findPivotIndex ft2
+-- 
+-- ft3 = pivot ft2 (fst fpiv2) (snd fpiv2)
+-- :p isOptimal ft3
+-- fpiv3 = fromJust $ findPivotIndex ft3
+-- 
+-- ft4 = pivot ft3 (fst fpiv3) (snd fpiv3)
+-- isOptimal ft4
+-- fpiv4 = fromJust $ findPivotIndex ft4
+-- 
+-- ft5 = pivot ft4 (fst fpiv4) (snd fpiv4)
+-- isOptimal ft5
+-- fpiv5 = fromJust $ findPivotIndex ft5
+-- 
+-- ft6 = pivot ft5 (fst fpiv5) (snd fpiv5)
+-- isOptimal ft6
+-- fpiv6 = fromJust $ findPivotIndex ft6
+-- -- error!! fail boundedness test
 
 -- Feasibility debugging 2
 -- ==========================================================
 
--- et' = build_tableau textbook_constraints' obj' Maximize
--- :p et'
+et' = build_tableau textbook_constraints' obj' Maximize
+:p et'
 
--- fet' = build_feasibility_tableau et'
--- :p fet'
--- :p isOptimal fet'
--- :p computeCost fet'
+fet' = build_feasibility_tableau et'
+:p fet'
+:p isOptimal fet'
+:p computeCost fet'
+
+fpiv1' = fromJust $ findPivotIndex fet'
+:p fpiv1'
+fet1' = pivot fet' (fst fpiv1') (snd fpiv1')
+-- :p (snd $ snd fet1')
+
+fpiv2' = fromJust $ findPivotIndex fet1'
+:p fpiv2'
+fet2' = pivot fet1' (fst fpiv2') (snd fpiv2')
+-- :p (snd $ snd fet2')
+
+fpiv3' = fromJust $ findPivotIndex fet2'
+fet3' = pivot fet2' (fst fpiv3') (snd fpiv3')
+:p snd $ snd fet3'
+
+isOptimal fet3'
+-- done with the first step!
+checkFeasible fet3'
+
+feasibilityAns = fet3'
+tf = feas_to_normal feasibilityAns
+-- buggy!
+
+def eliminate_artificials2 (_:Eq cons) ?=>
+  (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
+   -- copy to new tableau without the artificial columns
+  (basics, nonbasics, table) = tableau
+ 
+  newBasics = for r:cons. case basics.r of 
+    {|slacks=r|} -> {|slacks=r|}
+    {|variables=r|} -> case r of
+      {|realvars=r|} -> {|variables=r|}
+      {|artificials=r|} -> error("tag 3")
+  newNonbasics : vars=>(ColIx cons vars) =
+  -- todo, collect all non-newBasics (with yield?)
+    for r:vars. case nonbasics.r of
+      {|slacks=r|} -> {|slacks=r|}
+      {|variables=r|} -> case r of
+        {|realvars=r|} -> {|variables=r|}
+        {|artificials=r|} -> error("tag 4")
+
+  -- keep real var only
+  t = for i. for j:(ColIx cons vars). case j of
+      {|slacks=j|}    -> table.i.{|slacks=j|}
+      {|value=j|}     -> table.i.{|value=()|}
+      {|variables=j|} -> table.i.{|variables={|realvars=j|}|}
+
+--2. replacing the equation for w with the original objective z expressed in terms of the nonbasic variables
+--identified in the isOptimal artificial Phase 1 dictionary (ie. x1, x5 and x6).
+  -- replace obj
+  t2 = for i:(RowIx cons Void). case i of
+    {|constraints=i|} -> t.{|constraints=i|}
+    {|objective=()|} -> t.{|extra=()|}  -- todo: should be extra!!
+    {|extra=_|} -> todo
+
+  (newBasics, newNonbasics, t2)
+
+
+eliminate_artificials2 feasibilityAns
+
+-- buggy!!
+
+withState tf \tableauRef. iter \_.
+  tableau = get tableauRef
+  isopt = isOptimal (get tableauRef)
+  case isopt of
+    True -> Done $ Solution $ extractSolution tableau
+    False -> case findPivotIndex tableau of
+      Nothing -> Done Unbounded
+      Just piv -> 
+        tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
+        Continue
+-- not the right result
+
 
 -- :p pivot fet' (0@_) (0@_)
 
