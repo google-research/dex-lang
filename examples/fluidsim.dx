@@ -4,14 +4,14 @@ Fluid simulation code based on
 
 import plot
 
-def wrapidx (n:Type) (i:Int) : n =
+def wrapidx (n:Type) [Ix n] (i:Int) : n =
   -- Index wrapping around at ends.
   asidx $ mod i $ size n
 
-def incwrap {n} (i:n) : n =  -- Increment index, wrapping around at ends.
+def incwrap {n} [Ix n] (i:n) : n =  -- Increment index, wrapping around at ends.
   asidx $ mod ((ordinal i) + 1) $ size n
 
-def decwrap {n} (i:n) : n =  -- Decrement index, wrapping around at ends.
+def decwrap {n} [Ix n] (i:n) : n =  -- Decrement index, wrapping around at ends.
   asidx $ mod ((ordinal i) - 1) $ size n
 
 def finite_difference_neighbours {n a} [Add a] (x:n=>a) : n=>a =
@@ -112,7 +112,7 @@ N = Fin 50
 M = Fin 50
 
 -- Create random velocity field.
-def ixkey3 {n m o} (k:Key) (i:n) (j:m) (k2:o) : Key =
+def ixkey3 {n m o} [Ix n, Ix m, Ix o] (k:Key) (i:n) (j:m) (k2:o) : Key =
   hash (hash (hash k (ordinal i)) (ordinal j)) (ordinal k2)
 init_velocity = for i:N j:M k:(Fin 2).
   3.0 * (randn $ ixkey3 (newKey 0) i j k)

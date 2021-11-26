@@ -41,13 +41,13 @@ f = \x. x + 10.
 
 'Lambdas can have specific arrow annotations.
 
-lam1 = \{n}. \x. fromOrdinal n x
+lam1 = \{n}. \x:(Fin n). ordinal x
 :t lam1
-> ((n:Type) ?-> Int32 -> n)
+> ((n:Int32) ?-> (Fin n) -> Int32)
 
-lam4 = \{n m}. (0@n, 0@m)
+lam4 = \{n m}. (Fin n, Fin m)
 :t lam4
-> ((n:Type) ?-> (m:Type) ?-> (n & m))
+> (Int32 ?-> Int32 ?-> (Type & Type))
 
 :p (
     1

@@ -561,10 +561,14 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
   x
 > (Right 1.2)
 
+-- TODO(Ix) : Write a proper instance
+instance {n m} [Ix n, Ix m] Ix {weights:(n&m) | biases:n}
+  dummy_ix__ = 0
+
 -- Sum types as flattened index sets!
-def Weights (n:Type) (m:Type) : Type = n=>m=>Float
-def Biases  (n:Type)          : Type = n=>Float
-def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Float
+def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
+def Biases  (n:Type)          [Ix n]       : Type = n=>Float
+def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
 
 w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
 b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)

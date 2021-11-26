@@ -2,7 +2,7 @@
 
 'Utilities unrelated to parsing
 
-def fromOrdinalExc (n:Type) (i:Int) : {Except} n =
+def fromOrdinalExc (n:Type) [Ix n] (i:Int) : {Except} n =
   if (0 <= i) && (i < size n)
     then unsafeFromOrdinal _ i
     else throw ()

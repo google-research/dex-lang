@@ -233,8 +233,8 @@ instance CheaplyReducibleE Expr Atom where
     Op (SynthesizeDict _ ty') -> do
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthDictBlock ty) >>= \case
-        Success (Block _ Empty (Atom d)) -> return d
-        _ -> reportSynthesisFail ty >> empty
+        Success block -> dropSubst $ cheapReduceE block
+        Failure _     -> reportSynthesisFail ty >> empty
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?
     Op (CastOp ty' val') -> do

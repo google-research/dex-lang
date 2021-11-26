@@ -44,7 +44,7 @@ def fToC (x:Float) : Complex = MkComplex x 0.
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension
-def ixToF {n} (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
+def ixToF {n} [Ix n] (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
 
 -- Helper to generate zero-delay GIF animations
 def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
@@ -52,7 +52,7 @@ def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
 
 -- Cuts an array down to a smaller dimension.
 -- Useful for cutting out animation frames for a faster GIF.
-def cut {n m a} (x:n=>a) : m=>a =
+def cut {n m a} [Ix m] (x:n=>a) : m=>a =
   s = idiv (size n) (size m)
   for i:m. x.(unsafeFromOrdinal _ $ s * ordinal i)
 
@@ -65,15 +65,15 @@ def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
 '## Computing $\psi_{t+\Delta t}$
 
 -- Are the given indices at the bounds of the grid
-def atBounds {n m} (i:n) (j:m) : Bool =
+def atBounds {n m} [Ix n, Ix m] (i:n) (j:m) : Bool =
   (ordinal i == 0
    || ordinal i == (gridSize - 1)
    || ordinal j == 0
    || ordinal j == (gridSize - 1))
 
 -- Operators for performing unsafe ordinal arithmetic
-def (+!) {n} (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
-def (-!) {n} (i:n) (off:Int) : n = i +! (-1 * off)
+def (+!) {n} [Ix n] (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
+def (-!) {n} [Ix n] (i:n) (off:Int) : n = i +! (-1 * off)
 
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
 def step {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
@@ -103,7 +103,7 @@ def pdf {n m} (psi:n=>m=>Complex) : n=>m=>Float =
 '## Examples
 
 -- Generate gaussian initial conditions with zero at the bounds.
-def gaussian {n m} ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
+def gaussian {n m} [Ix n, Ix m] ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
   for i:n.
     for j:m.
       y2 = pow (ixToF i - uy) 2.

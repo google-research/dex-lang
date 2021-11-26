@@ -11,11 +11,11 @@ def Scale (a:Type) : Type =
   { mapping : a -> Maybe Float
   & range   : List (CompactSet Float) }  -- non-overlapping, ordered
 
-def ScaledData (n:Type) (a:Type) : Type =
+def ScaledData (n:Type) [Ix n] (a:Type) : Type =
   { scale : Scale a
   & dat   : n => a }
 
-def Plot (n:Type) (a:Type) (b:Type) (c:Type) : Type =
+def Plot (n:Type) [Ix n] (a:Type) (b:Type) (c:Type) : Type =
   { xs : ScaledData n a
   & ys : ScaledData n b
   & cs : ScaledData n c }
@@ -79,11 +79,11 @@ def plotToDiagram {a b c n} (plot:Plot n a b c) : Diagram =
 def showPlot {a b c n} (plot:Plot n a b c) : String =
   renderSVG (plotToDiagram plot) ((0.0, 0.0), (1.0, 1.0))
 
-def blankData {n} : ScaledData n Unit = {scale = unitTypeScale, dat = for i. ()}
+def blankData {n} [Ix n] : ScaledData n Unit =
+  {scale = unitTypeScale, dat = for i. ()}
 
-def blankPlot {n} : Plot n Unit Unit Unit = { xs = blankData
-                                            , ys = blankData
-                                            , cs = blankData }
+def blankPlot {n} [Ix n] : Plot n Unit Unit Unit =
+  { xs = blankData, ys = blankData, cs = blankData }
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def autoScale {n} (xs:n=>Float) : ScaledData n Float =
