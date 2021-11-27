@@ -443,6 +443,7 @@ simplifyOp op = case op of
 simplifyHof :: Hof -> SimplifyM Atom
 simplifyHof hof = case hof of
   For d lam -> do
+    -- buggy: need to apply substitution to d!
     ~(lam'@(Lam (Abs i _)), recon) <- simplifyLam lam
     ans <- emit $ Hof $ For d lam'
     case recon of

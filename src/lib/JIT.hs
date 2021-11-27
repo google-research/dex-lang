@@ -188,6 +188,7 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
                       <> wszBinder  @> nthr
                       <> nthrBinder @> nthr
     -- Emit the body
+    -- buggy: wrong arg order
     void $ extendOperands (argEnv <> threadInfoEnv) $ compileBlock body
     kernel <- makeFunction (asLLVMName name)
                 [threadIdParam, nThreadParam, argArrayParam] Nothing
@@ -505,6 +506,7 @@ impKernelToLLVMGPU ~(ImpFunction _ ~(tidVar:widVar:wszVar:nthrVar:args) body) = 
                     <> wszVar  @> bsz
                     <> nthrVar @> nthr
   let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
+  -- Buggy: `paramEnv` should be on the right of the `<>`
   void $ extendOperands (paramEnv <> threadInfoEnv) $ compileBlock body
   kernel <- makeFunction "kernel" argParams Nothing
   LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple
