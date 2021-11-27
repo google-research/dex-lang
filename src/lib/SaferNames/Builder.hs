@@ -15,7 +15,7 @@
 
 module SaferNames.Builder (
   emit, emitOp,
-  buildPureLam, BuilderT (..), Builder (..), Builder2,
+  buildPureLam, BuilderT (..), Builder (..), Builder2, BuilderM,
   runBuilderT, buildBlock, buildBlockReduced, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,

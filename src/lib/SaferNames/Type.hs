@@ -893,6 +893,8 @@ checkValidCast sourceTy destTy =
       Scalar Int64Type   -> return ()
       Scalar Int32Type   -> return ()
       Scalar Word8Type   -> return ()
+      Scalar Word32Type  -> return ()
+      Scalar Word64Type  -> return ()
       Scalar Float64Type -> return ()
       Scalar Float32Type -> return ()
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
