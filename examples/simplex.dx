@@ -438,27 +438,24 @@ def pivot_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
 
 
 def deduce_nonbasics [Eq cons, Eq vars]
-  (ftableau: FeasibilityTableau cons vars) : vars=>(ColIx cons vars) =
-  (fbasics, _) = ftableau
-  -- given a feasibility tableau
-  -- find the nonbasics of its corresponding normal tableau
+  (basics: cons=>(ColIx cons vars)) : vars=>(ColIx cons vars) =
+  -- given the basics of a *normal* tableau
+  -- find the nonbasics
   init_nonbasics = for r:vars. {|variables=r|}
   yieldState init_nonbasics \nonbasics_ref.
     withState (0@vars) \pointer.
       for c:(ColIx cons vars).
-        in_fbasics = any for r.
-          case fbasics.r of
-            {|slacks=r|} -> case c of
-              {|slacks=c|} -> r == c
+        in_basics = any for r.
+          case basics.r of
+            {|slacks=r|}    -> case c of
+              {|slacks=c|}    -> r == c
               {|variables=_|} -> False
-              {|value=_|} -> True
-            {|variables=r|} -> case r of
-              {|realvars=r|} -> case c of
-                {|variables=c|} -> r == c
-                {|slacks=_|} -> False
-                {|value=_|} -> True
-              {|artificials=r|} -> error ("tag 4")  -- same as tag 3
-        if not in_fbasics then
+              {|value=_|}     -> True
+            {|variables=r|} -> case c of
+              {|slacks=_|}    -> False
+              {|variables=c|} -> r == c
+              {|value=_|}     -> True
+        if not in_basics then
           nonbasics_ref!(get pointer) := c
           if (ordinal (get pointer) + 1) < (size vars) then
             pointer := ((ordinal (get pointer)) + 1)@vars
@@ -478,7 +475,7 @@ def eliminate_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
       {|artificials=r|} -> error("tag 3")
         -- can always pivot an artificial variable to a slack variable
 
-  newNonbasics = deduce_nonbasics tableau
+  newNonbasics = deduce_nonbasics newBasics
 
   -- keep real var only
   t = for i. for j:(ColIx cons vars). case j of
