@@ -398,7 +398,6 @@ def find_non_artificial_pivcol [Eq cons, Eq vars]
   (tableau: FeasibilityTableau cons vars)
   (pivrow: RowIx cons Unit)
   : Maybe (ColIx cons {realvars: vars | artificials: cons}) =
-
   (basics, nonbasics, table) = tableau
   coeff = for i.
     col = nonbasics.i
@@ -418,24 +417,19 @@ def pivot_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
   -- Pivot out all the artificial variables out of the basis
   yieldState tableau \tRef.
     (basics, nonbasics, table) = get tRef  -- todo: less copying
-    for v:(RowIx cons Unit).
-      v' = v
-      case v of
-        {|constraints=v|} ->
-          var = basics.v
-          case var of
-            {|variables=var|} -> case var of
-              {|artificials=var|} ->
-                pivrow = v'
-                case find_non_artificial_pivcol (get tRef) pivrow of
-                  Just pivcol -> 
-                    tRef := pivot (get tRef) pivrow pivcol
-                  Nothing -> error("tag 5")
-                  -- can always pivot to a slack (same as tag 3)
-              {|realvars=var|} -> ()
-            {|slacks=var|} -> ()
-        {|objective=()|} -> ()
-        {|extra=()|} -> ()
+    for v:cons.
+      var = basics.v
+      case var of
+        {|slacks=var|} -> ()
+        {|variables=var|} -> case var of
+          {|realvars=var|} -> ()
+          {|artificials=var|} ->
+            pivrow = {|constraints=v|}
+            case find_non_artificial_pivcol (get tRef) pivrow of
+              Just pivcol ->
+                tRef := pivot (get tRef) pivrow pivcol
+              Nothing -> error("tag 5")
+              -- can always pivot to a slack (same as tag 3)
 
 
 def deduce_nonbasics [Eq cons, Eq vars]
@@ -460,8 +454,6 @@ def deduce_nonbasics [Eq cons, Eq vars]
           nonbasics_ref!(get pointer) := c
           if (ordinal (get pointer) + 1) < (size vars) then
             pointer := ((ordinal (get pointer)) + 1)@vars
-        ()
-    ()
 
 
 def eliminate_artificials (_:Eq cons) ?=> (_:Eq vars) ?=>
