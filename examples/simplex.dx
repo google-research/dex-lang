@@ -617,6 +617,8 @@ dup_constraints =
 > (Solution [0.5, 0.])
 
 
+-- differs from dup_constraints only in the ordering
+-- artificial variables are in the basis of FeasibilityAns
 dup_constraints2 =
   [{coeffs=equal_a.(1@_), offset=equal_b.(1@_), conType=GreaterThan},
   {coeffs=equal_a.(0@_), offset=equal_b.(0@_), conType=LessThan},
@@ -626,6 +628,7 @@ dup_constraints2 =
 > (Solution [0.5, 0.])
 
 
+-- the first constraint is always satisfied
 redundant_obj = [1.0, 1.0]
 redundant_constraints =
   [{coeffs=[0.0, 0.0], offset=0.0, conType=LessThan},
