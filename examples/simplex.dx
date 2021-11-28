@@ -29,6 +29,7 @@ and [these notes](http://www.eng.uwaterloo.ca/~syde05/phase1.pdf)
  - helpful pattern-matching features
     - wildcard: debugging runtime error
     - match tuple: (rowIx, colIx)
+ - record printing is buggy (try print nonbasics in a feasibilityTableau)
 
 import plot
 
