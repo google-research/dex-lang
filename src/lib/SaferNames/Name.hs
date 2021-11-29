@@ -49,7 +49,7 @@ module SaferNames.Name (
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   withFreshM, withFreshLike, inject, injectM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupEnvFrag, lookupEnvFragRaw,
-  EmptyAbs, pattern EmptyAbs, SubstVal (..),
+  EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   NameGen (..), fmapG, NameGenT (..), fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
@@ -308,6 +308,8 @@ data BinderP (c::C) (ann::E) (n::S) (l::S) =
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
+
+type NaryAbs (c::C) = Abs (Nest (NameBinder c)) :: E -> E
 
 -- Proof object that a given scope is void
 data IsVoidS n where
@@ -788,6 +790,9 @@ instance (SubstE (SubstVal cMatch atom) atom, NameColor c)
          => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom c) where
   substE (_, env) (Rename name) = env ! name
   substE env (SubstVal val) = SubstVal $ substE env val
+
+instance (SubstE (SubstVal cMatch atom) atom, InjectableE atom)
+         => SubstV (SubstVal cMatch atom) (SubstVal cMatch atom) where
 
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case

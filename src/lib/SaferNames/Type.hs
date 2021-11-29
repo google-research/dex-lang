@@ -13,7 +13,7 @@
 
 module SaferNames.Type (
   HasType (..), CheckableE (..), CheckableB (..),
-  checkModule, checkTypes, getType, litType, getBaseMonoidType,
+  checkModule, checkTypes, getType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, checkExtends, applyDataDefParams, indices,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
@@ -55,6 +55,13 @@ checkTypes e = () <$ liftImmut do
   e' <- injectM e
   liftExcept $ runTyperT bindings $ void $ checkE e'
   return UnitE
+
+getTypeSubst :: (EnvReader Name m, BindingsReader2 m, HasType e)
+             => e i -> m i o (Type o)
+getTypeSubst e = liftImmut do
+  DB bindings <- getDB
+  env <- getEnv
+  return $ runHardFail $ runSubstTyperT env bindings $ getTypeE e
 
 getType :: (BindingsReader m, HasType e)
            => e n -> m n (Type n)
@@ -115,13 +122,15 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
 
 type TyperM = TyperT Except
 
-runTyperT :: (Fallible m, Distinct n)
-          => Bindings n -> TyperT m n n a -> m a
-runTyperT bindings m = do
+runSubstTyperT :: (Fallible m, Distinct o)
+               => Env Name i o -> Bindings o -> TyperT m i o a -> m a
+runSubstTyperT env bindings m = do
   runBindingsReaderT bindings $
-    runEnvReaderT idEnv $
+    runEnvReaderT env $
       runTyperT' m
 
+runTyperT :: (Fallible m, Distinct n) => Bindings n -> TyperT m n n a -> m a
+runTyperT bindings m = runSubstTyperT idEnv bindings m
 
 liftTyperM :: (Immut n, Fallible1 m, BindingsReader m)
            => TyperM n n a

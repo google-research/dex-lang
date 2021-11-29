@@ -628,14 +628,15 @@ instance (forall c. NameColor c => ToBinding (binding c) c)
 
 captureClosure
   :: (HoistableB b, HoistableE e, NameColor c)
-  => b n l -> e l
-  -> ([Name c l], Abs (Nest (NameBinder c)) e n )
+  => b n l -> e l -> ([Name c l], NaryAbs c e n)
 captureClosure decls result = do
   let vs = capturedVars decls result
   let ab = abstractFreeVars vs result
   case hoist decls ab of
     HoistSuccess abHoisted -> (vs, abHoisted)
-    HoistFailure _ -> error "shouldn't happen"
+    HoistFailure _ ->
+      error "shouldn't happen"  -- but it will if we have types that reference
+                                -- local vars. We really need a telescope.
 
 capturedVars :: (NameColor c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
@@ -1522,6 +1523,9 @@ instance BindsOneName LamBinder AtomNameC where
 instance BindsOneAtomName LamBinder where
   boundAtomBinding (LamBinder _ ty arr _) =
     LamBound $ LamBinding arr ty
+
+instance HasNameHint (LamBinder n l) where
+  getNameHint (LamBinder b _ _ _) = getNameHint b
 
 instance ProvesExt  LamBinder
 instance BindsNames LamBinder

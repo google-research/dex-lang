@@ -33,7 +33,8 @@ module SaferNames.Builder (
    emitSourceMap, emitSynthCandidates,
   TopBindingsFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
-  singletonBinderNest, runBuilderM, liftBuilder, makeBlock
+  singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
+  indexToInt, indexSetSize, intToIndex
   ) where
 
 import Control.Applicative
@@ -669,3 +670,52 @@ app x i = Var <$> emit (App x i)
 
 naryApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
 naryApp f xs = foldM app f xs
+
+indexAsInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+indexAsInt idx = emitOp $ ToOrdinal idx
+
+-- === index set type class ===
+
+clampPositive :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+clampPositive x = do
+  isNegative <- x `ilt` (IdxRepVal 0)
+  select isNegative (IdxRepVal 0) x
+
+intToIndex :: (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
+intToIndex ty i = case ty of
+  TC con -> case con of
+    IntRange        low high   -> return $ Con $ IntRangeVal        low high i
+    IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
+
+indexToInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+indexToInt (Con (IntRangeVal _ _ i))     = return i
+indexToInt (Con (IndexRangeVal _ _ _ i)) = return i
+indexToInt idx = getType idx >>= \case
+  TC (IntRange _ _)     -> indexAsInt idx
+  TC (IndexRange _ _ _) -> indexAsInt idx
+  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
+
+indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
+indexSetSize (TC con) = case con of
+  IntRange low high -> clampPositive =<< high `isub` low
+  SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSize types
+  IndexRange n low high -> do
+    low' <- case low of
+      InclusiveLim x -> indexToInt x
+      ExclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
+      Unlimited      -> return $ IdxRepVal 0
+    high' <- case high of
+      InclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
+      ExclusiveLim x -> indexToInt x
+      Unlimited      -> indexSetSize n
+    clampPositive =<< high' `isub` low'
+  ProdType tys -> foldM imul (IdxRepVal 1) =<< traverse indexSetSize tys
+  ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
+  _ -> error $ "Not implemented " ++ pprint con
+indexSetSize (RecordTy (NoExt types)) = do
+  sizes <- traverse indexSetSize types
+  foldM imul (IdxRepVal 1) sizes
+indexSetSize (VariantTy (NoExt types)) = do
+  sizes <- traverse indexSetSize types
+  foldM iadd (IdxRepVal 0) sizes
+indexSetSize ty = error $ "Not implemented " ++ pprint ty

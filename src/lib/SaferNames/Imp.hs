@@ -45,11 +45,11 @@ toImpModule bindings _ cc mainFunName maybeDest absBlock =
 
 type ImpBuilderEmissions = Nest ImpDecl
 
-newtype ImpM (i::S) (o::S) (a:: *) =
-  ImpM { runImpM' ::
-           EnvReaderT AtomSubstVal
-             (InplaceT Bindings ImpBuilderEmissions Identity) i o a }
-  deriving ( Functor, Applicative, Monad, ScopeReader, EnvReader AtomSubstVal)
+newtype ImpM (n::S) (a:: *) =
+  ImpM { runImpM' :: InplaceT Bindings ImpBuilderEmissions Identity n a }
+  deriving ( Functor, Applicative, Monad, ScopeReader)
+
+type SubstImpM = EnvReaderT AtomSubstVal ImpM :: S -> S -> * -> *
 
 instance ExtOutMap Bindings ImpBuilderEmissions where
   extendOutMap bindings emissions =
@@ -59,19 +59,18 @@ class ( ImpBuilder2 m, EnvReader AtomSubstVal m
       , BindingsReader2 m, BindingsExtender2 m)
       => Imper (m::MonadKind2) where
 
-instance BindingsReader (ImpM i) where
-  getBindings = ImpM $ EnvReaderT $ lift $ getOutMapInplaceT
+instance BindingsReader ImpM where
+  getBindings = ImpM $ getOutMapInplaceT
 
-instance BindingsExtender (ImpM i) where
-  extendBindings frag cont = ImpM $ EnvReaderT $ ReaderT \env ->
+instance BindingsExtender ImpM where
+  extendBindings frag cont = ImpM $
     extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-      withExtEvidence (toExtEvidence frag) $
-        runEnvReaderT (inject env) $ runImpM' cont
+      withExtEvidence (toExtEvidence frag) $ runImpM' cont
 
-instance ImpBuilder (ImpM i) where
+instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = do
     let tys = impInstrTypes instr
-    ListE vs <- ImpM $ EnvReaderT $ ReaderT \env ->
+    ListE vs <- ImpM $
       extendInplaceT do
         scope <- getScope
         let hints = map (const "v") tys
@@ -87,23 +86,27 @@ instance ImpBuilder (ImpM i) where
      makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
      makeImpBinders _ _ = error "zip error"
 
-  buildScopedImp cont = ImpM $ EnvReaderT $ ReaderT \env ->
-    locallyMutableInplaceT $
-      runEnvReaderT (inject env) $ runImpM' do
-        Emits <- fabricateEmitsEvidenceM
-        Distinct <- getDistinct
-        cont
+  buildScopedImp cont = ImpM $
+    locallyMutableInplaceT $ runImpM' do
+      Emits <- fabricateEmitsEvidenceM
+      Distinct <- getDistinct
+      cont
 
-instance Imper ImpM
+instance ImpBuilder m => ImpBuilder (EnvReaderT AtomSubstVal m i) where
+  emitMultiReturnInstr instr = EnvReaderT $ lift $ emitMultiReturnInstr instr
+  buildScopedImp cont = EnvReaderT $ ReaderT \env ->
+    buildScopedImp $ runEnvReaderT (inject env) $ cont
+
+instance ImpBuilder m => Imper (EnvReaderT AtomSubstVal m)
 
 runImpM
   :: Distinct n
   => Bindings n
-  -> (Immut n => ImpM n n (e n))
+  -> (Immut n => SubstImpM n n (e n))
   -> e n
 runImpM bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
-    case runIdentity $ runInplaceT bindings $ runEnvReaderT idEnv $ runImpM' $ cont of
+    case runIdentity $ runInplaceT bindings $ runImpM' $ runEnvReaderT idEnv $ cont of
       (Empty, result) -> result
 
 -- === the actual pass ===
@@ -141,19 +144,21 @@ buildRecon b x = do
 
 translateBlock :: forall m i o. (Imper m, Emits o)
                => MaybeDest o -> Block i -> m i o (Atom o)
-translateBlock dest (Block _ decls result) = go decls result
-  where
-    go :: Nest Decl i' i'' -> Expr i'' -> m i' o (Atom o)
-    go Empty result = translateExpr dest result
-    go (Nest decl decls) result = translateDecl Nothing decl $ go decls result
+translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest result
 
-translateDecl :: (Imper m, Emits o) => MaybeDest o -> Decl i i' -> (m i' o a) -> m i o a
-translateDecl maybeDest (Let b (DeclBinding _ _ expr)) cont = do
-  ans <- translateExpr maybeDest expr
+translateDeclNest :: (Imper m, Emits o) => Nest Decl i i' -> m i' o a -> m i o a
+translateDeclNest Empty cont = cont
+translateDeclNest (Nest decl rest) cont =
+  translateDecl decl $ translateDeclNest rest cont
+
+translateDecl :: (Imper m, Emits o) => Decl i i' -> m i' o a -> m i o a
+translateDecl (Let b (DeclBinding _ _ expr)) cont = do
+  ans <- translateExpr Nothing expr
   extendEnv (b @> SubstVal ans) $ cont
 
 translateExpr :: (Imper m, Emits o) => MaybeDest o -> Expr i -> m i o (Atom o)
 translateExpr maybeDest expr = case expr of
+  Hof hof -> toImpHof maybeDest hof
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
   _ -> error $ "not implemented: " ++ pprint expr
@@ -170,7 +175,7 @@ toImpOp maybeDest op = case op of
     resultTy <- resultTyM
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) \(i, row) -> do
-      ithDest <- destGet dest =<< intToIndex ixTy (IIdxRepVal i)
+      ithDest <- destGet dest =<< intToIndexImp ixTy (IIdxRepVal i)
       copyAtom ithDest row
     destToAtom dest
   PrimEffect refDest m -> do
@@ -190,23 +195,23 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
-  UnsafeFromOrdinal n i -> returnVal =<< intToIndex n =<< fromScalarAtom i
-  IdxSetSize n -> returnVal =<< toScalarAtom  =<< indexSetSize n
+  UnsafeFromOrdinal n i -> returnVal =<< intToIndexImp n =<< fromScalarAtom i
+  IdxSetSize n -> returnVal =<< toScalarAtom  =<< indexSetSizeImp n
   ToOrdinal idx -> case idx of
     Con (IntRangeVal   _ _   i) -> returnVal $ i
     Con (IndexRangeVal _ _ _ i) -> returnVal $ i
-    _ -> returnVal =<< toScalarAtom =<< indexToInt idx
+    _ -> returnVal =<< toScalarAtom =<< indexToIntImp idx
   Inject e -> case e of
     Con (IndexRangeVal t low _ restrictIdx) -> do
       offset <- case low of
-        InclusiveLim a -> indexToInt a
-        ExclusiveLim a -> indexToInt a >>= iaddI (IIdxRepVal 1)
+        InclusiveLim a -> indexToIntImp a
+        ExclusiveLim a -> indexToIntImp a >>= iaddI (IIdxRepVal 1)
         Unlimited      -> return (IIdxRepVal 0)
       restrictIdx' <- fromScalarAtom restrictIdx
-      returnVal =<< intToIndex t =<< iaddI restrictIdx' offset
+      returnVal =<< intToIndexImp t =<< iaddI restrictIdx' offset
     Con (ParIndexCon (TC (ParIndexRange realIdxTy _ _)) i) -> do
       i' <- fromScalarAtom i
-      returnVal =<< intToIndex realIdxTy i'
+      returnVal =<< intToIndexImp realIdxTy i'
     _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
@@ -231,13 +236,13 @@ toImpOp maybeDest op = case op of
     store ptr' x'
     return UnitVal
   SliceOffset ~(Con (IndexSliceVal n _ tileOffset)) idx -> do
-    i' <- indexToInt idx
+    i' <- indexToIntImp idx
     tileOffset' <- fromScalarAtom tileOffset
     i <- iaddI tileOffset' i'
-    returnVal =<< intToIndex n i
+    returnVal =<< intToIndexImp n i
   SliceCurry ~(Con (IndexSliceVal _ (PairTy _ v) tileOffset)) idx -> do
-    vz <- intToIndex v $ IIdxRepVal 0
-    extraOffset <- indexToInt (PairVal idx vz)
+    vz <- intToIndexImp v $ IIdxRepVal 0
+    extraOffset <- indexToIntImp (PairVal idx vz)
     tileOffset' <- fromScalarAtom tileOffset
     tileOffset'' <- iaddI tileOffset' extraOffset
     returnVal =<< toScalarAtom tileOffset''
@@ -289,6 +294,25 @@ toImpOp maybeDest op = case op of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
 
+toImpHof :: (Imper m, Emits o) => Maybe (Dest o) -> PrimHof (Atom i) -> m i o (Atom o)
+toImpHof maybeDest hof = do
+  -- TODO: it's a shame to have to substitute the whole expression just to get its type.
+  -- Laziness *might* save us, but we should check.
+  resultTy <- getType =<< substM (Hof hof)
+  case hof of
+    For (RegularFor d) (Lam (LamExpr b body)) -> do
+      idxTy <- substM $ binderType b
+      case idxTy of
+        _ -> do
+          n <- indexSetSizeImp idxTy
+          dest <- allocDest maybeDest resultTy
+          emitLoop (getNameHint b) d n \i -> do
+            idx <- intToIndexImp (inject idxTy) i
+            ithDest <- destGet (inject dest) idx
+            void $ extendEnv (b @> SubstVal idx) $
+              translateBlock (Just ithDest) body
+          destToAtom dest
+
 -- === Destination type ===
 
 type Dest = Atom  -- has type `Ref a` for some a
@@ -328,6 +352,12 @@ emitSwitch :: (ImpBuilder m, Emits n)
            -> [m n ()]  -- <-- Need to figure out what to do here! No impredicative polymorphism
            -> m n ()
 emitSwitch _ = undefined
+
+emitLoop :: (ImpBuilder m, Emits n)
+         => NameHint -> Direction -> IExpr n
+         -> (forall l. (Ext n l, Distinct l, Emits l) => IExpr l -> m l ())
+         -> m n ()
+emitLoop hint d n body = undefined
 
 destToAtom :: (ImpBuilder m, Emits n) => Dest n -> m n (Atom n)
 destToAtom (Con dest) = do
@@ -399,11 +429,11 @@ deviceFromCallingConvention cc = case cc of
 
 -- === Imp IR builder ===
 
-class BindingsReader m => ImpBuilder (m::MonadKind1) where
+class (BindingsReader m, BindingsExtender m) => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
     :: (InjectableE e, Immut n)
-    => (forall l. (Emits l, Ext n l) => m l (e l))
+    => (forall l. (Emits l, Ext n l, Distinct l) => m l (e l))
     -> m n (DistinctAbs (Nest ImpDecl) e n)
 
 type ImpBuilder2 (m::MonadKind2) = forall i. ImpBuilder (m i)
@@ -435,12 +465,6 @@ buildImpNaryAbs
 buildImpNaryAbs [] body = do
   Distinct <- getDistinct
   DistinctAbs Empty <$> buildScopedImp (body [])
--- buildImpNaryAbs ((hint, ty):args) body = do
---   Abs b (Abs bs body) <- withFreshIBinder hint ty \v ->
---     buildImpNaryAbs args \vs -> do
---       v' <- injectM v
---       body (v':vs)
---   return $ Abs (Nest b bs) body
 
 emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do
@@ -521,14 +545,24 @@ toScalarType b = BaseTy b
 
 -- === Type classes ===
 
-intToIndex :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
-intToIndex _ _  = undefined
+liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, InjectableE e)
+               => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
+               -> m n (e n)
+liftBuilderImp cont = do
+  Abs decls result <- liftImmut do
+    DB bindings <- getDB
+    DistinctAbs decls result <- return $ runBuilderM bindings $ buildScoped cont
+    return $ Abs decls result
+  runEnvReaderT idEnv $ translateDeclNest decls $ substM result
 
-indexToInt :: (ImpBuilder m, Emits n) => Atom n -> m n (IExpr n)
-indexToInt _ = undefined
+intToIndexImp :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
+intToIndexImp ty i = liftBuilderImp $ intToIndex (inject ty) =<< toScalarAtom (inject i)
 
-indexSetSize :: (ImpBuilder m, Emits n) => Type n -> m n (IExpr n)
-indexSetSize _ = undefined
+indexToIntImp :: (ImpBuilder m, Emits n) => Atom n -> m n (IExpr n)
+indexToIntImp idx = fromScalarAtom =<< liftBuilderImp (indexToInt $ inject idx)
+
+indexSetSizeImp :: (ImpBuilder m, Emits n) => Type n -> m n (IExpr n)
+indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImp (indexSetSize $ inject ty)
 
 -- === type checking imp programs ===
 

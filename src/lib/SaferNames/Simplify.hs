@@ -6,10 +6,12 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module SaferNames.Simplify
   ( simplifyModule, splitSimpModule, applyDataResults) where
 
+import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -178,8 +180,64 @@ simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
   _ -> emitOp op
 
+data Reconstruct n =
+   IdentityRecon
+ | LamRecon (NaryAbs AtomNameC Atom n)
+
+simplifyLam :: (Emits o, Simplifier m) => LamExpr i -> m i o (LamExpr o, Reconstruct o)
+simplifyLam lam = simplifyLams 1 lam
+
+simplifyLams :: Simplifier m => Int -> LamExpr i -> m i o (LamExpr o, Reconstruct o)
+simplifyLams n lam = fromPairE <$> liftImmut do
+  Abs bs body <- return $ fromNaryLam n lam
+  refreshBinders bs \bs' -> do
+    DistinctAbs decls result <- buildScoped $ simplifyBlock body
+    -- TODO: this would be more efficient if we had the two-computation version of buildScoped
+    extendBindings (toBindingsFrag decls) do
+      (resultData, recon) <- defuncAtom (toScopeFrag bs' >>> toScopeFrag decls) result
+      block <- makeBlock decls $ Atom result
+      return $ PairE (toNaryLam $ Abs bs' block) recon
+
+fromNaryLam :: Int -> LamExpr n -> Abs (Nest LamBinder) Block n
+fromNaryLam 1 (LamExpr b block) = Abs (Nest b Empty) block
+fromNaryLam n _ = undefined
+fromNaryLam _ _ = error "only defined for n >= 1"
+
+toNaryLam :: Abs (Nest LamBinder) Block n -> LamExpr n
+toNaryLam (Abs Empty _) = error "not defined for nullary lambda"
+toNaryLam (Abs (Nest b Empty) block) = LamExpr b block
+
+defuncAtom :: BindingsReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
+defuncAtom frag x = do
+  xTy <- getType x
+  if isData xTy
+    then return (x, IdentityRecon)
+    else error "todo"
+
+isData :: Type n -> Bool
+isData _ = True  -- TODO!
+
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
-simplifyHof = undefined
+simplifyHof hof = case hof of
+  For d ~(Lam lam) -> do
+    (lam', recon) <- simplifyLam lam
+    ans <- liftM Var $ emit $ Hof $ For d $ Lam lam'
+    case recon of
+      IdentityRecon -> return ans
+      LamRecon _ -> undefined
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
+
+-- === instances ===
+
+instance GenericE Reconstruct where
+  type RepE Reconstruct = EitherE UnitE (NaryAbs AtomNameC Atom)
+  toE = undefined
+  fromE = undefined
+
+instance InjectableE Reconstruct
+instance HoistableE  Reconstruct
+instance SubstE Name Reconstruct
+instance SubstE AtomSubstVal Reconstruct
+instance AlphaEqE Reconstruct
