@@ -176,10 +176,10 @@ def q2 {a} (x : MyPairOfXs a) : a = fst x
 def q3 {a} (x : MyPairOfXs a) : Int = x_ a
 
 -- We don't quantify implicitly over constraints of the return type
-def f4 {a} (x : a) : MyPairOfXs a = (x, x)
+def q4 {a} (x : a) : MyPairOfXs a = (x, x)
 > Type error:Couldn't synthesize a class dictionary for: (X a)
 >
-> def f4 {a} (x : a) : MyPairOfXs a = (x, x)
+> def q4 {a} (x : a) : MyPairOfXs a = (x, x)
 >                      ^^^^^^^^^^^^^
 
 -- Check automatic quantification for interfaces
@@ -187,3 +187,8 @@ interface AutoQuant a
   dummy : Int
 instance {a} AutoQuant (MyPairOfXs a)
   dummy = 1
+
+-- Should be able to quantify nested constraints
+def q5 {a} (x : MyPairOfXs (MyPairOfXs a)) : Int = 0
+:t q5
+> ((a:Type) ?-> (X a) ?=> (X (a & a)) ?=> ((a & a) & (a & a)) -> Int32)

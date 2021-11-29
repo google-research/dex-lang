@@ -417,6 +417,10 @@ instance Fallible m => Fallible (StateT s m) where
   throwErrs errs = lift $ throwErrs errs
   addErrCtx ctx (StateT f) = StateT \s -> addErrCtx ctx $ f s
 
+instance Catchable m => Catchable (StateT s m) where
+  StateT f `catchErr` handler = StateT \s ->
+    f s `catchErr` \e -> runStateT (handler e) s
+
 instance CtxReader m => CtxReader (StateT s m) where
   getErrCtx = lift getErrCtx
 

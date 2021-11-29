@@ -31,7 +31,8 @@ module SaferNames.Name (
   MaterializedEnv (..), lookupTerminalEnvFrag, lookupMaterializedEnv,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
-  IsVoidS (..), UnitE (..), VoidE, PairE (..), fromPairE, ListE (..), ComposeE (..),
+  IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
+  ListE (..), ComposeE (..),
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
@@ -45,7 +46,8 @@ module SaferNames.Name (
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applySubst, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
-  checkAlphaEq, alphaEq, alphaElem, AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
+  checkAlphaEq, alphaEq, alphaEqPure, alphaElem, nubAlphaEq,
+  AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   withFreshM, withFreshLike, inject, injectM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupEnvFrag, lookupEnvFragRaw,
@@ -85,11 +87,14 @@ import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
+import Control.Monad.State.Strict
 import qualified Data.Map.Strict as M
 import Data.Foldable (fold)
 import Data.Maybe (catMaybes)
 import Data.Kind (Type)
 import Data.String
+import Data.Function ((&))
+import Data.List (nubBy)
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..), Rep)
@@ -496,6 +501,9 @@ data PairE (e1::E) (e2::E) (n::S) = PairE (e1 n) (e2 n)
 fromPairE :: PairE e1 e2 n -> (e1 n, e2 n)
 fromPairE (PairE x y) = (x, y)
 
+toPairE :: (e1 n, e2 n) -> PairE e1 e2 n
+toPairE (x, y) = (PairE x y)
+
 data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
      deriving (Show, Eq, Generic)
 
@@ -854,6 +862,19 @@ checkAlphaEq e1 e2 = do
   WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
   liftExcept $ checkAlphaEqPure scope e1' e2'
 
+alphaEqPure :: (AlphaEqE e, Distinct n)
+            => Scope n -> e n -> e n -> Bool
+alphaEqPure scope e1 e2 = checkAlphaEqPure scope e1 e2 & \case
+  Success _ -> True
+  Failure _ -> False
+
+-- TODO: Support sets of types and eliminate this!
+nubAlphaEq :: (AlphaEqE e, ScopeReader m) => [e n] -> m n [e n]
+nubAlphaEq l = fromListE <$> liftImmut do
+  scope <- getScope
+  Distinct <- getDistinct
+  return $ ListE $ nubBy (alphaEqPure scope) $ fromListE $ inject $ ListE l
+
 checkAlphaEqPure :: (AlphaEqE e, Distinct n)
                  => Scope n -> e n -> e n -> Except ()
 checkAlphaEqPure scope e1 e2 =
@@ -997,6 +1018,9 @@ instance (InjectableV v, ScopeReader m, ScopeExtender m)
 
 instance AlwaysImmut m => AlwaysImmut (EnvReaderT v m i) where
   getImmut = EnvReaderT $ lift getImmut
+
+instance (Monad1 m, MonadState (s o) (m o)) => MonadState (s o) (EnvReaderT v m i o) where
+  state = EnvReaderT . lift . state
 
 -- === OutReader monad: reads data in the output name space ===
 
@@ -1179,7 +1203,7 @@ extendInplaceT
   :: forall m b d e n.
      (ExtOutMap b d, Monad m, InjectableE e)
   => Mut n
-  => (forall l.(Distinct l, Immut l, Ext n l) => InplaceT b d m l (DistinctAbs d e l))
+  => (forall l. (Distinct l, Immut l, Ext n l) => InplaceT b d m l (DistinctAbs d e l))
   -> InplaceT b d m n (e n)
 extendInplaceT cont = do
   Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
