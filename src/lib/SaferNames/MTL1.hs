@@ -10,15 +10,18 @@
 module SaferNames.MTL1 (
     MonadTrans11 (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
-    MaybeT1 (..), runMaybeT1,
+    StateT1, pattern StateT1, runStateT1,
+    MaybeT1 (..), runMaybeT1
   ) where
 
 import Control.Monad.Writer.Strict
+import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import Control.Applicative
 
 import SaferNames.Name
 import SaferNames.Syntax
+import Err
 
 class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where
   lift11 :: Monad1 m => m n a -> t m n a
@@ -61,6 +64,43 @@ instance (InjectableE w, HoistableE w, FallibleMonoid1 w, BindingsExtender m)
     case hoist frag update of
       HoistSuccess topUpdate -> return (ans, topUpdate)
       HoistFailure _ -> return (ans, mfail)
+
+-------------------- StateT1 --------------------
+
+newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+  WrapStateT1 { runStateT1' :: (StateT (s n) (m n) a) }
+  deriving (Functor, Applicative, Monad, MonadState (s n), MonadFail)
+
+pattern StateT1 :: ((s n) -> m n (a, s n)) -> StateT1 s m n a
+pattern StateT1 f = WrapStateT1 (StateT f)
+
+{-# COMPLETE StateT1 #-}
+
+runStateT1 :: StateT1 s m n a -> s n -> m n (a, s n)
+runStateT1 = runStateT . runStateT1'
+
+instance MonadTrans11 (StateT1 s) where
+  lift11 = WrapStateT1 . lift
+
+instance (InjectableE s, BindingsReader m) => BindingsReader (StateT1 s m) where
+  getBindings = lift11 getBindings
+
+instance (InjectableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
+  getScope = lift11 getScope
+  getDistinct = lift11 getDistinct
+  liftImmut m = StateT1 \s -> fromPairE <$> liftImmut do
+    s' <- injectM s
+    uncurry PairE <$> runStateT1 m s'
+
+instance (Monad1 m, Fallible (m n)) => Fallible (StateT1 s m n) where
+  throwErrs = lift11 . throwErrs
+  addErrCtx ctx (WrapStateT1 m) = WrapStateT1 $ addErrCtx ctx m
+
+instance (Monad1 m, Catchable (m n)) => Catchable (StateT1 s m n) where
+  catchErr (WrapStateT1 m) f = WrapStateT1 $ catchErr m (runStateT1' . f)
+
+instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
+  getErrCtx = lift11 getErrCtx
 
 -------------------- MaybeT1 --------------------
 
