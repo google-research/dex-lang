@@ -30,7 +30,7 @@ module SaferNames.Syntax (
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), SynthCandidates (..), Bindings (..),
-    BindsBindings (..), BindsOneAtomName (..), WithBindings (..),
+    BindsBindings (..), BindsOneAtomName (..), WithBindings (..), AtomNameBinder,
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
@@ -51,7 +51,7 @@ module SaferNames.Syntax (
     BindingsReader (..), BindingsExtender (..),  Binding (..),
     TopBindingsFrag (..), EvaluatedModule,
     ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
-    withFreshLamBinder, refreshAbsM, captureClosure,
+    withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
     BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
@@ -80,7 +80,7 @@ module SaferNames.Syntax (
     pattern PairVal, pattern TyKind,
     pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTyAbs,
+    pattern TabTyAbs, pattern TabTy,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern NothingAtom, pattern JustAtom,
     (-->), (?-->), (--@), (==>) ) where
@@ -170,6 +170,8 @@ data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
 type AtomName    = Name AtomNameC
 type DataDefName = Name DataDefNameC
 type ClassName   = Name ClassNameC
+
+type AtomNameBinder = NameBinder AtomNameC
 
 data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
@@ -398,6 +400,7 @@ instance Monad m => ScopeReader (BindingsReaderT m) where
   getScope = toScope <$> snd <$> BindingsReaderT ask
   liftImmut cont = do
     Immut <- getImmut
+    Distinct <- getDistinct
     cont
 
 instance Monad m => AlwaysImmut (BindingsReaderT m) where
@@ -581,6 +584,17 @@ withFreshLamBinder hint binding@(LamBinding arr ty) effAbs cont = do
     effs <- applyAbs (inject effAbs) (binderName b)
     withAllowedEffects effs do
       cont $ LamBinder b ty arr effs
+
+withFreshPureLamBinder
+  :: (BindingsExtender m)
+  => Immut n
+  => NameHint -> LamBinding n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => LamBinder n l -> m l a)
+  -> m n a
+withFreshPureLamBinder hint binding@(LamBinding arr ty) cont = do
+  withFreshBinder hint binding \b -> do
+    withAllowedEffects Pure do
+      cont $ LamBinder b ty arr Pure
 
 withFreshPiBinder
   :: BindingsExtender m
@@ -1164,6 +1178,9 @@ pattern RawRefTy a = TC (RefType Nothing a)
 
 pattern TabTyAbs :: PiType n -> Type n
 pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
+
+pattern TabTy :: PiBinder n l -> Type l -> Type n
+pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind

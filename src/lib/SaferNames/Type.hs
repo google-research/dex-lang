@@ -17,7 +17,8 @@ module SaferNames.Type (
   instantiatePi, checkExtends, applyDataDefParams, indices,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
-  checkUnOp, checkBinOp) where
+  checkUnOp, checkBinOp,
+  oneEffect) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))

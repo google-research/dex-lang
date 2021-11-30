@@ -65,7 +65,7 @@ module SaferNames.Name (
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs,
   hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars, WithRenamer (..),
+  HoistExcept (..), liftHoistExcept, abstractFreeVars, WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), fromEnvVal,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
@@ -255,7 +255,7 @@ class Monad1 m => AlwaysImmut (m::MonadKind1) where
 class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: Immut n => m n (Scope n)
   liftImmut :: InjectableE e
-            => (forall l. (Immut l, Ext n l) => m l (e l))
+            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
             -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
@@ -953,6 +953,7 @@ instance Monad m => ScopeReader (ScopeReaderT m) where
   getScope = ScopeReaderT $ asks snd
   liftImmut cont = do
     Immut <- getImmut
+    Distinct <- getDistinct
     cont
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
@@ -1307,7 +1308,9 @@ instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
   getDistinct = UnsafeMakeInplaceT \_ ->
     return (Distinct, emptyOutFrag)
   getScope = toScope <$> getOutMapInplaceT
-  liftImmut cont = locallyImmutableInplaceT cont
+  liftImmut cont = locallyImmutableInplaceT do
+    Distinct <- getDistinct
+    cont
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
@@ -2216,6 +2219,10 @@ liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
 
+ignoreHoistFailure :: HoistExcept a -> a
+ignoreHoistFailure (HoistSuccess x) = x
+ignoreHoistFailure (HoistFailure _) = error "hoist failure"
+
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
   case nameSetRawNames $ M.intersection frag (freeVarsE e) of
@@ -2542,6 +2549,18 @@ instance
   ( Store a0, Store a1, Store a2, Store a3
   , Store a4, Store a5, Store a6)
   => Store (DynamicColor a0 a1 a2 a3 a4 a5 a6)
+
+instance Functor HoistExcept where
+  fmap f x = f <$> x
+
+instance Applicative HoistExcept where
+  pure x = HoistSuccess x
+  liftA2 = liftM2
+
+instance Monad HoistExcept where
+  return = pure
+  HoistFailure vs >>= _ = HoistFailure vs
+  HoistSuccess x >>= f = f x
 
 -- === notes ===
 

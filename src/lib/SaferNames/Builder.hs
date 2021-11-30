@@ -23,12 +23,13 @@ module SaferNames.Builder (
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
+  ptrOffset, unsafePtrLoad, ptrLoad,
   getDataDef, getClassDef, getDataCon, atomAsBlock,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
-  emitBlock, BuilderEmissions, emitAtomToName,
+  emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
    emitSourceMap, emitSynthCandidates,
   TopBindingsFrag (..),
@@ -79,18 +80,23 @@ emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
-emitBlock (Block _ Empty (Atom result)) = return result
-emitBlock (Block _ decls result) = runEnvReaderT idEnv $ emitBlock' decls result
+emitBlock (Block _ decls result) = do
+  result' <- emitDecls decls result
+  case result' of
+    Atom x -> return x
+    _ -> Var <$> emit result'
 
-emitBlock' :: (Builder m, Emits o)
-           => Nest Decl i i' -> Expr i' -> EnvReaderT Name m i o (Atom o)
-emitBlock' Empty expr = do
-  v <- substM expr >>= emit
-  return $ Var v
-emitBlock' (Nest (Let b (DeclBinding ann _ expr)) rest) result = do
+emitDecls :: (Builder m, Emits n, SubstE Name e, InjectableE e)
+          => Nest Decl n l -> e l -> m n (e n)
+emitDecls decls result = runEnvReaderT idEnv $ emitDecls' decls result
+
+emitDecls' :: (Builder m, Emits o, SubstE Name e, InjectableE e)
+           => Nest Decl i i' -> e i' -> EnvReaderT Name m i o (e o)
+emitDecls' Empty e = substM e
+emitDecls' (Nest (Let b (DeclBinding ann _ expr)) rest) e = do
   expr' <- substM expr
   v <- emitDecl (getNameHint b) ann expr'
-  extendEnv (b @> v) $ emitBlock' rest result
+  extendEnv (b @> v) $ emitDecls' rest e
 
 emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
 emitAtomToName (Var v) = return v
@@ -673,6 +679,18 @@ naryApp f xs = foldM app f xs
 
 indexAsInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 indexAsInt idx = emitOp $ ToOrdinal idx
+
+ptrOffset :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+ptrOffset x i = emitOp $ PtrOffset x i
+
+unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+unsafePtrLoad x = do
+  lam <- buildLam "_ign" PlainArrow UnitTy (oneEffect IOEffect) \_ ->
+    ptrLoad =<< injectM x
+  liftM Var $ emit $ Hof $ RunIO $ lam
+
+ptrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+ptrLoad x = emitOp $ PtrLoad x
 
 -- === index set type class ===
 

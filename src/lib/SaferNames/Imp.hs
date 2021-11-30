@@ -6,9 +6,11 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module SaferNames.Imp (toImpModule, PtrBinder, impFunType, getIType) where
 
+import Control.Category ((>>>))
 import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -313,10 +315,283 @@ toImpHof maybeDest hof = do
               translateBlock (Just ithDest) body
           destToAtom dest
 
--- === Destination type ===
+-- === Destination builder monad ===
+
+-- It's shame to have to reimplement so much for this DestM monad. The problem
+-- is that `makeDestRec` is emitting two sorts of names: (1) decls to compute
+-- indexing offsets (often under a table lambda) and (2) pointer names, with
+-- sizes, for the buffers themselves. The emissions are interleaved, but we're
+-- really dealing with two separate scopes: the pointer binders are always
+-- hoistable above the decls. Ideally we'd have a system with two scope
+-- parameters, where you can separately emit into either. The types would then
+-- look like this:
+
+--   makeDestRec :: Idxs n -> Abs IdxNest Type n -> DestM n l (Dest l)
+--   emitDecl    :: Expr  l -> DestM n l (AtomName l)
+--   emitPointer :: Block n -> DestM n l (AtomName n)
+
+
+data DestPtrInfo n = DestPtrInfo PtrType (Block n)
+type DestEmission = EitherE DeclBinding DestPtrInfo
+data DestEmissions n l where
+  DestEmissions
+    :: [DestPtrInfo n]          -- pointer types and allocation sizes
+    -> Nest AtomNameBinder n h  -- pointer binders
+    ->   Nest Decl h l          -- decls to compute indexing offsets
+    -> DestEmissions n l
+
+instance GenericB DestEmissions where
+  type RepB DestEmissions =         LiftB (ListE DestPtrInfo)
+                            `PairB` Nest AtomNameBinder
+                            `PairB` Nest Decl
+  fromB (DestEmissions ps bs ds) = LiftB (ListE ps) `PairB` bs `PairB` ds
+  toB   (LiftB (ListE ps) `PairB` bs `PairB` ds) = DestEmissions ps bs ds
+
+instance ProvesExt   DestEmissions
+instance BindsNames  DestEmissions
+instance InjectableB DestEmissions
+instance HoistableB  DestEmissions
+
+instance OutFrag DestEmissions where
+  emptyOutFrag = DestEmissions [] Empty Empty
+  catOutFrags _ (DestEmissions p1 b1 d1) de2@(DestEmissions p2 b2 d2) =
+    ignoreHoistFailure do
+      ListE p2' <- hoist (PairB b1 d1) (ListE p2)
+      PairB b2' d1' <- withSubscopeDistinct d2 $exchangeBs $ PairB d1 b2
+      return $ DestEmissions (p1 <> p2') (b1 >>> b2') (d1' >>> d2)
+
+newtype DestM (n::S) (a:: *) =
+  DestM { runDestM' :: InplaceT Bindings DestEmissions
+                         (ReaderT AllocInfo HardFailM) n a }
+  deriving ( Functor, Applicative, Monad
+           , ScopeReader, MonadFail, Fallible)
+
+-- TODO: actually plumb this through the Imp monad
+allocInfo :: AllocInfo
+allocInfo = (LLVM, CPU, Managed)
+
+runDestM :: (Immut n, Distinct n, InjectableE e)
+         => Bindings n
+         -> (forall l. (Emits l, Ext n l, Distinct l) => DestM l (e l))
+         -> DistinctAbs DestEmissions e n
+runDestM bindings m = do
+  let result = runHardFail $ flip runReaderT allocInfo $
+                 runInplaceT bindings $ locallyMutableInplaceT do
+                   Emits <- fabricateEmitsEvidenceM
+                   runDestM' m
+  case result of
+    (DestEmissions _ Empty Empty, result') -> result'
+
+getAllocInfo :: DestM n AllocInfo
+getAllocInfo = DestM $ lift1 ask
+
+introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
+introduceNewPtr hint ptrTy numel =
+  DestM $ emitInplaceT hint (DestPtrInfo ptrTy numel) \b ptrInfo ->
+    DestEmissions [ptrInfo] (Nest b Empty) Empty
+
+-- TODO: this is mostly copy-paste from Inference
+buildDeclsDest
+  :: (Mut n, InjectableE e)
+  => (forall l. (Emits l, Ext n l, Distinct l) => DestM l (e l))
+  -> DestM n (Abs (Nest Decl) e n)
+buildDeclsDest cont =
+  DestM $ extendInplaceT do
+    resultWithEmissions <- locallyMutableInplaceT do
+      Emits    <- fabricateEmitsEvidenceM
+      runDestM' cont
+    DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <- return resultWithEmissions
+    withSubscopeDistinct decls $
+      return $ DistinctAbs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
+
+buildBlockDest
+  :: Mut n
+  => (forall l. (Emits l, Ext n l, Distinct l) => DestM l (Atom l))
+  -> DestM n (Block n)
+buildBlockDest cont = do
+  Abs decls (PairE result ty) <- buildDeclsDest do
+    result <- cont
+    ty <- getType result
+    return $ result `PairE` ty
+  ty' <- liftHoistExcept $ hoist decls ty
+  return $ Block ty' decls $ Atom result
+
+-- TODO: this is mostly copy-paste from Inference
+buildAbsDest
+  :: (InjectableE e, HoistableE e, NameColor c, ToBinding binding c)
+  => Mut n
+  => NameHint -> binding n
+  -> (forall l. (Mut l, Distinct l, Ext n l) => Name c l -> DestM l (e l))
+  -> DestM n (Abs (BinderP c binding) e n)
+buildAbsDest hint binding cont =
+  DestM $ extendInplaceT do
+    scope <- getScope
+    withFresh hint nameColorRep scope \b -> do
+      let b' = b :> inject binding
+      let bExt = toBindingsFrag b'
+      extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
+        DistinctAbs emissions result <- locallyMutableInplaceT do
+          runDestM' $ cont $ inject $ binderName b
+        PairB emissions' b'' <- liftHoistExcept $ exchangeBs $ PairB b' emissions
+        withSubscopeDistinct b'' $
+          return $ DistinctAbs emissions' (Abs b'' result)
+
+buildTabLamDest
+  :: Mut n
+  => NameHint -> Type n
+  -> (forall l. (Emits l, Ext n l, Distinct l) => AtomName l -> DestM l (Atom l))
+  -> DestM n (Atom n)
+buildTabLamDest hint ty body = do
+  Abs (b:>_) body <- buildAbsDest hint (LamBinding TabArrow ty) \v ->
+    buildBlockDest $ injectM v >>= body
+  return $ Lam $ LamExpr (LamBinder b ty TabArrow Pure) body
+
+instance BindingsExtender DestM where
+  extendBindings frag cont = DestM $
+    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
+      withExtEvidence (toExtEvidence frag) $
+        runDestM' cont
+
+instance BindingsReader DestM where
+  getBindings = DestM $ getOutMapInplaceT
+
+instance Builder DestM where
+  emitDecl hint ann expr = do
+    ty <- getType expr
+    DestM $ emitInplaceT hint (DeclBinding ann ty expr) \b binding ->
+      DestEmissions [] Empty $ Nest (Let b binding) Empty
+
+  -- We can't implement this because we'd have to throw away the pointer
+  -- binders. Maybe we should split builder into a separate decl-emitting thing
+  -- and a scoping thing.
+  buildScoped _ = error "not implemented"
+
+instance ExtOutMap Bindings DestEmissions where
+  extendOutMap bindings (DestEmissions ptrInfo ptrs decls) =
+    withSubscopeDistinct decls $
+      (bindings `extendOutMap` ptrBindersToBindingsFrag ptrInfo ptrs)
+                `extendOutMap` decls
+   where
+     ptrBindersToBindingsFrag :: Distinct l => [DestPtrInfo n] -> Nest AtomNameBinder n l -> BindingsFrag n l
+     ptrBindersToBindingsFrag [] Empty = emptyOutFrag
+     ptrBindersToBindingsFrag (DestPtrInfo ty _ : rest) (Nest b restBs) =
+       withSubscopeDistinct restBs do
+         let frag1 = toBindingsFrag $ b :> PtrTy ty
+         let frag2 = withExtEvidence (toExtEvidence b) $
+                        ptrBindersToBindingsFrag (map inject rest) restBs
+         frag1 `catBindingsFrags` frag2
+
+
+instance GenericE DestPtrInfo where
+  type RepE DestPtrInfo = PairE (LiftE PtrType) Block
+  fromE (DestPtrInfo ty n) = PairE (LiftE ty) n
+  toE   (PairE (LiftE ty) n) = DestPtrInfo ty n
+
+instance InjectableE DestPtrInfo
+instance HoistableE  DestPtrInfo
+instance SubstE Name DestPtrInfo
+instance SubstE AtomSubstVal DestPtrInfo
+
+-- === Destination builder ===
 
 type Dest = Atom  -- has type `Ref a` for some a
 type MaybeDest n = Maybe (Dest n)
+
+type IdxNest = Nest Binder
+type Idxs n = [AtomName n]
+
+data AbsPtrs e n = AbsPtrs (NaryAbs AtomNameC e n) [DestPtrInfo n]
+
+instance GenericE (AbsPtrs e) where
+  type RepE (AbsPtrs e) = PairE (NaryAbs AtomNameC e) (ListE DestPtrInfo)
+  fromE (AbsPtrs ab ptrInfo) = PairE ab (ListE ptrInfo)
+  toE   (PairE ab (ListE ptrInfo)) = AbsPtrs ab ptrInfo
+
+instance InjectableE e => InjectableE (AbsPtrs e)
+instance SubstE Name e => SubstE Name (AbsPtrs e)
+instance SubstE AtomSubstVal e => SubstE AtomSubstVal (AbsPtrs e)
+
+-- builds a dest and a list of pointer binders along with their required allocation sizes
+makeDest :: (Emits n, ImpBuilder m, BindingsReader m)
+         => AllocInfo -> Type n -> m n (AbsPtrs Dest n)
+makeDest allocInfo ty = do
+  Abs decls result <- liftImmut do
+    DB bindings <- getDB
+    DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
+      return $ runDestM bindings do
+        makeDestRec [] Empty =<< injectM ty
+    case exchangeBs $ PairB ptrBs decls of
+      HoistFailure _ -> error "shouldn't happen"
+      HoistSuccess (PairB decls' ptrBs') ->
+        withExtEvidence (toExtEvidence decls') $ withSubscopeDistinct ptrBs' $
+          return $ Abs decls' $ AbsPtrs (Abs ptrBs' result) (map inject ptrInfo)
+  runEnvReaderT idEnv $ translateDeclNest decls $ substM result
+
+makeDestRec :: forall n l.
+               Emits n => Idxs n -> IdxNest n l -> Type l -> DestM n (Dest n)
+makeDestRec idxs idxBinders ty = case ty of
+  TabTy (PiBinder b iTy _) bodyTy -> do
+    Distinct <- getDistinct
+    iTy' <- applyCurIdxs iTy
+    lam <- buildTabLamDest "i" (inject iTy') \v -> do
+      let idxs' = map inject idxs <> [v]
+      Abs idxBinders' bodyTy' <- injectM $ Abs (idxBinders >>> Nest (b:>iTy) Empty) bodyTy
+      makeDestRec idxs' idxBinders' bodyTy'
+    return $ Con $ TabRef lam
+  TC con -> case con of
+    BaseType b -> do
+      ptr <- makeBaseTypePtr idxs idxBinders b
+      return $ Con $ BaseTypeRef ptr
+    ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
+    IntRange l h -> do
+      l' <- applyCurIdxs l
+      h' <- applyCurIdxs h
+      x <- rec IdxRepTy
+      return $ Con $ ConRef $ IntRangeVal l' h' x
+    IndexRange t l h -> do
+      t' <- applyCurIdxs t
+      l' <- mapM applyCurIdxs l
+      h' <- mapM applyCurIdxs h
+      x <- rec IdxRepTy
+      return $ Con $ ConRef $ IndexRangeVal t' l' h' x
+    _ -> error $ "not implemented: " ++ pprint con
+  where
+    applyCurIdxs :: (InjectableE e, SubstE Name e) => e l -> DestM n (e n)
+    applyCurIdxs x = applyNaryAbs (Abs idxBinders x) idxs
+
+    rec = makeDestRec idxs idxBinders
+
+makeBaseTypePtr :: Emits n => Idxs n -> IdxNest n l -> BaseType -> DestM n (Atom n)
+makeBaseTypePtr idxs idxBinders ty = do
+  numel <- buildBlockDest do
+    elemCount =<< injectM (Abs idxBinders UnitE)
+  allocInfo <- getAllocInfo
+  let addrSpace = chooseAddrSpace allocInfo numel
+  let ptrTy = (addrSpace, ty)
+  ptr <- introduceNewPtr "ptr" ptrTy numel
+  applyIdxs idxs idxBinders $ Var ptr
+
+elemCount :: (Emits n, Builder m) => EmptyAbs IdxNest n -> m n (Atom n)
+elemCount (Abs idxs UnitE) = case idxs of
+  Empty -> return $ IdxRepVal 1
+  Nest (b:>ixTy) rest -> case hoist b $ Abs rest UnitE of
+    HoistSuccess rest' -> do
+      n1 <- indexSetSize ixTy
+      n2 <- elemCount rest'
+      imul n1 n2
+    HoistFailure _ -> error "can't handle dependent tables"
+
+applyIdxs :: (Emits n, Builder m) => Idxs n -> IdxNest n l -> Atom n -> m n (Atom n)
+applyIdxs [] Empty ptr = return ptr
+applyIdxs (ix:ixs) (Nest b rest) ptr =
+  case hoist b (Abs rest UnitE) of
+    HoistSuccess (Abs rest' UnitE) -> do
+      stride <- elemCount $ Abs rest' UnitE
+      ordinal <- indexToInt $ Var ix
+      offset <- imul stride ordinal
+      ptr' <- ptrOffset ptr offset
+      applyIdxs ixs rest' ptr'
+    HoistFailure _ -> error "can't handle dependent tables"
 
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
@@ -340,6 +615,23 @@ store dest src = emitStatement $ Store dest src
 alloc :: (ImpBuilder m, Emits n) => Type n -> m n (Dest n)
 alloc ty = makeAllocDest Managed ty
 
+indexDest :: (Builder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
+indexDest (Con (TabRef (Lam (LamExpr b body)))) i = do
+  body' <- applyAbs (Abs b body) $ SubstVal i
+  emitBlock body'
+indexDest dest _ = error $ pprint dest
+
+loadDest :: (Builder m, Emits n) => Dest n -> m n (Atom n)
+loadDest (Con dest) = do
+ case dest of
+  BaseTypeRef ptr -> unsafePtrLoad ptr
+  TabRef (Lam (LamExpr b body)) ->
+    buildLam (getNameHint b) TabArrow (binderType b) Pure \i -> do
+      Distinct <- getDistinct
+      body' <- applyAbs (inject $ Abs b body) i
+      result <- emitBlock body'
+      loadDest result
+
 emitWhen :: (ImpBuilder m, Emits n)
          => IExpr n
          -> m n ()
@@ -357,15 +649,29 @@ emitLoop :: (ImpBuilder m, Emits n)
          => NameHint -> Direction -> IExpr n
          -> (forall l. (Ext n l, Distinct l, Emits l) => IExpr l -> m l ())
          -> m n ()
-emitLoop hint d n body = undefined
+emitLoop hint d n cont = do
+  loopBody <- liftImmut do
+    withFreshIBinder hint (getIType n) \b@(IBinder _ ty)  -> do
+      let i = IVar (binderName b) ty
+      body <- buildBlockImp do
+                cont =<< injectM i
+                return []
+      return $ Abs b body
+  emitStatement $ IFor d n loopBody
+
+buildBlockImp
+  :: ImpBuilder m
+  => (forall l. (Emits l, Ext n l, Distinct l) => m l [IExpr l])
+  -> m n (ImpBlock n)
+buildBlockImp cont = liftImmut do
+  DistinctAbs decls (ListE results) <- buildScopedImp $ ListE <$> cont
+  return $ ImpBlock decls results
 
 destToAtom :: (ImpBuilder m, Emits n) => Dest n -> m n (Atom n)
-destToAtom (Con dest) = do
- case dest of
-   BaseTypeRef ptr -> fromScalarAtom ptr >>= load >>= toScalarAtom
+destToAtom dest = liftBuilderImp $ loadDest $ inject dest
 
 destGet :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
-destGet _ _ = undefined
+destGet dest i = liftBuilderImp $ indexDest (inject dest) (inject i)
 
 destPairUnpack :: Dest n -> (Dest n, Dest n)
 destPairUnpack (Con (ConRef (ProdCon [l, r]))) = (l, r)
@@ -382,7 +688,16 @@ makeAllocDest allocTy ty = fst <$> makeAllocDestWithPtrs allocTy ty
 
 makeAllocDestWithPtrs :: (ImpBuilder m, Emits n)
                       => AllocType -> Type n -> m n (Dest n, [IExpr n])
-makeAllocDestWithPtrs _ _ = undefined
+makeAllocDestWithPtrs allocTy ty = do
+  let backend = undefined
+  let curDev = undefined
+  AbsPtrs absDest ptrDefs <- makeDest (backend, curDev, allocTy) ty
+  ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
+    size <- liftBuilderImp $ emitBlock $ inject sizeBlock
+    emitAlloc ptrTy =<< fromScalarAtom size
+  ptrAtoms <- mapM toScalarAtom ptrs
+  dest' <- applyNaryAbs absDest $ map SubstVal ptrAtoms
+  return (dest', ptrs)
 
 copyDest :: (ImpBuilder m, Emits n) => Maybe (Dest n) -> Atom n -> m n (Atom n)
 copyDest maybeDest atom = case maybeDest of
@@ -395,6 +710,7 @@ allocDest maybeDest t = case maybeDest of
   Just dest -> return dest
 
 type AllocInfo = (Backend, Device, AllocType)
+
 data AllocType = Managed | Unmanaged  deriving (Show, Eq)
 
 chooseAddrSpace :: AllocInfo -> Block n -> AddressSpace
@@ -411,7 +727,9 @@ chooseAddrSpace (backend, curDev, allocTy) numel = case allocTy of
           Interpreter -> error "Shouldn't be compiling to Imp with interpreter backend"
 
 isSmall :: Block n -> Bool
-isSmall _ = undefined
+isSmall numel = case numel of
+  Block _ Empty (Atom (Con (Lit l))) | getIntLit l <= 256 -> True
+  _ -> False
 
 allocateBuffer :: (ImpBuilder m, Emits n)
                => AddressSpace -> Bool -> BaseType -> IExpr n -> m n (IExpr n)
@@ -443,7 +761,12 @@ withFreshIBinder
   => NameHint -> IType
   -> (forall l. (Immut l, Distinct l, Ext n l) => IBinder n l -> m l a)
   -> m n a
-withFreshIBinder _ _ _ = undefined
+withFreshIBinder hint ty cont = do
+  scope    <- getScope
+  Distinct <- getDistinct
+  withFresh hint nameColorRep scope \b -> do
+    extendBindings (toBindingsFrag (b :> (toBinding $ MiscBound $ BaseTy ty))) $
+      cont $ IBinder b ty
 
 buildImpAbs
   :: ( Immut n, ImpBuilder m
