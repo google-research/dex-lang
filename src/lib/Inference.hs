@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Inference (inferModule, synthModule) where
@@ -13,15 +14,19 @@ module Inference (inferModule, synthModule) where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
+import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict hiding (Alt)
+import Data.Maybe (fromJust, maybeToList)
 import Data.Foldable (fold, toList)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import Data.String (fromString)
 import qualified Data.Set as S
+import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
+import Data.List (nubBy, partition, sortOn)
 
+import LabeledItems
 import Syntax
 import Interpreter (indicesNoIO)
 import Builder  hiding (sub)
@@ -30,8 +35,14 @@ import Type
 import PPrint
 import Cat
 import Util
+import Err
 
-type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((BuilderT (SolverT (Either Err)))))
+data UInferEnv = UInferEnv
+  { inferSubst        :: SubstEnv
+  , srcCtx            :: SrcPosCtx
+  , protoludeScope    :: ProtoludeScope
+  }
+type UInferM = ReaderT UInferEnv (BuilderT (SolverT Except))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -46,20 +57,44 @@ pattern Check t <-
 
 {-# COMPLETE Infer, Check #-}
 
-inferModule :: Bindings -> UModule -> Except Module
-inferModule scope (UModule decls) = do
-  ((), (bindings, decls')) <- runUInferM mempty scope $
-                                mapM_ (inferUDecl True) decls
-  let bindings' = envFilter bindings \(_, b) -> case b of
-                    DataBoundTypeCon _   -> True
-                    DataBoundDataCon _ _ -> True
-                    _ -> False
-  return $ Module Typed decls' bindings'
+inferModule :: Bindings -> SynthCandidates -> UModule -> ProtoludeScope -> Except Module
+inferModule scope scs (UModule uDecl sourceMap) protolude = do
+  (evaluated, ((bindings, synthCandidates), decls)) <- runUInferM mempty scope scs protolude do
+    substEnv <- inferUDecl uDecl
+    substBuilder substEnv $ EvaluatedModule mempty mempty sourceMap
+  let evaluated' = addSynthCandidates evaluated synthCandidates
+  if requiresEvaluation
+    then return $ Module Typed decls evaluated'
+    else do
+      unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
+      return $ Module Typed Empty $ prependBindings bindings evaluated'
+  where
+    requiresEvaluation = case uDecl of
+      ULet         _ _ _     -> True
+      UInstance    _ _ _ _ _ -> True
+      UDataDefDecl _ _ _     -> False
+      UInterface   _ _ _ _ _ -> False
 
-runUInferM :: (Subst a, Pretty a)
-           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
-runUInferM env scope m = runSolverT $
-  runBuilderT (runReaderT (runReaderT m env) Nothing) scope
+-- TODO: bindings' might shadow names in bindings, so we should do this more
+-- carefully. But the way we use it here is probably ok, and we're about to swap
+-- it out for the type-checked naming system which will force us to do the right
+-- thing anyway.
+prependBindings :: Bindings -> EvaluatedModule -> EvaluatedModule
+prependBindings bindings (EvaluatedModule bindings' scs sourceMap) =
+  EvaluatedModule (bindings <> bindings') scs sourceMap
+
+-- TODO: sinking the synth candidates underneath the bindings is sketchy
+-- shadowing-wise but, as above it seems ok here. The safer-names system will
+-- fix it up.
+addSynthCandidates :: EvaluatedModule -> SynthCandidates -> EvaluatedModule
+addSynthCandidates (EvaluatedModule bindings scsPrev sourceMap) scs =
+  EvaluatedModule bindings (scs <> scsPrev) sourceMap
+
+runUInferM :: (HasVars a, Subst a, Pretty a)
+           => SubstEnv -> Scope -> SynthCandidates -> ProtoludeScope
+           -> UInferM a -> Except (a, ((Scope, SynthCandidates), Nest Decl))
+runUInferM env scope scs protolude m = runSolverT $ do
+  runBuilderT scope scs $ runReaderT m $ UInferEnv env Nothing protolude
 
 checkSigma :: UExpr -> (Type -> RequiredTy Type) -> SigmaType -> UInferM Atom
 checkSigma expr reqCon sTy = case sTy of
@@ -86,24 +121,26 @@ inferRho :: UExpr -> UInferM Atom
 inferRho expr = checkOrInferRho expr Infer
 
 instantiateSigma :: Atom -> UInferM Atom
-instantiateSigma f = case getType f of
-  Pi (Abs b (ImplicitArrow, _)) -> do
-    x <- freshType $ binderType b
-    ans <- emitZonked $ App f x
-    instantiateSigma ans
-  Pi (Abs b (ClassArrow, _)) -> do
-    ctx <- getSrcCtx
-    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ctx $ binderType b))
-  _ -> return f
+instantiateSigma f = do
+  ty <- tryGetType f
+  case ty of
+    Pi (Abs b (ImplicitArrow, _)) -> do
+      x <- freshType $ binderType b
+      ans <- emitZonked $ App f x
+      instantiateSigma ans
+    Pi (Abs b (ClassArrow, _)) -> do
+      ctx <- getSrcCtx
+      instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ctx $ binderType b))
+    _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
 checkOrInferRho (WithSrc pos expr) reqTy = do
  addSrcContext' pos $ case expr of
-  UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
-  ULam (p, ann) ImplicitArrow body -> do
+  UVar v -> lookupUVar v >>= instantiateSigma >>= matchRequirement
+  ULam (UPatAnn p ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
-    x <- freshType argTy
-    withBindPat p x $ checkOrInferRho body reqTy
+    Var v <- freshType argTy
+    withBindPat p v $ checkOrInferRho body reqTy
   ULam b arr body -> do
     let infer = inferULam b (fmap (const Pure) arr) body
     case reqTy of
@@ -142,34 +179,50 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
       Abs b rhs@(arr', _) -> case b `isin` freeVars rhs of
         False -> builderExtend builderEnv $> (xVal, arr')
         True  -> do
-          xValMaybeRed <- flip typeReduceBlock (Block xDecls (Atom xVal)) <$> getScope
-          case xValMaybeRed of
-            Just xValRed -> return (xValRed, fst $ applyAbs piTy xValRed)
-            Nothing      -> addSrcContext' xPos $ do
-              throw TypeErr $ "Dependent functions can only be applied to fully " ++
-                              "evaluated expressions. Bind the argument to a name " ++
-                              "before you apply the function."
+          let msg = "Dependent functions can only be applied to fully " ++
+                    "evaluated expressions. Bind the argument to a name " ++
+                    "before you apply the function."
+          xValRed <- typeReductionAsAtom xPos msg =<<
+            typeReduceBlockWithWanteds (Block xDecls (Atom xVal))
+          return (xValRed, fst $ applyAbs piTy xValRed)
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi (pat, ann) arr ty -> do
+  UPi (UPatAnn (WithSrc pos' pat) ann) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
-    ann' <- checkAnn ann
-    piTy <- case pat of
-      UnderscoreUPat -> buildPi (Ignore ann') $ const $
-                          (,) <$> mapM checkUEffRow arr <*> checkUType ty
-      _ -> withNameHint ("pat" :: Name) $ buildPi b \x ->
-        withBindPat pat x $ (,) <$> mapM checkUEffRow arr <*> checkUType ty
-        where b = case pat of
-                    -- Note: The binder name becomes part of the type, so we
-                    -- need to keep the same name used in the pattern.
-                    WithSrc _ (UPatBinder (Bind (v:>()))) -> Bind (v:>ann')
-                    _ -> Ignore ann'
+    piTy <- checkAnnAutoInterface ann \wanteds getAnnType -> do
+      let maybeIntroWanteds = case arr of
+            TabArrow -> id
+            _        -> introWanteds wanteds
+      maybeIntroWanteds $ do
+        ann' <- getAnnType  -- Only attempt to reduce the type once we have wanteds in scope
+        addSrcContext' pos' $ case pat of
+          UPatBinder UIgnore -> buildPi (Ignore ann') (const $ mapM checkUEffRow arr)
+                                                      (const $ checkTailTy ty)
+          _ -> withNameHint ("pat" :: Name) $ buildPi b
+            (\(Var v) -> withBindPat (WithSrc pos' pat) v $ mapM checkUEffRow arr)
+            (\(Var v) -> withBindPat (WithSrc pos' pat) v $ checkTailTy ty)
+            where b = case pat of
+                        -- Note: The binder name becomes part of the type, so we
+                        -- need to keep the same name used in the pattern.
+                        UPatBinder (UBind v) -> Bind (v:>ann')
+                        _ -> Ignore ann'
     matchRequirement piTy
+    where
+      introWanteds :: [Type] -> UInferM Type -> UInferM Type
+      introWanteds [] m = m
+      introWanteds (h:t) m = buildPi (Ignore h) (const $ return ClassArrow) (const $ introWanteds t m)
+
+      checkTailTy :: UType -> UInferM Type
+      checkTailTy tty = case tty of
+        -- Continued arguments in a curried function will do interface
+        -- quantification themselves.
+        WithSrc _ (UPi _ tarr _) | tarr /= TabArrow -> checkUType tty
+        _ -> checkUTypeAutoInterface tty introWanteds
   UDecl decl body -> do
-    env <- inferUDecl False decl
-    extendR env $ checkOrInferRho body reqTy
+    env <- inferUDecl decl
+    extInferSubst env $ checkOrInferRho body reqTy
   UCase scrut alts -> do
     scrut' <- inferRho scrut
     let scrutTy = getType scrut'
@@ -180,7 +233,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     scrutTy' <- zonk scrutTy
     scrut'' <- zonk scrut'
     case scrutTy' of
-      TypeCon def params -> do
+      TypeCon (_, def) params -> do
         let conDefs = applyDataDefParams def params
         altsSorted <- forM (enumerate conDefs) \(i, DataConDef _ bs) -> do
           case lookup (ConAlt i) alts' of
@@ -241,7 +294,7 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
             emit $ Case split [leftCase, tailAlt] reqTy'
           _ -> throw TypeErr "Can't specify more than one variant tail pattern."
       _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy'
-  UTabCon xs -> inferTabCon xs reqTy >>= matchRequirement
+  UTabCon xs -> inferTabCon pos xs reqTy >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
     low'  <- mapM (flip checkRho n) low
@@ -291,7 +344,12 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emit (Op $ VariantLift prev value')
-  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int32Lit $ fromIntegral x
+  UIntLit  x  -> do
+    fromIntegerName <- protoludeFromIntegerMethod <$> asks protoludeScope
+    fromIntegerFunc <- inferRho $ WithSrc Nothing $ UVar $ UInternalVar fromIntegerName
+    let FunTy _ _ a = getType fromIntegerFunc
+    registerDefault a Int32Ty
+    matchRequirement =<< app fromIntegerFunc (Con $ Lit  $ Int64Lit $ fromIntegral x)
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
   where
@@ -301,251 +359,188 @@ checkOrInferRho (WithSrc pos expr) reqTy = do
         Infer -> return ()
         Check req -> constrainEq req (getType x)
 
-lookupSourceVar :: UVar -> UInferM Atom
-lookupSourceVar v = do
-  substEnv <- ask
+lookupUVar :: UVar -> UInferM Atom
+lookupUVar (USourceVar _) = error "Shouldn't have source names left"
+lookupUVar (UInternalVar v) = do
+  substEnv <- getInferSubst
+  scope <- getScope
   case envLookup substEnv v of
-    Just x -> return x
-    Nothing -> do
-      scope <- getScope
-      let v' = asGlobal $ varName v
-      case envLookup scope v' of
-        Just (_, DataBoundTypeCon def    ) -> return $ TypeCon def []
-        Just (_, DataBoundDataCon def con) -> return $ DataCon def [] con []
-        Just (ty, _) -> return $ Var $ v':>ty
-        Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
+    Nothing -> return $ fromJust $ nameToAtom scope v
+    Just (Rename  v') -> return $ fromJust $ nameToAtom scope v'
+    Just (SubstVal x) -> return x
 
-unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
-unpackTopPat letAnn pat expr = do
-  atom <- emit expr
-  bindings <- bindPat pat atom
-  void $ flip traverseNames bindings \name val -> do
-    let name' = asGlobal name
-    checkNotInScope name'
-    emitTo name' letAnn $ Atom val
-
-inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
-inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
-  -- We don't display global names in any visually distinct way from local names
-  -- so avoid giving the name hint for top-level declarations. Otherwise we might
-  -- end up with x = x decls in the module (with left x being global and right being local).
-  let nameHint = if topLevel then liftM id else withPatHint p
-  val <- nameHint $ case ann of
+inferUDecl ::  UDecl -> UInferM SubstEnv
+inferUDecl (ULet letAnn (UPatAnn p ann) rhs) = do
+  val <- withPatHint p case ann of
     Nothing -> inferSigma rhs
     Just ty -> do
       ty' <- zonk =<< checkUType ty
       let reqCon = if null (toList $ freeVars ty') then Concrete else Suggest
       checkSigma rhs reqCon ty'
   expr <- zonk $ Atom val
-  if topLevel
-    then unpackTopPat letAnn p expr $> mempty
-    else do
-      env <- bindPat p val
-      -- XXX: We have to preserve the non-standard let annotations
-      --      Ideally we would just put the annotations on the equations
-      --      elaborated during inference, but this approach is simpler.
-      case letAnn of
-        PlainLet -> return env
-        _        -> forM env $ emitAnn letAnn . Atom
-inferUDecl True (UData tc dcs) = do
-  (tc', paramBs) <- inferUConDef tc
-  dataDef <- buildDataDef tc' paramBs \params -> do
-    extendR (newEnv paramBs params) $ forM dcs \dc ->
-      uncurry DataConDef <$> inferUConDef dc
-  checkDataDefShadows dataDef
-  emitConstructors dataDef
-  return mempty
-inferUDecl True (UInterface superclasses tc methods) = do
-  (tc', paramBs) <- inferUConDef tc
-  dataDef <- buildDataDef tc' paramBs \params -> do
-    extendR (newEnv paramBs params) $ do
-      conName <- freshClassGenName
-      superclasses' <- mkLabeledItems <$> mapM mkSuperclass superclasses
-      methods'      <- mkLabeledItems <$> mapM mkMethod     methods
-      return $ ClassDictDef conName superclasses' methods'
-  checkDataDefShadows dataDef
-  emitConstructors      dataDef
-  emitSuperclassGetters dataDef
-  emitMethodGetters     dataDef
-  return mempty
-inferUDecl topLevel (UInstance maybeName argBinders instanceTy methods) = do
-  instanceDict <- checkInstance argBinders instanceTy methods
-  case (topLevel, maybeName) of
-    (False, Nothing) -> error "anonymous instance definitions should be top-level"
-    (False, Just n ) -> return $ n @> instanceDict
-    (True , Nothing) -> mempty <$ emitTo nameHint InstanceLet (Atom instanceDict)
-      where nameHint = Name TypeClassGenName "instance" 0
-    (True , Just n ) -> mempty <$ (checkNotInScope gn >> emitTo gn PlainLet (Atom instanceDict))
-      where gn = asGlobal $ varName n
-inferUDecl False (UData      _ _  ) = error "data definitions should be top-level"
-inferUDecl False (UInterface _ _ _) = error "interface definitions should be top-level"
+  var <- withPatHint p $ emitAnn letAnn expr
+  bindPat p var
+inferUDecl (UDataDefDecl def tc dcs) = do
+  def' <- inferDataDef def >>= emitDataDef
+  tc' <- emitTyConName def'
+  dcs' <- mapM (emitDataConName def') [0..(length dcs - 1)]
+  return $ tc @> Rename tc' <> newEnv dcs (map Rename dcs')
+inferUDecl (UInterface paramBs superclasses methodTys className methodNames) = do
+  let classPrettyName = pprint className
+  let methodPrettyNames = map pprint $ toList methodNames
+  classDef <- inferInterfaceDataDef classPrettyName methodPrettyNames
+                paramBs superclasses methodTys
+  className' <- withNameHint className $ emitClassDef classDef
+  mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
+  methodNames' <- forM (enumerate $ zip (toList methodNames) methodTys) \(i, (name, ty)) -> do
+    paramVs <- forM (toList paramBs) \(UAnnBinder v _) -> case v of
+      UBind n -> return $ UInternalVar n
+      _       -> throw CompilerErr "Unexpected interface binder. Please open a bug report!"
+    explicits <- case uMethodExplicitBs ty of
+      []               -> return $ replicate (length paramBs) False
+      e | e == paramVs -> return $ replicate (length paramBs) True
+      e -> case unexpected of
+        []    -> throw CompilerErr "Permuted or incomplete explicit type binders are not supported yet."
+        (h:_) -> throw TypeErr $ "Explicit type binder `" ++ pprint h ++ "` in method " ++
+                                 pprint name ++ " is not a type parameter of its interface"
+        where unexpected = filter (not . (`elem` paramVs)) e
+    withNameHint name $ emitMethodType explicits className' i
+  return $  className @> Rename className'
+         <> newEnv methodNames (map Rename methodNames')
+inferUDecl (UInstance argBinders ~(UInternalVar className) params methods maybeName) = do
+  instanceDict <- checkInstance argBinders className params methods
+  case maybeName of
+    Nothing -> do
+      _ <- withNameHint hint $ emitAnn InstanceLet (Atom instanceDict)
+      return mempty
+      where hint = Name TypeClassGenName "instance" 0
+    Just instanceName -> do
+      instanceVal <- withNameHint instanceName $ emitAnn PlainLet (Atom instanceDict)
+      return $ instanceName @> SubstVal instanceVal
 
-freshClassGenName :: MonadBuilder m => m Name
-freshClassGenName = do
-  scope <- getScope
-  let v' = genFresh (Name TypeClassGenName "classgen" 0) scope
-  builderExtend $ asFst $ v' @> (UnitTy, UnknownBinder)
-  return v'
+inferDataDef :: UDataDef -> UInferM DataDef
+inferDataDef (UDataDef (tyConName, paramBs) dataCons) =
+  withNestedBinders paramBs \paramBs' -> do
+    dataCons' <- forM dataCons \(dataConName, argBs) ->
+                   withNestedBinders argBs \argBs' ->
+                     return $ DataConDef dataConName argBs'
+    return $ DataDef tyConName paramBs' dataCons'
 
-mkMethod :: UAnnBinder -> UInferM (Label, Type)
-mkMethod (Ignore _) = error "Methods must have names"
-mkMethod (Bind (v:>ty)) = do
+inferInterfaceDataDef :: SourceName -> [SourceName] -> Nest UAnnBinder
+                      -> [UType] -> [UMethodType] -> UInferM ClassDef
+inferInterfaceDataDef className methodNames paramBs superclasses methods = do
+  dictDef <- withNestedBinders paramBs \paramBs' -> do
+    superclasses' <- mapM checkUType superclasses
+    methods'      <- mapM checkUType $ uMethodType <$> methods
+    return $ makeClassDataDef className paramBs' superclasses' methods'
+  defName <- emitDataDef dictDef
+  return $ ClassDef (defName, dictDef) methodNames
+
+withNestedBinders :: Nest UAnnBinder -> (Nest Binder -> UInferM a) -> UInferM a
+withNestedBinders Empty cont = cont Empty
+withNestedBinders (Nest (UAnnBinder b ty) rest) cont = do
   ty' <- checkUType ty
-  return (nameToLabel v, ty')
+  withFreshName b ty' \x@(Var v) ->
+    extInferSubst (b@>SubstVal x) $
+      withNestedBinders rest \rest' ->
+        cont $ Nest (Bind v) rest'
 
-mkSuperclass :: UType -> UInferM (Label, Type)
-mkSuperclass ty = do
-  ty' <- checkUType ty
-  -- TODO: think about the scope of these names
-  l <- freshClassGenName
-  return (nameToLabel l, ty')
-
--- TODO: just make Name and Label the same thing
-nameToLabel :: Name -> Label
-nameToLabel = pprint
-
-mkLabeledItems :: [(Label, a)] -> LabeledItems a
-mkLabeledItems items = foldMap (uncurry labeledSingleton) items
-
-emitConstructors :: DataDef -> UInferM ()
-emitConstructors def@(DataDef tyConName _ dataConDefs) = do
-  let tyConTy = getType $ TypeCon def []
-  checkNotInScope tyConName
-  extendScope $ tyConName @> (tyConTy, DataBoundTypeCon def)
-  forM_ (zip [0..] dataConDefs) \(i, DataConDef dataConName _) -> do
-    let dataConTy = getType $ DataCon def [] i []
-    checkNotInScope dataConName
-    extendScope $ dataConName @> (dataConTy, DataBoundDataCon def i)
-
-emitMethodGetters :: DataDef -> UInferM ()
-emitMethodGetters def@(DataDef _ paramBs (ClassDictDef _ _ methodTys)) = do
-  forM_ (getLabels methodTys) \l -> do
-    f <- buildImplicitNaryLam paramBs \params -> do
-      buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
-        return $ recGetHead l $ getProjection [1] dict
-    let methodName = GlobalName $ fromString l
-    checkNotInScope methodName
-    emitTo methodName PlainLet $ Atom f
-emitMethodGetters (DataDef _ _ _) = error "Not a class dictionary"
-
-emitSuperclassGetters :: MonadBuilder m => DataDef -> m ()
-emitSuperclassGetters def@(DataDef _ paramBs (ClassDictDef _ superclassTys _)) = do
-  forM_ (getLabels superclassTys) \l -> do
-    f <- buildImplicitNaryLam paramBs \params -> do
-      buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
-        return $ recGetHead l $ getProjection [0] dict
-    getterName <- freshClassGenName
-    emitTo getterName SuperclassLet $ Atom f
-emitSuperclassGetters (DataDef _ _ _) = error "Not a class dictionary"
-
-checkNotInScope :: Name -> UInferM ()
-checkNotInScope v = do
-  scope <- getScope
-  when (v `isin` scope) $ throw RepeatedVarErr $ pprint v
-
-checkDataDefShadows :: DataDef -> UInferM ()
-checkDataDefShadows (DataDef tc _ dataCons) = do
-  checkShadows $ tc:dcs
-  where dcs = [dc | DataConDef dc _ <- dataCons]
-
-checkShadows :: [Name] -> UInferM ()
-checkShadows vs = do
-  mapM_ checkNotInScope vs
-  case repeated vs of
-    [] -> return ()
-    (v:_) -> throw RepeatedVarErr $ pprint v
-
-inferUConDef :: UConDef -> UInferM (Name, Nest Binder)
-inferUConDef (UConDef v bs) = do
-  (bs', _) <- builderScoped $ checkNestedBinders bs
-  let v' = asGlobal v
-  checkNotInScope v'
-  return (v', bs')
-
-checkNestedBinders :: Nest UAnnBinder -> UInferM (Nest Binder)
-checkNestedBinders Empty = return Empty
-checkNestedBinders (Nest b bs) = do
-  b' <- mapM checkUType b
-  extendScope (boundVars b')
-  let env = case b' of Bind v   -> b' @> Var v
-                       Ignore _ -> mempty
-  bs' <- extendR env $ checkNestedBinders bs
-  return $ Nest b' bs'
+withFreshName :: NameHint hint => MonadFail m => MonadBuilder m
+              => hint -> Type -> (Atom -> m a) -> m a
+withFreshName hint ty cont = do
+  (ans, decls) <- scopedDecls do
+     v <- withNameHint hint $ freshVarE UnknownBinder ty
+     cont $ Var v
+  Empty <- return decls
+  return ans
 
 inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
-inferULam (p, ann) arr body = do
+inferULam (UPatAnn p ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
   buildLam (Bind $ patNameHint p :> argTy) arr
-    \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
+    \(Var v) -> checkLeaks [v] $ withBindPat p v $ inferSigma body
 
 checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Atom
-checkULam (p, ann) body piTy = do
+checkULam (UPatAnn p ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
   buildDepEffLam (Bind $ patNameHint p :> argTy)
     ( \x -> return $ fst $ applyAbs piTy x)
-    \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
+    \x@(Var v) -> checkLeaks [v] $ withBindPat p v $
                       checkSigma body Suggest $ snd $ applyAbs piTy x
 
-checkInstance :: Nest UPatAnnArrow -> UType -> [UMethodDef] -> UInferM Atom
-checkInstance Empty ty methods = do
-  ty' <- checkUType ty
-  case ty' of
-    TypeCon def@(DataDef className _ _) params ->
-      case applyDataDefParams def params of
-        ClassDictDef _ superclassTys methodTys -> do
-          let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
-          methods' <- checkMethodDefs className methodTys methods
-          return $ ClassDictCon def params superclassHoles methods'
-        _ -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
-    _     -> throw TypeErr $ "Not a valid instance type: " ++ pprint ty
-checkInstance (Nest ((p, ann), arrow) rest) ty methods = do
-  case arrow of
-    ImplicitArrow -> return ()
-    ClassArrow    -> return ()
-    _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
-  argTy <- checkAnn ann
-  buildLam (Bind $ patNameHint p :> argTy) (fromUArrow arrow) \x@(Var v) ->
-    checkLeaks [v] $ withBindPat p x $ checkInstance rest ty methods
+checkInstance :: Nest UPatAnnArrow -> Name -> [UType] -> [UMethodDef] -> UInferM Atom
+checkInstance arrows className params methods = case arrows of
+  Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest -> do
+    case arrow of
+      ImplicitArrow -> return ()
+      ClassArrow    -> return ()
+      _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
+    checkAnnAutoInterface ann \wanteds getAnn -> do
+      introWanteds wanteds do
+        argTy <- getAnn
+        buildLam (Bind $ patNameHint p :> argTy) (fromUArrow arrow) \(Var v) ->
+          checkLeaks [v] $ withBindPat p v $ checkInstance rest className params methods
+  Empty -> do
+    substEnv <- getInferSubst
+    className' <- case envLookup substEnv className of
+      Nothing -> return className
+      Just (Rename className') -> return className'
+      Just (SubstVal _) -> throw TypeErr $ "Not a valid class: " ++ pprint className
+    (paramWanteds, paramGetters) <- checkParams params
+    introWanteds paramWanteds $ do
+      params' <- sequence paramGetters
+      ClassDef def methodNames <- getClassDef className'
+      [ClassDictCon superclassTys methodTys] <- return $ applyDataDefParams (snd def) params'
+      let superclassHoles = fmap (Con . ClassDictHole Nothing) superclassTys
+      methodsChecked <- mapM (checkMethodDef className' methodTys) methods
+      let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
+      forM_ (repeated idxs) \i ->
+        throw TypeErr $ "Duplicate method: " ++ pprint (methodNames!!i)
+      forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
+        throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
+      return $ DataCon def params' 0 [PairVal (ProdVal superclassHoles)
+                                              (ProdVal methods')]
+  where
+    checkParams :: [UExpr] -> UInferM ([Type], [UInferM Type])
+    checkParams [] = return ([], [])
+    checkParams (e:t) = checkUTypeAutoInterface e \wanteds e' -> do
+      (tailWanteds, tailGets) <- checkParams t
+      return (wanteds ++ tailWanteds, e' : tailGets)
 
+    introWanteds :: [Type] -> UInferM Type -> UInferM Type
+    introWanteds [] m = m
+    introWanteds (h:t) m = buildLam (Ignore h) ClassArrow (const $ introWanteds t m)
 
-checkMethodDefs :: Name ->  LabeledItems Type -> [UMethodDef]
-                -> UInferM (LabeledItems Atom)
-checkMethodDefs className methodTys methods = do
-  methods' <- liftM mkLabeledItems $ forM methods \(UMethodDef (v:>()) rhs) -> do
-    let v' = nameToLabel v
-    case lookupLabelHead methodTys v' of
-      Nothing -> throw TypeErr $
-        pprint v ++ " is not a method of " ++ pprint className
-      Just methodTy -> do
-        rhs' <- checkSigma rhs Suggest methodTy
-        return (v', rhs')
-  forM_ (reflectLabels methods') \(l,i) ->
-    when (i > 0) $ throw TypeErr $ "Duplicate method: " ++ pprint l
-  forM_ (reflectLabels methodTys) \(l,_) ->
-    case lookupLabelHead methods' l of
-      Nothing -> throw TypeErr $ "Missing method: " ++ pprint l
-      Just _  -> return ()
-  return methods'
+checkMethodDef :: ClassDefName -> [Type] -> UMethodDef -> UInferM (Int, Atom)
+checkMethodDef className methodTys (UMethodDef ~(UInternalVar v) rhs) = do
+  scope <- getScope
+  ClassDef (_, DataDef classSourceName _ _ ) _ <- getClassDef className
+  case scope ! v of
+    MethodName className' i _ | className == className' -> do
+      let methodTy = methodTys !! i
+      rhs' <- checkSigma rhs Suggest methodTy
+      return (i, rhs')
+    _ -> throw TypeErr $ pprint v ++ " is not a method of " ++ pprint classSourceName
 
-checkUEffRow :: EffectRow -> UInferM EffectRow
+checkUEffRow :: UEffectRow -> UInferM EffectRow
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
    t'    <- forM t \tv -> lookupVarName EffKind tv
    return $ EffectRow effs' t'
    where
-     lookupVarName :: Type -> Name -> UInferM Name
-     lookupVarName ty v = do
+     lookupVarName :: Type -> UVar -> UInferM Name
+     lookupVarName ty ~(UInternalVar v) = do
        -- TODO: more graceful errors on error
-       Var (v':>ty') <- asks (!(v:>()))
+       SubstVal (Var (v':>ty')) <- (!v) <$> getInferSubst
        constrainEq ty ty'
        return v'
 
-checkUEff :: Effect -> UInferM Effect
+checkUEff :: UEffect -> UInferM Effect
 checkUEff eff = case eff of
   RWSEffect rws region -> do
-    (Var (v:>ty)) <- lookupSourceVar (region:>())
+    Var (v:>ty) <- lookupUVar region
     constrainEq TyKind ty
     return $ RWSEffect rws v
   ExceptionEffect -> return ExceptionEffect
@@ -562,22 +557,29 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   let (subPats, subPatTys) = unzip patTys
   let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
   alt <- buildNAbs (toNest bs) \xs ->
-           withBindPats (zip subPats xs) $ checkRho body reqTy
+           let vs = map (\(Var v) -> v) xs
+           in withBindPats (zip subPats vs) $ checkRho body reqTy
   return (conIdx, alt)
 
-lookupDataCon :: Name -> UInferM (DataDef, Int)
+lookupDataCon :: Name -> UInferM (NamedDataDef, Int)
 lookupDataCon conName = do
-  let conName' = asGlobal conName
+  substEnv <- getInferSubst
+  conName' <- case envLookup substEnv conName of
+    Nothing         -> return conName
+    Just (Rename v) -> return v
+    _ -> throw TypeErr $ "Not a data constructor: " ++ pprint conName
   scope <- getScope
-  case envLookup scope (conName':>()) of
-    Just (_, DataBoundDataCon def con) -> return (def, con)
-    Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
-    Nothing -> throw UnboundVarErr $ pprint conName'
+  case envLookup scope conName' of
+    Just (DataConName dataDefName con) -> do
+      let DataDefName def = scope ! dataDefName
+      return ((dataDefName, def), con)
+    Just _  -> throw CompilerErr $ "Not a data constructor: " ++ pprint conName
+    Nothing -> throw CompilerErr $ pprint conName
 
 checkCasePat :: UPat -> Type -> UInferM (CaseAltIndex, [(UPat, Type)])
 checkCasePat (WithSrc pos pat) scrutineeTy = addSrcContext' pos $ case pat of
-  UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
+  UPatCon ~(UInternalVar conName) ps -> do
+    (def@(_, DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
     when (length argBs /= length ps) $ throw TypeErr $
      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
@@ -606,86 +608,78 @@ checkCasePat (WithSrc pos pat) scrutineeTy = addSrcContext' pos $ case pat of
     return (VariantTailAlt labels, [(subpat, subty)])
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
+withBindPats :: [(UPat, Var)] -> UInferM a -> UInferM a
 withBindPats pats body = foldr (uncurry withBindPat) body pats
 
-withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
-withBindPat pat val m = do
-  env <- bindPat pat val
-  extendR env m
+withBindPat :: UPat -> Var -> UInferM a -> UInferM a
+withBindPat pat var m = do
+  env <- bindPat pat $ Var var
+  extInferSubst env m
 
 bindPat :: UPat -> Atom -> UInferM SubstEnv
-bindPat pat val = evalCatT $ bindPat' pat val
-
--- CatT wrapper is used to prevent duplicate bindings within the same pattern,
--- e.g. (a, a) = (1, 2) should throw RepeatedVarErr
-bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
-bindPat' (WithSrc pos pat) val = addSrcContext pos $ case pat of
+bindPat (WithSrc pos pat) val = addSrcContext pos $ case pat of
   UPatBinder b -> do
-    usedVars <- look
-    when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint $ getName b
-    extend (b @> ())
-    return (b @> val)
+    return (b @> SubstVal val)
   UPatUnit -> do
-    lift $ constrainEq UnitTy (getType val)
+    constrainEq UnitTy (getType val)
     return mempty
   UPatPair p1 p2 -> do
-    _    <- lift $ fromPairType (getType val)
-    val' <- lift $ zonk val  -- ensure it has a pair type before unpacking
-    x1   <- lift $ getFst val'
-    x2   <- lift $ getSnd val'
-    env1 <- bindPat' p1 x1
-    env2 <- bindPat' p2 x2
+    _    <- fromPairType (getType val)
+    val' <- zonk val  -- ensure it has a pair type before unpacking
+    x1   <- getFst val' >>= zonk
+    x2   <- getSnd val' >>= zonk
+    env1 <- bindPat p1 x1
+    env2 <- bindPat p2 x2
     return $ env1 <> env2
-  UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con) <- lift $ lookupDataCon conName
+  UPatCon ~(UInternalVar conName) ps -> do
+    (def@(_, DataDef _ paramBs cons), con) <- lookupDataCon conName
     when (length cons /= 1) $ throw TypeErr $
       "sum type constructor in can't-fail pattern"
     let (DataConDef _ argBs) = cons !! con
     when (length argBs /= length ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                              ++ " got " ++ show (length ps)
-    params <- lift $ mapM (freshType . binderType) $ toList paramBs
-    lift $ constrainEq (TypeCon def params) (getType val)
-    xs <- lift $ zonk (Atom val) >>= emitUnpack
-    fold <$> zipWithM bindPat' (toList ps) xs
+    params <- mapM (freshType . binderType) $ toList paramBs
+    constrainEq (TypeCon def params) (getType val)
+    xs <- zonk (Atom $ val) >>= emitUnpack >>= mapM zonk
+    fold <$> zipWithM bindPat (toList ps) xs
   UPatRecord (Ext pats Nothing) -> do
-    expectedTypes <- lift $ mapM (const $ freshType TyKind) pats
-    lift $ constrainEq (RecordTy (NoExt expectedTypes)) (getType val)
-    xs <- lift $ zonk (Atom val) >>= emitUnpack
-    fold <$> zipWithM bindPat' (toList pats) xs
+    expectedTypes <- mapM (const $ freshType TyKind) pats
+    constrainEq (RecordTy (NoExt expectedTypes)) (getType val)
+    xs <- zonk (Atom $ val) >>= emitUnpack >>= mapM zonk
+    fold <$> zipWithM bindPat (toList pats) xs
   UPatRecord (Ext pats (Just tailPat)) -> do
-    wantedTypes <- lift $ mapM (const $ freshType TyKind) pats
-    restType <- lift $ freshInferenceName LabeledRowKind
+    wantedTypes <- mapM (const $ freshType TyKind) pats
+    restType <- freshInferenceName LabeledRowKind
     let vty = getType val
-    lift $ constrainEq (RecordTy $ Ext wantedTypes $ Just restType) vty
+    constrainEq (RecordTy $ Ext wantedTypes $ Just restType) vty
     -- Split the record.
-    wantedTypes' <- lift $ zonk wantedTypes
-    val' <- lift $ zonk val
-    split <- lift $ emit $ Op $ RecordSplit wantedTypes' val'
-    [left, right] <- lift $ getUnpacked split
-    leftVals <- lift $ getUnpacked left
-    env1 <- fold <$> zipWithM bindPat' (toList pats) leftVals
-    env2 <- bindPat' tailPat right
+    wantedTypes' <- zonk wantedTypes
+    val' <- zonk val
+    split <- emit $ Op $ RecordSplit wantedTypes' val'
+    [left, right] <- getUnpacked split
+    leftVals <- getUnpacked left
+    env1 <- fold <$> zipWithM bindPat (toList pats) leftVals
+    env2 <- bindPat tailPat right
     return $ env1 <> env2
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
-    elemTy <- lift $ freshType TyKind
+    elemTy <- freshType TyKind
     let idxTy = FixedIntRange 0 (fromIntegral $ length ps)
-    lift $ constrainEq (getType val) (idxTy ==> elemTy)
+    constrainEq (getType val) (idxTy ==> elemTy)
     let idxs = indicesNoIO idxTy
     unless (length idxs == length ps) $
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (length ps) <> " patterns."
     flip foldMapM (zip ps idxs) \(p, i) -> do
-      v <- lift $ emitZonked $ App val i
-      bindPat' p v
+      v <- emitZonked $ App val i
+      bindPat p v
 
 -- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it
 patNameHint :: UPat -> Name
-patNameHint (WithSrc _ (UPatBinder (Bind (v:>())))) = v
+patNameHint (WithSrc _ (UPatBinder (UBind v))) = v
 patNameHint _ = "pat"
 
 withPatHint :: UPat -> UInferM a -> UInferM a
@@ -696,12 +690,95 @@ checkAnn ann = case ann of
   Just ty -> checkUType ty
   Nothing -> freshType TyKind
 
+checkAnnAutoInterface :: Maybe UType -> ([Type] -> UInferM Type -> UInferM a) -> UInferM a
+checkAnnAutoInterface ann cont = case ann of
+  Just ty -> checkUTypeAutoInterface ty cont
+  Nothing -> cont [] (freshType TyKind)
+
 checkUType :: UType -> UInferM Type
-checkUType ty = do
-  reduced <- typeReduceScoped $ withEffects Pure $ checkRho ty TyKind
+checkUType ty@(WithSrc ctx _) =
+  (buildScoped $ withEffects Pure $ checkRho ty TyKind) >>=
+  typeReduceBlockWithWanteds >>=
+  typeReductionAsAtom ctx "Failed to reduce type annotation"
+
+checkUTypeAutoInterface :: UType -> ([Type] -> UInferM Type -> UInferM a) -> UInferM a
+checkUTypeAutoInterface ty@(WithSrc ctx _) cont =
+  (buildScoped $ withEffects Pure $ checkRho ty TyKind) >>=
+  typeReduceBlockWithWanteds >>= \case
+    (Left block, wanteds) -> cont (snd <$> wanteds) $
+      typeReductionAsAtom ctx "Failed to reduce type annotation" (Left block, wanteds)
+    (Right ans, wanteds) -> cont (snd <$> wanteds) (return ans)
+
+-- Delayed unification task. When performing its solve, it tries to perform
+-- dictionary synthesis within the inner scope and normalize eafResult such
+-- that it contains no free vars from the eafInner scope (while it can refer
+-- to eafOuter scope). If the evaluation succeeds, the result is unified
+-- with eafExpected.
+data EvalAndUnif = EvalAndUnif
+  { eafOuter :: Scope
+  , eafInner :: Scope
+  , eafResult :: Atom
+  , eafScs :: SynthCandidates
+  , eafExpected :: Atom
+  , eafErr :: Err
+  }
+-- XXX: Those assume no shadowing between outer and local scopes
+instance HasVars EvalAndUnif where
+  freeVars EvalAndUnif{..} = allFree `envDiff` eafInner
+    where allFree = freeVars eafResult <> foldMap freeVars eafInner <> freeVars eafExpected
+-- XXX: This is incorrect if the subst is not scopeless
+instance Subst EvalAndUnif where
+  subst env EvalAndUnif{..} =
+    EvalAndUnif (subst env eafOuter) (subst env eafInner) (subst env eafResult)
+                (subst env eafScs) (subst env eafExpected) eafErr
+instance IsDelayedSolve EvalAndUnif where
+  performDelayedSolve EvalAndUnif{..} = do
+    innerNoDict <- zonk eafInner >>= traverse \case
+      (AtomBinderInfo ty (LetBound ann expr)) -> AtomBinderInfo ty . LetBound ann <$> expr'
+        where
+          comp = traverseExpr (traverseHoles synthDictTop) expr
+          expr' = case runSubstBuilderT eafOuter eafScs comp of
+            Failure  errs    -> throwErrs errs
+            Success (ans, _) -> return ans
+      info -> return info
+    case typeReduceLocals eafOuter innerNoDict (Atom eafResult) of
+      Right ans -> do
+        -- We don't do leak checks on delayed solves, so make sure we don't
+        -- introduce more free vars than were present in the atom we returned
+        -- in places of the delayed evaluation (which was subject to leak checking).
+        unless (null $ freeVars ans `envDiff` freeVars eafExpected) $
+          throw CompilerErr $ "Inference failed due to scoping issues"
+        constrainEq ans eafExpected
+      Left  _   -> throwErr eafErr
+
+data DelayedSynthesis = DelayedSynthesis SrcPosCtx SynthCandidates Type
+instance HasVars DelayedSynthesis where
+  freeVars (DelayedSynthesis _ scs ty) = freeVars ty <> freeVars scs
+instance Subst DelayedSynthesis where
+  subst env (DelayedSynthesis ctx scs ty) = DelayedSynthesis ctx (subst env scs) (subst env ty)
+instance IsDelayedSolve DelayedSynthesis where
+  performDelayedSolve (DelayedSynthesis ctx scs ty) =
+    case runSubstBuilderT mempty scs $ synthDictTop ctx ty of
+      Failure errs -> throwErrs errs
+      Success _    -> return ()
+
+typeReductionAsAtom :: SrcPosCtx -> String -> (Either Block Atom, [(SrcPosCtx, Type)]) -> UInferM Atom
+typeReductionAsAtom ctx msg (reduced, wanteds) =
   case reduced of
-    Just ty' -> return $ ty'
-    Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
+    Right ty -> do
+      scs <- getSynthCandidates
+      forM_ wanteds \(wctx, wty) -> delaySolve $ DelayedSynthesis wctx scs wty
+      return $ ty
+    Left (Block decls ~(Atom ty)) -> do
+      outerScope <- getScope
+      let localScope = foldMap boundVars decls
+      env <- forM (localScope `envIntersect` freeVars ty) \(AtomBinderInfo ty' _) ->
+        freshInferenceName ty' <&> (:> ty')
+      resTy <- substBuilder (env <&> Rename . varName) ty
+      scs <- getSynthCandidates
+      delaySolve $ EvalAndUnif outerScope localScope ty scs resTy $
+        Err TypeErr (ErrCtx Nothing ctx []) msg
+      return resTy
 
 checkArrow :: Arrow -> UArrow -> UInferM ()
 checkArrow ahReq ahOff = case (ahReq, ahOff) of
@@ -712,7 +789,7 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
   (ClassArrow, ClassArrow) -> return ()
   _ -> throw TypeErr $  " Wrong arrow type:" ++
                        "\nExpected: " ++ pprint ahReq ++
-                       "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
+                       "\nActual:   " ++ pprint (fmap (const Pure) ahOff :: Arrow)
 
 checkExtLabeledRow :: ExtLabeledItems UExpr UExpr -> UInferM (ExtLabeledItems Type Name)
 checkExtLabeledRow (Ext types Nothing) = do
@@ -724,33 +801,52 @@ checkExtLabeledRow (Ext types (Just ext)) = do
   Var (ext':>_) <- checkRho ext LabeledRowKind
   return $ Ext types' $ Just ext'
 
-inferTabCon :: [UExpr] -> RequiredTy RhoType -> UInferM Atom
-inferTabCon xs reqTy = do
-  (tabTy, xs') <- case reqTy of
-    Concrete tabTy@(TabTyAbs a) -> do
-      let idx = indicesNoIO $ absArgType a
-      -- TODO: Check length!!
-      unless (length idx == length xs) $
-        throw TypeErr "Table type doesn't match annotation"
-      xs' <- mapM (\(x, i) -> checkOrInferRho x $ Concrete $ snd $ applyAbs a i) $ zip xs idx
-      return (tabTy, xs')
-    _ -> do
-      elemTy <- case xs of
-        []    -> freshType TyKind
-        (x:_) -> getType <$> inferRho x
-      let tabTy = (FixedIntRange 0 (fromIntegral $ length xs)) ==> elemTy
-      case reqTy of
-        Suggest sTy -> addContext context $ constrainEq sTy tabTy
-          where context = "If attempting to construct a fixed-size table not " <>
-                          "indexed by 'Fin n' for some n, this error may " <>
-                          "indicate there was not enough information to infer " <>
-                          "a concrete index set; try adding an explicit " <>
-                          "annotation."
-        Infer       -> return ()
-        _           -> error "Missing case"
-      xs' <- mapM (flip checkRho elemTy) xs
-      return (tabTy, xs')
-  emitZonked $ Op $ TabCon tabTy xs'
+data DelayedTabCon = DelayedTabCon
+  { dtcPi           :: PiType
+  , dtcExpectedSize :: Int
+  , dtcCheckIndices :: Maybe [Atom]
+  , dtcSrcCtx       :: SrcPosCtx
+  }
+instance HasVars DelayedTabCon where
+  freeVars (DelayedTabCon p _ indices _) = freeVars p <> foldMap (foldMap freeVars) indices
+instance Subst DelayedTabCon where
+  subst env (DelayedTabCon p si idxs ctx) = DelayedTabCon (subst env p) si (fmap (fmap (subst env)) idxs) ctx
+instance IsDelayedSolve DelayedTabCon where
+  performDelayedSolve DelayedTabCon{..} = do
+    uns <- looks unsolved
+    finalPi <- zonk dtcPi
+    case null $ freeVars finalPi `envIntersect` uns of
+      False -> throwErr $ Err TypeErr (ErrCtx Nothing dtcSrcCtx [])
+        "Failed to infer the index set of an array literal. Please try adding a type annotation."
+      True  -> return ()
+    let indices = indicesNoIO $ absArgType finalPi
+    unless (length indices == dtcExpectedSize) $ throwErr $ Err TypeErr (ErrCtx Nothing dtcSrcCtx []) $
+      "Table literal has " ++ show dtcExpectedSize ++ " elements, but its inferred index set " ++
+      "(" ++ pprint (Pi finalPi) ++ ") has a size of " ++ show (length indices)
+    case dtcCheckIndices of
+      Nothing      -> return ()
+      Just idxVars -> forM_ (zip indices idxVars) (uncurry constrainEq)
+
+inferTabCon :: SrcPosCtx -> [UExpr] -> RequiredTy RhoType -> UInferM Atom
+inferTabCon pos xs reqTy = do
+  p@(Abs n (_, a)) <- case reqTy of
+    Check ty -> fromPiType True TabArrow ty
+    Infer    -> fromPiType True TabArrow =<< freshType TyKind
+  registerDefault (binderType n) $ Fin $ IdxRepVal $ fromIntegral $ length xs
+  xs' <- case n `isin` freeVars a of
+    False -> do
+      delaySolve $ DelayedTabCon p (length xs) Nothing pos
+      mapM (flip checkRho a) xs
+    True  -> do
+      -- TODO: We could check if we can already create indices at this point
+      -- and avoid delaying the checks. But this might get difficult once we
+      -- make index set a type class.
+      (idxs, xs') <- unzip <$> forM xs \x -> do
+        idx <- freshType $ binderType n
+        (idx,) <$> checkRho x (snd $ applyAbs p idx)
+      delaySolve $ DelayedTabCon p (length xs) (Just idxs) pos
+      return xs'
+  emitZonked $ Op $ TabCon (Pi p) xs'
 
 fromUArrow :: UArrow -> Arrow
 fromUArrow arr = fmap (const Pure) arr
@@ -791,48 +887,106 @@ checkAllowedUnconditionally eff = do
   eff' <- zonk eff
   effAllowed <- getAllowedEffects >>= zonk
   return $ case checkExtends effAllowed eff' of
-    Left _   -> False
-    Right () -> True
+    Failure _  -> False
+    Success () -> True
 
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
-addSrcContext' :: SrcCtx -> UInferM a -> UInferM a
-addSrcContext' pos m = do
-  env <- ask
-  addSrcContext pos $ lift $
-    local (const pos) $ runReaderT m env
+addSrcContext' :: SrcPosCtx -> UInferM a -> UInferM a
+addSrcContext' pos = addSrcContext pos . local (\e -> e { srcCtx = pos })
 
-getSrcCtx :: UInferM SrcCtx
-getSrcCtx = lift ask
+getSrcCtx :: UInferM SrcPosCtx
+getSrcCtx = asks srcCtx
+
+getInferSubst :: UInferM SubstEnv
+getInferSubst = asks inferSubst
+
+extInferSubst :: SubstEnv -> UInferM a -> UInferM a
+extInferSubst ext = local (\e -> e { inferSubst = inferSubst e <> ext })
 
 -- === typeclass dictionary synthesizer ===
 
 -- We have two variants here because at the top level we want error messages and
 -- internally we want to consider all alternatives.
-type SynthPassM = SubstBuilderT (Either Err)
-type SynthDictM = SubstBuilderT []
+type SynthPassM = SubstBuilderT Except
+type SynthDictM = SubstBuilderT (ReaderT NormalizedGivens (WriterT DerivationKind []))
 
-synthModule :: Scope -> Module -> Except Module
-synthModule scope (Module Typed decls bindings) = do
-  decls' <- fst . fst <$> runSubstBuilderT
-              (traverseDecls (traverseHoles synthDictTop) decls) scope
-  return $ Module Core decls' bindings
-synthModule _ _ = error $ "Unexpected IR variant"
+type SuperclassProjection = Atom  -- A function projecting a superclass from a dictionary
+type Given = Block  -- A block that can produce a given of the corresponding type
 
-synthDictTop :: SrcCtx -> Type -> SynthPassM Atom
+newtype NormalizedGivens = NormalizedGivens [Given]
+instance Semigroup NormalizedGivens where
+  (NormalizedGivens a) <> (NormalizedGivens b) = NormalizedGivens $ uniqGivens $ a ++ b
+instance Monoid NormalizedGivens where
+  mempty = NormalizedGivens []
+
+data DerivationKind = OnlyGivens | UsedInstance deriving Eq
+instance Semigroup DerivationKind where
+  OnlyGivens <> OnlyGivens = OnlyGivens
+  _          <> _          = UsedInstance
+instance Monoid DerivationKind where
+  mempty = OnlyGivens
+
+synthModule :: Scope -> SynthCandidates -> Module -> Except Module
+synthModule scope scs (Module Typed decls result) = do
+  (result', (_, decls')) <- runSubstBuilderT scope scs do
+              env <- traverseDeclsOpen (traverseHoles synthDictTop) decls
+              extendR env $ substBuilderR result
+  -- TODO: put the InstanceLet decls in the result bindings (eventually should
+  -- be a separate thing but not necessary now)
+  return $ Module Core decls' result'
+synthModule _ _ _ = error $ "Unexpected IR variant"
+
+synthDictTop :: SrcPosCtx -> Type -> SynthPassM Atom
 synthDictTop ctx ty = do
   scope <- getScope
-  let solutions = runSubstBuilderT (synthDict ty) scope
-  addSrcContext ctx $ case solutions of
-    [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-    [(ans, env)] -> builderExtend env $> ans
-    _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
-           ++ "\n" ++ pprint solutions
+  scs <- getSynthCandidates
+  let baseGivens = foldMap (normalizeGiven scope scs (superclassGetters scs)) $
+        Block Empty . Atom <$> lambdaDicts scs
+  let (solutionsGivens, solutionsInstance) = partition ((== OnlyGivens) . snd) $
+        runWriterT $ runReaderT (runSubstBuilderT scope scs $ synthDict ty) baseGivens
+  addSrcContext ctx $ do
+    unless (length solutionsInstance <= 1) $
+      throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+    case solutionsGivens ++ solutionsInstance of
+      [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+      ((ans, env), _):_ -> builderExtend env $> ans
+
+normalizeGiven :: Scope -> SynthCandidates -> [SuperclassProjection] -> Given -> NormalizedGivens
+normalizeGiven scope scs projs initGivens = NormalizedGivens $ superclassClosure [initGivens]
+  where
+    superclassClosure :: [Given] -> [Given]
+    superclassClosure givens = case length givens == length nextGivens of
+      True  -> givens
+      False -> superclassClosure nextGivens
+      where nextGivens = uniqGivens $ givens ++ superclassStep givens
+
+    superclassStep :: [Given] -> [Given]
+    superclassStep givens = do
+      p <- projs
+      g <- givens
+      maybeToList $ tryApply p g
+
+    tryApply :: Atom -> Block -> Maybe Block
+    tryApply f xb = case res of
+      Failure _      -> Nothing
+      Success (b, _) -> Just b
+      where
+        res = runUInferM mempty scope scs (error "Shouldn't need protolude here") $ do
+          buildScoped $ do
+            f' <- instantiateSigma f
+            Pi (Abs b _) <- return $ getType f'
+            constrainEq (binderType b) (getType xb)
+            x <- emitBlock xb
+            emitZonked $ App f' x
+
+uniqGivens :: [Given] -> [Given]
+uniqGivens = nubBy (\x y -> getType x == getType y)
 
 traverseHoles :: (MonadReader SubstEnv m, MonadBuilder m)
-              => (SrcCtx -> Type -> m Atom) -> TraversalDef m
+              => (SrcPosCtx -> Type -> m Atom) -> TraversalDef m
 traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
@@ -844,17 +998,21 @@ synthDict :: Type -> SynthDictM Atom
 synthDict ty = case ty of
   PiTy b arr body -> synthesizeNow <|> introFirst
     where
-      introFirst = buildDepEffLam b
-                      (\x -> extendR (b @> x) $ substBuilderR arr)
-                      (\x -> extendR (b @> x) $ substBuilderR body >>= synthDict)
+      introFirst = do
+        buildDepEffLam b
+          (\x -> extendR (b @> SubstVal x) $ substBuilderR arr)
+          (\x -> extendR (b @> SubstVal x) $ do
+            givens         <- lift $ lift $ ask
+            superclassProj <- superclassGetters <$> getSynthCandidates
+            scope <- getScope
+            scs <- getSynthCandidates
+            let newGivens = case arr of
+                  ClassArrow -> givens <> normalizeGiven scope scs superclassProj (Block Empty $ Atom x)
+                  _          -> givens
+            withGivens newGivens $ substBuilderR body >>= synthDict)
   _ -> synthesizeNow
   where
-    synthesizeNow = do
-      (d, bindingInfo) <- getBinding
-      case bindingInfo of
-        LetBound InstanceLet _ -> trySynth d
-        LamBound ClassArrow    -> withSuperclasses d >>= trySynth
-        _                      -> empty
+    synthesizeNow = (getGiven <|> getInstance) >>= trySynth
     trySynth step = do
       block <- buildScoped $ inferToSynth $ instantiateAndCheck ty step
       -- NOTE: It's ok to emit unconditionally here. It will only ever emit
@@ -863,34 +1021,37 @@ synthDict ty = case ty of
       --       it's an error!
       traverseBlock (traverseHoles (const synthDict)) block >>= emitBlock
 
--- TODO: this doesn't de-dup, so we'll get multiple results if we have a
--- diamond-shaped hierarchy.
-withSuperclasses :: Atom -> SynthDictM Atom
-withSuperclasses dict = return dict <|> do
-  (f, LetBound SuperclassLet _) <- getBinding
-  inferToSynth $ tryApply f dict
+tryEachCandidate :: [a] -> SynthDictM a
+tryEachCandidate = lift . lift . lift . lift
 
-getBinding :: SynthDictM (Atom, BinderInfo)
-getBinding = do
-  scope <- getScope
-  (v, (ty, bindingInfo)) <- lift $ lift $ envPairs scope
-  return (Var (v:>ty), bindingInfo)
+getInstance :: SynthDictM Atom
+getInstance = do
+  tell UsedInstance
+  (instanceDicts <$> getSynthCandidates) >>= tryEachCandidate
 
-inferToSynth :: (Pretty a, Subst a) => UInferM a -> SynthDictM a
+getGiven :: SynthDictM Atom
+getGiven = do
+  NormalizedGivens givens <- lift $ lift $ ask
+  tryEachCandidate givens >>= emitBlock
+
+withGivens :: NormalizedGivens -> SynthDictM a -> SynthDictM a
+withGivens givens m = do
+  buildC <- builderLook
+  buildR <- builderAsk
+  scope <- ask
+  (ans, ext) <- lift $ lift $ local (const givens) $ runBuilderT' (runReaderT m scope) (buildR, buildC)
+  builderExtend ext
+  return ans
+
+inferToSynth :: (Pretty a, HasVars a, Subst a) => UInferM a -> SynthDictM a
 inferToSynth m = do
   scope <- getScope
-  case runUInferM mempty scope m of
-    Left _ -> empty
-    Right (x, (_, decls)) -> do
+  scs <- getSynthCandidates
+  case runUInferM mempty scope scs (error "Shouldn't need protolude here") m of
+    Failure _ -> empty
+    Success (x, (_, decls)) -> do
       mapM_ emitDecl decls
       return x
-
-tryApply :: Atom -> Atom -> UInferM Atom
-tryApply f x = do
-  f' <- instantiateSigma f
-  Pi (Abs b _) <- return $ getType f'
-  constrainEq (binderType b) (getType x)
-  emitZonked $ App f' x
 
 instantiateAndCheck :: Type -> Atom -> UInferM Atom
 instantiateAndCheck ty x = do
@@ -900,40 +1061,87 @@ instantiateAndCheck ty x = do
 
 -- === constraint solver ===
 
-data SolverEnv = SolverEnv { solverVars :: Env Kind
-                           , solverSub  :: Env Type }
-type SolverT m = CatT SolverEnv m
 
-runSolverT :: (MonadError Err m, Subst a, Pretty a)
+
+
+data DelayedSolve = forall a. (IsDelayedSolve a, HasVars a, Subst a) => DelayedSolve a
+instance HasVars DelayedSolve where
+  freeVars (DelayedSolve s) = freeVars s
+instance Subst DelayedSolve where
+  subst env (DelayedSolve s) = DelayedSolve $ subst env s
+
+class IsDelayedSolve a where
+  performDelayedSolve :: (MonadSolver m, Fallible m) => a -> m ()
+instance IsDelayedSolve DelayedSolve where
+  performDelayedSolve (DelayedSolve s) = performDelayedSolve s
+
+data SolverEnv = SolverEnv
+  { solverVars        :: Env Kind
+  , solverSub         :: Env (SubstVal Type)
+  , solverDefaults    :: [(Atom, Atom)]  -- Optional unifications
+  , solverDelayed     :: [DelayedSolve]
+  }
+type SolverT m = CatT SolverEnv m
+type MonadSolver m = MonadCat SolverEnv m
+
+runSolverT :: (Fallible m, HasVars a, Subst a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
-   ans <- m >>= zonk
-   applyDefaults
-   ans' <- zonk ans
-   vs <- looks $ envNames . unsolved
-   throwIf (not (null vs)) TypeErr $ "Ambiguous type variables: "
-                                   ++ pprint vs ++ "\n\n" ++ pprint ans'
-   return ans'
+  ans <- m >>= zonk
+  unsolvedDelayedBeforeDefaults <- trySolveDelayed =<< looks solverDelayed
+  applyDefaults
+  failedDelayed <- trySolveDelayed unsolvedDelayedBeforeDefaults
+  forM_ failedDelayed performDelayedSolve  -- TODO: Applicative errors!
+  ans' <- zonk ans
+  vs <- looks $ envNames . unsolved
+  throwIf (not (null vs)) TypeErr $ "Ambiguous type variables: "
+                                  ++ pprint vs ++ "\n\n" ++ pprint ans'
+  return ans'
 
-applyDefaults :: MonadCat SolverEnv m => m ()
+data SolveProgress = Progressed | NoChange deriving Show
+
+trySolveDelayed :: forall m. MonadSolver m => [DelayedSolve] -> m [DelayedSolve]
+trySolveDelayed solves = go solves
+  where
+    go :: [DelayedSolve] -> m [DelayedSolve]
+    go todos = do
+      (remaining, progress) <- flip runStateT NoChange $
+        flip filterM todos \s -> do
+          result <- catchSolver $ performDelayedSolve s
+          case result of
+            Failure _  -> return True
+            Success () -> put Progressed $> False
+      case progress of
+        Progressed -> go remaining
+        NoChange   -> return remaining
+
+catchSolver :: MonadSolver n => (forall m. (MonadSolver m, Fallible m) => m a) -> n (Except a)
+catchSolver m = (runCatT m <$> look) >>= \case
+  Failure errs            -> return $ Failure errs
+  Success (ans, finalEnv) -> extend finalEnv $> Success ans
+
+applyDefaults :: (MonadSolver m, Fallible m) => m ()
 applyDefaults = do
-  vs <- looks unsolved
-  forM_ (envPairs vs) \(v, k) -> case k of
-    EffKind -> addSub v $ Eff Pure
-    _ -> return ()
-  where addSub v ty = extend $ SolverEnv mempty (v@>ty)
+  vs       <- looks unsolved
+  defaults <- looks solverDefaults
+  forM_ (envPairs vs) \case
+    (v, EffKind)                     -> addSub v $ Eff Pure
+    _                                -> return ()
+  -- Apply all defaults that don't cause unification errors
+  forM_ defaults \(lhs, rhs) -> void $ tryConstrainEq lhs rhs
+  where addSub v ty = extend $ SolverEnv mempty (v@>SubstVal ty) mempty mempty
 
-solveLocal :: Subst a => UInferM a -> UInferM a
+solveLocal :: (HasVars a, Subst a) => UInferM a -> UInferM a
 solveLocal m = do
-  (ans, env@(SolverEnv freshVars sub)) <- scoped $ do
+  (ans, env@(SolverEnv freshVars sub defaults delayed)) <- scoped $ do
     -- This might get expensive. TODO: revisit once we can measure performance.
     (ans, builderEnv) <- zonk =<< builderScoped m
     builderExtend builderEnv
     return ans
-  extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
+  extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars) (scopelessSubst sub defaults) (scopelessSubst sub delayed)
   return ans
 
-checkLeaks :: (HasType a, Subst a) => [Var] -> UInferM a -> UInferM a
+checkLeaks :: (HasType a, HasVars a, Subst a) => [Var] -> UInferM a -> UInferM a
 checkLeaks tvs m = do
   scope <- getScope
   (ans, env) <- scoped $ solveLocal $ m
@@ -949,24 +1157,38 @@ checkLeaks tvs m = do
   return ans
 
 unsolved :: SolverEnv -> Env Kind
-unsolved (SolverEnv vs sub) = vs `envDiff` sub
+unsolved (SolverEnv vs sub _ _) = vs `envDiff` sub
 
-freshInferenceName :: (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Name
+freshInferenceName :: (Fallible m, MonadSolver m) => Kind -> m Name
 freshInferenceName k = do
   env <- look
   let v = genFresh (rawName InferenceName "?") $ solverVars env
-  extend $ SolverEnv (v@>k) mempty
+  extend $ SolverEnv (v@>k) mempty mempty mempty
   return v
 
-freshType ::  (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Type
+freshType ::  (Fallible m, MonadSolver m) => Kind -> m Type
 freshType EffKind = Eff <$> freshEff
 freshType k = Var . (:>k) <$> freshInferenceName k
 
-freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
+freshEff :: (Fallible m, MonadSolver m) => m EffectRow
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
-constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
-             => Type -> Type -> m ()
+registerDefault :: MonadSolver m => Atom -> Atom -> m ()
+registerDefault lhs rhs = do
+  extend $ SolverEnv mempty mempty [(lhs, rhs)] mempty
+
+delaySolve :: (MonadSolver m, IsDelayedSolve a, HasVars a, Subst a) => a -> m ()
+delaySolve todo = do
+  -- Try to eagerly perform the solve to improve performance
+  result <- catchSolver $ performDelayedSolve todo
+  case result of
+    Success () -> return ()
+    Failure _  -> extend $ SolverEnv mempty mempty mempty [DelayedSolve todo]
+
+tryConstrainEq :: MonadSolver m => Type -> Type -> m (Except ())
+tryConstrainEq t1 t2 = catchSolver $ constrainEq t1 t2
+
+constrainEq :: (Fallible m, MonadSolver m) => Type -> Type -> m ()
 constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
@@ -977,13 +1199,12 @@ constrainEq t1 t2 = do
                "\n(Solving for: " ++ pprint infVars ++ ")")
   addContext msg $ unify t1' t2'
 
-zonk :: (Subst a, MonadCat SolverEnv m) => a -> m a
+zonk :: (HasVars a, Subst a, MonadSolver m) => a -> m a
 zonk x = do
   s <- looks solverSub
   return $ scopelessSubst s x
 
-unify :: (MonadCat SolverEnv m, MonadError Err m)
-       => Type -> Type -> m ()
+unify :: (Fallible m, MonadSolver m) => Type -> Type -> m ()
 unify t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
@@ -1012,7 +1233,7 @@ unify t1 t2 = do
     (Eff eff, Eff eff') -> unifyEff eff eff'
     _ -> throw TypeErr ""
 
-unifyExtLabeledItems :: (MonadCat SolverEnv m, MonadError Err m)
+unifyExtLabeledItems :: (MonadSolver m, Fallible m)
   => ExtLabeledItems Type Name -> ExtLabeledItems Type Name -> m ()
 unifyExtLabeledItems r1 r2 = do
   r1' <- zonk r1
@@ -1038,8 +1259,7 @@ unifyExtLabeledItems r1 r2 = do
       unifyExtLabeledItems (Ext NoLabeledItems t2)
                            (Ext (LabeledItems extras1) (Just newTail))
 
-unifyEff :: (MonadCat SolverEnv m, MonadError Err m)
-         => EffectRow -> EffectRow -> m ()
+unifyEff :: (MonadSolver m, Fallible m) => EffectRow -> EffectRow -> m ()
 unifyEff r1 r2 = do
   r1' <- zonk r1
   r2' <- zonk r2
@@ -1056,40 +1276,60 @@ unifyEff r1 r2 = do
       unifyEff (extendEffRow extras1 newRow) (EffectRow mempty t2)
     _ -> throw TypeErr ""
 
-bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
+bindQ :: (MonadSolver m, Fallible m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
           | hasSkolems t = throw TypeErr "Can't unify with skolem vars"
-          | otherwise = extend $ mempty { solverSub = v@>t }
+          | otherwise = extend $ mempty { solverSub = v@>SubstVal t }
 
-hasSkolems :: Subst a => a -> Bool
+hasSkolems :: HasVars a => a -> Bool
 hasSkolems x = not $ null [() | Name Skolem _ _ <- envNames $ freeVars x]
 
-occursIn :: Subst a => Var -> a -> Bool
+occursIn :: HasVars a => Var -> a -> Bool
 occursIn v t = v `isin` freeVars t
 
-renameForPrinting :: Subst a => a -> (a, [Var])
+renameForPrinting :: HasVars a => Subst a => a -> (a, [Var])
 renameForPrinting x = (scopelessSubst substEnv x, newNames)
   where
     fvs = freeVars x
-    infVars = filter ((== Just InferenceName) . nameSpace . varName) $ envAsVars fvs
-    newNames = [ genFresh (fromString name) fvs :> fst (varAnn v)
-               | (v, name) <- zip infVars nameList]
-    substEnv = fold $ zipWith (\v v' -> v@>Var v') infVars newNames
+    infVars = filter ((== InferenceName) . nameSpace . varName) $ envAsVars fvs
+    newNames = [ genFresh (fromString name) fvs :> ty
+               | (~(_ :> AtomBinderInfo ty _ ), name) <- zip infVars nameList]
+    substEnv = fold $ zipWith (\v v' -> v@> SubstVal (Var v')) infVars newNames
     nameList = map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
 
 instance Semigroup SolverEnv where
   -- TODO: as an optimization, don't do the subst when sub2 is empty
   -- TODO: make concatenation more efficient by maintaining a reverse-lookup map
-  SolverEnv scope1 sub1 <> SolverEnv scope2 sub2 =
-    SolverEnv (scope1 <> scope2) (sub1' <> sub2)
-    where sub1' = fmap (scopelessSubst sub2) sub1
+  SolverEnv scope1 sub1 def1 del1 <> SolverEnv scope2 sub2 def2 del2 =
+    SolverEnv (scope1' <> scope2) (sub1' <> sub2) (def1' <> def2) (del1' <> del2)
+    where
+      scope1' = fmap (scopelessSubst sub2) scope1
+      sub1' = fmap (scopelessSubst sub2) sub1
+      def1' = fmap (scopelessSubst sub2) def1
+      del1' = fmap (scopelessSubst sub2) del1
 
 instance Monoid SolverEnv where
-  mempty = SolverEnv mempty mempty
+  mempty = SolverEnv mempty mempty mempty mempty
   mappend = (<>)
 
-typeReduceScoped :: MonadBuilder m => m Atom -> m (Maybe Atom)
-typeReduceScoped m = do
-  block <- buildScoped m
+typeReduceBlockWithWanteds :: (MonadSolver m, MonadBuilder m)
+                            => Block -> m (Either Block Atom, [(SrcPosCtx, Type)])
+typeReduceBlockWithWanteds block@(Block decls _) = do
   scope <- getScope
-  return $ typeReduceBlock scope block
+  -- We're lifting expressions from the inside of the block, so we need to make sure
+  -- that we're not leaking any internal vars. Note that thanks to laziness the error
+  -- will not get raised unless we actually consume the wanteds downstream.
+  let blockDefs = foldMap boundVars decls
+  let safeWanteds = case null $ foldMap (freeVars . snd) wanteds `envIntersect` blockDefs of
+        True -> wanteds
+        False -> error $ "Not implemented yet!"
+  return $ (,safeWanteds) $ case typeReduceBlock scope block of
+    Left (_, ans) -> Left $ Block decls $ Atom ans
+    Right ans     -> Right ans
+  where
+    -- XXX: This might leak types that refer to block binders
+    wanteds = execWriter $ runSubstBuilderT mempty mempty holeFindingTraversal
+    holeFindingTraversal = traverseBlock (traverseHoles recordHole) block
+    recordHole ctx ty = do
+      v <- freshVarE UnknownBinder ty
+      tell [(ctx, ty)] $> Var v

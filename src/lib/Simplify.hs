@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Simplify (simplifyModule, simplifyCase, splitSimpModule) where
+module Simplify (simplifyModule, splitSimpModule) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -14,12 +14,15 @@ import Data.Maybe
 import Data.Foldable (toList)
 import Data.Functor
 import Data.List (partition, elemIndex)
+import Data.Graph (graphFromEdges, topSort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import GHC.Stack
 
 import Autodiff
 import Env
+import LabeledItems
 import Syntax
 import Cat
 import Builder
@@ -30,43 +33,68 @@ import Util
 type SimplifyM = SubstBuilder
 
 simplifyModule :: Bindings -> Module -> Module
-simplifyModule scope (Module Core decls bindings) = do
-  let simpDecls = snd $ snd $ runSubstBuilder (simplifyDecls decls) scope
-  -- We don't have to check that the binders are global here, since all local
-  -- Atom binders have been inlined as part of the simplification.
+simplifyModule scope (Module Core decls result) = do
+  let (result', (_, decls')) = runSubstBuilder scope mempty do
+                                 env <- simplifyDecls decls
+                                 extendR env $ substBuilderR result
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
-  let (declsDone, declsNotDone) = partition isAtomDecl $ toList simpDecls
-  let bindings' = foldMap boundVars declsDone
-  Module Simp (toNest declsNotDone) (bindings <> bindings')
+  -- XXX: this is very iffy. There's no guarantee that the scoping works out,
+  --      since the atoms' names might be used in later non-atom decls.
+  let (declsDone, declsNotDone) = partition isAtomDecl $ toList decls'
+  let bindings = foldMap boundVars declsDone
+  let result'' = prependBindings bindings result'
+  Module Simp (toNest declsNotDone) result''
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
+-- XXX: copied from Inference. It's sketchy both here and there
+prependBindings :: Bindings -> EvaluatedModule -> EvaluatedModule
+prependBindings bindings (EvaluatedModule bindings' scs sourceMap) =
+  EvaluatedModule (bindings <> bindings') scs sourceMap
+
 splitSimpModule :: Bindings -> Module -> (Block, Abs Binder Module)
-splitSimpModule scope m = do
-  let (Module Simp decls bindings) = hoistDepDataCons scope m
-  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ mkConsList $ map Var localVars
+splitSimpModule scope (Module _ decls bindings) = do
+  let localScope = boundVars decls
+  let localVars = bindingsAsVars $ freeVars bindings `envIntersect` localScope
+  let (blockResult, recon) = fst $ runBuilder (scope <> boundVars decls) mempty $
+        mkTelescope localScope $ Var <$> localVars
+  let block = Block decls $ Atom blockResult
   let (Abs b (decls', bindings')) =
-        fst $ flip runBuilder scope $ buildAbs (Bind ("result":>getType block)) $
+        fst $ runBuilder scope mempty $ buildAbs (Bind ("result":>getType block)) $
           \result -> do
-             results <- unpackConsList result
-             substBuilder (newEnv localVars results) bindings
+             results <- recon result
+             substBuilder (newEnv localVars $ map SubstVal results) bindings
   (block, Abs b (Module Evaluated decls' bindings'))
 
--- Bundling up the free vars in a result with a dependent constructor like
--- `AsList n xs` doesn't give us a well typed term. This is a short-term
--- workaround.
-hoistDepDataCons :: Bindings -> Module -> Module
-hoistDepDataCons scope (Module Simp decls bindings) =
-  Module Simp decls' bindings'
+mkTelescope :: forall m. MonadBuilder m => Scope -> [Atom] -> m (Atom, Atom -> m [Atom])
+mkTelescope localScope atoms = do
+  let xs = bindingsAsVars $ foldMap localFVs atoms
+  -- XXX: This is valid iff our IR satisfies the property that the type of an atom
+  -- never has more free vars than the atom itself.
+  let varsInTypes = foldMap (localFVs . varType) xs
+  let xsNoType = filter (not . (`isin` varsInTypes)) xs
+  let (graph, nodeFromVertex, _) = graphFromEdges $ (bindingsAsVars varsInTypes) <&> \v ->
+        (v, varName v, varName <$> (bindingsAsVars $ localFVs $ varType v))
+  let orderedVars = fst3 . nodeFromVertex <$> topSort graph
+  (packedXs, recon) <- flip runReaderT mempty $ buildDepPairs orderedVars xsNoType
+  -- TODO: Don't put everything under all the binders
+  return (packedXs, \p -> do
+    env <- recon p
+    substBuilder env atoms)
   where
-    (bindings', (_, decls')) = flip runBuilder scope $ do
-      mapM_ emitDecl decls
-      forM bindings \(ty, info) -> case info of
-        LetBound ann x | isData ty -> do x' <- emit x
-                                         return (ty, LetBound ann $ Atom x')
-        _ -> return (ty, info)
-hoistDepDataCons _ (Module _ _ _) =
-  error "Should only be hoisting data cons on core-Simp IR"
+    localFVs a = freeVars a `envIntersect` localScope
+
+    buildDepPairs :: [Var] -> [Var] -> ReaderT SubstEnv m (Atom, Atom -> m SubstEnv)
+    buildDepPairs vs xs = case vs of
+      []  -> return (ProdVal $ Var <$> xs, \p -> do newEnv xs <$> (map SubstVal <$> getUnpacked p))
+      v:t -> do
+        (tp, recon) <- buildDepPairs t xs
+        a <- buildAAbs (Bind v) \vb -> extendR (v@> SubstVal vb) $ substBuilderR $ getType tp
+        return (DepPair (Var v) tp a, \p -> do
+          ~[rv, rc] <- getUnpacked p
+          env <- recon rc
+          return $ env <> v @> SubstVal rv)
+
+    fst3 (a, _, _) = a
 
 simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
 simplifyDecls Empty = return mempty
@@ -78,19 +106,16 @@ simplifyDecls (Nest decl rest) = do
 simplifyDecl :: Decl -> SimplifyM SubstEnv
 simplifyDecl (Let NoInlineLet (Bind (name:>_)) expr) = do
   x <- simplifyStandalone expr
-  emitTo name NoInlineLet (Atom x) $> mempty
-simplifyDecl (Let ann b expr) = do
+  withNameHint name $ emitAnn NoInlineLet (Atom x) $> mempty
+simplifyDecl (Let _ b expr) = do
   x <- simplifyExpr expr
-  let name = binderNameHint b
-  if isGlobalBinder b
-    then emitTo name ann (Atom x) $> mempty
-    else return $ b @> x
+  return $ b @> SubstVal  x
 
 simplifyStandalone :: Expr -> SimplifyM Atom
 simplifyStandalone (Atom (LamVal b body)) = do
   b' <- mapM substBuilderR b
   buildLam b' PureArrow \x ->
-    extendR (b@>x) $ simplifyBlock body
+    extendR (b@> SubstVal x) $ simplifyBlock body
 simplifyStandalone block =
   error $ "@noinline decorator applied to non-function" ++ pprint block
 
@@ -105,9 +130,12 @@ simplifyAtom atom = case atom of
     substEnv <- ask
     scope <- getScope
     case envLookup substEnv v of
-      Just x -> return $ deShadow x scope
+      Just (SubstVal x) -> return x
+      Just (Rename v') -> do
+        ty <- substBuilderR $ varAnn v
+        return $ Var $ v' :> ty
       Nothing -> case envLookup scope v of
-        Just (_, info) -> case info of
+        Just (AtomBinderInfo _ info) -> case info of
           LetBound ann (Atom x) | ann /= NoInlineLet -> dropSub $ simplifyAtom x
           _ -> substBuilderR atom
         _   -> substBuilderR atom
@@ -122,6 +150,9 @@ simplifyAtom atom = case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substBuilderR atom
   Pi  _ -> substBuilderR atom
+  DepPairTy _ -> substBuilderR atom
+  DepPair x y at -> do
+    DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substBuilderR at
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM simplifyAtom tc
   Eff eff -> Eff <$> substBuilderR eff
@@ -141,13 +172,14 @@ simplifyAtom atom = case atom of
       Nothing -> do
         alts' <- forM alts \(Abs bs a) -> do
           bs' <- mapM (mapM substBuilderR) bs
-          (Abs bs'' b) <- buildNAbs bs' \xs -> extendR (newEnv bs' xs) $ simplifyAtom a
+          (Abs bs'' b) <- buildNAbs bs' \xs -> extendR (newEnv bs' (map SubstVal xs)) $ simplifyAtom a
           case b of
             Block Empty (Atom r) -> return $ Abs bs'' r
             _                    -> error $ "Nontrivial block in ACase simplification"
         ACase e' alts' <$> (substBuilderR rty)
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _ _ -> error "Should only occur in Imp lowering"
+  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
 
 simplifyExtLabeledItems :: ExtLabeledItems Atom Name -> SimplifyM (ExtLabeledItems Atom Name)
@@ -156,32 +188,17 @@ simplifyExtLabeledItems (Ext items ext) = do
     ext' <- substBuilderR (Ext NoLabeledItems ext)
     return $ prefixExtLabeledItems items' ext'
 
-simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
-simplifyCase e alts = case e of
-  DataCon _ _ con args -> do
-    let Abs bs result = alts !! con
-    Just (newEnv bs args, result)
-  Variant (NoExt types) label i value -> do
-    let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) NE.!! i
-    let Abs bs result = alts !! index
-    Just (newEnv bs [value], result)
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let Abs bs result = alts !! (fromIntegral tag)
-    Just (newEnv bs (vals !! fromIntegral tag), result)
-  _ -> Nothing
-
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)
 
-simplifyLam :: Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
+simplifyLam :: HasCallStack => Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLam = simplifyLams 1
 
-simplifyBinaryLam :: Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
+simplifyBinaryLam :: HasCallStack => Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyBinaryLam = simplifyLams 2
 
 -- Unlike `substBuilderR`, this simplifies under the binder too.
-simplifyLams :: Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
+simplifyLams :: HasCallStack => Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams numArgs lam = do
   lam' <- substBuilderR lam
   dropSub $ go numArgs mempty $ Block Empty $ Atom lam'
@@ -191,25 +208,27 @@ simplifyLams numArgs lam = do
       return $ case result of
         Left  res -> (res, Nothing)
         Right (dat, (ctx, recon), atomf) ->
-          ( mkConsList $ (toList dat) ++ (toList ctx)
+          ( ProdVal $ (toList dat) ++ (toList ctx)
           , Just \vals -> do
-             (datEls', ctxEls') <- splitAt (length dat) <$> unpackConsList vals
+             (datEls', ctxEls') <- splitAt (length dat) <$> getUnpacked vals
              let dat' = restructure datEls' dat
              let ctx' = restructure ctxEls' ctx
              atomf dat' <$> recon dat' ctx'
           )
-    go n scope ~(Block Empty (Atom (Lam (Abs b (arr, body))))) = do
+    go n scope (Block Empty (Atom (Lam (Abs b (arr, body))))) = do
       b' <- mapM substBuilderR b
-      buildLamAux b' (\x -> extendR (b@>x) $ substBuilderR arr) \x@(Var v) -> do
-        let scope' = scope <> v @> (varType v, LamBound (void arr))
-        extendR (b@>x) $ go (n-1) scope' body
+      buildLamAux b' (\x -> extendR (b@> SubstVal x) $ substBuilderR arr) \x@(Var v) -> do
+        let scope' = scope <> v @> AtomBinderInfo (varType v) (LamBound (void arr))
+        extendR (b@> SubstVal x) $ go (n-1) scope' body
+    go n _ lam' = error $
+      "Expected " <> show n <> "-arg lambda, got: " <> pprint lam'
 
 defunBlock :: Scope -> Block -> SimplifyM (Either Atom (AtomFac SimplifyM))
 defunBlock localScope block = do
   if isData (getType block)
     then Left <$> simplifyBlock block
     else do
-      (result, (localScope', decls)) <- builderScoped $ simplifyBlock block
+      (result, ((localScope',_), decls)) <- builderScoped $ simplifyBlock block
       mapM_ emitDecl decls
       Right <$> separateDataComponent (localScope <> localScope') result
 
@@ -220,7 +239,7 @@ pattern RNil :: RTree a
 pattern RNil = RNode []
 
 -- Factorization of the atom into data and non-data components
--- TODO: Make the non-linear reconstruction take the scope instead of being monadic
+-- TODO: Make the non-data reconstruction take the scope instead of being monadic
 type DataA = Atom
 type NonDataA = Atom
 type CtxA = Atom
@@ -238,7 +257,12 @@ separateDataComponent localVars v = do
   (dat, (ctx, recon), atomf) <- rec v
   let (ctx', ctxRec) = dedup dat ctx
   let recon' = \dat'' ctx'' -> recon $ ctxRec dat'' (toList ctx'')
-  return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
+  let typeVars = foldMap (freeVars . getType) dat <> foldMap (freeVars . getType) ctx'
+  -- Make sure that we're not leaking any local variables in the type
+  case null $ typeVars `envIntersect` localVars of
+    True  -> return (dat, (RNode $ fmap RLeaf ctx', recon'), atomf)
+    False -> error $ "Failed to simplify the program: packing of " ++
+                     "dependent local variables not implemented"
   where
     rec atom = do
       let atomTy = getType atom
@@ -263,7 +287,7 @@ separateDataComponent localVars v = do
             where
               recon xs = do
                 scope <- getScope
-                return $ RLeaf $ subst (newEnv vs xs, scope) atom
+                return $ RLeaf $ subst (newEnv vs (fmap SubstVal xs), scope) atom
           vs = bindingsAsVars $ localVars `envIntersect` freeVars atom
 
     -- TODO: This function is really slow, but I'm not sure if we can come up with
@@ -290,9 +314,9 @@ simplifyExpr expr = case expr of
     f' <- simplifyAtom f
     case f' of
       Lam (Abs b (_, body)) ->
-        dropSub $ extendR (b@>x') $ simplifyBlock body
+        dropSub $ extendR (b@> SubstVal x') $ simplifyBlock body
       DataCon def params con xs -> return $ DataCon def params' con xs'
-         where DataDef _ paramBs _ = def
+         where (_, DataDef _ paramBs _) = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
       ACase e alts ~(Pi ab) -> do
         let rty' = snd $ applyAbs ab $ getType x'
@@ -306,7 +330,7 @@ simplifyExpr expr = case expr of
             Abs _ (LamVal _ (Block Empty (Atom (LamVal _ _)))) -> True
             _ -> False
           appAlt ~(Abs bs (LamVal b (Block Empty (Atom r)))) =
-            Abs bs $ subst (b @> x', mempty) r
+            Abs bs $ subst (b @> SubstVal  x', mempty) r
       TypeCon def params -> return $ TypeCon def params'
          where params' = params ++ [x']
       _ -> emit $ App f' x'
@@ -323,7 +347,7 @@ simplifyExpr expr = case expr of
           then do
             alts' <- forM alts \(Abs bs body) -> do
               bs' <-  mapM (mapM substBuilderR) bs
-              buildNAbs bs' \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
+              buildNAbs bs' \xs -> extendR (newEnv bs' (map SubstVal xs)) $ simplifyBlock body
             emit $ Case e' alts' resultTy'
           else do
             -- Construct the blocks of new cases. The results will only get replaced
@@ -331,26 +355,26 @@ simplifyExpr expr = case expr of
             (alts', facs) <- liftM unzip $ forM alts \(Abs bs body) -> do
               bs' <-  mapM (mapM substBuilderR) bs
               buildNAbsAux bs' \xs -> do
-                ~(Right fac@(dat, (ctx, _), _)) <- extendR (newEnv bs' xs) $ defunBlock (boundVars bs') body
+                ~(Right fac@(dat, (ctx, _), _)) <- extendR (newEnv bs' (map SubstVal xs)) $
+                                                     defunBlock (boundVars bs') body
                 -- NB: The return value here doesn't really matter as we're going to replace it afterwards.
-                return (mkConsList $ toList dat ++ toList ctx, fac)
+                return (ProdVal $ toList dat ++ toList ctx, fac)
             -- Now that we know the exact set of values each case needs, ctxDef is a sum type
             -- that can encapsulate the necessary contexts.
             -- TODO: Handle dependency once separateDataComponent supports it
             let altCtxTypes = fmap (\(_, (ctx, _), _) -> fmap getType $ toList ctx) facs
-            let ctxDef = DataDef "CaseClosure" Empty $
-                  fmap (DataConDef "Closure" . toNest . fmap Ignore) altCtxTypes
+            let closureTy = SumTy (map ProdTy altCtxTypes)
             -- New cases return a pair of data components, and a closure for non-data atoms
             let alts'' = for (enumerate $ zip alts' facs) $
                   \(i, (Abs bs (Block decls _), (dat, (ctx, _), _))) ->
                     Abs bs $ Block decls $ Atom $
-                      PairVal (mkConsList $ toList dat) (DataCon ctxDef [] i $ toList ctx)
+                      PairVal (ProdVal $ toList dat) (SumVal closureTy i $ ProdVal $ toList ctx)
             -- Here, we emit the case expression and unpack the results. All the trees
             -- should be the same, so we just pick the first one.
-            let (datType, datTree) = (\(dat, _, _) -> (getType $ mkConsList $ toList dat, dat)) $ head facs
-            caseResult <- emit $ Case e' alts'' $ PairTy datType (TypeCon ctxDef [])
+            let (datType, datTree) = (\(dat, _, _) -> (getType $ ProdVal $ toList dat, dat)) $ head facs
+            caseResult <- emit $ Case e' alts'' $ PairTy datType closureTy
             (cdat, cctx) <- fromPair caseResult
-            dat <- flip restructure datTree <$> unpackConsList cdat
+            dat <- flip restructure datTree <$> getUnpacked cdat
             -- At this point we have the data components `dat` ready to be applied to the
             -- full atom reconstruction function, but we only have the sum type for the closures
             -- and a list of potential non-data reconstruction functions. To get a list of
@@ -363,7 +387,8 @@ simplifyExpr expr = case expr of
             nondatTree <- (\(_, (ctx, rec), _) -> rec dat ctx) $ head facs
             nondat <- forM (enumerate nondatTree) \(i, _) -> do
               aalts <- forM facs \(_, (ctx, rec), _) -> do
-                Abs bs' b <- buildNAbs (toNest $ toList $ fmap (Ignore . getType) ctx) \ctxVals ->
+                Abs bs' b <- buildNAbs (toNest [Ignore $ ProdTy $ toList $ fmap getType ctx]) \[ctxVal] -> do
+                  ctxVals <- getUnpacked ctxVal
                   ((!! i) . toList) <$> rec dat (restructure ctxVals ctx)
                 case b of
                   Block Empty (Atom r) -> return $ Abs bs' r
@@ -432,9 +457,24 @@ simplifyOp op = case op of
       -- Simplify the case away if we can.
       dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
     _ -> emitOp op
+  SumToVariant (ACase scrutinee alts _) -> do
+    scrutinee' <- substBuilderR scrutinee
+    alts' <- substBuilderR alts
+    ~resultTy'@(VariantTy labs) <- substBuilderR $ getType $ Op op
+    -- NB: Technically the alternative bodies can also be SumAsProd constructors,
+    -- but that should never happen. Those are only introduced during Imp lowering
+    -- and so the only way to introduce them here would via inlining of results of
+    -- another compilation unit. However, the builtin sum types are always internal
+    -- to the compilation units, because they are not exposed to the surface
+    -- language, so they cannot get introduced via inlining!
+    let variantAlts = alts' <&> \(Abs bs (SumVal _ i val)) ->
+          Abs bs $ Variant labs "c" i val
+    return $ ACase scrutinee' variantAlts resultTy'
   PrimEffect ref (MExtend f) -> dropSub $ do
     ~(f', Nothing) <- simplifyLam f
     emitOp $ PrimEffect ref $ MExtend f'
+  -- TODO: Make sure that fromIntegral wraps in the same way as Dex
+  CastOp Int32Ty (Con (Lit (Int64Lit val))) -> return $ Con $ Lit $ Int32Lit $ fromIntegral val
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom
@@ -497,11 +537,11 @@ exceptToMaybeBlock (Block (Nest (Let _ b expr) decls) result) = do
   maybeResult <- exceptToMaybeExpr expr
   case maybeResult of
     -- These two cases are just an optimization
-    JustAtom _ x  -> extendR (b@>x) $ exceptToMaybeBlock $ Block decls result
+    JustAtom _ x  -> extendR (b@> SubstVal x) $ exceptToMaybeBlock $ Block decls result
     NothingAtom _ -> return $ NothingAtom a
     _ -> do
       emitMaybeCase maybeResult (return $ NothingAtom a) \x -> do
-        extendR (b@>x) $ exceptToMaybeBlock $ Block decls result
+        extendR (b@> SubstVal x) $ exceptToMaybeBlock $ Block decls result
 
 exceptToMaybeExpr :: Expr -> SubstBuilder Atom
 exceptToMaybeExpr expr = do
@@ -512,27 +552,35 @@ exceptToMaybeExpr expr = do
       resultTy' <- substBuilderR $ MaybeTy resultTy
       alts' <- forM alts \(Abs bs body) -> do
         bs' <-  substBuilderR bs
-        buildNAbs bs' \xs -> extendR (newEnv bs' xs) $ exceptToMaybeBlock body
+        buildNAbs bs' \xs -> extendR (newEnv bs' (map SubstVal xs)) $ exceptToMaybeBlock body
       emit $ Case e' alts' resultTy'
     Atom x -> substBuilderR $ JustAtom (getType x) x
     Op (ThrowException _) -> return $ NothingAtom a
     Hof (For ann ~(Lam (Abs b (_, body)))) -> do
       b' <- substBuilderR b
-      maybes <- buildForAnn ann b' \i -> extendR (b@>i) $ exceptToMaybeBlock body
-      catMaybesE maybes
+      maybes <- buildForAnn ann b' \i -> extendR (b@> SubstVal i) $ exceptToMaybeBlock body
+      simplifyBuilder $ catMaybesE maybes
     Hof (RunState s lam) -> do
       s' <- substBuilderR s
       let BinaryFunVal _ b _ body = lam
       result  <- emitRunState "ref" s' \ref ->
-        extendR (b@>ref) $ exceptToMaybeBlock body
+        extendR (b@> SubstVal ref) $ exceptToMaybeBlock body
       (maybeAns, newState) <- fromPair result
       emitMaybeCase maybeAns (return $ NothingAtom a) \ans ->
         return $ JustAtom a $ PairVal ans newState
+    Hof (RunWriter baseMonoid lam) -> do
+      let BinaryFunVal _ b _ body = lam
+      let RefTy _ accumTy = binderAnn b
+      result  <- emitRunWriter "ref" accumTy baseMonoid \ref ->
+        extendR (b@>SubstVal ref) $ exceptToMaybeBlock body
+      (maybeAns, accumResult) <- fromPair result
+      emitMaybeCase maybeAns (return $ NothingAtom a) \ans ->
+        return $ JustAtom a $ PairVal ans accumResult
     Hof (While ~(Lam (Abs _ (_, body)))) -> do
       eff <- getAllowedEffects
       lam <- buildLam (Ignore UnitTy) (PlainArrow eff) \_ ->
                exceptToMaybeBlock body
-      runMaybeWhile lam
+      simplifyBuilder $ runMaybeWhile lam
     _ | not (hasExceptions expr) -> do
           x <- substBuilderR expr >>= emit
           return $ JustAtom (getType x) x
@@ -544,16 +592,6 @@ hasExceptions expr = case t of
   Nothing -> ExceptionEffect `S.member` effs
   Just _  -> error "Shouldn't have tail left"
   where (EffectRow effs t) = exprEffs expr
-
-catMaybesE :: MonadBuilder m => Atom -> m Atom
-catMaybesE maybes = simplifyBuilder $ do
-  let (TabTy b (MaybeTy a)) = getType maybes
-  applyPreludeFunction "seqMaybes" [binderAnn b, a, maybes]
-
-runMaybeWhile :: MonadBuilder m => Atom -> m Atom
-runMaybeWhile lam = simplifyBuilder $ do
-  let (Pi (Abs _ (PlainArrow eff, _))) = getType lam
-  applyPreludeFunction "whileMaybe" [Eff eff, lam]
 
 simplifyBuilder :: MonadBuilder m => m Atom -> m Atom
 simplifyBuilder m = do

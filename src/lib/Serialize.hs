@@ -28,8 +28,10 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Foreign.Ptr
 import Foreign.Marshal.Array
 import GHC.Generics (Generic)
+import Numeric (showHex)
 
 import Interpreter
+import LabeledItems
 import Syntax
 import Type
 import PPrint
@@ -39,7 +41,7 @@ foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ()
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
 
 pprintVal :: Val -> IO String
-pprintVal val = asStr <$> prettyVal val
+pprintVal val = docAsStr <$> prettyVal val
 
 -- TODO: get the pointer rather than reading char by char
 getDexString :: Val -> IO String
@@ -69,6 +71,8 @@ prettyVal val = case val of
       case atom of
         Con (Lit (Word8Lit c)) ->
           return $ showChar (toEnum @Char $ fromIntegral c) ""
+        Con (Lit (Word32Lit c)) -> return $ "0x" ++ showHex c ""
+        Con (Lit (Word64Lit c)) -> return $ "0x" ++ showHex c ""
         _ -> pprintVal atom
     let bodyType = getType body
     let elemsDoc = case bodyType of
@@ -76,7 +80,7 @@ prettyVal val = case val of
           TC (BaseType (Scalar Word8Type)) -> pretty ('"': concat elems ++ "\"")
           _      -> pretty elems
     return $ elemsDoc <> idxSetDoc
-  DataCon (DataDef _ _ dataCons) _ con args ->
+  DataCon (_, DataDef _ _ dataCons) _ con args ->
     case args of
       [] -> return $ pretty conName
       _  -> do
@@ -84,14 +88,16 @@ prettyVal val = case val of
         return $ parens $ pretty conName <+> hsep ans
     where DataConDef conName _ = dataCons !! con
   Con con -> case con of
-    PairCon x y -> do
+    ProdCon [] -> return $ pretty ()
+    ProdCon [x, y] -> do
       xStr <- pprintVal x
       yStr <- pprintVal y
       return $ pretty (xStr, yStr)
+    ProdCon _ -> error "Unexpected product type: only binary products available in surface language."
     SumAsProd ty (TagRepVal trep) payload -> do
       let t = fromIntegral trep
       case ty of
-        TypeCon (DataDef _ _ dataCons) _ ->
+        TypeCon (_, DataDef _ _ dataCons) _ ->
           case args of
             [] -> return $ pretty conName
             _  -> do
@@ -271,6 +277,8 @@ instance HasPtrs Atom where
     Var v   -> Var <$> traverse (tp f) v
     Lam lam -> Lam <$> tp f lam
     Pi  ty  -> Pi  <$> tp f ty
+    DepPairTy     ta -> DepPairTy <$> tp f ta
+    DepPair   x y ta -> DepPair <$> tp f x <*> tp f y <*> tp f ta
     TC  tc  -> TC  <$> traverse (tp f) tc
     Con (Lit (PtrLit ptrTy ptr)) -> (Con . Lit . PtrLit ptrTy) <$> f ptrTy ptr
     Con con -> Con <$> traverse (tp f) con
@@ -285,6 +293,7 @@ instance HasPtrs Atom where
     VariantTy row -> VariantTy <$> tp f row
     ACase v alts rty -> ACase <$> tp f v <*>  tp f alts <*> tp f rty
     DataConRef def params args -> DataConRef def <$> tp f params <*> tp f args
+    DepPairRef _ _ _ -> undefined  -- This is only used in Imp
     BoxedRef b ptr size body ->
       BoxedRef <$> tp f b <*> tp f ptr <*> tp f size <*> tp f body
     ProjectElt idxs v -> pure $ ProjectElt idxs v
@@ -295,6 +304,11 @@ instance HasPtrs EffectRow where traversePtrs _ x = pure x
 instance HasPtrs a => HasPtrs [a]         where traversePtrs f xs = traverse (tp f) xs
 instance HasPtrs a => HasPtrs (Nest a)    where traversePtrs f xs = traverse (tp f) xs
 instance HasPtrs a => HasPtrs (BinderP a) where traversePtrs f xs = traverse (tp f) xs
+
+instance HasPtrs AnyBinderInfo where
+  traversePtrs f (AtomBinderInfo ty info) =
+    AtomBinderInfo <$> traversePtrs f ty <*> traversePtrs f info
+  traversePtrs _ info = pure info
 
 instance HasPtrs BinderInfo where
   traversePtrs f binfo = case binfo of

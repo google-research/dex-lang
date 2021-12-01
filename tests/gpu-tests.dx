@@ -1,10 +1,10 @@
 
 x = for i:(Fin 5). IToF $ ordinal i
 x
-> [0.0, 1.0, 2.0, 3.0, 4.0]
+> [0., 1., 2., 3., 4.]
 
 x + x
-> [0.0, 2.0, 4.0, 6.0, 8.0]
+> [0., 2., 4., 6., 8.]
 
 -- TODO: Make it a FileCheck test
 testNestedParallelism =
@@ -13,7 +13,7 @@ testNestedParallelism =
     q = for j:(Fin 2000). IToF $ x * ordinal j
     (2.0 .* q, 4.0 .* q)
 (fst testNestedParallelism.(2@_)).(5@_)
-> 20.0
+> 20.
 
 -- TODO: Make it a FileCheck test
 testNestedLoops =
@@ -25,9 +25,9 @@ testNestedLoops.(4@_).(5@_)
 
 -- The state is large enough such that it shouldn't fit on the stack of a
 -- single GPU thread. It should get lifted to a top-level allocation instead.
-allocationLiftingTest =
-  for i:(Fin 100).
-    yieldState (for j:(Fin 1000). ordinal i) $ \s.
-      s!(0@_) := get s!(0@_) + 1
-(allocationLiftingTest.(4@_).(0@_), allocationLiftingTest.(4@_).(1@_))
-> (5, 4)
+-- allocationLiftingTest =
+--   for i:(Fin 100).
+--     yieldState (for j:(Fin 1000). ordinal i) $ \s.
+--       s!(0@_) := get s!(0@_) + 1
+-- (allocationLiftingTest.(4@_).(0@_), allocationLiftingTest.(4@_).(1@_))
+-- > (5, 4)

@@ -124,13 +124,13 @@ mean y
   lets consider how it works. Critically, one cannot
   simply index an table with an integer.
 
-r = x.2
+r = x.(2 : Int)
 > Type error:
 > Expected: (Fin 3)
 >   Actual: Int32
 >
-> r = x.2
->       ^
+> r = x.(2 : Int)
+>          ^^
 
 ' Instead, it is necessary to cast the integer into the index type of the
   current shape. This type annotation is done with the `@` operator.
@@ -213,7 +213,8 @@ for pair:(Fin 2 & Fin 3). ordinal pair
   change the order of the axes. This is useful for applying functions on tables.
 
 ' For instance, we saw the `mean` function above which sums over the first axis
-  of an table. We can apply `mean` to `y` to produce the sum over 24 elements:
+  of an table. We can apply `mean` to `y` to produce the mean average over 24
+  elements:
 
 :t y
 > ((Fin 3 & Fin 8) => Float32)
@@ -316,7 +317,7 @@ Full = Fin ((size Batch) * (size IHeight) * (size IWidth))
 def pixel (x:Char) : Float32 =
      r = W8ToI x
      IToF case r < 0 of
-             True -> (abs r) + 128
+             True -> 256 + r
              False -> r
 
 def getIm : Batch => Image =
@@ -461,8 +462,8 @@ tableMean [0.0, 1.0, 0.5]
 ' That leaves: `withState`. This function uses the `State` effect, enabling us
   to introduce imperative variables into the computation.
   `withState` takes an initial value `init` and a body function taking a
-  "mutable value" reference (`acc` here), and returns a pair of the body
-  function's result and the final value. Here's a simple example:
+  "mutable value" reference (`acc` here), and returns the body function's result.
+  Here's a simple example:
 
 withState 10 $ \ state.
      state := 30
@@ -470,7 +471,7 @@ withState 10 $ \ state.
      get state
 > 10
 
-' The element returned pair is the body function's result (`10`)
+' The element returned is the body function's result (`10`)
 
 ' Finally: this is a good point to talk a bit about some other operators in Dex.
   In the examples above, we see two types of equal sign operators: `=` and `:=`.
@@ -586,7 +587,7 @@ instance [VSpace v, VSpace w] VSpace (v & w)
 
 '## More Fashion MNist
 
-' Now that we has more functions we can revisit some of the Fashion MNist examples.
+' Now that we have more functions we can revisit some of the Fashion MNist examples.
 
 ' Function that uses state to produce a histogram:
 
@@ -602,16 +603,11 @@ def bincount (inp : a => b) : b => Int =
 ' Plot how many times each pixel value occurs in an image:
 
 hist = bincount $ for (i,j). (FToI (ims.(0 @ _).i.j) @Pixels)
-> Ordinal index out of range:256 >= 256
-> Runtime error
 :t hist
-> Error: variable not in scope: hist
+> ((Fin 256) => Int32)
 
 :html showPlot $ yPlot (for i. (IToF hist.i))
-> Error: variable not in scope: hist
->
-> :html showPlot $ yPlot (for i. (IToF hist.i))
->                                      ^^^^
+> <html output>
 
 ' Find nearest images in the dataset:
 

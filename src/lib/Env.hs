@@ -5,14 +5,16 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..),
             varAnn, varName, BinderP (..), binderAnn, binderNameHint,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, traverseNames,
             envAsVars, rawName, nameSpace, nameTag, envMaxName, genFresh,
-            tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
-            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
+            tagToStr, envFilter, binderAsEnv,
+            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind,
+            NameHint (..)) where
 
 import Data.Maybe
 import Data.Store
@@ -29,12 +31,9 @@ infixr 7 :>
 newtype Env a = Env (M.Map Name a)
                 deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
 
--- TODO: consider parameterizing by namespace, for type-level namespace checks.
-data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
-            deriving (Show, Ord, Eq, Generic)
+data Name = Name NameSpace Tag Int deriving (Show, Ord, Eq, Generic)
 data NameSpace =
        GenName
-     | SourceName         -- names from source program
      | Skolem
      | InferenceName
      | SumName
@@ -64,14 +63,8 @@ pattern Bind v <- BindWithHint _ v
 rawName :: NameSpace -> Tag -> Name
 rawName s t = Name s t 0
 
-asGlobal :: Name -> Name
-asGlobal (GlobalName tag) = GlobalName tag
-asGlobal (Name SourceName tag 0) = GlobalName tag
-asGlobal v = error $ "Can't treat as global name: " ++ show v
-
-nameSpace :: Name -> Maybe NameSpace
-nameSpace (Name s _ _) = Just s
-nameSpace _ = Nothing
+nameSpace :: Name -> NameSpace
+nameSpace (Name s _ _) = s
 
 newEnv :: (Foldable f, Foldable h, HasName a) => f a -> h b -> Env b
 newEnv bs xs = fold $ zipWith (@>) (toList bs) (toList xs)
@@ -91,10 +84,7 @@ binderNameHint (Ignore _) = "ignored"
 binderNameHint (Bind (v:>_)) = v
 
 nameTag :: Name -> Tag
-nameTag name = case name of
-  Name _ t _        -> t
-  GlobalName t      -> t
-  GlobalArrayName _ -> error "GlobalArrayName has no tag"
+nameTag (Name _ t _) = t
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v
@@ -161,16 +151,7 @@ env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show (fromMaybe "<no name>" $ getName v) ++ " failed"
 
-isGlobal :: VarP ann -> Bool
-isGlobal (GlobalName _ :> _) = True
-isGlobal (GlobalArrayName _ :> _) = True
-isGlobal (Name TypeClassGenName _ _ :> _) = True
-isGlobal _ = False
-
-isGlobalBinder :: BinderP ann -> Bool
-isGlobalBinder b = isGlobal $ fromBind "" b
-
-genFresh :: Name-> Env a -> Name
+genFresh :: Name -> Env a -> Name
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
     nextNum = case M.lookupLT (Name ns tag bigInt) m of
@@ -180,12 +161,6 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
                   | otherwise   -> error "Ran out of numbers!"
                 _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
-genFresh v@(GlobalName _) env
-  | v `isin` env = error $ "Can't rename global: " ++ show v
-  | otherwise    = v
-genFresh v@(GlobalArrayName _) env
-  | v `isin` env = error $ "Can't rename global array: " ++ show v
-  | otherwise    = v
 
 infixr 7 @>
 
@@ -216,8 +191,9 @@ instance Monoid (Env a) where
   mappend = (<>)
 
 instance Pretty a => Pretty (Env a) where
-  pretty (Env m) = tupled [pretty v <+> "@>" <+> pretty x
-                          | (v, x) <- M.toAscList m]
+  pretty (Env m) = fold
+    [pretty v <+> "@>" <+> nest 2 (pretty x) <> hardline
+    | (v, x) <- M.toAscList m]
 
 instance Eq (VarP a) where
   (v:>_) == (v':>_) = v == v'
@@ -225,11 +201,10 @@ instance Eq (VarP a) where
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
+  pretty (Name AllocPtrName tag n) = "p" <> pretty (Name GenName tag n)
   pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> pretty n
-  pretty (GlobalName tag) = pretty (tagToStr tag)
-  pretty (GlobalArrayName i) = "<array " <> pretty i <> ">"
 
 instance Pretty a => Pretty (BinderP a) where
   pretty (Ignore ann) = "_:" <> pretty ann
@@ -247,3 +222,23 @@ instance Store InlineHint
 instance Store a => Store (VarP a)
 instance Store a => Store (Env a)
 instance Store a => Store (BinderP a)
+
+
+class NameHint a where
+  asNameHint :: a -> Maybe T.Text
+
+instance NameHint String where
+  asNameHint s = Just $ fromString s
+
+instance NameHint T.Text where
+  asNameHint = Just
+
+instance NameHint Name where
+  asNameHint (Name _ tag _) = Just tag
+
+instance NameHint (VarP ann) where
+  asNameHint (v:>_) = asNameHint v
+
+instance NameHint (BinderP ann) where
+  asNameHint (Bind v) = asNameHint v
+  asNameHint (Ignore _) = Nothing

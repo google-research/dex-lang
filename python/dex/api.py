@@ -17,11 +17,22 @@ def tagged_union(name: str, members: List[type]):
   payload = type(name + "Payload", (ctypes.Union,), {"_fields_": named_members})
   union = type(name, (ctypes.Structure,), {
     "_fields_": [("tag", ctypes.c_uint64), ("payload", payload)],
-    "value": property(lambda self: getattr(self.payload, f"t{self.tag}")),
+    "value": property(
+        fget=lambda self: getattr(self.payload, f"t{self.tag}"),
+        fset=lambda self, value: setattr(self.payload, f"t{self.tag}", value)),
+    "Payload": payload,
   })
   return union
 
-CLit = tagged_union("Lit", [ctypes.c_int64, ctypes.c_int32, ctypes.c_int8, ctypes.c_double, ctypes.c_float])
+CLit = tagged_union("Lit", [
+  ctypes.c_int64,
+  ctypes.c_int32,
+  ctypes.c_uint8,
+  ctypes.c_double,
+  ctypes.c_float,
+  ctypes.c_uint32,
+  ctypes.c_uint64
+])
 class CRectArray(ctypes.Structure):
   _fields_ = [("data", ctypes.c_void_p),
               ("shape_ptr", ctypes.POINTER(ctypes.c_int64)),
@@ -65,8 +76,9 @@ insert   = dex_func('dexInsert',   HsContextPtr, ctypes.c_char_p, HsAtomPtr, HsC
 evalExpr = dex_func('dexEvalExpr', HsContextPtr, ctypes.c_char_p,            HsAtomPtr)
 lookup   = dex_func('dexLookup',   HsContextPtr, ctypes.c_char_p,            HsAtomPtr)
 
-print   = dex_func('dexPrint',   HsAtomPtr,           ctypes.c_char_p)
-toCAtom = dex_func('dexToCAtom', HsAtomPtr, CAtomPtr, ctypes.c_int)
+print     = dex_func('dexPrint',     HsAtomPtr,           ctypes.c_char_p)
+toCAtom   = dex_func('dexToCAtom',   HsAtomPtr, CAtomPtr, ctypes.c_int)
+fromCAtom = dex_func('dexFromCAtom', CAtomPtr,            HsAtomPtr)
 
 createJIT  = dex_func('dexCreateJIT',  HsJITPtr)
 destroyJIT = dex_func('dexDestroyJIT', HsJITPtr, None)
@@ -74,7 +86,7 @@ compile    = dex_func('dexCompile',    HsJITPtr, HsContextPtr, HsAtomPtr, Native
 unload     = dex_func('dexUnload',     HsJITPtr, NativeFunction, None)
 
 getFunctionSignature  = dex_func('dexGetFunctionSignature', HsJITPtr, NativeFunction, NativeFunctionSignaturePtr)
-freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr)
+freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
 
 init()
 jit = createJIT()

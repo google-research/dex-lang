@@ -121,6 +121,9 @@ def yPlot (ys:n=>Float) : Plot n Float Float Unit =
 def matshow (img:n=>m=>Float) : Html =
   low  = minimum  $ for (i,j). img.i.j
   high = maximum $ for (i,j). img.i.j
+  range = high - low
   imgToHtml $ makePNG for i j.
-    x = floatTo8Bit $ (img.i.j - low) / (high - low)
+    x = if range == 0.0
+      then floatTo8Bit $ 0.5
+      else floatTo8Bit $ (img.i.j - low) / range
     [x, x, x]

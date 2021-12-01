@@ -215,6 +215,17 @@ litArr = [10, 5, 3]
    mean for i:(Fin 100). randn (ixkey k i)
 > -0.1158
 
+:p hash (IToW64 0) 0
+> 0x6b20015999ba4efe
+
+:p hash (IToW64 123) 456
+> 0x500945c565c98701
+
+key = (W32ToW64 (IToW32 320440878) .<<. 32) .|. (W32ToW64 (IToW32 57701188)) -- 0x13198a2e03707344
+count = (W32ToW64 (IToW32 608135816) .<<. 32) .|. (W32ToW64 (IToW32 2242054355)) -- 0x243f6a8885a308d3
+:p threeFry2x32 key count
+> 0xc4923a9c483df7a0
+
 :p
    k = newKey 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
@@ -835,6 +846,85 @@ def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
 @noinline
 def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
+-- Testing integer powers
+
+:p intpow 10 2
+> 100
+:p intpow 0 0
+> 1
+:p intpow 0 1
+> 0
+:p intpow 1 0
+> 1
+:p intpow 1 1
+> 1
+:p intpow 2 1
+> 2
+:p intpow 2 3
+> 8
+:p intpow 2 17
+> 131072
+
+-- Integer utility tests
+
+:p map isPowerOf2 [0, 1, 2, 3, 256, 1024, 1024*1024, 1024*1024 + 1]
+> [False, True, True, False, True, True, True, False]
+
+:p map intlog2 [-1, 0, 1, 2, 3, 4, 5, 1023, 1024, 1025]
+> [-1, -1, 0, 1, 1, 2, 2, 9, 10, 10]
+
+:p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
+> [1, 1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048]
+
+
 -- This will compile extremely slowly if non-inlining is broken
 :p f6 0
 > 100000
+
+interface AssociatedInt a
+  value a : Int
+
+instance AssociatedInt Int
+  value = 2
+
+instance AssociatedInt Float
+  value = 4
+
+value Int
+> 2
+value Float
+> 4
+
+interface AssociatedWithTwo a c
+  value2 a c : Int
+
+instance AssociatedWithTwo Int Float
+  value2 = 8
+
+value2 Int Float
+> 8
+value2 Float Int
+> Type error:Couldn't synthesize a class dictionary for: (AssociatedWithTwo Float32 Int32)
+>
+> value2 Float Int
+> ^^^^^^^^^^^^^^^^
+
+-- TODO: This is a really bad error message
+interface BadAssociatedName a
+  value2 c : Int
+> Error: variable not in scope: c
+
+-- Technically the two tests below are not incorrect, but we don't implement them yet.
+interface AssociatedSubsetOfParams a c
+  badValue1 a : Int
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Permuted or incomplete explicit type binders are not supported yet.
+
+interface AssociatedPermutedParams a c
+  badValue2 c a : Int
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Permuted or incomplete explicit type binders are not supported yet.

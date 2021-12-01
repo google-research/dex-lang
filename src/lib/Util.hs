@@ -11,12 +11,15 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
              scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
+             onSnd, onFst, findReplace, swapAt, uncurry3,
              measureSeconds,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for) where
+             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
+             Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
+             iota, whenM) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
+import qualified Data.List.NonEmpty as NE
 import Data.Foldable
 import Prelude
 import qualified Data.Set as Set
@@ -28,6 +31,9 @@ import Cat
 
 class IsBool a where
   toBool :: a -> Bool
+
+iota :: Int -> [Int]
+iota n = [0..n-1]
 
 swapAt :: Int -> a -> [a] -> [a]
 swapAt _ _ [] = error "swapping to empty list"
@@ -139,38 +145,6 @@ restructure xs structure = evalState (traverse procLeaf structure) xs
                         put rest
                         return x
 
-highlightRegion :: (Int, Int) -> String -> String
-highlightRegion pos@(low, high) s
-  | low > high || high > length s = error $ "Bad region: \n"
-                                              ++ show pos ++ "\n" ++ s
-  | otherwise =
-    -- TODO: flag to control line numbers
-    -- (disabling for now because it makes quine tests tricky)
-    -- "Line " ++ show (1 + lineNum) ++ "\n"
-
-    allLines !! lineNum ++ "\n"
-    ++ take start (repeat ' ') ++ take (stop - start) (repeat '^') ++ "\n"
-  where
-    allLines = lines s
-    (lineNum, start, stop) = getPosTriple pos allLines
-
-getPosTriple :: (Int, Int) -> [String] -> (Int, Int, Int)
-getPosTriple (start, stop) lines_ = (lineNum, start - offset, stop')
-  where
-    lineLengths = map ((+1) . length) lines_
-    lineOffsets = cumsum lineLengths
-    lineNum = maxLT lineOffsets start
-    offset = lineOffsets  !! lineNum
-    stop' = min (stop - offset) (lineLengths !! lineNum)
-
-cumsum :: [Int] -> [Int]
-cumsum xs = scanl (+) 0 xs
-
-maxLT :: Ord a => [a] -> a -> Int
-maxLT [] _ = 0
-maxLT (x:xs) n = if n < x then -1
-                          else 1 + maxLT xs n
-
 -- TODO: find a more efficient implementation
 findReplace :: Eq a => [a] -> [a] -> [a] -> [a]
 findReplace _ _ [] = []
@@ -241,3 +215,33 @@ measureSeconds m = do
   ans <- m
   t2 <- liftIO $ getCPUTime
   return (ans, (fromIntegral $ t2 - t1) / 1e12)
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM test doit = test >>= \case
+  True -> doit
+  False -> return ()
+
+-- === zippable class ===
+
+class Zippable f where
+  zipWithZ :: MonadFail m => (a -> b -> m c) -> f a -> f b -> m (f c)
+
+instance Zippable [] where
+  zipWithZ _ [] [] = return []
+  zipWithZ f (x:xs) (y:ys) = (:) <$> f x y <*> zipWithZ f xs ys
+  zipWithZ _ _ _ = zipErr
+
+instance Zippable NE.NonEmpty where
+  zipWithZ f xs ys = NE.fromList <$> zipWithZ f (NE.toList xs) (NE.toList ys)
+
+zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
+zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
+
+zipErr :: MonadFail m => m a
+zipErr = fail "zip error"
+
+forMZipped :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m (f c)
+forMZipped xs ys f = zipWithZ f xs ys
+
+forMZipped_ :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m ()
+forMZipped_ xs ys f = void $ forMZipped xs ys f

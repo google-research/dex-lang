@@ -21,7 +21,7 @@ else
 	# Using separate stack-work directories to avoid recompiling when
 	# changing between debug and non-debug builds, per
 	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-	PROF := --profile --work-dir .stack-work-prof
+	PROF := --trace --work-dir .stack-work-prof
 
 	dex     := $(STACK) exec         dex --
 	dexprof := $(STACK) exec $(PROF) dex --
@@ -47,12 +47,27 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
-ifeq (1,$(LLVM_HEAD))
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++
+
+CLANG := clang++
+
+ifeq (1,$(DEX_LLVM_HEAD))
 ifeq ($(PLATFORM),Darwin)
-	$(error LLVM head builds not supported on macOS!)
+$(error LLVM head builds not supported on macOS!)
 endif
 STACK_FLAGS := $(STACK_FLAGS) --flag dex:llvm-head
 STACK := $(STACK) --stack-yaml=stack-llvm-head.yaml
+else
+CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
+if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
+then echo "$$clangversion" ; break ; fi ; done)
+ifeq (,$(CLANG))
+$(error "Please install clang++-9")
+endif
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+ifneq (1,$(clang-version-compatible))
+$(error "Please install clang++-9")
+endif
 endif
 
 CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
@@ -75,13 +90,14 @@ install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
-	$(STACK) build $(PROF)
+	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:-foreign
 
 # For some reason stack fails to detect modifications to foreign library files
-build-python: dexrt-llvm
+build-ffis: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty
 	$(eval STACK_INSTALL_DIR=$(shell $(STACK) path --local-install-root))
 	cp $(STACK_INSTALL_DIR)/lib/libDex.so python/dex/
+	cp $(STACK_INSTALL_DIR)/lib/libDex.so julia/deps/
 
 build-ci: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
@@ -89,23 +105,30 @@ build-ci: dexrt-llvm
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
 
+build-safe-names: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS) --flag dex:safe-names
+
 dexrt-llvm: src/lib/dexrt.bc
 
 %.bc: %.cpp
-	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
+	$(CLANG) $(CXXFLAGS) -DDEX_LIVE -c -emit-llvm $^ -o $@
 
 # --- running tests ---
 
 example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
-                isomorphisms ode-integrator linear_algebra fluidsim \
-                sgd chol fft tutorial vega-plotting
+                isomorphisms ode-integrator fluidsim \
+                sgd psd tutorial kernelregression \
+                quaternions manifold-gradients schrodinger
+# TODO: re-enable
+# fft vega-plotting
 
 test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
-             shadow-tests monad-tests io-tests exception-tests \
+             shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
-             record-variant-tests typeclass-tests complex-tests trig-tests
+             record-variant-tests typeclass-tests complex-tests trig-tests \
+             linalg-tests
 
 lib-names = diagram plot png
 
@@ -113,8 +136,8 @@ all-names = $(test-names:%=tests/%) $(example-names:%=examples/%)
 
 quine-test-targets = $(all-names:%=run-%)
 
-update-test-targets    = $(test-names:%=update-tests-%)
-update-example-targets = $(example-names:%=update-examples-%)
+update-test-targets    = $(test-names:%=update-tests/%)
+update-example-targets = $(example-names:%=update-examples/%)
 
 doc-example-names = $(example-names:%=doc/examples/%.html)
 
@@ -141,11 +164,11 @@ update-%: export DEX_TEST_MODE=t
 
 update-all: $(update-test-targets) $(update-example-targets)
 
-update-tests-%: tests/%.dx build
+update-tests/%: tests/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-update-examples-%: examples/%.dx build
+update-examples/%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 

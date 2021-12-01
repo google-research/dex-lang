@@ -37,8 +37,7 @@ asABlock :: Block -> ABlock
 asABlock block = ABlock decls result
   where
     scope = freeVars block
-    ((result, decls), _) = flip runBuilder scope $ scopedDecls $ emitBlock block
-
+    ((result, decls), _) = runBuilder scope mempty $ scopedDecls $ emitBlock block
 
 data LoopEnv = LoopEnv
   { loopBinders :: [Var]              -- In scope of the original program
@@ -55,7 +54,8 @@ runLoopM m = runReaderT m $ LoopEnv mempty mempty
 
 extractParallelism :: Module -> Module
 extractParallelism = transformModuleAsBlock go
-  where go block = fst $ evalState (runSubstBuilderT (traverseBlock parallelTrav block) mempty) $ AccEnv mempty
+  where go block = fst $ evalState (runSubstBuilderT mempty mempty
+                     (traverseBlock parallelTrav block)) $ AccEnv mempty
 
 parallelTrav :: TraversalDef TLParallelM
 parallelTrav = ( traverseDecl parallelTrav
@@ -82,7 +82,7 @@ parallelTraverseExpr expr = case expr of
     liftM Atom $ emitRunWriter (binderNameHint b) accTy bm \ref@(Var refVar) -> do
       let RefTy h' _ = varType refVar
       modify \accEnv -> accEnv { activeAccs = activeAccs accEnv <> b @> (hName, (refVar, bm)) }
-      res <- extendR (h @> h' <> b @> ref) $ evalBlockE parallelTrav body
+      res <- extendR (h @> SubstVal h' <> b @> SubstVal ref) $ evalBlockE parallelTrav body
       modify \accEnv -> accEnv { activeAccs = activeAccs accEnv `envDiff` (b @> ()) }
       return res
   -- TODO: Do some alias analysis. This is not fundamentally hard, but it is a little annoying.
@@ -91,8 +91,7 @@ parallelTraverseExpr expr = case expr of
   --       to recreate all the aliases. We could do that by carrying around a block and using
   --       SubstBuilder to take care of renaming for us.
   Op (IndexRef ref _) -> disallowRef ref >> nothingSpecial
-  Op (FstRef   ref  ) -> disallowRef ref >> nothingSpecial
-  Op (SndRef   ref  ) -> disallowRef ref >> nothingSpecial
+  Op (ProjRef  _ ref) -> disallowRef ref >> nothingSpecial
   _ -> nothingSpecial
   where
     nothingSpecial = traverseExpr parallelTrav expr
@@ -141,7 +140,7 @@ buildParallelBlock ablock@(ABlock decls result) = do
 unflattenIndexBundle :: MonadBuilder m => [Var] -> Atom -> m Atom
 unflattenIndexBundle []  arr = return arr
 unflattenIndexBundle [_] arr = return arr
-unflattenIndexBundle ivs arr = buildNestedLam TabArrow (fmap Bind ivs) $ app arr . fst . mkBundle
+unflattenIndexBundle ivs arr = buildNaryLam TabArrow (toNest $ fmap Bind ivs) $ app arr . fst . mkBundle
 
 type Loop = Abs Binder Block
 data NestDecision = Emit | Split (Nest Decl) (Binder, Loop) (Nest Decl)
@@ -181,7 +180,7 @@ withLoopBinder :: Binder -> LoopM a -> LoopM a
 withLoopBinder b m = do
   v <- case b of
     Bind v    -> return v
-    Ignore ty -> freshVarE UnknownBinder $ Bind $ (Name LoopBinderName "i" 0) :> ty
+    Ignore ty -> withNameHint ("i"::String) $ freshVarE UnknownBinder ty
   local (\env -> env { loopBinders = loopBinders env <> [v]}) m
 
 delayApps :: Env (Atom, [Atom]) -> LoopM a -> LoopM a
@@ -200,10 +199,10 @@ emitLoops buildPureLoop (ABlock decls result) = do
   let (iterTy, iterBundleDesc) = mkBundleTy $ fmap varType lbs
   let buildBody pari = do
         is <- unpackBundle pari iterBundleDesc
-        extendR (newEnv lbs is) $ do
+        extendR (newEnv lbs $ map SubstVal is) $ do
           ctxEnv <- flip traverseNames dapps \_ (arr, idx) ->
             -- XXX: arr is namespaced in the new program
-            foldM appTryReduce arr =<< substBuilderR idx
+            SubstVal <$> (foldM appTryReduce arr =<< substBuilderR idx)
           extendR ctxEnv $ evalBlockE appReduceTraversalDef $ Block decls $ Atom result
   lift $ case null refs of
     True -> buildPureLoop (Bind $ "pari" :> iterTy) buildBody
@@ -216,10 +215,10 @@ emitLoops buildPureLoop (ABlock decls result) = do
             emitRunWriters writerSpecs $ \localRefs -> do
               buildFor Fwd (Bind $ "tidx" :> threadRange) \tidx -> do
                 pari <- emitOp $ Inject tidx
-                let regionEnv = newEnv oldRegionNames $ for localRefs \(getType -> RefTy h _) -> h
-                extendR (regionEnv <> newEnv oldRefNames localRefs) $ buildBody pari
+                let regionEnv = newEnv oldRegionNames $ for localRefs \(getType -> RefTy h _) -> SubstVal h
+                extendR (regionEnv <> newEnv oldRefNames (map SubstVal localRefs)) $ buildBody pari
       (ans, updateList) <- fromPair =<< (emit $ Hof $ PTileReduce (fmap snd newRefs) iterTy body)
-      updates <- unpackConsList updateList
+      updates <- unpackRightLeaningConsList updateList
       forM_ (zip newRefs updates) $ \((ref, bm), update) -> do
         updater <- mextendForRef (Var ref) bm update
         emitOp $ PrimEffect (Var ref) $ MExtend updater

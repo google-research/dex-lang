@@ -303,3 +303,13 @@ vec = [1.]
     c
   checkDeriv f 1.0
 > True
+
+-- Test reference indexing
+:p
+  f = \x.
+    i = unsafeFromOrdinal (Fin 3) 0
+    mat = yieldState zero \m. m!i!i := x
+    mat.i.i
+
+  checkDeriv f 1.0
+> True

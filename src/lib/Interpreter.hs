@@ -22,6 +22,7 @@ import CUDA
 import Cat
 import Syntax
 import Env
+import LabeledItems
 import PPrint
 import Builder
 import Util (enumerate, restructure)
@@ -29,14 +30,13 @@ import LLVMExec
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
-foreign import ccall "threefry2x32"  c_threefry :: Int64 -> Int64 -> Int64
 
 type InterpM = IO
 
-evalModuleInterp :: SubstEnv -> Module -> InterpM Bindings
-evalModuleInterp env (Module _ decls bindings) = do
+evalModuleInterp :: SubstEnv -> Module -> InterpM EvaluatedModule
+evalModuleInterp env (Module _ decls result) = do
   env' <- catFoldM evalDecl env decls
-  return $ subst (env <> env', mempty) bindings
+  return $ subst (env <> env', mempty) result
 
 evalBlock :: SubstEnv -> Block -> InterpM Atom
 evalBlock env (Block decls result) = do
@@ -44,7 +44,7 @@ evalBlock env (Block decls result) = do
   evalExpr env $ subst (env <> env', mempty) result
 
 evalDecl :: SubstEnv -> Decl -> InterpM SubstEnv
-evalDecl env (Let _ v rhs) = liftM (v @>) $ evalExpr env rhs'
+evalDecl env (Let _ v rhs) = liftM ((v@>) . SubstVal) $ evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
 
 evalExpr :: SubstEnv -> Expr -> InterpM Atom
@@ -94,7 +94,6 @@ evalOp expr = case expr of
     _ -> error $ "Not implemented: " ++ pprint expr
   FFICall name _ args -> return $ case name of
     "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
-    "threefry2x32" -> Int64Val   $ c_threefry x y  where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
@@ -123,11 +122,9 @@ indices ty = do
   case ty of
     TC (IntRange l h)      -> return $ fmap (Con . IntRangeVal     l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
     TC (IndexRange t l h)  -> return $ fmap (Con . IndexRangeVal t l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
-    TC (PairType lt rt)    -> do
-      lt' <- indices lt
-      rt' <- indices rt
-      return $ [PairVal l r | l <- lt', r <- rt']
-    TC UnitType            -> return [UnitVal]
+    -- NB: sequence below computes the cartesian product using the list monad
+    TC (ProdType [])       -> return [ProdVal []]
+    TC (ProdType tys)      -> fmap ProdVal . sequence <$> mapM indices tys
     RecordTy (NoExt types) -> do
       subindices <- mapM indices (toList types)
       -- Earlier indices change faster than later ones, so we need to first
@@ -152,7 +149,7 @@ indexSetSize ty = do
 
 evalBuilder :: BuilderT InterpM Atom -> InterpM Atom
 evalBuilder builder = do
-  (atom, (_, decls)) <- runBuilderT builder mempty
+  (atom, (_, decls)) <- runBuilderT mempty mempty builder
   evalBlock mempty $ Block decls (Atom atom)
 
 pattern Int64Val :: Int64 -> Atom

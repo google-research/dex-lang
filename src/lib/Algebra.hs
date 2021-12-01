@@ -18,6 +18,7 @@ import Data.Tuple (swap)
 import Data.Coerce
 
 import Env
+import LabeledItems
 import Syntax
 import PPrint
 import Builder ( MonadBuilder, iadd, imul, idiv, clampPositive, ptrOffset
@@ -79,7 +80,8 @@ offsets idxs = case idxs of
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
-  UnitType              -> liftC $ toPolynomial $ IdxRepVal 1
+  ProdType tys          -> foldl mulC (liftC $ toPolynomial $ IdxRepVal 1) $
+    indexSetSize <$> F.toList tys
   IntRange low high     -> clamp $ toPolynomial high `sub` toPolynomial low
   IndexRange n low high -> case (low, high) of
     -- When one bound is left unspecified, the size expressions are guaranteed
@@ -99,7 +101,6 @@ indexSetSize (TC con) = case con of
         InclusiveLim h -> add1 $ toPolynomial h
         ExclusiveLim h -> toPolynomial h
         Unlimited      -> undefined
-  PairType l r -> mulC (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSize (RecordTy (NoExt types)) = let
   sizes = map indexSetSize (F.toList types)
@@ -255,7 +256,7 @@ sumVar :: Var -> MVar
 sumVar (_ :> t) = MVar $ (Name SumName "s" 0) :> t
 
 showMono :: Monomial -> String
-showMono m = concat $ intersperse " " $ fmap (\(n, p) -> asStr $ pretty n <> "^" <> pretty p) $ toList m
+showMono m = concat $ intersperse " " $ fmap (\(n, p) -> docAsStr $ pretty n <> "^" <> pretty p) $ toList m
 
 showPolyP :: (mono -> String) -> PolynomialP mono -> String
 showPolyP mshow p = concat $ intersperse " + " $ fmap (\(m, c) -> show c ++ " " ++ mshow m) $ toList p

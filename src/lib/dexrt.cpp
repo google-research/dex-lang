@@ -71,78 +71,6 @@ uint64_t apply_round(uint32_t x, uint32_t y, int rot) {
   return out;
 }
 
-uint64_t threefry2x32(uint64_t keypair, uint64_t count) {
-  /* Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins */
-
-  uint32_t k0;
-  uint32_t k1;
-  uint32_t k2;
-
-  uint32_t x;
-  uint32_t y;
-
-  uint64_t out;
-  int i;
-
-  int rotations1[4] = {13, 15, 26, 6};
-  int rotations2[4] = {17, 29, 16, 24};
-
-  k0 = (uint32_t) (keypair >> 32);
-  k1 = (uint32_t) keypair;
-  k2 = k0 ^ k1 ^ 0x1BD11BDA;
-  x = (uint32_t) (count >> 32);
-  y = (uint32_t) count;
-
-  x = x + k0;
-  y = y + k1;
-
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations1[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k1;
-  y = y + k2 + 1;
-
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations2[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k2;
-  y = y + k0 + 2;
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations1[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k0;
-  y = y + k1 + 3;
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations2[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k1;
-  y = y + k2 + 4;
-
-  for (i=0;i<4;i++) {
-    count = apply_round(x, y, rotations1[i]);
-    x = (uint32_t) (count >> 32);
-    y = (uint32_t) count;
-  }
-  x = x + k2;
-  y = y + k0 + 5;
-
-  out = (uint64_t) x;
-  out = (out << 32) | y;
-  return out;
-}
-
 long randint(uint64_t keypair, long nmax) {
   return keypair % nmax; // TODO: correct this with rejection sampling or more bits
 }
@@ -297,9 +225,6 @@ void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
 
 extern "C" {
 
-void load_cuda_array(void* host_ptr, void* device_ptr, int64_t bytes) {
-  CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
-}
 
 void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
   CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
@@ -378,6 +303,25 @@ void dex_ensure_has_cuda_context() {
     CHECK(cuDevicePrimaryCtxRetain, &ctx, dev);
     CHECK(cuCtxPushCurrent, ctx);
   }
+}
+
+void dex_get_cuda_architecture(int device, char* arch) {
+  int majorVersion, minorVersion;
+  CUdevice dev;
+  CHECK(cuInit, 0);
+  CHECK(cuDeviceGet, &dev, device);
+  CHECK(cuDeviceGetAttribute, &majorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+  CHECK(cuDeviceGetAttribute, &minorVersion, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+  if (majorVersion > 9 || majorVersion < 0 || minorVersion > 9 || minorVersion < 0) {
+    printf("Unsupported CUDA architecture version: %d.%d", majorVersion, minorVersion);
+    std::abort();
+  }
+  // Cap CUDA architecture version at 7.5, the latest supported by LLVM 9
+  if (majorVersion > 7 || (majorVersion == 7 && minorVersion > 5)) {
+    majorVersion = 7;
+    minorVersion = 5;
+  }
+  snprintf(arch, 6, "sm_%d%d", majorVersion, minorVersion);
 }
 
 #undef CHECK

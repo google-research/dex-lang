@@ -1,0 +1,150 @@
+'# 2D Time-Dependent Schrodinger Equation
+
+' The time-dependent Schrodinger equation in 2D is given by:\
+$-\frac{\hbar^2}{2m}(\frac{\partial^2}{\partial x^2} + \frac{\partial^2}{\partial y^2})\psi(x, y, t) + V(x, y)\psi(x, y, t) =
+i\hbar\frac{\partial\psi(x, y, t)}{\partial t}$
+
+' Setting $\hbar=m=1$ gives:\
+$-(\frac{\partial^2}{\partial x^2} + \frac{\partial^2}{\partial y^2})\psi(x, y, t) + V(x, y)\psi(x, y, t) =
+i\frac{\partial\psi(x, y, t)}{\partial t}$
+
+' Here we approximate this for small $\Delta x$ and $\Delta t$ by the finite difference method in two dimensions:\
+$$ \psi(x, y, t + \Delta t) = \\\\ \psi(x, y, t) \\\\ + \frac{i}{2}\frac{\Delta t}{\Delta x^2}(\psi(x-\Delta x, y, t) + \psi(x+\Delta x, y, t) + 4\psi(x, y, t) + \psi(x, y-\Delta y, t) + \psi(x, y+\Delta y, t)) \\\\ - i \Delta t V(x, y)\psi(x, y, t) $$
+
+'## Imports
+
+import plot
+import png
+
+'## Parameters
+
+-- The number of points on the grid in each dimension e.g. (41x41 for the 2d case)
+gridSize = 41
+D = Fin gridSize
+
+-- Space discretization
+dx = 1. / IToF gridSize
+
+-- Time discretization (solution unstable if much higher)
+dt = 0.000001
+
+-- The number of dt timesteps to simulate
+Steps = Fin 155000
+
+-- The number of frames to output in each GIF animation
+gifFrames = 100
+
+'## Helpers
+
+-- Define i_=sqrt(-1) in a way that won't clash with indices named 'i'
+i_ = MkComplex 0. 1.
+
+-- Shorthand conversion
+def fToC (x:Float) : Complex = MkComplex x 0.
+
+-- Translate from index to Float representation of real space
+-- Simulates the range [0.0, 1.0] in each dimension
+def ixToF (i:n) : Float = (IToF (ordinal i)) / (IToF gridSize - 1.)
+
+-- Helper to generate zero-delay GIF animations
+def animate (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
+  imgToHtml $ pngsToGif 0 $ map imgToPng imgs
+
+-- Cuts an array down to a smaller dimension.
+-- Useful for cutting out animation frames for a faster GIF.
+def cut (x:n=>a) : m=>a =
+  s = idiv (size n) (size m)
+  for i:m. x.(unsafeFromOrdinal _ $ s * ordinal i)
+
+-- Converts a given 2D matrix to a greyscale image.
+def toImg (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
+  scale = 1. / maximum (map maximum xs)
+  for h.
+    for w c. scale * xs.h.w
+
+'## Computing $\psi_{t+\Delta t}$
+
+-- Are the given indices at the bounds of the grid
+def atBounds (i:n) (j:m) : Bool =
+  (ordinal i == 0
+   || ordinal i == (gridSize - 1)
+   || ordinal j == 0
+   || ordinal j == (gridSize - 1))
+
+-- Operators for performing unsafe ordinal arithmetic
+def (+!) (i:n) (off:Int) : n = unsafeFromOrdinal _ ((ordinal i) + off)
+def (-!) (i:n) (off:Int) : n = i +! (-1 * off)
+
+-- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
+def step (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
+  for i j.
+    if atBounds i j
+      then zero
+      else
+        psi_u = psi.(i -! 1).j
+        psi_d = psi.(i +! 1).j
+        psi_l = psi.i.(j -! 1)
+        psi_r = psi.i.(j +! 1)
+        (psi.i.j
+         + ((i_ / 2.) * (fToC $ dt / pow dx 2.)
+             * (psi_l + psi_u + (fToC 4. * psi.i.j) + psi_r + psi_d))
+         - (i_ * (fToC $ dt * v.i.j) * psi.i.j))
+
+-- Computes time evolution of wavefunction.
+def evolve (psi:m=>n=>Complex) (v:m=>n=>Float): Steps=>m=>n=>Complex =
+  scan' psi (\i x. step x v)
+
+-- Compute the Born rule probability distribution by |psi|**2
+def pdf (psi:n=>m=>Complex) : n=>m=>Float =
+  pdf = for i j. complex_mag (pow psi.i.j (fToC 2.))
+  scale = sum (map sum pdf)
+  for i j. divide pdf.i.j scale
+
+'## Examples
+
+-- Generate gaussian initial conditions with zero at the bounds.
+def gaussian ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
+  for i:n.
+    for j:m.
+      y2 = pow (ixToF i - uy) 2.
+      x2 = pow (ixToF j - ux) 2.
+      if atBounds i j
+        then fToC 0.
+        else fToC $ exp (-0.5 * ((x2 / (pow ox 2.)) + (y2 / (pow oy 2.))))
+
+-- Create an animation of the evolution of the given wavefunction under the given potential.
+def run (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
+  animate (map toImg (cut (map pdf (evolve psi v))):(Fin gifFrames=>_))
+
+' Centred particle in a zero-potential box.
+
+:html (run
+        ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
+        (for i j. 0.))
+> <html output>
+
+' Off-centre particle tunnelling through a high-potential barrier
+
+:html (run
+        ((gaussian (0.25, 0.5) (0.1, 0.1)):(D=>D=>_))
+        (for i j. if (ordinal j) == 20 then 1000. else 0.))
+> <html output>
+
+' Ramp potential confining a particle to a corner over time
+
+:html (run
+        ((gaussian (0.5, 0.5) (0.1, 0.1)):(D=>D=>_))
+        (for i j. IToF $ ordinal i + ordinal j))
+> <html output>
+
+' Square wavefunction
+
+:html (run
+        ((for i j.
+            y = ordinal i
+            x = ordinal j
+            if x >= 15 && y >= 15 && x < 25 && y < 25
+               then fToC 0.01
+               else fToC 0.0):(D=>D=>_))
+        (for i j. 0.))
+> <html output>

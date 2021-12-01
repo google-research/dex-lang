@@ -11,7 +11,8 @@
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
                  standardCompilationPipeline,
-                 compileCUDAKernel, loadLitVal) where
+                 compileCUDAKernel,
+                 storeLitVals, loadLitVals, allocaCells, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -73,8 +74,8 @@ compileAndEval :: Logger [Output] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndEval logger ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaBytes (length args * cellSize) \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
         evalTime <- compileOneOff logger ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
@@ -85,8 +86,8 @@ compileAndBench :: Bool -> Logger [Output] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
 compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
-    allocaBytes (length args * cellSize) \argsPtr ->
-      allocaBytes (length resultTypes * cellSize) \resultPtr -> do
+    allocaCells (length args) \argsPtr ->
+      allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
         compileOneOff logger ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
@@ -96,7 +97,7 @@ compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
             let run = do
                   let (CInt fd') = fdFD fd
                   exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-                  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+                  unless (exitCode == 0) $ throw RuntimeErr ""
                   freeLitVals resultPtr resultTypes
             let sync = when shouldSyncCUDA $ synchronizeCUDA
             exampleDuration <- snd <$> measureSeconds (run >> sync)
@@ -126,7 +127,7 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   (exitCode, duration) <- measureSeconds $ do
     exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
     return exitCode
-  unless (exitCode == 0) $ throwIO $ Err RuntimeErr Nothing ""
+  unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
 
 compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
@@ -269,6 +270,8 @@ loadLitVal ptr (Scalar ty) = case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
+  Word32Type  -> Word32Lit  <$> peek (castPtr ptr)
+  Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
 loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
@@ -308,6 +311,9 @@ cellSize = 8
 
 ptrArray :: Ptr () -> [Ptr ()]
 ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
+
+allocaCells :: Int -> (Ptr () -> IO a) -> IO a
+allocaCells n = allocaBytes (n * cellSize)
 
 
 -- === dex runtime ===
@@ -349,8 +355,8 @@ data LLVMKernel = LLVMKernel L.Module
 cudaPath :: IO String
 cudaPath = maybe "/usr/local/cuda" id <$> lookupEnv "CUDA_PATH"
 
-compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
-compileCUDAKernel logger (LLVMKernel ast) = do
+compileCUDAKernel :: Logger [Output] -> LLVMKernel -> String -> IO CUDAKernel
+compileCUDAKernel logger (LLVMKernel ast) arch = do
   T.initializeAllTargets
   withContext \ctx ->
     Mod.withModuleFromAST ctx ast \m -> do
@@ -375,8 +381,6 @@ compileCUDAKernel logger (LLVMKernel ast) = do
                 -- TODO: B.readFile might be faster, but withSystemTempFile seems to lock the file...
                 CUDAKernel <$> B.hGetContents sassH
           else return $ CUDAKernel ptx
-  where
-    arch = "sm_60"
 
 {-# NOINLINE libdevice #-}
 libdevice :: L.Module

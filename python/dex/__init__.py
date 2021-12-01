@@ -33,7 +33,7 @@ class Module:
     result = api.lookup(self, api.as_cstr(name))
     if not result:
       api.raise_from_dex()
-    return Atom(result, self)
+    return Atom._from_ptr(result, self)
 
 
 class Prelude(Module):
@@ -52,15 +52,35 @@ def eval(expr: str, module=prelude, _env=None):
   result = api.evalExpr(_env, api.as_cstr(expr))
   if not result:
     api.raise_from_dex()
-  return Atom(result, module)
+  return Atom._from_ptr(result, module)
 
 
 class Atom:
   __slots__ = ('__weakref__', '_as_parameter_', 'module')
 
-  def __init__(self, ptr, module):
+  def __init__(self, value):
+    catom = api.CAtom()
+    if isinstance(value, int):
+      catom.tag = 0
+      catom.value.tag = 1
+      catom.value.value = ctypes.c_int(value)
+    elif isinstance(value, float):
+      catom.tag = 0
+      catom.value.tag = 4
+      catom.value.value = ctypes.c_float(value)
+    else:
+      raise ValueError("Can't convert given value to a Dex Atom")
+    self.module = prelude
+    self._as_parameter_ = api.fromCAtom(ctypes.pointer(catom))
+    if not self._as_parameter_:
+      api.raise_from_dex()
+
+  @classmethod
+  def _from_ptr(cls, ptr, module):
+    self = super().__new__(cls)
     self._as_parameter_ = ptr
     self.module = module
+    return self
 
   def __del__(self):
     # TODO: Free

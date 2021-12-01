@@ -7,10 +7,18 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- disabling because some safer-names stuff lives under a preprocessor flag
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
-module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 initTopEnv, EvalConfig (..), TopEnv (..)) where
+module TopLevel (
+  EvalConfig (..),
+  evalSourceBlock, evalFile, MonadInterblock (..), InterblockM,
+  evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx,
+  evalInterblockM, lookupSourceName, evalSourceBlockIO) where
 
+import Data.Functor
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -21,13 +29,16 @@ import qualified Data.Map.Strict as M
 import Data.Store (Store)
 import GHC.Generics (Generic)
 import System.FilePath
+import System.Console.Haskeline -- for MonadException
+import Debug.Trace
 
 import Paths_dex  (getDataFileName)
 
-import Syntax
+import Err
+import Syntax as D
 import Builder
-import Cat
 import Env
+import SourceRename
 import Type
 import Inference
 import Interpreter
@@ -38,74 +49,178 @@ import Imp.Optimize
 import JIT
 import Logging
 import LLVMExec
-import PPrint
+import PPrint()
 import Parser
-import Util (highlightRegion, measureSeconds)
+import Util (measureSeconds, onFst, onSnd)
 import Optimize
 import Parallelize
+
+#if DEX_LLVM_VERSION == HEAD
+import Data.Foldable
+import MLIR.Lower
+import MLIR.Eval
+#endif
+
+import SaferNames.Bridge
+
+import qualified SaferNames.Name   as S
+import qualified SaferNames.Syntax as S
+import qualified SaferNames.Type   as S
+
+-- === shared effects ===
 
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , libPath     :: Maybe FilePath
-  , logFile     :: Maybe FilePath
-  }
+  , logFile     :: Maybe FilePath }
 
-data TopPassEnv = TopPassEnv
-  { logService :: Logger [Output]
-  , benchmark  :: Bool
-  , evalConfig :: EvalConfig }
-type TopPassM a = ReaderT TopPassEnv IO a
+class Monad m => ConfigReader m where
+  getConfig :: m EvalConfig
 
-data TopEnv = TopEnv
-  { topBindings     :: Bindings
-  , modulesImported :: M.Map ModuleName ModuleImportStatus}
-    deriving Generic
+-- === monad for wiring together the source blocks ===
+
+class (ConfigReader m, MonadIO m) => MonadInterblock m where
+  getTopStateEx :: m TopStateEx
+  setTopStateEx :: TopStateEx -> m ()
+
+  getImportStatus :: ModuleName -> m (Maybe ModuleImportStatus)
+  setImportStatus :: ModuleName -> ModuleImportStatus -> m ()
+
+newtype InterblockM a = InterblockM
+  { runInterblockM' :: ReaderT EvalConfig (StateT (ModulesImported, TopStateEx) IO) a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadException)
+
+runInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO (a, TopStateEx)
+runInterblockM opts env m = do
+  (ans, (_, finalState)) <- runStateT (runReaderT (runInterblockM' m) opts) (mempty, env)
+  return (ans, finalState)
+
+evalInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO a
+evalInterblockM opts env m = fst <$> runInterblockM opts env m
+
+execInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO TopStateEx
+execInterblockM opts env m = snd <$> runInterblockM opts env m
+
+-- === monad for wiring together the passes within each source block ===
+
+class ( forall n. Fallible (m n)
+      , forall n. MonadLogger [Output] (m n)
+      , forall n. ConfigReader (m n)
+      , forall n. MonadIO (m n) )
+      => MonadPasses (m::S.MonadKind1) where
+  requireBenchmark :: m n Bool
+  getTopState :: m n (S.DistinctWitness n, JointTopState n)
+
+newtype PassesM (n::S.S) a = PassesM
+  { runPassesM' :: ReaderT (Bool, EvalConfig, (S.DistinctWitness n, JointTopState n))
+                     (LoggerT [Output] IO) a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Fallible)
+
+type ModulesImported = M.Map ModuleName ModuleImportStatus
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
-initTopEnv :: TopEnv
-initTopEnv = TopEnv initBindings mempty
+runPassesM :: S.Distinct n => Bool -> EvalConfig -> JointTopState n -> PassesM n a -> IO (Except a, [Output])
+runPassesM bench opts env m = do
+  let maybeLogFile = logFile opts
+  runLogger maybeLogFile \l ->
+    catchIOExcept $ runLoggerT l $ runReaderT (runPassesM' m) $
+      (bench, opts, (S.Distinct, env))
 
-evalDecl :: EvalConfig -> SourceBlock -> StateT TopEnv IO Result
-evalDecl opts block = do
-  env <- get
-  (env', ans) <- liftIO $ evalSourceBlock opts env $ block
-  put $ env <> env'
-  return ans
+-- ======
 
-evalFile :: EvalConfig -> FilePath -> StateT TopEnv IO [(SourceBlock, Result)]
-evalFile opts fname = do
-  evalSource opts =<< (liftIO $ readFile fname)
+initTopState :: TopStateEx
+initTopState = case emptyTopStateEx protolude of
+  TopStateEx empty -> extendTopStateD empty protoludeModule
+  where
+    protoludeModule :: EvaluatedModule
+    protoludeModule = case null decls of
+      True  -> EvaluatedModule bindings scs sourceMap
+      False -> error "Unexpected decls in protolude!"
 
-evalSource :: EvalConfig -> FilePath -> StateT TopEnv IO [(SourceBlock, Result)]
-evalSource opts source = do
+    ((sourceMap, protolude), ((bindings, scs), decls)) = runBuilder mempty mempty do
+      -- interface FromInteger a
+      --   fromInteger : Int -> a
+      let a = "a" :> TyKind
+      let fromIntegerDataDef =
+            makeClassDataDef "FromInteger" (toNest [Bind a]) []
+              [ Int64Ty --> Var a ]
+      fromIntegerNamedData <- (,fromIntegerDataDef) <$> emitDataDef fromIntegerDataDef
+      fromIntegerIface <- emitClassDef $
+        ClassDef fromIntegerNamedData ["fromInteger"]
+      fromIntegerMethod <- emitMethodType [False] fromIntegerIface 0
+
+      let fromIntegerInstance fromIntegerImpl = do
+            implLam <- buildLam (Ignore Int64Ty) PureArrow fromIntegerImpl
+            let FunTy _ _ resultTy = getType implLam
+            let dict = DataCon fromIntegerNamedData [resultTy] 0
+                  [PairVal (ProdVal []) (ProdVal [implLam])]
+            void $ emitBinding $ AtomBinderInfo (TypeCon fromIntegerNamedData [resultTy]) $
+              LetBound InstanceLet (Atom dict)
+
+      -- instance FromInteger Int64
+      fromIntegerInstance return
+      -- instance FromInteger Int32
+      fromIntegerInstance $ emitOp . CastOp Int32Ty
+      -- instance FromInteger Float64
+      fromIntegerInstance $ emitOp . CastOp (BaseTy $ Scalar Float64Type)
+      -- instance FromInteger Float32
+      fromIntegerInstance $ emitOp . CastOp (BaseTy $ Scalar Float32Type)
+
+      let source = SourceMap $ M.fromList
+            [ ("FromInteger", SrcClassName fromIntegerIface)
+            , ("fromInteger", SrcMethodName fromIntegerMethod)
+            ]
+      let scope = ProtoludeScope
+            { protoludeFromIntegerIface  = fromIntegerIface
+            , protoludeFromIntegerMethod = fromIntegerMethod
+            }
+      return (source, scope)
+
+evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
+evalSourceBlockIO opts env block = do
+  (ans, env') <- runInterblockM opts env $ evalSourceBlock block
+  if mayUpdateTopState block
+    then return (ans, Just env')
+    -- This case in an opimization for the cache. It lets us indicate that the
+    -- state hasn't changed.
+    else return (ans, Nothing)
+
+evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
+evalSourceText source = do
   let sourceBlocks = parseProg source
-  results <- mapM (evalDecl opts) sourceBlocks
+  results <- mapM evalSourceBlock  sourceBlocks
   return $ zip sourceBlocks results
 
--- TODO: handle errors due to upstream modules failing
-evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
-evalSourceBlock opts env block = do
-  let bench = case sbLogLevel block of PrintBench _ -> True; _ -> False
-  (ans, outs) <- runTopPassM bench opts $ withCompileTime $ evalSourceBlockM env block
-  let (logOuts, requiredOuts) = partition isLogInfo outs
-  let outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
-  case ans of
-    Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
-    Right env' -> return (env'  , Result outs' (Right ()))
+liftPassesM :: MonadInterblock m => Bool -> (forall n. PassesM n a) -> m (Except a, [Output])
+liftPassesM bench m = do
+  opts <- getConfig
+  TopStateEx env <- getTopStateEx
+  liftIO $ runPassesM bench opts env m
 
-runTopPassM :: Bool -> EvalConfig -> TopPassM a -> IO (Except a, [Output])
-runTopPassM bench opts m = runLogger (logFile opts) \logger ->
-  runExceptT $ catchIOExcept $ runReaderT m $ TopPassEnv logger bench opts
+liftPassesM_ :: MonadInterblock m => Bool -> (forall n. PassesM n ()) -> m Result
+liftPassesM_ bench m = do
+  (maybeAns, outs) <- liftPassesM bench m
+  return $ Result outs maybeAns
 
-evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
+evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
+evalSourceBlock block = do
+  result <- withCompileTime $ evalSourceBlock' block
+  return $ filterLogs block $ addResultCtx block $ result
+
+evalSourceBlock' :: MonadInterblock m => SourceBlock -> m Result
+evalSourceBlock' block = case sbContents block of
   RunModule m -> do
-    newBindings <- evalUModule bindings m
-    return $ mempty { topBindings = newBindings }
-  Command cmd (v, m) -> mempty <$ case cmd of
+    (maybeEvaluatedModule, outs) <- liftPassesM (requiresBench block) $ evalUModule m
+    case maybeEvaluatedModule of
+      Failure err -> return $ Result outs $ Failure err
+      Success evaluatedModule -> do
+        TopStateEx curState <- getTopStateEx
+        setTopStateEx $ extendTopStateD curState evaluatedModule
+        return $ Result outs $ Success ()
+  Command cmd (v, m) -> liftPassesM_ (requiresBench block) case cmd of
     EvalExpr fmt -> do
-      val <- evalUModuleVal bindings v m
+      val <- evalUModuleVal v m
       case fmt of
         Printed -> do
           s <- liftIO $ pprintVal val
@@ -115,32 +230,77 @@ evalSourceBlockM env@(TopEnv bindings _) block = case sbContents block of
           s <- liftIO $ getDexString val
           logTop $ HtmlOut s
     ExportFun name -> do
-      f <- evalUModuleVal bindings v m
+      f <- evalUModuleVal v m
       void $ traverseLiterals f \val -> case val of
-        PtrLit _ _ -> liftEitherIO $ throw CompilerErr $
+        PtrLit _ _ -> throw CompilerErr $
           "Can't export functions with captured pointers (not implemented)."
         _ -> return $ Con $ Lit val
       logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalUModuleVal bindings v m
+      val <- evalUModuleVal v m
       logTop $ TextOut $ pprint $ getType val
-  GetNameType v -> case envLookup bindings (v:>()) of
-    Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
-    _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
-  ImportModule moduleName ->
-    case M.lookup moduleName $ modulesImported env of
-      Just CurrentlyImporting -> liftEitherIO $ throw MiscErr $
+  GetNameType v -> liftPassesM_ False do
+    (S.Distinct, topState) <- getTopState
+    let SourceMap m = topSourceMap $ topStateD topState
+    case M.lookup v m of
+      Nothing -> throw UnboundVarErr $ pprint v
+      Just v' -> do
+        let bindings = topBindings $ topStateD topState
+        case nameToAtom bindings (sourceNameDefName v') of
+          Just x -> logTop $ TextOut $ pprint $ getType x
+          Nothing -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+  ImportModule moduleName -> do
+    moduleStatus <- getImportStatus moduleName
+    case moduleStatus of
+      Just CurrentlyImporting -> liftPassesM_ False $ throw MiscErr $
         "Circular import detected: " ++ pprint moduleName
-      Just FullyImported -> return mempty
+      Just FullyImported -> return emptyResult
       Nothing -> do
         fullPath <- findModulePath moduleName
         source <- liftIO $ readFile fullPath
-        newTopEnv <- evalSourceBlocks
-                       (env <> moduleStatus moduleName CurrentlyImporting) $
-                       parseProg source
-        return $ newTopEnv <> moduleStatus moduleName FullyImported
-  UnParseable _ s -> liftEitherIO $ throw ParseErr s
-  _               -> return mempty
+        setImportStatus moduleName CurrentlyImporting
+        results <- mapM evalSourceBlock $ parseProg source
+        setImportStatus moduleName FullyImported
+        return $ summarizeModuleResults results
+  ProseBlock _ -> return emptyResult
+  CommentLine  -> return emptyResult
+  EmptyLines   -> return emptyResult
+  UnParseable _ s -> liftPassesM_ False (throw ParseErr s)
+
+requiresBench :: SourceBlock -> Bool
+requiresBench block = case sbLogLevel block of
+  PrintBench _ -> True
+  _            -> False
+
+mayUpdateTopState :: SourceBlock -> Bool
+mayUpdateTopState block = case sbContents block of
+  RunModule _     -> True
+  ImportModule _  -> True
+  Command _ _     -> False
+  GetNameType _   -> False
+  ProseBlock _    -> False
+  CommentLine     -> False
+  EmptyLines      -> False
+  UnParseable _ _ -> False
+
+filterLogs :: SourceBlock -> Result -> Result
+filterLogs block (Result outs err) = let
+  (logOuts, requiredOuts) = partition isLogInfo outs
+  outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
+  in Result outs' err
+
+summarizeModuleResults :: [Result] -> Result
+summarizeModuleResults results =
+  case [err | Result _ (Failure err) <- results] of
+    [] -> Result allOuts $ Success ()
+    errs -> Result allOuts $ throw ModuleImportErr $ foldMap pprint errs
+  where allOuts = foldMap resultOutputs results
+
+emptyResult :: Result
+emptyResult = Result [] (Success ())
+
+evalFile :: MonadInterblock m => FilePath -> m [(SourceBlock, Result)]
+evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
 
 processLogs :: LogLevel -> [Output] -> [Output]
 processLogs logLevel logs = case logLevel of
@@ -177,53 +337,90 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
-evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
+evalUModuleVal :: MonadPasses m => SourceName -> SourceUModule -> m n Atom
+evalUModuleVal v m = do
+   evaluated <- evalUModule m
+   (S.Distinct, env) <- getTopState
+   let finalState = extendTopStateD env evaluated
+   result <- lookupSourceName finalState v
+   case result of
+     AtomBinderInfo _ (LetBound _ (Atom atom)) -> return atom
+     _ -> throw TypeErr $ "Not an atom name: " ++ pprint v
 
-evalUModuleVal :: Bindings -> Name -> UModule -> TopPassM Val
-evalUModuleVal env v m = do
-  env' <- evalUModule env m
-  return $ lookupBindings (env <> env') (v:>())
-
-lookupBindings :: Bindings -> VarP ann -> Atom
-lookupBindings scope v = x
-  where (_, LetBound PlainLet (Atom x)) = scope ! v
+lookupSourceName :: Fallible m => TopStateEx -> SourceName -> m AnyBinderInfo
+lookupSourceName (TopStateEx topState) v =
+  let D.TopState bindings _ (SourceMap sourceMap) _ = topStateD topState
+  in case M.lookup v sourceMap of
+    Just name ->
+      case envLookup bindings name of
+        Just info -> return info
+        _ -> throw CompilerErr $ pprint name
+    _ -> throw UnboundVarErr $ pprint v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalUModule :: Bindings -> UModule -> TopPassM Bindings
-evalUModule env untyped = do
-  logPass Parse untyped
-  typed <- liftEitherIO $ inferModule env untyped
+evalUModule :: MonadPasses m => SourceUModule -> m n EvaluatedModule
+evalUModule sourceModule = do
+  (S.Distinct, topState) <- getTopState
+  let D.TopState bindings synthCandidates sourceMap protolude = topStateD topState
+  logPass Parse sourceModule
+  renamed <- renameSourceNames bindings sourceMap sourceModule
+  logPass RenamePass renamed
+  typed <- liftExcept $ inferModule bindings synthCandidates renamed protolude
+  -- This is a (hopefully) no-op pass. It's here as a sanity check to test the
+  -- safer names system while we're staging it in.
   checkPass TypePass typed
-  synthed <- liftEitherIO $ synthModule env typed
+  synthed <- liftExcept $ synthModule bindings synthCandidates typed
   -- TODO: check that the type of module exports doesn't change from here on
   checkPass SynthPass synthed
-  let defunctionalized = simplifyModule env synthed
+  let defunctionalized = simplifyModule bindings synthed
   checkPass SimpPass defunctionalized
   let stdOptimized = optimizeModule defunctionalized
   -- Apply backend specific optimizations
-  backend <- asks (backendName . evalConfig)
+  backend <- backendName <$> getConfig
   let optimized = case backend of
                     LLVMCUDA -> parallelizeModule stdOptimized
                     LLVMMC   -> parallelizeModule stdOptimized
                     _        -> stdOptimized
   checkPass OptimPass optimized
   case optimized of
-    Module _ Empty newBindings -> return newBindings
+    Module _ Empty result->
+      return result
     _ -> do
-      let (block, rest) = splitSimpModule env optimized
-      result <- evalBackend env block
-      newBindings <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
-      checkPass ResultPass $ Module Evaluated Empty newBindings
-      return newBindings
+      let (block, rest) = splitSimpModule bindings optimized
+      result <- evalBackend block
+      evaluated <- liftIO $ evalModuleInterp mempty $ applyAbs rest result
+      checkPass ResultPass $ Module Evaluated Empty evaluated
+      return evaluated
 
-evalBackend :: Bindings -> Block -> TopPassM Atom
-evalBackend env block = do
-  backend <- asks (backendName . evalConfig)
-  bench   <- asks benchmark
-  logger  <- asks logService
+-- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
+-- TODO: Standalone functions --- use the env!
+evalMLIR :: MonadPasses m => Block -> m n Atom
+#if DEX_LLVM_VERSION == HEAD
+evalMLIR block' = do
+  -- This is a little silly, but simplification likes to leave inlinable
+  -- let-bindings (they just construct atoms) in the block.
+  let block = inlineTraverse block'
+  let (moduleOp, recon@(Abs bs _)) = coreToMLIR block
+  liftIO $ do
+    let resultTypes = toList bs <&> binderAnn <&> \case BaseTy bt -> bt; _ -> error "Expected a base type"
+    resultVals <- evalModule moduleOp [] resultTypes
+    return $ applyNaryAbs recon $ Con . Lit <$> resultVals
+  where
+    inlineTraverse :: Block -> Block
+    inlineTraverse block = fst $ flip runSubstBuilder mempty $ traverseBlock substTraversalDef block
+#else
+evalMLIR = error "Dex built without support for MLIR"
+#endif
+
+evalLLVM :: MonadPasses m => Block -> m n Atom
+evalLLVM block = do
+  (S.Distinct, topState) <- getTopState
+  let env = topBindings $ topStateD topState
+  backend <- backendName <$> getConfig
+  bench   <- requireBenchmark
+  logger  <- getLogger
   let (ptrBinders, ptrVals, block') = abstractPtrLiterals block
   let funcName = "entryFun"
   let mainName = Name TopFunctionName (fromString funcName) 0
@@ -246,33 +443,40 @@ evalBackend env block = do
     llvmEvaluate logger llvmAST funcName ptrVals resultTypes
   return $ applyNaryAbs reconAtom resultVals
 
-withCompileTime :: TopPassM a -> TopPassM a
-withCompileTime m = do
-  (ans, t) <- measureSeconds m
-  logTop $ TotalTime t
-  return ans
+evalBackend :: MonadPasses m => Block -> m n Atom
+evalBackend block = do
+  backend <- backendName <$> getConfig
+  let eval = case backend of
+               MLIR        -> evalMLIR
+               LLVM        -> evalLLVM
+               LLVMMC      -> evalLLVM
+               LLVMCUDA    -> evalLLVM
+               Interpreter -> error "TODO"
+  eval block
 
-checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
+
+withCompileTime :: MonadInterblock m => m Result -> m Result
+withCompileTime m = do
+  (Result outs err, t) <- measureSeconds m
+  return $ Result (outs ++ [TotalTime t]) err
+
+checkPass :: (MonadPasses m, Pretty a, Checkable a) => PassName -> a -> m n ()
 checkPass name x = do
+  (S.Distinct, topState) <- getTopState
+  let scope = topBindings $ topStateD topState
   logPass name x
-  liftEitherIO $ checkValid x
+  liftExcept $ checkValid scope x
   logTop $ MiscLog $ pprint name ++ " checks passed"
 
-logPass :: Pretty a => PassName -> a -> TopPassM ()
+logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
 logPass passName x = logTop $ PassInfo passName $ pprint x
 
-addCtx :: SourceBlock -> Err -> Err
-addCtx block err@(Err e src s) = case src of
-  Nothing -> err
-  Just (start, stop) ->
-    Err e Nothing $ s ++ "\n\n" ++ ctx
-    where n = sbOffset block
-          ctx = highlightRegion (start - n, stop - n) (sbText block)
+addResultCtx :: SourceBlock -> Result -> Result
+addResultCtx block (Result outs errs) =
+  Result outs (addSrcTextContext (sbOffset block) (sbText block) errs)
 
-logTop :: Output -> TopPassM ()
-logTop x = do
-  logger <- asks logService
-  logThis logger [x]
+logTop :: MonadPasses m => Output -> m n ()
+logTop x = logIO [x]
 
 abstractPtrLiterals :: Block -> ([IBinder], [LitVal], Block)
 abstractPtrLiterals block = flip evalState mempty $ do
@@ -304,35 +508,41 @@ instance HasTraversal Atom where
 
 traverseLiterals :: (HasTraversal e, Monad m) => e -> (LitVal -> m Atom) -> m e
 traverseLiterals block f =
-    liftM fst $ flip runSubstBuilderT mempty $ traverseCore def block
+    liftM fst $ runSubstBuilderT mempty mempty $ traverseCore def block
   where
     def = (traverseDecl def, traverseExpr def, traverseAtomLiterals)
     traverseAtomLiterals atom = case atom of
       Con (Lit x) -> lift $ lift $ f x
       _ -> traverseAtom def atom
 
-findModulePath :: ModuleName -> TopPassM FilePath
+findModulePath :: MonadInterblock m => ModuleName -> m FilePath
 findModulePath moduleName = do
   let fname = moduleName ++ ".dx"
-  specifiedPath <- asks (libPath . evalConfig)
+  specifiedPath <- libPath <$> getConfig
   case specifiedPath of
     Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
     Just path -> return $ path </> fname
 
-instance Semigroup TopEnv where
-  (TopEnv env ms) <> (TopEnv env' ms') =
-    -- Data.Map is left-biased so we flip the order
-    TopEnv (env <> env') (ms' <> ms)
+-- === instances ===
 
-instance Monoid TopEnv where
-  mempty = TopEnv mempty mempty
+instance ConfigReader (PassesM n) where
+  getConfig = PassesM $ asks \(_, cfg, _) -> cfg
 
-moduleStatus :: ModuleName -> ModuleImportStatus -> TopEnv
-moduleStatus name status = mempty { modulesImported = M.singleton name status}
+instance MonadPasses PassesM where
+  requireBenchmark = PassesM $ asks \(bench, _, _) -> bench
+  getTopState      = PassesM $ asks \(_    , _, s) -> s
 
-instance HasPtrs TopEnv where
-  traversePtrs f (TopEnv bindings status) =
-    TopEnv <$> traverse (traversePtrs f) bindings <*> pure status
+instance MonadLogger [Output] (PassesM n) where
+  getLogger = PassesM $ lift $ getLogger
 
-instance Store TopEnv
+instance ConfigReader InterblockM where
+  getConfig = InterblockM ask
+
+instance MonadInterblock InterblockM where
+  getTopStateEx = InterblockM $ gets snd
+  setTopStateEx s = InterblockM $ modify $ onSnd $ const s
+
+  getImportStatus name = InterblockM $ gets $ M.lookup name . fst
+  setImportStatus name status = InterblockM $ modify $ onFst $ M.insert name status
+
 instance Store ModuleImportStatus

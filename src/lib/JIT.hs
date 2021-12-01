@@ -40,6 +40,7 @@ import GHC.Stack
 import qualified Data.Set as S
 import qualified Data.Text as T
 
+import CUDA (getCudaArchitecture)
 import Syntax
 import Env
 import PPrint
@@ -121,7 +122,8 @@ compileFunction logger fun@(ImpFunction f bs body) = case cc of
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
-    (CUDAKernel kernelText) <- compileCUDAKernel logger $ impKernelToLLVMGPU fun
+    arch <- getCudaArchitecture 0
+    (CUDAKernel kernelText) <- compileCUDAKernel logger (impKernelToLLVMGPU fun) arch
     let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) (B.unpack kernelText) ++ [0]
     let textArr = C.Array i8 chars
     let textArrTy = L.typeOf textArr
@@ -302,19 +304,23 @@ compileInstr instr = case instr of
   ICastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
     let (xt, dt) = (L.typeOf x, scalarTy idt)
-    case (xt, dt) of
-      (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
-      (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
-        LT -> emitInstr dt $ L.FPExt x dt []
-        EQ -> return x
-        GT -> emitInstr dt $ L.FPTrunc x dt []
-      (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
-      (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
-      (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
-      (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
-        emitInstr ptrTy $ L.IntToPtr x ptrTy []
-      (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
-      _ -> error $ "Unsupported cast"
+    case (xt, idt) of
+      -- if upcasting to unsigned int, use zext instruction
+      (L.IntegerType _,    Scalar Word64Type)             -> x `zeroExtendTo` dt
+      (L.IntegerType bits, Scalar Word32Type) | bits < 32 -> x `zeroExtendTo` dt
+      _ -> case (xt, dt) of
+       (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
+       (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
+         LT -> emitInstr dt $ L.FPExt x dt []
+         EQ -> return x
+         GT -> emitInstr dt $ L.FPTrunc x dt []
+       (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
+       (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
+       (L.PointerType _ _, L.PointerType eltTy _) -> castLPtr eltTy x
+       (L.IntegerType 64 , ptrTy@(L.PointerType _ _)) ->
+         emitInstr ptrTy $ L.IntToPtr x ptrTy []
+       (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
+       _ -> error $ "Unsupported cast"
   ICall f@(fname:> IFunType cc argTys resultTys) args -> do
     -- TODO: consider having a separate calling convention specification rather
     -- than switching on the number of results
@@ -407,6 +413,8 @@ compilePrimOp pop = case pop of
   VectorIndex v i    -> emitInstr resTy $ L.ExtractElement v i []
     where (L.VectorType _ resTy) = L.typeOf v
   PtrOffset ptr off -> gep ptr off
+  OutputStreamPtr -> return outputStreamPtr
+
   _ -> error $ "Can't JIT primop: " ++ pprint pop
 
 compileUnOp :: UnOp -> Operand -> Compile Operand
@@ -430,6 +438,7 @@ compileBinOp op x y = case op of
   FDiv   -> emitInstr (L.typeOf x) $ L.FDiv mathFlags x y []
   BAnd   -> emitInstr (L.typeOf x) $ L.And x y []
   BOr    -> emitInstr (L.typeOf x) $ L.Or  x y []
+  BXor   -> emitInstr (L.typeOf x) $ L.Xor x y []
   BShL   -> emitInstr (L.typeOf x) $ L.Shl  False False x y []
   BShR   -> emitInstr (L.typeOf x) $ L.LShr False       x y []
   ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
@@ -670,6 +679,8 @@ litVal lit = case lit of
   Int64Lit x   -> i64Lit $ fromIntegral x
   Int32Lit x   -> i32Lit $ fromIntegral x
   Word8Lit x   -> i8Lit  $ fromIntegral x
+  Word32Lit x  -> i32Lit  $ fromIntegral x
+  Word64Lit x  -> i64Lit  $ fromIntegral x
   Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
   Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
   VecLit l     -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
@@ -790,6 +801,8 @@ scalarTy b = case b of
     Int64Type   -> i64
     Int32Type   -> i32
     Word8Type   -> i8
+    Word32Type  -> i32
+    Word64Type  -> i64
     Float64Type -> fp64
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
@@ -811,15 +824,10 @@ callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 asLLVMName :: Name -> L.Name
-asLLVMName name@(Name TopFunctionName _ _) = fromString $ pprint name
--- TODO: Non-inlined functions use the GlobalName namespace. The underscores are
--- a crude way to distinguish them from TopFunctionName names. We should try to
--- make `asLLVM` properly invertible. proper invertible Name -> L.Name mapping.
-asLLVMName (GlobalName tag) = fromString $ "__" ++ pprint tag
-asLLVMName name = error $ "Expected a top function name: " ++ show name
+asLLVMName name = fromString $ pprint name
 
 showName :: Name -> String
-showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counter
+showName (Name GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
 showName _ = error $ "All names in JIT should be from the GenName namespace"
 
 asIntWidth :: Operand -> L.Type -> Compile Operand
@@ -888,8 +896,10 @@ cpuBinaryIntrinsic op x y = case L.typeOf x of
 
 -- === Output stream ===
 
+-- TODO: replace all of this with a built-in print
+
 outputStreamPtrLName :: L.Name
-outputStreamPtrLName  = asLLVMName outputStreamPtrName
+outputStreamPtrLName  = "*OUT_STREAM_PTR*"
 
 outputStreamPtrDef :: L.Definition
 outputStreamPtrDef = L.GlobalDefinition $ L.globalVariableDefaults
@@ -907,15 +917,12 @@ initializeOutputStream streamFD = do
   streamPtr <- emitExternCall fdopenFun [streamFD]
   store outputStreamPtr streamPtr
 
-outputStreamEnv :: OperandEnv
-outputStreamEnv = outputStreamPtrName @> outputStreamPtr
-
 -- === Compile monad utilities ===
 
 runCompile :: Device -> Compile a -> a
 runCompile dev m = evalState (runReaderT m env) initState
   where
-    env = CompileEnv outputStreamEnv dev
+    env = CompileEnv mempty dev
     initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnv -> Compile a -> Compile a

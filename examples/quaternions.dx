@@ -1,0 +1,405 @@
+' # Rotations with quaternions
+
+
+' (This is a Dex reimplementation of the @imadr's lovely little blog post [Rotation with Quaternions](https://imadr.github.io/rotations-with-quaternions/) that includes an example front-end in three.js.)
+
+' A quaternion is a 4 dimensional complex-like number, it has four components, three of which are the "imaginary" part.
+
+' $$ q = a+b\textrm{i}+c\textrm{j}+d\textrm{k} $$
+  $$ q = (b,c,d, a) $$
+  $$ \textrm{i}^{2}=\textrm{j}^{2}=\textrm{k}^{2}=\textrm{i}\textrm{j}\textrm{k}=-1 $$
+
+' We represent a quaternion with this data structure:
+
+data Quaternion = Q {x:Float & y:Float & z:Float & w:Float}
+
+' The four components are usually ordered \(w,x,y,z\) but I like to put \(w\) at the end.
+ Initializing a quaternion:
+
+q = Q {x=1.0, y=2.0, z=3.0, w=4.0}
+q
+> (Q {w = 4., x = 1., y = 2., z = 3.})
+
+' ## Quaternion magnitude
+ A quaternion is basically a 4 dimensional vector.
+
+as_vec = \ Q{x,y,z,w}. [x, y, z, w]
+from_vec = \ [x, y, z, w]. Q{x,y,z,w}
+
+' It has a vector magnitude (or norm, or length):
+$$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
+
+
+
+def magnitude (x:a=>Float) : Float = sqrt $ sum $ for i. x.i * x.i
+
+
+' ## Quaternion normalization
+Like vectors a quaternion can be normalized by dividing each component by the magnitude:
+
+def normalize (x:a=>Float) : a=> Float = 1.0 / (magnitude x) .* x
+
+' A special property of quaternions is that a unit quaternion (a quaternion with magnitude \(1\)) represents a rotation in 3D space.
+
+' ## Scaling a quaternion
+Scaling a quaternion is multiplying each of its components by a real number (the scalar):
+
+instance Add Quaternion
+  add = \ x y. from_vec $ (as_vec x) + as_vec y
+  sub = \ x y. from_vec $ (as_vec x) - as_vec y
+  zero = from_vec $ zero
+
+instance VSpace Quaternion
+  scaleVec = \ s x. from_vec (s .* as_vec x)
+
+
+' ## Identity quaternion
+
+' There is a special quaternion called the *identity quaternion* which corresponds to no rotation:
+
+ident = Q{x=0.0, y=0.0, z=0.0, w=1.0}
+
+' Geometrically, we can also consider \((0, 0, 0, -1)\) to be an identity quaternion since it corresponds to no rotation.
+
+' ## Quaternion multiplication
+Multiplying two unit quaternions represents a *composition of two rotations*.
+
+' Quaternion multiplication isn't commutative . If we want to apply a rotation \(q_{1}\) then a rotation \(q_{2}\), the resulting rotation \(q_{3}\) is: 
+$$q_{3}=q_{2}.q_{1}$$
+
+' Quaternion multiplication looks like this:
+$$q_{1} = a+b\textrm{i}+c\textrm{j}+d\textrm{k}$$
+$$q_{2} = e+f\textrm{i}+g\textrm{j}+h\textrm{k}$$
+
+'
+$$
+q_{1}.q_{2} = (ae-bf-cg-dh)+(af+be+ch-dg)\textrm{i}+(ag-bh+ce+df)\textrm{j}+(ah+bg-cf+de)\textrm{k}
+$$
+
+
+instance Mul Quaternion
+  mul = \ (Q{x,y,z,w}) (Q{x=x',y=y',z=z',w=w'}). Q {
+        x = w*x' + x*w' + y*z' - z*y',
+        y = w*y' - x*z' + y*w' + z*x',
+        z = w*z' + x*y' - y*x' + z*w',
+        w = w*w' - x*x' - y*y' - z*z'
+  }
+  one = ident
+
+' We will make this into a Monoid in Dex.
+
+instance Monoid Quaternion
+  mempty = one
+  mcombine = \a b. a * b
+
+
+' ## Quaternion vs Euler angles
+
+' We use quaternions instead of Euler angles to represent rotations for a couple of reasons:
+  * Euler angles suffer from gimbal lock
+  * Interpolating between two Euler angles lead to weird results
+
+' We represent the orientation of an object using only a quaternion, then we multiply that orientation by another quaternion to rotate it.
+
+' However writing a rotation directly in quaternion form isn't really intuitive, what we do instead is *convert an Euler angle to a quaternion then use it for rotating.
+
+' If we have an Euler angle rotation in the order ZYX (Yaw -> Pitch -> Roll, we can chose any order but must stay consistent), we can convert it to a quaternion like this:
+
+
+
+' $$
+q = \begin{bmatrix}
+\sin(x/2)\cos(y/2)\cos(z/2)-\cos(x/2)\sin(y/2)\sin(z/2) \\\\
+\cos(x/2)\sin(y/2)\cos(z/2)+\sin(x/2)\cos(y/2)\sin(z/2) \\\\
+\cos(x/2)\cos(y/2)\sin(z/2)-\sin(x/2)\sin(y/2)\cos(z/2) \\\\
+\cos(x/2)\cos(y/2)\cos(z/2)+\sin(x/2)\sin(y/2)\sin(z/2) \\\\
+\end{bmatrix}
+$$
+
+data Euler = E (Fin 3=>Float)
+
+def euler_to_quat ((E v):Euler) : Quaternion =
+    [sx, sy, sz] = for i. sin v.i
+    [cx, cy, cz] = for i. cos v.i
+    Q { 
+        x = sx*cy*cz - cx*sy*sz,
+        y = cx*sy*cz + sx*cy*sz,
+        z = cx*cy*sz - sx*sy*cz,
+        w = cx*cy*cz + sx*sy*sz
+    }   
+
+
+
+' ## Drawing with Quaternions
+
+' Libraries like three.js allow us to use quaternions directly for rotations.
+
+' This script implements a simple 3D box positioned based on a quaternion. 
+
+
+def show3D ((Q {x, y, z, w}): Quaternion) : String =
+    "<iframe width=\"100%\" frameborder=\"0\" scrolling=\"no\"  onload=\"this.style.height=this.contentWindow.document.body.scrollHeight+'px'\";
+srcdoc='<html> 
+    <head><script src=\"https://cdn.jsdelivr.net/npm/three-js@79.0.0/three.js\"></script>  
+    </head> 
+    <body> 
+           <script>const scene = new THREE.Scene();
+                   // Generic scene construction
+                   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+                   camera.position.z = 2;
+                   const renderer = new THREE.WebGLRenderer();
+                   renderer.setSize( window.innerWidth, window.innerHeight );
+                   document.body.appendChild( renderer.domElement );
+
+                   // Create a pretty box with lights.
+                   const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                   red = new THREE.Color(1, 0, 0);
+                   green = new THREE.Color(0, 1, 0);
+                   blue = new THREE.Color(0, 0, 1);
+                   var colors = [red, green, blue];
+
+                   for (var i = 0; i < 3; i++) {
+                       geometry.faces[4 * i].color = colors[i];
+                       geometry.faces[4 * i + 1].color = colors[i];
+                       geometry.faces[4 * i + 2].color = colors[i];
+                       geometry.faces[4 * i + 3].color = colors[i];
+                   }
+                   var material = new THREE.MeshBasicMaterial( { color: 0xffffff, vertexColors: true } );
+
+
+                   // Add the cube to the scene
+                   const cube = new THREE.Mesh( geometry, material );
+                   scene.add( cube );
+
+                   // Rotate by our angles.
+                   cube.quaternion.copy(new THREE.Quaternion("<>
+                   (show x) <> ", " <>
+                   (show y) <> ", " <>
+                   (show z) <> ", " <>
+                   (show w) <> "));
+
+                   
+                   renderer.render( scene, camera );
+           </script> 
+    </body>
+    </html>'>
+    </iframe>"
+
+:html show3D one
+> <html output>
+
+rot = euler_to_quat (E [pi / 16.0, 0.0, 0.0]) 
+
+
+:html show3D $ one <> rot
+> <html output>
+
+:html show3D $ one <> rot <> rot
+> <html output>
+
+:html show3D $ one <> rot <> rot <> rot
+> <html output>
+
+:html show3D $ one <> rot <> rot <> rot <> rot
+> <html output>
+
+' All the way around!
+
+
+rot2 = euler_to_quat (E [pi / 16.0, pi/8.0, 0.0]) 
+
+:html show3D $ one * rot2
+> <html output>
+
+' ## Quaternion Conjugate
+The *conjugate* of a quaternion \(q\) is:
+
+' $$q^{*} = a-b\textrm{i}-c\textrm{j}-d\textrm{k}$$
+
+
+def conj ((Q {x, y, z, w}):Quaternion) : Quaternion =
+    Q {x=-x, y=-y, z=-z, w=w}
+
+
+' ## Quaternion Inverse
+
+' The *inverse* of a quaternion \(q\), is the conjugate divided by the magnitude squared:
+$$q^{-1} = \frac{q^{*}}{||q||^{2}}$$
+
+
+def inv (q:Quaternion) : Quaternion =
+    m = magnitude $ as_vec q
+    1.0 / (m * m) .* conj q
+
+' For unit quaternions, the conjugate is equal to the inverse.
+Multiplying a quaternion by its inverse results in the identity quaternion:
+
+' $$q.q^{-1} = (0, 0, 0, 1)$$
+
+
+' Let's try it out
+
+q' = from_vec $ normalize $ as_vec $ Q { x=1.0, y=2.0, z=0.5, w=10.0}
+
+
+:html show3D $ one 
+> <html output>
+
+:html show3D $ one * q'
+> <html output>
+
+:html show3D $ one * (inv q')
+> <html output>
+
+:html show3D $ one * q' * (inv q')
+> <html output>
+
+
+
+
+
+' ## Quaternion difference
+
+' The difference of two quaternions \(q_{1}\) and \(q_{2}\) is another quaternion \(q_{3}\) that rotates from \(q_{1}\) to \(q_{2}\):
+
+' $$q_{3} = q_{1}^{-1}.q_{2}$$
+
+difference = \ a b . (inv a) * b
+
+rot_right = euler_to_quat (E [0.0, pi/8.0, 0.0])
+:html show3D $ rot_right
+> <html output>
+
+rot_right_down = euler_to_quat (E [pi/16.0, pi/8.0, 0.0]) 
+:html show3D $ rot_right_down
+> <html output>
+
+
+rot_down = difference rot_right_down rot_right
+:html show3D $ rot_down
+> <html output>
+
+
+' ## Quaternion Exp and Log
+
+' The exponential and the logarithm of a quaternion won't be very useful by themselves, but we will use them to compute other functions later.
+
+' Given a quaternion \(q = (x,y,z,w)\) and its vector part \(v = (x,y,z)\), the exponential of that quaternion is also a quaternion, and it's given by this formula:
+
+' $$\exp(q) = \exp(w)\begin{pmatrix}
+\frac{v_{x}}{||v||}\sin(||v||)\\\\
+\frac{v_{y}}{||v||}\sin(||v||)\\\\
+\frac{v_{z}}{||v||}\sin(||v||)\\\\
+\cos(||v||)
+\end{pmatrix}$$
+
+
+def q_exp (q:Quaternion) : Quaternion =
+    (Q {x,y,z,w}) = q
+    v = [x, y, z]
+    m = magnitude v
+    [x', y', z'] = normalize v
+    sin_v = sin m
+    exp_w = exp w
+    Q {x = x' * sin_v * exp_w,
+       y = y' * sin_v * exp_w,
+       z = z' * sin_v * exp_w,
+       w = cos(m) * exp_w
+    }
+
+' Tangent: to implement quaternion logs we need arccos. We don't have this yet in Dex
+  so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
+
+' NVidia CG Toolkit 3.1. NVidia Corporation. https://developer.nvidia.com/cg-toolkit
+
+def acos (x:Float) : Float = 
+  negate = select (x < 0.0) 1.0 0.0
+  x = abs x
+  ret1 = (-0.0187293 * x) + 0.0742610
+  ret2 = (ret1 * x) - 0.2121144
+  ret3 = (ret2 * x) + pi / 2.
+  ret4 = (ret3 * (sqrt (1.0-x)))
+  ret5 = ret4 - (2.0 * negate * ret4)
+  negate * pi + ret5
+    
+
+' The logarithm of a quaternion is also a quaternion and is given by this formula:
+
+' $$\log(q) = \begin{pmatrix}
+\frac{v_{x}}{||v||}\arccos(\frac{w}{||q||})\\\\
+\frac{v_{y}}{||v||}\arccos(\frac{w}{||q||})\\\\
+\frac{v_{z}}{||v||}\arccos(\frac{w}{||q||})\\\\
+\log(||q||)
+\end{pmatrix}$$
+
+
+
+
+
+def q_log (q:Quaternion) : Quaternion =
+    (Q {x,y,z,w}) = q
+    v = [x, y, z]
+    m = magnitude $ as_vec q
+    [x', y', z'] = normalize v
+    a = acos (w / m)
+    Q {x = x' * a,
+       y = y' * a,
+       z = z' * a,
+       w = log(m)
+    }
+
+
+' ## Quaternion exponentiation
+
+' Raising a quaternion to a power results in either a fraction or a multiple of that quaternion. \(q^{2}\) represents twice the rotation of \(q\), and \(q^{0.5}\) represents half of that rotation.
+
+' $$q^{n} = \exp(n\log(q))$$
+
+
+def q_pow (q:Quaternion) (n:Float) : Quaternion =
+    q_exp $ n .* q_log q
+
+
+
+:html show3D (q_pow rot_right 5.0)
+> <html output>
+
+:html show3D (q_pow rot_right 15.0)
+> <html output>
+
+' ## Quaternion slerping
+
+' Arguably one of the most important advantages of quaternions, "Slerp" stands for spherical linear interpolation. It's a function thats takes three parameters: a quaternion \(q_{1}\), a quaternion \(q_{2}\) and an interpolation parameter \(t\) that goes from \(0\) to \(1\). It gives us an intermediate rotation depending on the value of \(t\).
+
+' $$\textrm{slerp}(q_{1}, q_{2}, t) = q_{1}(q_{1}^{-1}q_{2})^{t}$$
+
+def slerp (q1:Quaternion) (q2:Quaternion) (t:Float) : Quaternion =
+    q1 * q_pow ((inv q1) <> q2) (min 1.0 (max 0.0 t))
+
+
+:html show3D one
+> <html output>
+
+goal = rot_right_down <> rot_right_down
+
+:html show3D goal
+> <html output>
+
+
+' Here's what it looks like each step of the way
+
+:html show3D $ one
+> <html output>
+
+:html show3D $ slerp one goal 0.25
+> <html output>
+
+:html show3D $ slerp one goal 0.5
+> <html output>
+
+:html show3D $ slerp one goal 0.75
+> <html output>
+
+:html show3D $ slerp one goal 1.0
+> <html output>
+

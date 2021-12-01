@@ -1,6 +1,6 @@
 ' # Neural Networks
 
-include "plot.dx"
+import plot
 
 ' ## NN Prelude
 
@@ -55,7 +55,7 @@ def conv2d (x:inc=>(Fin h)=>(Fin w)=>Float)
      outc=>(Fin h)=>(Fin w)=>Float =
      for o i j.
          (i', j') = (ordinal i, ordinal j)
-         case (i' + kh) < h && (j' + kw) < w of
+         case (i' + kh) <= h && (j' + kw) <= w of
           True ->
               sum for (ki, kj, inp).
                   (di, dj) = (fromOrdinal (Fin h) (i' + (ordinal ki)),

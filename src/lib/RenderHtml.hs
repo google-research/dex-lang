@@ -22,14 +22,17 @@ import Text.Megaparsec.Char as C
 
 import Resources (cssSource, javascriptSource)
 import Syntax
+import qualified SaferNames.Syntax as S
 import PPrint
+import SaferNames.PPrint ()
 import Parser
 import Serialize ()
+import Err
 
 pprintHtml :: ToMarkup a => a -> String
 pprintHtml x = renderHtml $ toMarkup x
 
-progHtml :: LitProg -> String
+progHtml :: (ToMarkup a, ToMarkup b) => [(a, b)] -> String
 progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
   where toHtmlBlock (block,result) = toMarkup block <> toMarkup result
 
@@ -52,8 +55,8 @@ wrapBody blocks = docTypeHtml $ do
 instance ToMarkup Result where
   toMarkup (Result outs err) = foldMap toMarkup outs <> err'
     where err' = case err of
-                   Left e   -> cdiv "err-block" $ toHtml $ pprint e
-                   Right () -> mempty
+                   Failure e  -> cdiv "err-block" $ toHtml $ pprint e
+                   Success () -> mempty
 
 instance ToMarkup Output where
   toMarkup out = case out of
@@ -63,6 +66,11 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
     ProseBlock s -> cdiv "prose-block" $ mdToHtml s
+    _ -> cdiv "code-block" $ highlightSyntax (pprint block)
+
+instance ToMarkup S.SourceBlock where
+  toMarkup block = case S.sbContents block of
+    S.ProseBlock s -> cdiv "prose-block" $ mdToHtml s
     _ -> cdiv "code-block" $ highlightSyntax (pprint block)
 
 mdToHtml :: String -> Html
@@ -75,10 +83,7 @@ cdiv c inner = H.div inner ! class_ (stringValue c)
 
 highlightSyntax :: String -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
-  where
-    classified = case runTheParser s (many (withSource classify) <* eof) of
-                   Left e -> error $ errorBundlePretty e
-                   Right ans -> ans
+  where classified = ignoreExcept $ parseit s (many (withSource classify) <* eof)
 
 syntaxSpan :: String -> StrClass -> Html
 syntaxSpan s NormalStr = toHtml s
