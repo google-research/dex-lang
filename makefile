@@ -115,7 +115,7 @@ dexrt-llvm: src/lib/dexrt.bc
 
 # --- running tests ---
 
-example-names = mandelbrot pi sierpinski rejection-sampler \
+example-names = simplex mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \

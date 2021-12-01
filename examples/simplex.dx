@@ -72,8 +72,11 @@ instance [Eq a, Eq b] Eq {artificials: a | realvars: b}
           {|realvars=r2|} -> r1 == r2
 
 
+'#### Filtered argmin and argmax
+These were written before filtering was supported.
+Note that the two functions also differ in their type signature.
+
 def argmin_suchthat [Ord o] (xs:n=>o) (cond:n=>Bool): Maybe n =
-  -- Difference is that cond takes an n instead of an o.
   def compare (maybepair1: Maybe (n & o))
               (maybepair2: Maybe (n & o)) : Maybe (n & o) =
     case maybepair1 of
@@ -94,7 +97,6 @@ def argmin_suchthat [Ord o] (xs:n=>o) (cond:n=>Bool): Maybe n =
 
 
 def argmax_suchthat [Ord o] (xs:n=>o) (cond:o->Bool): Maybe n =
-  -- This function could maybe be replaced with filter.
   def compare (maybepair1: Maybe (n & o))
               (maybepair2: Maybe (n & o)) : Maybe (n & o) =
     case maybepair1 of
@@ -518,7 +520,7 @@ textbook_constraints =
   for i. {coeffs=a.i, offset=20.0, conType=LessThan}
 
 :p simplex textbook_constraints obj Maximize
-> (Solution [4.0, 4.0, 4.0])
+> (Solution [4., 4., 4.])
 
 
 -- A feasible problem from Waterloo notes
@@ -631,15 +633,18 @@ image = for i:(Fin 100). for j:(Fin 100).
 
 -- Find optimum by brute force.
 best_ix = argmax for (i, j). image.i.j.(2@_)
-:p best_ix
 image2 = draw_point image (fst best_ix) (snd best_ix)
 :html imshow image2
+> <html output>
+
 bfa = pixToReal (fst best_ix) (snd best_ix)
 :p eval_objective objective bfa
+> 1.492
 
 -- Now find optimum by simplex method
 maybeanswer = simplex pentagon objective Maximize
-:p maybeanswer
+:p eval_objective objective bfa
+> 1.492
 
 -- Plot location of answer.
 answer = case maybeanswer of
@@ -647,3 +652,4 @@ answer = case maybeanswer of
 (x, y) : (Fin 100 & Fin 100) = float2pix answer
 image3 = draw_point image x y
 :html imshow image3
+> <html output>
