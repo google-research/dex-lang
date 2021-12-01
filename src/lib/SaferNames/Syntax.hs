@@ -323,14 +323,22 @@ bindingsFragToSynthCandidates' nest = case nest of
   Empty -> return ()
   Nest (EnvPair b binding) rest -> withExtEvidence rest do
     case binding of
-       AtomNameBinding (LetBound (DeclBinding InstanceLet _ _)) -> do
-         tell $ inject (SynthCandidates [] [] [Var $ binderName b])
+       AtomNameBinding (LetBound (DeclBinding InstanceLet ty _)) -> do
+         let dataDefName = getInstanceLetDataDefName ty
+         let m = M.singleton dataDefName [inject $ Var $ binderName b]
+         tell $ (SynthCandidates [] [] m)
        AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
-         tell $ inject (SynthCandidates [Var $ binderName b] [] [])
+         tell $ inject (SynthCandidates [Var $ binderName b] [] mempty)
        SuperclassBinding _ _ getter ->
-         tell $ inject (SynthCandidates [] [getter] [])
+         tell $ inject (SynthCandidates [] [getter] mempty)
        _ -> return ()
     bindingsFragToSynthCandidates' rest
+
+getInstanceLetDataDefName :: Type n -> DataDefName n
+getInstanceLetDataDefName (Pi (PiType b _ resultTy)) =
+  ignoreHoistFailure $ hoist b $ getInstanceLetDataDefName resultTy
+getInstanceLetDataDefName (TypeCon _ defName _) = defName
+getInstanceLetDataDefName _ = error "not a valid instance type"
 
 data WithBindings (e::E) (n::S) where
   WithBindings :: (Distinct l, Ext l n) => Bindings l -> e l -> WithBindings e n
@@ -921,7 +929,7 @@ data TopBindingsFrag n l =
 data SynthCandidates n = SynthCandidates
   { lambdaDicts       :: [Atom n]
   , superclassGetters :: [Atom n]
-  , instanceDicts     :: [Atom n] }
+  , instanceDicts     :: M.Map (DataDefName n) [Atom n] }
   deriving (Show, Generic)
 
 -- === effects ===
@@ -1711,9 +1719,12 @@ instance SubstE AtomSubstVal (EffectRowP AtomName) where
     extendEffRow effs' tailEffRow
 
 instance GenericE SynthCandidates where
-  type RepE SynthCandidates = PairE (ListE Atom) (PairE (ListE Atom) (ListE Atom))
-  fromE (SynthCandidates xs ys zs) = PairE (ListE xs) (PairE (ListE ys) (ListE zs))
-  toE   (PairE (ListE xs) (PairE (ListE ys) (ListE zs))) = SynthCandidates xs ys zs
+  type RepE SynthCandidates =
+    ListE Atom `PairE` ListE Atom `PairE` ListE (PairE DataDefName (ListE Atom))
+  fromE (SynthCandidates xs ys zs) = ListE xs `PairE` ListE ys `PairE` ListE zs'
+    where zs' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList zs)
+  toE (ListE xs `PairE` ListE ys `PairE` ListE zs) = SynthCandidates xs ys zs'
+    where zs' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) zs
 
 instance InjectableE SynthCandidates
 instance HoistableE  SynthCandidates
@@ -1845,7 +1856,7 @@ instance Pretty Arrow where
 
 instance Semigroup (SynthCandidates n) where
   SynthCandidates xs ys zs <> SynthCandidates xs' ys' zs' =
-    SynthCandidates (xs<>xs') (ys<>ys') (zs<>zs')
+    SynthCandidates (xs<>xs') (ys<>ys') (M.unionWith (<>) zs zs')
 
 instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty

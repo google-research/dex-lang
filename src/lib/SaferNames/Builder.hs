@@ -500,7 +500,7 @@ emitSuperclass :: (Mut n ,TopBuilder m)
                => ClassName n -> Int -> m n (Name SuperclassNameC n)
 emitSuperclass dataDef idx = do
   getter <- makeSuperclassGetter dataDef idx
-  emitSynthCandidates $ SynthCandidates [] [getter] []
+  emitSynthCandidates $ SynthCandidates [] [getter] mempty
   emitBinding hint $ SuperclassBinding dataDef idx getter
   where hint = getNameHint $ "Proj" <> show idx <> pprint dataDef
 

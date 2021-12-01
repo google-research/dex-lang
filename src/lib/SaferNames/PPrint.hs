@@ -508,7 +508,7 @@ instance Pretty (SynthCandidates n) where
   pretty scs =
        "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
     <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
-    <> "instance dicts:" <+> p (instanceDicts     scs)
+    <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
 
 indented :: Doc ann -> Doc ann
 indented doc = nest 2 (hardline <> doc) <> hardline

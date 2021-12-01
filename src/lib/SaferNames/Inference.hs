@@ -1789,11 +1789,14 @@ getGiven = do
   Givens _ givens <- getGivens
   asum $ map emitBlock givens
 
-getInstance :: Synther m => m n (Atom n)
-getInstance = do
+getInstance :: DataDefName n -> Synther m => m n (Atom n)
+getInstance target = do
   instances <- instanceDicts <$> getSynthCandidatesM
-  declareUsedInstance
-  asum $ map pure instances
+  case M.lookup target instances of
+    Just relevantInstances -> do
+      declareUsedInstance
+      asum $ map pure relevantInstances
+    Nothing -> empty
 
 synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
 synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =
@@ -1806,8 +1809,8 @@ synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =
         return [d]
       _ -> return []
     extendGivens newGivens $ synthDict resultTy
-synthDict ty = do
-  polyDict <- getGiven <|> getInstance
+synthDict ty@(TypeCon _ dataDef _) = do
+  polyDict <- getGiven <|> getInstance dataDef
   ty' <- injectM ty
   polyTy <- getType polyDict
   PairE (ListE params) (ListE reqDictTys) <- instantiateDictParams ty' polyTy
