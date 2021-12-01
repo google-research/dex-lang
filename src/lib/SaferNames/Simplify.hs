@@ -130,7 +130,17 @@ simplifyExpr expr = case expr of
   Case e alts resultTy -> do
     e' <- simplifyAtom e
     resultTy' <- substM resultTy
-    undefined
+    case trySelectBranch e' of
+      Just (i, args) -> do
+        Abs bs body <- return $ alts !! i
+        extendEnv (bs @@> map SubstVal args) $ simplifyBlock body
+      Nothing -> do
+        alts' <- forM alts \(Abs bs body) -> do
+          bs' <- substM $ EmptyAbs bs
+          buildNaryAbs bs' \xs ->
+            extendEnv (bs @@> map Rename xs) $
+              buildBlock $ simplifyBlock body
+        liftM Var $ emit $ Case e' alts' resultTy'
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
 simplifyApp f x = case f of
@@ -184,6 +194,12 @@ data Reconstruct n =
    IdentityRecon
  | LamRecon (NaryAbs AtomNameC Atom n)
 
+applyRecon :: (Emits n, Builder m) => Reconstruct n -> Atom n -> m n (Atom n)
+applyRecon IdentityRecon x = return x
+applyRecon (LamRecon abs) x = do
+  xs <- getUnpacked x
+  applyNaryAbs abs $ map SubstVal xs
+
 simplifyLam :: (Emits o, Simplifier m) => LamExpr i -> m i o (LamExpr o, Reconstruct o)
 simplifyLam lam = simplifyLams 1 lam
 
@@ -225,6 +241,10 @@ simplifyHof hof = case hof of
     case recon of
       IdentityRecon -> return ans
       LamRecon _ -> undefined
+  RunIO ~(Lam lam) -> do
+    (lam', recon) <- simplifyLam lam
+    ans <- emit $ Hof $ RunIO $ Lam lam'
+    applyRecon recon $ Var ans
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result

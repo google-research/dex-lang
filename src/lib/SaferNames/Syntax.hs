@@ -59,8 +59,8 @@ module SaferNames.Syntax (
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
     getDB, DistinctBindings (..),
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
-    considerNonDepPiType,
-    fromNonDepTabTy, binderType, atomBindingType, getProjection,
+    considerNonDepPiType, trySelectBranch,
+    fromNonDepTabTy, nonDepDataConTys, binderType, atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     piArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates,
@@ -119,7 +119,7 @@ import Syntax
 import SaferNames.Name
 import Err
 import LabeledItems
-import Util ((...))
+import Util ((...), enumerate)
 
 -- === core IR ===
 
@@ -1086,6 +1086,17 @@ fromNonDepTabTy ty = do
   (idxTy, Pure, resultTy) <- fromNonDepPiType TabArrow ty
   return (idxTy, resultTy)
 
+nonDepDataConTys :: DataConDef n -> Maybe [Type n]
+nonDepDataConTys (DataConDef _ (Abs bs UnitE)) = go bs
+  where
+    go :: Nest Binder n l -> Maybe [Type n]
+    go Empty = return []
+    go (Nest (b:>ty) bs) = do
+      tys <- go bs
+      case hoist b (ListE tys) of
+        HoistFailure _ -> Nothing
+        HoistSuccess (ListE tys') -> return $ ty:tys'
+
 (?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
 a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
 
@@ -1428,6 +1439,7 @@ instance HoistableE  Atom
 instance AlphaEqE Atom
 instance SubstE Name Atom
 
+-- TODO: special handling of ACase too
 instance SubstE AtomSubstVal Atom where
   substE (scope, env) atom = case fromE atom of
     LeftE specialCase -> case specialCase of
@@ -1445,6 +1457,19 @@ instance SubstE AtomSubstVal Atom where
       Case1 _ -> error "impossible"
       _ -> error "impossible"
     RightE rest -> (toE . RightE) $ substE (scope, env) rest
+
+trySelectBranch :: Atom n -> Maybe (Int, [Atom n])
+trySelectBranch e = case e of
+  DataCon _ _ _ con args -> return (con, args)
+  Variant (NoExt types) label i value -> do
+    let LabeledItems ixtypes = enumerate types
+    let index = fst $ (ixtypes M.! label) NE.!! i
+    return (index, [value])
+  SumVal _ i value -> Just (i, [value])
+  Con (SumAsProd _ (TagRepVal tag) vals) -> do
+    let i = fromIntegral tag
+    return (i , vals !! i)
+  _ -> Nothing
 
 instance GenericE Expr where
   type RepE Expr =

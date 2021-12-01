@@ -161,8 +161,34 @@ translateDecl (Let b (DeclBinding _ _ expr)) cont = do
 translateExpr :: (Imper m, Emits o) => MaybeDest o -> Expr i -> m i o (Atom o)
 translateExpr maybeDest expr = case expr of
   Hof hof -> toImpHof maybeDest hof
+  App f' x' -> do
+    f <- substM f'
+    x <- substM x'
+    getType f >>= \case
+      TabTy _ _ -> do
+        case f of
+          Lam (LamExpr b body) -> do
+            body' <- applyAbs (Abs b body) (SubstVal x)
+            dropSubst $ translateBlock maybeDest body'
+          _ -> error $ "Invalid Imp atom: " ++ pprint f
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
+  Case e alts ty -> do
+    e' <- substM e
+    case trySelectBranch e' of
+      Just (con, args) -> do
+        Abs bs body <- return $ alts !! con
+        extendEnv (bs @@> map SubstVal args) $ translateBlock maybeDest body
+      Nothing -> case e' of
+        Con (SumAsProd _ tag xss) -> do
+          tag' <- fromScalarAtom tag
+          dest <- allocDest maybeDest =<< substM ty
+          emitSwitch tag' (zip xss alts) $
+            \(xs, Abs bs body) ->
+               void $ extendEnv (bs @@> map (SubstVal . inject) xs) $
+                 translateBlock (Just $ inject dest) body
+          destToAtom dest
+        _ -> error "not possible"
   _ -> error $ "not implemented: " ++ pprint expr
   where
     returnVal atom = case maybeDest of
@@ -270,7 +296,7 @@ toImpOp maybeDest op = case op of
         dest <- allocDest maybeDest resultTy
         p' <- fromScalarAtom p
         p'' <- cast p' tagBT
-        emitSwitch p'' [copyAtom dest y, copyAtom dest x]
+        emitSwitch p'' [x, y] (\arg -> copyAtom (inject dest) (inject arg))
         destToAtom dest
         where (BaseTy tagBT) = TagRepTy
   RecordCons   _ _ -> error "Unreachable: should have simplified away"
@@ -314,6 +340,10 @@ toImpHof maybeDest hof = do
             void $ extendEnv (b @> SubstVal idx) $
               translateBlock (Just ithDest) body
           destToAtom dest
+    RunIO (Lam (LamExpr b body)) ->
+      extendEnv (b@>SubstVal UnitVal) $
+        translateBlock maybeDest body
+    _ -> error $ "not implemented: " ++ pprint hof
 
 -- === Destination builder monad ===
 
@@ -538,6 +568,21 @@ makeDestRec idxs idxBinders ty = case ty of
       Abs idxBinders' bodyTy' <- injectM $ Abs (idxBinders >>> Nest (b:>iTy) Empty) bodyTy
       makeDestRec idxs' idxBinders' bodyTy'
     return $ Con $ TabRef lam
+  TypeCon _ _ -> do
+    Abs idxBinders' (ListE dcs) <- liftImmut do
+      refreshAbsM (inject $ Abs idxBinders ty) \idxBinders' (TypeCon def params) -> do
+        dcs <- applyDataDefParams (snd def) params
+        return $ Abs idxBinders' $ ListE dcs
+    case dcs of
+      [] -> error "Void type not allowed"
+      [_] -> error "not implemented"
+      _ -> do
+        tag <- rec TagRepTy
+        ty' <- applyCurIdxs ty
+        contents <- forM dcs \dc -> case nonDepDataConTys dc of
+          Nothing -> error "Dependent data constructors only allowed for single-constructor types"
+          Just tys -> mapM (makeDestRec idxs idxBinders') tys
+        return $ Con $ ConRef $ SumAsProd ty' tag contents
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs idxBinders b
@@ -555,6 +600,7 @@ makeDestRec idxs idxBinders ty = case ty of
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IndexRangeVal t' l' h' x
     _ -> error $ "not implemented: " ++ pprint con
+  _ -> error $ "not implemented: " ++ pprint ty
   where
     applyCurIdxs :: (InjectableE e, SubstE Name e) => e l -> DestM n (e n)
     applyCurIdxs x = applyNaryAbs (Abs idxBinders x) idxs
@@ -596,15 +642,34 @@ applyIdxs (ix:ixs) (Nest b rest) ptr =
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
   where
+    copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
     copyRec dest src = case (dest, src) of
       (Con destRefCon, _) -> case (destRefCon, src) of
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
           src' <- fromScalarAtom src
           storeAnywhere ptr' src'
+        (ConRef (SumAsProd _ tag payload), DataCon _ _ _ con x) -> do
+          rec tag $ TagRepVal $ fromIntegral con
+          zipWithM_ rec (payload !! con) x
+        _ -> error $ "not implemented " ++ pprint dest
+      (DataConRef _ _ refs, DataCon _ _ _ _ vals) -> copyDataConArgs refs vals
+      _ -> error $ "not implemented " ++ pprint dest
+      where
+        rec = copyRec
+
+copyDataConArgs :: (ImpBuilder m, Emits n)
+                => EmptyAbs (Nest DataConRefBinding) n -> [Atom n] -> m n ()
+copyDataConArgs (Abs Empty UnitE) [] = return ()
+copyDataConArgs (Abs (Nest (DataConRefBinding b ref) rest) UnitE) (x:xs) = do
+  copyAtom ref x
+  rest' <- applyAbs (Abs b $ EmptyAbs rest) (SubstVal x)
+  copyDataConArgs rest' xs
+copyDataConArgs bindings args =
+  error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
 
 loadAnywhere :: (ImpBuilder m, Emits n) => IExpr n -> m n (IExpr n)
-loadAnywhere _ = undefined
+loadAnywhere ptr = load ptr -- TODO: generalize to GPU backend
 
 storeAnywhere :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n ()
 storeAnywhere ptr val = store ptr val
@@ -624,26 +689,50 @@ indexDest dest _ = error $ pprint dest
 loadDest :: (Builder m, Emits n) => Dest n -> m n (Atom n)
 loadDest (Con dest) = do
  case dest of
-  BaseTypeRef ptr -> unsafePtrLoad ptr
-  TabRef (Lam (LamExpr b body)) ->
-    buildLam (getNameHint b) TabArrow (binderType b) Pure \i -> do
-      Distinct <- getDistinct
-      body' <- applyAbs (inject $ Abs b body) i
-      result <- emitBlock body'
-      loadDest result
+   BaseTypeRef ptr -> unsafePtrLoad ptr
+   TabRef (Lam (LamExpr b body)) ->
+     buildLam (getNameHint b) TabArrow (binderType b) Pure \i -> do
+       Distinct <- getDistinct
+       body' <- applyAbs (inject $ Abs b body) i
+       result <- emitBlock body'
+       loadDest result
+   RecordRef xs -> Record <$> traverse loadDest xs
+   ConRef con -> Con <$> case con of
+     ProdCon ds -> ProdCon <$> traverse loadDest ds
+     SumAsProd ty tag xss -> SumAsProd ty <$> loadDest tag <*> mapM (mapM loadDest) xss
+     IntRangeVal     l h iRef -> IntRangeVal     l h <$> loadDest iRef
+     IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
+     _        -> error $ "Not a valid dest: " ++ pprint dest
+   _ -> error $ "not implemented" ++ pprint dest
 
 emitWhen :: (ImpBuilder m, Emits n)
          => IExpr n
+         -> (forall l. (Emits l, Ext n l, Distinct l) => m l ())
          -> m n ()
-         -> m n ()
-emitWhen cond doIfTrue = emitSwitch cond [return (), doIfTrue]
+emitWhen cond doIfTrue =
+  emitSwitch cond [False, True] \case False -> return ()
+                                      True  -> doIfTrue
 
 -- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
-emitSwitch :: (ImpBuilder m, Emits n)
+emitSwitch :: forall m n a.
+              (ImpBuilder m, Emits n)
            => IExpr n
-           -> [m n ()]  -- <-- Need to figure out what to do here! No impredicative polymorphism
+           -> [a]
+           -> (forall l. (Emits l, Ext n l, Distinct l) => a -> m l ())
            -> m n ()
-emitSwitch _ = undefined
+emitSwitch testIdx args cont = do
+  Distinct <- getDistinct
+  rec 0 args
+  where
+    rec :: forall l. (Emits l, Ext n l, Distinct l) => Int -> [a] -> m l ()
+    rec _ [] = error "Shouldn't have an empty list of alternatives"
+    rec _ [arg] = cont arg
+    rec curIdx (arg:rest) = do
+      curTag     <- fromScalarAtom $ TagRepVal $ fromIntegral curIdx
+      cond       <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) (inject testIdx) curTag
+      thisCase   <- buildBlockImp $ cont arg >> return []
+      otherCases <- buildBlockImp $ rec (curIdx + 1) rest >> return []
+      emitStatement $ ICond cond thisCase otherCases
 
 emitLoop :: (ImpBuilder m, Emits n)
          => NameHint -> Direction -> IExpr n
