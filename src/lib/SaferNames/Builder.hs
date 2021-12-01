@@ -24,7 +24,7 @@ module SaferNames.Builder (
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   ptrOffset, unsafePtrLoad, ptrLoad,
-  getDataDef, getClassDef, getDataCon, atomAsBlock,
+  getClassDef, getDataCon, atomAsBlock,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
@@ -492,7 +492,7 @@ emitClassDef classDef@(ClassDef name _ _) =
 
 emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> m n (Name DataConNameC n)
 emitDataConName dataDefName conIdx = do
-  DataDef _ _ dataCons <- getDataDef dataDefName
+  DataDef _ _ dataCons <- lookupDataDef dataDefName
   let (DataConDef name _) = dataCons !! conIdx
   emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx
 
@@ -518,11 +518,12 @@ zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
 makeSuperclassGetter :: BindingsReader m => Name ClassNameC n -> Int -> m n (Atom n)
 makeSuperclassGetter classDefName methodIdx = liftBuilder do
   classDefName' <- injectM classDefName
-  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName'
+  ClassDef _ _ defName <- getClassDef classDefName'
+  DataDef sourceName paramBs _ <- lookupDataDef defName
   buildPureNaryLam (EmptyAbs $ zipPiBinders (repeat ImplicitArrow) paramBs) \params -> do
     defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam "subclassDict" PlainArrow (TypeCon (defName', def') (map Var params)) \dict ->
+    let tc = TypeCon sourceName defName' (map Var params)
+    buildPureLam "subclassDict" PlainArrow tc \dict ->
       return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
 
 emitMethodType :: (Mut n, TopBuilder m)
@@ -534,22 +535,17 @@ emitMethodType hint classDef explicit idx = do
 makeMethodGetter :: BindingsReader m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom n)
 makeMethodGetter classDefName explicit methodIdx = liftBuilder do
   classDefName' <- injectM classDefName
-  ClassDef _ _ (defName, def@(DataDef _ paramBs _)) <- getClassDef classDefName'
+  ClassDef _ _ defName <- getClassDef classDefName'
+  DataDef sourceName paramBs _ <- lookupDataDef defName
   let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
   buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
     defName' <- injectM defName
-    def'     <- injectM def
-    buildPureLam "dict" ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
+    buildPureLam "dict" ClassArrow (TypeCon sourceName defName' (map Var params)) \dict ->
       return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
 
 emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> m n (Name TyConNameC n)
 emitTyConName dataDefName =
   emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName
-
-getDataDef :: BindingsReader m => DataDefName n -> m n (DataDef n)
-getDataDef v = do
-  ~(DataDefBinding def) <- lookupBindings v
-  return def
 
 getDataCon :: BindingsReader m => Name DataConNameC n -> m n (DataDefName n, Int)
 getDataCon v = do

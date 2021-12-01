@@ -129,7 +129,7 @@ instance CheaplyReducibleE Expr where
         Lam (LamExpr (LamBinder b _ arr Pure) body)
           | arr == PlainArrow || arr == ImplicitArrow || arr == ClassArrow -> do
               dropSubst $ extendEnv (b@>SubstVal x) $ cheapReduceE body
-        TypeCon con xs -> return $ TypeCon con $ xs ++ [x]
+        TypeCon sn con xs -> return $ TypeCon sn con $ xs ++ [x]
         _ -> empty
     Op (SynthesizeDict _ ty) -> do
       runFallibleT1 (trySynthDictBlock ty) >>= \case

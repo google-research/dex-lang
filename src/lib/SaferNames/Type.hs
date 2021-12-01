@@ -99,7 +99,7 @@ sourceNameType v = do
       TyConBinding   def     -> liftTyperM $ typeConFunType def
       DataConBinding def con -> liftTyperM $ dataConFunType def con
       MethodBinding _ _ getter -> getType getter
-      ClassBinding (ClassDef _ _ (def, _)) -> liftTyperM $ typeConFunType def
+      ClassBinding (ClassDef _ _ def) -> liftTyperM $ typeConFunType def
       _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
 
 -- === the type checking/querying monad ===
@@ -269,11 +269,11 @@ instance HasType Atom where
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
-    DataCon _ (name,_) params con args -> do
+    DataCon _ name params con args -> do
       name' <- substM name
       funTy <- dataConFunType name' con
       foldM checkApp funTy $ params ++ args
-    TypeCon (name, _) params -> do
+    TypeCon _ name params -> do
       name' <- substM name
       funTy <- typeConFunType name'
       foldM checkApp funTy $ params
@@ -297,14 +297,14 @@ instance HasType Atom where
       checkTypeE TyKind ty
     VariantTy row -> checkLabeledRow row $> TyKind
     ACase e alts resultTy -> checkCase e alts resultTy
-    DataConRef (defName, _) params args -> do
+    DataConRef defName params args -> do
       defName' <- substM defName
-      DataDefBinding def@(DataDef _ paramBs [DataConDef _ argBs]) <- lookupBindings defName'
+      DataDef sourceName paramBs [DataConDef _ argBs] <- lookupDataDef defName'
       paramTys <- nonDepBinderNestTypes paramBs
       params' <- forMZipped paramTys params checkTypeE
       argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
       checkDataConRefBindings argBs' args
-      return $ RawRefTy $ TypeCon (defName',def) params'
+      return $ RawRefTy $ TypeCon sourceName defName' params'
     BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
       PtrTy (_, t) <- getTypeE ptr
       annTy |: TyKind
@@ -320,9 +320,9 @@ instance HasType Atom where
               Nothing -> Var v
               Just is' -> ProjectElt is' v
       case ty of
-        TypeCon (defName, _) params -> do
+        TypeCon _ defName params -> do
           v' <- substM v
-          DataDefBinding def <- lookupBindings defName
+          def <- lookupDataDef defName
           [DataConDef _ (Abs bs' UnitE)] <- applyDataDefParams def params
           PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
           -- `ty` can depends on earlier binders from this constructor. Rewrite
@@ -636,14 +636,14 @@ typeCheckPrimOp op = case op of
     return $ VariantTy $ NoExt $
       Unlabeled [ VariantTy $ NoExt types', VariantTy diff ]
   DataConTag x -> do
-    (TypeCon _ _) <- getTypeE x
+    TypeCon _ _ _ <- getTypeE x
     return TagRepTy
   ToEnum t x -> do
     x |: Word8Ty
-    TypeCon namedDef [] <- checkTypeE TyKind t
-    DataDefBinding (DataDef _ _ dataConDefs) <- lookupBindings $ fst namedDef
+    TypeCon sourceName dataDefName [] <- checkTypeE TyKind t
+    DataDef _ _ dataConDefs <- lookupDataDef dataDefName
     forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
-    return $ TypeCon namedDef []
+    return $ TypeCon sourceName dataDefName []
   SumToVariant x -> do
     SumTy cases <- getTypeE x
     return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
@@ -763,7 +763,7 @@ nonDepBinderNestTypes (Nest (b:>ty) rest) = do
 
 dataConFunType :: Typer m => Name DataDefNameC o -> Int -> m i o (Type o)
 dataConFunType name con = do
-  DataDefBinding def@(DataDef _ paramBinders cons) <- lookupBindings name
+  DataDef sourceName paramBinders cons <- lookupDataDef name
   let DataConDef _ argBinders = cons !! con
   case argBinders of
     Abs argBinders' UnitE ->
@@ -772,12 +772,11 @@ dataConFunType name con = do
           buildNaryPiType PlainArrow argBinders' \_ -> do
             params' <- mapM injectM params
             name'   <- injectM name
-            def'    <- injectM def
-            return $ TypeCon (name', def') params'
+            return $ TypeCon sourceName name' params'
 
 typeConFunType :: Typer m => Name DataDefNameC o -> m i o (Type o)
 typeConFunType name = do
-  DataDefBinding (DataDef _ paramBinders _) <- lookupBindings name
+  (DataDef _ paramBinders _) <- lookupDataDef name
   dropSubst $ buildNaryPiType PlainArrow paramBinders \_ ->
     return TyKind
 
@@ -806,8 +805,8 @@ checkCase scrut alts resultTy = do
 caseAltsBinderTys :: (MonadFail1 m, BindingsReader m)
                   => Type n -> m n [EmptyAbs (Nest Binder) n]
 caseAltsBinderTys ty = case ty of
-  TypeCon (defName, _) params -> do
-    DataDefBinding def <- lookupBindings defName
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
     cons <- applyDataDefParams def params
     return [bs | DataConDef _ bs <- cons]
   VariantTy (NoExt types) -> do
@@ -1202,9 +1201,10 @@ labeledRowDifference (Ext (LabeledItems items) rest)
   return $ Ext (LabeledItems diffitems) diffrest
 
 
-projectLength :: (Fallible1 m, ScopeReader m) => Type n -> m n Int
+projectLength :: (Fallible1 m, BindingsReader m) => Type n -> m n Int
 projectLength ty = case ty of
-  TypeCon (_, def) params -> do
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
     [DataConDef _ (Abs bs UnitE)] <- applyDataDefParams def params
     return $ nestLength bs
   RecordTy (NoExt types) -> return $ length types

@@ -727,7 +727,7 @@ buildNthOrderedAlt alts scrutTy resultTy i vs = do
 -- `CaseAltIndex` used in the surface IR.
 nthCaseAltIdx :: Type n -> Int -> CaseAltIndex
 nthCaseAltIdx ty i = case ty of
-  TypeCon _ _ -> ConAlt i
+  TypeCon _ _ _ -> ConAlt i
   VariantTy (NoExt types) -> case lookup i pairedIndices of
     Just idx -> idx
     Nothing -> error "alt index out of range"
@@ -751,7 +751,7 @@ buildSortedCase :: (Fallible1 m, Builder m, Emits n)
 buildSortedCase scrut alts resultTy = do
   scrutTy <- getType scrut
   case scrutTy of
-    TypeCon _ _ -> buildMonomorphicCase alts scrut resultTy
+    TypeCon _ _ _ -> buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
         [] -> case tailName of
@@ -806,17 +806,17 @@ inferUVar = \case
     return $ Var v
   UTyConVar v -> do
     -- TODO: we shouldn't need these tildes because it's the only valid case
-    ~(TyConBinding   dataDefName) <- lookupBindings v
-    ~(DataDefBinding dataDef)     <- lookupBindings dataDefName
-    return $ TypeCon (dataDefName, dataDef) []
+    ~(TyConBinding dataDefName) <- lookupBindings v
+    DataDef sourceName _ _  <- lookupDataDef dataDefName
+    return $ TypeCon sourceName dataDefName []
   UDataConVar v -> do
    -- TODO: we shouldn't need these tildes because it's the only valid case
     ~(DataConBinding dataDefName idx) <- lookupBindings v
-    ~(DataDefBinding dataDef)         <- lookupBindings dataDefName
-    return $ DataCon (pprint v) (dataDefName, dataDef) [] idx []
+    return $ DataCon (pprint v) dataDefName [] idx []
   UClassVar v -> do
-    ~(ClassBinding (ClassDef _ _ dataDef)) <- lookupBindings v
-    return $ TypeCon dataDef []
+    ~(ClassBinding (ClassDef _ _ defName)) <- lookupBindings v
+    DataDef sourceName _ _ <- lookupDataDef defName
+    return $ TypeCon sourceName defName []
   UMethodVar v -> do
     ~(MethodBinding _ _ getter) <- lookupBindings v
     return getter
@@ -904,7 +904,7 @@ inferInterfaceDataDef className methodNames paramBs superclasses methods = do
         methodsTys'   <- mapM checkUType $ methods <&> \(UMethodType _ ty) -> ty
         return $ PairTy (ProdTy superclasses') (ProdTy methodsTys')
   defName <- emitDataDef dictDef
-  return $ ClassDef className methodNames (defName, dictDef)
+  return $ ClassDef className methodNames defName
 
 withNestedUBinders
   :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, InjectableE e)
@@ -979,9 +979,10 @@ checkInstanceBody :: (EmitsBoth o, Inferer m)
                   -> [UMethodDef i]
                   -> m i o (Atom o)
 checkInstanceBody className params methods = do
-  ClassDef _ methodNames def@(_, DataDef tcNameHint _ _) <- getClassDef className
+  ClassDef _ methodNames defName <- getClassDef className
+  def@(DataDef tcNameHint _ _) <- lookupDataDef defName
   params' <- mapM checkUType params
-  Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params'
+  Just dictTy <- fromNewtype <$> applyDataDefParams def params'
   PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
   superclassDicts <- mapM trySynthDict superclassTys
   methodsChecked <- mapM (checkMethodDef className methodTys) methods
@@ -991,7 +992,7 @@ checkInstanceBody className params methods = do
   forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
   let dataConNameHint = "Mk" <> tcNameHint
-  return $ DataCon dataConNameHint def params' 0 [PairVal (ProdVal superclassDicts)
+  return $ DataCon dataConNameHint defName params' 0 [PairVal (ProdVal superclassDicts)
                                                           (ProdVal methods')]
 
 checkMethodDef :: (EmitsBoth o, Inferer m)
@@ -1063,13 +1064,13 @@ checkCasePat :: (EmitsBoth o, Inferer m)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
   UPatCon ~(InternalName conName) ps -> do
     (dataDefName, con) <- substM conName >>= getDataCon
-    dataDef@(DataDef _ paramBs cons) <- getDataDef dataDefName
+    DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     DataConDef _ (EmptyAbs argBs) <- return $ cons !! con
     when (nestLength argBs /= nestLength ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (nestLength argBs)
                                              ++ " got " ++ show (nestLength ps)
     (params, argBs') <- inferParams (Abs paramBs $ EmptyAbs argBs)
-    constrainEq scrutineeTy $ TypeCon (dataDefName, dataDef) params
+    constrainEq scrutineeTy $ TypeCon sourceName dataDefName params
     buildAltInf argBs' \args ->
       bindLamPats ps args $ cont
   UPatVariant labels label p -> do
@@ -1124,14 +1125,14 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         cont
   UPatCon ~(InternalName conName) ps -> do
     (dataDefName, _) <- getDataCon =<< substM conName
-    dataDef@(DataDef _ paramBs cons) <- getDataDef dataDefName
+    (DataDef sourceName paramBs cons) <- lookupDataDef dataDefName
     case cons of
       [DataConDef _ (EmptyAbs argBs)] -> do
         when (nestLength argBs /= nestLength ps) $ throw TypeErr $
           "Unexpected number of pattern binders. Expected " ++ show (nestLength argBs)
                                                  ++ " got " ++ show (nestLength ps)
         (params, UnitE) <- inferParams (Abs paramBs UnitE)
-        constrainVarTy v $ TypeCon (dataDefName, dataDef) params
+        constrainVarTy v $ TypeCon sourceName dataDefName params
         xs <- zonk (Var v) >>= emitUnpacked
         xs' <- forM xs \x -> zonk (Var x) >>= emitAtomToName
         bindLamPats ps xs' cont
@@ -1481,7 +1482,7 @@ instance Unifiable Atom where
        (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
        (RecordTy  xs, RecordTy  xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
        (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
-       (TypeCon (c,_) xs, TypeCon (c',_) xs') ->
+       (TypeCon _ c xs, TypeCon _ c' xs') ->
          unless (c == c') empty >> unifyFoldable xs xs'
        (TC con, TC con') -> unifyFoldable con con'
        (Eff eff, Eff eff') -> unify eff eff'

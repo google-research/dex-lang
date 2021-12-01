@@ -568,10 +568,11 @@ makeDestRec idxs idxBinders ty = case ty of
       Abs idxBinders' bodyTy' <- injectM $ Abs (idxBinders >>> Nest (b:>iTy) Empty) bodyTy
       makeDestRec idxs' idxBinders' bodyTy'
     return $ Con $ TabRef lam
-  TypeCon _ _ -> do
+  TypeCon _ _ _ -> do
     Abs idxBinders' (ListE dcs) <- liftImmut do
-      refreshAbsM (inject $ Abs idxBinders ty) \idxBinders' (TypeCon def params) -> do
-        dcs <- applyDataDefParams (snd def) params
+      refreshAbsM (inject $ Abs idxBinders ty) \idxBinders' (TypeCon _ defName params) -> do
+        def <- lookupDataDef defName
+        dcs <- applyDataDefParams def params
         return $ Abs idxBinders' $ ListE dcs
     case dcs of
       [] -> error "Void type not allowed"

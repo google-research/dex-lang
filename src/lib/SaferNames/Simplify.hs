@@ -146,12 +146,12 @@ simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
 simplifyApp f x = case f of
   Lam (LamExpr b body) ->
     dropSubst $ extendEnv (b@>SubstVal x) $ simplifyBlock body
-  DataCon printName namedDef@(defName, _) params con xs -> do
-    DataDef _ paramBs _ <- getDataDef defName
+  DataCon printName defName params con xs -> do
+    DataDef _ paramBs _ <- lookupDataDef defName
     let (params', xs') = splitAt (nestLength paramBs) $ params ++ xs ++ [x]
-    return $ DataCon printName namedDef params' con xs'
+    return $ DataCon printName defName params' con xs'
   ACase e alts ~(Pi ab) -> undefined
-  TypeCon def params -> return $ TypeCon def params'
+  TypeCon sn def params -> return $ TypeCon sn def params'
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x
 
@@ -172,14 +172,12 @@ simplifyAtom atom = case atom of
   Con con -> Con <$> mapM simplifyAtom con
   TC  tc  -> TC  <$> mapM simplifyAtom tc
   Eff _ -> substM atom
-  TypeCon (defName, def) params -> do
+  TypeCon sn defName params -> do
     defName' <- substM defName
-    def'     <- substM def
-    TypeCon (defName', def') <$> mapM simplifyAtom params
-  DataCon printName (defName, def) params con args -> do
+    TypeCon sn defName' <$> mapM simplifyAtom params
+  DataCon printName defName params con args -> do
     defName' <- substM defName
-    def'     <- substM def
-    DataCon printName (defName', def') <$> mapM simplifyAtom params
+    DataCon printName defName' <$> mapM simplifyAtom params
                                        <*> pure con <*> mapM simplifyAtom args
   Record items -> Record <$> mapM simplifyAtom items
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"

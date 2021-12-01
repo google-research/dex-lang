@@ -58,12 +58,11 @@ traverseAtomDefault atom = case atom of
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
-  DataCon sourceName (dataDefName, dataDef) params con args ->
-    DataCon sourceName <$> ((,) <$> substM dataDefName <*> substM dataDef) <*>
+  DataCon sourceName dataDefName params con args ->
+    DataCon sourceName <$> substM dataDefName <*>
       mapM tge params <*> pure con <*> mapM tge args
-  TypeCon (dataDefName, dataDef) params ->
-    TypeCon <$> ((,) <$> substM dataDefName <*> substM dataDef)
-            <*> mapM tge params
+  TypeCon sn dataDefName params ->
+    TypeCon sn <$> substM dataDefName <*> mapM tge params
   LabeledRow (Ext items rest) -> do
     items' <- mapM tge items
     rest'  <- mapM substM rest

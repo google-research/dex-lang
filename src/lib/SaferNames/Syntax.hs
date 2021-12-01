@@ -47,13 +47,13 @@ module SaferNames.Syntax (
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..), EnvQuery (..),
     SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
-    CmdName (..), LogLevel (..), PassName, OutFormat (..), NamedDataDef,
+    CmdName (..), LogLevel (..), PassName, OutFormat (..),
     BindingsReader (..), BindingsExtender (..),  Binding (..),
     TopBindingsFrag (..), EvaluatedModule,
     ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
     withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
-    BindingsFrag (..), lookupBindings, lookupBindingsPure, lookupSourceMap,
+    BindingsFrag (..), lookupBindings, lookupDataDef, lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
     BindingsReaderM, runBindingsReaderM,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
@@ -128,8 +128,8 @@ data Atom (n::S) =
  | Lam (LamExpr n)
  | Pi  (PiType  n)
    -- SourceName is purely for printing
- | DataCon SourceName (NamedDataDef n) [Atom n] Int [Atom n]
- | TypeCon (NamedDataDef n) [Atom n]
+ | DataCon SourceName (DataDefName n) [Atom n] Int [Atom n]
+ | TypeCon SourceName (DataDefName n) [Atom n]
  | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
  | Record (LabeledItems (Atom n))
  | RecordTy  (ExtLabeledItems (Type n) (AtomName n))
@@ -140,7 +140,7 @@ data Atom (n::S) =
  | Eff (EffectRow n)
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
- | DataConRef (NamedDataDef n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
+ | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
  | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
@@ -157,10 +157,6 @@ data Expr n =
  | Op  (Op  n)
  | Hof (Hof n)
    deriving (Show, Generic)
-
--- We inline the definition for compatibility with the unsafe IR.
--- TODO: remove once we don't need the bridge anymore
-type NamedDataDef n = (DataDefName n, DataDef n)
 
 data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
      deriving (Show, Generic)
@@ -191,7 +187,7 @@ data DataConDef n =
   deriving (Show, Generic)
 
 data ClassDef n =
-  ClassDef SourceName [SourceName] (NamedDataDef n)
+  ClassDef SourceName [SourceName] (DataDefName n)
   deriving (Show, Generic)
 
 -- The Type is the type of the result expression (and thus the type of the
@@ -473,6 +469,11 @@ lookupBindings v = liftImmut do
   bindings <- getBindings
   v' <- injectM v
   return $ lookupBindingsPure bindings v'
+
+lookupDataDef :: BindingsReader m => DataDefName n -> m n (DataDef n)
+lookupDataDef defName = do
+  lookupBindings defName >>= \case
+    DataDefBinding def -> return def
 
 lookupSourceMap :: BindingsReader m
                 => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
@@ -1305,11 +1306,11 @@ instance AlphaEqE DataConDef
 
 instance GenericE ClassDef where
   type RepE ClassDef = PairE (LiftE (SourceName, [SourceName]))
-                             (PairE (Name DataDefNameC) DataDef)
-  fromE (ClassDef className methodNames (dataDefName, dataDef)) =
-          PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)
-  toE (PairE (LiftE (className, methodNames)) (PairE dataDefName dataDef)) =
-        ClassDef className methodNames (dataDefName, dataDef)
+                             (Name DataDefNameC)
+  fromE (ClassDef className methodNames dataDefName) =
+          PairE (LiftE (className, methodNames)) dataDefName
+  toE (PairE (LiftE (className, methodNames)) dataDefName) =
+        ClassDef className methodNames dataDefName
 instance InjectableE         ClassDef
 instance HoistableE        ClassDef
 instance SubstE Name         ClassDef
@@ -1347,10 +1348,10 @@ instance GenericE Atom where
   {- Lam -}        LamExpr
   {- Pi -}         PiType
   {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
-                     PairE DataDefName DataDef `PairE`
+                     DataDefName               `PairE`
                      ListE Atom                `PairE`
                      ListE Atom )
-  {- TypeCon -}    ( PairE DataDefName DataDef `PairE` ListE Atom )
+  {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` ListE Atom )
             ) (EitherE5
   {- LabeledRow -} (ExtLabeledItemsE Type AtomName)
   {- Record -}     (ComposeE LabeledItems Atom)
@@ -1364,7 +1365,7 @@ instance GenericE Atom where
             ) (EitherE4
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
-  {- DataConRef -} ( PairE DataDefName DataDef      `PairE`
+  {- DataConRef -} ( DataDefName                    `PairE`
                      ListE Atom                     `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
   {- BoxedRef -}   ( Atom `PairE` Block `PairE` Abs Binder Atom ))
@@ -1374,13 +1375,13 @@ instance GenericE Atom where
     ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
     Lam lamExpr -> Case1 (Case0 lamExpr)
     Pi  piExpr  -> Case1 (Case1 piExpr)
-    DataCon printName (defName, def) params con args -> Case1 $ Case2 $
+    DataCon printName defName params con args -> Case1 $ Case2 $
       LiftE (printName, con) `PairE`
-      PairE defName def      `PairE`
+            defName          `PairE`
       ListE params           `PairE`
       ListE args
-    TypeCon (defName, def) params ->
-      Case1 $ Case3 $ PairE defName def `PairE` ListE params
+    TypeCon sourceName defName params -> Case1 $ Case3 $
+      LiftE sourceName `PairE` defName `PairE` ListE params
     LabeledRow extItems -> Case2 $ Case0 $ ExtLabeledItemsE extItems
     Record items        -> Case2 $ Case1 $ ComposeE items
     RecordTy extItems   -> Case2 $ Case2 $ ExtLabeledItemsE extItems
@@ -1391,8 +1392,8 @@ instance GenericE Atom where
     TC  con -> Case3 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case0 $ effs
     ACase scrut alts ty -> Case4 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
-    DataConRef (defName, def) params bs ->
-      Case4 $ Case2 $ PairE defName def `PairE` ListE params `PairE` bs
+    DataConRef defName params bs ->
+      Case4 $ Case2 $ defName `PairE` ListE params `PairE` bs
     BoxedRef ptr size ab ->
       Case4 $ Case3 $ ptr `PairE` size `PairE` ab
 
@@ -1405,12 +1406,12 @@ instance GenericE Atom where
       Case0 lamExpr -> Lam lamExpr
       Case1 piExpr  -> Pi  piExpr
       Case2 ( LiftE (printName, con) `PairE`
-              PairE defName def      `PairE`
+                    defName           `PairE`
               ListE params           `PairE`
               ListE args ) ->
-        DataCon printName (defName, def) params con args
-      Case3 (PairE defName def `PairE` ListE params) ->
-        TypeCon (defName, def) params
+        DataCon printName defName params con args
+      Case3 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
+        TypeCon sourceName defName params
       _ -> error "impossible"
     Case2 val -> case val of
       Case0 (ExtLabeledItemsE extItems) -> LabeledRow extItems
@@ -1428,8 +1429,8 @@ instance GenericE Atom where
     Case4 val -> case val of
       Case0 effs -> Eff effs
       Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
-      Case2 (PairE defName def `PairE` ListE params `PairE` bs) ->
-        DataConRef (defName, def) params bs
+      Case2 (defName `PairE` ListE params `PairE` bs) ->
+        DataConRef defName params bs
       Case3 (ptr `PairE` size `PairE` ab) -> BoxedRef ptr size ab
       _ -> error "impossible"
     _ -> error "impossible"
