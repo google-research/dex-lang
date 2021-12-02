@@ -21,7 +21,7 @@
 module SaferNames.Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
-    Binder, Block (..), Decl (..), DeclBinding (..),
+    Binder, Block (..), BlockAnn (..), Decl (..), DeclBinding (..),
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
@@ -82,7 +82,7 @@ module SaferNames.Syntax (
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
     pattern TabTyAbs, pattern TabTy,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
-    pattern NothingAtom, pattern JustAtom,
+    pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Foldable (toList, fold)
@@ -194,8 +194,15 @@ data ClassDef n =
 -- block). It's given by querying the result expression's type, and checking
 -- that it doesn't have any free names bound by the decls in the block. We store
 -- it separately as an optimization, to avoid having to traverse the block.
+-- If the decls are empty we can skip the type annotation, because then we can
+-- cheaply query the result, and, more importantly, there's no risk of having a
+-- type that mentions local variables.
 data Block n where
-  Block :: Type n -> Nest Decl n l -> Expr l -> Block n
+  Block :: BlockAnn n l -> Nest Decl n l -> Expr l -> Block n
+
+data BlockAnn n l where
+  BlockAnn :: Type n -> BlockAnn n l
+  NoBlockAnn :: BlockAnn n n
 
 data LamBinding (n::S) = LamBinding Arrow (Type n)
   deriving (Show, Generic)
@@ -1220,6 +1227,10 @@ pattern Fin n = TC (IntRange (IdxRepVal 0) n)
 pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
 pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
+pattern AtomicBlock :: Atom n -> Block n
+pattern AtomicBlock atom <- Block _ Empty (Atom atom)
+  where AtomicBlock atom = Block NoBlockAnn Empty (Atom atom)
+
 mkConsListTy :: [Type n] -> Type n
 mkConsListTy = foldr PairTy UnitTy
 
@@ -1536,9 +1547,14 @@ instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
 instance GenericE Block where
-  type RepE Block = PairE Type (Abs (Nest Decl) Expr)
-  fromE (Block ty decls result) = PairE ty (Abs decls result)
-  toE   (PairE ty (Abs decls result)) = Block ty decls result
+  type RepE Block = PairE (MaybeE Type) (Abs (Nest Decl) Expr)
+  fromE (Block (BlockAnn ty) decls result) = PairE (JustE ty) (Abs decls result)
+  fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
+  toE   (PairE (JustE ty) (Abs decls result)) = Block (BlockAnn ty) decls result
+  toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
+
+deriving instance Show (BlockAnn n l)
+
 instance InjectableE Block
 instance HoistableE  Block
 instance AlphaEqE Block

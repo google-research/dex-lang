@@ -615,7 +615,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
             return $ PairE effs' ty'
         cheapReduceWithDecls decls piResult >>= \case
           Nothing -> throw TypeErr $ "Can't reduce type expression: " ++
-                       pprint (Block TyKind decls $ Atom $ snd $ fromPairE piResult)
+            pprint (Block (BlockAnn TyKind) decls $ Atom $ snd $ fromPairE piResult)
           Just (PairE effs' ty') -> return (effs', ty')
     matchRequirement $ Pi piTy
   UDecl (UDeclExpr decl body) -> do
@@ -1692,7 +1692,7 @@ givensFromBindings :: BindingsReader m => m n (Givens n)
 givensFromBindings = liftImmut do
   DB bindings <- getDB
   let (SynthCandidates givens projs _) = getSynthCandidates bindings
-  let givensBlocks = runBindingsReaderM bindings $ mapM atomAsBlock givens
+  let givensBlocks = map AtomicBlock givens
   return $ getSuperclassClosure bindings projs (Givens [] []) givensBlocks
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
@@ -1804,9 +1804,7 @@ synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =
     piTy' <- injectM piTy
     (_, resultTy) <- instantiatePi piTy' $ Var v
     newGivens <- case arr of
-      ClassArrow -> do
-        d <- atomAsBlock $ Var v
-        return [d]
+      ClassArrow -> return [AtomicBlock $ Var v]
       _ -> return []
     extendGivens newGivens $ synthDict resultTy
 synthDict ty@(TypeCon _ dataDef _) = do
@@ -1911,7 +1909,7 @@ buildBlockInf cont = do
     ty <- getType result
     return $ result `PairE` ty
   ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block ty' decls $ Atom result
+  return $ Block (BlockAnn ty') decls $ Atom result
 
 buildLamInf
   :: (EmitsInf n, Solver m, InfBuilder m)

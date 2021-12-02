@@ -24,7 +24,7 @@ module SaferNames.Builder (
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
   ptrOffset, unsafePtrLoad, ptrLoad,
-  getClassDef, getDataCon, atomAsBlock,
+  getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
   buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
@@ -278,14 +278,14 @@ buildBlock cont = liftImmut do
   let (result `PairE` ty) = results
   ty' <- liftHoistExcept $ hoist decls ty
   Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
-  return $ Block ty' decls' result'
+  return $ Block (BlockAnn ty') decls' result'
 
 makeBlock :: (BindingsReader m, BindingsExtender m, Fallible1 m)
           => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
   ty <- getType expr
   ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block ty' decls expr
+  return $ Block (BlockAnn ty') decls expr
 
 inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
 inlineLastDecl Empty result = Abs Empty result
@@ -303,11 +303,6 @@ buildBlockReduced
 buildBlockReduced cont = do
   Block _ decls result <- buildBlock cont
   cheapReduceToAtom $ Abs decls result
-
-atomAsBlock :: BindingsReader m => Atom n -> m n (Block n)
-atomAsBlock x = do
-  ty <- getType x
-  return $ Block ty Empty $ Atom x
 
 buildPureLam :: Builder m
              => NameHint -> Arrow -> Type n

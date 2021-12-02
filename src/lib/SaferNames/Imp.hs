@@ -444,7 +444,7 @@ buildBlockDest cont = do
     ty <- getType result
     return $ result `PairE` ty
   ty' <- liftHoistExcept $ hoist decls ty
-  return $ Block ty' decls $ Atom result
+  return $ Block (BlockAnn ty') decls $ Atom result
 
 -- TODO: this is mostly copy-paste from Inference
 buildAbsDest

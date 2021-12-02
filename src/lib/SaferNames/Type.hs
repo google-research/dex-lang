@@ -358,7 +358,9 @@ instance HasType Expr where
     Case e alts resultTy -> checkCase e alts resultTy
 
 instance HasType Block where
-  getTypeE (Block ty decls expr) = do
+  getTypeE (Block NoBlockAnn Empty expr) = do
+    getTypeE expr
+  getTypeE (Block (BlockAnn ty) decls expr) = do
     tyReq <- substM ty
     checkB decls \_ -> do
       tyReq' <- injectM tyReq
