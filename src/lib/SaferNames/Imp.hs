@@ -171,6 +171,7 @@ translateExpr maybeDest expr = case expr of
             body' <- applyAbs (Abs b body) (SubstVal x)
             dropSubst $ translateBlock maybeDest body'
           _ -> error $ "Invalid Imp atom: " ++ pprint f
+      _ -> error $ "unexpected expression: " ++ pprint expr
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
   Case e alts ty -> do
@@ -340,6 +341,19 @@ toImpHof maybeDest hof = do
             void $ extendEnv (b @> SubstVal idx) $
               translateBlock (Just ithDest) body
           destToAtom dest
+    RunReader r (Lam (BinaryLamExpr h ref body)) -> do
+      r' <- substM r
+      rDest <- alloc =<< getType r'
+      copyAtom rDest r'
+      extendEnv (h @> SubstVal UnitTy <.> ref @> SubstVal rDest) $
+        translateBlock maybeDest body
+    RunState s (Lam (BinaryLamExpr h ref body)) -> do
+      s' <- substM s
+      (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+      copyAtom sDest s'
+      void $ extendEnv (h @> SubstVal UnitTy <.> ref @> SubstVal sDest) $
+        translateBlock (Just aDest) body
+      PairVal <$> destToAtom aDest <*> destToAtom sDest
     RunIO (Lam (LamExpr b body)) ->
       extendEnv (b@>SubstVal UnitVal) $
         translateBlock maybeDest body

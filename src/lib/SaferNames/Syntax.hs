@@ -82,6 +82,7 @@ module SaferNames.Syntax (
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
     pattern TabTyAbs, pattern TabTy,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
+    pattern BinaryLamExpr, NaryLam,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
     (-->), (?-->), (--@), (==>) ) where
 
@@ -1230,6 +1231,11 @@ pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 pattern AtomicBlock :: Atom n -> Block n
 pattern AtomicBlock atom <- Block _ Empty (Atom atom)
   where AtomicBlock atom = Block NoBlockAnn Empty (Atom atom)
+
+pattern BinaryLamExpr :: LamBinder n l1 -> LamBinder l1 l2 -> Block l2 -> LamExpr n
+pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
+
+type NaryLam = Abs (Nest LamBinder) Block
 
 mkConsListTy :: [Type n] -> Type n
 mkConsListTy = foldr PairTy UnitTy

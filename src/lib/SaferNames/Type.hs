@@ -18,7 +18,7 @@ module SaferNames.Type (
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
-  oneEffect) where
+  oneEffect, lamExprTy) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -401,9 +401,13 @@ instance CheckableB LamBinder where
 
 instance HasType LamExpr where
   getTypeE (LamExpr b body) = do
-    checkB b \(LamBinder b' ty arr eff') -> do
+    checkB b \b' -> do
       bodyTy <- getTypeE body
-      return $ Pi $ PiType (PiBinder b' ty arr) eff' bodyTy
+      return $ lamExprTy b' bodyTy
+
+lamExprTy :: LamBinder n l -> Type l -> Type n
+lamExprTy (LamBinder b ty arr eff) bodyTy =
+  Pi $ PiType (PiBinder b ty arr) eff bodyTy
 
 instance HasType PiType where
   getTypeE (PiType b@(PiBinder _ _ arr) eff resultTy) = do

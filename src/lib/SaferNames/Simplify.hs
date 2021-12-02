@@ -198,28 +198,29 @@ applyRecon (LamRecon abs) x = do
   xs <- getUnpacked x
   applyNaryAbs abs $ map SubstVal xs
 
-simplifyLam :: (Emits o, Simplifier m) => LamExpr i -> m i o (LamExpr o, Reconstruct o)
-simplifyLam lam = simplifyLams 1 lam
+simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
+simplifyLam lam = do
+  Lam (LamExpr b body) <- substM lam
+  (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyNaryLam $ Abs (Nest b Empty) body
+  return (Lam $ LamExpr b' body', recon)
 
-simplifyLams :: Simplifier m => Int -> LamExpr i -> m i o (LamExpr o, Reconstruct o)
-simplifyLams n lam = fromPairE <$> liftImmut do
-  Abs bs body <- return $ fromNaryLam n lam
+simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
+simplifyBinaryLam binaryLam = do
+  Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) <- substM binaryLam
+  (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
+      dropSubst $ simplifyNaryLam $ Abs (Nest b1 (Nest b2 Empty)) body
+  let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
+  return (binaryLam', recon)
+
+simplifyNaryLam :: Simplifier m => NaryLam i -> m i o (NaryLam o, Reconstruct o)
+simplifyNaryLam (Abs bs body) = fromPairE <$> liftImmut do
   refreshBinders bs \bs' -> do
     DistinctAbs decls result <- buildScoped $ simplifyBlock body
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
     extendBindings (toBindingsFrag decls) do
       (resultData, recon) <- defuncAtom (toScopeFrag bs' >>> toScopeFrag decls) result
       block <- makeBlock decls $ Atom result
-      return $ PairE (toNaryLam $ Abs bs' block) recon
-
-fromNaryLam :: Int -> LamExpr n -> Abs (Nest LamBinder) Block n
-fromNaryLam 1 (LamExpr b block) = Abs (Nest b Empty) block
-fromNaryLam n _ = undefined
-fromNaryLam _ _ = error "only defined for n >= 1"
-
-toNaryLam :: Abs (Nest LamBinder) Block n -> LamExpr n
-toNaryLam (Abs Empty _) = error "not defined for nullary lambda"
-toNaryLam (Abs (Nest b Empty) block) = LamExpr b block
+      return $ PairE (Abs bs' block) recon
 
 defuncAtom :: BindingsReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
 defuncAtom frag x = do
@@ -233,16 +234,29 @@ isData _ = True  -- TODO!
 
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
 simplifyHof hof = case hof of
-  For d ~(Lam lam) -> do
+  For d lam -> do
     (lam', recon) <- simplifyLam lam
-    ans <- liftM Var $ emit $ Hof $ For d $ Lam lam'
+    ans <- liftM Var $ emit $ Hof $ For d lam'
     case recon of
       IdentityRecon -> return ans
       LamRecon _ -> undefined
-  RunIO ~(Lam lam) -> do
-    (lam', recon) <- simplifyLam lam
-    ans <- emit $ Hof $ RunIO $ Lam lam'
+  RunReader r lam -> do
+    r' <- simplifyAtom r
+    (lam', recon) <- simplifyBinaryLam lam
+    ans <- emit $ Hof $ RunReader r' lam'
     applyRecon recon $ Var ans
+  RunState s lam -> do
+    s' <- simplifyAtom s
+    (lam', recon) <- simplifyBinaryLam lam
+    resultPair <- emit $ Hof $ RunState s' lam'
+    (ans, sOut) <- fromPair $ Var resultPair
+    ans' <- applyRecon recon ans
+    return $ PairVal ans' sOut
+  RunIO lam -> do
+    (lam', recon) <- simplifyLam lam
+    ans <- emit $ Hof $ RunIO lam'
+    applyRecon recon $ Var ans
+  _ -> error $ "not implemented: " ++ pprint hof
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result

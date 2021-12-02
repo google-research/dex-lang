@@ -280,11 +280,10 @@ buildBlock cont = liftImmut do
   Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
   return $ Block (BlockAnn ty') decls' result'
 
-makeBlock :: (BindingsReader m, BindingsExtender m, Fallible1 m)
-          => Nest Decl n l -> Expr l -> m l (Block n)
+makeBlock :: BindingsReader m => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
   ty <- getType expr
-  ty' <- liftHoistExcept $ hoist decls ty
+  let ty' = ignoreHoistFailure $ hoist decls ty
   return $ Block (BlockAnn ty') decls expr
 
 inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
