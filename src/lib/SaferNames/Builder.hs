@@ -56,7 +56,7 @@ import SaferNames.PPrint ()
 import SaferNames.CheapReduction
 
 import LabeledItems
-import Util (enumerate)
+import Util (enumerate, scanM, restructure)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -689,19 +689,54 @@ clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
-intToIndex :: (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
+intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
 intToIndex ty i = case ty of
   TC con -> case con of
     IntRange        low high   -> return $ Con $ IntRangeVal        low high i
     IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
+    ProdType types             -> intToProd (reverse types) (ProdVal . reverse)
+    _ -> error $ "Unexpected type " ++ pprint ty
+  RecordTy  (NoExt types) -> intToProd types Record
+  where
+    -- XXX: Expects that the types are in a minor-to-major order
+    intToProd :: Traversable t => t (Type n) -> (t (Atom n) -> (Atom n)) -> m n (Atom n)
+    intToProd types mkProd = do
+      sizes <- traverse indexSetSize types
+      (strides, _) <- scanM
+        (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
+      offsets <- flip mapM (zip (toList types) (toList strides)) $
+        \(ety, (s1, s2)) -> do
+          x <- irem i s2
+          y <- idiv x s1
+          intToIndex ety y
+      return $ mkProd (restructure offsets types)
 
-indexToInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+data IterOrder = MinorToMajor | MajorToMinor
+
+indexToInt :: forall m n. (Builder m, Emits n) => Atom n -> m n (Atom n)
 indexToInt (Con (IntRangeVal _ _ i))     = return i
 indexToInt (Con (IndexRangeVal _ _ _ i)) = return i
 indexToInt idx = getType idx >>= \case
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
   TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
+  ProdTy           types  -> prodToInt MajorToMinor types
+  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
+  SumTy            types  -> error "not implemented"
+  VariantTy (NoExt types) -> error "not implemented"
+  ty -> error $ "Unexpected type " ++ pprint ty
+  where
+    -- XXX: Assumes minor-to-major iteration order
+    prodToInt :: Traversable t => IterOrder -> t (Type n) -> m n (Atom n)
+    prodToInt order types = do
+      sizes <- toList <$> traverse indexSetSize types
+      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
+      strides <- rev . fst <$> scanM (\sz prev -> (prev,) <$> imul sz prev) (rev sizes) (IdxRepVal 1)
+      -- Unpack and sum the strided contributions
+      subindices <- getUnpacked idx
+      subints <- traverse indexToInt subindices
+      scaled <- mapM (uncurry imul) $ zip strides subints
+      foldM iadd (IdxRepVal 0) scaled
 
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
 indexSetSize (TC con) = case con of
