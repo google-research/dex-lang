@@ -48,8 +48,8 @@ toImpModule bindings _ cc mainFunName maybeDest absBlock =
 type ImpBuilderEmissions = Nest ImpDecl
 
 newtype ImpM (n::S) (a:: *) =
-  ImpM { runImpM' :: InplaceT Bindings ImpBuilderEmissions Identity n a }
-  deriving ( Functor, Applicative, Monad, ScopeReader)
+  ImpM { runImpM' :: InplaceT Bindings ImpBuilderEmissions HardFailM n a }
+  deriving ( Functor, Applicative, Monad, ScopeReader, Fallible, MonadFail)
 
 type SubstImpM = EnvReaderT AtomSubstVal ImpM :: S -> S -> * -> *
 
@@ -108,7 +108,7 @@ runImpM
   -> e n
 runImpM bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
-    case runIdentity $ runInplaceT bindings $ runImpM' $ runEnvReaderT idEnv $ cont of
+    case runHardFail $ runInplaceT bindings $ runImpM' $ runEnvReaderT idEnv $ cont of
       (Empty, result) -> result
 
 -- === the actual pass ===
@@ -660,6 +660,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
     copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
     copyRec dest src = case (dest, src) of
       (Con destRefCon, _) -> case (destRefCon, src) of
+        (TabRef _, Lam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
           src' <- fromScalarAtom src
@@ -667,11 +668,35 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         (ConRef (SumAsProd _ tag payload), DataCon _ _ _ con x) -> do
           rec tag $ TagRepVal $ fromIntegral con
           zipWithM_ rec (payload !! con) x
-        _ -> error $ "not implemented " ++ pprint dest
+        (ConRef destCon, Con srcCon) ->
+          zipWithRefConM rec destCon srcCon
+        _ -> error $ "not implemented " ++ pprint dest ++ "\n" ++ pprint src
       (DataConRef _ _ refs, DataCon _ _ _ _ vals) -> copyDataConArgs refs vals
-      _ -> error $ "not implemented " ++ pprint dest
+      _ -> error $ "not implemented " ++ pprint dest ++ "\n" ++ pprint src
       where
         rec = copyRec
+
+zipTabDestAtom :: (Emits n, ImpBuilder m)
+               => (forall l. (Emits l, Ext n l) => Dest l -> Atom l -> m l ())
+               -> Dest n -> Atom n -> m n ()
+zipTabDestAtom f dest src = do
+  Con (TabRef (Lam (LamExpr b _))) <- return dest
+  Lam (LamExpr b' _)               <- return src
+  checkAlphaEq (binderType b) (binderType b')
+  let idxTy = binderType b
+  n <- indexSetSizeImp idxTy
+  emitLoop "i" Fwd n \i -> do
+    idx <- intToIndexImp (inject idxTy) i
+    destIndexed <- destGet (inject dest) idx
+    srcIndexed  <- runEnvReaderT idEnv $ translateExpr Nothing (App (inject src) idx)
+    f destIndexed srcIndexed
+
+zipWithRefConM :: Monad m => (Dest n -> Atom n -> m ()) -> Con n -> Con n -> m ()
+zipWithRefConM f destCon srcCon = case (destCon, srcCon) of
+  (ProdCon ds, ProdCon ss) -> zipWithM_ f ds ss
+  (IntRangeVal     _ _ iRef, IntRangeVal     _ _ i) -> f iRef i
+  (IndexRangeVal _ _ _ iRef, IndexRangeVal _ _ _ i) -> f iRef i
+  _ -> error $ "Unexpected ref/val " ++ pprint (destCon, srcCon)
 
 copyDataConArgs :: (ImpBuilder m, Emits n)
                 => EmptyAbs (Nest DataConRefBinding) n -> [Atom n] -> m n ()
@@ -851,7 +876,8 @@ deviceFromCallingConvention cc = case cc of
 
 -- === Imp IR builder ===
 
-class (BindingsReader m, BindingsExtender m) => ImpBuilder (m::MonadKind1) where
+class (BindingsReader m, BindingsExtender m, Fallible1 m)
+       => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
     :: (InjectableE e, Immut n)

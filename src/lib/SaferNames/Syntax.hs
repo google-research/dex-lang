@@ -943,7 +943,7 @@ data SynthCandidates n = SynthCandidates
 -- === effects ===
 
 data EffectP (name::E) (n::S) =
-  RWSEffect RWS (name n) | ExceptionEffect | IOEffect
+  RWSEffect RWS (Maybe (name n)) | ExceptionEffect | IOEffect
   deriving (Show, Eq, Ord, Generic)
 
 type Effect = EffectP AtomName
@@ -1687,14 +1687,14 @@ deriving via WrapE PiType n instance Generic (PiType n)
 
 instance GenericE (EffectP name) where
   type RepE (EffectP name) =
-    EitherE (PairE (LiftE RWS) name)
+    EitherE (PairE (LiftE RWS) (MaybeE name))
             (LiftE (Either () ()))
   fromE = \case
-    RWSEffect rws name -> LeftE  (PairE (LiftE rws) name)
+    RWSEffect rws name -> LeftE  (PairE (LiftE rws) $ toMaybeE name)
     ExceptionEffect -> RightE (LiftE (Left  ()))
     IOEffect        -> RightE (LiftE (Right ()))
   toE = \case
-    LeftE  (PairE (LiftE rws) name) -> RWSEffect rws name
+    LeftE  (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
     RightE (LiftE (Left  ())) -> ExceptionEffect
     RightE (LiftE (Right ())) -> IOEffect
 
@@ -1704,10 +1704,12 @@ instance AlphaEqE      name => AlphaEqE      (EffectP name)
 instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
   substE (_, env) eff = case eff of
-    RWSEffect rws v -> do
+    RWSEffect rws Nothing -> RWSEffect rws Nothing
+    RWSEffect rws (Just v) -> do
       let v' = case env ! v of
-                 Rename        v''  -> v''
-                 SubstVal (Var v'') -> v''
+                 Rename        v''  -> Just v''
+                 SubstVal UnitTy    -> Nothing  -- used at runtime/imp-translation-time
+                 SubstVal (Var v'') -> Just v''
                  SubstVal _ -> error "Heap parameter must be a name"
       RWSEffect rws v'
     ExceptionEffect -> ExceptionEffect

@@ -201,7 +201,8 @@ instance ((forall n. Ord (a n)), SourceRenamableE a) => SourceRenamableE (Effect
     where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
 
 instance SourceRenamableE a => SourceRenamableE (EffectP a) where
-  sourceRenameE (RWSEffect rws name) = RWSEffect rws <$> sourceRenameE name
+  sourceRenameE (RWSEffect rws (Just name)) = RWSEffect rws <$> Just <$> sourceRenameE name
+  sourceRenameE (RWSEffect rws Nothing) = return $ RWSEffect rws Nothing
   sourceRenameE ExceptionEffect = return ExceptionEffect
   sourceRenameE IOEffect = return IOEffect
 

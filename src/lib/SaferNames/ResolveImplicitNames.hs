@@ -192,7 +192,7 @@ instance ((forall n. Ord (a n)), HasImplicitArgNamesE a)
     mapM_ implicitArgsE tailVar
 
 instance HasImplicitArgNamesE a => HasImplicitArgNamesE (EffectP a) where
-  implicitArgsE (RWSEffect _ name) = implicitArgsE name
+  implicitArgsE (RWSEffect _ (Just name)) = implicitArgsE name
   implicitArgsE _ = return ()
 
 instance HasImplicitArgNamesE e => HasImplicitArgNamesE (WithSrcE e) where

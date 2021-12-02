@@ -1016,10 +1016,11 @@ checkUEffRow (EffectRow effs t) = do
 
 checkUEff :: (EmitsBoth o, Inferer m) => UEffect i -> m i o (Effect o)
 checkUEff eff = case eff of
-  RWSEffect rws ~(InternalName region) -> do
+  RWSEffect rws (Just ~(InternalName region)) -> do
     region' <- substM region
     constrainVarTy region' TyKind
-    return $ RWSEffect rws region'
+    return $ RWSEffect rws $ Just region'
+  RWSEffect rws Nothing -> return $ RWSEffect rws Nothing
   ExceptionEffect -> return ExceptionEffect
   IOEffect        -> return IOEffect
 

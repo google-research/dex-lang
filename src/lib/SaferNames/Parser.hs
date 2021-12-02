@@ -386,7 +386,7 @@ effects = braces someEffects <|> return Pure
       return $ EffectRow (S.fromList effs) $ fmap fromString v
 
 effect :: Parser (UEffect VoidS)
-effect =   (RWSEffect <$> rwsName <*> (fromString <$> anyCaseName))
+effect =   (RWSEffect <$> rwsName <*> (Just <$> fromString <$> anyCaseName))
        <|> (keyWord ExceptKW $> ExceptionEffect)
        <|> (keyWord IOKW     $> IOEffect)
        <?> "effect (Accum h | Read h | State h | Except | IO)"

@@ -534,12 +534,12 @@ typeCheckPrimOp op = case op of
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var h')) s) <- getTypeE ref
     case m of
-      MGet      ->                 declareEff (RWSEffect State  h') $> s
-      MPut  x   -> x|:s         >> declareEff (RWSEffect State  h') $> UnitTy
-      MAsk      ->                 declareEff (RWSEffect Reader h') $> s
+      MGet      ->         declareEff (RWSEffect State  $ Just h') $> s
+      MPut  x   -> x|:s >> declareEff (RWSEffect State  $ Just h') $> UnitTy
+      MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
       MExtend x -> do
         updaterTy <- s --> s
-        x|:updaterTy >> declareEff (RWSEffect Writer h') $> UnitTy
+        x|:updaterTy >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) <- getTypeE ref
     i' <- checkTypeE iTy i
@@ -748,7 +748,7 @@ checkRWSAction rws f = do
         regionName <- injectM $ binderName regionBinder'
         Immut <- getImmut
         withAllowedEffects allowed' $
-          extendAllowedEffect (RWSEffect rws regionName) $
+          extendAllowedEffect (RWSEffect rws $ Just regionName) $
             declareEffs eff'
   PiBinder _ (RefTy _ referentTy) _ <- return refBinder
   referentTy' <- liftHoistExcept $ hoist regionBinder referentTy
@@ -1132,7 +1132,8 @@ applyDataDefParams (DataDef _ bs cons) params =
 instance CheckableE EffectRow where
   checkE effRow@(EffectRow effs effTail) = do
     forM_ effs \eff -> case eff of
-      RWSEffect _ v -> Var v |: TyKind
+      RWSEffect _ (Just v) -> Var v |: TyKind
+      RWSEffect _ Nothing -> return ()
       ExceptionEffect -> return ()
       IOEffect        -> return ()
     forM_ effTail \v -> do
