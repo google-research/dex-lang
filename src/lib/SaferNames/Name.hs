@@ -87,6 +87,7 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
+import Control.Monad.IO.Class
 import Control.Monad.Writer.Strict
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
@@ -1011,6 +1012,9 @@ instance (InjectableV v, ScopeReader m, ScopeExtender m)
       let EnvReaderT (ReaderT cont) = m
       env' <- injectM env
       cont env'
+
+instance (InjectableV v, MonadIO1 m) => MonadIO (EnvReaderT v m i o) where
+  liftIO m = EnvReaderT $ lift $ liftIO m
 
 instance AlwaysImmut m => AlwaysImmut (EnvReaderT v m i) where
   getImmut = EnvReaderT $ lift getImmut

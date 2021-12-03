@@ -4,9 +4,11 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Interpreter (evalBlock, indices, indexSetSize) where
+module Interpreter (
+  evalBlock, evalExpr, indices, indexSetSize,
+  runInterpM, liftInterpM, InterpM, Interp) where
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -22,6 +24,7 @@ import CUDA
 import LabeledItems
 import Util (enumerate, restructure)
 import LLVMExec
+import Err
 
 import SaferNames.Name
 import SaferNames.Syntax
@@ -32,14 +35,26 @@ import SaferNames.Builder
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
 
-newtype InterpM (i::S) (o::S) (a:: *) = InterpM ()
+newtype InterpM (i::S) (o::S) (a:: *) =
+  InterpM { runInterpM' :: EnvReaderT AtomSubstVal (BindingsReaderT IO) i o a }
+  deriving ( Functor, Applicative, Monad
+           , MonadIO, ScopeReader, BindingsReader, MonadFail, Fallible
+           , EnvReader AtomSubstVal)
 
 class ( EnvReader AtomSubstVal m, BindingsReader2 m
       , Monad2 m, MonadIO2 m)
       => Interp m
 
-runInterpM :: Distinct n => Bindings n -> InterpM n n a -> a
-runInterpM = undefined
+instance Interp InterpM
+
+runInterpM :: Distinct n => Bindings n -> InterpM n n a -> IO a
+runInterpM bindings cont =
+  runBindingsReaderT bindings $ runEnvReaderT idEnv $ runInterpM' cont
+
+liftInterpM :: (BindingsReader m, MonadIO1 m, Immut n) => InterpM n n a -> m n a
+liftInterpM m = do
+  DB bindings <- getDB
+  liftIO $ runInterpM bindings m
 
 evalBlock :: Interp m => Block i -> m i o (Atom o)
 evalBlock (Block _ decls result) = evalDecls decls $ evalExpr result
@@ -50,18 +65,24 @@ evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
   result <- evalExpr rhs
   extendEnv (b @> SubstVal result) $ evalDecls rest cont
 
+evalAtom :: Interp m => Atom i -> m i o (Atom o)
+evalAtom x = do
+  x' <- substM x
+  (ab, ptrLits) <- abstractPtrLiterals x'
+  applyNaryAbs ab $ map (SubstVal . Con . Lit) ptrLits
+
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of
   App f x -> do
-    f' <- substM f
-    x' <- substM x
+    f' <- evalAtom f
+    x' <- evalAtom x
     case f' of
       Lam (LamExpr b body) -> dropSubst $ extendEnv (b @> SubstVal x') $ evalBlock body
       _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
-  Atom atom -> substM atom
+  Atom atom -> evalAtom atom
   Op op     -> evalOp op
   Case e alts _ -> do
-    e' <- substM e
+    e' <- evalAtom e
     case trySelectBranch e' of
       Nothing -> error "branch should be chosen at this point"
       Just (con, args) -> do
@@ -74,7 +95,7 @@ evalExpr expr = case expr of
     _ -> error $ "Not implemented: " ++ pprint expr
 
 evalOp :: Interp m => Op i -> m i o (Atom o)
-evalOp expr = mapM substM expr >>= \case
+evalOp expr = mapM evalAtom expr >>= \case
   ScalarBinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
     ISub -> applyIntBinOp   (-) x y

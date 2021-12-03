@@ -66,7 +66,7 @@ module SaferNames.Syntax (
     piArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates,
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
-    FallibleT1, runFallibleT1,
+    FallibleT1, runFallibleT1, abstractPtrLiterals,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
     ImpModule (..), ImpFunction (..), ImpBlock (..), ImpDecl (..),
     ImpInstr (..), iBinderType,
@@ -87,6 +87,7 @@ module SaferNames.Syntax (
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
     (-->), (?-->), (--@), (==>) ) where
 
+import Data.Functor
 import Data.Foldable (toList, fold)
 import Control.Applicative
 import Control.Monad.Except hiding (Except)
@@ -101,6 +102,7 @@ import Data.Int
 import Data.String (IsString, fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
 import Data.Word
+import Data.Maybe (catMaybes)
 import Foreign.Ptr
 import Data.Maybe (fromJust)
 
@@ -421,6 +423,9 @@ instance Monad m => AlwaysImmut (BindingsReaderT m) where
   getImmut = BindingsReaderT $ ReaderT \(_, bindings) ->
     return $ toImmutEvidence bindings
 
+instance MonadIO m => MonadIO (BindingsReaderT m n) where
+  liftIO m = BindingsReaderT $ lift $ liftIO m
+
 instance (InjectableV v, BindingsReader m) => BindingsReader (EnvReaderT v m i) where
   getBindings = EnvReaderT $ lift getBindings
 
@@ -676,6 +681,19 @@ capturedVars :: (NameColor c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
 capturedVars b e = nameSetToList nameColorRep nameSet
   where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+
+abstractPtrLiterals
+  :: (BindingsReader m, HoistableE e)
+  => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
+abstractPtrLiterals block = do
+  let fvs = freeVarsList AtomNameRep block
+  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
+    lookupAtomName v <&> \case
+      PtrLitBound ty ptr -> Just ((v, LiftE (PtrType ty)), PtrLit ty ptr)
+      _ -> Nothing
+  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
+  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
+  return (Abs ptrBinders block', ptrVals)
 
 -- === FallibleT transformer ===
 

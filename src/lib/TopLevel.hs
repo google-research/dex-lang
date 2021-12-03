@@ -42,7 +42,7 @@ import Logging
 import LLVMExec
 import PPrint()
 import Util (measureSeconds, onFst, onSnd)
-import Serialize (HasPtrs (..))
+import Serialize (HasPtrs (..), pprintVal)
 
 #if DEX_LLVM_VERSION == HEAD
 import Data.Foldable
@@ -208,7 +208,9 @@ evalSourceBlock' block = case sbContents block of
       execUModule m
       val <- lookupAtomSourceName v
       case fmt of
-        Printed -> logTop $ TextOut $ pprint val
+        Printed -> do
+          s <- pprintVal val
+          logTop $ TextOut s
         -- RenderHtml -> do
         --   -- TODO: check types before we get here
         --   s <- liftIO $ getDexString val
@@ -447,18 +449,6 @@ addResultCtx block (Result outs errs) =
 
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
-
-abstractPtrLiterals :: BindingsReader m
-                    => Block n -> m n (Abs (Nest PtrBinder) Block n, [LitVal])
-abstractPtrLiterals block = do
-  let fvs = freeVarsList AtomNameRep block
-  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
-    lookupAtomName v <&> \case
-      PtrLitBound ty ptr -> Just ((v, LiftE (PtrType ty)), PtrLit ty ptr)
-      _ -> Nothing
-  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
-  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
-  return (Abs ptrBinders block', ptrVals)
 
 findModulePath :: MonadInterblock m => ModuleName -> m FilePath
 findModulePath moduleName = do
