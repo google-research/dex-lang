@@ -440,15 +440,15 @@ emitDataDef dataDef@(DataDef sourceName _ _) =
   emitBinding hint $ DataDefBinding dataDef
   where hint = getNameHint sourceName
 
-emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> m n (Name ClassNameC n)
-emitClassDef classDef@(ClassDef name _ _) =
-  emitBinding (getNameHint name) $ ClassBinding classDef
+emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> Atom n -> m n (Name ClassNameC n)
+emitClassDef classDef@(ClassDef name _ _) dictTyAtom =
+  emitBinding (getNameHint name) $ ClassBinding classDef dictTyAtom
 
-emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> m n (Name DataConNameC n)
-emitDataConName dataDefName conIdx = do
+emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> Atom n -> m n (Name DataConNameC n)
+emitDataConName dataDefName conIdx conAtom = do
   DataDef _ _ dataCons <- getDataDef dataDefName
   let (DataConDef name _) = dataCons !! conIdx
-  emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx
+  emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
 
 emitSuperclass :: (Mut n ,TopBuilder m)
                => ClassName n -> Int -> m n (Name SuperclassNameC n)
@@ -495,9 +495,9 @@ makeMethodGetter classDefName explicit methodIdx = liftBuilder do
     buildPureLam "dict" ClassArrow (TypeCon (defName', def') (map Var params)) \dict ->
       return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
 
-emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> m n (Name TyConNameC n)
-emitTyConName dataDefName =
-  emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName
+emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> Atom n -> m n (Name TyConNameC n)
+emitTyConName dataDefName tyConAtom = do
+  emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName tyConAtom
 
 getDataDef :: BindingsReader m => DataDefName n -> m n (DataDef n)
 getDataDef v = do
@@ -506,12 +506,12 @@ getDataDef v = do
 
 getDataCon :: BindingsReader m => Name DataConNameC n -> m n (DataDefName n, Int)
 getDataCon v = do
-  ~(DataConBinding defName idx) <- lookupBindings v
+  ~(DataConBinding defName idx _) <- lookupBindings v
   return (defName, idx)
 
 getClassDef :: BindingsReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
-  ~(ClassBinding classDef) <- lookupBindings classDefName
+  ~(ClassBinding classDef _) <- lookupBindings classDefName
   return classDef
 
 -- === builder versions of common local ops ===

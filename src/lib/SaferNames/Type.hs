@@ -14,7 +14,7 @@
 module SaferNames.Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, applyDataDefParams, indices,
+  instantiatePi, checkExtends, checkedApplyDataDefParams, indices,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType) where
 
@@ -86,11 +86,11 @@ sourceNameType v = do
     bindingType :: (NameColor c, BindingsReader m, Fallible1 m)
                 => Binding c n -> m n (Type n)
     bindingType binding = liftImmut $ injectM binding >>= \case
-      AtomNameBinding b      -> return $ atomBindingType $ toBinding b
-      TyConBinding   def     -> liftTyperM $ typeConFunType def
-      DataConBinding def con -> liftTyperM $ dataConFunType def con
-      MethodBinding _ _ getter -> getType getter
-      ClassBinding (ClassDef _ _ (def, _)) -> liftTyperM $ typeConFunType def
+      AtomNameBinding b    -> return $ atomBindingType $ toBinding b
+      TyConBinding   _   e -> getType e
+      DataConBinding _ _ e -> getType e
+      MethodBinding  _ _ e -> getType e
+      ClassBinding   _   e -> getType e
       _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
 
 -- === the type checking/querying monad ===
@@ -112,23 +112,12 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , ScopeReader
            , BindingsReader, BindingsExtender)
 
-type TyperM = TyperT Except
-
 runTyperT :: (Fallible m, Distinct n)
           => Bindings n -> TyperT m n n a -> m a
 runTyperT bindings m = do
   runBindingsReaderT bindings $
     runEnvReaderT idEnv $
       runTyperT' m
-
-
-liftTyperM :: (Immut n, Fallible1 m, BindingsReader m)
-           => TyperM n n a
-           -> m n a
-liftTyperM cont = do
-  Distinct <- getDistinct
-  bindings <- getBindings
-  liftExcept $ runTyperT bindings cont
 
 instance Fallible m => Typer (TyperT m)
 
@@ -215,13 +204,13 @@ instance CheckableB BindingsFrag where
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
-    AtomNameBinding   atomNameBinding -> AtomNameBinding <$> checkE atomNameBinding
-    DataDefBinding    dataDef         -> DataDefBinding  <$> checkE dataDef
-    TyConBinding      dataDefName     -> TyConBinding    <$> substM dataDefName
-    DataConBinding    dataDefName idx -> DataConBinding  <$> substM dataDefName <*> pure idx
-    ClassBinding      classDef        -> ClassBinding    <$> substM classDef
-    SuperclassBinding className idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
-    MethodBinding     className idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
+    AtomNameBinding   atomNameBinding   -> AtomNameBinding <$> checkE atomNameBinding
+    DataDefBinding    dataDef           -> DataDefBinding  <$> checkE dataDef
+    TyConBinding      dataDefName     e -> TyConBinding    <$> substM dataDefName              <*> substM e
+    DataConBinding    dataDefName idx e -> DataConBinding  <$> substM dataDefName <*> pure idx <*> substM e
+    ClassBinding      classDef        e -> ClassBinding    <$> substM classDef                 <*> substM e
+    SuperclassBinding className   idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
+    MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -253,14 +242,20 @@ instance HasType Atom where
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
-    DataCon _ (name,_) params con args -> do
-      name' <- substM name
-      funTy <- dataConFunType name' con
-      foldM checkApp funTy $ params ++ args
-    TypeCon (name, _) params -> do
-      name' <- substM name
-      funTy <- typeConFunType name'
-      foldM checkApp funTy $ params
+    DataCon _ (defName, def) params conIx args -> do
+      defName' <- substM defName
+      def'@(DataDef _ tyParamNest' absCons') <- substM def
+      params' <- traverse checkE params
+      ListE cons' <- checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
+      let DataConDef _ conParamAbs' = cons' !! conIx
+      args'   <- traverse checkE args
+      void $ checkedApplyNaryAbs conParamAbs' args'
+      return $ TypeCon (defName', def') params'
+    TypeCon (_, def) params -> do
+      DataDef _ tyParamNest' absCons' <- substM def
+      params' <- traverse checkE params
+      void $ checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
+      return TyKind
     LabeledRow row -> checkLabeledRow row $> LabeledRowKind
     Record items -> do
       types <- mapM getTypeE items
@@ -307,7 +302,7 @@ instance HasType Atom where
         TypeCon (defName, _) params -> do
           v' <- substM v
           DataDefBinding def <- lookupBindings defName
-          [DataConDef _ (Abs bs' UnitE)] <- applyDataDefParams def params
+          [DataConDef _ (Abs bs' UnitE)] <- checkedApplyDataDefParams def params
           PairB bsInit (Nest (_:>bTy) _) <- return $ splitNestAt i bs'
           -- `ty` can depends on earlier binders from this constructor. Rewrite
           -- it to also use projections.
@@ -745,39 +740,6 @@ nonDepBinderNestTypes (Nest (b:>ty) rest) = do
   restTys <- nonDepBinderNestTypes rest'
   return $ ty : restTys
 
-dataConFunType :: Typer m => Name DataDefNameC o -> Int -> m i o (Type o)
-dataConFunType name con = do
-  DataDefBinding def@(DataDef _ paramBinders cons) <- lookupBindings name
-  let DataConDef _ argBinders = cons !! con
-  case argBinders of
-    Abs argBinders' UnitE ->
-      dropSubst $
-        buildNaryPiType ImplicitArrow paramBinders \params -> do
-          buildNaryPiType PlainArrow argBinders' \_ -> do
-            params' <- mapM injectM params
-            name'   <- injectM name
-            def'    <- injectM def
-            return $ TypeCon (name', def') params'
-
-typeConFunType :: Typer m => Name DataDefNameC o -> m i o (Type o)
-typeConFunType name = do
-  DataDefBinding (DataDef _ paramBinders _) <- lookupBindings name
-  dropSubst $ buildNaryPiType PlainArrow paramBinders \_ ->
-    return TyKind
-
--- TODO: put this in Builder?
-buildNaryPiType :: Typer m
-                => Arrow
-                -> Nest Binder i i'
-                -> (forall o'. Ext o o' => [Type o'] -> m i' o' (Type o'))
-                -> m i o (Type o)
-buildNaryPiType _ Empty cont = cont []
-buildNaryPiType arr (Nest (b:>argTy) rest) cont = do
-  refreshBindersI (PiBinder b argTy arr) \b' -> do
-    Pi <$> PiType b' Pure <$> buildNaryPiType arr rest \params -> do
-      param <- Var <$> injectM (binderName b')
-      cont (param : params)
-
 checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
 checkCase scrut alts resultTy = do
   resultTy' <- substM resultTy
@@ -787,12 +749,12 @@ checkCase scrut alts resultTy = do
     checkAlt resultTy' bs alt
   return resultTy'
 
-caseAltsBinderTys :: (MonadFail1 m, BindingsReader m)
+caseAltsBinderTys :: (Fallible1 m, BindingsReader m)
                   => Type n -> m n [EmptyAbs (Nest Binder) n]
 caseAltsBinderTys ty = case ty of
   TypeCon (defName, _) params -> do
     DataDefBinding def <- lookupBindings defName
-    cons <- applyDataDefParams def params
+    cons <- checkedApplyDataDefParams def params
     return [bs | DataConDef _ bs <- cons]
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
@@ -1012,6 +974,21 @@ getBaseMonoidType ty = case ty of
 applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
 applyDataDefParams (DataDef _ bs cons) params =
   fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
+
+checkedApplyDataDefParams :: (BindingsReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
+checkedApplyDataDefParams (DataDef _ bs cons) params =
+  fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) params
+
+-- TODO: Subst all at once, not one at a time!
+checkedApplyNaryAbs :: (BindingsReader m, Fallible1 m, InjectableE e, SubstE AtomSubstVal e)
+                    => Abs (Nest Binder) e o -> [Atom o] -> m o (e o)
+checkedApplyNaryAbs (Abs nest e) args = case (nest, args) of
+  (Empty    , []) -> return e
+  (Nest b@(_:>bTy) bs, x:t) -> do
+    xTy <- getType x
+    checkAlphaEq bTy xTy
+    flip checkedApplyNaryAbs t =<< applyAbs (Abs b $ Abs bs e) (SubstVal x)
+  (_        , _  ) -> throw CompilerErr $ "Length mismatch in checkedApplyNaryAbs"
 
 -- === effects ===
 

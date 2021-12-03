@@ -927,9 +927,9 @@ instance BindsUVars a => BindsUVars (Maybe a) where
 data AnyBinderInfo =
    AtomBinderInfo Type BinderInfo
  | DataDefName  DataDef
- | TyConName    DataDefName
- | DataConName  DataDefName Int
- | ClassDefName ClassDef
+ | TyConName    DataDefName     Atom
+ | DataConName  DataDefName Int Atom
+ | ClassDefName ClassDef        Atom
  -- The atoms in SuperclassName and MethodNames are the dict projections, cached
  -- for fast lookup.
  | SuperclassName ClassDefName Int Atom
@@ -1318,9 +1318,9 @@ instance HasVars AnyBinderInfo where
   freeVars info = case info of
     AtomBinderInfo ty binfo -> freeVars ty <> freeVars binfo
     DataDefName dataDef     -> freeVars dataDef
-    ClassDefName classDef   -> freeVars classDef
-    TyConName      dataDefName   -> freeVarsName dataDefName
-    DataConName    dataDefName _ -> freeVarsName dataDefName
+    ClassDefName classDef  e       -> freeVars classDef <> freeVars e
+    TyConName      dataDefName   e -> freeVarsName dataDefName <> freeVars e
+    DataConName    dataDefName _ e -> freeVarsName dataDefName <> freeVars e
     SuperclassName dataDefName _ getter -> freeVarsName dataDefName <> freeVars getter
     MethodName     dataDefName _ getter -> freeVarsName dataDefName <> freeVars getter
     LocalUExprBound    -> mempty
@@ -1331,9 +1331,9 @@ instance Subst AnyBinderInfo where
   subst env@(substEnv, _) info = case info of
     AtomBinderInfo ty binfo    -> AtomBinderInfo (subst env ty) (subst env binfo)
     DataDefName dataDef        -> DataDefName    (subst env dataDef)
-    ClassDefName classDef      -> ClassDefName   (subst env classDef)
-    TyConName      dataDefName        -> TyConName   (substName substEnv dataDefName)
-    DataConName    dataDefName idx -> DataConName    (substName substEnv dataDefName) idx
+    ClassDefName classDef      e -> ClassDefName   (subst env classDef) (subst env e)
+    TyConName      dataDefName     e -> TyConName   (substName substEnv dataDefName) (subst env e)
+    DataConName    dataDefName idx e -> DataConName    (substName substEnv dataDefName) idx (subst env e)
     SuperclassName dataDefName idx getter ->
       SuperclassName (substName substEnv dataDefName) idx (subst env getter)
     MethodName     dataDefName idx getter ->

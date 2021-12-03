@@ -237,9 +237,9 @@ type AtomSubstVal = SubstVal AtomNameC Atom :: V
 data Binding (c::C) (n::S) where
   AtomNameBinding   :: AtomBinding n                      -> Binding AtomNameC       n
   DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
-  TyConBinding      :: DataDefName n                      -> Binding TyConNameC      n
-  DataConBinding    :: DataDefName n -> Int               -> Binding DataConNameC    n
-  ClassBinding      :: ClassDef n                         -> Binding ClassNameC      n
+  TyConBinding      :: DataDefName n        -> Atom n -> Binding TyConNameC      n
+  DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
+  ClassBinding      :: ClassDef n -> Atom n                        -> Binding ClassNameC      n
   SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
 deriving instance Show (Binding c n)
@@ -1614,29 +1614,29 @@ instance NameColor c => GenericE (Binding c) where
       (EitherE5
           AtomBinding
           DataDef
-          DataDefName
-          (DataDefName `PairE` LiftE Int)
-          ClassDef)
+          (DataDefName `PairE` Atom)
+          (DataDefName `PairE` LiftE Int `PairE` Atom)
+          (ClassDef `PairE` Atom))
       (EitherE2
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom))
   fromE binding = case binding of
-    AtomNameBinding   tyinfo          -> Case0 $ Case0 $ tyinfo
-    DataDefBinding    dataDef         -> Case0 $ Case1 $ dataDef
-    TyConBinding      dataDefName     -> Case0 $ Case2 $ dataDefName
-    DataConBinding    dataDefName idx -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx
-    ClassBinding      classDef        -> Case0 $ Case4 $ classDef
-    SuperclassBinding className idx e -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` e
-    MethodBinding     className idx e -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
+    AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
+    DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
+    TyConBinding      dataDefName     e -> Case0 $ Case2 $ dataDefName `PairE` e
+    DataConBinding    dataDefName idx e -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx `PairE` e
+    ClassBinding      classDef        e -> Case0 $ Case4 $ classDef `PairE` e
+    SuperclassBinding className idx e   -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` e
+    MethodBinding     className idx e   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
 
   toE rep = case rep of
-    Case0 (Case0 tyinfo)                                  -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
-    Case0 (Case1 dataDef)                                 -> fromJust $ tryAsColor $ DataDefBinding    dataDef
-    Case0 (Case2 dataDefName)                             -> fromJust $ tryAsColor $ TyConBinding      dataDefName
-    Case0 (Case3 (dataDefName `PairE` LiftE idx))         -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx
-    Case0 (Case4 classDef)                                -> fromJust $ tryAsColor $ ClassBinding      classDef
-    Case1 (Case0 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ SuperclassBinding className idx e
-    Case1 (Case1 (className `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ MethodBinding     className idx e
+    Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
+    Case0 (Case1 dataDef)                                   -> fromJust $ tryAsColor $ DataDefBinding    dataDef
+    Case0 (Case2 (dataDefName `PairE` e))                   -> fromJust $ tryAsColor $ TyConBinding      dataDefName e
+    Case0 (Case3 (dataDefName `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx e
+    Case0 (Case4 (classDef `PairE` e))                      -> fromJust $ tryAsColor $ ClassBinding      classDef e
+    Case1 (Case0 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ SuperclassBinding className idx e
+    Case1 (Case1 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ MethodBinding     className idx e
     _ -> error "impossible"
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)

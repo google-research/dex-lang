@@ -579,9 +579,9 @@ instance Pretty AnyBinderInfo where
   pretty info = case info of
     AtomBinderInfo ty binfo -> "<atom binder>" <+> p ty <+> p binfo
     DataDefName  dataDef -> "<data def>" <+> p dataDef
-    ClassDefName classDef -> "<class def>" <+> p classDef
-    TyConName    dataDef -> "<type con name>" <+> p dataDef
-    DataConName  dataDef i -> "<data con name>" <+> parens ("idx:" <+> p i) <+> p dataDef
+    ClassDefName classDef _ -> "<class def>" <+> p classDef
+    TyConName    dataDef _ -> "<type con name>" <+> p dataDef
+    DataConName  dataDef i _ -> "<data con name>" <+> parens ("idx:" <+> p i) <+> p dataDef
     SuperclassName dataDef i getter ->
       "<superclass name>" <+> parens ("idx:" <+> p i) <+> p dataDef <+> p getter
     MethodName     dataDef i getter ->

@@ -277,11 +277,11 @@ instance Pretty (Binding s n) where
   pretty b = case b of
     AtomNameBinding   info -> "Atom name:" <+> pretty info
     DataDefBinding    dataDef -> pretty dataDef
-    TyConBinding      dataDefName -> "Type constructor:" <+> pretty dataDefName
-    DataConBinding    dataDefName idx ->
+    TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
+    DataConBinding    dataDefName idx e ->
       "Data constructor:" <+> pretty dataDefName <+>
-      "Constructor index:" <+> pretty idx
-    ClassBinding      classDef -> pretty classDef
+      "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
+    ClassBinding      classDef e -> pretty classDef <+> (parens $ "atom:" <+> p e)
     SuperclassBinding className idx _ ->
       "Superclass" <+> pretty idx <+> "of" <+> pretty className
     MethodBinding     className idx _ ->
