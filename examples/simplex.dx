@@ -380,17 +380,25 @@ def pivot_artificials [Eq cons, Eq vars]
 
 def deduce_nonbasics [Eq cons, Eq vars]
   (basics: cons=>(ColIx cons vars)) : vars=>(ColIx cons vars) =
-  -- Given the basics of a normal tableau, find the nonbasics.
-  -- Todo: Get rid of the stateful loop.
-  init_nonbasics = for r:vars. {|variables=r|}
-  yieldState init_nonbasics \nonbasics_ref.
-    withState (0@vars) \pointer.
-      for c:(ColIx cons vars).
-        in_basics = any for r. basics.r == c
-        if not in_basics then
-          nonbasics_ref!(get pointer) := c
-          if (ordinal (get pointer) + 1) < (size vars) then
-            pointer := ((ordinal (get pointer)) + 1)@vars
+    not_in_basics = \c. not $ any for r.
+      case basics.r of
+        {|slacks=r|}    -> case c of
+          {|slacks=c|}    -> r == c
+          {|variables=_|} -> False
+          {|value=_|}     -> True
+        {|variables=r|} -> case c of
+          {|slacks=_|}    -> False
+          {|variables=c|} -> r == c
+          {|value=_|}     -> True
+
+    all_columns = for i:(ColIx cons vars). i
+    nonBasicsList = filter not_in_basics all_columns
+
+    -- We know that there will be one nonbasic for every variable,
+    -- but don't know how to tell the compiler that, so
+    -- need to use an unsafe cast.
+    (AsList n nonBasicsTable) = nonBasicsList
+    unsafeCastTable vars nonBasicsTable
 
 
 def eliminate_artificials [Eq cons, Eq vars]
@@ -422,8 +430,7 @@ def eliminate_artificials [Eq cons, Eq vars]
 
 
 def feas_to_normal [Eq cons, Eq vars]
-  (tableau: FeasibilityTableau cons vars)
-  : (Tableau cons vars) =
+  (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
   ft = pivot_artificials tableau
   eliminate_artificials ft
 
