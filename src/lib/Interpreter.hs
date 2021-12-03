@@ -6,10 +6,10 @@
 
 {-# LANGUAGE Rank2Types #-}
 
-module Interpreter (evalBlock, indices, indicesNoIO, evalModuleInterp,
-                    indexSetSize) where
+module Interpreter (evalBlock, indices, indexSetSize) where
 
 import Control.Monad
+import Control.Monad.IO.Class
 import Data.Foldable
 import Data.Int
 import Foreign.Ptr
@@ -19,59 +19,62 @@ import System.IO.Unsafe (unsafePerformIO)
 import Foreign.Marshal.Alloc
 
 import CUDA
-import Cat
-import Syntax
-import Env
 import LabeledItems
-import PPrint
-import Builder
 import Util (enumerate, restructure)
 import LLVMExec
+
+import SaferNames.Name
+import SaferNames.Syntax
+import SaferNames.Type
+import SaferNames.PPrint
+import SaferNames.Builder
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
 
-type InterpM = IO
+newtype InterpM (i::S) (o::S) (a:: *) = InterpM ()
 
-evalModuleInterp :: SubstEnv -> Module -> InterpM EvaluatedModule
-evalModuleInterp env (Module _ decls result) = do
-  env' <- catFoldM evalDecl env decls
-  return $ subst (env <> env', mempty) result
+class ( EnvReader AtomSubstVal m, BindingsReader2 m
+      , Monad2 m, MonadIO2 m)
+      => Interp m
 
-evalBlock :: SubstEnv -> Block -> InterpM Atom
-evalBlock env (Block decls result) = do
-  env' <- catFoldM evalDecl env decls
-  evalExpr env $ subst (env <> env', mempty) result
+runInterpM :: Distinct n => Bindings n -> InterpM n n a -> a
+runInterpM = undefined
 
-evalDecl :: SubstEnv -> Decl -> InterpM SubstEnv
-evalDecl env (Let _ v rhs) = liftM ((v@>) . SubstVal) $ evalExpr env rhs'
-  where rhs' = subst (env, mempty) rhs
+evalBlock :: Interp m => Block i -> m i o (Atom o)
+evalBlock (Block _ decls result) = evalDecls decls $ evalExpr result
 
-evalExpr :: SubstEnv -> Expr -> InterpM Atom
-evalExpr env expr = case expr of
-  App f x   -> case f of
-    Lam a -> evalBlock env $ snd $ applyAbs a x
-    _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
-  Atom atom -> return $ atom
+evalDecls :: Interp m => Nest Decl i i' -> m i' o a -> m i o a
+evalDecls Empty cont = cont
+evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
+  result <- evalExpr rhs
+  extendEnv (b @> SubstVal result) $ evalDecls rest cont
+
+evalExpr :: Interp m => Expr i -> m i o (Atom o)
+evalExpr expr = case expr of
+  App f x -> do
+    f' <- substM f
+    x' <- substM x
+    case f' of
+      Lam (LamExpr b body) -> dropSubst $ extendEnv (b @> SubstVal x') $ evalBlock body
+      _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
+  Atom atom -> substM atom
   Op op     -> evalOp op
-  Case e alts _ -> case e of
-    DataCon _ _ con args ->
-      evalBlock env $ applyNaryAbs (alts !! con) args
-    Variant (NoExt types) label i x -> do
-      let LabeledItems ixtypes = enumerate types
-      let index = fst $ ixtypes M.! label NE.!! i
-      evalBlock env $ applyNaryAbs (alts !! index) [x]
-    Con (SumAsProd _ tag xss) -> case tag of
-      Con (Lit x) -> let i = getIntLit x in
-        evalBlock env $ applyNaryAbs (alts !! i) (xss !! i)
-      _ -> error $ "Not implemented: SumAsProd with tag " ++ pprint expr
-    _ -> error $ "Unexpected scrutinee: " ++ pprint e
+  Case e alts _ -> do
+    e' <- substM e
+    case trySelectBranch e' of
+      Nothing -> error "branch should be chosen at this point"
+      Just (con, args) -> do
+        Abs bs body <- return $ alts !! con
+        extendEnv (bs @@> map SubstVal args) $ evalBlock body
   Hof hof -> case hof of
-    RunIO ~(Lam (Abs _ (_, body))) -> evalBlock env body
+    RunIO (Lam (LamExpr b body)) ->
+      extendEnv (b @> SubstVal UnitTy) $
+        evalBlock body
     _ -> error $ "Not implemented: " ++ pprint expr
 
-evalOp :: Op -> InterpM Atom
-evalOp expr = case expr of
+evalOp :: Interp m => Op i -> m i o (Atom o)
+evalOp expr = mapM substM expr >>= \case
   ScalarBinOp op x y -> return $ case op of
     IAdd -> applyIntBinOp   (+) x y
     ISub -> applyIntBinOp   (-) x y
@@ -97,9 +100,10 @@ evalOp expr = case expr of
     _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit (Heap CPU, t) p))) -> Con . Lit <$> loadLitVal p t
+  PtrLoad (Con (Lit (PtrLit (Heap CPU, t) p))) ->
+    Con . Lit <$> liftIO (loadLitVal p t)
   PtrLoad (Con (Lit (PtrLit (Heap GPU, t) p))) ->
-    allocaBytes (sizeOf t) $ \hostPtr -> do
+    liftIO $ allocaBytes (sizeOf t) $ \hostPtr -> do
       loadCUDAArray hostPtr p (sizeOf t)
       Con . Lit <$> loadLitVal hostPtr t
   PtrLoad (Con (Lit (PtrLit (Stack, _) _))) ->
@@ -107,53 +111,18 @@ evalOp expr = case expr of
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
-    _ -> evalBuilder (indexToIntE idxArg)
+    _ -> evalBuilder $ indexToInt $ inject idxArg
   _ -> error $ "Not implemented: " ++ pprint expr
 
--- We can use this when we know we won't be dereferencing pointers. A better
--- approach might be to have a typeclass for the pointer dereferencing that the
--- interpreter does, with a dummy instance that throws an error if you try.
-indicesNoIO :: Type -> [Atom]
-indicesNoIO = unsafePerformIO . indices
+evalBuilder :: (Interp m, InjectableE e, SubstE AtomSubstVal e)
+            => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
+            -> m i n (e n)
+evalBuilder cont = dropSubst do
+  Abs decls result <- liftBuilder $ fromDistinctAbs <$> buildScoped cont
+  evalDecls decls $ substM result
 
-indices :: Type -> IO [Atom]
-indices ty = do
-  n <- indexSetSize ty
-  case ty of
-    TC (IntRange l h)      -> return $ fmap (Con . IntRangeVal     l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
-    TC (IndexRange t l h)  -> return $ fmap (Con . IndexRangeVal t l h . IdxRepVal) [0..(fromIntegral $ n - 1)]
-    -- NB: sequence below computes the cartesian product using the list monad
-    TC (ProdType [])       -> return [ProdVal []]
-    TC (ProdType tys)      -> fmap ProdVal . sequence <$> mapM indices tys
-    RecordTy (NoExt types) -> do
-      subindices <- mapM indices (toList types)
-      -- Earlier indices change faster than later ones, so we need to first
-      -- iterate over the current index and then over all previous ones. For
-      -- efficiency we build the indices in reverse order and then reassign them
-      -- at the end with `reverse`.
-      let addAxisInReverse prevs curs = [cur:prev | cur <- curs, prev <- prevs]
-      let products = foldl addAxisInReverse [[]] subindices
-      return $ map (\idxs -> Record $ restructure (reverse idxs) types) products
-    VariantTy (NoExt types) -> do
-      subindices <- mapM indices types
-      let reflect = reflectLabels types
-      let zipped = zip (toList reflect) (toList subindices)
-      return $concatMap (\((label, i), args) ->
-        Variant (NoExt types) label i <$> args) zipped
-    _ -> error $ "Not implemented: " ++ pprint ty
-
-indexSetSize :: Type -> InterpM Int
-indexSetSize ty = do
-  IdxRepVal l <- evalBuilder (indexSetSizeE ty)
-  return $ fromIntegral l
-
-evalBuilder :: BuilderT InterpM Atom -> InterpM Atom
-evalBuilder builder = do
-  (atom, (_, decls)) <- runBuilderT mempty mempty builder
-  evalBlock mempty $ Block decls (Atom atom)
-
-pattern Int64Val :: Int64 -> Atom
+pattern Int64Val :: Int64 -> Atom n
 pattern Int64Val x = Con (Lit (Int64Lit x))
 
-pattern Float64Val :: Double -> Atom
+pattern Float64Val :: Double -> Atom n
 pattern Float64Val x = Con (Lit (Float64Lit x))
