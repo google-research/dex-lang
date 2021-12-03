@@ -9,8 +9,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
--- disabling because some safer-names stuff lives under a preprocessor flag
-{-# OPTIONS_GHC -Wno-unused-imports #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -30,6 +28,7 @@ import Data.Text.Prettyprint.Doc
 import Data.String
 import Data.Store (Store)
 import Data.List (partition)
+import Data.Maybe (catMaybes)
 import qualified Data.Map.Strict as M
 import Data.Store (Store)
 import GHC.Generics (Generic (..))
@@ -207,7 +206,7 @@ evalSourceBlock' block = case sbContents block of
   Command cmd (v, m) -> case cmd of
     EvalExpr fmt -> do
       execUModule m
-      val <- lookupAtomName v
+      val <- lookupAtomSourceName v
       case fmt of
         Printed -> logTop $ TextOut $ pprint val
         -- RenderHtml -> do
@@ -223,7 +222,7 @@ evalSourceBlock' block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       execUModule m
-      val <- lookupAtomName v
+      val <- lookupAtomSourceName v
       ty <- getType val
       logTop $ TextOut $ pprint ty
   GetNameType v -> do
@@ -327,13 +326,13 @@ isLogInfo out = case out of
   _ -> False
 
 
-lookupAtomName :: (Fallible1 m, BindingsReader m) => SourceName -> m n (Atom n)
-lookupAtomName v =
+lookupAtomSourceName :: (Fallible1 m, BindingsReader m) => SourceName -> m n (Atom n)
+lookupAtomSourceName v =
   lookupSourceMap AtomNameRep v >>= \case
     Nothing -> throw UnboundVarErr $ pprint v
     Just v' -> do
-      lookupBindings v' >>= \case
-        AtomNameBinding (LetBound (DeclBinding _ _ (Atom atom))) -> return atom
+      lookupAtomName v' >>= \case
+        LetBound (DeclBinding _ _ (Atom atom)) -> return atom
         _ -> throw TypeErr $ "Not an atom name: " ++ pprint v
 
 execUModule :: (Mut n, MonadPasses m) => SourceUModule -> m n ()
@@ -361,10 +360,14 @@ evalUModule sourceModule = do
     Module _ Empty result-> return result
     _ -> do
       let (block, recon) = splitSimpModule bindings defunctionalized
-      result <- evalBackend block
-      let evaluated = applyDataResults bindings recon result
-      checkPass ResultPass $ Module Evaluated Empty evaluated
-      return evaluated
+      fromDistinctAbs <$> localTopBuilder do
+        -- TODO: the evaluation pass gets to emit top bindings because it
+        -- creates bindings for pointer literals. But should we just do it this
+        -- way for all the passes?
+        result <- evalBackend $ inject block
+        evaluated <- applyDataResults (inject recon) result
+        checkPass ResultPass $ Module Evaluated Empty evaluated
+        emitBindings evaluated
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
@@ -386,18 +389,17 @@ evalMLIR block' = do
 evalMLIR = error "Dex built without support for MLIR"
 #endif
 
-evalLLVM :: (Immut n, MonadPasses m) => Block n -> m n (Atom n)
+evalLLVM :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
 evalLLVM block = do
-  DB env  <- getDB
   backend <- backendName <$> getConfig
   bench   <- requireBenchmark
   logger  <- getLogger
-  let (blockAbs, ptrVals) = abstractPtrLiterals block
+  (blockAbs, ptrVals) <- abstractPtrLiterals block
   let funcName = "entryFun"
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
-  let (mainFunc, impModuleUnoptimized, reconAtom) =
-        toImpModule env backend cc funcName Nothing blockAbs
+  (mainFunc, impModuleUnoptimized, reconAtom) <-
+    toImpModule backend cc funcName Nothing blockAbs
   -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
   --       were not lifted from the kernels just yet. We should split the Imp IR
   --       into different levels so that we can check the output here!
@@ -409,12 +411,11 @@ evalLLVM block = do
   llvmAST <- liftIO $ impToLLVM logger impModule
   let IFunType _ _ resultTypes = impFunType $ mainFunc
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  resultVals <- liftM (map (Con . Lit)) $ liftIO $
-    llvmEvaluate logger llvmAST funcName ptrVals resultTypes
-  return $ runBindingsReaderM env $
-    applyNaryAbs reconAtom $ map SubstVal resultVals
+  resultVals <- liftIO $ llvmEvaluate logger llvmAST funcName ptrVals resultTypes
+  resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
+  applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 
-evalBackend :: (Immut n, MonadPasses m) => Block n -> m n (Atom n)
+evalBackend :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
@@ -430,13 +431,11 @@ withCompileTime m = do
   (Result outs err, t) <- measureSeconds m
   return $ Result (outs ++ [TotalTime t]) err
 
-checkPass :: (Immut n, MonadPasses m, Pretty (e n), CheckableE e)
+checkPass :: (MonadPasses m, Pretty (e n), CheckableE e)
           => PassName -> e n -> m n ()
 checkPass name x = do
-  DB bindings <- getDB
   logPass name x
-  liftExcept $ addContext ("Checking :\n" ++ pprint x) $
-    runBindingsReaderT bindings $ checkTypes x
+  addContext ("Checking :\n" ++ pprint x) $ checkTypes x
   logTop $ MiscLog $ pprint name ++ " checks passed"
 
 logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
@@ -449,8 +448,17 @@ addResultCtx block (Result outs errs) =
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
 
-abstractPtrLiterals :: Block n -> (Abs (Nest PtrBinder) Block n, [LitVal])
-abstractPtrLiterals block = (Abs Empty block, [])  -- TODO!
+abstractPtrLiterals :: BindingsReader m
+                    => Block n -> m n (Abs (Nest PtrBinder) Block n, [LitVal])
+abstractPtrLiterals block = do
+  let fvs = freeVarsList AtomNameRep block
+  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
+    lookupAtomName v <&> \case
+      PtrLitBound ty ptr -> Just ((v, LiftE (PtrType ty)), PtrLit ty ptr)
+      _ -> Nothing
+  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
+  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
+  return (Abs ptrBinders block', ptrVals)
 
 findModulePath :: MonadInterblock m => ModuleName -> m FilePath
 findModulePath moduleName = do

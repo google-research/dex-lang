@@ -29,19 +29,18 @@ type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
 type PtrBinder = IBinder
 
-toImpModule :: Distinct n
-            => Bindings n -> Backend -> CallingConvention
+toImpModule :: BindingsReader m
+            => Backend -> CallingConvention
             -> SourceName
             -> Maybe (Dest n)
             -> Abs (Nest PtrBinder) Block n
-            -> (ImpFunction n, ImpModule n, AtomRecon n)
-toImpModule bindings _ cc mainFunName maybeDest absBlock =
-  (f', ImpModule [f'], recon')
-  where
-    PairE recon' f' = runImpM bindings do
-      (recon, f) <- translateTopLevel cc mainFunName (fmap inject maybeDest) $
-                      inject absBlock
-      return $ PairE recon f
+            -> m n (ImpFunction n, ImpModule n, AtomRecon n)
+toImpModule _ cc mainFunName maybeDest absBlock = do
+  PairE recon' f' <- liftImmut do
+    DB bindings <- getDB
+    return $ runImpM bindings $ uncurry PairE <$>
+      translateTopLevel cc mainFunName (fmap inject maybeDest) (inject absBlock)
+  return (f', ImpModule [f'], recon')
 
 -- === ImpM monad ===
 
@@ -113,6 +112,8 @@ runImpM bindings cont =
 
 -- === the actual pass ===
 
+-- We don't emit any results when a destination is provided, since they are already
+-- going to be available through the dest.
 translateTopLevel :: (Immut o, Imper m)
                   => CallingConvention
                   -> SourceName
@@ -124,8 +125,11 @@ translateTopLevel cc mainFunName maybeDest (Abs bs body) = do
   DistinctAbs bs' (DistinctAbs decls resultAtom) <-
     buildImpNaryAbs argTys \vs ->
       extendEnv (bs @@> map Rename vs) do
-        maybeDest' <- mapM injectM maybeDest
-        translateBlock maybeDest' body
+        outDest <- case maybeDest of
+          Nothing   -> makeAllocDest Unmanaged =<< getType =<< substM body
+          Just dest -> injectM dest
+        void $ translateBlock (Just outDest) body
+        destToAtom outDest
   let localBindings = toBindingsFrag $ PairB bs' decls
   (results, recon) <- extendBindings localBindings $
                         buildRecon localBindings resultAtom
@@ -410,15 +414,11 @@ newtype DestM (n::S) (a:: *) =
   deriving ( Functor, Applicative, Monad
            , ScopeReader, MonadFail, Fallible)
 
--- TODO: actually plumb this through the Imp monad
-allocInfo :: AllocInfo
-allocInfo = (LLVM, CPU, Managed)
-
 runDestM :: (Immut n, Distinct n, InjectableE e)
-         => Bindings n
+         => Bindings n -> AllocInfo
          -> (forall l. (Emits l, Ext n l, Distinct l) => DestM l (e l))
          -> DistinctAbs DestEmissions e n
-runDestM bindings m = do
+runDestM bindings allocInfo m = do
   let result = runHardFail $ flip runReaderT allocInfo $
                  runInplaceT bindings $ locallyMutableInplaceT do
                    Emits <- fabricateEmitsEvidenceM
@@ -562,7 +562,7 @@ makeDest allocInfo ty = do
   Abs decls result <- liftImmut do
     DB bindings <- getDB
     DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
-      return $ runDestM bindings do
+      return $ runDestM bindings allocInfo do
         makeDestRec [] Empty =<< injectM ty
     case exchangeBs $ PairB ptrBs decls of
       HoistFailure _ -> error "shouldn't happen"
@@ -815,11 +815,14 @@ fromDestConsList dest = case dest of
 makeAllocDest :: (ImpBuilder m, Emits n) => AllocType -> Type n -> m n (Dest n)
 makeAllocDest allocTy ty = fst <$> makeAllocDestWithPtrs allocTy ty
 
+backend_TODO_DONT_HARDCODE = LLVM
+curDev_TODO_DONT_HARDCODE = CPU
+
 makeAllocDestWithPtrs :: (ImpBuilder m, Emits n)
                       => AllocType -> Type n -> m n (Dest n, [IExpr n])
 makeAllocDestWithPtrs allocTy ty = do
-  let backend = undefined
-  let curDev = undefined
+  let backend = backend_TODO_DONT_HARDCODE
+  let curDev  = curDev_TODO_DONT_HARDCODE
   AbsPtrs absDest ptrDefs <- makeDest (backend, curDev, allocTy) ty
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
     size <- liftBuilderImp $ emitBlock $ inject sizeBlock
@@ -915,9 +918,16 @@ buildImpNaryAbs
   => [(NameHint, IType)]
   -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (e l))
   -> m n (DistinctAbs (Nest IBinder) (DistinctAbs (Nest ImpDecl) e) n)
-buildImpNaryAbs [] body = do
+buildImpNaryAbs [] cont = do
   Distinct <- getDistinct
-  DistinctAbs Empty <$> buildScopedImp (body [])
+  DistinctAbs Empty <$> buildScopedImp (cont [])
+buildImpNaryAbs ((hint,ty) : rest) cont = do
+  withFreshIBinder hint ty \b -> do
+    ab <- buildImpNaryAbs rest \vs -> do
+      v <- injectM $ binderName b
+      cont (v : vs)
+    DistinctAbs bs body <- return ab
+    return $ DistinctAbs (Nest b bs) body
 
 emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do

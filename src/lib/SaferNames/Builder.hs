@@ -35,7 +35,7 @@ module SaferNames.Builder (
   TopBindingsFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
-  indexToInt, indexSetSize, intToIndex
+  indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit
   ) where
 
 import Control.Applicative
@@ -114,7 +114,7 @@ class (BindingsReader m, MonadFail1 m)
                   => Abs TopBindingsFrag e n -> m n (e n)
   emitNamelessBindings :: TopBindingsFrag n n -> m n ()
   localTopBuilder :: (Immut n, InjectableE e)
-                  => (forall l. (Mut l, Ext n l) => m l (e l))
+                  => (forall l. (Mut l, Ext n l, Distinct l) => m l (e l))
                   -> m n (DistinctAbs TopBindingsFrag e n)
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
@@ -474,6 +474,16 @@ buildSplitCase tys scrut resultTy match fallback = do
       _ -> error "should only have two cases"
 
 -- === builder versions of common top-level emissions ===
+
+litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom n)
+litValToPointerlessAtom litval = case litval of
+  PtrLit ptrTy ptr -> Var <$> emitPtrLit "ptr" ptrTy ptr
+  VecLit _ -> error "not implemented"
+  _ -> return $ Con $ Lit litval
+
+emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrType -> Ptr () -> m n (AtomName n)
+emitPtrLit hint ptrTy ptr =
+  emitBinding hint $ AtomNameBinding $ PtrLitBound ptrTy ptr
 
 emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =

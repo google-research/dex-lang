@@ -1606,7 +1606,7 @@ renameForPrinting' :: (Distinct n, HoistableE e, InjectableE e, SubstE Name e)
                    => Bindings n -> e n -> Abs (Nest (NameBinder AtomNameC)) e n
 renameForPrinting' bindings e = do
   let infVars = filter (isInferenceVar bindings) $ freeVarsList AtomNameRep e
-  let ab = abstractFreeVars infVars e
+  let ab = abstractFreeVarsNoAnn infVars e
   let scope = toScope bindings
   let hints = take (length infVars) $ map fromString $
                 map (:[]) ['a'..'z'] ++ map show [(0::Int)..]

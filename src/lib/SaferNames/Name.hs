@@ -54,8 +54,8 @@ module SaferNames.Name (
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..),
-  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
-    pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
+  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5, EitherE6,
+    pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4, pattern Case5,
   EitherB1, EitherB2, EitherB3, EitherB4, EitherB5,
     pattern CaseB0, pattern CaseB1, pattern CaseB2, pattern CaseB3, pattern CaseB4,
   splitNestAt, nestLength, nestToList, binderAnn,
@@ -65,7 +65,8 @@ module SaferNames.Name (
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs,
   hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars, WithRenamer (..), ignoreHoistFailure,
+  HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVarsNoAnn,
+  WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), fromEnvVal,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
@@ -76,7 +77,7 @@ module SaferNames.Name (
   checkEmpty, updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence,
-  collectFreeVars, unConsEnv, ConsEnv (..), MonadTrans1 (..),
+  collectFreeVars, unConsEnv, ConsEnv (..), MonadTrans1 (..), fromDistinctAbs,
   ) where
 
 import Prelude hiding (id, (.))
@@ -87,6 +88,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import qualified Data.Map.Strict as M
+import Data.Functor ((<&>))
 import Data.Foldable (fold)
 import Data.Maybe (catMaybes)
 import Data.Kind (Type)
@@ -472,6 +474,9 @@ instance (SubstB v b, SubstE v e) => SubstE v (DistinctAbs b e) where
 
 instance (HoistableB b, HoistableE e) => HoistableE (DistinctAbs b e) where
   freeVarsE (DistinctAbs b e) = freeVarsE (Abs b e)
+
+fromDistinctAbs :: DistinctAbs b e n -> Abs b e n
+fromDistinctAbs (DistinctAbs b e) = Abs b e
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -1872,11 +1877,12 @@ deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnvFrag v o o')
 
 type EE = EitherE
 
-type EitherE1 e0             = EE e0 VoidE
-type EitherE2 e0 e1          = EE e0 (EE e1 VoidE)
-type EitherE3 e0 e1 e2       = EE e0 (EE e1 (EE e2 VoidE))
-type EitherE4 e0 e1 e2 e3    = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
-type EitherE5 e0 e1 e2 e3 e4 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
+type EitherE1 e0                = EE e0 VoidE
+type EitherE2 e0 e1             = EE e0 (EE e1 VoidE)
+type EitherE3 e0 e1 e2          = EE e0 (EE e1 (EE e2 VoidE))
+type EitherE4 e0 e1 e2 e3       = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
+type EitherE5 e0 e1 e2 e3 e4    = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
+type EitherE6 e0 e1 e2 e3 e4 e5 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 (EE e5 VoidE)))))
 
 pattern Case0 :: e0 n -> EE e0 rest n
 pattern Case0 e = LeftE e
@@ -1892,6 +1898,9 @@ pattern Case3 e = RightE (RightE (RightE (LeftE e)))
 
 pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
 pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
+
+pattern Case5 :: e5 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 (EE e5 rest))))) n
+pattern Case5 e = RightE (RightE (RightE (RightE (RightE (LeftE e)))))
 
 type EB = EitherB
 
@@ -2271,9 +2280,29 @@ hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
-abstractFreeVars :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
+abstractFreeVars :: [(Name c n, ann n)]
+                 -> e n -> Abs (Nest (BinderP c ann)) e n
 abstractFreeVars vs e = Abs bs e
-  where bs = unsafeCoerceB $ unsafeListToNest $ map (UnsafeMakeBinder . unsafeCoerceE) vs
+  where bs = unsafeCoerceB $ unsafeListToNest bsFlat
+        bsFlat = vs <&> \(v, ann) ->
+          UnsafeMakeBinder (unsafeCoerceE v) :> unsafeCoerceE ann
+
+abstractFreeVarsNoAnn :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
+abstractFreeVarsNoAnn vs e =
+  case abstractFreeVars (zip vs (repeat UnitE)) e of
+    Abs bs e' -> Abs bs' e'
+      where bs' = fmapNest (\(b:>UnitE) -> b) bs
+
+-- captureClosure decls result = do
+--   let vs = capturedVars decls result
+--   case abstractFreeVars (zip vs (repeat UnitE)) result of
+--     Abs bs e -> do
+--       let bs' = fmapNest (\(b:>UnitE) -> b) bs
+--       case hoist decls $ Abs bs' e of
+--         HoistSuccess abHoisted -> (vs, abHoisted)
+--         HoistFailure _ ->
+--           error "shouldn't happen"  -- but it will if we have types that reference
+--                                     -- local vars. We really need a telescope.
 
 instance HoistableB (NameBinder c) where
   freeVarsB _ = mempty

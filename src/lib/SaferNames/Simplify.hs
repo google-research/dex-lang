@@ -84,15 +84,14 @@ splitSimpModule bindings (Module _ decls result) = do
                   makeBlock decls' result'
   (block, recon)
 
-applyDataResults :: Distinct n => Bindings n
-                 -> AbsEvaluatedModule n -> Atom n
-                 -> EvaluatedModule n
-applyDataResults bindings (Abs bs evaluated) x =
-  runHardFail $ runBindingsReaderT bindings $
-    runEnvReaderT idEnv do
-      xs <- getUnpacked $ inject x
-      extendEnv (bs @@> map SubstVal xs) $
-        substEvaluatedModuleM evaluated
+applyDataResults :: BindingsReader m
+                 => AbsEvaluatedModule n -> Atom n
+                 -> m n (EvaluatedModule n)
+applyDataResults (Abs bs evaluated) x = do
+  runEnvReaderT idEnv do
+    xs <- liftM ignoreExcept $ runFallibleT1 $ getUnpacked x
+    extendEnv (bs @@> map SubstVal xs) $
+      substEvaluatedModuleM evaluated
 
 -- === All the bits of IR  ===
 

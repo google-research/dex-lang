@@ -53,7 +53,8 @@ module SaferNames.Syntax (
     ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
     withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
-    BindingsFrag (..), lookupBindings, lookupDataDef, lookupBindingsPure, lookupSourceMap,
+    BindingsFrag (..), lookupBindings, lookupDataDef, lookupAtomName,
+    lookupBindingsPure, lookupSourceMap,
     getSourceMapM, updateBindings, runBindingsReaderT,
     BindingsReaderM, runBindingsReaderM,
     BindingsReaderT (..), BindingsReader2, BindingsExtender2,
@@ -264,6 +265,7 @@ data AtomBinding (n::S) =
  | PiBound     (PiBinding     n)
  | MiscBound   (Type          n)
  | SolverBound (SolverBinding n)
+ | PtrLitBound PtrType (Ptr ())
    deriving (Show, Generic)
 
 data SolverBinding (n::S) =
@@ -486,10 +488,11 @@ lookupBindings v = liftImmut do
   v' <- injectM v
   return $ lookupBindingsPure bindings v'
 
+lookupAtomName :: BindingsReader m => AtomName n -> m n (AtomBinding n)
+lookupAtomName name = lookupBindings name >>= \case AtomNameBinding x -> return x
+
 lookupDataDef :: BindingsReader m => DataDefName n -> m n (DataDef n)
-lookupDataDef defName = do
-  lookupBindings defName >>= \case
-    DataDefBinding def -> return def
+lookupDataDef name = lookupBindings name >>= \case DataDefBinding x -> return x
 
 lookupSourceMap :: BindingsReader m
                 => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
@@ -662,7 +665,7 @@ captureClosure
   => b n l -> e l -> ([Name c l], NaryAbs c e n)
 captureClosure decls result = do
   let vs = capturedVars decls result
-  let ab = abstractFreeVars vs result
+  let ab = abstractFreeVarsNoAnn vs result
   case hoist decls ab of
     HoistSuccess abHoisted -> (vs, abHoisted)
     HoistFailure _ ->
@@ -1048,6 +1051,7 @@ atomBindingType (AtomNameBinding b) = case b of
   MiscBound   ty                   -> ty
   SolverBound (InfVarBound ty _)   -> ty
   SolverBound (SkolemBound ty)     -> ty
+  PtrLitBound ty _ -> BaseTy (PtrType ty)
 
 infixr 1 -->
 infixr 1 --@
@@ -1757,12 +1761,13 @@ instance SubstE AtomSubstVal SynthCandidates
 
 instance GenericE AtomBinding where
   type RepE AtomBinding =
-     EitherE5
+     EitherE6
         DeclBinding
         LamBinding
         PiBinding
         Type
         SolverBinding
+        (LiftE (PtrType, Ptr ()))
 
   fromE = \case
     LetBound    x -> Case0 x
@@ -1770,6 +1775,7 @@ instance GenericE AtomBinding where
     PiBound     x -> Case2 x
     MiscBound   x -> Case3 x
     SolverBound x -> Case4 x
+    PtrLitBound x y -> Case5 (LiftE (x,y))
 
   toE = \case
     Case0 x -> LetBound x
@@ -1777,6 +1783,7 @@ instance GenericE AtomBinding where
     Case2 x -> PiBound  x
     Case3 x -> MiscBound x
     Case4 x -> SolverBound x
+    Case5 (LiftE (x,y)) -> PtrLitBound x y
     _ -> error "impossible"
 
 instance InjectableE AtomBinding

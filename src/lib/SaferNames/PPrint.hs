@@ -260,6 +260,7 @@ instance Pretty (AtomBinding n) where
     PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
+    PtrLitBound ty ptr -> p $ PtrLit ty ptr
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
@@ -557,7 +558,8 @@ instance Pretty (ImpInstr n)  where
   pretty (IPrimOp op)     = pLowest op
   pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
   pretty (Store dest val) = "store" <+> p dest <+> p val
-  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (Alloc Stack t s) = "alloca" <+> p t <> "[" <> p s <> "]"
+  pretty (Alloc _ t s)     = "alloc"  <+> p t <> "[" <> p s <> "]"
   pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
   pretty (Free ptr)       = "free"  <+> p ptr
   pretty ISyncWorkgroup   = "syncWorkgroup"
