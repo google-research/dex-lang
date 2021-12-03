@@ -311,8 +311,8 @@ def findPivotIndex (tableau: (AbsTableau cons vars extra))
 
 
 def pivot [Eq cons, Eq extra, Eq vars]
-          (tableau: (AbsTableau cons vars extra))
-          (pivotrow:RowIx cons extra) (pivotcol:ColIx cons vars) :
+          (tableau:(AbsTableau cons vars extra))
+          ((pivotrow, pivotcol):(RowIx cons extra & ColIx cons vars)) :
           (AbsTableau cons vars extra) =
   (basics, nonbasics, table) = tableau
 
@@ -335,7 +335,7 @@ def pivot [Eq cons, Eq extra, Eq vars]
   (newBasics, newNonbasics, newTable)
 
 
-def checkFeasible (tableau: FeasibilityTableau cons vars) : Bool =
+def isFeasible (tableau: FeasibilityTableau cons vars) : Bool =
   (_, _, table) = tableau
   val = table.{|objective=()|}.{|value=()|}
   val ~~ 0.
@@ -363,7 +363,8 @@ def pivot_artificials [Eq cons, Eq vars]
   (tableau: FeasibilityTableau cons vars) : (FeasibilityTableau cons vars) =
   -- Pivot out all the artificial variables out of the basis
   yieldState tableau \tRef.
-    (basics, nonbasics, table) = get tRef  -- todo: less copying
+    tableau = get tRef
+    (basics, _, _) = tableau
     for v:cons.
       var = basics.v
       case var of
@@ -372,9 +373,9 @@ def pivot_artificials [Eq cons, Eq vars]
           {|realvars=var|} -> ()
           {|artificials=var|} ->
             pivrow = {|constraints=v|}
-            case find_non_artificial_pivcol (get tRef) pivrow of
+            case find_non_artificial_pivcol tableau pivrow of
               Just pivcol ->
-                tRef := pivot (get tRef) pivrow pivcol
+                tRef := pivot tableau (pivrow, pivcol)
               Nothing -> error("should have been able to pivot to a slack var")
 
 
@@ -402,7 +403,6 @@ def deduce_nonbasics [Eq cons, Eq vars]
 
 
 def eliminate_artificials [Eq cons, Eq vars]
-  -- Here's an example where the function signature says it all.
   (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
 
   (basics, nonbasics, table) = tableau
@@ -429,7 +429,7 @@ def eliminate_artificials [Eq cons, Eq vars]
   (newBasics, newNonbasics, t2)
 
 
-def feas_to_normal [Eq cons, Eq vars]
+def feasibilityTableauToNormalTableau [Eq cons, Eq vars]
   (tableau: FeasibilityTableau cons vars) : (Tableau cons vars) =
   ft = pivot_artificials tableau
   eliminate_artificials ft
@@ -451,38 +451,37 @@ def simplex [Eq cons, Eq vars]
   initFeasibilityTableau = build_feasibility_tableau init_tableau
   feasibilityAns = yieldState initFeasibilityTableau \tableauRef. iter \_.
     tableau = get tableauRef
-    isopt = isOptimal (get tableauRef)
+    isopt = isOptimal tableau
     case isopt of
       True -> Done tableau
       False ->
-        case findPivotIndex (get tableauRef) of
-          Just piv ->
-            tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
+        case findPivotIndex tableau of
+          Just pivIx ->
+            tableauRef := pivot tableau pivIx
             Continue
           Nothing -> error "Couldn't find a pivot index."
 
-  case checkFeasible feasibilityAns of
+  case isFeasible feasibilityAns of
     False -> Infeasible
     True ->
+      tf = feasibilityTableauToNormalTableau feasibilityAns
+
       -- Optimize within the simplex.
-      tf = feas_to_normal feasibilityAns
       withState tf \tableauRef. iter \_.
         tableau = get tableauRef  -- Whole tableau will be overwritten.
-        isopt = isOptimal (get tableauRef)
+        isopt = isOptimal tableau
         case isopt of
           True -> Done $ Solution $ extractSolution tableau
           False -> case findPivotIndex tableau of
             Nothing -> Done Unbounded
-            Just piv -> 
-              tableauRef := pivot (get tableauRef) (fst piv) (snd piv)
+            Just pivIx ->
+              tableauRef := pivot tableau pivIx
               Continue
 
 
 '# Tests
 
---=-=-=-=-=- Tests --=-=-=-=-=-
 -- An impossible problem.
-
 impossible_constraints = for i.
     angles = linspace (Fin 3) 0.0 (2.0 * pi)
     cs = [-(sin (angles.i)), -(cos (angles.i))]
@@ -494,7 +493,6 @@ impossible_constraints = for i.
 initft = build_feasibility_tableau $ build_tableau impossible_constraints [1.0, 1.0] Maximize
 
 -- An unbounded problem.
-
 unbounded_constraints =
   angles = linspace (Fin 3) 0.0 1.0
   for i.
@@ -621,31 +619,22 @@ pentagon = [
 , {coeffs = [0.855563, -0.517699], conType = LessThan, offset = 0.368932} ]
 objective = [1.1, 1.2]
 
-image = for i:(Fin 100). for j:(Fin 100).
+image = for i:(Fin 200). for j:(Fin 200).
   cur_point = pixToReal i j
   case constraints_satisfied pentagon cur_point of
     True -> [1.0, 1.0, (-0.5) + eval_objective objective cur_point]
     False -> [0.0, 0.0, 0.0]
 
--- Find optimum by brute force.
-best_ix = argmax for (i, j). image.i.j.(2@_)
-image2 = draw_point image (fst best_ix) (snd best_ix)
-:html imshow image2
-> <html output>
 
-bfa = pixToReal (fst best_ix) (snd best_ix)
-:p eval_objective objective bfa
-> 1.492
+-- Find optimum by simplex method
+simplexSolution = simplex pentagon objective Maximize
+:p simplexSolution
+> (Solution [0.55636, 0.740704])
 
--- Now find optimum by simplex method
-maybeanswer = simplex pentagon objective Maximize
-:p eval_objective objective bfa
-> 1.492
-
--- Plot location of answer.
-answer = case maybeanswer of
+-- Plot objective function, and location of answer (red dot).
+simplexLocation = case simplexSolution of
   Solution ans -> ans
-(x, y) : (Fin 100 & Fin 100) = float2pix answer
+(x, y) : (Fin 200 & Fin 200) = float2pix simplexLocation
 image3 = draw_point image x y
 :html imshow image3
 > <html output>
