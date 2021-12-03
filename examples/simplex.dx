@@ -266,19 +266,19 @@ def isOptimal (tableau: AbsTableau cons vars extra) : Bool =
 
 def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
   (basics, _, table) = tableau
-  yieldState zero \varRef.  -- Todo: turn this into a parallel loop.
+  yieldAccum (AddMonoid Float) \varRef.
     for v:cons.
       var = basics.v
       case var of  -- If this basic variable is an original variable, write it.
         {|variables=var|} ->
-          varRef!var := table.{|constraints=v|}.{|value=()|}
+          varRef!var += table.{|constraints=v|}.{|value=()|}
         {|slacks=var|} -> ()
 
 def extractAll (tableau: AbsTableau cons vars extra) : (ColIx cons vars=>Float) =
   (basics, _, table) = tableau
-  yieldState zero \varRef.  -- Todo: turn this into a parallel loop.
+  yieldAccum (AddMonoid Float) \varRef.
     for v:cons.
-      varRef!(basics.v) := table.{|constraints=v|}.{|value=()|}
+      varRef!(basics.v) += table.{|constraints=v|}.{|value=()|}
 
 def chooseColumn (tableau: (AbsTableau cons vars extra)) : ColIx cons vars =
   -- An unchecked assumption is that there exists
@@ -328,11 +328,9 @@ def pivot [Eq cons, Eq extra, Eq vars]
     ref!i' := pivotcol
 
   -- Move old basic variable to nonbasics.
-  newNonbasics = yieldState nonbasics \ref.
-    for i.
-      case (get (ref!i)) == pivotcol of
-        True -> ref!i := basics.i'
-        False -> ()
+  newNonbasics = for i. case nonbasics.i == pivotcol of
+    True -> basics.i'
+    False -> nonbasics.i
 
   (newBasics, newNonbasics, newTable)
 
@@ -388,16 +386,7 @@ def deduce_nonbasics [Eq cons, Eq vars]
   yieldState init_nonbasics \nonbasics_ref.
     withState (0@vars) \pointer.
       for c:(ColIx cons vars).
-        in_basics = any for r.
-          case basics.r of
-            {|slacks=r|}    -> case c of
-              {|slacks=c|}    -> r == c
-              {|variables=_|} -> False
-              {|value=_|}     -> True
-            {|variables=r|} -> case c of
-              {|slacks=_|}    -> False
-              {|variables=c|} -> r == c
-              {|value=_|}     -> True
+        in_basics = any for r. basics.r == c
         if not in_basics then
           nonbasics_ref!(get pointer) := c
           if (ordinal (get pointer) + 1) < (size vars) then
