@@ -707,6 +707,7 @@ intToIndex ty i = case ty of
     ProdType types             -> intToProd (reverse types) (ProdVal . reverse)
     _ -> error $ "Unexpected type " ++ pprint ty
   RecordTy  (NoExt types) -> intToProd types Record
+  _ -> error "not implemented"
   where
     -- XXX: Expects that the types are in a minor-to-major order
     intToProd :: Traversable t => t (Type n) -> (t (Atom n) -> (Atom n)) -> m n (Atom n)
@@ -732,8 +733,8 @@ indexToInt idx = getType idx >>= \case
   TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
   ProdTy           types  -> prodToInt MajorToMinor types
   RecordTy  (NoExt types) -> prodToInt MinorToMajor types
-  SumTy            types  -> error "not implemented"
-  VariantTy (NoExt types) -> error "not implemented"
+  SumTy            _  -> error "not implemented"
+  VariantTy (NoExt _) -> error "not implemented"
   ty -> error $ "Unexpected type " ++ pprint ty
   where
     -- XXX: Assumes minor-to-major iteration order

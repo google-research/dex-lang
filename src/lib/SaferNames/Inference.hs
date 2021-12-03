@@ -1815,6 +1815,7 @@ synthDict ty@(TypeCon _ dataDef _) = do
   PairE (ListE params) (ListE reqDictTys) <- instantiateDictParams ty' polyTy
   reqDicts <- mapM synthDict reqDictTys
   naryApp polyDict $ params ++ reqDicts
+synthDict ty = error $ "Not a valid dictionary type: " ++ pprint ty
 
 instantiateDictParams :: (Fallible1 m, BindingsReader m)
                       => Type n -> Type n -> m n (PairE (ListE Atom) (ListE Type) n)

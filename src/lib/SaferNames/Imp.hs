@@ -7,15 +7,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module SaferNames.Imp (toImpModule, PtrBinder, impFunType, getIType) where
 
 import Control.Category ((>>>))
-import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
-import Data.Either
 
 import Err
 import Syntax (CallingConvention (..), Backend (..))
@@ -109,6 +107,7 @@ runImpM bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
     case runHardFail $ runInplaceT bindings $ runImpM' $ runEnvReaderT idEnv $ cont of
       (Empty, result) -> result
+      _ -> error "shouldn't be possible because of `Emits` constraint"
 
 -- === the actual pass ===
 
@@ -194,7 +193,6 @@ translateExpr maybeDest expr = case expr of
                  translateBlock (Just $ inject dest) body
           destToAtom dest
         _ -> error "not possible"
-  _ -> error $ "not implemented: " ++ pprint expr
   where
     returnVal atom = case maybeDest of
       Nothing   -> return atom
@@ -214,7 +212,7 @@ toImpOp maybeDest op = case op of
   PrimEffect refDest m -> do
     case m of
       MAsk      -> returnVal =<< destToAtom refDest
-  --     MExtend ~(Lam f) -> do
+      MExtend _ -> error "not implemented"
   --       -- TODO: Update in-place?
   --       refValue <- destToAtom refDest
   --       result <- translateBlock mempty (Nothing, snd $ applyAbs f refValue)
@@ -308,9 +306,9 @@ toImpOp maybeDest op = case op of
   RecordSplit  _ _ -> error "Unreachable: should have simplified away"
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
   VariantSplit _ _ -> error "Unreachable: should have simplified away"
-  DataConTag con -> undefined
-  ToEnum ty i -> undefined
-  FFICall name returnTy xs -> undefined
+  DataConTag _ -> undefined
+  ToEnum _ _ -> undefined
+  FFICall _ _ _ -> undefined
   SumToVariant ~(Con c) -> do
     ~resultTy@(VariantTy labs) <- resultTyM
     returnVal $ case c of
@@ -380,7 +378,6 @@ toImpHof maybeDest hof = do
 
 
 data DestPtrInfo n = DestPtrInfo PtrType (Block n)
-type DestEmission = EitherE DeclBinding DestPtrInfo
 data DestEmissions n l where
   DestEmissions
     :: [DestPtrInfo n]          -- pointer types and allocation sizes
@@ -402,7 +399,7 @@ instance HoistableB  DestEmissions
 
 instance OutFrag DestEmissions where
   emptyOutFrag = DestEmissions [] Empty Empty
-  catOutFrags _ (DestEmissions p1 b1 d1) de2@(DestEmissions p2 b2 d2) =
+  catOutFrags _ (DestEmissions p1 b1 d1) (DestEmissions p2 b2 d2) =
     ignoreHoistFailure do
       ListE p2' <- hoist (PairB b1 d1) (ListE p2)
       PairB b2' d1' <- withSubscopeDistinct d2 $exchangeBs $ PairB d1 b2
@@ -425,6 +422,7 @@ runDestM bindings allocInfo m = do
                    runDestM' m
   case result of
     (DestEmissions _ Empty Empty, result') -> result'
+    _ -> error "not implemented"
 
 getAllocInfo :: DestM n AllocInfo
 getAllocInfo = DestM $ lift1 ask
@@ -485,9 +483,9 @@ buildTabLamDest
   => NameHint -> Type n
   -> (forall l. (Emits l, Ext n l, Distinct l) => AtomName l -> DestM l (Atom l))
   -> DestM n (Atom n)
-buildTabLamDest hint ty body = do
+buildTabLamDest hint ty cont = do
   Abs (b:>_) body <- buildAbsDest hint (LamBinding TabArrow ty) \v ->
-    buildBlockDest $ injectM v >>= body
+    buildBlockDest $ injectM v >>= cont
   return $ Lam $ LamExpr (LamBinder b ty TabArrow Pure) body
 
 instance BindingsExtender DestM where
@@ -524,6 +522,7 @@ instance ExtOutMap Bindings DestEmissions where
          let frag2 = withExtEvidence (toExtEvidence b) $
                         ptrBindersToBindingsFrag (map inject rest) restBs
          frag1 `catBindingsFrags` frag2
+     ptrBindersToBindingsFrag _ _ = error "mismatched indices"
 
 
 instance GenericE DestPtrInfo where
@@ -653,6 +652,7 @@ applyIdxs (ix:ixs) (Nest b rest) ptr =
       ptr' <- ptrOffset ptr offset
       applyIdxs ixs rest' ptr'
     HoistFailure _ -> error "can't handle dependent tables"
+applyIdxs _ _ _ = error "mismatched number of indices"
 
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
@@ -744,12 +744,13 @@ loadDest (Con dest) = do
      IndexRangeVal t l h iRef -> IndexRangeVal t l h <$> loadDest iRef
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
+loadDest dest = error $ "not implemented" ++ pprint dest
 
-emitWhen :: (ImpBuilder m, Emits n)
+_emitWhen :: (ImpBuilder m, Emits n)
          => IExpr n
          -> (forall l. (Emits l, Ext n l, Distinct l) => m l ())
          -> m n ()
-emitWhen cond doIfTrue =
+_emitWhen cond doIfTrue =
   emitSwitch cond [False, True] \case False -> return ()
                                       True  -> doIfTrue
 
@@ -806,16 +807,19 @@ destPairUnpack :: Dest n -> (Dest n, Dest n)
 destPairUnpack (Con (ConRef (ProdCon [l, r]))) = (l, r)
 destPairUnpack d = error $ "Not a pair destination: " ++ show d
 
-fromDestConsList :: Dest n -> [Dest n]
-fromDestConsList dest = case dest of
-  Con (ConRef (ProdCon [h, t])) -> h : fromDestConsList t
+_fromDestConsList :: Dest n -> [Dest n]
+_fromDestConsList dest = case dest of
+  Con (ConRef (ProdCon [h, t])) -> h : _fromDestConsList t
   Con (ConRef (ProdCon []))     -> []
   _ -> error $ "Not a dest cons list: " ++ pprint dest
 
 makeAllocDest :: (ImpBuilder m, Emits n) => AllocType -> Type n -> m n (Dest n)
 makeAllocDest allocTy ty = fst <$> makeAllocDestWithPtrs allocTy ty
 
+backend_TODO_DONT_HARDCODE :: Backend
 backend_TODO_DONT_HARDCODE = LLVM
+
+curDev_TODO_DONT_HARDCODE :: Device
 curDev_TODO_DONT_HARDCODE = CPU
 
 makeAllocDestWithPtrs :: (ImpBuilder m, Emits n)
@@ -831,8 +835,8 @@ makeAllocDestWithPtrs allocTy ty = do
   dest' <- applyNaryAbs absDest $ map SubstVal ptrAtoms
   return (dest', ptrs)
 
-copyDest :: (ImpBuilder m, Emits n) => Maybe (Dest n) -> Atom n -> m n (Atom n)
-copyDest maybeDest atom = case maybeDest of
+_copyDest :: (ImpBuilder m, Emits n) => Maybe (Dest n) -> Atom n -> m n (Atom n)
+_copyDest maybeDest atom = case maybeDest of
   Nothing   -> return atom
   Just dest -> copyAtom dest atom >> return atom
 
@@ -863,13 +867,9 @@ isSmall numel = case numel of
   Block _ Empty (Atom (Con (Lit l))) | getIntLit l <= 256 -> True
   _ -> False
 
-allocateBuffer :: (ImpBuilder m, Emits n)
-               => AddressSpace -> Bool -> BaseType -> IExpr n -> m n (IExpr n)
-allocateBuffer _ _ _ _ = undefined
-
 -- TODO: separate these concepts in IFunType?
-deviceFromCallingConvention :: CallingConvention -> Device
-deviceFromCallingConvention cc = case cc of
+_deviceFromCallingConvention :: CallingConvention -> Device
+_deviceFromCallingConvention cc = case cc of
   CEntryFun         -> CPU
   EntryFun _        -> CPU
   FFIFun            -> CPU
@@ -901,13 +901,13 @@ withFreshIBinder hint ty cont = do
     extendBindings (toBindingsFrag (b :> (toBinding $ MiscBound $ BaseTy ty))) $
       cont $ IBinder b ty
 
-buildImpAbs
+_buildImpAbs
   :: ( Immut n, ImpBuilder m
      , InjectableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => NameHint -> IType
   -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (e l))
   -> m n (DistinctAbs IBinder (DistinctAbs (Nest ImpDecl) e) n)
-buildImpAbs hint ty body =
+_buildImpAbs hint ty body =
   withFreshIBinder hint ty \b -> do
     ab <- buildScopedImp $ injectM (binderName b) >>= body
     return $ DistinctAbs b ab
@@ -943,9 +943,6 @@ emitStatement instr = do
     [] -> return ()
     _ -> error "unexpected numer of return values"
 
-extendAlloc :: (ImpBuilder m, Emits n) => IExpr n -> m n ()
-extendAlloc _ = undefined
-
 emitAlloc :: (ImpBuilder m, Emits n) => PtrType -> IExpr n -> m n (IExpr n)
 emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
 
@@ -957,23 +954,23 @@ buildBinOp _ _ _ = undefined
 iaddI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
 iaddI = buildBinOp iadd
 
-isubI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-isubI = buildBinOp isub
+_isubI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+_isubI = buildBinOp isub
 
-imulI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-imulI = buildBinOp imul
+_imulI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+_imulI = buildBinOp imul
 
-idivI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-idivI = buildBinOp idiv
+_idivI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+_idivI = buildBinOp idiv
 
-iltI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-iltI = buildBinOp ilt
+_iltI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+_iltI = buildBinOp ilt
 
-ieqI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-ieqI = buildBinOp ieq
+_ieqI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+_ieqI = buildBinOp ieq
 
-bandI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
-bandI x y = emitInstr $ IPrimOp $ ScalarBinOp BAnd x y
+_bandI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
+_bandI x y = emitInstr $ IPrimOp $ ScalarBinOp BAnd x y
 
 impOffset :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
 impOffset ref off = emitInstr $ IPrimOp $ PtrOffset ref off
@@ -999,12 +996,12 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
-fromScalarType :: Type n -> IType
-fromScalarType (BaseTy b) =  b
-fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
+_fromScalarType :: Type n -> IType
+_fromScalarType (BaseTy b) =  b
+_fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
 
-toScalarType :: IType -> Type n
-toScalarType b = BaseTy b
+_toScalarType :: IType -> Type n
+_toScalarType b = BaseTy b
 
 -- === Type classes ===
 
@@ -1034,6 +1031,7 @@ instance CheckableE ImpModule where
 
 impFunType :: ImpFunction n -> IFunType
 impFunType (ImpFunction _ ty _) = ty
+impFunType _ = error "not implemeted"
 
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l

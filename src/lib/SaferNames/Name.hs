@@ -87,7 +87,6 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.IO.Class
 import Control.Monad.Writer.Strict
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))

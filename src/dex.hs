@@ -25,7 +25,6 @@ import Serialize
 import Resources
 import TopLevel
 import Err
-import Export
 #ifdef DEX_LIVE
 import RenderHtml
 import LiveOutput

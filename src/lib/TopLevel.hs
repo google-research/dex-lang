@@ -23,14 +23,10 @@ module TopLevel (
 import Data.Functor
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
-import Data.String
 import Data.Store (Store)
 import Data.List (partition)
-import Data.Maybe (catMaybes)
 import qualified Data.Map.Strict as M
-import Data.Store (Store)
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Console.Haskeline -- for MonadException
@@ -42,7 +38,7 @@ import Logging
 import LLVMExec
 import PPrint()
 import Util (measureSeconds, onFst, onSnd)
-import Serialize (HasPtrs (..), pprintVal)
+import Serialize (HasPtrs (..), pprintVal, getDexString)
 
 #if DEX_LLVM_VERSION == HEAD
 import Data.Foldable
@@ -55,7 +51,6 @@ import SaferNames.Parser
 import SaferNames.Syntax
 import SaferNames.Builder
 import SaferNames.Type
-import SaferNames.ResolveImplicitNames
 import SaferNames.SourceRename
 import SaferNames.Inference
 import SaferNames.Simplify
@@ -63,15 +58,7 @@ import SaferNames.Imp
 import JIT
 
 import Syntax
-  ( LetAnn (..), IRVariant (..)
-  , PrimExpr (..), PrimTC (..), PrimCon (..), PrimOp (..), PrimHof (..)
-  , BaseMonoid, BaseMonoidP (..), PrimEffect (..), BinOp (..), UnOp (..)
-  , CmpOp (..), Direction (..)
-  , ForAnn (..), Limit (..), strToPrimName, primNameToStr, showPrimName
-  , BlockId, ReachedEOF, ModuleName, CmdName (..), LogLevel (..)
-  , RWS (..), LitVal (..), ScalarBaseType (..), BaseType (..)
-  , AddressSpace (..), Device (..), PtrType, sizeOf, ptrSize, vectorWidth
-  , PassName, OutFormat (..), Result (..), CallingConvention (..)
+  ( ModuleName, Result (..), CallingConvention (..)
   , Output (..), Backend (..), BenchStats, IsCUDARequired (..), PassName (..))
 
 -- === shared effects ===
@@ -89,9 +76,6 @@ class Monad m => ConfigReader m where
 -- Hides the `n` parameter as an existential
 data TopStateEx where
   TopStateEx :: Distinct n => Bindings n -> TopStateEx
-
-data SomeBinding where
-  SomeBinding :: NameColor c => Binding c n -> SomeBinding
 
 class (ConfigReader m, MonadIO m) => MonadInterblock m where
   getTopStateEx :: m TopStateEx
@@ -211,11 +195,11 @@ evalSourceBlock' block = case sbContents block of
         Printed -> do
           s <- pprintVal val
           logTop $ TextOut s
-        -- RenderHtml -> do
-        --   -- TODO: check types before we get here
-        --   s <- liftIO $ getDexString val
-        --   logTop $ HtmlOut s
-    -- ExportFun name -> do
+        RenderHtml -> do
+          -- TODO: check types before we get here
+          s <- getDexString val
+          logTop $ HtmlOut s
+    ExportFun _ -> error "not implemented"
     --   f <- evalUModuleVal v m
     --   void $ traverseLiterals f \val -> case val of
     --     PtrLit _ _ -> throw CompilerErr $
@@ -373,9 +357,9 @@ evalUModule sourceModule = do
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
-evalMLIR :: MonadPasses m => Block n -> m n (Atom n)
+_evalMLIR :: MonadPasses m => Block n -> m n (Atom n)
 #if DEX_LLVM_VERSION == HEAD
-evalMLIR block' = do
+_evalMLIR block' = do
   -- This is a little silly, but simplification likes to leave inlinable
   -- let-bindings (they just construct atoms) in the block.
   let block = inlineTraverse block'
@@ -388,7 +372,7 @@ evalMLIR block' = do
     inlineTraverse :: Block -> Block
     inlineTraverse block = fst $ flip runSubstBuilder mempty $ traverseBlock substTraversalDef block
 #else
-evalMLIR = error "Dex built without support for MLIR"
+_evalMLIR = error "Dex built without support for MLIR"
 #endif
 
 evalLLVM :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
@@ -421,7 +405,7 @@ evalBackend :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
-               -- MLIR        -> evalMLIR
+               MLIR        -> error "TODO"
                LLVM        -> evalLLVM
                LLVMMC      -> evalLLVM
                LLVMCUDA    -> evalLLVM

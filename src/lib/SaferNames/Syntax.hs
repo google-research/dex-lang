@@ -593,7 +593,7 @@ withFreshBinders ((hint,binding):rest) cont = do
   Distinct <- getDistinct
   withFresh hint nameColorRep scope \b -> do
     extendBindings (toBindingsFrag (b:>binding)) do
-      rest' <- forM rest \(hint, binding) -> (hint,) <$> injectM binding
+      rest' <- forM rest \(h, bs) -> (h,) <$> injectM bs
       withFreshBinders rest' \bs vs ->
         cont (Nest (b:>binding) bs) (inject (binderName b) : vs)
 
@@ -1126,7 +1126,7 @@ fromNonDepTabTy ty = do
   return (idxTy, resultTy)
 
 nonDepDataConTys :: DataConDef n -> Maybe [Type n]
-nonDepDataConTys (DataConDef _ (Abs bs UnitE)) = go bs
+nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
   where
     go :: Nest Binder n l -> Maybe [Type n]
     go Empty = return []
@@ -1578,8 +1578,10 @@ instance GenericE Block where
   type RepE Block = PairE (MaybeE Type) (Abs (Nest Decl) Expr)
   fromE (Block (BlockAnn ty) decls result) = PairE (JustE ty) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
+  fromE _ = error "impossible"
   toE   (PairE (JustE ty) (Abs decls result)) = Block (BlockAnn ty) decls result
   toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
+  toE   _ = error "impossible"
 
 deriving instance Show (BlockAnn n l)
 
@@ -2109,6 +2111,8 @@ instance GenericE ImpInstr where
   {- ICastOp -} (LiftE IType `PairE` IExpr)
   {- IPrimOp -} (ComposeE PrimOp IExpr)
       )
+  toE = undefined
+  fromE = undefined
 
 instance InjectableE ImpInstr
 instance HoistableE  ImpInstr
@@ -2117,6 +2121,8 @@ instance SubstE Name ImpInstr
 
 instance GenericE ImpBlock where
   type RepE ImpBlock = Abs (Nest ImpDecl) (ListE IExpr)
+  toE = undefined
+  fromE = undefined
 
 instance InjectableE ImpBlock
 instance HoistableE  ImpBlock
@@ -2126,6 +2132,8 @@ instance SubstE Name ImpBlock
 instance GenericE IExpr where
   type RepE IExpr = EitherE2 (LiftE LitVal)
                              (PairE AtomName (LiftE BaseType))
+  toE = undefined
+  fromE = undefined
 
 instance InjectableE IExpr
 instance HoistableE  IExpr
@@ -2134,6 +2142,8 @@ instance SubstE Name IExpr
 
 instance GenericB IBinder where
   type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder AtomNameC)
+  toB = undefined
+  fromB = undefined
 
 instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
@@ -2175,6 +2185,8 @@ instance BindsBindings ImpDecl where
 
 instance GenericE ImpFunction where
   type RepE ImpFunction = UnitE -- TODO
+  toE = undefined
+  fromE = undefined
 
 instance InjectableE ImpFunction
 instance HoistableE  ImpFunction
@@ -2183,6 +2195,8 @@ instance SubstE Name ImpFunction
 
 instance GenericE ImpModule where
   type RepE ImpModule = ListE ImpFunction
+  toE = undefined
+  fromE = undefined
 
 instance InjectableE ImpModule
 instance HoistableE  ImpModule

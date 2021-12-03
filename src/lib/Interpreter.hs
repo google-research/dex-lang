@@ -10,26 +10,19 @@ module Interpreter (
   evalBlock, evalExpr, indices, indexSetSize,
   runInterpM, liftInterpM, InterpM, Interp) where
 
-import Control.Monad
 import Control.Monad.IO.Class
-import Data.Foldable
 import Data.Int
 import Foreign.Ptr
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
-import System.IO.Unsafe (unsafePerformIO)
 import Foreign.Marshal.Alloc
 
 import CUDA
-import LabeledItems
-import Util (enumerate, restructure)
 import LLVMExec
 import Err
 
 import SaferNames.Name
 import SaferNames.Syntax
 import SaferNames.Type
-import SaferNames.PPrint
+import SaferNames.PPrint ()
 import SaferNames.Builder
 
 -- TODO: can we make this as dynamic as the compiled version?

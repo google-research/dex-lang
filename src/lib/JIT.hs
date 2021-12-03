@@ -38,8 +38,8 @@ import Data.Foldable
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import qualified Data.Set as S
-import qualified Data.Map.Strict as M
-import qualified Data.Text as T
+-- import qualified Data.Map.Strict as M
+-- import qualified Data.Text as T
 
 import CUDA (getCudaArchitecture)
 import Syntax (CallingConvention (..), CUDAKernel (..),
@@ -536,6 +536,7 @@ impKernelToLLVMGPU (ImpFunction _ _ (Abs args body)) = do
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     kernelMetaId = L.MetadataNodeID 0
     nvvmAnnotations = L.NamedMetadataDefinition "nvvm.annotations" [kernelMetaId]
+impKernelToLLVMGPU _ = error "not implemented"
 
 threadIdxX :: Compile n Operand
 threadIdxX = emitExternCall spec []
@@ -830,9 +831,6 @@ lAddress s = case s of
 
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
-
-asLLVMName :: D.Name -> L.Name
-asLLVMName name = fromString $ pprint name
 
 showName :: D.Name -> String
 showName (D.Name D.GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter

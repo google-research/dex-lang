@@ -34,7 +34,6 @@ import qualified Data.Set        as S
 import LabeledItems
 
 import Err
-import Type (litType)
 import Util (forMZipped, forMZipped_, iota)
 
 import SaferNames.Syntax
@@ -247,6 +246,7 @@ instance CheckableE AtomBinding where
     PiBound  piBinding  -> PiBound     <$> checkE piBinding
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
+    PtrLitBound ty ptr  -> return $ PtrLitBound ty ptr
 
 instance CheckableE SolverBinding where
   checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
@@ -366,6 +366,7 @@ instance HasType Block where
       tyReq' <- injectM tyReq
       expr |: tyReq'
     return tyReq
+  getTypeE _ = error "impossible"
 
 instance CheckableB Decl where
   checkB (Let b binding) cont =
@@ -920,6 +921,19 @@ typeCheckBaseType e =
   getTypeE e >>= \case
     TC (BaseType b) -> return b
     ty -> throw TypeErr $ "Expected a base type. Got: " ++ pprint ty
+
+litType :: LitVal -> BaseType
+litType v = case v of
+  Int64Lit   _ -> Scalar Int64Type
+  Int32Lit   _ -> Scalar Int32Type
+  Word8Lit   _ -> Scalar Word8Type
+  Word32Lit  _ -> Scalar Word32Type
+  Word64Lit  _ -> Scalar Word64Type
+  Float64Lit _ -> Scalar Float64Type
+  Float32Lit _ -> Scalar Float32Type
+  PtrLit t _   -> PtrType t
+  VecLit  l -> Vector sb
+    where Scalar sb = litType $ head l
 
 data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
 data ReturnType   = SameReturn | Word8Return

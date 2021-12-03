@@ -13,21 +13,10 @@ module SaferNames.Simplify
 
 import Control.Category ((>>>))
 import Control.Monad
-import Control.Monad.Identity
 import Control.Monad.Reader
-import Data.Maybe
 import Data.Foldable (toList)
-import Data.Functor
-import Data.List (partition, elemIndex)
-import Data.Graph (graphFromEdges, topSort)
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
-import qualified Data.Set as S
-import GHC.Stack
 
 import Err
-import PPrint
-import Util
 
 import SaferNames.Name
 import SaferNames.Builder
@@ -54,6 +43,8 @@ runSimplifyM bindings cont =
 instance Simplifier SimplifyM
 
 instance Fallible (SimplifyM i o) where
+  throwErrs _ = undefined
+  addErrCtx _ _ = undefined
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance Builder (SimplifyM i) where
@@ -78,9 +69,9 @@ splitSimpModule :: Distinct n => Bindings n -> Module n
                 -> (Block n , AbsEvaluatedModule n)
 splitSimpModule bindings (Module _ decls result) = do
   let (vs, recon) = captureClosure decls result
-  let result = Atom $ ProdVal $ map Var vs
+  let resultTup = Atom $ ProdVal $ map Var vs
   let block = runHardFail $ runBindingsReaderT bindings $
-                refreshAbsM (Abs decls result) \decls' result' ->
+                refreshAbsM (Abs decls resultTup) \decls' result' ->
                   makeBlock decls' result'
   (block, recon)
 
@@ -149,7 +140,7 @@ simplifyApp f x = case f of
     DataDef _ paramBs _ <- lookupDataDef defName
     let (params', xs') = splitAt (nestLength paramBs) $ params ++ xs ++ [x]
     return $ DataCon printName defName params' con xs'
-  ACase e alts ~(Pi ab) -> undefined
+  ACase _ _ ~(Pi _) -> undefined
   TypeCon sn def params -> return $ TypeCon sn def params'
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x
@@ -182,6 +173,7 @@ simplifyAtom atom = case atom of
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _   -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
+  _ -> error "not implemented"
 
 simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
@@ -193,9 +185,9 @@ data Reconstruct n =
 
 applyRecon :: (Emits n, Builder m) => Reconstruct n -> Atom n -> m n (Atom n)
 applyRecon IdentityRecon x = return x
-applyRecon (LamRecon abs) x = do
+applyRecon (LamRecon ab) x = do
   xs <- getUnpacked x
-  applyNaryAbs abs $ map SubstVal xs
+  applyNaryAbs ab $ map SubstVal xs
 
 simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
 simplifyLam lam = do
@@ -218,11 +210,11 @@ simplifyNaryLam (Abs bs body) = fromPairE <$> liftImmut do
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
     extendBindings (toBindingsFrag decls) do
       (resultData, recon) <- defuncAtom (toScopeFrag bs' >>> toScopeFrag decls) result
-      block <- makeBlock decls $ Atom result
+      block <- makeBlock decls $ Atom resultData
       return $ PairE (Abs bs' block) recon
 
 defuncAtom :: BindingsReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
-defuncAtom frag x = do
+defuncAtom _ x = do
   xTy <- getType x
   if isData xTy
     then return (x, IdentityRecon)

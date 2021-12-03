@@ -35,13 +35,12 @@ import LabeledItems
 
 import Interpreter
 import Err
-import PPrint (PrettyPrec (..), PrecedenceLevel (..), atPrec, pprint,
-               prettyFromPrettyPrec, DocPrec, fromInfix, pAppArg)
+import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 
 import SaferNames.Syntax
 import SaferNames.Type
 import SaferNames.Name
-import SaferNames.PPrint
+import SaferNames.PPrint ()
 
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
