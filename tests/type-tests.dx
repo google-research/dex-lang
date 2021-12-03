@@ -255,7 +255,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > 1
 
 :p NewPair
-> NewPair
+> \a:Type b:Type. NewPair a b
 
 -- TODO: these are broken since switching from newtype mechanism to ADTs
 

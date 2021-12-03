@@ -29,8 +29,7 @@ module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux,
                 unpackBundle, unpackBundleTab,
                 emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
                 emitRunState, emitMaybeCase, emitWhile, emitDecl,
-                buildDataDef, emitDataDef, emitClassDef, emitDataConName, emitTyConName,
-                emitSuperclass, emitMethodType, getDataDef, getClassDef,
+                buildDataDef, emitDataDef, getDataDef, getClassDef,
                 emitRunReader, tabGet, SubstBuilderT, SubstBuilder, runSubstBuilderT,
                 ptrOffset, ptrLoad, unsafePtrLoad,
                 evalBlockE, substTraversalDef,
@@ -48,7 +47,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Control.Monad.State.Strict
-import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
@@ -233,19 +231,6 @@ emitDataDef dataDef =
   withNameHint (Name GenName "_data_def_" 0) $
     emitBinding $ DataDefName dataDef
 
-emitClassDef :: MonadBuilder m => ClassDef -> m ClassDefName
-emitClassDef classDef = emitBinding $ ClassDefName classDef
-
-emitDataConName :: MonadBuilder m => DataDefName -> Int -> m Name
-emitDataConName dataDefName conIdx = do
-  DataDef _ _ dataCons <- getDataDef dataDefName
-  let (DataConDef name _) = dataCons !! conIdx
-  withNameHint name $ emitBinding $ DataConName dataDefName conIdx
-
-emitTyConName :: MonadBuilder m => DataDefName -> m Name
-emitTyConName dataDefName =
-  withNameHint dataDefName $ emitBinding $ TyConName dataDefName
-
 getDataDef :: MonadBuilder m => DataDefName -> m DataDef
 getDataDef dataDefName = do
   scope <- getScope
@@ -257,34 +242,8 @@ getClassDef :: MonadBuilder m => ClassDefName -> m ClassDef
 getClassDef classDefName = do
   scope <- getScope
   case scope ! classDefName of
-    ClassDefName classDef -> return classDef
+    ClassDefName classDef _ -> return classDef
     _ -> error "Not a data def"
-
-emitSuperclass :: MonadBuilder m => ClassDefName -> Int -> m Name
-emitSuperclass dataDef idx = do
-  getter <- makeSuperclassGetter dataDef idx
-  emitBinding $ SuperclassName dataDef idx getter
-
-emitMethodType :: MonadBuilder m => [Bool] -> ClassDefName -> Int -> m Name
-emitMethodType explicit classDef idx = do
-  getter <- makeMethodGetter explicit classDef idx
-  emitBinding $ MethodName classDef idx getter
-
-makeMethodGetter :: MonadBuilder m => [Bool] -> ClassDefName -> Int -> m Atom
-makeMethodGetter explicit classDefName methodIdx = do
-  ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
-  let arrows = explicit <&> \case True -> PureArrow; False -> ImplicitArrow
-  let bs = toNest $ zip (toList paramBs) arrows
-  buildNestedLam bs \params -> do
-    buildLam (Bind ("d":> TypeCon def params)) ClassArrow \dict -> do
-      return $ getProjection [methodIdx] $ getProjection [1, 0] dict
-
-makeSuperclassGetter :: MonadBuilder m => DataDefName -> Int -> m Atom
-makeSuperclassGetter classDefName methodIdx = do
-  ClassDef def@(_, DataDef _ paramBs _) _ <- getClassDef classDefName
-  buildNaryLam ImplicitArrow paramBs \params -> do
-    buildLam (Bind ("d":> TypeCon def params)) PureArrow \dict -> do
-      return $ getProjection [methodIdx] $ getProjection [0, 0] dict
 
 buildNaryLam :: MonadBuilder m => Arrow -> (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
 buildNaryLam _   Empty       body = body []

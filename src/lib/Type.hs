@@ -1179,14 +1179,9 @@ nameToAtom :: Scope -> Name -> Maybe Atom
 nameToAtom scope v = do
   case scope ! v of
     AtomBinderInfo ty _ -> return $ Var $ v :> ty
-    ClassDefName (ClassDef dataDef _) ->
-      return $ TypeCon dataDef []
-    TyConName dataDefName -> do
-      let DataDefName dataDef = scope ! dataDefName
-      return $ TypeCon (dataDefName, dataDef) []
-    DataConName dataDefName conIdx -> do
-      let DataDefName dataDef = scope ! dataDefName
-      return $ DataCon (dataDefName, dataDef) [] conIdx []
+    ClassDefName _ e -> return e
+    TyConName _ e -> return e
+    DataConName _ _ e -> return e
     MethodName _ _ methodGetter -> return methodGetter
     binderInfo -> error $ "Not an atom name: " ++ pprint binderInfo
 

@@ -866,20 +866,16 @@ inferUVar = \case
   UAtomVar v ->
     return $ Var v
   UTyConVar v -> do
-    -- TODO: we shouldn't need these tildes because it's the only valid case
-    ~(TyConBinding   dataDefName) <- lookupBindings v
-    ~(DataDefBinding dataDef)     <- lookupBindings dataDefName
-    return $ TypeCon (dataDefName, dataDef) []
+    TyConBinding   _ tyConAtom <- lookupBindings v
+    return tyConAtom
   UDataConVar v -> do
-   -- TODO: we shouldn't need these tildes because it's the only valid case
-    ~(DataConBinding dataDefName idx) <- lookupBindings v
-    ~(DataDefBinding dataDef)         <- lookupBindings dataDefName
-    return $ DataCon (pprint v) (dataDefName, dataDef) [] idx []
+    DataConBinding _ _ conAtom <- lookupBindings v
+    return conAtom
   UClassVar v -> do
-    ~(ClassBinding (ClassDef _ _ dataDef)) <- lookupBindings v
-    return $ TypeCon dataDef []
+    ClassBinding _ dictTyAtom <- lookupBindings v
+    return dictTyAtom
   UMethodVar v -> do
-    ~(MethodBinding _ _ getter) <- lookupBindings v
+    MethodBinding _ _ getter <- lookupBindings v
     return getter
 
 buildForTypeFromTabType :: (Fallible1 m, Builder m)
@@ -920,15 +916,16 @@ inferUDeclTop :: (Mut o, TopInferer m) => UDecl i i' -> m i' o a -> m i o a
 inferUDeclTop (UDataDefDecl def tc dcs) cont = do
   def' <- liftImmut $ liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
-  tc' <- emitTyConName defName
-  dcs' <- mapM (emitDataConName defName) [0..(nestLength dcs - 1)]
+  tc' <- emitTyConName defName =<< tyConDefAsAtom (defName, def')
+  dcs' <- forM [0..(nestLength dcs - 1)] \i ->
+    emitDataConName defName i =<< dataConDefAsAtom (defName, def') i
   extendEnv (tc @> tc' <.> dcs @@> dcs') cont
 inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) cont = do
   let classPrettyName   = fromString (pprint className) :: SourceName
   let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
-  classDef <- inferInterfaceDataDef classPrettyName methodPrettyNames
-                paramBs superclasses methodTys
-  className' <- emitClassDef classDef
+  classDef@(ClassDef _ _ dictDataDef) <-
+    inferInterfaceDataDef classPrettyName methodPrettyNames paramBs superclasses methodTys
+  className' <- emitClassDef classDef =<< tyConDefAsAtom dictDataDef
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <-
     forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
@@ -936,6 +933,30 @@ inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) 
       emitMethodType (getNameHint prettyName) className' explicits i
   extendEnv (className @> className' <.> methodNames @@> methodNames') cont
 inferUDeclTop _ _ = error "not a top decl"
+
+tyConDefAsAtom :: TopInferer m => NamedDataDef o -> m i o (Atom o)
+tyConDefAsAtom ndef = liftBuilder do
+  PairE defName def@(DataDef _ params _) <- injectM $ toPairE ndef
+  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow params) \params' -> do
+    PairE defName' def' <- injectM (PairE defName def)
+    return $ TypeCon (defName', def') $ Var <$> params'
+
+dataConDefAsAtom :: TopInferer m => NamedDataDef o -> Int -> m i o (Atom o)
+dataConDefAsAtom ndef@(_, def) conIx = liftBuilder do
+  DataDef _ tyParams' conDefs' <- injectM def
+  let conDef' = conDefs' !! conIx
+  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ImplicitArrow tyParams') \tyArgs'' -> do
+    DataConDef conName (EmptyAbs conParams'') <-
+      (`applyNaryAbs` tyArgs'') =<< injectM (Abs tyParams' conDef')
+    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conParams'') \conArgs''' -> do
+      ListE tyArgs''' <- injectM $ ListE tyArgs''
+      ndef''' <- fromPairE <$> injectM (toPairE ndef)
+      return $ DataCon conName ndef''' (Var <$> tyArgs''') conIx (Var <$> conArgs''')
+
+binderNestAsPiNest :: Arrow -> Nest Binder n l -> Nest PiBinder n l
+binderNestAsPiNest arr = \case
+  Empty             -> Empty
+  Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
 inferDataDef :: (EmitsInf o, Inferer m) => UDataDef i -> m i o (DataDef o)
 inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
@@ -1057,8 +1078,8 @@ checkInstanceBody :: (EmitsBoth o, Inferer m)
                   -> [UMethodDef i]
                   -> m i o (Atom o)
 checkInstanceBody className params methods = do
-  ClassDef _ methodNames def@(_, DataDef tcNameHint _ _) <- getClassDef className
-  Just dictTy <- fromNewtype <$> applyDataDefParams (snd def) params
+  ClassDef _ methodNames ndef@(_, def@(DataDef tcNameHint _ _)) <- getClassDef className
+  Just dictTy <- fromNewtype <$> checkedApplyDataDefParams def params
   PairTy (ProdTy superclassTys) (ProdTy methodTys) <- return dictTy
   superclassDicts <- mapM trySynthDict superclassTys
   methodsChecked <- mapM (checkMethodDef className methodTys) methods
@@ -1068,8 +1089,8 @@ checkInstanceBody className params methods = do
   forM_ ([0..(length methodTys - 1)] `listDiff` idxs) \i ->
     throw TypeErr $ "Missing method: " ++ pprint (methodNames!!i)
   let dataConNameHint = "Mk" <> tcNameHint
-  return $ DataCon dataConNameHint def params 0 [PairVal (ProdVal superclassDicts)
-                                                         (ProdVal methods')]
+  return $ DataCon dataConNameHint ndef params 0 [PairVal (ProdVal superclassDicts)
+                                                          (ProdVal methods')]
 
 introDicts :: forall m o. (EmitsBoth o, Solver m, InfBuilder m)
            => [Type o]

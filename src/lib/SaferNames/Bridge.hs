@@ -321,9 +321,9 @@ asUnsafeNameFromBinderInfo
 asUnsafeNameFromBinderInfo info name cont = case info of
   AtomBinderInfo _ _ -> cont $ UnsafeName AtomNameRep    name
   DataDefName  _     -> cont $ UnsafeName DataDefNameRep name
-  TyConName    _     -> cont $ UnsafeName TyConNameRep   name
-  DataConName  _ _   -> cont $ UnsafeName DataConNameRep name
-  ClassDefName _     -> cont $ UnsafeName ClassNameRep   name
+  TyConName    _ _   -> cont $ UnsafeName TyConNameRep   name
+  DataConName  _ _ _ -> cont $ UnsafeName DataConNameRep name
+  ClassDefName _ _   -> cont $ UnsafeName ClassNameRep   name
   MethodName   _ _ _ -> cont $ UnsafeName MethodNameRep  name
   SuperclassName _ _ _ -> cont $ UnsafeName SuperclassNameRep name
 
@@ -391,11 +391,11 @@ data DEnvPair n where
 instance HasSafeVersionE AnyBinderInfo where
   type SafeVersionE AnyBinderInfo = EnvVal Binding
   toSafeE anyInfo = case anyInfo of
-    AtomBinderInfo ty info -> EnvVal nameColorRep <$> (AtomNameBinding <$> toSafeE (TypedBinderInfo ty info))
-    DataDefName def        -> EnvVal nameColorRep <$> (DataDefBinding  <$> toSafeE def)
-    TyConName def          -> EnvVal nameColorRep <$> (TyConBinding    <$> toSafeE (UnsafeName nameColorRep def))
-    DataConName def idx    -> EnvVal nameColorRep <$> (DataConBinding  <$> toSafeE (UnsafeName nameColorRep def) <*> pure idx)
-    ClassDefName classDef  -> EnvVal nameColorRep <$> (ClassBinding    <$> (S.ClassDef className methods <$> toSafeNamedDataDef def))
+    AtomBinderInfo ty info  -> EnvVal nameColorRep <$> (AtomNameBinding <$> toSafeE (TypedBinderInfo ty info))
+    DataDefName def         -> EnvVal nameColorRep <$> (DataDefBinding  <$> toSafeE def)
+    TyConName def e         -> EnvVal nameColorRep <$> (TyConBinding    <$> toSafeE (UnsafeName nameColorRep def) <*> toSafeE e)
+    DataConName def idx e   -> EnvVal nameColorRep <$> (DataConBinding  <$> toSafeE (UnsafeName nameColorRep def) <*> pure idx <*> toSafeE e)
+    ClassDefName classDef e -> EnvVal nameColorRep <$> (ClassBinding    <$> (S.ClassDef className methods <$> toSafeNamedDataDef def) <*> toSafeE e)
       where D.ClassDef def@(_, D.DataDef className _ _) methods = classDef
     MethodName def idx val -> EnvVal nameColorRep <$> (MethodBinding   <$> toSafeE (UnsafeName nameColorRep def) <*> pure idx <*> toSafeE val)
     SuperclassName def idx val -> EnvVal nameColorRep <$> (SuperclassBinding <$> toSafeE (UnsafeName nameColorRep def) <*> pure idx <*> toSafeE val)
@@ -407,10 +407,10 @@ topBindingToAnyBinderInfo rep binding = case binding of
   AtomNameBinding info -> do
     TypedBinderInfo ty' info' <- fromSafeE info
     return $ AtomBinderInfo ty' info'
-  DataDefBinding def      -> DataDefName <$> fromSafeE def
-  TyConBinding   defName  -> TyConName <$> fromUnsafeName <$> fromSafeE defName
-  DataConBinding defName idx -> DataConName <$> (fromUnsafeName <$> fromSafeE defName) <*> pure idx
-  ClassBinding   def -> ClassDefName <$> fromSafeE def
+  DataDefBinding def           -> DataDefName <$> fromSafeE def
+  TyConBinding   defName     e -> TyConName <$> (fromUnsafeName <$> fromSafeE defName) <*> fromSafeE e
+  DataConBinding defName idx e -> DataConName <$> (fromUnsafeName <$> fromSafeE defName) <*> pure idx <*> fromSafeE e
+  ClassBinding   def         e -> ClassDefName <$> fromSafeE def <*> fromSafeE e
   SuperclassBinding superclassName idx getter ->
     SuperclassName <$> (fromUnsafeName <$> fromSafeE superclassName) <*> pure idx <*> fromSafeE getter
   MethodBinding className idx getter ->

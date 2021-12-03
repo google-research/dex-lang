@@ -316,9 +316,6 @@ simplifyExpr expr = case expr of
     case f' of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@> SubstVal x') $ simplifyBlock body
-      DataCon def params con xs -> return $ DataCon def params' con xs'
-         where (_, DataDef _ paramBs _) = def
-               (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
       ACase e alts ~(Pi ab) -> do
         let rty' = snd $ applyAbs ab $ getType x'
         case all isCurriedFun alts of
@@ -332,8 +329,6 @@ simplifyExpr expr = case expr of
             _ -> False
           appAlt ~(Abs bs (LamVal b (Block Empty (Atom r)))) =
             Abs bs $ subst (b @> SubstVal  x', mempty) r
-      TypeCon def params -> return $ TypeCon def params'
-         where params' = params ++ [x']
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
