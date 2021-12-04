@@ -72,49 +72,16 @@ instance [Eq a, Eq b] Eq {artificials: a | realvars: b}
           {|realvars=r2|} -> r1 == r2
 
 
-'#### Filtered argmin and argmax
-These were written before filtering was supported.
-Note that the two functions also differ in their type signature.
+def argmax_suchthat [Ord o] (xs:n=>o) (cond:o->Bool): n =
+  -- Assumes that there's at least one element of xs
+  -- that satisfies the condition.
+  cmp = \x y. (not $ cond y) || (x > y && cond x)
+  argscan cmp xs
 
-def argmin_suchthat [Ord o] (xs:n=>o) (cond:n=>Bool): Maybe n =
-  def compare (maybepair1: Maybe (n & o))
-              (maybepair2: Maybe (n & o)) : Maybe (n & o) =
-    case maybepair1 of
-      Nothing -> case maybepair2 of
-        Nothing -> Nothing
-        Just pair2 -> Just pair2
-      Just pair1 -> case maybepair2 of
-        Nothing -> Just pair1
-        Just pair2 -> Just $ select ((snd pair1) < (snd pair2)) pair1 pair2
-
-  zipped = for i. case cond i of
-    True -> Just (i, xs.i)
-    False -> Nothing
-
-  case reduce Nothing compare zipped of
-    Nothing -> Nothing
-    Just pair -> Just $ fst pair
-
-
-def argmax_suchthat [Ord o] (xs:n=>o) (cond:o->Bool): Maybe n =
-  def compare (maybepair1: Maybe (n & o))
-              (maybepair2: Maybe (n & o)) : Maybe (n & o) =
-    case maybepair1 of
-      Nothing -> case maybepair2 of
-        Nothing -> Nothing
-        Just pair2 -> Just pair2
-      Just pair1 -> case maybepair2 of
-        Nothing -> Just pair1
-        Just pair2 -> Just $ select ((snd pair1) > (snd pair2)) pair1 pair2
-
-  zipped = for i. case cond xs.i of
-    True -> Just (i, xs.i)
-    False -> Nothing
-
-  case reduce Nothing compare zipped of
-    Nothing -> Nothing
-    Just pair -> Just $ fst pair
-
+def argmax_suchthat_table [Ord o] (xs:n=>o) (cond:n=>Bool): n =
+  -- This variant takes a table of pre-evaluated conditions.
+  cmp = \i j. (not $ cond.j) || (xs.i > xs.j && cond.i)
+  argscan cmp (for i. i)
 
 
 '### Simplex data types
@@ -222,7 +189,7 @@ def negate_constraints_with_negative_offsets [Eq cons]
 
 def build_feasibility_tableau [Eq cons]
   (tableau: (Tableau cons vars)): FeasibilityTableau cons vars =
-  -- Builds an expanded tableua, with an extra variable for each constraint.
+  -- Builds an expanded tableau, with an extra variable for each constraint.
   -- If these new variables can be driven to zero,
   -- while satisfying all constraints, then the original problem is feasible.
 
@@ -274,20 +241,13 @@ def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
           varRef!var += table.{|constraints=v|}.{|value=()|}
         {|slacks=var|} -> ()
 
-def extractAll (tableau: AbsTableau cons vars extra) : (ColIx cons vars=>Float) =
-  (basics, _, table) = tableau
-  yieldAccum (AddMonoid Float) \varRef.
-    for v:cons.
-      varRef!(basics.v) += table.{|constraints=v|}.{|value=()|}
-
 def chooseColumn (tableau: (AbsTableau cons vars extra)) : ColIx cons vars =
   -- An unchecked assumption is that there exists
   -- at least one nonbasic variable with a positive objective coefficient.
   (_, nonbasics, table) = tableau
   objective_coeffs = for c:vars.
     table.{|objective=()|}.(nonbasics.c)
-  maybeCol = argmax_suchthat objective_coeffs \x. x > 0.0
-  col = fromJust maybeCol
+  col = argmax_suchthat objective_coeffs \x. x > 0.0
   nonbasics.col
 
 def findPivotIndex (tableau: (AbsTableau cons vars extra))
@@ -302,12 +262,12 @@ def findPivotIndex (tableau: (AbsTableau cons vars extra))
     True -> Nothing
     False ->
       -- pick row index minimizing the quotient amongst positive quotients
-      quotients = for r. table.{|objective|extra|...r|}.{|value=()|} /
-                         table.{|objective|extra|...r|}.pivotcol
+      quotients = for r. -table.{|objective|extra|...r|}.{|value=()|} /
+                          table.{|objective|extra|...r|}.pivotcol
       cond = for r. table.{|objective|extra|...r|}.pivotcol > 0.0
-      case argmin_suchthat quotients cond of
-        Nothing -> todo  -- throw
-        Just pivotrow -> Just ({|objective|extra|...pivotrow|}, pivotcol)
+      pivotrow = argmax_suchthat_table quotients cond
+
+      Just ({|objective|extra|...pivotrow|}, pivotcol)
 
 
 def pivot [Eq cons, Eq extra, Eq vars]
@@ -344,7 +304,7 @@ def isFeasible (tableau: FeasibilityTableau cons vars) : Bool =
 def find_non_artificial_pivcol [Eq cons, Eq vars]
   (tableau: FeasibilityTableau cons vars)
   (pivrow: RowIx cons Unit)
-  : Maybe (ColIx cons {realvars: vars | artificials: cons}) =
+  : ColIx cons {realvars: vars | artificials: cons} =
   (basics, nonbasics, table) = tableau
   coeff = for i.
     col = nonbasics.i
@@ -354,9 +314,7 @@ def find_non_artificial_pivcol [Eq cons, Eq vars]
         {|realvars=_|} -> table.pivrow.col
         {|artificials=_|} -> 0.0
   ind = argmax_suchthat coeff (\x. not $ x ~~ 0.0)
-  case ind of 
-    Nothing -> Nothing
-    Just ind -> Just nonbasics.ind
+  nonbasics.ind
 
 
 def pivot_artificials [Eq cons, Eq vars]
@@ -373,14 +331,12 @@ def pivot_artificials [Eq cons, Eq vars]
           {|realvars=var|} -> ()
           {|artificials=var|} ->
             pivrow = {|constraints=v|}
-            case find_non_artificial_pivcol tableau pivrow of
-              Just pivcol ->
-                tRef := pivot tableau (pivrow, pivcol)
-              Nothing -> error("should have been able to pivot to a slack var")
-
+            pivcol = find_non_artificial_pivcol tableau pivrow
+            tRef := pivot tableau (pivrow, pivcol)
 
 def deduce_nonbasics [Eq cons, Eq vars]
   (basics: cons=>(ColIx cons vars)) : vars=>(ColIx cons vars) =
+
     not_in_basics = \c. not $ any for r.
       case basics.r of
         {|slacks=r|}    -> case c of
@@ -392,7 +348,7 @@ def deduce_nonbasics [Eq cons, Eq vars]
           {|variables=c|} -> r == c
           {|value=_|}     -> True
 
-    all_columns = for i:(ColIx cons vars). i
+    all_columns = for i. i
     nonBasicsList = filter not_in_basics all_columns
 
     -- We know that there will be one nonbasic for every variable,
@@ -619,7 +575,7 @@ pentagon = [
 , {coeffs = [0.855563, -0.517699], conType = LessThan, offset = 0.368932} ]
 objective = [1.1, 1.2]
 
-image = for i:(Fin 200). for j:(Fin 200).
+image = for i:(Fin 150). for j:(Fin 150).
   cur_point = pixToReal i j
   case constraints_satisfied pentagon cur_point of
     True -> [1.0, 1.0, (-0.5) + eval_objective objective cur_point]
@@ -631,10 +587,10 @@ simplexSolution = simplex pentagon objective Maximize
 :p simplexSolution
 > (Solution [0.55636, 0.740704])
 
--- Plot objective function, and location of answer (red dot).
+-- Plot objective function and location of answer (red dot).
 simplexLocation = case simplexSolution of
   Solution ans -> ans
-(x, y) : (Fin 200 & Fin 200) = float2pix simplexLocation
+(x, y) : (Fin 150 & Fin 150) = float2pix simplexLocation
 image3 = draw_point image x y
 :html imshow image3
 > <html output>
