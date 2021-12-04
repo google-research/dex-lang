@@ -10,8 +10,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SaferNames.Inference (inferModule, synthModule,
-                             trySynthDict, trySynthDictBlock) where
+module Inference (inferModule, synthModule, trySynthDict, trySynthDictBlock) where
 
 import Prelude hiding ((.), id)
 import Control.Category
@@ -32,14 +31,14 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Unsafe.Coerce as TrulyUnsafe
 
-import SaferNames.Name
-import SaferNames.Builder
-import SaferNames.Syntax hiding (State)
-import SaferNames.Type
-import SaferNames.PPrint ()
-import SaferNames.CheapReduction
-import SaferNames.GenericTraversal
-import SaferNames.MTL1
+import Name
+import Builder
+import Syntax hiding (State)
+import Type
+import PPrint ()
+import CheapReduction
+import GenericTraversal
+import MTL1
 
 import LabeledItems
 import Err

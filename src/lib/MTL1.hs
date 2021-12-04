@@ -7,7 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SaferNames.MTL1 (
+module MTL1 (
     MonadTrans11 (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
     StateT1, pattern StateT1, runStateT1,
@@ -19,8 +19,8 @@ import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import Control.Applicative
 
-import SaferNames.Name
-import SaferNames.Syntax
+import Name
+import Syntax
 import Err
 
 class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where

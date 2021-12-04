@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module SaferNames.CheapReduction (
+module CheapReduction (
   CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapReduceToAtom) where
 
 import Data.Functor.Identity
@@ -15,11 +15,11 @@ import Control.Applicative
 import Control.Monad.Trans
 import Control.Monad.Writer.Strict
 
-import SaferNames.MTL1
-import SaferNames.Name
-import SaferNames.Syntax
-import SaferNames.PPrint ()
-import {-# SOURCE #-} SaferNames.Inference (trySynthDictBlock)
+import MTL1
+import Name
+import Syntax
+import PPrint ()
+import {-# SOURCE #-} Inference (trySynthDictBlock)
 import Err
 
 -- === api ===

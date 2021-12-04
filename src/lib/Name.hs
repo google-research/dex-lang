@@ -15,7 +15,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE DerivingVia #-}
 
-module SaferNames.Name (
+module Name (
   Name (..), RawName, S (..), C (..), (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), FromName (..), Distinct,
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,

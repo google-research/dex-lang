@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module SaferNames.Parser (Parser, parseit, parseProg, parseData,
+module Parser (Parser, parseit, parseProg, parseData,
                parseTopDeclRepl, uint, withSource, parseExpr, exprAsModule,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
@@ -27,8 +27,8 @@ import qualified Env as D
 
 import Err
 import LabeledItems
-import SaferNames.Name
-import SaferNames.Syntax
+import Name
+import Syntax
 
 -- canPair is used for the ops (,) (|) (&) which should only appear inside
 -- parentheses (to avoid conflicts with records and other syntax)
@@ -77,7 +77,7 @@ sourceBlock = do
     level <- logLevel <|> logTime <|> logBench <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
-  return $ SourceBlock (unPos (sourceLine pos)) offset level src b Nothing
+  return $ SourceBlock (unPos (sourceLine pos)) offset level src b
 
 recover :: ParseError String Void -> Parser (LogLevel, SourceBlock')
 recover e = do

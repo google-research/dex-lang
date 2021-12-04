@@ -25,16 +25,12 @@ import Serialize
 import Resources
 import TopLevel
 import Err
+import Syntax
+import Parser (parseTopDeclRepl, keyWordStrs)
 #ifdef DEX_LIVE
 import RenderHtml
 import LiveOutput
 #endif
-
-import SaferNames.PPrint ()
-import SaferNames.Syntax
-import SaferNames.Parser (parseTopDeclRepl, keyWordStrs)
-
-import Syntax (Result (..), Output (..), Backend (..))
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly
@@ -69,17 +65,17 @@ runMode evalMode preludeFile opts = do
     ScriptMode fname fmt _ -> do
       results <- evalInterblockM opts env $ evalFile fname
       printLitProg fmt results
-    ExportMode dexPath objPath -> do
-      results <- evalInterblockM opts env $ map snd <$> evalFile dexPath
-      let outputs = foldMap (\(Result outs _) -> outs) results
-      let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
-      putStr $ foldMap (nonEmptyNewline . pprint) errors
-      let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-      unless (backendName opts == LLVM) $
-        throw CompilerErr "Export only supported with the LLVM CPU backend"
-      TopStateEx env' <- return env
-      -- exportFunctions objPath exportedFuns $ getNameBindings env'
-      error "not implemented"
+    -- ExportMode dexPath objPath -> do
+    --   results <- evalInterblockM opts env $ map snd <$> evalFile dexPath
+    --   let outputs = foldMap (\(Result outs _) -> outs) results
+    --   let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
+    --   putStr $ foldMap (nonEmptyNewline . pprint) errors
+    --   let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
+    --   unless (backendName opts == LLVM) $
+    --     throw CompilerErr "Export only supported with the LLVM CPU backend"
+    --   TopStateEx env' <- return env
+    --   -- exportFunctions objPath exportedFuns $ getNameBindings env'
+    --   error "not implemented"
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block

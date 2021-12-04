@@ -42,19 +42,16 @@ import qualified Data.Set as S
 -- import qualified Data.Text as T
 
 import CUDA (getCudaArchitecture)
-import Syntax (CallingConvention (..), CUDAKernel (..),
-               Output (..))
 import qualified Env as D
 
-
-import SaferNames.Syntax
-import SaferNames.Name
-import SaferNames.Imp
+import Err
+import Syntax
+import Name
+import Imp
 import PPrint
 import Logging
 import LLVMExec
 import Util (IsBool (..))
-
 
 type OperandSubstVal = SubstVal AtomNameC (LiftE Operand)
 type OperandEnv     i    = Env     OperandSubstVal i    VoidS

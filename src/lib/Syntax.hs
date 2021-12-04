@@ -7,170 +7,226 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module Syntax (
-    Type, Kind, BaseType (..), ScalarBaseType (..),
-    EffectP (..), Effect, RWS (..), EffectRowP (..), EffectRow,
-    ClassName (..), TyQual (..), Var, Binder, Block (..), Decl (..),
-    Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
-    PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
-    BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), SubstEnv, ScopedSubstEnv, SubstVal (..),
-    Scope, CmdName (..), HasIVars (..), ForAnn (..),
-    Val, Op, Con, Hof, TC, Module (..), TopState (..), emptyTopState,
-    EvaluatedModule (..), SynthCandidates (..),
-    emptyEvaluatedModule, DataConRefBinding (..),
-    ImpModule (..), ImpBlock (..), ImpFunction (..), ImpDecl (..),
-    IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
-    IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
-    IFunType (..), IFunVar, CallingConvention (..), IsCUDARequired (..),
-    UAlt (..), AltP, Alt, ModuleName,
-    IScope, BinderInfo (..), AnyBinderInfo (..), AsRecEnv (..),
-    Bindings, CUDAKernel (..), BenchStats,
-    Result (..), Output (..), OutFormat (..),
-    Err (..), ErrType (..), Except, throw, throwIf, addContext,
-    addSrcContext, catchIOExcept, liftExcept, (-->), (--@), (==>),
-    boundUVars, PassName (..), boundVars, renamingSubst, bindingsAsVars,
-    freeVars, freeUVars, Subst, HasVars, BindsVars, Ptr, PtrType,
-    AddressSpace (..), showPrimName, strToPrimName, primNameToStr,
-    monMapSingle, monMapLookup, Direction (..), Limit (..),
-    SourceName, SourceMap (..), UExpr, UExpr' (..), UType, UPatAnn (..),
-    UAnnBinder (..), UVar (..), UBinder (..), UMethodDef (..),
-    UMethodType (..), UPatAnnArrow (..), UVars,
-    UPat, UPat' (..), SourceUModule (..), SourceNameDef (..), sourceNameDefName,
-    UModule (..), UDecl (..), UDataDef (..), UArrow, arrowEff,
-    UEffect, UEffectRow, UEffArrow,
-    DataDef (..), NamedDataDef, DataConDef (..), ClassDef (..), UConDef, Nest (..), toNest,
-    DataDefName, ClassDefName,
-    subst, scopelessSubst, absArgType, applyAbs, makeAbs,
-    applyNaryAbs, applyDataDefParams, freshSkolemVar, IndexStructure,
-    fromLeftLeaningConsListTy,
+    Type, Kind, BaseType (..), ScalarBaseType (..), Except,
+    EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
+    Binder, Block (..), BlockAnn (..), Decl (..), DeclBinding (..),
+    Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
+    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
+    LamBinding (..), LamBinder (..), LamExpr (..),
+    PiBinding (..), PiBinder (..),
+    PiType (..), LetAnn (..), SomeDecl (..),
+    BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
+    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
+    ClassDef (..), SynthCandidates (..), Bindings (..),
+    BindsBindings (..), BindsOneAtomName (..), WithBindings (..), AtomNameBinder,
+    DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
+    SubstE (..), SubstB (..), Ptr, PtrType,
+    AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
+    Direction (..), Limit (..), DataDef (..), DataConDef (..), Nest (..), IndexStructure,
+    mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
-    extendEffRow, getProjection, simplifyCase,
-    varType, binderType, isTabTy, BlockId, LogLevel (..), IRVariant (..),
-    BaseMonoidP (..), BaseMonoid, getBaseMonoidType,
+    BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
+    IRVariant (..), SubstVal (..), AtomName, DataDefName, ClassName, AtomSubstVal,
+    SourceName, SourceNameOr (..), UVar (..), UBinder (..),
+    UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
+    ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
+    UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
+    UMethodDef (..), UAnnBinder (..),
+    WithSrcE (..), WithSrcB (..), srcPos,
+    SourceBlock (..), SourceBlock' (..), EnvQuery (..),
+    SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
+    CmdName (..), LogLevel (..), OutFormat (..),
+    BindingsReader (..), BindingsExtender (..),  Binding (..),
+    TopBindingsFrag (..), EvaluatedModule,
+    ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
+    withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
+    withFreshPiBinder, piBinderToLamBinder, catBindingsFrags,
+    BindingsFrag (..), lookupBindings, lookupDataDef, lookupAtomName,
+    lookupBindingsPure, lookupSourceMap,
+    getSourceMapM, updateBindings, runBindingsReaderT,
+    BindingsReaderM, runBindingsReaderM,
+    BindingsReaderT (..), BindingsReader2, BindingsExtender2,
+    getDB, DistinctBindings (..),
+    naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
+    considerNonDepPiType, trySelectBranch,
+    fromNonDepTabTy, nonDepDataConTys, binderType, atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
-    pattern MaybeTy, pattern JustAtom, pattern NothingAtom,
-    pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
-    pattern IdxRepTy, pattern IdxRepVal, pattern IIdxRepVal, pattern IIdxRepTy,
-    pattern TagRepTy, pattern TagRepVal, pattern Word8Ty,
-    pattern IntLitExpr, pattern FloatLitExpr,
-    pattern Int32Ty, pattern Int64Ty,
+    piArgType, piArrow, extendEffRow,
+    bindingsFragToSynthCandidates,
+    getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoInjectableProof,
+    FallibleT1, runFallibleT1, abstractPtrLiterals,
+    IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
+    ImpModule (..), ImpFunction (..), ImpBlock (..), ImpDecl (..),
+    ImpInstr (..), iBinderType,
+    IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
+    Output (..), PassName (..), Result (..), ModuleName, BenchStats,
+    IsCUDARequired (..),
+    pattern IdxRepTy, pattern IdxRepVal,
+    pattern IIdxRepTy, pattern IIdxRepVal,
+    pattern TagRepTy,
+    pattern TagRepVal, pattern Word8Ty,
     pattern UnitTy, pattern PairTy,
-    pattern ProdTy, pattern ProdVal,
-    pattern SumTy, pattern SumVal,
-    pattern FunTy, pattern PiTy,
     pattern FixedIntRange, pattern Fin, pattern RefTy, pattern RawRefTy,
     pattern BaseTy, pattern PtrTy, pattern UnitVal,
-    pattern PairVal, pattern PureArrow,
-    pattern TyKind, pattern LamVal,
-    pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
-    pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
-    pattern EffKind, pattern NestOne, pattern BinderAnn,
-    pattern LabeledRowKind, pattern UPatIgnore, pattern ClassDictCon)
-  where
+    pattern PairVal, pattern TyKind,
+    pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
+    pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
+    pattern TabTyAbs, pattern TabTy,
+    pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
+    pattern BinaryLamExpr, NaryLam,
+    pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
+    (-->), (?-->), (--@), (==>) ) where
 
-import qualified Data.Map.Strict as M
-import Control.Monad.Except hiding (Except)
-import qualified Data.ByteString.Char8 as B
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Set as S
-import Data.Store (Store)
+import Data.Functor
+import Data.Foldable (toList, fold)
 import Data.Tuple (swap)
-import Data.Foldable (toList)
+import Control.Applicative
+import Control.Monad.Except hiding (Except)
+import Control.Monad.Identity
+import Control.Monad.Reader
+import Control.Monad.Writer.Strict (Writer, execWriter, tell)
+import qualified Control.Monad.Trans.Except as MTE
+import qualified Data.ByteString.Char8 as B
+import qualified Data.List.NonEmpty    as NE
+import qualified Data.Map.Strict       as M
+import qualified Data.Set              as S
 import Data.Int
-import Data.Word
 import Data.String (IsString, fromString)
+import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
+import Data.Word
+import Data.Maybe (catMaybes)
 import Foreign.Ptr
-import GHC.Generics
+import Data.Maybe (fromJust)
 
-import Cat
+import GHC.Generics (Generic (..))
+import Data.Store (Store)
+
+import Name
 import Err
 import LabeledItems
-import Env
-import Util (IsBool (..), (...), Zippable (..), zipErr, enumerate)
+import Util ((...), enumerate, IsBool (..))
 
 -- === core IR ===
 
-data Atom = Var Var
-          | Lam LamExpr
-          | Pi  PiType
-          | DepPairTy           (Abs Binder Type)
-          | DepPair   Atom Atom (Abs Binder Type) -- lhs, rhs, rhs type abstracted over lhs
-          | DataCon NamedDataDef [Atom] Int [Atom]
-          | TypeCon NamedDataDef [Atom]
-          | LabeledRow (ExtLabeledItems Type Name)
-          | Record (LabeledItems Atom)
-          | RecordTy (ExtLabeledItems Type Name)
-          | Variant (ExtLabeledItems Type Name) Label Int Atom
-          | VariantTy (ExtLabeledItems Type Name)
-          | Con Con
-          | TC  TC
-          | Eff EffectRow
-          | ACase Atom [AltP Atom] Type
-            -- single-constructor only for now
-          | DataConRef NamedDataDef [Atom] (Nest DataConRefBinding)
-          -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
-          | DepPairRef Atom (Abs Binder Atom) (Abs Binder Type)
-          | BoxedRef Binder Atom Block Atom  -- binder, ptr, size, body
-          -- access a nested member of a binder
-          -- XXX: Variable name must not be an alias for another name or for
-          -- a statically-known atom. This is because the variable name used
-          -- here may also appear in the type of the atom. (We maintain this
-          -- invariant during substitution and in Builder.hs.)
-          | ProjectElt (NE.NonEmpty Int) Var
-            deriving (Show, Generic)
+data Atom (n::S) =
+   Var (AtomName n)
+ | Lam (LamExpr n)
+ | Pi  (PiType  n)
+   -- SourceName is purely for printing
+ | DataCon SourceName (DataDefName n) [Atom n] Int [Atom n]
+ | TypeCon SourceName (DataDefName n) [Atom n]
+ | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
+ | Record (LabeledItems (Atom n))
+ | RecordTy  (ExtLabeledItems (Type n) (AtomName n))
+ | Variant   (ExtLabeledItems (Type n) (AtomName n)) Label Int (Atom n)
+ | VariantTy (ExtLabeledItems (Type n) (AtomName n))
+ | Con (Con n)
+ | TC  (TC  n)
+ | Eff (EffectRow n)
+ | ACase (Atom n) [AltP Atom n] (Type n)
+   -- single-constructor only for now
+ | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
+ | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
+ -- access a nested member of a binder
+ -- XXX: Variable name must not be an alias for another name or for
+ -- a statically-known atom. This is because the variable name used
+ -- here may also appear in the type of the atom. (We maintain this
+ -- invariant during substitution and in Builder.hs.)
+ | ProjectElt (NE.NonEmpty Int) (AtomName n)
+   deriving (Show, Generic)
 
-data Expr = App Atom Atom
-          | Case Atom [Alt] Type
-          | Atom Atom
-          | Op  Op
-          | Hof Hof
-            deriving (Show, Generic)
+data Expr n =
+   App (Atom n) (Atom n)
+ | Case (Atom n) [Alt n] (Type n)
+ | Atom (Atom n)
+ | Op  (Op  n)
+ | Hof (Hof n)
+   deriving (Show, Generic)
 
-data Decl = Let LetAnn Binder Expr deriving (Show, Generic)
+data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
+     deriving (Show, Generic)
+data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
+     deriving (Show, Generic)
 
-data DataConRefBinding = DataConRefBinding Binder Atom  deriving (Show, Generic)
+type AtomName    = Name AtomNameC
+type DataDefName = Name DataDefNameC
+type ClassName   = Name ClassNameC
 
-data Block = Block (Nest Decl) Expr    deriving (Show, Generic)
-type AltP a = Abs (Nest Binder) a
-type Alt = AltP Block
+type AtomNameBinder = NameBinder AtomNameC
 
-type Var    = VarP Type
-type Binder = BinderP Type
+data DataConRefBinding (n::S) (l::S) = DataConRefBinding (Binder n l) (Atom n)
 
--- The SourceNames in DataDef, DataConDef and ClassDef are purely for printing
-data DataDef = DataDef SourceName (Nest Binder) [DataConDef]  deriving (Show, Generic)
-data DataConDef = DataConDef SourceName (Nest Binder)    deriving (Show, Generic)
--- The SourceNames are the method names, for reporting errors
-data ClassDef = ClassDef NamedDataDef [SourceName]  deriving (Show, Generic)
+type AtomBinderP = BinderP AtomNameC
+type Binder = AtomBinderP Type
+type AltP (e::E) = Abs (Nest Binder) e :: E
+type Alt = AltP Block                  :: E
 
-type NamedDataDef = (Name, DataDef)
+data DataDef n where
+  -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
+  -- binder name is in UExpr and Bindings
+  DataDef :: SourceName -> Nest Binder n l -> [DataConDef l] -> DataDef n
 
-data Abs b body = Abs b body               deriving (Show, Generic)
-data Nest a = Nest a (Nest a) | Empty
-              deriving (Show, Generic, Functor, Foldable, Traversable)
+-- As above, the `SourceName` is just for pretty-printing
+data DataConDef n =
+  DataConDef SourceName (EmptyAbs (Nest Binder) n)
+  deriving (Show, Generic)
 
-data NestPair b1 b2 = NestPair b1 b2
-                      deriving (Show, Generic)
+data ClassDef n =
+  ClassDef SourceName [SourceName] (DataDefName n)
+  deriving (Show, Generic)
 
-type LamExpr = Abs Binder (Arrow, Block)
-type PiType  = Abs Binder (Arrow, Type)
+-- The Type is the type of the result expression (and thus the type of the
+-- block). It's given by querying the result expression's type, and checking
+-- that it doesn't have any free names bound by the decls in the block. We store
+-- it separately as an optimization, to avoid having to traverse the block.
+-- If the decls are empty we can skip the type annotation, because then we can
+-- cheaply query the result, and, more importantly, there's no risk of having a
+-- type that mentions local variables.
+data Block n where
+  Block :: BlockAnn n l -> Nest Decl n l -> Expr l -> Block n
 
-type Arrow = ArrowP EffectRow
-data ArrowP eff = PlainArrow eff
-                | ImplicitArrow
-                | ClassArrow
-                | TabArrow
-                | LinArrow
-                  deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+data BlockAnn n l where
+  BlockAnn :: Type n -> BlockAnn n l
+  NoBlockAnn :: BlockAnn n n
+
+data LamBinding (n::S) = LamBinding Arrow (Type n)
+  deriving (Show, Generic)
+
+data LamBinder (n::S) (l::S) =
+  LamBinder (NameBinder AtomNameC n l) (Type n) Arrow (EffectRow l)
+  deriving (Show, Generic)
+
+data LamExpr (n::S) where
+  LamExpr :: LamBinder n l -> Block l -> LamExpr n
+
+data PiBinding (n::S) = PiBinding Arrow (Type n)
+  deriving (Show, Generic)
+
+data PiBinder (n::S) (l::S) =
+  PiBinder (NameBinder AtomNameC n l) (Type n) Arrow
+  deriving (Show, Generic)
+
+data PiType  (n::S) where
+  PiType :: PiBinder n l -> EffectRow l -> Type  l -> PiType n
+
+data Arrow =
+   PlainArrow
+ | ImplicitArrow
+ | ClassArrow
+ | TabArrow
+ | LinArrow
+   deriving (Show, Eq, Generic)
 
 data LetAnn = PlainLet
             | InstanceLet
@@ -181,160 +237,738 @@ type Val  = Atom
 type Type = Atom
 type Kind = Type
 
-type TC  = PrimTC  Atom
-type Con = PrimCon Atom
-type Op  = PrimOp  Atom
-type Hof = PrimHof Atom
+type TC  n = PrimTC  (Atom n)
+type Con n = PrimCon (Atom n)
+type Op  n = PrimOp  (Atom n)
+type Hof n = PrimHof (Atom n)
 
-data SourceNameDef =
-   SrcAtomName    Name
- | SrcTyConName   Name
- | SrcDataConName Name
- | SrcClassName   Name
- | SrcMethodName  Name
+type IndexStructure = Nest Binder
+
+type AtomSubstVal = SubstVal AtomNameC Atom :: V
+
+-- === bindings - static information we carry about a lexical scope ===
+
+data Binding (c::C) (n::S) where
+  AtomNameBinding   :: AtomBinding n                      -> Binding AtomNameC       n
+  DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
+  TyConBinding      :: DataDefName n        -> Atom n -> Binding TyConNameC      n
+  DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
+  ClassBinding      :: ClassDef n -> Atom n                        -> Binding ClassNameC      n
+  SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
+  MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
+deriving instance Show (Binding c n)
+
+data AtomBinding (n::S) =
+   LetBound    (DeclBinding   n)
+ | LamBound    (LamBinding    n)
+ | PiBound     (PiBinding     n)
+ | MiscBound   (Type          n)
+ | SolverBound (SolverBinding n)
+ | PtrLitBound PtrType (Ptr ())
    deriving (Show, Generic)
 
-sourceNameDefName :: SourceNameDef -> Name
-sourceNameDefName def = case def of
-  SrcAtomName    v -> v
-  SrcTyConName   v -> v
-  SrcDataConName v -> v
-  SrcClassName   v -> v
-  SrcMethodName  v -> v
+data SolverBinding (n::S) =
+   InfVarBound (Type n) SrcPosCtx
+ | SkolemBound (Type n)
+   deriving (Show, Generic)
 
-data SourceMap = SourceMap { fromSourceMap :: M.Map SourceName SourceNameDef }  deriving (Show, Generic)
+data BindingsFrag (n::S) (l::S) =
+  BindingsFrag (RecEnvFrag Binding n l) (Maybe (EffectRow l))
 
-data Module = Module IRVariant (Nest Decl) EvaluatedModule deriving (Show, Generic)
+data Bindings (n::S) = Bindings
+  { getNameBindings    :: RecEnv Binding n
+  , getSynthCandidates :: SynthCandidates n
+  , getSourceMap       :: SourceMap n
+  , getEffects         :: EffectRow n}
+  deriving (Generic)
 
-data EvaluatedModule =
-  EvaluatedModule Bindings SynthCandidates SourceMap deriving (Show, Generic)
+instance HasScope Bindings where
+  toScope = toScope . getNameBindings
 
-data TopState = TopState
-  { topBindings        :: Bindings
-  , topSynthCandidates :: SynthCandidates
-  , topSourceMap       :: SourceMap }
+catBindingsFrags :: Distinct n3
+                 => BindingsFrag n1 n2 -> BindingsFrag n2 n3 -> BindingsFrag n1 n3
+catBindingsFrags (BindingsFrag frag1 maybeEffs1)
+                 (BindingsFrag frag2 maybeEffs2) =
+  withExtEvidence (toExtEvidence frag2) do
+    let fragOut = catRecEnvFrags frag1 frag2
+    let effsOut = case maybeEffs2 of
+                     Nothing    -> fmap inject maybeEffs1
+                     Just effs2 -> Just effs2
+    BindingsFrag fragOut effsOut
+
+instance OutFrag BindingsFrag where
+  emptyOutFrag = BindingsFrag emptyOutFrag Nothing
+  catOutFrags _ frag1 frag2 = catBindingsFrags frag1 frag2
+
+instance OutMap Bindings where
+  emptyOutMap = Bindings emptyOutMap mempty (SourceMap mempty) Pure
+
+instance ExtOutMap Bindings (RecEnvFrag Binding)  where
+  extendOutMap (Bindings bindings scs sm eff) frag =
+    withExtEvidence frag do
+      Bindings
+        (bindings `extendOutMap` frag)
+        (inject scs <> bindingsFragToSynthCandidates (BindingsFrag frag Nothing))
+        (inject sm)
+        (inject eff)
+
+instance ExtOutMap Bindings BindingsFrag where
+  extendOutMap bindings frag = do
+    let BindingsFrag newBindings maybeNewEff = frag
+    case extendOutMap bindings newBindings of
+      Bindings bs scs sm oldEff -> do
+        let newEff = case maybeNewEff of
+                       Nothing  -> inject oldEff
+                       Just eff -> eff
+        Bindings bs scs sm newEff
+
+bindingsFragToSynthCandidates :: Distinct l => BindingsFrag n l -> SynthCandidates l
+bindingsFragToSynthCandidates (BindingsFrag (RecEnvFrag frag) _) =
+  execWriter $ bindingsFragToSynthCandidates' $ toEnvPairs frag
+
+bindingsFragToSynthCandidates' :: Distinct l => Nest (EnvPair Binding l) n l
+                               -> Writer (SynthCandidates l) ()
+bindingsFragToSynthCandidates' nest = case nest of
+  Empty -> return ()
+  Nest (EnvPair b binding) rest -> withExtEvidence rest do
+    case binding of
+       AtomNameBinding (LetBound (DeclBinding InstanceLet ty _)) -> do
+         let dataDefName = getInstanceLetDataDefName ty
+         let m = M.singleton dataDefName [inject $ Var $ binderName b]
+         tell $ (SynthCandidates [] [] m)
+       AtomNameBinding (LamBound (LamBinding ClassArrow _)) -> do
+         tell $ inject (SynthCandidates [Var $ binderName b] [] mempty)
+       AtomNameBinding (PiBound (PiBinding ClassArrow _)) -> do
+         tell $ inject (SynthCandidates [Var $ binderName b] [] mempty)
+       SuperclassBinding _ _ getter ->
+         tell $ inject (SynthCandidates [] [getter] mempty)
+       _ -> return ()
+    bindingsFragToSynthCandidates' rest
+
+getInstanceLetDataDefName :: Type n -> DataDefName n
+getInstanceLetDataDefName (Pi (PiType b _ resultTy)) =
+  ignoreHoistFailure $ hoist b $ getInstanceLetDataDefName resultTy
+getInstanceLetDataDefName (TypeCon _ defName _) = defName
+getInstanceLetDataDefName _ = error "not a valid instance type"
+
+data WithBindings (e::E) (n::S) where
+  WithBindings :: (Distinct l, Ext l n) => Bindings l -> e l -> WithBindings e n
+
+class ScopeReader m => BindingsReader (m::MonadKind1) where
+  getBindings :: Immut n => m n (Bindings n)
+
+getDB :: BindingsReader m => Immut n => m n (DistinctBindings n)
+getDB = do
+  Distinct <- getDistinct
+  bindings <- getBindings
+  return $ DB bindings
+
+data DistinctBindings n where
+  DB :: (Distinct n, Immut n) => Bindings n -> DistinctBindings n
+
+class (BindingsReader m, Monad1 m)
+      => BindingsExtender (m::MonadKind1) where
+  -- Note that we don't require `Immut l` here. So it's still possible to extend
+  -- with nameless fragments, of type `BindingsFrag n n`.
+  extendBindings :: Distinct l => BindingsFrag n l -> (Ext n l => m l r) -> m n r
+
+type BindingsReader2   (m::MonadKind2) = forall (n::S). BindingsReader   (m n)
+type BindingsExtender2 (m::MonadKind2) = forall (n::S). BindingsExtender (m n)
+
+instance (InjectableE e, BindingsReader m)
+         => BindingsReader (OutReaderT e m) where
+  getBindings = OutReaderT $ lift $ getBindings
+
+instance (InjectableE e, ScopeReader m, BindingsExtender m)
+         => BindingsExtender (OutReaderT e m) where
+  extendBindings frag m = OutReaderT $ ReaderT \env ->
+    extendBindings frag do
+      let OutReaderT (ReaderT cont) = m
+      env' <- injectM env
+      cont env'
+
+newtype BindingsReaderT (m::MonadKind) (n::S) (a:: *) =
+  BindingsReaderT {runBindingsReaderT' :: ReaderT (DistinctEvidence n, Bindings n) m a }
+  deriving (Functor, Applicative, Monad, MonadFail, Fallible, Alternative)
+
+type BindingsReaderM = BindingsReaderT Identity
+runBindingsReaderM :: Distinct n => Bindings n -> BindingsReaderM n a -> a
+runBindingsReaderM bindings m = runIdentity $ runBindingsReaderT bindings m
+
+runBindingsReaderT :: Distinct n => Bindings n
+                   -> (Immut n => BindingsReaderT m n a) -> m a
+runBindingsReaderT bindings cont =
+  withImmutEvidence (toImmutEvidence bindings) $
+    runReaderT (runBindingsReaderT' cont) (Distinct, bindings)
+
+instance Monad m => BindingsReader (BindingsReaderT m) where
+  getBindings = BindingsReaderT $ asks snd
+
+instance Monad m => BindingsExtender (BindingsReaderT m) where
+  extendBindings frag m = BindingsReaderT $ withReaderT
+    (\(_, bindings) -> (Distinct, extendOutMap bindings frag)) $
+        withExtEvidence (toExtEvidence frag) $
+          runBindingsReaderT' m
+
+instance Monad m => ScopeReader (BindingsReaderT m) where
+  getDistinct = BindingsReaderT $ asks fst
+  getScope = toScope <$> snd <$> BindingsReaderT ask
+  liftImmut cont = do
+    Immut <- getImmut
+    Distinct <- getDistinct
+    cont
+
+instance Monad m => AlwaysImmut (BindingsReaderT m) where
+  getImmut = BindingsReaderT $ ReaderT \(_, bindings) ->
+    return $ toImmutEvidence bindings
+
+instance MonadIO m => MonadIO (BindingsReaderT m n) where
+  liftIO m = BindingsReaderT $ lift $ liftIO m
+
+instance (InjectableV v, BindingsReader m) => BindingsReader (EnvReaderT v m i) where
+  getBindings = EnvReaderT $ lift getBindings
+
+instance (InjectableV v, ScopeReader m, BindingsExtender m)
+         => BindingsExtender (EnvReaderT v m i) where
+  extendBindings frag m = EnvReaderT $ ReaderT \env ->
+    extendBindings frag do
+      let EnvReaderT (ReaderT cont) = m
+      env' <- injectM env
+      cont env'
+
+-- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
+-- like we do with `SubstE Name`, `SubstE AtomSubstVal`, etc?
+class BindsNames b => BindsBindings (b::B) where
+  toBindingsFrag :: Distinct l => b n l -> BindingsFrag n l
+
+  default toBindingsFrag :: (GenericB b, BindsBindings (RepB b))
+                        => Distinct l => b n l -> BindingsFrag n l
+  toBindingsFrag b = toBindingsFrag $ fromB b
+
+-- We're really just defining this so we can have a polymorphic `binderType`.
+-- But maybe we don't need one. Or maybe we can make one using just
+-- `BindsOneName b AtomNameC` and `BindsBindings b`.
+class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
+  boundAtomBinding :: b n l -> AtomBinding n
+
+binderType :: BindsOneAtomName b => b n l -> Type n
+binderType b =  atomBindingType $ toBinding $ boundAtomBinding b
+
+instance (InjectableE ann, ToBinding ann c) => BindsBindings (BinderP c ann) where
+  toBindingsFrag (b:>ann) = BindingsFrag (RecEnvFrag (b @> toBinding ann')) Nothing
+    where ann' = withExtEvidence b $ inject ann
+
+class (SubstE Name e, InjectableE e) => ToBinding (e::E) (c::C) | e -> c where
+  toBinding :: e n -> Binding c n
+
+instance NameColor c => ToBinding (Binding c) c where
+  toBinding = id
+
+instance ToBinding AtomBinding AtomNameC where
+  toBinding = AtomNameBinding
+
+instance ToBinding DeclBinding AtomNameC where
+  toBinding = toBinding . LetBound
+
+instance ToBinding LamBinding AtomNameC where
+  toBinding = toBinding . LamBound
+
+instance ToBinding PiBinding AtomNameC where
+  toBinding = toBinding . PiBound
+
+instance ToBinding Atom AtomNameC where
+  toBinding = toBinding . MiscBound
+
+instance ToBinding SolverBinding AtomNameC where
+  toBinding = toBinding . SolverBound
+
+instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
+  toBinding (LeftE  e) = toBinding e
+  toBinding (RightE e) = toBinding e
+
+lookupBindings :: (NameColor c, BindingsReader m) => Name c o -> m o (Binding c o)
+lookupBindings v = liftImmut do
+  bindings <- getBindings
+  v' <- injectM v
+  return $ lookupBindingsPure bindings v'
+
+lookupAtomName :: BindingsReader m => AtomName n -> m n (AtomBinding n)
+lookupAtomName name = lookupBindings name >>= \case AtomNameBinding x -> return x
+
+lookupDataDef :: BindingsReader m => DataDefName n -> m n (DataDef n)
+lookupDataDef name = lookupBindings name >>= \case DataDefBinding x -> return x
+
+lookupSourceMap :: BindingsReader m
+                => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
+lookupSourceMap nameColor sourceName = do
+  sourceMap <- getSourceMapM
+  case M.lookup sourceName $ fromSourceMap sourceMap of
+    Just envVal -> return $ Just $ fromEnvVal nameColor envVal
+    Nothing -> return Nothing
+
+getSourceMapM :: BindingsReader m => m n (SourceMap n)
+getSourceMapM = liftImmut $ getSourceMap <$> getBindings
+
+lookupBindingsPure :: Bindings n -> Name c n -> Binding c n
+lookupBindingsPure (Bindings bindings _ _ _) v =
+  lookupTerminalEnvFrag (fromRecEnv bindings) v
+
+updateBindings :: Name c n -> Binding c n -> Bindings n -> Bindings n
+updateBindings v rhs bindings =
+  bindings { getNameBindings = RecEnv $ updateEnvFrag v rhs bs }
+  where (RecEnv bs) = getNameBindings bindings
+
+refreshAbsM
+  :: ( SubstB Name b, SubstE Name e, Immut n, BindsBindings b
+     , BindingsReader m, BindingsExtender m)
+  => Abs b e n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => b n l -> e l -> m l a)
+  -> m n a
+refreshAbsM ab cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  DistinctAbs b e <- return $ refreshAbs scope ab
+  extendBindings (toBindingsFrag b) do
+    withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b) $
+      cont b e
+
+refreshBinders
+  :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
+     , EnvReader v m, SubstB v b, BindsBindings b)
+  => Immut o
+  => b i i'
+  -> (forall o'. (Immut o', Ext o o') => b o o' -> m i' o' a)
+  -> m i o a
+refreshBinders b cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  env <- getEnv
+  DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idEnvFrag b)
+  extendBindings (toBindingsFrag b') do
+    withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b') $
+      extendEnv envFrag do
+        cont b'
+
+-- Version of `refreshBinder` that gets its `Immut n` evidence from the monad.
+-- TODO: make it easy to go the other way (from refreshI to refresh) by having a
+-- `CarriesImmutT` transformer to add explicit Immut evidence when
+-- needed. Then this can be the main version.
+refreshBindersI
+  :: ( InjectableV v, SubstV v v, BindingsExtender2 m, FromName v
+     , EnvReader v m, SubstB v b, BindsBindings b)
+  => AlwaysImmut2 m
+  => b i i'
+  -> (forall o'. Ext o o' => b o o' -> m i' o' a)
+  -> m i o a
+refreshBindersI b cont = do
+  Immut <- getImmut
+  refreshBinders b cont
+
+withFreshBinder
+  :: (NameColor c, BindingsExtender m, ToBinding binding c)
+  => Immut n
+  => NameHint -> binding n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => NameBinder c n l -> m l a)
+  -> m n a
+withFreshBinder hint binding cont = do
+  scope    <- getScope
+  Distinct <- getDistinct
+  withFresh hint nameColorRep scope \b -> do
+    extendBindings (toBindingsFrag (b:>binding)) $
+      cont b
+
+withFreshBinders
+  :: (NameColor c, BindingsExtender m, ToBinding binding c)
+  => Immut n
+  => [(NameHint, binding n)]
+  -> (forall l. (Immut l, Distinct l, Ext n l)
+              => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
+  -> m n a
+withFreshBinders [] cont = do
+  Distinct <- getDistinct
+  cont Empty []
+withFreshBinders ((hint,binding):rest) cont = do
+  scope    <- getScope
+  Distinct <- getDistinct
+  withFresh hint nameColorRep scope \b -> do
+    extendBindings (toBindingsFrag (b:>binding)) do
+      rest' <- forM rest \(h, bs) -> (h,) <$> injectM bs
+      withFreshBinders rest' \bs vs ->
+        cont (Nest (b:>binding) bs) (inject (binderName b) : vs)
+
+withFreshLamBinder
+  :: (BindingsExtender m)
+  => Immut n
+  => NameHint -> LamBinding n
+  -> Abs Binder EffectRow n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => LamBinder n l -> m l a)
+  -> m n a
+withFreshLamBinder hint binding@(LamBinding arr ty) effAbs cont = do
+  withFreshBinder hint binding \b -> do
+    effs <- applyAbs (inject effAbs) (binderName b)
+    withAllowedEffects effs do
+      cont $ LamBinder b ty arr effs
+
+withFreshPureLamBinder
+  :: (BindingsExtender m)
+  => Immut n
+  => NameHint -> LamBinding n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => LamBinder n l -> m l a)
+  -> m n a
+withFreshPureLamBinder hint binding@(LamBinding arr ty) cont = do
+  withFreshBinder hint binding \b -> do
+    withAllowedEffects Pure do
+      cont $ LamBinder b ty arr Pure
+
+withFreshPiBinder
+  :: BindingsExtender m
+  => Immut n
+  => NameHint -> PiBinding n
+  -> (forall l. (Immut l, Distinct l, Ext n l) => PiBinder n l -> m l a)
+  -> m n a
+withFreshPiBinder hint binding@(PiBinding arr ty) cont = do
+  withFreshBinder hint binding \b ->
+    withAllowedEffects Pure $
+      cont $ PiBinder b ty arr
+
+piBinderToLamBinder :: PiBinder n l -> EffectRow l -> LamBinder n l
+piBinderToLamBinder (PiBinder b ty arr) eff = LamBinder b ty arr eff
+
+data SomeDecl (binding::V) (n::S) (l::S) where
+  SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
+
+instance ProvesExt (SomeDecl binding) where
+  toExtEvidence (SomeDecl b _) = toExtEvidence b
+
+instance (InjectableV v, SubstV v binding)
+         => SubstB v (SomeDecl binding) where
+  substB env (SomeDecl b binding) cont = do
+    let binding' = substE env binding
+    substB env b \env' b' -> cont env' $ SomeDecl b' binding'
+  substBDistinct _ _ = undefined
+
+instance HoistableV binding => HoistableB (SomeDecl binding) where
+  freeVarsB (SomeDecl _ binding) = freeVarsE binding
+
+instance InjectableV binding => InjectableB (SomeDecl binding) where
+  injectionProofB _ _ _ = undefined
+
+instance BindsNames (SomeDecl binding) where
+  toScopeFrag (SomeDecl b _) = toScopeFrag b
+
+instance (forall c. NameColor c => ToBinding (binding c) c)
+         => BindsBindings (SomeDecl binding) where
+  toBindingsFrag (SomeDecl b binding) =
+    withExtEvidence b $
+      BindingsFrag (RecEnvFrag $ b @> inject (toBinding binding)) Nothing
+
+-- === reconstruction abstractions ===
+
+captureClosure
+  :: (HoistableB b, HoistableE e, NameColor c)
+  => b n l -> e l -> ([Name c l], NaryAbs c e n)
+captureClosure decls result = do
+  let vs = capturedVars decls result
+  let ab = abstractFreeVarsNoAnn vs result
+  case hoist decls ab of
+    HoistSuccess abHoisted -> (vs, abHoisted)
+    HoistFailure _ ->
+      error "shouldn't happen"  -- but it will if we have types that reference
+                                -- local vars. We really need a telescope.
+
+capturedVars :: (NameColor c, BindsNames b, HoistableE e)
+             => b n l -> e l -> [Name c l]
+capturedVars b e = nameSetToList nameColorRep nameSet
+  where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+
+abstractPtrLiterals
+  :: (BindingsReader m, HoistableE e)
+  => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
+abstractPtrLiterals block = do
+  let fvs = freeVarsList AtomNameRep block
+  (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
+    lookupAtomName v <&> \case
+      PtrLitBound ty ptr -> Just ((v, LiftE (PtrType ty)), PtrLit ty ptr)
+      _ -> Nothing
+  Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
+  let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
+  return (Abs ptrBinders block', ptrVals)
+
+-- === FallibleT transformer ===
+
+newtype FallibleT1 (m::MonadKind1) (n::S) a =
+  FallibleT1 { fromFallibleT :: ReaderT ErrCtx (MTE.ExceptT Errs (m n)) a }
+  deriving (Functor, Applicative, Monad)
+
+runFallibleT1 :: Monad1 m => FallibleT1 m n a -> m n (Except a)
+runFallibleT1 m =
+  MTE.runExceptT (runReaderT (fromFallibleT m) mempty) >>= \case
+    Right ans -> return $ Success ans
+    Left errs -> return $ Failure errs
+
+instance Monad1 m => MonadFail (FallibleT1 m n) where
+  fail s = throw MonadFailErr s
+
+instance Monad1 m => Fallible (FallibleT1 m n) where
+  throwErrs (Errs errs) = FallibleT1 $ ReaderT \ambientCtx ->
+    MTE.throwE $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
+  addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
+
+instance ScopeReader m => ScopeReader (FallibleT1 m) where
+  getScope = FallibleT1 $ lift $ lift getScope
+  getDistinct = FallibleT1 $ lift $ lift $ getDistinct
+  liftImmut cont = FallibleT1 $ ReaderT \ctx -> do
+    exceptResult <- lift $ liftImmut do
+      MTE.runExceptT (runReaderT (fromFallibleT cont) ctx) >>= \case
+        Right x  -> return $ RightE x
+        Left err -> return $ LeftE (LiftE err)
+    case exceptResult of
+      RightE x -> return x
+      LeftE (LiftE err) -> MTE.throwE err
+
+instance BindingsReader m => BindingsReader (FallibleT1 m) where
+  getBindings = FallibleT1 $ lift $ lift getBindings
+
+-- === Querying static env ===
+
+getSynthCandidatesM :: BindingsReader m => m n (SynthCandidates n)
+getSynthCandidatesM = liftImmut $ getSynthCandidates <$> getBindings
+
+getAllowedEffects :: BindingsReader m => m n (EffectRow n)
+getAllowedEffects = liftImmut $ getEffects <$> getBindings
+
+withAllowedEffects :: BindingsExtender m => EffectRow n -> m n a -> m n a
+withAllowedEffects effs cont = do
+  Distinct <- getDistinct
+  extendBindings (BindingsFrag emptyOutFrag $ Just effs) cont
+
+-- === front-end language AST ===
+
+data SourceNameOr (a::E) (n::S) where
+  -- Only appears before renaming pass
+  SourceName :: SourceName -> SourceNameOr a VoidS
+  -- Only appears after renaming pass
+  InternalName :: a n -> SourceNameOr a n
+deriving instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S))
+deriving instance Ord (a n) => Ord (SourceNameOr a n)
+deriving instance Show (a n) => Show (SourceNameOr a n)
+
+data UVar (n::S) =
+   UAtomVar    (Name AtomNameC    n)
+ | UTyConVar   (Name TyConNameC   n)
+ | UDataConVar (Name DataConNameC n)
+ | UClassVar   (Name ClassNameC   n)
+ | UMethodVar  (Name MethodNameC  n)
+   deriving (Eq, Ord, Show, Generic)
+
+data UBinder (c::C) (n::S) (l::S) where
+  -- Only appears before renaming pass
+  UBindSource :: SourceName -> UBinder c n n
+  -- May appear before or after renaming pass
+  UIgnore :: UBinder c n n
+  -- The following binders only appear after the renaming pass.
+  UBind :: (NameBinder c n l) -> UBinder c n l
+
+type UExpr = WithSrcE UExpr'
+data UExpr' (n::S) =
+   UVar (SourceNameOr UVar n)
+ | ULam (ULamExpr n)
+ | UPi  (UPiExpr n)
+ | UApp Arrow (UExpr n) (UExpr n)
+ | UDecl (UDeclExpr n)
+ | UFor Direction (UForExpr n)
+ | UCase (UExpr n) [UAlt n]
+ | UHole
+ | UTypeAnn (UExpr n) (UExpr n)
+ | UTabCon [UExpr n]
+ | UIndexRange (Limit (UExpr n)) (Limit (UExpr n))
+ | UPrimExpr (PrimExpr (UExpr n))
+ | URecord (ExtLabeledItems (UExpr n) (UExpr n))     -- {a=x, b=y, ...rest}
+ | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
+ | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
+ | URecordTy (ExtLabeledItems (UExpr n) (UExpr n))   -- {a:X & b:Y & ...rest}
+ | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
+ | UIntLit  Int
+ | UFloatLit Double
   deriving (Show, Generic)
 
-emptyEvaluatedModule :: EvaluatedModule
-emptyEvaluatedModule = EvaluatedModule mempty mempty mempty
+data ULamExpr (n::S) where
+  ULamExpr :: Arrow -> UPatAnn n l -> UExpr l -> ULamExpr n
 
-emptyTopState :: TopState
-emptyTopState = TopState mempty mempty mempty
+data UPiExpr (n::S) where
+  UPiExpr :: Arrow -> UPatAnn n l -> UEffectRow l -> UType l -> UPiExpr n
+
+data UDeclExpr (n::S) where
+  UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
+
+type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameC) n l)
+
+-- TODO Why are the type and data constructor names SourceName, rather
+-- than being scoped names of the proper color of their own?
+data UDataDef (n::S) where
+  UDataDef
+    :: (SourceName, Nest (UAnnBinder AtomNameC) n l)    -- param binders
+    -- Trailing l' is the last scope for the chain of potentially
+    -- dependent constructor argument types.
+    -> [(SourceName, UDataDefTrail l)] -- data constructor types
+    -> UDataDef n
+
+data UDataDefTrail (l::S) where
+  UDataDefTrail :: Nest (UAnnBinder AtomNameC) l l' -> UDataDefTrail l
+
+data UDecl (n::S) (l::S) where
+  ULet :: LetAnn -> UPatAnn n l -> UExpr n -> UDecl n l
+  UDataDefDecl
+    :: UDataDef n                          -- actual definition
+    -> UBinder TyConNameC n l'             -- type constructor name
+    ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
+    -> UDecl n l
+  UInterface
+    :: Nest (UAnnBinder AtomNameC) n p     -- parameter binders
+    ->  [UType p]                          -- superclasses
+    ->  [UMethodType p]                    -- method types
+    -> UBinder ClassNameC n l'             -- class name
+    ->   Nest (UBinder MethodNameC) l' l   -- method names
+    -> UDecl n l
+  UInstance
+    :: SourceNameOr (Name ClassNameC) n  -- class name
+    -> Nest UPatAnnArrow n l'            -- dictionary args (i.e. conditions)
+    ->   [UExpr l']                      -- class parameters
+    ->   [UMethodDef l']                 -- method definitions
+    -- Maybe we should make a separate color (namespace) for instance names?
+    -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
+    -> UDecl n l
+
+type UType = UExpr
+
+data UMethodType (n::S) where
+  UMethodType :: Either [SourceName] [Bool] -> UType s -> UMethodType s
+  deriving (Show, Generic)
+
+data UForExpr (n::S) where
+  UForExpr :: UPatAnn n l -> UExpr l -> UForExpr n
+
+data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (UExpr n)
+  deriving (Show, Generic)
+
+data UPatAnn (n::S) (l::S) = UPatAnn (UPat n l) (Maybe (UType n))
+  deriving (Show, Generic)
+
+data UPatAnnArrow (n::S) (l::S) = UPatAnnArrow (UPatAnn n l) Arrow
+  deriving (Show, Generic)
+
+data UAnnBinder (c::C) (n::S) (l::S) = UAnnBinder (UBinder c n l) (UType n)
+  deriving (Show, Generic)
+
+data UAlt (n::S) where
+  UAlt :: UPat n l -> UExpr l -> UAlt n
+
+type UPat = WithSrcB UPat'
+data UPat' (n::S) (l::S) =
+   UPatBinder (UBinder AtomNameC n l)
+ | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
+ | UPatPair (PairB UPat UPat n l)
+ | UPatUnit (UnitB n l)
+ -- The ExtLabeledItems and the PairB are parallel, constrained by the parser.
+ | UPatRecord (ExtLabeledItems () ()) (PairB (Nest UPat) (MaybeB UPat) n l) -- {a=x, b=y, ...rest}
+ | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
+ | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
+ | UPatTable (Nest UPat n l)
+  deriving (Show)
+
+data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
+  deriving (Show)
+
+data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcPosCtx (binder n l)
+  deriving (Show)
+
+class HasSrcPos a where
+  srcPos :: a -> SrcPosCtx
+
+instance HasSrcPos (WithSrcE (a::E) (n::S)) where
+  srcPos (WithSrcE pos _) = pos
+
+instance HasSrcPos (WithSrcB (b::B) (n::S) (n::S)) where
+  srcPos (WithSrcB pos _) = pos
+
+pattern UPatIgnore :: UPat' (n::S) n
+pattern UPatIgnore = UPatBinder UIgnore
+
+-- === top-level modules ===
+
+type SourceName = String
+
+-- body must only contain SourceName version of names and binders
+data SourceUModule = SourceUModule (UDecl VoidS VoidS) deriving (Show)
+
+-- body must only contain Name version of names and binders
+data UModule (n::S) where
+  UModule
+    :: UDecl n l
+    -> SourceMap l
+    -> UModule n
+
+data SourceBlock = SourceBlock
+  { sbLine     :: Int
+  , sbOffset   :: Int
+  , sbLogLevel :: LogLevel
+  , sbText     :: String
+  , sbContents :: SourceBlock' }  deriving (Show)
+
+type ReachedEOF = Bool
+type ModuleName = String
+
+data SourceBlock' =
+   RunModule SourceUModule
+ | Command CmdName (SourceName, SourceUModule)
+ | GetNameType SourceName
+ -- TODO Add a color for module names?
+ | ImportModule ModuleName
+ | QueryEnv EnvQuery
+ | ProseBlock String
+ | CommentLine
+ | EmptyLines
+ | UnParseable ReachedEOF String
+  deriving (Show, Generic)
+
+data CmdName = GetType | EvalExpr OutFormat | ExportFun String
+               deriving  (Show, Generic)
+
+data LogLevel = LogNothing | PrintEvalTime | PrintBench String
+              | LogPasses [PassName] | LogAll
+                deriving  (Show, Generic)
+
+data EnvQuery =
+   DumpEnv
+ | InternalNameInfo RawName
+ | SourceNameInfo   SourceName
+   deriving (Show, Generic)
+
+data SourceMap (n::S) = SourceMap
+  { fromSourceMap :: M.Map SourceName (EnvVal Name n)}
+  deriving Show
+
+data Module n where
+  Module
+    :: IRVariant
+    -> Nest Decl n l   -- Unevaluated decls representing runtime work to be done
+    -> EvaluatedModule l
+    -> Module n
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
 
+type EvaluatedModule = Abs TopBindingsFrag UnitE
 
--- === front-end language AST ===
+data TopBindingsFrag n l =
+  TopBindingsFrag (BindingsFrag n l) (SynthCandidates l) (SourceMap l)
 
-type SourceName = String
-
-data UVar =
-   -- Only appears before renaming pass
-   USourceVar SourceName
-   -- Only appears after renaming pass
- | UInternalVar Name
-   deriving (Eq, Ord, Show, Generic)
-
-data UBinder =
-   -- Only appears before renaming pass
-   UBindSource SourceName
-   -- May appear before or after renaming pass
- | UIgnore
-   -- The following binders only appear after the renaming pass.
- | UBind Name
-   deriving (Show, Generic)
-
-
-type UExpr = WithSrc UExpr'
-data UExpr' = UVar UVar
-            | ULam UPatAnn UArrow UExpr
-            | UPi  UPatAnn UEffArrow UType
-            | UApp UArrow UExpr UExpr
-            | UDecl UDecl UExpr
-            | UFor Direction UPatAnn UExpr
-            | UCase UExpr [UAlt]
-            | UHole
-            | UTypeAnn UExpr UExpr
-            | UTabCon [UExpr]
-            | UIndexRange (Limit UExpr) (Limit UExpr)
-            | UPrimExpr (PrimExpr UExpr)
-            | URecord (ExtLabeledItems UExpr UExpr)     -- {a=x, b=y, ...rest}
-            | UVariant (LabeledItems ()) Label UExpr    -- {|a|b| a=x |}
-            | UVariantLift (LabeledItems ()) UExpr      -- {|a|b| ...rest |}
-            | URecordTy (ExtLabeledItems UExpr UExpr)   -- {a:X & b:Y & ...rest}
-            | UVariantTy (ExtLabeledItems UExpr UExpr)  -- {a:X | b:Y | ...rest}
-            | UIntLit  Int
-            | UFloatLit Double
-              deriving (Show, Generic)
-
-type UConDef = (SourceName,  Nest UAnnBinder)
-
-data UDataDef = UDataDef
-        (SourceName, Nest UAnnBinder)  -- param binders
-       [(SourceName, Nest UAnnBinder)] -- data constructor types
-                deriving (Show, Generic)
-
-data UDecl =
-   ULet LetAnn UPatAnn UExpr
- | UDataDefDecl
-     UDataDef       -- actual definition
-     UBinder        -- type constructor name
-     (Nest UBinder) -- data constructor names
- | UInterface
-     (Nest UAnnBinder)  -- parameter binders
-        [UType]         -- superclasses
-        [UMethodType]   -- method types
-     UBinder            -- class name
-       (Nest UBinder)   -- method names
- | UInstance
-     (Nest UPatAnnArrow)      -- dictionary args (i.e. conditions)
-       UVar [UExpr]           -- class var and params
-       [UMethodDef]           -- method definitions
-     (Maybe UBinder)          -- optional instance name
-   deriving (Show, Generic)
-
-type UType  = UExpr
-type UArrow = ArrowP ()
-type UEffect    = EffectP    UVar
-type UEffectRow = EffectRowP UVar
-type UEffArrow = ArrowP UEffectRow
-
-data UMethodType = UMethodType { uMethodExplicitBs :: [UVar], uMethodType :: UType }
-                   deriving (Show, Generic)
-data UMethodDef = UMethodDef UVar UExpr deriving (Show, Generic)
-
-data UPatAnn      = UPatAnn      UPat    (Maybe UType)  deriving (Show, Generic)
-data UPatAnnArrow = UPatAnnArrow UPatAnn UArrow         deriving (Show, Generic)
-
-data UAnnBinder = UAnnBinder UBinder UType  deriving (Show, Generic)
-data UAlt = UAlt UPat UExpr deriving (Show, Generic)
-
--- body must only contain SourceName version of names and binders
-data SourceUModule = SourceUModule UDecl deriving (Show)
-
--- body must only contain Name version of names and binders
-data UModule = UModule UDecl SourceMap deriving (Show)
-
-type UPat  = WithSrc UPat'
-data UPat' = UPatBinder UBinder
-           | UPatCon UVar (Nest UPat)
-           | UPatPair UPat UPat
-           | UPatUnit
-           | UPatRecord (ExtLabeledItems UPat UPat)     -- {a=x, b=y, ...rest}
-           | UPatVariant (LabeledItems ()) Label UPat   -- {|a|b| a=x |}
-           | UPatVariantLift (LabeledItems ()) UPat     -- {|a|b| ...rest |}
-           | UPatTable [UPat]
-             deriving (Show)
-
-data WithSrc a = WithSrc SrcPosCtx a
-                 deriving (Show, Functor, Foldable, Traversable)
-
-pattern UPatIgnore :: UPat'
-pattern UPatIgnore = UPatBinder UIgnore
-
-srcPos :: WithSrc a -> SrcPosCtx
-srcPos (WithSrc pos _) = pos
+-- TODO: we could add a lot more structure for querying by dict type, caching, etc.
+data SynthCandidates n = SynthCandidates
+  { lambdaDicts       :: [Atom n]
+  , superclassGetters :: [Atom n]
+  , instanceDicts     :: M.Map (DataDefName n) [Atom n] }
+  deriving (Show, Generic)
 
 -- === primitive constructors and operators ===
 
@@ -446,7 +1080,7 @@ data PrimHof e =
 
 data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
                      deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-type BaseMonoid = BaseMonoidP Atom
+type BaseMonoid n = BaseMonoidP (Atom n)
 
 data PrimEffect e = MAsk | MExtend e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -476,13 +1110,7 @@ data Limit a = InclusiveLim a
              | Unlimited
                deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data ClassName = DataClass | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
-
-data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
-
 type PrimName = PrimExpr ()
-
-type IndexStructure = Nest Binder
 
 strToPrimName :: String -> Maybe PrimName
 strToPrimName s = M.lookup s builtinNames
@@ -495,86 +1123,49 @@ primNameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 showPrimName :: PrimExpr e -> String
 showPrimName prim = primNameToStr $ fmap (const ()) prim
 
-getBaseMonoidType :: Type -> Type
-getBaseMonoidType ty = case ty of
-  TabTy _ b -> getBaseMonoidType b
-  _         -> ty
-
 -- === effects ===
 
-data EffectRowP name = EffectRow (S.Set (EffectP name)) (Maybe name)
-                      deriving (Show, Eq, Generic)
+data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data RWS = Reader | Writer | State               deriving (Show, Eq, Ord, Generic)
-data EffectP name = RWSEffect RWS name | ExceptionEffect | IOEffect
-                    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+data EffectP (name::E) (n::S) =
+  RWSEffect RWS (Maybe (name n)) | ExceptionEffect | IOEffect
+  deriving (Show, Eq, Ord, Generic)
 
-type EffectRow = EffectRowP Name
-type Effect    = EffectP    Name
+type Effect = EffectP AtomName
+type UEffect = EffectP (SourceNameOr (Name AtomNameC))
 
-pattern Pure :: Ord name => EffectRowP name
+data EffectRowP (name::E) (n::S) =
+  EffectRow (S.Set (EffectP name n)) (Maybe (name n))
+  deriving (Show, Eq, Ord, Generic)
+
+type EffectRow = EffectRowP AtomName
+type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
+
+pattern Pure :: Ord (name n) => EffectRowP name n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
- where  Pure = mempty
+ where  Pure = EffectRow mempty Nothing
 
-instance Ord name => Semigroup (EffectRowP name) where
-  EffectRow effs t <> EffectRow effs' t' =
-    EffectRow (S.union effs effs') newTail
-    where
-      newTail = case (t, t') of
-        (Nothing, effTail) -> effTail
-        (effTail, Nothing) -> effTail
-        _ | t == t' -> t
-          | otherwise -> error "Can't combine effect rows with mismatched tails"
-
-instance Ord name => Monoid (EffectRowP name) where
-  mempty = EffectRow mempty Nothing
-
--- === top-level constructs ===
-
-data SourceBlock = SourceBlock
-  { sbLine     :: Int
-  , sbOffset   :: Int
-  , sbLogLevel :: LogLevel
-  , sbText     :: String
-  , sbContents :: SourceBlock'
-  , sbId       :: Maybe BlockId }  deriving (Show)
-
-type BlockId = Int
-type ReachedEOF = Bool
-type ModuleName = String
-data SourceBlock' = RunModule SourceUModule
-                  | Command CmdName (SourceName, SourceUModule)
-                  | GetNameType SourceName
-                  | ImportModule ModuleName
-                  | ProseBlock String
-                  | CommentLine
-                  | EmptyLines
-                  | UnParseable ReachedEOF String
-                    deriving (Show, Generic)
-
-data CmdName = GetType | EvalExpr OutFormat | ExportFun String
-               deriving  (Show, Generic)
-
-data LogLevel = LogNothing | PrintEvalTime | PrintBench String
-              | LogPasses [PassName] | LogAll
-                deriving  (Show, Generic)
+extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
+extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
 -- === imperative IR ===
 
-data IExpr = ILit LitVal
-           | IVar IVar
-             deriving (Show)
+data IExpr n = ILit LitVal
+             -- We use AtomName because we convert between atoms and imp
+             -- expressions without chaning names. Maybe we shouldn't do that.
+             | IVar (AtomName n) BaseType
+               deriving (Show)
 
-type IPrimOp = PrimOp IExpr
+data IBinder n l = IBinder (NameBinder AtomNameC n l) IType
+
+type IPrimOp n = PrimOp (IExpr n)
 type IVal = IExpr  -- only ILit and IRef constructors
-type IBinder = BinderP IType
-type IVar = VarP IType
 type IType = BaseType
 type Size = IExpr
 
-type IFunVar = VarP IFunType
+type IFunVar = (SourceName, IFunType)
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
-                deriving (Show)
+                deriving (Show, Eq)
 
 data IsCUDARequired = CUDARequired | CUDANotRequired  deriving (Eq, Show)
 
@@ -582,35 +1173,43 @@ instance IsBool IsCUDARequired where
   toBool CUDARequired = True
   toBool CUDANotRequired = False
 
-data CallingConvention = CEntryFun
-                       | EntryFun IsCUDARequired
-                       | FFIFun
-                       | FFIMultiResultFun
-                       | CUDAKernelLaunch
-                       | MCThreadLaunch
-                         deriving (Show, Eq)
+data CallingConvention =
+   CEntryFun
+ | EntryFun IsCUDARequired
+ | FFIFun
+ | FFIMultiResultFun
+ | CUDAKernelLaunch
+ | MCThreadLaunch
+   deriving (Show, Eq)
 
-data ImpModule   = ImpModule [ImpFunction] deriving (Show)
-data ImpFunction = ImpFunction IFunVar [IBinder] ImpBlock
-                 | FFIFunction IFunVar
-                   deriving (Show)
-data ImpBlock    = ImpBlock (Nest ImpDecl) [IExpr]    deriving (Show)
-data ImpDecl     = ImpLet [IBinder] ImpInstr deriving (Show)
-data ImpInstr = IFor Direction IBinder Size ImpBlock
-              | IWhile ImpBlock
-              | ICond IExpr ImpBlock ImpBlock
-              | IQueryParallelism IFunVar IExpr -- returns the number of available concurrent threads
-              | ISyncWorkgroup
-              | ILaunch IFunVar Size [IExpr]
-              | ICall IFunVar [IExpr]
-              | Store IExpr IExpr           -- dest, val
-              | Alloc AddressSpace IType Size
-              | MemCopy IExpr IExpr IExpr   -- dest, source, numel
-              | Free IExpr
-              | IThrowError  -- TODO: parameterize by a run-time string
-              | ICastOp IType IExpr
-              | IPrimOp IPrimOp
-                deriving (Show)
+data ImpModule n   = ImpModule [ImpFunction n]
+data ImpFunction n =
+   ImpFunction SourceName IFunType (Abs (Nest IBinder) ImpBlock n)
+ | FFIFunction IFunVar
+
+data ImpBlock n where
+  ImpBlock :: Nest ImpDecl n l -> [IExpr l] -> ImpBlock n
+
+data ImpDecl n l = ImpLet (Nest IBinder n l) (ImpInstr n)
+
+data ImpInstr n =
+   IFor Direction (Size n) (Abs IBinder ImpBlock n)
+ | IWhile (ImpBlock n)
+ | ICond (IExpr n) (ImpBlock n) (ImpBlock n)
+ | IQueryParallelism IFunVar (IExpr n) -- returns the number of available concurrent threads
+ | ISyncWorkgroup
+ | ILaunch IFunVar (Size n) [IExpr n]
+ | ICall IFunVar [IExpr n]
+ | Store (IExpr n) (IExpr n)           -- dest, val
+ | Alloc AddressSpace IType (Size n)
+ | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
+ | Free (IExpr n)
+ | IThrowError  -- TODO: parameterize by a run-time string
+ | ICastOp IType (IExpr n)
+ | IPrimOp (IPrimOp n)
+
+iBinderType :: IBinder n l -> IType
+iBinderType (IBinder _ ty) = ty
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | MLIR | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
@@ -659,31 +1258,6 @@ ptrSize = 8
 vectorWidth :: Int
 vectorWidth = 4
 
--- === some handy monoids ===
-
-data SetVal a = Set a | NotSet
-newtype MonMap k v = MonMap (M.Map k v)  deriving (Show, Eq)
-
-instance Semigroup (SetVal a) where
-  x <> NotSet = x
-  _ <> Set x  = Set x
-
-instance Monoid (SetVal a) where
-  mempty = NotSet
-
-instance (Ord k, Semigroup v) => Semigroup (MonMap k v) where
-  MonMap m <> MonMap m' = MonMap $ M.unionWith (<>) m m'
-
-instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
-  mempty = MonMap mempty
-
-monMapSingle :: k -> v -> MonMap k v
-monMapSingle k v = MonMap (M.singleton k v)
-
-monMapLookup :: (Monoid v, Ord k) => MonMap k v -> k -> v
-monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
-                                                 Just v  -> v
-
 -- === passes ===
 
 data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
@@ -703,6 +1277,7 @@ instance Show PassName where
 -- === outputs ===
 
 type LitProg = [(SourceBlock, Result)]
+
 data Result = Result
                 { resultOutputs :: [Output]
                 , resultErrs    :: Except () }
@@ -716,841 +1291,131 @@ data Output = TextOut String
             | TotalTime Double
             | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
             | MiscLog String
-            | ExportedFun String Atom
+            -- | ExportedFun String Atom
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | RenderHtml  deriving (Show, Eq, Generic)
 
--- === UExpr free variables ===
-
-type UVars = Env ()
-
-uvarSingleton :: UVar -> UVars
-uvarSingleton v = case v of
-  USourceVar   _  -> error "Should only query `freeUVars` on post-renaming IR"
-  UInternalVar v' -> v' @> ()
-
-class HasUVars a where
-  freeUVars :: a -> UVars
-
-class BindsUVars a where
-  boundUVars :: a -> UVars
-
-instance HasUVars a => HasUVars [a] where
-  freeUVars xs = foldMap freeUVars xs
-
-instance HasUVars a => HasUVars (NE.NonEmpty a) where
-  freeUVars xs = foldMap freeUVars xs
-
-instance (BindsUVars a, HasUVars a) => HasUVars (Nest a) where
-  freeUVars Empty = mempty
-  freeUVars (Nest x xs) = freeUVars x <> (freeUVars xs `envDiff` boundUVars x)
-
-instance BindsUVars a => BindsUVars (Nest a) where
-  boundUVars xs = foldMap boundUVars xs
-
-instance (HasUVars b, BindsUVars b, HasUVars body)
-         => HasUVars (Abs b body) where
-  freeUVars (Abs b body) = freeUVars b <> (freeUVars body `envDiff` boundUVars b)
-
-instance HasUVars a => HasUVars (WithSrc a) where
-  freeUVars (WithSrc _ e) = freeUVars e
-
-instance HasUVars UExpr' where
-  freeUVars expr = case expr of
-    UVar v -> uvarSingleton v
-    ULam pat _ body -> freeUVars (Abs pat body)
-    UPi pat arr ty -> freeUVars $ Abs pat (arr, ty)
-    -- TODO: maybe distinguish table arrow application
-    -- (otherwise `x.i` and `x i` are the same)
-    UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl decl body -> freeUVars $ Abs decl body
-    UFor _ pat body -> freeUVars (Abs pat body)
-    UHole -> mempty
-    UTypeAnn v ty -> freeUVars v <> freeUVars ty
-    UTabCon xs -> foldMap freeUVars xs
-    UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
-    UPrimExpr prim -> foldMap freeUVars prim
-    UCase e alts -> freeUVars e <> foldMap freeUVars alts
-    URecord ulr -> freeUVars ulr
-    UVariant types _ val -> freeUVars types <> freeUVars val
-    URecordTy ulr -> freeUVars ulr
-    UVariantTy ulr -> freeUVars ulr
-    UVariantLift skip val -> freeUVars skip <> freeUVars val
-    UIntLit  _ -> mempty
-    UFloatLit _ -> mempty
-
-instance HasUVars UAlt where
-  freeUVars (UAlt p body) = freeUVars $ Abs p body
-
-instance HasUVars () where
-  freeUVars = mempty
-
-instance HasUVars UPat' where
-  freeUVars pat = case pat of
-    UPatBinder _   -> mempty
-    UPatCon con ps -> uvarSingleton con <> foldMap freeUVars ps
-    UPatPair p1 p2 -> freeUVars p1 <> freeUVars p2
-    UPatUnit       -> mempty
-    UPatRecord items -> freeUVars items
-    UPatVariant _ _ p -> freeUVars p
-    UPatVariantLift _ p -> freeUVars p
-    UPatTable ps -> foldMap freeUVars ps
-
-instance BindsUVars UPat' where
-  boundUVars pat = case pat of
-    UPatBinder b   -> boundUVars b
-    UPatCon _ ps   -> foldMap boundUVars ps
-    UPatPair p1 p2 -> boundUVars p1 <> boundUVars p2
-    UPatUnit       -> mempty
-    UPatRecord items -> boundUVars items
-    UPatVariant _ _ p -> boundUVars p
-    UPatVariantLift _ p -> boundUVars p
-    UPatTable ps -> foldMap boundUVars ps
-
-instance HasUVars UBinder where
-  freeUVars = mempty
-
-instance BindsUVars UBinder where
-  boundUVars (UBind v) = v @> ()
-  boundUVars (UBindSource _) = mempty
-  boundUVars UIgnore = mempty
-
-instance HasName UBinder where
-  getName UIgnore         = Nothing
-  getName (UBindSource _) = Nothing
-  getName (UBind v)       = Just v
-
-instance HasUVars UDecl where
-  freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
-  freeUVars (UDataDefDecl dataDef bTyCon bDataCons) =
-    freeUVars dataDef <> freeUVars (Abs bTyCon bDataCons)
-  freeUVars (UInterface paramBs superclasses methods _ _) =
-    freeUVars $ Abs paramBs (superclasses, uMethodType <$> methods)
-  freeUVars (UInstance bs className params methods _) =
-    freeUVars $ Abs bs ((className, params), methods)
-
-instance (BindsUVars b1, HasUVars b1, HasUVars b2) => HasUVars (NestPair b1 b2) where
-  freeUVars (NestPair b1 b2) =
-    freeUVars b1 <> (freeUVars b2 `envDiff` boundUVars b1)
-
-instance HasUVars UDataDef where
-  freeUVars (UDataDef (_, paramBs) dataCons) =
-    freeUVars $ NestPair paramBs $ map snd dataCons
-
-instance HasUVars UMethodDef where
-  freeUVars (UMethodDef name def) = freeUVars name <> freeUVars def
-
-instance HasUVars UPatAnn where
-  freeUVars (UPatAnn p ann) = freeUVars ann <> freeUVars p
-
-instance BindsUVars UPatAnn where
-  boundUVars (UPatAnn p _) = boundUVars p
-
-instance HasUVars UPatAnnArrow where
-  freeUVars (UPatAnnArrow b ann) = freeUVars b <> freeUVars ann
-
-instance BindsUVars UPatAnnArrow where
-  boundUVars (UPatAnnArrow p _) = boundUVars p
-
-instance BindsUVars UDecl where
-  boundUVars decl = case decl of
-    ULet _ p _           -> boundUVars p
-    UDataDefDecl _ bTyCon bDataCons ->
-      boundUVars $ NestPair bTyCon bDataCons
-    UInterface _ _ _ className methodNames ->
-      boundUVars $ NestPair className methodNames
-    UInstance _ _ _ _ instanceName  -> foldMap boundUVars instanceName
-
-instance (BindsUVars b1, BindsUVars b2) => BindsUVars (NestPair b1 b2) where
-  boundUVars (NestPair b1 b2) = boundUVars b1 <> boundUVars b2
-
-instance HasUVars UModule where
-  freeUVars (UModule decl sourceMap) =
-    freeUVars (Abs decl sourceMap)
-
-instance HasUVars SourceMap where
-  freeUVars (SourceMap m) = foldMap (@>()) m
-
-instance HasUVars UEffectRow where
-  freeUVars (EffectRow effs tailVar) =
-    foldMap freeUVars effs <> foldMap uvarSingleton tailVar
-
-instance HasUVars UEffect where
-  freeUVars (RWSEffect _ h) = uvarSingleton h
-  freeUVars ExceptionEffect = mempty
-  freeUVars IOEffect        = mempty
-
-instance HasUVars UVar where
-  freeUVars v = uvarSingleton v
-
-instance HasUVars UAnnBinder where
-  freeUVars (UAnnBinder _ ann) = freeUVars ann
-
-instance BindsUVars UAnnBinder where
-  boundUVars (UAnnBinder b _) = boundUVars b
-
-instance HasUVars a => HasUVars (LabeledItems a) where
-  freeUVars (LabeledItems items) = foldMap freeUVars items
-
-instance HasUVars a => HasUVars (ExtLabeledItems a a) where
-  freeUVars (Ext items rest) = freeUVars items <> freeUVars rest
-
-instance HasUVars eff => HasUVars (ArrowP eff) where
-  freeUVars (PlainArrow eff) = freeUVars eff
-  freeUVars _ = mempty
-
-instance (HasUVars a, HasUVars b) => HasUVars (a, b) where
-  freeUVars (x, y) = freeUVars x <> freeUVars y
-
-instance HasUVars a => HasUVars (Maybe a) where
-  freeUVars Nothing = mempty
-  freeUVars (Just x) = freeUVars x
-
-instance BindsUVars a => BindsUVars (WithSrc a) where
-  boundUVars (WithSrc _ x) = boundUVars x
-
-instance BindsUVars a => BindsUVars (LabeledItems a) where
-  boundUVars items = foldMap boundUVars items
-
-instance BindsUVars a => BindsUVars (ExtLabeledItems a a) where
-  boundUVars (Ext items rest) = boundUVars items <> boundUVars rest
-
-instance BindsUVars a => BindsUVars (Maybe a) where
-  boundUVars Nothing = mempty
-  boundUVars (Just x) = boundUVars x
-
--- === Expr free variables and substitutions ===
-
--- In the safer-names system we use Typeable to make this an open sum type, but
--- here all the cases are explicit.
-data AnyBinderInfo =
-   AtomBinderInfo Type BinderInfo
- | DataDefName  DataDef
- | TyConName    DataDefName     Atom
- | DataConName  DataDefName Int Atom
- | ClassDefName ClassDef        Atom
- -- The atoms in SuperclassName and MethodNames are the dict projections, cached
- -- for fast lookup.
- | SuperclassName ClassDefName Int Atom
- | MethodName     ClassDefName Int Atom
- | LocalUExprBound
- | ImpBound
- | TrulyUnknownBinder
-   deriving (Show, Generic)
-
--- Just documentation for now, but they'll be distinct types with safer-names
-type DataDefName  = Name
-type ClassDefName = Name
-
-data BinderInfo =
-        LamBound (ArrowP ())
-        -- TODO: make the expression optional, for when it's effectful?
-        -- (or we could put the effect tag on the let annotation)
-      | PatBound
-      | LetBound LetAnn Expr
-      | PiBound (ArrowP ())
-      | UnknownBinder
-        deriving (Show, Generic)
-
-data SubstVal e = SubstVal e
-                | Rename Name
-
-type SubstEnv = Env (SubstVal Atom)
-type Bindings = Env AnyBinderInfo
-type Scope = Bindings  -- when we only care about the names, not the payloads
-type ScopedSubstEnv = (SubstEnv, Bindings)
-
--- TODO: we could add a lot more structure for querying by dict type, caching, etc.
-data SynthCandidates = SynthCandidates
-  { lambdaDicts       :: [Atom]
-  , superclassGetters :: [Atom]
-  , instanceDicts     :: [Atom] }
-  deriving (Show, Generic)
-
-scopelessSubst :: (HasVars a, Subst a) => SubstEnv -> a -> a
-scopelessSubst env x = subst (env, scope) x
-  where scope = foldMap freeVars env <> (freeVars x `envDiff` env)
-
--- XXX: only gives the atom bindings
-bindingsAsVars :: Bindings -> [Var]
-bindingsAsVars env =
-  flip map (envPairs env) \(v, info) ->
-    case info of
-      AtomBinderInfo ty _ -> v:>ty
-      -- XXX: this type is nonsense. We shouldn't rely on the types obtained
-      -- from querying free vars (and we're getting rid of them completely in
-      -- safer-names).
-      _ -> v:>UnitTy
-
-class HasVars a where
-  freeVars :: a -> Scope
-
-class Subst a where
-  subst :: ScopedSubstEnv -> a -> a
-
-class BindsVars a where
-  boundVars :: a -> Scope
-  renamingSubst :: ScopedSubstEnv -> a -> (a, ScopedSubstEnv)
-
-instance HasVars e => HasVars (SubstVal e) where
-  freeVars (SubstVal x) = freeVars x
-  freeVars (Rename v) = v @> TrulyUnknownBinder
-
-instance Subst (SubstVal Atom) where
-  subst env (SubstVal x) = SubstVal (subst env x)
-  subst (env, _) (Rename v) =
-    case envLookup env v of
-      Nothing -> Rename v
-      Just x -> x
-
-instance (HasVars b, BindsVars b, HasVars body) => HasVars (Abs b body) where
-  freeVars (Abs b body) = freeVars b <> (freeVars body `envDiff` boundVars b)
-
-instance (BindsVars b, Subst body) => Subst (Abs b body) where
-  subst env (Abs b body) = Abs b' body'
-    where (b', env') = renamingSubst env b
-          body' = subst (env <> env') body
-
-instance (HasVars a, BindsVars a) => HasVars (Nest a) where
-  freeVars xs = case xs of
-    Empty -> mempty
-    Nest b rest -> freeVars b <> (freeVars rest `envDiff` boundVars b)
-
-instance (Subst a, BindsVars a) => Subst (Nest a) where
-  subst env xs = case xs of
-    Empty -> Empty
-    Nest x rest -> Nest x' rest'
-      where x' = subst env x
-            env' = (mempty, boundVars x')
-            rest' = subst (env <> env') rest
-
-instance BindsVars a => BindsVars (Nest a) where
-  boundVars xs = foldMap boundVars xs
-  renamingSubst env xs = case xs of
-    Empty -> (Empty, mempty)
-    Nest x rest -> (Nest x' rest', xEnv <> restEnv)
-      where
-        (x', xEnv) = renamingSubst env x
-        (rest', restEnv) = renamingSubst (env <> xEnv) rest
-
-instance HasVars Binder where
-  freeVars b = freeVars $ binderType b
-
-instance Subst Binder where
-  -- BUG: the following case should be unreachable but it shows up in tests
-  -- subst env@(_, scope) b | b `isin` scope = error $ "shadowed binder: " ++ show b
-  -- XXX: this doesn't rename the bound vars, so they must not be in scope
-  subst env b = fmap (subst env) b
-
-instance BindsVars Binder where
-  boundVars b = b @> AtomBinderInfo (binderType b) UnknownBinder
-  renamingSubst env (Ignore ty) = (Ignore (subst env ty), mempty)
-  renamingSubst env@(_, scope) b@(Bind (v:>ty)) = (b', env')
-    where v' = genFresh v scope
-          b' = Bind (v':>ty')
-          ty' = subst env ty
-          env' = (b@>SubstVal (Var (v':>ty')), b' @> AtomBinderInfo ty' UnknownBinder)
-
-instance HasVars DataConRefBinding where
-  freeVars (DataConRefBinding b ref) = freeVars b <> freeVars ref
-
-instance Subst DataConRefBinding where
-  subst env (DataConRefBinding b ref) =
-    DataConRefBinding (subst env b) (subst env ref)
-
-instance BindsVars DataConRefBinding where
-  boundVars (DataConRefBinding b _) = b @> AtomBinderInfo (binderType b) UnknownBinder
-  renamingSubst env (DataConRefBinding b ref) = (DataConRefBinding b' ref', env')
-    where
-      ref' = subst env ref
-      (b', env') = renamingSubst env b
-
-instance Eq Atom where
-  Var v == Var v' = v == v'
-  Pi ab == Pi ab' = ab == ab'
-  DataCon def params con args == DataCon def' params' con' args' =
-    def == def' && params == params' && con == con' && args == args'
-  TypeCon def params == TypeCon def' params' = def == def' && params == params'
-  Variant lr l i v == Variant lr' l' i' v' =
-    (lr, l, i, v) == (lr', l', i', v')
-  Record lr    == Record lr'      = lr == lr'
-  RecordTy lr  == RecordTy lr'    = lr == lr'
-  VariantTy lr == VariantTy lr'   = lr == lr'
-  Con con == Con con' = con == con'
-  TC  con == TC  con' = con == con'
-  Eff eff == Eff eff' = eff == eff'
-  ProjectElt idxs v == ProjectElt idxs' v' = (idxs, v) == (idxs', v')
-  _ == _ = False
-
-instance Eq DataDef where
-  DataDef name _ _ == DataDef name' _ _ = name == name'
-
-instance (Show a, HasVars a, Subst a, Eq a) => Eq (Abs Binder a) where
-  Abs (Ignore a) b == Abs (Ignore a') b' = a == a' && b == b'
-  ab == ab' = absArgType ab == absArgType ab' && applyAbs ab v == applyAbs ab' v
-    where v = Var $ freshSkolemVar (ab, ab') (absArgType ab)
-
-instance Eq (Nest Binder) where
-  Empty == Empty = True
-  (Nest b bs) == (Nest b' bs') = Abs b bs == Abs b' bs'
-  _ == _ = False
-
-freshSkolemVar :: HasVars a => a -> Type -> Var
-freshSkolemVar x ty = v :> ty
-  where v = genFresh (rawName Skolem "skol") (freeVars x)
-
-applyAbs :: (HasVars a, Subst a) => Abs Binder a -> Atom -> a
-applyAbs (Abs b body) x = scopelessSubst (b@>SubstVal x) body
-
-applyNaryAbs :: (HasVars a, Subst a) => Abs (Nest Binder) a -> [Atom] -> a
-applyNaryAbs (Abs Empty body) [] = body
-applyNaryAbs (Abs (Nest b bs) body) (x:xs) = applyNaryAbs ab xs
-  where ab = applyAbs (Abs b (Abs bs body)) x
-applyNaryAbs _ _ = error "wrong number of arguments"
-
-applyDataDefParams :: DataDef -> [Type] -> [DataConDef]
-applyDataDefParams (DataDef _ bs cons) params
-  | length params == length (toList bs) = applyNaryAbs (Abs bs cons) params
-  | otherwise = error $ "Wrong number of parameters: " ++ show (length params)
-
-makeAbs :: HasVars a => Binder -> a -> Abs Binder a
-makeAbs b body | b `isin` freeVars body = Abs b body
-               | otherwise = Abs (Ignore (binderType b)) body
-
-absArgType :: Abs Binder a -> Type
-absArgType (Abs b _) = binderType b
-
-toNest :: [a] -> Nest a
-toNest = foldr Nest Empty
-
-instance HasVars Arrow where
-  freeVars arrow = case arrow of
-    PlainArrow eff -> freeVars eff
-    _ -> mempty
-instance Subst Arrow where
-  subst env arrow = case arrow of
-    PlainArrow eff -> PlainArrow $ subst env eff
-    _ -> arrow
-
-arrowEff :: Arrow -> EffectRow
-arrowEff (PlainArrow eff) = eff
-arrowEff _ = Pure
-
-substVar :: (SubstEnv, Scope) -> Var -> Atom
-substVar env@(sub, _) v = case envLookup sub v of
-  Nothing -> Var $ fmap (subst env) v
-  Just (SubstVal x') -> x'
-  Just (Rename v') -> Var $ v' :> subst env (varAnn v)
-
-
--- wrapper for substitution instances for recursively-scoped bindings
-newtype AsRecEnv a = AsRecEnv (Env a)
-
-instance HasVars a => HasVars (AsRecEnv a) where
-  freeVars (AsRecEnv env) = foldMap freeVars env `envDiff` env
-
-instance BindsVars (AsRecEnv AnyBinderInfo) where
-  boundVars (AsRecEnv recEnv) = recEnv
-  renamingSubst (substEnv, scope) (AsRecEnv recEnv) = let
-    (names, vals) = unzip $ envPairs recEnv
-    names' = freshNames scope (envNames recEnv)
-    substEnv' = newEnv names (map Rename names')
-    tmpScope = newEnv names' (repeat TrulyUnknownBinder)
-    recEnv' = newEnv names' $ subst (substEnv <> substEnv', scope <> tmpScope) vals
-    in (AsRecEnv recEnv', (substEnv', scope <> recEnv'))
-
-freshNames :: NameHint hint => Scope -> [hint] -> [Name]
-freshNames initScope hints = fst $ flip runCat initScope $
-  forM hints \hint -> do
-    scope <- look
-    let nameHint = case asNameHint hint of
-                     Just name -> rawName GenName name
-                     Nothing   -> rawName GenName "tmp"
-    let v = genFresh nameHint scope
-    extend (v@>TrulyUnknownBinder)
-    return v
-
-instance HasVars Expr where
-  freeVars expr = case expr of
-    App f x -> freeVars f <> freeVars x
-    Atom x  -> freeVars x
-    Op  e   -> foldMap freeVars e
-    Hof e   -> foldMap freeVars e
-    Case e alts resultTy ->
-      freeVars e <> freeVars alts <> freeVars resultTy
-
-instance Subst Expr where
-  subst env expr = case expr of
-    App f x -> App (subst env f) (subst env x)
-    Atom x  -> Atom $ subst env x
-    Op  e   -> Op  $ fmap (subst env) e
-    Hof e   -> Hof $ fmap (subst env) e
-    Case e alts resultTy ->
-      Case (subst env e) (subst env alts) (subst env resultTy)
-
-instance HasVars Decl where
-  freeVars decl = case decl of
-    Let _  b expr  -> freeVars expr <> freeVars b
-
-instance Subst Decl where
-  subst env decl = case decl of
-    Let ann b expr -> Let ann (fmap (subst env) b) $ subst env expr
-
-instance BindsVars Decl where
-  boundVars decl = case decl of
-    Let ann b expr -> b @> AtomBinderInfo (binderType b) (LetBound ann expr)
-
-  renamingSubst env decl = case decl of
-    Let ann b expr -> (Let ann b' expr', env')
-      where expr' = subst env expr
-            (b', env') = renamingSubst env b
-
-instance HasVars Block where
-  freeVars (Block decls result) = freeVars $ Abs decls result
-instance Subst Block where
-  subst env (Block decls result) = Block decls' result'
-    where Abs decls' result' = subst env $ Abs decls result
-
-instance HasVars Atom where
-  freeVars atom = case atom of
-    Var v@(_:>t) -> (v @> AtomBinderInfo t UnknownBinder) <> freeVars t
-    Lam lam -> freeVars lam
-    Pi  ty  -> freeVars ty
-    Con con -> foldMap freeVars con
-    TC  tc  -> foldMap freeVars tc
-    Eff eff -> freeVars eff
-    DepPairTy     ta -> freeVars ta
-    DepPair   x y ta -> freeVars x <> freeVars y <> freeVars ta
-    -- TODO: think about these cases. We don't want to needlessly traverse the
-    --       data definition but we might need to know the free Vars.
-    DataCon _ params _ args -> freeVars params <> freeVars args
-    TypeCon _ params        -> freeVars params
-    LabeledRow la -> freeVars la
-    Record la -> freeVars la
-    Variant la _ _ val -> freeVars la <> freeVars val
-    RecordTy row -> freeVars row
-    VariantTy row -> freeVars row
-    ACase e alts rty -> freeVars e <> freeVars alts <> freeVars rty
-    DataConRef _ params args -> freeVars params <> freeVars args
-    DepPairRef l r a -> freeVars l <> freeVars r <> freeVars a
-    BoxedRef b ptr size body ->
-      freeVars ptr <> freeVars size <> freeVars (Abs b body)
-    ProjectElt _ v -> freeVars (Var v)
-
-instance Subst Atom where
-  subst env@(subEnv, bs) atom = case atom of
-    Var v   -> substVar env v
-    Lam lam -> Lam $ subst env lam
-    Pi  ty  -> Pi  $ subst env ty
-    TC  tc  -> TC  $ fmap (subst env) tc
-    Con con -> Con $ fmap (subst env) con
-    Eff eff -> Eff $ subst env eff
-    DepPairTy     ta -> DepPairTy $ subst env ta
-    DepPair   x y ta -> DepPair (subst env x) (subst env y) (subst env ta)
-    DataCon def params con args -> DataCon def (subst env params) con (subst env args)
-    TypeCon def params          -> TypeCon def (subst env params)
-    LabeledRow row -> LabeledRow $ subst env row
-    Record la -> Record $ subst env la
-    Variant row label i val -> Variant (subst env row) label i (subst env val)
-    RecordTy row -> RecordTy $ subst env row
-    VariantTy row -> VariantTy $ subst env row
-    ACase s alts rty -> case simplifyCase s' alts of
-      Just (cenv, result) -> subst (subEnv <> cenv, bs) result
-      Nothing             -> ACase s' (subst env alts) (subst env rty)
-      where s' = subst env s
-    DataConRef def params args -> DataConRef def (subst env params) args'
-      where Abs args' () = subst env $ Abs args ()
-    DepPairRef l r a -> DepPairRef (subst env l) (subst env r) (subst env a)
-    BoxedRef b ptr size body -> BoxedRef b' (subst env ptr) (subst env size) body'
-        where Abs b' body' = subst env $ Abs b body
-    ProjectElt idxs v -> getProjection (toList idxs) $ substVar env v
-
-simplifyCase :: Atom -> [AltP a] -> Maybe (SubstEnv, a)
-simplifyCase e alts = case e of
-  DataCon _ _ con args -> do
-    let Abs bs result = alts !! con
-    Just (newEnv bs (map SubstVal args), result)
-  Variant (NoExt types) label i value -> do
-    let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) NE.!! i
-    let Abs bs result = alts !! index
-    Just (newEnv bs [SubstVal value], result)
-  SumVal _ i value -> do
-    let Abs bs result = alts !! i
-    Just (newEnv bs [SubstVal value], result)
-  Con (SumAsProd _ (TagRepVal tag) vals) -> do
-    let Abs bs result = alts !! (fromIntegral tag)
-    Just (newEnv bs (map SubstVal (vals !! fromIntegral tag)), result)
-  _ -> Nothing
-
-instance HasVars EffectRow where
-  freeVars (EffectRow row t) = foldMap freeVars row
-                            <> foldMap (\v -> v @> AtomBinderInfo EffKind UnknownBinder) t
-instance Subst EffectRow where
-  subst env (EffectRow row t) = extendEffRow row' t'
-   where
-     row' = S.map (subst env) row
-     t' = substEffTail (fst env) t
-
-instance HasVars Effect where
-  freeVars eff = case eff of
-    RWSEffect _ v -> v @> AtomBinderInfo TyKind UnknownBinder
-    ExceptionEffect -> mempty
-    IOEffect        -> mempty
-instance Subst Effect where
-  subst (env,_) eff = case eff of
-    RWSEffect rws v -> RWSEffect rws (substName env v)
-    ExceptionEffect -> ExceptionEffect
-    IOEffect        -> IOEffect
-
-instance HasVars BinderInfo where
-  freeVars binfo = case binfo of
-   LetBound _ expr -> freeVars expr
-   _ -> mempty
-
-instance Subst BinderInfo where
-  subst env binfo = case binfo of
-   LetBound a expr -> LetBound a $ subst env expr
-   _ -> binfo
-
-instance HasVars AnyBinderInfo where
-  freeVars info = case info of
-    AtomBinderInfo ty binfo -> freeVars ty <> freeVars binfo
-    DataDefName dataDef     -> freeVars dataDef
-    ClassDefName classDef  e       -> freeVars classDef <> freeVars e
-    TyConName      dataDefName   e -> freeVarsName dataDefName <> freeVars e
-    DataConName    dataDefName _ e -> freeVarsName dataDefName <> freeVars e
-    SuperclassName dataDefName _ getter -> freeVarsName dataDefName <> freeVars getter
-    MethodName     dataDefName _ getter -> freeVarsName dataDefName <> freeVars getter
-    LocalUExprBound    -> mempty
-    ImpBound           -> mempty
-    TrulyUnknownBinder -> mempty
-
-instance Subst AnyBinderInfo where
-  subst env@(substEnv, _) info = case info of
-    AtomBinderInfo ty binfo    -> AtomBinderInfo (subst env ty) (subst env binfo)
-    DataDefName dataDef        -> DataDefName    (subst env dataDef)
-    ClassDefName classDef      e -> ClassDefName   (subst env classDef) (subst env e)
-    TyConName      dataDefName     e -> TyConName   (substName substEnv dataDefName) (subst env e)
-    DataConName    dataDefName idx e -> DataConName    (substName substEnv dataDefName) idx (subst env e)
-    SuperclassName dataDefName idx getter ->
-      SuperclassName (substName substEnv dataDefName) idx (subst env getter)
-    MethodName     dataDefName idx getter ->
-      MethodName     (substName substEnv dataDefName) idx (subst env getter)
-    LocalUExprBound    -> LocalUExprBound
-    ImpBound           -> ImpBound
-    TrulyUnknownBinder -> TrulyUnknownBinder
-
-instance HasVars SynthCandidates where
-  freeVars (SynthCandidates xs ys zs) =
-    foldMap freeVars xs <> foldMap freeVars ys <> foldMap freeVars zs
-
-instance Subst SynthCandidates where
-  subst env (SynthCandidates xs ys zs) =
-    SynthCandidates (map (subst env) xs) (map (subst env) ys) (map (subst env) zs)
-
-instance HasVars DataDef where
-  freeVars (DataDef _ paramBs dataCons) = freeVars $ Abs paramBs dataCons
-
-instance Subst DataDef where
-  subst env (DataDef tcName paramBs dataCons) =
-    DataDef tcName paramBs' dataCons'
-    where Abs paramBs' dataCons' = subst env $ Abs paramBs dataCons
-
-instance HasVars ClassDef where
-  freeVars (ClassDef (_, dataDef) _) = freeVars dataDef
-
-instance Subst ClassDef where
-  subst env (ClassDef (name, dataDef) methodNames) =
-    ClassDef (substName (fst env) name, subst env dataDef) methodNames
-
-instance HasVars DataConDef where
-  freeVars (DataConDef _ bs) = freeVars $ Abs bs ()
-instance Subst DataConDef where
-  subst env (DataConDef name bs) = DataConDef name bs'
-    where Abs bs' () = subst env $ Abs bs ()
-
-instance HasVars a => HasVars (LabeledItems a) where
-  freeVars (LabeledItems items) = foldMap freeVars items
-
-instance Subst a => Subst (LabeledItems a) where
-  subst env (LabeledItems items) = LabeledItems $ fmap (subst env) items
-
-instance HasVars a => HasVars (ExtLabeledItems a Name) where
-  freeVars (Ext items Nothing) = freeVars items
-  freeVars (Ext items (Just v)) =
-    freeVars items <> (v @> AtomBinderInfo LabeledRowKind UnknownBinder)
-
-instance Subst (ExtLabeledItems Type Name) where
-  subst env@(env', _) (Ext items rest) =
-    prefixExtLabeledItems (subst env items) (substExtLabeledItemsTail env' rest)
-
-substEffTail :: SubstEnv -> Maybe Name -> EffectRow
-substEffTail _ Nothing = EffectRow mempty Nothing
-substEffTail env (Just v) = case envLookup env (v:>()) of
-  Nothing -> EffectRow mempty (Just v)
-  Just (Rename v')              -> EffectRow mempty (Just v')
-  Just (SubstVal (Var (v':>_))) -> EffectRow mempty (Just v')
-  Just (SubstVal (Eff r))       -> r
-  _ -> error "Not a valid effect substitution"
-
-substName :: SubstEnv -> Name -> Name
-substName env v = case envLookup env (v:>()) of
-  Nothing -> v
-  Just (Rename         v'     ) -> v'
-  Just (SubstVal (Var (v':>_))) -> v'
-  _ -> error "Should only substitute with a name"
-
--- XXX: this is a hack. (Should be fixed with safer-names)
-freeVarsName :: Name -> Scope
-freeVarsName name = name @> LocalUExprBound
-
-extendEffRow :: S.Set Effect -> EffectRow -> EffectRow
-extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
-
-substExtLabeledItemsTail :: SubstEnv -> Maybe Name -> ExtLabeledItems Type Name
-substExtLabeledItemsTail _ Nothing = NoExt NoLabeledItems
-substExtLabeledItemsTail env (Just v) = case envLookup env (v:>()) of
-  Nothing -> Ext NoLabeledItems $ Just v
-  Just (Rename v')                 -> Ext NoLabeledItems $ Just v'
-  Just (SubstVal (Var (v':>_)))    -> Ext NoLabeledItems $ Just v'
-  Just (SubstVal (LabeledRow row)) -> row
-  _ -> error "Not a valid labeled row substitution"
-
-getProjection :: [Int] -> Atom -> Atom
-getProjection [] a = a
-getProjection (i:is) a = case getProjection is a of
-  Var v               -> ProjectElt (NE.fromList [i]) v
-  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
-  DataCon _ _ _ xs    -> xs !! i
-  Record items        -> toList items !! i
-  ProdVal xs          -> xs !! i
-  DepPair l _ _ | i == 0 -> l
-  DepPair _ r _ | i == 1 -> r
-  _ -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a
-
-instance HasVars () where freeVars () = mempty
-instance Subst () where subst _ () = ()
-
-instance (HasVars a, HasVars b) => HasVars (a, b) where
-  freeVars (x, y) = freeVars x <> freeVars y
-instance (Subst a, Subst b) => Subst (a, b) where
-  subst env (x, y) = (subst env x, subst env y)
-
-instance HasVars a => HasVars (Maybe a) where freeVars x = foldMap freeVars x
-instance Subst a => Subst (Maybe a) where subst env x = fmap (subst env) x
-
-instance HasVars a => HasVars (Env a) where freeVars x = foldMap freeVars x
-instance Subst a => Subst (Env a) where subst env x = fmap (subst env) x
-
-instance HasVars a => HasVars [a] where freeVars x = foldMap freeVars x
-instance Subst a => Subst [a] where subst env x = fmap (subst env) x
-
-instance HasVars a => HasVars (NE.NonEmpty a) where freeVars x = foldMap freeVars x
-instance Subst a => Subst (NE.NonEmpty a) where subst env x = fmap (subst env) x
-
-instance Eq SourceBlock where
-  x == y = sbText x == sbText y
-
-instance Ord SourceBlock where
-  compare x y = compare (sbText x) (sbText y)
-
-type IScope = Env IType
-
-class HasIVars a where
-  freeIVars :: a -> IScope
-
-instance HasIVars IExpr where
-  freeIVars e = case e of
-    ILit _        -> mempty
-    IVar v@(_:>t) -> v @> t <> freeIVars t
-
-instance HasIVars IType where
-  freeIVars _ = mempty
-
-instance HasIVars ImpBlock where
-  freeIVars (ImpBlock Empty results) = foldMap freeIVars results
-  freeIVars (ImpBlock (Nest (ImpLet bs instr) rest) results) =
-    freeIVars instr <>
-      (freeIVars (ImpBlock rest results) `envDiff` newEnv bs (repeat ()))
-
-instance HasIVars ImpInstr where
-  freeIVars i = case i of
-    IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
-    IWhile p          -> freeIVars p
-    ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
-    IQueryParallelism _ s -> freeIVars s
-    ISyncWorkgroup      -> mempty
-    ILaunch _ size args -> freeIVars size <> foldMap freeIVars args
-    ICall   _      args -> foldMap freeIVars args
-    Store d e     -> freeIVars d <> freeIVars e
-    Alloc _ t s   -> freeIVars t <> freeIVars s
-    MemCopy x y z -> freeIVars x <> freeIVars y <> freeIVars z
-    Free x        -> freeIVars x
-    ICastOp t x   -> freeIVars t <> freeIVars x
-    IPrimOp op    -> foldMap freeIVars op
-    IThrowError   -> mempty
-
-instance Semigroup (Nest a) where
-  (<>) = mappend
-
--- TODO: think about performance. This is used with the Cat/Writer monad a lot.
-instance Monoid (Nest a) where
-  mempty = Empty
-  mappend xs ys = toNest $ toList xs ++ toList ys
-
 -- === Helpers for function evaluation over fixed-width types ===
 
-applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a) => (a -> Atom) -> a -> a -> Atom) -> Atom -> Atom -> Atom
+applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
+               => (a -> Atom n) -> a -> a -> Atom n) -> Atom n -> Atom n -> Atom n
 applyIntBinOp' f x y = case (x, y) of
   (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
   (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
   (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
   (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
   (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
-  _ -> error $ "Expected integer atoms, got: " ++ show x ++ " and " ++ show y
+  _ -> error "Expected integer atoms"
 
-applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom -> Atom -> Atom
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
 applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
 
-applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom -> Atom -> Atom
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom n -> Atom n -> Atom n
 applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
 
-applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom -> Atom -> Atom
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom n -> Atom n -> Atom n
 applyFloatBinOp f x y = case (x, y) of
   (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
   (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
   _ -> error "Expected float atoms"
 
-applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom -> Atom
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom n -> Atom n
 applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
 -- === Synonyms ===
 
-varType :: Var -> Type
-varType = varAnn
-
-binderType :: Binder -> Type
-binderType = binderAnn
+atomBindingType :: Binding AtomNameC n -> Type n
+atomBindingType (AtomNameBinding b) = case b of
+  LetBound    (DeclBinding _ ty _) -> ty
+  LamBound    (LamBinding  _ ty)   -> ty
+  PiBound     (PiBinding   _ ty)   -> ty
+  MiscBound   ty                   -> ty
+  SolverBound (InfVarBound ty _)   -> ty
+  SolverBound (SkolemBound ty)     -> ty
+  PtrLitBound ty _ -> BaseTy (PtrType ty)
 
 infixr 1 -->
 infixr 1 --@
 infixr 2 ==>
 
-(-->) :: Type -> Type -> Type
-a --> b = Pi (Abs (Ignore a) (PureArrow, b))
+piArgType :: PiType n -> Type n
+piArgType (PiType (PiBinder _ ty _) _ _) = ty
 
-(--@) :: Type -> Type -> Type
-a --@ b = Pi (Abs (Ignore a) (LinArrow, b))
+piArrow :: PiType n -> Arrow
+piArrow (PiType (PiBinder _ _ arr) _ _) = arr
 
-(==>) :: Type -> Type -> Type
-a ==> b = Pi (Abs (Ignore a) (TabArrow, b))
+nonDepPiType :: ScopeReader m
+             => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)
+nonDepPiType arr argTy eff resultTy =
+  toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
+    Abs b (PairE eff' resultTy') ->
+      return $ PiType (PiBinder b argTy arr) eff' resultTy'
 
-pattern IntLitExpr :: Int -> UExpr'
+considerNonDepPiType :: PiType n -> Maybe (Arrow, Type n, EffectRow n, Type n)
+considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
+  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
+  return (arr, argTy, eff', resultTy')
+
+fromNonDepPiType :: (ScopeReader m, MonadFail1 m)
+                 => Arrow -> Type n -> m n (Type n, EffectRow n, Type n)
+fromNonDepPiType arr ty = do
+  Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
+  unless (arr == arr') $ fail "arrow type mismatch"
+  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
+  return $ (argTy, eff', resultTy')
+
+naryNonDepPiType :: ScopeReader m =>  Arrow -> EffectRow n -> [Type n] -> Type n -> m n (Type n)
+naryNonDepPiType _ Pure [] resultTy = return resultTy
+naryNonDepPiType _ _    [] _        = error "nullary function can't have effects"
+naryNonDepPiType arr eff [ty] resultTy = Pi <$> nonDepPiType arr ty eff resultTy
+naryNonDepPiType arr eff (ty:tys) resultTy = do
+  innerFunctionTy <- naryNonDepPiType arr eff tys resultTy
+  Pi <$> nonDepPiType arr ty Pure innerFunctionTy
+
+fromNaryNonDepPiType :: (ScopeReader m, MonadFail1 m)
+                     => [Arrow] -> Type n -> m n ([Type n], EffectRow n, Type n)
+fromNaryNonDepPiType [] ty = return ([], Pure, ty)
+fromNaryNonDepPiType [arr] ty = do
+  (argTy, eff, resultTy) <- fromNonDepPiType arr ty
+  return ([argTy], eff, resultTy)
+fromNaryNonDepPiType (arr:arrs) ty = do
+  (argTy, Pure, innerTy) <- fromNonDepPiType arr ty
+  (argTys, eff, resultTy) <- fromNaryNonDepPiType arrs innerTy
+  return (argTy:argTys, eff, resultTy)
+
+fromNonDepTabTy :: (ScopeReader m, MonadFail1 m) => Type n -> m n (Type n, Type n)
+fromNonDepTabTy ty = do
+  (idxTy, Pure, resultTy) <- fromNonDepPiType TabArrow ty
+  return (idxTy, resultTy)
+
+nonDepDataConTys :: DataConDef n -> Maybe [Type n]
+nonDepDataConTys (DataConDef _ (Abs binders UnitE)) = go binders
+  where
+    go :: Nest Binder n l -> Maybe [Type n]
+    go Empty = return []
+    go (Nest (b:>ty) bs) = do
+      tys <- go bs
+      case hoist b (ListE tys) of
+        HoistFailure _ -> Nothing
+        HoistSuccess (ListE tys') -> return $ ty:tys'
+
+(?-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
+a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
+
+(-->) :: ScopeReader m => Type n -> Type n -> m n (Type n)
+a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
+
+(--@) :: ScopeReader m => Type n -> Type n -> m n (Type n)
+a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
+
+(==>) :: ScopeReader m => Type n -> Type n -> m n (Type n)
+a ==> b = Pi <$> nonDepPiType TabArrow a Pure b
+
+pattern IntLitExpr :: Int -> UExpr' n
 pattern IntLitExpr x = UIntLit x
 
-pattern FloatLitExpr :: Double -> UExpr'
+pattern FloatLitExpr :: Double -> UExpr' n
 pattern FloatLitExpr x = UFloatLit x
 
 getIntLit :: LitVal -> Int
@@ -1558,8 +1423,6 @@ getIntLit l = case l of
   Int64Lit i -> fromIntegral i
   Int32Lit i -> fromIntegral i
   Word8Lit  i -> fromIntegral i
-  Word32Lit  i -> fromIntegral i
-  Word64Lit  i -> fromIntegral i
   _ -> error $ "Expected an integer literal"
 
 getFloatLit :: LitVal -> Double
@@ -1569,109 +1432,111 @@ getFloatLit l = case l of
   _ -> error $ "Expected a floating-point literal"
 
 -- Type used to represent indices at run-time
-pattern IdxRepTy :: Type
-pattern IdxRepTy = TC (BaseType IIdxRepTy)
+pattern IdxRepTy :: Type n
+pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
 
-pattern IdxRepVal :: Int32 -> Atom
+pattern IdxRepVal :: Int32 -> Atom n
 pattern IdxRepVal x = Con (Lit (Int32Lit x))
 
-pattern IIdxRepVal :: Int32 -> IExpr
+pattern IIdxRepVal :: Int32 -> IExpr n
 pattern IIdxRepVal x = ILit (Int32Lit x)
 
 pattern IIdxRepTy :: IType
 pattern IIdxRepTy = Scalar Int32Type
 
 -- Type used to represent sum type tags at run-time
-pattern TagRepTy :: Type
+pattern TagRepTy :: Type n
 pattern TagRepTy = TC (BaseType (Scalar Word8Type))
 
-pattern TagRepVal :: Word8 -> Atom
+pattern TagRepVal :: Word8 -> Atom n
 pattern TagRepVal x = Con (Lit (Word8Lit x))
 
-pattern Word8Ty :: Type
+pattern Word8Ty :: Type n
 pattern Word8Ty = TC (BaseType (Scalar Word8Type))
 
-pattern PairVal :: Atom -> Atom -> Atom
-pattern PairVal x y = Con (ProdCon [x, y])
-
-pattern PairTy :: Type -> Type -> Type
-pattern PairTy x y = TC (ProdType [x, y])
-
-pattern ProdTy :: [Type] -> Type
+pattern ProdTy :: [Type n] -> Type n
 pattern ProdTy tys = TC (ProdType tys)
 
-pattern ProdVal :: [Atom] -> Atom
+pattern ProdVal :: [Atom n] -> Atom n
 pattern ProdVal xs = Con (ProdCon xs)
 
-pattern SumTy :: [Type] -> Type
+pattern SumTy :: [Type n] -> Type n
 pattern SumTy cs = TC (SumType cs)
 
-pattern SumVal :: Type -> Int -> Atom -> Atom
+pattern SumVal :: Type n -> Int -> Atom n -> Atom n
 pattern SumVal ty tag payload = Con (SumCon ty tag payload)
 
-pattern UnitVal :: Atom
+pattern PairVal :: Atom n -> Atom n -> Atom n
+pattern PairVal x y = Con (ProdCon [x, y])
+
+pattern PairTy :: Type n -> Type n -> Type n
+pattern PairTy x y = TC (ProdType [x, y])
+
+pattern UnitVal :: Atom n
 pattern UnitVal = Con (ProdCon [])
 
-pattern UnitTy :: Type
+pattern UnitTy :: Type n
 pattern UnitTy = TC (ProdType [])
 
-pattern BaseTy :: BaseType -> Type
+pattern BaseTy :: BaseType -> Type n
 pattern BaseTy b = TC (BaseType b)
 
-pattern PtrTy :: PtrType -> Type
+pattern PtrTy :: PtrType -> Type n
 pattern PtrTy ty = BaseTy (PtrType ty)
 
-pattern RefTy :: Atom -> Type -> Type
+pattern RefTy :: Atom n -> Type n -> Type n
 pattern RefTy r a = TC (RefType (Just r) a)
 
-pattern RawRefTy :: Type -> Type
+pattern RawRefTy :: Type n -> Type n
 pattern RawRefTy a = TC (RefType Nothing a)
 
-pattern TyKind :: Kind
+pattern TabTyAbs :: PiType n -> Type n
+pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
+
+pattern TabTy :: PiBinder n l -> Type l -> Type n
+pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
+
+pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
 
-pattern EffKind :: Kind
+pattern EffKind :: Kind n
 pattern EffKind = TC EffectRowKind
 
-pattern LabeledRowKind :: Kind
+pattern LabeledRowKind :: Kind n
 pattern LabeledRowKind = TC LabeledRowKindTC
 
-pattern FixedIntRange :: Int32 -> Int32 -> Type
+pattern FixedIntRange :: Int32 -> Int32 -> Type n
 pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
-pattern Fin :: Atom -> Type
+pattern Fin :: Atom n -> Type n
 pattern Fin n = TC (IntRange (IdxRepVal 0) n)
 
-pattern PureArrow :: Arrow
-pattern PureArrow = PlainArrow Pure
+pattern BinaryFunTy :: PiBinder n l1 -> PiBinder l1 l2 -> EffectRow l2 -> Type l2 -> Type n
+pattern BinaryFunTy b1 b2 eff ty <- Pi (PiType b1 Pure (Pi (PiType b2 eff ty)))
 
-pattern TabTy :: Binder -> Type -> Type
-pattern TabTy v i = Pi (Abs v (TabArrow, i))
+pattern AtomicBlock :: Atom n -> Block n
+pattern AtomicBlock atom <- Block _ Empty (Atom atom)
+  where AtomicBlock atom = Block NoBlockAnn Empty (Atom atom)
 
-pattern TabTyAbs :: PiType -> Type
-pattern TabTyAbs a <- Pi a@(Abs _ (TabArrow, _))
+pattern BinaryLamExpr :: LamBinder n l1 -> LamBinder l1 l2 -> Block l2 -> LamExpr n
+pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
 
-pattern LamVal :: Binder -> Block -> Atom
-pattern LamVal v b <- Lam (Abs v (_, b))
+type NaryLam = Abs (Nest LamBinder) Block
 
-pattern TabVal :: Binder -> Block -> Atom
-pattern TabVal v b = Lam (Abs v (TabArrow, b))
+mkConsListTy :: [Type n] -> Type n
+mkConsListTy = foldr PairTy UnitTy
 
-pattern TabValA :: Binder -> Atom -> Atom
-pattern TabValA v a = Lam (Abs v (TabArrow, (Block Empty (Atom a))))
+mkConsList :: [Atom n] -> Atom n
+mkConsList = foldr PairVal UnitVal
 
-pattern Int32Ty :: Type
-pattern Int32Ty = BaseTy (Scalar Int32Type)
-
-pattern Int64Ty :: Type
-pattern Int64Ty = BaseTy (Scalar Int64Type)
-
-isTabTy :: Type -> Bool
-isTabTy (TabTy _ _) = True
-isTabTy _ = False
+fromConsListTy :: Fallible m => Type n -> m [Type n]
+fromConsListTy ty = case ty of
+  UnitTy         -> return []
+  PairTy t rest -> (t:) <$> fromConsListTy rest
+  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
 
 -- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
-fromLeftLeaningConsListTy :: Fallible m => Int -> Type -> m (Type, [Type])
+fromLeftLeaningConsListTy :: Fallible m => Int -> Type n -> m (Type n, [Type n])
 fromLeftLeaningConsListTy depth initTy = go depth initTy []
   where
     go 0        ty xs = return (ty, reverse xs)
@@ -1679,67 +1544,980 @@ fromLeftLeaningConsListTy depth initTy = go depth initTy []
       PairTy lt rt -> go (remDepth - 1) lt (rt : xs)
       _ -> throw CompilerErr $ "Not a pair: " ++ show xs
 
+fromConsList :: Fallible m => Atom n -> m [Atom n]
+fromConsList xs = case xs of
+  UnitVal        -> return []
+  PairVal x rest -> (x:) <$> fromConsList rest
+  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
+
 type BundleDesc = Int  -- length
 
+getProjection :: [Int] -> Atom n -> Atom n
+getProjection [] a = a
+getProjection (i:is) a = case getProjection is a of
+  Var name -> ProjectElt (NE.fromList [i]) name
+  ProjectElt idxs' a' -> ProjectElt (NE.cons i idxs') a'
+  DataCon _ _ _ _ xs -> xs !! i
+  Record items -> toList items !! i
+  Con (ProdCon xs) -> xs !! i
+  a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
+
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
-bundleFold empty pair els = case els of
-  []  -> (empty, 0)
+bundleFold emptyVal pair els = case els of
+  []  -> (emptyVal, 0)
   [e] -> (e, 1)
   h:t -> (pair h tb, td + 1)
-    where (tb, td) = bundleFold empty pair t
+    where (tb, td) = bundleFold emptyVal pair t
 
-mkBundleTy :: [Type] -> (Type, BundleDesc)
+mkBundleTy :: [Type n] -> (Type n, BundleDesc)
 mkBundleTy = bundleFold UnitTy PairTy
 
-mkBundle :: [Atom] -> (Atom, BundleDesc)
+mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
 
-pattern FunTy :: Binder -> EffectRow -> Type -> Type
-pattern FunTy b eff bodyTy = Pi (Abs b (PlainArrow eff, bodyTy))
-
-pattern PiTy :: Binder -> Arrow -> Type -> Type
-pattern PiTy b arr bodyTy = Pi (Abs b (arr, bodyTy))
-
-pattern BinaryFunTy :: Binder -> Binder -> EffectRow -> Type -> Type
-pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
-
-pattern BinaryFunVal :: Binder -> Binder -> EffectRow -> Block -> Type
-pattern BinaryFunVal b1 b2 eff body =
-          Lam (Abs b1 (PureArrow, Block Empty (Atom (
-          Lam (Abs b2 (PlainArrow eff, body))))))
-
-pattern NestOne :: a -> Nest a
-pattern NestOne x = Nest x Empty
-
-pattern BinderAnn :: a -> BinderP a
-pattern BinderAnn x <- ((\case Ignore   ann  -> ann
-                               Bind (_:>ann) -> ann) -> x)
-  where BinderAnn x = Ignore x
-
-pattern ClassDictCon :: [Type] -> [Type] -> DataConDef
-pattern ClassDictCon superclassTys methodTys <-
- DataConDef _ (Nest (BinderAnn (PairTy (ProdTy superclassTys) (ProdTy methodTys))) Empty)
-
-pattern MaybeTy :: Type -> Type
+pattern MaybeTy :: Type n -> Type n
 pattern MaybeTy a = SumTy [UnitTy, a]
 
-pattern NothingAtom :: Type -> Atom
+pattern NothingAtom :: Type n -> Atom n
 pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
 
-pattern JustAtom :: Type -> Atom -> Atom
+pattern JustAtom :: Type n -> Atom n -> Atom n
 pattern JustAtom a x = SumVal (MaybeTy a) 1 x
 
-pattern BoolTy :: Type
-pattern BoolTy = Word8Ty
+-- -- === instances ===
 
-pattern FalseAtom :: Atom
-pattern FalseAtom = Con (Lit (Word8Lit 0))
+-- right-biased, unlike the underlying Map
+instance Semigroup (SourceMap n) where
+  m1 <> m2 = SourceMap $ fromSourceMap m2 <> fromSourceMap m1
 
-pattern TrueAtom :: Atom
-pattern TrueAtom = Con (Lit (Word8Lit 1))
+instance Monoid (SourceMap n) where
+  mempty = SourceMap mempty
 
--- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
--- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
+instance GenericE DataDef where
+  type RepE DataDef = PairE (LiftE SourceName) (Abs (Nest Binder) (ListE DataConDef))
+  fromE (DataDef name bs cons) = PairE (LiftE name) (Abs bs (ListE cons))
+  toE   (PairE (LiftE name) (Abs bs (ListE cons))) = DataDef name bs cons
+deriving instance Show (DataDef n)
+deriving via WrapE DataDef n instance Generic (DataDef n)
+instance InjectableE DataDef
+instance HoistableE  DataDef
+instance SubstE Name DataDef
+instance SubstE AtomSubstVal DataDef
+instance AlphaEqE DataDef
+
+instance GenericE DataConDef where
+  type RepE DataConDef = PairE (LiftE SourceName) (Abs (Nest Binder) UnitE)
+  fromE (DataConDef name ab) = PairE (LiftE name) ab
+  toE   (PairE (LiftE name) ab) = DataConDef name ab
+instance InjectableE DataConDef
+instance HoistableE  DataConDef
+instance SubstE Name DataConDef
+instance SubstE AtomSubstVal DataConDef
+instance AlphaEqE DataConDef
+
+instance GenericE ClassDef where
+  type RepE ClassDef = PairE (LiftE (SourceName, [SourceName]))
+                             (Name DataDefNameC)
+  fromE (ClassDef className methodNames dataDefName) =
+          PairE (LiftE (className, methodNames)) dataDefName
+  toE (PairE (LiftE (className, methodNames)) dataDefName) =
+        ClassDef className methodNames dataDefName
+instance InjectableE         ClassDef
+instance HoistableE        ClassDef
+instance SubstE Name         ClassDef
+instance SubstE AtomSubstVal ClassDef
+
+instance GenericB DataConRefBinding where
+  type RepB DataConRefBinding = PairB (LiftB Atom) Binder
+  fromB (DataConRefBinding b val) = PairB (LiftB val) b
+  toB   (PairB (LiftB val) b) = DataConRefBinding b val
+
+instance InjectableB DataConRefBinding
+instance HoistableB DataConRefBinding
+instance ProvesExt  DataConRefBinding
+instance BindsNames DataConRefBinding
+instance SubstB Name DataConRefBinding
+instance SubstB AtomSubstVal DataConRefBinding
+instance AlphaEqB DataConRefBinding
+deriving instance Show (DataConRefBinding n l)
+deriving instance Generic (DataConRefBinding n l)
+
+newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
+  ExtLabeledItemsE (ExtLabeledItems (e1 n) (e2 n))
+
+instance GenericE Atom where
+  type RepE Atom =
+      EitherE5
+              (EitherE2
+                   -- We isolate the Var and ProjectElt cases (and reorder them
+                   -- compared to the data definition) because they need special
+                   -- handling when you substitute with atoms. The rest just act
+                   -- like containers
+  {- Var -}        AtomName
+  {- ProjectElt -} ( LiftE (NE.NonEmpty Int) `PairE` AtomName )
+            ) (EitherE4
+  {- Lam -}        LamExpr
+  {- Pi -}         PiType
+  {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
+                     DataDefName               `PairE`
+                     ListE Atom                `PairE`
+                     ListE Atom )
+  {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` ListE Atom )
+            ) (EitherE5
+  {- LabeledRow -} (ExtLabeledItemsE Type AtomName)
+  {- Record -}     (ComposeE LabeledItems Atom)
+  {- RecordTy -}   (ExtLabeledItemsE Type AtomName)
+  {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
+                     LiftE (Label, Int) `PairE` Atom )
+  {- VariantTy -}  (ExtLabeledItemsE Type AtomName)
+            ) (EitherE2
+  {- Con -}        (ComposeE PrimCon Atom)
+  {- TC -}         (ComposeE PrimTC  Atom)
+            ) (EitherE4
+  {- Eff -}        EffectRow
+  {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
+  {- DataConRef -} ( DataDefName                    `PairE`
+                     ListE Atom                     `PairE`
+                     EmptyAbs (Nest DataConRefBinding) )
+  {- BoxedRef -}   ( Atom `PairE` Block `PairE` Abs Binder Atom ))
+
+  fromE atom = case atom of
+    Var v -> Case0 (Case0 v)
+    ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
+    Lam lamExpr -> Case1 (Case0 lamExpr)
+    Pi  piExpr  -> Case1 (Case1 piExpr)
+    DataCon printName defName params con args -> Case1 $ Case2 $
+      LiftE (printName, con) `PairE`
+            defName          `PairE`
+      ListE params           `PairE`
+      ListE args
+    TypeCon sourceName defName params -> Case1 $ Case3 $
+      LiftE sourceName `PairE` defName `PairE` ListE params
+    LabeledRow extItems -> Case2 $ Case0 $ ExtLabeledItemsE extItems
+    Record items        -> Case2 $ Case1 $ ComposeE items
+    RecordTy extItems   -> Case2 $ Case2 $ ExtLabeledItemsE extItems
+    Variant extItems l con payload -> Case2 $ Case3 $
+      ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
+    VariantTy extItems  -> Case2 $ Case4 $ ExtLabeledItemsE extItems
+    Con con -> Case3 $ Case0 $ ComposeE con
+    TC  con -> Case3 $ Case1 $ ComposeE con
+    Eff effs -> Case4 $ Case0 $ effs
+    ACase scrut alts ty -> Case4 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
+    DataConRef defName params bs ->
+      Case4 $ Case2 $ defName `PairE` ListE params `PairE` bs
+    BoxedRef ptr size ab ->
+      Case4 $ Case3 $ ptr `PairE` size `PairE` ab
+
+  toE atom = case atom of
+    Case0 val -> case val of
+      Case0 v -> Var v
+      Case1 (PairE (LiftE idxs) x) -> ProjectElt idxs x
+      _ -> error "impossible"
+    Case1 val -> case val of
+      Case0 lamExpr -> Lam lamExpr
+      Case1 piExpr  -> Pi  piExpr
+      Case2 ( LiftE (printName, con) `PairE`
+                    defName           `PairE`
+              ListE params           `PairE`
+              ListE args ) ->
+        DataCon printName defName params con args
+      Case3 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
+        TypeCon sourceName defName params
+      _ -> error "impossible"
+    Case2 val -> case val of
+      Case0 (ExtLabeledItemsE extItems) -> LabeledRow extItems
+      Case1 (ComposeE items) -> Record items
+      Case2 (ExtLabeledItemsE extItems) -> RecordTy extItems
+      Case3 ( (ExtLabeledItemsE extItems) `PairE`
+              LiftE (l, con)              `PairE`
+              payload) -> Variant extItems l con payload
+      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      _ -> error "impossible"
+    Case3 val -> case val of
+      Case0 (ComposeE con) -> Con con
+      Case1 (ComposeE con) -> TC con
+      _ -> error "impossible"
+    Case4 val -> case val of
+      Case0 effs -> Eff effs
+      Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
+      Case2 (defName `PairE` ListE params `PairE` bs) ->
+        DataConRef defName params bs
+      Case3 (ptr `PairE` size `PairE` ab) -> BoxedRef ptr size ab
+      _ -> error "impossible"
+    _ -> error "impossible"
+
+instance InjectableE Atom
+instance HoistableE  Atom
+instance AlphaEqE Atom
+instance SubstE Name Atom
+
+-- TODO: special handling of ACase too
+instance SubstE AtomSubstVal Atom where
+  substE (scope, env) atom = case fromE atom of
+    LeftE specialCase -> case specialCase of
+      -- Var
+      Case0 v -> do
+        case env ! v of
+          Rename v' -> Var v'
+          SubstVal x -> x
+      -- ProjectElt
+      Case1 (PairE (LiftE idxs) v) -> do
+        let v' = case env ! v of
+                   SubstVal x -> x
+                   Rename v''  -> Var v''
+        getProjection (NE.toList idxs) v'
+      Case1 _ -> error "impossible"
+      _ -> error "impossible"
+    RightE rest -> (toE . RightE) $ substE (scope, env) rest
+
+trySelectBranch :: Atom n -> Maybe (Int, [Atom n])
+trySelectBranch e = case e of
+  DataCon _ _ _ con args -> return (con, args)
+  Variant (NoExt types) label i value -> do
+    let LabeledItems ixtypes = enumerate types
+    let index = fst $ (ixtypes M.! label) NE.!! i
+    return (index, [value])
+  SumVal _ i value -> Just (i, [value])
+  Con (SumAsProd _ (TagRepVal tag) vals) -> do
+    let i = fromIntegral tag
+    return (i , vals !! i)
+  _ -> Nothing
+
+instance GenericE Expr where
+  type RepE Expr =
+     EitherE5
+        (PairE Atom Atom)
+        (PairE Atom (PairE (ListE Alt) Type))
+        (Atom)
+        (ComposeE PrimOp Atom)
+        (ComposeE PrimHof Atom)
+  fromE = \case
+    App f e        -> Case0 (PairE f e)
+    Case e alts ty -> Case1 (PairE e (PairE (ListE alts) ty))
+    Atom x         -> Case2 (x)
+    Op op          -> Case3 (ComposeE op)
+    Hof hof        -> Case4 (ComposeE hof)
+
+  toE = \case
+    Case0 (PairE f e)                       -> App f e
+    Case1 (PairE e (PairE (ListE alts) ty)) -> Case e alts ty
+    Case2 (x)                               -> Atom x
+    Case3 (ComposeE op)                     -> Op op
+    Case4 (ComposeE hof)                    -> Hof hof
+    _ -> error "impossible"
+
+instance InjectableE Expr
+instance HoistableE  Expr
+instance AlphaEqE Expr
+instance SubstE Name Expr
+instance SubstE AtomSubstVal Expr
+
+instance GenericE (ExtLabeledItemsE e1 e2) where
+  type RepE (ExtLabeledItemsE e1 e2) = EitherE (ComposeE LabeledItems e1)
+                                               (ComposeE LabeledItems e1 `PairE` e2)
+  fromE (ExtLabeledItemsE (Ext items Nothing))  = LeftE  (ComposeE items)
+  fromE (ExtLabeledItemsE (Ext items (Just t))) = RightE (ComposeE items `PairE` t)
+
+  toE (LeftE  (ComposeE items          )) = ExtLabeledItemsE (Ext items Nothing)
+  toE (RightE (ComposeE items `PairE` t)) = ExtLabeledItemsE (Ext items (Just t))
+
+instance (InjectableE e1, InjectableE e2) => InjectableE (ExtLabeledItemsE e1 e2)
+instance (HoistableE  e1, HoistableE  e2) => HoistableE  (ExtLabeledItemsE e1 e2)
+instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2)
+instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
+
+instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
+  substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
+    let items' = fmap (substE (scope, env)) items
+    let ext = case maybeExt of
+                Nothing -> NoExt NoLabeledItems
+                Just v -> case env ! v of
+                  Rename        v'  -> Ext NoLabeledItems $ Just v'
+                  SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
+                  SubstVal (LabeledRow row) -> row
+                  _ -> error "Not a valid labeled row substitution"
+    ExtLabeledItemsE $ prefixExtLabeledItems items' ext
+
+instance GenericE Block where
+  type RepE Block = PairE (MaybeE Type) (Abs (Nest Decl) Expr)
+  fromE (Block (BlockAnn ty) decls result) = PairE (JustE ty) (Abs decls result)
+  fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
+  fromE _ = error "impossible"
+  toE   (PairE (JustE ty) (Abs decls result)) = Block (BlockAnn ty) decls result
+  toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
+  toE   _ = error "impossible"
+
+deriving instance Show (BlockAnn n l)
+
+instance InjectableE Block
+instance HoistableE  Block
+instance AlphaEqE Block
+instance SubstE Name Block
+instance SubstE AtomSubstVal Block
+deriving instance Show (Block n)
+deriving via WrapE Block n instance Generic (Block n)
+
+instance GenericB LamBinder where
+  type RepB LamBinder =         LiftB (PairE Type (LiftE Arrow))
+                        `PairB` NameBinder AtomNameC
+                        `PairB` LiftB EffectRow
+  fromB (LamBinder b ty arr effs) = LiftB (PairE ty (LiftE arr))
+                            `PairB` b
+                            `PairB` LiftB effs
+  toB (       LiftB (PairE ty (LiftE arr))
+      `PairB` b
+      `PairB` LiftB effs) = LamBinder b ty arr effs
+
+instance BindsBindings LamBinder where
+  toBindingsFrag (LamBinder b ty arrow effects) =
+    withExtEvidence b do
+      let binding = toBinding $ inject $ LamBinding arrow ty
+      BindingsFrag (RecEnvFrag $ b @> binding)
+                   (Just $ inject effects)
+
+instance BindsAtMostOneName LamBinder AtomNameC where
+  LamBinder b _ _ _ @> x = b @> x
+
+instance BindsOneName LamBinder AtomNameC where
+  binderName (LamBinder b _ _ _) = binderName b
+
+instance BindsOneAtomName LamBinder where
+  boundAtomBinding (LamBinder _ ty arr _) =
+    LamBound $ LamBinding arr ty
+
+instance HasNameHint (LamBinder n l) where
+  getNameHint (LamBinder b _ _ _) = getNameHint b
+
+instance ProvesExt  LamBinder
+instance BindsNames LamBinder
+instance InjectableB LamBinder
+instance HoistableB  LamBinder
+instance SubstB Name LamBinder
+instance SubstB AtomSubstVal LamBinder
+instance AlphaEqB LamBinder
+
+instance GenericE LamBinding where
+  type RepE LamBinding = PairE (LiftE Arrow) Type
+  fromE (LamBinding arr ty) = PairE (LiftE arr) ty
+  toE   (PairE (LiftE arr) ty) = LamBinding arr ty
+
+instance InjectableE LamBinding
+instance HoistableE  LamBinding
+instance SubstE Name LamBinding
+instance SubstE AtomSubstVal LamBinding
+instance AlphaEqE LamBinding
+
+instance GenericE LamExpr where
+  type RepE LamExpr = Abs LamBinder Block
+  fromE (LamExpr b block) = Abs b block
+  toE   (Abs b block) = LamExpr b block
+
+instance InjectableE LamExpr
+instance HoistableE  LamExpr
+instance AlphaEqE LamExpr
+instance SubstE Name LamExpr
+instance SubstE AtomSubstVal LamExpr
+deriving instance Show (LamExpr n)
+deriving via WrapE LamExpr n instance Generic (LamExpr n)
+
+instance GenericE PiBinding where
+  type RepE PiBinding = PairE (LiftE Arrow) Type
+  fromE (PiBinding arr ty) = PairE (LiftE arr) ty
+  toE   (PairE (LiftE arr) ty) = PiBinding arr ty
+
+instance InjectableE PiBinding
+instance HoistableE  PiBinding
+instance SubstE Name PiBinding
+instance SubstE AtomSubstVal PiBinding
+instance AlphaEqE PiBinding
+
+instance GenericB PiBinder where
+  type RepB PiBinder = BinderP AtomNameC (PairE Type (LiftE Arrow))
+  fromB (PiBinder b ty arr) = b :> PairE ty (LiftE arr)
+  toB   (b :> PairE ty (LiftE arr)) = PiBinder b ty arr
+
+instance BindsAtMostOneName PiBinder AtomNameC where
+  PiBinder b _ _ @> x = b @> x
+
+instance BindsOneName PiBinder AtomNameC where
+  binderName (PiBinder b _ _) = binderName b
+
+instance BindsOneAtomName PiBinder where
+  boundAtomBinding (PiBinder _ ty arr) =
+    PiBound $ PiBinding arr ty
+
+instance BindsBindings PiBinder where
+  toBindingsFrag (PiBinder b ty arr) =
+    withExtEvidence b do
+      let binding = toBinding $ inject $ PiBinding arr ty
+      BindingsFrag (RecEnvFrag $ b @> binding) (Just Pure)
+
+instance ProvesExt  PiBinder
+instance BindsNames PiBinder
+instance InjectableB PiBinder
+instance HoistableB  PiBinder
+instance SubstB Name PiBinder
+instance SubstB AtomSubstVal PiBinder
+instance AlphaEqB PiBinder
+
+instance GenericE PiType where
+  type RepE PiType = Abs PiBinder (PairE EffectRow Type)
+  fromE (PiType b eff resultTy) = Abs b (PairE eff resultTy)
+  toE   (Abs b (PairE eff resultTy)) = PiType b eff resultTy
+
+instance InjectableE PiType
+instance HoistableE  PiType
+instance AlphaEqE PiType
+instance SubstE Name PiType
+instance SubstE AtomSubstVal PiType
+deriving instance Show (PiType n)
+deriving via WrapE PiType n instance Generic (PiType n)
+
+instance GenericE (EffectP name) where
+  type RepE (EffectP name) =
+    EitherE (PairE (LiftE RWS) (MaybeE name))
+            (LiftE (Either () ()))
+  fromE = \case
+    RWSEffect rws name -> LeftE  (PairE (LiftE rws) $ toMaybeE name)
+    ExceptionEffect -> RightE (LiftE (Left  ()))
+    IOEffect        -> RightE (LiftE (Right ()))
+  toE = \case
+    LeftE  (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
+    RightE (LiftE (Left  ())) -> ExceptionEffect
+    RightE (LiftE (Right ())) -> IOEffect
+
+instance InjectableE   name => InjectableE   (EffectP name)
+instance HoistableE    name => HoistableE    (EffectP name)
+instance AlphaEqE      name => AlphaEqE      (EffectP name)
+instance SubstE Name (EffectP AtomName)
+instance SubstE AtomSubstVal (EffectP AtomName) where
+  substE (_, env) eff = case eff of
+    RWSEffect rws Nothing -> RWSEffect rws Nothing
+    RWSEffect rws (Just v) -> do
+      let v' = case env ! v of
+                 Rename        v''  -> Just v''
+                 SubstVal UnitTy    -> Nothing  -- used at runtime/imp-translation-time
+                 SubstVal (Var v'') -> Just v''
+                 SubstVal _ -> error "Heap parameter must be a name"
+      RWSEffect rws v'
+    ExceptionEffect -> ExceptionEffect
+    IOEffect        -> IOEffect
+
+instance OrdE name => GenericE (EffectRowP name) where
+  type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE name)
+  fromE (EffectRow effs ext) = ListE (S.toList effs) `PairE` ext'
+    where ext' = case ext of Just v  -> JustE v
+                             Nothing -> NothingE
+  toE (ListE effs `PairE` ext) = EffectRow (S.fromList effs) ext'
+    where ext' = case ext of JustE v  -> Just v
+                             NothingE -> Nothing
+                             _ -> error "impossible"
+
+instance InjectableE (EffectRowP AtomName)
+instance HoistableE  (EffectRowP AtomName)
+instance SubstE Name (EffectRowP AtomName)
+instance AlphaEqE    (EffectRowP AtomName)
+
+instance SubstE AtomSubstVal (EffectRowP AtomName) where
+  substE env (EffectRow effs tailVar) = do
+    let effs' = S.fromList $ map (substE env) (S.toList effs)
+    let tailEffRow = case tailVar of
+          Nothing -> EffectRow mempty Nothing
+          Just v -> case snd env ! v of
+            Rename        v'  -> EffectRow mempty (Just v')
+            SubstVal (Var v') -> EffectRow mempty (Just v')
+            SubstVal (Eff r)  -> r
+            _ -> error "Not a valid effect substitution"
+    extendEffRow effs' tailEffRow
+
+instance GenericE SynthCandidates where
+  type RepE SynthCandidates =
+    ListE Atom `PairE` ListE Atom `PairE` ListE (PairE DataDefName (ListE Atom))
+  fromE (SynthCandidates xs ys zs) = ListE xs `PairE` ListE ys `PairE` ListE zs'
+    where zs' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList zs)
+  toE (ListE xs `PairE` ListE ys `PairE` ListE zs) = SynthCandidates xs ys zs'
+    where zs' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) zs
+
+instance InjectableE SynthCandidates
+instance HoistableE  SynthCandidates
+instance SubstE Name SynthCandidates
+instance SubstE AtomSubstVal SynthCandidates
+
+instance GenericE AtomBinding where
+  type RepE AtomBinding =
+     EitherE6
+        DeclBinding
+        LamBinding
+        PiBinding
+        Type
+        SolverBinding
+        (LiftE (PtrType, Ptr ()))
+
+  fromE = \case
+    LetBound    x -> Case0 x
+    LamBound    x -> Case1 x
+    PiBound     x -> Case2 x
+    MiscBound   x -> Case3 x
+    SolverBound x -> Case4 x
+    PtrLitBound x y -> Case5 (LiftE (x,y))
+
+  toE = \case
+    Case0 x -> LetBound x
+    Case1 x -> LamBound x
+    Case2 x -> PiBound  x
+    Case3 x -> MiscBound x
+    Case4 x -> SolverBound x
+    Case5 (LiftE (x,y)) -> PtrLitBound x y
+    _ -> error "impossible"
+
+instance InjectableE AtomBinding
+instance HoistableE  AtomBinding
+instance SubstE Name AtomBinding
+instance SubstE AtomSubstVal AtomBinding
+instance AlphaEqE AtomBinding
+
+instance GenericE SolverBinding where
+  type RepE SolverBinding = EitherE2
+                              (PairE Type (LiftE SrcPosCtx))
+                              Type
+  fromE = \case
+    InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
+    SkolemBound  ty     -> Case1 ty
+
+  toE = \case
+    Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
+    Case1 ty                    -> SkolemBound  ty
+    _ -> error "impossible"
+
+instance InjectableE SolverBinding
+instance HoistableE  SolverBinding
+instance SubstE Name SolverBinding
+instance SubstE AtomSubstVal SolverBinding
+instance AlphaEqE SolverBinding
+
+instance NameColor c => GenericE (Binding c) where
+  type RepE (Binding c) =
+    EitherE2
+      (EitherE5
+          AtomBinding
+          DataDef
+          (DataDefName `PairE` Atom)
+          (DataDefName `PairE` LiftE Int `PairE` Atom)
+          (ClassDef `PairE` Atom))
+      (EitherE2
+          (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
+          (Name ClassNameC `PairE` LiftE Int `PairE` Atom))
+  fromE binding = case binding of
+    AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
+    DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
+    TyConBinding      dataDefName     e -> Case0 $ Case2 $ dataDefName `PairE` e
+    DataConBinding    dataDefName idx e -> Case0 $ Case3 $ dataDefName `PairE` LiftE idx `PairE` e
+    ClassBinding      classDef        e -> Case0 $ Case4 $ classDef `PairE` e
+    SuperclassBinding className idx e   -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` e
+    MethodBinding     className idx e   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
+
+  toE rep = case rep of
+    Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
+    Case0 (Case1 dataDef)                                   -> fromJust $ tryAsColor $ DataDefBinding    dataDef
+    Case0 (Case2 (dataDefName `PairE` e))                   -> fromJust $ tryAsColor $ TyConBinding      dataDefName e
+    Case0 (Case3 (dataDefName `PairE` LiftE idx `PairE` e)) -> fromJust $ tryAsColor $ DataConBinding    dataDefName idx e
+    Case0 (Case4 (classDef `PairE` e))                      -> fromJust $ tryAsColor $ ClassBinding      classDef e
+    Case1 (Case0 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ SuperclassBinding className idx e
+    Case1 (Case1 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ MethodBinding     className idx e
+    _ -> error "impossible"
+
+deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
+instance InjectableV         Binding
+instance HoistableV          Binding
+instance SubstV Name         Binding
+instance SubstV AtomSubstVal Binding
+instance NameColor c => InjectableE         (Binding c)
+instance NameColor c => HoistableE          (Binding c)
+instance NameColor c => SubstE Name         (Binding c)
+instance NameColor c => SubstE AtomSubstVal (Binding c)
+
+instance GenericE DeclBinding where
+  type RepE DeclBinding = LiftE LetAnn `PairE` Type `PairE` Expr
+  fromE (DeclBinding ann ty expr) = LiftE ann `PairE` ty `PairE` expr
+  toE   (LiftE ann `PairE` ty `PairE` expr) = DeclBinding ann ty expr
+
+instance InjectableE DeclBinding
+instance HoistableE  DeclBinding
+instance SubstE Name DeclBinding
+instance SubstE AtomSubstVal DeclBinding
+instance AlphaEqE DeclBinding
+
+instance GenericB Decl where
+  type RepB Decl = AtomBinderP DeclBinding
+  fromB (Let b binding) = b :> binding
+  toB   (b :> binding) = Let b binding
+
+instance InjectableB Decl
+instance HoistableB  Decl
+instance SubstB AtomSubstVal Decl
+instance SubstB Name Decl
+instance AlphaEqB Decl
+instance ProvesExt  Decl
+instance BindsNames Decl
+instance BindsBindings Decl
+
+instance Pretty Arrow where
+  pretty arr = case arr of
+    PlainArrow     -> "->"
+    TabArrow       -> "=>"
+    LinArrow       -> "--o"
+    ImplicitArrow  -> "?->"
+    ClassArrow     -> "?=>"
+
+instance Semigroup (SynthCandidates n) where
+  SynthCandidates xs ys zs <> SynthCandidates xs' ys' zs' =
+    SynthCandidates (xs<>xs') (ys<>ys') (M.unionWith (<>) zs zs')
+
+instance Monoid (SynthCandidates n) where
+  mempty = SynthCandidates mempty mempty mempty
+
+instance GenericE SourceMap where
+  type RepE SourceMap = ListE (PairE (LiftE SourceName) (EnvVal Name))
+  fromE (SourceMap m) = ListE [PairE (LiftE v) def | (v, def) <- M.toList m]
+  toE   (ListE pairs) = SourceMap $ M.fromList [(v, def) | (PairE (LiftE v) def) <- pairs]
+
+deriving via WrapE SourceMap n instance Generic (SourceMap n)
+-- instance Generic (SourceMap n) where
+--   type Rep (SourceMap n) = Rep ()
+
+instance InjectableE SourceMap
+instance SubstE Name SourceMap
+instance HoistableE  SourceMap
+
+instance Pretty (SourceMap n) where
+  pretty (SourceMap m) =
+    fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
+
+instance GenericE Module where
+  type RepE Module =       LiftE IRVariant
+                   `PairE` Abs (Nest Decl) (Abs TopBindingsFrag UnitE)
+  fromE = undefined
+  toE = undefined
+
+instance InjectableE Module
+instance SubstE Name Module
+
+instance Store ForAnn
+instance Store AddressSpace
+instance Store LetAnn
+instance Store RWS
+instance Store Direction
+instance Store UnOp
+instance Store BinOp
+instance Store CmpOp
+instance Store BaseType
+instance Store LitVal
+instance Store ScalarBaseType
+instance Store Device
+
+instance Store a => Store (PrimOp  a)
+instance Store a => Store (PrimCon a)
+instance Store a => Store (PrimTC  a)
+instance Store a => Store (PrimHof a)
+instance Store a => Store (Limit a)
+instance Store a => Store (PrimEffect a)
+instance Store a => Store (BaseMonoidP a)
+
+instance Store (Atom n)
+instance Store (Expr n)
+instance Store (SolverBinding n)
+instance Store (AtomBinding n)
+instance Store (LamBinding  n)
+instance Store (DeclBinding n)
+instance Store (Decl n l)
+instance Store (DataDef n)
+instance Store (DataConDef n)
+instance Store (Block n)
+instance Store (LamBinder n l)
+instance Store (LamExpr n)
+instance Store (PiBinding n)
+instance Store (PiBinder n l)
+instance Store (PiType  n)
+instance Store Arrow
+instance Store (ClassDef       n)
+instance Store (SourceMap n)
+instance Store (SynthCandidates n)
+instance Store (EffectRow n)
+instance Store (Effect n)
+instance Store (DataConRefBinding n l)
+instance NameColor c => Store (Binding c n)
+
+instance IsString (SourceNameOr a VoidS) where
+  fromString = SourceName
+
+instance IsString (UBinder s VoidS VoidS) where
+  fromString = UBindSource
+
+instance IsString (UPat' VoidS VoidS) where
+  fromString = UPatBinder . fromString
+
+instance IsString (UPatAnn VoidS VoidS) where
+  fromString s = UPatAnn (fromString s) Nothing
+
+instance IsString (UExpr' VoidS) where
+  fromString = UVar . fromString
+
+instance IsString (a n) => IsString (WithSrcE a n) where
+  fromString = WithSrcE Nothing . fromString
+
+instance IsString (b n l) => IsString (WithSrcB b n l) where
+  fromString = WithSrcB Nothing . fromString
+
+deriving instance Show (UBinder s n l)
+deriving instance Show (UDataDefTrail n)
+deriving instance Show (ULamExpr n)
+deriving instance Show (UPiExpr n)
+deriving instance Show (UDeclExpr n)
+deriving instance Show (UDataDef n)
+deriving instance Show (UDecl n l)
+deriving instance Show (UForExpr n)
+deriving instance Show (UAlt n)
+
+instance (BindsBindings b1, BindsBindings b2)
+         => (BindsBindings (PairB b1 b2)) where
+  toBindingsFrag (PairB b1 b2) = do
+    let bindings2 = toBindingsFrag b2
+    let ext = toExtEvidence bindings2
+    withSubscopeDistinct ext do
+      toBindingsFrag b1 `catBindingsFrags` bindings2
+
+instance BindsBindings b => (BindsBindings (Nest b)) where
+  toBindingsFrag Empty = emptyOutFrag
+  toBindingsFrag (Nest b rest) = toBindingsFrag $ PairB b rest
+
+instance (BindsBindings b1, BindsBindings b2)
+         => (BindsBindings (EitherB b1 b2)) where
+  toBindingsFrag (LeftB  b) = toBindingsFrag b
+  toBindingsFrag (RightB b) = toBindingsFrag b
+
+instance GenericB BindingsFrag where
+  type RepB BindingsFrag = PairB (RecEnvFrag Binding) (LiftB (MaybeE EffectRow))
+  fromB (BindingsFrag frag (Just effs)) = PairB frag (LiftB (JustE effs))
+  fromB (BindingsFrag frag Nothing    ) = PairB frag (LiftB NothingE)
+  toB   (PairB frag (LiftB (JustE effs))) = BindingsFrag frag (Just effs)
+  toB   (PairB frag (LiftB NothingE    )) = BindingsFrag frag Nothing
+  toB   _ = error "impossible" -- GHC exhaustiveness bug?
+
+instance InjectableB         BindingsFrag
+instance HoistableB          BindingsFrag
+instance ProvesExt           BindingsFrag
+instance BindsNames          BindingsFrag
+instance SubstB Name         BindingsFrag
+instance SubstB AtomSubstVal BindingsFrag
+
+instance BindsBindings BindingsFrag where
+  toBindingsFrag frag = frag
+
+instance BindsBindings UnitB where
+  toBindingsFrag UnitB = emptyOutFrag
+
+-- TODO: name subst instances for the rest of UExpr
+instance SubstE Name UVar where
+  substE env = \case
+    UAtomVar    v -> UAtomVar    $ substE env v
+    UTyConVar   v -> UTyConVar   $ substE env v
+    UDataConVar v -> UDataConVar $ substE env v
+    UClassVar   v -> UClassVar   $ substE env v
+    UMethodVar  v -> UMethodVar  $ substE env v
+
+instance InjectableE e => InjectableE (WithBindings e) where
+  injectionProofE (fresh::InjectionCoercion n l) (WithBindings (bindings :: Bindings h) e) =
+    withExtEvidence (injectionProofE fresh ext) $
+      WithBindings bindings e
+    where ext = getExtEvidence :: ExtEvidence h n
+
+instance InjectableE UVar where
+  injectionProofE = todoInjectableProof
+
+instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
+  getNameHint (WithSrcB _ b) = getNameHint b
+
+instance HasNameHint (UPat' n l) where
+  getNameHint (UPatBinder b) = getNameHint b
+  getNameHint _ = "pat"
+
+instance HasNameHint (UBinder c n l) where
+  getNameHint b = case b of
+    UBindSource v -> getNameHint v
+    UIgnore       -> fromString "_ign"
+    UBind v       -> getNameHint v
+
+instance BindsNames (UBinder c) where
+  toScopeFrag (UBindSource _) = emptyOutFrag
+  toScopeFrag (UIgnore)       = emptyOutFrag
+  toScopeFrag (UBind b)       = toScopeFrag b
+
+instance ProvesExt (UBinder c) where
+instance BindsAtMostOneName (UBinder c) c where
+  b @> x = case b of
+    UBindSource _ -> emptyInFrag
+    UIgnore       -> emptyInFrag
+    UBind b'      -> b' @> x
+
+instance ProvesExt (UAnnBinder c) where
+instance BindsNames (UAnnBinder c) where
+  toScopeFrag (UAnnBinder b _) = toScopeFrag b
+
+instance BindsAtMostOneName (UAnnBinder c) c where
+  UAnnBinder b _ @> x = b @> x
+
+instance InjectableE UModule where
+  injectionProofE = todoInjectableProof
+
+instance Eq SourceBlock where
+  x == y = sbText x == sbText y
+
+instance Ord SourceBlock where
+  compare x y = compare (sbText x) (sbText y)
+
+instance GenericE ImpInstr where
+  type RepE ImpInstr = EitherE4
+      (EitherE4
+  {- IFor -}    (Size `PairE` Abs IBinder ImpBlock)
+  {- IWhile -}  (ImpBlock)
+  {- ICond -}   (IExpr `PairE` ImpBlock `PairE` ImpBlock)
+  {- IQuery -}  (LiftE IFunVar `PairE` IExpr)
+    ) (EitherE4
+  {- ISyncW -}  (UnitE)
+  {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
+  {- ICall -}   (LiftE IFunVar `PairE` ListE IExpr)
+  {- Store -}   (IExpr `PairE` IExpr)
+    ) (EitherE4
+  {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
+  {- MemCopy -} (IExpr `PairE` IExpr `PairE` IExpr)
+  {- Free -}    (IExpr)
+  {- IThrowE -} (UnitE)
+    ) (EitherE2
+  {- ICastOp -} (LiftE IType `PairE` IExpr)
+  {- IPrimOp -} (ComposeE PrimOp IExpr)
+      )
+  toE = undefined
+  fromE = undefined
+
+instance InjectableE ImpInstr
+instance HoistableE  ImpInstr
+instance AlphaEqE ImpInstr
+instance SubstE Name ImpInstr
+
+instance GenericE ImpBlock where
+  type RepE ImpBlock = Abs (Nest ImpDecl) (ListE IExpr)
+  toE = undefined
+  fromE = undefined
+
+instance InjectableE ImpBlock
+instance HoistableE  ImpBlock
+instance AlphaEqE ImpBlock
+instance SubstE Name ImpBlock
+
+instance GenericE IExpr where
+  type RepE IExpr = EitherE2 (LiftE LitVal)
+                             (PairE AtomName (LiftE BaseType))
+  toE = undefined
+  fromE = undefined
+
+instance InjectableE IExpr
+instance HoistableE  IExpr
+instance AlphaEqE IExpr
+instance SubstE Name IExpr
+
+instance GenericB IBinder where
+  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder AtomNameC)
+  toB = undefined
+  fromB = undefined
+
+instance HasNameHint (IBinder n l) where
+  getNameHint (IBinder b _) = getNameHint b
+
+instance BindsBindings IBinder where
+  toBindingsFrag (IBinder b ty) = toBindingsFrag $ b :> BaseTy ty
+
+instance BindsAtMostOneName IBinder AtomNameC where
+  IBinder b _ @> x = b @> x
+
+instance BindsOneName IBinder AtomNameC where
+  binderName (IBinder b _) = binderName b
+
+instance BindsNames IBinder where
+  toScopeFrag (IBinder b _) = toScopeFrag b
+
+instance ProvesExt  IBinder
+instance InjectableB IBinder
+instance HoistableB  IBinder
+instance SubstB Name IBinder
+instance SubstB AtomSubstVal IBinder
+instance AlphaEqB IBinder
+
+instance GenericB ImpDecl where
+  type RepB ImpDecl = PairB (LiftB ImpInstr) (Nest IBinder)
+  fromB (ImpLet bs instr) = PairB (LiftB instr) bs
+  toB   (PairB (LiftB instr) bs) = ImpLet bs instr
+
+instance InjectableB ImpDecl
+instance HoistableB  ImpDecl
+instance SubstB Name ImpDecl
+instance AlphaEqB ImpDecl
+instance ProvesExt  ImpDecl
+instance BindsNames ImpDecl
+
+instance BindsBindings ImpDecl where
+  toBindingsFrag (ImpLet bs _) =
+    toBindingsFrag bs
+
+instance GenericE ImpFunction where
+  type RepE ImpFunction = UnitE -- TODO
+  toE = undefined
+  fromE = undefined
+
+instance InjectableE ImpFunction
+instance HoistableE  ImpFunction
+instance AlphaEqE    ImpFunction
+instance SubstE Name ImpFunction
+
+instance GenericE ImpModule where
+  type RepE ImpModule = ListE ImpFunction
+  toE = undefined
+  fromE = undefined
+
+instance InjectableE ImpModule
+instance HoistableE  ImpModule
+instance AlphaEqE    ImpModule
+instance SubstE Name ImpModule
+
+instance GenericB TopBindingsFrag where
+  type RepB TopBindingsFrag = PairB BindingsFrag
+                                    (LiftB (PairE SynthCandidates SourceMap))
+  fromB (TopBindingsFrag frag sc sm) = PairB frag (LiftB (PairE sc sm))
+  toB   (PairB frag (LiftB (PairE sc sm))) = TopBindingsFrag frag sc sm
+
+instance SubstB Name TopBindingsFrag
+instance HoistableB  TopBindingsFrag
+instance InjectableB TopBindingsFrag
+instance ProvesExt   TopBindingsFrag
+instance BindsNames  TopBindingsFrag
+
+instance OutFrag TopBindingsFrag where
+  emptyOutFrag = TopBindingsFrag emptyOutFrag mempty mempty
+  catOutFrags scope (TopBindingsFrag frag1 sc1 sm1) (TopBindingsFrag frag2 sc2 sm2) =
+    withExtEvidence frag2 $
+      TopBindingsFrag
+        (catOutFrags scope frag1 frag2)
+        (inject sc1 <> sc2)
+        (inject sm1 <> sm2)
+
+-- XXX: unlike `ExtOutMap Bindings BindingsFrag` instance, this once doesn't
+-- extend the synthesis candidates based on the annotated let-bound names. It
+-- only extends synth candidates when they're supplied explicitly.
+instance ExtOutMap Bindings TopBindingsFrag where
+  extendOutMap (Bindings bs scs sm effs)
+               (TopBindingsFrag (BindingsFrag frag _) scs' sm') =
+    withExtEvidence (toExtEvidence frag) $
+      Bindings (bs `extendOutMap` frag) (inject scs <> scs')
+               (inject sm <> sm') (inject effs)
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)
@@ -1830,91 +2608,3 @@ builtinNames = M.fromList
     binOp  op = OpExpr $ ScalarBinOp op () ()
     unOp   op = OpExpr $ ScalarUnOp  op ()
     ptrTy  ty = PtrType (Heap CPU, ty)
-
-instance Store a => Store (PrimOp  a)
-instance Store a => Store (PrimCon a)
-instance Store a => Store (PrimTC  a)
-instance Store a => Store (PrimHof a)
-instance (Store a, Store b) => Store (Abs a b)
-instance Store a => Store (Nest a)
-instance Store a => Store (ArrowP a)
-instance Store a => Store (Limit a)
-instance Store a => Store (PrimEffect a)
-instance Store a => Store (BaseMonoidP a)
-instance Store ForAnn
-instance Store Atom
-instance Store Expr
-instance Store Block
-instance Store Decl
-instance Store RWS
-instance Store Effect
-instance Store EffectRow
-instance Store Direction
-instance Store UnOp
-instance Store BinOp
-instance Store CmpOp
-instance Store LetAnn
-instance Store BinderInfo
-instance Store AnyBinderInfo
-instance Store DataDef
-instance Store ClassDef
-instance Store DataConDef
-instance Store LitVal
-instance Store ScalarBaseType
-instance Store BaseType
-instance Store AddressSpace
-instance Store Device
-instance Store DataConRefBinding
-instance Store SourceMap
-instance Store SynthCandidates
-instance Store SourceNameDef
-instance Store TopState
-
-instance IsString UVar where
-  fromString = USourceVar . fromString
-
-instance IsString UBinder where
-  fromString = UBindSource . fromString
-
-instance NameHint UBinder where
-  asNameHint b = case b of
-    UBindSource name -> Just $ fromString name
-    UIgnore -> Nothing
-    UBind name -> asNameHint name
-
-instance IsString UPat' where
-  fromString = UPatBinder . fromString
-
-instance IsString UPatAnn where
-  fromString s = UPatAnn (fromString s) Nothing
-
-instance IsString UExpr' where
-  fromString = UVar . fromString
-
-instance IsString a => IsString (WithSrc a) where
-  fromString = WithSrc Nothing . fromString
-
-instance Zippable ArrowP where
-  zipWithZ f arr1 arr2 = case (arr1, arr2) of
-    (PlainArrow e1, PlainArrow e2) -> PlainArrow <$> f e1 e2
-    (ImplicitArrow, ImplicitArrow) -> return ImplicitArrow
-    (ClassArrow   , ClassArrow   ) -> return ClassArrow
-    (TabArrow     , TabArrow     ) -> return TabArrow
-    (LinArrow     , LinArrow     ) -> return LinArrow
-    _ -> zipErr
-
-instance Semigroup SourceMap where
-  SourceMap m1 <> SourceMap m2 = SourceMap $ m2 <> m1
-
-instance Monoid SourceMap where
-  mempty = SourceMap mempty
-
-instance Semigroup SynthCandidates where
-  SynthCandidates xs ys zs <> SynthCandidates xs' ys' zs' =
-    SynthCandidates (xs<>xs') (ys<>ys') (zs<>zs')
-
-instance Monoid SynthCandidates where
-  mempty = SynthCandidates mempty mempty mempty
-
-instance HasName SourceNameDef where
-  getName srcName = Just $ sourceNameDefName srcName

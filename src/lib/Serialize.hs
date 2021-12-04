@@ -37,10 +37,10 @@ import Interpreter
 import Err
 import PPrint (PrettyPrec (..), PrecedenceLevel (..))
 
-import SaferNames.Syntax
-import SaferNames.Type
-import SaferNames.Name
-import SaferNames.PPrint ()
+import Syntax
+import Type
+import Name
+import PPrint ()
 
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64

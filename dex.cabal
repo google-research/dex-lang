@@ -47,18 +47,12 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Env, Syntax, Cat,
-                       Util, PPrint, Serialize
+  exposed-modules:     Env, Syntax, Cat, Util, PPrint, Serialize
                        TopLevel, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
-                       Err, LabeledItems, SourceRename,
-                       SaferNames.Name, SaferNames.LazyMap,
-                       SaferNames.Syntax,
-                       SaferNames.PPrint, SaferNames.Parser,
-                       SaferNames.SourceRename, SaferNames.MTL1,
-                       SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
-                       SaferNames.CheapReduction, SaferNames.GenericTraversal,
-                       SaferNames.Simplify, SaferNames.Imp
+                       Err, LabeledItems, SourceRename, Name, Parser, MTL1,
+                       Type, Builder, Inference, CheapReduction, GenericTraversal,
+                       Simplify, Imp
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
@@ -92,7 +86,8 @@ library
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms,
                        BlockArguments, GADTs, TypeOperators, DataKinds, KindSignatures
                        ConstraintKinds, FlexibleContexts, RankNTypes, QuantifiedConstraints,
-                       TypeOperators, MultiParamTypeClasses, FunctionalDependencies
+                       TypeOperators, MultiParamTypeClasses, FunctionalDependencies,
+                       GeneralizedNewtypeDeriving
   pkgconfig-depends:   libpng
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include

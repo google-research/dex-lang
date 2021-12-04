@@ -8,15 +8,15 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module SaferNames.GenericTraversal
+module GenericTraversal
   (GenericTraverser (..), GenericallyTraversableE (..),
    traverseExprDefault, traverseAtomDefault) where
 
-import SaferNames.Name
-import SaferNames.Builder
-import SaferNames.Syntax
-import SaferNames.Type
-import SaferNames.PPrint
+import Name
+import Builder
+import Syntax
+import Type
+import PPrint
 
 import LabeledItems
 

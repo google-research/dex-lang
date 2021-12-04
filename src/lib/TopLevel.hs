@@ -46,20 +46,16 @@ import MLIR.Lower
 import MLIR.Eval
 #endif
 
-import SaferNames.Name
-import SaferNames.Parser
-import SaferNames.Syntax
-import SaferNames.Builder
-import SaferNames.Type
-import SaferNames.SourceRename
-import SaferNames.Inference
-import SaferNames.Simplify
-import SaferNames.Imp
-import JIT
-
+import Name
+import Parser
 import Syntax
-  ( ModuleName, Result (..), CallingConvention (..)
-  , Output (..), Backend (..), BenchStats, IsCUDARequired (..), PassName (..))
+import Builder
+import Type
+import SourceRename
+import Inference
+import Simplify
+import Imp
+import JIT
 
 -- === shared effects ===
 
@@ -165,7 +161,7 @@ liftPassesM mayUpdateState bench m = do
       return $ Result outs (Failure errs)
 
 evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
-evalSourceBlock (SourceBlock _ _ _ _ (ImportModule moduleName) _) = do
+evalSourceBlock (SourceBlock _ _ _ _ (ImportModule moduleName)) = do
   moduleStatus <- getImportStatus moduleName
   case moduleStatus of
     Just CurrentlyImporting -> return $ Result [] $

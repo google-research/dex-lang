@@ -19,11 +19,11 @@ import CUDA
 import LLVMExec
 import Err
 
-import SaferNames.Name
-import SaferNames.Syntax
-import SaferNames.Type
-import SaferNames.PPrint ()
-import SaferNames.Builder
+import Name
+import Syntax
+import Type
+import PPrint ()
+import Builder
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
