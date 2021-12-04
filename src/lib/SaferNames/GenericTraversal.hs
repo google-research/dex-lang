@@ -15,6 +15,7 @@ module SaferNames.GenericTraversal
 import SaferNames.Name
 import SaferNames.Builder
 import SaferNames.Syntax
+import SaferNames.Type
 import SaferNames.PPrint
 
 import LabeledItems
@@ -58,12 +59,11 @@ traverseAtomDefault atom = case atom of
   Con con -> Con <$> mapM tge con
   TC  tc  -> TC  <$> mapM tge tc
   Eff _   -> substM atom
-  DataCon sourceName (dataDefName, dataDef) params con args ->
-    DataCon sourceName <$> ((,) <$> substM dataDefName <*> substM dataDef) <*>
+  DataCon sourceName dataDefName params con args ->
+    DataCon sourceName <$> substM dataDefName <*>
       mapM tge params <*> pure con <*> mapM tge args
-  TypeCon (dataDefName, dataDef) params ->
-    TypeCon <$> ((,) <$> substM dataDefName <*> substM dataDef)
-            <*> mapM tge params
+  TypeCon sn dataDefName params ->
+    TypeCon sn <$> substM dataDefName <*> mapM tge params
   LabeledRow (Ext items rest) -> do
     items' <- mapM tge items
     rest'  <- mapM substM rest
@@ -102,11 +102,14 @@ instance GenericallyTraversableE Module where
     return $ Module ir decls' result'
 
 instance GenericallyTraversableE Block where
-  traverseGenericE (Block ty decls result) = do
-    ty' <- tge ty
-    DistinctAbs decls' result' <- buildScoped $ traverseDeclNest decls $
-                                    traverseExpr result
-    return $ Block ty' decls' result'
+  traverseGenericE (Block _ decls result) = do
+    DistinctAbs decls' (PairE ty result') <-
+      buildScoped $ traverseDeclNest decls do
+        result' <- traverseExpr result
+        resultTy <- getType result'
+        return $ PairE resultTy result'
+    ty' <- liftHoistExcept $ hoist decls' ty
+    return $ Block (BlockAnn ty') decls' result'
 
 traverseDeclNest
   :: (GenericTraverser m, Emits o)

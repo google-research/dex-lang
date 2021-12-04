@@ -64,7 +64,7 @@ data TopStateEx where
 
 data JointTopState n = JointTopState
   { topStateD   :: D.TopState
-  , topStateS   :: S.TopState n
+  , topStateS   :: S.Bindings n
   , topToSafeMap   :: ToSafeEnv n
   , topFromSafeMap :: FromSafeEnv n }
 
@@ -111,7 +111,7 @@ instance Pretty (JointTopState n) where
 
 instance GenericE JointTopState where
   type RepE JointTopState = LiftE D.TopState `PairE`
-                            S.TopState       `PairE`
+                            S.Bindings       `PairE`
                             ToSafeEnv        `PairE`
                             FromSafeEnv
   fromE (JointTopState stateD stateS toSafeMap fromSafeMap) =
@@ -303,14 +303,8 @@ instance HasSafeVersionE (UnsafeName c) where
 
 instance HasSafeVersionE D.EvaluatedModule where
   type SafeVersionE D.EvaluatedModule = S.EvaluatedModule
-  toSafeE (D.EvaluatedModule bindings scs sourceMap) =
-    toSafeB (DRecEnvFrag bindings) \bindings' ->
-      S.EvaluatedModule (S.BindingsFrag bindings' Nothing)
-        <$> toSafeE scs <*> toSafeE sourceMap
-
-  fromSafeE (S.EvaluatedModule (S.BindingsFrag bindings _) scs sourceMap) =
-    fromSafeB bindings \(DRecEnvFrag bindings') ->
-      D.EvaluatedModule bindings' <$> fromSafeE scs <*> fromSafeE sourceMap
+  toSafeE = undefined
+  fromSafeE = undefined
 
 newtype DRecEnvFrag = DRecEnvFrag D.Bindings
 

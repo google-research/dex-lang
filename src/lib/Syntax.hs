@@ -588,7 +588,7 @@ data CallingConvention = CEntryFun
                        | FFIMultiResultFun
                        | CUDAKernelLaunch
                        | MCThreadLaunch
-                         deriving (Show)
+                         deriving (Show, Eq)
 
 data ImpModule   = ImpModule [ImpFunction] deriving (Show)
 data ImpFunction = ImpFunction IFunVar [IBinder] ImpBlock

@@ -30,7 +30,6 @@ import qualified Data.Set as S
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
 
-import {-# SOURCE #-} Interpreter (indicesNoIO)
 import Syntax
 import Env
 import Err
@@ -699,10 +698,10 @@ typeCheckOp op = case op of
     checkingEnv <- ask
     case checkingEnv of
       SkipChecks   -> return ()
-      CheckWith  _ -> do
-        let idxs = indicesNoIO $ absArgType a
-        mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
-        assertEq (length idxs) (length xs) "Index set size mismatch"
+      -- CheckWith  _ -> do
+      --   let idxs = indicesNoIO $ absArgType a
+      --   mapM_ (uncurry (|:)) $ zip xs (fmap (snd . applyAbs a) idxs)
+      --   assertEq (length idxs) (length xs) "Index set size mismatch"
     return ty
   ScalarBinOp binop x y -> do
     typeEnv <- ask

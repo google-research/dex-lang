@@ -20,23 +20,21 @@ import System.Directory
 import Data.List
 import qualified Data.Map.Strict as M
 
-import Syntax
-import PPrint
+import PPrint (toJSONStr, printLitBlock)
 import Serialize
 import Resources
 import TopLevel
-import Env (envNames)
 import Err
-import Export
 #ifdef DEX_LIVE
 import RenderHtml
 import LiveOutput
 #endif
 
-import SaferNames.Bridge
+import SaferNames.PPrint ()
+import SaferNames.Syntax
+import SaferNames.Parser (parseTopDeclRepl, keyWordStrs)
 
-import qualified SaferNames.Parser               as S
-import qualified SaferNames.Syntax               as S
+import Syntax (Result (..), Output (..), Backend (..))
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly
@@ -80,7 +78,8 @@ runMode evalMode preludeFile opts = do
       unless (backendName opts == LLVM) $
         throw CompilerErr "Export only supported with the LLVM CPU backend"
       TopStateEx env' <- return env
-      exportFunctions objPath exportedFuns $ topBindings $ topStateD env'
+      -- exportFunctions objPath exportedFuns $ getNameBindings env'
+      error "not implemented"
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
@@ -98,7 +97,7 @@ evalPrelude fname = do
 
 replLoop :: String -> InputT InterblockM ()
 replLoop prompt = do
-  sourceBlock <- readMultiline prompt S.parseTopDeclRepl
+  sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift getTopStateEx
   result <- lift $ evalSourceBlock sourceBlock
   case result of Result _ (Failure _) -> lift $ setTopStateEx env
@@ -108,12 +107,12 @@ replLoop prompt = do
 dexCompletions :: CompletionFunc InterblockM
 dexCompletions (line, _) = do
   TopStateEx env <- getTopStateEx
-  let varNames = map pprint $ M.keys $ fromSourceMap $ topSourceMap $ topStateD env
+  let varNames = map pprint $ M.keys $ fromSourceMap $ getSourceMap env
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
   let candidates = (if null rest then startoflineKeywords else []) ++
-                   S.keyWordStrs ++ varNames
+                   keyWordStrs ++ varNames
   let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
   return (rest, completions)
 
@@ -138,7 +137,7 @@ readMultiline prompt parse = loop prompt ""
 simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
-printLitProg :: DocFmt -> S.LitProg -> IO ()
+printLitProg :: DocFmt -> LitProg -> IO ()
 printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
 #ifdef DEX_LIVE
 printLitProg HTMLDoc prog = putStr $ progHtml prog

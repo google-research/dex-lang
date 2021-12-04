@@ -47,20 +47,18 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Env, Syntax, Type,
-                       Util, Imp, Imp.Builder, Imp.Optimize,
-                       PPrint, Algebra, Parallelize, Optimize, Serialize
-                       Builder, Cat,
-                       Simplify, TopLevel,
-                       Autodiff, Interpreter, Logging, CUDA,
-                       LLVM.JIT, LLVM.Shims, JIT, LLVMExec, Export
+  exposed-modules:     Env, Syntax, Cat,
+                       Util, PPrint, Serialize
+                       TopLevel, Interpreter, Logging, CUDA,
+                       LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
                        Err, LabeledItems, SourceRename,
                        SaferNames.Name, SaferNames.LazyMap,
-                       SaferNames.Syntax, SaferNames.Bridge,
+                       SaferNames.Syntax,
                        SaferNames.PPrint, SaferNames.Parser,
                        SaferNames.SourceRename, SaferNames.MTL1,
                        SaferNames.Type, SaferNames.Builder, SaferNames.Inference,
-                       SaferNames.CheapReduction, SaferNames.GenericTraversal
+                       SaferNames.CheapReduction, SaferNames.GenericTraversal,
+                       SaferNames.Simplify, SaferNames.Imp
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

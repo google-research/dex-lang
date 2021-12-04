@@ -45,6 +45,7 @@ import Foreign.Marshal.Alloc
 import Foreign.Ptr
 import Foreign.C.Types (CInt (..))
 import Foreign.Storable hiding (alignment)
+import Control.Monad.IO.Class
 import Control.Monad
 import Control.Concurrent
 import Control.Exception hiding (throw)
@@ -256,17 +257,17 @@ withModuleClone ctx m f = do
 
 -- === serializing scalars ===
 
-loadLitVals :: Ptr () -> [BaseType] -> IO [LitVal]
+loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
 loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
-freeLitVals :: Ptr () -> [BaseType] -> IO ()
+freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
 freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
 
-storeLitVals :: Ptr () -> [LitVal] -> IO ()
+storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
 
-loadLitVal :: Ptr () -> BaseType -> IO LitVal
-loadLitVal ptr (Scalar ty) = case ty of
+loadLitVal :: MonadIO m => Ptr () -> BaseType -> m LitVal
+loadLitVal ptr (Scalar ty) = liftIO case ty of
   Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
   Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
   Word8Type   -> Word8Lit   <$> peek (castPtr ptr)
@@ -274,11 +275,11 @@ loadLitVal ptr (Scalar ty) = case ty of
   Word64Type  -> Word64Lit  <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
-loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
+loadLitVal ptr (PtrType t) = liftIO $ PtrLit t <$> peek (castPtr ptr)
 loadLitVal _ _ = error "not implemented"
 
-storeLitVal :: Ptr () -> LitVal -> IO ()
-storeLitVal ptr val = case val of
+storeLitVal :: MonadIO m => Ptr () -> LitVal -> m ()
+storeLitVal ptr val = liftIO case val of
   Int64Lit   x -> poke (castPtr ptr) x
   Int32Lit   x -> poke (castPtr ptr) x
   Word8Lit   x -> poke (castPtr ptr) x
@@ -297,11 +298,11 @@ free_gpu :: Ptr () -> IO ()
 free_gpu = error "Compiled without GPU support!"
 #endif
 
-freeLitVal :: Ptr () -> BaseType -> IO ()
+freeLitVal :: MonadIO m => Ptr () -> BaseType -> m ()
 freeLitVal litValPtr ty = case ty of
   Scalar  _ -> return ()
-  PtrType (Heap CPU, Scalar _) -> free_cpu =<< loadPtr
-  PtrType (Heap GPU, Scalar _) -> free_gpu =<< loadPtr
+  PtrType (Heap CPU, Scalar _) -> liftIO $ free_cpu =<< loadPtr
+  PtrType (Heap GPU, Scalar _) -> liftIO $ free_gpu =<< loadPtr
   -- TODO: Handle pointers to pointers
   _ -> error "not implemented"
   where loadPtr = peek (castPtr litValPtr)
@@ -312,8 +313,8 @@ cellSize = 8
 ptrArray :: Ptr () -> [Ptr ()]
 ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
 
-allocaCells :: Int -> (Ptr () -> IO a) -> IO a
-allocaCells n = allocaBytes (n * cellSize)
+allocaCells :: MonadIO m => Int -> (Ptr () -> IO a) -> m a
+allocaCells n cont = liftIO $ allocaBytes (n * cellSize) cont
 
 
 -- === dex runtime ===

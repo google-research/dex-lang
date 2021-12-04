@@ -43,6 +43,7 @@ module SaferNames.Name (
   lookupEnvM, dropSubst, extendEnv, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2, Monoid1,
+  MonadIO1, MonadIO2,
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applySubst, applyNaryAbs, ZipEnvReader (..), alphaEqTraversable,
@@ -51,13 +52,13 @@ module SaferNames.Name (
   InjectableE (..), InjectableB (..), InjectableV, InjectionCoercion,
   withFreshM, withFreshLike, inject, injectM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupEnvFrag, lookupEnvFragRaw,
-  EmptyAbs, pattern EmptyAbs, SubstVal (..),
+  EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   NameGen (..), fmapG, NameGenT (..), fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedEnvReader, runScopedEnvReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..),
-  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5,
-    pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4,
+  EitherE1, EitherE2, EitherE3, EitherE4, EitherE5, EitherE6,
+    pattern Case0, pattern Case1, pattern Case2, pattern Case3, pattern Case4, pattern Case5,
   EitherB1, EitherB2, EitherB3, EitherB4, EitherB5,
     pattern CaseB0, pattern CaseB1, pattern CaseB2, pattern CaseB3, pattern CaseB4,
   splitNestAt, nestLength, nestToList, binderAnn,
@@ -67,17 +68,19 @@ module SaferNames.Name (
   toEnvPairs, fromEnvPairs, EnvPair (..), refreshRecEnvFrag,
   substAbsDistinct, refreshAbs,
   hoist, hoistToTop, injectFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars,
+  HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVarsNoAnn,
+  WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV,
   WrapE (..), EnvVal (..), fromEnvVal,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, injectR, fmapEnvFrag, catRecEnvFrags,
-  freeVarsList, isFreeIn, todoInjectableProof, liftInplaceT,
+  freeVarsList, isFreeIn, todoInjectableProof,
   locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
   checkEmpty, updateEnvFrag, nameSetToList, toNameSet, absurdExtEvidence,
-  Mut, Immut, ImmutEvidence (..), scopeToImmut, toImmutEvidence,
+  Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence,
+  collectFreeVars, unConsEnv, ConsEnv (..), MonadTrans1 (..), fromDistinctAbs,
   ) where
 
 import Prelude hiding (id, (.))
@@ -89,6 +92,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import qualified Data.Map.Strict as M
+import Data.Functor ((<&>))
 import Data.Foldable (fold)
 import Data.Maybe (catMaybes)
 import Data.Kind (Type)
@@ -259,7 +263,7 @@ class Monad1 m => AlwaysImmut (m::MonadKind1) where
 class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: Immut n => m n (Scope n)
   liftImmut :: InjectableE e
-            => (forall l. (Immut l, Ext n l) => m l (e l))
+            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
             -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
@@ -312,6 +316,8 @@ data BinderP (c::C) (ann::E) (n::S) (l::S) =
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
+
+type NaryAbs (c::C) = Abs (Nest (NameBinder c)) :: E -> E
 
 -- Proof object that a given scope is void
 data IsVoidS n where
@@ -474,6 +480,9 @@ instance (SubstB v b, SubstE v e) => SubstE v (DistinctAbs b e) where
 
 instance (HoistableB b, HoistableE e) => HoistableE (DistinctAbs b e) where
   freeVarsE (DistinctAbs b e) = freeVarsE (Abs b e)
+
+fromDistinctAbs :: DistinctAbs b e n -> Abs b e n
+fromDistinctAbs (DistinctAbs b e) = Abs b e
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -727,6 +736,9 @@ type Monad2 (m :: MonadKind2) = forall (n::S) (l::S) . Monad (m n l)
 type Fallible1 (m :: MonadKind1) = forall (n::S)        . Fallible (m n  )
 type Fallible2 (m :: MonadKind2) = forall (n::S) (l::S) . Fallible (m n l)
 
+type MonadIO1 (m :: MonadKind1) = forall (n::S)        . MonadIO (m n  )
+type MonadIO2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadIO (m n l)
+
 type Catchable1 (m :: MonadKind1) = forall (n::S)        . Catchable (m n  )
 type Catchable2 (m :: MonadKind2) = forall (n::S) (l::S) . Catchable (m n l)
 
@@ -748,6 +760,9 @@ type Alternative1 (m::MonadKind1) = forall (n::S)        . Alternative (m n)
 type Alternative2 (m::MonadKind2) = forall (n::S) (l::S ). Alternative (m n l)
 
 type Monoid1 (m :: E) = forall (n::S). Monoid (m n)
+
+class MonadTrans1 (t :: MonadKind -> MonadKind1) where
+  lift1 :: Monad m => m a -> t m n a
 
 -- === subst monad ===
 
@@ -794,6 +809,9 @@ instance (SubstE (SubstVal cMatch atom) atom, NameColor c)
          => SubstE (SubstVal cMatch atom) (SubstVal cMatch atom c) where
   substE (_, env) (Rename name) = env ! name
   substE env (SubstVal val) = SubstVal $ substE env val
+
+instance (SubstE (SubstVal cMatch atom) atom, InjectableE atom)
+         => SubstV (SubstVal cMatch atom) (SubstVal cMatch atom) where
 
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
@@ -967,6 +985,7 @@ instance Monad m => ScopeReader (ScopeReaderT m) where
   getScope = ScopeReaderT $ asks snd
   liftImmut cont = do
     Immut <- getImmut
+    Distinct <- getDistinct
     cont
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
@@ -1015,6 +1034,9 @@ instance (InjectableV v, ScopeReader m, ScopeExtender m)
       let EnvReaderT (ReaderT cont) = m
       env' <- injectM env
       cont env'
+
+instance (InjectableV v, MonadIO1 m) => MonadIO (EnvReaderT v m i o) where
+  liftIO m = EnvReaderT $ lift $ liftIO m
 
 instance AlwaysImmut m => AlwaysImmut (EnvReaderT v m i) where
   getImmut = EnvReaderT $ lift getImmut
@@ -1162,10 +1184,6 @@ runInplaceT
 runInplaceT bindings (UnsafeMakeInplaceT f) = do
   (result, d) <- f bindings
   return (unsafeCoerceB d, result)
-
-liftInplaceT :: (Monad m, OutFrag d, ExtOutMap b d)
-              => m a -> InplaceT b d m n a
-liftInplaceT m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
 
 -- Special case of extending without introducing new names
 -- (doesn't require `Mut n`)
@@ -1328,11 +1346,13 @@ instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
   getDistinct = UnsafeMakeInplaceT \_ ->
     return (Distinct, emptyOutFrag)
   getScope = toScope <$> getOutMapInplaceT
-  liftImmut cont = locallyImmutableInplaceT cont
+  liftImmut cont = locallyImmutableInplaceT do
+    Distinct <- getDistinct
+    cont
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
-  fail s = liftInplaceT $ fail s
+  fail s = lift1 $ fail s
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
@@ -1342,12 +1362,12 @@ instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
 
 instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m, CtxReader m)
          => CtxReader (InplaceT bindings decls m n) where
-  getErrCtx = liftInplaceT getErrCtx
+  getErrCtx = lift1 getErrCtx
 
 instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls, Monad m
          , Alternative m)
          => Alternative (InplaceT bindings decls m n) where
-  empty = liftInplaceT empty
+  empty = lift1 empty
   UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \bindings ->
     f1 bindings <|> f2 bindings
 
@@ -1367,9 +1387,24 @@ instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls,
 instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
          , MonadWriter w m)
          => MonadWriter w (InplaceT bindings decls m n) where
-  tell w = liftInplaceT $ tell w
+  tell w = lift1 $ tell w
   listen = undefined
   pass = undefined
+
+instance (ExtOutMap bindings decls, BindsNames decls, InjectableB decls)
+         => MonadTrans1 (InplaceT bindings decls) where
+  lift1 m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
+
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
+         , MonadReader r m)
+         => MonadReader r (InplaceT bindings decls m n) where
+  ask = lift1 $ ask
+  local = undefined
+
+instance ( ExtOutMap bindings decls, BindsNames decls, InjectableB decls
+         , MonadIO m)
+         => MonadIO (InplaceT bindings decls m n) where
+  liftIO = lift1 . liftIO
 
 -- === name hints ===
 
@@ -1875,11 +1910,12 @@ deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnvFrag v o o')
 
 type EE = EitherE
 
-type EitherE1 e0             = EE e0 VoidE
-type EitherE2 e0 e1          = EE e0 (EE e1 VoidE)
-type EitherE3 e0 e1 e2       = EE e0 (EE e1 (EE e2 VoidE))
-type EitherE4 e0 e1 e2 e3    = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
-type EitherE5 e0 e1 e2 e3 e4 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
+type EitherE1 e0                = EE e0 VoidE
+type EitherE2 e0 e1             = EE e0 (EE e1 VoidE)
+type EitherE3 e0 e1 e2          = EE e0 (EE e1 (EE e2 VoidE))
+type EitherE4 e0 e1 e2 e3       = EE e0 (EE e1 (EE e2 (EE e3 VoidE)))
+type EitherE5 e0 e1 e2 e3 e4    = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 VoidE))))
+type EitherE6 e0 e1 e2 e3 e4 e5 = EE e0 (EE e1 (EE e2 (EE e3 (EE e4 (EE e5 VoidE)))))
 
 pattern Case0 :: e0 n -> EE e0 rest n
 pattern Case0 e = LeftE e
@@ -1895,6 +1931,9 @@ pattern Case3 e = RightE (RightE (RightE (LeftE e)))
 
 pattern Case4 :: e4 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 rest)))) n
 pattern Case4 e = RightE (RightE (RightE (RightE (LeftE e))))
+
+pattern Case5 :: e5 n ->  EE e0 (EE e1 (EE e2 (EE e3 (EE e4 (EE e5 rest))))) n
+pattern Case5 e = RightE (RightE (RightE (RightE (RightE (LeftE e)))))
 
 type EB = EitherB
 
@@ -2222,6 +2261,10 @@ liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
 
+ignoreHoistFailure :: HoistExcept a -> a
+ignoreHoistFailure (HoistSuccess x) = x
+ignoreHoistFailure (HoistFailure _) = error "hoist failure"
+
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
   case nameSetRawNames $ M.intersection frag (freeVarsE e) of
@@ -2270,9 +2313,29 @@ hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
-abstractFreeVars :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
+abstractFreeVars :: [(Name c n, ann n)]
+                 -> e n -> Abs (Nest (BinderP c ann)) e n
 abstractFreeVars vs e = Abs bs e
-  where bs = unsafeCoerceB $ unsafeListToNest $ map (UnsafeMakeBinder . unsafeCoerceE) vs
+  where bs = unsafeCoerceB $ unsafeListToNest bsFlat
+        bsFlat = vs <&> \(v, ann) ->
+          UnsafeMakeBinder (unsafeCoerceE v) :> unsafeCoerceE ann
+
+abstractFreeVarsNoAnn :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
+abstractFreeVarsNoAnn vs e =
+  case abstractFreeVars (zip vs (repeat UnitE)) e of
+    Abs bs e' -> Abs bs' e'
+      where bs' = fmapNest (\(b:>UnitE) -> b) bs
+
+-- captureClosure decls result = do
+--   let vs = capturedVars decls result
+--   case abstractFreeVars (zip vs (repeat UnitE)) result of
+--     Abs bs e -> do
+--       let bs' = fmapNest (\(b:>UnitE) -> b) bs
+--       case hoist decls $ Abs bs' e of
+--         HoistSuccess abHoisted -> (vs, abHoisted)
+--         HoistFailure _ ->
+--           error "shouldn't happen"  -- but it will if we have types that reference
+--                                     -- local vars. We really need a telescope.
 
 instance HoistableB (NameBinder c) where
   freeVarsB _ = mempty
@@ -2362,6 +2425,31 @@ toEnvPairs (UnsafeMakeEnv m) =
     go :: [EnvPair v o UnsafeS UnsafeS] -> Nest (EnvPair v o) i i'
     go [] = unsafeCoerceB Empty
     go (EnvPair b val : rest) = Nest (EnvPair (unsafeCoerceB b) val) $ go rest
+
+data WithRenamer e i o where
+  WithRenamer :: EnvFrag Name i i' o -> e i' -> WithRenamer e i o
+
+collectFreeVars :: HoistableE e => e n -> WithRenamer e VoidS n
+collectFreeVars e = WithRenamer idRenamerFrag e
+  where idRenamerFrag = UnsafeMakeEnv $
+          flip M.mapWithKey (freeVarsE e) \v (SomeNameColor c) ->
+            EnvVal c $ UnsafeMakeName c v
+
+-- Lets you process entries one by one, just as you'd traverse a list by pattern-matching
+-- on `:` and `[]`.
+unConsEnv :: EnvFrag v i i' o -> ConsEnv v i i' o
+unConsEnv (UnsafeMakeEnv m) =
+  case M.minViewWithKey m of
+    Nothing -> unsafeCoerceB EmptyEnv
+    Just ((v, EnvVal c x), rest)  ->
+      withNameColorRep c $
+        ConsEnv (UnsafeMakeBinder (UnsafeMakeName c v)) x (UnsafeMakeEnv rest)
+
+data ConsEnv v i i' o where
+  ConsEnv :: NameColor c
+          => NameBinder c i1 i2 -> v c o -> EnvFrag v i2 i3 o
+          -> ConsEnv v i1 i3 o
+  EmptyEnv :: ConsEnv v i i o
 
 instance Category (Nest b) where
   id = Empty
@@ -2523,6 +2611,18 @@ instance
   ( Store a0, Store a1, Store a2, Store a3
   , Store a4, Store a5, Store a6)
   => Store (DynamicColor a0 a1 a2 a3 a4 a5 a6)
+
+instance Functor HoistExcept where
+  fmap f x = f <$> x
+
+instance Applicative HoistExcept where
+  pure x = HoistSuccess x
+  liftA2 = liftM2
+
+instance Monad HoistExcept where
+  return = pure
+  HoistFailure vs >>= _ = HoistFailure vs
+  HoistSuccess x >>= f = f x
 
 -- === notes ===
 

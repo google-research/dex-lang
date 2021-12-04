@@ -143,7 +143,7 @@ instance PrettyPrec (Atom n) where
       [l, r] | Just sym <- fromInfix (fromString name) -> atPrec ArgPrec $ align $ group $
         parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
-    TypeCon (_, DataDef name _ _) params -> case params of
+    TypeCon name _ params -> case params of
       [] -> atPrec ArgPrec $ p name
       [l, r] | Just sym <- fromInfix (fromString name) ->
         atPrec ArgPrec $ align $ group $
@@ -260,6 +260,7 @@ instance Pretty (AtomBinding n) where
     PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
+    PtrLitBound ty ptr -> p $ PtrLit ty ptr
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
@@ -493,14 +494,14 @@ instance Pretty (UPatAnn n l) where
 instance Pretty (BindingsFrag n l) where
   pretty (BindingsFrag bindings effects) =
        "Partial bindings:" <> indented (p bindings)
-    <> "Effects candidates:" <+> p effects
+    <> "Effects allowed:" <+> p effects
 
-instance Pretty (EvaluatedModule n) where
-  pretty (EvaluatedModule bindings synthCandidates sourceMap) =
-       "decls:"
+instance Pretty (TopBindingsFrag n l) where
+  pretty (TopBindingsFrag bindings scs sourceMap) =
+       "bindings:"
     <>   indented (p bindings)
-    <> "Synthesis candidates:"
-    <>   indented (p synthCandidates)
+    <> "Synth candidats:"
+    <>   indented (p scs)
     <> "Source map:"
     <>   indented (p sourceMap)
 
@@ -508,7 +509,62 @@ instance Pretty (SynthCandidates n) where
   pretty scs =
        "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
     <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
-    <> "instance dicts:" <+> p (instanceDicts     scs)
+    <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
 
 indented :: Doc ann -> Doc ann
 indented doc = nest 2 (hardline <> doc) <> hardline
+
+-- ==== Imp IR ===
+
+instance Pretty (IExpr n) where
+  pretty (ILit v) = p v
+  pretty (IVar v _) = p v
+
+instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance Pretty (ImpDecl n l) where
+  pretty (ImpLet Empty instr) = p instr
+  pretty (ImpLet (Nest b Empty) instr) = p b <+> "=" <+> p instr
+  pretty (ImpLet bs instr) = p bs <+> "=" <+> p instr
+
+instance Pretty IFunType where
+  pretty (IFunType cc argTys retTys) =
+    "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
+
+instance Pretty (ImpFunction n) where
+  pretty (ImpFunction f (IFunType cc _ _) (Abs bs body)) =
+    "def" <+> p f <+> p cc <+> p bs
+    <> nest 2 (hardline <> p body) <> hardline
+  pretty (FFIFunction f) = p f
+
+instance Pretty (ImpBlock n)  where
+  pretty (ImpBlock Empty expr) = group $ line <> pLowest expr
+  pretty (ImpBlock decls expr) = hardline <> prettyLines decls' <> pLowest expr
+    where decls' = fromNest decls
+
+instance Pretty (IBinder n l)  where
+  pretty (IBinder b ty) = p b <+> ":" <+> p ty
+
+instance Pretty (ImpInstr n)  where
+  pretty (IFor a n (Abs i block)) = forStr (RegularFor a) <+> p i <+> "<" <+> p n <>
+                                      nest 4 (hardline <> p block)
+  pretty (IWhile body) = "while" <+> nest 2 (p body)
+  pretty (ICond predicate cons alt) =
+    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
+    hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (IQueryParallelism f s) = "queryParallelism" <+> p f <+> p s
+  pretty (ILaunch f size args) =
+    "launch" <+> p f <+> p size <+> spaced args
+  pretty (IPrimOp op)     = pLowest op
+  pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
+  pretty (Store dest val) = "store" <+> p dest <+> p val
+  pretty (Alloc Stack t s) = "alloca" <+> p t <> "[" <> p s <> "]"
+  pretty (Alloc _ t s)     = "alloc"  <+> p t <> "[" <> p s <> "]"
+  pretty (MemCopy dest src numel) = "memcopy" <+> p dest <+> p src <+> p numel
+  pretty (Free ptr)       = "free"  <+> p ptr
+  pretty ISyncWorkgroup   = "syncWorkgroup"
+  pretty IThrowError      = "throwError"
+  pretty (ICall f args)   = "call" <+> p f <+> p args
+
+instance Pretty (ImpModule n) where
+  pretty (ImpModule fs) = "Imp module" <> indented (prettyLines fs)
