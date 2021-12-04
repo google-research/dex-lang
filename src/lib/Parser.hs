@@ -23,8 +23,6 @@ import Data.String (IsString, fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Text.Megaparsec.Debug
 
-import qualified Env as D
-
 import Err
 import LabeledItems
 import Name
@@ -150,7 +148,7 @@ envQuery = string ":debug" >> sc >> (
        <* eol
   where
     rawName :: Parser RawName
-    rawName = D.Name D.GenName <$> (fromString <$> anyName) <*> intLit
+    rawName = RawName <$> (fromString <$> anyName) <*> intLit
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do

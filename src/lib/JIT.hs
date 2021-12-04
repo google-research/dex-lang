@@ -31,6 +31,7 @@ import System.Environment
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import qualified Data.Map.Strict as M
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.String
@@ -42,7 +43,6 @@ import qualified Data.Set as S
 -- import qualified Data.Text as T
 
 import CUDA (getCudaArchitecture)
-import qualified Env as D
 
 import Err
 import Syntax
@@ -61,7 +61,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [Named Instruction]
                                  , scalarDecls :: [Named Instruction]
                                  , blockName   :: L.Name
-                                 , usedNames   :: D.Env ()
+                                 , usedNames   :: M.Map RawName ()
                                  , funSpecs    :: S.Set ExternFunSpec
                                  , globalDefs  :: [L.Definition]
                                  }
@@ -829,10 +829,6 @@ lAddress s = case s of
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
-showName :: D.Name -> String
-showName (D.Name D.GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
-showName _ = error $ "All names in JIT should be from the GenName namespace"
-
 asIntWidth :: Operand -> L.Type -> Compile n Operand
 asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
   LT -> emitInstr expTy $ L.Trunc op expTy []
@@ -952,18 +948,17 @@ finishBlock term newName = do
          . setBlockName (const newName)
 
 freshName :: NameHint -> Compile n L.Name
-freshName v = do
+freshName hint = do
   used <- gets usedNames
-  let v' = D.genFresh hint' used
-  modify \s -> s { usedNames = used <> v' D.@> () }
-  return $ nameToLName v'
+  let v = freshRawName hint used
+  modify \s -> s { usedNames = used <> M.singleton v () }
+  return $ nameToLName v
   where
-    nameToLName :: D.Name -> L.Name
+    nameToLName :: RawName -> L.Name
     nameToLName name = L.Name $ toShort $ B.pack $ showName name
 
-    hint' :: D.Name
-    hint' = case v of Hint s -> fromString $ pprint s
-                      NoHint -> "v"
+    showName :: RawName -> String
+    showName (RawName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
 
 -- TODO: consider getting type from instruction rather than passing it explicitly
 emitInstr :: L.Type -> Instruction -> Compile n Operand

@@ -16,7 +16,8 @@
 {-# LANGUAGE DerivingVia #-}
 
 module Name (
-  Name (..), RawName, S (..), C (..), (<.>), EnvFrag (..), NameBinder (..),
+  Name (..), RawName (..), freshRawName,
+  S (..), C (..), (<.>), EnvFrag (..), NameBinder (..),
   EnvReader (..), FromName (..), Distinct,
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Env (..), idEnv, idEnvFrag, newEnv, envFromFrag, traverseEnvFrag,
@@ -100,13 +101,12 @@ import Data.String
 import Data.Function ((&))
 import Data.List (nubBy)
 import Data.Text.Prettyprint.Doc  hiding (nest)
+import qualified Data.Text as T
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..), Rep)
 import Data.Store (Store)
 
 import qualified Unsafe.Coerce as TrulyUnsafe
-
-import qualified Env as D
 
 import Util (zipErr, onFst, onSnd)
 import Err
@@ -1412,13 +1412,13 @@ class HasNameHint a where
   getNameHint :: a -> NameHint
 
 instance HasNameHint (Name s n) where
-  getNameHint name = Hint $ getRawName name
+  getNameHint name = getNameHint $ getRawName name
 
 instance HasNameHint (NameBinder s n l) where
-  getNameHint b = Hint $ getRawName $ binderName b
+  getNameHint b = getNameHint $ getRawName $ binderName b
 
 instance HasNameHint RawName where
-  getNameHint = Hint
+  getNameHint (RawName s _) = Hint s
 
 instance HasNameHint String where
   getNameHint = fromString
@@ -1884,6 +1884,7 @@ instance HoistableV v => HoistableE (EnvVal v) where
   freeVarsE (EnvVal rep v) =
     withNameColorRep rep $ freeVarsE v
 
+instance Store RawName
 instance Store (UnitE n)
 instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
@@ -2042,12 +2043,8 @@ scopeFragToEnvFrag :: ScopeFrag n l -> EnvFrag (ConstE UnitE) n l VoidS
 scopeFragToEnvFrag (UnsafeMakeScopeFrag m) =
   UnsafeMakeEnv $ M.map (\(SomeNameColor c) -> EnvVal c (ConstE UnitE)) m
 
--- TODO: we reuse the old `Name` to make use of the GlobalName name space while
--- we're using both the old and new systems together.
--- TODO: something like this instead:
---    type Tag = T.Text
---    data RawName = RawName Tag Int deriving (Show, Eq, Ord)
-type RawName = D.Name
+type NameText = T.Text
+data RawName = RawName !NameText !Int deriving (Show, Eq, Ord, Generic)
 
 data Name (c::C)  -- Name color
           (n::S)  -- Scope parameter
@@ -2058,7 +2055,7 @@ data NameBinder (c::C)  -- name color
                 (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder { nameBinderName :: Name c l }
 
-data NameHint = Hint RawName
+data NameHint = Hint NameText
               | NoHint
 
 instance IsString NameHint where
@@ -2073,23 +2070,20 @@ withFresh hint rep (Scope (UnsafeMakeScopeFrag scope)) cont =
       cont $ UnsafeMakeBinder freshName
   where
     freshName :: Name c UnsafeS
-    freshName = UnsafeMakeName rep $ freshRawName (D.nameTag $ hintToRawName hint) scope
+    freshName = UnsafeMakeName rep $ freshRawName hint scope
 
-hintToRawName :: NameHint -> RawName
-hintToRawName hint = case hint of
-  Hint v -> v
-  NoHint -> "v"
-
-freshRawName :: D.Tag -> M.Map RawName a -> RawName
-freshRawName tag usedNames = D.Name D.GenName tag nextNum
+freshRawName :: NameHint -> M.Map RawName a -> RawName
+freshRawName hint usedNames = RawName tag nextNum
   where
-    nextNum = case M.lookupLT (D.Name D.GenName tag bigInt) usedNames of
-                Just (D.Name D.GenName tag' i, _)
+    nextNum = case M.lookupLT (RawName tag bigInt) usedNames of
+                Just (RawName tag' i, _)
                   | tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
                 _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
+    tag = case hint of Hint v -> v
+                       NoHint -> "v"
 
 projectName :: ScopeFrag n l -> Name s l -> Either (Name s n) (Name s (n:=>:l))
 projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rep rawName)
@@ -2623,6 +2617,13 @@ instance Monad HoistExcept where
   return = pure
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
+
+-- TODO: this needs to be injective but it's currently not
+-- (needs to figure out acceptable tag strings)
+instance Pretty RawName where
+  pretty (RawName tag n) = pretty tag <> suffix
+            where suffix = case n of 0 -> ""
+                                     _ -> pretty n
 
 -- === notes ===
 

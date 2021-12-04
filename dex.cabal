@@ -47,7 +47,7 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Env, Syntax, Cat, Util, PPrint, Serialize
+  exposed-modules:     Syntax, Cat, Util, PPrint, Serialize
                        TopLevel, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
                        Err, LabeledItems, SourceRename, Name, Parser, MTL1,
