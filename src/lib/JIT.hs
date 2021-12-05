@@ -27,7 +27,7 @@ import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
 
 import System.IO.Unsafe
-import System.Environment
+import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -54,8 +54,8 @@ import LLVMExec
 import Util (IsBool (..))
 
 type OperandSubstVal = SubstVal AtomNameC (LiftE Operand)
-type OperandEnv     i    = Env     OperandSubstVal i    VoidS
-type OperandEnvFrag i i' = EnvFrag OperandSubstVal i i' VoidS
+type OperandEnv     i    = Subst     OperandSubstVal i    VoidS
+type OperandEnvFrag i i' = SubstFrag OperandSubstVal i i' VoidS
 
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [Named Instruction]
@@ -922,7 +922,7 @@ runCompile :: Device -> Compile n a -> a
 runCompile dev m = evalState (runReaderT m env) initState
   where
     -- TODO: figure out naming discipline properly
-    env = CompileEnv (unsafeCoerceE idEnv) dev
+    env = CompileEnv (unsafeCoerceE idSubst) dev
     initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnvFrag i i' -> Compile i' a -> Compile i a
@@ -1002,7 +1002,7 @@ binaryIntrinsic op x y = do
 -- === Constants ===
 
 allowContractions :: Bool
-allowContractions = unsafePerformIO $ (Just "0"/=) <$> lookupEnv "DEX_ALLOW_CONTRACTIONS"
+allowContractions = unsafePerformIO $ (Just "0"/=) <$> E.lookupEnv "DEX_ALLOW_CONTRACTIONS"
 
 -- FP contractions should only lead to fewer rounding points, so we allow those
 mathFlags :: L.FastMathFlags

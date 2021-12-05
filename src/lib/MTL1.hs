@@ -48,19 +48,19 @@ instance (AlwaysImmut m, Monoid1 w) => AlwaysImmut (WriterT1 w m) where
 instance Monoid1 w => MonadTrans11 (WriterT1 w) where
   lift11 = WriterT1 . lift
 
-instance (InjectableE w, Monoid1 w, BindingsReader m) => BindingsReader (WriterT1 w m) where
-  getBindings = lift11 getBindings
+instance (SinkableE w, Monoid1 w, EnvReader m) => EnvReader (WriterT1 w m) where
+  getEnv = lift11 getEnv
 
-instance (InjectableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) where
+instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) where
   getScope = lift11 getScope
   getDistinct = lift11 getDistinct
   liftImmut m = WriterT1 $ WriterT $ fromPairE <$>
     (liftImmut $ (uncurry PairE) <$> (runWriterT $ runWriterT1' m))
 
-instance (InjectableE w, HoistableE w, FallibleMonoid1 w, BindingsExtender m)
-         => BindingsExtender (WriterT1 w m) where
-  extendBindings frag m = WriterT1 $ WriterT $ do
-    (ans, update) <- extendBindings frag (runWriterT $ runWriterT1' m)
+instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
+         => EnvExtender (WriterT1 w m) where
+  extendEnv frag m = WriterT1 $ WriterT $ do
+    (ans, update) <- extendEnv frag (runWriterT $ runWriterT1' m)
     case hoist frag update of
       HoistSuccess topUpdate -> return (ans, topUpdate)
       HoistFailure _ -> return (ans, mfail)
@@ -82,14 +82,14 @@ runStateT1 = runStateT . runStateT1'
 instance MonadTrans11 (StateT1 s) where
   lift11 = WrapStateT1 . lift
 
-instance (InjectableE s, BindingsReader m) => BindingsReader (StateT1 s m) where
-  getBindings = lift11 getBindings
+instance (SinkableE s, EnvReader m) => EnvReader (StateT1 s m) where
+  getEnv = lift11 getEnv
 
-instance (InjectableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
+instance (SinkableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
   getScope = lift11 getScope
   getDistinct = lift11 getDistinct
   liftImmut m = StateT1 \s -> fromPairE <$> liftImmut do
-    s' <- injectM s
+    s' <- sinkM s
     uncurry PairE <$> runStateT1 m s'
 
 instance (Monad1 m, Fallible (m n)) => Fallible (StateT1 s m n) where
@@ -117,8 +117,8 @@ instance AlwaysImmut m => AlwaysImmut (MaybeT1 m) where
 instance MonadTrans11 MaybeT1 where
   lift11 = MaybeT1 . lift
 
-instance BindingsReader m => BindingsReader (MaybeT1 m) where
-  getBindings = lift11 getBindings
+instance EnvReader m => EnvReader (MaybeT1 m) where
+  getEnv = lift11 getEnv
 
 instance ScopeReader m => ScopeReader (MaybeT1 m) where
   getScope = lift11 getScope
@@ -126,6 +126,6 @@ instance ScopeReader m => ScopeReader (MaybeT1 m) where
   liftImmut m = MaybeT1 $ MaybeT $ fromMaybeE <$>
     (liftImmut $ toMaybeE <$> (runMaybeT $ runMaybeT1' m))
 
-instance BindingsExtender m => BindingsExtender (MaybeT1 m) where
-  extendBindings frag m = MaybeT1 $ MaybeT $
-    extendBindings frag $ runMaybeT $ runMaybeT1' m
+instance EnvExtender m => EnvExtender (MaybeT1 m) where
+  extendEnv frag m = MaybeT1 $ MaybeT $
+    extendEnv frag $ runMaybeT $ runMaybeT1' m

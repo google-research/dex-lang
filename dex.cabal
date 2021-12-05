@@ -36,7 +36,7 @@ flag llvm-head
 
 flag foreign
   description:         Build the C interface to Dex
-  default:             True
+  default:             False
 
 library dex-resources
   if os(darwin)

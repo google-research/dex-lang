@@ -71,7 +71,7 @@ class Monad m => ConfigReader m where
 
 -- Hides the `n` parameter as an existential
 data TopStateEx where
-  TopStateEx :: Distinct n => Bindings n -> TopStateEx
+  TopStateEx :: Distinct n => Env n -> TopStateEx
 
 class (ConfigReader m, MonadIO m) => MonadInterblock m where
   getTopStateEx :: m TopStateEx
@@ -101,7 +101,7 @@ class ( forall n. Fallible (m n)
       , forall n. MonadLogger [Output] (m n)
       , forall n. ConfigReader (m n)
       , forall n. MonadIO (m n)  -- TODO: something more restricted here
-      , BindingsReader m
+      , EnvReader m
       , TopBuilder m )
       => MonadPasses (m::MonadKind1) where
   requireBenchmark :: m n Bool
@@ -109,13 +109,13 @@ class ( forall n. Fallible (m n)
 newtype PassesM (n::S) a = PassesM
   { runPassesM' :: TopBuilderT (ReaderT (Bool, EvalConfig) (LoggerT [Output] IO)) n a }
     deriving ( Functor, Applicative, Monad, MonadIO, MonadFail
-             , Fallible, TopBuilder, BindingsReader, ScopeReader)
+             , Fallible, TopBuilder, EnvReader, ScopeReader)
 
 type ModulesImported = M.Map ModuleName ModuleImportStatus
 
 data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
 
-runPassesM :: Distinct n => Bool -> EvalConfig -> Bindings n -> PassesM n a -> IO (Except a, [Output])
+runPassesM :: Distinct n => Bool -> EvalConfig -> Env n -> PassesM n a -> IO (Except a, [Output])
 runPassesM bench opts env m = do
   let maybeLogFile = logFile opts
   runLogger maybeLogFile \l ->
@@ -221,18 +221,18 @@ runEnvQuery :: (Immut n, MonadPasses m) => EnvQuery -> m n ()
 runEnvQuery query = do
   DB bindings <- getDB
   case query of
-    DumpEnv -> logTop $ TextOut $ pprint $ bindings
+    DumpSubst -> logTop $ TextOut $ pprint $ bindings
     InternalNameInfo name ->
-      case lookupEnvFragRaw (fromRecEnv $ getNameBindings bindings) name of
+      case lookupSubstFragRaw (fromRecSubst $ getNameEnv bindings) name of
         Nothing -> throw UnboundVarErr $ pprint name
-        Just (EnvVal _ binding) ->
+        Just (WithColor _ binding) ->
           logTop $ TextOut $ pprint binding
     SourceNameInfo name -> do
       let SourceMap sourceMap = getSourceMap bindings
       case M.lookup name sourceMap of
         Nothing -> throw UnboundVarErr $ pprint name
-        Just (EnvVal c name') -> do
-          binding <- withNameColorRep c $ lookupBindings name'
+        Just (WithColor c name') -> do
+          binding <- withNameColorRep c $ lookupEnv name'
           logTop $ TextOut $ "Internal name: " ++ pprint name'
           logTop $ TextOut $ "Binding:\n"      ++ pprint binding
 
@@ -308,7 +308,7 @@ isLogInfo out = case out of
   _ -> False
 
 
-lookupAtomSourceName :: (Fallible1 m, BindingsReader m) => SourceName -> m n (Atom n)
+lookupAtomSourceName :: (Fallible1 m, EnvReader m) => SourceName -> m n (Atom n)
 lookupAtomSourceName v =
   lookupSourceMap AtomNameRep v >>= \case
     Nothing -> throw UnboundVarErr $ pprint v
@@ -320,7 +320,7 @@ lookupAtomSourceName v =
 execUModule :: (Mut n, MonadPasses m) => SourceUModule -> m n ()
 execUModule m = do
   bs <- liftImmut $ evalUModule m
-  void $ emitBindings bs
+  void $ emitEnv bs
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
@@ -328,7 +328,7 @@ execUModule m = do
 evalUModule :: (Immut n, MonadPasses m) => SourceUModule -> m n (EvaluatedModule n)
 evalUModule sourceModule = do
   DB bindings <- getDB
-  let (Bindings _ _ sourceMap _) = bindings
+  let (Env _ _ sourceMap _) = bindings
   logPass Parse sourceModule
   renamed <- renameSourceNames (toScope bindings) sourceMap sourceModule
   logPass RenamePass renamed
@@ -346,10 +346,10 @@ evalUModule sourceModule = do
         -- TODO: the evaluation pass gets to emit top bindings because it
         -- creates bindings for pointer literals. But should we just do it this
         -- way for all the passes?
-        result <- evalBackend $ inject block
-        evaluated <- applyDataResults (inject recon) result
+        result <- evalBackend $ sink block
+        evaluated <- applyDataResults (sink recon) result
         checkPass ResultPass $ Module Evaluated Empty evaluated
-        emitBindings evaluated
+        emitEnv evaluated
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 -- TODO: Standalone functions --- use the env!
@@ -464,11 +464,11 @@ instance Store ModuleImportStatus
 instance Store TopStateEx
 
 instance Generic TopStateEx where
-  type Rep TopStateEx = Rep (Bindings UnsafeS)
-  from (TopStateEx topState) = from (unsafeCoerceE topState :: Bindings UnsafeS)
+  type Rep TopStateEx = Rep (Env UnsafeS)
+  from (TopStateEx topState) = from (unsafeCoerceE topState :: Env UnsafeS)
   to rep = do
     case fabricateDistinctEvidence :: DistinctEvidence UnsafeS of
-      Distinct -> TopStateEx (to rep :: Bindings UnsafeS)
+      Distinct -> TopStateEx (to rep :: Env UnsafeS)
 
 instance HasPtrs TopStateEx where
   -- TODO: rather than implementing HasPtrs for safer names, let's just switch

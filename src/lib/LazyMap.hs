@@ -60,7 +60,7 @@ lookupNoFailOption k m = case lookup k m of
 mapWithKey :: Ord k => (k -> a -> b) -> LazyMap k a -> LazyMap k b
 mapWithKey f lm = LazyMap (keysSet lm) mempty \k -> f k $ lookupNoFailOption k lm
 
--- XXX: left-biased, like Data.Map, but unlike our Env-like structures.
+-- XXX: left-biased, like Data.Map, but unlike our Subst-like structures.
 -- This means it's lazy in the right argument, but the left one is forced.
 instance Ord k => Semigroup (LazyMap k a) where
   lm1 <> LazyMap s2 m2 f2 =

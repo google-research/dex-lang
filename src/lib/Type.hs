@@ -43,31 +43,31 @@ import PPrint ()
 
 -- === top-level API ===
 
-checkModule :: (Distinct n, Fallible m) => Bindings n -> Module n -> m ()
+checkModule :: (Distinct n, Fallible m) => Env n -> Module n -> m ()
 checkModule bindings m =
   addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
-    runBindingsReaderT bindings $
+    runEnvReaderT bindings $
       checkTypes m
 
-checkTypes :: (BindingsReader m, Fallible1 m, CheckableE e)
+checkTypes :: (EnvReader m, Fallible1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = () <$ liftImmut do
   DB bindings <- getDB
-  e' <- injectM e
+  e' <- sinkM e
   liftExcept $ runTyperT bindings $ void $ checkE e'
   return UnitE
 
-getType :: (BindingsReader m, HasType e)
+getType :: (EnvReader m, HasType e)
            => e n -> m n (Type n)
 getType e = liftImmut do
   DB bindings <- getDB
-  e' <- injectM e
+  e' <- sinkM e
   return $ runHardFail $ runTyperT bindings $ getTypeE e'
 
-tryGetType :: (BindingsReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
+tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftImmut do
   DB bindings <- getDB
-  e' <- injectM e
+  e' <- sinkM e
   liftExcept $ runTyperT bindings $ getTypeE e'
 
 instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
@@ -75,19 +75,19 @@ instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
 
-sourceNameType :: (BindingsReader m, Fallible1 m)
+sourceNameType :: (EnvReader m, Fallible1 m)
                => SourceName -> m n (Type n)
 sourceNameType v = do
   sm <- getSourceMapM
   case M.lookup v $ fromSourceMap sm of
     Nothing -> throw UnboundVarErr $ pprint v
-    Just (EnvVal c v') ->
-      withNameColorRep c $ lookupBindings v' >>= bindingType
+    Just (WithColor c v') ->
+      withNameColorRep c $ lookupEnv v' >>= bindingType
 
   where
-    bindingType :: (NameColor c, BindingsReader m, Fallible1 m)
+    bindingType :: (NameColor c, EnvReader m, Fallible1 m)
                 => Binding c n -> m n (Type n)
-    bindingType binding = liftImmut $ injectM binding >>= \case
+    bindingType binding = liftImmut $ sinkM binding >>= \case
       AtomNameBinding b    -> return $ atomBindingType $ toBinding b
       TyConBinding   _   e -> getType e
       DataConBinding _ _ e -> getType e
@@ -100,25 +100,25 @@ sourceNameType v = do
 -- TODO: not clear why we need the explicit `Monad2` here since it should
 -- already be a superclass, transitively, through both Fallible2 and
 -- MonadAtomSubst.
-class ( Monad2 m, Fallible2 m, EnvReader Name m
-      , BindingsReader2 m, BindingsExtender2 m, AlwaysImmut2 m)
+class ( Monad2 m, Fallible2 m, SubstReader Name m
+      , EnvReader2 m, EnvExtender2 m, AlwaysImmut2 m)
      => Typer (m::MonadKind2)
 
 newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
-  TyperT { runTyperT' :: EnvReaderT Name (BindingsReaderT m) i o a }
+  TyperT { runTyperT' :: SubstReaderT Name (EnvReaderT m) i o a }
   deriving ( Functor, Applicative, Monad
-           , EnvReader Name
+           , SubstReader Name
            , MonadFail
            , Fallible
            , AlwaysImmut
            , ScopeReader
-           , BindingsReader, BindingsExtender)
+           , EnvReader, EnvExtender)
 
 runTyperT :: (Fallible m, Distinct n)
-          => Bindings n -> TyperT m n n a -> m a
+          => Env n -> TyperT m n n a -> m a
 runTyperT bindings m = do
-  runBindingsReaderT bindings $
-    runEnvReaderT idEnv $
+  runEnvReaderT bindings $
+    runSubstReaderT idSubst $
       runTyperT' m
 
 instance Fallible m => Typer (TyperT m)
@@ -128,7 +128,7 @@ instance Fallible m => Typer (TyperT m)
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class (InjectableE e, SubstE Name e) => HasType (e::E) where
+class (SinkableE e, SubstE Name e) => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -141,7 +141,7 @@ class (InjectableE e, SubstE Name e) => HasType (e::E) where
     checkAlphaEq reqTy ty
     return e'
 
-class (InjectableE e, SubstE Name e) => CheckableE (e::E) where
+class (SinkableE e, SubstE Name e) => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
 
 class HasNamesB b => CheckableB (b::B) where
@@ -176,11 +176,11 @@ instance CheckableE Module where
           return $ Module ir decls' evaluated'
 
 instance CheckableE EvaluatedModule where
-  checkE (Abs (TopBindingsFrag bindings scs sourceMap) UnitE) =
+  checkE (Abs (TopEnvFrag bindings scs sourceMap) UnitE) =
     checkB bindings \bindings' -> do
       sourceMap' <- checkE sourceMap
       scs'       <- checkE scs
-      return $ Abs (TopBindingsFrag bindings' scs' sourceMap') UnitE
+      return $ Abs (TopEnvFrag bindings' scs' sourceMap') UnitE
 
 instance CheckableE SourceMap where
   checkE sourceMap = substM sourceMap
@@ -192,23 +192,23 @@ instance CheckableE SynthCandidates where
                     <*> (M.fromList <$> forM (M.toList zs) \(k, vs) ->
                           (,) <$> substM k <*> mapM checkE vs)
 
-instance CheckableB (RecEnvFrag Binding) where
+instance CheckableB (RecSubstFrag Binding) where
   checkB frag cont = do
     Immut <- getImmut
     scope <- getScope
-    env <- getEnv
+    env <- getSubst
     Distinct <- getDistinct
-    DistinctAbs frag' env' <- return $ refreshRecEnvFrag scope env frag
-    extendBindings (BindingsFrag frag' Nothing) do
-      void $ dropSubst $ traverseEnvFrag checkE $ fromRecEnvFrag frag'
-      withEnv env' do
+    DistinctAbs frag' env' <- return $ refreshRecSubstFrag scope env frag
+    extendEnv (EnvFrag frag' Nothing) do
+      void $ dropSubst $ traverseSubstFrag checkE $ fromRecSubstFrag frag'
+      withSubst env' do
         cont frag'
 
-instance CheckableB BindingsFrag where
-  checkB (BindingsFrag frag effs) cont = do
+instance CheckableB EnvFrag where
+  checkB (EnvFrag frag effs) cont = do
     checkB frag \frag' -> do
       effs' <- mapM checkE effs
-      cont $ BindingsFrag frag' effs'
+      cont $ EnvFrag frag' effs'
 
 instance NameColor c => CheckableE (Binding c) where
   checkE binding = case binding of
@@ -245,7 +245,7 @@ instance HasType Atom where
   getTypeE atom = case atom of
     Var name -> do
       name' <- substM name
-      atomBindingType <$> lookupBindings name'
+      atomBindingType <$> lookupEnv name'
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
     Con con  -> typeCheckPrimCon con
@@ -291,7 +291,7 @@ instance HasType Atom where
       paramTys <- nonDepBinderNestTypes paramBs
       params' <- forMZipped paramTys params checkTypeE
       argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
-      checkDataConRefBindings argBs' args
+      checkDataConRefEnv argBs' args
       return $ RawRefTy $ TypeCon sourceName defName' params'
     BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
       PtrTy (_, t) <- getTypeE ptr
@@ -350,7 +350,7 @@ instance HasType Block where
   getTypeE (Block (BlockAnn ty) decls expr) = do
     tyReq <- substM ty
     checkB decls \_ -> do
-      tyReq' <- injectM tyReq
+      tyReq' <- sinkM tyReq
       expr |: tyReq'
     return tyReq
   getTypeE _ = error "impossible"
@@ -384,7 +384,7 @@ instance CheckableB LamBinder where
     withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
         effs' <- checkE effs
-        extendBindings (BindingsFrag emptyOutFrag (Just effs')) $
+        extendEnv (EnvFrag emptyOutFrag (Just effs')) $
           cont $ LamBinder b' ty' arr effs'
 
 instance HasType LamExpr where
@@ -412,7 +412,7 @@ instance CheckableB PiBinder where
     Immut <- getImmut
     withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
-        extendBindings (BindingsFrag emptyOutFrag (Just Pure)) $
+        extendEnv (EnvFrag emptyOutFrag (Just Pure)) $
           cont $ PiBinder b' ty' arr
 
 instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
@@ -513,12 +513,12 @@ typeCheckPrimOp op = case op of
                                     "fixed-width base types, but got: " ++ pprint argTy
     declareEff IOEffect
     substM ansTy
-  Inject i -> do
+  Sink i -> do
     TC tc <- getTypeE i
     case tc of
       IndexRange ty _ _ -> return ty
       ParIndexRange ty _ _ -> return ty
-      _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
+      _ -> throw TypeErr $ "Unsupported sink argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var h')) s) <- getTypeE ref
     case m of
@@ -731,9 +731,9 @@ checkRWSAction rws f = do
   dropSubst $
     refreshBindersI regionBinder \regionBinder' -> do
       refreshBindersI refBinder \_ -> do
-        allowed'   <- injectM allowed
+        allowed'   <- sinkM allowed
         eff'       <- substM eff
-        regionName <- injectM $ binderName regionBinder'
+        regionName <- sinkM $ binderName regionBinder'
         Immut <- getImmut
         withAllowedEffects allowed' $
           extendAllowedEffect (RWSEffect rws $ Just regionName) $
@@ -765,7 +765,7 @@ checkCase scrut alts resultTy = do
     checkAlt resultTy' bs alt
   return resultTy'
 
-caseAltsBinderTys :: (Fallible1 m, BindingsReader m)
+caseAltsBinderTys :: (Fallible1 m, EnvReader m)
                   => Type n -> m n [EmptyAbs (Nest Binder) n]
 caseAltsBinderTys ty = case ty of
   TypeCon _ defName params -> do
@@ -777,21 +777,21 @@ caseAltsBinderTys ty = case ty of
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
-checkDataConRefBindings :: Typer m
+checkDataConRefEnv :: Typer m
                         => EmptyAbs (Nest Binder) o
                         -> EmptyAbs (Nest DataConRefBinding) i
                         -> m i o ()
-checkDataConRefBindings (EmptyAbs Empty) (Abs Empty UnitE) = return ()
-checkDataConRefBindings (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding restRefs)) = do
+checkDataConRefEnv (EmptyAbs Empty) (Abs Empty UnitE) = return ()
+checkDataConRefEnv (EmptyAbs (Nest b restBs)) (EmptyAbs (Nest refBinding restRefs)) = do
   let DataConRefBinding b' ref = refBinding
   ref |: RawRefTy (binderAnn b)
   bAnn' <- substM $ binderAnn b'
   checkAlphaEq (binderAnn b) bAnn'
   checkB b' \b'' -> do
-    ab <- injectM $ Abs b (EmptyAbs restBs)
+    ab <- sinkM $ Abs b (EmptyAbs restBs)
     restBs' <- applyAbs ab (binderName b'')
-    checkDataConRefBindings restBs' (EmptyAbs restRefs)
-checkDataConRefBindings _ _ = throw CompilerErr $ "Mismatched args and binders"
+    checkDataConRefEnv restBs' (EmptyAbs restRefs)
+checkDataConRefEnv _ _ = throw CompilerErr $ "Mismatched args and binders"
 
 typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
 typeAsBinderNest ty = do
@@ -804,7 +804,7 @@ checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
   refreshBindersI bs \_ -> do
-    resultTyReq' <- injectM resultTyReq
+    resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
 checkApp :: Typer m => Type o -> Atom i -> m i o (Type o)
@@ -958,13 +958,13 @@ checkUnOp op x = do
 -- dependency cycle. And we intend to make index sets a user-defined thing soon
 -- anyway.
 
-indices :: forall n m. BindingsReader m => Type n -> m n [Atom n]
+indices :: forall n m. EnvReader m => Type n -> m n [Atom n]
 indices ty = do
   Distinct <- getDistinct
   withExtEvidence (absurdExtEvidence :: ExtEvidence VoidS n) do
     case hoistToTop ty of
       HoistSuccess ty' ->
-        return $ map (inject . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
+        return $ map (sink . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
       HoistFailure _ -> error "can't get index literals from type with free vars"
 
 litIdxSetSize :: Type VoidS -> Int32
@@ -1006,79 +1006,79 @@ litFromOrdinal ty i = case ty of
 -- `substE` only gives us scopes.
 
 substEvaluatedModuleM
-  :: (EnvReader AtomSubstVal m, BindingsReader2 m)
+  :: (SubstReader AtomSubstVal m, EnvReader2 m)
   => EvaluatedModule i
   -> m i o (EvaluatedModule o)
 substEvaluatedModuleM m = liftImmut do
-  Abs (TopBindingsFrag (BindingsFrag bs eff) sc sm) UnitE <- return m
-  env <- getEnv
+  Abs (TopEnvFrag (EnvFrag bs eff) sc sm) UnitE <- return m
+  env <- getSubst
   DB bindings <- getDB
   let body = toMaybeE eff `PairE` sc `PairE` sm
-  Abs bs' body' <- return $ atomSubstAbsBindingsFrag bindings env $ Abs bs body
+  Abs bs' body' <- return $ atomSubstAbsEnvFrag bindings env $ Abs bs body
   eff' `PairE` sc' `PairE` sm' <- return body'
-  return $ EmptyAbs (TopBindingsFrag (BindingsFrag bs' (fromMaybeE eff')) sc' sm')
+  return $ EmptyAbs (TopEnvFrag (EnvFrag bs' (fromMaybeE eff')) sc' sm')
 
-atomSubstAbsBindingsFrag
-  :: (Distinct o, InjectableE e, SubstE Name e, HoistableE e)
-  => Bindings o
-  -> Env AtomSubstVal i o
-  -> Abs (RecEnvFrag Binding) e i
-  -> Abs (RecEnvFrag Binding) e o
-atomSubstAbsBindingsFrag bindings env (Abs b e) =
+atomSubstAbsEnvFrag
+  :: (Distinct o, SinkableE e, SubstE Name e, HoistableE e)
+  => Env o
+  -> Subst AtomSubstVal i o
+  -> Abs (RecSubstFrag Binding) e i
+  -> Abs (RecSubstFrag Binding) e o
+atomSubstAbsEnvFrag bindings env (Abs b e) =
   substB (toScope bindings, env) b \(scope', env') b' ->
     case substAnything scope' env' e of
       DistinctAbs bNew e' -> do
         let bindings' = extendOutMap bindings b'
-        let bOut = catRecEnvFrags b' (atomNestToBindingsFrag bindings' bNew)
+        let bOut = catRecSubstFrags b' (atomNestToEnvFrag bindings' bNew)
         Abs bOut e'
 
-atomNestToBindingsFrag
+atomNestToEnvFrag
   :: Distinct o'
-  => Bindings o
+  => Env o
   -> Nest (BinderP AtomNameC Atom) o o'
-  -> RecEnvFrag Binding o o'
-atomNestToBindingsFrag _ Empty = emptyOutFrag
-atomNestToBindingsFrag bindings (Nest (b:>x) rest) =
+  -> RecSubstFrag Binding o o'
+atomNestToEnvFrag _ Empty = emptyOutFrag
+atomNestToEnvFrag bindings (Nest (b:>x) rest) =
   withSubscopeDistinct rest $
     withSubscopeDistinct b do
-      let (BindingsFrag frag _) = toBindingsFrag (b :> atomToBinding bindings x)
-      let frag' = atomNestToBindingsFrag (bindings `extendOutMap` frag) rest
-      catRecEnvFrags frag frag'
+      let (EnvFrag frag _) = toEnvFrag (b :> atomToBinding bindings x)
+      let frag' = atomNestToEnvFrag (bindings `extendOutMap` frag) rest
+      catRecSubstFrags frag frag'
 
-atomToBinding :: Distinct n => Bindings n -> Atom n -> Binding AtomNameC n
+atomToBinding :: Distinct n => Env n -> Atom n -> Binding AtomNameC n
 atomToBinding bindings x = do
-  let ty = runBindingsReaderM bindings $ getType x
+  let ty = runEnvReaderM bindings $ getType x
   AtomNameBinding $ LetBound $ DeclBinding PlainLet ty (Atom x)
 
 substAnything
-  :: ( Distinct o, InjectableE atom
-     , InjectableE e, SubstE Name e, HoistableE e)
+  :: ( Distinct o, SinkableE atom
+     , SinkableE e, SubstE Name e, HoistableE e)
   => Scope o
-  -> Env (SubstVal c atom) i o
+  -> Subst (SubstVal c atom) i o
   -> e i
   -> DistinctAbs (Nest (BinderP c atom)) e o
 substAnything scope subst e =
   substAnythingRec scope subst emptyInMap $ collectFreeVars e
 
 substAnythingRec
-  :: (Distinct o, InjectableE atom, InjectableE e, SubstE Name e)
+  :: (Distinct o, SinkableE atom, SinkableE e, SubstE Name e)
   => Scope o
-  -> Env (SubstVal c atom) i o
-  -> Env Name h o
+  -> Subst (SubstVal c atom) i o
+  -> Subst Name h o
   -> WithRenamer e h i
   -> DistinctAbs (Nest (BinderP c atom)) e o
 substAnythingRec scope atomSubst nameSubst (WithRenamer renamer e) =
-  case unConsEnv renamer of
-    EmptyEnv -> DistinctAbs Empty $ substE (scope, nameSubst) e
-    ConsEnv b v rest -> case atomSubst ! v of
+  case unConsSubst renamer of
+    EmptySubst -> DistinctAbs Empty $ substE (scope, nameSubst) e
+    ConsSubst b v rest -> case atomSubst ! v of
       Rename v' ->
         substAnythingRec scope atomSubst nameSubst' $ WithRenamer rest e
         where nameSubst' = nameSubst <>> b@>v'
       SubstVal x ->
         withFresh (getNameHint b) nameColorRep scope \b' -> do
           let scope'     = scope `extendOutMap` toScopeFrag b'
-          let atomSubst' = inject atomSubst
-          let nameSubst' = inject nameSubst <>> b@> binderName b'
+          let atomSubst' = sink atomSubst
+          let nameSubst' = sink nameSubst <>> b@> binderName b'
           prependNestAbs (b':>x) $
             substAnythingRec scope' atomSubst' nameSubst' $ WithRenamer rest e
 
@@ -1096,12 +1096,12 @@ applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef 
 applyDataDefParams (DataDef _ bs cons) params =
   fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
 
-checkedApplyDataDefParams :: (BindingsReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
+checkedApplyDataDefParams :: (EnvReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
 checkedApplyDataDefParams (DataDef _ bs cons) params =
   fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) params
 
 -- TODO: Subst all at once, not one at a time!
-checkedApplyNaryAbs :: (BindingsReader m, Fallible1 m, InjectableE e, SubstE AtomSubstVal e)
+checkedApplyNaryAbs :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)
                     => Abs (Nest Binder) e o -> [Atom o] -> m o (e o)
 checkedApplyNaryAbs (Abs nest e) args = case (nest, args) of
   (Empty    , []) -> return e
@@ -1122,7 +1122,7 @@ instance CheckableE EffectRow where
       IOEffect        -> return ()
     forM_ effTail \v -> do
       v' <- substM v
-      ty <- atomBindingType <$> lookupBindings v'
+      ty <- atomBindingType <$> lookupEnv v'
       checkAlphaEq EffKind ty
     substM effRow
 
@@ -1162,8 +1162,8 @@ checkLabeledRow :: Typer m => ExtLabeledItems (Type i) (AtomName i) -> m i o ()
 checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
   forM_ rest \name -> do
-    name' <- lookupEnvM name
-    ty <- atomBindingType <$> lookupBindings name'
+    name' <- lookupSubstM name
+    ty <- atomBindingType <$> lookupEnv name'
     checkAlphaEq LabeledRowKind ty
 
 labeledRowDifference :: Typer m
@@ -1192,8 +1192,7 @@ labeledRowDifference (Ext (LabeledItems items) rest)
       ++ " is not known to be a subset of " ++ pprint rest
   return $ Ext (LabeledItems diffitems) diffrest
 
-
-projectLength :: (Fallible1 m, BindingsReader m) => Type n -> m n Int
+projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n Int
 projectLength ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName

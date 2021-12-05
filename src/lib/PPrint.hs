@@ -34,7 +34,7 @@ import Data.Text (Text, uncons, unsnoc, unpack)
 import Data.String (fromString)
 import System.Console.ANSI
 import System.IO.Unsafe
-import System.Environment
+import qualified System.Environment as E
 import Numeric
 
 import LabeledItems
@@ -82,7 +82,7 @@ pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
 
 layout :: LayoutOptions
 layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
-  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
+  where unbounded = unsafePerformIO $ (Just "1"==) <$> E.lookupEnv "DEX_PPRINT_UNBOUNDED"
 
 asStr :: Doc ann -> String
 asStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
@@ -339,13 +339,13 @@ instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
 
-deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedEnv v i o)
-deriving instance (forall c n. Pretty (v c n)) => Pretty (RecEnv v o)
+deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedSubst v i o)
+deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
-instance Pretty (Bindings n) where
+instance Pretty (Env n) where
   pretty s =
        "bindings: "
-    <>   indented (pretty (getNameBindings s))
+    <>   indented (pretty (getNameEnv s))
     <> "synth candidates:"
     <>   indented (pretty (getSynthCandidates s))
     <> "source map: "
@@ -563,13 +563,13 @@ instance Pretty (UPatAnn n l) where
       Just ty -> ":" <> pApp ty
       Nothing -> mempty
 
-instance Pretty (BindingsFrag n l) where
-  pretty (BindingsFrag bindings effects) =
+instance Pretty (EnvFrag n l) where
+  pretty (EnvFrag bindings effects) =
        "Partial bindings:" <> indented (p bindings)
     <> "Effects allowed:" <+> p effects
 
-instance Pretty (TopBindingsFrag n l) where
-  pretty (TopBindingsFrag bindings scs sourceMap) =
+instance Pretty (TopEnvFrag n l) where
+  pretty (TopEnvFrag bindings scs sourceMap) =
        "bindings:"
     <>   indented (p bindings)
     <> "Synth candidats:"

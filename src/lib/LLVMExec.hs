@@ -38,7 +38,7 @@ import System.IO.Unsafe
 import System.IO.Temp
 import System.Directory (listDirectory)
 import System.Process
-import System.Environment
+import qualified System.Environment as E
 import System.Exit
 
 import Foreign.Marshal.Alloc
@@ -355,7 +355,7 @@ linkDexrt m = do
 data LLVMKernel = LLVMKernel L.Module
 
 cudaPath :: IO String
-cudaPath = maybe "/usr/local/cuda" id <$> lookupEnv "CUDA_PATH"
+cudaPath = maybe "/usr/local/cuda" id <$> E.lookupEnv "CUDA_PATH"
 
 compileCUDAKernel :: Logger [Output] -> LLVMKernel -> String -> IO CUDAKernel
 compileCUDAKernel logger (LLVMKernel ast) arch = do
@@ -366,7 +366,7 @@ compileCUDAKernel logger (LLVMKernel ast) arch = do
         linkLibdevice m
         standardCompilationPipeline logger ["kernel"] tm m
         ptx <- Mod.moduleTargetAssembly tm m
-        usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
+        usePTXAS <- maybe False (=="1") <$> E.lookupEnv "DEX_USE_PTXAS"
         if usePTXAS
           then do
             ptxasPath <- (++"/bin/ptxas") <$> cudaPath

@@ -17,7 +17,7 @@ import Data.List (intersperse)
 import Data.Tuple (swap)
 import Data.Coerce
 
-import Env
+import Subst
 import LabeledItems
 import Syntax
 import PPrint
@@ -291,17 +291,17 @@ instance Pretty MVar where
 
 -- We deliberately skip the variables in the types, since we treat all variables
 -- with index set types as their ordinals.
-freeVarsM :: Monomial -> Env Type
-freeVarsM m = foldMap (varAsEnv . coerce) $ keys m
+freeVarsM :: Monomial -> Subst Type
+freeVarsM m = foldMap (varAsSubst . coerce) $ keys m
 
-freeVarsP :: Polynomial -> Env Type
+freeVarsP :: Polynomial -> Subst Type
 freeVarsP p = foldMap freeVarsM $ keys p
 
-freeVarsC :: Clamp -> Env Type
+freeVarsC :: Clamp -> Subst Type
 freeVarsC (Clamp p) = freeVarsP p
 
 imapMonos :: (Ord mono, Ord mono') => (mono -> mono') -> PolynomialP mono -> PolynomialP mono'
-imapMonos = mapKeysWith (error "Expected an injective map")
+imapMonos = mapKeysWith (error "Expected an sinkive map")
 
 liftC :: Polynomial -> ClampPolynomial
 liftC = imapMonos $ cmono []

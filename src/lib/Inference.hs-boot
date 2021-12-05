@@ -9,4 +9,4 @@ module Inference (trySynthDictBlock) where
 import Name
 import Syntax
 
-trySynthDictBlock :: (Fallible1 m, BindingsReader m) => Type n -> m n (Block n)
+trySynthDictBlock :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)

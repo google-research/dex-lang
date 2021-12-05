@@ -142,7 +142,7 @@ topLevelCommand =
 
 envQuery :: Parser EnvQuery
 envQuery = string ":debug" >> sc >> (
-      (DumpEnv          <$  (string "env"   >> sc))
+      (DumpSubst          <$  (string "env"   >> sc))
   <|> (InternalNameInfo <$> (string "iname" >> sc >> rawName))
   <|> (SourceNameInfo   <$> (string "sname" >> sc >> anyName)))
        <* eol

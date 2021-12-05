@@ -20,7 +20,7 @@ import PPrint
 
 import LabeledItems
 
-class (Builder2 m, EnvReader Name m)
+class (Builder2 m, SubstReader Name m)
       => GenericTraverser (m::MonadKind2) where
 
   traverseExpr :: Emits o => Expr i -> m i o (Expr o)
@@ -120,7 +120,7 @@ traverseDeclNest Empty cont = cont
 traverseDeclNest (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   expr' <- traverseExpr expr
   v <- emitDecl (getNameHint b) ann expr'
-  extendEnv (b @> v) $ traverseDeclNest rest cont
+  extendSubst (b @> v) $ traverseDeclNest rest cont
 
 traverseAlt
   :: (Immut o, GenericTraverser m)

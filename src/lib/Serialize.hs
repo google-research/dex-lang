@@ -45,25 +45,25 @@ import PPrint ()
 foreign import ccall "malloc_dex"           dexMalloc    :: Int64  -> IO (Ptr ())
 foreign import ccall "dex_allocation_size"  dexAllocSize :: Ptr () -> IO Int64
 
-pprintVal :: (MonadIO1 m, BindingsReader m, Fallible1 m) => Val n -> m n String
+pprintVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
 pprintVal val = docAsStr <$> prettyVal val
 
 -- TODO: get the pointer rather than reading char by char
-getDexString :: (MonadIO1 m, BindingsReader m, Fallible1 m) => Val n -> m n String
+getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n String
 getDexString (DataCon _ _ _ 0 [_, xs]) = do
   xs' <- getTableElements xs
   forM xs' \(Con (Lit (Word8Lit c))) -> return $ toEnum $ fromIntegral c
 getDexString x = error $ "Not a string: " ++ pprint x
 
-getTableElements :: (MonadIO1 m, BindingsReader m, Fallible1 m) => Val n -> m n [Atom n]
+getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n [Atom n]
 getTableElements tab = do
   TabTy b _ <- getType tab
   idxs <- indices $ binderType b
-  forM idxs \i -> liftImmut $ liftInterpM $ evalExpr $ inject $ App tab i
+  forM idxs \i -> liftImmut $ liftInterpM $ evalExpr $ sink $ App tab i
 
 -- Pretty-print values, e.g. for displaying in the REPL.
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec
-prettyVal :: (MonadIO1 m, BindingsReader m, Fallible1 m) => Val n -> m n (Doc ann)
+prettyVal :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n (Doc ann)
 prettyVal val = case val of
   -- Pretty-print tables.
   Lam (LamExpr (LamBinder _ _ TabArrow _) _) -> do

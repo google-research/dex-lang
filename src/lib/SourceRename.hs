@@ -16,7 +16,7 @@ import Control.Monad.Except hiding (Except)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
--- import Env
+-- import Subst
 import Err
 import LabeledItems
 import Name
@@ -26,14 +26,14 @@ renameSourceNames :: (Distinct n, Fallible m)
                   => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
 renameSourceNames scope sourceMap sourceModule =
   liftExcept $ runFallibleM $ runScopeReaderT scope $
-    runOutReaderT (RenamerEnv sourceMap False) $ runRenamerM $
+    runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $
       renameSourceNames' sourceModule
 
-data RenamerEnv n = RenamerEnv { renamerSourceMap :: SourceMap n
-                               , renamerMayShadow :: Bool }
+data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
+                                   , renamerMayShadow :: Bool }
 
 newtype RenamerM (n::S) (a:: *) =
-  RenamerM { runRenamerM :: OutReaderT RenamerEnv (ScopeReaderT FallibleM) n a }
+  RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , AlwaysImmut, ScopeReader, ScopeExtender)
 
@@ -48,11 +48,11 @@ instance Renamer RenamerM where
   askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
   askSourceMap = RenamerM $ renamerSourceMap <$> askOutReader
   setMayShadow mayShadow (RenamerM cont) = RenamerM do
-    RenamerEnv sm _ <- askOutReader
-    localOutReader (RenamerEnv sm mayShadow) cont
+    RenamerSubst sm _ <- askOutReader
+    localOutReader (RenamerSubst sm mayShadow) cont
   extendSourceMap sourceMap (RenamerM cont) = RenamerM do
-    RenamerEnv sm mayShadow <- askOutReader
-    localOutReader (RenamerEnv (sm <> sourceMap) mayShadow) cont
+    RenamerSubst sm mayShadow <- askOutReader
+    localOutReader (RenamerSubst (sm <> sourceMap) mayShadow) cont
 
 renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
 renameSourceNames' (SourceUModule decl) = do
@@ -87,7 +87,7 @@ instance (Renamer m) => NameGen (RenamerNameGenT m) where
     extendScope frag $ extendSourceMap sourceMap $ do
       (RenamerContent frag2 sourceMap2 expr2) <- runRenamerNameGenT $ cont expr
       withExtEvidence frag2 do
-        let sourceMap' = inject sourceMap <> sourceMap2
+        let sourceMap' = sink sourceMap <> sourceMap2
         return $ RenamerContent (frag >>> frag2) sourceMap' expr2
   getDistinctEvidenceG = RenamerNameGenT do
     Distinct <- getDistinct
@@ -106,16 +106,16 @@ instance SourceRenamableE (SourceNameOr UVar) where
     SourceMap sourceMap <- askSourceMap
     case M.lookup sourceName sourceMap of
       Nothing -> throw UnboundVarErr $ pprint sourceName
-      Just (EnvVal AtomNameRep    name) -> return $ InternalName $ UAtomVar name
-      Just (EnvVal TyConNameRep   name) -> return $ InternalName $ UTyConVar name
-      Just (EnvVal DataConNameRep name) -> return $ InternalName $ UDataConVar name
-      Just (EnvVal ClassNameRep   name) -> return $ InternalName $ UClassVar name
-      Just (EnvVal MethodNameRep  name) -> return $ InternalName $ UMethodVar name
-      Just (EnvVal DataDefNameRep _   ) -> error "Shouldn't find these in source map"
-      Just (EnvVal SuperclassNameRep _) -> error "Shouldn't find these in source map"
+      Just (WithColor AtomNameRep    name) -> return $ InternalName $ UAtomVar name
+      Just (WithColor TyConNameRep   name) -> return $ InternalName $ UTyConVar name
+      Just (WithColor DataConNameRep name) -> return $ InternalName $ UDataConVar name
+      Just (WithColor ClassNameRep   name) -> return $ InternalName $ UClassVar name
+      Just (WithColor MethodNameRep  name) -> return $ InternalName $ UMethodVar name
+      Just (WithColor DataDefNameRep _   ) -> error "Shouldn't find these in source map"
+      Just (WithColor SuperclassNameRep _) -> error "Shouldn't find these in source map"
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-lookupSourceName :: Renamer m => SourceName -> m n (EnvVal Name n)
+lookupSourceName :: Renamer m => SourceName -> m n (WithColor Name n)
 lookupSourceName v = do
   SourceMap sourceMap <- askSourceMap
   case M.lookup v sourceMap of
@@ -125,7 +125,7 @@ lookupSourceName v = do
 instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
-      EnvVal rep val -> case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
+      WithColor rep val -> case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
         Just ColorsEqual -> return $ InternalName val
         Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
@@ -282,7 +282,7 @@ sourceRenameUBinder ubinder = case ubinder of
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) nameColorRep \freshName -> do
       Distinct <- getDistinct
-      let sourceMap' = SourceMap (M.singleton b (EnvVal nameColorRep $ nameBinderName freshName))
+      let sourceMap' = SourceMap (M.singleton b (WithColor nameColorRep $ nameBinderName freshName))
       return $ RenamerContent (toScopeFrag freshName) sourceMap' $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> returnG UIgnore
@@ -309,7 +309,7 @@ instance SourceRenamableE e => SourceRenamableE (ListE e) where
 instance SourceRenamableE UMethodDef where
   sourceRenameE (UMethodDef ~(SourceName v) expr) = do
     lookupSourceName v >>= \case
-      EnvVal MethodNameRep v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
+      WithColor MethodNameRep v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
@@ -341,7 +341,7 @@ instance (Renamer m) => NameGen (PatRenamerNameGenT m) where
       (extraSibs2, RenamerContent frag' sourceMap' expr') <-
           runPatRenamerNameGenT (cont expr) (sibs <> extraSibs1)
       withExtEvidence frag' do
-        let sourceMap'' = inject sourceMap <> sourceMap'
+        let sourceMap'' = sink sourceMap <> sourceMap'
         return (extraSibs1 <> extraSibs2, RenamerContent (frag >>> frag') sourceMap'' expr')
 
   getDistinctEvidenceG = PatRenamerNameGenT \_ -> do
@@ -373,7 +373,7 @@ instance SourceRenamablePat UPat' where
       SourceMap sourceMap <- askSourceMap
       con' <- case M.lookup con sourceMap of
         Nothing    -> throw UnboundVarErr $ pprint con
-        Just (EnvVal DataConNameRep name) -> return $ InternalName name
+        Just (WithColor DataConNameRep name) -> return $ InternalName name
         Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
       runPatRenamerNameGenT (UPatCon con' `fmapG` sourceRenamePat bs) sibs
     UPatPair (PairB p1 p2) ->
@@ -422,5 +422,5 @@ instance SourceRenamableB UPat' where
 
 -- === misc instance ===
 
-instance InjectableE RenamerEnv where
-  injectionProofE = undefined
+instance SinkableE RenamerSubst where
+  sinkingProofE = undefined

@@ -29,22 +29,22 @@ import Builder
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
 
 newtype InterpM (i::S) (o::S) (a:: *) =
-  InterpM { runInterpM' :: EnvReaderT AtomSubstVal (BindingsReaderT IO) i o a }
+  InterpM { runInterpM' :: SubstReaderT AtomSubstVal (EnvReaderT IO) i o a }
   deriving ( Functor, Applicative, Monad
-           , MonadIO, ScopeReader, BindingsReader, MonadFail, Fallible
-           , EnvReader AtomSubstVal)
+           , MonadIO, ScopeReader, EnvReader, MonadFail, Fallible
+           , SubstReader AtomSubstVal)
 
-class ( EnvReader AtomSubstVal m, BindingsReader2 m
+class ( SubstReader AtomSubstVal m, EnvReader2 m
       , Monad2 m, MonadIO2 m)
       => Interp m
 
 instance Interp InterpM
 
-runInterpM :: Distinct n => Bindings n -> InterpM n n a -> IO a
+runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
 runInterpM bindings cont =
-  runBindingsReaderT bindings $ runEnvReaderT idEnv $ runInterpM' cont
+  runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
 
-liftInterpM :: (BindingsReader m, MonadIO1 m, Immut n) => InterpM n n a -> m n a
+liftInterpM :: (EnvReader m, MonadIO1 m, Immut n) => InterpM n n a -> m n a
 liftInterpM m = do
   DB bindings <- getDB
   liftIO $ runInterpM bindings m
@@ -56,7 +56,7 @@ evalDecls :: Interp m => Nest Decl i i' -> m i' o a -> m i o a
 evalDecls Empty cont = cont
 evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
   result <- evalExpr rhs
-  extendEnv (b @> SubstVal result) $ evalDecls rest cont
+  extendSubst (b @> SubstVal result) $ evalDecls rest cont
 
 evalAtom :: Interp m => Atom i -> m i o (Atom o)
 evalAtom x = do
@@ -70,7 +70,7 @@ evalExpr expr = case expr of
     f' <- evalAtom f
     x' <- evalAtom x
     case f' of
-      Lam (LamExpr b body) -> dropSubst $ extendEnv (b @> SubstVal x') $ evalBlock body
+      Lam (LamExpr b body) -> dropSubst $ extendSubst (b @> SubstVal x') $ evalBlock body
       _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
   Atom atom -> evalAtom atom
   Op op     -> evalOp op
@@ -80,10 +80,10 @@ evalExpr expr = case expr of
       Nothing -> error "branch should be chosen at this point"
       Just (con, args) -> do
         Abs bs body <- return $ alts !! con
-        extendEnv (bs @@> map SubstVal args) $ evalBlock body
+        extendSubst (bs @@> map SubstVal args) $ evalBlock body
   Hof hof -> case hof of
     RunIO (Lam (LamExpr b body)) ->
-      extendEnv (b @> SubstVal UnitTy) $
+      extendSubst (b @> SubstVal UnitTy) $
         evalBlock body
     _ -> error $ "Not implemented: " ++ pprint expr
 
@@ -125,10 +125,10 @@ evalOp expr = mapM evalAtom expr >>= \case
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
-    _ -> evalBuilder $ indexToInt $ inject idxArg
+    _ -> evalBuilder $ indexToInt $ sink idxArg
   _ -> error $ "Not implemented: " ++ pprint expr
 
-evalBuilder :: (Interp m, InjectableE e, SubstE AtomSubstVal e)
+evalBuilder :: (Interp m, SinkableE e, SubstE AtomSubstVal e)
             => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
             -> m i n (e n)
 evalBuilder cont = dropSubst do

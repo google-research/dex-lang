@@ -25,19 +25,19 @@ import Type
 
 -- === simplification monad ===
 
-class (Builder2 m, EnvReader AtomSubstVal m) => Simplifier m
+class (Builder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
-  { runSimplifyM' :: EnvReaderT AtomSubstVal (BuilderT HardFailM) i o a }
-  deriving ( Functor, Applicative, Monad, ScopeReader, BindingsExtender
-           , BindingsReader, EnvReader AtomSubstVal, MonadFail)
+  { runSimplifyM' :: SubstReaderT AtomSubstVal (BuilderT HardFailM) i o a }
+  deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender
+           , EnvReader, SubstReader AtomSubstVal, MonadFail)
 
-runSimplifyM :: Distinct n => Bindings n -> SimplifyM n n (e n) -> e n
+runSimplifyM :: Distinct n => Env n -> SimplifyM n n (e n) -> e n
 runSimplifyM bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
     runHardFail $
       runBuilderT bindings $
-        runEnvReaderT idEnv $
+        runSubstReaderT idSubst $
           runSimplifyM' cont
 
 instance Simplifier SimplifyM
@@ -49,12 +49,12 @@ instance Fallible (SimplifyM i o) where
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance Builder (SimplifyM i) where
   emitDecl hint ann expr = SimplifyM $ emitDecl hint ann expr
-  buildScoped cont = SimplifyM $ EnvReaderT $ ReaderT \env ->
-    buildScoped $ runEnvReaderT (inject env) (runSimplifyM' cont)
+  buildScoped cont = SimplifyM $ SubstReaderT $ ReaderT \env ->
+    buildScoped $ runSubstReaderT (sink env) (runSimplifyM' cont)
 
 -- === Top level ===
 
-simplifyModule :: Distinct n => Bindings n -> Module n -> Module n
+simplifyModule :: Distinct n => Env n -> Module n -> Module n
 simplifyModule bindings (Module Core decls result) = runSimplifyM bindings do
   Immut <- return $ toImmutEvidence bindings
   DistinctAbs decls' result' <-
@@ -65,23 +65,23 @@ simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 type AbsEvaluatedModule n = Abs (Nest (NameBinder AtomNameC)) EvaluatedModule n
 
-splitSimpModule :: Distinct n => Bindings n -> Module n
+splitSimpModule :: Distinct n => Env n -> Module n
                 -> (Block n , AbsEvaluatedModule n)
 splitSimpModule bindings (Module _ decls result) = do
   let (vs, recon) = captureClosure decls result
   let resultTup = Atom $ ProdVal $ map Var vs
-  let block = runHardFail $ runBindingsReaderT bindings $
+  let block = runHardFail $ runEnvReaderT bindings $
                 refreshAbsM (Abs decls resultTup) \decls' result' ->
                   makeBlock decls' result'
   (block, recon)
 
-applyDataResults :: BindingsReader m
+applyDataResults :: EnvReader m
                  => AbsEvaluatedModule n -> Atom n
                  -> m n (EvaluatedModule n)
 applyDataResults (Abs bs evaluated) x = do
-  runEnvReaderT idEnv do
+  runSubstReaderT idSubst do
     xs <- liftM ignoreExcept $ runFallibleT1 $ getUnpacked x
-    extendEnv (bs @@> map SubstVal xs) $
+    extendSubst (bs @@> map SubstVal xs) $
       substEvaluatedModuleM evaluated
 
 -- === All the bits of IR  ===
@@ -91,10 +91,10 @@ simplifyDecl (Let b (DeclBinding ann _ expr)) cont = case ann of
   NoInlineLet -> do
     x <- simplifyStandalone expr
     v <- emitDecl (getNameHint b) NoInlineLet (Atom x)
-    extendEnv (b@>Rename v) cont
+    extendSubst (b@>Rename v) cont
   _ -> do
     x <- simplifyExpr expr
-    extendEnv (b@>SubstVal x) cont
+    extendSubst (b@>SubstVal x) cont
 
 simplifyDecls ::  (Emits o, Simplifier m) => Nest Decl i i' -> m i' o a -> m i o a
 simplifyDecls Empty cont = cont
@@ -104,7 +104,7 @@ simplifyStandalone :: Simplifier m => Expr i -> m i o (Atom o)
 simplifyStandalone (Atom (Lam (LamExpr (LamBinder b argTy arr Pure) body))) = do
   argTy' <- substM argTy
   buildPureLam (getNameHint b) arr argTy' \v ->
-    extendEnv (b@>Rename v) $ simplifyBlock body
+    extendSubst (b@>Rename v) $ simplifyBlock body
 simplifyStandalone block =
   error $ "@noinline decorator applied to non-pure-function" ++ pprint block
 
@@ -123,19 +123,19 @@ simplifyExpr expr = case expr of
     case trySelectBranch e' of
       Just (i, args) -> do
         Abs bs body <- return $ alts !! i
-        extendEnv (bs @@> map SubstVal args) $ simplifyBlock body
+        extendSubst (bs @@> map SubstVal args) $ simplifyBlock body
       Nothing -> do
         alts' <- forM alts \(Abs bs body) -> do
           bs' <- substM $ EmptyAbs bs
           buildNaryAbs bs' \xs ->
-            extendEnv (bs @@> map Rename xs) $
+            extendSubst (bs @@> map Rename xs) $
               buildBlock $ simplifyBlock body
         liftM Var $ emit $ Case e' alts' resultTy'
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
 simplifyApp f x = case f of
   Lam (LamExpr b body) ->
-    dropSubst $ extendEnv (b@>SubstVal x) $ simplifyBlock body
+    dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
   DataCon printName defName params con xs -> do
     DataDef _ paramBs _ <- lookupDataDef defName
     let (params', xs') = splitAt (nestLength paramBs) $ params ++ xs ++ [x]
@@ -148,11 +148,11 @@ simplifyApp f x = case f of
 simplifyAtom :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o)
 simplifyAtom atom = case atom of
   Var v -> do
-    env <- getEnv
+    env <- getSubst
     case env ! v of
       SubstVal x -> return x
       Rename v' -> do
-        AtomNameBinding bindingInfo <- lookupBindings v'
+        AtomNameBinding bindingInfo <- lookupEnv v'
         case bindingInfo of
           LetBound (DeclBinding ann _ (Atom x))
             | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
@@ -208,12 +208,12 @@ simplifyNaryLam (Abs bs body) = fromPairE <$> liftImmut do
   refreshBinders bs \bs' -> do
     DistinctAbs decls result <- buildScoped $ simplifyBlock body
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-    extendBindings (toBindingsFrag decls) do
+    extendEnv (toEnvFrag decls) do
       (resultData, recon) <- defuncAtom (toScopeFrag bs' >>> toScopeFrag decls) result
       block <- makeBlock decls $ Atom resultData
       return $ PairE (Abs bs' block) recon
 
-defuncAtom :: BindingsReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
+defuncAtom :: EnvReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
 defuncAtom _ x = do
   xTy <- getType x
   if isData xTy
@@ -259,7 +259,7 @@ instance GenericE Reconstruct where
   toE = undefined
   fromE = undefined
 
-instance InjectableE Reconstruct
+instance SinkableE Reconstruct
 instance HoistableE  Reconstruct
 instance SubstE Name Reconstruct
 instance SubstE AtomSubstVal Reconstruct
