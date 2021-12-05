@@ -40,7 +40,6 @@ import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import qualified Data.Set as S
 -- import qualified Data.Map.Strict as M
--- import qualified Data.Text as T
 
 import CUDA (getCudaArchitecture)
 
@@ -350,14 +349,13 @@ topLevelFunName :: IFunVar -> L.Name
 topLevelFunName (name, _) = fromString name
 
 makeFunSpec :: IFunVar -> ExternFunSpec
-makeFunSpec = undefined
--- makeFunSpec (Name _ name _ :> IFunType FFIFun argTys [resultTy]) =
---    ExternFunSpec (L.Name (fromString $ T.unpack name)) (scalarTy resultTy)
---                     [] [] (map scalarTy argTys)
--- makeFunSpec (Name _ name _ :> IFunType FFIMultiResultFun argTys _) =
---    ExternFunSpec (L.Name (fromString $ T.unpack name)) L.VoidType [] []
---      (hostPtrTy hostVoidp : map scalarTy argTys)
--- makeFunSpec (_ :> IFunType _ _ _) = error "not implemented"
+makeFunSpec (name, IFunType FFIFun argTys [resultTy]) =
+   ExternFunSpec (L.Name (fromString name)) (scalarTy resultTy)
+                    [] [] (map scalarTy argTys)
+makeFunSpec (name, IFunType FFIMultiResultFun argTys _) =
+   ExternFunSpec (L.Name (fromString name)) L.VoidType [] []
+     (hostPtrTy hostVoidp : map scalarTy argTys)
+makeFunSpec (_, IFunType _ _ _) = error "not implemented"
 
 compileLoop :: Direction -> IBinder n l -> Operand -> Compile l () -> Compile n ()
 compileLoop d iBinder n compileBody = do

@@ -322,7 +322,13 @@ toImpOp maybeDest op = case op of
     SumTy cases ->
       return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
-  FFICall _ _ _ -> undefined
+  FFICall name returnTy xs -> do
+    let returnTys = fromScalarOrPairType returnTy
+    xTys <- forM xs \x -> fromScalarType <$> getType x
+    let f = asFFIFunction name xTys returnTys
+    xs' <- mapM fromScalarAtom xs
+    results <- emitMultiReturnInstr $ ICall f xs'
+    restructureScalarOrPairType returnTy results
   SumToVariant ~(Con c) -> do
     ~resultTy@(VariantTy labs) <- resultTyM
     returnVal $ case c of
@@ -338,6 +344,15 @@ toImpOp maybeDest op = case op of
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
+
+asFFIFunction :: SourceName -> [IType] -> [IType] -> IFunVar
+asFFIFunction fname argTys resultTys =
+  (fname, IFunType cc argTys resultTys)
+  where
+    cc = case length resultTys of
+           0 -> error "Not implemented"
+           1 -> FFIFun
+           _ -> FFIMultiResultFun
 
 toImpHof :: (Imper m, Emits o) => Maybe (Dest o) -> PrimHof (Atom i) -> m i o (Atom o)
 toImpHof maybeDest hof = do
@@ -824,6 +839,29 @@ emitLoop hint d n cont = do
       return $ Abs b body
   emitStatement $ IFor d n loopBody
 
+fromScalarOrPairType :: Type n -> [IType]
+fromScalarOrPairType (PairTy a b) =
+  fromScalarOrPairType a <> fromScalarOrPairType b
+fromScalarOrPairType (BaseTy ty) = [ty]
+fromScalarOrPairType ty = error $ "Not a scalar or pair: " ++ pprint ty
+
+restructureScalarOrPairType :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n)
+restructureScalarOrPairType ty xs =
+  restructureScalarOrPairTypeRec ty xs >>= \case
+    (atom, []) -> return atom
+    _ -> error "Wrong number of scalars"
+
+restructureScalarOrPairTypeRec
+  :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n, [IExpr n])
+restructureScalarOrPairTypeRec (PairTy t1 t2) xs = do
+  (atom1, rest1) <- restructureScalarOrPairTypeRec t1 xs
+  (atom2, rest2) <- restructureScalarOrPairTypeRec t2 rest1
+  return (PairVal atom1 atom2, rest2)
+restructureScalarOrPairTypeRec (BaseTy _) (x:xs) = do
+  x' <- toScalarAtom x
+  return (x', xs)
+restructureScalarOrPairTypeRec ty _ = error $ "Not a scalar or pair: " ++ pprint ty
+
 buildBlockImp
   :: ImpBuilder m
   => (forall l. (Emits l, Ext n l, Distinct l) => m l [IExpr l])
@@ -1031,9 +1069,9 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
-_fromScalarType :: Type n -> IType
-_fromScalarType (BaseTy b) =  b
-_fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
+fromScalarType :: Type n -> IType
+fromScalarType (BaseTy b) =  b
+fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
 
 _toScalarType :: IType -> Type n
 _toScalarType b = BaseTy b
