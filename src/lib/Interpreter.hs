@@ -12,6 +12,7 @@ module Interpreter (
 
 import Control.Monad.IO.Class
 import Data.Int
+import Data.Foldable (toList)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
 
@@ -58,11 +59,38 @@ evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
   result <- evalExpr rhs
   extendSubst (b @> SubstVal result) $ evalDecls rest cont
 
+-- TODO: this was mostly copy-paste from `simplifyAtom`. We should either de-dup
+-- by abstracting over what distinguishes them or, even better, make the `Atom`
+-- ADT simple enough that the duplication is acceptable.
 evalAtom :: Interp m => Atom i -> m i o (Atom o)
-evalAtom x = do
-  x' <- substM x
-  (ab, ptrLits) <- abstractPtrLiterals x'
-  applyNaryAbs ab $ map (SubstVal . Con . Lit) ptrLits
+evalAtom atom = case atom of
+  Var v -> do
+    env <- getSubst
+    case env ! v of
+      SubstVal x -> return x
+      Rename v' -> do
+        ~(AtomNameBinding bindingInfo) <- lookupEnv v'
+        case bindingInfo of
+          LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ evalAtom x
+          PtrLitBound ty ptr -> return $ Con $ Lit $ PtrLit ty ptr
+          _ -> error "shouldn't have irreducible atom names left"
+  Lam _ -> substM atom
+  Pi  _ -> substM atom
+  Con con -> Con <$> mapM evalAtom con
+  TC  tc  -> TC  <$> mapM evalAtom tc
+  Eff _ -> substM atom
+  TypeCon sn defName params -> do
+    defName' <- substM defName
+    TypeCon sn defName' <$> mapM evalAtom params
+  DataCon printName defName params con args -> do
+    defName' <- substM defName
+    DataCon printName defName' <$> mapM evalAtom params
+                               <*> pure con <*> mapM evalAtom args
+  Record items -> Record <$> mapM evalAtom items
+  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
+  BoxedRef _ _ _   -> error "Should only occur in Imp lowering"
+  ProjectElt idxs v -> getProjection (toList idxs) <$> evalAtom (Var v)
+  _ -> error "not implemented"
 
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of
