@@ -11,6 +11,8 @@
 
 module Imp (toImpModule, PtrBinder, impFunType, getIType) where
 
+import Data.Functor
+import Data.Foldable (toList)
 import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -20,6 +22,7 @@ import Name
 import Builder
 import Syntax
 import Type
+import LabeledItems
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -225,6 +228,7 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
+      _ -> error "impossible"
   UnsafeFromOrdinal n i -> returnVal =<< intToIndexImp n =<< fromScalarAtom i
   IdxSetSize n -> returnVal =<< toScalarAtom  =<< indexSetSizeImp n
   ToOrdinal idx -> case idx of
@@ -305,8 +309,19 @@ toImpOp maybeDest op = case op of
   RecordSplit  _ _ -> error "Unreachable: should have simplified away"
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
   VariantSplit _ _ -> error "Unreachable: should have simplified away"
-  DataConTag _ -> undefined
-  ToEnum _ _ -> undefined
+  DataConTag con -> case con of
+    Con (SumAsProd _ tag _) -> returnVal tag
+    DataCon _ _ _ i _ -> returnVal $ TagRepVal $ fromIntegral i
+    _ -> error $ "Not a data constructor: " ++ pprint con
+  ToEnum ty i -> returnVal =<< case ty of
+    TypeCon _ defName _ -> do
+      DataDef _ _ cons <- lookupDataDef defName
+      return $ Con $ SumAsProd ty i (map (const []) cons)
+    VariantTy (NoExt labeledItems) ->
+      return $ Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
+    SumTy cases ->
+      return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
+    _ -> error $ "Not an enum: " ++ pprint ty
   FFICall _ _ _ -> undefined
   SumToVariant ~(Con c) -> do
     ~resultTy@(VariantTy labs) <- resultTyM
@@ -667,22 +682,34 @@ copyAtom topDest topSrc = copyRec topDest topSrc
   where
     copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
     copyRec dest src = case (dest, src) of
+      (BoxedRef _ _ _, _) -> undefined
+      (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
+        copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
+        (RecordRef refs, Record vals)
+          | fmap (const ()) refs == fmap (const ()) vals -> do
+              zipWithM_ copyRec (toList refs) (toList vals)
         (TabRef _, Lam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
           src' <- fromScalarAtom src
           storeAnywhere ptr' src'
-        (ConRef (SumAsProd _ tag payload), DataCon _ _ _ con x) -> do
-          rec tag $ TagRepVal $ fromIntegral con
-          zipWithM_ rec (payload !! con) x
+        (ConRef (SumAsProd _ tag payload), _) -> case src of
+          DataCon _ _ _ con x -> do
+            copyRec tag $ TagRepVal $ fromIntegral con
+            zipWithM_ copyRec (payload !! con) x
+          Con (SumAsProd _ tagSrc payloadSrc) -> do
+            copyRec tag tagSrc
+            unless (all null payload) do -- optimization
+              tag' <- fromScalarAtom tag
+              emitSwitch tag' (zip payload payloadSrc)
+                \(d, s) -> zipWithM_ copyRec (map sink d) (map sink s)
+          Variant _ _ _ _ -> undefined
+          _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) ->
-          zipWithRefConM rec destCon srcCon
-        _ -> error $ "not implemented " ++ pprint dest ++ "\n" ++ pprint src
-      (DataConRef _ _ refs, DataCon _ _ _ _ vals) -> copyDataConArgs refs vals
-      _ -> error $ "not implemented " ++ pprint dest ++ "\n" ++ pprint src
-      where
-        rec = copyRec
+          zipWithRefConM copyRec destCon srcCon
+        _ -> error "unexpected src/dest pair"
+      _ -> error "unexpected src/dest pair"
 
 zipTabDestAtom :: (Emits n, ImpBuilder m)
                => (forall l. (Emits l, Ext n l) => Dest l -> Atom l -> m l ())
