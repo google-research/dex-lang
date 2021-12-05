@@ -35,7 +35,8 @@ module Builder (
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
-  indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit
+  indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
+  liftMonoidEmpty
   ) where
 
 import Control.Applicative
@@ -301,6 +302,13 @@ buildPureLam :: Builder m
              -> m n (Atom n)
 buildPureLam hint arr ty body =
  buildLamGeneral hint arr ty (const $ return Pure) body
+
+buildTabLam
+  :: Builder m
+  => NameHint -> Type n
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildTabLam hint ty body = buildLam hint TabArrow ty Pure body
 
 buildLam
   :: Builder m
@@ -683,6 +691,22 @@ unsafePtrLoad x = do
 
 ptrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 ptrLoad x = emitOp $ PtrLoad x
+
+liftMonoidEmpty :: (Builder m, Emits n)
+                => Type n -> Atom n -> m n (Atom n)
+liftMonoidEmpty accTy x = do
+  xTy <- getType x
+  alphaEq xTy accTy >>= \case
+    True -> return x
+    False -> case accTy of
+      TabTy b eltTy -> do
+        buildTabLam "i" (binderType b) \i -> do
+          x' <- sinkM x
+          ab <- sinkM $ Abs b eltTy
+          eltTy' <- applyAbs ab i
+          liftMonoidEmpty eltTy' x'
+      _ -> error $ "Base monoid type mismatch: can't lift " ++
+             pprint xTy ++ " to " ++ pprint accTy
 
 -- === index set type class ===
 

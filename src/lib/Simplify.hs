@@ -177,6 +177,9 @@ simplifyAtom atom = case atom of
 
 simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
+  PrimEffect ref (MExtend f) -> dropSubst $ do
+    (f', IdentityRecon) <- simplifyLam f
+    emitOp $ PrimEffect ref $ MExtend f'
   _ -> emitOp op
 
 data Reconstruct n =
@@ -236,6 +239,14 @@ simplifyHof hof = case hof of
     (lam', recon) <- simplifyBinaryLam lam
     ans <- emit $ Hof $ RunReader r' lam'
     applyRecon recon $ Var ans
+  RunWriter (BaseMonoid e combine) lam -> do
+    e' <- simplifyAtom e
+    (combine', IdentityRecon) <- simplifyBinaryLam combine
+    (lam', recon) <- simplifyBinaryLam lam
+    let hof' = Hof $ RunWriter (BaseMonoid e' combine') lam'
+    (ans, w) <- fromPair =<< liftM Var (emit hof')
+    ans' <- applyRecon recon ans
+    return $ PairVal ans' w
   RunState s lam -> do
     s' <- simplifyAtom s
     (lam', recon) <- simplifyBinaryLam lam

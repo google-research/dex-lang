@@ -209,14 +209,15 @@ toImpOp maybeDest op = case op of
     destToAtom dest
   PrimEffect refDest m -> do
     case m of
-      MAsk      -> returnVal =<< destToAtom refDest
-      MExtend _ -> error "not implemented"
-  --       -- TODO: Update in-place?
-  --       refValue <- destToAtom refDest
-  --       result <- translateBlock mempty (Nothing, snd $ applyAbs f refValue)
-  --       copyAtom refDest result
-  --       returnVal UnitVal
-      MPut x    -> copyAtom  refDest x >> returnVal UnitVal
+      MAsk -> returnVal =<< destToAtom refDest
+      MExtend (Lam (LamExpr b body)) -> do
+        -- TODO: Update in-place?
+        refValue <- destToAtom refDest
+        result <- dropSubst $ extendSubst (b @> SubstVal refValue) $
+                    translateBlock Nothing body
+        copyAtom refDest result
+        returnVal UnitVal
+      MPut x -> copyAtom  refDest x >> returnVal UnitVal
       MGet -> do
         resultTy <- resultTyM
         dest <- allocDest maybeDest resultTy
@@ -347,6 +348,15 @@ toImpHof maybeDest hof = do
       copyAtom rDest r'
       extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal rDest) $
         translateBlock maybeDest body
+    RunWriter (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
+      let PairTy _ accTy = resultTy
+      (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+      e' <- substM e
+      emptyVal <- liftBuilderImp $ liftMonoidEmpty (sink accTy) (sink e')
+      copyAtom wDest emptyVal
+      void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal wDest) $
+        translateBlock (Just aDest) body
+      PairVal <$> destToAtom aDest <*> destToAtom wDest
     RunState s (Lam (BinaryLamExpr h ref body)) -> do
       s' <- substM s
       (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
@@ -1003,6 +1013,8 @@ _toScalarType b = BaseTy b
 
 -- === Type classes ===
 
+-- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
+-- are part of the same conspiracy.
 liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
                -> m n (e n)
