@@ -9,1091 +9,759 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
-module Builder (emit, emitAnn, emitOp, emitBinding, buildDepEffLam, buildLamAux, buildPi,
-                getAllowedEffects, withEffects, modifyAllowedEffects,
-                buildLam, BuilderT, Builder, MonadBuilder (..), buildScoped, runBuilderT,
-                runSubstBuilder, runBuilder, runBuilderT', getScope, getSynthCandidates,
-                liftBuilder,
-                app,
-                add, mul, sub, neg, div',
-                iadd, imul, isub, idiv, ilt, ieq,
-                fpow, flog, fLitLike, recGetHead, buildNaryLam,
-                select, substBuilder, substBuilderR, emitUnpack, getUnpacked,
-                fromPair, getFst, getSnd, getProj, getProjRef,
-                naryApp, appReduce, appTryReduce, buildAbs, buildAAbs, buildAAbsAux,
-                buildFor, buildForAux, buildForAnn, buildForAnnAux,
-                emitBlock, unzipTab, isSingletonType, withNameHint,
-                singletonTypeVal, scopedDecls, extendScope, checkBuilder,
-                unpackLeftLeaningConsList, unpackRightLeaningConsList,
-                unpackBundle, unpackBundleTab,
-                emitRunWriter, emitRunWriters, mextendForRef, monoidLift,
-                emitRunState, emitMaybeCase, emitWhile, emitDecl,
-                buildDataDef, emitDataDef, getDataDef, getClassDef,
-                emitRunReader, tabGet, SubstBuilderT, SubstBuilder, runSubstBuilderT,
-                ptrOffset, ptrLoad, unsafePtrLoad,
-                evalBlockE, substTraversalDef,
-                TraversalDef, traverseDecls, traverseDecl, traverseDeclsOpen,
-                traverseBlock, traverseExpr, traverseAtom,
-                clampPositive, buildNAbs, buildNAbsAux, buildNestedLam,
-                transformModuleAsBlock, dropSub, appReduceTraversalDef,
-                indexSetSizeE, indexToIntE, intToIndexE, freshVarE,
-                catMaybesE, runMaybeWhile, makeClassDataDef) where
+module Builder (
+  emit, emitOp,
+  buildPureLam, BuilderT (..), Builder (..), Builder2, BuilderM,
+  runBuilderT, buildBlock, app, add, mul, sub, neg, div',
+  iadd, imul, isub, idiv, ilt, ieq, irem,
+  fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
+  emitMethodType, emitSuperclass,
+  makeSuperclassGetter, makeMethodGetter,
+  select, getUnpacked, emitUnpacked,
+  fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
+  ptrOffset, unsafePtrLoad, ptrLoad,
+  getClassDef, getDataCon,
+  Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
+  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
+  emitDataDef, emitClassDef, emitDataConName, emitTyConName,
+  buildCase, buildSplitCase,
+  emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
+  TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
+   emitSourceMap, emitSynthCandidates,
+  TopEnvFrag (..),
+  inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
+  singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
+  indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit
+  ) where
 
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.Writer hiding (Alt)
-import Control.Monad.Identity
-import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict hiding (Alt)
+import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
-import Data.Tuple (swap)
-import GHC.Stack
 
-import Env
+import qualified Unsafe.Coerce as TrulyUnsafe
+
+import Name
 import Syntax
-import LabeledItems
-import Cat
 import Type
-import Err
 import PPrint ()
-import Util (bindM2, scanM, restructure)
+import CheapReduction
 
-newtype BuilderT m a = BuilderT (ReaderT BuilderEnvR (CatT BuilderEnvC m) a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Fallible, Alternative)
+import LabeledItems
+import Util (enumerate, scanM, restructure)
+import Err
 
-type Builder = BuilderT Identity
-type BuilderEnv = (BuilderEnvR, BuilderEnvC)
+-- === Ordinary (local) builder class ===
 
-type SubstBuilderT m = ReaderT SubstEnv (BuilderT m)
-type SubstBuilder    = SubstBuilderT Identity
+class (EnvReader m, EnvExtender m, Fallible1 m)
+      => Builder (m::MonadKind1) where
+  emitDecl
+    :: (Builder m, Emits n)
+    => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
+  buildScoped
+    :: (SinkableE e, Immut n)
+    => (forall l. (Emits l, Distinct l, Ext n l) => m l (e l))
+    -> m n (DistinctAbs (Nest Decl) e n)
 
--- Carries the vars in scope (with optional definitions) and the emitted decls
--- TODO: The only reason to have the inference candidates here is that we want
--- to use traversal template in dictinoary synthesis. We should come up with a
--- different design that's more modular.
-type BuilderEnvC = ((Scope, SynthCandidates), Nest Decl)
--- Carries a name suggestion and the allowable effects
-type BuilderEnvR = (Tag, EffectRow)
+type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
 
-runBuilderT :: Monad m => Scope -> SynthCandidates -> BuilderT m a -> m (a, BuilderEnvC)
-runBuilderT scope scs (BuilderT m) = do
-  (ans, env) <- runCatT (runReaderT m ("tmp", Pure)) ((scope, scs), Empty)
-  return (ans, env)
+emit :: (Builder m, Emits n) => Expr n -> m n (AtomName n)
+emit expr = emitDecl NoHint PlainLet expr
 
-runBuilder :: Scope -> SynthCandidates -> Builder a -> (a, BuilderEnvC)
-runBuilder scope scs m = runIdentity $ runBuilderT scope scs m
+emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
+emitOp op = Var <$> emit (Op op)
 
-runSubstBuilderT :: Monad m => Scope -> SynthCandidates -> SubstBuilderT m a -> m (a, BuilderEnvC)
-runSubstBuilderT scope scs m = runBuilderT scope scs $ runReaderT m mempty
+emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
+emitBlock (Block _ decls result) = do
+  result' <- emitDecls decls result
+  case result' of
+    Atom x -> return x
+    _ -> Var <$> emit result'
 
-runSubstBuilder :: Scope -> SynthCandidates -> SubstBuilder a -> (a, BuilderEnvC)
-runSubstBuilder scope scs m = runIdentity $ runBuilderT scope scs $ runReaderT m mempty
+emitDecls :: (Builder m, Emits n, SubstE Name e, SinkableE e)
+          => Nest Decl n l -> e l -> m n (e n)
+emitDecls decls result = runSubstReaderT idSubst $ emitDecls' decls result
 
-emit :: MonadBuilder m => Expr -> m Atom
-emit expr = emitAnn PlainLet expr
+emitDecls' :: (Builder m, Emits o, SubstE Name e, SinkableE e)
+           => Nest Decl i i' -> e i' -> SubstReaderT Name m i o (e o)
+emitDecls' Empty e = substM e
+emitDecls' (Nest (Let b (DeclBinding ann _ expr)) rest) e = do
+  expr' <- substM expr
+  v <- emitDecl (getNameHint b) ann expr'
+  extendSubst (b @> v) $ emitDecls' rest e
 
-emitAnn :: MonadBuilder m => LetAnn -> Expr -> m Atom
-emitAnn ann expr = do
-  let ty = getType expr
-  v <- freshVarE (LetBound ann expr) ty
-  builderExtend $ asSnd $ Nest (Let ann (Bind v) expr) Empty
-  return $ Var v
+emitAtomToName :: (Builder m, Emits n) => Atom n -> m n (AtomName n)
+emitAtomToName (Var v) = return v
+emitAtomToName x = emit (Atom x)
 
-emitOp :: MonadBuilder m => Op -> m Atom
-emitOp op = emit $ Op op
+-- === Top-level builder class ===
 
-emitUnpack :: MonadBuilder m => Expr -> m [Atom]
-emitUnpack expr = getUnpacked =<< emit expr
+class (EnvReader m, MonadFail1 m)
+      => TopBuilder (m::MonadKind1) where
+  -- `emitBinding` is expressible in terms of `emitEnv` but it can be
+  -- implemented more efficiently by avoiding a double substitution
+  -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
+  emitBinding :: Mut n => NameColor c => NameHint -> Binding c n -> m n (Name c n)
+  emitEnv :: (Mut n, SinkableE e, SubstE Name e)
+                  => Abs TopEnvFrag e n -> m n (e n)
+  emitNamelessEnv :: TopEnvFrag n n -> m n ()
+  localTopBuilder :: (Immut n, SinkableE e)
+                  => (forall l. (Mut l, Ext n l, Distinct l) => m l (e l))
+                  -> m n (DistinctAbs TopEnvFrag e n)
 
-emitBlock :: MonadBuilder m => Block -> m Atom
-emitBlock block = emitBlockRec mempty block
+emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
+emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm
 
-emitBlockRec :: MonadBuilder m => SubstEnv -> Block -> m Atom
-emitBlockRec env (Block (Nest (Let ann b expr) decls) result) = do
-  expr' <- substBuilder env expr
-  x <- withNameHint b $ emitAnn ann expr'
-  emitBlockRec (env <> b@>SubstVal x) $ Block decls result
-emitBlockRec env (Block Empty (Atom atom)) = substBuilder env atom
-emitBlockRec env (Block Empty expr) = substBuilder env expr >>= emit
+emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
+emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag sc mempty
 
-freshVarE :: MonadBuilder m => BinderInfo -> Type -> m Var
-freshVarE bInfo ty = do
-  hint <- getNameHint
-  scope <- getScope
-  let v = genFresh hint scope
-  extendScope $ v @> AtomBinderInfo ty bInfo
-  return $ v :> ty
+newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
+  TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
+  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
+           , CtxReader, ScopeReader, MonadTrans1, MonadReader r, MonadIO)
 
-freshNestedBinders :: MonadBuilder m => Nest Binder -> m (Nest Var)
-freshNestedBinders bs = freshNestedBindersRec mempty bs
+instance Fallible m => EnvReader (TopBuilderT m) where
+  getEnv = TopBuilderT $ getOutMapInplaceT
 
-freshNestedBindersRec :: MonadBuilder m => SubstEnv -> Nest Binder -> m (Nest Var)
-freshNestedBindersRec _ Empty = return Empty
-freshNestedBindersRec substEnv (Nest b bs) = do
-  scope <- getScope
-  v  <- withNameHint b $ freshVarE PatBound $ subst (substEnv, scope) (binderType b)
-  vs <- freshNestedBindersRec (substEnv <> b @> SubstVal (Var v)) bs
-  return $ Nest v vs
+instance Fallible m => TopBuilder (TopBuilderT m) where
+  emitBinding hint binding = TopBuilderT $
+    emitInplaceT hint binding \b binding' ->
+      TopEnvFrag (toEnvFrag (b:>binding')) mempty mempty
 
-buildPi :: (Fallible m, MonadBuilder m)
-        => Binder -> (Atom -> m Arrow) -> (Atom -> m Type) -> m Atom
-buildPi b fArr fTy = do
-  scope <- getScope
-  (ans, decls) <- scopedDecls $ do
-     v <- withNameHint b $ freshVarE UnknownBinder $ binderType b
-     arr <- fArr $ Var v
-     -- overwriting the previous binder info know that we know more
-     extendScope $ v @> AtomBinderInfo (varType v) (PiBound (void arr))
-     ans <- fTy $ Var v
-     return $ Pi $ makeAbs (Bind v) (arr, ans)
-  let block = wrapDecls decls ans
-  case typeReduceBlock scope block of
-    Right piTy -> return piTy
-    Left _ -> throw CompilerErr $
-      "Unexpected irreducible decls in pi type: " ++ pprint block
+  emitEnv ab = TopBuilderT do
+    extendInplaceT do
+      scope <- getScope
+      ab' <- sinkM ab
+      return $ refreshAbs scope ab'
 
-buildAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder (Nest Decl, a), b)
-buildAbsAux b f = do
-  ((b', ans, aux), decls) <- scopedDecls $ do
-     v <- freshVarE UnknownBinder $ binderType b
-     (ans, aux) <- f $ Var v
-     return (Bind v, ans, aux)
-  return (makeAbs b' (decls, ans), aux)
+  emitNamelessEnv bs = TopBuilderT $ extendTrivialInplaceT bs
 
-buildAbs :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m a) -> m (Abs Binder (Nest Decl, a))
-buildAbs b f = fst <$> buildAbsAux b (\x -> (,()) <$> f x)
+  localTopBuilder cont = TopBuilderT $
+    locallyMutableInplaceT $ runTopBuilderT' cont
 
-buildAAbsAux :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m (a, b)) -> m (Abs Binder a, b)
-buildAAbsAux b' f = do
-  (Abs b (decls, a), aux) <- buildAbsAux b' f
-  case decls of
-    Empty -> return $ (Abs b a, aux)
-    _     -> error $ "buildAAbsAux with non-empty body: " ++ pprint decls
+instance (SinkableV v, TopBuilder m) => TopBuilder (SubstReaderT v m i) where
+  emitBinding hint binding = SubstReaderT $ lift $ emitBinding hint binding
+  emitEnv ab = SubstReaderT $ lift $ emitEnv ab
+  emitNamelessEnv bs = SubstReaderT $ lift $ emitNamelessEnv bs
+  localTopBuilder cont = SubstReaderT $ ReaderT \env -> do
+    localTopBuilder do
+      Distinct <- getDistinct
+      runReaderT (runSubstReaderT' cont) (sink env)
 
-buildAAbs :: (MonadBuilder m, HasVars a) => Binder -> (Atom -> m a) -> m (Abs Binder a)
-buildAAbs b' f = fst <$> buildAAbsAux b' (\x -> (,()) <$> f x)
+runTopBuilderT
+  :: (Fallible m, Distinct n)
+  => Env n
+  -> TopBuilderT m n a
+  -> m a
+runTopBuilderT bindings cont = do
+  Immut <- return $ toImmutEvidence bindings
+  liftM snd $ runInplaceT bindings $ runTopBuilderT' $ cont
 
-buildLam :: MonadBuilder m => Binder -> Arrow -> (Atom -> m Atom) -> m Atom
-buildLam b arr body = buildDepEffLam b (const (return arr)) body
+type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
 
-buildDepEffLam :: MonadBuilder m
-               => Binder -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
-buildDepEffLam b fArr fBody = liftM fst $ buildLamAux b fArr \x -> (,()) <$> fBody x
+-- === BuilderT ===
 
-buildLamAux :: MonadBuilder m
-            => Binder -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
-buildLamAux b fArr fBody = do
-  ((b', arr, ans, aux), decls) <- scopedDecls $ do
-     v <- withNameHint b $ freshVarE UnknownBinder $ binderType b
-     let x = Var v
-     arr <- fArr x
-     -- overwriting the previous binder info know that we know more
-     extendScope $ v @> AtomBinderInfo (varType v) (LamBound (void arr))
-     (ans, aux) <- withEffects (arrowEff arr) $ fBody x
-     return (Bind v, arr, ans, aux)
-  return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
+type BuilderEmissions = Nest Decl
 
-buildNAbs :: MonadBuilder m => Nest Binder -> ([Atom] -> m Atom) -> m Alt
-buildNAbs bs body = liftM fst $ buildNAbsAux bs \xs -> (,()) <$> body xs
+instance ExtOutMap Env BuilderEmissions where
+  extendOutMap bindings emissions =
+    bindings `extendOutMap` toEnvFrag emissions
 
-buildNAbsAux :: MonadBuilder m => Nest Binder -> ([Atom] -> m (Atom, a)) -> m (Alt, a)
-buildNAbsAux bs body = do
-  ((bs', (ans, aux)), decls) <- scopedDecls $ do
-     vs <- freshNestedBinders bs
-     result <- body $ map Var $ toList vs
-     return (fmap Bind vs, result)
-  return (Abs bs' $ wrapDecls decls ans, aux)
+newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
+  BuilderT { runBuilderT' :: InplaceT Env BuilderEmissions m n a }
+  deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
+           , CtxReader, ScopeReader, Alternative, Searcher, MonadWriter w)
 
-buildDataDef :: MonadBuilder m
-             => SourceName -> Nest Binder -> ([Atom] -> m [DataConDef]) -> m DataDef
-buildDataDef tyConName paramBinders body = do
-  ((paramBinders', dataDefs), _) <- scopedDecls $ do
-     vs <- freshNestedBinders paramBinders
-     result <- body $ map Var $ toList vs
-     return (fmap Bind vs, result)
-  return $ DataDef tyConName paramBinders' dataDefs
+type BuilderM = BuilderT HardFailM
 
-emitBinding :: MonadBuilder m => AnyBinderInfo -> m Name
-emitBinding binfo = do
-  scope <- getScope
-  hint <- getNameHint
-  let name = genFresh hint scope
-  extendScope $ name @> binfo
-  return name
+runBuilderT
+  :: (Fallible m, Distinct n)
+  => Env n
+  -> BuilderT m n a
+  -> m a
+runBuilderT bindings cont = do
+  Immut <- return $ toImmutEvidence bindings
+  (Empty, result) <- runInplaceT bindings $ runBuilderT' cont
+  return result
 
-emitDataDef :: MonadBuilder m => DataDef -> m DataDefName
-emitDataDef dataDef =
-  -- XXX: the hint shouldn't be necssary but ...
-  withNameHint (Name GenName "_data_def_" 0) $
-    emitBinding $ DataDefName dataDef
+runBuilderM :: Distinct n => Env n -> BuilderM n a -> a
+runBuilderM bindings m = runHardFail $ runBuilderT bindings m
 
-getDataDef :: MonadBuilder m => DataDefName -> m DataDef
-getDataDef dataDefName = do
-  scope <- getScope
-  case scope ! dataDefName of
-    DataDefName dataDef -> return dataDef
-    _ -> error "Not a data def"
+liftBuilder
+  :: (EnvReader m, SinkableE e)
+  => (forall l. (Immut l, Distinct l, Ext n l) => BuilderM l (e l))
+  -> m n (e n)
+liftBuilder cont = liftImmut do
+  DB bindings <- getDB
+  return $ runBuilderM bindings $ cont
 
-getClassDef :: MonadBuilder m => ClassDefName -> m ClassDef
+instance Fallible m => Builder (BuilderT m) where
+  emitDecl hint ann expr = do
+    ty <- getType expr
+    BuilderT $ emitInplaceT hint (DeclBinding ann ty expr) \b rhs ->
+      Nest (Let b rhs) Empty
+
+  buildScoped cont = BuilderT $
+    locallyMutableInplaceT $
+      runBuilderT' do
+        Emits <- fabricateEmitsEvidenceM
+        Distinct <- getDistinct
+        cont
+
+instance Fallible m => EnvReader (BuilderT m) where
+  getEnv = BuilderT $ getOutMapInplaceT
+
+instance Fallible m => EnvExtender (BuilderT m) where
+  extendEnv frag cont = BuilderT $
+    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
+      withExtEvidence (toExtEvidence frag) $
+        runBuilderT' cont
+
+instance (SinkableV v, Builder m) => Builder (SubstReaderT v m i) where
+  emitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
+  buildScoped cont = SubstReaderT $ ReaderT \env ->
+    buildScoped $
+      runReaderT (runSubstReaderT' cont) (sink env)
+
+instance (SinkableE e, Builder m) => Builder (OutReaderT e m) where
+  emitDecl hint ann expr =
+    OutReaderT $ lift $ emitDecl hint ann expr
+  buildScoped cont = OutReaderT $ ReaderT \env ->
+    buildScoped do
+      env' <- sinkM env
+      runReaderT (runOutReaderT' cont) env'
+
+-- === Emits predicate ===
+
+-- We use the `Emits` predicate on scope parameters to indicate that we may emit
+-- decls. This lets us ensure that a computation *doesn't* emit decls, by
+-- supplying a fresh name without supplying the `Emits` predicate.
+
+class Mut n => Emits (n::S)
+data EmitsEvidence (n::S) where
+  Emits :: Emits n => EmitsEvidence n
+instance Emits UnsafeS
+
+fabricateEmitsEvidence :: forall n. EmitsEvidence n
+fabricateEmitsEvidence =
+  withEmitsEvidence (error "pure fabrication" :: EmitsEvidence n) Emits
+
+fabricateEmitsEvidenceM :: forall m n. Monad1 m => m n (EmitsEvidence n)
+fabricateEmitsEvidenceM = return fabricateEmitsEvidence
+
+withEmitsEvidence :: forall n a. EmitsEvidence n -> (Emits n => a) -> a
+withEmitsEvidence _ cont = fromWrapWithEmits
+ ( TrulyUnsafe.unsafeCoerce ( WrapWithEmits cont :: WrapWithEmits n       a
+                                               ) :: WrapWithEmits UnsafeS a)
+newtype WrapWithEmits n r =
+  WrapWithEmits { fromWrapWithEmits :: Emits n => r }
+
+-- === lambda-like things ===
+
+buildBlock
+  :: Builder m
+  => (forall l. (Emits l, Ext n l) => m l (Atom l))
+  -> m n (Block n)
+buildBlock cont = liftImmut do
+  DistinctAbs decls results <- buildScoped do
+    result <- cont
+    ty <- getType result
+    return $ result `PairE` ty
+  let (result `PairE` ty) = results
+  ty' <- liftHoistExcept $ hoist decls ty
+  Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
+  return $ Block (BlockAnn ty') decls' result'
+
+makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
+makeBlock decls expr = do
+  ty <- getType expr
+  let ty' = ignoreHoistFailure $ hoist decls ty
+  return $ Block (BlockAnn ty') decls expr
+
+inlineLastDecl :: Nest Decl n l -> Expr l -> Abs (Nest Decl) Expr n
+inlineLastDecl Empty result = Abs Empty result
+inlineLastDecl (Nest (Let b (DeclBinding _ _ expr)) Empty) (Atom (Var v))
+  | v == binderName b = Abs Empty expr
+inlineLastDecl (Nest decl rest) result =
+  case inlineLastDecl rest result of
+   Abs decls' result' ->
+     Abs (Nest decl decls') result'
+
+buildPureLam :: Builder m
+             => NameHint -> Arrow -> Type n
+             -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+             -> m n (Atom n)
+buildPureLam hint arr ty body =
+ buildLamGeneral hint arr ty (const $ return Pure) body
+
+buildLam
+  :: Builder m
+  => NameHint -> Arrow -> Type n -> EffectRow n
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
+
+buildLamGeneral
+  :: Builder m
+  => NameHint -> Arrow -> Type n
+  -> (forall l. (Immut l, Ext n l) => AtomName l -> m l (EffectRow l))
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildLamGeneral hint arr ty fEff fBody = liftImmut do
+  ty' <- sinkM ty
+  withFreshBinder hint (LamBinding arr ty') \b -> do
+    let v = binderName b
+    effs <- fEff v
+    body <- withAllowedEffects effs $ buildBlock do
+      v' <- sinkM v
+      fBody v'
+    return $ Lam $ LamExpr (LamBinder b ty' arr effs) body
+
+-- Body must be an Atom because otherwise the nullary case would require
+-- emitting decls into the enclosing scope.
+buildPureNaryLam :: Builder m
+                 => EmptyAbs (Nest PiBinder) n
+                 -> (forall l. Ext n l => [AtomName l] -> m l (Atom l))
+                 -> m n (Atom n)
+buildPureNaryLam (EmptyAbs Empty) cont = cont []
+buildPureNaryLam (EmptyAbs (Nest (PiBinder b ty arr) rest)) cont = do
+  buildPureLam (getNameHint b) arr ty \x -> do
+    restAbs <- sinkM $ Abs b $ EmptyAbs rest
+    rest' <- applyAbs restAbs x
+    buildPureNaryLam rest' \xs -> do
+      x' <- sinkM x
+      cont (x':xs)
+buildPureNaryLam _ _ = error "impossible"
+
+buildPi :: (Fallible1 m, Builder m)
+        => NameHint -> Arrow -> Type n
+        -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
+        -> m n (PiType n)
+buildPi hint arr ty body = liftImmut do
+  ty' <- sinkM ty
+  withFreshPiBinder hint (PiBinding arr ty') \b -> do
+    (effs, resultTy) <- body $ binderName b
+    return $ PiType b effs resultTy
+
+buildNonDepPi :: EnvReader m
+              => NameHint -> Arrow -> Type n -> EffectRow n -> Type n
+              -> m n (PiType n)
+buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
+  argTy' <- sinkM argTy
+  buildPi hint arr argTy' \_ -> do
+    resultTy' <- sinkM resultTy
+    effs'     <- sinkM effs
+    return (effs', resultTy')
+
+buildAbs
+  :: ( EnvReader m, EnvExtender m
+     , SinkableE e, NameColor c, ToBinding binding c)
+  => NameHint
+  -> binding n
+  -> (forall l. (Immut l, Ext n l) => Name c l -> m l (e l))
+  -> m n (Abs (BinderP c binding) e n)
+buildAbs hint binding cont = liftImmut do
+  binding' <- sinkM binding
+  withFreshBinder hint binding' \b -> do
+    body <- cont $ binderName b
+    return $ Abs (b:>binding') body
+
+singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
+singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
+
+singletonBinderNest :: Builder m
+                    => NameHint -> Type n -> m n (EmptyAbs (Nest Binder) n)
+singletonBinderNest hint ty = do
+  EmptyAbs b <- singletonBinder hint ty
+  return $ EmptyAbs (Nest b Empty)
+
+buildNaryAbs
+  :: (Builder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Immut l, Ext n l) => [AtomName l] -> m l (e l))
+  -> m n (Abs (Nest Binder) e n)
+buildNaryAbs (EmptyAbs Empty) body = liftImmut $ Abs Empty <$> body []
+buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
+  Abs b' (Abs bs' body') <-
+    buildAbs (getNameHint b) ty \v -> do
+      ab <- sinkM $ Abs b (EmptyAbs bs)
+      bs' <- applyAbs ab v
+      buildNaryAbs bs' \vs -> do
+        v' <- sinkM v
+        body $ v' : vs
+  return $ Abs (Nest b' bs') body'
+buildNaryAbs _ _ = error "impossible"
+
+buildAlt
+  :: Builder m
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
+  -> m n (Alt n)
+buildAlt bs body = do
+  buildNaryAbs bs \xs -> do
+    buildBlock do
+      xs' <- mapM sinkM xs
+      body xs'
+
+buildUnaryAlt
+  :: Builder m
+  => Type n
+  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (Alt n)
+buildUnaryAlt ty body = do
+  bs <- singletonBinderNest NoHint ty
+  buildAlt bs \[v] -> body v
+
+buildNewtype :: Builder m
+             => SourceName
+             -> EmptyAbs (Nest Binder) n
+             -> (forall l. (Immut l, Ext n l) => [AtomName l] -> m l (Type l))
+             -> m n (DataDef n)
+buildNewtype name paramBs body = do
+  Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
+    ty <- body params
+    singletonBinderNest NoHint ty
+  return $ DataDef name paramBs' [DataConDef ("mk" <> name) argBs]
+
+fromNewtype :: [DataConDef n]
+            -> Maybe (Type n)
+fromNewtype [DataConDef _ (EmptyAbs (Nest (_:>ty) Empty))] = Just ty
+fromNewtype _ = Nothing
+
+-- TODO: consider a version with nonempty list of alternatives where we figure
+-- out the result type from one of the alts rather than providing it explicitly
+buildCase :: (Emits n, Builder m)
+          => Atom n -> Type n
+          -> (forall l. (Emits l, Ext n l) => Int -> [AtomName l] -> m l (Atom l))
+          -> m n (Atom n)
+buildCase scrut resultTy indexedAltBody = do
+  scrutTy <- getType scrut
+  altsBinderTys <- caseAltsBinderTys scrutTy
+  alts <- forM (enumerate altsBinderTys) \(i, bs) -> do
+    buildNaryAbs bs \xs -> do
+      buildBlock do
+        ListE xs' <- sinkM $ ListE xs
+        indexedAltBody i xs'
+  liftM Var $ emit $ Case scrut alts resultTy
+
+buildSplitCase :: (Emits n, Builder m)
+               => LabeledItems (Type n) -> Atom n -> Type n
+               -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+               -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+               -> m n (Atom n)
+buildSplitCase tys scrut resultTy match fallback = do
+  split <- emitOp $ VariantSplit tys scrut
+  buildCase split resultTy \i [v] ->
+    case i of
+      0 -> match v
+      1 -> fallback v
+      _ -> error "should only have two cases"
+
+-- === builder versions of common top-level emissions ===
+
+litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom n)
+litValToPointerlessAtom litval = case litval of
+  PtrLit ptrTy ptr -> Var <$> emitPtrLit "ptr" ptrTy ptr
+  VecLit _ -> error "not implemented"
+  _ -> return $ Con $ Lit litval
+
+emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrType -> Ptr () -> m n (AtomName n)
+emitPtrLit hint ptrTy ptr =
+  emitBinding hint $ AtomNameBinding $ PtrLitBound ptrTy ptr
+
+emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
+emitDataDef dataDef@(DataDef sourceName _ _) =
+  emitBinding hint $ DataDefBinding dataDef
+  where hint = getNameHint sourceName
+
+emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> Atom n -> m n (Name ClassNameC n)
+emitClassDef classDef@(ClassDef name _ _) dictTyAtom =
+  emitBinding (getNameHint name) $ ClassBinding classDef dictTyAtom
+
+emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> Atom n -> m n (Name DataConNameC n)
+emitDataConName dataDefName conIdx conAtom = do
+  DataDef _ _ dataCons <- lookupDataDef dataDefName
+  let (DataConDef name _) = dataCons !! conIdx
+  emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
+
+emitSuperclass :: (Mut n ,TopBuilder m)
+               => ClassName n -> Int -> m n (Name SuperclassNameC n)
+emitSuperclass dataDef idx = do
+  getter <- makeSuperclassGetter dataDef idx
+  emitSynthCandidates $ SynthCandidates [] [getter] mempty
+  emitBinding hint $ SuperclassBinding dataDef idx getter
+  where hint = getNameHint $ "Proj" <> show idx <> pprint dataDef
+
+zipNest :: (forall ii ii'. a -> b ii ii' -> b' ii ii')
+        -> [a]
+        -> Nest b  i i'
+        -> Nest b' i i'
+zipNest _ _ Empty = Empty
+zipNest f (x:t) (Nest b rest) = Nest (f x b) $ zipNest f t rest
+zipNest _ _ _ = error "List too short!"
+
+zipPiBinders :: [Arrow] -> Nest Binder i i' -> Nest PiBinder i i'
+zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
+
+makeSuperclassGetter :: EnvReader m => Name ClassNameC n -> Int -> m n (Atom n)
+makeSuperclassGetter classDefName methodIdx = liftBuilder do
+  classDefName' <- sinkM classDefName
+  ClassDef _ _ defName <- getClassDef classDefName'
+  DataDef sourceName paramBs _ <- lookupDataDef defName
+  buildPureNaryLam (EmptyAbs $ zipPiBinders (repeat ImplicitArrow) paramBs) \params -> do
+    defName' <- sinkM defName
+    let tc = TypeCon sourceName defName' (map Var params)
+    buildPureLam "subclassDict" PlainArrow tc \dict ->
+      return $ getProjection [methodIdx] $ getProjection [0, 0] $ Var dict
+
+emitMethodType :: (Mut n, TopBuilder m)
+               => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
+emitMethodType hint classDef explicit idx = do
+  getter <- makeMethodGetter classDef explicit idx
+  emitBinding hint $ MethodBinding classDef idx getter
+
+makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom n)
+makeMethodGetter classDefName explicit methodIdx = liftBuilder do
+  classDefName' <- sinkM classDefName
+  ClassDef _ _ defName <- getClassDef classDefName'
+  DataDef sourceName paramBs _ <- lookupDataDef defName
+  let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
+  buildPureNaryLam (EmptyAbs $ zipPiBinders arrows paramBs) \params -> do
+    defName' <- sinkM defName
+    buildPureLam "dict" ClassArrow (TypeCon sourceName defName' (map Var params)) \dict ->
+      return $ getProjection [methodIdx] $ getProjection [1, 0] $ Var dict
+
+emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> Atom n -> m n (Name TyConNameC n)
+emitTyConName dataDefName tyConAtom = do
+  emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName tyConAtom
+
+getDataCon :: EnvReader m => Name DataConNameC n -> m n (DataDefName n, Int)
+getDataCon v = do
+  ~(DataConBinding defName idx _) <- lookupEnv v
+  return (defName, idx)
+
+getClassDef :: EnvReader m => Name ClassNameC n -> m n (ClassDef n)
 getClassDef classDefName = do
-  scope <- getScope
-  case scope ! classDefName of
-    ClassDefName classDef _ -> return classDef
-    _ -> error "Not a data def"
+  ~(ClassBinding classDef _) <- lookupEnv classDefName
+  return classDef
 
-buildNaryLam :: MonadBuilder m => Arrow -> (Nest Binder) -> ([Atom] -> m Atom) -> m Atom
-buildNaryLam _   Empty       body = body []
-buildNaryLam arr (Nest b bs) body =
-  buildLam b arr \x -> do
-    bs' <- substBuilder (b@>SubstVal x) bs
-    buildNaryLam arr bs' \xs -> body $ x:xs
+-- === builder versions of common local ops ===
 
-recGetHead :: Label -> Atom -> Atom
+recGetHead :: EnvReader m => Label -> Atom n -> m n (Atom n)
 recGetHead l x = do
-  let (RecordTy (Ext r _)) = getType x
+  ~(RecordTy (Ext r _)) <- getType x
   let i = fromJust $ elemIndex l $ map fst $ toList $ reflectLabels r
-  getProjection [i] x
+  return $ getProjection [i] x
 
-buildScoped :: MonadBuilder m => m Atom -> m Block
-buildScoped m = do
-  (ans, decls) <- scopedDecls m
-  return $ wrapDecls decls ans
+fLitLike :: (Builder m, Emits n) => Double -> Atom n -> m n (Atom n)
+fLitLike x t = do
+  ty <- getType t
+  case ty of
+    BaseTy (Scalar Float64Type) -> return $ Con $ Lit $ Float64Lit x
+    BaseTy (Scalar Float32Type) -> return $ Con $ Lit $ Float32Lit $ realToFrac x
+    _ -> error "Expected a floating point scalar"
 
-wrapDecls :: Nest Decl -> Atom -> Block
-wrapDecls decls atom = inlineLastDecl $ Block decls $ Atom atom
-
-inlineLastDecl :: Block -> Block
-inlineLastDecl block@(Block decls result) =
-  case (reverse (toList decls), result) of
-    (Let _ (Bind v) expr:rest, Atom atom) | atom == Var v ->
-      Block (toNest (reverse rest)) expr
-    _ -> block
-
-fLitLike :: Double -> Atom -> Atom
-fLitLike x t = case getType t of
-  BaseTy (Scalar Float64Type) -> Con $ Lit $ Float64Lit x
-  BaseTy (Scalar Float32Type) -> Con $ Lit $ Float32Lit $ realToFrac x
-  _ -> error "Expected a floating point scalar"
-
-neg :: MonadBuilder m => Atom -> m Atom
+neg :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 neg x = emitOp $ ScalarUnOp FNeg x
 
-add :: MonadBuilder m => Atom -> Atom -> m Atom
+add :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 add x y = emitOp $ ScalarBinOp FAdd x y
 
 -- TODO: Implement constant folding for fixed-width integer types as well!
-iadd :: MonadBuilder m => Atom -> Atom -> m Atom
+iadd :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 iadd (Con (Lit l)) y | getIntLit l == 0 = return y
 iadd x (Con (Lit l)) | getIntLit l == 0 = return x
 iadd x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (+) x y
 iadd x y = emitOp $ ScalarBinOp IAdd x y
 
-mul :: MonadBuilder m => Atom -> Atom -> m Atom
+mul :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 mul x y = emitOp $ ScalarBinOp FMul x y
 
-imul :: MonadBuilder m => Atom -> Atom -> m Atom
+imul :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 imul   (Con (Lit l)) y               | getIntLit l == 1 = return y
 imul x                 (Con (Lit l)) | getIntLit l == 1 = return x
 imul x@(Con (Lit _)) y@(Con (Lit _))                    = return $ applyIntBinOp (*) x y
 imul x y = emitOp $ ScalarBinOp IMul x y
 
-sub :: MonadBuilder m => Atom -> Atom -> m Atom
+sub :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 sub x y = emitOp $ ScalarBinOp FSub x y
 
-isub :: MonadBuilder m => Atom -> Atom -> m Atom
+isub :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 isub x (Con (Lit l)) | getIntLit l == 0 = return x
 isub x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (-) x y
 isub x y = emitOp $ ScalarBinOp ISub x y
 
-select :: MonadBuilder m => Atom -> Atom -> Atom -> m Atom
+select :: (Builder m, Emits n) => Atom n -> Atom n -> Atom n -> m n (Atom n)
 select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
 select p x y = emitOp $ Select p x y
 
-div' :: MonadBuilder m => Atom -> Atom -> m Atom
+div' :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 div' x y = emitOp $ ScalarBinOp FDiv x y
 
-idiv :: MonadBuilder m => Atom -> Atom -> m Atom
+idiv :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 idiv x (Con (Lit l)) | getIntLit l == 1 = return x
 idiv x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp div x y
 idiv x y = emitOp $ ScalarBinOp IDiv x y
 
-irem :: MonadBuilder m => Atom -> Atom -> m Atom
+irem :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 irem x y = emitOp $ ScalarBinOp IRem x y
 
-fpow :: MonadBuilder m => Atom -> Atom -> m Atom
+fpow :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 fpow x y = emitOp $ ScalarBinOp FPow x y
 
-flog :: MonadBuilder m => Atom -> m Atom
+flog :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 flog x = emitOp $ ScalarUnOp Log x
 
-ilt :: MonadBuilder m => Atom -> Atom -> m Atom
+ilt :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 ilt x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (<) x y
 ilt x y = emitOp $ ScalarBinOp (ICmp Less) x y
 
-ieq :: MonadBuilder m => Atom -> Atom -> m Atom
+ieq :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ ScalarBinOp (ICmp Equal) x y
 
-fromPair :: MonadBuilder m => Atom -> m (Atom, Atom)
+fromPair :: (Builder m, Emits n) => Atom n -> m n (Atom n, Atom n)
 fromPair pair = do
   ~[x, y] <- getUnpacked pair
   return (x, y)
 
-getProj :: MonadBuilder m => Int -> Atom -> m Atom
+getProj :: (Builder m, Emits n) => Int -> Atom n -> m n (Atom n)
 getProj i x = do
   xs <- getUnpacked x
   return $ xs !! i
 
-getFst :: MonadBuilder m => Atom -> m Atom
+getFst :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 getFst p = fst <$> fromPair p
 
-getSnd :: MonadBuilder m => Atom -> m Atom
+getSnd :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 getSnd p = snd <$> fromPair p
 
-getProjRef :: MonadBuilder m => Int -> Atom -> m Atom
+getProjRef :: (Builder m, Emits n) => Int -> Atom n -> m n (Atom n)
 getProjRef i r = emitOp $ ProjRef i r
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
 -- equivalent types spelled differently).
-getUnpacked :: MonadBuilder m => Atom -> m [Atom]
-getUnpacked (ProdVal xs) = return xs
+getUnpacked :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
 getUnpacked atom = do
-  scope <- getScope
-  let len = projectLength $ getType atom
-      atom' = typeReduceAtom scope atom
-      res = map (\i -> getProjection [i] atom') [0..(len-1)]
-  return res
+  atom' <- cheapReduce atom
+  ty <- getType atom'
+  len <- projectLength ty
+  return $ map (\i -> getProjection [i] atom') [0..(len-1)]
 
-app :: MonadBuilder m => Atom -> Atom -> m Atom
-app x i = emit $ App x i
+-- TODO: should we just make all of these return names instead of atoms?
+emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
+emitUnpacked tup = do
+  xs <- getUnpacked tup
+  forM xs \x -> emit $ Atom x
 
-naryApp :: MonadBuilder m => Atom -> [Atom] -> m Atom
+app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+app x i = Var <$> emit (App x i)
+
+naryApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
 naryApp f xs = foldM app f xs
 
-appReduce :: MonadBuilder m => Atom -> Atom -> m Atom
-appReduce (Lam (Abs v (_, b))) a =
-  runReaderT (evalBlockE substTraversalDef b) (v @> SubstVal a)
-appReduce _ _ = error "appReduce expected a lambda as the first argument"
-
-appTryReduce :: MonadBuilder m => Atom -> Atom -> m Atom
-appTryReduce f x = case f of
-  Lam _ -> appReduce f x
-  _     -> app f x
-
-ptrOffset :: MonadBuilder m => Atom -> Atom -> m Atom
-ptrOffset x i = emitOp $ PtrOffset x i
-
-unsafePtrLoad :: MonadBuilder m => Atom -> m Atom
-unsafePtrLoad x = emit $ Hof $ RunIO $ Lam $ Abs (Ignore UnitTy) $
-  (PlainArrow (oneEffect IOEffect), Block Empty (Op (PtrLoad x)))
-
-ptrLoad :: MonadBuilder m => Atom -> m Atom
-ptrLoad x = emitOp $ PtrLoad x
-
-unpackRightLeaningConsList :: HasCallStack => MonadBuilder m => Atom -> m [Atom]
-unpackRightLeaningConsList xs = case getType xs of
-  UnitTy -> return []
-  -- PairTy _ UnitTy -> (:[]) <$> getFst xs
-  PairTy _ _ -> do
-    (x, rest) <- fromPair xs
-    liftM (x:) $ unpackRightLeaningConsList rest
-  _ -> error $ "Not a cons list: " ++ pprint (getType xs)
-
--- ((...((ans, x{n}), x{n-1})..., x2), x1) -> (ans, [x1, ..., x{n}])
--- This is useful for unpacking results of stacked effect handlers (as produced
--- by e.g. emitRunWriters).
-unpackLeftLeaningConsList :: MonadBuilder m => Int -> Atom -> m (Atom, [Atom])
-unpackLeftLeaningConsList depth atom = go depth atom []
-  where
-    go 0        curAtom xs = return (curAtom, reverse xs)
-    go remDepth curAtom xs = do
-      (consTail, x) <- fromPair curAtom
-      go (remDepth - 1) consTail (x : xs)
-
-unpackBundle :: MonadBuilder m => Atom -> BundleDesc -> m [Atom]
-unpackBundle b size = case size of
-  0 -> return []
-  1 -> return [b]
-  _ -> do
-    (h, t) <- fromPair b
-    (h:) <$> unpackBundle t (size - 1)
-
-unpackBundleTab :: MonadBuilder m => Atom -> BundleDesc -> m [Atom]
-unpackBundleTab tab size = case size of
-  0 -> return []
-  1 -> return [tab]
-  _ -> do
-    (h, t) <- unzipTab tab
-    (h:) <$> unpackBundleTab t (size - 1)
-
-emitWhile :: MonadBuilder m => m Atom -> m ()
-emitWhile body = do
-  eff <- getAllowedEffects
-  lam <- buildLam (Ignore UnitTy) (PlainArrow eff) \_ -> body
-  void $ emit $ Hof $ While lam
-
-monoidLift :: Type -> Type -> Nest Binder
-monoidLift baseTy accTy = case baseTy == accTy of
-  True  -> Empty
-  False -> case accTy of
-    TabTy n b -> Nest n $ monoidLift baseTy b
-    _         -> error $ "Base monoid type mismatch: can't lift " ++
-                         pprint baseTy ++ " to " ++ pprint accTy
-
-mextendForRef :: MonadBuilder m => Atom -> BaseMonoid -> Atom -> m Atom
-mextendForRef ref (BaseMonoid _ combine) update = do
-  buildLam (Bind $ "refVal":>accTy) PureArrow \refVal ->
-    buildNestedFor (fmap (Fwd,) $ toList liftIndices) $ \indices -> do
-      refElem <- tabGetNd refVal indices
-      updateElem <- tabGetNd update indices
-      bindM2 appTryReduce (appTryReduce combine refElem) (return updateElem)
-  where
-    TC (RefType _ accTy) = getType ref
-    FunTy (BinderAnn baseTy) _ _ = getType combine
-    liftIndices = monoidLift baseTy accTy
-
-emitRunWriter :: MonadBuilder m => Name -> Type -> BaseMonoid -> (Atom -> m Atom) -> m Atom
-emitRunWriter v accTy bm body = do
-  emit . Hof . RunWriter bm =<< mkBinaryEffFun Writer v accTy body
-
-emitRunWriters :: MonadBuilder m => [(Name, Type, BaseMonoid)] -> ([Atom] -> m Atom) -> m Atom
-emitRunWriters inits body = go inits []
-  where
-    go [] refs = body $ reverse refs
-    go ((v, accTy, bm):rest) refs = emitRunWriter v accTy bm $ \ref -> go rest (ref:refs)
-
-emitRunReader :: MonadBuilder m => Name -> Atom -> (Atom -> m Atom) -> m Atom
-emitRunReader v x0 body = do
-  emit . Hof . RunReader x0 =<< mkBinaryEffFun Reader v (getType x0) body
-
-emitRunState :: MonadBuilder m => Name -> Atom -> (Atom -> m Atom) -> m Atom
-emitRunState v x0 body = do
-  emit . Hof . RunState x0 =<< mkBinaryEffFun State v (getType x0) body
-
-mkBinaryEffFun :: MonadBuilder m => RWS -> Name -> Type -> (Atom -> m Atom) -> m Atom
-mkBinaryEffFun rws v ty body = do
-  eff <- getAllowedEffects
-  buildLam (Bind ("h":>TyKind)) PureArrow \r@(Var (rName:>_)) -> do
-    let arr = PlainArrow $ extendEffect (RWSEffect rws rName) eff
-    buildLam (Bind (v:> RefTy r ty)) arr body
-
-buildForAnnAux :: MonadBuilder m => ForAnn -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
-buildForAnnAux ann i body = do
-  -- TODO: consider only tracking the effects that are actually needed.
-  eff <- getAllowedEffects
-  (lam, aux) <- buildLamAux i (const $ return $ PlainArrow eff) body
-  (,aux) <$> (emit $ Hof $ For ann lam)
-
-buildForAnn :: MonadBuilder m => ForAnn -> Binder -> (Atom -> m Atom) -> m Atom
-buildForAnn ann i body = fst <$> buildForAnnAux ann i (\x -> (,()) <$> body x)
-
-buildForAux :: MonadBuilder m => Direction -> Binder -> (Atom -> m (Atom, a)) -> m (Atom, a)
-buildForAux = buildForAnnAux . RegularFor
-
--- Do we need this variant?
-buildFor :: MonadBuilder m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
-buildFor = buildForAnn . RegularFor
-
-buildNestedFor :: forall m. MonadBuilder m => [(Direction, Binder)] -> ([Atom] -> m Atom) -> m Atom
-buildNestedFor specs body = go specs []
-  where
-    go :: [(Direction, Binder)] -> [Atom] -> m Atom
-    go []        indices = body $ reverse indices
-    go ((d,b):t) indices = buildFor d b $ \i -> go t (i:indices)
-
-buildNestedLam :: MonadBuilder m => Nest (Binder, Arrow) -> ([Atom] -> m Atom) -> m Atom
-buildNestedLam Empty f = f []
-buildNestedLam (Nest (b, arr) t) f =
-  buildLam b arr \x -> buildNestedLam t \xs -> f (x:xs)
-
-tabGet :: MonadBuilder m => Atom -> Atom -> m Atom
-tabGet tab idx = emit $ App tab idx
-
-tabGetNd :: MonadBuilder m => Atom -> [Atom] -> m Atom
-tabGetNd tab idxs = foldM (flip tabGet) tab idxs
-
-unzipTab :: MonadBuilder m => Atom -> m (Atom, Atom)
-unzipTab tab = do
-  fsts <- buildLam (Bind ("i":>binderType v)) TabArrow \i ->
-            liftM fst $ app tab i >>= fromPair
-  snds <- buildLam (Bind ("i":>binderType v)) TabArrow \i ->
-            liftM snd $ app tab i >>= fromPair
-  return (fsts, snds)
-  where TabTy v _ = getType tab
-
-substBuilderR :: (MonadBuilder m, MonadReader SubstEnv m, Subst a)
-           => a -> m a
-substBuilderR x = do
-  env <- ask
-  substBuilder env x
-
-substBuilder :: (MonadBuilder m, Subst a)
-           => SubstEnv -> a -> m a
-substBuilder env x = do
-  scope <- getScope
-  return $ subst (env, scope) x
-
-checkBuilder :: (HasCallStack, MonadBuilder m, HasVars a, HasType a) => a -> m a
-checkBuilder x = do
-  scope <- getScope
-  let globals = freeVars x `envDiff` scope
-  eff <- getAllowedEffects
-  case checkType (scope <> globals) eff x of
-    Failure e  -> error $ pprint e
-    Success () -> return x
-
-isSingletonType :: Type -> Bool
-isSingletonType ty = case singletonTypeVal ty of
-  Nothing -> False
-  Just _  -> True
-
--- TODO: TypeCon with a single case?
-singletonTypeVal :: Type -> Maybe Atom
-singletonTypeVal (TabTy v a) = TabValA v <$> singletonTypeVal a
-singletonTypeVal (RecordTy (NoExt items)) = Record <$> traverse singletonTypeVal items
-singletonTypeVal (TC con) = case con of
-  ProdType tys -> ProdVal <$> traverse singletonTypeVal tys
-  _            -> Nothing
-singletonTypeVal _ = Nothing
-
-indexAsInt :: MonadBuilder m => Atom -> m Atom
+indexAsInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 indexAsInt idx = emitOp $ ToOrdinal idx
 
-instance MonadTrans BuilderT where
-  lift m = BuilderT $ lift $ lift m
+ptrOffset :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+ptrOffset x i = emitOp $ PtrOffset x i
 
-class Monad m => MonadBuilder m where
-  builderLook   :: m BuilderEnvC
-  builderExtend :: BuilderEnvC -> m ()
-  builderScoped :: m a -> m (a, BuilderEnvC)
-  builderAsk    :: m BuilderEnvR
-  builderLocal  :: (BuilderEnvR -> BuilderEnvR) -> m a -> m a
+unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+unsafePtrLoad x = do
+  lam <- buildLam "_ign" PlainArrow UnitTy (oneEffect IOEffect) \_ ->
+    ptrLoad =<< sinkM x
+  liftM Var $ emit $ Hof $ RunIO $ lam
 
-instance Monad m => MonadBuilder (BuilderT m) where
-  builderLook = BuilderT look
-  builderExtend env = BuilderT $ extend env
-  builderScoped (BuilderT m) = BuilderT $ scoped m
-  builderAsk = BuilderT ask
-  builderLocal f (BuilderT m) = BuilderT $ local f m
+ptrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)
+ptrLoad x = emitOp $ PtrLoad x
 
-instance MonadBuilder m => MonadBuilder (ReaderT r m) where
-  builderLook = lift builderLook
-  builderExtend x = lift $ builderExtend x
-  builderScoped m = ReaderT \r -> builderScoped $ runReaderT m r
-  builderAsk = lift builderAsk
-  builderLocal v m = ReaderT \r -> builderLocal v $ runReaderT m r
+-- === index set type class ===
 
-instance MonadBuilder m => MonadBuilder (StateT s m) where
-  builderLook = lift builderLook
-  builderExtend x = lift $ builderExtend x
-  builderScoped m = do
-    s <- get
-    ((x, s'), env) <- lift $ builderScoped $ runStateT m s
-    put s'
-    return (x, env)
-  builderAsk = lift builderAsk
-  builderLocal v m = do
-    s <- get
-    (x, s') <- lift $ builderLocal v $ runStateT m s
-    put s'
-    return x
-
-instance (Monoid env, MonadBuilder m) => MonadBuilder (CatT env m) where
-  builderLook = lift builderLook
-  builderExtend x = lift $ builderExtend x
-  builderScoped m = do
-    env <- look
-    ((ans, env'), scopeEnv) <- lift $ builderScoped $ runCatT m env
-    extend env'
-    return (ans, scopeEnv)
-  builderAsk = lift builderAsk
-  builderLocal v m = do
-    env <- look
-    (ans, env') <- lift $ builderLocal v $ runCatT m env
-    extend env'
-    return ans
-
-instance (Monoid w, MonadBuilder m) => MonadBuilder (WriterT w m) where
-  builderLook = lift builderLook
-  builderExtend x = lift $ builderExtend x
-  builderScoped m = do
-    ((x, w), env) <- lift $ builderScoped $ runWriterT m
-    tell w
-    return (x, env)
-  builderAsk = lift builderAsk
-  builderLocal v m = WriterT $ builderLocal v $ runWriterT m
-
-instance (Monoid env, MonadCat env m) => MonadCat env (BuilderT m) where
-  look = lift look
-  extend x = lift $ extend x
-  scoped (BuilderT m) = BuilderT $ do
-    name <- ask
-    env <- look
-    ((ans, env'), scopeEnv) <- lift $ lift $ scoped $ runCatT (runReaderT m name) env
-    extend env'
-    return (ans, scopeEnv)
-
-instance MonadReader r m => MonadReader r (BuilderT m) where
-  ask = lift ask
-  local r m = do
-    envC <- builderLook
-    envR <- builderAsk
-    (ans, envC') <- lift $ local r $ runBuilderT' m (envR, envC)
-    builderExtend envC'
-    return ans
-
-instance MonadWriter w m => MonadWriter w (BuilderT m) where
-  tell = lift . tell
-  listen m = do
-    envC <- builderLook
-    envR <- builderAsk
-    ((ans, envC'), w) <- lift $ listen $ runBuilderT' m (envR, envC)
-    builderExtend envC'
-    return (ans, w)
-  pass m = do
-    envC <- builderLook
-    envR <- builderAsk
-    (ans, envC') <- lift $ pass $ (\((a, wf), e) -> ((a, e), wf)) <$> runBuilderT' m (envR, envC)
-    builderExtend envC'
-    return ans
-
-instance MonadState s m => MonadState s (BuilderT m) where
-  get = lift get
-  put = lift . put
-
-getNameHint :: MonadBuilder m => m Name
-getNameHint = do
-  tag <- fst <$> builderAsk
-  return $ Name GenName tag 0
-
--- This is purely for human readability. `const id` would be a valid implementation.
-withNameHint :: HasCallStack => (MonadBuilder m, NameHint hint) => hint -> m a -> m a
-withNameHint hint m =
-  flip builderLocal m \(prevHint, eff) -> case asNameHint hint of
-    Nothing      -> (prevHint, eff)
-    Just newHint -> (newHint , eff)
-
-runBuilderT' :: Monad m => BuilderT m a -> BuilderEnv -> m (a, BuilderEnvC)
-runBuilderT' (BuilderT m) (envR, envC) = runCatT (runReaderT m envR) envC
-
-getSynthCandidates :: MonadBuilder m => m SynthCandidates
-getSynthCandidates = snd . fst <$> builderLook
-
-getScope :: MonadBuilder m => m Scope
-getScope = fst . fst <$> builderLook
-
-extendScope :: MonadBuilder m => Scope -> m ()
-extendScope scope = builderExtend $ asFst (scope, scs)
-  where scs = foldMap (uncurry binderInfoAsSynthCandidates) $ envPairs scope
-
-binderInfoAsSynthCandidates :: Name -> AnyBinderInfo -> SynthCandidates
-binderInfoAsSynthCandidates name binfo = case binfo of
-  AtomBinderInfo ty (LamBound ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
-  AtomBinderInfo ty (PiBound  ClassArrow)    -> mempty { lambdaDicts       = [Var (name:>ty)]}
-  SuperclassName _ _ superclassGetter        -> mempty { superclassGetters = [superclassGetter]}
-  AtomBinderInfo ty (LetBound InstanceLet _) -> mempty { instanceDicts     = [Var (name:>ty)]}
-  _ -> mempty
-
-getAllowedEffects :: MonadBuilder m => m EffectRow
-getAllowedEffects = snd <$> builderAsk
-
-withEffects :: MonadBuilder m => EffectRow -> m a -> m a
-withEffects effs m = modifyAllowedEffects (const effs) m
-
-modifyAllowedEffects :: MonadBuilder m => (EffectRow -> EffectRow) -> m a -> m a
-modifyAllowedEffects f m = builderLocal (\(name, eff) -> (name, f eff)) m
-
--- XXX: this doesn't generate fresh names so be careful!
-emitDecl :: MonadBuilder m => Decl -> m ()
-emitDecl decl = do
-  extendScope bindings
-  builderExtend $ asSnd $ Nest decl Empty
-  where bindings = case decl of
-          Let ann b expr -> b @> (AtomBinderInfo (binderType b) (LetBound ann expr))
-
-scopedDecls :: MonadBuilder m => m a -> m (a, Nest Decl)
-scopedDecls m = do
-  (ans, (_, decls)) <- builderScoped m
-  return (ans, decls)
-
-liftBuilder :: MonadBuilder m => Builder a -> m a
-liftBuilder action = do
-  envR <- builderAsk
-  envC <- builderLook
-  let (ans, envC') = runIdentity $ runBuilderT' action (envR, envC)
-  builderExtend envC'
-  return ans
-
--- === generic traversal ===
-
-type TraversalDef m = (Decl -> m SubstEnv, Expr -> m Expr, Atom -> m Atom)
-
-substTraversalDef :: (MonadBuilder m, MonadReader SubstEnv m) => TraversalDef m
-substTraversalDef = ( traverseDecl substTraversalDef
-                    , traverseExpr substTraversalDef
-                    , traverseAtom substTraversalDef
-                    )
-
-appReduceTraversalDef :: (MonadBuilder m, MonadReader SubstEnv m) => TraversalDef m
-appReduceTraversalDef = ( traverseDecl appReduceTraversalDef
-                        , reduceAppExpr
-                        , traverseAtom appReduceTraversalDef
-                        )
-  where
-    reduceAppExpr expr = case expr of
-      App f' x' -> do
-        f <- traverseAtom appReduceTraversalDef f'
-        x <- traverseAtom appReduceTraversalDef x'
-        case f of
-          TabVal b body ->
-            Atom <$> (dropSub $ extendR (b@>SubstVal x) $ evalBlockE appReduceTraversalDef body)
-          _ -> return $ App f x
-      _ -> traverseExpr appReduceTraversalDef expr
-
--- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
-traverseDecls :: (MonadBuilder m, MonadReader SubstEnv m)
-              => TraversalDef m -> Nest Decl -> m ((Nest Decl), SubstEnv)
-traverseDecls def decls = liftM swap $ scopedDecls $ traverseDeclsOpen def decls
-
-traverseDeclsOpen :: (MonadBuilder m, MonadReader SubstEnv m)
-                  => TraversalDef m -> Nest Decl -> m SubstEnv
-traverseDeclsOpen _ Empty = return mempty
-traverseDeclsOpen def@(fDecl, _, _) (Nest decl decls) = do
-  env <- fDecl decl
-  env' <- extendR env $ traverseDeclsOpen def decls
-  return (env <> env')
-
-traverseDecl :: (MonadBuilder m, MonadReader SubstEnv m)
-             => TraversalDef m -> Decl -> m SubstEnv
-traverseDecl (_, fExpr, _) decl = case decl of
-  Let letAnn b expr -> do
-    expr' <- fExpr expr
-    ((b@>) . SubstVal) <$> withNameHint b (emitAnn letAnn expr')
-
-traverseBlock :: (MonadBuilder m, MonadReader SubstEnv m)
-              => TraversalDef m -> Block -> m Block
-traverseBlock def block = buildScoped $ evalBlockE def block
-
-evalBlockE :: (MonadBuilder m, MonadReader SubstEnv m)
-              => TraversalDef m -> Block -> m Atom
-evalBlockE def@(_, fExpr, _) (Block decls result) = do
-  env <- traverseDeclsOpen def decls
-  resultExpr <- extendR env $ fExpr result
-  case resultExpr of
-    Atom a -> return a
-    _      -> emit resultExpr
-
-traverseExpr :: (MonadBuilder m, MonadReader SubstEnv m)
-             => TraversalDef m -> Expr -> m Expr
-traverseExpr def@(_, _, fAtom) expr = case expr of
-  App g x -> App  <$> fAtom g <*> fAtom x
-  Atom x  -> Atom <$> fAtom x
-  Op  op  -> Op   <$> traverse fAtom op
-  Hof hof -> Hof  <$> traverse fAtom hof
-  Case e alts ty -> Case <$> fAtom e <*> mapM traverseAlt alts <*> fAtom ty
-  where
-    traverseAlt (Abs bs body) = do
-      bs' <- mapM (mapM fAtom) bs
-      buildNAbs bs' \xs -> extendR (newEnv bs' $ map SubstVal xs) $ evalBlockE def body
-
-traverseAtom :: forall m . (HasCallStack, MonadBuilder m, MonadReader SubstEnv m)
-             => TraversalDef m -> Atom -> m Atom
-traverseAtom def@(_, _, fAtom) atom = case atom of
-  Var _ -> substBuilderR atom
-  Lam (Abs b (arr, body)) -> do
-    b' <- mapM fAtom b
-    buildDepEffLam b'
-      (\x -> extendR (b'@>SubstVal x) (substBuilderR arr))
-      (\x -> extendR (b'@>SubstVal x) (evalBlockE def body))
-  Pi (Abs b (arr, ty)) -> do
-    b' <- mapM fAtom b
-    Pi <$> buildAAbs b' \x ->
-      extendR (b'@>SubstVal x) $ (,) <$> (substBuilderR arr) <*> (fAtom ty)
-  DepPairTy (Abs b ty) -> do
-    b' <- mapM fAtom b
-    DepPairTy <$> buildAAbs b' \x -> extendR (b'@>SubstVal x) $ fAtom ty
-  DepPair x y (Abs b ty) -> do
-    x' <- fAtom x
-    y' <- fAtom y
-    b' <- mapM fAtom b
-    DepPair x' y' <$> buildAAbs b' \xb -> extendR (b'@>SubstVal xb) $ fAtom ty
-  Con con -> Con <$> traverse fAtom con
-  TC  tc  -> TC  <$> traverse fAtom tc
-  Eff _   -> substBuilderR atom
-  DataCon dataDef params con args -> DataCon dataDef <$>
-    traverse fAtom params <*> pure con <*> traverse fAtom args
-  TypeCon dataDef params -> TypeCon dataDef <$> traverse fAtom params
-  LabeledRow (Ext items rest) -> do
-    items' <- traverse fAtom items
-    return $ LabeledRow $ Ext items' rest
-  Record items -> Record <$> traverse fAtom items
-  RecordTy (Ext items rest) -> do
-    items' <- traverse fAtom items
-    return $ RecordTy $ Ext items' rest
-  Variant (Ext types rest) label i value -> do
-    types' <- traverse fAtom types
-    Variant (Ext types' rest) label i <$> fAtom value
-  VariantTy (Ext items rest) -> do
-    items' <- traverse fAtom items
-    return $ VariantTy $ Ext items' rest
-  ACase e alts ty -> ACase <$> fAtom e <*> mapM traverseAAlt alts <*> fAtom ty
-  DataConRef dataDef params args -> DataConRef dataDef <$>
-    traverse fAtom params <*> traverseNestedArgs args
-  DepPairRef _ _ _ -> undefined  -- Should be unnecessary, those refs are only used in Imp lowering
-  BoxedRef b ptr size body -> do
-    ptr'  <- fAtom ptr
-    size' <- buildScoped $ evalBlockE def size
-    Abs b' (decls, body') <- buildAbs b \x ->
-      extendR (b@>SubstVal x) $ evalBlockE def (Block Empty $ Atom body)
-    case decls of
-      Empty -> return $ BoxedRef b' ptr' size' body'
-      _ -> error "Traversing the body atom shouldn't produce decls"
-  ProjectElt _ _ -> substBuilderR atom
-  where
-    traverseNestedArgs :: Nest DataConRefBinding -> m (Nest DataConRefBinding)
-    traverseNestedArgs Empty = return Empty
-    traverseNestedArgs (Nest (DataConRefBinding b ref) rest) = do
-      ref' <- fAtom ref
-      ty <- substBuilderR $ binderType b
-      v <- withNameHint b $ freshVarE UnknownBinder ty
-      rest' <- extendR (b @> SubstVal (Var v)) $ traverseNestedArgs rest
-      return $ Nest (DataConRefBinding (Bind v) ref') rest'
-
-    traverseAAlt (Abs bs a) = do
-      bs' <- mapM (mapM fAtom) bs
-      (Abs bs'' b) <- buildNAbs bs' \xs -> extendR (newEnv bs' (map SubstVal xs)) $ fAtom a
-      case b of
-        Block Empty (Atom r) -> return $ Abs bs'' r
-        _                    -> error "ACase alternative traversal has emitted decls or exprs!"
-
-transformModuleAsBlock :: (Block -> Block) -> Module -> Module
-transformModuleAsBlock transform (Module ir decls bindings) = do
-  let localVars = bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ ProdVal $ map Var localVars
-  let (Block newDecls (Atom (ProdVal newLocalVals))) = transform block
-  Module ir newDecls $ scopelessSubst (newEnv localVars $ map SubstVal newLocalVals) bindings
-
-dropSub :: MonadReader SubstEnv m => m a -> m a
-dropSub m = local mempty m
-
-indexSetSizeE :: MonadBuilder m => Type -> m Atom
-indexSetSizeE (TC con) = case con of
-  IntRange low high -> clampPositive =<< high `isub` low
-  SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSizeE types
-  IndexRange n low high -> do
-    low' <- case low of
-      InclusiveLim x -> indexToIntE x
-      ExclusiveLim x -> indexToIntE x >>= iadd (IdxRepVal 1)
-      Unlimited      -> return $ IdxRepVal 0
-    high' <- case high of
-      InclusiveLim x -> indexToIntE x >>= iadd (IdxRepVal 1)
-      ExclusiveLim x -> indexToIntE x
-      Unlimited      -> indexSetSizeE n
-    clampPositive =<< high' `isub` low'
-  ProdType tys -> foldM imul (IdxRepVal 1) =<< traverse indexSetSizeE tys
-  ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
-  _ -> error $ "Not implemented " ++ pprint con
-indexSetSizeE (RecordTy (NoExt types)) = do
-  sizes <- traverse indexSetSizeE types
-  foldM imul (IdxRepVal 1) sizes
-indexSetSizeE (VariantTy (NoExt types)) = do
-  sizes <- traverse indexSetSizeE types
-  foldM iadd (IdxRepVal 0) sizes
-indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
-
-clampPositive :: MonadBuilder m => Atom -> m Atom
+clampPositive :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
-data IterOrder = MinorToMajor | MajorToMinor
-
--- XXX: Be careful if you use this function as an interpretation for
---      IndexAsInt instruction, as for Int and IndexRanges it will
---      generate the same instruction again, potentially leading to an
---      infinite loop.
-indexToIntE :: MonadBuilder m => Atom -> m Atom
-indexToIntE (Con (IntRangeVal _ _ i))     = return i
-indexToIntE (Con (IndexRangeVal _ _ _ i)) = return i
-indexToIntE idx = case getType idx of
-  TC (IntRange _ _)     -> indexAsInt idx
-  TC (IndexRange _ _ _) -> indexAsInt idx
-  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
-  ProdTy           types  -> prodToInt MajorToMinor types
-  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
-  SumTy            types  -> sumToInt  types
-  VariantTy (NoExt types) -> sumToInt  types
-  ty -> error $ "Unexpected type " ++ pprint ty
-  where
-    -- XXX: Assumes minor-to-major iteration order
-    prodToInt :: (MonadBuilder m, Traversable t) => IterOrder -> t Type -> m Atom
-    prodToInt order types = do
-      sizes <- toList <$> traverse indexSetSizeE types
-      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
-      strides <- rev . fst <$> scanM (\sz prev -> (prev,) <$> imul sz prev) (rev sizes) (IdxRepVal 1)
-      -- Unpack and sum the strided contributions
-      subindices <- getUnpacked idx
-      subints <- traverse indexToIntE subindices
-      scaled <- mapM (uncurry imul) $ zip strides subints
-      foldM iadd (IdxRepVal 0) scaled
-    sumToInt :: (MonadBuilder m, Traversable t) => t Type -> m Atom
-    sumToInt types = do
-      sizes <- traverse indexSetSizeE types
-      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-      alts <- flip mapM (zip (toList offsets) (toList types)) $
-        \(offset, subty) -> buildNAbs (toNest [Ignore subty]) \[subix] -> do
-          i <- indexToIntE subix
-          iadd offset i
-      emit $ Case idx alts IdxRepTy
-
-intToIndexE :: MonadBuilder m => Type -> Atom -> m Atom
-intToIndexE ty i = case ty of
+intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
+intToIndex ty i = case ty of
   TC con -> case con of
     IntRange        low high   -> return $ Con $ IntRangeVal        low high i
     IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
-    -- Strategically placed reverses make intToProd major-to-minor
     ProdType types             -> intToProd (reverse types) (ProdVal . reverse)
-    SumType  types             -> intToSum  types [0..] $ SumVal ty
-    ParIndexRange _ _ _ -> error "Int casts unsupported on ParIndexRange"
     _ -> error $ "Unexpected type " ++ pprint ty
   RecordTy  (NoExt types) -> intToProd types Record
-  VariantTy (NoExt types) -> intToSum  types (reflectLabels types) $ uncurry $ Variant (NoExt types)
-  _ -> error $ "Unexpected type " ++ pprint ty
+  _ -> error "not implemented"
   where
     -- XXX: Expects that the types are in a minor-to-major order
-    intToProd :: (MonadBuilder m, Traversable t) => t Type -> (t Atom -> Atom) -> m Atom
+    intToProd :: Traversable t => t (Type n) -> (t (Atom n) -> (Atom n)) -> m n (Atom n)
     intToProd types mkProd = do
-      sizes <- traverse indexSetSizeE types
+      sizes <- traverse indexSetSize types
       (strides, _) <- scanM
         (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
       offsets <- flip mapM (zip (toList types) (toList strides)) $
         \(ety, (s1, s2)) -> do
           x <- irem i s2
           y <- idiv x s1
-          intToIndexE ety y
+          intToIndex ety y
       return $ mkProd (restructure offsets types)
-    intToSum :: (MonadBuilder m, Traversable t) => t Type -> t l -> (l -> Atom -> Atom) -> m Atom
-    intToSum types labels mkSum = do
-      sizes <- traverse indexSetSizeE types
-      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-      let
-        -- Find the right index by looping through the possible offsets
-        go prev (label, cty, offset) = do
-          shifted <- isub i offset
-          -- TODO: This might run intToIndex on negative indices. Fix this!
-          index   <- intToIndexE cty shifted
-          beforeThis <- ilt i offset
-          select beforeThis prev $ mkSum label index
-        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
-      start <- mkSum l <$> intToIndexE ty0 i
-      foldM go start zs
 
--- === pseudo-prelude ===
+data IterOrder = MinorToMajor | MajorToMinor
 
--- Monoid a -> (n=>a) -> a
-reduceE :: MonadBuilder m => BaseMonoid -> Atom -> m Atom
-reduceE monoid xs = do
-  let TabTy n a = getType xs
-  getSnd =<< emitRunWriter "ref" a monoid \ref ->
-    buildFor Fwd n \i -> do
-      x <- emit $ App xs i
-      updater <- emit $ App (baseCombine monoid) x
-      emitOp $ PrimEffect ref $ MExtend updater
+indexToInt :: forall m n. (Builder m, Emits n) => Atom n -> m n (Atom n)
+indexToInt (Con (IntRangeVal _ _ i))     = return i
+indexToInt (Con (IndexRangeVal _ _ _ i)) = return i
+indexToInt idx = getType idx >>= \case
+  TC (IntRange _ _)     -> indexAsInt idx
+  TC (IndexRange _ _ _) -> indexAsInt idx
+  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
+  ProdTy           types  -> prodToInt MajorToMinor types
+  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
+  SumTy            _  -> error "not implemented"
+  VariantTy (NoExt _) -> error "not implemented"
+  ty -> error $ "Unexpected type " ++ pprint ty
+  where
+    -- XXX: Assumes minor-to-major iteration order
+    prodToInt :: Traversable t => IterOrder -> t (Type n) -> m n (Atom n)
+    prodToInt order types = do
+      sizes <- toList <$> traverse indexSetSize types
+      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
+      strides <- rev . fst <$> scanM (\sz prev -> (prev,) <$> imul sz prev) (rev sizes) (IdxRepVal 1)
+      -- Unpack and sum the strided contributions
+      subindices <- getUnpacked idx
+      subints <- traverse indexToInt subindices
+      scaled <- mapM (uncurry imul) $ zip strides subints
+      foldM iadd (IdxRepVal 0) scaled
 
--- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
-mapE :: MonadBuilder m => (Atom -> m Atom) -> Atom -> m Atom
-mapE f xs = do
-  let TabTy n _ = getType xs
-  buildFor Fwd n \i -> do
-    x <- emit $ App xs i
-    f x
-
-emitMaybeCase :: MonadBuilder m => Atom -> m Atom -> (Atom -> m Atom) -> m Atom
-emitMaybeCase scrut nothingCase justCase = do
-  let (MaybeTy a) = getType scrut
-  nothingAlt <- buildNAbs (Nest (Ignore UnitTy) Empty) \[_] -> nothingCase
-  justAlt    <- buildNAbs (Nest (Bind ("x":>a)) Empty) \[x] -> justCase x
-  let (Abs _ nothingBody) = nothingAlt
-  let resultTy = getType nothingBody
-  emit $ Case scrut [nothingAlt, justAlt] resultTy
-
--- Maybe a -> a
-fromJustE :: MonadBuilder m => Atom -> m Atom
-fromJustE x = do
-  let MaybeTy a = getType x
-  emitMaybeCase x
-    (emitOp $ ThrowError a)
-    return
-
--- Maybe a -> Bool
-isJustE :: MonadBuilder m => Atom -> m Atom
-isJustE x = emitMaybeCase x (return FalseAtom) (\_ -> return TrueAtom)
-
-andMonoid :: MonadBuilder m => m BaseMonoid
-andMonoid = do
-  combiner <-
-    buildLam (Ignore BoolTy) PureArrow \x ->
-      buildLam (Ignore BoolTy) PureArrow \y -> do
-        emitOp $ ScalarBinOp BAnd x y
-  return $ BaseMonoid TrueAtom combiner
-
--- Bool -> (Unit -> {|eff} a) -> (() -> {|eff} a) -> {|eff} a
--- XXX: the first argument is the true case, following the
--- surface-level `if ... then ... else ...`, but the order
--- is flipped in the actual `Case`, because False acts like 0.
-emitIf :: MonadBuilder m => Atom -> m Atom -> m Atom -> m Atom
-emitIf predicate trueCase falseCase = do
-  predicate' <- emitOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
-  falseCaseAbs <- buildNAbs (Nest (Ignore UnitTy) Empty) \[_] -> falseCase
-  trueCaseAbs  <- buildNAbs (Nest (Ignore UnitTy) Empty) \[_] -> trueCase
-  let (Abs _ trueBody) = trueCaseAbs
-  let resultTy = getType trueBody
-  emit $ Case predicate' [falseCaseAbs, trueCaseAbs] resultTy
-
--- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
-catMaybesE :: MonadBuilder m => Atom -> m Atom
-catMaybesE maybes = do
-  let TabTy n (MaybeTy a) = getType maybes
-  justs <- mapE isJustE maybes
-  monoid <- andMonoid
-  allJust <- reduceE monoid justs
-  emitIf allJust
-    (JustAtom (TabTy n a) <$> mapE fromJustE maybes)
-    (return (NothingAtom (TabTy n a)))
-
--- Dex implementation, for reference
--- def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
---   hadError = yieldState False \ref.
---     while do
---       ans = liftState ref body ()
---       case ans of
---         Nothing ->
---           ref := True
---           False
---         Just cond -> W8ToB cond
---   if hadError
---     then Nothing
---     else Just ()
-
-runMaybeWhile :: MonadBuilder m => Atom -> m Atom
-runMaybeWhile lam = do
-  hadError <- getSnd =<< emitRunState "ref" FalseAtom \ref -> do
-    emitWhile do
-      ans <- emit $ App lam UnitVal
-      emitMaybeCase ans
-        (emitOp (PrimEffect ref $ MPut TrueAtom) >> return FalseAtom)
-        return
-    return UnitVal
-  emitIf hadError
-    (return $ NothingAtom UnitTy)
-    (return $ JustAtom    UnitTy UnitVal)
-
-makeClassDataDef :: SourceName -> Nest Binder -> [Type] -> [Type] -> DataDef
-makeClassDataDef className params superclasses methods =
-  DataDef className params [DataConDef ("Mk"<>className) (Nest (Ignore dictContents) Empty)]
-  where dictContents = PairTy (ProdTy superclasses) (ProdTy methods)
+indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
+indexSetSize (TC con) = case con of
+  IntRange low high -> clampPositive =<< high `isub` low
+  SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSize types
+  IndexRange n low high -> do
+    low' <- case low of
+      InclusiveLim x -> indexToInt x
+      ExclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
+      Unlimited      -> return $ IdxRepVal 0
+    high' <- case high of
+      InclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
+      ExclusiveLim x -> indexToInt x
+      Unlimited      -> indexSetSize n
+    clampPositive =<< high' `isub` low'
+  ProdType tys -> foldM imul (IdxRepVal 1) =<< traverse indexSetSize tys
+  ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
+  _ -> error $ "Not implemented " ++ pprint con
+indexSetSize (RecordTy (NoExt types)) = do
+  sizes <- traverse indexSetSize types
+  foldM imul (IdxRepVal 1) sizes
+indexSetSize (VariantTy (NoExt types)) = do
+  sizes <- traverse indexSetSize types
+  foldM iadd (IdxRepVal 0) sizes
+indexSetSize ty = error $ "Not implemented " ++ pprint ty

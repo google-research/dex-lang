@@ -27,10 +27,11 @@ import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
 
 import System.IO.Unsafe
-import System.Environment
+import qualified System.Environment as E
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import qualified Data.Map.Strict as M
 import Data.ByteString.Short (toShort)
 import qualified Data.ByteString.Char8 as B
 import Data.String
@@ -42,29 +43,25 @@ import qualified Data.Set as S
 -- import qualified Data.Text as T
 
 import CUDA (getCudaArchitecture)
-import Syntax (CallingConvention (..), CUDAKernel (..),
-               Output (..))
-import qualified Env as D
 
-
-import SaferNames.Syntax
-import SaferNames.Name
-import SaferNames.Imp
+import Err
+import Syntax
+import Name
+import Imp
 import PPrint
 import Logging
 import LLVMExec
 import Util (IsBool (..))
 
-
 type OperandSubstVal = SubstVal AtomNameC (LiftE Operand)
-type OperandEnv     i    = Env     OperandSubstVal i    VoidS
-type OperandEnvFrag i i' = EnvFrag OperandSubstVal i i' VoidS
+type OperandEnv     i    = Subst     OperandSubstVal i    VoidS
+type OperandEnvFrag i i' = SubstFrag OperandSubstVal i i' VoidS
 
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [Named Instruction]
                                  , scalarDecls :: [Named Instruction]
                                  , blockName   :: L.Name
-                                 , usedNames   :: D.Env ()
+                                 , usedNames   :: M.Map RawName ()
                                  , funSpecs    :: S.Set ExternFunSpec
                                  , globalDefs  :: [L.Definition]
                                  }
@@ -832,10 +829,6 @@ lAddress s = case s of
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
-showName :: D.Name -> String
-showName (D.Name D.GenName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
-showName _ = error $ "All names in JIT should be from the GenName namespace"
-
 asIntWidth :: Operand -> L.Type -> Compile n Operand
 asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
   LT -> emitInstr expTy $ L.Trunc op expTy []
@@ -929,7 +922,7 @@ runCompile :: Device -> Compile n a -> a
 runCompile dev m = evalState (runReaderT m env) initState
   where
     -- TODO: figure out naming discipline properly
-    env = CompileEnv (unsafeCoerceE idEnv) dev
+    env = CompileEnv (unsafeCoerceE idSubst) dev
     initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 extendOperands :: OperandEnvFrag i i' -> Compile i' a -> Compile i a
@@ -955,18 +948,17 @@ finishBlock term newName = do
          . setBlockName (const newName)
 
 freshName :: NameHint -> Compile n L.Name
-freshName v = do
+freshName hint = do
   used <- gets usedNames
-  let v' = D.genFresh hint' used
-  modify \s -> s { usedNames = used <> v' D.@> () }
-  return $ nameToLName v'
+  let v = freshRawName hint used
+  modify \s -> s { usedNames = used <> M.singleton v () }
+  return $ nameToLName v
   where
-    nameToLName :: D.Name -> L.Name
+    nameToLName :: RawName -> L.Name
     nameToLName name = L.Name $ toShort $ B.pack $ showName name
 
-    hint' :: D.Name
-    hint' = case v of Hint s -> fromString $ pprint s
-                      NoHint -> "v"
+    showName :: RawName -> String
+    showName (RawName tag counter) = docAsStr $ pretty tag <> "." <> pretty counter
 
 -- TODO: consider getting type from instruction rather than passing it explicitly
 emitInstr :: L.Type -> Instruction -> Compile n Operand
@@ -1010,7 +1002,7 @@ binaryIntrinsic op x y = do
 -- === Constants ===
 
 allowContractions :: Bool
-allowContractions = unsafePerformIO $ (Just "0"/=) <$> lookupEnv "DEX_ALLOW_CONTRACTIONS"
+allowContractions = unsafePerformIO $ (Just "0"/=) <$> E.lookupEnv "DEX_ALLOW_CONTRACTIONS"
 
 -- FP contractions should only lead to fewer rounding points, so we allow those
 mathFlags :: L.FastMathFlags

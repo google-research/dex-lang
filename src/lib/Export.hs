@@ -24,7 +24,7 @@ import Algebra
 import Syntax
 import Builder
 import Cat
-import Env
+import Subst
 import Type
 import Simplify
 import Imp
@@ -47,20 +47,20 @@ exportFunctions = undefined
 
 
 type CArgList = [IBinder] -- ^ List of arguments to the C call
-data CArgEnv = CArgEnv { -- | Maps scalar atom binders to their CArgs. All atoms are Vars.
-                         cargScalarScope :: SubstEnv
+data CArgSubst = CArgEnv { -- | Maps scalar atom binders to their CArgs. All atoms are Vars.
+                         cargScalarScope :: SubstSubst
                          -- | Tracks the CArg names used so far (globally scoped, unlike Builder)
-                       , cargScope :: Env () }
-type CArgM = WriterT CArgList (CatT CArgEnv Builder)
+                       , cargScope :: Subst () }
+type CArgM = WriterT CArgList (CatT CArgSubst Builder)
 
-instance Semigroup CArgEnv where
-  (CArgEnv a1 a2) <> (CArgEnv b1 b2) = CArgEnv (a1 <> b1) (a2 <> b2)
+instance Semigroup CArgSubst where
+  (CArgSubst a1 a2) <> (CArgEnv b1 b2) = CArgEnv (a1 <> b1) (a2 <> b2)
 
-instance Monoid CArgEnv where
-  mempty = CArgEnv mempty mempty
+instance Monoid CArgSubst where
+  mempty = CArgSubst mempty mempty
 
-runCArg :: CArgEnv -> CArgM a -> Builder (a, [IBinder], CArgEnv)
-runCArg initEnv m = repack <$> runCatT (runWriterT m) initEnv
+runCArg :: CArgSubst -> CArgM a -> Builder (a, [IBinder], CArgEnv)
+runCArg initSubst m = repack <$> runCatT (runWriterT m) initEnv
   where repack ((ans, cargs), env) = (ans, cargs, env)
 
 prepareFunctionForExport :: Bindings -> String -> Atom -> (ImpModule, ExportedSignature)
@@ -68,11 +68,11 @@ prepareFunctionForExport env nameStr func = do
   -- Create a module that simulates an application of arguments to the function
   -- TODO: Assert that the type of func is closed?
   let ((dest, cargs, apiDesc, resultName, resultType), (_, decls)) = runBuilder (freeVars func) mempty $ do
-        (args, cargArgs, cargEnv) <- runCArg mempty $ createArgs $ getType func
+        (args, cargArgs, cargSubst) <- runCArg mempty $ createArgs $ getType func
         let (atomArgs, exportedArgSig) = unzip args
         resultAtom <- naryApp func atomArgs
         ~(Var (outputName:>outputType)) <- emit $ Atom resultAtom
-        ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargEnv $ createDest mempty $ getType resultAtom
+        ((resultDest, exportedResSig), cdestArgs, _) <- runCArg cargSubst $ createDest mempty $ getType resultAtom
         let cargs' = cargArgs <> cdestArgs
         let exportedCCallSig = fmap (\(Bind (v:>_)) -> v) cargs'
         return (resultDest, cargs', ExportedSignature{..}, outputName, outputType)
@@ -162,7 +162,7 @@ prepareFunctionForExport env nameStr func = do
     -- TODO: Have an ExternalPtr tag?
     ptrTy ty = PtrType (Heap CPU, ty)
 
-    getRectShape :: Env () -> IndexStructure -> Maybe [Either Name Int]
+    getRectShape :: Subst () -> IndexStructure -> Maybe [Either Name Int]
     getRectShape scope idx = traverse (dimShape . binderType) $ toList idx
       where
         dimShape dimTy = case dimTy of
