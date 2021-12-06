@@ -280,7 +280,13 @@ toImpOp maybeDest op = case op of
     tileOffset' <- fromScalarAtom tileOffset
     tileOffset'' <- iaddI tileOffset' extraOffset
     returnVal =<< toScalarAtom tileOffset''
-  ThrowError _ -> undefined
+  ThrowError _ -> do
+    resultTy <- resultTyM
+    dest <- allocDest maybeDest resultTy
+    emitStatement IThrowError
+    -- XXX: we'd be reading uninitialized data here but it's ok because control never reaches
+    -- this point since we just threw an error.
+    destToAtom dest
   CastOp destTy x -> do
     xTy <- getType x
     case (xTy, destTy) of
