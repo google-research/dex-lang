@@ -14,7 +14,6 @@ module Simplify
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
-import Data.Foldable (toList)
 
 import Err
 
@@ -22,6 +21,7 @@ import Name
 import Builder
 import Syntax
 import Type
+import Interpreter (traverseSurfaceAtomNames)
 
 -- === simplification monad ===
 
@@ -145,35 +145,17 @@ simplifyApp f x = case f of
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x
 
-simplifyAtom :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o)
-simplifyAtom atom = case atom of
-  Var v -> do
-    env <- getSubst
-    case env ! v of
-      SubstVal x -> return x
-      Rename v' -> do
-        AtomNameBinding bindingInfo <- lookupEnv v'
-        case bindingInfo of
-          LetBound (DeclBinding ann _ (Atom x))
-            | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
-          _ -> return $ Var v'
-  Lam _ -> substM atom
-  Pi  _ -> substM atom
-  Con con -> Con <$> mapM simplifyAtom con
-  TC  tc  -> TC  <$> mapM simplifyAtom tc
-  Eff _ -> substM atom
-  TypeCon sn defName params -> do
-    defName' <- substM defName
-    TypeCon sn defName' <$> mapM simplifyAtom params
-  DataCon printName defName params con args -> do
-    defName' <- substM defName
-    DataCon printName defName' <$> mapM simplifyAtom params
-                                       <*> pure con <*> mapM simplifyAtom args
-  Record items -> Record <$> mapM simplifyAtom items
-  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
-  BoxedRef _ _ _   -> error "Should only occur in Imp lowering"
-  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
-  _ -> error "not implemented"
+simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
+simplifyAtom atom = traverseSurfaceAtomNames atom \v -> do
+  env <- getSubst
+  case env ! v of
+    SubstVal x -> return x
+    Rename v' -> do
+      AtomNameBinding bindingInfo <- lookupEnv v'
+      case bindingInfo of
+        LetBound (DeclBinding ann _ (Atom x))
+          | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
+        _ -> return $ Var v'
 
 simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
