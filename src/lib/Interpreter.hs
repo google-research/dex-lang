@@ -8,10 +8,12 @@
 
 module Interpreter (
   evalBlock, evalExpr, indices, indexSetSize,
-  runInterpM, liftInterpM, InterpM, Interp) where
+  runInterpM, liftInterpM, InterpM, Interp,
+  traverseSurfaceAtomNames) where
 
 import Control.Monad.IO.Class
 import Data.Int
+import Data.Foldable (toList)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
 
@@ -58,11 +60,44 @@ evalDecls (Nest (Let b (DeclBinding _ _ rhs)) rest) cont = do
   result <- evalExpr rhs
   extendSubst (b @> SubstVal result) $ evalDecls rest cont
 
+-- XXX: this doesn't go under lambda or pi binders
+traverseSurfaceAtomNames
+  :: (SubstReader AtomSubstVal m, EnvReader2 m)
+  => Atom i
+  -> (AtomName i -> m i o (Atom o))
+  -> m i o (Atom o)
+traverseSurfaceAtomNames atom doWithName = case atom of
+  Var v -> doWithName v
+  Lam _ -> substM atom
+  Pi  _ -> substM atom
+  Con con -> Con <$> mapM rec con
+  TC  tc  -> TC  <$> mapM rec tc
+  Eff _ -> substM atom
+  TypeCon sn defName params -> do
+    defName' <- substM defName
+    TypeCon sn defName' <$> mapM rec params
+  DataCon printName defName params con args -> do
+    defName' <- substM defName
+    DataCon printName defName' <$> mapM rec params
+                               <*> pure con <*> mapM rec args
+  Record items -> Record <$> mapM rec items
+  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
+  BoxedRef _ _ _   -> error "Should only occur in Imp lowering"
+  ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
+  _ -> error "not implemented"
+  where rec x = traverseSurfaceAtomNames x doWithName
+
 evalAtom :: Interp m => Atom i -> m i o (Atom o)
-evalAtom x = do
-  x' <- substM x
-  (ab, ptrLits) <- abstractPtrLiterals x'
-  applyNaryAbs ab $ map (SubstVal . Con . Lit) ptrLits
+evalAtom atom = traverseSurfaceAtomNames atom \v -> do
+  env <- getSubst
+  case env ! v of
+    SubstVal x -> return x
+    Rename v' -> do
+      ~(AtomNameBinding bindingInfo) <- lookupEnv v'
+      case bindingInfo of
+        LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ evalAtom x
+        PtrLitBound ty ptr -> return $ Con $ Lit $ PtrLit ty ptr
+        _ -> error "shouldn't have irreducible atom names left"
 
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of

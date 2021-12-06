@@ -11,6 +11,8 @@
 
 module Imp (toImpModule, PtrBinder, impFunType, getIType) where
 
+import Data.Functor
+import Data.Foldable (toList)
 import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -20,6 +22,7 @@ import Name
 import Builder
 import Syntax
 import Type
+import LabeledItems
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -209,14 +212,15 @@ toImpOp maybeDest op = case op of
     destToAtom dest
   PrimEffect refDest m -> do
     case m of
-      MAsk      -> returnVal =<< destToAtom refDest
-      MExtend _ -> error "not implemented"
-  --       -- TODO: Update in-place?
-  --       refValue <- destToAtom refDest
-  --       result <- translateBlock mempty (Nothing, snd $ applyAbs f refValue)
-  --       copyAtom refDest result
-  --       returnVal UnitVal
-      MPut x    -> copyAtom  refDest x >> returnVal UnitVal
+      MAsk -> returnVal =<< destToAtom refDest
+      MExtend (Lam (LamExpr b body)) -> do
+        -- TODO: Update in-place?
+        refValue <- destToAtom refDest
+        result <- dropSubst $ extendSubst (b @> SubstVal refValue) $
+                    translateBlock Nothing body
+        copyAtom refDest result
+        returnVal UnitVal
+      MPut x -> copyAtom  refDest x >> returnVal UnitVal
       MGet -> do
         resultTy <- resultTyM
         dest <- allocDest maybeDest resultTy
@@ -224,6 +228,7 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
+      _ -> error "impossible"
   UnsafeFromOrdinal n i -> returnVal =<< intToIndexImp n =<< fromScalarAtom i
   IdxSetSize n -> returnVal =<< toScalarAtom  =<< indexSetSizeImp n
   ToOrdinal idx -> case idx of
@@ -275,7 +280,13 @@ toImpOp maybeDest op = case op of
     tileOffset' <- fromScalarAtom tileOffset
     tileOffset'' <- iaddI tileOffset' extraOffset
     returnVal =<< toScalarAtom tileOffset''
-  ThrowError _ -> undefined
+  ThrowError _ -> do
+    resultTy <- resultTyM
+    dest <- allocDest maybeDest resultTy
+    emitStatement IThrowError
+    -- XXX: we'd be reading uninitialized data here but it's ok because control never reaches
+    -- this point since we just threw an error.
+    destToAtom dest
   CastOp destTy x -> do
     xTy <- getType x
     case (xTy, destTy) of
@@ -304,9 +315,26 @@ toImpOp maybeDest op = case op of
   RecordSplit  _ _ -> error "Unreachable: should have simplified away"
   VariantLift  _ _ -> error "Unreachable: should have simplified away"
   VariantSplit _ _ -> error "Unreachable: should have simplified away"
-  DataConTag _ -> undefined
-  ToEnum _ _ -> undefined
-  FFICall _ _ _ -> undefined
+  DataConTag con -> case con of
+    Con (SumAsProd _ tag _) -> returnVal tag
+    DataCon _ _ _ i _ -> returnVal $ TagRepVal $ fromIntegral i
+    _ -> error $ "Not a data constructor: " ++ pprint con
+  ToEnum ty i -> returnVal =<< case ty of
+    TypeCon _ defName _ -> do
+      DataDef _ _ cons <- lookupDataDef defName
+      return $ Con $ SumAsProd ty i (map (const []) cons)
+    VariantTy (NoExt labeledItems) ->
+      return $ Con $ SumAsProd ty i (map (const [UnitVal]) $ toList labeledItems)
+    SumTy cases ->
+      return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
+    _ -> error $ "Not an enum: " ++ pprint ty
+  FFICall name returnTy xs -> do
+    let returnTys = fromScalarOrPairType returnTy
+    xTys <- forM xs \x -> fromScalarType <$> getType x
+    let f = asFFIFunction name xTys returnTys
+    xs' <- mapM fromScalarAtom xs
+    results <- emitMultiReturnInstr $ ICall f xs'
+    restructureScalarOrPairType returnTy results
   SumToVariant ~(Con c) -> do
     ~resultTy@(VariantTy labs) <- resultTyM
     returnVal $ case c of
@@ -322,6 +350,15 @@ toImpOp maybeDest op = case op of
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
+
+asFFIFunction :: SourceName -> [IType] -> [IType] -> IFunVar
+asFFIFunction fname argTys resultTys =
+  (fname, IFunType cc argTys resultTys)
+  where
+    cc = case length resultTys of
+           0 -> error "Not implemented"
+           1 -> FFIFun
+           _ -> FFIMultiResultFun
 
 toImpHof :: (Imper m, Emits o) => Maybe (Dest o) -> PrimHof (Atom i) -> m i o (Atom o)
 toImpHof maybeDest hof = do
@@ -347,6 +384,15 @@ toImpHof maybeDest hof = do
       copyAtom rDest r'
       extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal rDest) $
         translateBlock maybeDest body
+    RunWriter (BaseMonoid e _) (Lam (BinaryLamExpr h ref body)) -> do
+      let PairTy _ accTy = resultTy
+      (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+      e' <- substM e
+      emptyVal <- liftBuilderImp $ liftMonoidEmpty (sink accTy) (sink e')
+      copyAtom wDest emptyVal
+      void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal wDest) $
+        translateBlock (Just aDest) body
+      PairVal <$> destToAtom aDest <*> destToAtom wDest
     RunState s (Lam (BinaryLamExpr h ref body)) -> do
       s' <- substM s
       (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
@@ -657,22 +703,34 @@ copyAtom topDest topSrc = copyRec topDest topSrc
   where
     copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
     copyRec dest src = case (dest, src) of
+      (BoxedRef _ _ _, _) -> undefined
+      (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
+        copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
+        (RecordRef refs, Record vals)
+          | fmap (const ()) refs == fmap (const ()) vals -> do
+              zipWithM_ copyRec (toList refs) (toList vals)
         (TabRef _, Lam _) -> zipTabDestAtom copyRec dest src
         (BaseTypeRef ptr, _) -> do
           ptr' <- fromScalarAtom ptr
           src' <- fromScalarAtom src
           storeAnywhere ptr' src'
-        (ConRef (SumAsProd _ tag payload), DataCon _ _ _ con x) -> do
-          rec tag $ TagRepVal $ fromIntegral con
-          zipWithM_ rec (payload !! con) x
+        (ConRef (SumAsProd _ tag payload), _) -> case src of
+          DataCon _ _ _ con x -> do
+            copyRec tag $ TagRepVal $ fromIntegral con
+            zipWithM_ copyRec (payload !! con) x
+          Con (SumAsProd _ tagSrc payloadSrc) -> do
+            copyRec tag tagSrc
+            unless (all null payload) do -- optimization
+              tag' <- fromScalarAtom tag
+              emitSwitch tag' (zip payload payloadSrc)
+                \(d, s) -> zipWithM_ copyRec (map sink d) (map sink s)
+          Variant _ _ _ _ -> undefined
+          _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) ->
-          zipWithRefConM rec destCon srcCon
-        _ -> error $ "not implemented " ++ pprint dest ++ "\n" ++ pprint src
-      (DataConRef _ _ refs, DataCon _ _ _ _ vals) -> copyDataConArgs refs vals
-      _ -> error $ "not implemented " ++ pprint dest ++ "\n" ++ pprint src
-      where
-        rec = copyRec
+          zipWithRefConM copyRec destCon srcCon
+        _ -> error "unexpected src/dest pair"
+      _ -> error "unexpected src/dest pair"
 
 zipTabDestAtom :: (Emits n, ImpBuilder m)
                => (forall l. (Emits l, Ext n l) => Dest l -> Atom l -> m l ())
@@ -786,6 +844,29 @@ emitLoop hint d n cont = do
                 return []
       return $ Abs b body
   emitStatement $ IFor d n loopBody
+
+fromScalarOrPairType :: Type n -> [IType]
+fromScalarOrPairType (PairTy a b) =
+  fromScalarOrPairType a <> fromScalarOrPairType b
+fromScalarOrPairType (BaseTy ty) = [ty]
+fromScalarOrPairType ty = error $ "Not a scalar or pair: " ++ pprint ty
+
+restructureScalarOrPairType :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n)
+restructureScalarOrPairType ty xs =
+  restructureScalarOrPairTypeRec ty xs >>= \case
+    (atom, []) -> return atom
+    _ -> error "Wrong number of scalars"
+
+restructureScalarOrPairTypeRec
+  :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n, [IExpr n])
+restructureScalarOrPairTypeRec (PairTy t1 t2) xs = do
+  (atom1, rest1) <- restructureScalarOrPairTypeRec t1 xs
+  (atom2, rest2) <- restructureScalarOrPairTypeRec t2 rest1
+  return (PairVal atom1 atom2, rest2)
+restructureScalarOrPairTypeRec (BaseTy _) (x:xs) = do
+  x' <- toScalarAtom x
+  return (x', xs)
+restructureScalarOrPairTypeRec ty _ = error $ "Not a scalar or pair: " ++ pprint ty
 
 buildBlockImp
   :: ImpBuilder m
@@ -994,15 +1075,17 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
-_fromScalarType :: Type n -> IType
-_fromScalarType (BaseTy b) =  b
-_fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
+fromScalarType :: Type n -> IType
+fromScalarType (BaseTy b) =  b
+fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
 
 _toScalarType :: IType -> Type n
 _toScalarType b = BaseTy b
 
 -- === Type classes ===
 
+-- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
+-- are part of the same conspiracy.
 liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
                -> m n (e n)
