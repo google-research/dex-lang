@@ -216,6 +216,9 @@ simplifyHof hof = case hof of
     case recon of
       IdentityRecon -> return ans
       LamRecon _ -> undefined
+  While body -> do
+    (lam', IdentityRecon) <- simplifyLam body
+    liftM Var $ emit $ Hof $ While lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
     (lam', recon) <- simplifyBinaryLam lam

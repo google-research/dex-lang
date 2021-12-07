@@ -1650,7 +1650,8 @@ deriving instance Show (DataConRefBinding n l)
 deriving instance Generic (DataConRefBinding n l)
 
 newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
-  ExtLabeledItemsE (ExtLabeledItems (e1 n) (e2 n))
+  ExtLabeledItemsE
+   { fromExtLabeledItemsE :: ExtLabeledItems (e1 n) (e2 n) }
 
 instance GenericE Atom where
   type RepE Atom =

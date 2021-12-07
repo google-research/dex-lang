@@ -378,6 +378,12 @@ toImpHof maybeDest hof = do
             void $ extendSubst (b @> SubstVal idx) $
               translateBlock (Just ithDest) body
           destToAtom dest
+    While (Lam (LamExpr b body)) -> do
+      body' <- buildBlockImp $ extendSubst (b@>SubstVal UnitVal) do
+        ans <- fromScalarAtom =<< translateBlock Nothing body
+        return [ans]
+      emitStatement $ IWhile body'
+      return UnitVal
     RunReader r (Lam (BinaryLamExpr h ref body)) -> do
       r' <- substM r
       rDest <- alloc =<< getType r'

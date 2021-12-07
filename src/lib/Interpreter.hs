@@ -83,11 +83,18 @@ traverseSurfaceAtomNames atom doWithName = case atom of
     DataCon printName defName' <$> mapM rec params
                                <*> pure con <*> mapM rec args
   Record items -> Record <$> mapM rec items
+  RecordTy _ -> substM atom
+  Variant ty l con payload ->
+    Variant
+       <$> (fromExtLabeledItemsE <$> substM (ExtLabeledItemsE ty))
+       <*> return l <*> return con <*> rec payload
+  VariantTy _      -> substM atom
+  LabeledRow _     -> substM atom
+  ACase _ _ _ -> error "not implemented"
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _   -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
-  _ -> error "not implemented"
   where rec x = traverseSurfaceAtomNames x doWithName
 
 evalAtom :: Interp m => Atom i -> m i o (Atom o)
