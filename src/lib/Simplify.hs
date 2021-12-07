@@ -55,8 +55,8 @@ instance Builder (SimplifyM i) where
 -- === Top level ===
 
 simplifyModule :: Distinct n => Env n -> Module n -> Module n
-simplifyModule bindings (Module Core decls result) = runSimplifyM bindings do
-  Immut <- return $ toImmutEvidence bindings
+simplifyModule env (Module Core decls result) = runSimplifyM env do
+  Immut <- return $ toImmutEvidence env
   DistinctAbs decls' result' <-
     buildScoped $ simplifyDecls decls $
       substEvaluatedModuleM result
@@ -65,22 +65,22 @@ simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 type AbsEvaluatedModule n = Abs (Nest (NameBinder AtomNameC)) EvaluatedModule n
 
-splitSimpModule :: Distinct n => Env n -> Module n
+splitSimpModule :: forall n. Distinct n
+                 => Env n -> Module n
                 -> (Block n , AbsEvaluatedModule n)
-splitSimpModule bindings (Module _ decls result) = do
-  let (vs, recon) = captureClosure decls result
-  let resultTup = Atom $ ProdVal $ map Var vs
-  let block = runHardFail $ runEnvReaderT bindings $
-                refreshAbsM (Abs decls resultTup) \decls' result' ->
-                  makeBlock decls' result'
-  (block, recon)
+splitSimpModule env (Module _ decls result) = do
+  runEnvReaderM env $ runSubstReaderT idNameSubst do
+    Immut <- return $ toImmutEvidence env
+    refreshBinders decls \decls' -> do
+      result' <- substM result
+      telescopicCaptureBlock decls' $ result'
 
 applyDataResults :: EnvReader m
                  => AbsEvaluatedModule n -> Atom n
                  -> m n (EvaluatedModule n)
 applyDataResults (Abs bs evaluated) x = do
   runSubstReaderT idSubst do
-    xs <- liftM ignoreExcept $ runFallibleT1 $ getUnpacked x
+    xs <- liftM ignoreExcept $ runFallibleT1 $ unpackTelescope x
     extendSubst (bs @@> map SubstVal xs) $
       substEvaluatedModuleM evaluated
 

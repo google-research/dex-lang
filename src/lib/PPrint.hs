@@ -168,12 +168,20 @@ instance PrettyPrec (LamExpr n) where
       atPrec LowestPrec $ "\\"
       <> prettyLamHelper lamExpr (PrettyLam arr)
 
+instance Pretty (DepPairType n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (DepPairType n) where
+  prettyPrec (DepPairType b rhs) =
+    atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
+
 instance Pretty (Atom n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Atom n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
     Lam lamExpr -> prettyPrec lamExpr
     Pi piType -> atPrec LowestPrec $ align $ p piType
+    DepPairTy ty -> prettyPrec ty
+    DepPair x y _ -> atPrec ArgPrec $ align $ group $
+        parens $ p x <> ",>" <+> p y
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
@@ -203,6 +211,8 @@ instance PrettyPrec (Atom n) where
       "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
       atPrec AppPrec $ "ProjectElt" <+> p idxs <+> p v
+    DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
+      "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
 
 instance Pretty (DataConRefBinding n l) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (DataConRefBinding n l) where

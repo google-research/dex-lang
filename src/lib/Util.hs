@@ -9,7 +9,8 @@
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, uncons, repeated, transitiveClosure,
+             scanM, composeN, mapMaybe, uncons, repeated,
+             transitiveClosure, transitiveClosureM,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, findReplace, swapAt, uncurry3,
              measureSeconds,
@@ -208,6 +209,17 @@ transitiveClosure getParents seeds =
       unless (x `Set.member` visited) $ do
         extend $ Set.singleton x
         mapM_ go $ getParents x
+
+transitiveClosureM :: forall m a. (Monad m, Ord a) => (a -> m [a]) -> [a] -> m [a]
+transitiveClosureM getParents seeds =
+  toList <$> execStateT (mapM_ go seeds) mempty
+  where
+    go :: a -> StateT (Set.Set a) m ()
+    go x = do
+      visited <- get
+      unless (x `Set.member` visited) $ do
+        modify (<> Set.singleton x)
+        lift (getParents x) >>= mapM_ go
 
 measureSeconds :: MonadIO m => m a -> m (a, Double)
 measureSeconds m = do

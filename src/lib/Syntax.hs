@@ -25,7 +25,7 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
     PiBinding (..), PiBinder (..),
-    PiType (..), LetAnn (..), SomeDecl (..),
+    PiType (..), DepPairType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
     ClassDef (..), SynthCandidates (..), Env (..),
@@ -123,6 +123,8 @@ data Atom (n::S) =
    Var (AtomName n)
  | Lam (LamExpr n)
  | Pi  (PiType  n)
+ | DepPairTy (DepPairType n)
+ | DepPair   (Atom n) (Atom n) (DepPairType n)
    -- SourceName is purely for printing
  | DataCon SourceName (DataDefName n) [Atom n] Int [Atom n]
  | TypeCon SourceName (DataDefName n) [Atom n]
@@ -137,6 +139,8 @@ data Atom (n::S) =
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
  | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
+ -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
+ | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
  | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
@@ -219,6 +223,9 @@ data PiBinder (n::S) (l::S) =
 
 data PiType  (n::S) where
   PiType :: PiBinder n l -> EffectRow l -> Type  l -> PiType n
+
+data DepPairType (n::S) where
+  DepPairType :: Binder n l -> Type  l -> DepPairType n
 
 data Arrow =
    PlainArrow
@@ -1655,9 +1662,11 @@ instance GenericE Atom where
                    -- like containers
   {- Var -}        AtomName
   {- ProjectElt -} ( LiftE (NE.NonEmpty Int) `PairE` AtomName )
-            ) (EitherE4
+            ) (EitherE6
   {- Lam -}        LamExpr
   {- Pi -}         PiType
+  {- DepPairTy -}  DepPairType
+  {- DepPair -}    ( Atom `PairE` Atom `PairE` DepPairType)
   {- DataCon -}    ( LiftE (SourceName, Int)   `PairE`
                      DataDefName               `PairE`
                      ListE Atom                `PairE`
@@ -1673,25 +1682,28 @@ instance GenericE Atom where
             ) (EitherE2
   {- Con -}        (ComposeE PrimCon Atom)
   {- TC -}         (ComposeE PrimTC  Atom)
-            ) (EitherE4
+            ) (EitherE5
   {- Eff -}        EffectRow
   {- ACase -}      ( Atom `PairE` ListE (AltP Atom) `PairE` Type )
   {- DataConRef -} ( DataDefName                    `PairE`
                      ListE Atom                     `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
-  {- BoxedRef -}   ( Atom `PairE` Block `PairE` Abs Binder Atom ))
+  {- BoxedRef -}   ( Atom `PairE` Block `PairE` Abs Binder Atom )
+  {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
 
   fromE atom = case atom of
     Var v -> Case0 (Case0 v)
     ProjectElt idxs x -> Case0 (Case1 (PairE (LiftE idxs) x))
     Lam lamExpr -> Case1 (Case0 lamExpr)
     Pi  piExpr  -> Case1 (Case1 piExpr)
-    DataCon printName defName params con args -> Case1 $ Case2 $
+    DepPairTy ty -> Case1 (Case2 ty)
+    DepPair l r ty -> Case1 (Case3 $ l `PairE` r `PairE` ty)
+    DataCon printName defName params con args -> Case1 $ Case4 $
       LiftE (printName, con) `PairE`
             defName          `PairE`
       ListE params           `PairE`
       ListE args
-    TypeCon sourceName defName params -> Case1 $ Case3 $
+    TypeCon sourceName defName params -> Case1 $ Case5 $
       LiftE sourceName `PairE` defName `PairE` ListE params
     LabeledRow extItems -> Case2 $ Case0 $ ExtLabeledItemsE extItems
     Record items        -> Case2 $ Case1 $ ComposeE items
@@ -1707,6 +1719,8 @@ instance GenericE Atom where
       Case4 $ Case2 $ defName `PairE` ListE params `PairE` bs
     BoxedRef ptr size ab ->
       Case4 $ Case3 $ ptr `PairE` size `PairE` ab
+    DepPairRef lhs rhs ty ->
+      Case4 $ Case4 $ lhs `PairE` rhs `PairE` ty
 
   toE atom = case atom of
     Case0 val -> case val of
@@ -1716,12 +1730,14 @@ instance GenericE Atom where
     Case1 val -> case val of
       Case0 lamExpr -> Lam lamExpr
       Case1 piExpr  -> Pi  piExpr
-      Case2 ( LiftE (printName, con) `PairE`
-                    defName           `PairE`
+      Case2 ty      -> DepPairTy ty
+      Case3 (l `PairE` r `PairE` ty) -> DepPair l r ty
+      Case4 ( LiftE (printName, con) `PairE`
+                    defName          `PairE`
               ListE params           `PairE`
               ListE args ) ->
         DataCon printName defName params con args
-      Case3 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
+      Case5 (LiftE sourceName `PairE` defName `PairE` ListE params) ->
         TypeCon sourceName defName params
       _ -> error "impossible"
     Case2 val -> case val of
@@ -1743,12 +1759,13 @@ instance GenericE Atom where
       Case2 (defName `PairE` ListE params `PairE` bs) ->
         DataConRef defName params bs
       Case3 (ptr `PairE` size `PairE` ab) -> BoxedRef ptr size ab
+      Case4 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"
 
-instance SinkableE Atom
+instance SinkableE   Atom
 instance HoistableE  Atom
-instance AlphaEqE Atom
+instance AlphaEqE    Atom
 instance SubstE Name Atom
 
 -- TODO: special handling of ACase too
@@ -1856,6 +1873,9 @@ instance SubstE Name Block
 instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
 deriving via WrapE Block n instance Generic (Block n)
+
+instance BindsOneAtomName (BinderP AtomNameC Type) where
+  boundAtomBinding (_ :> ty) = MiscBound ty
 
 instance GenericB LamBinder where
   type RepB LamBinder =         LiftB (PairE Type (LiftE Arrow))
@@ -1972,6 +1992,19 @@ instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
 deriving instance Show (PiType n)
 deriving via WrapE PiType n instance Generic (PiType n)
+
+instance GenericE DepPairType where
+  type RepE DepPairType = Abs Binder Type
+  fromE (DepPairType b resultTy) = Abs b resultTy
+  toE   (Abs b resultTy) = DepPairType b resultTy
+
+instance SinkableE   DepPairType
+instance HoistableE  DepPairType
+instance AlphaEqE    DepPairType
+instance SubstE Name DepPairType
+instance SubstE AtomSubstVal DepPairType
+deriving instance Show (DepPairType n)
+deriving via WrapE DepPairType n instance Generic (DepPairType n)
 
 instance GenericE (EffectP name) where
   type RepE (EffectP name) =
@@ -2238,6 +2271,7 @@ instance Store (LamExpr n)
 instance Store (PiBinding n)
 instance Store (PiBinder n l)
 instance Store (PiType  n)
+instance Store (DepPairType  n)
 instance Store Arrow
 instance Store (ClassDef       n)
 instance Store (SourceMap n)

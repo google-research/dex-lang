@@ -641,6 +641,7 @@ makeDestRec idxs idxBinders ty = case ty of
           Nothing -> error "Dependent data constructors only allowed for single-constructor types"
           Just tys -> mapM (makeDestRec idxs idxBinders') tys
         return $ Con $ ConRef $ SumAsProd ty' tag contents
+  DepPairTy _ -> error "not implemented"
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs idxBinders b

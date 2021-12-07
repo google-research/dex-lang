@@ -14,7 +14,8 @@
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
   checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, checkedApplyDataDefParams, indices,
+  instantiatePi, instantiateDepPairTy,
+  checkExtends, checkedApplyDataDefParams, indices,
   applyDataDefParams,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
@@ -70,7 +71,13 @@ tryGetType e = liftImmut do
   e' <- sinkM e
   liftExcept $ runTyperT bindings $ getTypeE e'
 
-instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
+depPairLeftTy :: DepPairType n -> Type n
+depPairLeftTy (DepPairType (_:>ty) _) = ty
+
+instantiateDepPairTy :: ScopeReader m => DepPairType n -> Atom n -> m n (Type n)
+instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
+
+instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Type n)
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
@@ -248,6 +255,13 @@ instance HasType Atom where
       atomBindingType <$> lookupEnv name'
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
+    DepPair l r ty -> do
+      ty' <- checkTypeE TyKind ty
+      l'  <- checkTypeE (depPairLeftTy ty') l
+      rTy <- instantiateDepPairTy ty' l'
+      r |: rTy
+      return $ DepPairTy ty'
+    DepPairTy ty -> getTypeE ty
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
@@ -293,6 +307,14 @@ instance HasType Atom where
       argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
       checkDataConRefEnv argBs' args
       return $ RawRefTy $ TypeCon sourceName defName' params'
+    DepPairRef l (Abs b r) ty -> do
+      ty' <- checkTypeE TyKind ty
+      l |: RawRefTy (depPairLeftTy ty')
+      checkB b \b' -> do
+        ty'' <- sinkM ty'
+        rTy <- instantiateDepPairTy ty'' $ Var (binderName b')
+        r |: RawRefTy rTy
+      return $ RawRefTy $ DepPairTy ty'
     BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
       PtrTy (_, t) <- getTypeE ptr
       annTy |: TyKind
@@ -392,6 +414,11 @@ instance HasType LamExpr where
     checkB b \b' -> do
       bodyTy <- getTypeE body
       return $ lamExprTy b' bodyTy
+
+instance HasType DepPairType where
+  getTypeE (DepPairType b ty) = do
+    checkB b \_ -> ty |: TyKind
+    return TyKind
 
 lamExprTy :: LamBinder n l -> Type l -> Type n
 lamExprTy (LamBinder b ty arr eff) bodyTy =

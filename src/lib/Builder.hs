@@ -36,17 +36,21 @@ module Builder (
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
-  liftMonoidEmpty
+  liftMonoidEmpty,
+  telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   ) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
+import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
+import Data.Graph (graphFromEdges, topSort)
+import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -57,7 +61,7 @@ import PPrint ()
 import CheapReduction
 
 import LabeledItems
-import Util (enumerate, scanM, restructure)
+import Util (enumerate, scanM, restructure, transitiveClosureM)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -281,7 +285,7 @@ buildBlock cont = liftImmut do
   Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
   return $ Block (BlockAnn ty') decls' result'
 
-makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
+makeBlock :: (HasCallStack, EnvReader m) => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
   ty <- getType expr
   let ty' = ignoreHoistFailure $ hoist decls ty
@@ -789,3 +793,103 @@ indexSetSize (VariantTy (NoExt types)) = do
   sizes <- traverse indexSetSize types
   foldM iadd (IdxRepVal 0) sizes
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
+
+-- === capturing closures with telescopes ===
+
+telescopicCaptureBlock
+  :: (EnvReader m, EnvExtender m, HoistableE e, Immut l)
+  => (PrettyE e)
+  => Nest Decl n l -> e l -> m l (Block n, NaryAbs AtomNameC e n)
+telescopicCaptureBlock decls result = do
+  (result', ty, ab) <- telescopicCapture decls result
+  let block = Block (BlockAnn ty) decls (Atom result')
+  return (block, ab)
+
+telescopicCapture
+  :: (EnvReader m, EnvExtender m, Immut l, HoistableE e, HoistableB b, BindsEnv b)
+  => (PrettyB b, PrettyE e)
+  => b n l -> e l -> m l (Atom l, Type n, NaryAbs AtomNameC e n)
+telescopicCapture bs e = do
+  vs <- localVarsAndTypeVars bs e
+  vTys <- mapM (getType . Var) vs
+  let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
+  ty <- buildTelescopeTy vs tys
+  result <- buildTelescopeVal (map Var vsSorted) ty
+  let ty' = ignoreHoistFailure $ hoist bs ty
+  let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
+  return (result, ty', ab)
+
+-- XXX: assumes arguments are toposorted
+buildTelescopeTy :: (EnvReader m, EnvExtender m, Immut n)
+                 => [AtomName n] -> [Type n] -> m n (Type n)
+buildTelescopeTy [] [] = return UnitTy
+buildTelescopeTy (v:vs) (ty:tys) = do
+  withFreshBinder (getNameHint v) (MiscBound ty) \b -> do
+    ListE tys' <- applyAbs (sink $ abstractFreeVar v $ ListE tys) (binderName b)
+    ListE vs' <- sinkM $ ListE vs
+    innerTelescope <- buildTelescopeTy vs' tys'
+    return case hoist b innerTelescope of
+      HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
+      HoistFailure _ -> DepPairTy $ DepPairType (b:>ty) innerTelescope
+buildTelescopeTy _ _ = error "zip mismatch"
+
+buildTelescopeVal :: EnvReader m => [Atom n] -> Type n -> m n (Atom n)
+buildTelescopeVal elts telescopeTy = go elts telescopeTy
+  where
+    go :: (EnvReader m) => [Atom n] -> Type n -> m n (Atom n)
+    go [] UnitTy = return UnitVal
+    go (x:xs) (PairTy _ xsTy) = do
+      rest <- go xs xsTy
+      return $ PairVal x rest
+    go (x:xs) (DepPairTy ty) = do
+      xsTy <- instantiateDepPairTy ty x
+      rest <- go xs xsTy
+      return $ DepPair x rest ty
+    go _ _ = error "zip mismatch"
+
+toposortAnnVars :: forall e c n. (NameColor c, HoistableE e)
+                => [(Name c n, e n)] -> [(Name c n, e n)]
+toposortAnnVars annVars =
+  let (graph, vertexToNode, _) = graphFromEdges $ map annVarToNode annVars
+  in map (nodeToAnnVar . vertexToNode) $ reverse $ topSort graph
+  where
+    annVarToNode :: (Name c n, e n) -> (e n, Name c n, [Name c n])
+    annVarToNode (v, ann) = (ann, v, nameSetToList nameColorRep $ freeVarsE ann)
+
+    nodeToAnnVar :: (e n, Name c n, [Name c n]) -> (Name c n, e n)
+    nodeToAnnVar (ann, v, _) = (v, ann)
+
+unpackTelescope :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
+unpackTelescope atom = do
+  n <- telescopeLength <$> getType atom
+  return $ go n atom
+  where
+    go :: Int -> Atom n -> [Atom n]
+    go 0 _ = []
+    go n pair = left : go (n-1) right
+      where left  = getProjection [0] pair
+            right = getProjection [1] pair
+
+    telescopeLength :: Type n -> Int
+    telescopeLength ty = case ty of
+      UnitTy -> 0
+      PairTy _ rest -> 1 + telescopeLength rest
+      DepPairTy (DepPairType _ rest) -> 1 + telescopeLength rest
+      _ -> error $ "not a valid telescope: " ++ pprint ty
+
+localVarsAndTypeVars
+  :: forall m b e n l.
+     (EnvReader m, BindsNames b, HoistableE e)
+  => b n l -> e l -> m l [AtomName l]
+localVarsAndTypeVars b e =
+  transitiveClosureM varsViaType (localVars b e)
+  where
+    varsViaType :: AtomName l -> m l [AtomName l]
+    varsViaType v = do
+      ty <- getType $ Var v
+      return $ nameSetToList nameColorRep $ freeVarsE ty
+
+localVars :: (NameColor c, BindsNames b, HoistableE e)
+          => b n l -> e l -> [Name c l]
+localVars b e = nameSetToList nameColorRep $
+  M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)

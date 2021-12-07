@@ -70,6 +70,8 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   Var v -> doWithName v
   Lam _ -> substM atom
   Pi  _ -> substM atom
+  DepPair l r ty -> DepPair <$> rec l <*> rec r <*> substM ty
+  DepPairTy _ -> substM atom
   Con con -> Con <$> mapM rec con
   TC  tc  -> TC  <$> mapM rec tc
   Eff _ -> substM atom
@@ -83,6 +85,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
   Record items -> Record <$> mapM rec items
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _ _   -> error "Should only occur in Imp lowering"
+  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
   ProjectElt idxs v -> getProjection (toList idxs) <$> rec (Var v)
   _ -> error "not implemented"
   where rec x = traverseSurfaceAtomNames x doWithName
