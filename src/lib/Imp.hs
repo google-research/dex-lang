@@ -642,6 +642,8 @@ makeDestRec ty = case ty of
   VariantTy (NoExt types) -> do
     tag <- rec TagRepTy
     contents <- forM (toList types) rec
+    -- buggy! I think that `ty` needs to be applied to the indices here.
+    -- As least, in the safe names system that's the only thing that's possible.
     return $ Con $ ConRef $ SumAsProd ty tag $ map (\x->[x]) contents
   TC con -> case con of
     BaseType b -> do
@@ -668,6 +670,7 @@ makeBaseTypePtr ty = do
   numel <- buildScoped $ elemCountE idxs
   ptrScope <- fmap (const (UnitTy, UnknownBinder)) <$> look
   scope <- getScope
+  -- buggy! (or at least, not good)
   -- We use a different namespace because these will be hoisted to the top
   -- where they could cast shadows
   let addrSpace = chooseAddrSpace allocInfo numel

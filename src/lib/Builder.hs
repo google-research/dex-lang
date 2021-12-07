@@ -414,6 +414,7 @@ emitMaybeCase scrut nothingCase justCase = do
   let resultTy = getType nothingBody
   emit $ Case scrut [nothingAlt, justAlt] resultTy
 
+-- buggy, surely! what's going to go under these binders?
 monoidLift :: Type -> Type -> Nest Binder
 monoidLift baseTy accTy = case baseTy == accTy of
   True  -> Empty

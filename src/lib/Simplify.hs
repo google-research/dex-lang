@@ -307,6 +307,7 @@ simplifyExpr expr = case expr of
             Abs _ (LamVal _ (Block Empty (Atom (LamVal _ _)))) -> True
             _ -> False
           appAlt ~(Abs bs (LamVal b (Block Empty (Atom r)))) =
+            -- Buggy: chance of variable capture if any of `bs` are free in `x'`
             Abs bs $ subst (b @> x', mempty) r
       TypeCon def params -> return $ TypeCon def params'
          where params' = params ++ [x']
@@ -443,7 +444,7 @@ simplifyOp op = case op of
 simplifyHof :: Hof -> SimplifyM Atom
 simplifyHof hof = case hof of
   For d lam -> do
-    -- buggy: need to apply substitution to d!
+    -- buggy: need to apply substitution to i's type!
     ~(lam'@(Lam (Abs i _)), recon) <- simplifyLam lam
     ans <- emit $ Hof $ For d lam'
     case recon of

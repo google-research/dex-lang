@@ -50,6 +50,7 @@ type ClampPolynomial  = PolynomialP ClampMonomial
 data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
 data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
 
+-- buggy, probably. I can't figure out what the scopes are supposed to be here
 applyIdxs :: MonadBuilder m => Atom -> IndexStructure -> m Atom
 applyIdxs ptr Empty = return ptr
 applyIdxs ptr idxs@(Nest ~(Bind i) rest) = do
