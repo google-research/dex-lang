@@ -38,6 +38,8 @@ module Builder (
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
+  applyRecon, applyReconAbs,
+  ReconAbs, ReconstructAtom (..)
   ) where
 
 import Control.Applicative
@@ -302,10 +304,15 @@ inlineLastDecl (Nest decl rest) result =
 
 buildPureLam :: Builder m
              => NameHint -> Arrow -> Type n
-             -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+             -> (forall l. (Emits l, Distinct l, Ext n l) => AtomName l -> m l (Atom l))
              -> m n (Atom n)
-buildPureLam hint arr ty body =
- buildLamGeneral hint arr ty (const $ return Pure) body
+buildPureLam hint arr ty body = do
+  buildLamGeneral hint arr ty (const $ return Pure) \v -> do
+    -- TODO: we should just pass around Distinct by convention whenever we make
+    -- a distinct extension. We could make an alias `DExt n l` to make it more
+    -- convenient.
+    Distinct <- getDistinct
+    body v
 
 buildTabLam
   :: Builder m
@@ -796,24 +803,40 @@ indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
 -- === capturing closures with telescopes ===
 
+type ReconAbs e n = NaryAbs AtomNameC e n
+data ReconstructAtom (n::S) =
+   IdentityRecon
+ | LamRecon (ReconAbs Atom n)
+
+applyRecon :: (EnvReader m, Fallible1 m)
+           => ReconstructAtom n -> Atom n -> m n (Atom n)
+applyRecon IdentityRecon x = return x
+applyRecon (LamRecon ab) x = applyReconAbs ab x
+
+applyReconAbs
+  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)
+  => ReconAbs e n -> Atom n -> m n (e n)
+applyReconAbs ab x = do
+  xs <- unpackTelescope x
+  applyNaryAbs ab $ map SubstVal xs
+
 telescopicCaptureBlock
-  :: (EnvReader m, EnvExtender m, HoistableE e, Immut l)
-  => (PrettyE e)
-  => Nest Decl n l -> e l -> m l (Block n, NaryAbs AtomNameC e n)
+  :: (EnvReader m, HoistableE e)
+  => Nest Decl n l -> e l -> m l (Block n, ReconAbs e n)
 telescopicCaptureBlock decls result = do
   (result', ty, ab) <- telescopicCapture decls result
   let block = Block (BlockAnn ty) decls (Atom result')
   return (block, ab)
 
 telescopicCapture
-  :: (EnvReader m, EnvExtender m, Immut l, HoistableE e, HoistableB b, BindsEnv b)
-  => (PrettyB b, PrettyE e)
-  => b n l -> e l -> m l (Atom l, Type n, NaryAbs AtomNameC e n)
+  :: (EnvReader m, HoistableE e, HoistableB b)
+  => b n l -> e l -> m l (Atom l, Type n, ReconAbs e n)
 telescopicCapture bs e = do
   vs <- localVarsAndTypeVars bs e
   vTys <- mapM (getType . Var) vs
   let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
-  ty <- buildTelescopeTy vs tys
+  ty <- liftImmut $ liftEnvReaderM $
+          buildTelescopeTy (map sink vs) (map sink tys)
   result <- buildTelescopeVal (map Var vsSorted) ty
   let ty' = ignoreHoistFailure $ hoist bs ty
   let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
@@ -893,3 +916,14 @@ localVars :: (NameColor c, BindsNames b, HoistableE e)
           => b n l -> e l -> [Name c l]
 localVars b e = nameSetToList nameColorRep $
   M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+
+instance GenericE ReconstructAtom where
+  type RepE ReconstructAtom = EitherE UnitE (NaryAbs AtomNameC Atom)
+  toE = undefined
+  fromE = undefined
+
+instance SinkableE   ReconstructAtom
+instance HoistableE  ReconstructAtom
+instance AlphaEqE    ReconstructAtom
+instance SubstE Name ReconstructAtom
+instance SubstE AtomSubstVal ReconstructAtom

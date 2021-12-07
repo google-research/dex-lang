@@ -164,23 +164,13 @@ simplifyOp op = case op of
     emitOp $ PrimEffect ref $ MExtend f'
   _ -> emitOp op
 
-data Reconstruct n =
-   IdentityRecon
- | LamRecon (NaryAbs AtomNameC Atom n)
-
-applyRecon :: (Emits n, Builder m) => Reconstruct n -> Atom n -> m n (Atom n)
-applyRecon IdentityRecon x = return x
-applyRecon (LamRecon ab) x = do
-  xs <- getUnpacked x
-  applyNaryAbs ab $ map SubstVal xs
-
-simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
+simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyLam lam = do
   Lam (LamExpr b body) <- substM lam
   (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyNaryLam $ Abs (Nest b Empty) body
   return (Lam $ LamExpr b' body', recon)
 
-simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
+simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyBinaryLam binaryLam = do
   Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) <- substM binaryLam
   (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
@@ -188,34 +178,38 @@ simplifyBinaryLam binaryLam = do
   let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
   return (binaryLam', recon)
 
-simplifyNaryLam :: Simplifier m => NaryLam i -> m i o (NaryLam o, Reconstruct o)
+simplifyNaryLam :: Simplifier m => NaryLam i -> m i o (NaryLam o, ReconstructAtom o)
 simplifyNaryLam (Abs bs body) = fromPairE <$> liftImmut do
   refreshBinders bs \bs' -> do
     DistinctAbs decls result <- buildScoped $ simplifyBlock body
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
     extendEnv (toEnvFrag decls) do
-      (resultData, recon) <- defuncAtom (toScopeFrag bs' >>> toScopeFrag decls) result
-      block <- makeBlock decls $ Atom resultData
-      return $ PairE (Abs bs' block) recon
-
-defuncAtom :: EnvReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
-defuncAtom _ x = do
-  xTy <- getType x
-  if isData xTy
-    then return (x, IdentityRecon)
-    else error "todo"
-
-isData :: Type n -> Bool
-isData _ = True  -- TODO!
+      resultTy <- getType result
+      isData resultTy >>= \case
+        True -> do
+          block <- makeBlock decls $ Atom result
+          return $ PairE (Abs bs' block) IdentityRecon
+        False -> do
+          let locals = toScopeFrag bs' >>> toScopeFrag decls
+          -- TODO: this might be too cautious. The type only needs to be hoistable
+          -- above the delcs. In principle it can still mention vars from the lambda
+          -- binders.
+          (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
+          let block = Block (BlockAnn $ sink newResultTy) decls (Atom newResult)
+          return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
 simplifyHof hof = case hof of
-  For d lam -> do
+  For d lam@(Lam lamExpr) -> do
+    ixTy <- substM $ lamArgType lamExpr
     (lam', recon) <- simplifyLam lam
     ans <- liftM Var $ emit $ Hof $ For d lam'
     case recon of
       IdentityRecon -> return ans
-      LamRecon _ -> undefined
+      LamRecon reconAbs ->
+        buildPureLam "i" TabArrow ixTy \i' -> do
+          elt <- app (sink ans) $ Var i'
+          applyReconAbs (sink reconAbs) elt
   While body -> do
     (lam', IdentityRecon) <- simplifyLam body
     liftM Var $ emit $ Hof $ While lam'
@@ -247,16 +241,3 @@ simplifyHof hof = case hof of
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
-
--- === instances ===
-
-instance GenericE Reconstruct where
-  type RepE Reconstruct = EitherE UnitE (NaryAbs AtomNameC Atom)
-  toE = undefined
-  fromE = undefined
-
-instance SinkableE Reconstruct
-instance HoistableE  Reconstruct
-instance SubstE Name Reconstruct
-instance SubstE AtomSubstVal Reconstruct
-instance AlphaEqE Reconstruct

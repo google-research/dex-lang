@@ -20,7 +20,7 @@ module Type (
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
-  oneEffect, lamExprTy) where
+  oneEffect, lamExprTy, isData) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -1228,3 +1228,42 @@ projectLength ty = case ty of
   RecordTy (NoExt types) -> return $ length types
   ProdTy tys -> return $ length tys
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
+
+-- === "Data" type class ===
+
+isData :: EnvReader m => Type n -> m n Bool
+isData ty = fromLiftE <$> liftImmut do
+  ty' <- sinkM ty
+  DB env <- getDB
+  let s = " is not serializable"
+  case runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $ checkDataLike s ty' of
+    Success () -> return $ LiftE True
+    Failure _  -> return $ LiftE False
+
+checkDataLike :: ( EnvReader2 m, EnvExtender2 m
+                 , SubstReader Name m, Fallible2 m, Immut o)
+              => String -> Type i -> m i o ()
+checkDataLike msg ty = case ty of
+  Var _ -> error "Not implemented"
+  TabTy b eltTy ->
+    refreshBinders b \_ ->
+      checkDataLike msg eltTy
+  RecordTy (NoExt items)  -> mapM_ recur items
+  VariantTy (NoExt items) -> mapM_ recur items
+  -- TypeCon (_, def) params ->
+  --   mapM_ checkDataLikeDataCon $ applyDataDefParams def params
+  TC con -> case con of
+    BaseType _       -> return ()
+    ProdType as      -> mapM_ recur as
+    SumType  cs      -> mapM_ recur cs
+    IntRange _ _     -> return ()
+    IndexRange _ _ _ -> return ()
+    IndexSlice _ _   -> return ()
+    _ -> throw TypeErr $ pprint ty ++ msg
+  _   -> throw TypeErr $ pprint ty ++ msg
+  where recur x = checkDataLike msg x
+
+-- checkDataLikeDataCon :: Fallible m => DataConDef -> m ()
+-- checkDataLikeDataCon (DataConDef _ bs) =
+--   mapM_ (checkDataLike "data con binder" . binderAnn) bs
+

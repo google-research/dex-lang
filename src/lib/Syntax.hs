@@ -54,7 +54,7 @@ module Syntax (
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName,
     lookupEnvPure, lookupSourceMap,
-    getSourceMapM, updateEnv, runEnvReaderT,
+    getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM,
     EnvReaderM, runEnvReaderM,
     EnvReaderT (..), EnvReader2, EnvExtender2,
     getDB, DistinctEnv (..),
@@ -62,7 +62,7 @@ module Syntax (
     considerNonDepPiType, trySelectBranch,
     fromNonDepTabTy, nonDepDataConTys, binderType, atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
-    piArgType, piArrow, extendEffRow,
+    piArgType, lamArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates,
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoSinkableProof,
     FallibleT1, runFallibleT1, abstractPtrLiterals,
@@ -408,6 +408,11 @@ runEnvReaderT bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
     runReaderT (runEnvReaderT' cont) (Distinct, bindings)
 
+liftEnvReaderM :: (EnvReader m, Immut n) => EnvReaderM n a -> m n a
+liftEnvReaderM cont = do
+  DB env <- getDB
+  return $ runEnvReaderM env cont
+
 instance Monad m => EnvReader (EnvReaderT m) where
   getEnv = EnvReaderT $ asks snd
 
@@ -544,7 +549,7 @@ refreshBinders
      , SubstReader v m, SubstB v b, BindsEnv b)
   => Immut o
   => b i i'
-  -> (forall o'. (Immut o', Ext o o') => b o o' -> m i' o' a)
+  -> (forall o'. (Immut o', Distinct o', Ext o o') => b o o' -> m i' o' a)
   -> m i o a
 refreshBinders b cont = do
   scope <- getScope
@@ -1348,6 +1353,9 @@ infixr 2 ==>
 
 piArgType :: PiType n -> Type n
 piArgType (PiType (PiBinder _ ty _) _ _) = ty
+
+lamArgType :: LamExpr n -> Type n
+lamArgType (LamExpr (LamBinder _ ty _ _) _) = ty
 
 piArrow :: PiType n -> Arrow
 piArrow (PiType (PiBinder _ _ arr) _ _) = arr
