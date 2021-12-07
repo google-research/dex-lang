@@ -54,7 +54,7 @@ module Syntax (
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName,
     lookupEnvPure, lookupSourceMap,
-    getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM,
+    getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM, liftSubstEnvReaderM,
     EnvReaderM, runEnvReaderM,
     EnvReaderT (..), EnvReader2, EnvExtender2,
     getDB, DistinctEnv (..),
@@ -412,6 +412,12 @@ liftEnvReaderM :: (EnvReader m, Immut n) => EnvReaderM n a -> m n a
 liftEnvReaderM cont = do
   DB env <- getDB
   return $ runEnvReaderM env cont
+
+liftSubstEnvReaderM
+  :: (EnvReader m, Immut n)
+  => SubstReaderT Name EnvReaderM n n a
+  -> m n a
+liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idNameSubst $ cont
 
 instance Monad m => EnvReader (EnvReaderT m) where
   getEnv = EnvReaderT $ asks snd

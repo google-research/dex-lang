@@ -652,6 +652,7 @@ makeDestRec idxs idxBinders ty = case ty of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs idxBinders b
       return $ Con $ BaseTypeRef ptr
+    SumType cases -> recSumType cases
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
     IntRange l h -> do
       l' <- applyCurIdxs l
@@ -664,6 +665,7 @@ makeDestRec idxs idxBinders ty = case ty of
       h' <- mapM applyCurIdxs h
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IndexRangeVal t' l' h' x
+
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
@@ -671,6 +673,12 @@ makeDestRec idxs idxBinders ty = case ty of
     applyCurIdxs x = applyNaryAbs (Abs idxBinders x) idxs
 
     rec = makeDestRec idxs idxBinders
+
+    recSumType cases = do
+      tag <- rec TagRepTy
+      ty' <- applyCurIdxs ty
+      contents <- forM cases rec
+      return $ Con $ ConRef $ SumAsProd ty' tag $ map (\x->[x]) contents
 
 makeBaseTypePtr :: Emits n => Idxs n -> IdxNest n l -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr idxs idxBinders ty = do
@@ -732,6 +740,11 @@ copyAtom topDest topSrc = copyRec topDest topSrc
               tag' <- fromScalarAtom tag
               emitSwitch tag' (zip payload payloadSrc)
                 \(d, s) -> zipWithM_ copyRec (map sink d) (map sink s)
+          SumVal _ con x -> do
+            copyRec tag $ TagRepVal $ fromIntegral con
+            case payload !! con of
+              [xDest] -> copyRec xDest x
+              _       -> error "Expected singleton payload in SumAsProd"
           Variant _ _ _ _ -> undefined
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) ->

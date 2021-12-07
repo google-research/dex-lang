@@ -13,7 +13,7 @@
 
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
-  checkModule, checkTypes, getType, litType, getBaseMonoidType,
+  checkModule, checkTypes, getType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, instantiateDepPairTy,
   checkExtends, checkedApplyDataDefParams, indices,
   applyDataDefParams,
@@ -64,6 +64,16 @@ getType e = liftImmut do
   DB bindings <- getDB
   e' <- sinkM e
   return $ runHardFail $ runTyperT bindings $ getTypeE e'
+
+getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
+             => e i -> m i o (Type o)
+getTypeSubst e = liftImmut do
+  DB bindings <- getDB
+  subst <- getSubst
+  return $ runHardFail $
+    runEnvReaderT bindings $
+      runSubstReaderT subst $
+        runTyperT' $ getTypeE e
 
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftImmut do
@@ -802,6 +812,7 @@ caseAltsBinderTys ty = case ty of
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
+  SumTy cases -> mapM typeAsBinderNest cases
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
 checkDataConRefEnv :: Typer m

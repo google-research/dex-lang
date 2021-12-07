@@ -26,7 +26,8 @@ module Builder (
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
+  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
+  buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
@@ -422,11 +423,12 @@ buildNaryAbs _ _ = error "impossible"
 buildAlt
   :: Builder m
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
+  -> (forall l. (Distinct l, Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
   -> m n (Alt n)
 buildAlt bs body = do
   buildNaryAbs bs \xs -> do
     buildBlock do
+      Distinct <- getDistinct
       xs' <- mapM sinkM xs
       body xs'
 
@@ -438,6 +440,17 @@ buildUnaryAlt
 buildUnaryAlt ty body = do
   bs <- singletonBinderNest NoHint ty
   buildAlt bs \[v] -> body v
+
+buildUnaryAtomAlt
+  :: Builder m
+  => Type n
+  -> (forall l. (Distinct l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (AltP Atom n)
+buildUnaryAtomAlt ty body = do
+  bs <- singletonBinderNest NoHint ty
+  buildNaryAbs bs \[v] -> do
+    Distinct <- getDistinct
+    body v
 
 buildNewtype :: Builder m
              => SourceName

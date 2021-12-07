@@ -22,6 +22,7 @@ import Builder
 import Syntax
 import Type
 import Interpreter (traverseSurfaceAtomNames)
+import Util (enumerate)
 
 -- === simplification monad ===
 
@@ -125,12 +126,41 @@ simplifyExpr expr = case expr of
         Abs bs body <- return $ alts !! i
         extendSubst (bs @@> map SubstVal args) $ simplifyBlock body
       Nothing -> do
-        alts' <- forM alts \(Abs bs body) -> do
-          bs' <- substM $ EmptyAbs bs
-          buildNaryAbs bs' \xs ->
-            extendSubst (bs @@> map Rename xs) $
-              buildBlock $ simplifyBlock body
-        liftM Var $ emit $ Case e' alts' resultTy'
+        substM resultTy >>= isData >>= \case
+          True -> do
+            alts' <- forM alts \(Abs bs body) -> do
+              bs' <- substM $ EmptyAbs bs
+              buildNaryAbs bs' \xs ->
+                extendSubst (bs @@> map Rename xs) $
+                  buildBlock $ simplifyBlock body
+            liftM Var $ emit $ Case e' alts' resultTy'
+          False -> defuncCase e' alts resultTy'
+
+defuncCase :: (Emits o, Simplifier m) => Atom o -> [Alt i] -> Type o -> m i o (Atom o)
+defuncCase scrut alts resultTy = do
+  (alts', recons) <- unzip <$> mapM simplifyAbs alts
+  closureTys <- mapM getAltTy alts'
+  let closureSumTy = SumTy closureTys
+  alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
+  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy
+  reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
+                 buildUnaryAtomAlt ty \v -> applyRecon (sink recon) $ Var v
+  return $ ACase sumVal reconAlts resultTy
+
+  where
+    getAltTy :: EnvReader m => Alt n -> m n (Type n)
+    getAltTy alt = liftImmut $ liftSubstEnvReaderM do
+      Abs bs body <- sinkM alt
+      refreshBinders bs \bs' -> do
+        ty <- getTypeSubst body
+        -- Result types of simplified abs should be hoistable past binder
+        return $ ignoreHoistFailure $ hoist bs' ty
+
+    injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
+    injectAltResult sumTy con (Abs bs body) = liftBuilder do
+      buildAlt (sink $ EmptyAbs bs) \vs -> do
+        originalResult <- emitBlock =<< applyNaryAbs (sink $ Abs bs body) vs
+        return $ Con $ SumCon (sink sumTy) con originalResult
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
 simplifyApp f x = case f of
@@ -140,7 +170,16 @@ simplifyApp f x = case f of
     DataDef _ paramBs _ <- lookupDataDef defName
     let (params', xs') = splitAt (nestLength paramBs) $ params ++ xs ++ [x]
     return $ DataCon printName defName params' con xs'
-  ACase _ _ ~(Pi _) -> undefined
+  ACase e alts (Pi piType) -> do
+    -- TODO: optimization for common case where all branches are curried
+    -- functions and we do the application under the ACase without emitting a
+    -- case expression.
+    Just (_, _, _, resultTy) <- return $ considerNonDepPiType piType
+    alts' <- forM alts \(Abs bs a) -> do
+      buildAlt (EmptyAbs bs) \vs -> do
+        a' <- applyNaryAbs (sink $ Abs bs a) vs
+        app a' (sink x)
+    dropSubst $ simplifyExpr $ Case e alts' resultTy
   TypeCon sn def params -> return $ TypeCon sn def params'
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x
@@ -167,19 +206,21 @@ simplifyOp op = case op of
 simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyLam lam = do
   Lam (LamExpr b body) <- substM lam
-  (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyNaryLam $ Abs (Nest b Empty) body
+  (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyAbs $ Abs (Nest b Empty) body
   return (Lam $ LamExpr b' body', recon)
 
 simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyBinaryLam binaryLam = do
   Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) <- substM binaryLam
   (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
-      dropSubst $ simplifyNaryLam $ Abs (Nest b1 (Nest b2 Empty)) body
+      dropSubst $ simplifyAbs $ Abs (Nest b1 (Nest b2 Empty)) body
   let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
   return (binaryLam', recon)
 
-simplifyNaryLam :: Simplifier m => NaryLam i -> m i o (NaryLam o, ReconstructAtom o)
-simplifyNaryLam (Abs bs body) = fromPairE <$> liftImmut do
+simplifyAbs
+  :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+  => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
+simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
   refreshBinders bs \bs' -> do
     DistinctAbs decls result <- buildScoped $ simplifyBlock body
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
