@@ -635,7 +635,7 @@ makeDestRec idxs idxBinders ty = case ty of
     Abs idxBinders' (ListE dcs) <- liftImmut do
       refreshAbsM (sink $ Abs idxBinders ty) \idxBinders' (TypeCon _ defName params) -> do
         def <- lookupDataDef defName
-        dcs <- applyDataDefParams def params
+        dcs <- instantiateDataDef def params
         return $ Abs idxBinders' $ ListE dcs
     case dcs of
       [] -> error "Void type not allowed"

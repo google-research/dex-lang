@@ -16,7 +16,7 @@ module Type (
   checkModule, checkTypes, getType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, instantiateDepPairTy,
   checkExtends, checkedApplyDataDefParams, indices,
-  applyDataDefParams,
+  instantiateDataDef,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
@@ -353,6 +353,9 @@ instance HasType Atom where
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         ProdTy xs -> return $ xs !! i
+        DepPairTy t | i == 0 -> return $ depPairLeftTy t
+        DepPairTy t | i == 1 -> do v' <- substM v
+                                   instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -1130,8 +1133,8 @@ getBaseMonoidType ty = case ty of
   Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
 
-applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
-applyDataDefParams (DataDef _ bs cons) params =
+instantiateDataDef :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
+instantiateDataDef (DataDef _ bs cons) params =
   fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
 
 checkedApplyDataDefParams :: (EnvReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
@@ -1234,7 +1237,7 @@ projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n Int
 projectLength ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    [DataConDef _ (Abs bs UnitE)] <- applyDataDefParams def params
+    [DataConDef _ (Abs bs UnitE)] <- instantiateDataDef def params
     return $ nestLength bs
   RecordTy (NoExt types) -> return $ length types
   ProdTy tys -> return $ length tys
@@ -1261,8 +1264,15 @@ checkDataLike msg ty = case ty of
       checkDataLike msg eltTy
   RecordTy (NoExt items)  -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
-  -- TypeCon (_, def) params ->
-  --   mapM_ checkDataLikeDataCon $ applyDataDefParams def params
+  DepPairTy (DepPairType b@(_:>l) r) -> do
+    recur l
+    refreshBinders b \_ -> checkDataLike msg r
+  TypeCon _ defName params -> do
+    params' <- mapM substM params
+    def <- lookupDataDef =<< substM defName
+    dataCons <- instantiateDataDef def params'
+    dropSubst $ forM_ dataCons \(DataConDef _ bs) ->
+      checkDataLikeBinderNest bs
   TC con -> case con of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as
@@ -1272,9 +1282,21 @@ checkDataLike msg ty = case ty of
     IndexSlice _ _   -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg
   _   -> throw TypeErr $ pprint ty ++ msg
-  where recur x = checkDataLike msg x
 
--- checkDataLikeDataCon :: Fallible m => DataConDef -> m ()
--- checkDataLikeDataCon (DataConDef _ bs) =
---   mapM_ (checkDataLike "data con binder" . binderAnn) bs
+  where
+    recur x = checkDataLike msg x
 
+checkDataLikeBinderNest :: ( EnvReader2 m, EnvExtender2 m
+                           , SubstReader Name m, Fallible2 m, Immut o)
+                        => EmptyAbs (Nest Binder) i -> m i o ()
+checkDataLikeBinderNest (Abs Empty UnitE) = return ()
+checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
+  checkDataLike "data con binder" $ binderType b
+  refreshBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE
+
+-- checkDataLikeDataCon :: ( EnvReader2 m, EnvExtender2 m
+--                         , SubstReader Name m, Fallible2 m, Immut o)
+--                      => DataConDef n -> m n ()
+-- checkDataLikeDataCon (DataConDef _ bs) = do
+--   refreshBinders bs \_ -> do
+--     mapM_ (checkDataLike "data con binder" . binderAnn) bs

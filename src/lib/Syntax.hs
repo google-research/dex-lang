@@ -1581,6 +1581,8 @@ getProjection (i:is) a = case getProjection is a of
   DataCon _ _ _ _ xs -> xs !! i
   Record items -> toList items !! i
   Con (ProdCon xs) -> xs !! i
+  DepPair l _ _ | i == 0 -> l
+  DepPair _ r _ | i == 1 -> r
   a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
