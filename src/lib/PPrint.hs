@@ -207,8 +207,8 @@ instance PrettyPrec (Atom n) where
     ACase e alts _ -> prettyPrecCase "acase" e alts
     DataConRef _ params args -> atPrec AppPrec $
       "DataConRef" <+> p params <+> p args
-    BoxedRef ptr size (Abs b body) -> atPrec AppPrec $
-      "Box" <+> p b <+> "<-" <+> p ptr <+> "[" <> p size <> "]" <+> hardline <> "in" <+> p body
+    BoxedRef ptrsSizes (Abs b body) -> atPrec AppPrec $
+      "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
       atPrec AppPrec $ "ProjectElt" <+> p idxs <+> p v
     DepPairRef l (Abs b r) _ -> atPrec LowestPrec $

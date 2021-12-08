@@ -141,7 +141,8 @@ data Atom (n::S) =
  | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
  -- lhs ref, rhs ref abstracted over the eventual value of lhs ref, type
  | DepPairRef (Atom n) (Abs Binder Atom n) (DepPairType n)
- | BoxedRef (Atom n) (Block n) (Abs Binder Atom n)  -- ptr, size, binder/body
+ | BoxedRef [(Atom n, Block n)]        -- ptrptrs/sizes
+            (NaryAbs AtomNameC Atom n) -- abstracted dest
  -- access a nested member of a binder
  -- XXX: Variable name must not be an alias for another name or for
  -- a statically-known atom. This is because the variable name used
@@ -1705,7 +1706,7 @@ instance GenericE Atom where
   {- DataConRef -} ( DataDefName                    `PairE`
                      ListE Atom                     `PairE`
                      EmptyAbs (Nest DataConRefBinding) )
-  {- BoxedRef -}   ( Atom `PairE` Block `PairE` Abs Binder Atom )
+  {- BoxedRef -}   ( ListE (Atom `PairE` Block) `PairE` NaryAbs AtomNameC Atom )
   {- DepPairRef -} ( Atom `PairE` Abs Binder Atom `PairE` DepPairType))
 
   fromE atom = case atom of
@@ -1734,8 +1735,8 @@ instance GenericE Atom where
     ACase scrut alts ty -> Case4 $ Case1 $ scrut `PairE` ListE alts `PairE` ty
     DataConRef defName params bs ->
       Case4 $ Case2 $ defName `PairE` ListE params `PairE` bs
-    BoxedRef ptr size ab ->
-      Case4 $ Case3 $ ptr `PairE` size `PairE` ab
+    BoxedRef ptrsAndSizes ab ->
+      Case4 $ Case3 $ ListE (map (uncurry PairE) ptrsAndSizes) `PairE` ab
     DepPairRef lhs rhs ty ->
       Case4 $ Case4 $ lhs `PairE` rhs `PairE` ty
 
@@ -1775,7 +1776,7 @@ instance GenericE Atom where
       Case1 (scrut `PairE` ListE alts `PairE` ty) -> ACase scrut alts ty
       Case2 (defName `PairE` ListE params `PairE` bs) ->
         DataConRef defName params bs
-      Case3 (ptr `PairE` size `PairE` ab) -> BoxedRef ptr size ab
+      Case3 (ListE ptrsAndSizes `PairE` ab) -> BoxedRef (map fromPairE ptrsAndSizes) ab
       Case4 (lhs `PairE` rhs `PairE` ty) -> DepPairRef lhs rhs ty
       _ -> error "impossible"
     _ -> error "impossible"

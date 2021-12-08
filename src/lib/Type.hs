@@ -259,7 +259,7 @@ instance CheckableE Atom where
   checkE atom = fst <$> getTypeAndSubstE atom
 
 instance HasType Atom where
-  getTypeE atom = case atom of
+  getTypeE atom = liftImmut $ case atom of
     Var name -> do
       name' <- substM name
       atomBindingType <$> lookupEnv name'
@@ -325,16 +325,15 @@ instance HasType Atom where
         rTy <- instantiateDepPairTy ty'' $ Var (binderName b')
         r |: RawRefTy rTy
       return $ RawRefTy $ DepPairTy ty'
-    BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
-      PtrTy (_, t) <- getTypeE ptr
-      annTy |: TyKind
-      annTy' <- substM annTy
-      checkAlphaEq annTy' (BaseTy t)
-      numel |: IdxRepTy
-      depTy <- refreshBindersI b \b' -> do
-        bodyTy <- getTypeE body
-        return $ Abs b' bodyTy
-      liftHoistExcept $ fromConstAbs depTy
+    BoxedRef ptrsAndSizes (Abs bs body) -> do
+      ptrTys <- forM ptrsAndSizes \(ptr, numel) -> do
+        numel |: IdxRepTy
+        ty@(PtrTy _) <- getTypeE ptr
+        return ty
+      withFreshBinders (zip (repeat NoHint) ptrTys) \bs' vs -> do
+        extendSubst (bs @@> vs) do
+          bodyTy <- getTypeE body
+          liftHoistExcept $ hoist bs' bodyTy
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v

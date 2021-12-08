@@ -426,7 +426,6 @@ toImpHof maybeDest hof = do
 --   emitDecl    :: Expr  l -> DestM n l (AtomName l)
 --   emitPointer :: Block n -> DestM n l (AtomName n)
 
-
 data DestPtrInfo n = DestPtrInfo PtrType (Block n)
 data DestEmissions n l where
   DestEmissions
@@ -590,7 +589,6 @@ instance SubstE AtomSubstVal DestPtrInfo
 type Dest = Atom  -- has type `Ref a` for some a
 type MaybeDest n = Maybe (Dest n)
 
-type IdxNest = Nest Binder
 type Idxs n = [AtomName n]
 
 data AbsPtrs e n = AbsPtrs (NaryAbs AtomNameC e n) [DestPtrInfo n]
@@ -620,12 +618,18 @@ makeDest allocInfo ty = do
           return $ Abs decls' $ AbsPtrs (Abs ptrBs' result) (map sink ptrInfo)
   runSubstReaderT idSubst $ translateDeclNest decls $ substM result
 
-makeDestRec :: forall n l.
-               Emits n => Idxs n -> IdxNest n l -> Type l -> DestM n (Dest n)
+type IdxNest = Nest Binder
+
+makeDestRec ::
+  forall n l . Emits n
+    => Idxs n       -- indices from the enclosing table lambas we're building
+    -> IdxNest n l  -- indices from the table type we're building a dest for.
+      -> Type l
+    -> DestM n (Dest n)
 makeDestRec idxs idxBinders ty = case ty of
   TabTy (PiBinder b iTy _) bodyTy -> do
     Distinct <- getDistinct
-    iTy' <- applyCurIdxs iTy
+    iTy' <- idxSubst iTy
     lam <- buildTabLamDest "i" (sink iTy') \v -> do
       let idxs' = map sink idxs <> [v]
       Abs idxBinders' bodyTy' <- sinkM $ Abs (idxBinders >>> Nest (b:>iTy) Empty) bodyTy
@@ -642,12 +646,20 @@ makeDestRec idxs idxBinders ty = case ty of
       [_] -> error "not implemented"
       _ -> do
         tag <- rec TagRepTy
-        ty' <- applyCurIdxs ty
+        ty' <- idxSubst ty
         contents <- forM dcs \dc -> case nonDepDataConTys dc of
           Nothing -> error "Dependent data constructors only allowed for single-constructor types"
           Just tys -> mapM (makeDestRec idxs idxBinders') tys
         return $ Con $ ConRef $ SumAsProd ty' tag contents
-  DepPairTy _ -> error "not implemented"
+  DepPairTy depPairTy@(DepPairType (b:>lTy) rTy) -> do
+    lDest <- rec lTy
+    lTy' <- idxSubst lTy
+    depPairTy' <- idxSubst depPairTy
+    case hoist b rTy of
+      HoistSuccess rTy' -> do
+        Abs b' rDest <- toConstAbs nameColorRep =<< rec rTy'
+        return $ DepPairRef lDest (Abs (b':>lTy') rDest) depPairTy'
+      HoistFailure _ -> undefined
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs idxBinders b
@@ -655,28 +667,29 @@ makeDestRec idxs idxBinders ty = case ty of
     SumType cases -> recSumType cases
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
     IntRange l h -> do
-      l' <- applyCurIdxs l
-      h' <- applyCurIdxs h
+      l' <- idxSubst l
+      h' <- idxSubst h
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IntRangeVal l' h' x
     IndexRange t l h -> do
-      t' <- applyCurIdxs t
-      l' <- mapM applyCurIdxs l
-      h' <- mapM applyCurIdxs h
+      t' <- idxSubst t
+      l' <- mapM idxSubst l
+      h' <- mapM idxSubst h
       x <- rec IdxRepTy
       return $ Con $ ConRef $ IndexRangeVal t' l' h' x
 
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
-    applyCurIdxs :: (SinkableE e, SubstE Name e) => e l -> DestM n (e n)
-    applyCurIdxs x = applyNaryAbs (Abs idxBinders x) idxs
+    -- this is really just `substM`. Should we just use a SubsTreader instead?
+    idxSubst :: (SinkableE e, SubstE Name e) => e l -> DestM n (e n)
+    idxSubst x = applyNaryAbs (Abs idxBinders x) idxs
 
     rec = makeDestRec idxs idxBinders
 
     recSumType cases = do
       tag <- rec TagRepTy
-      ty' <- applyCurIdxs ty
+      ty' <- idxSubst ty
       contents <- forM cases rec
       return $ Con $ ConRef $ SumAsProd ty' tag $ map (\x->[x]) contents
 
@@ -718,7 +731,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
   where
     copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
     copyRec dest src = case (dest, src) of
-      (BoxedRef _ _ _, _) -> undefined
+      (BoxedRef _ _, _) -> undefined
       (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
         copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
