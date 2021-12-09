@@ -112,8 +112,14 @@ instance Pretty Expr where
 -------------------- Evaluation --------------------
 
 type EvalEnv = M.Map Var Value
+evalFunc :: Program -> FuncName -> [Value] -> [Value] -> Result
+evalFunc prog@(Program defs) funcName vals vals' = do
+  let FuncDef formals linFormals _ funcExpr = defs ! funcName
+  let appEnv = envExt mempty (fst <$> (formals ++ linFormals)) (vals ++ vals')
+  eval prog appEnv funcExpr
+
 eval :: Program -> EvalEnv -> Expr -> Result
-eval prog@(Program defs) env expr = case expr of
+eval prog env expr = case expr of
   Ret nonlin lin -> Result ((env !) <$> nonlin) ((env !) <$> lin)
   LetMixed vs linVs e1 e2 -> do
     let Result vals linVals = eval prog env e1
@@ -127,12 +133,8 @@ eval prog@(Program defs) env expr = case expr of
     let TupleVal vals = env ! v
     let env' = envExt env vs vals
     eval prog env' e
-  App funcName args linArgs -> do
-    let FuncDef formals linFormals _ funcExpr = defs ! funcName
-    let argVals = (env !) <$> args
-    let linArgVals = (env !) <$> linArgs
-    let appEnv = envExt mempty (fst <$> (formals ++ linFormals)) (argVals ++ linArgVals)
-    eval prog appEnv funcExpr
+  App funcName args linArgs ->
+    evalFunc prog funcName ((env !) <$> args) ((env !) <$> linArgs)
   -- Nonlinear expressions
   Var v     -> result $ env ! v
   Lit f     -> result $ FloatVal f
@@ -254,7 +256,7 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     case env ! v of
       TupleType tys -> do
         check "" $ length tys == length vs
-        typecheck prog (envExt env vs tys, linEnv) e
+        typecheck prog (envExt (env `M.restrictKeys` free) vs tys, linEnv) e
       _ -> throwError "Unpacking a non-tuple type"
   LetUnpackLin vs v e -> do
     let FV free freeLin = freeVars e
@@ -512,6 +514,67 @@ shuffle scope es = go [] [] (freshVars scope) es
         Ret [v] [v']
     go n l (v:v':vt) (e:t) = LetMixed [v] [v'] e $ go (Var v:n) (LVar v':l) vt t
     go _ _ _ _ = error "Impossible"
+
+-------------------- Unzip --------------------
+
+unzipProgram :: Program -> Program
+unzipProgram (Program funcMap) = Program $ flip M.foldMapWithKey funcMap $ \name def -> do
+  let (udef, udef') = unzipFunc def
+  M.fromList [(name ++ ".nonlin", udef), (name ++ ".lin", udef')]
+
+unzipFunc :: FuncDef -> (FuncDef, FuncDef)
+unzipFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys) body) =
+  ( FuncDef formalsWithTys [] nonlinFuncTy nonlinBody
+  , FuncDef [(resVar, residualTupleTy)]
+      linFormalsWithTys (MixedType [] linRetTys) linBody
+  )
+  where
+    (formals, formalTypes) = unzip formalsWithTys
+    (linFormals, linFormalTypes) = unzip linFormalsWithTys
+    formalsScope = scopeExt (scopeExt mempty formals) linFormals
+    formalsSubst = envExt (envExt mempty formals formals) linFormals linFormals
+    ((ctx, ctxScope), ubody, ubody') = unzipExpr formalsScope formalsSubst body
+    residualVars = toList $ getFree (freeVars ubody') `S.difference` (scopeExt mempty linFormals)
+    resVar:retVars = take (1 + length retTys) $ freshVars ctxScope
+    nonlinBody = ctx $
+      LetMixed retVars [] ubody $
+      LetMixed [resVar] [] (Tuple $ Var <$> residualVars) $
+      Ret (retVars ++ [resVar]) []
+    linBody = LetUnpack residualVars resVar $ ubody'
+    Right nonlinFuncTy@(MixedType nonlinRetTys []) =
+      typecheck (Program undefined) (M.fromList formalsWithTys, mempty) nonlinBody
+    residualTupleTy = last nonlinRetTys
+
+
+unzipExpr :: Scope -> Subst -> Expr -> ((Expr -> Expr, Scope), Expr, Expr)
+unzipExpr scope subst expr = case expr of
+  Ret vs vs' -> ((id, scope), Ret ((subst !) <$> vs) [], Ret [] ((subst !) <$> vs'))
+  LetMixed vs vs' e1 e2 ->
+      ( (ctx1 . LetMixed uvs [] ue1 . ctx2, scopeCtx2)
+      , ue2
+      , LetMixed [] uvs' ue1' ue2'
+      )
+    where
+      ((ctx1, scopeCtx1), ue1, ue1') = unzipExpr scope subst e1
+      (uvs, uvs') = splitAt (length vs) $ take (length vs + length vs') $ freshVars scopeCtx1
+      e2Subst = envExt (envExt subst vs uvs) vs' uvs'
+      e2Scope = scopeExt (scopeExt scope uvs) uvs'
+      ((ctx2, scopeCtx2), ue2, ue2') = unzipExpr e2Scope e2Subst e2
+  Var  v -> ((id, scope), Var (subst ! v), Ret [] [])
+  LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
+  UnOp Sin e -> ((ctx, ctxScope), UnOp Sin ue, ue')
+    where ((ctx, ctxScope), ue, ue') = unzipExpr scope subst e
+  UnOp Cos e -> ((ctx, ctxScope), UnOp Cos ue, ue')
+    where ((ctx, ctxScope), ue, ue') = unzipExpr scope subst e
+  LScale s e ->
+    ( (sCtx . eCtx, eCtxScope)
+    , LetMixed [] [] ue  $ Ret [] []
+    , LetMixed [] [] us' $ LScale us ue'
+    )
+    where
+      ((sCtx, sCtxScope), us, us') = unzipExpr scope     subst s
+      ((eCtx, eCtxScope), ue, ue') = unzipExpr sCtxScope subst e
+  _ -> error $ "Not implemented: " ++ show (pretty expr)
 
 -------------------- Helpers --------------------
 

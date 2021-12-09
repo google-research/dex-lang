@@ -138,9 +138,34 @@ spec = do
 
   describe "JVP" $ do
     it "(sin x)^2 + (cos x)^2" $ do
-      shouldTypeCheck $ jvpProgram $ Program $ M.fromList
-        [ ("f", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
-            LetMixed ["y"] [] (UnOp Sin (Var "x")) $
-            LetMixed ["z"] [] (UnOp Cos (Var "x")) $
-            (Var "y") * (Var "y") + (Var "z") * (Var "z"))
-        ]
+      let pj = jvpProgram $ Program $ M.fromList
+                 [ ("f", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+                     LetMixed ["y"] [] (UnOp Sin (Var "x")) $
+                     LetMixed ["z"] [] (UnOp Cos (Var "x")) $
+                     (Var "y") * (Var "y") + (Var "z") * (Var "z"))
+                 ]
+      shouldTypeCheck pj
+      -- TODO: Test that this evaluates to approximately (1.0, 0.0) for a variety of inputs
+      let Result _ [FloatVal dx] = evalFunc pj "f" [FloatVal 2.0] [FloatVal 2.0]
+      dx `shouldBe` 0.0
+
+  let ensureJvpUnzips p = do
+        let pj = jvpProgram p
+        let upj = unzipProgram pj
+        shouldTypeCheck pj
+        shouldTypeCheck upj
+        let expAns = evalFunc pj "f" [FloatVal 2.0] [FloatVal 2.0]
+        let ans = eval upj mempty $
+                    LetMixed ["x"] [] (Lit 2.0) $
+                    LetMixed ["v", "r"] [] (App "f.nonlin" ["x"] []) $
+                    LetMixed [] ["v'"] (App "f.lin" ["r"] ["x"]) $
+                    Ret ["v"] ["v'"]
+        ans `shouldBe` expAns
+  describe "Unzipping" $ do
+    it "sin x" $ do
+      let p = Program $ M.fromList
+                [ ("f", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+                    UnOp Sin (Var "x")
+                  )
+                ]
+      ensureJvpUnzips p
