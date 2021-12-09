@@ -26,7 +26,8 @@ module Builder (
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildNewtype, fromNewtype,
+  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
+  buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
@@ -36,17 +37,23 @@ module Builder (
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
-  liftMonoidEmpty
+  liftMonoidEmpty,
+  telescopicCapture, telescopicCaptureBlock, unpackTelescope,
+  applyRecon, applyReconAbs,
+  ReconAbs, ReconstructAtom (..)
   ) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
+import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
+import Data.Graph (graphFromEdges, topSort)
+import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -57,7 +64,7 @@ import PPrint ()
 import CheapReduction
 
 import LabeledItems
-import Util (enumerate, scanM, restructure)
+import Util (enumerate, scanM, restructure, transitiveClosureM)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -298,10 +305,15 @@ inlineLastDecl (Nest decl rest) result =
 
 buildPureLam :: Builder m
              => NameHint -> Arrow -> Type n
-             -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+             -> (forall l. (Emits l, Distinct l, Ext n l) => AtomName l -> m l (Atom l))
              -> m n (Atom n)
-buildPureLam hint arr ty body =
- buildLamGeneral hint arr ty (const $ return Pure) body
+buildPureLam hint arr ty body = do
+  buildLamGeneral hint arr ty (const $ return Pure) \v -> do
+    -- TODO: we should just pass around Distinct by convention whenever we make
+    -- a distinct extension. We could make an alias `DExt n l` to make it more
+    -- convenient.
+    Distinct <- getDistinct
+    body v
 
 buildTabLam
   :: Builder m
@@ -394,7 +406,7 @@ singletonBinderNest hint ty = do
 buildNaryAbs
   :: (Builder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Immut l, Ext n l) => [AtomName l] -> m l (e l))
+  -> (forall l. (Immut l, Distinct l, Ext n l) => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
 buildNaryAbs (EmptyAbs Empty) body = liftImmut $ Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
@@ -411,11 +423,12 @@ buildNaryAbs _ _ = error "impossible"
 buildAlt
   :: Builder m
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
+  -> (forall l. (Distinct l, Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
   -> m n (Alt n)
 buildAlt bs body = do
   buildNaryAbs bs \xs -> do
     buildBlock do
+      Distinct <- getDistinct
       xs' <- mapM sinkM xs
       body xs'
 
@@ -427,6 +440,17 @@ buildUnaryAlt
 buildUnaryAlt ty body = do
   bs <- singletonBinderNest NoHint ty
   buildAlt bs \[v] -> body v
+
+buildUnaryAtomAlt
+  :: Builder m
+  => Type n
+  -> (forall l. (Distinct l, Ext n l) => AtomName l -> m l (Atom l))
+  -> m n (AltP Atom n)
+buildUnaryAtomAlt ty body = do
+  bs <- singletonBinderNest NoHint ty
+  buildNaryAbs bs \[v] -> do
+    Distinct <- getDistinct
+    body v
 
 buildNewtype :: Builder m
              => SourceName
@@ -789,3 +813,134 @@ indexSetSize (VariantTy (NoExt types)) = do
   sizes <- traverse indexSetSize types
   foldM iadd (IdxRepVal 0) sizes
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
+
+-- === capturing closures with telescopes ===
+
+type ReconAbs e n = NaryAbs AtomNameC e n
+data ReconstructAtom (n::S) =
+   IdentityRecon
+ | LamRecon (ReconAbs Atom n)
+
+applyRecon :: (EnvReader m, Fallible1 m)
+           => ReconstructAtom n -> Atom n -> m n (Atom n)
+applyRecon IdentityRecon x = return x
+applyRecon (LamRecon ab) x = applyReconAbs ab x
+
+applyReconAbs
+  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)
+  => ReconAbs e n -> Atom n -> m n (e n)
+applyReconAbs ab x = do
+  xs <- unpackTelescope x
+  applyNaryAbs ab $ map SubstVal xs
+
+telescopicCaptureBlock
+  :: (EnvReader m, HoistableE e)
+  => Nest Decl n l -> e l -> m l (Block n, ReconAbs e n)
+telescopicCaptureBlock decls result = do
+  (result', ty, ab) <- telescopicCapture decls result
+  let block = Block (BlockAnn ty) decls (Atom result')
+  return (block, ab)
+
+telescopicCapture
+  :: (EnvReader m, HoistableE e, HoistableB b)
+  => b n l -> e l -> m l (Atom l, Type n, ReconAbs e n)
+telescopicCapture bs e = do
+  vs <- localVarsAndTypeVars bs e
+  vTys <- mapM (getType . Var) vs
+  let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
+  ty <- liftImmut $ liftEnvReaderM $
+          buildTelescopeTy (map sink vs) (map sink tys)
+  result <- buildTelescopeVal (map Var vsSorted) ty
+  let ty' = ignoreHoistFailure $ hoist bs ty
+  let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
+  return (result, ty', ab)
+
+-- XXX: assumes arguments are toposorted
+buildTelescopeTy :: (EnvReader m, EnvExtender m, Immut n)
+                 => [AtomName n] -> [Type n] -> m n (Type n)
+buildTelescopeTy [] [] = return UnitTy
+buildTelescopeTy (v:vs) (ty:tys) = do
+  withFreshBinder (getNameHint v) (MiscBound ty) \b -> do
+    ListE tys' <- applyAbs (sink $ abstractFreeVar v $ ListE tys) (binderName b)
+    ListE vs' <- sinkM $ ListE vs
+    innerTelescope <- buildTelescopeTy vs' tys'
+    return case hoist b innerTelescope of
+      HoistSuccess innerTelescope' -> PairTy ty innerTelescope'
+      HoistFailure _ -> DepPairTy $ DepPairType (b:>ty) innerTelescope
+buildTelescopeTy _ _ = error "zip mismatch"
+
+buildTelescopeVal :: EnvReader m => [Atom n] -> Type n -> m n (Atom n)
+buildTelescopeVal elts telescopeTy = go elts telescopeTy
+  where
+    go :: (EnvReader m) => [Atom n] -> Type n -> m n (Atom n)
+    go [] UnitTy = return UnitVal
+    go (x:xs) (PairTy _ xsTy) = do
+      rest <- go xs xsTy
+      return $ PairVal x rest
+    go (x:xs) (DepPairTy ty) = do
+      xsTy <- instantiateDepPairTy ty x
+      rest <- go xs xsTy
+      return $ DepPair x rest ty
+    go _ _ = error "zip mismatch"
+
+-- sorts name-annotation pairs so that earlier names may be occur free in later
+-- annotations but not vice versa.
+toposortAnnVars :: forall e c n. (NameColor c, HoistableE e)
+                => [(Name c n, e n)] -> [(Name c n, e n)]
+toposortAnnVars annVars =
+  let (graph, vertexToNode, _) = graphFromEdges $ map annVarToNode annVars
+  in map (nodeToAnnVar . vertexToNode) $ reverse $ topSort graph
+  where
+    annVarToNode :: (Name c n, e n) -> (e n, Name c n, [Name c n])
+    annVarToNode (v, ann) = (ann, v, nameSetToList nameColorRep $ freeVarsE ann)
+
+    nodeToAnnVar :: (e n, Name c n, [Name c n]) -> (Name c n, e n)
+    nodeToAnnVar (ann, v, _) = (v, ann)
+
+unpackTelescope :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
+unpackTelescope atom = do
+  n <- telescopeLength <$> getType atom
+  return $ go n atom
+  where
+    go :: Int -> Atom n -> [Atom n]
+    go 0 _ = []
+    go n pair = left : go (n-1) right
+      where left  = getProjection [0] pair
+            right = getProjection [1] pair
+
+    telescopeLength :: Type n -> Int
+    telescopeLength ty = case ty of
+      UnitTy -> 0
+      PairTy _ rest -> 1 + telescopeLength rest
+      DepPairTy (DepPairType _ rest) -> 1 + telescopeLength rest
+      _ -> error $ "not a valid telescope: " ++ pprint ty
+
+-- gives a list of atom names that are free in `e`, including names mentioned in
+-- the types of those names, recursively.
+localVarsAndTypeVars
+  :: forall m b e n l.
+     (EnvReader m, BindsNames b, HoistableE e)
+  => b n l -> e l -> m l [AtomName l]
+localVarsAndTypeVars b e =
+  transitiveClosureM varsViaType (localVars b e)
+  where
+    varsViaType :: AtomName l -> m l [AtomName l]
+    varsViaType v = do
+      ty <- getType $ Var v
+      return $ nameSetToList nameColorRep $ freeVarsE ty
+
+localVars :: (NameColor c, BindsNames b, HoistableE e)
+          => b n l -> e l -> [Name c l]
+localVars b e = nameSetToList nameColorRep $
+  M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+
+instance GenericE ReconstructAtom where
+  type RepE ReconstructAtom = EitherE UnitE (NaryAbs AtomNameC Atom)
+  toE = undefined
+  fromE = undefined
+
+instance SinkableE   ReconstructAtom
+instance HoistableE  ReconstructAtom
+instance AlphaEqE    ReconstructAtom
+instance SubstE Name ReconstructAtom
+instance SubstE AtomSubstVal ReconstructAtom

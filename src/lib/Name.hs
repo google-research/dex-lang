@@ -40,7 +40,8 @@ module Name (
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
-  runScopeReaderT, runScopeReaderM, runSubstReaderT, ScopeReaderT (..), SubstReaderT (..),
+  runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst,
+  ScopeReaderT (..), SubstReaderT (..),
   lookupSubstM, dropSubst, extendSubst, fmapNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2, Monoid1,
@@ -69,7 +70,8 @@ module Name (
   toSubstPairs, fromSubstPairs, SubstPair (..), refreshRecSubstFrag,
   substAbsDistinct, refreshAbs,
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
-  HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVarsNoAnn,
+  HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
+  abstractFreeVarsNoAnn,
   WithRenamer (..), ignoreHoistFailure,
   HoistableB (..), HoistableV,
   WrapE (..), WithColor (..), fromWithColor,
@@ -102,6 +104,7 @@ import Data.Function ((&))
 import Data.List (nubBy)
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Text as T
+import GHC.Stack
 import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..), Rep)
 import Data.Store (Store)
@@ -126,6 +129,10 @@ envFromFrag frag = Subst absurdNameFunction frag
 
 idSubst :: FromName v => Subst v n n
 idSubst = newSubst fromName
+
+-- common instantiation (useful where `v` would be ambiguous)
+idNameSubst :: Subst Name n n
+idNameSubst = idSubst
 
 idSubstFrag :: (BindsNames b, FromName v) => b n l -> SubstFrag v n l l
 idSubstFrag b =
@@ -2255,7 +2262,7 @@ liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
 
-ignoreHoistFailure :: HoistExcept a -> a
+ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x
 ignoreHoistFailure (HoistFailure _) = error "hoist failure"
 
@@ -2307,6 +2314,12 @@ hoistNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistNameSet b nameSet = unsafeCoerceNameSet $ nameSet `M.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
+abstractFreeVar :: Name c n -> e n -> Abs (NameBinder c) e n
+abstractFreeVar v e =
+  case abstractFreeVarsNoAnn [v] e of
+    Abs (Nest b Empty) e' -> Abs b e'
+    _ -> error "impossible"
+
 abstractFreeVars :: [(Name c n, ann n)]
                  -> e n -> Abs (Nest (BinderP c ann)) e n
 abstractFreeVars vs e = Abs bs e
@@ -2319,17 +2332,6 @@ abstractFreeVarsNoAnn vs e =
   case abstractFreeVars (zip vs (repeat UnitE)) e of
     Abs bs e' -> Abs bs' e'
       where bs' = fmapNest (\(b:>UnitE) -> b) bs
-
--- captureClosure decls result = do
---   let vs = capturedVars decls result
---   case abstractFreeVars (zip vs (repeat UnitE)) result of
---     Abs bs e -> do
---       let bs' = fmapNest (\(b:>UnitE) -> b) bs
---       case hoist decls $ Abs bs' e of
---         HoistSuccess abHoisted -> (vs, abHoisted)
---         HoistFailure _ ->
---           error "shouldn't happen"  -- but it will if we have types that reference
---                                     -- local vars. We really need a telescope.
 
 instance HoistableB (NameBinder c) where
   freeVarsB _ = mempty

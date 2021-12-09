@@ -22,6 +22,7 @@ import Builder
 import Syntax
 import Type
 import Interpreter (traverseSurfaceAtomNames)
+import Util (enumerate)
 
 -- === simplification monad ===
 
@@ -55,8 +56,8 @@ instance Builder (SimplifyM i) where
 -- === Top level ===
 
 simplifyModule :: Distinct n => Env n -> Module n -> Module n
-simplifyModule bindings (Module Core decls result) = runSimplifyM bindings do
-  Immut <- return $ toImmutEvidence bindings
+simplifyModule env (Module Core decls result) = runSimplifyM env do
+  Immut <- return $ toImmutEvidence env
   DistinctAbs decls' result' <-
     buildScoped $ simplifyDecls decls $
       substEvaluatedModuleM result
@@ -65,22 +66,22 @@ simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 type AbsEvaluatedModule n = Abs (Nest (NameBinder AtomNameC)) EvaluatedModule n
 
-splitSimpModule :: Distinct n => Env n -> Module n
+splitSimpModule :: forall n. Distinct n
+                 => Env n -> Module n
                 -> (Block n , AbsEvaluatedModule n)
-splitSimpModule bindings (Module _ decls result) = do
-  let (vs, recon) = captureClosure decls result
-  let resultTup = Atom $ ProdVal $ map Var vs
-  let block = runHardFail $ runEnvReaderT bindings $
-                refreshAbsM (Abs decls resultTup) \decls' result' ->
-                  makeBlock decls' result'
-  (block, recon)
+splitSimpModule env (Module _ decls result) = do
+  runEnvReaderM env $ runSubstReaderT idNameSubst do
+    Immut <- return $ toImmutEvidence env
+    refreshBinders decls \decls' -> do
+      result' <- substM result
+      telescopicCaptureBlock decls' $ result'
 
 applyDataResults :: EnvReader m
                  => AbsEvaluatedModule n -> Atom n
                  -> m n (EvaluatedModule n)
 applyDataResults (Abs bs evaluated) x = do
   runSubstReaderT idSubst do
-    xs <- liftM ignoreExcept $ runFallibleT1 $ getUnpacked x
+    xs <- liftM ignoreExcept $ runFallibleT1 $ unpackTelescope x
     extendSubst (bs @@> map SubstVal xs) $
       substEvaluatedModuleM evaluated
 
@@ -125,12 +126,41 @@ simplifyExpr expr = case expr of
         Abs bs body <- return $ alts !! i
         extendSubst (bs @@> map SubstVal args) $ simplifyBlock body
       Nothing -> do
-        alts' <- forM alts \(Abs bs body) -> do
-          bs' <- substM $ EmptyAbs bs
-          buildNaryAbs bs' \xs ->
-            extendSubst (bs @@> map Rename xs) $
-              buildBlock $ simplifyBlock body
-        liftM Var $ emit $ Case e' alts' resultTy'
+        substM resultTy >>= isData >>= \case
+          True -> do
+            alts' <- forM alts \(Abs bs body) -> do
+              bs' <- substM $ EmptyAbs bs
+              buildNaryAbs bs' \xs ->
+                extendSubst (bs @@> map Rename xs) $
+                  buildBlock $ simplifyBlock body
+            liftM Var $ emit $ Case e' alts' resultTy'
+          False -> defuncCase e' alts resultTy'
+
+defuncCase :: (Emits o, Simplifier m) => Atom o -> [Alt i] -> Type o -> m i o (Atom o)
+defuncCase scrut alts resultTy = do
+  (alts', recons) <- unzip <$> mapM simplifyAbs alts
+  closureTys <- mapM getAltTy alts'
+  let closureSumTy = SumTy closureTys
+  alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
+  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy
+  reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
+                 buildUnaryAtomAlt ty \v -> applyRecon (sink recon) $ Var v
+  return $ ACase sumVal reconAlts resultTy
+
+  where
+    getAltTy :: EnvReader m => Alt n -> m n (Type n)
+    getAltTy alt = liftImmut $ liftSubstEnvReaderM do
+      Abs bs body <- sinkM alt
+      refreshBinders bs \bs' -> do
+        ty <- getTypeSubst body
+        -- Result types of simplified abs should be hoistable past binder
+        return $ ignoreHoistFailure $ hoist bs' ty
+
+    injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
+    injectAltResult sumTy con (Abs bs body) = liftBuilder do
+      buildAlt (sink $ EmptyAbs bs) \vs -> do
+        originalResult <- emitBlock =<< applyNaryAbs (sink $ Abs bs body) vs
+        return $ Con $ SumCon (sink sumTy) con originalResult
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
 simplifyApp f x = case f of
@@ -140,7 +170,16 @@ simplifyApp f x = case f of
     DataDef _ paramBs _ <- lookupDataDef defName
     let (params', xs') = splitAt (nestLength paramBs) $ params ++ xs ++ [x]
     return $ DataCon printName defName params' con xs'
-  ACase _ _ ~(Pi _) -> undefined
+  ACase e alts (Pi piType) -> do
+    -- TODO: optimization for common case where all branches are curried
+    -- functions and we do the application under the ACase without emitting a
+    -- case expression.
+    Just (_, _, _, resultTy) <- return $ considerNonDepPiType piType
+    alts' <- forM alts \(Abs bs a) -> do
+      buildAlt (EmptyAbs bs) \vs -> do
+        a' <- applyNaryAbs (sink $ Abs bs a) vs
+        app a' (sink x)
+    dropSubst $ simplifyExpr $ Case e alts' resultTy
   TypeCon sn def params -> return $ TypeCon sn def params'
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x
@@ -164,58 +203,57 @@ simplifyOp op = case op of
     emitOp $ PrimEffect ref $ MExtend f'
   _ -> emitOp op
 
-data Reconstruct n =
-   IdentityRecon
- | LamRecon (NaryAbs AtomNameC Atom n)
-
-applyRecon :: (Emits n, Builder m) => Reconstruct n -> Atom n -> m n (Atom n)
-applyRecon IdentityRecon x = return x
-applyRecon (LamRecon ab) x = do
-  xs <- getUnpacked x
-  applyNaryAbs ab $ map SubstVal xs
-
-simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
+simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyLam lam = do
   Lam (LamExpr b body) <- substM lam
-  (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyNaryLam $ Abs (Nest b Empty) body
+  (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyAbs $ Abs (Nest b Empty) body
   return (Lam $ LamExpr b' body', recon)
 
-simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, Reconstruct o)
+simplifyBinaryLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyBinaryLam binaryLam = do
   Lam (LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))) <- substM binaryLam
   (Abs (Nest b1' (Nest b2' Empty)) body', recon) <-
-      dropSubst $ simplifyNaryLam $ Abs (Nest b1 (Nest b2 Empty)) body
+      dropSubst $ simplifyAbs $ Abs (Nest b1 (Nest b2 Empty)) body
   let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
   return (binaryLam', recon)
 
-simplifyNaryLam :: Simplifier m => NaryLam i -> m i o (NaryLam o, Reconstruct o)
-simplifyNaryLam (Abs bs body) = fromPairE <$> liftImmut do
+simplifyAbs
+  :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+  => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
+simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
   refreshBinders bs \bs' -> do
     DistinctAbs decls result <- buildScoped $ simplifyBlock body
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
     extendEnv (toEnvFrag decls) do
-      (resultData, recon) <- defuncAtom (toScopeFrag bs' >>> toScopeFrag decls) result
-      block <- makeBlock decls $ Atom resultData
-      return $ PairE (Abs bs' block) recon
-
-defuncAtom :: EnvReader m => ScopeFrag n l -> Atom l -> m l (Atom l, Reconstruct n)
-defuncAtom _ x = do
-  xTy <- getType x
-  if isData xTy
-    then return (x, IdentityRecon)
-    else error "todo"
-
-isData :: Type n -> Bool
-isData _ = True  -- TODO!
+      resultTy <- getType result
+      isData resultTy >>= \case
+        True -> do
+          block <- makeBlock decls $ Atom result
+          return $ PairE (Abs bs' block) IdentityRecon
+        False -> do
+          let locals = toScopeFrag bs' >>> toScopeFrag decls
+          -- TODO: this might be too cautious. The type only needs to be hoistable
+          -- above the delcs. In principle it can still mention vars from the lambda
+          -- binders.
+          (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
+          let block = Block (BlockAnn $ sink newResultTy) decls (Atom newResult)
+          return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
 simplifyHof hof = case hof of
-  For d lam -> do
+  For d lam@(Lam lamExpr) -> do
+    ixTy <- substM $ lamArgType lamExpr
     (lam', recon) <- simplifyLam lam
     ans <- liftM Var $ emit $ Hof $ For d lam'
     case recon of
       IdentityRecon -> return ans
-      LamRecon _ -> undefined
+      LamRecon reconAbs ->
+        buildPureLam "i" TabArrow ixTy \i' -> do
+          elt <- app (sink ans) $ Var i'
+          applyReconAbs (sink reconAbs) elt
+  While body -> do
+    (lam', IdentityRecon) <- simplifyLam body
+    liftM Var $ emit $ Hof $ While lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
     (lam', recon) <- simplifyBinaryLam lam
@@ -244,16 +282,3 @@ simplifyHof hof = case hof of
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
-
--- === instances ===
-
-instance GenericE Reconstruct where
-  type RepE Reconstruct = EitherE UnitE (NaryAbs AtomNameC Atom)
-  toE = undefined
-  fromE = undefined
-
-instance SinkableE Reconstruct
-instance HoistableE  Reconstruct
-instance SubstE Name Reconstruct
-instance SubstE AtomSubstVal Reconstruct
-instance AlphaEqE Reconstruct

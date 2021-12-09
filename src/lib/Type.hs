@@ -13,13 +13,14 @@
 
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
-  checkModule, checkTypes, getType, litType, getBaseMonoidType,
-  instantiatePi, checkExtends, checkedApplyDataDefParams, indices,
-  applyDataDefParams,
+  checkModule, checkTypes, getType, getTypeSubst, litType, getBaseMonoidType,
+  instantiatePi, instantiateDepPairTy,
+  checkExtends, checkedApplyDataDefParams, indices,
+  instantiateDataDef,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
-  oneEffect, lamExprTy) where
+  oneEffect, lamExprTy, isData) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -64,13 +65,29 @@ getType e = liftImmut do
   e' <- sinkM e
   return $ runHardFail $ runTyperT bindings $ getTypeE e'
 
+getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
+             => e i -> m i o (Type o)
+getTypeSubst e = liftImmut do
+  DB bindings <- getDB
+  subst <- getSubst
+  return $ runHardFail $
+    runEnvReaderT bindings $
+      runSubstReaderT subst $
+        runTyperT' $ getTypeE e
+
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftImmut do
   DB bindings <- getDB
   e' <- sinkM e
   liftExcept $ runTyperT bindings $ getTypeE e'
 
-instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Atom n)
+depPairLeftTy :: DepPairType n -> Type n
+depPairLeftTy (DepPairType (_:>ty) _) = ty
+
+instantiateDepPairTy :: ScopeReader m => DepPairType n -> Atom n -> m n (Type n)
+instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
+
+instantiatePi :: ScopeReader m => PiType n -> Atom n -> m n (EffectRow n, Type n)
 instantiatePi (PiType b eff body) x = do
   PairE eff' body' <- applyAbs (Abs b (PairE eff body)) (SubstVal x)
   return (eff', body')
@@ -242,12 +259,19 @@ instance CheckableE Atom where
   checkE atom = fst <$> getTypeAndSubstE atom
 
 instance HasType Atom where
-  getTypeE atom = case atom of
+  getTypeE atom = liftImmut $ case atom of
     Var name -> do
       name' <- substM name
       atomBindingType <$> lookupEnv name'
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
+    DepPair l r ty -> do
+      ty' <- checkTypeE TyKind ty
+      l'  <- checkTypeE (depPairLeftTy ty') l
+      rTy <- instantiateDepPairTy ty' l'
+      r |: rTy
+      return $ DepPairTy ty'
+    DepPairTy ty -> getTypeE ty
     Con con  -> typeCheckPrimCon con
     TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
@@ -293,16 +317,23 @@ instance HasType Atom where
       argBs' <- applyNaryAbs (Abs paramBs argBs) (map SubstVal params')
       checkDataConRefEnv argBs' args
       return $ RawRefTy $ TypeCon sourceName defName' params'
-    BoxedRef ptr numel (Abs b@(_:>annTy) body) -> do
-      PtrTy (_, t) <- getTypeE ptr
-      annTy |: TyKind
-      annTy' <- substM annTy
-      checkAlphaEq annTy' (BaseTy t)
-      numel |: IdxRepTy
-      depTy <- refreshBindersI b \b' -> do
-        bodyTy <- getTypeE body
-        return $ Abs b' bodyTy
-      liftHoistExcept $ fromConstAbs depTy
+    DepPairRef l (Abs b r) ty -> do
+      ty' <- checkTypeE TyKind ty
+      l |: RawRefTy (depPairLeftTy ty')
+      checkB b \b' -> do
+        ty'' <- sinkM ty'
+        rTy <- instantiateDepPairTy ty'' $ Var (binderName b')
+        r |: RawRefTy rTy
+      return $ RawRefTy $ DepPairTy ty'
+    BoxedRef ptrsAndSizes (Abs bs body) -> do
+      ptrTys <- forM ptrsAndSizes \(ptr, numel) -> do
+        numel |: IdxRepTy
+        ty@(PtrTy _) <- getTypeE ptr
+        return ty
+      withFreshBinders (zip (repeat NoHint) ptrTys) \bs' vs -> do
+        extendSubst (bs @@> vs) do
+          bodyTy <- getTypeE body
+          liftHoistExcept $ hoist bs' bodyTy
     ProjectElt (i NE.:| is) v -> do
       ty <- getTypeE $ case NE.nonEmpty is of
               Nothing -> Var v
@@ -321,6 +352,9 @@ instance HasType Atom where
         RecordTy (NoExt types) -> return $ toList types !! i
         RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         ProdTy xs -> return $ xs !! i
+        DepPairTy t | i == 0 -> return $ depPairLeftTy t
+        DepPairTy t | i == 1 -> do v' <- substM v
+                                   instantiateDepPairTy t (ProjectElt (0 NE.:| is) v')
         Var _ -> throw CompilerErr $ "Tried to project value of unreduced type " <> pprint ty
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
@@ -392,6 +426,11 @@ instance HasType LamExpr where
     checkB b \b' -> do
       bodyTy <- getTypeE body
       return $ lamExprTy b' bodyTy
+
+instance HasType DepPairType where
+  getTypeE (DepPairType b ty) = do
+    checkB b \_ -> ty |: TyKind
+    return TyKind
 
 lamExprTy :: LamBinder n l -> Type l -> Type n
 lamExprTy (LamBinder b ty arr eff) bodyTy =
@@ -775,6 +814,7 @@ caseAltsBinderTys ty = case ty of
   VariantTy (NoExt types) -> do
     mapM typeAsBinderNest $ toList types
   VariantTy _ -> fail "Can't pattern-match partially-known variants"
+  SumTy cases -> mapM typeAsBinderNest cases
   _ -> fail $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ty
 
 checkDataConRefEnv :: Typer m
@@ -1092,8 +1132,8 @@ getBaseMonoidType ty = case ty of
   Pi (PiType b _ resultTy) -> liftHoistExcept $ hoist b resultTy
   _     -> return ty
 
-applyDataDefParams :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
-applyDataDefParams (DataDef _ bs cons) params =
+instantiateDataDef :: ScopeReader m => DataDef n -> [Type n] -> m n [DataConDef n]
+instantiateDataDef (DataDef _ bs cons) params =
   fromListE <$> applyNaryAbs (Abs bs (ListE cons)) (map SubstVal params)
 
 checkedApplyDataDefParams :: (EnvReader m, Fallible1 m) => DataDef n -> [Type n] -> m n [DataConDef n]
@@ -1196,8 +1236,59 @@ projectLength :: (Fallible1 m, EnvReader m) => Type n -> m n Int
 projectLength ty = case ty of
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
-    [DataConDef _ (Abs bs UnitE)] <- applyDataDefParams def params
+    [DataConDef _ (Abs bs UnitE)] <- instantiateDataDef def params
     return $ nestLength bs
   RecordTy (NoExt types) -> return $ length types
   ProdTy tys -> return $ length tys
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
+
+-- === "Data" type class ===
+
+isData :: EnvReader m => Type n -> m n Bool
+isData ty = fromLiftE <$> liftImmut do
+  ty' <- sinkM ty
+  DB env <- getDB
+  let s = " is not serializable"
+  case runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $ checkDataLike s ty' of
+    Success () -> return $ LiftE True
+    Failure _  -> return $ LiftE False
+
+checkDataLike :: ( EnvReader2 m, EnvExtender2 m
+                 , SubstReader Name m, Fallible2 m, Immut o)
+              => String -> Type i -> m i o ()
+checkDataLike msg ty = case ty of
+  Var _ -> error "Not implemented"
+  TabTy b eltTy ->
+    refreshBinders b \_ ->
+      checkDataLike msg eltTy
+  RecordTy (NoExt items)  -> mapM_ recur items
+  VariantTy (NoExt items) -> mapM_ recur items
+  DepPairTy (DepPairType b@(_:>l) r) -> do
+    recur l
+    refreshBinders b \_ -> checkDataLike msg r
+  TypeCon _ defName params -> do
+    params' <- mapM substM params
+    def <- lookupDataDef =<< substM defName
+    dataCons <- instantiateDataDef def params'
+    dropSubst $ forM_ dataCons \(DataConDef _ bs) ->
+      checkDataLikeBinderNest bs
+  TC con -> case con of
+    BaseType _       -> return ()
+    ProdType as      -> mapM_ recur as
+    SumType  cs      -> mapM_ recur cs
+    IntRange _ _     -> return ()
+    IndexRange _ _ _ -> return ()
+    IndexSlice _ _   -> return ()
+    _ -> throw TypeErr $ pprint ty ++ msg
+  _   -> throw TypeErr $ pprint ty ++ msg
+
+  where
+    recur x = checkDataLike msg x
+
+checkDataLikeBinderNest :: ( EnvReader2 m, EnvExtender2 m
+                           , SubstReader Name m, Fallible2 m, Immut o)
+                        => EmptyAbs (Nest Binder) i -> m i o ()
+checkDataLikeBinderNest (Abs Empty UnitE) = return ()
+checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
+  checkDataLike "data con binder" $ binderType b
+  refreshBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE
