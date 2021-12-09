@@ -1292,10 +1292,3 @@ checkDataLikeBinderNest (Abs Empty UnitE) = return ()
 checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
   checkDataLike "data con binder" $ binderType b
   refreshBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE
-
--- checkDataLikeDataCon :: ( EnvReader2 m, EnvExtender2 m
---                         , SubstReader Name m, Fallible2 m, Immut o)
---                      => DataConDef n -> m n ()
--- checkDataLikeDataCon (DataConDef _ bs) = do
---   refreshBinders bs \_ -> do
---     mapM_ (checkDataLike "data con binder" . binderAnn) bs

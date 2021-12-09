@@ -288,7 +288,7 @@ buildBlock cont = liftImmut do
   Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
   return $ Block (BlockAnn ty') decls' result'
 
-makeBlock :: (HasCallStack, EnvReader m) => Nest Decl n l -> Expr l -> m l (Block n)
+makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
   ty <- getType expr
   let ty' = ignoreHoistFailure $ hoist decls ty
@@ -406,7 +406,7 @@ singletonBinderNest hint ty = do
 buildNaryAbs
   :: (Builder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Immut l, Ext n l) => [AtomName l] -> m l (e l))
+  -> (forall l. (Immut l, Distinct l, Ext n l) => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
 buildNaryAbs (EmptyAbs Empty) body = liftImmut $ Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
@@ -883,6 +883,8 @@ buildTelescopeVal elts telescopeTy = go elts telescopeTy
       return $ DepPair x rest ty
     go _ _ = error "zip mismatch"
 
+-- sorts name-annotation pairs so that earlier names may be occur free in later
+-- annotations but not vice versa.
 toposortAnnVars :: forall e c n. (NameColor c, HoistableE e)
                 => [(Name c n, e n)] -> [(Name c n, e n)]
 toposortAnnVars annVars =
@@ -913,6 +915,8 @@ unpackTelescope atom = do
       DepPairTy (DepPairType _ rest) -> 1 + telescopeLength rest
       _ -> error $ "not a valid telescope: " ++ pprint ty
 
+-- gives a list of atom names that are free in `e`, including names mentioned in
+-- the types of those names, recursively.
 localVarsAndTypeVars
   :: forall m b e n l.
      (EnvReader m, BindsNames b, HoistableE e)

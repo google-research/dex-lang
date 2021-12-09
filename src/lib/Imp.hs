@@ -427,11 +427,12 @@ toImpHof maybeDest hof = do
 --   emitPointer :: Block n -> DestM n l (AtomName n)
 
 data DestPtrInfo n = DestPtrInfo PtrType (Block n)
+type PtrBinders = Nest AtomNameBinder
 data DestEmissions n l where
   DestEmissions
-    :: [DestPtrInfo n]          -- pointer types and allocation sizes
-    -> Nest AtomNameBinder n h  -- pointer binders
-    ->   Nest Decl h l          -- decls to compute indexing offsets
+    :: [DestPtrInfo n]   -- pointer types and allocation sizes
+    -> PtrBinders n h    -- pointer binders for allocations we require
+    ->   Nest Decl h l   -- decls to compute indexing offsets
     -> DestEmissions n l
 
 instance GenericB DestEmissions where
@@ -460,15 +461,13 @@ newtype DestM (n::S) (a:: *) =
   deriving ( Functor, Applicative, Monad
            , ScopeReader, MonadFail, Fallible)
 
-runDestM :: (Immut n, Distinct n, SinkableE e)
+runDestM :: (Immut n, Distinct n)
          => Env n -> AllocInfo
-         -> (forall l. (Emits l, Ext n l, Distinct l) => DestM l (e l))
-         -> DistinctAbs DestEmissions e n
+         -> DestM n a
+         -> a
 runDestM bindings allocInfo m = do
   let result = runHardFail $ flip runReaderT allocInfo $
-                 runInplaceT bindings $ locallyMutableInplaceT do
-                   Emits <- fabricateEmitsEvidenceM
-                   runDestM' m
+                 runInplaceT bindings $ runDestM' m
   case result of
     (DestEmissions _ Empty Empty, result') -> result'
     _ -> error "not implemented"
@@ -481,6 +480,17 @@ introduceNewPtr hint ptrTy numel =
   DestM $ emitInplaceT hint (DestPtrInfo ptrTy numel) \b ptrInfo ->
     DestEmissions [ptrInfo] (Nest b Empty) Empty
 
+buildLocalDest
+  :: (SinkableE e)
+  => (forall l. (Mut l, Ext n l, Distinct l) => DestM l (e l))
+  -> DestM n (AbsPtrs e n)
+buildLocalDest cont = liftImmut do
+  result <- DestM $ locallyMutableInplaceT $ runDestM' cont
+  DistinctAbs (DestEmissions ptrInfo ptrBs decls) e <- return result
+  case decls of
+    Empty -> return $ AbsPtrs (Abs ptrBs e) ptrInfo
+    _ -> error "shouldn't have decls without `Emits`"
+
 -- TODO: this is mostly copy-paste from Inference
 buildDeclsDest
   :: (Mut n, SinkableE e)
@@ -489,7 +499,7 @@ buildDeclsDest
 buildDeclsDest cont =
   DestM $ extendInplaceT do
     resultWithEmissions <- locallyMutableInplaceT do
-      Emits    <- fabricateEmitsEvidenceM
+      Emits <- fabricateEmitsEvidenceM
       runDestM' cont
     DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <- return resultWithEmissions
     withSubscopeDistinct decls $
@@ -589,9 +599,7 @@ instance SubstE AtomSubstVal DestPtrInfo
 type Dest = Atom  -- has type `Ref a` for some a
 type MaybeDest n = Maybe (Dest n)
 
-type Idxs n = [AtomName n]
-
-data AbsPtrs e n = AbsPtrs (NaryAbs AtomNameC e n) [DestPtrInfo n]
+data AbsPtrs e n = AbsPtrs (Abs PtrBinders e n) [DestPtrInfo n]
 
 instance GenericE (AbsPtrs e) where
   type RepE (AbsPtrs e) = PairE (NaryAbs AtomNameC e) (ListE DestPtrInfo)
@@ -599,109 +607,125 @@ instance GenericE (AbsPtrs e) where
   toE   (PairE ab (ListE ptrInfo)) = AbsPtrs ab ptrInfo
 
 instance SinkableE e => SinkableE (AbsPtrs e)
+instance HoistableE e => HoistableE (AbsPtrs e)
 instance SubstE Name e => SubstE Name (AbsPtrs e)
 instance SubstE AtomSubstVal e => SubstE AtomSubstVal (AbsPtrs e)
 
 -- builds a dest and a list of pointer binders along with their required allocation sizes
 makeDest :: (Emits n, ImpBuilder m, EnvReader m)
          => AllocInfo -> Type n -> m n (AbsPtrs Dest n)
-makeDest allocInfo ty = do
-  Abs decls result <- liftImmut do
-    DB bindings <- getDB
-    DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
-      return $ runDestM bindings allocInfo do
-        makeDestRec [] Empty =<< sinkM ty
-    case exchangeBs $ PairB ptrBs decls of
-      HoistFailure _ -> error "shouldn't happen"
-      HoistSuccess (PairB decls' ptrBs') ->
-        withExtEvidence (toExtEvidence decls') $ withSubscopeDistinct ptrBs' $
-          return $ Abs decls' $ AbsPtrs (Abs ptrBs' result) (map sink ptrInfo)
-  runSubstReaderT idSubst $ translateDeclNest decls $ substM result
+makeDest allocInfo ty =
+ liftImmut do
+   DB bindings <- getDB
+   return $ runDestM bindings allocInfo do
+     buildLocalDest $
+       makeSingleDest $ sink ty
 
+makeSingleDest :: Mut n => Type n -> DestM n (Dest n)
+makeSingleDest ty = do
+  Abs decls dest <- buildDeclsDest $ makeDestRec (Abs Empty UnitE, []) (sink ty)
+  case decls of
+    Empty -> return dest
+    _ -> error "shouldn't need to emit decls if we're not working with indices"
+
+extendIdxsTy
+  :: EnvReader m
+  => DestIdxs n -> Type n -> m n (EmptyAbs IdxNest n)
+extendIdxsTy (idxsTy, idxs) new = do
+  let newAbs = abstractFreeVarsNoAnn idxs new
+  Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs (sink idxsTy) \idxs' -> do
+    ty' <- applyNaryAbs (sink newAbs) idxs'
+    singletonBinderNest NoHint ty'
+  return $ Abs (bs >>> b) UnitE
+
+type Idxs n = [AtomName n]
 type IdxNest = Nest Binder
+type DestIdxs n = (Abs IdxNest UnitE n, Idxs n)
 
-makeDestRec ::
-  forall n l . Emits n
-    => Idxs n       -- indices from the enclosing table lambas we're building
-    -> IdxNest n l  -- indices from the table type we're building a dest for.
-      -> Type l
-    -> DestM n (Dest n)
-makeDestRec idxs idxBinders ty = case ty of
+-- `makeDestRec` builds an array of dests. The curried index type, `EmptyAbs
+-- IdxNest n`, determines a set of valid indices, `Idxs n`. At each valid value
+-- of `Idxs n` we should have a distinct dest.
+makeDestRec :: forall n. Emits n => DestIdxs n -> Type n -> DestM n (Dest n)
+makeDestRec idxs ty = case ty of
   TabTy (PiBinder b iTy _) bodyTy -> do
     Distinct <- getDistinct
-    iTy' <- idxSubst iTy
-    lam <- buildTabLamDest "i" (sink iTy') \v -> do
-      let idxs' = map sink idxs <> [v]
-      Abs idxBinders' bodyTy' <- sinkM $ Abs (idxBinders >>> Nest (b:>iTy) Empty) bodyTy
-      makeDestRec idxs' idxBinders' bodyTy'
-    return $ Con $ TabRef lam
-  TypeCon _ _ _ -> do
-    Abs idxBinders' (ListE dcs) <- liftImmut do
-      refreshAbsM (sink $ Abs idxBinders ty) \idxBinders' (TypeCon _ defName params) -> do
-        def <- lookupDataDef defName
-        dcs <- instantiateDataDef def params
-        return $ Abs idxBinders' $ ListE dcs
+    idxsTy <- extendIdxsTy idxs iTy
+    Con <$> TabRef <$> buildTabLamDest "i" iTy \v -> do
+      let newIdxVals = map sink (snd idxs) <> [v]
+      bodyTy' <- applyAbs (sink $ Abs b bodyTy) v
+      makeDestRec (sink idxsTy, newIdxVals) bodyTy'
+  TypeCon _ defName params -> do
+    def <- lookupDataDef defName
+    dcs <- instantiateDataDef def params
     case dcs of
       [] -> error "Void type not allowed"
       [_] -> error "not implemented"
       _ -> do
         tag <- rec TagRepTy
-        ty' <- idxSubst ty
         contents <- forM dcs \dc -> case nonDepDataConTys dc of
           Nothing -> error "Dependent data constructors only allowed for single-constructor types"
-          Just tys -> mapM (makeDestRec idxs idxBinders') tys
-        return $ Con $ ConRef $ SumAsProd ty' tag contents
-  DepPairTy depPairTy@(DepPairType (b:>lTy) rTy) -> do
+          Just tys -> mapM (makeDestRec idxs) tys
+        return $ Con $ ConRef $ SumAsProd ty tag contents
+  DepPairTy depPairTy@(DepPairType (lBinder:>lTy) rTy) -> do
     lDest <- rec lTy
-    lTy' <- idxSubst lTy
-    depPairTy' <- idxSubst depPairTy
-    case hoist b rTy of
+    case hoist lBinder rTy of
       HoistSuccess rTy' -> do
-        Abs b' rDest <- toConstAbs nameColorRep =<< rec rTy'
-        return $ DepPairRef lDest (Abs (b':>lTy') rDest) depPairTy'
-      HoistFailure _ -> undefined
+        Abs lBinder' rDest <- toConstAbs nameColorRep =<< rec rTy'
+        return $ DepPairRef lDest (Abs (lBinder':>lTy) rDest) depPairTy
+      HoistFailure _ -> do
+        -- This case means that the rhs type, and thus the size of its dest,
+        -- depends on the lhs value. So we introduce a binder for the abstracted
+        -- lhs value, and under it we build the rhs dest, collecting all the
+        -- allocations required, along with their sizes. Both the sizes and the
+        -- dest itself may mention that binder. We can't allocate the memory
+        -- required because we don't have the lhs value yet. So instead we
+        -- allocate pointers which will eventually point to the required
+        -- pointers.
+        Abs lBinder' (AbsPtrs absDest ptrsInfo) <- buildAbsDest NoHint lTy \lVal -> do
+            rTy' <- applyAbs (sink $ Abs lBinder rTy) lVal
+            buildLocalDest $ makeSingleDest (sink rTy')
+        ptrs <- forM ptrsInfo \(DestPtrInfo ptrTy _) ->
+                  makeBaseTypePtr idxs (PtrType ptrTy)
+        let sizes = ptrsInfo <&> \(DestPtrInfo _ size) -> size
+        -- Now we're done. The rest is just trying to sink the newly created
+        -- pointer names under lBinder. I wish it wasn't so much
+        -- work!
+        liftImmut $ withFreshBinder NoHint (sink lTy) \lBinder'' -> do
+          ListE sizes' <- applyAbs (sink $ Abs lBinder' $ ListE sizes) (binderName lBinder'')
+          absDest'     <- applyAbs (sink $ Abs lBinder' absDest)       (binderName lBinder'')
+          let box = BoxedRef (zip (map sink ptrs) sizes') absDest'
+          return $ DepPairRef (sink lDest) (Abs (lBinder'':>sink lTy) box) (sink depPairTy)
   TC con -> case con of
     BaseType b -> do
-      ptr <- makeBaseTypePtr idxs idxBinders b
+      ptr <- makeBaseTypePtr idxs b
       return $ Con $ BaseTypeRef ptr
     SumType cases -> recSumType cases
     ProdType tys  -> (Con . ConRef) <$> (ProdCon <$> traverse rec tys)
     IntRange l h -> do
-      l' <- idxSubst l
-      h' <- idxSubst h
       x <- rec IdxRepTy
-      return $ Con $ ConRef $ IntRangeVal l' h' x
+      return $ Con $ ConRef $ IntRangeVal l h x
     IndexRange t l h -> do
-      t' <- idxSubst t
-      l' <- mapM idxSubst l
-      h' <- mapM idxSubst h
       x <- rec IdxRepTy
-      return $ Con $ ConRef $ IndexRangeVal t' l' h' x
+      return $ Con $ ConRef $ IndexRangeVal t l h x
 
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
-    -- this is really just `substM`. Should we just use a SubsTreader instead?
-    idxSubst :: (SinkableE e, SubstE Name e) => e l -> DestM n (e n)
-    idxSubst x = applyNaryAbs (Abs idxBinders x) idxs
-
-    rec = makeDestRec idxs idxBinders
+    rec = makeDestRec idxs
 
     recSumType cases = do
       tag <- rec TagRepTy
-      ty' <- idxSubst ty
       contents <- forM cases rec
-      return $ Con $ ConRef $ SumAsProd ty' tag $ map (\x->[x]) contents
+      return $ Con $ ConRef $ SumAsProd ty tag $ map (\x->[x]) contents
 
-makeBaseTypePtr :: Emits n => Idxs n -> IdxNest n l -> BaseType -> DestM n (Atom n)
-makeBaseTypePtr idxs idxBinders ty = do
-  numel <- buildBlockDest do
-    elemCount =<< sinkM (Abs idxBinders UnitE)
+makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
+makeBaseTypePtr (idxsTy, idxs) ty = do
+  numel <- buildBlockDest $ elemCount (sink idxsTy)
   allocInfo <- getAllocInfo
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrTy = (addrSpace, ty)
   ptr <- introduceNewPtr "ptr" ptrTy numel
-  applyIdxs idxs idxBinders $ Var ptr
+  applyIdxs (idxsTy, idxs) $ Var ptr
 
 elemCount :: (Emits n, Builder m) => EmptyAbs IdxNest n -> m n (Atom n)
 elemCount (Abs idxs UnitE) = case idxs of
@@ -713,25 +737,39 @@ elemCount (Abs idxs UnitE) = case idxs of
       imul n1 n2
     HoistFailure _ -> error "can't handle dependent tables"
 
-applyIdxs :: (Emits n, Builder m) => Idxs n -> IdxNest n l -> Atom n -> m n (Atom n)
-applyIdxs [] Empty ptr = return ptr
-applyIdxs (ix:ixs) (Nest b rest) ptr =
+applyIdxs :: (Emits n, Builder m) => DestIdxs n -> Atom n -> m n (Atom n)
+applyIdxs (Abs Empty UnitE, []) ptr = return ptr
+applyIdxs (Abs (Nest b rest) UnitE, ix:ixs)  ptr =
   case hoist b (Abs rest UnitE) of
-    HoistSuccess (Abs rest' UnitE) -> do
-      stride <- elemCount $ Abs rest' UnitE
+    HoistSuccess rest' -> do
+      stride <- elemCount rest'
       ordinal <- indexToInt $ Var ix
       offset <- imul stride ordinal
       ptr' <- ptrOffset ptr offset
-      applyIdxs ixs rest' ptr'
+      applyIdxs (rest', ixs) ptr'
     HoistFailure _ -> error "can't handle dependent tables"
-applyIdxs _ _ _ = error "mismatched number of indices"
+applyIdxs _ _ = error "mismatched number of indices"
 
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
   where
     copyRec :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
     copyRec dest src = case (dest, src) of
-      (BoxedRef _ _, _) -> undefined
+      (BoxedRef ptrsSizes absDest, _) -> do
+        -- TODO: load old ptr and free (recursively)
+        ptrs <- forM ptrsSizes \(ptrPtr, sizeBlock) -> do
+          PtrTy (_, (PtrType ptrTy)) <- getType ptrPtr
+          size <- liftBuilderImp $ emitBlock (sink sizeBlock)
+          ptr <- emitAlloc ptrTy =<< fromScalarAtom size
+          ptrPtr' <- fromScalarAtom ptrPtr
+          storeAnywhere ptrPtr' ptr
+          toScalarAtom ptr
+        dest' <- applyNaryAbs absDest (map SubstVal ptrs)
+        copyRec dest' src
+      (DepPairRef lRef rRefAbs _, DepPair l r _) -> do
+        copyAtom lRef l
+        rRef <- applyAbs rRefAbs (SubstVal l)
+        copyAtom rRef r
       (DataConRef _ _ refs, DataCon _ _ _ _ vals) ->
         copyDataConArgs refs vals
       (Con destRefCon, _) -> case (destRefCon, src) of
@@ -816,6 +854,14 @@ indexDest (Con (TabRef (Lam (LamExpr b body)))) i = do
 indexDest dest _ = error $ pprint dest
 
 loadDest :: (Builder m, Emits n) => Dest n -> m n (Atom n)
+loadDest (DepPairRef lr rra a) = do
+  l <- loadDest lr
+  r <- loadDest =<< applyAbs rra (SubstVal l)
+  return $ DepPair l r a
+loadDest (BoxedRef ptrsSizes absDest) = do
+  ptrs <- forM ptrsSizes \(ptrPtr, _) -> unsafePtrLoad ptrPtr
+  dest <- applyNaryAbs absDest (map SubstVal ptrs)
+  loadDest dest
 loadDest (Con dest) = do
  case dest of
    BaseTypeRef ptr -> unsafePtrLoad ptr

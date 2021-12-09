@@ -632,7 +632,7 @@ instance BindsOneName (BinderP c ann) c where
 
 infixr 7 @@>
 class BindsNameList (b::B) (c::C) | b -> c where
-  (@@>) :: HasCallStack => b i i' -> [v c o] -> SubstFrag v i i' o
+  (@@>) :: b i i' -> [v c o] -> SubstFrag v i i' o
 
 instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   (@@>) Empty [] = emptyInFrag
