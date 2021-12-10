@@ -149,8 +149,7 @@ defuncCase scrut alts resultTy = do
 
   where
     getAltTy :: EnvReader m => Alt n -> m n (Type n)
-    getAltTy alt = liftImmut $ liftSubstEnvReaderM do
-      Abs bs body <- sinkM alt
+    getAltTy (Abs bs body) = liftImmut $ liftSubstEnvReaderM do
       refreshBinders bs \bs' -> do
         ty <- getTypeSubst body
         -- Result types of simplified abs should be hoistable past binder

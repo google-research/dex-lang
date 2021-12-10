@@ -332,14 +332,11 @@ buildLamGeneral
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 buildLamGeneral hint arr ty fEff fBody = liftImmut do
-  ty' <- sinkM ty
-  withFreshBinder hint (LamBinding arr ty') \b -> do
+  withFreshBinder hint (LamBinding arr ty) \b -> do
     let v = binderName b
     effs <- fEff v
-    body <- withAllowedEffects effs $ buildBlock do
-      v' <- sinkM v
-      fBody v'
-    return $ Lam $ LamExpr (LamBinder b ty' arr effs) body
+    body <- withAllowedEffects effs $ buildBlock $ fBody $ sink v
+    return $ Lam $ LamExpr (LamBinder b ty arr effs) body
 
 -- Body must be an Atom because otherwise the nullary case would require
 -- emitting decls into the enclosing scope.
@@ -364,8 +361,7 @@ buildPi :: (Fallible1 m, Builder m)
         -> (forall l. DExt n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (PiType n)
 buildPi hint arr ty body = liftImmut do
-  ty' <- sinkM ty
-  withFreshPiBinder hint (PiBinding arr ty') \b -> do
+  withFreshPiBinder hint (PiBinding arr ty) \b -> do
     (effs, resultTy) <- body $ binderName b
     return $ PiType b effs resultTy
 
@@ -387,10 +383,9 @@ buildAbs
   -> (forall l. (Immut l, DExt n l) => Name c l -> m l (e l))
   -> m n (Abs (BinderP c binding) e n)
 buildAbs hint binding cont = liftImmut do
-  binding' <- sinkM binding
-  withFreshBinder hint binding' \b -> do
+  withFreshBinder hint binding \b -> do
     body <- cont $ binderName b
-    return $ Abs (b:>binding') body
+    return $ Abs (b:>binding) body
 
 singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
 singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
@@ -406,7 +401,10 @@ buildNaryAbs
   => EmptyAbs (Nest Binder) n
   -> (forall l. (Immut l, Distinct l, DExt n l) => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
-buildNaryAbs (EmptyAbs Empty) body = liftImmut $ Abs Empty <$> body []
+buildNaryAbs (EmptyAbs Empty) body =
+  liftImmut do
+    Distinct <- getDistinct
+    Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
   Abs b' (Abs bs' body') <-
     buildAbs (getNameHint b) ty \v -> do
@@ -846,8 +844,7 @@ telescopicCapture bs e = do
   vs <- localVarsAndTypeVars bs e
   vTys <- mapM (getType . Var) vs
   let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
-  ty <- liftImmut $ liftEnvReaderM $
-          buildTelescopeTy (map sink vs) (map sink tys)
+  ty <- liftImmut $ liftEnvReaderM $ buildTelescopeTy vs tys
   result <- buildTelescopeVal (map Var vsSorted) ty
   let ty' = ignoreHoistFailure $ hoist bs ty
   let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e

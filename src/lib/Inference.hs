@@ -332,7 +332,7 @@ instance Solver (InfererM i) where
   zonk e = InfererM $ SubstReaderT $ lift $ lift11 $ liftImmut do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
-    return $ zonkWithOutMap solverOutMap $ sink e
+    return $ zonkWithOutMap solverOutMap e
 
   emitSolver binding = emitInfererM "?" $ RightE binding
 

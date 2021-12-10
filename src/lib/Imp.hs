@@ -690,11 +690,11 @@ makeDestRec idxs ty = case ty of
         -- Now we're done. The rest is just trying to sink the newly created
         -- pointer names under lBinder. I wish it wasn't so much
         -- work!
-        liftImmut $ withFreshBinder NoHint (sink lTy) \lBinder'' -> do
+        liftImmut $ withFreshBinder NoHint lTy \lBinder'' -> do
           ListE sizes' <- applyAbs (sink $ Abs lBinder' $ ListE sizes) (binderName lBinder'')
           absDest'     <- applyAbs (sink $ Abs lBinder' absDest)       (binderName lBinder'')
           let box = BoxedRef (zip (map sink ptrs) sizes') absDest'
-          return $ DepPairRef (sink lDest) (Abs (lBinder'':>sink lTy) box) (sink depPairTy)
+          return $ DepPairRef lDest (Abs (lBinder'':>lTy) box) depPairTy
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs b

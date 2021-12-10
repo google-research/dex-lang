@@ -269,9 +269,8 @@ class Monad1 m => AlwaysImmut (m::MonadKind1) where
 
 class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: Immut n => m n (Scope n)
-  liftImmut :: SinkableE e
-            => (forall l. (Immut l, DExt n l) => m l (e l))
-            -> m n (e n)
+  -- XXX: be careful using this. See note [LiftImmutAndFriends]
+  liftImmut :: SinkableE e => (Immut n => m n (e n)) -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
@@ -1248,10 +1247,11 @@ locallyMutableInplaceT cont = do
                     unsafeRunInplaceT cont bindings
     return (DistinctAbs (unsafeCoerceB decls) e, emptyOutFrag)
 
+-- XXX: be careful with this. See note [LiftImmutAndFriends]
 locallyImmutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
-  => (forall l. (Immut l, DExt n l) => InplaceT b d m l (e l))
+  => (Immut n => InplaceT b d m n (e n))
   -> InplaceT b d m n (e n)
 locallyImmutableInplaceT doWithImmut = do
   Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
@@ -2664,5 +2664,34 @@ must produce an sinking `e n -> e l` given an sinking
 The typeclass should obey `sinkingProofE (SinkingCoercion id) = id`
 Otherwise you could just give an `sinkableE` instance for `Name n -> Bool`
 as `sinkingProofE _ _ = const True`.
+
+Note [LiftImmutAndFriends]
+
+We use the `Immut n` constraint to indicate that we're not updating the meaning
+of the name space `n` "in-place". We use `liftImmut` to run a computation that
+doesn't update the name parameter wihthin a computation that does. `liftImmut`
+(and similarly, `locallyImmutableInplaceT`) used to have a rank-2 guard for
+extra protection, like this:
+
+  liftImmut :: SinkableE e
+            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
+            -> m n (e n)
+
+The idea was that we'd make a new name space, `l`, that you could reach from the
+old one by sinking. But it generated a lot of busy work. And some things, like a
+binder `b n h` from a newly-unpacked abstraction, couldn't be sunk at all.
+
+So we switched to the less safe signature:
+
+  liftImmut :: SinkableE e => (Immut n, => m n (e n)) -> m n (e n)
+
+We require the result to be sinkable, so you can't just return something illegal
+like a `Scope n`. But you can trick it by using `LiftE` to wrap a `Scope n`:
+
+naughtyFunction :: ScopeReader m => m n (Scope n)
+naughtyFunction = fromLiftE <$> liftImmut (LiftE <$> getScope)
+
+But let's just not do that. The rule to follow is this: don't instantiate `e`
+with a type that mentions `n`.
 
 -}

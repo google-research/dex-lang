@@ -54,16 +54,14 @@ checkTypes :: (EnvReader m, Fallible1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = () <$ liftImmut do
   DB bindings <- getDB
-  e' <- sinkM e
-  liftExcept $ runTyperT bindings $ void $ checkE e'
+  liftExcept $ runTyperT bindings $ void $ checkE e
   return UnitE
 
 getType :: (EnvReader m, HasType e)
            => e n -> m n (Type n)
 getType e = liftImmut do
   DB bindings <- getDB
-  e' <- sinkM e
-  return $ runHardFail $ runTyperT bindings $ getTypeE e'
+  return $ runHardFail $ runTyperT bindings $ getTypeE e
 
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
@@ -78,8 +76,7 @@ getTypeSubst e = liftImmut do
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftImmut do
   DB bindings <- getDB
-  e' <- sinkM e
-  liftExcept $ runTyperT bindings $ getTypeE e'
+  liftExcept $ runTyperT bindings $ getTypeE e
 
 depPairLeftTy :: DepPairType n -> Type n
 depPairLeftTy (DepPairType (_:>ty) _) = ty
@@ -104,7 +101,7 @@ sourceNameType v = do
   where
     bindingType :: (NameColor c, EnvReader m, Fallible1 m)
                 => Binding c n -> m n (Type n)
-    bindingType binding = liftImmut $ sinkM binding >>= \case
+    bindingType binding = liftImmut case binding of
       AtomNameBinding b    -> return $ atomBindingType $ toBinding b
       TyConBinding   _   e -> getType e
       DataConBinding _ _ e -> getType e

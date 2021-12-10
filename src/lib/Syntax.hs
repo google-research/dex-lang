@@ -508,8 +508,7 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 lookupEnv :: (NameColor c, EnvReader m) => Name c o -> m o (Binding c o)
 lookupEnv v = liftImmut do
   bindings <- getEnv
-  v' <- sinkM v
-  return $ lookupEnvPure bindings v'
+  return $ lookupEnvPure bindings v
 
 lookupAtomName :: EnvReader m => AtomName n -> m n (AtomBinding n)
 lookupAtomName name = lookupEnv name >>= \case AtomNameBinding x -> return x
