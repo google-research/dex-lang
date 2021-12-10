@@ -482,7 +482,7 @@ introduceNewPtr hint ptrTy numel =
 
 buildLocalDest
   :: (SinkableE e)
-  => (forall l. (Mut l, Ext n l, Distinct l) => DestM l (e l))
+  => (forall l. (Mut l, DExt n l) => DestM l (e l))
   -> DestM n (AbsPtrs e n)
 buildLocalDest cont = liftImmut do
   result <- DestM $ locallyMutableInplaceT $ runDestM' cont
@@ -494,7 +494,7 @@ buildLocalDest cont = liftImmut do
 -- TODO: this is mostly copy-paste from Inference
 buildDeclsDest
   :: (Mut n, SinkableE e)
-  => (forall l. (Emits l, Ext n l, Distinct l) => DestM l (e l))
+  => (forall l. (Emits l, DExt n l) => DestM l (e l))
   -> DestM n (Abs (Nest Decl) e n)
 buildDeclsDest cont =
   DestM $ extendInplaceT do
@@ -507,7 +507,7 @@ buildDeclsDest cont =
 
 buildBlockDest
   :: Mut n
-  => (forall l. (Emits l, Ext n l, Distinct l) => DestM l (Atom l))
+  => (forall l. (Emits l, DExt n l) => DestM l (Atom l))
   -> DestM n (Block n)
 buildBlockDest cont = do
   Abs decls (PairE result ty) <- buildDeclsDest do
@@ -522,7 +522,7 @@ buildAbsDest
   :: (SinkableE e, HoistableE e, NameColor c, ToBinding binding c)
   => Mut n
   => NameHint -> binding n
-  -> (forall l. (Mut l, Distinct l, Ext n l) => Name c l -> DestM l (e l))
+  -> (forall l. (Mut l, DExt n l) => Name c l -> DestM l (e l))
   -> DestM n (Abs (BinderP c binding) e n)
 buildAbsDest hint binding cont =
   DestM $ extendInplaceT do
@@ -540,7 +540,7 @@ buildAbsDest hint binding cont =
 buildTabLamDest
   :: Mut n
   => NameHint -> Type n
-  -> (forall l. (Emits l, Ext n l, Distinct l) => AtomName l -> DestM l (Atom l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> DestM l (Atom l))
   -> DestM n (Atom n)
 buildTabLamDest hint ty cont = do
   Abs (b:>_) body <- buildAbsDest hint (LamBinding TabArrow ty) \v ->
@@ -804,7 +804,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
       _ -> error "unexpected src/dest pair"
 
 zipTabDestAtom :: (Emits n, ImpBuilder m)
-               => (forall l. (Emits l, Ext n l) => Dest l -> Atom l -> m l ())
+               => (forall l. (Emits l, DExt n l) => Dest l -> Atom l -> m l ())
                -> Dest n -> Atom n -> m n ()
 zipTabDestAtom f dest src = do
   Con (TabRef (Lam (LamExpr b _))) <- return dest
@@ -883,7 +883,7 @@ loadDest dest = error $ "not implemented" ++ pprint dest
 
 _emitWhen :: (ImpBuilder m, Emits n)
          => IExpr n
-         -> (forall l. (Emits l, Ext n l, Distinct l) => m l ())
+         -> (forall l. (Emits l, DExt n l) => m l ())
          -> m n ()
 _emitWhen cond doIfTrue =
   emitSwitch cond [False, True] \case False -> return ()
@@ -894,13 +894,13 @@ emitSwitch :: forall m n a.
               (ImpBuilder m, Emits n)
            => IExpr n
            -> [a]
-           -> (forall l. (Emits l, Ext n l, Distinct l) => a -> m l ())
+           -> (forall l. (Emits l, DExt n l) => a -> m l ())
            -> m n ()
 emitSwitch testIdx args cont = do
   Distinct <- getDistinct
   rec 0 args
   where
-    rec :: forall l. (Emits l, Ext n l, Distinct l) => Int -> [a] -> m l ()
+    rec :: forall l. (Emits l, DExt n l) => Int -> [a] -> m l ()
     rec _ [] = error "Shouldn't have an empty list of alternatives"
     rec _ [arg] = cont arg
     rec curIdx (arg:rest) = do
@@ -912,7 +912,7 @@ emitSwitch testIdx args cont = do
 
 emitLoop :: (ImpBuilder m, Emits n)
          => NameHint -> Direction -> IExpr n
-         -> (forall l. (Ext n l, Distinct l, Emits l) => IExpr l -> m l ())
+         -> (forall l. (DExt n l, Emits l) => IExpr l -> m l ())
          -> m n ()
 emitLoop hint d n cont = do
   loopBody <- liftImmut do
@@ -949,7 +949,7 @@ restructureScalarOrPairTypeRec ty _ = error $ "Not a scalar or pair: " ++ pprint
 
 buildBlockImp
   :: ImpBuilder m
-  => (forall l. (Emits l, Ext n l, Distinct l) => m l [IExpr l])
+  => (forall l. (Emits l, DExt n l) => m l [IExpr l])
   -> m n (ImpBlock n)
 buildBlockImp cont = liftImmut do
   DistinctAbs decls (ListE results) <- buildScopedImp $ ListE <$> cont
@@ -1063,7 +1063,7 @@ _buildImpAbs
   :: ( Immut n, ImpBuilder m
      , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => NameHint -> IType
-  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (e l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (e l))
   -> m n (DistinctAbs IBinder (DistinctAbs (Nest ImpDecl) e) n)
 _buildImpAbs hint ty body =
   withFreshIBinder hint ty \b -> do
@@ -1074,7 +1074,7 @@ buildImpNaryAbs
   :: ( Immut n, ImpBuilder m
      , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => [(NameHint, IType)]
-  -> (forall l. (Emits l, Ext n l) => [AtomName l] -> m l (e l))
+  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l (e l))
   -> m n (DistinctAbs (Nest IBinder) (DistinctAbs (Nest ImpDecl) e) n)
 buildImpNaryAbs [] cont = do
   Distinct <- getDistinct
@@ -1166,7 +1166,7 @@ _toScalarType b = BaseTy b
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
 -- are part of the same conspiracy.
 liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
-               => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
+               => (forall l. (Emits l, DExt n l) => BuilderM l (e l))
                -> m n (e n)
 liftBuilderImp cont = do
   Abs decls result <- liftImmut do

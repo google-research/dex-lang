@@ -115,21 +115,21 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
   buildDeclsInfUnzonked
     :: (SinkableE e, HoistableE e)
     => EmitsInf n
-    => (forall l. (EmitsBoth l, Distinct l, Ext n l) => m l (e l))
+    => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
     -> m n (Abs (Nest Decl) e n)
 
   buildAbsInf
     :: (SinkableE e, HoistableE e, NameColor c, ToBinding binding c)
     => EmitsInf n
     => NameHint -> binding n
-    -> (forall l. (EmitsInf l, Distinct l, Ext n l) => Name c l -> m l (e l))
+    -> (forall l. (EmitsInf l, DExt n l) => Name c l -> m l (e l))
     -> m n (Abs (BinderP c binding) e n)
 
 buildDeclsInf
   :: (SubstE AtomSubstVal e, Solver m, InfBuilder m)
   => (SinkableE e, HoistableE e)
   => EmitsInf n
-  => (forall l. (EmitsBoth l, Distinct l, Ext n l) => m l (e l))
+  => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
   -> m n (Abs (Nest Decl) e n)
 buildDeclsInf cont = buildDeclsInfUnzonked $ cont >>= zonk
 
@@ -297,7 +297,7 @@ liftInfererM cont = do
 
 runLocalInfererM
   :: (Immut n, SinkableE e)
-  => (forall l. (EmitsInf l, Ext n l, Distinct l) => InfererM i l (e l))
+  => (forall l. (EmitsInf l, DExt n l) => InfererM i l (e l))
   -> InfererM i n (DistinctAbs InfOutFrag e n)
 runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
   DistinctAbs fg (PairE ans s') <- locallyMutableInplaceT do

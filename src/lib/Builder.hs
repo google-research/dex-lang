@@ -53,7 +53,6 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
-import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -76,7 +75,7 @@ class (EnvReader m, EnvExtender m, Fallible1 m)
     => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
   buildScoped
     :: (SinkableE e, Immut n)
-    => (forall l. (Emits l, Distinct l, Ext n l) => m l (e l))
+    => (forall l. (Emits l, DExt n l) => m l (e l))
     -> m n (DistinctAbs (Nest Decl) e n)
 
 type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
@@ -122,7 +121,7 @@ class (EnvReader m, MonadFail1 m)
                   => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: (Immut n, SinkableE e)
-                  => (forall l. (Mut l, Ext n l, Distinct l) => m l (e l))
+                  => (forall l. (Mut l, DExt n l) => m l (e l))
                   -> m n (DistinctAbs TopEnvFrag e n)
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
@@ -205,7 +204,7 @@ runBuilderM bindings m = runHardFail $ runBuilderT bindings m
 
 liftBuilder
   :: (EnvReader m, SinkableE e)
-  => (forall l. (Immut l, Distinct l, Ext n l) => BuilderM l (e l))
+  => (forall l. (Immut l, DExt n l) => BuilderM l (e l))
   -> m n (e n)
 liftBuilder cont = liftImmut do
   DB bindings <- getDB
@@ -276,7 +275,7 @@ newtype WrapWithEmits n r =
 
 buildBlock
   :: Builder m
-  => (forall l. (Emits l, Ext n l) => m l (Atom l))
+  => (forall l. (Emits l, DExt n l) => m l (Atom l))
   -> m n (Block n)
 buildBlock cont = liftImmut do
   DistinctAbs decls results <- buildScoped do
@@ -305,35 +304,32 @@ inlineLastDecl (Nest decl rest) result =
 
 buildPureLam :: Builder m
              => NameHint -> Arrow -> Type n
-             -> (forall l. (Emits l, Distinct l, Ext n l) => AtomName l -> m l (Atom l))
+             -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
              -> m n (Atom n)
 buildPureLam hint arr ty body = do
   buildLamGeneral hint arr ty (const $ return Pure) \v -> do
-    -- TODO: we should just pass around Distinct by convention whenever we make
-    -- a distinct extension. We could make an alias `DExt n l` to make it more
-    -- convenient.
     Distinct <- getDistinct
     body v
 
 buildTabLam
   :: Builder m
   => NameHint -> Type n
-  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 buildTabLam hint ty body = buildLam hint TabArrow ty Pure body
 
 buildLam
   :: Builder m
   => NameHint -> Arrow -> Type n -> EffectRow n
-  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
 
 buildLamGeneral
   :: Builder m
   => NameHint -> Arrow -> Type n
-  -> (forall l. (Immut l, Ext n l) => AtomName l -> m l (EffectRow l))
-  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> (forall l. (Immut l, DExt n l) => AtomName l -> m l (EffectRow l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 buildLamGeneral hint arr ty fEff fBody = liftImmut do
   ty' <- sinkM ty
@@ -349,9 +345,11 @@ buildLamGeneral hint arr ty fEff fBody = liftImmut do
 -- emitting decls into the enclosing scope.
 buildPureNaryLam :: Builder m
                  => EmptyAbs (Nest PiBinder) n
-                 -> (forall l. Ext n l => [AtomName l] -> m l (Atom l))
+                 -> (forall l. DExt n l => [AtomName l] -> m l (Atom l))
                  -> m n (Atom n)
-buildPureNaryLam (EmptyAbs Empty) cont = cont []
+buildPureNaryLam (EmptyAbs Empty) cont = do
+  Distinct <- getDistinct
+  cont []
 buildPureNaryLam (EmptyAbs (Nest (PiBinder b ty arr) rest)) cont = do
   buildPureLam (getNameHint b) arr ty \x -> do
     restAbs <- sinkM $ Abs b $ EmptyAbs rest
@@ -363,7 +361,7 @@ buildPureNaryLam _ _ = error "impossible"
 
 buildPi :: (Fallible1 m, Builder m)
         => NameHint -> Arrow -> Type n
-        -> (forall l. Ext n l => AtomName l -> m l (EffectRow l, Type l))
+        -> (forall l. DExt n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (PiType n)
 buildPi hint arr ty body = liftImmut do
   ty' <- sinkM ty
@@ -386,7 +384,7 @@ buildAbs
      , SinkableE e, NameColor c, ToBinding binding c)
   => NameHint
   -> binding n
-  -> (forall l. (Immut l, Ext n l) => Name c l -> m l (e l))
+  -> (forall l. (Immut l, DExt n l) => Name c l -> m l (e l))
   -> m n (Abs (BinderP c binding) e n)
 buildAbs hint binding cont = liftImmut do
   binding' <- sinkM binding
@@ -406,7 +404,7 @@ singletonBinderNest hint ty = do
 buildNaryAbs
   :: (Builder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Immut l, Distinct l, Ext n l) => [AtomName l] -> m l (e l))
+  -> (forall l. (Immut l, Distinct l, DExt n l) => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
 buildNaryAbs (EmptyAbs Empty) body = liftImmut $ Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
@@ -423,7 +421,7 @@ buildNaryAbs _ _ = error "impossible"
 buildAlt
   :: Builder m
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Distinct l, Emits l, Ext n l) => [AtomName l] -> m l (Atom l))
+  -> (forall l. (Distinct l, Emits l, DExt n l) => [AtomName l] -> m l (Atom l))
   -> m n (Alt n)
 buildAlt bs body = do
   buildNaryAbs bs \xs -> do
@@ -435,7 +433,7 @@ buildAlt bs body = do
 buildUnaryAlt
   :: Builder m
   => Type n
-  -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
 buildUnaryAlt ty body = do
   bs <- singletonBinderNest NoHint ty
@@ -444,7 +442,7 @@ buildUnaryAlt ty body = do
 buildUnaryAtomAlt
   :: Builder m
   => Type n
-  -> (forall l. (Distinct l, Ext n l) => AtomName l -> m l (Atom l))
+  -> (forall l. (Distinct l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (AltP Atom n)
 buildUnaryAtomAlt ty body = do
   bs <- singletonBinderNest NoHint ty
@@ -455,7 +453,7 @@ buildUnaryAtomAlt ty body = do
 buildNewtype :: Builder m
              => SourceName
              -> EmptyAbs (Nest Binder) n
-             -> (forall l. (Immut l, Ext n l) => [AtomName l] -> m l (Type l))
+             -> (forall l. (Immut l, DExt n l) => [AtomName l] -> m l (Type l))
              -> m n (DataDef n)
 buildNewtype name paramBs body = do
   Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
@@ -472,7 +470,7 @@ fromNewtype _ = Nothing
 -- out the result type from one of the alts rather than providing it explicitly
 buildCase :: (Emits n, Builder m)
           => Atom n -> Type n
-          -> (forall l. (Emits l, Ext n l) => Int -> [AtomName l] -> m l (Atom l))
+          -> (forall l. (Emits l, DExt n l) => Int -> [AtomName l] -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
   scrutTy <- getType scrut
@@ -486,8 +484,8 @@ buildCase scrut resultTy indexedAltBody = do
 
 buildSplitCase :: (Emits n, Builder m)
                => LabeledItems (Type n) -> Atom n -> Type n
-               -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
-               -> (forall l. (Emits l, Ext n l) => AtomName l -> m l (Atom l))
+               -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+               -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
                -> m n (Atom n)
 buildSplitCase tys scrut resultTy match fallback = do
   split <- emitOp $ VariantSplit tys scrut

@@ -18,7 +18,7 @@
 module Name (
   Name (..), RawName (..), freshRawName,
   S (..), C (..), (<.>), SubstFrag (..), NameBinder (..),
-  SubstReader (..), FromName (..), Distinct,
+  SubstReader (..), FromName (..), Distinct, DExt,
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   DistinctAbs (..), WithScope (..),
@@ -270,7 +270,7 @@ class Monad1 m => AlwaysImmut (m::MonadKind1) where
 class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: Immut n => m n (Scope n)
   liftImmut :: SinkableE e
-            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
+            => (forall l. (Immut l, DExt n l) => m l (e l))
             -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
@@ -724,7 +724,7 @@ binderAnn (_:>ann) = ann
 
 withManyFresh :: Distinct n
               => [NameHint] -> NameColorRep c -> Scope n
-              -> (forall l. (Ext n l, Distinct l) => Nest (NameBinder c) n l -> a) -> a
+              -> (forall l. DExt n l => Nest (NameBinder c) n l -> a) -> a
 withManyFresh [] _ _ cont = cont Empty
 withManyFresh (h:hs) rep scope cont =
   withFresh h rep scope \b ->
@@ -1156,7 +1156,7 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m, AlwaysImmut m)
 
 class NameGen (m :: E -> S -> *) where
   returnG :: e n -> m e n
-  bindG   :: m e n -> (forall l. (Distinct l, Ext n l) => e l -> m e' l) -> m e' n
+  bindG   :: m e n -> (forall l. (DExt n l) => e l -> m e' l) -> m e' n
   getDistinctEvidenceG :: m DistinctEvidence n
 
 fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
@@ -1228,7 +1228,7 @@ extendInplaceT
   :: forall m b d e n.
      (ExtOutMap b d, Monad m, SinkableE e)
   => Mut n
-  => (forall l. (Distinct l, Immut l, Ext n l) => InplaceT b d m l (DistinctAbs d e l))
+  => (forall l. (Immut l, DExt n l) => InplaceT b d m l (DistinctAbs d e l))
   -> InplaceT b d m n (e n)
 extendInplaceT cont = do
   Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
@@ -1240,7 +1240,7 @@ locallyMutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
   => Immut n
-  => (forall l. (Mut l, Distinct l, Ext n l) => InplaceT b d m l (e l))
+  => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
   -> InplaceT b d m n (DistinctAbs d e n)
 locallyMutableInplaceT cont = do
   UnsafeMakeInplaceT \bindings -> do
@@ -1251,10 +1251,11 @@ locallyMutableInplaceT cont = do
 locallyImmutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
-  => (forall l. (Immut l, Ext n l) => InplaceT b d m l (e l))
+  => (forall l. (Immut l, DExt n l) => InplaceT b d m l (e l))
   -> InplaceT b d m n (e n)
 locallyImmutableInplaceT doWithImmut = do
   Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
+  Distinct <- getDistinct
   doWithImmut
 
 liftBetweenInplaceTs
@@ -1274,7 +1275,7 @@ emitInplaceT
   :: (NameColor c, SinkableE e, ExtOutMap b d, Monad m)
   => Mut o
   => NameHint -> e o
-  -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> d n l)
+  -> (forall n l. DExt n l => NameBinder c n l -> e n -> d n l)
   -> InplaceT b d m o (Name c o)
 emitInplaceT hint e buildDecls =
   extendInplaceT do
@@ -2070,7 +2071,7 @@ instance IsString NameHint where
 
 withFresh :: forall n c a. Distinct n
           => NameHint -> NameColorRep c -> Scope n
-          -> (forall l. (Ext n l, Immut l, Distinct l) => NameBinder c n l -> a) -> a
+          -> (forall l. (DExt n l, Immut l) => NameBinder c n l -> a) -> a
 withFresh hint rep (Scope (UnsafeMakeScopeFrag scope)) cont =
   withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
@@ -2099,6 +2100,7 @@ projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rep rawName)
 
 -- proves that the names in n are distinct
 class Distinct (n::S)
+type DExt n l = (Distinct l, Ext n l)
 
 fabricateDistinctEvidence :: forall n .DistinctEvidence n
 fabricateDistinctEvidence =
@@ -2172,7 +2174,7 @@ instance Category ExtEvidence where
   -- because the intermediate type would be ambiguous.
   FabricateExtEvidence . FabricateExtEvidence = FabricateExtEvidence
 
-sink :: (SinkableE e, Distinct l, Ext n l) => e n -> e l
+sink :: (SinkableE e, DExt n l) => e n -> e l
 sink x = unsafeCoerceE x
 
 sinkR :: SinkableE e => e (n:=>:l) -> e l
