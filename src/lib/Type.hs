@@ -54,16 +54,14 @@ checkTypes :: (EnvReader m, Fallible1 m, CheckableE e)
            => e n -> m n ()
 checkTypes e = () <$ liftImmut do
   DB bindings <- getDB
-  e' <- sinkM e
-  liftExcept $ runTyperT bindings $ void $ checkE e'
+  liftExcept $ runTyperT bindings $ void $ checkE e
   return UnitE
 
 getType :: (EnvReader m, HasType e)
            => e n -> m n (Type n)
 getType e = liftImmut do
   DB bindings <- getDB
-  e' <- sinkM e
-  return $ runHardFail $ runTyperT bindings $ getTypeE e'
+  return $ runHardFail $ runTyperT bindings $ getTypeE e
 
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
@@ -78,8 +76,7 @@ getTypeSubst e = liftImmut do
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
 tryGetType e = liftImmut do
   DB bindings <- getDB
-  e' <- sinkM e
-  liftExcept $ runTyperT bindings $ getTypeE e'
+  liftExcept $ runTyperT bindings $ getTypeE e
 
 depPairLeftTy :: DepPairType n -> Type n
 depPairLeftTy (DepPairType (_:>ty) _) = ty
@@ -104,7 +101,7 @@ sourceNameType v = do
   where
     bindingType :: (NameColor c, EnvReader m, Fallible1 m)
                 => Binding c n -> m n (Type n)
-    bindingType binding = liftImmut $ sinkM binding >>= \case
+    bindingType binding = liftImmut case binding of
       AtomNameBinding b    -> return $ atomBindingType $ toBinding b
       TyConBinding   _   e -> getType e
       DataConBinding _ _ e -> getType e
@@ -768,8 +765,8 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   allowed <- getAllowedEffects
   dropSubst $
-    refreshBindersI regionBinder \regionBinder' -> do
-      refreshBindersI refBinder \_ -> do
+    substBindersI regionBinder \regionBinder' -> do
+      substBindersI refBinder \_ -> do
         allowed'   <- sinkM allowed
         eff'       <- substM eff
         regionName <- sinkM $ binderName regionBinder'
@@ -843,7 +840,7 @@ checkAlt :: HasType body => Typer m
 checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
-  refreshBindersI bs \_ -> do
+  substBindersI bs \_ -> do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
@@ -1259,13 +1256,13 @@ checkDataLike :: ( EnvReader2 m, EnvExtender2 m
 checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy b eltTy ->
-    refreshBinders b \_ ->
+    substBinders b \_ ->
       checkDataLike msg eltTy
   RecordTy (NoExt items)  -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
-    refreshBinders b \_ -> checkDataLike msg r
+    substBinders b \_ -> checkDataLike msg r
   TypeCon _ defName params -> do
     params' <- mapM substM params
     def <- lookupDataDef =<< substM defName
@@ -1291,4 +1288,4 @@ checkDataLikeBinderNest :: ( EnvReader2 m, EnvExtender2 m
 checkDataLikeBinderNest (Abs Empty UnitE) = return ()
 checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
   checkDataLike "data con binder" $ binderType b
-  refreshBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE
+  substBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE

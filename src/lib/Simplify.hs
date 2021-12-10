@@ -72,7 +72,7 @@ splitSimpModule :: forall n. Distinct n
 splitSimpModule env (Module _ decls result) = do
   runEnvReaderM env $ runSubstReaderT idNameSubst do
     Immut <- return $ toImmutEvidence env
-    refreshBinders decls \decls' -> do
+    substBinders decls \decls' -> do
       result' <- substM result
       telescopicCaptureBlock decls' $ result'
 
@@ -149,9 +149,8 @@ defuncCase scrut alts resultTy = do
 
   where
     getAltTy :: EnvReader m => Alt n -> m n (Type n)
-    getAltTy alt = liftImmut $ liftSubstEnvReaderM do
-      Abs bs body <- sinkM alt
-      refreshBinders bs \bs' -> do
+    getAltTy (Abs bs body) = liftImmut $ liftSubstEnvReaderM do
+      substBinders bs \bs' -> do
         ty <- getTypeSubst body
         -- Result types of simplified abs should be hoistable past binder
         return $ ignoreHoistFailure $ hoist bs' ty
@@ -221,7 +220,7 @@ simplifyAbs
   :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
   => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
 simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
-  refreshBinders bs \bs' -> do
+  substBinders bs \bs' -> do
     DistinctAbs decls result <- buildScoped $ simplifyBlock body
     -- TODO: this would be more efficient if we had the two-computation version of buildScoped
     extendEnv (toEnvFrag decls) do

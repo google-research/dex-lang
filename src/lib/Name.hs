@@ -18,13 +18,13 @@
 module Name (
   Name (..), RawName (..), freshRawName,
   S (..), C (..), (<.>), SubstFrag (..), NameBinder (..),
-  SubstReader (..), FromName (..), Distinct,
+  SubstReader (..), FromName (..), Distinct, DExt,
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
-  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
+  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
   SubstV, InplaceT, extendInplaceT, extendInplaceTLocal,
   liftBetweenInplaceTs, emitInplaceT,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
@@ -269,9 +269,8 @@ class Monad1 m => AlwaysImmut (m::MonadKind1) where
 
 class Monad1 m => ScopeReader (m::MonadKind1) where
   getScope :: Immut n => m n (Scope n)
-  liftImmut :: SinkableE e
-            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
-            -> m n (e n)
+  -- XXX: be careful using this. See note [LiftImmutAndFriends]
+  liftImmut :: SinkableE e => (Immut n => m n (e n)) -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
@@ -476,6 +475,16 @@ substM e = do
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
 fromConstAbs (Abs b e) = hoist b e
 
+substBToFrag
+  :: (SubstB Name b, BindsNames b, Distinct o)
+  => (Scope o, Subst Name i o)
+  -> b i i'
+  -> (forall o'. Distinct o' => b o o' -> SubstFrag Name i i' o' -> a)
+  -> a
+substBToFrag env b cont =
+  substB env b \env' b' ->
+    cont b' $ substE env' $ idSubstFrag b
+
 -- === expresions carrying distinctness constraints ===
 
 data DistinctAbs (b::B) (e::E) (n::S) where
@@ -640,9 +649,11 @@ instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   (@@>) _ _ = error "length mismatch"
 
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
-           => SubstFrag v o i o -> e i -> m o (e o)
+           => Ext h o
+           => SubstFrag v h i o -> e i -> m o (e o)
 applySubst substFrag x = do
-  let fullSubst = idSubst <>> substFrag
+  Distinct <- getDistinct
+  let fullSubst = sink idSubst <>> substFrag
   WithScope scope fullSubst' <- addScope fullSubst
   sinkM $ fmapNames scope (fullSubst' !) x
 
@@ -724,7 +735,7 @@ binderAnn (_:>ann) = ann
 
 withManyFresh :: Distinct n
               => [NameHint] -> NameColorRep c -> Scope n
-              -> (forall l. (Ext n l, Distinct l) => Nest (NameBinder c) n l -> a) -> a
+              -> (forall l. DExt n l => Nest (NameBinder c) n l -> a) -> a
 withManyFresh [] _ _ cont = cont Empty
 withManyFresh (h:hs) rep scope cont =
   withFresh h rep scope \b ->
@@ -1156,7 +1167,7 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m, AlwaysImmut m)
 
 class NameGen (m :: E -> S -> *) where
   returnG :: e n -> m e n
-  bindG   :: m e n -> (forall l. (Distinct l, Ext n l) => e l -> m e' l) -> m e' n
+  bindG   :: m e n -> (forall l. (DExt n l) => e l -> m e' l) -> m e' n
   getDistinctEvidenceG :: m DistinctEvidence n
 
 fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
@@ -1228,7 +1239,7 @@ extendInplaceT
   :: forall m b d e n.
      (ExtOutMap b d, Monad m, SinkableE e)
   => Mut n
-  => (forall l. (Distinct l, Immut l, Ext n l) => InplaceT b d m l (DistinctAbs d e l))
+  => (forall l. (Immut l, DExt n l) => InplaceT b d m l (DistinctAbs d e l))
   -> InplaceT b d m n (e n)
 extendInplaceT cont = do
   Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
@@ -1240,7 +1251,7 @@ locallyMutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
   => Immut n
-  => (forall l. (Mut l, Distinct l, Ext n l) => InplaceT b d m l (e l))
+  => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
   -> InplaceT b d m n (DistinctAbs d e n)
 locallyMutableInplaceT cont = do
   UnsafeMakeInplaceT \bindings -> do
@@ -1248,13 +1259,15 @@ locallyMutableInplaceT cont = do
                     unsafeRunInplaceT cont bindings
     return (DistinctAbs (unsafeCoerceB decls) e, emptyOutFrag)
 
+-- XXX: be careful with this. See note [LiftImmutAndFriends]
 locallyImmutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
-  => (forall l. (Immut l, Ext n l) => InplaceT b d m l (e l))
+  => (Immut n => InplaceT b d m n (e n))
   -> InplaceT b d m n (e n)
 locallyImmutableInplaceT doWithImmut = do
   Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
+  Distinct <- getDistinct
   doWithImmut
 
 liftBetweenInplaceTs
@@ -1274,7 +1287,7 @@ emitInplaceT
   :: (NameColor c, SinkableE e, ExtOutMap b d, Monad m)
   => Mut o
   => NameHint -> e o
-  -> (forall n l. (Ext n l, Distinct l) => NameBinder c n l -> e n -> d n l)
+  -> (forall n l. DExt n l => NameBinder c n l -> e n -> d n l)
   -> InplaceT b d m o (Name c o)
 emitInplaceT hint e buildDecls =
   extendInplaceT do
@@ -2070,7 +2083,7 @@ instance IsString NameHint where
 
 withFresh :: forall n c a. Distinct n
           => NameHint -> NameColorRep c -> Scope n
-          -> (forall l. (Ext n l, Immut l, Distinct l) => NameBinder c n l -> a) -> a
+          -> (forall l. (DExt n l, Immut l) => NameBinder c n l -> a) -> a
 withFresh hint rep (Scope (UnsafeMakeScopeFrag scope)) cont =
   withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
@@ -2099,6 +2112,7 @@ projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rep rawName)
 
 -- proves that the names in n are distinct
 class Distinct (n::S)
+type DExt n l = (Distinct l, Ext n l)
 
 fabricateDistinctEvidence :: forall n .DistinctEvidence n
 fabricateDistinctEvidence =
@@ -2172,7 +2186,7 @@ instance Category ExtEvidence where
   -- because the intermediate type would be ambiguous.
   FabricateExtEvidence . FabricateExtEvidence = FabricateExtEvidence
 
-sink :: (SinkableE e, Distinct l, Ext n l) => e n -> e l
+sink :: (SinkableE e, DExt n l) => e n -> e l
 sink x = unsafeCoerceE x
 
 sinkR :: SinkableE e => e (n:=>:l) -> e l
@@ -2662,5 +2676,34 @@ must produce an sinking `e n -> e l` given an sinking
 The typeclass should obey `sinkingProofE (SinkingCoercion id) = id`
 Otherwise you could just give an `sinkableE` instance for `Name n -> Bool`
 as `sinkingProofE _ _ = const True`.
+
+Note [LiftImmutAndFriends]
+
+We use the `Immut n` constraint to indicate that we're not updating the meaning
+of the name space `n` "in-place". We use `liftImmut` to run a computation that
+doesn't update the name parameter wihthin a computation that does. `liftImmut`
+(and similarly, `locallyImmutableInplaceT`) used to have a rank-2 guard for
+extra protection, like this:
+
+  liftImmut :: SinkableE e
+            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
+            -> m n (e n)
+
+The idea was that we'd make a new name space, `l`, that you could reach from the
+old one by sinking. But it generated a lot of busy work. And some things, like a
+binder `b n h` from a newly-unpacked abstraction, couldn't be sunk at all.
+
+So we switched to the less safe signature:
+
+  liftImmut :: SinkableE e => (Immut n, => m n (e n)) -> m n (e n)
+
+We require the result to be sinkable, so you can't just return something illegal
+like a `Scope n`. But you can trick it by using `LiftE` to wrap a `Scope n`:
+
+naughtyFunction :: ScopeReader m => m n (Scope n)
+naughtyFunction = fromLiftE <$> liftImmut (LiftE <$> getScope)
+
+But let's just not do that. The rule to follow is this: don't instantiate `e`
+with a type that mentions `n`.
 
 -}

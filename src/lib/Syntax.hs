@@ -49,7 +49,7 @@ module Syntax (
     CmdName (..), LogLevel (..), OutFormat (..),
     EnvReader (..), EnvExtender (..),  Binding (..),
     TopEnvFrag (..), EvaluatedModule,
-    ToBinding (..), refreshBinders, refreshBindersI, withFreshBinder, withFreshBinders,
+    ToBinding (..), withFreshBinders, refreshBinders, substBinders, substBindersI, withFreshBinder,
     withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName,
@@ -508,8 +508,7 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 lookupEnv :: (NameColor c, EnvReader m) => Name c o -> m o (Binding c o)
 lookupEnv v = liftImmut do
   bindings <- getEnv
-  v' <- sinkM v
-  return $ lookupEnvPure bindings v'
+  return $ lookupEnvPure bindings v
 
 lookupAtomName :: EnvReader m => AtomName n -> m n (AtomBinding n)
 lookupAtomName name = lookupEnv name >>= \case AtomNameBinding x -> return x
@@ -541,7 +540,7 @@ refreshAbsM
   :: ( SubstB Name b, SubstE Name e, Immut n, BindsEnv b
      , EnvReader m, EnvExtender m)
   => Abs b e n
-  -> (forall l. (Immut l, Distinct l, Ext n l) => b n l -> e l -> m l a)
+  -> (forall l. (Immut l, DExt n l) => b n l -> e l -> m l a)
   -> m n a
 refreshAbsM ab cont = do
   scope <- getScope
@@ -552,13 +551,27 @@ refreshAbsM ab cont = do
       cont b e
 
 refreshBinders
+  :: (EnvExtender m, BindsEnv b, SubstB Name b)
+  => Immut n
+  => b n l
+  -> (forall l'. (Immut l', DExt n l') => b n l' -> SubstFrag Name n l l' -> m l' a)
+  -> m n a
+refreshBinders b cont = do
+  scope <- getScope
+  Distinct <- getDistinct
+  substBToFrag (scope, idSubst) b \b' frag ->
+    extendEnv (toEnvFrag b') $
+      withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b') $
+        cont b' frag
+
+substBinders
   :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
      , SubstReader v m, SubstB v b, BindsEnv b)
   => Immut o
   => b i i'
-  -> (forall o'. (Immut o', Distinct o', Ext o o') => b o o' -> m i' o' a)
+  -> (forall o'. (Immut o', DExt o o') => b o o' -> m i' o' a)
   -> m i o a
-refreshBinders b cont = do
+substBinders b cont = do
   scope <- getScope
   Distinct <- getDistinct
   env <- getSubst
@@ -568,20 +581,20 @@ refreshBinders b cont = do
       extendSubst envFrag do
         cont b'
 
--- Version of `refreshBinder` that gets its `Immut n` evidence from the monad.
+-- Version of `substBinder` that gets its `Immut n` evidence from the monad.
 -- TODO: make it easy to go the other way (from refreshI to refresh) by having a
 -- `CarriesImmutT` transformer to add explicit Immut evidence when
 -- needed. Then this can be the main version.
-refreshBindersI
+substBindersI
   :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
      , SubstReader v m, SubstB v b, BindsEnv b)
   => AlwaysImmut2 m
   => b i i'
   -> (forall o'. Ext o o' => b o o' -> m i' o' a)
   -> m i o a
-refreshBindersI b cont = do
+substBindersI b cont = do
   Immut <- getImmut
-  refreshBinders b cont
+  substBinders b cont
 
 withFreshBinder
   :: (NameColor c, EnvExtender m, ToBinding binding c)
