@@ -24,7 +24,7 @@ module Name (
   DistinctAbs (..), WithScope (..),
   extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
-  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
+  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
   SubstV, InplaceT, extendInplaceT, extendInplaceTLocal,
   liftBetweenInplaceTs, emitInplaceT,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
@@ -475,6 +475,16 @@ substM e = do
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
 fromConstAbs (Abs b e) = hoist b e
 
+substBToFrag
+  :: (SubstB Name b, BindsNames b, Distinct o)
+  => (Scope o, Subst Name i o)
+  -> b i i'
+  -> (forall o'. Distinct o' => b o o' -> SubstFrag Name i i' o' -> a)
+  -> a
+substBToFrag env b cont =
+  substB env b \env' b' ->
+    cont b' $ substE env' $ idSubstFrag b
+
 -- === expresions carrying distinctness constraints ===
 
 data DistinctAbs (b::B) (e::E) (n::S) where
@@ -639,9 +649,11 @@ instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   (@@>) _ _ = error "length mismatch"
 
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
-           => SubstFrag v o i o -> e i -> m o (e o)
+           => Ext h o
+           => SubstFrag v h i o -> e i -> m o (e o)
 applySubst substFrag x = do
-  let fullSubst = idSubst <>> substFrag
+  Distinct <- getDistinct
+  let fullSubst = sink idSubst <>> substFrag
   WithScope scope fullSubst' <- addScope fullSubst
   sinkM $ fmapNames scope (fullSubst' !) x
 

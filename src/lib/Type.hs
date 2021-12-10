@@ -765,8 +765,8 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   allowed <- getAllowedEffects
   dropSubst $
-    refreshBindersI regionBinder \regionBinder' -> do
-      refreshBindersI refBinder \_ -> do
+    substBindersI regionBinder \regionBinder' -> do
+      substBindersI refBinder \_ -> do
         allowed'   <- sinkM allowed
         eff'       <- substM eff
         regionName <- sinkM $ binderName regionBinder'
@@ -840,7 +840,7 @@ checkAlt :: HasType body => Typer m
 checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
-  refreshBindersI bs \_ -> do
+  substBindersI bs \_ -> do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
@@ -1256,13 +1256,13 @@ checkDataLike :: ( EnvReader2 m, EnvExtender2 m
 checkDataLike msg ty = case ty of
   Var _ -> error "Not implemented"
   TabTy b eltTy ->
-    refreshBinders b \_ ->
+    substBinders b \_ ->
       checkDataLike msg eltTy
   RecordTy (NoExt items)  -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
-    refreshBinders b \_ -> checkDataLike msg r
+    substBinders b \_ -> checkDataLike msg r
   TypeCon _ defName params -> do
     params' <- mapM substM params
     def <- lookupDataDef =<< substM defName
@@ -1288,4 +1288,4 @@ checkDataLikeBinderNest :: ( EnvReader2 m, EnvExtender2 m
 checkDataLikeBinderNest (Abs Empty UnitE) = return ()
 checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
   checkDataLike "data con binder" $ binderType b
-  refreshBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE
+  substBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE

@@ -681,20 +681,19 @@ makeDestRec idxs ty = case ty of
         -- required because we don't have the lhs value yet. So instead we
         -- allocate pointers which will eventually point to the required
         -- pointers.
-        Abs lBinder' (AbsPtrs absDest ptrsInfo) <- buildAbsDest NoHint lTy \lVal -> do
-            rTy' <- applyAbs (sink $ Abs lBinder rTy) lVal
-            buildLocalDest $ makeSingleDest (sink rTy')
+        Abs lBinder' ab@(AbsPtrs _ ptrsInfo) <-
+          liftImmut $ refreshBinders (lBinder:>lTy) \lBinder' s -> do
+            rTy' <- applySubst s rTy
+            absDest <- buildLocalDest $ makeSingleDest $ sink rTy'
+            return $ Abs lBinder' absDest
         ptrs <- forM ptrsInfo \(DestPtrInfo ptrTy _) ->
                   makeBaseTypePtr idxs (PtrType ptrTy)
-        let sizes = ptrsInfo <&> \(DestPtrInfo _ size) -> size
-        -- Now we're done. The rest is just trying to sink the newly created
-        -- pointer names under lBinder. I wish it wasn't so much
-        -- work!
-        liftImmut $ withFreshBinder NoHint lTy \lBinder'' -> do
-          ListE sizes' <- applyAbs (sink $ Abs lBinder' $ ListE sizes) (binderName lBinder'')
-          absDest'     <- applyAbs (sink $ Abs lBinder' absDest)       (binderName lBinder'')
-          let box = BoxedRef (zip (map sink ptrs) sizes') absDest'
-          return $ DepPairRef lDest (Abs (lBinder'':>lTy) box) depPairTy
+        liftImmut $ refreshBinders lBinder' \lBinder'' s -> do
+          AbsPtrs absDest ptrsInfo' <- applySubst s ab
+          sizedPtrs <- forM (zip ptrs ptrsInfo') \(ptr, (DestPtrInfo _ size)) ->
+                         return (sink ptr, size)
+          let box = BoxedRef sizedPtrs absDest
+          return $ DepPairRef lDest (Abs lBinder'' box) depPairTy
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs b
