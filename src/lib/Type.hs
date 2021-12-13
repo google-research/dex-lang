@@ -23,7 +23,7 @@ module Type (
   oneEffect, lamExprTy, isData) where
 
 import Prelude hiding (id)
-import Control.Category ((>>>))
+import Control.Category ((>>>), id)
 import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable (toList)
@@ -36,7 +36,7 @@ import qualified Data.Set        as S
 import LabeledItems
 
 import Err
-import Util (forMZipped, forMZipped_, iota)
+import Util (forMZipped, forMZipped_, iota, scan, restructure)
 
 import Syntax
 import Name
@@ -993,7 +993,8 @@ checkUnOp op x = do
 -- These only work for index set types without free variables. It's redundant
 -- with the more general index set classs in Builder but this way we avoid the
 -- dependency cycle. And we intend to make index sets a user-defined thing soon
--- anyway.
+-- anyway. One solution might be to define a monad class, a subset of Builder,
+-- that can be instantiated with both an interpreter and a builder.
 
 indices :: forall n m. EnvReader m => Type n -> m n [Atom n]
 indices ty = do
@@ -1005,9 +1006,10 @@ indices ty = do
       HoistFailure _ -> error "can't get index literals from type with free vars"
 
 litIdxSetSize :: Type VoidS -> Int32
-litIdxSetSize (TC ty) = case ty of
-  IntRange (IdxRepVal low) (IdxRepVal high) -> fromIntegral $ high - low
-  IndexRange n low high -> high' - low'
+litIdxSetSize ty = case ty of
+  TC (IntRange (IdxRepVal low) (IdxRepVal high)) ->
+    fromIntegral $ high - low
+  TC (IndexRange n low high) -> high' - low'
     where
       low' = case low of
         InclusiveLim x -> litToOrdinal x
@@ -1017,20 +1019,87 @@ litIdxSetSize (TC ty) = case ty of
         InclusiveLim x -> litToOrdinal x + 1
         ExclusiveLim x -> litToOrdinal x
         Unlimited      -> litIdxSetSize n
-  ProdType tys -> product $ fmap litIdxSetSize tys
+  TC (ProdType types)     -> product $ fmap litIdxSetSize types
+  RecordTy (NoExt types)  -> product $ fmap litIdxSetSize types
+  SumTy types             -> sum $ fmap litIdxSetSize types
+  VariantTy (NoExt types) -> sum $ fmap litIdxSetSize types
   _ -> error $ "Not an (implemented) index set: " ++ pprint ty
-litIdxSetSize _ = error "not a literal index set"
+
+data IterOrder = MinorToMajor | MajorToMinor
 
 litToOrdinal :: Atom VoidS -> Int32
-litToOrdinal x = case x of
+litToOrdinal idx = case idx of
   Con (IntRangeVal   _ _   (IdxRepVal i)) -> i
   Con (IndexRangeVal _ _ _ (IdxRepVal i)) -> i
-  _ -> error $ "Not an (implemented) index: " ++ pprint x
+  ProdTy           types  -> prodToInt MajorToMinor types
+  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
+  Con (SumCon _ _ _) -> error "not implemented"
+  Variant (NoExt tys) _ _ _ -> sumToInt tys
+  _ -> error $ "Not an (implemented) index: " ++ pprint idx
+  where
+    prodToInt :: Traversable t => IterOrder -> t (Type VoidS) -> Int32
+    prodToInt order types = do
+      let sizes = toList $ fmap litIdxSetSize types
+      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
+      let strides = rev $ fst $ scan (\sz prev -> (prev,) $ sz * prev) (rev sizes) 1
+      -- Unpack and sum the strided contributions
+      let subints = fmap litToOrdinal $ getUnpackedLitProd idx
+      let scaled = map (uncurry (*)) $ zip strides subints
+      sum scaled
+
+    sumToInt :: Traversable t => t (Type VoidS) -> Int32
+    sumToInt types = do
+      let sizes = map litIdxSetSize $ toList types
+      let offsets = fst $ scan (\sz prev -> (prev,) $ sz + prev) sizes 0
+      case trySelectBranch idx of
+        Nothing -> error "we're working with literals, so we should know the branch"
+        Just (i, [subix]) -> offsets !! i + litToOrdinal subix
+        Just _ -> error "expected a unary alt"
+
+    getUnpackedLitProd :: Atom VoidS -> [Atom VoidS]
+    getUnpackedLitProd prod = case prod of
+      Record xs -> toList xs
+      Con (ProdCon xs) -> xs
+      _ -> error "expected a record or product type"
 
 litFromOrdinal :: Type VoidS -> Int32 -> Atom VoidS
 litFromOrdinal ty i = case ty of
   TC (IntRange low high) -> Con $ IntRangeVal low high $ IdxRepVal i
+  TC (IndexRange n low high) -> Con $ IndexRangeVal n low high (IdxRepVal i)
+  TC (ProdType types)    -> ProdVal $ reverse $ intToProd types
+  RecordTy (NoExt types) -> Record $ intToProd types
+  SumTy types             -> intToSum types [0..] $ SumVal ty
+  VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)
   _ -> error $ "Not an (implemented) index set: " ++ pprint ty
+  where
+    -- XXX: Expects that the types are in a minor-to-major order
+    intToProd :: Traversable t => t (Type VoidS) -> t (Atom VoidS)
+    intToProd types = do
+      let sizes = fmap litIdxSetSize types
+      let strides = fst $ scan (\sz prev -> let v = sz * prev in ((prev, v), v)) sizes 1
+      let offsets = flip map (zip (toList types) (toList strides)) $
+            \(ety, (s1, s2)) -> do
+              let x = rem i s2
+              let y = div x s1
+              litFromOrdinal ety y
+      restructure offsets types
+
+    intToSum :: Traversable t => t (Type VoidS) -> t l -> (l -> Atom VoidS -> Atom VoidS) -> Atom VoidS
+    intToSum types labels mkSum = do
+      let sizes = fmap litIdxSetSize types
+      let offsets = fst $ scan (\sz prev -> (prev,) $ sz + prev) sizes 0
+      let
+        -- Find the right index by looping through the possible offsets
+        go prev (label, cty, offset) = do
+          let shifted = i - offset
+          -- TODO: This might run intToIndex on negative indices. Fix this!
+          let index = litFromOrdinal cty shifted
+          if i < offset
+            then prev
+            else mkSum label index
+        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
+      let start = mkSum l $ litFromOrdinal ty0 i
+      foldl go start zs
 
 -- === substituting evaluated modules ===
 

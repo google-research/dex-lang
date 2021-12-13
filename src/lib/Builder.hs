@@ -737,17 +737,17 @@ clampPositive x = do
 
 intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
 intToIndex ty i = case ty of
-  TC con -> case con of
-    IntRange        low high   -> return $ Con $ IntRangeVal        low high i
-    IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
-    ProdType types             -> intToProd (reverse types) (ProdVal . reverse)
-    _ -> error $ "Unexpected type " ++ pprint ty
-  RecordTy  (NoExt types) -> intToProd types Record
-  _ -> error "not implemented"
+  TC (IntRange        low high) -> return $ Con $ IntRangeVal        low high i
+  TC (IndexRange from low high) -> return $ Con $ IndexRangeVal from low high i
+  TC (ProdType types) -> (ProdVal . reverse) <$> intToProd (reverse types)
+  RecordTy  (NoExt types) -> Record <$> intToProd types
+  SumTy types             -> intToSum types [0..] $ SumVal ty
+  VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)
+  _ -> error "not an (implemented) index set"
   where
     -- XXX: Expects that the types are in a minor-to-major order
-    intToProd :: Traversable t => t (Type n) -> (t (Atom n) -> (Atom n)) -> m n (Atom n)
-    intToProd types mkProd = do
+    intToProd :: Traversable t => t (Type n) -> m n (t (Atom n))
+    intToProd types = do
       sizes <- traverse indexSetSize types
       (strides, _) <- scanM
         (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
@@ -756,7 +756,23 @@ intToIndex ty i = case ty of
           x <- irem i s2
           y <- idiv x s1
           intToIndex ety y
-      return $ mkProd (restructure offsets types)
+      return $ restructure offsets types
+
+    intToSum :: Traversable t => t (Type n) -> t l -> (l -> Atom n -> Atom n) -> m n (Atom n)
+    intToSum types labels mkSum = do
+      sizes <- traverse indexSetSize types
+      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
+      let
+        -- Find the right index by looping through the possible offsets
+        go prev (label, cty, offset) = do
+          shifted <- isub i offset
+          -- TODO: This might run intToIndex on negative indices. Fix this!
+          index   <- intToIndex cty shifted
+          beforeThis <- ilt i offset
+          select beforeThis prev $ mkSum label index
+        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
+      start <- mkSum l <$> intToIndex ty0 i
+      foldM go start zs
 
 data IterOrder = MinorToMajor | MajorToMinor
 
@@ -766,14 +782,13 @@ indexToInt (Con (IndexRangeVal _ _ _ i)) = return i
 indexToInt idx = getType idx >>= \case
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
-  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
   ProdTy           types  -> prodToInt MajorToMinor types
   RecordTy  (NoExt types) -> prodToInt MinorToMajor types
-  SumTy            _  -> error "not implemented"
-  VariantTy (NoExt _) -> error "not implemented"
+  SumTy            types  -> sumToInt types
+  VariantTy (NoExt types) -> sumToInt types
+  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
   ty -> error $ "Unexpected type " ++ pprint ty
   where
-    -- XXX: Assumes minor-to-major iteration order
     prodToInt :: Traversable t => IterOrder -> t (Type n) -> m n (Atom n)
     prodToInt order types = do
       sizes <- toList <$> traverse indexSetSize types
@@ -785,11 +800,20 @@ indexToInt idx = getType idx >>= \case
       scaled <- mapM (uncurry imul) $ zip strides subints
       foldM iadd (IdxRepVal 0) scaled
 
+    sumToInt :: Traversable t => t (Type n) -> m n (Atom n)
+    sumToInt types = do
+      sizes <- traverse indexSetSize types
+      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
+      alts <- flip mapM (zip (toList offsets) (toList types)) $
+        \(offset, subty) -> buildUnaryAlt subty \subix -> do
+          i <- indexToInt $ Var subix
+          iadd (sink offset) i
+      liftM Var $ emit $ Case idx alts IdxRepTy
+
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
-indexSetSize (TC con) = case con of
-  IntRange low high -> clampPositive =<< high `isub` low
-  SumType types -> foldM iadd (IdxRepVal 0) =<< traverse indexSetSize types
-  IndexRange n low high -> do
+indexSetSize ty = case ty of
+  TC (IntRange low high) -> clampPositive =<< high `isub` low
+  TC (IndexRange n low high) -> do
     low' <- case low of
       InclusiveLim x -> indexToInt x
       ExclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
@@ -799,16 +823,19 @@ indexSetSize (TC con) = case con of
       ExclusiveLim x -> indexToInt x
       Unlimited      -> indexSetSize n
     clampPositive =<< high' `isub` low'
-  ProdType tys -> foldM imul (IdxRepVal 1) =<< traverse indexSetSize tys
-  ParIndexRange _ _ _ -> error "Shouldn't be querying the size of a ParIndexRange"
-  _ -> error $ "Not implemented " ++ pprint con
-indexSetSize (RecordTy (NoExt types)) = do
-  sizes <- traverse indexSetSize types
-  foldM imul (IdxRepVal 1) sizes
-indexSetSize (VariantTy (NoExt types)) = do
-  sizes <- traverse indexSetSize types
-  foldM iadd (IdxRepVal 0) sizes
-indexSetSize ty = error $ "Not implemented " ++ pprint ty
+  TC (ProdType types) -> do
+    sizes <- traverse indexSetSize types
+    foldM imul (IdxRepVal 1) sizes
+  RecordTy (NoExt types) -> do
+    sizes <- traverse indexSetSize types
+    foldM imul (IdxRepVal 1) sizes
+  TC (SumType types) -> do
+    sizes <- traverse indexSetSize types
+    foldM iadd (IdxRepVal 0) sizes
+  VariantTy (NoExt types) -> do
+    sizes <- traverse indexSetSize types
+    foldM iadd (IdxRepVal 0) sizes
+  _ -> error $ "Not an (implemented) index set " ++ pprint ty
 
 -- === capturing closures with telescopes ===
 
