@@ -23,6 +23,7 @@ import Builder
 import Syntax
 import Type
 import LabeledItems
+import qualified Algebra as A
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -537,6 +538,22 @@ buildAbsDest hint binding cont =
         withSubscopeDistinct b'' $
           return $ DistinctAbs emissions' (Abs b'' result)
 
+-- decls emitted at the inner scope are hoisted to the outer scope
+-- (they must be hoistable, otherwise we'll get a hoisting error)
+buildAbsHoistingDeclsDest
+  :: (SinkableE e, HoistableE e, NameColor c, ToBinding binding c)
+  => Emits n
+  => NameHint -> binding n
+  -> (forall l. (Emits l, DExt n l) => Name c l -> DestM l (e l))
+  -> DestM n (Abs (BinderP c binding) e n)
+buildAbsHoistingDeclsDest hint binding cont =
+  -- XXX: here we're using the fact that `buildAbsDest` doesn't actually check
+  -- that the function produces no decls (it assumes it can't because it doesn't
+  -- give it `Emits`) and so it just hoists all the emissions.
+  buildAbsDest hint binding \v -> do
+    Emits <- fabricateEmitsEvidenceM
+    cont v
+
 buildTabLamDest
   :: Mut n
   => NameHint -> Type n
@@ -619,14 +636,17 @@ makeDest allocInfo ty =
    DB bindings <- getDB
    return $ runDestM bindings allocInfo do
      buildLocalDest $
-       makeSingleDest $ sink ty
+       makeSingleDest [] $ sink ty
 
-makeSingleDest :: Mut n => Type n -> DestM n (Dest n)
-makeSingleDest ty = do
-  Abs decls dest <- buildDeclsDest $ makeDestRec (Abs Empty UnitE, []) (sink ty)
+makeSingleDest :: Mut n => [AtomName n] -> Type n -> DestM n (Dest n)
+makeSingleDest depVars ty = do
+  Abs decls dest <- buildDeclsDest $
+    makeDestRec (Abs Empty UnitE, []) (map sink depVars) (sink ty)
   case decls of
     Empty -> return dest
-    _ -> error "shouldn't need to emit decls if we're not working with indices"
+    _ -> error
+     $ "shouldn't need to emit decls if we're not working with indices"
+     ++ pprint decls
 
 extendIdxsTy
   :: EnvReader m
@@ -640,60 +660,71 @@ extendIdxsTy (idxsTy, idxs) new = do
 
 type Idxs n = [AtomName n]
 type IdxNest = Nest Binder
-type DestIdxs n = (Abs IdxNest UnitE n, Idxs n)
+type DestIdxs n = (EmptyAbs IdxNest n, Idxs n)
+
+-- TODO: make `DestIdxs` a proper E-kinded thing
+sinkDestIdxs :: DExt n l => DestIdxs n -> DestIdxs l
+sinkDestIdxs (idxsTy, idxs) = (sink idxsTy, map sink idxs)
 
 -- `makeDestRec` builds an array of dests. The curried index type, `EmptyAbs
 -- IdxNest n`, determines a set of valid indices, `Idxs n`. At each valid value
--- of `Idxs n` we should have a distinct dest.
-makeDestRec :: forall n. Emits n => DestIdxs n -> Type n -> DestM n (Dest n)
-makeDestRec idxs ty = case ty of
+-- of `Idxs n` we should have a distinct dest. The `depVars` are a list of
+-- variables whose values we won't know until we actually store something. The
+-- resulting `Dest n` may mention these variables, but the pointer allocation
+-- sizes can't.
+makeDestRec :: forall n. Emits n => DestIdxs n -> [AtomName n] -> Type n -> DestM n (Dest n)
+makeDestRec idxs depVars ty = case ty of
   TabTy (PiBinder b iTy _) bodyTy -> do
-    Distinct <- getDistinct
-    idxsTy <- extendIdxsTy idxs iTy
-    Con <$> TabRef <$> buildTabLamDest "i" iTy \v -> do
-      let newIdxVals = map sink (snd idxs) <> [v]
-      bodyTy' <- applyAbs (sink $ Abs b bodyTy) v
-      makeDestRec (sink idxsTy, newIdxVals) bodyTy'
+    if depVars `areFreeIn` iTy
+      then do
+        AbsPtrs absDest ptrsInfo <- buildLocalDest $ makeSingleDest [] $ sink ty
+        ptrs <- forM ptrsInfo \(DestPtrInfo ptrTy size) -> do
+                  ptr <- makeBaseTypePtr idxs (PtrType ptrTy)
+                  return (ptr, size)
+        return $ BoxedRef ptrs absDest
+      else do
+        Distinct <- getDistinct
+        idxsTy <- extendIdxsTy idxs iTy
+        Con <$> TabRef <$> buildTabLamDest "i" iTy \v -> do
+          let newIdxVals = map sink (snd idxs) <> [v]
+          bodyTy' <- applyAbs (sink $ Abs b bodyTy) v
+          makeDestRec (sink idxsTy, newIdxVals) (map sink depVars) bodyTy'
   TypeCon _ defName params -> do
     def <- lookupDataDef defName
     dcs <- instantiateDataDef def params
     case dcs of
       [] -> error "Void type not allowed"
-      [_] -> error "not implemented"
+      [DataConDef _ dataConBinders] -> do
+        Distinct <- getDistinct
+        dests <- makeDataConDest depVars dataConBinders
+        return $ DataConRef defName params dests
+        where
+          makeDataConDest :: (Emits l, DExt n l)
+                          => [AtomName l]
+                          -> EmptyAbs (Nest Binder) l
+                          -> DestM l (EmptyAbs (Nest DataConRefBinding) l)
+          makeDataConDest depVars' (Abs bs UnitE) = case bs of
+            Empty -> return $ EmptyAbs Empty
+            Nest (b:>bTy) rest -> do
+              dest <- makeDestRec (sinkDestIdxs idxs) depVars' bTy
+              Abs b' (EmptyAbs restDest) <- buildAbsHoistingDeclsDest (getNameHint b) bTy \v -> do
+                let depVars'' = map sink depVars' ++ [v]
+                rest' <- applySubst (b@>v) $ EmptyAbs rest
+                makeDataConDest depVars'' rest'
+              return $ EmptyAbs $ Nest (DataConRefBinding b' dest) restDest
       _ -> do
         tag <- rec TagRepTy
         contents <- forM dcs \dc -> case nonDepDataConTys dc of
           Nothing -> error "Dependent data constructors only allowed for single-constructor types"
-          Just tys -> mapM (makeDestRec idxs) tys
+          Just tys -> mapM (makeDestRec idxs depVars) tys
         return $ Con $ ConRef $ SumAsProd ty tag contents
   DepPairTy depPairTy@(DepPairType (lBinder:>lTy) rTy) -> do
     lDest <- rec lTy
-    case hoist lBinder rTy of
-      HoistSuccess rTy' -> do
-        Abs lBinder' rDest <- toConstAbs nameColorRep =<< rec rTy'
-        return $ DepPairRef lDest (Abs (lBinder':>lTy) rDest) depPairTy
-      HoistFailure _ -> do
-        -- This case means that the rhs type, and thus the size of its dest,
-        -- depends on the lhs value. So we introduce a binder for the abstracted
-        -- lhs value, and under it we build the rhs dest, collecting all the
-        -- allocations required, along with their sizes. Both the sizes and the
-        -- dest itself may mention that binder. We can't allocate the memory
-        -- required because we don't have the lhs value yet. So instead we
-        -- allocate pointers which will eventually point to the required
-        -- pointers.
-        Abs lBinder' ab@(AbsPtrs _ ptrsInfo) <-
-          liftImmut $ refreshBinders (lBinder:>lTy) \lBinder' s -> do
-            rTy' <- applySubst s rTy
-            absDest <- buildLocalDest $ makeSingleDest $ sink rTy'
-            return $ Abs lBinder' absDest
-        ptrs <- forM ptrsInfo \(DestPtrInfo ptrTy _) ->
-                  makeBaseTypePtr idxs (PtrType ptrTy)
-        liftImmut $ refreshBinders lBinder' \lBinder'' s -> do
-          AbsPtrs absDest ptrsInfo' <- applySubst s ab
-          sizedPtrs <- forM (zip ptrs ptrsInfo') \(ptr, (DestPtrInfo _ size)) ->
-                         return (sink ptr, size)
-          let box = BoxedRef sizedPtrs absDest
-          return $ DepPairRef lDest (Abs lBinder'' box) depPairTy
+    Abs lBinder' rDest <- buildAbsHoistingDeclsDest (getNameHint lBinder) lTy \v -> do
+      rTy' <- applySubst (lBinder@>v) rTy
+      let depVars' = map sink depVars ++ [v]
+      makeDestRec (sinkDestIdxs idxs) depVars' rTy'
+    return $ DepPairRef lDest (Abs lBinder' rDest) depPairTy
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs b
@@ -710,7 +741,7 @@ makeDestRec idxs ty = case ty of
     _ -> error $ "not implemented: " ++ pprint con
   _ -> error $ "not implemented: " ++ pprint ty
   where
-    rec = makeDestRec idxs
+    rec = makeDestRec idxs depVars
 
     recSumType cases = do
       tag <- rec TagRepTy
@@ -719,35 +750,13 @@ makeDestRec idxs ty = case ty of
 
 makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr (idxsTy, idxs) ty = do
-  numel <- buildBlockDest $ elemCount (sink idxsTy)
+  numel <- buildBlockDest $ computeElemCount (sink idxsTy)
   allocInfo <- getAllocInfo
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrTy = (addrSpace, ty)
-  ptr <- introduceNewPtr "ptr" ptrTy numel
-  applyIdxs (idxsTy, idxs) $ Var ptr
-
-elemCount :: (Emits n, Builder m) => EmptyAbs IdxNest n -> m n (Atom n)
-elemCount (Abs idxs UnitE) = case idxs of
-  Empty -> return $ IdxRepVal 1
-  Nest (b:>ixTy) rest -> case hoist b $ Abs rest UnitE of
-    HoistSuccess rest' -> do
-      n1 <- indexSetSize ixTy
-      n2 <- elemCount rest'
-      imul n1 n2
-    HoistFailure _ -> error "can't handle dependent tables"
-
-applyIdxs :: (Emits n, Builder m) => DestIdxs n -> Atom n -> m n (Atom n)
-applyIdxs (Abs Empty UnitE, []) ptr = return ptr
-applyIdxs (Abs (Nest b rest) UnitE, ix:ixs)  ptr =
-  case hoist b (Abs rest UnitE) of
-    HoistSuccess rest' -> do
-      stride <- elemCount rest'
-      ordinal <- indexToInt $ Var ix
-      offset <- imul stride ordinal
-      ptr' <- ptrOffset ptr offset
-      applyIdxs (rest', ixs) ptr'
-    HoistFailure _ -> error "can't handle dependent tables"
-applyIdxs _ _ = error "mismatched number of indices"
+  ptr <- Var <$> introduceNewPtr "ptr" ptrTy numel
+  offset <- computeOffset idxsTy idxs
+  ptrOffset ptr offset
 
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
@@ -829,7 +838,7 @@ copyDataConArgs :: (ImpBuilder m, Emits n)
 copyDataConArgs (Abs Empty UnitE) [] = return ()
 copyDataConArgs (Abs (Nest (DataConRefBinding b ref) rest) UnitE) (x:xs) = do
   copyAtom ref x
-  rest' <- applyAbs (Abs b $ EmptyAbs rest) (SubstVal x)
+  rest' <- applySubst (b@>SubstVal x) (EmptyAbs rest)
   copyDataConArgs rest' xs
 copyDataConArgs bindings args =
   error $ "Mismatched bindings/args: " ++ pprint (bindings, args)
@@ -853,6 +862,10 @@ indexDest (Con (TabRef (Lam (LamExpr b body)))) i = do
 indexDest dest _ = error $ pprint dest
 
 loadDest :: (Builder m, Emits n) => Dest n -> m n (Atom n)
+loadDest (DataConRef def params bs) = do
+  DataDef _ _ cons <- lookupDataDef def
+  let DataConDef conName _ = cons !! 0
+  DataCon conName def params 0 <$> loadDataConArgs bs
 loadDest (DepPairRef lr rra a) = do
   l <- loadDest lr
   r <- loadDest =<< applyAbs rra (SubstVal l)
@@ -879,6 +892,14 @@ loadDest (Con dest) = do
      _        -> error $ "Not a valid dest: " ++ pprint dest
    _ -> error $ "not implemented" ++ pprint dest
 loadDest dest = error $ "not implemented" ++ pprint dest
+
+loadDataConArgs :: (Builder m, Emits n) => EmptyAbs (Nest DataConRefBinding) n -> m n [Atom n]
+loadDataConArgs (Abs bs UnitE) = case bs of
+  Empty -> return []
+  Nest (DataConRefBinding b ref) rest -> do
+    val <- loadDest ref
+    rest' <- applySubst (b @> SubstVal val) $ EmptyAbs rest
+    (val:) <$> loadDataConArgs rest'
 
 _emitWhen :: (ImpBuilder m, Emits n)
          => IExpr n
@@ -1033,6 +1054,45 @@ _deviceFromCallingConvention cc = case cc of
   FFIMultiResultFun -> CPU
   MCThreadLaunch    -> CPU
   CUDAKernelLaunch  -> GPU
+
+-- === Determining buffer sizes and offsets using polynomials ===
+
+type IndexStructure = EmptyAbs IdxNest :: E
+
+computeElemCount :: (Emits n, Builder m) => IndexStructure n -> m n (Atom n)
+computeElemCount (EmptyAbs Empty) =
+  -- XXX: this optimization is important because we don't want to emit any decls
+  -- in the case that we don't have any indices. The more general path will
+  -- still compute `1`, but it might emit decls along the way.
+  return $ IdxRepVal 1
+computeElemCount idxNest = do
+  polySize <- liftImmut $ elemCountCPoly idxNest
+  A.emitCPoly polySize
+
+computeOffset :: (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
+computeOffset (Abs Empty UnitE) [] = return $ IdxRepVal 0
+computeOffset (Abs (Nest b bs) UnitE) (i:is) = do
+  rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
+    rest' <- applySubst s $ EmptyAbs bs
+    Abs b' <$> elemCountCPoly rest'
+  significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
+  remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
+  otherOffsets <- computeOffset remainingIdxStructure is
+  iadd significantOffset otherOffsets
+computeOffset _ _ = error "zip error"
+
+elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n)
+               => IndexStructure n -> m n (A.ClampPolynomial n)
+elemCountCPoly (Abs bs UnitE) = case bs of
+  Empty -> return $ A.liftPoly $ A.emptyMonomial
+  Nest b rest -> do
+    size <- A.indexSetSizeCPoly $ binderType b
+    rhsElemCounts <- refreshBinders b \(b':>_) s -> do
+      rest' <- applySubst s $ Abs rest UnitE
+      Abs b' <$> elemCountCPoly rest'
+    withFreshBinder NoHint IdxRepTy \b' -> do
+      let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
+      return $ A.psubst (Abs b' sumPoly) size
 
 -- === Imp IR builder ===
 

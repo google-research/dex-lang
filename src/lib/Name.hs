@@ -78,7 +78,7 @@ module Name (
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..),
   eqNameColorRep, withNameColorRep, sinkR, fmapSubstFrag, catRecSubstFrags,
-  freeVarsList, isFreeIn, todoSinkableProof,
+  freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
   locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
   checkEmpty, updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
@@ -95,6 +95,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import qualified Data.Map.Strict as M
+import qualified Data.Set        as S
 import Data.Functor ((<&>))
 import Data.Foldable (fold)
 import Data.Maybe (catMaybes)
@@ -2314,6 +2315,11 @@ nameSetRawNames m = M.keys m
 
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
 isFreeIn v e = getRawName v `M.member` freeVarsE e
+
+areFreeIn :: HoistableE e => [Name c n] -> e n -> Bool
+areFreeIn vs e =
+  not $ null $ S.intersection (S.fromList $ map getRawName vs)
+                              (M.keysSet $ freeVarsE e)
 
 exchangeBs :: (Distinct l, BindsNames b1, SinkableB b1, HoistableB b2)
               => PairB b1 b2 n l
