@@ -23,6 +23,7 @@ import Syntax
 import Type
 import Interpreter (traverseSurfaceAtomNames)
 import Util (enumerate)
+import Linearize
 
 -- === simplification monad ===
 
@@ -277,6 +278,10 @@ simplifyHof hof = case hof of
     (lam', recon) <- simplifyLam lam
     ans <- emit $ Hof $ RunIO lam'
     applyRecon recon $ Var ans
+  Linearize lam -> do
+    ~(lam', IdentityRecon) <- simplifyLam lam
+    -- TODO: simplify the result to remove functions introduced by linearization
+    linearize lam'
   _ -> error $ "not implemented: " ++ pprint hof
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
