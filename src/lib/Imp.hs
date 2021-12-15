@@ -23,6 +23,7 @@ import Builder
 import Syntax
 import Type
 import LabeledItems
+import qualified Algebra as A
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -747,35 +748,13 @@ makeDestRec idxs depVars ty = case ty of
 
 makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr (idxsTy, idxs) ty = do
-  numel <- buildBlockDest $ elemCount (sink idxsTy)
+  numel <- buildBlockDest $ computeElemCount (sink idxsTy)
   allocInfo <- getAllocInfo
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrTy = (addrSpace, ty)
-  ptr <- introduceNewPtr "ptr" ptrTy numel
-  applyIdxs (idxsTy, idxs) $ Var ptr
-
-elemCount :: (Emits n, Builder m) => EmptyAbs IdxNest n -> m n (Atom n)
-elemCount (Abs idxs UnitE) = case idxs of
-  Empty -> return $ IdxRepVal 1
-  Nest (b:>ixTy) rest -> case hoist b $ Abs rest UnitE of
-    HoistSuccess rest' -> do
-      n1 <- indexSetSize ixTy
-      n2 <- elemCount rest'
-      imul n1 n2
-    HoistFailure _ -> error "can't handle dependent tables"
-
-applyIdxs :: (Emits n, Builder m) => DestIdxs n -> Atom n -> m n (Atom n)
-applyIdxs (Abs Empty UnitE, []) ptr = return ptr
-applyIdxs (Abs (Nest b rest) UnitE, ix:ixs)  ptr =
-  case hoist b (Abs rest UnitE) of
-    HoistSuccess rest' -> do
-      stride <- elemCount rest'
-      ordinal <- indexToInt $ Var ix
-      offset <- imul stride ordinal
-      ptr' <- ptrOffset ptr offset
-      applyIdxs (rest', ixs) ptr'
-    HoistFailure _ -> error "can't handle dependent tables"
-applyIdxs _ _ = error "mismatched number of indices"
+  ptr <- Var <$> introduceNewPtr "ptr" ptrTy numel
+  offset <- computeOffset idxsTy idxs
+  ptrOffset ptr offset
 
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
 copyAtom topDest topSrc = copyRec topDest topSrc
@@ -1073,6 +1052,40 @@ _deviceFromCallingConvention cc = case cc of
   FFIMultiResultFun -> CPU
   MCThreadLaunch    -> CPU
   CUDAKernelLaunch  -> GPU
+
+-- === Determining buffer sizes and offsets using polynomials ===
+
+type IndexStructure = EmptyAbs IdxNest :: E
+
+computeElemCount :: (Emits n, Builder m) => IndexStructure n -> m n (Atom n)
+computeElemCount idxNest = do
+  polySize <- liftImmut $ elemCountCPoly idxNest
+  A.emitCPoly polySize
+
+computeOffset :: (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
+computeOffset (Abs Empty UnitE) [] = return $ IdxRepVal 0
+computeOffset (Abs (Nest b bs) UnitE) (i:is) = do
+  rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
+    rest' <- applySubst s $ EmptyAbs bs
+    Abs b' <$> elemCountCPoly rest'
+  significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
+  remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
+  otherOffsets <- computeOffset remainingIdxStructure is
+  iadd significantOffset otherOffsets
+computeOffset _ _ = error "zip error"
+
+elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n)
+               => IndexStructure n -> m n (A.ClampPolynomial n)
+elemCountCPoly (Abs bs UnitE) = case bs of
+  Empty -> return $ A.liftPoly $ A.emptyMonomial
+  Nest b rest -> do
+    size <- A.indexSetSizeCPoly $ binderType b
+    rhsElemCounts <- refreshBinders b \(b':>_) s -> do
+      rest' <- applySubst s $ Abs rest UnitE
+      Abs b' <$> elemCountCPoly rest'
+    withFreshBinder NoHint IdxRepTy \b' -> do
+      let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
+      return $ A.psubst (Abs b' sumPoly) size
 
 -- === Imp IR builder ===
 

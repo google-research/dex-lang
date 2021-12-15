@@ -33,7 +33,7 @@ module Syntax (
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
     AddressSpace (..), Device (..), showPrimName, strToPrimName, primNameToStr,
-    Direction (..), Limit (..), DataDef (..), DataConDef (..), Nest (..), IndexStructure,
+    Direction (..), Limit (..), DataDef (..), DataConDef (..), Nest (..),
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, fromLeftLeaningConsListTy,
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
@@ -249,8 +249,6 @@ type TC  n = PrimTC  (Atom n)
 type Con n = PrimCon (Atom n)
 type Op  n = PrimOp  (Atom n)
 type Hof n = PrimHof (Atom n)
-
-type IndexStructure = Nest Binder
 
 type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
@@ -600,7 +598,7 @@ withFreshBinder
   :: (NameColor c, EnvExtender m, ToBinding binding c)
   => Immut n
   => NameHint -> binding n
-  -> (forall l. (Immut l, Distinct l, Ext n l) => NameBinder c n l -> m l a)
+  -> (forall l. (Immut l, DExt n l) => NameBinder c n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
   scope    <- getScope

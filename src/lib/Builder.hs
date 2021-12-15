@@ -39,7 +39,7 @@ module Builder (
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
-  applyRecon, applyReconAbs,
+  applyRecon, applyReconAbs, clampPositive,
   ReconAbs, ReconstructAtom (..)
   ) where
 
