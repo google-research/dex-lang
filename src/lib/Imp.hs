@@ -644,7 +644,9 @@ makeSingleDest depVars ty = do
     makeDestRec (Abs Empty UnitE, []) (map sink depVars) (sink ty)
   case decls of
     Empty -> return dest
-    _ -> error "shouldn't need to emit decls if we're not working with indices"
+    _ -> error
+     $ "shouldn't need to emit decls if we're not working with indices"
+     ++ pprint decls
 
 extendIdxsTy
   :: EnvReader m
@@ -1058,6 +1060,11 @@ _deviceFromCallingConvention cc = case cc of
 type IndexStructure = EmptyAbs IdxNest :: E
 
 computeElemCount :: (Emits n, Builder m) => IndexStructure n -> m n (Atom n)
+computeElemCount (EmptyAbs Empty) =
+  -- XXX: this optimization is important because we don't want to emit any decls
+  -- in the case that we don't have any indices. The more general path will
+  -- still compute `1`, but it might emit decls along the way.
+  return $ IdxRepVal 1
 computeElemCount idxNest = do
   polySize <- liftImmut $ elemCountCPoly idxNest
   A.emitCPoly polySize

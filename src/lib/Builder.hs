@@ -701,6 +701,7 @@ indexAsInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 indexAsInt idx = emitOp $ ToOrdinal idx
 
 ptrOffset :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+ptrOffset x (IdxRepVal 0) = return x
 ptrOffset x i = emitOp $ PtrOffset x i
 
 unsafePtrLoad :: (Builder m, Emits n) => Atom n -> m n (Atom n)

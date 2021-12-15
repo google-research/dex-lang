@@ -6,11 +6,12 @@
 
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Algebra (
   Polynomial, ClampPolynomial, PolyName, emitCPoly,
   emptyMonomial, poly, mono, liftC, sumC, psubst,
-  liftPoly, indexSetSizeCPoly) where
+  liftPoly, indexSetSizeCPoly, showPoly, showPolyC) where
 
 import Prelude hiding (lookup, sum, pi)
 import Control.Monad
@@ -24,6 +25,7 @@ import Data.Tuple (swap)
 import Data.Coerce
 
 import Builder hiding (sub, add)
+import LabeledItems
 import Syntax
 import Type
 import Name
@@ -45,7 +47,7 @@ type Polynomial = PolynomialP Monomial
 
 -- Clamp represents the expression max(poly, 0).
 newtype Clamp (n::S) = Clamp (Polynomial n)
-        deriving (Show, Eq, Ord, HoistableE)
+        deriving (Show, Eq, Ord, HoistableE, SinkableE, AlphaEqE)
 
 -- TODO: Make clamps a map of powers!
 -- A product of a number of clamps and a monomial.
@@ -139,7 +141,13 @@ cpoly cmonos = Polynomial $ fromListWith (+) $ fmap swap cmonos
 cmono :: [Clamp n] -> Monomial n -> ClampMonomial n
 cmono = ClampMonomial
 
--- -- === Type classes and helpers ===
+onePoly :: Polynomial n
+onePoly = poly [(1, mono [])]
+
+zeroPoly :: Polynomial n
+zeroPoly = poly []
+
+-- === Type classes and helpers ===
 
 showMono :: Monomial n -> String
 showMono (Monomial m) =
@@ -168,7 +176,7 @@ emptyMonomial :: ClampMonomial n
 emptyMonomial = cmono [] $ mono []
 
 liftPoly :: mono n -> PolynomialP mono n
-liftPoly mono = Polynomial $ singleton mono (fromInteger 1)
+liftPoly m = Polynomial $ singleton m (fromInteger 1)
 
 liftC :: Polynomial n -> ClampPolynomial n
 liftC = imapMonos $ cmono []
@@ -180,31 +188,60 @@ clamp p = cpoly [(1, cmono [Clamp p] (mono []))]
 
 -- TODO: figure out what to do here when we make index sets a user-definable
 -- thing
-
 indexSetSizeCPoly :: EnvReader m => Type n -> m n (ClampPolynomial n)
 indexSetSizeCPoly (TC con) = case con of
---   ProdType tys          -> foldl mulC (liftC $ toPolynomial $ IdxRepVal 1) $
---     indexSetSizeCPoly <$> F.toList tys
+  ProdType tys -> do
+    sizes <- mapM indexSetSizeCPoly (F.toList tys)
+    return $ foldl mulC (liftC onePoly) sizes
   IntRange low high     -> do
     low'  <- toPolynomial low
     high' <- toPolynomial high
     return $ clamp $ high' `sub` low'
+  IndexRange n low high -> case (low, high) of
+    -- When one bound is left unspecified, the size expressions are guaranteed
+    -- to be non-negative, so we don't have to clamp them.
+    (Unlimited, _) -> liftC <$> mkHigh -- `sub` 0
+    (_, Unlimited) -> do
+      n' <- indexSetSizeCPoly n
+      low' <- liftC <$> mkLow
+      return $ n' `sub` low'
+    -- When both bounds are specified, we may have to clamp to avoid negative terms
+    _ -> do
+      high' <- mkHigh
+      low'  <- mkLow
+      return $ clamp $ high' `sub` low'
+    where
+      add1 = add (poly [(1, mono [])])
+      -- The unlimited cases should have been handled above
+      mkLow = case low of
+        InclusiveLim l -> toPolynomial l
+        ExclusiveLim l -> add1 <$> toPolynomial l
+        Unlimited      -> error "unreachable"
+      mkHigh = case high of
+        InclusiveLim h -> add1 <$> toPolynomial h
+        ExclusiveLim h -> toPolynomial h
+        Unlimited      -> error "unreachable"
+  _ -> error $ "Not implemented " ++ pprint con
+indexSetSizeCPoly (RecordTy (NoExt types)) = do
+  sizes <- mapM indexSetSizeCPoly (F.toList types)
+  return $ foldl mulC (liftC onePoly) sizes
+indexSetSizeCPoly (VariantTy (NoExt types)) = do
+  sizes <- mapM indexSetSizeCPoly (F.toList types)
+  return $ foldl add (liftC zeroPoly) sizes
+indexSetSizeCPoly ty = error $ "Not implemented " ++ pprint ty
 
 toPolynomial :: EnvReader m => Atom n -> m n (Polynomial n)
 toPolynomial atom = case atom of
-  -- -- makes dougal nervous
-  -- Var v                  -> poly [(1, mono [(v, 1)])]
+  -- XXX: here, we expect the type of `v` to be either `IdxRepTy` or
+  -- an index set. But we should check it.
+  Var v -> return $ poly [(1, mono [(v, 1)])]
   IdxRepVal x -> return $ fromInt x
-  -- Con (Lit (Int32Lit x)) -> fromInt x
-  -- Con (Lit (Word8Lit x)) -> fromInt x
-  -- Con (IntRangeVal _ _ i) -> toPolynomial i
-  -- Con (ProductCon x y)
-
-  -- -- TODO: Coercions? Unit constructor?
-  -- _ -> unreachable
+  Con (IntRangeVal _ _ i) -> toPolynomial i
+  -- TODO: Coercions? Unit constructor?
+  _ -> unreachable
   where
     fromInt i = poly [((fromIntegral i) % 1, mono [])]
-  --   unreachable = error $ "Unsupported or invalid atom in index set: " ++ pprint atom
+    unreachable = error $ "Unsupported or invalid atom in index set: " ++ pprint atom
 
 
 -- === polynomials to Core expressions ===
@@ -272,19 +309,19 @@ instance HoistableE Monomial
 instance AlphaEqE   Monomial
 
 instance GenericE ClampMonomial where
-  type RepE ClampMonomial = UnitE -- TODO
-  toE = undefined
-  fromE = undefined
+  type RepE ClampMonomial = PairE (ListE Clamp) Monomial
+  fromE (ClampMonomial clamps m) = PairE (ListE clamps) m
+  toE   (PairE (ListE clamps) m) = ClampMonomial clamps m
 
 instance SinkableE  ClampMonomial
 instance HoistableE ClampMonomial
 instance AlphaEqE   ClampMonomial
 
-instance GenericE (PolynomialP mono) where
+instance OrdE mono => GenericE (PolynomialP mono) where
   type RepE (PolynomialP mono) = ListE (PairE mono (LiftE Constant))
-  toE = undefined
-  fromE = undefined
+  fromE (Polynomial m) = ListE $ toList m <&> \(x, n) -> PairE x (LiftE n)
+  toE (ListE pairs) = Polynomial $ fromList $ pairs <&> \(PairE x (LiftE n)) -> (x, n)
 
-instance SinkableE  mono => SinkableE  (PolynomialP mono)
-instance HoistableE mono => HoistableE (PolynomialP mono)
-instance AlphaEqE   mono => AlphaEqE   (PolynomialP mono)
+instance (OrdE mono, SinkableE  mono) => SinkableE  (PolynomialP mono)
+instance (OrdE mono, HoistableE mono) => HoistableE (PolynomialP mono)
+instance (OrdE mono, AlphaEqE   mono) => AlphaEqE   (PolynomialP mono)
