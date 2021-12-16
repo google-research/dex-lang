@@ -1049,7 +1049,7 @@ data PrimOp e =
       | IndexRef e e
       | ProjRef Int e
       | FFICall String e [e]
-      | Sink e
+      | Inject e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- Low-level memory operations
@@ -2616,7 +2616,7 @@ builtinNames = M.fromList
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
-  , ("sink"     , OpExpr $ Sink ())
+  , ("inject"     , OpExpr $ Inject ())
   , ("select"     , OpExpr $ Select () () ())
   , ("while"           , HofExpr $ While ())
   , ("linearize"       , HofExpr $ Linearize ())

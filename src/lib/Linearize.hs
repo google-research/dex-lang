@@ -228,7 +228,7 @@ linearizeOp op = case op of
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
   -- TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
-  Sink _                 -> emitZeroT
+  Inject _               -> emitZeroT
   SliceOffset _ _        -> emitZeroT
   SliceCurry  _ _        -> emitZeroT
   VectorBinOp _ _ _      -> notImplemented

@@ -665,8 +665,8 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
           x := newtonIter f $ get x
           Continue
 
-:p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
-> 1.414216
+-- :p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
+-- > 1.414216
 
 -- :p
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0

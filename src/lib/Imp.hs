@@ -236,7 +236,7 @@ toImpOp maybeDest op = case op of
     Con (IntRangeVal   _ _   i) -> returnVal $ i
     Con (IndexRangeVal _ _ _ i) -> returnVal $ i
     _ -> returnVal =<< toScalarAtom =<< indexToIntImp idx
-  Sink e -> case e of
+  Inject e -> case e of
     Con (IndexRangeVal t low _ restrictIdx) -> do
       offset <- case low of
         InclusiveLim a -> indexToIntImp a
@@ -247,7 +247,7 @@ toImpOp maybeDest op = case op of
     Con (ParIndexCon (TC (ParIndexRange realIdxTy _ _)) i) -> do
       i' <- fromScalarAtom i
       returnVal =<< intToIndexImp realIdxTy i'
-    _ -> error $ "Unsupported argument to sink: " ++ pprint e
+    _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
   IOAlloc ty n -> do

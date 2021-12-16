@@ -549,12 +549,12 @@ typeCheckPrimOp op = case op of
                                     "fixed-width base types, but got: " ++ pprint argTy
     declareEff IOEffect
     substM ansTy
-  Sink i -> do
+  Inject i -> do
     TC tc <- getTypeE i
     case tc of
       IndexRange ty _ _ -> return ty
       ParIndexRange ty _ _ -> return ty
-      _ -> throw TypeErr $ "Unsupported sink argument type: " ++ pprint (TC tc)
+      _ -> throw TypeErr $ "Unsupported inject argument type: " ++ pprint (TC tc)
   PrimEffect ref m -> do
     TC (RefType ~(Just (Var h')) s) <- getTypeE ref
     case m of
