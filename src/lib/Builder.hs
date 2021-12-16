@@ -14,7 +14,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
-  emit, emitOp,
+  emit, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), Builder2, BuilderM,
   runBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
@@ -85,6 +85,9 @@ emit expr = emitDecl NoHint PlainLet expr
 
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
+
+emitUnOp :: (Builder m, Emits n) => UnOp -> Atom n -> m n (Atom n)
+emitUnOp op x = emitOp $ ScalarUnOp op x
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
 emitBlock (Block _ decls result) = do

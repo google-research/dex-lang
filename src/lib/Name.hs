@@ -540,7 +540,7 @@ newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
         deriving (Show, Eq, Generic)
 
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
-  ComposeE (f (e n))
+  ComposeE { fromComposeE :: (f (e n)) }
   deriving (Show, Eq, Generic)
 
 data UnitB (n::S) (l::S) where
