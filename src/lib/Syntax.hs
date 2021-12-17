@@ -82,7 +82,7 @@ module Syntax (
     pattern PairVal, pattern TyKind,
     pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTyAbs, pattern TabTy,
+    pattern TabTyAbs, pattern TabTy, pattern TabVal,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern BinaryLamExpr, NaryLam,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
@@ -1528,6 +1528,9 @@ pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
 
 pattern TabTy :: PiBinder n l -> Type l -> Type n
 pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
+
+pattern TabVal :: LamBinder n l -> Block l -> Type n
+pattern TabVal b body <- Lam (LamExpr b@(LamBinder _ _ TabArrow _) body)
 
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind

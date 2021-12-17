@@ -87,24 +87,6 @@ traverseLin
   -> LinM i o (ComposeE f e) (ComposeE f e)
 traverseLin f xs = seqLin $ fmap f xs
 
--- === TODO: move these elsewhere ===
-
-zeroAt :: (Emits n ,Builder m) => Type n -> m n (Atom n )
-zeroAt ty = case ty of
-  BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
-  _          -> unreachable
-  where
-    unreachable :: a
-    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
-    zeroLit bt = case bt of
-      Scalar Float64Type -> Float64Lit 0.0
-      Scalar Float32Type -> Float32Lit 0.0
-      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
-      _                  -> unreachable
-
-zeroLike :: (HasType e, Emits n, Builder m) => e n -> m n (Atom n )
-zeroLike x = zeroAt =<< getType x
-
 -- === actual linearization passs ===
 
 -- main API entrypoint
@@ -124,27 +106,6 @@ linearizeLambda' (Lam (LamExpr (LamBinder b ty PlainArrow Pure) body)) = do
       liftTangentM $ extendSubst (b @> PTPair (sink vp) (Just vt)) $ tangentAction
     return $ PairVal primalResult tangentLam
 linearizeLambda' _ = error "not implemented"
-
-tangentType :: Type n -> Type n
-tangentType ty = case ty of
-  RecordTy (NoExt items) -> RecordTy $ NoExt $ fmap tangentType items
-  TypeCon _ _ _ -> notImplemented -- Need to synthesize or look up a tangent ADT
-  Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) ->
-    Pi (PiType b Pure $ tangentType bodyTy)
-  TC con    -> case con of
-    BaseType (Scalar Float64Type) -> TC con
-    BaseType (Scalar Float32Type) -> TC con
-    BaseType (Vector Float64Type) -> TC con
-    BaseType (Vector Float32Type) -> TC con
-    BaseType   _                  -> UnitTy
-    IntRange   _ _                -> UnitTy
-    IndexRange _ _ _              -> UnitTy
-    IndexSlice _ _                -> UnitTy
-    ProdType   tys                -> ProdTy $ tangentType <$> tys
-    -- XXX: This assumes that arrays are always constants.
-    _ -> unsupported
-  _ -> unsupported
-  where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
 
 liftTangentM :: TangentM i o a -> PrimalM i o a
 liftTangentM m = do

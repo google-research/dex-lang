@@ -20,7 +20,8 @@ module Type (
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
-  oneEffect, lamExprTy, isData) where
+  oneEffect, lamExprTy, isData, isSingletonType, singletonTypeVal,
+  extendEffect) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>), id)
@@ -987,6 +988,36 @@ checkUnOp op x = do
       BNot             -> (u, sr)
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
+
+-- === singleton types ===
+
+isSingletonType :: EnvReader m => Type n -> m n Bool
+isSingletonType ty =
+  singletonTypeVal ty >>= \case
+  Nothing -> return False
+  Just _  -> return True
+
+singletonTypeVal :: EnvReader m => Type n -> m n (Maybe (Atom n))
+singletonTypeVal ty = fromMaybeE <$> liftImmut do
+  DB env <- getDB
+  return $ toMaybeE $ runEnvReaderT env $ runSubstReaderT idSubst $
+    singletonTypeVal' ty
+
+-- TODO: TypeCon with a single case?
+singletonTypeVal'
+  :: (Immut o, MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
+  => Type i -> m i o (Atom o)
+singletonTypeVal' ty = case ty of
+  Pi (PiType b@(PiBinder _ _ TabArrow) Pure body) ->
+    substBinders b \b' -> do
+      body' <- singletonTypeVal' body
+      return $ Pi $ PiType b' Pure body'
+  RecordTy (NoExt items) -> Record <$> traverse singletonTypeVal' items
+  TC con -> case con of
+    ProdType tys -> ProdVal <$> traverse singletonTypeVal' tys
+    _            -> notASingleton
+  _ -> notASingleton
+  where notASingleton = fail "not a singleton type"
 
 -- === built-in index set type class ===
 

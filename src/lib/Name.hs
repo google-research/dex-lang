@@ -42,7 +42,7 @@ module Name (
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst,
   ScopeReaderT (..), SubstReaderT (..),
-  lookupSubstM, dropSubst, extendSubst, fmapNames,
+  lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2, Monoid1,
   MonadIO1, MonadIO2,
@@ -394,6 +394,14 @@ instance Category ExtWitness where
 fmapNames :: (SubstE v e, Distinct o)
           => Scope o -> (forall c. Name c i -> v c o) -> e i -> e o
 fmapNames scope f e = substE (scope, newSubst f) e
+
+fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
+          => (forall c. Name c i -> v c o) -> e i -> m o (e o)
+fmapNamesM f e = liftImmut do
+  scope <- getScope
+  Distinct <- getDistinct
+  return $ substE (scope, newSubst f) e
+
 
 toConstAbs :: (SinkableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)

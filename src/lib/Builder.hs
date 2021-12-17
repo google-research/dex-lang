@@ -40,6 +40,8 @@ module Builder (
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
+  emitRunWriter, buildFor, buildForAnn,
+  zeroAt, zeroLike, tangentType, addTangent, updateAddAt, tangentBaseMonoidFor,
   ReconAbs, ReconstructAtom (..)
   ) where
 
@@ -495,6 +497,102 @@ buildSplitCase tys scrut resultTy match fallback = do
       0 -> match v
       1 -> fallback v
       _ -> error "should only have two cases"
+
+mkBinaryEffFun :: Builder m
+               => RWS -> NameHint -> Type n
+               -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+               -> m n (Atom n)
+mkBinaryEffFun rws hint ty body = do
+  eff <- getAllowedEffects
+  buildLam "h" PlainArrow TyKind Pure \h -> do
+    let eff' = extendEffect (RWSEffect rws (Just h)) (sink eff)
+    buildLam hint PlainArrow (RefTy (Var h) (sink ty)) eff' \ref ->
+      body ref
+
+buildForAnn
+  :: (Emits n, Builder m)
+  => NameHint -> ForAnn -> Type n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildForAnn hint ann ty body = do
+  -- TODO: consider only tracking the effects that are actually needed.
+  eff <- getAllowedEffects
+  lam <- buildLam hint PlainArrow ty eff body
+  liftM Var $ emit $ Hof $ For ann lam
+
+buildFor :: (Emits n, Builder m)
+         => NameHint -> Direction -> Type n
+         -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+         -> m n (Atom n)
+buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
+
+emitRunWriter
+  :: (Emits n ,Builder m)
+  => NameHint -> Type n -> BaseMonoid n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+emitRunWriter hint accTy bm body = do
+  lam <- mkBinaryEffFun Writer hint accTy body
+  liftM Var $ emit $ Hof $ RunWriter bm lam
+
+-- === vector space (ish) type class ===
+
+zeroAt :: Builder m => Type n -> m n (Atom n )
+zeroAt ty = case ty of
+  BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
+  _          -> unreachable
+  where
+    unreachable :: a
+    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
+    zeroLit bt = case bt of
+      Scalar Float64Type -> Float64Lit 0.0
+      Scalar Float32Type -> Float32Lit 0.0
+      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
+      _                  -> unreachable
+
+zeroLike :: (HasType e, Builder m) => e n -> m n (Atom n )
+zeroLike x = zeroAt =<< getType x
+
+tangentType :: Type n -> Type n
+tangentType ty = case ty of
+  RecordTy (NoExt items) -> RecordTy $ NoExt $ fmap tangentType items
+  TypeCon _ _ _ -> error "not implemented" -- Need to synthesize or look up a tangent ADT
+  Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) ->
+    Pi (PiType b Pure $ tangentType bodyTy)
+  TC con    -> case con of
+    BaseType (Scalar Float64Type) -> TC con
+    BaseType (Scalar Float32Type) -> TC con
+    BaseType (Vector Float64Type) -> TC con
+    BaseType (Vector Float32Type) -> TC con
+    BaseType   _                  -> UnitTy
+    IntRange   _ _                -> UnitTy
+    IndexRange _ _ _              -> UnitTy
+    IndexSlice _ _                -> UnitTy
+    ProdType   tys                -> ProdTy $ tangentType <$> tys
+    -- XXX: This assumes that arrays are always constants.
+    _ -> unsupported
+  _ -> unsupported
+  where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
+
+tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
+tangentBaseMonoidFor ty = do
+  zero <- zeroAt ty
+  adder <- buildLam "t" PlainArrow ty Pure \v -> updateAddAt $ Var v
+  return $ BaseMonoid zero adder
+
+addTangent :: (Emits n, Builder m) => Atom n -> Atom n -> m n (Atom n)
+addTangent x y = do
+  getType x >>= \case
+    TC con -> case con of
+      BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
+      ty -> notTangent ty
+    ty -> notTangent ty
+    where notTangent ty = error $ "Not a tangent type: " ++ pprint ty
+
+updateAddAt :: (Emits n, Builder m) => Atom n -> m n (Atom n)
+updateAddAt x = do
+  ty <- getType x
+  buildLam "t" PlainArrow ty Pure \v -> addTangent (sink x) (Var v)
 
 -- === builder versions of common top-level emissions ===
 
