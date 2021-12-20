@@ -41,6 +41,9 @@ pureLin x = do
   x' <- substM x
   return $ WithTangent x' (sinkM x')
 
+runPrimalM :: Subst Name i o -> [AtomName o] -> PrimalM i o a -> BuilderM o a
+runPrimalM subst args cont = runReaderT1 (ListE args) $ runSubstReaderT subst cont
+
 activePrimalIdx :: AtomName o -> PrimalM i o (Maybe Int)
 activePrimalIdx v = asks \(ListE vs) -> elemIndex v vs
 
@@ -107,8 +110,7 @@ traverseLin f xs = seqLin $ fmap f xs
 linearize :: EnvReader m => Atom n -> m n (Atom n)
 linearize x = liftImmut do
   DB env <- getDB
-  return $ runBuilderM env $ runReaderT1 (ListE []) $
-    runSubstReaderT idSubst $ linearizeLambda' x
+  return $ runBuilderM env $ runPrimalM idSubst [] $ linearizeLambda' x
 
 -- reify the tangent builder as a lambda
 linearizeLambda' :: Atom i -> PrimalM i o (Atom o)
@@ -148,6 +150,15 @@ applyLinToTangents f = do
   args <- getTangentArgs
   naryApp f $ map Var args
 
+-- repeat the primal computation in the tangent part (this is ok if the
+-- computation is cheap, e.g. the body of a table lambda)
+rematPrimal :: Emits o
+            => Subst Name i o -> [AtomName o] -> LinM i o e1 e2  -> TangentM o (e2 o)
+rematPrimal subst wrt m = do
+  WithTangent _ lin <- lift11 $ runPrimalM subst wrt m
+  Distinct <- getDistinct
+  lin
+
 liftTangentM :: [AtomName o] -> TangentM o a -> PrimalM i o a
 liftTangentM vs m = liftSubstReaderT $ lift11 $ runReaderT1 (ListE vs) m
 
@@ -159,7 +170,15 @@ linearizeAtom atom = case atom of
       Nothing -> withZeroT $ return (Var v')
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
   Con con -> linearizePrimCon con
-  Lam _ -> undefined
+  TabVal b body -> do
+    ty <- substM $ binderType b
+    wrt <- getActivePrimals
+    subst <- getSubst
+    atom' <- substM atom
+    return $ WithTangent atom' do
+      buildTabLam (getNameHint b) (sink ty) \i ->
+        rematPrimal (sink subst) (map sink wrt) $
+          extendSubst (b@>i) $ linearizeBlock body
   DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   DepPair _ _ _     -> notImplemented
   Record elems ->

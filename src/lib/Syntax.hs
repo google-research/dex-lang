@@ -1529,7 +1529,7 @@ pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
 pattern TabTy :: PiBinder n l -> Type l -> Type n
 pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
 
-pattern TabVal :: LamBinder n l -> Block l -> Type n
+pattern TabVal :: LamBinder n l -> Block l -> Atom n
 pattern TabVal b body <- Lam (LamExpr b@(LamBinder _ _ TabArrow _) body)
 
 pattern TyKind :: Kind n
