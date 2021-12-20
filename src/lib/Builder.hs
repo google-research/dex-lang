@@ -26,7 +26,8 @@ module Builder (
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
+  buildAbs, buildNaryAbs, buildNaryLam,
+  buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
@@ -35,12 +36,12 @@ module Builder (
    emitSourceMap, emitSynthCandidates,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
-  singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
+  singletonBinderNest, typesAsBinderNest, runBuilderM, liftBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
-  emitRunWriter, buildFor, buildForAnn,
+  emitRunWriter, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, tangentType, addTangent, updateAddAt, tangentBaseMonoidFor,
   ReconAbs, ReconstructAtom (..)
   ) where
@@ -63,6 +64,7 @@ import Syntax
 import Type
 import PPrint ()
 import CheapReduction
+import MTL1
 
 import LabeledItems
 import Util (enumerate, scanM, restructure, transitiveClosureM)
@@ -251,6 +253,14 @@ instance (SinkableE e, Builder m) => Builder (OutReaderT e m) where
       env' <- sinkM env
       runReaderT (runOutReaderT' cont) env'
 
+instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
+  emitDecl hint ann expr =
+    ReaderT1 $ lift $ emitDecl hint ann expr
+  buildScoped cont = ReaderT1 $ ReaderT \env ->
+    buildScoped do
+      env' <- sinkM env
+      runReaderT (runReaderT1' cont) env'
+
 -- === Emits predicate ===
 
 -- We use the `Emits` predicate on scope parameters to indicate that we may emit
@@ -395,6 +405,16 @@ buildAbs hint binding cont = liftImmut do
 singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
 singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
 
+typesAsBinderNest :: EnvReader m => [Type n] -> m n (EmptyAbs (Nest Binder) n)
+typesAsBinderNest types = liftImmut $ liftEnvReaderM $ go types
+  where
+    go :: forall n. Immut n => [Type n] -> EnvReaderM n (EmptyAbs (Nest Binder) n)
+    go tys = case tys of
+      [] -> return $ Abs Empty UnitE
+      ty:rest -> withFreshBinder NoHint ty \b -> do
+        Abs bs UnitE <- go $ map sink rest
+        return $ Abs (Nest (b:>ty) bs) UnitE
+
 singletonBinderNest :: Builder m
                     => NameHint -> Type n -> m n (EmptyAbs (Nest Binder) n)
 singletonBinderNest hint ty = do
@@ -420,6 +440,25 @@ buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
         body $ v' : vs
   return $ Abs (Nest b' bs') body'
 buildNaryAbs _ _ = error "impossible"
+
+buildNaryLam
+  :: (Builder m, Emits n)
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName l] -> m l (Atom l))
+  -> m n (Atom n)
+buildNaryLam binderNest body = do
+  naryAbs <- buildNaryAbs binderNest \vs ->
+    buildBlock $ body $ map sink vs
+  case naryAbsToNaryLam naryAbs of
+    AtomicBlock atom -> return atom
+    block -> emitBlock block
+  where
+    naryAbsToNaryLam :: Abs (Nest Binder) Block n -> Block n
+    naryAbsToNaryLam (Abs nest block) = case nest of
+      Empty -> block
+      Nest (b:>ty) bs ->
+        AtomicBlock $ Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
+          naryAbsToNaryLam $ Abs bs block
 
 buildAlt
   :: Builder m
@@ -525,6 +564,15 @@ buildFor :: (Emits n, Builder m)
          -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
          -> m n (Atom n)
 buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
+
+unzipTab :: (Emits n, Builder m) => Atom n -> m n (Atom n, Atom n)
+unzipTab tab = do
+  TabTy b _ <- getType tab
+  fsts <- buildLam "i" TabArrow (binderType b) Pure \i ->
+            liftM fst $ app (sink tab) (Var i) >>= fromPair
+  snds <- buildLam "i" TabArrow (binderType b) Pure \i ->
+            liftM snd $ app (sink tab) (Var i) >>= fromPair
+  return (fsts, snds)
 
 emitRunWriter
   :: (Emits n ,Builder m)
