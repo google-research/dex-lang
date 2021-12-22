@@ -256,11 +256,14 @@ instance CheckableE DataDef where
 instance CheckableE Atom where
   checkE atom = fst <$> getTypeAndSubstE atom
 
+instance HasType AtomName where
+  getTypeE name = do
+    name' <- substM name
+    atomBindingType <$> lookupEnv name'
+
 instance HasType Atom where
   getTypeE atom = liftImmut $ case atom of
-    Var name -> do
-      name' <- substM name
-      atomBindingType <$> lookupEnv name'
+    Var name -> getTypeE name
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
     DepPair l r ty -> do

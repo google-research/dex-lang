@@ -24,8 +24,14 @@ import PPrint
 
 -- === linearization monad ===
 
-type ActivePrimals = ListE AtomName
-type TangentArgs = ListE AtomName
+data ActivePrimals (n::S) = ActivePrimals
+  { activeVars    :: [AtomName n]  -- includes refs and regions
+  , activeEffs    :: EffectRow n }
+
+emptyActivePrimals :: ActivePrimals n
+emptyActivePrimals = ActivePrimals [] Pure
+
+data TangentArgs (n::S) = TangentArgs [AtomName n]
 
 type PrimalM  = SubstReaderT Name (ReaderT1 ActivePrimals BuilderM) :: MonadKind2
 type TangentM = ReaderT1 TangentArgs BuilderM :: MonadKind1
@@ -41,26 +47,33 @@ pureLin x = do
   x' <- substM x
   return $ WithTangent x' (sinkM x')
 
-runPrimalM :: Subst Name i o -> [AtomName o] -> PrimalM i o a -> BuilderM o a
-runPrimalM subst args cont = runReaderT1 (ListE args) $ runSubstReaderT subst cont
+runPrimalM :: Subst Name i o -> ActivePrimals o -> PrimalM i o a -> BuilderM o a
+runPrimalM subst args cont = runReaderT1 args $ runSubstReaderT subst cont
 
 activePrimalIdx :: AtomName o -> PrimalM i o (Maybe Int)
-activePrimalIdx v = asks \(ListE vs) -> elemIndex v vs
+activePrimalIdx v = asks \primals -> elemIndex v (activeVars primals)
 
-getActivePrimals :: PrimalM i o [AtomName o]
-getActivePrimals = fromListE <$> ask
+getActivePrimals :: PrimalM i o (ActivePrimals o)
+getActivePrimals = ask
+
+extendActiveSubst
+  :: BindsAtMostOneName b AtomNameC
+  => b i i' -> AtomName o -> PrimalM i' o a -> PrimalM i o a
+extendActiveSubst b v cont = do
+  extendSubst (b@>v) $ extendActivePrimals v cont
 
 extendActivePrimals :: AtomName o -> PrimalM i o a -> PrimalM i o a
-extendActivePrimals v = local \(ListE vs) -> ListE $ vs ++ [v]
+extendActivePrimals v =
+  local \primals -> primals { activeVars = activeVars primals ++ [v] }
 
 getTangentArg :: Int -> TangentM o (Atom o)
-getTangentArg idx = asks \(ListE args) -> Var $ args !! idx
+getTangentArg idx = asks \(TangentArgs vs) -> Var $ vs !! idx
 
 extendTangentArgs :: AtomName n -> TangentM n a -> TangentM n a
-extendTangentArgs v = local \(ListE vs) -> ListE $ vs ++ [v]
+extendTangentArgs v m = local (\(TangentArgs vs) -> TangentArgs $ vs ++ [v]) m
 
-getTangentArgs :: TangentM o [AtomName o]
-getTangentArgs = fromListE <$> ask
+getTangentArgs :: TangentM o (TangentArgs o)
+getTangentArgs = ask
 
 bindLin
   :: Emits o
@@ -68,10 +81,28 @@ bindLin
   -> (forall o' m. (Emits o', DExt o o', Builder m) => e o' -> m o' (e' o'))
   -> LinM i o e' e'
 bindLin m f = do
-  WithTangent x tx <- m
+  result <- m
+  withBoth result f
+
+withBoth
+  :: Emits o
+  => WithTangent o e e
+  -> (forall o' m. (Emits o', DExt o o', Builder m) => e o' -> m o' (e' o'))
+  -> PrimalM i o (WithTangent o e' e')
+withBoth (WithTangent x tx) f = do
   Distinct <- getDistinct
   y <- f x
   return $ WithTangent y do
+    tx >>= f
+
+withTangentComputation
+  :: Emits o
+  => WithTangent o e1 e2
+  -> (forall o' m. (Emits o', DExt o o', Builder m) => e2 o' -> m o' (e2' o'))
+  -> PrimalM i o (WithTangent o e1 e2')
+withTangentComputation (WithTangent x tx) f = do
+  Distinct <- getDistinct
+  return $ WithTangent x do
     tx >>= f
 
 fmapLin
@@ -104,28 +135,10 @@ traverseLin
   -> LinM i o (ComposeE f e) (ComposeE f e)
 traverseLin f xs = seqLin $ fmap f xs
 
--- === actual linearization passs ===
+liftTangentM :: TangentArgs o -> TangentM o a -> PrimalM i o a
+liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
--- main API entrypoint
-linearize :: EnvReader m => Atom n -> m n (Atom n)
-linearize x = liftImmut do
-  DB env <- getDB
-  return $ runBuilderM env $ runPrimalM idSubst [] $ linearizeLambda' x
-
--- reify the tangent builder as a lambda
-linearizeLambda' :: Atom i -> PrimalM i o (Atom o)
-linearizeLambda' (Lam (LamExpr (LamBinder b ty PlainArrow Pure) body)) = do
-  ty' <- substM ty
-  buildLam (getNameHint b) PlainArrow ty' Pure \vp -> do
-    extendSubst (b@>vp) $ extendActivePrimals vp do
-      WithTangent primalResult tangentAction <- linearizeBlock body
-      Lam tanFun <- tangentFunAsLambda tangentAction
-      return $ PairVal primalResult (Lam $ lamToLinLam tanFun)
-linearizeLambda' _ = error "not implemented"
-
-lamToLinLam :: LamExpr n -> LamExpr n
-lamToLinLam (LamExpr (LamBinder b ty _ eff) body) =
-  LamExpr (LamBinder b ty LinArrow eff) body
+-- === converision between monadic and reified version of functions ===
 
 withTangentFunAsLambda :: Emits o => LinM i o Atom Atom -> PrimalM i o (Atom o)
 withTangentFunAsLambda cont = do
@@ -138,29 +151,65 @@ tangentFunAsLambda
   => (forall o'. (DExt o o', Emits o') => TangentM o' (Atom o'))
   -> PrimalM i o (Atom o)
 tangentFunAsLambda cont = do
-  activeVars <- getActivePrimals
-  tangentTys <- forM activeVars \v -> tangentType <$> getType (Var v)
-  binderNest <- typesAsBinderNest tangentTys
-  buildNaryLam binderNest \vs ->
-    liftTangentM vs cont
+  ActivePrimals primalVars effs <- getActivePrimals
+  tangentTys <- varsAsBinderNest primalVars
+  let effAbs = abstractFreeVarsNoAnn primalVars effs
+  buildNaryLam tangentTys \tangentVars -> do
+    effs' <- applyNaryAbs (sink effAbs) tangentVars
+    buildNullaryLam effs' $
+      liftTangentM (TangentArgs $ map sink tangentVars) cont
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
 applyLinToTangents :: Emits n => Atom n -> TangentM n (Atom n)
 applyLinToTangents f = do
-  args <- getTangentArgs
-  naryApp f $ map Var args
+  TangentArgs args <- getTangentArgs
+  f'  <- naryApp f  $ map Var args
+  app f' UnitVal
 
 -- repeat the primal computation in the tangent part (this is ok if the
 -- computation is cheap, e.g. the body of a table lambda)
 rematPrimal :: Emits o
-            => Subst Name i o -> [AtomName o] -> LinM i o e1 e2  -> TangentM o (e2 o)
+            => Subst Name i o -> ActivePrimals o
+            -> LinM i o e1 e2  -> TangentM o (e2 o)
 rematPrimal subst wrt m = do
   WithTangent _ lin <- lift11 $ runPrimalM subst wrt m
   Distinct <- getDistinct
   lin
 
-liftTangentM :: [AtomName o] -> TangentM o a -> PrimalM i o a
-liftTangentM vs m = liftSubstReaderT $ lift11 $ runReaderT1 (ListE vs) m
+fromPureUnaryTanFunLam :: EnvReader m => Atom n -> m n (Atom n)
+fromPureUnaryTanFunLam atom = liftImmut $ liftSubstEnvReaderM $ go atom
+  where
+    go :: Immut o => Atom i -> SubstEnvReaderM AtomSubstVal i o (Atom o)
+    go = \case
+      Lam (LamExpr b@(LamBinder _ _ _ Pure) (AtomicBlock nullaryLam)) ->
+        substBinders b \(LamBinder b' ty _ _) -> do
+          case nullaryLam of
+            Lam (LamExpr unitBinder body) -> do
+              body' <- extendSubst (unitBinder @> SubstVal UnitVal) $ substM body
+              return $ Lam $ LamExpr (LamBinder b' ty LinArrow Pure) body'
+            _ -> error notValidStr
+      _ -> error notValidStr
+      where notValidStr = "not a pure unary tangent function: " ++ pprint atom
+
+-- === actual linearization passs ===
+
+-- main API entrypoint
+linearize :: EnvReader m => Atom n -> m n (Atom n)
+linearize x = liftImmut do
+  DB env <- getDB
+  return $ runBuilderM env $ runPrimalM idSubst emptyActivePrimals $ linearizeLambda' x
+
+-- reify the tangent builder as a lambda
+linearizeLambda' :: Atom i -> PrimalM i o (Atom o)
+linearizeLambda' (Lam (LamExpr (LamBinder b ty PlainArrow Pure) body)) = do
+  ty' <- substM ty
+  buildLam (getNameHint b) PlainArrow ty' Pure \vp -> do
+    extendActiveSubst b vp do
+      WithTangent primalResult tangentAction <- linearizeBlock body
+      tanFun <- tangentFunAsLambda tangentAction
+      lam <- fromPureUnaryTanFunLam tanFun
+      return $ PairVal primalResult lam
+linearizeLambda' _ = error "not implemented"
 
 linearizeAtom :: Emits o => Atom i -> LinM i o Atom Atom
 linearizeAtom atom = case atom of
@@ -177,7 +226,7 @@ linearizeAtom atom = case atom of
     atom' <- substM atom
     return $ WithTangent atom' do
       buildTabLam (getNameHint b) (sink ty) \i ->
-        rematPrimal (sink subst) (map sink wrt) $
+        rematPrimal (sink subst) (sink wrt) $
           extendSubst (b@>i) $ linearizeBlock body
   DataCon _ _ _ _ _ -> notImplemented  -- Need to synthesize or look up a tangent ADT
   DepPair _ _ _     -> notImplemented
@@ -218,7 +267,7 @@ linearizeDecls Empty cont = cont
 linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   WithTangent p tf <- linearizeExpr expr
   v <- emitDecl (getNameHint b) ann (Atom p)
-  extendSubst (b@>v) $ extendActivePrimals v do
+  extendActiveSubst b v do
     WithTangent pRest tfRest <- linearizeDecls rest cont
     return $ WithTangent pRest do
       t <- tf
@@ -243,7 +292,11 @@ linearizeOp :: Emits o => Op i -> LinM i o Atom Atom
 linearizeOp op = case op of
   ScalarUnOp  uop x       -> linearizeUnOp  uop x
   ScalarBinOp bop x y     -> linearizeBinOp bop x y
-  PrimEffect _ _ -> undefined
+  PrimEffect ref m ->
+    case m of
+    MGet   -> linearizeAtom ref `bindLin` \ref' -> emitOp $ PrimEffect ref' MGet
+    MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
+                emitOp $ PrimEffect ref' $ MPut x'
   IndexRef ref i -> zipLin (la ref) (pureLin i) `bindLin`
                       \(PairE ref' i') -> emitOp $ IndexRef ref' i'
   Select p t f -> (pureLin p `zipLin` la t `zipLin` la f) `bindLin`
@@ -379,7 +432,7 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof i -> LinM i o Atom Atom
 linearizeHof hof = case hof of
-  For (RegularFor d) (Lam (LamExpr (LamBinder i ty _ Pure) body)) -> do
+  For (RegularFor d) (Lam (LamExpr (LamBinder i ty _ _) body)) -> do
     ty' <- substM ty
     ansWithLinTab <- buildFor (getNameHint i) d ty' \i' ->
       extendSubst (i@>i') $ withTangentFunAsLambda $ linearizeBlock body
@@ -387,6 +440,37 @@ linearizeHof hof = case hof of
     return $ WithTangent ans do
       buildFor (getNameHint i) d (sink ty') \i' ->
         app (sink linTab) (Var i') >>= applyLinToTangents
+  RunState sInit lam -> do
+    WithTangent sInit' sLin <- linearizeAtom sInit
+    lam' <- linearizeEffectFun State lam
+    (result, sFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunState sInit' lam')
+    (primalResult, tangentLam) <- fromPair result
+    return $ WithTangent (PairVal primalResult sFinal) do
+      sLin' <- sLin
+      tanEffectLam <- applyLinToTangents $ sink tangentLam
+      liftM Var $ emit $ Hof $ RunState sLin' tanEffectLam
+  _ -> error $ "not implemented: " ++ pprint hof
+
+-- takes an effect function, of type `(h:Type) -> Ref h s -> a``
+-- and augments it with the tangent lambda, so instead of returning `a`, it returns:
+-- `[tangent args] -> (a & ((h':Type) -> (ref':Ref h' (T s)) -> T a))`
+linearizeEffectFun :: RWS -> Atom i -> PrimalM i o (Atom o)
+linearizeEffectFun rws (Lam lam) = do
+  BinaryLamExpr hB refB body <- return lam
+  referentTy <- getReferentTy =<< substM (EmptyAbs $ PairB hB refB)
+  buildEffLam rws (getNameHint refB) referentTy \h ref -> withTangentFunAsLambda do
+    extendActiveSubst hB h $ extendActiveSubst refB ref do
+      WithTangent p tangentFun <- linearizeBlock body
+      return $ WithTangent p do
+        buildEffLam rws (getNameHint refB) (tangentType $ sink referentTy) \h' ref' ->
+          extendTangentArgs h' $ extendTangentArgs ref' $
+            tangentFun
+
+getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
+getReferentTy (EmptyAbs (PairB hB refB)) = do
+  RefTy _ ty <- return $ binderType refB
+  HoistSuccess ty' <- return $ hoist hB ty
+  return ty'
 
 withT :: PrimalM i o (e1 o)
       -> (forall o'. (Emits o', DExt o o') => TangentM o' (e2 o'))
@@ -403,3 +487,21 @@ withZeroT p = do
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"
+
+-- === instances ===
+
+instance GenericE ActivePrimals where
+  type RepE ActivePrimals = UnitE
+
+instance SinkableE   ActivePrimals
+instance HoistableE  ActivePrimals
+instance AlphaEqE    ActivePrimals
+instance SubstE Name ActivePrimals
+
+instance GenericE TangentArgs where
+  type RepE TangentArgs = UnitE
+
+instance SinkableE   TangentArgs
+instance HoistableE  TangentArgs
+instance AlphaEqE    TangentArgs
+instance SubstE Name TangentArgs

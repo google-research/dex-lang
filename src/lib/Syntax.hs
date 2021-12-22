@@ -55,6 +55,7 @@ module Syntax (
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName,
     lookupEnvPure, lookupSourceMap,
     getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM, liftSubstEnvReaderM,
+    SubstEnvReaderM,
     EnvReaderM, runEnvReaderM,
     EnvReaderT (..), EnvReader2, EnvExtender2,
     getDB, DistinctEnv (..),
@@ -412,11 +413,13 @@ liftEnvReaderM cont = do
   DB env <- getDB
   return $ runEnvReaderM env cont
 
+type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
+
 liftSubstEnvReaderM
-  :: (EnvReader m, Immut n)
-  => SubstReaderT Name EnvReaderM n n a
+  :: (EnvReader m, Immut n, FromName v)
+  => SubstEnvReaderM v n n a
   -> m n a
-liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idNameSubst $ cont
+liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
 
 instance Monad m => EnvReader (EnvReaderT m) where
   getEnv = EnvReaderT $ asks snd

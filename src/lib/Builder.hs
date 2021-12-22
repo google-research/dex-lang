@@ -27,7 +27,7 @@ module Builder (
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
   buildLam, buildTabLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildNaryLam,
+  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam,
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
@@ -37,13 +37,15 @@ module Builder (
    emitSourceMap, emitSynthCandidates,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
-  singletonBinderNest, typesAsBinderNest, runBuilderM, liftBuilder, makeBlock,
+  singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
+  runBuilderM, liftBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
   emitRunWriter, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, tangentType, addTangent, updateAddAt, tangentBaseMonoidFor,
+  buildEffLam,
   ReconAbs, ReconstructAtom (..)
   ) where
 
@@ -341,6 +343,12 @@ buildLam
   -> m n (Atom n)
 buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
 
+buildNullaryLam :: Builder m
+                => EffectRow n
+                -> (forall l. (Emits l, DExt n l) => m l (Atom l))
+                -> m n (Atom n)
+buildNullaryLam effs cont = buildLam "ignore" PlainArrow UnitTy effs \_ -> cont
+
 buildLamGeneral
   :: Builder m
   => NameHint -> Arrow -> Type n
@@ -405,6 +413,14 @@ buildAbs hint binding cont = liftImmut do
 
 singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
 singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
+
+varsAsBinderNest :: EnvReader m => [AtomName n] -> m n (EmptyAbs (Nest Binder) n)
+varsAsBinderNest [] = return $ EmptyAbs Empty
+varsAsBinderNest (v:vs) = do
+  rest <- varsAsBinderNest vs
+  ty <- getType v
+  Abs b (Abs bs UnitE) <- return $ abstractFreeVar v rest
+  return $ EmptyAbs (Nest (b:>ty) bs)
 
 typesAsBinderNest :: EnvReader m => [Type n] -> m n (EmptyAbs (Nest Binder) n)
 typesAsBinderNest types = liftImmut $ liftEnvReaderM $ go types
@@ -538,16 +554,17 @@ buildSplitCase tys scrut resultTy match fallback = do
       1 -> fallback v
       _ -> error "should only have two cases"
 
-mkBinaryEffFun :: Builder m
-               => RWS -> NameHint -> Type n
-               -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
-               -> m n (Atom n)
-mkBinaryEffFun rws hint ty body = do
+buildEffLam
+  :: Builder m
+  => RWS -> NameHint -> Type n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildEffLam rws hint ty body = do
   eff <- getAllowedEffects
   buildLam "h" PlainArrow TyKind Pure \h -> do
     let eff' = extendEffect (RWSEffect rws (Just h)) (sink eff)
     buildLam hint PlainArrow (RefTy (Var h) (sink ty)) eff' \ref ->
-      body ref
+      body (sink h) ref
 
 buildForAnn
   :: (Emits n, Builder m)
@@ -581,7 +598,7 @@ emitRunWriter
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
 emitRunWriter hint accTy bm body = do
-  lam <- mkBinaryEffFun Writer hint accTy body
+  lam <- buildEffLam Writer hint accTy \_ ref -> body ref
   liftM Var $ emit $ Hof $ RunWriter bm lam
 
 -- === vector space (ish) type class ===
