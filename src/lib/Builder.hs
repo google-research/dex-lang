@@ -22,7 +22,7 @@ module Builder (
   emitMethodType, emitSuperclass,
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
-  fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
+  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
@@ -70,7 +70,7 @@ import CheapReduction
 import MTL1
 
 import LabeledItems
-import Util (enumerate, scanM, restructure, transitiveClosureM)
+import Util (enumerate, scanM, restructure, transitiveClosureM, bindM2)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -606,7 +606,12 @@ emitRunWriter hint accTy bm body = do
 zeroAt :: Builder m => Type n -> m n (Atom n )
 zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
-  _          -> unreachable
+  ProdTy tys -> ProdVal <$> mapM zeroAt tys
+  RecordTy (Ext tys Nothing) -> Record <$> mapM zeroAt tys
+  TabTy b bodyTy ->
+    buildTabLam (getNameHint b) (binderType b) \i ->
+      zeroAt =<< applySubst (b@>i) bodyTy
+  _ -> unreachable
   where
     unreachable :: a
     unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
@@ -649,8 +654,18 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, Builder m) => Atom n -> Atom n -> m n (Atom n)
 addTangent x y = do
   getType x >>= \case
+    RecordTy (NoExt tys) -> do
+      elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
+      return $ Record $ restructure elems tys
+    TabTy b _  -> buildFor (getNameHint b) Fwd (binderType b) \i -> do
+      bindM2 addTangent (app (sink x) (Var i)) (app (sink y) (Var i))
     TC con -> case con of
       BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
+      BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
+      ProdType _          -> do
+        xs <- getUnpacked x
+        ys <- getUnpacked y
+        ProdVal <$> zipWithM addTangent xs ys
       ty -> notTangent ty
     ty -> notTangent ty
     where notTangent ty = error $ "Not a tangent type: " ++ pprint ty
@@ -838,6 +853,10 @@ getFst p = fst <$> fromPair p
 
 getSnd :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 getSnd p = snd <$> fromPair p
+
+getNaryProjRef :: (Builder m, Emits n) => [Int] -> Atom n -> m n (Atom n)
+getNaryProjRef [] ref = return ref
+getNaryProjRef (i:is) ref = getProjRef i ref >>= getNaryProjRef is
 
 getProjRef :: (Builder m, Emits n) => Int -> Atom n -> m n (Atom n)
 getProjRef i r = emitOp $ ProjRef i r

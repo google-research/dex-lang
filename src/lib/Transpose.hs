@@ -8,6 +8,7 @@
 
 module Transpose (transpose) where
 
+import Data.Foldable
 import Control.Monad
 
 import Type
@@ -19,12 +20,15 @@ import Builder
 import Util (bindM2, zipWithT, enumerate, restructure)
 import GHC.Stack
 
-transpose :: EnvReader m => Atom n -> m n (Atom n)
-transpose (Lam (LamExpr (LamBinder b ty LinArrow Pure) body)) = liftImmut do
+transpose :: (MonadFail1 m, EnvReader m) => Atom n -> m n (Atom n)
+transpose lam@(Lam (LamExpr b body)) = liftImmut do
   DB env <- getDB
+  Pi (PiType piBinder _ resultTy) <- getType lam
+  let argTy = binderType b
+  let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
   return $ runBuilderM env $ runSubstReaderT idSubst $
-    buildLam "ct" LinArrow ty Pure \ct ->
-      withAccumulator (sink ty) \ref ->
+    buildLam "ct" LinArrow resultTy' Pure \ct ->
+      withAccumulator (sink argTy) \ref ->
         extendSubst (b @> LinRef ref) $
           transposeBlock body (sink $ Var ct)
 transpose _ = error "not a linear function"
@@ -111,8 +115,24 @@ transposeWithDecls (Nest (Let b (DeclBinding _ ty expr)) rest) result ct =
 
 transposeExpr :: Emits o => Expr i -> Atom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
+  -- TODO: Instead, should we handle table application like nonlinear
+  -- expressions, where we just project the reference?
+  App x i -> do
+    -- TODO: we should check that it's a table type here, but it's awkward to do
+    -- because we need something in the o-space to do that.
+    i' <- substNonlin i
+    case x of
+      Var v -> do
+        lookupSubstM v >>= \case
+          RenameNonlin _ -> error "shouldn't happen"
+          LinRef ref -> do
+            refProj <- emitOp $ IndexRef ref i'
+            emitCTToRef refProj ct
+          LinTrivial -> return ()
+      _ -> error "shouldn't occur"
   Op op         -> transposeOp op ct
   Atom atom     -> transposeAtom atom ct
+  Hof hof       -> transposeHof hof ct
 
 transposeOp :: Emits o => Op i -> Atom o -> TransposeM i o ()
 transposeOp op ct = case op of
@@ -158,8 +178,23 @@ transposeAtom atom ct = case atom of
   DataConRef _ _ _ -> error "Unexpected ref"
   BoxedRef _ _     -> error "Unexpected ref"
   DepPairRef _ _ _ -> error "Unexpected ref"
-  ProjectElt _ _ -> undefined
+  ProjectElt idxs v -> do
+    lookupSubstM v >>= \case
+      RenameNonlin _ -> error "an error, probably"
+      LinRef ref -> do
+        ref' <- getNaryProjRef (toList idxs) ref
+        emitCTToRef ref' ct
+      LinTrivial -> return ()
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
+
+transposeHof :: Emits o => Hof i -> Atom o -> TransposeM i o ()
+transposeHof hof ct = case hof of
+  For ann (Lam (LamExpr b  body)) -> do
+    ty <- substNonlin $ binderType b
+    void $ buildForAnn (getNameHint b) (flipDir ann) ty \i -> do
+      ctElt <- app (sink ct) (Var i)
+      extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
+      return UnitVal
 
 transposeCon :: Con i -> Atom o -> TransposeM i o ()
 transposeCon con ct = case con of
@@ -168,6 +203,12 @@ transposeCon con ct = case con of
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"
+
+flipDir :: ForAnn -> ForAnn
+flipDir ann = case ann of
+  RegularFor Fwd -> RegularFor Rev
+  RegularFor Rev -> RegularFor Fwd
+  ParallelFor -> ParallelFor
 
 -- === instances ===
 

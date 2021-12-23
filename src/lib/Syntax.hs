@@ -110,6 +110,7 @@ import Data.Maybe (catMaybes)
 import Foreign.Ptr
 import Data.Maybe (fromJust)
 
+import GHC.Stack
 import GHC.Generics (Generic (..))
 import Data.Store (Store)
 
@@ -1591,7 +1592,7 @@ fromConsList xs = case xs of
 
 type BundleDesc = Int  -- length
 
-getProjection :: [Int] -> Atom n -> Atom n
+getProjection :: HasCallStack => [Int] -> Atom n -> Atom n
 getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (NE.fromList [i]) name
@@ -2006,6 +2007,9 @@ instance BindsEnv PiBinder where
     withExtEvidence b do
       let binding = toBinding $ sink $ PiBinding arr ty
       EnvFrag (RecSubstFrag $ b @> binding) (Just Pure)
+
+instance HasNameHint (PiBinder n l) where
+  getNameHint (PiBinder b _ _) = getNameHint b
 
 instance ProvesExt  PiBinder
 instance BindsNames PiBinder
