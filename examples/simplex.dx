@@ -103,11 +103,14 @@ data ObjectiveType =
 def Constraint (n:Type) : Type =
   {coeffs:n=>Float & offset:Float & conType:ConstraintType}
 
-def ColIx (cons:Type) (vars:Type) : Type =
-  {variables:vars | slacks:cons | value: Unit}
-
 def RowIx (cons:Type) (a:Type) : Type =
   {constraints:cons | objective:Unit | extra:a}
+  -- extra is a field that could be left unused or (Fin 1)
+
+def ColIx (cons:Type) (vars:Type) : Type =
+  {variables:vars | slacks:cons | value:Unit}
+  -- Todo: we assigned a slack variable for every constraints
+  -- even though equality constraints do not need them.
 
 Void : Type = Fin 0
 
@@ -116,7 +119,7 @@ def AbsTableau (cons:Type) (vars:Type) (extra:Type) : Type =
   rowtype = RowIx cons extra
   tabletype = rowtype => coltype => Float
   (cons => coltype & vars => coltype & tabletype)
-  -- basics, nonbasics, table
+  -- (basics, nonbasics, table)
 
 def Tableau (cons:Type) (vars:Type) : Type =
   AbsTableau cons vars Void -- no need for extra row
@@ -128,18 +131,61 @@ def FeasibilityTableau (cons:Type) (vars:Type) : Type =
   allvars = {realvars: vars | artificials: cons}
   AbsTableau cons allvars Unit
 
+' The simplex method works `FeasibilityTableau` in phase 1 and `Tableau` in phase 2. Let's look at the usage of these types in an example (and introduce simplex along the way). Say we want to minimize
+$$z = x_1 - x_2$$
+subject to constraints
+$$
+  1x_1 - 2x_2 \le 0.5 \newline
+  1x_1 - 2x_2 \ge 0.5 \newline
+  x_j \ge 0 \ (j = 1,2)
+$$
+
+' In phase 1, we first construct the following table with `build_feasibility_tableau` according to some rules.
+* $x_i$ are the original variables in the constraints (`real_vars`)
+* $a_i$ are the artificial variables. They are used only in phase 1.
+* $s_i$ are slack variables.
+$$ \begin{array}{l|c||c|cc:cc:cc} \hline
+\text{RowIx \textbackslash ColIx}& \text{Basic} & \text{Value} & x_1 & x_2 & s_1 & s_2 & a_1 & a_2  \\\\ \hline
+\text{Constraint 1} & a_1 & 0.5 & 1 & -2 & 1 & 0 & 1 & 0\\\\
+\text{Constraint 2} & a_2  & 0.5 & 1 & -2 & 0 & -1 & 0 & 1 \\\\
+\text{Objective} & (-w) & 1 & 2 & -4 & 1 & -1 & 0 & 0 \\\\ \hline
+\text{Extra} & (-z) & 0 & -1 & 1 & 0 & 0 & 0 & 0 \\\\ \hline
+\end{array}$$
+
+' Dex represents such structured matrix using records as index sets.
+
+(cons, vars) = (Fin 2, Fin 2)
+:p (RowIx cons Unit) => (ColIx cons {realvars: vars | artificials: cons}) => Float
+> {constraints: Fin 2 | extra: Unit | objective: Unit}
+> => { slacks: Fin 2
+>    | value: Unit
+>    | variables: {artificials: Fin 2 | realvars: Fin 2}} => Float32
+
+' We `pivot` until the phase 1 tableau `isOptimal`. If the optimal tableau `isFeasible` at the end of phase 1, it is then converted to a normal tableau (`feasibilityTableauToNormalTableau`) with the following matrix structure. Note that all artificial variables are removed and $-z$ is the phase 2 objective.
+$$ \begin{array}{l|c||c|cc:cc} \hline
+\text{RowIx \textbackslash ColIx}& \text{Basic} & \text{Value} & x_1 & x_2 & s_1 & s_2 \\\\ \hline
+\text{Constraint 1} & s_2 & 0 & 0 & 0 & 1 & 1 \\\\
+\text{Constraint 2} & x_1 & 0.5 & 1 & -2 & 1 & 0 \\\\
+\text{Objective} & (-z) & 0.5 & 0 & -1 & 1 & 0 \\\\ \hline
+\end{array}$$
+The type of this normal table is:
+
+:p (RowIx cons Void) => (ColIx cons vars) => Float
+> {constraints: Fin 2 | extra: Fin 0 | objective: Unit}
+> => {slacks: Fin 2 | value: Unit | variables: Fin 2} => Float32
+
+' In phase 2, we apply `pivot` again to the normal tableau until the optimality criterion is met. Finally we can `extractSolution` from the optimal normal tableau.
+
+' The following section implements these functions:
+* `build_feasibility_tableau`
+* `pivot`
+* `isOptimal` and `isFeasible`
+* `feasibilityTableauToNormalTableau`
+* `extractSolution`
 
 '### Simplex helper functions
 
-def eval_objective (coeffs: n=>Float) (x: n=>Float) : Float = dot coeffs x
-
-def constraints_satisfied (constraints: m=>Constraint n) (x: n=>Float) : Bool =
-  constraints_ok = all for c.
-    ({offset=offset, coeffs=coeffs, conType=conType}) = constraints.c
-    case conType of
-      LessThan    -> dot coeffs x <= offset
-      GreaterThan -> dot coeffs x >= offset
-  constraints_ok && all for i:n. x.i >= 0.0 || x.i ~~ 0.0
+' #### Cononicalize and `build_feasibility_tableau`
 
 def cononicalize_constraint (inequality: Constraint vars):
   (vars=>Float & Float) =
@@ -173,8 +219,6 @@ def build_tableau [Eq cons]
   basics    = for r:cons. {|slacks=r|}
   nonbasics = for r:vars. {|variables=r|}
   (basics, nonbasics, table)
-
-
 
 def negate_constraints_with_negative_offsets [Eq cons]
   (tableau: (Tableau cons vars)): Tableau cons vars =
@@ -225,21 +269,20 @@ def build_feasibility_tableau [Eq cons]
     {|realvars=r|} -> {|variables={|realvars=r|}|}
   (fbasics, fnonbasics, ftable)
 
+' #### Stopping criteria: `isOptimal` and `isFeasible`
+
 def isOptimal (tableau: AbsTableau cons vars extra) : Bool =
   (_, nonbasics, table) = tableau
   all for c:vars.
     val = table.{|objective=()|}.(nonbasics.c)
     val ~~ 0.0 || val < 0.0
 
-def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
-  (basics, _, table) = tableau
-  yieldAccum (AddMonoid Float) \varRef.
-    for v:cons.
-      var = basics.v
-      case var of  -- If this basic variable is an original variable, write it.
-        {|variables=var|} ->
-          varRef!var += table.{|constraints=v|}.{|value=()|}
-        {|slacks=var|} -> ()
+def isFeasible (tableau: FeasibilityTableau cons vars) : Bool =
+  (_, _, table) = tableau
+  val = table.{|objective=()|}.{|value=()|}
+  val ~~ 0.
+
+' #### Choose `pivot` and apply
 
 def chooseColumn (tableau: (AbsTableau cons vars extra)) : ColIx cons vars =
   -- An unchecked assumption is that there exists
@@ -294,12 +337,7 @@ def pivot [Eq cons, Eq extra, Eq vars]
 
   (newBasics, newNonbasics, newTable)
 
-
-def isFeasible (tableau: FeasibilityTableau cons vars) : Bool =
-  (_, _, table) = tableau
-  val = table.{|objective=()|}.{|value=()|}
-  val ~~ 0.
-
+' #### Transition between phase 1 and 2: `feasibilityTableauToNormalTableau`
 
 def find_non_artificial_pivcol [Eq cons, Eq vars]
   (tableau: FeasibilityTableau cons vars)
@@ -390,8 +428,31 @@ def feasibilityTableauToNormalTableau [Eq cons, Eq vars]
   ft = pivot_artificials tableau
   eliminate_artificials ft
 
+' #### Wrap up with `extractSolution`
 
-'### Main Simplex Algorithm
+def eval_objective (coeffs: n=>Float) (x: n=>Float) : Float = dot coeffs x
+
+def constraints_satisfied (constraints: m=>Constraint n) (x: n=>Float) : Bool =
+  constraints_ok = all for c.
+    ({offset=offset, coeffs=coeffs, conType=conType}) = constraints.c
+    case conType of
+      LessThan    -> dot coeffs x <= offset
+      GreaterThan -> dot coeffs x >= offset
+  -- also enforces that all vars are >= 0.0
+  constraints_ok && all for i:n. x.i >= 0.0 || x.i ~~ 0.0
+
+def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
+  (basics, _, table) = tableau
+  yieldAccum (AddMonoid Float) \varRef.
+    for v:cons.
+      var = basics.v
+      case var of  -- If this basic variable is an original variable, write it.
+        {|variables=var|} ->
+          varRef!var += table.{|constraints=v|}.{|value=()|}
+        {|slacks=var|} -> ()
+
+
+'# Main Simplex Algorithm
 
 def simplex [Eq cons, Eq vars]
   (ineqs: cons=>Constraint vars)
@@ -551,7 +612,7 @@ def draw_point [Eq n, Eq m]
     False -> image.j
 
 
-'### Pentagon example.
+'### Pentagon example
 
 -- XXX This used to typecheck, now fails, so coefficients are hardcoded below.
 
