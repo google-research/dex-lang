@@ -21,7 +21,7 @@ module Type (
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
   oneEffect, lamExprTy, isData, isSingletonType, singletonTypeVal,
-  extendEffect) where
+  extendEffect, exprEffects) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>), id)
@@ -109,6 +109,41 @@ sourceNameType v = do
       MethodBinding  _ _ e -> getType e
       ClassBinding   _   e -> getType e
       _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+
+-- === querying effects ===
+
+exprEffects :: (MonadFail1 m, EnvReader m) => Expr n -> m n (EffectRow n)
+exprEffects expr = case expr of
+  Atom _  -> return $ Pure
+  App f _ -> functionEffs f
+  Op op   -> case op of
+    PrimEffect ref m -> do
+      RefTy (Var h) _ <- getType ref
+      return $ case m of
+        MGet      -> oneEffect (RWSEffect State  $ Just h)
+        MPut    _ -> oneEffect (RWSEffect State  $ Just h)
+        MAsk      -> oneEffect (RWSEffect Reader $ Just h)
+        MExtend _ -> oneEffect (RWSEffect Writer $ Just h)
+    ThrowException _ -> return $ oneEffect ExceptionEffect
+    IOAlloc  _ _  -> return $ oneEffect IOEffect
+    IOFree   _    -> return $ oneEffect IOEffect
+    PtrLoad  _    -> return $ oneEffect IOEffect
+    PtrStore _ _  -> return $ oneEffect IOEffect
+    FFICall _ _ _ -> return $ oneEffect IOEffect
+    _ -> return Pure
+  Hof hof -> case hof of
+    For _ f         -> functionEffs f
+    Tile _ _ _      -> error "not implemented"
+    While body      -> functionEffs body
+    Linearize _     -> return Pure  -- Body has to be a pure function
+    Transpose _     -> return Pure  -- Body has to be a pure function
+    _ -> error "not implemented"
+  _ -> error "not implemented"
+
+functionEffs :: EnvReader m => Atom n -> m n (EffectRow n)
+functionEffs f = getType f >>= \case
+  Pi (PiType b effs _) -> return $ ignoreHoistFailure $ hoist b effs
+  _ -> error "Expected a function type"
 
 -- === the type checking/querying monad ===
 

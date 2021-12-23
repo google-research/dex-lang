@@ -10,7 +10,10 @@ module Transpose (transpose) where
 
 import Data.Foldable
 import Control.Monad
+import Control.Monad.Reader
+import qualified Data.Set as S
 
+import MTL1
 import Type
 import Name
 import LabeledItems
@@ -26,7 +29,7 @@ transpose lam@(Lam (LamExpr b body)) = liftImmut do
   Pi (PiType piBinder _ resultTy) <- getType lam
   let argTy = binderType b
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
-  return $ runBuilderM env $ runSubstReaderT idSubst $
+  return $ runBuilderM env $ runReaderT1 (ListE []) $ runSubstReaderT idSubst $
     buildLam "ct" LinArrow resultTy' Pure \ct ->
       withAccumulator (sink argTy) \ref ->
         extendSubst (b @> LinRef ref) $
@@ -42,13 +45,17 @@ data TransposeSubstVal c n where
   -- as an optimization, we don't make references for trivial vector spaces
   LinTrivial :: TransposeSubstVal AtomNameC n
 
-type TransposeM a = SubstReaderT TransposeSubstVal BuilderM a
+type LinRegions = ListE AtomName
+
+type TransposeM a = SubstReaderT TransposeSubstVal
+                      (ReaderT1 LinRegions BuilderM) a
 
 -- TODO: it might make sense to replace substNonlin/isLin
 -- with a single `trySubtNonlin :: e i -> Maybe (e o)`.
 -- But for that we need a way to traverse names, like a monadic
 -- version of `substE`.
-substNonlin :: (SinkableE e, SubstE Name e) => e i -> TransposeM i o (e o)
+substNonlin :: (SinkableE e, SubstE Name e, HasCallStack)
+            => e i -> TransposeM i o (e o)
 substNonlin e = do
   subst <- getSubst
   fmapNamesM (\v -> case subst ! v of
@@ -86,12 +93,18 @@ withAccumulator
 withAccumulator ty cont = do
   baseTy <- getBaseMonoidType ty
   baseMonoid <- tangentBaseMonoidFor baseTy
-  getSnd =<< emitRunWriter "ref" ty baseMonoid \ref ->
+  getSnd =<< emitRunWriter "ref" ty baseMonoid \_ ref ->
                cont (Var ref) >> return UnitVal
 
 emitCTToRef :: (Emits n, Builder m) => Atom n -> Atom n -> m n ()
 emitCTToRef ref ct =
   void . emitOp . PrimEffect ref . MExtend =<< updateAddAt ct
+
+getLinRegions :: TransposeM i o [AtomName o]
+getLinRegions = asks fromListE
+
+extendLinRegions :: AtomName o -> TransposeM i o a -> TransposeM i o a
+extendLinRegions v cont = local (\(ListE vs) -> ListE (v:vs)) cont
 
 -- === actual pass ===
 
@@ -101,17 +114,34 @@ transposeBlock (Block _ decls result) ct = transposeWithDecls decls result ct
 transposeWithDecls :: Emits o => Nest Decl i i' -> Expr i' -> Atom o -> TransposeM i o ()
 transposeWithDecls Empty expr ct = transposeExpr expr ct
 transposeWithDecls (Nest (Let b (DeclBinding _ ty expr)) rest) result ct =
-  isLin expr >>= \case
-    True  -> do
+  substExprIfNonlin expr >>= \case
+    Nothing  -> do
       ty' <- substNonlin ty
       ctExpr <- withAccumulator ty' \ref ->
                   extendSubst (b @> LinRef ref) $
                     transposeWithDecls rest result (sink ct)
       transposeExpr expr ctExpr
-    False -> do
-      v <- emit =<< substNonlin expr
+    Just nonlinExpr -> do
+      v <- emit nonlinExpr
       extendSubst (b @> RenameNonlin v) $
         transposeWithDecls rest result ct
+
+substExprIfNonlin :: Expr i -> TransposeM i o (Maybe (Expr o))
+substExprIfNonlin expr =
+  isLin expr >>= \case
+    True -> return Nothing
+    False -> do
+      expr' <- substNonlin expr
+      exprEffects expr' >>= isLinEff >>= \case
+        True -> return Nothing
+        False -> return $ Just expr'
+
+isLinEff :: EffectRow o -> TransposeM i o Bool
+isLinEff effs = do
+  regions <- getLinRegions
+  let effRegions = freeVarsList AtomNameRep effs
+  return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
+isLinEff _ = error "Can't transpose polymorphic effects"
 
 transposeExpr :: Emits o => Expr i -> Atom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
@@ -145,13 +175,23 @@ transposeOp op ct = case op of
     if xLin
       then transposeAtom x =<< mul ct =<< substNonlin y
       else transposeAtom y =<< mul ct =<< substNonlin x
+  PrimEffect refArg m   -> do
+    refArg' <- substNonlin refArg
+    let emitEff = emitOp . PrimEffect refArg'
+    case m of
+      MGet -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
+      MPut x -> do
+        ct' <- emitEff MGet
+        transposeAtom x ct'
+        zero <- getType ct' >>= zeroAt
+        void $ emitEff $ MPut zero
   where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
-transposeAtom :: Emits o => Atom i -> Atom o -> TransposeM i o ()
+transposeAtom :: HasCallStack => Emits o => Atom i -> Atom o -> TransposeM i o ()
 transposeAtom atom ct = case atom of
   Var v -> do
     lookupSubstM v >>= \case
-      RenameNonlin _ -> error "an error, I think?"
+      RenameNonlin _ -> error $ "an error, I think? " ++ pprint v
       LinRef ref -> emitCTToRef ref ct
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
@@ -195,6 +235,14 @@ transposeHof hof ct = case hof of
       ctElt <- app (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal
+  RunState s (Lam (BinaryLamExpr hB refB body)) -> do
+    (ctBody, ctState) <- fromPair ct
+    (_, cts) <- (fromPair =<<) $ emitRunState "s" ctState \h ref -> do
+      extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
+        extendLinRegions h $
+          transposeBlock body (sink ctBody)
+      return UnitVal
+    transposeAtom s cts
 
 transposeCon :: Con i -> Atom o -> TransposeM i o ()
 transposeCon con ct = case con of

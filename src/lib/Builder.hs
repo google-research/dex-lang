@@ -43,7 +43,7 @@ module Builder (
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
-  emitRunWriter, buildFor, unzipTab, buildForAnn,
+  emitRunWriter, emitRunState, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, tangentType, addTangent, updateAddAt, tangentBaseMonoidFor,
   buildEffLam,
   ReconAbs, ReconstructAtom (..)
@@ -595,11 +595,21 @@ unzipTab tab = do
 emitRunWriter
   :: (Emits n ,Builder m)
   => NameHint -> Type n -> BaseMonoid n
-  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
   -> m n (Atom n)
 emitRunWriter hint accTy bm body = do
-  lam <- buildEffLam Writer hint accTy \_ ref -> body ref
+  lam <- buildEffLam Writer hint accTy \h ref -> body h ref
   liftM Var $ emit $ Hof $ RunWriter bm lam
+
+emitRunState
+  :: (Emits n ,Builder m)
+  => NameHint -> Atom n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+emitRunState hint initVal body = do
+  stateTy <- getType initVal
+  lam <- buildEffLam State hint stateTy \h ref -> body h ref
+  liftM Var $ emit $ Hof $ RunState initVal lam
 
 -- === vector space (ish) type class ===
 
