@@ -115,12 +115,12 @@ dexrt-llvm: src/lib/dexrt.bc
 
 # --- running tests ---
 
-example-names = simplex mandelbrot pi sierpinski rejection-sampler \
+example-names = mandelbrot pi sierpinski rejection-sampler \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
                 sgd psd tutorial kernelregression \
-                quaternions manifold-gradients schrodinger
+                quaternions manifold-gradients schrodinger simplex
 # TODO: re-enable
 # fft vega-plotting
 
