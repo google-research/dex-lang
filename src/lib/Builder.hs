@@ -40,7 +40,7 @@ module Builder (
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   runBuilderM, liftBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
-  liftMonoidEmpty,
+  liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
   emitRunWriter, mCombine, emitRunState, buildFor, unzipTab, buildForAnn,
@@ -931,6 +931,24 @@ liftMonoidEmpty accTy x = do
           liftMonoidEmpty eltTy' x'
       _ -> error $ "Base monoid type mismatch: can't lift " ++
              pprint xTy ++ " to " ++ pprint accTy
+
+liftMonoidCombine :: (Builder m, Emits n)
+                  => Type n -> Atom n -> Atom n -> Atom n
+                  -> m n (Atom n)
+liftMonoidCombine accTy baseCombine x y = do
+  Pi (PiType b _ _) <- getType baseCombine
+  let baseTy = binderType b
+  alphaEq accTy baseTy >>= \case
+    True -> naryApp baseCombine [x, y]
+    False -> case accTy of
+      TabTy b eltTy -> do
+        buildFor "i" Fwd (binderType b) \i -> do
+          xElt <- app (sink x) (Var i)
+          yElt <- app (sink y) (Var i)
+          eltTy' <- applySubst (b@>i) eltTy
+          liftMonoidCombine eltTy' (sink baseCombine) xElt yElt
+      _ -> error $ "Base monoid type mismatch: can't lift " ++
+             pprint baseTy ++ " to " ++ pprint accTy
 
 -- === index set type class ===
 

@@ -216,9 +216,11 @@ toImpOp maybeDest op = case op of
   PrimEffect refDest m -> do
     case m of
       MAsk -> returnVal =<< destToAtom refDest
-      MExtend monoid x -> do
+      MExtend (BaseMonoid _ combine) x -> do
+        xTy <- getType x
         refVal <- destToAtom refDest
-        result <- liftBuilderImpSimplify $ mCombine (sink monoid) (sink refVal) (sink x)
+        result <- liftBuilderImpSimplify $
+                    liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
         copyAtom refDest result
         returnVal UnitVal
       MPut x -> copyAtom  refDest x >> returnVal UnitVal

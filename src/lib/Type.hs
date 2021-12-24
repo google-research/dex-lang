@@ -123,6 +123,7 @@ exprEffects expr = case expr of
         MGet      -> oneEffect (RWSEffect State  $ Just h)
         MPut    _ -> oneEffect (RWSEffect State  $ Just h)
         MAsk      -> oneEffect (RWSEffect Reader $ Just h)
+        -- XXX: We don't verify the base monoid. See note about RunWriter.
         MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
     ThrowException _ -> return $ oneEffect ExceptionEffect
     IOAlloc  _ _  -> return $ oneEffect IOEffect

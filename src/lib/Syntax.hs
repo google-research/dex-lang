@@ -1116,7 +1116,7 @@ data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
                      deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 type BaseMonoid n = BaseMonoidP (Atom n)
 
-data PrimEffect e = MAsk | MExtend e e | MGet | MPut e
+data PrimEffect e = MAsk | MExtend (BaseMonoidP e) e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
@@ -2622,7 +2622,7 @@ builtinNames = M.fromList
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
-  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend () ())
+  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend (BaseMonoid () ()) ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())

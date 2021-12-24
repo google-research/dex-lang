@@ -293,11 +293,11 @@ linearizeOp op = case op of
   ScalarUnOp  uop x       -> linearizeUnOp  uop x
   ScalarBinOp bop x y     -> linearizeBinOp bop x y
   PrimEffect ref m -> case m of
-    MExtend monoid x -> do
-      -- TODO: check that we're dealing with a +/0 monoid
-      monoid' <- substM monoid
-      zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-        emitOp $ PrimEffect ref' $ MExtend (sink monoid') x'
+    -- MExtend monoid x -> do
+    --   -- TODO: check that we're dealing with a +/0 monoid
+    --   monoid' <- substM monoid
+    --   zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
+    --     emitOp $ PrimEffect ref' $ MExtend (sink monoid') x'
     MGet   -> linearizeAtom ref `bindLin` \ref' -> emitOp $ PrimEffect ref' MGet
     MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
                 emitOp $ PrimEffect ref' $ MPut x'

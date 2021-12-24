@@ -91,19 +91,14 @@ withAccumulator
   -> (forall o'. (Emits o', DExt o o') => Atom o' -> TransposeM i o' ())
   -> TransposeM i o (Atom o)
 withAccumulator ty cont = do
-  baseTy <- getBaseMonoidType ty
-  baseMonoid <- tangentBaseMonoidFor baseTy
+  baseMonoid <- getBaseMonoidType ty >>= tangentBaseMonoidFor
   getSnd =<< emitRunWriter "ref" ty baseMonoid \_ ref ->
                cont (Var ref) >> return UnitVal
 
 emitCTToRef :: (Emits n, Builder m) => Atom n -> Atom n -> m n ()
-emitCTToRef = undefined
--- emitCTToRef ref ct = do
---   bm <- getType ct >>= getBaseMonoid
---   void $ emitOp $ PrimEffect ref $ MExtend bm ct
-
-getBaseMonoid :: EnvReader m => Type n -> m n (BaseMonoid n)
-getBaseMonoid = undefined
+emitCTToRef ref ct = do
+  baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
+  void $ emitOp $ PrimEffect ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [AtomName o]
 getLinRegions = asks fromListE
