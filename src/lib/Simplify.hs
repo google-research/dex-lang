@@ -9,7 +9,8 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Simplify
-  ( simplifyModule, splitSimpModule, applyDataResults) where
+  ( simplifyModule, splitSimpModule, applyDataResults
+  , simplifyBlock, liftSimplifyM) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -42,6 +43,14 @@ runSimplifyM bindings cont =
       runBuilderT bindings $
         runSubstReaderT idSubst $
           runSimplifyM' cont
+
+liftSimplifyM
+  :: (EnvReader m, SinkableE e)
+  => (forall l. (Immut l, DExt n l) => SimplifyM l l (e l))
+  -> m n (e n)
+liftSimplifyM cont = liftImmut do
+  DB env <- getDB
+  return $ runSimplifyM env $ cont
 
 instance Simplifier SimplifyM
 
@@ -117,7 +126,7 @@ simplifyExpr expr = case expr of
     x' <- simplifyAtom x
     f' <- simplifyAtom f
     simplifyApp f' x'
-  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Op  op  -> mapM simplifyAtom op >>= emitOp
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
   Case e alts resultTy -> do
@@ -196,13 +205,6 @@ simplifyAtom atom = traverseSurfaceAtomNames atom \v -> do
         LetBound (DeclBinding ann _ (Atom x))
           | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
-
-simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
-simplifyOp op = case op of
-  PrimEffect ref (MExtend f) -> dropSubst $ do
-    (f', IdentityRecon) <- simplifyLam f
-    emitOp $ PrimEffect ref $ MExtend f'
-  _ -> emitOp op
 
 simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyLam lam = do

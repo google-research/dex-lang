@@ -396,9 +396,7 @@ def tableAccumMonoid {n h w} [(UnsafeMkAccumMonoid m): AccumMonoid h w] : AccumM
 
 def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
   (UnsafeMkAccumMonoid m) = am
-  %instance mHint = m
-  updater = \v. mcombine v x
-  %mextend ref updater
+  %mextend ref m x
 
 def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 def fstRef {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref

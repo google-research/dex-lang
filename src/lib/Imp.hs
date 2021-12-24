@@ -16,12 +16,14 @@ import Data.Foldable (toList)
 import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
+import GHC.Stack
 
 import Err
 import Name
 import Builder
 import Syntax
 import Type
+import Simplify
 import LabeledItems
 import qualified Algebra as A
 
@@ -214,11 +216,9 @@ toImpOp maybeDest op = case op of
   PrimEffect refDest m -> do
     case m of
       MAsk -> returnVal =<< destToAtom refDest
-      MExtend (Lam (LamExpr b body)) -> do
-        -- TODO: Update in-place?
-        refValue <- destToAtom refDest
-        result <- dropSubst $ extendSubst (b @> SubstVal refValue) $
-                    translateBlock Nothing body
+      MExtend monoid x -> do
+        refVal <- destToAtom refDest
+        result <- liftBuilderImpSimplify $ mCombine (sink monoid) (sink refVal) (sink x)
         copyAtom refDest result
         returnVal UnitVal
       MPut x -> copyAtom  refDest x >> returnVal UnitVal
@@ -229,7 +229,6 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
-      _ -> error "impossible"
   UnsafeFromOrdinal n i -> returnVal =<< intToIndexImp n =<< fromScalarAtom i
   IdxSetSize n -> returnVal =<< toScalarAtom  =<< indexSetSizeImp n
   ToOrdinal idx -> case idx of
@@ -1200,7 +1199,7 @@ load x = emitInstr $ IPrimOp $ PtrLoad x
 
 -- === Atom <-> IExpr conversions ===
 
-fromScalarAtom :: EnvReader m => Atom n -> m n (IExpr n)
+fromScalarAtom :: HasCallStack => EnvReader m => Atom n -> m n (IExpr n)
 fromScalarAtom atom = case atom of
   Var v -> do
     ~(BaseTy b) <- getType $ Var v
@@ -1233,6 +1232,18 @@ liftBuilderImp cont = do
     DistinctAbs decls result <- return $ runBuilderM bindings $ buildScoped cont
     return $ Abs decls result
   runSubstReaderT idSubst $ translateDeclNest decls $ substM result
+
+-- TODO: should we merge this with `liftBuilderImp`? Not much harm in
+-- simplifying even if it's not needed.
+liftBuilderImpSimplify
+  :: (Emits n, ImpBuilder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+liftBuilderImpSimplify cont = do
+  block <- liftSimplifyM do
+    block <- liftBuilder $ buildBlock cont
+    buildBlock $ simplifyBlock block
+  runSubstReaderT idSubst $ translateBlock Nothing block
 
 intToIndexImp :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
 intToIndexImp ty i = liftBuilderImp $ intToIndex (sink ty) =<< toScalarAtom (sink i)

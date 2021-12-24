@@ -43,7 +43,7 @@ module Builder (
   liftMonoidEmpty,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
-  emitRunWriter, emitRunState, buildFor, unzipTab, buildForAnn,
+  emitRunWriter, mCombine, emitRunState, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, tangentType, addTangent, updateAddAt, tangentBaseMonoidFor,
   buildEffLam,
   ReconAbs, ReconstructAtom (..)
@@ -600,6 +600,13 @@ emitRunWriter
 emitRunWriter hint accTy bm body = do
   lam <- buildEffLam Writer hint accTy \h ref -> body h ref
   liftM Var $ emit $ Hof $ RunWriter bm lam
+
+mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
+mCombine monoidDict x y = do
+  ty <- getType x
+  Just method <- lookupSourceMap MethodNameRep "mcombine"
+  MethodBinding _ _ projection <- lookupEnv method
+  naryApp projection [ty, monoidDict, x, y]
 
 emitRunState
   :: (Emits n ,Builder m)

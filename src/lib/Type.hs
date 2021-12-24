@@ -123,7 +123,7 @@ exprEffects expr = case expr of
         MGet      -> oneEffect (RWSEffect State  $ Just h)
         MPut    _ -> oneEffect (RWSEffect State  $ Just h)
         MAsk      -> oneEffect (RWSEffect Reader $ Just h)
-        MExtend _ -> oneEffect (RWSEffect Writer $ Just h)
+        MExtend _ _ -> oneEffect (RWSEffect Writer $ Just h)
     ThrowException _ -> return $ oneEffect ExceptionEffect
     IOAlloc  _ _  -> return $ oneEffect IOEffect
     IOFree   _    -> return $ oneEffect IOEffect
@@ -600,9 +600,7 @@ typeCheckPrimOp op = case op of
       MGet      ->         declareEff (RWSEffect State  $ Just h') $> s
       MPut  x   -> x|:s >> declareEff (RWSEffect State  $ Just h') $> UnitTy
       MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
-      MExtend x -> do
-        updaterTy <- s --> s
-        x|:updaterTy >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
+      MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
     RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) <- getTypeE ref
     i' <- checkTypeE iTy i

@@ -97,8 +97,13 @@ withAccumulator ty cont = do
                cont (Var ref) >> return UnitVal
 
 emitCTToRef :: (Emits n, Builder m) => Atom n -> Atom n -> m n ()
-emitCTToRef ref ct =
-  void . emitOp . PrimEffect ref . MExtend =<< updateAddAt ct
+emitCTToRef = undefined
+-- emitCTToRef ref ct = do
+--   bm <- getType ct >>= getBaseMonoid
+--   void $ emitOp $ PrimEffect ref $ MExtend bm ct
+
+getBaseMonoid :: EnvReader m => Type n -> m n (BaseMonoid n)
+getBaseMonoid = undefined
 
 getLinRegions :: TransposeM i o [AtomName o]
 getLinRegions = asks fromListE
