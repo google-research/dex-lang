@@ -179,6 +179,12 @@ transposeOp op ct = case op of
     refArg' <- substNonlin refArg
     let emitEff = emitOp . PrimEffect refArg'
     case m of
+      MAsk -> do
+        baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
+        void $ emitEff $ MExtend baseMonoid ct
+      -- XXX: This assumes that the update function uses a tangent (0, +) monoid
+      --      rule for RunWriter.
+      MExtend _ x -> transposeAtom x =<< emitEff MAsk
       MGet -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
       MPut x -> do
         ct' <- emitEff MGet
@@ -243,6 +249,23 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ctBody)
       return UnitVal
     transposeAtom s cts
+  RunReader r (Lam (BinaryLamExpr hB refB body)) -> do
+    accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
+    baseMonoid <- getBaseMonoidType accumTy >>= tangentBaseMonoidFor
+    (_, ct') <- (fromPair =<<) $ emitRunWriter "w" accumTy baseMonoid \h ref -> do
+      extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
+        extendLinRegions h $
+          transposeBlock body (sink ct)
+      return UnitVal
+    transposeAtom r ct'
+  RunWriter bm (Lam (BinaryLamExpr hB refB body))-> do
+    -- TODO: check we have the 0/+ monoid
+    (ctBody, ctEff) <- fromPair ct
+    void $ emitRunReader "r" ctEff \h ref -> do
+      extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
+        extendLinRegions h $
+          transposeBlock body (sink ctBody)
+      return UnitVal
 
 transposeCon :: Con i -> Atom o -> TransposeM i o ()
 transposeCon con ct = case con of

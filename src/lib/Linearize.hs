@@ -293,11 +293,12 @@ linearizeOp op = case op of
   ScalarUnOp  uop x       -> linearizeUnOp  uop x
   ScalarBinOp bop x y     -> linearizeBinOp bop x y
   PrimEffect ref m -> case m of
-    -- MExtend monoid x -> do
-    --   -- TODO: check that we're dealing with a +/0 monoid
-    --   monoid' <- substM monoid
-    --   zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-    --     emitOp $ PrimEffect ref' $ MExtend (sink monoid') x'
+    MAsk -> linearizeAtom ref `bindLin` \ref' -> emitOp $ PrimEffect ref' MAsk
+    MExtend monoid x -> do
+      -- TODO: check that we're dealing with a +/0 monoid
+      monoid' <- mapM substM monoid
+      zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
+        emitOp $ PrimEffect ref' $ MExtend (fmap sink monoid') x'
     MGet   -> linearizeAtom ref `bindLin` \ref' -> emitOp $ PrimEffect ref' MGet
     MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
                 emitOp $ PrimEffect ref' $ MPut x'
@@ -444,6 +445,15 @@ linearizeHof hof = case hof of
     return $ WithTangent ans do
       buildFor (getNameHint i) d (sink ty') \i' ->
         app (sink linTab) (Var i') >>= applyLinToTangents
+  RunReader r lam -> do
+    WithTangent r' rLin <- linearizeAtom r
+    lam' <- linearizeEffectFun Reader lam
+    result <- liftM Var (emit $ Hof $ RunReader r' lam')
+    (primalResult, tangentLam) <- fromPair result
+    return $ WithTangent primalResult do
+      rLin' <- rLin
+      tanEffectLam <- applyLinToTangents $ sink tangentLam
+      liftM Var $ emit $ Hof $ RunReader rLin' tanEffectLam
   RunState sInit lam -> do
     WithTangent sInit' sLin <- linearizeAtom sInit
     lam' <- linearizeEffectFun State lam
@@ -479,12 +489,6 @@ linearizeEffectFun rws (Lam lam) = do
         buildEffLam rws (getNameHint refB) (tangentType $ sink referentTy) \h' ref' ->
           extendTangentArgs h' $ extendTangentArgs ref' $
             tangentFun
-
-getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
-getReferentTy (EmptyAbs (PairB hB refB)) = do
-  RefTy _ ty <- return $ binderType refB
-  HoistSuccess ty' <- return $ hoist hB ty
-  return ty'
 
 withT :: PrimalM i o (e1 o)
       -> (forall o'. (Emits o', DExt o o') => TangentM o' (e2 o'))

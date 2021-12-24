@@ -21,7 +21,7 @@ module Type (
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
   oneEffect, lamExprTy, isData, isSingletonType, singletonTypeVal,
-  extendEffect, exprEffects) where
+  extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>), id)
@@ -109,6 +109,12 @@ sourceNameType v = do
       MethodBinding  _ _ e -> getType e
       ClassBinding   _   e -> getType e
       _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+
+getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
+getReferentTy (EmptyAbs (PairB hB refB)) = do
+  RefTy _ ty <- return $ binderType refB
+  HoistSuccess ty' <- return $ hoist hB ty
+  return ty'
 
 -- === querying effects ===
 
