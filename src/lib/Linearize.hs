@@ -292,8 +292,12 @@ linearizeOp :: Emits o => Op i -> LinM i o Atom Atom
 linearizeOp op = case op of
   ScalarUnOp  uop x       -> linearizeUnOp  uop x
   ScalarBinOp bop x y     -> linearizeBinOp bop x y
-  PrimEffect ref m ->
-    case m of
+  PrimEffect ref m -> case m of
+    MExtend monoid x -> do
+      -- TODO: check that we're dealing with a +/0 monoid
+      monoid' <- substM monoid
+      zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
+        emitOp $ PrimEffect ref' $ MExtend (sink monoid') x'
     MGet   -> linearizeAtom ref `bindLin` \ref' -> emitOp $ PrimEffect ref' MGet
     MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
                 emitOp $ PrimEffect ref' $ MPut x'
@@ -449,6 +453,16 @@ linearizeHof hof = case hof of
       sLin' <- sLin
       tanEffectLam <- applyLinToTangents $ sink tangentLam
       liftM Var $ emit $ Hof $ RunState sLin' tanEffectLam
+  RunWriter bm lam -> do
+    -- TODO: check it's actually the 0/+ monoid (or should we just build that in?)
+    ComposeE bm' <- substM (ComposeE bm)
+    lam' <- linearizeEffectFun Writer lam
+    (result, wFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunWriter bm' lam')
+    (primalResult, tangentLam) <- fromPair result
+    return $ WithTangent (PairVal primalResult wFinal) do
+      ComposeE bm'' <- sinkM $ ComposeE bm'
+      tanEffectLam <- applyLinToTangents $ sink tangentLam
+      liftM Var $ emit $ Hof $ RunWriter bm'' tanEffectLam
   _ -> error $ "not implemented: " ++ pprint hof
 
 -- takes an effect function, of type `(h:Type) -> Ref h s -> a``
