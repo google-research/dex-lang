@@ -159,7 +159,15 @@ transposeExpr expr ct = case expr of
             refProj <- emitOp $ IndexRef ref i'
             emitCTToRef refProj ct
           LinTrivial -> return ()
-      _ -> error "shouldn't occur"
+      ProjectElt idxs v -> do
+        lookupSubstM v >>= \case
+          RenameNonlin _ -> error "an error, probably"
+          LinRef ref -> do
+            ref' <- getNaryProjRef (toList idxs) ref
+            refProj <- emitOp $ IndexRef ref' i'
+            emitCTToRef refProj ct
+          LinTrivial -> return ()
+      _ -> error $ "shouldn't occur: " ++ pprint x
   Op op         -> transposeOp op ct
   Atom atom     -> transposeAtom atom ct
   Hof hof       -> transposeHof hof ct
@@ -175,6 +183,8 @@ transposeOp op ct = case op of
     if xLin
       then transposeAtom x =<< mul ct =<< substNonlin y
       else transposeAtom y =<< mul ct =<< substNonlin x
+  ScalarBinOp FDiv x y  -> transposeAtom x =<< div' ct =<< substNonlin y
+  ScalarBinOp _    _ _  -> notLinear
   PrimEffect refArg m   -> do
     refArg' <- substNonlin refArg
     let emitEff = emitOp . PrimEffect refArg'
@@ -191,13 +201,47 @@ transposeOp op ct = case op of
         transposeAtom x ct'
         zero <- getType ct' >>= zeroAt
         void $ emitEff $ MPut zero
+  -- TabCon ~(TabTy b _) es -> forM_ (enumerate es) \(i, e) -> do
+  --   transposeAtom e =<< tabGet ct =<< intToIndexE (binderType b) (IdxRepVal $ fromIntegral i)
+  IndexRef     _ _      -> notImplemented
+  ProjRef      _ _      -> notImplemented
+  Select       _ _ _    -> notImplemented
+  VectorBinOp  _ _ _    -> notImplemented
+  VectorPack   _        -> notImplemented
+  VectorIndex  _ _      -> notImplemented
+  CastOp       _ _      -> notImplemented
+  RecordCons   _ _      -> notImplemented
+  RecordSplit  _ _      -> notImplemented
+  VariantLift  _ _      -> notImplemented
+  VariantSplit _ _      -> notImplemented
+  SumToVariant _        -> notImplemented
+  PtrStore _ _          -> notLinear
+  PtrLoad    _          -> notLinear
+  PtrOffset _ _         -> notLinear
+  IOAlloc _ _           -> notLinear
+  IOFree _              -> notLinear
+  Inject       _        -> notLinear
+  SliceOffset  _ _      -> notLinear
+  SliceCurry   _ _      -> notLinear
+  UnsafeFromOrdinal _ _ -> notLinear
+  ToOrdinal    _        -> notLinear
+  IdxSetSize   _        -> notLinear
+  ThrowError   _        -> notLinear
+  FFICall _ _ _         -> notLinear
+  DataConTag _          -> notLinear
+  ToEnum _ _            -> notLinear
+  ThrowException _      -> notLinear
+  OutputStreamPtr       -> notLinear
+  SynthesizeDict _ _    -> notLinear
   where notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
 
 transposeAtom :: HasCallStack => Emits o => Atom i -> Atom o -> TransposeM i o ()
 transposeAtom atom ct = case atom of
   Var v -> do
     lookupSubstM v >>= \case
-      RenameNonlin _ -> error $ "an error, I think? " ++ pprint v
+      RenameNonlin _ ->
+        -- XXX: we seem to need this case, but it feels like it should be an error!
+        return ()
       LinRef ref -> emitCTToRef ref ct
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
@@ -267,10 +311,25 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ctBody)
       return UnitVal
 
-transposeCon :: Con i -> Atom o -> TransposeM i o ()
+transposeCon :: Emits o => Con i -> Atom o -> TransposeM i o ()
 transposeCon con ct = case con of
   Lit _             -> return ()
   ProdCon []        -> return ()
+  ProdCon xs ->
+    forM_ (enumerate xs) \(i, x) ->
+      getProj i ct >>= transposeAtom x
+  SumCon _ _ _      -> notImplemented
+  SumAsProd _ _ _   -> notImplemented
+  ClassDictHole _ _ -> notTangent
+  IntRangeVal _ _ _     -> notTangent
+  IndexRangeVal _ _ _ _ -> notTangent
+  IndexSliceVal _ _ _   -> notTangent
+  ParIndexCon _ _       -> notTangent
+  BaseTypeRef _  -> notTangent
+  TabRef _       -> notTangent
+  ConRef _       -> notTangent
+  RecordRef _    -> notTangent
+  where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"

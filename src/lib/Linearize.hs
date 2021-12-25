@@ -12,6 +12,7 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
 import Data.List (elemIndex)
+import qualified Data.Set as S
 import GHC.Stack
 
 import Name
@@ -137,6 +138,11 @@ traverseLin f xs = seqLin $ fmap f xs
 
 liftTangentM :: TangentArgs o -> TangentM o a -> PrimalM i o a
 liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
+
+isActive :: HoistableE e => e o -> PrimalM i o Bool
+isActive e = do
+  activeVars <- (S.fromList . activeVars) <$> getActivePrimals
+  return $ any (`S.member` activeVars) (freeVarsList AtomNameRep e)
 
 -- === converision between monadic and reified version of functions ===
 
@@ -265,15 +271,21 @@ linearizeDecls Empty cont = cont
 -- tangent is trivial, either because its type is a singleton or because ther
 -- are no active vars.
 linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
-  WithTangent p tf <- linearizeExpr expr
-  v <- emitDecl (getNameHint b) ann (Atom p)
-  extendActiveSubst b v do
-    WithTangent pRest tfRest <- linearizeDecls rest cont
-    return $ WithTangent pRest do
-      t <- tf
-      vt <- emitDecl (getNameHint b) ann (Atom t)
-      extendTangentArgs vt $
-        tfRest
+  expr' <- substM expr
+  isActive expr' >>= \case
+    False -> do
+      v <- emit expr'
+      extendSubst (b@>v) $ linearizeDecls rest cont
+    True -> do
+      WithTangent p tf <- linearizeExpr expr
+      v <- emitDecl (getNameHint b) ann (Atom p)
+      extendActiveSubst b v do
+        WithTangent pRest tfRest <- linearizeDecls rest cont
+        return $ WithTangent pRest do
+          t <- tf
+          vt <- emitDecl (getNameHint b) ann (Atom t)
+          extendTangentArgs vt $
+            tfRest
 
 linearizeExpr :: Emits o => Expr i -> LinM i o Atom Atom
 linearizeExpr expr = case expr of
@@ -286,6 +298,11 @@ linearizeExpr expr = case expr of
   Atom e     -> linearizeAtom e
   Op op      -> linearizeOp op
   Hof e      -> linearizeHof e
+  Case e alts _ -> do
+    e' <- substM e
+    isActive e' >>= \case
+      True -> notImplemented
+      False -> notImplemented
   _ -> error $ pprint expr
 
 linearizeOp :: Emits o => Op i -> LinM i o Atom Atom
@@ -326,7 +343,21 @@ linearizeOp op = case op of
   ThrowError _           -> emitZeroT
   DataConTag _           -> emitZeroT
   ToEnum _ _             -> emitZeroT
-  CastOp _ _             -> undefined
+  CastOp t v             -> do
+    vt <- getType =<< substM v
+    t' <- substM t
+    ((&&) <$> (tangentType vt `alphaEq` vt)
+          <*> (tangentType t' `alphaEq` t')) >>= \case
+      True -> do
+        linearizeAtom v `bindLin` \v' -> emitOp $ CastOp (sink t') v'
+      False -> do
+        WithTangent x xt <- linearizeAtom v
+        yt <- case (tangentType vt, tangentType t') of
+          (_     , UnitTy) -> return $ UnitVal
+          (UnitTy, tt    ) -> zeroAt tt
+          _                -> error "Expected at least one side of the CastOp to have a trivial tangent type"
+        y <- emitOp $ CastOp t' x
+        return $ WithTangent y do xt >> return (sink yt)
   RecordCons vs r ->
     zipLin (traverseLin la vs) (la r) `bindLin` \(PairE (ComposeE vs') r') ->
       emitOp $ RecordCons vs' r'
@@ -473,6 +504,16 @@ linearizeHof hof = case hof of
       ComposeE bm'' <- sinkM $ ComposeE bm'
       tanEffectLam <- applyLinToTangents $ sink tangentLam
       liftM Var $ emit $ Hof $ RunWriter bm'' tanEffectLam
+  RunIO (Lam (LamExpr b@(LamBinder _ _ _ effs) body)) -> do
+    effs' <- substM $ ignoreHoistFailure $ hoist b effs
+    -- TODO: consider the possibility of other effects here besides IO
+    ioLam <- buildLam "_" PlainArrow UnitTy effs' \v -> do
+      WithTangent primalResult tangentFun <- extendSubst (b@>v) $ linearizeBlock body
+      lam <- tangentFunAsLambda tangentFun
+      return $ PairVal primalResult lam
+    result <- liftM Var $ emit $ Hof $ RunIO ioLam
+    (ans, linLam) <- fromPair result
+    return $ WithTangent ans $ applyLinToTangents (sink linLam)
   _ -> error $ "not implemented: " ++ pprint hof
 
 -- takes an effect function, of type `(h:Type) -> Ref h s -> a``
@@ -501,7 +542,9 @@ withZeroT :: PrimalM i o (Atom o)
           -> PrimalM i o (WithTangent o Atom Atom)
 withZeroT p = do
   p' <- p
-  return $ WithTangent p' (zeroLike $ sink p')
+  return $ WithTangent p' do
+    pTy <- getType $ sink p'
+    zeroAt $ tangentType pTy
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"

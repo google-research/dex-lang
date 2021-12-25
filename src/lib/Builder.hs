@@ -59,6 +59,7 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
+import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -630,7 +631,7 @@ emitRunReader hint r body = do
 
 -- === vector space (ish) type class ===
 
-zeroAt :: Builder m => Type n -> m n (Atom n )
+zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n )
 zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
   ProdTy tys -> ProdVal <$> mapM zeroAt tys
@@ -648,7 +649,7 @@ zeroAt ty = case ty of
       Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
       _                  -> unreachable
 
-zeroLike :: (HasType e, Builder m) => e n -> m n (Atom n )
+zeroLike :: (HasCallStack, HasType e, Builder m) => e n -> m n (Atom n )
 zeroLike x = zeroAt =<< getType x
 
 tangentType :: Type n -> Type n
