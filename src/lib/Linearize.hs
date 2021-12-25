@@ -63,6 +63,10 @@ extendActiveSubst
 extendActiveSubst b v cont = do
   extendSubst (b@>v) $ extendActivePrimals v cont
 
+extendActiveEffs :: Effect o -> PrimalM i o a -> PrimalM i o a
+extendActiveEffs eff = local \primals ->
+  primals { activeEffs = extendEffRow (S.singleton eff) (activeEffs primals)}
+
 extendActivePrimals :: AtomName o -> PrimalM i o a -> PrimalM i o a
 extendActivePrimals v =
   local \primals -> primals { activeVars = activeVars primals ++ [v] }
@@ -524,12 +528,13 @@ linearizeEffectFun rws (Lam lam) = do
   BinaryLamExpr hB refB body <- return lam
   referentTy <- getReferentTy =<< substM (EmptyAbs $ PairB hB refB)
   buildEffLam rws (getNameHint refB) referentTy \h ref -> withTangentFunAsLambda do
-    extendActiveSubst hB h $ extendActiveSubst refB ref do
-      WithTangent p tangentFun <- linearizeBlock body
-      return $ WithTangent p do
-        buildEffLam rws (getNameHint refB) (tangentType $ sink referentTy) \h' ref' ->
-          extendTangentArgs h' $ extendTangentArgs ref' $
-            tangentFun
+    extendActiveSubst hB h $ extendActiveSubst refB ref $
+      extendActiveEffs (RWSEffect rws (Just h)) do
+        WithTangent p tangentFun <- linearizeBlock body
+        return $ WithTangent p do
+          buildEffLam rws (getNameHint refB) (tangentType $ sink referentTy) \h' ref' ->
+            extendTangentArgs h' $ extendTangentArgs ref' $
+              tangentFun
 
 withT :: PrimalM i o (e1 o)
       -> (forall o'. (Emits o', DExt o o') => TangentM o' (e2 o'))
