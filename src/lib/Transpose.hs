@@ -15,6 +15,7 @@ import qualified Data.Set as S
 
 import MTL1
 import Type
+import Err
 import Name
 import LabeledItems
 import Syntax

@@ -13,7 +13,8 @@
 
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
-  checkModule, checkTypes, getType, getTypeSubst, litType, getBaseMonoidType,
+  checkModule, checkTypes, checkTypesM,
+  getType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, instantiateDepPairTy,
   checkExtends, checkedApplyDataDefParams, indices,
   instantiateDataDef,
@@ -49,14 +50,16 @@ checkModule :: (Distinct n, Fallible m) => Env n -> Module n -> m ()
 checkModule bindings m =
   addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
     runEnvReaderT bindings $
-      checkTypes m
+      checkTypesM m
 
-checkTypes :: (EnvReader m, Fallible1 m, CheckableE e)
-           => e n -> m n ()
-checkTypes e = () <$ liftImmut do
+checkTypes :: (EnvReader m, CheckableE e) => e n -> m n (Except ())
+checkTypes e = fromLiftE <$> liftImmut do
   DB bindings <- getDB
-  liftExcept $ runTyperT bindings $ void $ checkE e
-  return UnitE
+  return $ LiftE $ runTyperT bindings $ void $ checkE e
+
+checkTypesM :: (EnvReader m, Fallible1 m, CheckableE e)
+           => e n -> m n ()
+checkTypesM e = liftExcept =<< checkTypes e
 
 getType :: (EnvReader m, HasType e)
            => e n -> m n (Type n)
@@ -614,8 +617,9 @@ typeCheckPrimOp op = case op of
     eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
     return $ RefTy h eltTy'
   ProjRef i ref -> do
-    RefTy h (ProdTy tys) <- getTypeE ref
-    return $ RefTy h $ tys !! i
+    getTypeE ref >>= \case
+      RefTy h (ProdTy tys) -> return $ RefTy h $ tys !! i
+      ty -> error $ "Not a reference to a product: " ++ pprint ty
   IOAlloc t n -> do
     n |: IdxRepTy
     declareEff IOEffect

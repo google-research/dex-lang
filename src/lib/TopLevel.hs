@@ -417,7 +417,7 @@ checkPass :: (MonadPasses m, Pretty (e n), CheckableE e)
           => PassName -> e n -> m n ()
 checkPass name x = do
   logPass name x
-  addContext ("Checking :\n" ++ pprint x) $ checkTypes x
+  addContext ("Checking :\n" ++ pprint x) $ checkTypesM x
   logTop $ MiscLog $ pprint name ++ " checks passed"
 
 logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()

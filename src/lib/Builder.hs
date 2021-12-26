@@ -882,9 +882,10 @@ getFst p = fst <$> fromPair p
 getSnd :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 getSnd p = snd <$> fromPair p
 
+-- the rightmost index is applied first
 getNaryProjRef :: (Builder m, Emits n) => [Int] -> Atom n -> m n (Atom n)
 getNaryProjRef [] ref = return ref
-getNaryProjRef (i:is) ref = getProjRef i ref >>= getNaryProjRef is
+getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
 
 getProjRef :: (Builder m, Emits n) => Int -> Atom n -> m n (Atom n)
 getProjRef i r = emitOp $ ProjRef i r
