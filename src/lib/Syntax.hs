@@ -55,6 +55,7 @@ module Syntax (
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName,
     lookupEnvPure, lookupSourceMap,
     getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM, liftSubstEnvReaderM,
+    SubstEnvReaderM,
     EnvReaderM, runEnvReaderM,
     EnvReaderT (..), EnvReader2, EnvExtender2,
     getDB, DistinctEnv (..),
@@ -82,7 +83,7 @@ module Syntax (
     pattern PairVal, pattern TyKind,
     pattern Pure, pattern LabeledRowKind, pattern EffKind, pattern UPatIgnore,
     pattern IntLitExpr, pattern FloatLitExpr, pattern ProdTy, pattern ProdVal,
-    pattern TabTyAbs, pattern TabTy,
+    pattern TabTyAbs, pattern TabTy, pattern TabVal,
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern BinaryLamExpr, NaryLam,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
@@ -109,6 +110,7 @@ import Data.Maybe (catMaybes)
 import Foreign.Ptr
 import Data.Maybe (fromJust)
 
+import GHC.Stack
 import GHC.Generics (Generic (..))
 import Data.Store (Store)
 
@@ -153,7 +155,7 @@ data Atom (n::S) =
 
 data Expr n =
    App (Atom n) (Atom n)
- | Case (Atom n) [Alt n] (Type n)
+ | Case (Atom n) [Alt n] (Type n) (EffectRow n)
  | Atom (Atom n)
  | Op  (Op  n)
  | Hof (Hof n)
@@ -412,11 +414,13 @@ liftEnvReaderM cont = do
   DB env <- getDB
   return $ runEnvReaderM env cont
 
+type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
+
 liftSubstEnvReaderM
-  :: (EnvReader m, Immut n)
-  => SubstReaderT Name EnvReaderM n n a
+  :: (EnvReader m, Immut n, FromName v)
+  => SubstEnvReaderM v n n a
   -> m n a
-liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idNameSubst $ cont
+liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
 
 instance Monad m => EnvReader (EnvReaderT m) where
   getEnv = EnvReaderT $ asks snd
@@ -1049,7 +1053,7 @@ data PrimOp e =
       | IndexRef e e
       | ProjRef Int e
       | FFICall String e [e]
-      | Sink e
+      | Inject e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- Low-level memory operations
@@ -1112,7 +1116,7 @@ data BaseMonoidP e = BaseMonoid { baseEmpty :: e, baseCombine :: e }
                      deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 type BaseMonoid n = BaseMonoidP (Atom n)
 
-data PrimEffect e = MAsk | MExtend e | MGet | MPut e
+data PrimEffect e = MAsk | MExtend (BaseMonoidP e) e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
@@ -1177,6 +1181,19 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 
 extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
+
+instance OrdE name => Semigroup (EffectRowP name n) where
+  EffectRow effs t <> EffectRow effs' t' =
+    EffectRow (S.union effs effs') newTail
+    where
+      newTail = case (t, t') of
+        (Nothing, effTail) -> effTail
+        (effTail, Nothing) -> effTail
+        _ | t == t' -> t
+          | otherwise -> error "Can't combine effect rows with mismatched tails"
+
+instance OrdE name => Monoid (EffectRowP name n) where
+  mempty = EffectRow mempty Nothing
 
 -- === imperative IR ===
 
@@ -1529,6 +1546,9 @@ pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
 pattern TabTy :: PiBinder n l -> Type l -> Type n
 pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
 
+pattern TabVal :: LamBinder n l -> Block l -> Atom n
+pattern TabVal b body <- Lam (LamExpr b@(LamBinder _ _ TabArrow _) body)
+
 pattern TyKind :: Kind n
 pattern TyKind = TC TypeKind
 
@@ -1585,7 +1605,7 @@ fromConsList xs = case xs of
 
 type BundleDesc = Int  -- length
 
-getProjection :: [Int] -> Atom n -> Atom n
+getProjection :: HasCallStack => [Int] -> Atom n -> Atom n
 getProjection [] a = a
 getProjection (i:is) a = case getProjection is a of
   Var name -> ProjectElt (NE.fromList [i]) name
@@ -1595,6 +1615,15 @@ getProjection (i:is) a = case getProjection is a of
   Con (ProdCon xs) -> xs !! i
   DepPair l _ _ | i == 0 -> l
   DepPair _ r _ | i == 1 -> r
+  ACase scrut alts resultTy -> ACase scrut alts' resultTy'
+    where
+      alts' = alts <&> \(Abs bs body) -> Abs bs $ getProjection [i] body
+      resultTy' = case resultTy of
+        ProdTy tys -> tys !! i
+        -- We can't handle all cases here because we'll end up needing access to
+        -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
+        -- do away with it.
+        _ -> error "oops"
   a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
@@ -1833,20 +1862,20 @@ instance GenericE Expr where
   type RepE Expr =
      EitherE5
         (PairE Atom Atom)
-        (PairE Atom (PairE (ListE Alt) Type))
+        (Atom `PairE` ListE Alt `PairE` Type `PairE` EffectRow)
         (Atom)
         (ComposeE PrimOp Atom)
         (ComposeE PrimHof Atom)
   fromE = \case
     App f e        -> Case0 (PairE f e)
-    Case e alts ty -> Case1 (PairE e (PairE (ListE alts) ty))
+    Case e alts ty eff -> Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff)
     Atom x         -> Case2 (x)
     Op op          -> Case3 (ComposeE op)
     Hof hof        -> Case4 (ComposeE hof)
 
   toE = \case
     Case0 (PairE f e)                       -> App f e
-    Case1 (PairE e (PairE (ListE alts) ty)) -> Case e alts ty
+    Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
     Case2 (x)                               -> Atom x
     Case3 (ComposeE op)                     -> Op op
     Case4 (ComposeE hof)                    -> Hof hof
@@ -2000,6 +2029,9 @@ instance BindsEnv PiBinder where
     withExtEvidence b do
       let binding = toBinding $ sink $ PiBinding arr ty
       EnvFrag (RecSubstFrag $ b @> binding) (Just Pure)
+
+instance HasNameHint (PiBinder n l) where
+  getNameHint (PiBinder b _ _) = getNameHint b
 
 instance ProvesExt  PiBinder
 instance BindsNames PiBinder
@@ -2612,11 +2644,11 @@ builtinNames = M.fromList
   , ("throwError"     , OpExpr $ ThrowError ())
   , ("throwException" , OpExpr $ ThrowException ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
-  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend ())
+  , ("mextend"    , OpExpr $ PrimEffect () $ MExtend (BaseMonoid () ()) ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
-  , ("sink"     , OpExpr $ Sink ())
+  , ("inject"     , OpExpr $ Inject ())
   , ("select"     , OpExpr $ Select () () ())
   , ("while"           , HofExpr $ While ())
   , ("linearize"       , HofExpr $ Linearize ())

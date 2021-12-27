@@ -11,9 +11,10 @@ module MTL1 (
     MonadTrans11 (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
     StateT1, pattern StateT1, runStateT1,
-    MaybeT1 (..), runMaybeT1
+    MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
   ) where
 
+import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
@@ -64,6 +65,38 @@ instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
     case hoist frag update of
       HoistSuccess topUpdate -> return (ans, topUpdate)
       HoistFailure _ -> return (ans, mfail)
+
+-------------------- ReaderT1 --------------------
+
+newtype ReaderT1 (r :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+  ReaderT1 { runReaderT1' :: (ReaderT (r n) (m n) a) }
+  deriving (Functor, Applicative, Monad, MonadFail, MonadReader (r n))
+
+runReaderT1 :: r n -> ReaderT1 r m n a -> m n a
+runReaderT1 r m = runReaderT (runReaderT1' m) r
+
+instance AlwaysImmut m => AlwaysImmut (ReaderT1 r m) where
+  getImmut = lift11 $ getImmut
+
+instance MonadTrans11 (ReaderT1 r) where
+  lift11 = ReaderT1 . lift
+
+instance (SinkableE r, EnvReader m) => EnvReader (ReaderT1 r m) where
+  getEnv = lift11 getEnv
+
+instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
+  getScope = lift11 getScope
+  getDistinct = lift11 getDistinct
+  liftImmut m = ReaderT1 $ ReaderT \r ->
+    liftImmut $ runReaderT (runReaderT1' m) r
+
+instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
+  extendEnv frag m = ReaderT1 $ ReaderT \r -> do
+    extendEnv frag (runReaderT1 (sink r) m)
+
+instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
+  throwErrs = lift11 . throwErrs
+  addErrCtx ctx (ReaderT1 m) = ReaderT1 $ addErrCtx ctx m
 
 -------------------- StateT1 --------------------
 

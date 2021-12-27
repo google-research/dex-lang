@@ -52,7 +52,7 @@ library
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
                        Err, LabeledItems, SourceRename, Name, Parser, MTL1,
                        Type, Builder, Inference, CheapReduction, GenericTraversal,
-                       Simplify, Imp, Algebra
+                       Simplify, Imp, Algebra, Linearize, Transpose
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex

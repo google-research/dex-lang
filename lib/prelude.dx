@@ -386,19 +386,20 @@ def (:=) {h s} (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 
 def ask  {h r} (ref:Ref h r)       : {Read  h} r    = %ask  ref
 
-data AccumMonoid h w = UnsafeMkAccumMonoid (Monoid w)
+data AccumMonoid h w =
+  UnsafeMkAccumMonoid b:Type (Monoid b)
 
 @instance
-def tableAccumMonoid {n h w} [(UnsafeMkAccumMonoid m): AccumMonoid h w] : AccumMonoid h (n=>w) =
-  %instance mHint = m
-  def liftTableMonoid [tm:Monoid (n=>w)] : Monoid (n=>w) = tm
-  UnsafeMkAccumMonoid liftTableMonoid
+def tableAccumMonoid {n h w} [am : AccumMonoid h w] : AccumMonoid h (n=>w) =
+  (UnsafeMkAccumMonoid b bm) = am
+  UnsafeMkAccumMonoid b bm
 
 def (+=) {h w} [am:AccumMonoid h w] (ref:Ref h w) (x:w) : {Accum h} Unit =
-  (UnsafeMkAccumMonoid m) = am
-  %instance mHint = m
-  updater = \v. mcombine v x
-  %mextend ref updater
+  (UnsafeMkAccumMonoid b bm) = am
+  %instance bmHint = bm
+  empty : b = mempty
+  combine : b -> b -> b = mcombine
+  %mextend ref empty combine x
 
 def (!) {h n a} (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 def fstRef {h a b} (ref: Ref h (a & b)) : Ref h a = %fstRef ref
@@ -433,7 +434,7 @@ def runAccum
     empty : b = mempty
     combine : b -> b -> b = mcombine
     def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a =
-      %instance accumBaseMonoidHint : AccumMonoid h' b = UnsafeMkAccumMonoid bm
+      %instance accumBaseMonoidHint : AccumMonoid h' b = UnsafeMkAccumMonoid b bm
       action ref
     %runWriter empty combine explicitAction
 

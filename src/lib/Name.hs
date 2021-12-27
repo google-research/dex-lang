@@ -40,9 +40,9 @@ module Name (
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
-  runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst,
+  runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst, liftSubstReaderT,
   ScopeReaderT (..), SubstReaderT (..),
-  lookupSubstM, dropSubst, extendSubst, fmapNames,
+  lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2, Monoid1,
   MonadIO1, MonadIO2,
@@ -395,6 +395,14 @@ fmapNames :: (SubstE v e, Distinct o)
           => Scope o -> (forall c. Name c i -> v c o) -> e i -> e o
 fmapNames scope f e = substE (scope, newSubst f) e
 
+fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
+          => (forall c. Name c i -> v c o) -> e i -> m o (e o)
+fmapNamesM f e = liftImmut do
+  scope <- getScope
+  Distinct <- getDistinct
+  return $ substE (scope, newSubst f) e
+
+
 toConstAbs :: (SinkableE e, ScopeReader m)
            => NameColorRep c -> e n -> m n (Abs (NameBinder c) e n)
 toConstAbs rep body = do
@@ -540,7 +548,7 @@ newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
         deriving (Show, Eq, Generic)
 
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
-  ComposeE (f (e n))
+  ComposeE { fromComposeE :: (f (e n)) }
   deriving (Show, Eq, Generic)
 
 data UnitB (n::S) (l::S) where
@@ -1026,6 +1034,9 @@ newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
 
 type ScopedSubstReader (v::V) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
 
+liftSubstReaderT :: Monad1 m => m o a -> SubstReaderT v m i o a
+liftSubstReaderT m = SubstReaderT $ lift m
+
 runScopedSubstReader :: Distinct o => Scope o -> Subst v i o
                    -> ScopedSubstReader v i o a -> a
 runScopedSubstReader scope env m =
@@ -1104,6 +1115,11 @@ instance OutReader e m => OutReader e (SubstReaderT v m i) where
   askOutReader = SubstReaderT $ ReaderT $ const askOutReader
   localOutReader e (SubstReaderT (ReaderT f)) = SubstReaderT $ ReaderT $ \env ->
     localOutReader e $ f env
+
+instance MonadReader (r o) (m o) => MonadReader (r o) (SubstReaderT v m i o) where
+  ask = SubstReaderT $ ReaderT $ const ask
+  local r (SubstReaderT (ReaderT f)) = SubstReaderT $ ReaderT $ \env ->
+    local r $ f env
 
 instance (Monad1 m, Alternative (m n)) => Alternative (OutReaderT e m n) where
   empty = OutReaderT $ lift empty

@@ -16,14 +16,19 @@ import Data.Foldable (toList)
 import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
+import GHC.Stack
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict as M
 
 import Err
 import Name
 import Builder
 import Syntax
 import Type
+import Simplify
 import LabeledItems
 import qualified Algebra as A
+import Util (enumerate)
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -179,7 +184,7 @@ translateExpr maybeDest expr = case expr of
       _ -> error $ "unexpected expression: " ++ pprint expr
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
-  Case e alts ty -> do
+  Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
       Just (con, args) -> do
@@ -214,11 +219,11 @@ toImpOp maybeDest op = case op of
   PrimEffect refDest m -> do
     case m of
       MAsk -> returnVal =<< destToAtom refDest
-      MExtend (Lam (LamExpr b body)) -> do
-        -- TODO: Update in-place?
-        refValue <- destToAtom refDest
-        result <- dropSubst $ extendSubst (b @> SubstVal refValue) $
-                    translateBlock Nothing body
+      MExtend (BaseMonoid _ combine) x -> do
+        xTy <- getType x
+        refVal <- destToAtom refDest
+        result <- liftBuilderImpSimplify $
+                    liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
         copyAtom refDest result
         returnVal UnitVal
       MPut x -> copyAtom  refDest x >> returnVal UnitVal
@@ -229,14 +234,13 @@ toImpOp maybeDest op = case op of
         -- than to go through a general purpose atom.
         copyAtom dest =<< destToAtom refDest
         destToAtom dest
-      _ -> error "impossible"
   UnsafeFromOrdinal n i -> returnVal =<< intToIndexImp n =<< fromScalarAtom i
   IdxSetSize n -> returnVal =<< toScalarAtom  =<< indexSetSizeImp n
   ToOrdinal idx -> case idx of
     Con (IntRangeVal   _ _   i) -> returnVal $ i
     Con (IndexRangeVal _ _ _ i) -> returnVal $ i
     _ -> returnVal =<< toScalarAtom =<< indexToIntImp idx
-  Sink e -> case e of
+  Inject e -> case e of
     Con (IndexRangeVal t low _ restrictIdx) -> do
       offset <- case low of
         InclusiveLim a -> indexToIntImp a
@@ -247,7 +251,7 @@ toImpOp maybeDest op = case op of
     Con (ParIndexCon (TC (ParIndexRange realIdxTy _ _)) i) -> do
       i' <- fromScalarAtom i
       returnVal =<< intToIndexImp realIdxTy i'
-    _ -> error $ "Unsupported argument to sink: " ++ pprint e
+    _ -> error $ "Unsupported argument to inject: " ++ pprint e
   IndexRef refDest i -> returnVal =<< destGet refDest i
   ProjRef i ~(Con (ConRef (ProdCon refs))) -> returnVal $ refs !! i
   IOAlloc ty n -> do
@@ -725,6 +729,8 @@ makeDestRec idxs depVars ty = case ty of
       let depVars' = map sink depVars ++ [v]
       makeDestRec (sinkDestIdxs idxs) depVars' rTy'
     return $ DepPairRef lDest (Abs lBinder' rDest) depPairTy
+  RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
+  VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs b
@@ -796,15 +802,19 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           Con (SumAsProd _ tagSrc payloadSrc) -> do
             copyRec tag tagSrc
             unless (all null payload) do -- optimization
-              tag' <- fromScalarAtom tag
-              emitSwitch tag' (zip payload payloadSrc)
+              tagSrc' <- fromScalarAtom tagSrc
+              emitSwitch tagSrc' (zip payload payloadSrc)
                 \(d, s) -> zipWithM_ copyRec (map sink d) (map sink s)
           SumVal _ con x -> do
             copyRec tag $ TagRepVal $ fromIntegral con
             case payload !! con of
               [xDest] -> copyRec xDest x
               _       -> error "Expected singleton payload in SumAsProd"
-          Variant _ _ _ _ -> undefined
+          Variant (NoExt types) label i x -> do
+            let LabeledItems ixtypes = enumerate types
+            let index = fst $ (ixtypes M.! label) NE.!! i
+            copyRec tag (TagRepVal $ fromIntegral index)
+            zipWithM_ copyRec (payload !! index) [x]
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) ->
           zipWithRefConM copyRec destCon srcCon
@@ -1200,7 +1210,7 @@ load x = emitInstr $ IPrimOp $ PtrLoad x
 
 -- === Atom <-> IExpr conversions ===
 
-fromScalarAtom :: EnvReader m => Atom n -> m n (IExpr n)
+fromScalarAtom :: HasCallStack => EnvReader m => Atom n -> m n (IExpr n)
 fromScalarAtom atom = case atom of
   Var v -> do
     ~(BaseTy b) <- getType $ Var v
@@ -1233,6 +1243,18 @@ liftBuilderImp cont = do
     DistinctAbs decls result <- return $ runBuilderM bindings $ buildScoped cont
     return $ Abs decls result
   runSubstReaderT idSubst $ translateDeclNest decls $ substM result
+
+-- TODO: should we merge this with `liftBuilderImp`? Not much harm in
+-- simplifying even if it's not needed.
+liftBuilderImpSimplify
+  :: (Emits n, ImpBuilder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+liftBuilderImpSimplify cont = do
+  block <- liftSimplifyM do
+    block <- liftBuilder $ buildBlock cont
+    buildBlock $ simplifyBlock block
+  runSubstReaderT idSubst $ translateBlock Nothing block
 
 intToIndexImp :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
 intToIndexImp ty i = liftBuilderImp $ intToIndex (sink ty) =<< toScalarAtom (sink i)

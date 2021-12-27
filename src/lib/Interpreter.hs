@@ -90,7 +90,8 @@ traverseSurfaceAtomNames atom doWithName = case atom of
        <*> return l <*> return con <*> rec payload
   VariantTy _      -> substM atom
   LabeledRow _     -> substM atom
-  ACase _ _ _ -> error "not implemented"
+  ACase scrut alts resultTy ->
+    ACase <$> rec scrut <*> mapM substM alts <*> rec resultTy
   DataConRef _ _ _ -> error "Should only occur in Imp lowering"
   BoxedRef _ _     -> error "Should only occur in Imp lowering"
   DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
@@ -119,7 +120,7 @@ evalExpr expr = case expr of
       _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
   Atom atom -> evalAtom atom
   Op op     -> evalOp op
-  Case e alts _ -> do
+  Case e alts _ _ -> do
     e' <- evalAtom e
     case trySelectBranch e' of
       Nothing -> error "branch should be chosen at this point"

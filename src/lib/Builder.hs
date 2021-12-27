@@ -14,7 +14,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
-  emit, emitOp,
+  emit, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), Builder2, BuilderM,
   runBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
@@ -22,11 +22,13 @@ module Builder (
   emitMethodType, emitSuperclass,
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
-  fromPair, getFst, getSnd, getProj, getProjRef, naryApp,
+  fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
-  Emits, EmitsEvidence (..), buildPi, buildNonDepPi, buildLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
+  Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
+  buildLam, buildTabLam, buildLamGeneral,
+  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam,
+  buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, buildSplitCase,
@@ -35,12 +37,17 @@ module Builder (
    emitSourceMap, emitSynthCandidates,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
-  singletonBinderNest, runBuilderM, liftBuilder, makeBlock,
+  singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
+  runBuilderM, liftBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
-  liftMonoidEmpty,
+  liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
-  ReconAbs, ReconstructAtom (..)
+  emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
+  zeroAt, zeroLike, maybeTangentType, tangentType,
+  addTangent, updateAddAt, tangentBaseMonoidFor,
+  buildEffLam,
+  ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi
   ) where
 
 import Control.Applicative
@@ -53,6 +60,7 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
+import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -61,9 +69,10 @@ import Syntax
 import Type
 import PPrint ()
 import CheapReduction
+import MTL1
 
 import LabeledItems
-import Util (enumerate, scanM, restructure, transitiveClosureM)
+import Util (enumerate, scanM, restructure, transitiveClosureM, bindM2)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -85,6 +94,9 @@ emit expr = emitDecl NoHint PlainLet expr
 
 emitOp :: (Builder m, Emits n) => Op n -> m n (Atom n)
 emitOp op = Var <$> emit (Op op)
+
+emitUnOp :: (Builder m, Emits n) => UnOp -> Atom n -> m n (Atom n)
+emitUnOp op x = emitOp $ ScalarUnOp op x
 
 emitBlock :: (Builder m, Emits n) => Block n -> m n (Atom n)
 emitBlock (Block _ decls result) = do
@@ -246,6 +258,14 @@ instance (SinkableE e, Builder m) => Builder (OutReaderT e m) where
       env' <- sinkM env
       runReaderT (runOutReaderT' cont) env'
 
+instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
+  emitDecl hint ann expr =
+    ReaderT1 $ lift $ emitDecl hint ann expr
+  buildScoped cont = ReaderT1 $ ReaderT \env ->
+    buildScoped do
+      env' <- sinkM env
+      runReaderT (runReaderT1' cont) env'
+
 -- === Emits predicate ===
 
 -- We use the `Emits` predicate on scope parameters to indicate that we may emit
@@ -325,6 +345,21 @@ buildLam
   -> m n (Atom n)
 buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
 
+buildNullaryLam :: Builder m
+                => EffectRow n
+                -> (forall l. (Emits l, DExt n l) => m l (Atom l))
+                -> m n (Atom n)
+buildNullaryLam effs cont = buildLam "ignore" PlainArrow UnitTy effs \_ -> cont
+
+buildNullaryPi :: Builder m
+               => EffectRow n
+               -> (forall l. DExt n l => m l (Type l))
+               -> m n (Type n)
+buildNullaryPi effs cont =
+  Pi <$> buildPi "ignore" PlainArrow UnitTy \_ -> do
+    resultTy <- cont
+    return (sink effs, resultTy)
+
 buildLamGeneral
   :: Builder m
   => NameHint -> Arrow -> Type n
@@ -365,6 +400,20 @@ buildPi hint arr ty body = liftImmut do
     (effs, resultTy) <- body $ binderName b
     return $ PiType b effs resultTy
 
+buildNaryPi
+  :: Builder m
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Distinct l, DExt n l) => [AtomName l] -> m l (Type l))
+  -> m n (Type n)
+buildNaryPi (EmptyAbs Empty) cont = do
+  Distinct <- getDistinct
+  cont []
+buildNaryPi (EmptyAbs (Nest (b:>ty) bs)) cont = do
+  Pi <$> buildPi (getNameHint b) PlainArrow ty \v -> do
+    bs' <- applySubst (b@>v) $ EmptyAbs bs
+    piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
+    return (Pure, piTy)
+
 buildNonDepPi :: EnvReader m
               => NameHint -> Arrow -> Type n -> EffectRow n -> Type n
               -> m n (PiType n)
@@ -389,6 +438,24 @@ buildAbs hint binding cont = liftImmut do
 
 singletonBinder :: Builder m => NameHint -> Type n -> m n (EmptyAbs Binder n)
 singletonBinder hint ty = buildAbs hint ty \_ -> return UnitE
+
+varsAsBinderNest :: EnvReader m => [AtomName n] -> m n (EmptyAbs (Nest Binder) n)
+varsAsBinderNest [] = return $ EmptyAbs Empty
+varsAsBinderNest (v:vs) = do
+  rest <- varsAsBinderNest vs
+  ty <- getType v
+  Abs b (Abs bs UnitE) <- return $ abstractFreeVar v rest
+  return $ EmptyAbs (Nest (b:>ty) bs)
+
+typesAsBinderNest :: EnvReader m => [Type n] -> m n (EmptyAbs (Nest Binder) n)
+typesAsBinderNest types = liftImmut $ liftEnvReaderM $ go types
+  where
+    go :: forall n. Immut n => [Type n] -> EnvReaderM n (EmptyAbs (Nest Binder) n)
+    go tys = case tys of
+      [] -> return $ Abs Empty UnitE
+      ty:rest -> withFreshBinder NoHint ty \b -> do
+        Abs bs UnitE <- go $ map sink rest
+        return $ Abs (Nest (b:>ty) bs) UnitE
 
 singletonBinderNest :: Builder m
                     => NameHint -> Type n -> m n (EmptyAbs (Nest Binder) n)
@@ -415,6 +482,25 @@ buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
         body $ v' : vs
   return $ Abs (Nest b' bs') body'
 buildNaryAbs _ _ = error "impossible"
+
+buildNaryLam
+  :: (Builder m, Emits n)
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName l] -> m l (Atom l))
+  -> m n (Atom n)
+buildNaryLam binderNest body = do
+  naryAbs <- buildNaryAbs binderNest \vs ->
+    buildBlock $ body $ map sink vs
+  case naryAbsToNaryLam naryAbs of
+    AtomicBlock atom -> return atom
+    block -> emitBlock block
+  where
+    naryAbsToNaryLam :: Abs (Nest Binder) Block n -> Block n
+    naryAbsToNaryLam (Abs nest block) = case nest of
+      Empty -> block
+      Nest (b:>ty) bs ->
+        AtomicBlock $ Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
+          naryAbsToNaryLam $ Abs bs block
 
 buildAlt
   :: Builder m
@@ -471,6 +557,7 @@ buildCase :: (Emits n, Builder m)
           -> (forall l. (Emits l, DExt n l) => Int -> [AtomName l] -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
+  eff <- getAllowedEffects
   scrutTy <- getType scrut
   altsBinderTys <- caseAltsBinderTys scrutTy
   alts <- forM (enumerate altsBinderTys) \(i, bs) -> do
@@ -478,7 +565,7 @@ buildCase scrut resultTy indexedAltBody = do
       buildBlock do
         ListE xs' <- sinkM $ ListE xs
         indexedAltBody i xs'
-  liftM Var $ emit $ Case scrut alts resultTy
+  liftM Var $ emit $ Case scrut alts resultTy eff
 
 buildSplitCase :: (Emits n, Builder m)
                => LabeledItems (Type n) -> Atom n -> Type n
@@ -492,6 +579,158 @@ buildSplitCase tys scrut resultTy match fallback = do
       0 -> match v
       1 -> fallback v
       _ -> error "should only have two cases"
+
+buildEffLam
+  :: Builder m
+  => RWS -> NameHint -> Type n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildEffLam rws hint ty body = do
+  eff <- getAllowedEffects
+  buildLam "h" PlainArrow TyKind Pure \h -> do
+    let eff' = extendEffect (RWSEffect rws (Just h)) (sink eff)
+    buildLam hint PlainArrow (RefTy (Var h) (sink ty)) eff' \ref ->
+      body (sink h) ref
+
+buildForAnn
+  :: (Emits n, Builder m)
+  => NameHint -> ForAnn -> Type n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+buildForAnn hint ann ty body = do
+  -- TODO: consider only tracking the effects that are actually needed.
+  eff <- getAllowedEffects
+  lam <- buildLam hint PlainArrow ty eff body
+  liftM Var $ emit $ Hof $ For ann lam
+
+buildFor :: (Emits n, Builder m)
+         => NameHint -> Direction -> Type n
+         -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+         -> m n (Atom n)
+buildFor hint dir ty body = buildForAnn hint (RegularFor dir) ty body
+
+unzipTab :: (Emits n, Builder m) => Atom n -> m n (Atom n, Atom n)
+unzipTab tab = do
+  TabTy b _ <- getType tab
+  fsts <- buildLam "i" TabArrow (binderType b) Pure \i ->
+            liftM fst $ app (sink tab) (Var i) >>= fromPair
+  snds <- buildLam "i" TabArrow (binderType b) Pure \i ->
+            liftM snd $ app (sink tab) (Var i) >>= fromPair
+  return (fsts, snds)
+
+emitRunWriter
+  :: (Emits n ,Builder m)
+  => NameHint -> Type n -> BaseMonoid n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+emitRunWriter hint accTy bm body = do
+  lam <- buildEffLam Writer hint accTy \h ref -> body h ref
+  liftM Var $ emit $ Hof $ RunWriter bm lam
+
+mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
+mCombine monoidDict x y = do
+  ty <- getType x
+  Just method <- lookupSourceMap MethodNameRep "mcombine"
+  MethodBinding _ _ projection <- lookupEnv method
+  naryApp projection [ty, monoidDict, x, y]
+
+emitRunState
+  :: (Emits n ,Builder m)
+  => NameHint -> Atom n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+emitRunState hint initVal body = do
+  stateTy <- getType initVal
+  lam <- buildEffLam State hint stateTy \h ref -> body h ref
+  liftM Var $ emit $ Hof $ RunState initVal lam
+
+emitRunReader
+  :: (Emits n ,Builder m)
+  => NameHint -> Atom n
+  -> (forall l. (Emits l, DExt n l) => AtomName l -> AtomName l -> m l (Atom l))
+  -> m n (Atom n)
+emitRunReader hint r body = do
+  rTy <- getType r
+  lam <- buildEffLam Reader hint rTy \h ref -> body h ref
+  liftM Var $ emit $ Hof $ RunReader r lam
+
+-- === vector space (ish) type class ===
+
+zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n )
+zeroAt ty = case ty of
+  BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
+  ProdTy tys -> ProdVal <$> mapM zeroAt tys
+  RecordTy (Ext tys Nothing) -> Record <$> mapM zeroAt tys
+  TabTy b bodyTy ->
+    buildTabLam (getNameHint b) (binderType b) \i ->
+      zeroAt =<< applySubst (b@>i) bodyTy
+  _ -> unreachable
+  where
+    unreachable :: a
+    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
+    zeroLit bt = case bt of
+      Scalar Float64Type -> Float64Lit 0.0
+      Scalar Float32Type -> Float32Lit 0.0
+      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
+      _                  -> unreachable
+
+zeroLike :: (HasCallStack, HasType e, Builder m) => e n -> m n (Atom n )
+zeroLike x = zeroAt =<< getType x
+
+tangentType :: Type n -> Type n
+tangentType ty = case maybeTangentType ty of
+  Just tanTy -> tanTy
+  Nothing -> error $ "can't differentiate wrt type: " ++ pprint ty
+
+maybeTangentType :: Type n -> Maybe (Type n)
+maybeTangentType ty = case ty of
+  RecordTy (NoExt items) -> RecordTy <$> NoExt <$> mapM maybeTangentType items
+  TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
+  Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) -> do
+    bodyTanTy <- maybeTangentType bodyTy
+    return $ Pi (PiType b Pure bodyTanTy)
+  TC con    -> case con of
+    BaseType (Scalar Float64Type) -> return $ TC con
+    BaseType (Scalar Float32Type) -> return $ TC con
+    BaseType (Vector Float64Type) -> return $ TC con
+    BaseType (Vector Float32Type) -> return $ TC con
+    BaseType   _                  -> return $ UnitTy
+    IntRange   _ _                -> return $ UnitTy
+    IndexRange _ _ _              -> return $ UnitTy
+    IndexSlice _ _                -> return $ UnitTy
+    ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
+    _ -> Nothing
+  _ -> Nothing
+
+tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
+tangentBaseMonoidFor ty = do
+  zero <- zeroAt ty
+  adder <- buildLam "t" PlainArrow ty Pure \v -> updateAddAt $ Var v
+  return $ BaseMonoid zero adder
+
+addTangent :: (Emits n, Builder m) => Atom n -> Atom n -> m n (Atom n)
+addTangent x y = do
+  getType x >>= \case
+    RecordTy (NoExt tys) -> do
+      elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
+      return $ Record $ restructure elems tys
+    TabTy b _  -> buildFor (getNameHint b) Fwd (binderType b) \i -> do
+      bindM2 addTangent (app (sink x) (Var i)) (app (sink y) (Var i))
+    TC con -> case con of
+      BaseType (Scalar _) -> emitOp $ ScalarBinOp FAdd x y
+      BaseType (Vector _) -> emitOp $ VectorBinOp FAdd x y
+      ProdType _          -> do
+        xs <- getUnpacked x
+        ys <- getUnpacked y
+        ProdVal <$> zipWithM addTangent xs ys
+      ty -> notTangent ty
+    ty -> notTangent ty
+    where notTangent ty = error $ "Not a tangent type: " ++ pprint ty
+
+updateAddAt :: (Emits n, Builder m) => Atom n -> m n (Atom n)
+updateAddAt x = do
+  ty <- getType x
+  buildLam "t" PlainArrow ty Pure \v -> addTangent (sink x) (Var v)
 
 -- === builder versions of common top-level emissions ===
 
@@ -672,6 +911,11 @@ getFst p = fst <$> fromPair p
 getSnd :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 getSnd p = snd <$> fromPair p
 
+-- the rightmost index is applied first
+getNaryProjRef :: (Builder m, Emits n) => [Int] -> Atom n -> m n (Atom n)
+getNaryProjRef [] ref = return ref
+getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
+
 getProjRef :: (Builder m, Emits n) => Int -> Atom n -> m n (Atom n)
 getProjRef i r = emitOp $ ProjRef i r
 
@@ -728,6 +972,24 @@ liftMonoidEmpty accTy x = do
           liftMonoidEmpty eltTy' x'
       _ -> error $ "Base monoid type mismatch: can't lift " ++
              pprint xTy ++ " to " ++ pprint accTy
+
+liftMonoidCombine :: (Builder m, Emits n)
+                  => Type n -> Atom n -> Atom n -> Atom n
+                  -> m n (Atom n)
+liftMonoidCombine accTy baseCombine x y = do
+  Pi baseCombineTy <- getType baseCombine
+  let baseTy = piArgType baseCombineTy
+  alphaEq accTy baseTy >>= \case
+    True -> naryApp baseCombine [x, y]
+    False -> case accTy of
+      TabTy b eltTy -> do
+        buildFor "i" Fwd (binderType b) \i -> do
+          xElt <- app (sink x) (Var i)
+          yElt <- app (sink y) (Var i)
+          eltTy' <- applySubst (b@>i) eltTy
+          liftMonoidCombine eltTy' (sink baseCombine) xElt yElt
+      _ -> error $ "Base monoid type mismatch: can't lift " ++
+             pprint baseTy ++ " to " ++ pprint accTy
 
 -- === index set type class ===
 
@@ -809,7 +1071,7 @@ indexToInt idx = getType idx >>= \case
         \(offset, subty) -> buildUnaryAlt subty \subix -> do
           i <- indexToInt $ Var subix
           iadd (sink offset) i
-      liftM Var $ emit $ Case idx alts IdxRepTy
+      liftM Var $ emit $ Case idx alts IdxRepTy Pure
 
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
 indexSetSize ty = case ty of

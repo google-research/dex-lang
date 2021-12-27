@@ -9,7 +9,8 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Simplify
-  ( simplifyModule, splitSimpModule, applyDataResults) where
+  ( simplifyModule, splitSimpModule, applyDataResults
+  , simplifyBlock, liftSimplifyM) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -23,6 +24,8 @@ import Syntax
 import Type
 import Interpreter (traverseSurfaceAtomNames)
 import Util (enumerate)
+import Linearize
+import Transpose
 
 -- === simplification monad ===
 
@@ -40,6 +43,14 @@ runSimplifyM bindings cont =
       runBuilderT bindings $
         runSubstReaderT idSubst $
           runSimplifyM' cont
+
+liftSimplifyM
+  :: (EnvReader m, SinkableE e)
+  => (forall l. (Immut l, DExt n l) => SimplifyM l l (e l))
+  -> m n (e n)
+liftSimplifyM cont = liftImmut do
+  DB env <- getDB
+  return $ runSimplifyM env $ cont
 
 instance Simplifier SimplifyM
 
@@ -115,11 +126,12 @@ simplifyExpr expr = case expr of
     x' <- simplifyAtom x
     f' <- simplifyAtom f
     simplifyApp f' x'
-  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Op  op  -> mapM simplifyAtom op >>= emitOp
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
-  Case e alts resultTy -> do
+  Case e alts resultTy eff -> do
     e' <- simplifyAtom e
+    eff' <- substM eff
     resultTy' <- substM resultTy
     case trySelectBranch e' of
       Just (i, args) -> do
@@ -133,7 +145,7 @@ simplifyExpr expr = case expr of
               buildNaryAbs bs' \xs ->
                 extendSubst (bs @@> map Rename xs) $
                   buildBlock $ simplifyBlock body
-            liftM Var $ emit $ Case e' alts' resultTy'
+            liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
 
 defuncCase :: (Emits o, Simplifier m) => Atom o -> [Alt i] -> Type o -> m i o (Atom o)
@@ -142,7 +154,8 @@ defuncCase scrut alts resultTy = do
   closureTys <- mapM getAltTy alts'
   let closureSumTy = SumTy closureTys
   alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
-  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy
+  eff <- getAllowedEffects -- TODO: more precise effects
+  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy eff
   reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
                  buildUnaryAtomAlt ty \v -> applyRecon (sink recon) $ Var v
   return $ ACase sumVal reconAlts resultTy
@@ -158,7 +171,7 @@ defuncCase scrut alts resultTy = do
     injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
     injectAltResult sumTy con (Abs bs body) = liftBuilder do
       buildAlt (sink $ EmptyAbs bs) \vs -> do
-        originalResult <- emitBlock =<< applyNaryAbs (sink $ Abs bs body) vs
+        originalResult <- emitBlock =<< applySubst (bs@@>vs) body
         return $ Con $ SumCon (sink sumTy) con originalResult
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
@@ -178,7 +191,8 @@ simplifyApp f x = case f of
       buildAlt (EmptyAbs bs) \vs -> do
         a' <- applyNaryAbs (sink $ Abs bs a) vs
         app a' (sink x)
-    dropSubst $ simplifyExpr $ Case e alts' resultTy
+    eff <- getAllowedEffects -- TODO: more precise effects
+    dropSubst $ simplifyExpr $ Case e alts' resultTy eff
   TypeCon sn def params -> return $ TypeCon sn def params'
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x
@@ -194,13 +208,6 @@ simplifyAtom atom = traverseSurfaceAtomNames atom \v -> do
         LetBound (DeclBinding ann _ (Atom x))
           | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
-
-simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
-simplifyOp op = case op of
-  PrimEffect ref (MExtend f) -> dropSubst $ do
-    (f', IdentityRecon) <- simplifyLam f
-    emitOp $ PrimEffect ref $ MExtend f'
-  _ -> emitOp op
 
 simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyLam lam = do
@@ -277,6 +284,14 @@ simplifyHof hof = case hof of
     (lam', recon) <- simplifyLam lam
     ans <- emit $ Hof $ RunIO lam'
     applyRecon recon $ Var ans
+  Linearize lam -> do
+    ~(lam', IdentityRecon) <- simplifyLam lam
+    -- TODO: simplify the result to remove functions introduced by linearization
+    linearize lam'
+  Transpose lam -> do
+    ~(lam', IdentityRecon) <- simplifyLam lam
+    -- TODO: simplify the result to remove functions introduced by linearization
+    transpose lam'
   _ -> error $ "not implemented: " ++ pprint hof
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)

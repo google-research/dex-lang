@@ -35,8 +35,8 @@ traverseExprDefault expr = liftImmut $ case expr of
   Atom x  -> Atom <$> tge x
   Op  op  -> Op   <$> mapM tge op
   Hof hof -> Hof  <$> mapM tge hof
-  Case scrut alts resultTy ->
-    Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy
+  Case scrut alts resultTy effs ->
+    Case <$> tge scrut <*> mapM traverseAlt alts <*> tge resultTy <*> substM effs
 
 traverseAtomDefault :: Immut o => GenericTraverser m => Atom i -> m i o (Atom o)
 traverseAtomDefault atom = case atom of
