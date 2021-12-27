@@ -114,7 +114,7 @@ sourceNameType v = do
       _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
 
 getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
-getReferentTy (EmptyAbs (PairB hB refB)) = do
+getReferentTy (Abs (PairB hB refB) UnitE) = do
   RefTy _ ty <- return $ binderType refB
   HoistSuccess ty' <- return $ hoist hB ty
   return ty'

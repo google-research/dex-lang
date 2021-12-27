@@ -19,7 +19,7 @@ import Err
 import Name
 import Syntax
 import Builder
-import Util (bindM2, zipWithT, enumerate, restructure)
+import Util (zipWithT, enumerate)
 import GHC.Stack
 
 transpose :: (MonadFail1 m, EnvReader m) => Atom n -> m n (Atom n)
@@ -68,21 +68,6 @@ isLin e = do
     LinTrivial     -> True
     LinRef _       -> True
     RenameNonlin _ -> False
-
-withAccumulatorSubst
-  :: Emits o
-  => AtomNameBinder i i'
-  -> Type o
-  -> (forall o'. (Emits o', DExt o o') => TransposeM i' o' ())
-  -> TransposeM i o (Atom o)
-withAccumulatorSubst b ty cont = do
-  singletonTypeVal ty >>= \case
-    -- as an optimization, don't make a trivial accumulator
-    Just singletonVal -> extendSubst (b@>LinTrivial) do
-      Distinct <- getDistinct
-      cont
-      return singletonVal
-    Nothing -> withAccumulator ty \ref -> extendSubst (b@>LinRef ref) cont
 
 withAccumulator
   :: Emits o
@@ -136,7 +121,7 @@ substExprIfNonlin expr =
         False -> return $ Just expr'
 
 isLinEff :: EffectRow o -> TransposeM i o Bool
-isLinEff effs = do
+isLinEff effs@(EffectRow _ Nothing) = do
   regions <- getLinRegions
   let effRegions = freeVarsList AtomNameRep effs
   return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
@@ -211,8 +196,7 @@ transposeOp op ct = case op of
         transposeAtom x ct'
         zero <- getType ct' >>= zeroAt
         void $ emitEff $ MPut zero
-  -- TabCon ~(TabTy b _) es -> forM_ (enumerate es) \(i, e) -> do
-  --   transposeAtom e =<< tabGet ct =<< intToIndexE (binderType b) (IdxRepVal $ fromIntegral i)
+  TabCon _ _ -> notImplemented
   IndexRef     _ _      -> notImplemented
   ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
@@ -320,6 +304,7 @@ transposeHof hof ct = case hof of
         extendLinRegions h $
           transposeBlock body (sink ctBody)
       return UnitVal
+  _ -> notImplemented
 
 transposeCon :: Emits o => Con i -> Atom o -> TransposeM i o ()
 transposeCon con ct = case con of
@@ -353,7 +338,9 @@ flipDir ann = case ann of
 -- === instances ===
 
 instance GenericE (TransposeSubstVal c) where
-  type RepE (TransposeSubstVal c) = EitherE (Name c) Atom
+  type RepE (TransposeSubstVal c) = EitherE3 (Name c) Atom UnitE
+  fromE = error "todo"
+  toE   = error "todo"
 
 instance SinkableE (TransposeSubstVal c)
 instance SinkableV TransposeSubstVal

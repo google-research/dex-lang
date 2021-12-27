@@ -22,7 +22,6 @@ import Type
 import MTL1
 import Util (bindM2)
 import PPrint
-import Err
 
 -- === linearization monad ===
 
@@ -152,22 +151,13 @@ isTrivialForAD expr = do
   hasActiveEffs <- exprEffects expr >>= \case
                      Pure -> return False
                      _ -> return True -- TODO: be more precise here
-  activeVars <- isActive expr
-  return $ not hasActiveEffs && (trivialTy || not activeVars)
+  hasActiveVars <- isActive expr
+  return $ not hasActiveEffs && (trivialTy || not hasActiveVars)
 
 isActive :: HoistableE e => e o -> PrimalM i o Bool
 isActive e = do
   vs <- (S.fromList . activeVars) <$> getActivePrimals
   return $ any (`S.member` vs) (freeVarsList AtomNameRep e)
-
-andM :: Monad m => m Bool -> m Bool -> m Bool
-andM x y = do
-  x >>= \case
-    False -> return False
-    True -> y >>= \case
-      False -> return False
-      True -> return True
-
 
 -- === converision between monadic and reified version of functions ===
 
@@ -416,6 +406,7 @@ linearizeOp op = case op of
   ThrowException _       -> notImplemented
   SumToVariant _         -> notImplemented
   OutputStreamPtr        -> emitZeroT
+  _ -> notImplemented
   where
     emitZeroT = withZeroT $ liftM Var $ emit =<< substM (Op op)
     la = linearizeAtom
@@ -562,7 +553,7 @@ linearizeHof hof = case hof of
 -- and augments it with the tangent lambda, so instead of returning `a`, it returns:
 -- `[tangent args] -> (a & ((h':Type) -> (ref':Ref h' (T s)) -> T a))`
 linearizeEffectFun :: RWS -> Atom i -> PrimalM i o (Atom o)
-linearizeEffectFun rws (Lam lam) = do
+linearizeEffectFun rws ~(Lam lam) = do
   BinaryLamExpr hB refB body <- return lam
   referentTy <- getReferentTy =<< substM (EmptyAbs $ PairB hB refB)
   buildEffLam rws (getNameHint refB) referentTy \h ref -> withTangentFunAsLambda do
@@ -595,7 +586,9 @@ notImplemented = error "Not implemented"
 -- === instances ===
 
 instance GenericE ActivePrimals where
-  type RepE ActivePrimals = UnitE
+  type RepE ActivePrimals = PairE (ListE AtomName) EffectRow
+  fromE (ActivePrimals vs effs) = ListE vs `PairE` effs
+  toE   (ListE vs `PairE` effs) = ActivePrimals vs effs
 
 instance SinkableE   ActivePrimals
 instance HoistableE  ActivePrimals
@@ -603,7 +596,9 @@ instance AlphaEqE    ActivePrimals
 instance SubstE Name ActivePrimals
 
 instance GenericE TangentArgs where
-  type RepE TangentArgs = UnitE
+  type RepE TangentArgs = ListE AtomName
+  fromE (TangentArgs vs) = ListE vs
+  toE   (ListE vs) = TangentArgs vs
 
 instance SinkableE   TangentArgs
 instance HoistableE  TangentArgs

@@ -405,10 +405,10 @@ buildNaryPi
   => EmptyAbs (Nest Binder) n
   -> (forall l. (Distinct l, DExt n l) => [AtomName l] -> m l (Type l))
   -> m n (Type n)
-buildNaryPi (EmptyAbs Empty) cont = do
+buildNaryPi (Abs Empty UnitE) cont = do
   Distinct <- getDistinct
   cont []
-buildNaryPi (EmptyAbs (Nest (b:>ty) bs)) cont = do
+buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
   Pi <$> buildPi (getNameHint b) PlainArrow ty \v -> do
     bs' <- applySubst (b@>v) $ EmptyAbs bs
     piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
@@ -976,18 +976,18 @@ liftMonoidEmpty accTy x = do
 liftMonoidCombine :: (Builder m, Emits n)
                   => Type n -> Atom n -> Atom n -> Atom n
                   -> m n (Atom n)
-liftMonoidCombine accTy baseCombine x y = do
-  Pi baseCombineTy <- getType baseCombine
+liftMonoidCombine accTy bc x y = do
+  Pi baseCombineTy <- getType bc
   let baseTy = piArgType baseCombineTy
   alphaEq accTy baseTy >>= \case
-    True -> naryApp baseCombine [x, y]
+    True -> naryApp bc [x, y]
     False -> case accTy of
       TabTy b eltTy -> do
         buildFor "i" Fwd (binderType b) \i -> do
           xElt <- app (sink x) (Var i)
           yElt <- app (sink y) (Var i)
           eltTy' <- applySubst (b@>i) eltTy
-          liftMonoidCombine eltTy' (sink baseCombine) xElt yElt
+          liftMonoidCombine eltTy' (sink bc) xElt yElt
       _ -> error $ "Base monoid type mismatch: can't lift " ++
              pprint baseTy ++ " to " ++ pprint accTy
 
