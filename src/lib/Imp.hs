@@ -17,6 +17,8 @@ import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
 import GHC.Stack
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict as M
 
 import Err
 import Name
@@ -26,6 +28,7 @@ import Type
 import Simplify
 import LabeledItems
 import qualified Algebra as A
+import Util (enumerate)
 
 type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
@@ -181,7 +184,7 @@ translateExpr maybeDest expr = case expr of
       _ -> error $ "unexpected expression: " ++ pprint expr
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
-  Case e alts ty -> do
+  Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
       Just (con, args) -> do
@@ -726,6 +729,8 @@ makeDestRec idxs depVars ty = case ty of
       let depVars' = map sink depVars ++ [v]
       makeDestRec (sinkDestIdxs idxs) depVars' rTy'
     return $ DepPairRef lDest (Abs lBinder' rDest) depPairTy
+  RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
+  VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
       ptr <- makeBaseTypePtr idxs b
@@ -797,15 +802,19 @@ copyAtom topDest topSrc = copyRec topDest topSrc
           Con (SumAsProd _ tagSrc payloadSrc) -> do
             copyRec tag tagSrc
             unless (all null payload) do -- optimization
-              tag' <- fromScalarAtom tag
-              emitSwitch tag' (zip payload payloadSrc)
+              tagSrc' <- fromScalarAtom tagSrc
+              emitSwitch tagSrc' (zip payload payloadSrc)
                 \(d, s) -> zipWithM_ copyRec (map sink d) (map sink s)
           SumVal _ con x -> do
             copyRec tag $ TagRepVal $ fromIntegral con
             case payload !! con of
               [xDest] -> copyRec xDest x
               _       -> error "Expected singleton payload in SumAsProd"
-          Variant _ _ _ _ -> undefined
+          Variant (NoExt types) label i x -> do
+            let LabeledItems ixtypes = enumerate types
+            let index = fst $ (ixtypes M.! label) NE.!! i
+            copyRec tag (TagRepVal $ fromIntegral index)
+            zipWithM_ copyRec (payload !! index) [x]
           _ -> error "unexpected src/dest pair"
         (ConRef destCon, Con srcCon) ->
           zipWithRefConM copyRec destCon srcCon

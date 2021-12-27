@@ -17,9 +17,7 @@ import MTL1
 import Type
 import Err
 import Name
-import LabeledItems
 import Syntax
-import PPrint
 import Builder
 import Util (bindM2, zipWithT, enumerate, restructure)
 import GHC.Stack
@@ -172,6 +170,17 @@ transposeExpr expr ct = case expr of
   Op op         -> transposeOp op ct
   Atom atom     -> transposeAtom atom ct
   Hof hof       -> transposeHof hof ct
+  Case e alts _ _ -> do
+    linearScrutinee <- isLin e
+    case linearScrutinee of
+      True  -> notImplemented
+      False -> do
+        e' <- substNonlin e
+        void $ buildCase e' UnitTy \i vs -> do
+          Abs bs body <- return $ alts !! i
+          extendSubst (bs @@> map RenameNonlin vs) do
+            transposeBlock body (sink ct)
+          return UnitVal
 
 transposeOp :: Emits o => Op i -> Atom o -> TransposeM i o ()
 transposeOp op ct = case op of
@@ -303,7 +312,7 @@ transposeHof hof ct = case hof of
           transposeBlock body (sink ct)
       return UnitVal
     transposeAtom r ct'
-  RunWriter bm (Lam (BinaryLamExpr hB refB body))-> do
+  RunWriter _ (Lam (BinaryLamExpr hB refB body))-> do
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader "r" ctEff \h ref -> do

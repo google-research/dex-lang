@@ -129,8 +129,9 @@ simplifyExpr expr = case expr of
   Op  op  -> mapM simplifyAtom op >>= emitOp
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
-  Case e alts resultTy -> do
+  Case e alts resultTy eff -> do
     e' <- simplifyAtom e
+    eff' <- substM eff
     resultTy' <- substM resultTy
     case trySelectBranch e' of
       Just (i, args) -> do
@@ -144,7 +145,7 @@ simplifyExpr expr = case expr of
               buildNaryAbs bs' \xs ->
                 extendSubst (bs @@> map Rename xs) $
                   buildBlock $ simplifyBlock body
-            liftM Var $ emit $ Case e' alts' resultTy'
+            liftM Var $ emit $ Case e' alts' resultTy' eff'
           False -> defuncCase e' alts resultTy'
 
 defuncCase :: (Emits o, Simplifier m) => Atom o -> [Alt i] -> Type o -> m i o (Atom o)
@@ -153,7 +154,8 @@ defuncCase scrut alts resultTy = do
   closureTys <- mapM getAltTy alts'
   let closureSumTy = SumTy closureTys
   alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
-  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy
+  eff <- getAllowedEffects -- TODO: more precise effects
+  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy eff
   reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
                  buildUnaryAtomAlt ty \v -> applyRecon (sink recon) $ Var v
   return $ ACase sumVal reconAlts resultTy
@@ -169,7 +171,7 @@ defuncCase scrut alts resultTy = do
     injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
     injectAltResult sumTy con (Abs bs body) = liftBuilder do
       buildAlt (sink $ EmptyAbs bs) \vs -> do
-        originalResult <- emitBlock =<< applyNaryAbs (sink $ Abs bs body) vs
+        originalResult <- emitBlock =<< applySubst (bs@@>vs) body
         return $ Con $ SumCon (sink sumTy) con originalResult
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
@@ -189,7 +191,8 @@ simplifyApp f x = case f of
       buildAlt (EmptyAbs bs) \vs -> do
         a' <- applyNaryAbs (sink $ Abs bs a) vs
         app a' (sink x)
-    dropSubst $ simplifyExpr $ Case e alts' resultTy
+    eff <- getAllowedEffects -- TODO: more precise effects
+    dropSubst $ simplifyExpr $ Case e alts' resultTy eff
   TypeCon sn def params -> return $ TypeCon sn def params'
      where params' = params ++ [x]
   _ -> liftM Var $ emit $ App f x

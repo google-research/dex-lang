@@ -126,7 +126,7 @@ instance PrettyPrec (Expr n) where
   prettyPrec (Hof (For ann (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
   prettyPrec (Hof hof) = prettyPrec hof
-  prettyPrec (Case e alts _) = prettyPrecCase "case" e alts
+  prettyPrec (Case e alts _ _) = prettyPrecCase "case" e alts
 
 prettyPrecCase :: PrettyE e => Doc ann -> Atom n -> [AltP e n] -> DocPrec ann
 prettyPrecCase name e alts = atPrec LowestPrec $ name <+> p e <+> "of" <>
@@ -137,7 +137,7 @@ prettyAlt (Abs bs body) = hsep (map prettyBinderNoAnn  bs') <+> "->" <> nest 2 (
   where bs' = fromNest bs
 
 prettyBinderNoAnn :: Binder n l -> Doc ann
-prettyBinderNoAnn (b:>_) = p $ show b
+prettyBinderNoAnn (b:>_) = p b
 
 instance PrettyPrecE e => Pretty     (Abs Binder e n) where pretty = prettyFromPrettyPrec
 instance PrettyPrecE e => PrettyPrec (Abs Binder e n) where

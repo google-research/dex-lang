@@ -44,9 +44,10 @@ module Builder (
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
   emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
-  zeroAt, zeroLike, tangentType, addTangent, updateAddAt, tangentBaseMonoidFor,
+  zeroAt, zeroLike, maybeTangentType, tangentType,
+  addTangent, updateAddAt, tangentBaseMonoidFor,
   buildEffLam,
-  ReconAbs, ReconstructAtom (..)
+  ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi
   ) where
 
 import Control.Applicative
@@ -350,6 +351,15 @@ buildNullaryLam :: Builder m
                 -> m n (Atom n)
 buildNullaryLam effs cont = buildLam "ignore" PlainArrow UnitTy effs \_ -> cont
 
+buildNullaryPi :: Builder m
+               => EffectRow n
+               -> (forall l. DExt n l => m l (Type l))
+               -> m n (Type n)
+buildNullaryPi effs cont =
+  Pi <$> buildPi "ignore" PlainArrow UnitTy \_ -> do
+    resultTy <- cont
+    return (sink effs, resultTy)
+
 buildLamGeneral
   :: Builder m
   => NameHint -> Arrow -> Type n
@@ -389,6 +399,20 @@ buildPi hint arr ty body = liftImmut do
   withFreshPiBinder hint (PiBinding arr ty) \b -> do
     (effs, resultTy) <- body $ binderName b
     return $ PiType b effs resultTy
+
+buildNaryPi
+  :: Builder m
+  => EmptyAbs (Nest Binder) n
+  -> (forall l. (Distinct l, DExt n l) => [AtomName l] -> m l (Type l))
+  -> m n (Type n)
+buildNaryPi (EmptyAbs Empty) cont = do
+  Distinct <- getDistinct
+  cont []
+buildNaryPi (EmptyAbs (Nest (b:>ty) bs)) cont = do
+  Pi <$> buildPi (getNameHint b) PlainArrow ty \v -> do
+    bs' <- applySubst (b@>v) $ EmptyAbs bs
+    piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
+    return (Pure, piTy)
 
 buildNonDepPi :: EnvReader m
               => NameHint -> Arrow -> Type n -> EffectRow n -> Type n
@@ -533,6 +557,7 @@ buildCase :: (Emits n, Builder m)
           -> (forall l. (Emits l, DExt n l) => Int -> [AtomName l] -> m l (Atom l))
           -> m n (Atom n)
 buildCase scrut resultTy indexedAltBody = do
+  eff <- getAllowedEffects
   scrutTy <- getType scrut
   altsBinderTys <- caseAltsBinderTys scrutTy
   alts <- forM (enumerate altsBinderTys) \(i, bs) -> do
@@ -540,7 +565,7 @@ buildCase scrut resultTy indexedAltBody = do
       buildBlock do
         ListE xs' <- sinkM $ ListE xs
         indexedAltBody i xs'
-  liftM Var $ emit $ Case scrut alts resultTy
+  liftM Var $ emit $ Case scrut alts resultTy eff
 
 buildSplitCase :: (Emits n, Builder m)
                => LabeledItems (Type n) -> Atom n -> Type n
@@ -653,25 +678,29 @@ zeroLike :: (HasCallStack, HasType e, Builder m) => e n -> m n (Atom n )
 zeroLike x = zeroAt =<< getType x
 
 tangentType :: Type n -> Type n
-tangentType ty = case ty of
-  RecordTy (NoExt items) -> RecordTy $ NoExt $ fmap tangentType items
-  TypeCon _ _ _ -> error "not implemented" -- Need to synthesize or look up a tangent ADT
-  Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) ->
-    Pi (PiType b Pure $ tangentType bodyTy)
+tangentType ty = case maybeTangentType ty of
+  Just tanTy -> tanTy
+  Nothing -> error $ "can't differentiate wrt type: " ++ pprint ty
+
+maybeTangentType :: Type n -> Maybe (Type n)
+maybeTangentType ty = case ty of
+  RecordTy (NoExt items) -> RecordTy <$> NoExt <$> mapM maybeTangentType items
+  TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
+  Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) -> do
+    bodyTanTy <- maybeTangentType bodyTy
+    return $ Pi (PiType b Pure bodyTanTy)
   TC con    -> case con of
-    BaseType (Scalar Float64Type) -> TC con
-    BaseType (Scalar Float32Type) -> TC con
-    BaseType (Vector Float64Type) -> TC con
-    BaseType (Vector Float32Type) -> TC con
-    BaseType   _                  -> UnitTy
-    IntRange   _ _                -> UnitTy
-    IndexRange _ _ _              -> UnitTy
-    IndexSlice _ _                -> UnitTy
-    ProdType   tys                -> ProdTy $ tangentType <$> tys
-    -- XXX: This assumes that arrays are always constants.
-    _ -> unsupported
-  _ -> unsupported
-  where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
+    BaseType (Scalar Float64Type) -> return $ TC con
+    BaseType (Scalar Float32Type) -> return $ TC con
+    BaseType (Vector Float64Type) -> return $ TC con
+    BaseType (Vector Float32Type) -> return $ TC con
+    BaseType   _                  -> return $ UnitTy
+    IntRange   _ _                -> return $ UnitTy
+    IndexRange _ _ _              -> return $ UnitTy
+    IndexSlice _ _                -> return $ UnitTy
+    ProdType   tys                -> ProdTy <$> traverse maybeTangentType tys
+    _ -> Nothing
+  _ -> Nothing
 
 tangentBaseMonoidFor :: Builder m => Type n -> m n (BaseMonoid n)
 tangentBaseMonoidFor ty = do
@@ -948,8 +977,8 @@ liftMonoidCombine :: (Builder m, Emits n)
                   => Type n -> Atom n -> Atom n -> Atom n
                   -> m n (Atom n)
 liftMonoidCombine accTy baseCombine x y = do
-  Pi (PiType b _ _) <- getType baseCombine
-  let baseTy = binderType b
+  Pi baseCombineTy <- getType baseCombine
+  let baseTy = piArgType baseCombineTy
   alphaEq accTy baseTy >>= \case
     True -> naryApp baseCombine [x, y]
     False -> case accTy of
@@ -1042,7 +1071,7 @@ indexToInt idx = getType idx >>= \case
         \(offset, subty) -> buildUnaryAlt subty \subix -> do
           i <- indexToInt $ Var subix
           iadd (sink offset) i
-      liftM Var $ emit $ Case idx alts IdxRepTy
+      liftM Var $ emit $ Case idx alts IdxRepTy Pure
 
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
 indexSetSize ty = case ty of

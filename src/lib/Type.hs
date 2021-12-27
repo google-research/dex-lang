@@ -147,13 +147,27 @@ exprEffects expr = case expr of
     While body      -> functionEffs body
     Linearize _     -> return Pure  -- Body has to be a pure function
     Transpose _     -> return Pure  -- Body has to be a pure function
-    _ -> error "not implemented"
-  _ -> error "not implemented"
+    RunWriter _ f -> rwsFunEffects Writer f
+    RunReader _ f -> rwsFunEffects Reader f
+    RunState  _ f -> rwsFunEffects State  f
+    _ -> error $ "not implemented:" ++ pprint expr
+  Case _ _ _ effs -> return effs
 
 functionEffs :: EnvReader m => Atom n -> m n (EffectRow n)
 functionEffs f = getType f >>= \case
   Pi (PiType b effs _) -> return $ ignoreHoistFailure $ hoist b effs
   _ -> error "Expected a function type"
+
+rwsFunEffects :: EnvReader m => RWS -> Atom n -> m n (EffectRow n)
+rwsFunEffects rws f = getType f >>= \case
+   BinaryFunTy h ref effs _ -> do
+     let effs' = ignoreHoistFailure $ hoist ref effs
+     let effs'' = deleteEff (RWSEffect rws (Just (binderName h))) effs'
+     return $ ignoreHoistFailure $ hoist h effs''
+   _ -> error "Expected a binary function type"
+
+deleteEff :: Effect n -> EffectRow n -> EffectRow n
+deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
 
 -- === the type checking/querying monad ===
 
@@ -301,6 +315,9 @@ instance CheckableE DataDef where
 instance CheckableE Atom where
   checkE atom = fst <$> getTypeAndSubstE atom
 
+instance CheckableE Expr where
+  checkE expr = fst <$> getTypeAndSubstE expr
+
 instance HasType AtomName where
   getTypeE name = do
     name' <- substM name
@@ -354,7 +371,7 @@ instance HasType Atom where
                                    <> " with type " <> pprint ty
       checkTypeE TyKind ty
     VariantTy row -> checkLabeledRow row $> TyKind
-    ACase e alts resultTy -> checkCase e alts resultTy
+    ACase e alts resultTy -> checkCase e alts resultTy Pure
     DataConRef defName params args -> do
       defName' <- substM defName
       DataDef sourceName paramBs [DataConDef _ argBs] <- lookupDataDef defName'
@@ -422,7 +439,7 @@ instance HasType Expr where
     Atom x   -> getTypeE x
     Op   op  -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof
-    Case e alts resultTy -> checkCase e alts resultTy
+    Case e alts resultTy effs -> checkCase e alts resultTy effs
 
 instance HasType Block where
   getTypeE (Block NoBlockAnn Empty expr) = do
@@ -563,7 +580,7 @@ typeCheckPrimCon con = case con of
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substM t
-  RecordRef _ -> error "Not implemented"
+  RecordRef xs -> (RawRefTy . RecordTy . NoExt) <$> traverse typeCheckRef xs
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
 typeCheckPrimOp op = case op of
@@ -840,8 +857,10 @@ nonDepBinderNestTypes (Nest (b:>ty) rest) = do
   restTys <- nonDepBinderNestTypes rest'
   return $ ty : restTys
 
-checkCase :: Typer m => HasType body => Atom i -> [AltP body i] -> Type i -> m i o (Type o)
-checkCase scrut alts resultTy = do
+checkCase :: Typer m => HasType body
+          => Atom i -> [AltP body i] -> Type i -> EffectRow i -> m i o (Type o)
+checkCase scrut alts resultTy effs = do
+  declareEffs =<< substM effs
   resultTy' <- substM resultTy
   scrutTy <- getTypeE scrut
   altsBinderTys <- caseAltsBinderTys scrutTy
@@ -1038,11 +1057,29 @@ checkUnOp op x = do
 
 -- === singleton types ===
 
+-- TODO: the following implementation should be valid:
+--   isSingletonType :: EnvReader m => Type n -> m n Bool
+--   isSingletonType ty =
+--     singletonTypeVal ty >>= \case
+--       Nothing -> return False
+--       Just _  -> return True
+-- But we want to be able to query the singleton-ness of types that we haven't
+-- implemented tangent types for. So instead we do a separate case analysis.
 isSingletonType :: EnvReader m => Type n -> m n Bool
-isSingletonType ty =
-  singletonTypeVal ty >>= \case
-  Nothing -> return False
-  Just _  -> return True
+isSingletonType topTy =
+  case checkIsSingleton topTy of
+    Just () -> return True
+    Nothing -> return False
+  where
+    checkIsSingleton :: Type n -> Maybe ()
+    checkIsSingleton ty = case ty of
+      Pi (PiType _ _ body) -> checkIsSingleton body
+      RecordTy (NoExt items) -> mapM_ checkIsSingleton items
+      TC con -> case con of
+        ProdType tys -> mapM_ checkIsSingleton tys
+        _ -> Nothing
+      _ -> Nothing
+
 
 singletonTypeVal :: EnvReader m => Type n -> m n (Maybe (Atom n))
 singletonTypeVal ty = fromMaybeE <$> liftImmut do

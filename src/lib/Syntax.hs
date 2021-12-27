@@ -155,7 +155,7 @@ data Atom (n::S) =
 
 data Expr n =
    App (Atom n) (Atom n)
- | Case (Atom n) [Alt n] (Type n)
+ | Case (Atom n) [Alt n] (Type n) (EffectRow n)
  | Atom (Atom n)
  | Op  (Op  n)
  | Hof (Hof n)
@@ -1182,6 +1182,19 @@ pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
 extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
+instance OrdE name => Semigroup (EffectRowP name n) where
+  EffectRow effs t <> EffectRow effs' t' =
+    EffectRow (S.union effs effs') newTail
+    where
+      newTail = case (t, t') of
+        (Nothing, effTail) -> effTail
+        (effTail, Nothing) -> effTail
+        _ | t == t' -> t
+          | otherwise -> error "Can't combine effect rows with mismatched tails"
+
+instance OrdE name => Monoid (EffectRowP name n) where
+  mempty = EffectRow mempty Nothing
+
 -- === imperative IR ===
 
 data IExpr n = ILit LitVal
@@ -1602,6 +1615,15 @@ getProjection (i:is) a = case getProjection is a of
   Con (ProdCon xs) -> xs !! i
   DepPair l _ _ | i == 0 -> l
   DepPair _ r _ | i == 1 -> r
+  ACase scrut alts resultTy -> ACase scrut alts' resultTy'
+    where
+      alts' = alts <&> \(Abs bs body) -> Abs bs $ getProjection [i] body
+      resultTy' = case resultTy of
+        ProdTy tys -> tys !! i
+        -- We can't handle all cases here because we'll end up needing access to
+        -- the env. This `ProjectElt` is a steady source of issues. Maybe we can
+        -- do away with it.
+        _ -> error "oops"
   a' -> error $ "Not a valid projection: " ++ show i ++ " of " ++ show a'
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
@@ -1840,20 +1862,20 @@ instance GenericE Expr where
   type RepE Expr =
      EitherE5
         (PairE Atom Atom)
-        (PairE Atom (PairE (ListE Alt) Type))
+        (Atom `PairE` ListE Alt `PairE` Type `PairE` EffectRow)
         (Atom)
         (ComposeE PrimOp Atom)
         (ComposeE PrimHof Atom)
   fromE = \case
     App f e        -> Case0 (PairE f e)
-    Case e alts ty -> Case1 (PairE e (PairE (ListE alts) ty))
+    Case e alts ty eff -> Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff)
     Atom x         -> Case2 (x)
     Op op          -> Case3 (ComposeE op)
     Hof hof        -> Case4 (ComposeE hof)
 
   toE = \case
     Case0 (PairE f e)                       -> App f e
-    Case1 (PairE e (PairE (ListE alts) ty)) -> Case e alts ty
+    Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
     Case2 (x)                               -> Atom x
     Case3 (ComposeE op)                     -> Op op
     Case4 (ComposeE hof)                    -> Hof hof

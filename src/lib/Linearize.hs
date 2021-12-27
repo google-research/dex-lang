@@ -22,6 +22,7 @@ import Type
 import MTL1
 import Util (bindM2)
 import PPrint
+import Err
 
 -- === linearization monad ===
 
@@ -100,12 +101,12 @@ withBoth (WithTangent x tx) f = do
   return $ WithTangent y do
     tx >>= f
 
-withTangentComputation
+_withTangentComputation
   :: Emits o
   => WithTangent o e1 e2
   -> (forall o' m. (Emits o', DExt o o', Builder m) => e2 o' -> m o' (e2' o'))
   -> PrimalM i o (WithTangent o e1 e2')
-withTangentComputation (WithTangent x tx) f = do
+_withTangentComputation (WithTangent x tx) f = do
   Distinct <- getDistinct
   return $ WithTangent x do
     tx >>= f
@@ -143,10 +144,30 @@ traverseLin f xs = seqLin $ fmap f xs
 liftTangentM :: TangentArgs o -> TangentM o a -> PrimalM i o a
 liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
+isTrivialForAD :: Expr o -> PrimalM i o Bool
+isTrivialForAD expr = do
+  trivialTy  <- (maybeTangentType <$> getType expr) >>= \case
+    Nothing -> return False
+    Just tTy -> isSingletonType tTy
+  hasActiveEffs <- exprEffects expr >>= \case
+                     Pure -> return False
+                     _ -> return True -- TODO: be more precise here
+  activeVars <- isActive expr
+  return $ not hasActiveEffs && (trivialTy || not activeVars)
+
 isActive :: HoistableE e => e o -> PrimalM i o Bool
 isActive e = do
-  activeVars <- (S.fromList . activeVars) <$> getActivePrimals
-  return $ any (`S.member` activeVars) (freeVarsList AtomNameRep e)
+  vs <- (S.fromList . activeVars) <$> getActivePrimals
+  return $ any (`S.member` vs) (freeVarsList AtomNameRep e)
+
+andM :: Monad m => m Bool -> m Bool -> m Bool
+andM x y = do
+  x >>= \case
+    False -> return False
+    True -> y >>= \case
+      False -> return False
+      True -> return True
+
 
 -- === converision between monadic and reified version of functions ===
 
@@ -155,6 +176,16 @@ withTangentFunAsLambda cont = do
   WithTangent primalResult tf <- cont
   lam <- tangentFunAsLambda tf
   return $ PairVal primalResult lam
+
+tangentFunType :: Type o -> PrimalM i o (Type o)
+tangentFunType ty = do
+  ActivePrimals primalVars effs <- getActivePrimals
+  tangentTys <- varsAsBinderNest primalVars
+  let effAbs = abstractFreeVarsNoAnn primalVars effs
+  buildNaryPi tangentTys \tangentVars -> do
+    effs' <- applyNaryAbs (sink effAbs) tangentVars
+    buildNullaryPi effs' $
+      return $ sink ty
 
 tangentFunAsLambda
   :: Emits o
@@ -276,11 +307,11 @@ linearizeDecls Empty cont = cont
 -- are no active vars.
 linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
   expr' <- substM expr
-  isActive expr' >>= \case
-    False -> do
+  isTrivialForAD expr' >>= \case
+    True -> do
       v <- emit expr'
       extendSubst (b@>v) $ linearizeDecls rest cont
-    True -> do
+    False -> do
       WithTangent p tf <- linearizeExpr expr
       v <- emitDecl (getNameHint b) ann (Atom p)
       extendActiveSubst b v do
@@ -302,12 +333,19 @@ linearizeExpr expr = case expr of
   Atom e     -> linearizeAtom e
   Op op      -> linearizeOp op
   Hof e      -> linearizeHof e
-  Case e alts _ -> do
+  Case e alts resultTy _ -> do
     e' <- substM e
+    resultTy' <- substM resultTy
     isActive e' >>= \case
       True -> notImplemented
-      False -> notImplemented
-  _ -> error $ pprint expr
+      False -> do
+        resultTyWithTangent <- PairTy <$> substM resultTy
+                                      <*> tangentFunType (tangentType resultTy')
+        (ans, linLam) <- fromPair =<< buildCase e' resultTyWithTangent \i xs -> do
+          Abs bs body <- return $ alts !! i
+          extendSubst (bs@@>xs) $ withTangentFunAsLambda $ linearizeBlock body
+        return $ WithTangent ans do
+          applyLinToTangents $ sink linLam
 
 linearizeOp :: Emits o => Op i -> LinM i o Atom Atom
 linearizeOp op = case op of
