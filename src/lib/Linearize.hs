@@ -353,6 +353,7 @@ linearizeOp op = case op of
                 emitOp $ PrimEffect ref' $ MPut x'
   IndexRef ref i -> zipLin (la ref) (pureLin i) `bindLin`
                       \(PairE ref' i') -> emitOp $ IndexRef ref' i'
+  ProjRef i ref -> la ref `bindLin` \ref' -> emitOp $ ProjRef i ref'
   Select p t f -> (pureLin p `zipLin` la t `zipLin` la f) `bindLin`
                      \(p' `PairE` t' `PairE` f') -> emitOp $ Select p' t' f'
   -- XXX: This assumes that pointers are always constants
