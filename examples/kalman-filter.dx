@@ -1,5 +1,6 @@
--- Based on TFP's Kalman filter, written by Dave Moore and others:
--- https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/distributions/linear_gaussian_ssm.py
+' # A Kalman filter in Dex
+
+' Based on [TFP's Kalman filter](https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/distributions/linear_gaussian_ssm.py), written by Dave Moore and others.
 
 import linalg
 
@@ -7,15 +8,17 @@ def LogProb : Type = Float
 def Vec (n:Type)          : Type = n=>Float
 def Mat (n:Type) (m:Type) : Type = n=>m=>Float
 def SqMat (n:Type)        : Type = n=>n=>Float
+
+' ## Multivariate Gaussian distribtions
+
+' The first object of interest is the multivariate Gaussian distribution.
+We index the dimensions of the Gaussian by the type parameter `n`.
+
 def Gaussian (n:Type)     : Type =
   { mean       : Vec n
   & covariance : SqMat n
   & precision  : SqMat n
   & logDetCov  : Float }
-
-def GaussianTransition (i:Type) (o:Type) : Type =
- { transitionMat : Mat o i
- & transitionNoise : Gaussian o }
 
 def makeGaussianFromPrecision (mean:Vec n) (precision: SqMat n) : Gaussian n =
   covariance = invert precision
@@ -31,6 +34,11 @@ def makeGaussianFromCovariance (mean:Vec n) (covariance: SqMat n) : Gaussian n =
     , precision  = precision
     , logDetCov = snd $ sign_and_log_determinant covariance }
 
+def logDensity (g:Gaussian n) (x:Vec n) : LogProb =
+   d = x - getAt #mean g
+   normalizer = - (IToF (size n) / 2.0) * log (2.0 * pi) - 0.5 * getAt #logDetCov g
+   -0.5 * (d `vdot` (getAt #precision g **. d)) + normalizer
+
 def scaleGaussian (scaleMat:Mat o i) (g:Gaussian i) : Gaussian o =
   newMean = scaleMat **. getAt#mean g
   newCov = (scaleMat ** getAt#covariance g) ** transpose scaleMat
@@ -41,10 +49,42 @@ def convolveGaussians (g1:Gaussian n) (g2:Gaussian n) : Gaussian n =
   newCov  = getAt#covariance g1 + getAt#covariance g2
   makeGaussianFromCovariance newMean newCov
 
+myGaussian = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.0],
+                                                   [0.0, 2.0]]
+myGaussian2 = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.2],
+                                                    [0.2, 2.0]]
+
+logDensity myGaussian [1.0, 2.0]
+> -1.991303
+
+logDensity myGaussian2 [1.0, 2.0]
+> -2.001405
+
+scaleGaussian (2.0 .* eye) myGaussian
+
+' ## Gaussian transitions
+
+' The second object of interest is the Gaussian transition: given a
+Gaussian on input space `i`, a linear transformation from `i` to `o`,
+and Gaussian noise on `o`, the induced joint distribution on `(i, o)`
+is also an analytic Gaussian, as are its marginal and conditional
+distributions.  These transitions can serve as either a
+linear-Gaussian transition or a linear-Gaussian observation in a state
+space model.
+
+def GaussianTransition (i:Type) (o:Type) : Type =
+ { transitionMat : Mat o i
+ & transitionNoise : Gaussian o }
+
+' `applyTransition` computes the marginal Gaussian on the output space `o`.
+
 def applyTransition (t:GaussianTransition i o) (g:Gaussian i) : Gaussian o =
   g |>
     scaleGaussian (getAt #transitionMat t) |>
     convolveGaussians (getAt #transitionNoise t)
+
+' `kalmanGain` computes the so-called "optimal Kalman gain" corresponding to
+the given input Gaussian and transition, which is used when conditioning, below.
 
 -- TODO: avoid redundant computation (or rely on compiler CSE?)
 def kalmanGain (g:Gaussian i) (t:GaussianTransition i o) : Mat i o =
@@ -53,6 +93,10 @@ def kalmanGain (g:Gaussian i) (t:GaussianTransition i o) : Mat i o =
   g' = applyTransition t g
   expectedPrecision = getAt #precision g'
   priorCov ** transpose h ** expectedPrecision
+
+' `condition` computes the conditional distribution on the input space
+`i`, from the given prior and the given linear-Gaussian observation
+model and observations.
 
 def condition (g:Gaussian i) (t:GaussianTransition i o) (obs:Vec o) : Gaussian i =
   priorMean = getAt #mean g
@@ -68,10 +112,20 @@ def condition (g:Gaussian i) (t:GaussianTransition i o) (obs:Vec o) : Gaussian i
                  k ** r ** transpose k
   makeGaussianFromCovariance posteriorMean posteriorCov
 
-def logDensity (g:Gaussian n) (x:Vec n) : LogProb =
-   d = x - getAt #mean g
-   normalizer = - (IToF (size n) / 2.0) * log (2.0 * pi) - 0.5 * getAt #logDetCov g
-   -0.5 * (d `vdot` (getAt #precision g **. d)) + normalizer
+:p
+  prior = makeGaussianFromPrecision [10.0] [[2.0]]
+  noise = makeGaussianFromPrecision [ 0.0] [[2.0]]
+  trans = { transitionMat = eye, transitionNoise = noise }
+  condition prior trans [100.0]
+
+' ## Kalman filtering
+
+' The `Model` record defines a linear Gaussian state space model with
+latent state of type `Vec latentsIx` and observations of type `Vec
+obsIx`.  The generative model is
+- x.0 ~ latentsPrior
+- x.(i+1) ~ transition(x.0)
+- y.i ~ obsModel(x.i)
 
 def Model (latentsIx:Type) (obsIx:Type) : Type =
  { transition : GaussianTransition latentsIx latentsIx
@@ -79,18 +133,31 @@ def Model (latentsIx:Type) (obsIx:Type) : Type =
  -- distribution prior to first step (before conditioning on any observation)
  & latentsPrior     : Gaussian latentsIx }
 
+' The `kalmanFilter` function below runs a Kalman filter on a given
+(dense) set of observations with respect to a given `Model`, and
+computes several quantities of interest.  The results are packaged as
+an array indexed by `timeIx` (the time-steps at which observations
+occurred) of `LoopState`s.
+
+' Each `LoopState` carries four relevant quantites:
+- `marginalEvidence` is the log probability of the current observation
+  conditioned on the model and all previous observations.
+- `filteredLatents` is the filtering posterior, namely the
+  distribution on this time-step's latent state conditioned on
+  observations up to and including this time-step.
+- `predictedLatents` is the filtered predictive distribution, namely
+  the posterior on the next step's latent state conditioned on
+  observations up to and including this time-step.  This is
+  obtainable from `filteredLatents` by applying the dynamics once.
+- `filteredObs` is the predictive distribution on observations for the
+  current time-step, conditioned on observations up to but _excluding_
+  the current time-step.  The `marginalEvidence` is the probability of
+  the current observation under the `filteredObs` distribution.
+
 def LoopState (latentsIx:Type) (obsIx:Type) : Type =
-  {
-  -- The log probability of an observation conditioned on all previous observations
-  marginalEvidence : Float
-  -- posterior on latents conditioned on everything up to and including this time step
+  { marginalEvidence : Float
   & filteredLatents  : Gaussian latentsIx
-  -- posterior on next step's latents conditioned on everything up to and
-  -- including this time step's observations and applying the subsequent
-  -- dynamics once
   & predictedLatents : Gaussian latentsIx
-  -- excludes the observation at this time step (otherwise it would collapse to
-  -- a delta)
   & filteredObs : Gaussian obsIx
   }
 
@@ -135,18 +202,7 @@ def kalmanFilter
       latentsRef := gaussianToTup $ getAt #predictedLatents stepResult
       stepResult
 
-myGaussian = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.0],
-                                                   [0.0, 2.0]]
-myGaussian2 = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.2],
-                                                    [0.2, 2.0]]
-
-logDensity myGaussian [1.0, 2.0]
-> -1.991303
-
-logDensity myGaussian2 [1.0, 2.0]
-> -2.001405
-
-scaleGaussian (2.0 .* eye) myGaussian
+' ## A test model
 
 def isotropic (scale:Float) : Gaussian n =
   makeGaussianFromCovariance zero (sq scale .* eye)
@@ -155,20 +211,14 @@ def isotropicDrift (scale:Float) : GaussianTransition n n =
   { transitionMat = eye
   , transitionNoise = isotropic scale }
 
-
 myModel : Model (Fin 4) (Fin 4) =
   { transition   = isotropicDrift 1.0
   , obsModel     = isotropicDrift 1.0
   , latentsPrior = isotropic      1.0 }
 
-myObs = for i:(Fin 1000).
+myObs = for i:(Fin 100).
   (for j:(Fin 4). IToF $ ordinal i)
 
-:p
-  prior = makeGaussianFromPrecision [10.0] [[2.0]]
-  noise = makeGaussianFromPrecision [ 0.0] [[2.0]]
-  trans = { transitionMat = eye, transitionNoise = noise }
-  condition prior trans [100.0]
 
 
 %time
