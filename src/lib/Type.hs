@@ -1181,7 +1181,8 @@ litFromOrdinal :: Type VoidS -> Int32 -> Atom VoidS
 litFromOrdinal ty i = case ty of
   TC (IntRange low high) -> Con $ IntRangeVal low high $ IdxRepVal i
   TC (IndexRange n low high) -> Con $ IndexRangeVal n low high (IdxRepVal i)
-  TC (ProdType types)    -> ProdVal $ reverse $ intToProd types
+  -- Strategically placed reverses make intToProd major-to-minor
+  TC (ProdType types)    -> ProdVal $ reverse $ intToProd $ reverse types
   RecordTy (NoExt types) -> Record $ intToProd types
   SumTy types             -> intToSum types [0..] $ SumVal ty
   VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)

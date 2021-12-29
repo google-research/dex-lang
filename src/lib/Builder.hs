@@ -1002,6 +1002,7 @@ intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom 
 intToIndex ty i = case ty of
   TC (IntRange        low high) -> return $ Con $ IntRangeVal        low high i
   TC (IndexRange from low high) -> return $ Con $ IndexRangeVal from low high i
+  -- Strategically placed reverses make intToProd major-to-minor
   TC (ProdType types) -> (ProdVal . reverse) <$> intToProd (reverse types)
   RecordTy  (NoExt types) -> Record <$> intToProd types
   SumTy types             -> intToSum types [0..] $ SumVal ty
