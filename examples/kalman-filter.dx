@@ -364,3 +364,89 @@ def plotSeriesAndForecast
 will hold its last level.  On the scale of this series, the hard-coded
 drift rate of the random walk is negligible, so we see effectively no
 forecast uncertainty.
+
+' ## A semi-local linear trend model
+
+' Now we move to a more realistic model.  Borrowing an idea from the
+structural time series package in TFP, let's try to hand-write a
+semi-local linear trend model.  First we will fit this model with
+guesses for the series-level parameters, just to test the Kalman
+filtering on a more realistic example, and in the next section we will
+learn the model parameters as well.
+
+' As a reminder, this model assumes a latent level at each time-step,
+which is growing with a speed given by a (also latent) time-varying
+slope.  The slope is assumed to regress towards a global mean slope
+with some global speed.  In math, we have a two-dimensional latent
+state which evolves as follows:
+```
+level.t = level.(t-1) + slope.(t-1) + Normal(0., level_scale)
+slope.t = slope_mean +
+          autoregressive_coef * (slope.(t-1) - slope_mean) +
+          Normal(0., slope_scale)
+```
+where `level_scale`, `autoregressive_coef`, `slope_mean`, and
+`slope_scale` are the main parameters of the model.
+
+' The observations are scalar, and are produced as
+```
+obs.t = Normal(level.t, noise_level)
+```
+where `noise_level` is the model's fifth scalar parameter.
+
+-- Unit vector
+def unit [Eq i] (ix: i) : Vec i =
+  for dim. if dim == ix then 1.0 else 0.0
+
+-- If you hand me a function that is actually linear, I can construct
+-- a matrix out of it.
+def linear_to_matrix [Eq i] (f: Vec i -> Vec o) : Mat o i =
+  transpose $ for row. f (unit row)
+
+def first (v: (Vec (Fin 2))) : _ =
+  [v.(fromOrdinal _ 0)]
+
+-- But if I declare the type of `first` as
+-- `first (v: (Vec (Fin 2))) : (Vec (Fin 1))`, I get the FromInteger Int32 error.
+linear_to_matrix first
+
+-- If you give me a function that is actually affine, I can construct
+-- a matrix out of the linear part, and an offset vector out of the
+-- affine part.
+def affine_to_offset_and_matrix [Eq i] (f: Vec i -> Vec o) : (Vec o & Mat o i) =
+  offset = f $ for i. 0
+  (offset, linear_to_matrix (\vec. f vec - offset))
+
+affine_to_offset_and_matrix first
+
+-- Here the natural representation of the latent state is as a record
+-- `{level: Float & slope: Float}`.  The `Model` type is, however,
+-- written expecting the latent state to be a `Vec` of some index set.
+-- Notionally, such an index set exists: it is the finite set
+-- `{:level, :slope}`.  Is there a way to write it?  Syntax to index
+-- by symbols such as `latent.level` would be very suggestive and, I
+-- think, conformant with Dex's overall philosophy.
+def semilocal_linear_trend
+      (level_scale: Float)
+      (autoregressive_coef: Float)
+      (slope_mean: Float)
+      (slope_scale: Float)
+      (noise_level: Float)
+      (latents_prior: Gaussian (Fin 2))
+      : Model (Fin 2) (Fin 1) =
+  level = \latent. latent.(fromOrdinal _ 0)
+  slope = \latent. latent.(fromOrdinal _ 1)
+  obsModel = { transitionMat = linear_to_matrix first
+             , transitionNoise = makeGaussianFromCovariance [0] [[noise_level]]
+             }
+  dynamics = \latent. [ level latent + slope latent
+                      , slope_mean + autoregressive_coef * (slope latent - slope_mean)
+                      ]
+  (offset, matrix) = affine_to_offset_and_matrix dynamics
+  dynamicsModel = { transitionMat = matrix
+                  , transitionNoise = makeGaussianFromCovariance offset [[level_scale, 0], [0, slope_scale]]
+                  }
+  { transition = dynamicsModel
+  , obsModel = obsModel
+  , latentsPrior = latents_prior
+  }
