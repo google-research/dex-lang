@@ -312,23 +312,22 @@ forecast_means
 %time
 :html showPlot $ yPlot forecast_means
 
--- TODO(Issue 716) Infer concatenation size
--- def array_concat (xs1: n1=>a) (xs2: n2=>a) : (n1 | n2)=>a =
-def array_concat (xs1: n1=>a) (xs2: n2=>a) : n3=>a =
-  sz = size n1
-  for i. if (ordinal i) < sz
-    then xs1.(fromOrdinal n1 $ ordinal i)
-    else xs2.(fromOrdinal n2 $ (ordinal i) - sz)
+-- TODO(Issue 716) It would be nice not to have to name the variants,
+-- but just have (n1|n2)=>a instead.
+def array_concat (xs1: n1=>a) (xs2: n2=>a) : ({ a: n1 | b: n2 } => a) =
+  for i. case i of
+    {|a=i1|} -> xs1.i1
+    {|b=i2|} -> xs2.i2
 
-def yPlot2Concatenate (ys1:n1=>Float) (ys2:n2=>Float) : Plot n3 Float Float Unit =
+def yPlot2Concatenate (ys1:n1=>Float) (ys2:n2=>Float)
+      : Plot ({ a: n1 | b: n2 }) Float Float Unit =
   xs = for i. IToF $ ordinal i
   xyPlot xs (array_concat ys1 ys2)
 
 %time
-:html showPlot $ (yPlot2Concatenate series forecast_means) : Plot (Fin 409) _ _ _
+:html showPlot $ yPlot2Concatenate series forecast_means
 
--- The upper 95%-ile on the first dimension.  Is there a way to constrain
--- the argument to be (equivalent to) a Gaussian (Fin 1)?
+-- The upper 95%-ile.
 def upper_p95 (marginal: Gaussian (Fin 1)) : Float =
   mean = (getAt #mean marginal).(fromOrdinal _ 0)
   variance = (getAt #covariance marginal).(fromOrdinal _ 0).(fromOrdinal _ 0)
@@ -337,29 +336,29 @@ def upper_p95 (marginal: Gaussian (Fin 1)) : Float =
 
 forecast_p95s = for i. upper_p95 forecast.i
 
-def yPlot2Overlay (ys1:n1=>Float) (ys2:n2=>Float) : Plot n3 Float Float Unit =
+def yPlot2Overlay (ys1:n1=>Float) (ys2:n2=>Float)
+      : Plot ({ a: n1 | b: n2 }) Float Float Unit =
   xs1 = for i:n1. IToF $ ordinal i
   xs2 = for i:n2. IToF $ ordinal i
   xyPlot (array_concat xs1 xs2) (array_concat ys1 ys2)
 
 %time
-:html showPlot $ (yPlot2Overlay forecast_means forecast_p95s) : Plot (Fin 100) _ _ _
+:html showPlot $ yPlot2Overlay forecast_means forecast_p95s
 
 def plotSeriesAndForecast
       (series: n1=>Float)
       (forecast: n2=>Gaussian _)
-      (intermediate: Type)
-      : Plot n3 Float Float Float =
+      : Plot ({ a: n1 | b: { a: n2 | b: n2} }) Float Float Float =
   forecast_means = for i. (getAt #mean forecast.i).(fromOrdinal _ 0)
   forecast_p95s = for i. upper_p95 forecast.i
   xs1 = for i:n1. IToF $ ordinal i
   xs2 = for i:n2. IToF $ size n1 + ordinal i
-  (xycPlot (array_concat xs1 $ (array_concat xs2 xs2) : intermediate => _)
-           (array_concat series $ (array_concat forecast_means forecast_p95s) : intermediate => _)
-           $ (array_concat (for i:n1. 0.0) $ (array_concat (for i:n2. 0.5) (for i:n2. 1.0)) : intermediate => _))
+  (xycPlot (array_concat xs1 $ array_concat xs2 xs2)
+           (array_concat series $ array_concat forecast_means forecast_p95s)
+           $ (array_concat (for i:n1. 0.0) $ array_concat (for i:n2. 0.5) (for i:n2. 1.0)))
 
 %time
-:html showPlot $ (plotSeriesAndForecast series forecast (Fin 100)) : Plot (Fin 459) _ _ _
+:html showPlot $ plotSeriesAndForecast series forecast
 
 ' Predictably, the random walk forecasts that on average the series
 will hold its last level.  On the scale of this series, the hard-coded
