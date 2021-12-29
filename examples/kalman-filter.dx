@@ -211,19 +211,157 @@ def isotropicDrift (scale:Float) : GaussianTransition n n =
   { transitionMat = eye
   , transitionNoise = isotropic scale }
 
-myModel : Model (Fin 4) (Fin 4) =
+random_walk : Model (Fin 1) (Fin 1) =
   { transition   = isotropicDrift 1.0
   , obsModel     = isotropicDrift 1.0
   , latentsPrior = isotropic      1.0 }
 
 myObs = for i:(Fin 100).
-  (for j:(Fin 4). IToF $ ordinal i)
-
-
+  (for j:(Fin 1). IToF $ ordinal i)
 
 %time
-results = kalmanFilter myObs myModel
+results = kalmanFilter myObs random_walk
 
 -- :p
 --   for i.
 --     (getAt #mean $ getAt #filteredLatents results.i)
+
+' ## Some real data
+
+' From the US Census Bureau, total sales of retail and food services (excluding gas stations),
+monthly from January 1992 to November 2021, in millions of dollars.  "Adjusted for
+seasonal, holiday, and trading-day differences, but not for price changes".  [https://www.census.gov/retail/marts/www/adv44z72.txt](https://www.census.gov/retail/marts/www/adv44z72.txt).
+
+-- N = 12 * 30 - 1 = 359
+series : Vec (Fin 359) = [
+  151292, 151612, 151082, 151999, 152742, 153191, 154291, 154708, 156154, 157321, 157645, 159630,
+  161710, 160148, 158819, 163210, 164905, 164696, 167241, 167335, 168357, 169129, 170993, 172772,
+  171486, 174199, 177668, 177772, 177156, 179071, 179421, 181478, 183116, 184862, 184853, 185817,
+  186658, 183436, 185326, 186011, 187771, 190167, 189671, 191294, 191812, 191169, 193683, 195153,
+  193220, 196551, 197940, 198424, 199811, 199716, 200257, 200292, 203168, 204700, 204361, 205232,
+  206543, 208438, 209192, 208002, 206562, 209679, 212307, 212627, 213555, 213125, 213802, 214645,
+  215362, 215630, 217380, 220188, 221018, 223038, 221324, 220528, 222738, 226601, 228277, 230131,
+  230474, 233211, 234138, 235362, 237549, 238379, 239752, 242095, 242978, 243186, 245973, 249768,
+  248686, 251806, 254373, 251139, 251152, 252537, 251725, 252344, 256221, 255515, 254123, 253667,
+  256903, 257158, 255798, 259190, 258868, 258473, 258818, 260535, 254748, 274507, 267866, 264755,
+  264378, 265986, 264449, 267977, 264021, 266639, 268947, 271468, 267138, 267917, 269475, 271483,
+  272175, 267282, 272357, 273019, 274600, 277849, 280551, 284736, 282719, 282095, 285055, 283413,
+  284365, 286137, 291233, 287994, 291953, 287908, 291804, 292425, 297408, 298084, 298487, 302828,
+  300321, 304011, 304083, 306574, 305382, 314109, 315600, 309908, 307840, 308186, 314140, 314251,
+  323033, 320532, 321470, 321777, 320545, 321651, 322043, 322995, 324026, 325550, 325944, 328835,
+  329372, 329074, 331159, 329837, 332938, 330844, 332651, 334135, 334659, 335982, 336875, 332705,
+  332813, 329329, 329701, 329639, 331692, 329908, 328225, 326639, 320952, 312366, 307574, 304092,
+  308111, 305716, 300922, 302605, 303768, 306508, 307451, 312010, 303707, 306769, 307802, 308890,
+  308601, 309945, 317219, 320147, 317693, 318121, 318901, 320621, 322108, 324860, 328183, 327856,
+  330279, 332798, 334759, 335904, 335053, 338526, 338135, 338931, 342427, 345240, 345919, 346317,
+  349968, 353158, 354120, 353208, 353523, 351939, 354083, 355771, 358448, 357723, 360574, 363140,
+  366111, 368113, 366505, 366068, 368716, 369914, 372598, 372006, 372097, 374524, 375935, 376690,
+  371812, 377483, 382790, 386738, 387853, 390032, 390627, 393807, 393402, 395652, 397895, 398578,
+  399901, 398039, 404110, 405263, 407260, 407456, 410057, 411292, 411682, 410696, 412987, 414816,
+  413296, 419477, 416628, 417329, 418410, 421785, 421253, 422753, 424361, 424817, 424829, 428661,
+  433613, 432889, 432220, 434824, 433953, 436135, 436414, 435938, 443565, 444119, 448002, 449681,
+  448732, 450575, 450761, 452622, 457194, 455858, 458788, 457297, 456273, 460132, 463251, 455631,
+  462943, 461187, 467658, 468839, 470594, 473294, 476049, 479050, 476067, 477848, 479565, 479769,
+  483735, 484185, 445730, 383688, 454679, 491896, 497521, 501511, 512312, 512059, 505232, 496874,
+  535571, 517767, 576666, 582943, 573483, 577097, 565769, 572079, 574956, 584214, 584961
+]
+
+' If we plot it, we can clearly see the 2008 financial crash and
+recession, and the 2020-2021 pandemic weirdness.
+
+import plot
+
+%time
+:html showPlot $ yPlot series
+
+' Now let's try forecasting it as a random walk and see what happens.
+
+%time
+random_walk_fit = kalmanFilter (for i. (for j. series.i)) random_walk
+
+random_walk_fit.(fromOrdinal (Fin 359) 358)
+
+def forecastMarginals
+      (model: Model latentsIx obsIx)
+      (init: Gaussian latentsIx)
+      : timeIx => Gaussian obsIx =
+  withState (gaussianToTup init) \latentsRef.
+    for i.
+      latents = tupToGaussian (get latentsRef)
+      prediction = applyTransition (getAt #obsModel model) latents
+      latentsRef := gaussianToTup $ applyTransition (getAt #transition model) latents
+      prediction
+
+last_fit = getAt #predictedLatents (random_walk_fit.(fromOrdinal (Fin 359) 358))
+
+:t last_fit
+
+-- This fails for mysterious reasons
+-- %time
+-- forecast : (Fin 50) => Gaussian (Fin 1) = (forecastMarginals random_walk last_fit)
+
+-- Even though this version succeeds
+%time
+forecast : (Fin 50) => Gaussian _ = (forecastMarginals random_walk last_fit)
+
+:t forecast
+
+forecast_means = for i. (getAt #mean forecast.i).(fromOrdinal (Fin 1) 0)
+forecast_means
+
+%time
+:html showPlot $ yPlot forecast_means
+
+-- TODO(Issue 716) Infer concatenation size
+-- def array_concat (xs1: n1=>a) (xs2: n2=>a) : (n1 | n2)=>a =
+def array_concat (xs1: n1=>a) (xs2: n2=>a) : n3=>a =
+  sz = size n1
+  for i. if (ordinal i) < sz
+    then xs1.(fromOrdinal n1 $ ordinal i)
+    else xs2.(fromOrdinal n2 $ (ordinal i) - sz)
+
+def yPlot2Concatenate (ys1:n1=>Float) (ys2:n2=>Float) : Plot n3 Float Float Unit =
+  xs = for i. IToF $ ordinal i
+  xyPlot xs (array_concat ys1 ys2)
+
+%time
+:html showPlot $ (yPlot2Concatenate series forecast_means) : Plot (Fin 409) _ _ _
+
+-- The upper 95%-ile on the first dimension.  Is there a way to constrain
+-- the argument to be (equivalent to) a Gaussian (Fin 1)?
+def upper_p95 (marginal: Gaussian (Fin 1)) : Float =
+  mean = (getAt #mean marginal).(fromOrdinal _ 0)
+  variance = (getAt #covariance marginal).(fromOrdinal _ 0).(fromOrdinal _ 0)
+  scale = 1.64  -- Approximate probit(0.95)
+  mean + sqrt variance * scale
+
+forecast_p95s = for i. upper_p95 forecast.i
+
+def yPlot2Overlay (ys1:n1=>Float) (ys2:n2=>Float) : Plot n3 Float Float Unit =
+  xs1 = for i:n1. IToF $ ordinal i
+  xs2 = for i:n2. IToF $ ordinal i
+  xyPlot (array_concat xs1 xs2) (array_concat ys1 ys2)
+
+%time
+:html showPlot $ (yPlot2Overlay forecast_means forecast_p95s) : Plot (Fin 100) _ _ _
+
+def plotSeriesAndForecast
+      (series: n1=>Float)
+      (forecast: n2=>Gaussian _)
+      (intermediate: Type)
+      : Plot n3 Float Float Float =
+  forecast_means = for i. (getAt #mean forecast.i).(fromOrdinal _ 0)
+  forecast_p95s = for i. upper_p95 forecast.i
+  xs1 = for i:n1. IToF $ ordinal i
+  xs2 = for i:n2. IToF $ size n1 + ordinal i
+  (xycPlot (array_concat xs1 $ (array_concat xs2 xs2) : intermediate => _)
+           (array_concat series $ (array_concat forecast_means forecast_p95s) : intermediate => _)
+           $ (array_concat (for i:n1. 0.0) $ (array_concat (for i:n2. 0.5) (for i:n2. 1.0)) : intermediate => _))
+
+%time
+:html showPlot $ (plotSeriesAndForecast series forecast (Fin 100)) : Plot (Fin 459) _ _ _
+
+' Predictably, the random walk forecasts that on average the series
+will hold its last level.  On the scale of this series, the hard-coded
+drift rate of the random walk is negligible, so we see effectively no
+forecast uncertainty.
