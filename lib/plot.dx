@@ -87,7 +87,12 @@ blankPlot : Plot n Unit Unit Unit = { xs = blankData
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def autoScale (xs:n=>Float) : ScaledData n Float =
-  {scale = floatScale (minimum xs) (maximum xs), dat = xs}
+  max = maximum xs
+  min = minimum xs
+  -- Add 10% padding away from the plot area
+  space = (max - min) * 0.05
+  padding = maximum [space, max * 0.001, 0.000001]
+  {scale = floatScale (min - padding) (max + padding), dat = xs}
 
 def setXData (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c=
   -- We can't use `setAt` here because we're changing the type
