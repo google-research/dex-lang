@@ -1076,20 +1076,68 @@ computeElemCount (EmptyAbs Empty) =
   -- still compute `1`, but it might emit decls along the way.
   return $ IdxRepVal 1
 computeElemCount idxNest = do
-  polySize <- liftImmut $ elemCountCPoly idxNest
+  idxNest' <- indexStructureWithoutProjectElt idxNest
+  polySize <- liftImmut $ elemCountCPoly idxNest'
   A.emitCPoly polySize
 
-computeOffset :: (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
-computeOffset (Abs Empty UnitE) [] = return $ IdxRepVal 0
-computeOffset (Abs (Nest b bs) UnitE) (i:is) = do
-  rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
-    rest' <- applySubst s $ EmptyAbs bs
-    Abs b' <$> elemCountCPoly rest'
-  significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
-  remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
-  otherOffsets <- computeOffset remainingIdxStructure is
-  iadd significantOffset otherOffsets
-computeOffset _ _ = error "zip error"
+-- XXX: We need this wrapper because the actual index
+-- indexStructureWithoutProjectElt' uses buildScoped, which DestM doesn't
+-- implement. At least if we split out Builder into two classes then it would be
+-- obviously needed. As it is it's a runtime error.
+indexStructureWithoutProjectElt
+  :: (Emits n, Builder m)
+  =>  IndexStructure n -> m n (IndexStructure n)
+indexStructureWithoutProjectElt idxNest = do
+  Abs decls idxNest' <- liftBuilder $ liftM fromDistinctAbs $ buildScoped do
+    indexStructureWithoutProjectElt' (sink idxNest)
+  emitDecls decls idxNest'
+
+-- we can't turn types into polynomials if they contain `ProjectElt` atoms, so
+-- we traverse the index structure and emit any `ProjectElt` occurrences so we
+-- just have variables instead.
+-- TODO: can we just get rid of `ProjectElt`? Is causes many headaches like these.
+indexStructureWithoutProjectElt'
+  :: (Emits n, Builder m)
+  =>  IndexStructure n -> m n (IndexStructure n)
+indexStructureWithoutProjectElt' (Abs Empty UnitE) = return $ EmptyAbs Empty
+indexStructureWithoutProjectElt' (Abs (Nest (b:>ty) rest) UnitE) = do
+  ty' <- indexTyWithoutProjectElt ty
+  Abs decls idxNest <- liftImmut $ refreshBinders (b:>ty') \b' s -> do
+    rest' <- applySubst s $ Abs rest UnitE
+    DistinctAbs decls (Abs restNoProj UnitE) <- buildScoped $
+      indexStructureWithoutProjectElt' (sink rest')
+    -- this should succeed because we shouldn't have a `ProjectElt` that depends on an index
+    PairB decls' b'' <- return $ ignoreHoistFailure $ exchangeBs $ PairB b' decls
+    return $ Abs decls' $ Abs (Nest b'' restNoProj) UnitE
+  emitDecls decls idxNest
+
+indexTyWithoutProjectElt :: forall n m . (Emits n, Builder m) =>  Type n -> m n (Type n)
+indexTyWithoutProjectElt ty = case ty of
+  Var v -> return $ Var v
+  ProjectElt idxs v -> liftM Var $ emit $ Atom $ ProjectElt idxs v
+  TC  con -> TC  <$> mapM rec con
+  Con con -> Con <$> mapM rec con
+  _ -> error $ "not implemented " ++ pprint ty
+  where
+    rec :: Type n -> m n (Type n)
+    rec = indexTyWithoutProjectElt
+
+computeOffset :: forall m n. (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
+computeOffset idxNest idxs = do
+  idxNest' <- indexStructureWithoutProjectElt idxNest
+  rec idxNest' idxs
+  where
+   rec :: IndexStructure n -> [AtomName n] -> m n (Atom n)
+   rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
+   rec (Abs (Nest b bs) UnitE) (i:is) = do
+     rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
+       rest' <- applySubst s $ EmptyAbs bs
+       Abs b' <$> elemCountCPoly rest'
+     significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
+     remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
+     otherOffsets <- rec remainingIdxStructure is
+     iadd significantOffset otherOffsets
+   rec _ _ = error "zip error"
 
 elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n)
                => IndexStructure n -> m n (A.ClampPolynomial n)
