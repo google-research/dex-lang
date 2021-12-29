@@ -16,7 +16,7 @@ julia> evaluate(raw"sum $ for i. exp [log 2.0, log 4.0].i")
 ## `DexModule` run a whole bunch of Dex code defining a module.
 Similar to `evaluate`, `DexModule` takes a string full of Dex code and runs it.
 However, DexModule is a bit more powerful.
-It allowed you to run multiple expressions, and returns a namespaced module object that you can query to get variables out from.
+It allows you to run multiple expressions, and returns a namespaced module object that you can query to get variables out from.
 
 
 ```julia
@@ -77,8 +77,8 @@ Int32
 
 It is not presently possible to `juliaize`/`dexize` arrays (but you can use them / get them as the input/output of `NativeFunction`s, see below).
 
-You can also use [`convert`](https://docs.julialang.org/en/v1/manual/conversion-and-promotion/#Conversion) to convert between `Atom`sand Julia objects.
-When converting to a Julia typeit will make the minimal change from the Dex type to get to the type you requested.
+You can also use [`convert`](https://docs.julialang.org/en/v1/manual/conversion-and-promotion/#Conversion) to convert between `Atom`s and Julia objects.
+When converting to a Julia type it will make the minimal change from the Dex type to get to the type you requested.
 ```julia
 julia> typeof(convert(Integer, m.x))
 Int32
@@ -93,8 +93,8 @@ julia> convert(Number, convert(Atom, 1.5))
 1.5
 ```
 
-To convert function `Atom`s into something you can execute as if it was a regular julia function use `NativeFunction`.
-This will compile it and handing inputs and outputs without needing to del with `Atom`s directly.
+To convert function `Atom`s into something you can execute as if it was a regular Julia function use `NativeFunction`.
+This will compile it and handle inputs and outputs without needing to deal with `Atom`s directly.
 
 ```julia
 julia> const add_two = NativeFunction(m.addTwo)
@@ -107,18 +107,17 @@ julia> add_two([0f0, 10f0, 100f0])
  102.0
 ```
 
-**Performance Note:** at present, when passing multidimensional arrays to or from a `NativeFunction` they are copied.
-This is due to Dex using C memory layout, and Julia's default `Array` using Fortran memory layout.
+**Performance Note:** at present, passing multidimensional arrays to or from a `NativeFunction` copies them.
+This is due to Dex using the C memory layout, while Julia's default `Array` uses the Fortran memory layout.
 We hope to address this in future versions.
 
-## `dex_func` compile Dex code directly into a function you can call from julia.
+## `dex_func` compile Dex code directly into a function you can call from Julia.
 
-The `dex_func` [string macro](https://docs.julialang.org/en/v1/manual/metaprogramming/#Non-Standard-String-Literals) allows you to define a function in Dex that you can then call from julia.
+The `dex_func` [string macro](https://docs.julialang.org/en/v1/manual/metaprogramming/#Non-Standard-String-Literals) allows you to define a function in Dex that you can then call from Julia.
 The function type it defines is a `NativeFunction` as described above.
 In functionality, `dex_func` is very similar to `NativeFunction ∘ evaluate` except that it does a whole ton of the work at parse time -- including compiling the Dex function.
 
-You can use it to define either named functions.
-Both in long form:
+You can use it to define named functions in long form:
 ```julia
 julia> dex_func"""
               def myTranspose (n: Int) ?-> (m: Int) ?->
@@ -153,6 +152,6 @@ julia> map(dex_func"\x:Float. pow 2.0 x", [1f0, 2f0,  3f0])
  8.0
 ```
 
-By adding a `c` flag after the string for a named function (in either long or short form), you can make it declared as const.
-Which is [a good idea if declaring it at global scope](https://docs.julialang.org/en/v1/manual/performance-tips/#Avoid-global-variables).
+By adding a `c` flag after the string for a named function (in either long or short form), you can declare it as const.
+This is [a good idea if declaring it at global scope](https://docs.julialang.org/en/v1/manual/performance-tips/#Avoid-global-variables).
 For example: `dex_func"inc = \a:Int. a + 1"c`
