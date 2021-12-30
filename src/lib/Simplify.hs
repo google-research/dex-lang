@@ -15,6 +15,8 @@ module Simplify
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
+import qualified Data.Map.Strict as M
+import qualified Data.List.NonEmpty as NE
 
 import Err
 
@@ -26,6 +28,8 @@ import Interpreter (traverseSurfaceAtomNames)
 import Util (enumerate)
 import Linearize
 import Transpose
+import LabeledItems
+import Util (restructure)
 
 -- === simplification monad ===
 
@@ -98,25 +102,20 @@ applyDataResults (Abs bs evaluated) x = do
 -- === All the bits of IR  ===
 
 simplifyDecl ::  (Emits o, Simplifier m) => Decl i i' -> m i' o a -> m i o a
-simplifyDecl (Let b (DeclBinding ann _ expr)) cont = case ann of
-  NoInlineLet -> do
-    x <- simplifyStandalone expr
-    v <- emitDecl (getNameHint b) NoInlineLet (Atom x)
-    extendSubst (b@>Rename v) cont
-  _ -> do
-    x <- simplifyExpr expr
-    extendSubst (b@>SubstVal x) cont
+simplifyDecl (Let b (DeclBinding _ _ expr)) cont = do
+  x <- simplifyExpr expr
+  extendSubst (b@>SubstVal x) cont
 
 simplifyDecls ::  (Emits o, Simplifier m) => Nest Decl i i' -> m i' o a -> m i o a
 simplifyDecls Empty cont = cont
 simplifyDecls (Nest decl rest) cont = simplifyDecl decl $ simplifyDecls rest cont
 
-simplifyStandalone :: Simplifier m => Expr i -> m i o (Atom o)
-simplifyStandalone (Atom (Lam (LamExpr (LamBinder b argTy arr Pure) body))) = do
+_simplifyStandalone :: Simplifier m => Expr i -> m i o (Atom o)
+_simplifyStandalone (Atom (Lam (LamExpr (LamBinder b argTy arr Pure) body))) = do
   argTy' <- substM argTy
   buildPureLam (getNameHint b) arr argTy' \v ->
     extendSubst (b@>Rename v) $ simplifyBlock body
-simplifyStandalone block =
+_simplifyStandalone block =
   error $ "@noinline decorator applied to non-pure-function" ++ pprint block
 
 simplifyExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
@@ -125,7 +124,7 @@ simplifyExpr expr = case expr of
     x' <- simplifyAtom x
     f' <- simplifyAtom f
     simplifyApp f' x'
-  Op  op  -> mapM simplifyAtom op >>= emitOp
+  Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
   Case e alts resultTy eff -> do
@@ -243,6 +242,34 @@ simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
           (newResult, newResultTy, reconAbs) <- telescopicCapture locals result
           let block = Block (BlockAnn $ sink newResultTy) decls (Atom newResult)
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
+
+-- TODO: come up with a coherent strategy for ordering these various reductions
+simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
+simplifyOp op = case op of
+  RecordCons left right ->
+    getType right >>= \case
+      RecordTy (NoExt rightTys) -> do
+        -- Unpack, then repack with new arguments (possibly in the middle).
+        rightList <- getUnpacked right
+        let rightItems = restructure rightList rightTys
+        return $ Record $ left <> rightItems
+      _ -> error "not a record"
+  RecordSplit (LabeledItems litems) full ->
+    getType full >>= \case
+      RecordTy (NoExt fullTys) -> do
+        -- Unpack, then repack into two pieces.
+        fullList <- getUnpacked full
+        let LabeledItems fullItems = restructure fullList fullTys
+            splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+            left = M.intersectionWith splitLeft fullItems litems
+            splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
+            right = M.differenceWith splitRight fullItems litems
+        return $ Record $ Unlabeled $
+          [Record (LabeledItems left), Record (LabeledItems right)]
+      _ -> error "not a record"
+  CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
+    return $ Con $ Lit $ Int32Lit $ fromIntegral val
+  _ -> emitOp op
 
 simplifyHof :: (Emits o, Simplifier m) => Hof i -> m i o (Atom o)
 simplifyHof hof = case hof of
