@@ -17,6 +17,7 @@ import Control.Monad
 import Control.Monad.Reader
 import qualified Data.Map.Strict as M
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Set as S
 
 import Err
 
@@ -318,7 +319,92 @@ simplifyHof hof = case hof of
     ~(lam', IdentityRecon) <- simplifyLam lam
     -- TODO: simplify the result to remove functions introduced by linearization
     transpose lam'
+  CatchException lam -> do
+    (Lam (LamExpr b body), IdentityRecon) <- simplifyLam lam
+    dropSubst $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock $ body
   _ -> error $ "not implemented: " ++ pprint hof
 
 simplifyBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
 simplifyBlock (Block _ decls result) = simplifyDecls decls $ simplifyExpr result
+
+exceptToMaybeBlock :: (Emits o, Simplifier m) => Block i -> m i o (Atom o)
+exceptToMaybeBlock (Block (BlockAnn ty) decls result) = do
+  ty' <- substM ty
+  exceptToMaybeDecls ty' decls result
+exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr result
+exceptToMaybeBlock _ = error "impossible"
+
+exceptToMaybeDecls :: (Emits o, Simplifier m) => Type o -> Nest Decl i i' -> Expr i' -> m i o (Atom o)
+exceptToMaybeDecls _ Empty result = exceptToMaybeExpr result
+exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ _ rhs)) decls) finalResult = do
+  maybeResult <- exceptToMaybeExpr rhs
+  case maybeResult of
+    -- This case is just an optimization (but an important one!)
+    JustAtom _ x  ->
+      extendSubst (b@> SubstVal x) $ exceptToMaybeDecls resultTy decls finalResult
+    _ -> emitMaybeCase maybeResult (MaybeTy resultTy)
+          (return $ NothingAtom $ sink resultTy)
+          (\v -> extendSubst (b@> Rename v) $
+                   exceptToMaybeDecls (sink resultTy) decls finalResult)
+
+exceptToMaybeExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
+exceptToMaybeExpr expr = case expr of
+  Case e alts resultTy _ -> do
+    e' <- substM e
+    resultTy' <- substM $ MaybeTy resultTy
+    buildCase e' resultTy' \i vs -> do
+      Abs bs body <- return $ alts !! i
+      extendSubst (bs @@> map Rename vs) $ exceptToMaybeBlock body
+  Atom x -> do
+    x' <- substM x
+    ty <- getType x'
+    return $ JustAtom ty x'
+  Op (ThrowException _) -> do
+    ty <- substM expr >>= getType
+    return $ NothingAtom ty
+  Hof (For ann (Lam (LamExpr b body))) -> do
+    ty <- substM $ binderType b
+    maybes <- buildForAnn (getNameHint b) ann ty \i ->
+      extendSubst (b@>Rename i) $ exceptToMaybeBlock body
+    catMaybesE maybes
+  Hof (RunState s lam) -> do
+    s' <- substM s
+    Lam (BinaryLamExpr h ref body) <- return lam
+    result  <- emitRunState "ref" s' \h' ref' ->
+      extendSubst (h @> Rename h' <.> ref @> Rename ref') do
+        exceptToMaybeBlock body
+    (maybeAns, newState) <- fromPair result
+    -- TODO: figure out the return type (or have `emitMaybeCase` do it) rather
+    -- than do the whole subsitution here. Similarly in the RunWriter case.
+    a <- getType =<< substM expr
+    emitMaybeCase maybeAns (MaybeTy a)
+       (return $ NothingAtom $ sink a)
+       (\ans -> return $ JustAtom (sink a) $ PairVal (Var ans) (sink newState))
+  Hof (RunWriter monoid (Lam (BinaryLamExpr h ref body))) -> do
+    monoid' <- mapM substM monoid
+    accumTy <- substM =<< (getReferentTy $ EmptyAbs $ PairB h ref)
+    result <- emitRunWriter "ref" accumTy monoid' \h' ref' ->
+      extendSubst (h @> Rename h' <.> ref @> Rename ref') $
+        exceptToMaybeBlock body
+    (maybeAns, accumResult) <- fromPair result
+    a <- getType =<< substM expr
+    emitMaybeCase maybeAns (MaybeTy a)
+      (return $ NothingAtom $ sink a)
+      (\ans -> return $ JustAtom (sink a) $ PairVal (Var ans) (sink accumResult))
+  Hof (While (Lam (LamExpr b body))) ->
+    runMaybeWhile $ extendSubst (b@>SubstVal UnitVal) $ exceptToMaybeBlock body
+  _ -> do
+    expr' <- substM expr
+    hasExceptions expr' >>= \case
+      True -> error $ "Unexpected exception-throwing expression: " ++ pprint expr
+      False -> do
+        v <- emit expr'
+        ty <- getType v
+        return $ JustAtom ty (Var v)
+
+hasExceptions :: (EnvReader m, MonadFail1 m) => Expr n -> m n Bool
+hasExceptions expr = do
+  (EffectRow effs t) <- exprEffects expr
+  case t of
+    Nothing -> return $ ExceptionEffect `S.member` effs
+    Just _  -> error "Shouldn't have tail left"

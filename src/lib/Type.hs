@@ -202,7 +202,7 @@ instance Fallible m => Typer (TyperT m)
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class (SinkableE e, SubstE Name e) => HasType (e::E) where
+class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -736,13 +736,18 @@ typeCheckPrimOp op = case op of
     return TagRepTy
   ToEnum t x -> do
     x |: Word8Ty
-    TypeCon sourceName dataDefName [] <- checkTypeE TyKind t
-    DataDef _ _ dataConDefs <- lookupDataDef dataDefName
-    forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
-    return $ TypeCon sourceName dataDefName []
-  SumToVariant x -> do
-    SumTy cases <- getTypeE x
-    return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
+    t' <- checkTypeE TyKind t
+    case t' of
+      TypeCon _ dataDefName [] -> do
+        DataDef _ _ dataConDefs <- lookupDataDef dataDefName
+        forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
+      VariantTy _ -> return ()  -- TODO: check empty payload
+      SumTy cases -> forM_ cases \cty -> checkAlphaEq cty UnitTy
+      _ -> error $ "Not a sum type: " ++ pprint t'
+    return t'
+  SumToVariant x -> getTypeE x >>= \case
+    SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
+    ty -> error $ "Not a sum type: " ++ pprint ty
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)

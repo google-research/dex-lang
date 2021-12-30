@@ -32,7 +32,7 @@ module Builder (
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
-  buildCase, buildSplitCase,
+  buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
    emitSourceMap, emitSynthCandidates,
@@ -47,7 +47,7 @@ module Builder (
   emitRunWriter, mCombine, emitRunState, emitRunReader, buildFor, unzipTab, buildForAnn,
   zeroAt, zeroLike, maybeTangentType, tangentType,
   addTangent, updateAddAt, tangentBaseMonoidFor,
-  buildEffLam,
+  buildEffLam, catMaybesE, runMaybeWhile,
   ReconAbs, ReconstructAtom (..), buildNullaryPi, buildNaryPi
   ) where
 
@@ -1119,6 +1119,128 @@ indexSetSize ty = case ty of
     sizes <- traverse indexSetSize types
     foldM iadd (IdxRepVal 0) sizes
   _ -> error $ "Not an (implemented) index set " ++ pprint ty
+
+-- === pseudo-prelude ===
+
+-- Bool -> (Unit -> {|eff} a) -> (() -> {|eff} a) -> {|eff} a
+-- XXX: the first argument is the true case, following the
+-- surface-level `if ... then ... else ...`, but the order
+-- is flipped in the actual `Case`, because False acts like 0.
+-- TODO: consider a version that figures out the resul type itself.
+emitIf :: (Emits n, ScopableBuilder m)
+       => Atom n
+       -> Type n
+       -> (forall l. (Emits l, DExt n l) => m l (Atom l))
+       -> (forall l. (Emits l, DExt n l) => m l (Atom l))
+       -> m n (Atom n)
+emitIf predicate resultTy trueCase falseCase = do
+  predicate' <- emitOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
+  buildCase predicate' resultTy \i [_] ->
+    case i of
+      0 -> falseCase
+      1 -> trueCase
+      _ -> error "should only have two cases"
+
+emitMaybeCase :: (Emits n, ScopableBuilder m)
+              => Atom n -> Type n
+              -> (forall l. (Emits l, DExt n l) =>               m l (Atom l))
+              -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
+              -> m n (Atom n)
+emitMaybeCase scrut resultTy nothingCase justCase = do
+  buildCase scrut resultTy \i [v] ->
+    case i of
+      0 -> nothingCase
+      1 -> justCase v
+      _ -> error "should be a binary scrutinee"
+
+-- Maybe a -> a
+fromJustE :: (Emits n, Builder m) => Atom n -> m n (Atom n)
+fromJustE x = liftEmitBuilder do
+  MaybeTy a <- getType x
+  emitMaybeCase x a
+    (emitOp $ ThrowError $ sink a)
+    (return . Var)
+
+-- Maybe a -> Bool
+isJustE :: (Emits n, Builder m) => Atom n -> m n (Atom n)
+isJustE x = liftEmitBuilder $
+  emitMaybeCase x BoolTy (return FalseAtom) (\_ -> return TrueAtom)
+
+-- Monoid a -> (n=>a) -> a
+reduceE :: (Emits n, Builder m) => BaseMonoid n -> Atom n -> m n (Atom n)
+reduceE monoid xs = liftEmitBuilder do
+  TabTy n a <- getType xs
+  a' <- return $ ignoreHoistFailure $ hoist n a
+  getSnd =<< emitRunWriter "ref" a' monoid \_ ref ->
+    buildFor "i" Fwd (sink $ binderType n) \i -> do
+      x <- emit $ App (sink xs) (Var i)
+      emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) $ Var x
+
+andMonoid :: EnvReader m => m n (BaseMonoid n)
+andMonoid = do
+  combiner <- liftBuilder $
+    buildLam "_" PlainArrow BoolTy Pure \x ->
+      buildLam "_" PlainArrow BoolTy Pure \y -> do
+        emitOp $ ScalarBinOp BAnd (sink $ Var x) (Var y)
+  return $ BaseMonoid TrueAtom combiner
+
+-- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
+mapE :: (Emits n, ScopableBuilder m)
+     => (forall l. (Emits l, DExt n l) => Atom l -> m l (Atom l))
+     -> Atom n -> m n (Atom n)
+mapE f xs = do
+  TabTy n _ <- getType xs
+  buildFor (getNameHint n) Fwd (binderType n) \i -> do
+    x <- emit $ App (sink xs) $ Var i
+    f $ Var x
+
+-- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
+catMaybesE :: (Emits n, Builder m) => Atom n -> m n (Atom n)
+catMaybesE maybes = do
+  TabTy n (MaybeTy a) <- getType maybes
+  justs <- liftEmitBuilder $ mapE isJustE maybes
+  monoid <- andMonoid
+  allJust <- reduceE monoid justs
+  liftEmitBuilder $ emitIf allJust (MaybeTy $ TabTy n a)
+    (JustAtom (sink $ TabTy n a) <$> mapE fromJustE (sink maybes))
+    (return (NothingAtom $ sink $ TabTy n a))
+
+emitWhile :: (Emits n, ScopableBuilder m)
+          => (forall l. (Emits l, DExt n l) => m l (Atom l))
+          -> m n ()
+emitWhile body = do
+  eff <- getAllowedEffects
+  lam <- buildNullaryLam eff body
+  void $ emit $ Hof $ While lam
+
+-- Dex implementation, for reference
+-- def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
+--   hadError = yieldState False \ref.
+--     while do
+--       ans = liftState ref body ()
+--       case ans of
+--         Nothing ->
+--           ref := True
+--           False
+--         Just cond -> W8ToB cond
+--   if hadError
+--     then Nothing
+--     else Just ()
+
+runMaybeWhile :: (Emits n, ScopableBuilder m)
+              => (forall l. (Emits l, DExt n l) => m l (Atom l))
+              -> m n (Atom n)
+runMaybeWhile body = do
+  hadError <- getSnd =<< emitRunState "ref" FalseAtom \_ ref -> do
+    emitWhile do
+      ans <- body
+      emitMaybeCase ans Word8Ty
+        (emitOp (PrimEffect (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
+        (return . Var)
+    return UnitVal
+  emitIf hadError (MaybeTy UnitTy)
+    (return $ NothingAtom UnitTy)
+    (return $ JustAtom    UnitTy UnitVal)
 
 -- === capturing closures with telescopes ===
 
