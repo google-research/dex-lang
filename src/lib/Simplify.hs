@@ -29,12 +29,12 @@ import Transpose
 
 -- === simplification monad ===
 
-class (Builder2 m, SubstReader AtomSubstVal m) => Simplifier m
+class (ScopableBuilder2 m, SubstReader AtomSubstVal m) => Simplifier m
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM' :: SubstReaderT AtomSubstVal (BuilderT HardFailM) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender
-           , EnvReader, SubstReader AtomSubstVal, MonadFail)
+           , Builder, EnvReader, SubstReader AtomSubstVal, MonadFail)
 
 runSimplifyM :: Distinct n => Env n -> SimplifyM n n (e n) -> e n
 runSimplifyM bindings cont =
@@ -59,8 +59,7 @@ instance Fallible (SimplifyM i o) where
   addErrCtx _ _ = undefined
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
-instance Builder (SimplifyM i) where
-  emitDecl hint ann expr = SimplifyM $ emitDecl hint ann expr
+instance ScopableBuilder (SimplifyM i) where
   buildScoped cont = SimplifyM $ SubstReaderT $ ReaderT \env ->
     buildScoped $ runSubstReaderT (sink env) (runSimplifyM' cont)
 

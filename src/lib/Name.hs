@@ -25,7 +25,7 @@ module Name (
   extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
-  SubstV, InplaceT, extendInplaceT, extendInplaceTLocal,
+  SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
   liftBetweenInplaceTs, emitInplaceT,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),

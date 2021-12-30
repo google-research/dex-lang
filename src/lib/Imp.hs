@@ -313,7 +313,11 @@ toImpOp maybeDest op = case op of
         dest <- allocDest maybeDest resultTy
         p' <- fromScalarAtom p
         p'' <- cast p' tagBT
-        emitSwitch p'' [x, y] (\arg -> copyAtom (sink dest) (sink arg))
+        -- XXX: this is `[y, x]` and not `[x, y]`! `Select` gives the first
+        -- element if the predicate is `1` ("true") and the second if it's `0`
+        -- ("false") but the binary case of the n-ary `switch` does the
+        -- opposite.
+        emitSwitch p'' [y, x] (\arg -> copyAtom (sink dest) (sink arg))
         destToAtom dest
         where (BaseTy tagBT) = TagRepTy
   RecordCons   _ _ -> error "Unreachable: should have simplified away"
@@ -582,11 +586,6 @@ instance Builder DestM where
     ty <- getType expr
     DestM $ emitInplaceT hint (DeclBinding ann ty expr) \b binding ->
       DestEmissions [] Empty $ Nest (Let b binding) Empty
-
-  -- We can't implement this because we'd have to throw away the pointer
-  -- binders. Maybe we should split builder into a separate decl-emitting thing
-  -- and a scoping thing.
-  buildScoped _ = error "not implemented"
 
 instance ExtOutMap Env DestEmissions where
   extendOutMap bindings (DestEmissions ptrInfo ptrs decls) =
@@ -888,9 +887,8 @@ loadDest (Con dest) = do
  case dest of
    BaseTypeRef ptr -> unsafePtrLoad ptr
    TabRef (Lam (LamExpr b body)) ->
-     buildLam (getNameHint b) TabArrow (binderType b) Pure \i -> do
-       Distinct <- getDistinct
-       body' <- applyAbs (sink $ Abs b body) i
+     liftEmitBuilder $ buildLam (getNameHint b) TabArrow (binderType b) Pure \i -> do
+       body' <- applySubst (b@>i) body
        result <- emitBlock body'
        loadDest result
    RecordRef xs -> Record <$> traverse loadDest xs
@@ -1076,47 +1074,39 @@ computeElemCount (EmptyAbs Empty) =
   -- still compute `1`, but it might emit decls along the way.
   return $ IdxRepVal 1
 computeElemCount idxNest = do
-  idxNest' <- indexStructureWithoutProjectElt idxNest
+  idxNest' <- liftEmitBuilder $ indexStructureWithoutProjectElt idxNest
   polySize <- liftImmut $ elemCountCPoly idxNest'
   A.emitCPoly polySize
-
--- XXX: We need this wrapper because the actual index
--- indexStructureWithoutProjectElt' uses buildScoped, which DestM doesn't
--- implement. At least if we split out Builder into two classes then it would be
--- obviously needed. As it is it's a runtime error.
-indexStructureWithoutProjectElt
-  :: (Emits n, Builder m)
-  =>  IndexStructure n -> m n (IndexStructure n)
-indexStructureWithoutProjectElt idxNest = do
-  Abs decls idxNest' <- liftBuilder $ liftM fromDistinctAbs $ buildScoped do
-    indexStructureWithoutProjectElt' (sink idxNest)
-  emitDecls decls idxNest'
 
 -- we can't turn types into polynomials if they contain `ProjectElt` atoms, so
 -- we traverse the index structure and emit any `ProjectElt` occurrences so we
 -- just have variables instead.
 -- TODO: can we just get rid of `ProjectElt`? Is causes many headaches like these.
-indexStructureWithoutProjectElt'
-  :: (Emits n, Builder m)
+indexStructureWithoutProjectElt
+  :: (Emits n, ScopableBuilder m)
   =>  IndexStructure n -> m n (IndexStructure n)
-indexStructureWithoutProjectElt' (Abs Empty UnitE) = return $ EmptyAbs Empty
-indexStructureWithoutProjectElt' (Abs (Nest (b:>ty) rest) UnitE) = do
+indexStructureWithoutProjectElt (Abs Empty UnitE) = return $ EmptyAbs Empty
+indexStructureWithoutProjectElt (Abs (Nest (b:>ty) rest) UnitE) = do
   ty' <- indexTyWithoutProjectElt ty
   Abs decls idxNest <- liftImmut $ refreshBinders (b:>ty') \b' s -> do
     rest' <- applySubst s $ Abs rest UnitE
     DistinctAbs decls (Abs restNoProj UnitE) <- buildScoped $
-      indexStructureWithoutProjectElt' (sink rest')
+      indexStructureWithoutProjectElt (sink rest')
     -- this should succeed because we shouldn't have a `ProjectElt` that depends on an index
     PairB decls' b'' <- return $ ignoreHoistFailure $ exchangeBs $ PairB b' decls
     return $ Abs decls' $ Abs (Nest b'' restNoProj) UnitE
   emitDecls decls idxNest
 
-indexTyWithoutProjectElt :: forall n m . (Emits n, Builder m) =>  Type n -> m n (Type n)
+indexTyWithoutProjectElt
+  :: forall n m . (Emits n, Builder m)
+  =>  Type n -> m n (Type n)
 indexTyWithoutProjectElt ty = case ty of
   Var v -> return $ Var v
   ProjectElt idxs v -> liftM Var $ emit $ Atom $ ProjectElt idxs v
   TC  con -> TC  <$> mapM rec con
   Con con -> Con <$> mapM rec con
+  RecordTy ( NoExt types) -> RecordTy  <$> NoExt <$> mapM rec types
+  VariantTy (NoExt types) -> VariantTy <$> NoExt <$> mapM rec types
   _ -> error $ "not implemented " ++ pprint ty
   where
     rec :: Type n -> m n (Type n)
@@ -1124,7 +1114,7 @@ indexTyWithoutProjectElt ty = case ty of
 
 computeOffset :: forall m n. (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
 computeOffset idxNest idxs = do
-  idxNest' <- indexStructureWithoutProjectElt idxNest
+  idxNest' <- liftEmitBuilder $ indexStructureWithoutProjectElt idxNest
   rec idxNest' idxs
   where
    rec :: IndexStructure n -> [AtomName n] -> m n (Atom n)
