@@ -196,7 +196,12 @@ transposeOp op ct = case op of
         transposeAtom x ct'
         zero <- getType ct' >>= zeroAt
         void $ emitEff $ MPut zero
-  TabCon _ _ -> notImplemented
+  TabCon ty es -> do
+    TabTy b _ <- return ty
+    idxTy <- substNonlin $ binderType b
+    forM_ (enumerate es) \(ordinalIdx, e) -> do
+      i <- intToIndex idxTy (IdxRepVal $ fromIntegral ordinalIdx)
+      app ct i >>= transposeAtom e
   IndexRef     _ _      -> notImplemented
   ProjRef      _ _      -> notImplemented
   Select       _ _ _    -> notImplemented
