@@ -810,23 +810,23 @@ buildMonomorphicCase alts scrut resultTy = do
 buildSortedCase :: (Fallible1 m, Builder m, Emits n)
                  => Atom n -> [IndexedAlt n] -> Type n
                  -> m n (Atom n)
-buildSortedCase scrut alts resultTy = liftEmitBuilder do
+buildSortedCase scrut alts resultTy = do
   scrutTy <- getType scrut
   case scrutTy of
-    TypeCon _ _ _ -> buildMonomorphicCase alts scrut resultTy
+    TypeCon _ _ _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
         [] -> case tailName of
           Nothing ->
             -- We already know the type exactly, so just emit a case.
-            buildMonomorphicCase alts scrut resultTy
+            liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
           Just _ -> do
             -- Split off the types we don't know about, mapping them to a
             -- runtime error.
-            buildSplitCase types scrut resultTy
+            liftEmitBuilder $ buildSplitCase types scrut resultTy
               (\v -> do ListE alts' <- sinkM $ ListE alts
                         resultTy'   <- sinkM resultTy
-                        buildMonomorphicCase alts' (Var v) resultTy')
+                        liftEmitBuilder $ buildMonomorphicCase alts' (Var v) resultTy')
               (\_ -> do resultTy' <- sinkM resultTy
                         emitOp $ ThrowError resultTy')
         [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
@@ -835,10 +835,10 @@ buildSortedCase scrut alts resultTy = liftEmitBuilder do
             let left = LabeledItems $ M.intersectionWith splitLeft
                         (fromLabeledItems types) skippedItems
             checkNoTailOverlaps alts left
-            buildSplitCase left scrut resultTy
+            liftEmitBuilder $ buildSplitCase left scrut resultTy
               (\v -> do ListE alts' <- sinkM $ ListE alts
                         resultTy'   <- sinkM resultTy
-                        buildMonomorphicCase alts' (Var v) resultTy')
+                        liftEmitBuilder $ buildMonomorphicCase alts' (Var v) resultTy')
               (\v -> do tailAlt' <- sinkM tailAlt
                         applyNaryAbs tailAlt' [v] >>= emitBlock )
         _ -> throw TypeErr "Can't specify more than one variant tail pattern."

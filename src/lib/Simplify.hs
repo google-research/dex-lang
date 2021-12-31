@@ -15,6 +15,7 @@ module Simplify
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
+import Data.Foldable (toList)
 import qualified Data.Map.Strict as M
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
@@ -268,6 +269,38 @@ simplifyOp op = case op of
         return $ Record $ Unlabeled $
           [Record (LabeledItems left), Record (LabeledItems right)]
       _ -> error "not a record"
+  VariantLift leftTys@(LabeledItems litems) right -> getType right >>= \case
+    VariantTy (NoExt rightTys) -> do
+      let fullRow = NoExt $ leftTys <> rightTys
+      let labels = toList $ reflectLabels rightTys
+      -- Emit a case statement (ordered by the arg type) that lifts the type.
+      buildCase right (VariantTy fullRow) \caseIdx [v] -> do
+          let (label, i) = labels !! caseIdx
+          let idx = case M.lookup label litems of Nothing  -> i
+                                                  Just tys -> i + length tys
+          let fullRow' = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE fullRow
+          return $ Variant fullRow' label idx (Var v)
+    _ -> error "not a variant"
+  VariantSplit leftTys@(LabeledItems litems) full -> getType full >>= \case
+    VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
+      -- Emit a case statement (ordered by the arg type) that splits into the
+      -- appropriate piece, changing indices as needed.
+      VariantTy resultRow <- getType $ Op op
+      let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
+      let rightTys = LabeledItems $ M.differenceWith splitRight fullItems litems
+      let labels = toList $ reflectLabels fullTys
+      buildCase full (VariantTy resultRow) \caseIdx [v] -> do
+        let (label, i) = labels !! caseIdx
+        let resultRow' = fromExtLabeledItemsE $ sink $ ExtLabeledItemsE resultRow
+        case M.lookup label litems of
+          Just tys -> if i < length tys
+            then return $ Variant resultRow' InternalSingletonLabel 0 $
+              Variant (NoExt $ fmap sink leftTys) label i (Var v)
+            else return $ Variant resultRow' InternalSingletonLabel 1 $
+              Variant (NoExt $ fmap sink rightTys) label (i - length tys) $ Var v
+          Nothing -> return $ Variant resultRow' InternalSingletonLabel 1 $
+            Variant (NoExt $ fmap sink rightTys) label i $ Var v
+    _ -> error "Not a variant type"
   CastOp (BaseTy (Scalar Int32Type)) (Con (Lit (Int64Lit val))) ->
     return $ Con $ Lit $ Int32Lit $ fromIntegral val
   _ -> emitOp op
