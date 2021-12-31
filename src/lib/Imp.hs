@@ -1212,9 +1212,12 @@ emitAlloc :: (ImpBuilder m, Emits n) => PtrType -> IExpr n -> m n (IExpr n)
 emitAlloc (addr, ty) n = emitInstr $ Alloc addr ty n
 
 buildBinOp :: (ImpBuilder m, Emits n)
-           => (Atom n -> Atom n -> BuilderM n (Atom n))
+           => (forall l. (Emits l, DExt n l) => Atom l -> Atom l -> BuilderM l (Atom l))
            -> IExpr n -> IExpr n -> m n (IExpr n)
-buildBinOp _ _ _ = undefined
+buildBinOp f x y = fromScalarAtom =<< liftBuilderImp do
+  x' <- toScalarAtom $ sink x
+  y' <- toScalarAtom $ sink y
+  f x' y'
 
 iaddI :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> m n (IExpr n)
 iaddI = buildBinOp iadd
