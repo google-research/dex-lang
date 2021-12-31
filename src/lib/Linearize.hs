@@ -362,12 +362,10 @@ linearizeOp op = case op of
   PtrOffset _ _          -> emitZeroT
   IOAlloc _ _            -> emitZeroT
   IOFree _               -> emitZeroT
-  -- TabCon ty xs           -> (TabCon ty <$> traverse la xs) `bindLin` emitOp
   Inject _               -> emitZeroT
   SliceOffset _ _        -> emitZeroT
   SliceCurry  _ _        -> emitZeroT
   VectorBinOp _ _ _      -> notImplemented
-  -- VectorPack  vals       -> (VectorPack  <$> traverse la vals) `bindLin` emitOp
   VectorIndex v i -> zipLin (la v) (pureLin i) `bindLin`
                        \(PairE v' i') -> emitOp $ VectorIndex v' i'
   UnsafeFromOrdinal _ _  -> emitZeroT
@@ -376,6 +374,13 @@ linearizeOp op = case op of
   ThrowError _           -> emitZeroT
   DataConTag _           -> emitZeroT
   ToEnum _ _             -> emitZeroT
+  TabCon ty xs -> do
+    ty' <- substM ty
+    seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
+      emitOp $ TabCon (sink ty') xs'
+  VectorPack xs ->
+    seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
+      emitOp $ VectorPack xs'
   CastOp t v             -> do
     vt <- getType =<< substM v
     t' <- substM t
