@@ -150,10 +150,13 @@ exprEffects expr = case expr of
     RunWriter _ f -> rwsFunEffects Writer f
     RunReader _ f -> rwsFunEffects Reader f
     RunState  _ f -> rwsFunEffects State  f
+    PTileReduce _ _ _ -> return mempty
     RunIO f -> do
-      Pi (PiType b effs resultTy) <- getType f
-      return $ deleteEff IOEffect $ ignoreHoistFailure $ hoist b effs
-    CatchException f -> undefined
+      effs <- functionEffs f
+      return $ deleteEff IOEffect effs
+    CatchException f -> do
+      effs <- functionEffs f
+      return $ deleteEff ExceptionEffect effs
   Case _ _ _ effs -> return effs
 
 functionEffs :: EnvReader m => Atom n -> m n (EffectRow n)
