@@ -150,21 +150,26 @@ simplifyExpr expr = case expr of
 
 defuncCase :: (Emits o, Simplifier m) => Atom o -> [Alt i] -> Type o -> m i o (Atom o)
 defuncCase scrut alts resultTy = do
-  (alts', recons) <- unzip <$> mapM simplifyAbs alts
-  closureTys <- mapM getAltTy alts'
+  split <- splitDataComponents resultTy
+  (alts', recons) <- unzip <$> mapM (simplifyAlt split) alts
+  closureTys <- mapM getAltNonDataTy alts'
   let closureSumTy = SumTy closureTys
+  let newNonDataTy = nonDataTy split
   alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureSumTy i alt
   eff <- getAllowedEffects -- TODO: more precise effects
-  sumVal <- liftM Var $ emit $ Case scrut alts'' closureSumTy eff
+  caseResult <- liftM Var $ emit $
+                  Case scrut alts'' (PairTy (dataTy split) closureSumTy) eff
+  (dataVal, sumVal) <- fromPair caseResult
   reconAlts <- forM (zip closureTys recons) \(ty, recon) -> do
-                 buildUnaryAtomAlt ty \v -> applyRecon (sink recon) $ Var v
-  return $ ACase sumVal reconAlts resultTy
-
+    buildUnaryAtomAlt ty \v -> applyRecon (sink recon) (Var v)
+  let nonDataVal = ACase sumVal reconAlts newNonDataTy
+  Distinct <- getDistinct
+  fromSplit split dataVal nonDataVal
   where
-    getAltTy :: EnvReader m => Alt n -> m n (Type n)
-    getAltTy (Abs bs body) = liftImmut $ liftSubstEnvReaderM do
+    getAltNonDataTy :: EnvReader m => Alt n -> m n (Type n)
+    getAltNonDataTy (Abs bs body) = liftImmut $ liftSubstEnvReaderM do
       substBinders bs \bs' -> do
-        ty <- getTypeSubst body
+        ~(PairTy _ ty) <- getTypeSubst body
         -- Result types of simplified abs should be hoistable past binder
         return $ ignoreHoistFailure $ hoist bs' ty
 
@@ -172,7 +177,32 @@ defuncCase scrut alts resultTy = do
     injectAltResult sumTy con (Abs bs body) = liftBuilder do
       buildAlt (sink $ EmptyAbs bs) \vs -> do
         originalResult <- emitBlock =<< applySubst (bs@@>vs) body
-        return $ Con $ SumCon (sink sumTy) con originalResult
+        (dataResult, nonDataResult) <- fromPair originalResult
+        return $ PairVal dataResult $ Con $ SumCon (sink sumTy) con nonDataResult
+
+    -- similar to `simplifyAbs` but assumes that the result is a pair whose
+    -- first component is data. The reconstruction returned only applies to the
+    -- second component.
+    simplifyAlt
+      :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+      => SplitDataNonData n -> Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
+    simplifyAlt split (Abs bs body) = fromPairE <$> liftImmut do
+      substBinders bs \bs' -> do
+        DistinctAbs decls result <- buildScoped $ simplifyBlock body
+        -- TODO: this would be more efficient if we had the two-computation version of buildScoped
+        extendEnv (toEnvFrag decls) do
+          let locals = toScopeFrag bs' >>> toScopeFrag decls
+          -- TODO: this might be too cautious. The type only needs to be hoistable
+          -- above the decls. In principle it can still mention vars from the lambda
+          -- binders.
+          Distinct <- getDistinct
+          (resultData, resultNonData) <- toSplit split result
+          (newResult, newResultTy, reconAbs) <- telescopicCapture locals resultNonData
+          resultDataTy <- (ignoreHoistFailure . hoist decls) <$> getType resultData
+          let block = Block (BlockAnn $ PairTy (sink resultDataTy) (sink newResultTy))
+                            decls
+                            (Atom (PairVal resultData newResult))
+          return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
 simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
 simplifyApp f x = case f of
@@ -222,6 +252,41 @@ simplifyBinaryLam binaryLam = do
       dropSubst $ simplifyAbs $ Abs (Nest b1 (Nest b2 Empty)) body
   let binaryLam' = Lam $ LamExpr b1' $ AtomicBlock $ Lam $ LamExpr b2' body'
   return (binaryLam', recon)
+
+data SplitDataNonData n = SplitDataNonData
+  { dataTy    :: Type n
+  , nonDataTy :: Type n
+  , toSplit   :: forall m l . (Fallible1 m, EnvReader m) => Atom l -> m l (Atom l, Atom l)
+  , fromSplit :: forall m l . (Fallible1 m, EnvReader m) => Atom l -> Atom l -> m l (Atom l) }
+
+-- bijection between that type and a (data, non-data) pair type.
+splitDataComponents :: EnvReader m => Type n -> m n (SplitDataNonData n)
+splitDataComponents = \case
+  ProdTy tys -> do
+    splits <- mapM splitDataComponents tys
+    return $ SplitDataNonData
+      { dataTy    = ProdTy $ map dataTy    splits
+      , nonDataTy = ProdTy $ map nonDataTy splits
+      , toSplit = \xProd -> do
+          xs <- getUnpacked xProd
+          (ys, zs) <- unzip <$> forM (zip xs splits) \(x, split) -> toSplit split x
+          return (ProdVal ys, ProdVal zs)
+      , fromSplit = \xsProd ysProd -> do
+          xs <- getUnpacked xsProd
+          ys <- getUnpacked ysProd
+          zs <- forM (zip (zip xs ys) splits) \((x, y), split) -> fromSplit split x y
+          return $ ProdVal zs }
+  ty -> isData ty >>= \case
+    True -> return $ SplitDataNonData
+      { dataTy = ty
+      , nonDataTy = UnitTy
+      , toSplit = \x -> return (x, UnitVal)
+      , fromSplit = \x _ -> return x }
+    False -> return $ SplitDataNonData
+      { dataTy = UnitTy
+      , nonDataTy = ty
+      , toSplit = \x -> return (UnitVal, x)
+      , fromSplit = \_ x -> return x }
 
 simplifyAbs
   :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)

@@ -139,6 +139,7 @@ data Atom (n::S) =
  | Con (Con n)
  | TC  (TC  n)
  | Eff (EffectRow n)
+   -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
  | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)

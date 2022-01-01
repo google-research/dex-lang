@@ -954,3 +954,13 @@ interface AssociatedPermutedParams a c
 > Please report this at github.com/google-research/dex-lang/issues
 >
 > Permuted or incomplete explicit type binders are not supported yet.
+
+-- checks that mixing non-data values into the results of case expressions don't
+-- prevent them from later being used in types.
+:p
+  x = 1 + 1
+  (n, _) = case x > 1 of
+    True  -> (x, \x:Int. x)
+    False -> (x, \x:Int. x)
+  for i:(Fin n). 1.0
+> [1., 1.]
