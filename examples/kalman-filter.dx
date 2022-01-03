@@ -450,3 +450,79 @@ def semilocal_linear_trend
   , obsModel = obsModel
   , latentsPrior = latents_prior
   }
+
+' And now we make up some vaguely plausible parameters for it and try a fit.
+
+init_latent_prior = makeGaussianFromCovariance [150000, 1000] [[10000 * 10000, 0], [0, 1000 * 1000]]
+semilocal_candidate = semilocal_linear_trend 1000 0.98 500 100 1000 init_latent_prior
+
+%time
+semilocal_candidate_fit = kalmanFilter (for i j. series.i) semilocal_candidate
+
+last_semilocal_candidate_fit = getAt #predictedLatents (semilocal_candidate_fit.(fromOrdinal (Fin 359) 358))
+
+%time
+semilocal_forecast : (Fin 50) => _ = (forecastMarginals semilocal_candidate last_semilocal_candidate_fit)
+
+%time
+:html showPlot $ plotSeriesAndForecast series semilocal_forecast
+
+' This model doesn't yet have much capacity for learning from the
+data: the only means by which the history can affect the forecast is
+by fitting the last latent state of the Kalman filter, after which the
+model basically follows the parameters we slapped down for it.
+
+' ## Learning
+
+' Now we can try learning the parameters in this model.  The first
+order of business is to try the maximum likelihood method, by gradient
+ascent.  The will maximize the probability of the observed data under
+this model, given the parameters.
+
+Params : Type =
+  { level_scale: Float
+  & autoregressive_coef: Float
+  & slope_mean: Float
+  & slope_scale: Float
+  & noise_level: Float
+  & init_level_mean: Float
+  & init_level_scale: Float
+  & init_slope_mean: Float
+  & init_slope_scale: Float
+  }
+
+def log_prob (params: Params) : LogProb =
+  init_level_scale = getAt #init_level_scale params
+  init_slope_scale = getAt #init_slope_scale params
+  init_latent_prior = (makeGaussianFromCovariance
+    [getAt #init_level_mean params, getAt #init_slope_mean params]
+    [[init_level_scale * init_level_scale, 0],
+     [0, init_slope_scale * init_slope_scale]])
+  model = (semilocal_linear_trend
+    (getAt #level_scale params)
+    (getAt #autoregressive_coef params)
+    (getAt #slope_mean params)
+    (getAt #slope_scale params)
+    (getAt #noise_level params)
+    init_latent_prior)
+  fit = kalmanFilter (for i j. series.i) model
+  marginals = for i. getAt #marginalEvidence fit.i
+  sum marginals
+
+start : Params =
+  { level_scale = 1000
+  , autoregressive_coef = 0.98
+  , slope_mean = 500
+  , slope_scale = 100
+  , noise_level = 1000
+  , init_level_mean = 150000
+  , init_level_scale = 10000
+  , init_slope_mean = 1000
+  , init_slope_scale = 1000
+  }
+
+%time
+log_prob start
+
+%time
+grad log_prob start
