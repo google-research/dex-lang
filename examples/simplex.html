@@ -1,0 +1,930 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but ð¤·
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h1>Simplex Method</h1>
+<p>The goal of this demo is to show off Dex's ability to work with
+structured matrices without using integers to denote rows, columns, or slices.
+This is done using records to construct index sets.
+The benefit, in principle, is that this both annotates the code, and
+avoids indexing errors.</p>
+</div></div><div class="cell"><div class="prose-block"><p>This implementation roughly follows the two-stage algorithm outlined in
+<a href="http://web.mit.edu/15.053/www/AMP-Chapter-02.pdf">these notes</a>
+and <a href="http://www.eng.uwaterloo.ca/%7Esyde05/phase1.pdf">these notes</a>.</p>
+</div></div><div class="cell"><div class="prose-block"><p>This is a basic implementation, and doesn't allow equality constraints
+or bounded variables.</p>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h1>General utility functions.</h1>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Hopefully these instances can one day be generated automatically for
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- all record types.
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> a] <span class="type-name">Eq</span> {constraints<span class="symbol">:</span> cons <span class="symbol">|</span> objective<span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">|</span> extra<span class="command">:a</span>}
+  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>r1 r2<span class="symbol">.</span>
+    <span class="keyword">case</span> r1 <span class="keyword">of</span>
+      {<span class="symbol">|</span>objective<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>objective<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">True</span>
+          {<span class="symbol">|</span>extra<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>constraints<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      {<span class="symbol">|</span>extra<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>objective<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>extra<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r1 <span class="symbol">==</span> r2
+          {<span class="symbol">|</span>constraints<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      {<span class="symbol">|</span>constraints<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>objective<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>extra<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>constraints<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r1 <span class="symbol">==</span> r2
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Eq</span> vars<span class="symbol">,</span> <span class="type-name">Eq</span> cons] <span class="type-name">Eq</span> {variables<span class="command">:vars</span> <span class="symbol">|</span> slacks<span class="command">:cons</span> <span class="symbol">|</span> value<span class="symbol">:</span> <span class="type-name">Unit</span>}
+  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>r1 r2<span class="symbol">.</span>
+    <span class="keyword">case</span> r1 <span class="keyword">of</span>
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>variables<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r1 <span class="symbol">==</span> r2
+          {<span class="symbol">|</span>slacks<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>value<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>variables<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>slacks<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r1 <span class="symbol">==</span> r2
+          {<span class="symbol">|</span>value<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      {<span class="symbol">|</span>value<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>variables<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>slacks<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>value<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">True</span>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> [<span class="type-name">Eq</span> a<span class="symbol">,</span> <span class="type-name">Eq</span> b] <span class="type-name">Eq</span> {artificials<span class="symbol">:</span> a <span class="symbol">|</span> realvars<span class="symbol">:</span> b}
+  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>r1 r2<span class="symbol">.</span>
+    <span class="keyword">case</span> r1 <span class="keyword">of</span>
+      {<span class="symbol">|</span>artificials<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>artificials<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r1 <span class="symbol">==</span> r2
+          {<span class="symbol">|</span>realvars<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+      {<span class="symbol">|</span>realvars<span class="symbol">=</span>r1<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> r2 <span class="keyword">of</span>
+          {<span class="symbol">|</span>artificials<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>realvars<span class="symbol">=</span>r2<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r1 <span class="symbol">==</span> r2
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmax_suchthat [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) (cond<span class="command">:o</span><span class="symbol">-&gt;</span><span class="type-name">Bool</span>)<span class="symbol">:</span> n <span class="symbol">=</span>
+  <span class="comment">-- Assumes that there&#39;s at least one element of xs
+</span>  <span class="comment">-- that satisfies the condition.
+</span>  cmp <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> (not <span class="symbol">$</span> cond y) <span class="symbol">||</span> (x <span class="symbol">&gt;</span> y <span class="symbol">&amp;&amp;</span> cond x)
+  argscan cmp xs
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmax_suchthat_table [<span class="type-name">Ord</span> o] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>o) (cond<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Bool</span>)<span class="symbol">:</span> n <span class="symbol">=</span>
+  <span class="comment">-- This variant takes a table of pre-evaluated conditions.
+</span>  cmp <span class="symbol">=</span> <span class="symbol">\</span>i j<span class="symbol">.</span> (not <span class="symbol">$</span> cond<span class="symbol">.</span>j) <span class="symbol">||</span> (xs<span class="symbol">.</span>i <span class="symbol">&gt;</span> xs<span class="symbol">.</span>j <span class="symbol">&amp;&amp;</span> cond<span class="symbol">.</span>i)
+  argscan cmp (<span class="keyword">for</span> i<span class="symbol">.</span> i)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Simplex data types</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">SimplexResult</span> n<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="type-name">Infeasible</span>
+  <span class="type-name">Unbounded</span>
+  <span class="type-name">Solution</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ConstraintType</span> <span class="symbol">=</span>
+  <span class="type-name">LessThan</span>
+  <span class="type-name">GreaterThan</span>
+</div></div><div class="cell"><div class="code-block">  <span class="comment">-- Todo: Add equality constraints
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ObjectiveType</span> <span class="symbol">=</span>
+  <span class="type-name">Maximize</span>
+  <span class="type-name">Minimize</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Constraint</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  {coeffs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> offset<span class="symbol">:</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> conType<span class="symbol">:</span><span class="type-name">ConstraintType</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">RowIx</span> (cons<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  {constraints<span class="command">:cons</span> <span class="symbol">|</span> objective<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">|</span> extra<span class="command">:a</span>}
+</div></div><div class="cell"><div class="code-block">  <span class="comment">-- extra is a field that could be left unused or (Fin 1)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">ColIx</span> (cons<span class="symbol">:</span><span class="type-name">Type</span>) (vars<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  {variables<span class="command">:vars</span> <span class="symbol">|</span> slacks<span class="command">:cons</span> <span class="symbol">|</span> value<span class="symbol">:</span><span class="type-name">Unit</span>}
+</div></div><div class="cell"><div class="code-block">  <span class="comment">-- Todo: we assigned a slack variable for every constraints
+</span></div></div><div class="cell"><div class="code-block">  <span class="comment">-- even though equality constraints do not need them.
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Void</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">AbsTableau</span> (cons<span class="symbol">:</span><span class="type-name">Type</span>) (vars<span class="symbol">:</span><span class="type-name">Type</span>) (extra<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  coltype <span class="symbol">=</span> <span class="type-name">ColIx</span> cons vars
+  rowtype <span class="symbol">=</span> <span class="type-name">RowIx</span> cons extra
+  tabletype <span class="symbol">=</span> rowtype <span class="symbol">=&gt;</span> coltype <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+  (cons <span class="symbol">=&gt;</span> coltype <span class="symbol">&amp;</span> vars <span class="symbol">=&gt;</span> coltype <span class="symbol">&amp;</span> tabletype)
+</div></div><div class="cell"><div class="code-block">  <span class="comment">-- (basics, nonbasics, table)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tableau</span> (cons<span class="symbol">:</span><span class="type-name">Type</span>) (vars<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="type-name">AbsTableau</span> cons vars <span class="type-name">Void</span> <span class="comment">-- no need for extra row
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">FeasibilityTableau</span> (cons<span class="symbol">:</span><span class="type-name">Type</span>) (vars<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="comment">-- The feasibility tableau has extra columns for the artificial variables.
+</span>  <span class="comment">-- Todo: use a List of artificial variables, since not each constraint
+</span>  <span class="comment">-- actually requires an artificial variable.
+</span>  allvars <span class="symbol">=</span> {realvars<span class="symbol">:</span> vars <span class="symbol">|</span> artificials<span class="symbol">:</span> cons}
+  <span class="type-name">AbsTableau</span> cons allvars <span class="type-name">Unit</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>The simplex method works <code>FeasibilityTableau</code> in phase 1 and <code>Tableau</code> in phase 2. Let's look at the usage of these types in an example (and introduce simplex along the way). Say we want to minimize
+$$z = x_1 - x_2$$
+subject to constraints
+$$
+1x_1 - 2x_2 \le 0.5 \newline
+1x_1 - 2x_2 \ge 0.5 \newline
+x_j \ge 0 \ (j = 1,2)
+$$</p>
+</div></div><div class="cell"><div class="prose-block"><p>In phase 1, we first construct the following table with <code>build_feasibility_tableau</code> according to some rules.</p>
+<ul>
+<li>$x_i$ are the original variables in the constraints (<code>real_vars</code>)</li>
+<li>$a_i$ are the artificial variables. They are used only in phase 1.</li>
+<li>$s_i$ are slack variables.
+$$ \begin{array}{l|c||c|cc:cc:cc} \hline
+\text{RowIx \textbackslash ColIx}&amp; \text{Basic} &amp; \text{Value} &amp; x_1 &amp; x_2 &amp; s_1 &amp; s_2 &amp; a_1 &amp; a_2  \\ \hline
+\text{Constraint 1} &amp; a_1 &amp; 0.5 &amp; 1 &amp; -2 &amp; 1 &amp; 0 &amp; 1 &amp; 0\\
+\text{Constraint 2} &amp; a_2  &amp; 0.5 &amp; 1 &amp; -2 &amp; 0 &amp; -1 &amp; 0 &amp; 1 \\
+\text{Objective} &amp; (-w) &amp; 1 &amp; 2 &amp; -4 &amp; 1 &amp; -1 &amp; 0 &amp; 0 \\ \hline
+\text{Extra} &amp; (-z) &amp; 0 &amp; -1 &amp; 1 &amp; 0 &amp; 0 &amp; 0 &amp; 0 \\ \hline
+\end{array}$$</li>
+</ul>
+</div></div><div class="cell"><div class="prose-block"><p>Dex represents such structured matrix using records as index sets.</p>
+</div></div><div class="cell"><div class="code-block">(cons<span class="symbol">,</span> vars) <span class="symbol">=</span> (<span class="type-name">Fin</span> 2<span class="symbol">,</span> <span class="type-name">Fin</span> 2)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="type-name">RowIx</span> cons <span class="type-name">Unit</span>) <span class="symbol">=&gt;</span> (<span class="type-name">ColIx</span> cons {realvars<span class="symbol">:</span> vars <span class="symbol">|</span> artificials<span class="symbol">:</span> cons}) <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div><div class="result-block">{constraints: Fin 2 | extra: Unit | objective: Unit}
+=&gt; { slacks: Fin 2
+   | value: Unit
+   | variables: {artificials: Fin 2 | realvars: Fin 2}} =&gt; Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>We <code>pivot</code> until the phase 1 tableau <code>isOptimal</code>. If the optimal tableau <code>isFeasible</code> at the end of phase 1, it is then converted to a normal tableau (<code>feasibilityTableauToNormalTableau</code>) with the following matrix structure. Note that all artificial variables are removed and $-z$ is the phase 2 objective.
+$$ \begin{array}{l|c||c|cc:cc} \hline
+\text{RowIx \textbackslash ColIx}&amp; \text{Basic} &amp; \text{Value} &amp; x_1 &amp; x_2 &amp; s_1 &amp; s_2 \\ \hline
+\text{Constraint 1} &amp; s_2 &amp; 0 &amp; 0 &amp; 0 &amp; 1 &amp; 1 \\
+\text{Constraint 2} &amp; x_1 &amp; 0.5 &amp; 1 &amp; -2 &amp; 1 &amp; 0 \\
+\text{Objective} &amp; (-z) &amp; 0.5 &amp; 0 &amp; -1 &amp; 1 &amp; 0 \\ \hline
+\end{array}$$
+The type of this normal table is:</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="type-name">RowIx</span> cons <span class="type-name">Void</span>) <span class="symbol">=&gt;</span> (<span class="type-name">ColIx</span> cons vars) <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
+</div><div class="result-block">{constraints: Fin 2 | extra: Fin 0 | objective: Unit}
+=&gt; {slacks: Fin 2 | value: Unit | variables: Fin 2} =&gt; Float32</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>In phase 2, we apply <code>pivot</code> again to the normal tableau until the optimality criterion is met. Finally we can <code>extractSolution</code> from the optimal normal tableau.</p>
+</div></div><div class="cell"><div class="prose-block"><p>The following section implements these functions:</p>
+<ul>
+<li><code>build_feasibility_tableau</code></li>
+<li><code>pivot</code></li>
+<li><code>isOptimal</code> and <code>isFeasible</code></li>
+<li><code>feasibilityTableauToNormalTableau</code></li>
+<li><code>extractSolution</code></li>
+</ul>
+</div></div><div class="cell"><div class="prose-block"><h3>Simplex helper functions</h3>
+</div></div><div class="cell"><div class="prose-block"><h4>Cononicalize and <code>build_feasibility_tableau</code></h4>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cononicalize_constraint (inequality<span class="symbol">:</span> <span class="type-name">Constraint</span> vars)<span class="symbol">:</span>
+  (vars<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+  <span class="comment">-- Turn all constraints into less-than inequalities,
+</span>  <span class="comment">-- so after this step we don&#39;t have to track which direction
+</span>  <span class="comment">-- the inequality was originallly.
+</span>  ({coeffs<span class="symbol">=</span>coeffs<span class="symbol">,</span> offset<span class="symbol">=</span>offset<span class="symbol">,</span> conType<span class="symbol">=</span>conType}) <span class="symbol">=</span> inequality
+  <span class="keyword">case</span> conType <span class="keyword">of</span>
+    <span class="type-name">LessThan</span>    <span class="symbol">-&gt;</span>  (coeffs<span class="symbol">,</span>  offset)
+    <span class="type-name">GreaterThan</span> <span class="symbol">-&gt;</span> (<span class="symbol">-</span>coeffs<span class="symbol">,</span> <span class="symbol">-</span>offset)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> build_tableau [<span class="type-name">Eq</span> cons]
+    (ineqs<span class="symbol">:</span> cons<span class="symbol">=&gt;</span><span class="type-name">Constraint</span> vars)
+    (objective<span class="symbol">:</span> vars<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+    (objType<span class="symbol">:</span><span class="type-name">ObjectiveType</span>) <span class="symbol">:</span> <span class="type-name">Tableau</span> cons vars <span class="symbol">=</span>
+
+  table <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
+    {<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+      (coeffs<span class="symbol">,</span> offset) <span class="symbol">=</span> cononicalize_constraint ineqs<span class="symbol">.</span>i
+      <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">case</span> j <span class="keyword">of</span>  
+        {<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> coeffs<span class="symbol">.</span>j
+        {<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> select (i <span class="symbol">==</span> j) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0  <span class="comment">-- identity matrix.
+</span>        {<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}     <span class="symbol">-&gt;</span> offset
+    {<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> objType <span class="keyword">of</span>
+        <span class="type-name">Maximize</span> <span class="symbol">-&gt;</span>  objective<span class="symbol">.</span>j
+        <span class="type-name">Minimize</span> <span class="symbol">-&gt;</span> <span class="symbol">-</span>objective<span class="symbol">.</span>j
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0  <span class="comment">-- slack variables never contribute to loss.
+</span>      {<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}  <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
+
+  basics    <span class="symbol">=</span> <span class="keyword">for</span> r<span class="command">:cons</span><span class="symbol">.</span> {<span class="symbol">|</span>slacks<span class="symbol">=</span>r<span class="symbol">|</span>}
+  nonbasics <span class="symbol">=</span> <span class="keyword">for</span> r<span class="command">:vars</span><span class="symbol">.</span> {<span class="symbol">|</span>variables<span class="symbol">=</span>r<span class="symbol">|</span>}
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> negate_constraints_with_negative_offsets [<span class="type-name">Eq</span> cons]
+  (tableau<span class="symbol">:</span> (<span class="type-name">Tableau</span> cons vars))<span class="symbol">:</span> <span class="type-name">Tableau</span> cons vars <span class="symbol">=</span>
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  table&#39; <span class="symbol">=</span> yieldState table <span class="symbol">\</span>tableRef<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="command">:cons</span><span class="symbol">.</span>
+      cur_constraint <span class="symbol">=</span> tableRef<span class="symbol">!</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>}
+      <span class="keyword">if</span> (get cur_constraint<span class="symbol">!</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>}) <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0
+        <span class="keyword">then</span> <span class="keyword">for</span>_ j<span class="symbol">.</span> cur_constraint<span class="symbol">!</span>j <span class="symbol">:=</span> <span class="symbol">-</span>(get cur_constraint<span class="symbol">!</span>j)
+        <span class="keyword">else</span> ()
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table&#39;)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> build_feasibility_tableau [<span class="type-name">Eq</span> cons]
+  (tableau<span class="symbol">:</span> (<span class="type-name">Tableau</span> cons vars))<span class="symbol">:</span> <span class="type-name">FeasibilityTableau</span> cons vars <span class="symbol">=</span>
+  <span class="comment">-- Builds an expanded tableau, with an extra variable for each constraint.
+</span>  <span class="comment">-- If these new variables can be driven to zero,
+</span>  <span class="comment">-- while satisfying all constraints, then the original problem is feasible.
+</span>
+  tableau&#39; <span class="symbol">=</span> negate_constraints_with_negative_offsets tableau
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau&#39;
+  sum_constraints <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">.</span>
+   sum <span class="keyword">for</span> r<span class="command">:cons</span><span class="symbol">.</span> table<span class="symbol">.</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>r<span class="symbol">|</span>}<span class="symbol">.</span>j
+
+  ftable <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
+    {<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> table<span class="symbol">.</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}
+      {<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}     <span class="symbol">-&gt;</span> table<span class="symbol">.</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>}
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+        {<span class="symbol">|</span>realvars<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> table<span class="symbol">.</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>}
+        {<span class="symbol">|</span>artificials<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> select (i <span class="symbol">==</span> j) 1<span class="symbol">.</span>0 0<span class="symbol">.</span>0
+    {<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> sum_constraints<span class="symbol">.</span>{<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}
+      {<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}  <span class="symbol">-&gt;</span> sum_constraints<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> j <span class="keyword">of</span>
+          {<span class="symbol">|</span>realvars<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> sum_constraints<span class="symbol">.</span>{<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>}
+          {<span class="symbol">|</span>artificials<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
+    {<span class="symbol">|</span>extra<span class="symbol">=</span>()<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">for</span> j<span class="symbol">.</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}
+      {<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}     <span class="symbol">-&gt;</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>}
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+        {<span class="symbol">|</span>realvars<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>}
+        {<span class="symbol">|</span>artificials<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
+  
+  fbasics <span class="symbol">=</span> <span class="keyword">for</span> r<span class="command">:cons</span><span class="symbol">.</span> {<span class="symbol">|</span>variables<span class="symbol">=</span>{<span class="symbol">|</span>artificials<span class="symbol">=</span>r<span class="symbol">|</span>}<span class="symbol">|</span>}
+  fnonbasics <span class="symbol">=</span> <span class="keyword">for</span> r<span class="symbol">.</span> <span class="keyword">case</span> r <span class="keyword">of</span>
+    {<span class="symbol">|</span>artificials<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> {<span class="symbol">|</span>slacks<span class="symbol">=</span>r<span class="symbol">|</span>}
+    {<span class="symbol">|</span>realvars<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> {<span class="symbol">|</span>variables<span class="symbol">=</span>{<span class="symbol">|</span>realvars<span class="symbol">=</span>r<span class="symbol">|</span>}<span class="symbol">|</span>}
+  (fbasics<span class="symbol">,</span> fnonbasics<span class="symbol">,</span> ftable)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h4>Stopping criteria: <code>isOptimal</code> and <code>isFeasible</code></h4>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isOptimal (tableau<span class="symbol">:</span> <span class="type-name">AbsTableau</span> cons vars extra) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  (_<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  all <span class="keyword">for</span> c<span class="command">:vars</span><span class="symbol">.</span>
+    val <span class="symbol">=</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>}<span class="symbol">.</span>(nonbasics<span class="symbol">.</span>c)
+    val <span class="symbol">~~</span> 0<span class="symbol">.</span>0 <span class="symbol">||</span> val <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isFeasible (tableau<span class="symbol">:</span> <span class="type-name">FeasibilityTableau</span> cons vars) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  (_<span class="symbol">,</span> _<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  val <span class="symbol">=</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>}
+  val <span class="symbol">~~</span> 0<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h4>Choose <code>pivot</code> and apply</h4>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chooseColumn (tableau<span class="symbol">:</span> (<span class="type-name">AbsTableau</span> cons vars extra)) <span class="symbol">:</span> <span class="type-name">ColIx</span> cons vars <span class="symbol">=</span>
+  <span class="comment">-- An unchecked assumption is that there exists
+</span>  <span class="comment">-- at least one nonbasic variable with a positive objective coefficient.
+</span>  (_<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  objective_coeffs <span class="symbol">=</span> <span class="keyword">for</span> c<span class="command">:vars</span><span class="symbol">.</span>
+    table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>}<span class="symbol">.</span>(nonbasics<span class="symbol">.</span>c)
+  col <span class="symbol">=</span> argmax_suchthat objective_coeffs <span class="symbol">\</span>x<span class="symbol">.</span> x <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
+  nonbasics<span class="symbol">.</span>col
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> findPivotIndex (tableau<span class="symbol">:</span> (<span class="type-name">AbsTableau</span> cons vars extra))
+ <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">RowIx</span> cons extra <span class="symbol">&amp;</span> <span class="type-name">ColIx</span> cons vars) <span class="symbol">=</span>
+  <span class="comment">-- Chooses row and column to pivot around next.
+</span>  (_<span class="symbol">,</span> _<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  pivotcol <span class="symbol">=</span> chooseColumn tableau  
+  unbounded <span class="symbol">=</span> all <span class="keyword">for</span> r<span class="symbol">.</span> 
+    val <span class="symbol">=</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">|</span>extra<span class="symbol">|...</span>r<span class="symbol">|</span>}<span class="symbol">.</span>pivotcol 
+    val <span class="symbol">&lt;=</span> 0<span class="symbol">.</span>0
+  <span class="keyword">case</span> unbounded <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span>
+      <span class="comment">-- pick row index minimizing the quotient amongst positive quotients
+</span>      quotients <span class="symbol">=</span> <span class="keyword">for</span> r<span class="symbol">.</span> <span class="symbol">-</span>table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">|</span>extra<span class="symbol">|...</span>r<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>} <span class="symbol">/</span>
+                          table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">|</span>extra<span class="symbol">|...</span>r<span class="symbol">|</span>}<span class="symbol">.</span>pivotcol
+      cond <span class="symbol">=</span> <span class="keyword">for</span> r<span class="symbol">.</span> table<span class="symbol">.</span>{<span class="symbol">|</span>objective<span class="symbol">|</span>extra<span class="symbol">|...</span>r<span class="symbol">|</span>}<span class="symbol">.</span>pivotcol <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0
+      pivotrow <span class="symbol">=</span> argmax_suchthat_table quotients cond
+
+      <span class="type-name">Just</span> ({<span class="symbol">|</span>objective<span class="symbol">|</span>extra<span class="symbol">|...</span>pivotrow<span class="symbol">|</span>}<span class="symbol">,</span> pivotcol)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pivot [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> extra<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+          (tableau<span class="symbol">:</span>(<span class="type-name">AbsTableau</span> cons vars extra))
+          ((pivotrow<span class="symbol">,</span> pivotcol)<span class="symbol">:</span>(<span class="type-name">RowIx</span> cons extra <span class="symbol">&amp;</span> <span class="type-name">ColIx</span> cons vars)) <span class="symbol">:</span>
+          (<span class="type-name">AbsTableau</span> cons vars extra) <span class="symbol">=</span>
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+
+  newTable <span class="symbol">=</span> <span class="keyword">for</span> row<span class="symbol">.</span>
+    <span class="keyword">case</span> row <span class="symbol">==</span> pivotrow <span class="keyword">of</span>
+      <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="keyword">for</span> col<span class="symbol">.</span> table<span class="symbol">.</span>row<span class="symbol">.</span>col <span class="symbol">/</span> table<span class="symbol">.</span>row<span class="symbol">.</span>pivotcol
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="keyword">for</span> col<span class="symbol">.</span> table<span class="symbol">.</span>row<span class="symbol">.</span>col <span class="symbol">-</span> table<span class="symbol">.</span>row<span class="symbol">.</span>pivotcol <span class="symbol">*</span> table<span class="symbol">.</span>pivotrow<span class="symbol">.</span>col <span class="symbol">/</span> table<span class="symbol">.</span>pivotrow<span class="symbol">.</span>pivotcol
+
+  i&#39; <span class="symbol">=</span> fromJust <span class="symbol">$</span> (matchWith <span class="iso-sugar">#?constraints</span>) pivotrow
+
+  <span class="comment">-- Swap in new basic variable.
+</span>  newBasics <span class="symbol">=</span> yieldState basics <span class="symbol">\</span>ref<span class="symbol">.</span>
+    ref<span class="symbol">!</span>i&#39; <span class="symbol">:=</span> pivotcol
+
+  <span class="comment">-- Move old basic variable to nonbasics.
+</span>  newNonbasics <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> nonbasics<span class="symbol">.</span>i <span class="symbol">==</span> pivotcol <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> basics<span class="symbol">.</span>i&#39;
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> nonbasics<span class="symbol">.</span>i
+
+  (newBasics<span class="symbol">,</span> newNonbasics<span class="symbol">,</span> newTable)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h4>Transition between phase 1 and 2: <code>feasibilityTableauToNormalTableau</code></h4>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> find_non_artificial_pivcol [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+  (tableau<span class="symbol">:</span> <span class="type-name">FeasibilityTableau</span> cons vars)
+  (pivrow<span class="symbol">:</span> <span class="type-name">RowIx</span> cons <span class="type-name">Unit</span>)
+  <span class="symbol">:</span> <span class="type-name">ColIx</span> cons {realvars<span class="symbol">:</span> vars <span class="symbol">|</span> artificials<span class="symbol">:</span> cons} <span class="symbol">=</span>
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  coeff <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+    col <span class="symbol">=</span> nonbasics<span class="symbol">.</span>i
+    <span class="keyword">case</span> col <span class="keyword">of</span>
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>_<span class="symbol">|</span>} <span class="symbol">-&gt;</span> table<span class="symbol">.</span>pivrow<span class="symbol">.</span>col
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>v<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> v <span class="keyword">of</span>
+        {<span class="symbol">|</span>realvars<span class="symbol">=</span>_<span class="symbol">|</span>} <span class="symbol">-&gt;</span> table<span class="symbol">.</span>pivrow<span class="symbol">.</span>col
+        {<span class="symbol">|</span>artificials<span class="symbol">=</span>_<span class="symbol">|</span>} <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
+  ind <span class="symbol">=</span> argmax_suchthat coeff (<span class="symbol">\</span>x<span class="symbol">.</span> not <span class="symbol">$</span> x <span class="symbol">~~</span> 0<span class="symbol">.</span>0)
+  nonbasics<span class="symbol">.</span>ind
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pivot_artificials [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+  (tableau<span class="symbol">:</span> <span class="type-name">FeasibilityTableau</span> cons vars) <span class="symbol">:</span> (<span class="type-name">FeasibilityTableau</span> cons vars) <span class="symbol">=</span>
+  <span class="comment">-- Pivot out all the artificial variables out of the basis
+</span>  yieldState tableau <span class="symbol">\</span>tRef<span class="symbol">.</span>
+    tableau <span class="symbol">=</span> get tRef
+    (basics<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> tableau
+    <span class="keyword">for</span> v<span class="command">:cons</span><span class="symbol">.</span>
+      var <span class="symbol">=</span> basics<span class="symbol">.</span>v
+      <span class="keyword">case</span> var <span class="keyword">of</span>
+        {<span class="symbol">|</span>slacks<span class="symbol">=</span>var<span class="symbol">|</span>} <span class="symbol">-&gt;</span> ()
+        {<span class="symbol">|</span>variables<span class="symbol">=</span>var<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> var <span class="keyword">of</span>
+          {<span class="symbol">|</span>realvars<span class="symbol">=</span>var<span class="symbol">|</span>} <span class="symbol">-&gt;</span> ()
+          {<span class="symbol">|</span>artificials<span class="symbol">=</span>var<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+            pivrow <span class="symbol">=</span> {<span class="symbol">|</span>constraints<span class="symbol">=</span>v<span class="symbol">|</span>}
+            pivcol <span class="symbol">=</span> find_non_artificial_pivcol tableau pivrow
+            tRef <span class="symbol">:=</span> pivot tableau (pivrow<span class="symbol">,</span> pivcol)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> deduce_nonbasics [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+  (basics<span class="symbol">:</span> cons<span class="symbol">=&gt;</span>(<span class="type-name">ColIx</span> cons vars)) <span class="symbol">:</span> vars<span class="symbol">=&gt;</span>(<span class="type-name">ColIx</span> cons vars) <span class="symbol">=</span>
+
+    not_in_basics <span class="symbol">=</span> <span class="symbol">\</span>c<span class="symbol">.</span> not <span class="symbol">$</span> any <span class="keyword">for</span> r<span class="symbol">.</span>
+      <span class="keyword">case</span> basics<span class="symbol">.</span>r <span class="keyword">of</span>
+        {<span class="symbol">|</span>slacks<span class="symbol">=</span>r<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> <span class="keyword">case</span> c <span class="keyword">of</span>
+          {<span class="symbol">|</span>slacks<span class="symbol">=</span>c<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> r <span class="symbol">==</span> c
+          {<span class="symbol">|</span>variables<span class="symbol">=</span>_<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>value<span class="symbol">=</span>_<span class="symbol">|</span>}     <span class="symbol">-&gt;</span> <span class="type-name">True</span>
+        {<span class="symbol">|</span>variables<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> c <span class="keyword">of</span>
+          {<span class="symbol">|</span>slacks<span class="symbol">=</span>_<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> <span class="type-name">False</span>
+          {<span class="symbol">|</span>variables<span class="symbol">=</span>c<span class="symbol">|</span>} <span class="symbol">-&gt;</span> r <span class="symbol">==</span> c
+          {<span class="symbol">|</span>value<span class="symbol">=</span>_<span class="symbol">|</span>}     <span class="symbol">-&gt;</span> <span class="type-name">True</span>
+
+    all_columns <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> i
+    nonBasicsList <span class="symbol">=</span> filter not_in_basics all_columns
+
+    <span class="comment">-- We know that there will be one nonbasic for every variable,
+</span>    <span class="comment">-- but don&#39;t know how to tell the compiler that, so
+</span>    <span class="comment">-- need to use an unsafe cast.
+</span>    (<span class="type-name">AsList</span> n nonBasicsTable) <span class="symbol">=</span> nonBasicsList
+    unsafeCastTable vars nonBasicsTable
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eliminate_artificials [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+  (tableau<span class="symbol">:</span> <span class="type-name">FeasibilityTableau</span> cons vars) <span class="symbol">:</span> (<span class="type-name">Tableau</span> cons vars) <span class="symbol">=</span>
+
+  (basics<span class="symbol">,</span> nonbasics<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+
+  <span class="comment">-- copy to new tableau without the artificial columns
+</span>  newBasics <span class="symbol">=</span> <span class="keyword">for</span> r<span class="command">:cons</span><span class="symbol">.</span> <span class="keyword">case</span> basics<span class="symbol">.</span>r <span class="keyword">of</span>
+    {<span class="symbol">|</span>slacks<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> {<span class="symbol">|</span>slacks<span class="symbol">=</span>r<span class="symbol">|</span>}
+    {<span class="symbol">|</span>variables<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> <span class="keyword">case</span> r <span class="keyword">of</span>
+      {<span class="symbol">|</span>realvars<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> {<span class="symbol">|</span>variables<span class="symbol">=</span>r<span class="symbol">|</span>}
+      {<span class="symbol">|</span>artificials<span class="symbol">=</span>r<span class="symbol">|</span>} <span class="symbol">-&gt;</span> error(&quot;leftover artificial variable&quot;)
+
+  <span class="comment">-- keep real vars only
+</span>  t <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">ColIx</span> cons vars)<span class="symbol">.</span> <span class="keyword">case</span> j <span class="keyword">of</span>
+      {<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}    <span class="symbol">-&gt;</span> table<span class="symbol">.</span>i<span class="symbol">.</span>{<span class="symbol">|</span>slacks<span class="symbol">=</span>j<span class="symbol">|</span>}
+      {<span class="symbol">|</span>value<span class="symbol">=</span>j<span class="symbol">|</span>}     <span class="symbol">-&gt;</span> table<span class="symbol">.</span>i<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>}
+      {<span class="symbol">|</span>variables<span class="symbol">=</span>j<span class="symbol">|</span>} <span class="symbol">-&gt;</span> table<span class="symbol">.</span>i<span class="symbol">.</span>{<span class="symbol">|</span>variables<span class="symbol">=</span>{<span class="symbol">|</span>realvars<span class="symbol">=</span>j<span class="symbol">|</span>}<span class="symbol">|</span>}
+
+  <span class="comment">-- replace objective row
+</span>  t2 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">RowIx</span> cons <span class="type-name">Void</span>)<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
+    {<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>} <span class="symbol">-&gt;</span> t<span class="symbol">.</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>i<span class="symbol">|</span>}
+    {<span class="symbol">|</span>objective<span class="symbol">=</span>()<span class="symbol">|</span>} <span class="symbol">-&gt;</span> t<span class="symbol">.</span>{<span class="symbol">|</span>extra<span class="symbol">=</span>()<span class="symbol">|</span>}
+
+  newNonbasics <span class="symbol">=</span> deduce_nonbasics newBasics
+  (newBasics<span class="symbol">,</span> newNonbasics<span class="symbol">,</span> t2)
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> feasibilityTableauToNormalTableau [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+  (tableau<span class="symbol">:</span> <span class="type-name">FeasibilityTableau</span> cons vars) <span class="symbol">:</span> (<span class="type-name">Tableau</span> cons vars) <span class="symbol">=</span>
+  ft <span class="symbol">=</span> pivot_artificials tableau
+  eliminate_artificials ft
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><h4>Wrap up with <code>extractSolution</code></h4>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eval_objective (coeffs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> dot coeffs x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> constraints_satisfied (constraints<span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Constraint</span> n) (x<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  constraints_ok <span class="symbol">=</span> all <span class="keyword">for</span> c<span class="symbol">.</span>
+    ({offset<span class="symbol">=</span>offset<span class="symbol">,</span> coeffs<span class="symbol">=</span>coeffs<span class="symbol">,</span> conType<span class="symbol">=</span>conType}) <span class="symbol">=</span> constraints<span class="symbol">.</span>c
+    <span class="keyword">case</span> conType <span class="keyword">of</span>
+      <span class="type-name">LessThan</span>    <span class="symbol">-&gt;</span> dot coeffs x <span class="symbol">&lt;=</span> offset
+      <span class="type-name">GreaterThan</span> <span class="symbol">-&gt;</span> dot coeffs x <span class="symbol">&gt;=</span> offset
+  <span class="comment">-- also enforces that all vars are &gt;= 0.0
+</span>  constraints_ok <span class="symbol">&amp;&amp;</span> all <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">&gt;=</span> 0<span class="symbol">.</span>0 <span class="symbol">||</span> x<span class="symbol">.</span>i <span class="symbol">~~</span> 0<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> extractSolution (tableau<span class="symbol">:</span> <span class="type-name">AbsTableau</span> cons vars extra) <span class="symbol">:</span> vars<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  (basics<span class="symbol">,</span> _<span class="symbol">,</span> table) <span class="symbol">=</span> tableau
+  yieldAccum (<span class="type-name">AddMonoid</span> <span class="type-name">Float</span>) <span class="symbol">\</span>varRef<span class="symbol">.</span>
+    <span class="keyword">for</span> v<span class="command">:cons</span><span class="symbol">.</span>
+      var <span class="symbol">=</span> basics<span class="symbol">.</span>v
+      <span class="keyword">case</span> var <span class="keyword">of</span>  <span class="comment">-- If this basic variable is an original variable, write it.
+</span>        {<span class="symbol">|</span>variables<span class="symbol">=</span>var<span class="symbol">|</span>} <span class="symbol">-&gt;</span>
+          varRef<span class="symbol">!</span>var <span class="symbol">+=</span> table<span class="symbol">.</span>{<span class="symbol">|</span>constraints<span class="symbol">=</span>v<span class="symbol">|</span>}<span class="symbol">.</span>{<span class="symbol">|</span>value<span class="symbol">=</span>()<span class="symbol">|</span>}
+        {<span class="symbol">|</span>slacks<span class="symbol">=</span>var<span class="symbol">|</span>} <span class="symbol">-&gt;</span> ()
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h1>Main Simplex Algorithm</h1>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simplex [<span class="type-name">Eq</span> cons<span class="symbol">,</span> <span class="type-name">Eq</span> vars]
+  (ineqs<span class="symbol">:</span> cons<span class="symbol">=&gt;</span><span class="type-name">Constraint</span> vars)
+  (objective<span class="symbol">:</span> vars<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  (objType<span class="symbol">:</span><span class="type-name">ObjectiveType</span>) <span class="symbol">:</span> <span class="type-name">SimplexResult</span> vars <span class="symbol">=</span>
+  <span class="comment">-- Note: Also enforces that all vars are &gt;= 0.0
+</span>  <span class="comment">-- Operates in two phases:
+</span>  <span class="comment">-- First, finds a point within the simplex (or return infeasible)
+</span>  <span class="comment">-- Second, optimizes within the simplex.
+</span>
+  <span class="comment">-- Find a feasible initial solution.
+</span>  init_tableau <span class="symbol">=</span> build_tableau ineqs objective objType
+  initFeasibilityTableau <span class="symbol">=</span> build_feasibility_tableau init_tableau
+  feasibilityAns <span class="symbol">=</span> yieldState initFeasibilityTableau <span class="symbol">\</span>tableauRef<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
+    tableau <span class="symbol">=</span> get tableauRef
+    isopt <span class="symbol">=</span> isOptimal tableau
+    <span class="keyword">case</span> isopt <span class="keyword">of</span>
+      <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> tableau
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span>
+        <span class="keyword">case</span> findPivotIndex tableau <span class="keyword">of</span>
+          <span class="type-name">Just</span> pivIx <span class="symbol">-&gt;</span>
+            tableauRef <span class="symbol">:=</span> pivot tableau pivIx
+            <span class="type-name">Continue</span>
+          <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> error &quot;<span class="type-name">Couldn</span>&#39;t find a pivot index<span class="symbol">.</span>&quot;
+
+  <span class="keyword">case</span> isFeasible feasibilityAns <span class="keyword">of</span>
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Infeasible</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span>
+      tf <span class="symbol">=</span> feasibilityTableauToNormalTableau feasibilityAns
+
+      <span class="comment">-- Optimize within the simplex.
+</span>      withState tf <span class="symbol">\</span>tableauRef<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
+        tableau <span class="symbol">=</span> get tableauRef  <span class="comment">-- Whole tableau will be overwritten.
+</span>        isopt <span class="symbol">=</span> isOptimal tableau
+        <span class="keyword">case</span> isopt <span class="keyword">of</span>
+          <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="symbol">$</span> <span class="type-name">Solution</span> <span class="symbol">$</span> extractSolution tableau
+          <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="keyword">case</span> findPivotIndex tableau <span class="keyword">of</span>
+            <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Done</span> <span class="type-name">Unbounded</span>
+            <span class="type-name">Just</span> pivIx <span class="symbol">-&gt;</span>
+              tableauRef <span class="symbol">:=</span> pivot tableau pivIx
+              <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h1>Tests</h1>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- An impossible problem.
+</span></div></div><div class="cell"><div class="code-block">impossible_constraints <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+    angles <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 3) 0<span class="symbol">.</span>0 (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi)
+    cs <span class="symbol">=</span> [<span class="symbol">-</span>(sin (angles<span class="symbol">.</span>i))<span class="symbol">,</span> <span class="symbol">-</span>(cos (angles<span class="symbol">.</span>i))]
+    {coeffs<span class="symbol">=</span>cs<span class="symbol">,</span> offset<span class="symbol">=</span>1<span class="symbol">.</span>0<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">GreaterThan</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex impossible_constraints [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0] <span class="type-name">Maximize</span>
+</div><div class="result-block">Infeasible</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">initft <span class="symbol">=</span> build_feasibility_tableau <span class="symbol">$</span> build_tableau impossible_constraints [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0] <span class="type-name">Maximize</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- An unbounded problem.
+</span></div></div><div class="cell"><div class="code-block">unbounded_constraints <span class="symbol">=</span>
+  angles <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 3) 0<span class="symbol">.</span>0 1<span class="symbol">.</span>0
+  <span class="keyword">for</span> i<span class="symbol">.</span>
+    cs <span class="symbol">=</span> [<span class="symbol">-</span>(sin (angles<span class="symbol">.</span>i))<span class="symbol">,</span>
+          <span class="symbol">-</span>(cos (angles<span class="symbol">.</span>i))]
+    {coeffs<span class="symbol">=</span>cs<span class="symbol">,</span> offset<span class="symbol">=-</span>0<span class="symbol">.</span>1<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex unbounded_constraints [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0] <span class="type-name">Maximize</span>
+</div><div class="result-block">Unbounded</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A feasible problem: Example 3.5 in
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Introduction to Linear Optimization
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- by D. Bertsimas and J. Tsitsiklis
+</span></div></div><div class="cell"><div class="code-block">obj <span class="symbol">=</span> [10<span class="symbol">.</span>0<span class="symbol">,</span> 12<span class="symbol">.</span>0<span class="symbol">,</span> 12<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">a <span class="symbol">=</span> [[1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 2<span class="symbol">.</span>]<span class="symbol">,</span>
+     [2<span class="symbol">.,</span> 1<span class="symbol">.,</span> 2<span class="symbol">.</span>]<span class="symbol">,</span>
+     [2<span class="symbol">.,</span> 2<span class="symbol">.,</span> 1<span class="symbol">.</span>]]
+</div></div><div class="cell"><div class="code-block">textbook_constraints <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> {coeffs<span class="symbol">=</span>a<span class="symbol">.</span>i<span class="symbol">,</span> offset<span class="symbol">=</span>20<span class="symbol">.</span>0<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex textbook_constraints obj <span class="type-name">Maximize</span>
+</div><div class="result-block">(Solution [4., 4., 4.])</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- A feasible problem from Waterloo notes
+</span></div></div><div class="cell"><div class="code-block">obj&#39; <span class="symbol">=</span> [1<span class="symbol">.,</span> <span class="symbol">-</span>1<span class="symbol">.,</span>  1<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">a&#39; <span class="symbol">=</span> [[ 2<span class="symbol">.,</span> <span class="symbol">-</span>1<span class="symbol">.,</span>  2<span class="symbol">.</span>]<span class="symbol">,</span>
+     [ 2<span class="symbol">.,</span> <span class="symbol">-</span>3<span class="symbol">.,</span>  1<span class="symbol">.</span>]<span class="symbol">,</span>
+     [<span class="symbol">-</span>1<span class="symbol">.,</span>  1<span class="symbol">.,</span> <span class="symbol">-</span>2<span class="symbol">.</span>]]
+</div></div><div class="cell"><div class="code-block">b&#39; <span class="symbol">=</span> [4<span class="symbol">.,</span> <span class="symbol">-</span>5<span class="symbol">.,</span> <span class="symbol">-</span>1<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">textbook_constraints&#39; <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> {coeffs<span class="symbol">=</span>a&#39;<span class="symbol">.</span>i<span class="symbol">,</span> offset<span class="symbol">=</span>b&#39;<span class="symbol">.</span>i<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex textbook_constraints&#39; obj&#39; <span class="type-name">Maximize</span>
+</div><div class="result-block">(Solution [0., 2.8, 3.4])</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">equal_obj <span class="symbol">=</span> [1<span class="symbol">.,</span> <span class="symbol">-</span>1<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">equal_a <span class="symbol">=</span> [[1<span class="symbol">.,</span> <span class="symbol">-</span>2<span class="symbol">.</span>]<span class="symbol">,</span> [1<span class="symbol">.,</span> <span class="symbol">-</span>2<span class="symbol">.</span>]]
+</div></div><div class="cell"><div class="code-block">equal_b <span class="symbol">=</span> [0<span class="symbol">.</span>5<span class="symbol">,</span> 0<span class="symbol">.</span>5]
+</div></div><div class="cell"><div class="code-block">equal_constraints <span class="symbol">=</span>
+  [{coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}<span class="symbol">,</span>
+  {coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">GreaterThan</span>}]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex equal_constraints equal_obj <span class="type-name">Minimize</span>
+</div><div class="result-block">(Solution [0.5, 0.])</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">dup_constraints <span class="symbol">=</span>
+  [{coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}<span class="symbol">,</span>
+  {coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">GreaterThan</span>}<span class="symbol">,</span>
+  {coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">GreaterThan</span>}]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex dup_constraints equal_obj <span class="type-name">Minimize</span>
+</div><div class="result-block">(Solution [0.5, 0.])</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- differs from dup_constraints only in the ordering
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- artificial variables are in the basis of FeasibilityAns
+</span></div></div><div class="cell"><div class="code-block">dup_constraints2 <span class="symbol">=</span>
+  [{coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">GreaterThan</span>}<span class="symbol">,</span>
+  {coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}<span class="symbol">,</span>
+  {coeffs<span class="symbol">=</span>equal_a<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> offset<span class="symbol">=</span>equal_b<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">GreaterThan</span>}]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex dup_constraints2 equal_obj <span class="type-name">Minimize</span>
+</div><div class="result-block">(Solution [0.5, 0.])</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- the first constraint is always satisfied
+</span></div></div><div class="cell"><div class="code-block">redundant_obj <span class="symbol">=</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">redundant_constraints <span class="symbol">=</span>
+  [{coeffs<span class="symbol">=</span>[0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]<span class="symbol">,</span> offset<span class="symbol">=</span>0<span class="symbol">.</span>0<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}<span class="symbol">,</span>
+    {coeffs<span class="symbol">=</span>[1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0]<span class="symbol">,</span> offset<span class="symbol">=</span>1<span class="symbol">.</span>0<span class="symbol">,</span> conType<span class="symbol">=</span><span class="type-name">LessThan</span>}]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplex redundant_constraints redundant_obj <span class="type-name">Maximize</span>
+</div><div class="result-block">(Solution [0., 1.])</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h1>Visual Example</h1>
+</div></div><div class="cell"><div class="prose-block"><h3>Plotting routines</h3>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> float2pix (v<span class="symbol">:</span><span class="type-name">Fin</span> 2<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (n <span class="symbol">&amp;</span> m) <span class="symbol">=</span>
+  x <span class="symbol">=</span> (<span class="type-name">FToI</span> ((v<span class="symbol">.</span>(0<span class="symbol">@</span>_) <span class="symbol">*</span> (<span class="type-name">IToF</span> (size n)))))<span class="symbol">@</span>n
+  y <span class="symbol">=</span> (<span class="type-name">FToI</span> ((v<span class="symbol">.</span>(1<span class="symbol">@</span>_) <span class="symbol">*</span> (<span class="type-name">IToF</span> (size m)))))<span class="symbol">@</span>m
+  (x<span class="symbol">,</span> y)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pixToReal (px<span class="command">:n</span>) (py<span class="command">:m</span>)<span class="symbol">:</span> (<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  x <span class="symbol">=</span> ((<span class="type-name">IToF</span> ((ordinal px)))) <span class="symbol">/</span> (<span class="type-name">IToF</span> (size n))
+  y <span class="symbol">=</span> ((<span class="type-name">IToF</span> ((ordinal py)))) <span class="symbol">/</span> (<span class="type-name">IToF</span> (size m))
+  [x<span class="symbol">,</span> y]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> draw_point [<span class="type-name">Eq</span> n<span class="symbol">,</span> <span class="type-name">Eq</span> m]
+  (image<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (row<span class="command">:n</span>) (col<span class="command">:m</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="comment">-- todo: in-place drawing
+</span>  <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span> <span class="keyword">case</span> row <span class="symbol">==</span> j <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="keyword">for</span> k<span class="command">:m</span><span class="symbol">.</span> <span class="keyword">case</span> col <span class="symbol">==</span> k <span class="keyword">of</span>
+      <span class="type-name">True</span>  <span class="symbol">-&gt;</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span> image<span class="symbol">.</span>j<span class="symbol">.</span>k
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> image<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="prose-block"><h3>Pentagon example</h3>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- XXX This used to typecheck, now fails, so coefficients are hardcoded below.
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- def polygon_constraints (num_sides: Int) (radius:Float)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   (center:(Fin 2)=&gt;Float) : (Fin num_sides)=&gt;Constraint (Fin 2) =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   angles = linspace (Fin num_sides) 0.0 (2.0 * pi)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   for i.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     cs = [-(sin (0.23 + angles.i)),
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--           -(cos (0.23 + angles.i))]
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     {coeffs=cs,
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      offset=radius + (dot cs center),
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      conType=LessThan}
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- pentagon = polygon_constraints 5 0.2 [0.5, 0.5]
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">pentagon <span class="symbol">=</span> [
+  {coeffs <span class="symbol">=</span> [<span class="symbol">-</span>0<span class="symbol">.</span>227978<span class="symbol">,</span> <span class="symbol">-</span>0<span class="symbol">.</span>973666]<span class="symbol">,</span> conType <span class="symbol">=</span> <span class="type-name">LessThan</span><span class="symbol">,</span> offset <span class="symbol">=</span> <span class="symbol">-</span>0<span class="symbol">.</span>400822}
+<span class="symbol">,</span> {coeffs <span class="symbol">=</span> [<span class="symbol">-</span>0<span class="symbol">.</span>996461<span class="symbol">,</span> <span class="symbol">-</span>0<span class="symbol">.</span>08406]<span class="symbol">,</span> conType <span class="symbol">=</span> <span class="type-name">LessThan</span><span class="symbol">,</span> offset <span class="symbol">=</span> <span class="symbol">-</span>0<span class="symbol">.</span>34026}
+<span class="symbol">,</span> {coeffs <span class="symbol">=</span> [<span class="symbol">-</span>0<span class="symbol">.</span>387869<span class="symbol">,</span> 0<span class="symbol">.</span>921715]<span class="symbol">,</span> conType <span class="symbol">=</span> <span class="type-name">LessThan</span><span class="symbol">,</span> offset <span class="symbol">=</span> 0<span class="symbol">.</span>466923}
+<span class="symbol">,</span> {coeffs <span class="symbol">=</span> [0<span class="symbol">.</span>756744<span class="symbol">,</span> 0<span class="symbol">.</span>653711]<span class="symbol">,</span> conType <span class="symbol">=</span> <span class="type-name">LessThan</span><span class="symbol">,</span> offset <span class="symbol">=</span> 0<span class="symbol">.</span>905228}
+<span class="symbol">,</span> {coeffs <span class="symbol">=</span> [0<span class="symbol">.</span>855563<span class="symbol">,</span> <span class="symbol">-</span>0<span class="symbol">.</span>517699]<span class="symbol">,</span> conType <span class="symbol">=</span> <span class="type-name">LessThan</span><span class="symbol">,</span> offset <span class="symbol">=</span> 0<span class="symbol">.</span>368932} ]
+</div></div><div class="cell"><div class="code-block">objective <span class="symbol">=</span> [1<span class="symbol">.</span>1<span class="symbol">,</span> 1<span class="symbol">.</span>2]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">image <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 150)<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">Fin</span> 150)<span class="symbol">.</span>
+  cur_point <span class="symbol">=</span> pixToReal i j
+  <span class="keyword">case</span> constraints_satisfied pentagon cur_point <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> [1<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> (<span class="symbol">-</span>0<span class="symbol">.</span>5) <span class="symbol">+</span> eval_objective objective cur_point]
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> [0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Find optimum by simplex method
+</span></div></div><div class="cell"><div class="code-block">simplexSolution <span class="symbol">=</span> simplex pentagon objective <span class="type-name">Maximize</span>
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> simplexSolution
+</div><div class="result-block">(Solution [0.55636, 0.740704])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Plot objective function and location of answer (red dot).
+</span></div></div><div class="cell"><div class="code-block">simplexLocation <span class="symbol">=</span> <span class="keyword">case</span> simplexSolution <span class="keyword">of</span>
+  <span class="type-name">Solution</span> ans <span class="symbol">-&gt;</span> ans
+</div></div><div class="cell"><div class="code-block">(x<span class="symbol">,</span> y) <span class="symbol">:</span> (<span class="type-name">Fin</span> 150 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 150) <span class="symbol">=</span> float2pix simplexLocation
+</div></div><div class="cell"><div class="code-block">image3 <span class="symbol">=</span> draw_point image x y
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imshow image3
+</div><img class="plot-img" src="data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAAJYAAACWCAIAAACzY+a1AAAAAXNSR0IArs4c6QAAA7FJREFUeJzt3K+PFWcUxvHz3i2Epk34lzAoTE3XYVCbkIACgSQEgUZVrCmqVaQGBDUlwYAgCBRBEIIBg8I9iGn3R/fevTP3vTPnmXe/n4zb5OTc8+x5353dZCMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4Owo2Q3kk+5GLJY+pdzI7m69H7IbGJd0fVU8EYuInVO/ushuv5cZb6H067oA+j8rsyxlL/uDruG7hdKldXMvR57KCE8p5c65xc0yqN/IY6Wk/ew5rNFMhKNmaa29CLefpfR79ihOYxqhdHmSe67/48u2ubHPRiIc3bhn49BS0p/ZA1lpXhHmZmnKsTPpyvAARr8ypcfZg1nOMcJpzsaNSjnybGuys3FoKUeebaX//Lm8lPQkezJL2EUo/XIiAJNXQ9NFNOxp4rNx2CP9nT2f/5tLhFZZerFraJplqiklPc8e0TFeEUq7FQFMeWUa8epm4n2qKGXEqxuDe65XKell9qAOuUU48TLVlHJh1EpErJ6a1ath95r/OntW/zKKULqatE8bPxZc+oiIyQOoLSW9zZ5YxDwjPBnAFo/Z+S2iRRP/Sdunim+LfBZNRIR0zeFsHFpKep89OZsIUwLYUqn8wZnIXKaaUtLH9MGZWDs1u1fDI6WSB5dP2nPYp4pSmSwizA6gtpT0OXd2DkyWqaZU5uwcON9zPRfxa9bsTCK02qeNS6XNLpl00yOA2lLSt5QB5kdoEsCWSuWML13/qblfmUoaXzrPfdqkVMobYnKE0i2fACrrlLKTMsP0LXQJoLJUVn5hEOFs7jnP/MLgXwfZ7dOgUqWcyx5g6hZKd3IDqCzlkF/kRljKfZNl2qCUSX6R/oeSjnRvyATX/vvC0UuVcj57ZocsIuxID6YJoLKUVX4Rschu4FAptzc40CY+Zt3yC6stPCA9nGCZhpYq5UL2YJZzjLAj/bbdDGpK2eYXzhFGhLQ/xj4NfUr5MXsSp7GOsCM9GulsbCC/mEWEHemPLR6MzeQXEYvsBvoqZXfiX4HOIr+Y0RYekP6qPBvXrmYpP2V/ygHmF2FHelp/z61Yvp+zP9wwc40wIqRnNfdcG/nFrCPsSP/0ORtbzS8aiDAipBf977nG8os2IuxIrwb9zNJGftFShB3pTb9jc6eN/KK9CCNCetv78ruY3ewWNBhhR3p3FvKLhiPsSB/azi+ajzAipE8N5xdnIcKO9KXJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIDJfQfqlptzx+kxUgAAAABJRU5ErkJggg=="></div></div></body></html>

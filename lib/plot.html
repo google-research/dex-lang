@@ -388,7 +388,12 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- -- TODO: generalize beyond Float with a type class for auto scaling
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> autoScale (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">ScaledData</span> n <span class="type-name">Float</span> <span class="symbol">=</span>
-  {scale <span class="symbol">=</span> floatScale (minimum xs) (maximum xs)<span class="symbol">,</span> dat <span class="symbol">=</span> xs}
+  max <span class="symbol">=</span> maximum xs
+  min <span class="symbol">=</span> minimum xs
+  <span class="comment">-- Add 10% padding away from the plot area
+</span>  space <span class="symbol">=</span> (max <span class="symbol">-</span> min) <span class="symbol">*</span> 0<span class="symbol">.</span>05
+  padding <span class="symbol">=</span> maximum [space<span class="symbol">,</span> max <span class="symbol">*</span> 0<span class="symbol">.</span>001<span class="symbol">,</span> 0<span class="symbol">.</span>000001]
+  {scale <span class="symbol">=</span> floatScale (min <span class="symbol">-</span> padding) (max <span class="symbol">+</span> padding)<span class="symbol">,</span> dat <span class="symbol">=</span> xs}
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> setXData (xs<span class="symbol">:</span><span class="type-name">ScaledData</span> n new) (plot<span class="symbol">:</span><span class="type-name">Plot</span> n a b c) <span class="symbol">:</span> <span class="type-name">Plot</span> n new b c<span class="symbol">=</span>
   <span class="comment">-- We can&#39;t use `setAt` here because we&#39;re changing the type
