@@ -576,6 +576,68 @@ unzipExpr scope subst expr = case expr of
       ((eCtx, eCtxScope), ue, ue') = unzipExpr sCtxScope subst e
   _ -> error $ "Not implemented: " ++ show (pretty expr)
 
+-------------------- Transposition --------------------
+
+-- expr : free vars -> unnamed outputs
+-- transpose expr : (cotangent per) unnamed outputs -> (cotangents of) free vars
+
+type CotangentMap = M.Map Var Var
+
+transposeProgram :: Program -> Program
+transposeProgram (Program funcMap) = Program $ funcMap <&> \def -> case def of
+  FuncDef _ _ (MixedType [] _) _ -> transposeFunc def
+  _ -> def
+
+transposeFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys) body) =
+  case retTys of
+    [] -> FuncDef formalsWithTys ctFormalsWithTys (MixedType [] linTys) tbody
+      where
+        (formals   , _     ) = unzip formalsWithTys
+        (linFormals, linTys) = unzip linFormalsWithTys
+        formalsScope = scopeExt mempty formals
+        ctFormals = take (length linRetTys) $ freshVars formalsScope
+        ctFormalsWithTys = zip ctFormals linRetTys
+        (ctx, _, ctMap) = transposeExpr (scopeExt formalsScope ctFormals) body ctFormals
+        tbody = ctx $ Ret [] ((ctMap !) <$> linFormals)
+    _ -> error "Transposing a function with non-linear results!"
+
+-- An alternative would be to return (Expr, [Var]) with the second argument
+-- mapping the linear outputs of the expr to variables in a primal program.
+transposeExpr :: Scope -> Expr -> [Var] -> (Expr -> Expr, Scope, CotangentMap)
+transposeExpr scope expr cts = case expr of
+  LetMixed vs vs' e1 e2 -> case vs of
+    [] ->
+      ( e2Ctx . e1Ctx
+      , e1Scope
+      , e1Map <> (e2Map `M.withoutKeys` (S.fromList vs'))
+      )
+      where
+        (e2Ctx, e2Scope, e2Map) = transposeExpr scope   e2 cts
+        (e1Ctx, e1Scope, e1Map) = transposeExpr e2Scope e1 ((e2Map !) <$> vs')
+    -- TODO: Relax
+    _  -> error "Binding non-linear values in transposition!"
+  LAdd x y ->
+    ( LetMixed [] [ct1, ct2] (Dup (LVar ct)) . xtCtx . ytCtx
+    , yScope
+    , xMap <> yMap
+    )
+    where
+      ct1:ct2:_ = freshVars scope
+      [ct] = cts
+      (xtCtx, xScope, xMap) = transposeExpr (scopeExt scope [ct1, ct2]) x [ct1]
+      (ytCtx, yScope, yMap) = transposeExpr xScope y [ct2]
+  LVar v -> (id, scope, M.singleton v ct)
+    where [ct] = cts
+
+
+-- It would be nice to make this the signature of transpose
+--   (Decls, CotangentMap) -> (Decls, CotangentMap)
+-- but the language would have to look more like this:
+--   Block (Nest Decl) [Var]
+-- where Decls are in ANF.
+-- This works because:
+--   Block Decls [Var] + [CotangentExprs] === (Decls, M.fromList (zip vars cotangentExprs))
+
 -------------------- Helpers --------------------
 
 unique :: Foldable f => f Var -> Bool

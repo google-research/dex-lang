@@ -169,3 +169,13 @@ spec = do
                   )
                 ]
       ensureJvpUnzips p
+
+  describe "Transposition" $ do
+    it "x + y (linearly)" $ do
+      let p = Program $ M.fromList
+                [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
+                    LetMixed [] ["z"] (LAdd (LVar "x") (LVar "y")) $
+                    LVar "z"
+                  )
+                ]
+      shouldTypeCheck $ transposeProgram p
