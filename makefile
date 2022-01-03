@@ -120,7 +120,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
                 ode-integrator mcmc ctc raytrace particle-filter \
                 isomorphisms ode-integrator fluidsim \
                 sgd psd tutorial kernelregression \
-                quaternions manifold-gradients schrodinger
+                quaternions manifold-gradients schrodinger simplex
 # TODO: re-enable
 # fft vega-plotting
 
