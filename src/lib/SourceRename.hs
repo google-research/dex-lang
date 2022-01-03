@@ -263,6 +263,12 @@ instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (EitherB
   sourceRenameB (LeftB  b) = LeftB  `fmapG` sourceRenameB b
   sourceRenameB (RightB b) = RightB `fmapG` sourceRenameB b
 
+instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b1 b2) where
+  sourceRenameB (PairB b1 b2) =
+    sourceRenameB b1 `bindG` \b1' ->
+    sourceRenameB b2 `bindG` \b2' ->
+    returnG $ PairB b1' b2'
+
 sourceRenameUBinderNest :: (Renamer m, NameColor c)
                         => Nest (UBinder c) i i'
                         -> RenamerNameGenT m (Nest (UBinder c) o) o
@@ -288,13 +294,13 @@ sourceRenameUBinder ubinder = case ubinder of
   UIgnore -> returnG UIgnore
 
 instance SourceRenamableE UDataDef where
-  sourceRenameE (UDataDef (tyConName, paramBs) dataCons) = do
-    (RenamerContent frag sourceMap paramBs') <- runRenamerNameGenT $ sourceRenameB paramBs
-    extendScope frag $ extendSourceMap sourceMap $ do
-      dataCons' <- forM dataCons \(dataConName, argBs) -> do
-        argBs' <- sourceRenameE argBs
-        return (dataConName, argBs')
-      return $ UDataDef (tyConName, paramBs') dataCons'
+  sourceRenameE (UDataDef (tyConName, paramBs) clsBs dataCons) = do
+    withSourceRenameB paramBs \paramBs' -> do
+      withSourceRenameB clsBs \clsBs' -> do
+        dataCons' <- forM dataCons \(dataConName, argBs) -> do
+          argBs' <- sourceRenameE argBs
+          return (dataConName, argBs')
+        return $ UDataDef (tyConName, paramBs') clsBs' dataCons'
 
 instance SourceRenamableE UDataDefTrail where
   sourceRenameE (UDataDefTrail args) = withSourceRenameB args \args' ->

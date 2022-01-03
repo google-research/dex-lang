@@ -192,3 +192,13 @@ instance {a} AutoQuant (MyPairOfXs a)
 def q5 {a} (x : MyPairOfXs (MyPairOfXs a)) : Int = 0
 :t q5
 > ((a:Type) ?-> (X a) ?=> (X (a & a)) ?=> ((a & a) & (a & a)) -> Int32)
+
+-------------------- Data interface constraints --------------------
+
+data MyData a       = MkMyData (MyPairOfXs a)
+> Type error:Couldn't synthesize a class dictionary for: (X a)
+>
+> data MyData a       = MkMyData (MyPairOfXs a)
+>                                 ^^^^^^^^^^^^
+
+data MyData a [X a] = MkMyData (MyPairOfXs a)

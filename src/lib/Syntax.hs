@@ -843,9 +843,8 @@ type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder AtomNameC) n l)
 -- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
-    :: (SourceName, Nest (UAnnBinder AtomNameC) n l)    -- param binders
-    -- Trailing l' is the last scope for the chain of potentially
-    -- dependent constructor argument types.
+    :: (SourceName, Nest (UAnnBinder AtomNameC) n l')    -- param binders
+    -> Nest (UAnnBinder AtomNameC) l' l  -- typeclass binders
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 

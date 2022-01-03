@@ -915,18 +915,18 @@ inferUDeclLocal _ _ = error "not a local decl"
 
 inferUDeclTop :: (Mut o, TopInferer m) => UDecl i i' -> m i' o a -> m i o a
 inferUDeclTop (UDataDefDecl def tc dcs) cont = do
-  def' <- liftImmut $ liftInfererM $ solveLocal $ inferDataDef def
+  PairE def' clsAbs <- liftImmut $ liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
-  tc' <- emitTyConName defName =<< tyConDefAsAtom defName
+  tc' <- emitTyConName defName =<< tyConDefAsAtom defName (Just clsAbs)
   dcs' <- forM [0..(nestLength dcs - 1)] \i ->
-    emitDataConName defName i =<< dataConDefAsAtom defName i
+    emitDataConName defName i =<< dataConDefAsAtom defName clsAbs i
   extendSubst (tc @> tc' <.> dcs @@> dcs') cont
 inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) cont = do
   let classPrettyName   = fromString (pprint className) :: SourceName
   let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
   classDef@(ClassDef _ _ dictDataDef) <-
     inferInterfaceDataDef classPrettyName methodPrettyNames paramBs superclasses methodTys
-  className' <- emitClassDef classDef =<< tyConDefAsAtom dictDataDef
+  className' <- emitClassDef classDef =<< tyConDefAsAtom dictDataDef Nothing
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <-
     forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
@@ -935,38 +935,57 @@ inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) 
   extendSubst (className @> className' <.> methodNames @@> methodNames') cont
 inferUDeclTop _ _ = error "not a top decl"
 
-tyConDefAsAtom :: TopInferer m => DataDefName o -> m i o (Atom o)
-tyConDefAsAtom defName = liftBuilder do
-  defName' <- sinkM defName
-  DataDef sourceName params _ <- lookupDataDef defName'
+tyConDefAsAtom :: TopInferer m => DataDefName o -> Maybe (DataIfaceReq o) -> m i o (Atom o)
+tyConDefAsAtom defName maybeIfaceReq = liftBuilder do
+  DataDef sourceName params _ <- lookupDataDef =<< sinkM defName
   buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow params) \params' -> do
-    defName'' <- sinkM defName'
-    return $ TypeCon sourceName defName'' $ Var <$> params'
+    EmptyAbs clsBs' <- case maybeIfaceReq of
+      Just clsAbs -> sinkM clsAbs >>= (`applyNaryAbs` params')
+      Nothing     -> return $ EmptyAbs Empty
+    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow clsBs') \_ -> do
+      ListE params'' <- sinkM $ ListE params'
+      defName'' <- sinkM defName
+      return $ TypeCon sourceName defName'' $ Var <$> params''
 
-dataConDefAsAtom :: TopInferer m => DataDefName o -> Int -> m i o (Atom o)
-dataConDefAsAtom defName conIx = liftBuilder do
+dataConDefAsAtom :: TopInferer m => DataDefName o -> DataIfaceReq o -> Int -> m i o (Atom o)
+dataConDefAsAtom defName ifaceReq conIx = liftBuilder do
   DataDef _ tyParams conDefs <- lookupDataDef =<< sinkM defName
   let conDef = conDefs !! conIx
-  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ImplicitArrow tyParams) \tyArgs -> do
-    ab <- sinkM $ Abs tyParams conDef
-    DataConDef conName (EmptyAbs conParams) <- applyNaryAbs ab tyArgs
-    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conParams) \conArgs -> do
-      ListE tyArgs' <- sinkM $ ListE tyArgs
-      defName' <- sinkM defName
-      return $ DataCon conName defName' (Var <$> tyArgs') conIx (Var <$> conArgs)
+  buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ImplicitArrow tyParams) \tyArgs' -> do
+    EmptyAbs clsParams' <- sinkM ifaceReq >>= (`applyNaryAbs` tyArgs')
+    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest ClassArrow clsParams') \_ -> do
+      ab'' <- sinkM $ Abs tyParams conDef
+      ListE tyArgs'' <- sinkM $ ListE tyArgs'
+      DataConDef conName (EmptyAbs conParams'') <- applyNaryAbs ab'' tyArgs''
+      buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conParams'') \conArgs''' -> do
+        ListE tyArgs''' <- sinkM $ ListE tyArgs'
+        defName''' <- sinkM defName
+        return $ DataCon conName defName''' (Var <$> tyArgs''') conIx (Var <$> conArgs''')
 
 binderNestAsPiNest :: Arrow -> Nest Binder n l -> Nest PiBinder n l
 binderNestAsPiNest arr = \case
   Empty             -> Empty
   Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
 
-inferDataDef :: (EmitsInf o, Inferer m) => UDataDef i -> m i o (DataDef o)
-inferDataDef (UDataDef (tyConName, paramBs) dataCons) = do
-  Abs paramBs' (ListE dataCons') <-
-    withNestedUBinders paramBs \_ -> do
-      dataCons' <- mapM inferDataCon dataCons
-      return $ ListE dataCons'
-  return $ DataDef tyConName paramBs' dataCons'
+type DataIfaceReq =
+  Abs (Nest Binder)  -- Type parameters
+    (EmptyAbs (Nest Binder))  -- Interface binders
+
+inferDataDef :: (EmitsInf o, Inferer m)
+             => UDataDef i
+             -> m i o (PairE DataDef DataIfaceReq o)
+inferDataDef (UDataDef (tyConName, paramBs) clsBs dataCons) = do
+  Abs paramBs' (PairE clsBs' (ListE dataCons')) <-
+    withNestedUBinders paramBs id \_ -> do
+      -- TODO: Don't masquerade as a class lambda
+      Abs clsBs' dataCons'' <-
+        withNestedUBinders clsBs (LamBound . LamBinding ClassArrow) \_ -> do
+          dataCons' <- mapM inferDataCon dataCons
+          return $ ListE dataCons'
+      case hoist clsBs' dataCons'' of
+        HoistFailure _ -> throw NotImplementedErr $ "Non-phantom type constraints in data?"
+        HoistSuccess dataCons' -> return (PairE (EmptyAbs clsBs') dataCons')
+  return $ PairE (DataDef tyConName paramBs' dataCons') (Abs paramBs' clsBs')
 
 inferDataCon :: (EmitsInf o, Inferer m)
              => (SourceName, UDataDefTrail i) -> m i o (DataConDef o)
@@ -992,32 +1011,35 @@ inferInterfaceDataDef className methodNames paramBs superclasses methods = do
   return $ ClassDef className methodNames defName
 
 withNestedUBinders
-  :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
   => Nest (UAnnBinder AtomNameC) i i'
+  -> (forall l. Type l -> binding l)
   -> (forall o'. (EmitsInf o', Ext o o') => [AtomName o'] -> m i' o' (e o'))
   -> m i o (Abs (Nest Binder) e o)
-withNestedUBinders bs cont = case bs of
+withNestedUBinders bs asBinding cont = case bs of
   Empty -> Abs Empty <$> cont []
   Nest b rest -> do
-    Abs b' (Abs rest' body) <- withUBinder b \name -> do
-      withNestedUBinders rest \names -> do
+    Abs b' (Abs rest' body) <- withUBinder b asBinding \name -> do
+      withNestedUBinders rest asBinding \names -> do
         name' <- sinkM name
         cont (name':names)
     return $ Abs (Nest b' rest') body
 
-withUBinder :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+withUBinder :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
             => UAnnBinder AtomNameC i i'
+            -> (Type o -> binding o)
             -> (forall o'. (EmitsInf o', Ext o o') => AtomName o' -> m i' o' (e o'))
             -> m i o (Abs Binder e o)
-withUBinder (UAnnBinder b ann) cont = do
+withUBinder (UAnnBinder b ann) asBinding cont = do
   ann' <- checkUType ann
-  buildAbsInf (getNameHint b) ann' \name ->
+  Abs (n :> _) ans <- buildAbsInf (getNameHint b) (asBinding ann') \name ->
     extendSubst (b @> name) $ cont name
+  return $ Abs (n :> ann') ans
 
 checkUBinders :: (EmitsInf o, Inferer m)
               => EmptyAbs (Nest (UAnnBinder AtomNameC)) i
               -> m i o (EmptyAbs (Nest Binder) o)
-checkUBinders (EmptyAbs bs) = withNestedUBinders bs \_ -> return UnitE
+checkUBinders (EmptyAbs bs) = withNestedUBinders bs id \_ -> return UnitE
 checkUBinders _ = error "impossible"
 
 inferULam :: (EmitsBoth o, Inferer m) => EffectRow o -> ULamExpr i -> m i o (Atom o)

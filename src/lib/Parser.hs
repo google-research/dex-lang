@@ -15,6 +15,7 @@ import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
 import Data.Functor
+import Data.Foldable
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (fromMaybe)
 import Data.Void
@@ -277,10 +278,12 @@ dataDef :: Parser (UDecl VoidS VoidS)
 dataDef = do
   keyWord DataKW
   tyCon <- tyConDef
+  ifaces <- (lookAhead lBracket >> brackets multiIfaceBinder) <|> pure []
   sym "="
   dataCons <- onePerLine dataConDef
   return $ UDataDefDecl
-    (UDataDef tyCon $ map (\(nm, cons) -> (nm, UDataDefTrail cons)) dataCons)
+    (UDataDef tyCon (toNestParsed ifaces) $
+      map (\(nm, cons) -> (nm, UDataDefTrail cons)) dataCons)
     (fromString $ fst tyCon)
     (toNest $ map (fromString . fst) $ dataCons)
 
@@ -312,7 +315,8 @@ instanceDef isNamed = do
   name <- case isNamed of
     False -> keyWord InstanceKW $> NothingB
     True  -> keyWord NamedInstanceKW *> (JustB . fromString <$> anyName) <* sym ":"
-  argBinders <- concat <$> many (defArg True)
+  argBinders <- concat <$> many
+    (argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg] <?> "instance arg")
   className <- upperName
   params <- many leafExpr
   methods <- onePerLine instanceMethod
@@ -339,46 +343,51 @@ funDefLet :: Parser (UExpr VoidS -> UDecl VoidS VoidS)
 funDefLet = label "function definition" $ mayBreak $ do
   keyWord DefKW
   v <- letPat
-  argBinders <- concat <$> many (defArg True)
+  argBinders <- concat <$> many
+    (argInParens [parensExplicitArg, parensImplicitArg, parensIfaceArg] <?> "def arg")
   (eff, ty) <- label "result type annotation" $ annot effectiveType
   when (null argBinders && eff /= Pure) $ fail "Nullary def can't have effects"
   let funTy = buildPiType argBinders eff ty
   let lamBinders = argBinders <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
   return \body -> ULet PlainLet (UPatAnn v (Just funTy)) $ buildLam lamBinders body
 
-defArg :: Bool -> Parser [UPatAnnArrow VoidS VoidS]
-defArg allowIface = mayNotPair (
-      (lookAhead lParen >> defExplicitArg)
-  <|> (lookAhead lBrace >> defImplicitArg)
-  <|> (if allowIface then (lookAhead lBracket >> defInterfaceArg) else empty)
-  <?> "def argument")
+argInParens :: [(Lexer (), Parser a)] -> Parser a
+argInParens argParsers = mayNotPair $ asum $ argParsers <&> \(paren, p) -> lookAhead paren >> p
+
+parensExplicitArg :: (Lexer (), Parser [UPatAnnArrow VoidS VoidS])
+parensExplicitArg = (lParen, parens $ do
+  (p, ty) <- (,) <$> pat <*> annot uType
+  return $ [UPatAnnArrow (UPatAnn p (Just ty)) PlainArrow])
+
+parensImplicitArg :: (Lexer (), Parser [UPatAnnArrow VoidS VoidS])
+parensImplicitArg = (lBrace, braces $ do
+  p <- pat
+  isSingle <- (lookAhead (sym ":") $> True) <|> return False
+  case isSingle of
+    True -> do
+      ty <- annot uType
+      return $ [UPatAnnArrow (UPatAnn p (Just ty)) ImplicitArrow]
+    False -> do
+      ps <- (pat `sepBy` sc) <|> return []
+      return $ (p : ps) <&> \x -> UPatAnnArrow (UPatAnn x Nothing) ImplicitArrow)
+
+singleIfaceArg :: Parser [UPatAnnArrow VoidS VoidS]
+singleIfaceArg = do
+  p <- try $ pat <* sym ":"
+  ty <- uType
+  return [UPatAnnArrow (UPatAnn p (Just ty)) ClassArrow]
+
+multiIfaceBinder :: Parser [UAnnBinder AtomNameC VoidS VoidS]
+multiIfaceBinder = do
+  tys <- uType `sepBy` sym ","
+  return $ UAnnBinder UIgnore <$> tys
+  --UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow
+
+parensIfaceArg :: (Lexer (), Parser [UPatAnnArrow VoidS VoidS])
+parensIfaceArg = (lBracket, brackets $ singleIfaceArg <|> multiIfaceArg)
   where
-    defExplicitArg = parens $ do
-      (p, ty) <- (,) <$> pat <*> annot uType
-      return $ [UPatAnnArrow (UPatAnn p (Just ty)) PlainArrow]
-
-    defImplicitArg = braces $ do
-      p <- pat
-      isSingle <- (lookAhead (sym ":") $> True) <|> return False
-      case isSingle of
-        True -> do
-          ty <- annot uType
-          return $ [UPatAnnArrow (UPatAnn p (Just ty)) ImplicitArrow]
-        False -> do
-          ps <- (pat `sepBy` sc) <|> return []
-          return $ (p : ps) <&> \x -> UPatAnnArrow (UPatAnn x Nothing) ImplicitArrow
-
-    defInterfaceArg = brackets $ singleIfaceBinder <|> multipleIfaces
-
-    singleIfaceBinder = do
-      p <- try $ pat <* sym ":"
-      ty <- uType
-      return [UPatAnnArrow (UPatAnn p (Just ty)) ClassArrow]
-
-    multipleIfaces :: Parser [UPatAnnArrow VoidS VoidS]
-    multipleIfaces = do
-      tys <- uType `sepBy` sym ","
-      return $ tys <&> \ty -> UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow
+    multiIfaceArg = multiIfaceBinder <&> fmap \(UAnnBinder UIgnore ty) ->
+      UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow
 
 buildPiType :: [UPatAnnArrow VoidS VoidS] -> UEffectRow VoidS -> UType VoidS -> UType VoidS
 buildPiType [] Pure ty = ty
@@ -413,7 +422,9 @@ uLamExpr :: Parser (UExpr VoidS)
 uLamExpr = do
   sym "\\"
   -- We don't allow interface binders in lambdas because they overlap with table patterns
-  bs <- concat <$> some ((try $ defArg False) <|> ((:[]) . flip UPatAnnArrow PlainArrow <$> patAnn))
+  bs <- concat <$> some (   (try $ argInParens [parensExplicitArg, parensImplicitArg])
+                        <|> ((:[]) . flip UPatAnnArrow PlainArrow <$> patAnn)
+                        )
   argTerm
   body <- blockOrExpr
   return $ buildLam bs body
