@@ -87,6 +87,7 @@ module Syntax (
     pattern SumTy, pattern SumVal, pattern MaybeTy, pattern BinaryFunTy,
     pattern BinaryLamExpr, NaryLam,
     pattern NothingAtom, pattern JustAtom, pattern AtomicBlock,
+    pattern BoolTy, pattern FalseAtom, pattern TrueAtom,
     (-->), (?-->), (--@), (==>) ) where
 
 import Data.Functor
@@ -138,6 +139,7 @@ data Atom (n::S) =
  | Con (Con n)
  | TC  (TC  n)
  | Eff (EffectRow n)
+   -- only used within Simplify
  | ACase (Atom n) [AltP Atom n] (Type n)
    -- single-constructor only for now
  | DataConRef (DataDefName n) [Atom n] (EmptyAbs (Nest DataConRefBinding) n)
@@ -1545,6 +1547,7 @@ pattern TabTyAbs a <- Pi a@(PiType (PiBinder _ _ TabArrow) _ _)
 
 pattern TabTy :: PiBinder n l -> Type l -> Type n
 pattern TabTy b body <- Pi (PiType (b@(PiBinder _ _ TabArrow)) Pure body)
+  where TabTy b body = Pi (PiType b Pure body)
 
 pattern TabVal :: LamBinder n l -> Block l -> Atom n
 pattern TabVal b body <- Lam (LamExpr b@(LamBinder _ _ TabArrow _) body)
@@ -1647,6 +1650,15 @@ pattern NothingAtom a = SumVal (MaybeTy a) 0 UnitVal
 
 pattern JustAtom :: Type n -> Atom n -> Atom n
 pattern JustAtom a x = SumVal (MaybeTy a) 1 x
+
+pattern BoolTy :: Type n
+pattern BoolTy = Word8Ty
+
+pattern FalseAtom :: Atom n
+pattern FalseAtom = Con (Lit (Word8Lit 0))
+
+pattern TrueAtom :: Atom n
+pattern TrueAtom = Con (Lit (Word8Lit 1))
 
 -- -- === instances ===
 

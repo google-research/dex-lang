@@ -150,7 +150,13 @@ exprEffects expr = case expr of
     RunWriter _ f -> rwsFunEffects Writer f
     RunReader _ f -> rwsFunEffects Reader f
     RunState  _ f -> rwsFunEffects State  f
-    _ -> error $ "not implemented:" ++ pprint expr
+    PTileReduce _ _ _ -> return mempty
+    RunIO f -> do
+      effs <- functionEffs f
+      return $ deleteEff IOEffect effs
+    CatchException f -> do
+      effs <- functionEffs f
+      return $ deleteEff ExceptionEffect effs
   Case _ _ _ effs -> return effs
 
 functionEffs :: EnvReader m => Atom n -> m n (EffectRow n)
@@ -202,7 +208,7 @@ instance Fallible m => Typer (TyperT m)
 -- Minimal complete definition: getTypeE | getTypeAndSubstE
 -- (Usually we just implement `getTypeE` but for big things like blocks it can
 -- be worth implementing the specialized versions too, as optimizations.)
-class (SinkableE e, SubstE Name e) => HasType (e::E) where
+class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
   getTypeE   :: Typer m => e i -> m i o (Type o)
   getTypeE e = snd <$> getTypeAndSubstE e
 
@@ -629,10 +635,13 @@ typeCheckPrimOp op = case op of
       MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
       MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
-    RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) <- getTypeE ref
-    i' <- checkTypeE iTy i
-    eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-    return $ RefTy h eltTy'
+    getTypeE ref >>= \case
+      RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) -> do
+        i' <- checkTypeE iTy i
+        eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
+        return $ RefTy h eltTy'
+      ty -> error $ "Not a reference to a table: " ++
+                       pprint (Op op) ++ " : " ++ pprint ty
   ProjRef i ref -> do
     getTypeE ref >>= \case
       RefTy h (ProdTy tys) -> return $ RefTy h $ tys !! i
@@ -736,13 +745,18 @@ typeCheckPrimOp op = case op of
     return TagRepTy
   ToEnum t x -> do
     x |: Word8Ty
-    TypeCon sourceName dataDefName [] <- checkTypeE TyKind t
-    DataDef _ _ dataConDefs <- lookupDataDef dataDefName
-    forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
-    return $ TypeCon sourceName dataDefName []
-  SumToVariant x -> do
-    SumTy cases <- getTypeE x
-    return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
+    t' <- checkTypeE TyKind t
+    case t' of
+      TypeCon _ dataDefName [] -> do
+        DataDef _ _ dataConDefs <- lookupDataDef dataDefName
+        forM_ dataConDefs \(DataConDef _ (Abs binders _)) -> checkEmptyNest binders
+      VariantTy _ -> return ()  -- TODO: check empty payload
+      SumTy cases -> forM_ cases \cty -> checkAlphaEq cty UnitTy
+      _ -> error $ "Not a sum type: " ++ pprint t'
+    return t'
+  SumToVariant x -> getTypeE x >>= \case
+    SumTy cases -> return $ VariantTy $ NoExt $ foldMap (labeledSingleton "c") cases
+    ty -> error $ "Not a sum type: " ++ pprint ty
   OutputStreamPtr ->
     return $ BaseTy $ hostPtrTy $ hostPtrTy $ Scalar Word8Type
     where hostPtrTy ty = PtrType (Heap CPU, ty)

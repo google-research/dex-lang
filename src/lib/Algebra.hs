@@ -237,12 +237,12 @@ toPolynomial atom = case atom of
   Var v -> return $ poly [(1, mono [(v, 1)])]
   IdxRepVal x -> return $ fromInt x
   Con (IntRangeVal _ _ i) -> toPolynomial i
+  Con (IndexRangeVal _ _ _ i) -> toPolynomial i
   -- TODO: Coercions? Unit constructor?
   _ -> unreachable
   where
     fromInt i = poly [((fromIntegral i) % 1, mono [])]
     unreachable = error $ "Unsupported or invalid atom in index set: " ++ pprint atom
-
 
 -- === polynomials to Core expressions ===
 

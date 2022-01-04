@@ -269,15 +269,15 @@ def graphToAdjacencyMatrix {a} ((MkGraph n nodes m edges):Graph a) : n=>n=>Bool 
 def pairUnpack ((v, _):(Int & Float)) : Int = v
 :p pairUnpack
 > \pat:(Int32 & Float32).
->   v4:Int32 = ((\(a, _). a) pat)
->   v5:Float32 = ((\(_, b). b) pat)
+>    v4:Int32 = ProjectElt [0] pat
+>    v5:Float32 = ProjectElt [1] pat
 >   v4
 
 def recordUnpack ({a=v, b=_}:{a:Int & b:Float}) : Int = v
 :p recordUnpack
 > \pat:{a: Int32 & b: Float32}.
->   v4:Int32 = ((\{a = a, b = _}. a) pat)
->   v5:Float32 = ((\{a = _, b = b}. b) pat)
+>    v4:Int32 = ProjectElt [0] pat
+>    v5:Float32 = ProjectElt [1] pat
 >   v4
 
 def nestedUnpack (x:MyPair Int (MyPair (MyIntish & Int) Int)) : Int =

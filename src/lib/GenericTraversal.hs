@@ -20,7 +20,7 @@ import PPrint
 
 import LabeledItems
 
-class (Builder2 m, SubstReader Name m)
+class (ScopableBuilder2 m, SubstReader Name m)
       => GenericTraverser (m::MonadKind2) where
 
   traverseExpr :: Emits o => Expr i -> m i o (Expr o)

@@ -838,7 +838,7 @@ triLit
 > , [3, 4, 5]@(..(2@Fin 4))
 > , [6, 7, 8, 9]@(..(3@Fin 4)) ]
 
-@noinline
+-- @noinline
 def fromLeftFloat (x:(Float | Int)) : Float =
   case x of
     Left x' -> x'
@@ -851,23 +851,30 @@ def fromLeftFloat (x:(Float | Int)) : Float =
 :p fromLeftFloat $ Left 1.2
 > 1.2
 
-@noinline
-def f1 (x:Int) : Int = x + 1
+-- TODO: revive these tests once we have automatic inlining control
 
-@noinline
-def f2 (x:Int) : Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
+-- @noinline
+-- def f1 (x:Int) : Int = x + 1
 
-@noinline
-def f3 (x:Int) : Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
+-- @noinline
+-- def f2 (x:Int) : Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
 
-@noinline
-def f4 (x:Int) : Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
+-- @noinline
+-- def f3 (x:Int) : Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
 
-@noinline
-def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
+-- @noinline
+-- def f4 (x:Int) : Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
 
-@noinline
-def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
+-- @noinline
+-- def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
+
+-- @noinline
+-- def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
+
+-- -- This will compile extremely slowly if non-inlining is broken
+-- :p f6 0
+-- > 100000
+
 
 -- Testing integer powers
 
@@ -899,10 +906,6 @@ def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 :p map nextpow2 [-1, 0, 1, 2, 3, 4, 7, 8, 9, 1023, 1024, 1025]
 > [1, 1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048]
 
-
--- This will compile extremely slowly if non-inlining is broken
-:p f6 0
-> 100000
 
 interface AssociatedInt a
   value a : Int
@@ -951,3 +954,13 @@ interface AssociatedPermutedParams a c
 > Please report this at github.com/google-research/dex-lang/issues
 >
 > Permuted or incomplete explicit type binders are not supported yet.
+
+-- checks that mixing non-data values into the results of case expressions don't
+-- prevent them from later being used in types.
+:p
+  x = 1 + 1
+  (n, _) = case x > 1 of
+    True  -> (x, \x:Int. x)
+    False -> (x, \x:Int. x)
+  for i:(Fin n). 1.0
+> [1., 1.]

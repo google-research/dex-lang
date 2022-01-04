@@ -415,6 +415,7 @@ instance Builder (InfererM i) where
     ty <- getType expr'
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
 
+instance ScopableBuilder (InfererM i) where
   buildScoped cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
       resultWithEmissions <- locallyMutableInplaceT do
@@ -795,7 +796,9 @@ nthCaseAltIdx ty i = case ty of
       pairedIndices = enumerate $ [VariantAlt l idx | (l, idx, _) <- toList (withLabels types)]
   _ -> error $ "can't pattern-match on: " <> pprint ty
 
-buildMonomorphicCase :: (Emits n, Builder m) => [IndexedAlt n] -> Atom n -> Type n -> m n (Atom n)
+buildMonomorphicCase
+  :: (Emits n, ScopableBuilder m)
+  => [IndexedAlt n] -> Atom n -> Type n -> m n (Atom n)
 buildMonomorphicCase alts scrut resultTy = do
   scrutTy <- getType scrut
   buildCase scrut resultTy \i vs -> do
@@ -810,20 +813,20 @@ buildSortedCase :: (Fallible1 m, Builder m, Emits n)
 buildSortedCase scrut alts resultTy = do
   scrutTy <- getType scrut
   case scrutTy of
-    TypeCon _ _ _ -> buildMonomorphicCase alts scrut resultTy
+    TypeCon _ _ _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     VariantTy (Ext types tailName) -> do
       case filter isVariantTailAlt alts of
         [] -> case tailName of
           Nothing ->
             -- We already know the type exactly, so just emit a case.
-            buildMonomorphicCase alts scrut resultTy
+            liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
           Just _ -> do
             -- Split off the types we don't know about, mapping them to a
             -- runtime error.
-            buildSplitCase types scrut resultTy
+            liftEmitBuilder $ buildSplitCase types scrut resultTy
               (\v -> do ListE alts' <- sinkM $ ListE alts
                         resultTy'   <- sinkM resultTy
-                        buildMonomorphicCase alts' (Var v) resultTy')
+                        liftEmitBuilder $ buildMonomorphicCase alts' (Var v) resultTy')
               (\_ -> do resultTy' <- sinkM resultTy
                         emitOp $ ThrowError resultTy')
         [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
@@ -832,10 +835,10 @@ buildSortedCase scrut alts resultTy = do
             let left = LabeledItems $ M.intersectionWith splitLeft
                         (fromLabeledItems types) skippedItems
             checkNoTailOverlaps alts left
-            buildSplitCase left scrut resultTy
+            liftEmitBuilder $ buildSplitCase left scrut resultTy
               (\v -> do ListE alts' <- sinkM $ ListE alts
                         resultTy'   <- sinkM resultTy
-                        buildMonomorphicCase alts' (Var v) resultTy')
+                        liftEmitBuilder $ buildMonomorphicCase alts' (Var v) resultTy')
               (\v -> do tailAlt' <- sinkM tailAlt
                         applyNaryAbs tailAlt' [v] >>= emitBlock )
         _ -> throw TypeErr "Can't specify more than one variant tail pattern."
@@ -1822,7 +1825,7 @@ instance Semigroup DerivationKind where
 instance Monoid DerivationKind where
   mempty = OnlyGivens
 
-class (Alternative1 m, Searcher1 m, Builder m)
+class (Alternative1 m, Searcher1 m, ScopableBuilder m)
       => Synther m where
   getGivens :: m n (Givens n)
   withGivens :: Givens n -> m n a -> m n a
@@ -1831,7 +1834,7 @@ class (Alternative1 m, Searcher1 m, Builder m)
 newtype SyntherM (n::S) (a:: *) = SyntherM
   { runSyntherM' :: OutReaderT Givens (BuilderT (WriterT DerivationKind [])) n a }
   deriving ( Functor, Applicative, Monad, EnvReader, EnvExtender
-           , ScopeReader, MonadFail, Fallible
+           , ScopeReader, MonadFail, Fallible, Builder
            , Alternative, Searcher, OutReader Givens)
 
 instance Synther SyntherM where
@@ -1842,8 +1845,7 @@ instance Synther SyntherM where
   withGivens givens cont = do
     localOutReader givens cont
 
-instance Builder SyntherM where
-  emitDecl hint ann expr = SyntherM $ emitDecl hint ann expr
+instance ScopableBuilder SyntherM where
   buildScoped cont = SyntherM $ buildScoped $ runSyntherM' cont
 
 runSyntherM :: Distinct n
@@ -1920,7 +1922,7 @@ tryApplyM proj dict = do
   projTy <- getType proj
   instantiateProjParams projTy dictTy >>= \case
     NothingE -> fail "couldn't instantiate params"
-    JustE (ListE params) -> buildBlock do
+    JustE (ListE params) -> liftBuilder $ buildBlock do
       Distinct <- getDistinct
       instantiated <- naryApp (sink proj) (map sink params)
       dictAtom <- emitBlock $ sink dict
@@ -2040,7 +2042,7 @@ runDictSynthTraverserM bindings m =
 newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
   DictSynthTraverserM
     { runDictSynthTraverserM' :: SubstReaderT Name (BuilderT FallibleM) i o a }
-    deriving ( Functor, Applicative, Monad, SubstReader Name
+    deriving ( Functor, Applicative, Monad, SubstReader Name, Builder
              , EnvReader, ScopeReader, EnvExtender, MonadFail, Fallible)
 
 instance GenericTraverser DictSynthTraverserM where
@@ -2049,11 +2051,7 @@ instance GenericTraverser DictSynthTraverserM where
     addSrcContext ctx $ Atom <$> trySynthDict ty'
   traverseExpr expr = traverseExprDefault expr
 
--- TODO: need to figure out why this one isn't derivable
-instance Builder (DictSynthTraverserM i) where
-  emitDecl hint ann expr =
-    DictSynthTraverserM $ emitDecl hint ann expr
-
+instance ScopableBuilder (DictSynthTraverserM i) where
   buildScoped cont =
     DictSynthTraverserM $ buildScoped $ runDictSynthTraverserM' cont
 
