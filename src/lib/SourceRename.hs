@@ -106,13 +106,15 @@ instance SourceRenamableE (SourceNameOr UVar) where
     SourceMap sourceMap <- askSourceMap
     case M.lookup sourceName sourceMap of
       Nothing -> throw UnboundVarErr $ pprint sourceName
-      Just (WithColor AtomNameRep    name) -> return $ InternalName $ UAtomVar name
-      Just (WithColor TyConNameRep   name) -> return $ InternalName $ UTyConVar name
-      Just (WithColor DataConNameRep name) -> return $ InternalName $ UDataConVar name
-      Just (WithColor ClassNameRep   name) -> return $ InternalName $ UClassVar name
-      Just (WithColor MethodNameRep  name) -> return $ InternalName $ UMethodVar name
-      Just (WithColor DataDefNameRep _   ) -> error "Shouldn't find these in source map"
-      Just (WithColor SuperclassNameRep _) -> error "Shouldn't find these in source map"
+      Just (WithColor AtomNameRep     name) -> return $ InternalName $ UAtomVar name
+      Just (WithColor TyConNameRep    name) -> return $ InternalName $ UTyConVar name
+      Just (WithColor DataConNameRep  name) -> return $ InternalName $ UDataConVar name
+      Just (WithColor ClassNameRep    name) -> return $ InternalName $ UClassVar name
+      Just (WithColor MethodNameRep   name) -> return $ InternalName $ UMethodVar name
+      Just (WithColor EffectNameRep   name) -> return $ InternalName $ UEffectVar name
+      Just (WithColor EffectOpNameRep name) -> return $ InternalName $ UEffectOpVar name
+      Just (WithColor DataDefNameRep  _   ) -> error "Shouldn't find these in source map"
+      Just (WithColor SuperclassNameRep _ ) -> error "Shouldn't find these in source map"
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 lookupSourceName :: Renamer m => SourceName -> m n (WithColor Name n)
@@ -237,6 +239,7 @@ instance SourceRenamableB UDecl where
       Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       runRenamerNameGenT $ UInstance className' conditions' params' methodDefs' `fmapG` sourceRenameB instanceName
+    UEffectDecl _ _ _ _ -> error "TODO"
 
 renameMethodType :: (Fallible1 m, Renamer m)
                  => Nest (UAnnBinder AtomNameC) i' i

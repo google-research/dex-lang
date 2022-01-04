@@ -74,6 +74,7 @@ isTopDecl decl = case decl of
   ULet         _ _ _     -> False
   UDataDefDecl _ _ _     -> True
   UInterface   _ _ _ _ _ -> True
+  UEffectDecl  _ _ _ _   -> True
   UInstance    _ _ _ _ _ -> False
 
 -- === Top-level inferer ===
@@ -878,6 +879,8 @@ inferUVar = \case
   UMethodVar v -> do
     MethodBinding _ _ getter <- lookupEnv v
     return getter
+  UEffectVar v -> error "TODO"
+  UEffectOpVar v -> error "TODO"
 
 buildForTypeFromTabType :: (Fallible1 m, Builder m)
                         => EffectRow n -> PiType n -> m n (PiType n)
@@ -933,6 +936,7 @@ inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) 
       let UMethodType (Right explicits) _ = ty
       emitMethodType (getNameHint prettyName) className' explicits i
   extendSubst (className @> className' <.> methodNames @@> methodNames') cont
+inferUDeclTop (UEffectDecl _ _ _ _) cont = error "TODO"
 inferUDeclTop _ _ = error "not a top decl"
 
 tyConDefAsAtom :: TopInferer m => DataDefName o -> m i o (Atom o)

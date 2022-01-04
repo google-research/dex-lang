@@ -790,11 +790,13 @@ deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
 
 data UVar (n::S) =
-   UAtomVar    (Name AtomNameC    n)
- | UTyConVar   (Name TyConNameC   n)
- | UDataConVar (Name DataConNameC n)
- | UClassVar   (Name ClassNameC   n)
- | UMethodVar  (Name MethodNameC  n)
+   UAtomVar     (Name AtomNameC     n)
+ | UTyConVar    (Name TyConNameC    n)
+ | UDataConVar  (Name DataConNameC  n)
+ | UClassVar    (Name ClassNameC    n)
+ | UMethodVar   (Name MethodNameC   n)
+ | UEffectVar   (Name EffectNameC   n)
+ | UEffectOpVar (Name EffectOpNameC n)
    deriving (Eq, Ord, Show, Generic)
 
 data UBinder (c::C) (n::S) (l::S) where
@@ -873,6 +875,12 @@ data UDecl (n::S) (l::S) where
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
     -> MaybeB (UBinder AtomNameC) n l  -- optional instance name
+    -> UDecl n l
+  UEffectDecl
+    :: SourceNameOr (Name EffectNameC) n  -- effect name
+    -> Nest (UAnnBinder AtomNameC) n p    -- parameter binders
+    -> [UType p]                          -- operation types
+    -> Nest (UBinder EffectOpNameC) p l
     -> UDecl n l
 
 type UType = UExpr
@@ -2426,11 +2434,13 @@ instance BindsEnv UnitB where
 -- TODO: name subst instances for the rest of UExpr
 instance SubstE Name UVar where
   substE env = \case
-    UAtomVar    v -> UAtomVar    $ substE env v
-    UTyConVar   v -> UTyConVar   $ substE env v
-    UDataConVar v -> UDataConVar $ substE env v
-    UClassVar   v -> UClassVar   $ substE env v
-    UMethodVar  v -> UMethodVar  $ substE env v
+    UAtomVar     v -> UAtomVar     $ substE env v
+    UTyConVar    v -> UTyConVar    $ substE env v
+    UDataConVar  v -> UDataConVar  $ substE env v
+    UClassVar    v -> UClassVar    $ substE env v
+    UMethodVar   v -> UMethodVar   $ substE env v
+    UEffectVar   v -> UEffectVar   $ substE env v
+    UEffectOpVar v -> UEffectOpVar $ substE env v
 
 instance SinkableE e => SinkableE (WithEnv e) where
   sinkingProofE (fresh::SinkingCoercion n l) (WithEnv (bindings :: Env h) e) =

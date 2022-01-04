@@ -1492,6 +1492,8 @@ data NameColorRep (c::C) where
   ClassNameRep      :: NameColorRep ClassNameC
   SuperclassNameRep :: NameColorRep SuperclassNameC
   MethodNameRep     :: NameColorRep MethodNameC
+  EffectNameRep     :: NameColorRep EffectNameC
+  EffectOpNameRep   :: NameColorRep EffectOpNameC
 
 deriving instance Show (NameColorRep c)
 deriving instance Eq   (NameColorRep c)
@@ -1505,6 +1507,8 @@ data DynamicColor
    classNameVal
    superclassNameVal
    methodNameVal
+   effectNameVal
+   effectOpNameVal
  =
    AtomNameVal       atomNameVal
  | DataDefNameVal    dataDefNameVal
@@ -1513,6 +1517,8 @@ data DynamicColor
  | ClassNameVal      classNameVal
  | SuperclassNameVal superclassNameVal
  | MethodNameVal     methodNameVal
+ | EffectNameVal     effectNameVal
+ | EffectOpNameVal   effectOpNameVal
    deriving (Show, Generic)
 
 data ColorsEqual (c1::C) (c2::C) where
@@ -1527,6 +1533,8 @@ eqNameColorRep rep1 rep2 = case (rep1, rep2) of
   (ClassNameRep     , ClassNameRep     ) -> Just ColorsEqual
   (SuperclassNameRep, SuperclassNameRep) -> Just ColorsEqual
   (MethodNameRep    , MethodNameRep    ) -> Just ColorsEqual
+  (EffectNameRep    , EffectNameRep    ) -> Just ColorsEqual
+  (EffectOpNameRep  , EffectOpNameRep  ) -> Just ColorsEqual
   _ -> Nothing
 
 -- gets the NameColorRep implicitly, like Typeable
@@ -1538,6 +1546,8 @@ instance NameColor DataConNameC    where nameColorRep = DataConNameRep
 instance NameColor ClassNameC      where nameColorRep = ClassNameRep
 instance NameColor SuperclassNameC where nameColorRep = SuperclassNameRep
 instance NameColor MethodNameC     where nameColorRep = MethodNameRep
+instance NameColor EffectNameC     where nameColorRep = EffectNameRep
+instance NameColor EffectOpNameC   where nameColorRep = EffectOpNameRep
 
 tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
               (NameColor c1, NameColor c2) => v c1 n -> Maybe (v c2 n)
@@ -1555,6 +1565,8 @@ withNameColorRep rep cont = case rep of
   ClassNameRep      -> cont
   SuperclassNameRep -> cont
   MethodNameRep     -> cont
+  EffectNameRep     -> cont
+  EffectOpNameRep     -> cont
 
 
 -- === instances ===
@@ -2046,6 +2058,8 @@ data C =
   | ClassNameC
   | SuperclassNameC
   | MethodNameC
+  | EffectNameC
+  | EffectOpNameC
 
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
@@ -2601,12 +2615,14 @@ instance NameColor c => Generic (NameBinder c n l) where
 
 instance (forall c. NameColor c => Store (v c n)) => Generic (WithColor v n) where
   type Rep (WithColor v n) = Rep (DynamicColor (v AtomNameC       n)
-                                            (v DataDefNameC    n)
-                                            (v TyConNameC      n)
-                                            (v DataConNameC    n)
-                                            (v ClassNameC      n)
-                                            (v SuperclassNameC n)
-                                            (v MethodNameC     n))
+                                               (v DataDefNameC    n)
+                                               (v TyConNameC      n)
+                                               (v DataConNameC    n)
+                                               (v ClassNameC      n)
+                                               (v SuperclassNameC n)
+                                               (v MethodNameC     n)
+                                               (v EffectNameC     n)
+                                               (v EffectOpNameC   n))
   from (WithColor rep val) = case rep of
     AtomNameRep       -> from $ AtomNameVal       val
     DataDefNameRep    -> from $ DataDefNameVal    val
@@ -2615,15 +2631,20 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (WithColor v n) whe
     ClassNameRep      -> from $ ClassNameVal      val
     SuperclassNameRep -> from $ SuperclassNameVal val
     MethodNameRep     -> from $ MethodNameVal     val
+    EffectNameRep     -> from $ EffectNameVal     val
+    EffectOpNameRep   -> from $ EffectOpNameVal   val
 
   to genRep = case to genRep of
-    (AtomNameVal       val) -> WithColor AtomNameRep       val
-    (DataDefNameVal    val) -> WithColor DataDefNameRep    val
-    (TyConNameVal      val) -> WithColor TyConNameRep      val
-    (DataConNameVal    val) -> WithColor DataConNameRep    val
-    (ClassNameVal      val) -> WithColor ClassNameRep      val
-    (SuperclassNameVal val) -> WithColor SuperclassNameRep val
-    (MethodNameVal     val) -> WithColor MethodNameRep     val
+    AtomNameVal       val -> WithColor AtomNameRep       val
+    DataDefNameVal    val -> WithColor DataDefNameRep    val
+    TyConNameVal      val -> WithColor TyConNameRep      val
+    DataConNameVal    val -> WithColor DataConNameRep    val
+    ClassNameVal      val -> WithColor ClassNameRep      val
+    SuperclassNameVal val -> WithColor SuperclassNameRep val
+    MethodNameVal     val -> WithColor MethodNameRep     val
+    EffectNameVal     val -> WithColor EffectNameRep     val
+    EffectOpNameVal   val -> WithColor EffectOpNameRep   val
+
 
 instance (forall c. NameColor c => Store (v c n)) => Store (WithColor v n)
 instance SinkableV v => SinkableE (WithColor v) where
@@ -2641,8 +2662,8 @@ instance ( Store   (b UnsafeS UnsafeS)
 
 instance
   ( Store a0, Store a1, Store a2, Store a3
-  , Store a4, Store a5, Store a6)
-  => Store (DynamicColor a0 a1 a2 a3 a4 a5 a6)
+  , Store a4, Store a5, Store a6, Store a7, Store a8 )
+  => Store (DynamicColor a0 a1 a2 a3 a4 a5 a6 a7 a8)
 
 instance Functor HoistExcept where
   fmap f x = f <$> x

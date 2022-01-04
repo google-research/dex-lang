@@ -419,11 +419,13 @@ instance Pretty SourceUModule where
 instance Pretty (UVar n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UVar n) where
   prettyPrec uvar = atPrec ArgPrec case uvar of
-    UAtomVar    v -> p v
-    UTyConVar   v -> p v
-    UDataConVar v -> p v
-    UClassVar   v -> p v
-    UMethodVar  v -> p v
+    UAtomVar     v -> p v
+    UTyConVar    v -> p v
+    UDataConVar  v -> p v
+    UClassVar    v -> p v
+    UMethodVar   v -> p v
+    UEffectVar   v -> p v
+    UEffectOpVar v -> p v
 
 instance NameColor c => Pretty (UBinder c n l) where pretty = prettyFromPrettyPrec
 instance NameColor c => PrettyPrec (UBinder c n l) where
@@ -535,6 +537,11 @@ instance Pretty (UDecl n l) where
   pretty (UInstance bs className params methods (LeftB v)) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
         <> hardline <> prettyLines methods
+  pretty (UEffectDecl name bs opTys opNames) =
+    "effect" <+> p name <+> prettyBinderNest bs
+        <> hardline <> foldMap (<>hardline) ops
+    where
+      ops = [ p n <+> ":" <+> p ty | (n, ty) <- zip (fromNest opNames) opTys]
 
 prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
 prettyBinderNest bs = spaced $ fromNest bs
