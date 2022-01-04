@@ -635,10 +635,13 @@ typeCheckPrimOp op = case op of
       MAsk      ->         declareEff (RWSEffect Reader $ Just h') $> s
       MExtend _ x -> x|:s >> declareEff (RWSEffect Writer $ Just h') $> UnitTy
   IndexRef ref i -> do
-    RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) <- getTypeE ref
-    i' <- checkTypeE iTy i
-    eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-    return $ RefTy h eltTy'
+    getTypeE ref >>= \case
+      RefTy h (Pi (PiType (PiBinder b iTy TabArrow) Pure eltTy)) -> do
+        i' <- checkTypeE iTy i
+        eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
+        return $ RefTy h eltTy'
+      ty -> error $ "Not a reference to a table: " ++
+                       pprint (Op op) ++ " : " ++ pprint ty
   ProjRef i ref -> do
     getTypeE ref >>= \case
       RefTy h (ProdTy tys) -> return $ RefTy h $ tys !! i

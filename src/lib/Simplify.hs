@@ -26,7 +26,6 @@ import Name
 import Builder
 import Syntax
 import Type
-import Interpreter (traverseSurfaceAtomNames)
 import Util (enumerate)
 import Linearize
 import Transpose
@@ -228,7 +227,67 @@ simplifyApp f x = case f of
   _ -> liftM Var $ emit $ App f x
 
 simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
-simplifyAtom atom = traverseSurfaceAtomNames atom \v -> do
+simplifyAtom atom = case atom of
+  Var v -> simplifyVar v
+  -- Tables that only contain data aren't necessarily getting inlined,
+  -- so this might be the last chance to simplify them.
+  TabVal _ _ -> do
+    substM atom >>= getType >>= isData >>= \case
+      True -> do
+        ~(tab, IdentityRecon) <- simplifyLam atom
+        return tab
+      False -> substM atom
+  -- We don't simplify body of lam because we'll beta-reduce it soon.
+  Lam _ -> substM atom
+  Pi  _ -> substM atom
+  DepPairTy _ -> substM atom
+  DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
+  Con con -> Con <$> mapM simplifyAtom con
+  TC tc -> TC <$> mapM simplifyAtom tc
+  Eff eff -> Eff <$> substM eff
+  TypeCon name def params ->
+    TypeCon name <$>  substM def <*> mapM simplifyAtom params
+  DataCon name def params con args ->
+    DataCon name <$> substM def <*> mapM simplifyAtom params
+                 <*> pure con <*> mapM simplifyAtom args
+  Record items -> Record <$> mapM simplifyAtom items
+  RecordTy items -> RecordTy <$> simplifyExtLabeledItems items
+  Variant types label i value -> do
+    types' <- fromExtLabeledItemsE <$> substM (ExtLabeledItemsE types)
+    value' <- simplifyAtom value
+    return $ Variant types' label i value'
+  VariantTy items -> VariantTy <$> simplifyExtLabeledItems items
+  LabeledRow items -> LabeledRow <$> simplifyExtLabeledItems items
+  ACase e alts rTy   -> do
+    e' <- simplifyAtom e
+    case trySelectBranch e' of
+      Just (i, args) -> do
+        Abs bs body <- return $ alts !! i
+        extendSubst (bs @@> map SubstVal args) $ simplifyAtom body
+      Nothing -> do
+        rTy' <- substM rTy
+        alts' <- forM alts \(Abs bs body) -> do
+          bs' <- substM $ EmptyAbs bs
+          buildNaryAbs bs' \xs ->
+            extendSubst (bs @@> map Rename xs) $
+              simplifyAtom body
+        return $ ACase e' alts' rTy'
+  DataConRef _ _ _ -> error "Should only occur in Imp lowering"
+  BoxedRef _ _     -> error "Should only occur in Imp lowering"
+  DepPairRef _ _ _ -> error "Should only occur in Imp lowering"
+  ProjectElt idxs v -> getProjection (toList idxs) <$> simplifyAtom (Var v)
+
+simplifyExtLabeledItems
+  :: Simplifier m
+  => ExtLabeledItems (Atom i) (AtomName i)
+  -> m i o (ExtLabeledItems (Atom o) (AtomName o))
+simplifyExtLabeledItems (Ext items ext) = do
+    items' <- mapM simplifyAtom items
+    ext' <- liftM fromExtLabeledItemsE $ substM $ ExtLabeledItemsE $ Ext NoLabeledItems ext
+    return $ prefixExtLabeledItems items' ext'
+
+simplifyVar :: Simplifier m => AtomName i -> m i o (Atom o)
+simplifyVar v = do
   env <- getSubst
   case env ! v of
     SubstVal x -> return x
@@ -239,7 +298,7 @@ simplifyAtom atom = traverseSurfaceAtomNames atom \v -> do
           | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
 
-simplifyLam :: (Emits o, Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
+simplifyLam :: (Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
 simplifyLam lam = do
   Lam (LamExpr b body) <- substM lam
   (Abs (Nest b' Empty) body', recon) <- dropSubst $ simplifyAbs $ Abs (Nest b Empty) body
@@ -411,11 +470,9 @@ simplifyHof hof = case hof of
     applyRecon recon $ Var ans
   Linearize lam -> do
     ~(lam', IdentityRecon) <- simplifyLam lam
-    -- TODO: simplify the result to remove functions introduced by linearization
     linearize lam'
   Transpose lam -> do
     ~(lam', IdentityRecon) <- simplifyLam lam
-    -- TODO: simplify the result to remove functions introduced by linearization
     transpose lam'
   CatchException lam -> do
     (Lam (LamExpr b body), IdentityRecon) <- simplifyLam lam
