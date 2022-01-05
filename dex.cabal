@@ -38,6 +38,10 @@ flag foreign
   description:         Build the C interface to Dex
   default:             False
 
+flag debug
+  description:         Enable extra checks and stack trace printing (useful for developers)
+  default:             False
+
 library dex-resources
   if os(darwin)
     exposed-modules:   Resources
@@ -70,6 +74,8 @@ library
     build-depends:     warp, wai, blaze-html, http-types, cmark, binary
     cpp-options:       -DDEX_LIVE
     cxx-options:       -DDEX_LIVE
+  if flag(debug)
+    cpp-options:       -DDEX_DEBUG
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources
