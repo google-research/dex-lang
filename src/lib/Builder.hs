@@ -24,6 +24,7 @@ module Builder (
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
   fromPair, getFst, getSnd, getProj, getProjRef, getNaryProjRef, naryApp,
+  indexRef, naryIndexRef,
   ptrOffset, unsafePtrLoad, ptrLoad,
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
@@ -955,10 +956,17 @@ emitUnpacked tup = do
   forM xs \x -> emit $ Atom x
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-app x i = Var <$> emit (App x i)
+app x i = Var <$> emit (App x [i])
 
 naryApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
-naryApp f xs = foldM app f xs
+naryApp f [] = return f
+naryApp f xs = Var <$> emit (App f xs)
+
+indexRef :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
+indexRef ref i = emitOp $ IndexRef ref i
+
+naryIndexRef :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
+naryIndexRef ref is = foldM indexRef ref is
 
 indexAsInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
 indexAsInt idx = emitOp $ ToOrdinal idx
@@ -1173,8 +1181,8 @@ reduceE monoid xs = liftEmitBuilder do
   a' <- return $ ignoreHoistFailure $ hoist n a
   getSnd =<< emitRunWriter "ref" a' monoid \_ ref ->
     buildFor "i" Fwd (sink $ binderType n) \i -> do
-      x <- emit $ App (sink xs) (Var i)
-      emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) $ Var x
+      x <- app (sink xs) (Var i)
+      emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid n)
 andMonoid = do
@@ -1191,8 +1199,8 @@ mapE :: (Emits n, ScopableBuilder m)
 mapE f xs = do
   TabTy n _ <- getType xs
   buildFor (getNameHint n) Fwd (binderType n) \i -> do
-    x <- emit $ App (sink xs) $ Var i
-    f $ Var x
+    x <- app (sink xs) (Var i)
+    f x
 
 -- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
 catMaybesE :: (Emits n, Builder m) => Atom n -> m n (Atom n)

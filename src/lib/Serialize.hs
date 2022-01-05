@@ -59,7 +59,7 @@ getTableElements :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val n -> m n [Atom
 getTableElements tab = do
   TabTy b _ <- getType tab
   idxs <- indices $ binderType b
-  forM idxs \i -> liftImmut $ liftInterpM $ evalExpr $ App tab i
+  forM idxs \i -> liftImmut $ liftInterpM $ evalExpr $ App tab [i]
 
 -- Pretty-print values, e.g. for displaying in the REPL.
 -- This doesn't handle parentheses well. TODO: treat it more like PrettyPrec

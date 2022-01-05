@@ -927,13 +927,15 @@ interface AssociatedWithTwo a c
 instance AssociatedWithTwo Int Float
   value2 = 8
 
+-- TODO: the source location for this error message is a bit off since we added
+-- n-ary applications.
 value2 Int Float
 > 8
 value2 Float Int
 > Type error:Couldn't synthesize a class dictionary for: (AssociatedWithTwo Float32 Int32)
 >
 > value2 Float Int
-> ^^^^^^^^^^^^^^^^
+> ^^^^^^^
 
 -- TODO: This is a really bad error message
 interface BadAssociatedName a

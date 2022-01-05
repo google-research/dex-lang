@@ -314,13 +314,13 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
 
 linearizeExpr :: Emits o => Expr i -> LinM i o Atom Atom
 linearizeExpr expr = case expr of
-  App x i -> do
+  Atom x -> linearizeAtom x
+  App x idxs -> do
     substM x >>= getType >>= \case
       TabTy _ _ ->
-        zipLin (linearizeAtom x) (pureLin i) `bindLin`
-         \(PairE x' i') -> app x' i'
+        zipLin (linearizeAtom x) (pureLin $ ListE idxs) `bindLin`
+         \(PairE x' (ListE idxs')) -> naryApp x' idxs'
       _ -> error "not implemented"
-  Atom e     -> linearizeAtom e
   Op op      -> linearizeOp op
   Hof e      -> linearizeHof e
   Case e alts resultTy _ -> do

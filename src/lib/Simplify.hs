@@ -121,13 +121,13 @@ _simplifyStandalone block =
 
 simplifyExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
 simplifyExpr expr = case expr of
-  App f x -> do
-    x' <- simplifyAtom x
+  Atom x -> simplifyAtom x
+  App f xs -> do
+    xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
-    simplifyApp f' x'
+    simplifyApp f' xs'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
-  Atom x  -> simplifyAtom x
   Case e alts resultTy eff -> do
     e' <- simplifyAtom e
     eff' <- substM eff
@@ -203,28 +203,22 @@ defuncCase scrut alts resultTy = do
                             (Atom (PairVal resultData newResult))
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
-simplifyApp :: (Emits o, Simplifier m) => Atom o -> Atom o -> m i o (Atom o)
-simplifyApp f x = case f of
-  Lam (LamExpr b body) ->
-    dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
-  DataCon printName defName params con xs -> do
-    DataDef _ paramBs _ <- lookupDataDef defName
-    let (params', xs') = splitAt (nestLength paramBs) $ params ++ xs ++ [x]
-    return $ DataCon printName defName params' con xs'
-  ACase e alts (Pi piType) -> do
-    -- TODO: optimization for common case where all branches are curried
-    -- functions and we do the application under the ACase without emitting a
-    -- case expression.
-    Just (_, _, _, resultTy) <- return $ considerNonDepPiType piType
+simplifyApp :: (Emits o, Simplifier m) => Atom o -> [Atom o] -> m i o (Atom o)
+simplifyApp f [] = return f
+simplifyApp f xs@(x:rest) = case f of
+  Lam (LamExpr b body) -> do
+    ans <- dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
+    simplifyApp ans rest
+  ACase e alts ty -> do
+    Just (NaryPiType piBinders _ resultTy) <- return $ fromNaryPiType (length xs) ty
+    resultTy' <- applySubst (piBinders @@> map SubstVal xs) resultTy
     alts' <- forM alts \(Abs bs a) -> do
       buildAlt (EmptyAbs bs) \vs -> do
-        a' <- applyNaryAbs (sink $ Abs bs a) vs
-        app a' (sink x)
+        a' <- applySubst (bs@@>vs) a
+        naryApp a' (map sink xs)
     eff <- getAllowedEffects -- TODO: more precise effects
-    dropSubst $ simplifyExpr $ Case e alts' resultTy eff
-  TypeCon sn def params -> return $ TypeCon sn def params'
-     where params' = params ++ [x]
-  _ -> liftM Var $ emit $ App f x
+    dropSubst $ simplifyExpr $ Case e alts' resultTy' eff
+  _ -> naryApp f xs
 
 simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
 simplifyAtom atom = case atom of

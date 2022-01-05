@@ -577,17 +577,27 @@ inferRho expr = checkOrInferRho expr Infer
 instantiateSigma :: (EmitsBoth o, Inferer m) => Atom o -> m i o (Atom o)
 instantiateSigma f = do
   ty <- tryGetType f
-  case ty of
-    Pi (PiType (PiBinder _ argTy ImplicitArrow) _ _) -> do
-      x <- freshType argTy
-      ans <- emit $ App f x
-      instantiateSigma $ Var ans
-    Pi (PiType (PiBinder _ argTy ClassArrow) _ _) -> do
-      ctx <- srcPosCtx <$> getErrCtx
-      dict <- emit $ Op $ SynthesizeDict ctx argTy
-      ans <- emit $ App f $ Var dict
-      instantiateSigma $ Var ans
-    _ -> return f
+  args <- getImplicitArgs ty
+  naryApp f args
+
+getImplicitArgs :: (EmitsBoth o, Inferer m) => Type o -> m i o [Atom o]
+getImplicitArgs ty = case ty of
+  Pi (PiType b _ _) ->
+    getImplicitArg b >>= \case
+      Nothing -> return []
+      Just arg -> do
+        appTy <- getAppType ty [arg]
+        (arg:) <$> getImplicitArgs appTy
+  _ -> return []
+
+getImplicitArg :: (EmitsBoth o, Inferer m) => PiBinder o o' -> m i o (Maybe (Atom o))
+getImplicitArg (PiBinder _ argTy arr) = case arr of
+  ImplicitArrow -> Just <$> freshType argTy
+  ClassArrow -> do
+    ctx <- srcPosCtx <$> getErrCtx
+    d <- emit $ Op $ SynthesizeDict ctx argTy
+    return $ Just $ Var d
+  _ -> return Nothing
 
 checkOrInferRho :: forall m i o.
                    (EmitsBoth o, Inferer m)
@@ -616,38 +626,10 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Infer   -> inferULam allowedEff uLamExpr
     result <- liftM Var $ emit $ Hof $ For (RegularFor dir) lam
     matchRequirement result
-  UApp arr f x@(WithSrcE xPos _) -> do
-    f' <- inferRho f
-    -- NB: We never infer dependent function types, but we accept them, provided they
-    --     come with annotations. So, unless we already know that the function is
-    --     dependent here (i.e. the type of the zonk comes as a dependent Pi type),
-    --     then nothing in the remainder of the program can convince us that the type
-    --     is dependent. Also, the Pi binder is never considered to be in scope for
-    --     inference variables, so they cannot get unified with it. Hence, this zonk
-    --     is safe and doesn't make the type checking depend on the program order.
-    infTy <- getType =<< zonk f'
-    piTy  <- addSrcContext (srcPos f) $ fromPiType True arr infTy
-    case considerNonDepPiType piTy of
-      Just (_, argTy, effs, _) -> do
-        x' <- checkSigma x argTy
-        addEffects effs
-        appVal <- emit $ App f' x'
-        instantiateSigma (Var appVal) >>= matchRequirement
-      Nothing -> do
-        Abs decls result <- buildDeclsInf do
-          argTy' <- sinkM $ piArgType piTy
-          checkSigma x argTy'
-        cheapReduceWithDecls decls result >>= \case
-          (Just x', Just ds) -> do
-            forM_ ds reportUnsolvedInterface
-            (effs, _) <- instantiatePi piTy x'
-            addEffects effs
-            appVal <- emit $ App f' x'
-            instantiateSigma (Var appVal) >>= matchRequirement
-          _ -> addSrcContext xPos $ do
-            throw TypeErr $ "Dependent functions can only be applied to fully " ++
-                            "evaluated expressions. Bind the argument to a name " ++
-                            "before you apply the function."
+  UApp _ _ _ -> do
+    let (f, args) = asNaryApp $ WithSrcE pos expr
+    f' <- inferFunNoInstantiation f >>= zonk
+    inferNaryApp (srcPos f) f' args >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     matchRequirement . Pi =<< checkAnnWithMissingDicts ann \missingDs getAnnType -> do
@@ -765,6 +747,96 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         Check req -> do
           ty <- getType x
           constrainEq req ty
+
+-- === n-ary applications ===
+
+-- The reason to infer n-ary applications rather than just handling nested
+-- applications one by one is that we want to target the n-ary form of
+-- application. This keeps our IR smaller and therefore faster and more
+-- readable. But it's a bit delicate. Nary applications may only have effects at
+-- their last argument, and they must only have as many arguments as implied by
+-- the type of the function before it gets further instantiated. (For example,
+-- `id (Float->Float) sin 1.0` is not allowed.)
+
+-- This allows us to make the instantiated params/dicts part of an n-ary
+-- application along with the ordinary explicit args
+inferFunNoInstantiation :: (EmitsBoth o, Inferer m) => UExpr i -> m i o (Atom o)
+inferFunNoInstantiation expr@(WithSrcE pos expr') = do
+ addSrcContext pos $ case expr' of
+  UVar ~(InternalName v) -> do
+    -- XXX: deliberately no instantiation!
+    substM v >>= inferUVar
+  _ -> inferRho expr
+
+type UExprArg n = (SrcPosCtx, SrcPosCtx, Arrow, UExpr n)
+asNaryApp :: UExpr n -> (UExpr n, [UExprArg n])
+asNaryApp (WithSrcE appCtx (UApp arr f x)) =
+  (f', xs ++ [(appCtx, srcPos x, arr, x)])
+  where (f', xs) = asNaryApp f
+asNaryApp e = (e, [])
+
+asNaryPiType :: Type n -> NaryPiType n
+asNaryPiType ty = case ty of
+  Pi (PiType b effs resultTy) -> case effs of
+    Pure -> case asNaryPiType resultTy of
+      NaryPiType bs effs' resultTy' ->
+        NaryPiType (Nest b bs) effs' resultTy'
+    _ -> NaryPiType (Nest b Empty) effs resultTy
+  _ -> NaryPiType Empty Pure ty
+
+inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> [UExprArg i] -> m i o (Atom o)
+inferNaryApp _ f [] = return f
+inferNaryApp ctx f args@((_, _, arr, _):_) = addSrcContext ctx do
+  fTy <- getType f
+  -- to guarantee that we makes progress, ensure that `f` is at least a unary pi type.
+  naryPi@(NaryPiType bs effs _) <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
+  (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
+  when (length remaining >= length args) $
+    error "this shouldn't happen (and would cause an endless loop without this check)"
+  partiallyApplied <- naryApp f inferredArgs
+  when (nestLength bs == length inferredArgs) $
+    addEffects =<< applySubst (bs@@>map SubstVal inferredArgs) effs
+  inferNaryApp ctx partiallyApplied remaining
+
+-- Returns the inferred args, along with any remaining args that couldn't be
+-- applied.
+-- XXX: we also instantiate args here, so the resulting inferred args list
+-- includes instantiated params and dicts.
+inferNaryAppArgs
+  :: (EmitsBoth o, Inferer m)
+  => NaryPiType o -> [UExprArg i] -> m i o ([Atom o], [UExprArg i])
+inferNaryAppArgs (NaryPiType Empty _ _) uArgs = return ([], uArgs)
+inferNaryAppArgs (NaryPiType (Nest b rest) effs resultTy) uArgs = do
+  let restNaryPi = NaryPiType rest effs resultTy
+  let isDependent = binderName b `isFreeIn` restNaryPi
+  inferNaryAppArg isDependent b uArgs >>= \case
+    Nothing -> return ([], []) -- no args left to apply, implicit or explicit
+    Just (x, uArgs') -> do
+      x' <- zonk x
+      restNaryPi' <- applySubst (b @> SubstVal x') restNaryPi
+      (xs, remaining) <- inferNaryAppArgs restNaryPi' uArgs'
+      return (x':xs, remaining)
+
+inferNaryAppArg
+  :: (EmitsBoth o, Inferer m)
+  => Bool -> PiBinder o o' -> [UExprArg i] -> m i o (Maybe (Atom o, [UExprArg i]))
+inferNaryAppArg isDependent b uArgs = getImplicitArg b >>= \case
+  Just x -> return $ Just (x, uArgs)
+  Nothing -> case uArgs of
+    [] -> return Nothing
+    (appCtx, argCtx, _, arg):restUArgs ->
+      liftM (Just . (,restUArgs)) $ addSrcContext appCtx $
+        if isDependent
+          then do
+            Abs decls result <- buildDeclsInf $ checkSigma arg (sink $ binderType b)
+            cheapReduceWithDecls decls result >>= \case
+              (Just x', Just ds) -> forM_ ds reportUnsolvedInterface >> return x'
+              _ -> addSrcContext argCtx $ throw TypeErr $ depFunErrMsg
+          else checkSigma arg (binderType b)
+  where
+    depFunErrMsg =
+      "Dependent functions can only be applied to fully evaluated expressions. " ++
+      "Bind the argument to a name before you apply the function."
 
 -- === sorting case alternatives ===
 
@@ -1289,7 +1361,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (nestLength ps) <> " patterns."
-    xs <- forM idxs \i -> emit $ App (Var v) i
+    xs <- forM idxs \i -> emit $ App (Var v) [i]
     bindLamPats ps xs cont
 
 checkAnn :: (EmitsInf o, Inferer m) => Maybe (UType i) -> m i o (Type o)
