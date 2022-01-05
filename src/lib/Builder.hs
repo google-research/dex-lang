@@ -321,7 +321,7 @@ buildBlock
 buildBlock cont = liftImmut do
   DistinctAbs decls results <- buildScoped do
     result <- cont
-    ty <- getType result
+    ty <- cheapNormalize =<< getType result
     return $ result `PairE` ty
   let (result `PairE` ty) = results
   ty' <- liftHoistExcept $ hoist decls ty
@@ -330,7 +330,7 @@ buildBlock cont = liftImmut do
 
 makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do
-  ty <- getType expr
+  ty <- cheapNormalize =<< getType expr
   let ty' = ignoreHoistFailure $ hoist decls ty
   return $ Block (BlockAnn ty') decls expr
 
@@ -945,7 +945,7 @@ getProjRef i r = emitOp $ ProjRef i r
 -- equivalent types spelled differently).
 getUnpacked :: (Fallible1 m, EnvReader m) => Atom n -> m n [Atom n]
 getUnpacked atom = do
-  atom' <- cheapReduce atom
+  atom' <- cheapNormalize atom
   ty <- getType atom'
   len <- projectLength ty
   return $ map (\i -> getProjection [i] atom') [0..(len-1)]

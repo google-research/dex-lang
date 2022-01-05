@@ -40,6 +40,7 @@ import LabeledItems
 import Err
 import Util (forMZipped, forMZipped_, iota, scan, restructure)
 
+import CheapReduction
 import Syntax
 import Name
 import PPrint ()
@@ -230,7 +231,14 @@ class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
   checkTypeE :: Typer m => Type o -> e i -> m i o (e o)
   checkTypeE reqTy e = do
     (e', ty) <- getTypeAndSubstE e
-    checkAlphaEq reqTy ty
+    -- TODO: Write an alphaEq variant that works modulo an equivalence
+    -- relation on names.
+    alphaEq reqTy ty >>= \case
+      True  -> return ()
+      False -> do
+        reqTy' <- cheapNormalize reqTy
+        ty'    <- cheapNormalize ty
+        checkAlphaEq reqTy' ty'
     return e'
 
 class (SinkableE e, SubstE Name e) => CheckableE (e::E) where

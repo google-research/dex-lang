@@ -33,7 +33,7 @@ module Name (
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
   Abs (..), Nest (..), PairB (..), UnitB (..),
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
-  ListE (..), ComposeE (..),
+  ListE (..), ComposeE (..), MapE (..),
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
@@ -543,6 +543,9 @@ data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
 
 newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
         deriving (Show, Eq, Generic)
+
+newtype MapE (k::E) (v::E) (n::S) = MapE { fromMapE :: M.Map (k n) (v n) }
+                                    deriving (Semigroup, Monoid)
 
 newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
         deriving (Show, Eq, Generic)
@@ -1769,6 +1772,12 @@ instance (HoistableE e1, HoistableE e2) => HoistableE (EitherE e1 e2) where
 instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
   substE env (LeftE  x) = LeftE  $ substE env x
   substE env (RightE x) = RightE $ substE env x
+
+instance (SinkableE k, SinkableE v, OrdE k) => SinkableE (MapE k v) where
+  sinkingProofE fresh (MapE m) = MapE $ M.fromList newItems
+    where
+      itemsE = ListE $ toPairE <$> M.toList m
+      newItems = fromPairE <$> (fromListE $ sinkingProofE fresh itemsE)
 
 instance SinkableE e => SinkableE (ListE e) where
   sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
