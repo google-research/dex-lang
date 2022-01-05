@@ -159,13 +159,10 @@ instance CheaplyReducibleE Block where
 instance CheaplyReducibleE Expr where
   cheapReduceE expr = cheapReduceFromSubst expr >>= \case
     Atom atom -> return atom
-    App f x -> do
-      case f of
-        Lam (LamExpr (LamBinder b _ arr Pure) body)
-          | arr == PlainArrow || arr == ImplicitArrow || arr == ClassArrow -> do
-              dropSubst $ extendSubst (b@>SubstVal x) $ cheapReduceE body
-        TypeCon sn con xs -> return $ TypeCon sn con $ xs ++ [x]
-        _ -> empty
+    App f xs -> case fromNaryLam (length xs) f of
+      Just (NaryLamExpr bs Pure body) -> do
+        dropSubst $ extendSubst (bs@@>map SubstVal xs) $ cheapReduceE body
+      _ -> empty
     Op (SynthesizeDict _ ty) -> do
       runFallibleT1 (trySynthDictBlock ty) >>= \case
         Success (Block _ Empty (Atom d)) -> return d
