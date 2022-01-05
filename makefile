@@ -90,7 +90,7 @@ install: dexrt-llvm
 	$(STACK) install $(STACK_BIN_PATH) --flag dex:optimized $(STACK_FLAGS)
 
 build-prof: dexrt-llvm
-	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:-foreign
+	$(STACK) build $(STACK_FLAGS) $(PROF) --flag dex:-foreign --flag dex:debug
 
 # For some reason stack fails to detect modifications to foreign library files
 build-ffis: dexrt-llvm

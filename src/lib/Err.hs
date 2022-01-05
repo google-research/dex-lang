@@ -66,7 +66,8 @@ type SrcTextCtx = Maybe (Int, String) -- Int is the offset in the source file
 data ErrCtx = ErrCtx
   { srcTextCtx :: SrcTextCtx
   , srcPosCtx  :: SrcPosCtx
-  , messageCtx :: [String] }
+  , messageCtx :: [String]
+  , stackCtx   :: Maybe [String] }
     deriving (Show, Eq)
 
 type SrcPos = (Int, Int)
@@ -186,10 +187,18 @@ instance FallibleApplicative HardFailM where
 -- === convenience layer ===
 
 throw :: Fallible m => ErrType -> String -> m a
-throw errTy s = throwErrs $ Errs [Err errTy mempty s]
+throw errTy s = throwErrs $ Errs [addCompilerStackCtx $ Err errTy mempty s]
 
 throwErr :: Fallible m => Err -> m a
-throwErr err = throwErrs $ Errs [err]
+throwErr err = throwErrs $ Errs [addCompilerStackCtx err]
+
+addCompilerStackCtx :: Err -> Err
+addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
+#ifdef DEX_DEBUG
+  where compilerStack = Just $! reverse $ unsafePerformIO currentCallStack
+#else
+  where compilerStack = stackCtx ctx
+#endif
 
 throwIf :: Fallible m => Bool -> ErrType -> String -> m ()
 throwIf True  e s = throw e s
@@ -347,20 +356,23 @@ instance Pretty Err where
   pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx
     -- TODO: figure out a more uniform way to newlines
     where prettyCtx = case ctx of
-            ErrCtx _ Nothing [] -> mempty
+            ErrCtx _ Nothing [] Nothing -> mempty
             _ -> hardline <> pretty ctx
 
 instance Pretty ErrCtx where
-  pretty (ErrCtx maybeTextCtx maybePosCtx messages) =
+  pretty (ErrCtx maybeTextCtx maybePosCtx messages stack) =
     -- The order of messages is outer-scope-to-inner-scope, but we want to print
     -- them starting the other way around (Not for a good reason. It's just what
     -- we've always done.)
-    prettyLines (reverse messages) <> highlightedSource
+    prettyLines (reverse messages) <> highlightedSource <> prettyStack
     where
       highlightedSource = case (maybeTextCtx, maybePosCtx) of
         (Just (offset, text), Just (start, stop)) ->
            hardline <> pretty (highlightRegion (start - offset, stop - offset) text)
         _ -> mempty
+      prettyStack = case stack of
+        Nothing -> mempty
+        Just s  -> hardline <> "Compiler stack trace:" <> nest 2 (hardline <> prettyLines s)
 
 instance Pretty a => Pretty (Except a) where
   pretty (Success x) = "Success:" <+> pretty x
@@ -425,12 +437,13 @@ instance CtxReader m => CtxReader (StateT s m) where
   getErrCtx = lift getErrCtx
 
 instance Semigroup ErrCtx where
-  ErrCtx text pos ctxStrs <> ErrCtx text' pos' ctxStrs' =
+  ErrCtx text pos ctxStrs stk <> ErrCtx text' pos' ctxStrs' stk' =
     ErrCtx (leftmostJust  text text')
            (rightmostJust pos  pos' )
            (ctxStrs <> ctxStrs')
+           (leftmostJust stk stk')  -- We usually extend errors form the right
 instance Monoid ErrCtx where
-  mempty = ErrCtx Nothing Nothing []
+  mempty = ErrCtx Nothing Nothing [] Nothing
 
 -- === misc util stuff ===
 
