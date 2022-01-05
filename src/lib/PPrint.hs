@@ -517,8 +517,8 @@ instance Pretty (UAlt n) where
 instance Pretty (UDecl n l) where
   pretty (ULet ann b rhs) =
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-  pretty (UDataDefDecl (UDataDef bParams dataCons) bTyCon bDataCons) =
-    "data" <+> p bTyCon <+> p bParams
+  pretty (UDataDefDecl (UDataDef bParams bIfaces dataCons) bTyCon bDataCons) =
+    "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
        <+> "where" <> nest 2
        (hardline <> prettyLines (zip (toList $ fromNest bDataCons) dataCons))
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
