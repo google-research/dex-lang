@@ -169,6 +169,7 @@ data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
      deriving (Show, Generic)
 
 type AtomName    = Name AtomNameC
+type EffectName  = Name EffectNameC
 type DataDefName = Name DataDefNameC
 type ClassName   = Name ClassNameC
 
@@ -1171,28 +1172,28 @@ showPrimName prim = primNameToStr $ fmap (const ()) prim
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data EffectP (name::E) (n::S) =
-  RWSEffect RWS (Maybe (name n)) | ExceptionEffect | IOEffect
+data EffectP (atomName::E) (effectName::E) (n::S) =
+  RWSEffect RWS (Maybe (atomName n)) | ExceptionEffect | IOEffect | UserEffect (effectName n)
   deriving (Show, Eq, Ord, Generic)
 
-type Effect = EffectP AtomName
-type UEffect = EffectP (SourceNameOr (Name AtomNameC))
+type Effect = EffectP AtomName EffectName
+type UEffect = EffectP (SourceNameOr AtomName) (SourceNameOr EffectName)
 
-data EffectRowP (name::E) (n::S) =
-  EffectRow (S.Set (EffectP name n)) (Maybe (name n))
+data EffectRowP (atomName::E) (effectName::E) (n::S) =
+  EffectRow (S.Set (EffectP atomName effectName n)) (Maybe (atomName n))
   deriving (Show, Eq, Ord, Generic)
 
-type EffectRow = EffectRowP AtomName
-type UEffectRow = EffectRowP (SourceNameOr (Name AtomNameC))
+type EffectRow = EffectRowP AtomName EffectName
+type UEffectRow = EffectRowP (SourceNameOr AtomName) (SourceNameOr EffectName)
 
-pattern Pure :: Ord (name n) => EffectRowP name n
+pattern Pure :: (OrdE atomName, OrdE effectName) => EffectRowP atomName effectName n
 pattern Pure <- ((\(EffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
  where  Pure = EffectRow mempty Nothing
 
 extendEffRow :: S.Set (Effect n) -> (EffectRow n) -> (EffectRow n)
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
-instance OrdE name => Semigroup (EffectRowP name n) where
+instance (OrdE atomName, OrdE effectName) => Semigroup (EffectRowP atomName effectName n) where
   EffectRow effs t <> EffectRow effs' t' =
     EffectRow (S.union effs effs') newTail
     where
@@ -1202,7 +1203,7 @@ instance OrdE name => Semigroup (EffectRowP name n) where
         _ | t == t' -> t
           | otherwise -> error "Can't combine effect rows with mismatched tails"
 
-instance OrdE name => Monoid (EffectRowP name n) where
+instance (OrdE atomName, OrdE effectName) => Monoid (EffectRowP atomName effectName n) where
   mempty = EffectRow mempty Nothing
 
 -- === imperative IR ===
@@ -2087,24 +2088,28 @@ instance SubstE AtomSubstVal DepPairType
 deriving instance Show (DepPairType n)
 deriving via WrapE DepPairType n instance Generic (DepPairType n)
 
-instance GenericE (EffectP name) where
-  type RepE (EffectP name) =
-    EitherE (PairE (LiftE RWS) (MaybeE name))
-            (LiftE (Either () ()))
+instance GenericE (EffectP atomName effectName) where
+  type RepE (EffectP atomName effectName) =
+    EitherE3 (PairE (LiftE RWS) (MaybeE atomName))
+             (LiftE (Either () ()))
+             (effectName)
   fromE = \case
-    RWSEffect rws name -> LeftE  (PairE (LiftE rws) $ toMaybeE name)
-    ExceptionEffect -> RightE (LiftE (Left  ()))
-    IOEffect        -> RightE (LiftE (Right ()))
+    RWSEffect rws name -> Case0 (PairE (LiftE rws) $ toMaybeE name)
+    ExceptionEffect    -> Case1 (LiftE (Left  ()))
+    IOEffect           -> Case1 (LiftE (Right ()))
+    UserEffect ename   -> Case2 ename
   toE = \case
-    LeftE  (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
-    RightE (LiftE (Left  ())) -> ExceptionEffect
-    RightE (LiftE (Right ())) -> IOEffect
+    Case0  (PairE (LiftE rws) name) -> RWSEffect rws $ fromMaybeE name
+    Case1 (LiftE (Left  ()))        -> ExceptionEffect
+    Case1 (LiftE (Right ()))        -> IOEffect
+    Case2 ename                     -> UserEffect ename
+    _ -> error "Unreachable"
 
-instance SinkableE   name => SinkableE   (EffectP name)
-instance HoistableE    name => HoistableE    (EffectP name)
-instance AlphaEqE      name => AlphaEqE      (EffectP name)
-instance SubstE Name (EffectP AtomName)
-instance SubstE AtomSubstVal (EffectP AtomName) where
+instance (SinkableE  atomName, SinkableE  effName) => SinkableE  (EffectP atomName effName)
+instance (HoistableE atomName, HoistableE effName) => HoistableE (EffectP atomName effName)
+instance (AlphaEqE   atomName, AlphaEqE   effName) => AlphaEqE   (EffectP atomName effName)
+instance SubstE Name (EffectP AtomName EffectName)
+instance SubstE AtomSubstVal (EffectP AtomName EffectName) where
   substE (_, env) eff = case eff of
     RWSEffect rws Nothing -> RWSEffect rws Nothing
     RWSEffect rws (Just v) -> do
@@ -2116,9 +2121,11 @@ instance SubstE AtomSubstVal (EffectP AtomName) where
       RWSEffect rws v'
     ExceptionEffect -> ExceptionEffect
     IOEffect        -> IOEffect
+    UserEffect v    -> case env ! v of Rename v' -> UserEffect v'
 
-instance OrdE name => GenericE (EffectRowP name) where
-  type RepE (EffectRowP name) = PairE (ListE (EffectP name)) (MaybeE name)
+instance (OrdE atomName, OrdE effName) => GenericE (EffectRowP atomName effName) where
+  type RepE (EffectRowP atomName effName) =
+    PairE (ListE (EffectP atomName effName)) (MaybeE atomName)
   fromE (EffectRow effs ext) = ListE (S.toList effs) `PairE` ext'
     where ext' = case ext of Just v  -> JustE v
                              Nothing -> NothingE
@@ -2127,12 +2134,12 @@ instance OrdE name => GenericE (EffectRowP name) where
                              NothingE -> Nothing
                              _ -> error "impossible"
 
-instance SinkableE (EffectRowP AtomName)
-instance HoistableE  (EffectRowP AtomName)
-instance SubstE Name (EffectRowP AtomName)
-instance AlphaEqE    (EffectRowP AtomName)
+instance SinkableE   (EffectRowP AtomName EffectName)
+instance HoistableE  (EffectRowP AtomName EffectName)
+instance SubstE Name (EffectRowP AtomName EffectName)
+instance AlphaEqE    (EffectRowP AtomName EffectName)
 
-instance SubstE AtomSubstVal (EffectRowP AtomName) where
+instance SubstE AtomSubstVal (EffectRowP AtomName EffectName) where
   substE env (EffectRow effs tailVar) = do
     let effs' = S.fromList $ map (substE env) (S.toList effs)
     let tailEffRow = case tailVar of

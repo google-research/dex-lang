@@ -195,16 +195,20 @@ instance SourceRenamableE UAlt where
     withSourceRenameB pat \pat' ->
       UAlt pat' <$> sourceRenameE body
 
-instance ((forall n. Ord (a n)), SourceRenamableE a) => SourceRenamableE (EffectRowP a) where
+instance ( OrdE atomName, SourceRenamableE atomName
+         , OrdE effName, SourceRenamableE effName ) =>
+             SourceRenamableE (EffectRowP atomName effName) where
   sourceRenameE (EffectRow row tailVar) =
     EffectRow <$> row' <*> mapM sourceRenameE tailVar
     where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
 
-instance SourceRenamableE a => SourceRenamableE (EffectP a) where
+instance (SourceRenamableE atomName, SourceRenamableE effName) =>
+            SourceRenamableE (EffectP atomName effName) where
   sourceRenameE (RWSEffect rws (Just name)) = RWSEffect rws <$> Just <$> sourceRenameE name
   sourceRenameE (RWSEffect rws Nothing) = return $ RWSEffect rws Nothing
   sourceRenameE ExceptionEffect = return ExceptionEffect
   sourceRenameE IOEffect = return IOEffect
+  sourceRenameE (UserEffect name) = UserEffect <$> sourceRenameE name
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $
