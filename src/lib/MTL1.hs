@@ -6,12 +6,14 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module MTL1 (
     MonadTrans11 (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
     StateT1, pattern StateT1, runStateT1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
+    ScopedT1, pattern ScopedT1, runScopedT1
   ) where
 
 import Control.Monad.Reader
@@ -134,6 +136,31 @@ instance (Monad1 m, Catchable (m n)) => Catchable (StateT1 s m n) where
 
 instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
   getErrCtx = lift11 getErrCtx
+
+instance AlwaysImmut m => AlwaysImmut (StateT1 s m) where
+  getImmut = lift11 getImmut
+
+-------------------- ScopedT1 --------------------
+
+newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+  WrapScopedT1 { runScopedT1' :: StateT1 s m n a }
+  deriving ( Functor, Applicative, Monad, MonadState (s n), MonadFail
+           , MonadTrans11, EnvReader, ScopeReader, AlwaysImmut )
+
+pattern ScopedT1 :: ((s n) -> m n (a, s n)) -> ScopedT1 s m n a
+pattern ScopedT1 f = WrapScopedT1 (StateT1 f)
+
+runScopedT1 :: ScopedT1 s m n a -> s n -> m n (a, s n)
+runScopedT1 = runStateT1 . runScopedT1'
+
+deriving instance (Monad1 m, Fallible1 m) => Fallible (ScopedT1 s m n)
+deriving instance (Monad1 m, Catchable1 m) => Catchable (ScopedT1 s m n)
+deriving instance (Monad1 m, CtxReader1 m) => CtxReader (ScopedT1 s m n)
+
+instance (SinkableE s, EnvExtender m) => EnvExtender (ScopedT1 s m) where
+  extendEnv frag m = ScopedT1 \s -> do
+    (ans, _) <- extendEnv frag $ runScopedT1 m (sink s)
+    return (ans, s)
 
 -------------------- MaybeT1 --------------------
 

@@ -596,8 +596,7 @@ getImplicitArg (PiBinder _ argTy arr) = case arr of
   ImplicitArrow -> Just <$> freshType argTy
   ClassArrow -> do
     ctx <- srcPosCtx <$> getErrCtx
-    d <- emit $ Op $ SynthesizeDict ctx argTy
-    return $ Just $ Var d
+    Just <$> emitOp (SynthesizeDict ctx argTy)
   _ -> return Nothing
 
 checkOrInferRho :: forall m i o.
@@ -689,7 +688,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     prim' <- forM prim \x -> do
       xBlock <- buildBlockInf $ inferRho x
       getType xBlock >>= \case
-        TyKind -> cheapReduceToAtom xBlock >>= \case
+        TyKind -> cheapReduce xBlock >>= \case
           (Just reduced, Just []) -> return reduced
           _ -> throw CompilerErr "Type args to primops must be reducible"
         _ -> emitBlock xBlock
@@ -1434,7 +1433,7 @@ checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
       -- unhoistable dicts as an irrecoverable failure. They might be derivable from the
       -- hoistable dicts (e.g. as in i:n=>(..i)=>Float). The failures are only irrecoverable
       -- when we stop doing auto quantification.
-      (_, maybeUnsolved) <- cheapReduceWithDecls decls result
+      (_, maybeUnsolved) <- cheapReduceWithDecls @Atom decls result
       case maybeUnsolved of
         Nothing       -> addSrcContext pos $ throw NotImplementedErr $
           "A type expression has interface constraints that depend on values " ++
@@ -2154,7 +2153,7 @@ newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
 
 instance GenericTraverser DictSynthTraverserM where
   traverseExpr (Op (SynthesizeDict ctx ty)) = do
-    ty' <- substM ty
+    ty' <- cheapNormalize =<< substM ty
     addSrcContext ctx $ Atom <$> trySynthDict ty'
   traverseExpr expr = traverseExprDefault expr
 
@@ -2179,7 +2178,7 @@ buildBlockInf
 buildBlockInf cont = do
   Abs decls (PairE result ty) <- buildDeclsInf do
     result <- cont
-    ty <- getType result
+    ty <- cheapNormalize =<< getType result
     return $ result `PairE` ty
   ty' <- liftHoistExcept $ hoist decls ty
   return $ Block (BlockAnn ty') decls $ Atom result
