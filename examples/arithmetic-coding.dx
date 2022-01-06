@@ -1,102 +1,138 @@
-'## [Arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding)
-This demonstrates a lossless method for compression on a string of letters.
-Rather than assigning a code to each letter, the entire string is encoded
-into a single floating-point number.
+'# Lossless compression
+Based on the implementation of [rANS](https://github.com/j-towns/ans-notes/blob/master/rans.py) by James Townsend.
+
+-- note: still some issues with using large integers, as with arithmetic coding
+-- likely a problem with Dex; need support for Int64 bitwise operations
+-- can either wait for improvements or use a bit array instead
+
+two: Float64 = FToF64 2.
+p_prec: Float64 = FToF64 3.
+p_int: Float64 = pow two p_prec
+s_prec: Float64 = FToF64 64.
+t_prec: Float64 = FToF64 32.
+t_mask: Float64 = (pow two t_prec) - one
+s_min: Float64  = pow two (s_prec - t_prec)
+s_max: Float64  = pow two s_prec
 
 Alphabet = Fin 26
-Interval = (Float&Float)
-top:Interval = (0.,1.)
+Interval = Fin (FToI (F64ToF p_int))
+Message = (Float64 & List Float64)
+
+'Utilities
 
 def charToIdx (c: Word8) : Int = W8ToI c - W8ToI 'a'
 def idxToChar (i: Int) : Word8 = IToW8 (i + (W8ToI 'a'))
+def mod64 (x: Float64) (y: Float64) : Float64 = x - (floor (divide x y)) * y
 
-'### Statistical modelling
-First, model the probability of each letter given by the string to be encoded.
-
-def cumProb (ps: n=>Float) : n=>Float =
-  withState 0.0 \total.
-    for i. if ps.i > 0. 
+def get_cs (ps: Alphabet=>Float64) : Alphabet=>Float64 =
+  withState zero \total.
+    for i. if ps.i > zero
       then
         currTotal = get total
         newTotal = currTotal + ps.i
         total := newTotal
         currTotal
-      else 0.
+      else zero
 
-def getFrequency (str: (Fin l)=>Word8) : Alphabet=>Int =
-  a: Alphabet => Int = zero
+def get_ps (str: (Fin l)=>Word8) : Alphabet=>Float64 =
+  a: Alphabet => Float64 = zero
   yieldState a \ref. for i. 
     i' = (charToIdx str.i)@_
     ref!i' := (get ref).i' + 1
 
-def getProbability (l: Int) (freq: Alphabet=>Int) : Alphabet=>(Float&Float) =
-  probs = for i. IToF freq.i / IToF l
-  cums = cumProb probs
-  for i. (probs.i, cums.i)
+def get_cs_map (ps: Alphabet=>Float64) : Interval=>Word8 =
+  init: List Word8 = (AsList 0 [])
+  map' = yieldState init \map.
+    for i.
+      count = (FToI (F64ToF ps.i))
+      boundedIter count 0 \_.
+        map := (get map) <> (AsList 1 [idxToChar (ordinal i)])
+        Continue
+  (AsList _ map'') = map'
+  map = for i:Interval. map''.(unsafeFromOrdinal _ (ordinal i))
+  map
 
-'### Scaling functions
+xs' = "abbccddc"
+(AsList l xs) = xs'
+ps = get_ps xs
+cs = get_cs ps
+cs_map = get_cs_map ps
 
-def getUpdateRule (p: Alphabet=>(Float&Float)) : Alphabet=>(Interval->Interval) =
-  for i. 
-    case p.i == (0.,0.) of
-      True -> id
-      False ->
-        \(x, w).
-          x' = x + w*(snd p.i)
-          w' = w*(fst p.i)
-          (x', w')
+def g (x: Word8) : (Float64 & Float64) =
+  x_idx = charToIdx x
+  (cs.(x_idx@_), ps.(x_idx@_))
 
-def subdivide (str: (Fin l)=>Word8) 
-              (rule: Alphabet=>(Interval->Interval)) 
-              (i: (Fin l)) (in: Interval) : Interval =
-  updateInterval = rule.((charToIdx str.i)@_)
-  updateInterval in
+def f (s': Float64) : (Word8 & (Float64 & Float64)) =
+  x = cs_map.((FToI (F64ToF s'))@_)
+  (x, g x)
 
-def findInterval  (l: Int) 
-                  (code: Float) 
-                  (rule: Alphabet=>(Interval->Interval))
-                  (i: (Fin l))
-                  ((str,in): (List Word8 & Interval)) : (List Word8 & Interval) =
-  (letter, in') = boundedIter (size Alphabet) (' ', top) \j.
-    case rule.(j@_) in == in of
-      True -> Continue
-      False ->
-        (x, w) = rule.(j@_) in 
-        case code >= x && code < (x+w) of
-          True -> Done (idxToChar j, (x,w))
-          False -> Continue
-  (str <> AsList 1 [letter], in')
+def stack_pop ((AsList l' t'): List Float64) : (Float64 & List Float64) =
+  l'' = l' - 1
+  tail = slice t' 1 (Fin l'')
+  head = t'.(0@_)
+  (head, (AsList _ tail))
 
-'### Coding interface
-Start from an initial interval, [0, 1). 
-For each letter encoded from the string, the current interval is divided based on the
-cumulative probability of all letters, then updated to the partition that matches
-the encoded letter.
-The decoding process retraces the steps of the encoding process to recover the correct letters.
+def stack_push (t_top: Float64) (t: List Float64) : (List Float64) =
+  (AsList 1 [t_top]) <> t
 
-def encode (str: (Fin l)=>Word8) (rule: Alphabet=>(Interval->Interval)) : Float =
-  update = subdivide str rule
-  finalInterval = fold top update
-  fst finalInterval + (snd finalInterval)/2.
+'Coding Interface
 
-def decode (l: Int) (code: Float) (rule: Alphabet=>(Interval->Interval)) : List Word8 =
-  update = findInterval l code rule
-  initStr: List Word8 = AsList _ []
-  fst $ fold (initStr, top) update
+def pop (m: Message) : (Message & Word8) =
+  (s, t) = m
+  s_bar = mod64 s p_int
+  (x, (c, p)) = f s_bar
+  s' = p * (floor (divide s (pow two p_prec))) + s_bar - c
+  -- TODO: use a while loop, not a do-while
+  m' = case s' < s_min of
+    True -> 
+      yieldState m \m'.
+        s'' = fstRef m'
+        t'' = sndRef m'
+        while do
+          (t_top, t') = stack_pop (get t'')
+          t'' := t'
+          s'' := (get s'') * (pow two t_prec) + t_top
+          (get s'') < s_min
+    False -> (s', t)
+  (m', x)
 
-'### Demo: Lossless compression on a test string
+def push ((s, t): Message) (x: Word8) : Message =
+  (c, p) = g x
+  (s', t') = case s >= (p * (pow two (s_prec - p_prec))) of
+    True ->
+      yieldState (s, t) \m'.
+        s' = fstRef m'
+        t' = sndRef m'
+        while do
+          t' := stack_push (mod64 (get s') (pow two t_prec)) (get t') 
+          s' := floor (divide (get s') (pow two t_prec))
+          get s' >= (p * (pow two (s_prec - p_prec)))
+    False -> (s, t)
+  s'' = (pow two p_prec) * (floor (divide s' p)) + (mod64 s' p) + c
+  (s'', t')
 
-str' = "abbadcabccdd"
-(AsList l str) = str'
 
-p = getProbability l $ getFrequency str
-r = getUpdateRule p
+'Demo 
 
-code = encode str r
-code
-> 0.081569
+-- initialize message
+m_init: Message = (s_min, AsList 0 [])
+xs_init' = "abbcbcdcc"
+(AsList l' xs_init) = xs_init'
 
-decoded = decode l code r
-decoded == str'
+m' = yieldState m_init \m.
+  for i:(Fin l').
+    m := push (get m) xs_init.i
+
+init_args: (Message & List Word8) = (m', AsList 0 [])
+args' = yieldState init_args \ref.
+  m = fstRef ref
+  xs_decoded = sndRef ref
+  for i:(Fin l').
+    (m', x) = pop (get m)
+    m := m'
+    xs_decoded := (AsList 1 [x]) <> (get xs_decoded)
+
+(AsList _ xs_decoded) = snd args'
+:p xs_decoded == xs_init
 > True
 
