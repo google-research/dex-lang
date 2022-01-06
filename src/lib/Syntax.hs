@@ -74,7 +74,7 @@ module Syntax (
     Output (..), PassName (..), Result (..), ModuleName, BenchStats,
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryPiType,
-    pattern Atom, pattern IdxRepTy, pattern IdxRepVal,
+    pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal,
     pattern TagRepTy,
     pattern TagRepVal, pattern Word8Ty,
@@ -157,14 +157,12 @@ data Atom (n::S) =
    deriving (Show, Generic)
 
 data Expr n =
-   App (Atom n) [Atom n]
+   App (Atom n) [Atom n] (Atom n)  -- function, pure args, possibly-effectful arg
  | Case (Atom n) [Alt n] (Type n) (EffectRow n)
+ | Atom (Atom n)
  | Op  (Op  n)
  | Hof (Hof n)
    deriving (Show, Generic)
-
-pattern Atom :: Atom n -> Expr n
-pattern Atom x = App x []
 
 data DeclBinding n = DeclBinding LetAnn (Type n) (Expr n)
      deriving (Show, Generic)
@@ -223,10 +221,12 @@ data LamExpr (n::S) where
   LamExpr :: LamBinder n l -> Block l -> LamExpr n
 
 data NaryLamExpr (n::S) where
-  NaryLamExpr :: Nest Binder n l -> EffectRow l -> Block l -> NaryLamExpr n
+  NaryLamExpr :: Nest Binder n l -> Binder l l' -> EffectRow l' -> Block l'
+              -> NaryLamExpr n
 
 data NaryPiType (n::S) where
-  NaryPiType :: Nest PiBinder n l -> EffectRow l -> Type l -> NaryPiType n
+  NaryPiType :: Nest PiBinder n l -> PiBinder l l' -> EffectRow l' -> Type l'
+             -> NaryPiType n
 
 data PiBinding (n::S) = PiBinding Arrow (Type n)
   deriving (Show, Generic)
@@ -1585,27 +1585,29 @@ pattern AtomicBlock atom <- Block _ Empty (Atom atom)
 pattern BinaryLamExpr :: LamBinder n l1 -> LamBinder l1 l2 -> Block l2 -> LamExpr n
 pattern BinaryLamExpr b1 b2 body = LamExpr b1 (AtomicBlock (Lam (LamExpr b2 body)))
 
+-- first argument is the number of extra pure args expected
+-- (i.e. 0 for ordinary unary application)
 fromNaryLam :: Int -> Atom n -> Maybe (NaryLamExpr n)
 fromNaryLam n _ | n < 0 = error "expected non-negative number of args"
-fromNaryLam 0 x = Just $ NaryLamExpr Empty Pure (AtomicBlock x)
-fromNaryLam 1 lam = case lam of
+fromNaryLam 0 lam = case lam of
   Lam (LamExpr (LamBinder b ty _ effs) body) ->
-    Just $ NaryLamExpr (Nest (b:>ty) Empty) effs body
+    Just $ NaryLamExpr Empty (b:>ty) effs body
   _ -> Nothing
 fromNaryLam n (Lam (LamExpr (LamBinder b ty _ Pure) (AtomicBlock lam))) = do
-  NaryLamExpr bs effs body <- fromNaryLam (n-1) lam
-  return $ NaryLamExpr (Nest (b:>ty) bs) effs body
+  NaryLamExpr bs bEnd effs body <- fromNaryLam (n-1) lam
+  return $ NaryLamExpr (Nest (b:>ty) bs) bEnd effs body
 fromNaryLam _ _ = Nothing
 
+-- first argument is the number of extra pure args expected
+-- (i.e. 0 for ordinary unary application)
 fromNaryPiType :: Int -> Type n -> Maybe (NaryPiType n)
 fromNaryPiType n _ | n < 0 = error "expected non-negative number of args"
-fromNaryPiType 0 ty = Just $ NaryPiType Empty Pure ty
-fromNaryPiType 1 ty = case ty of
-  Pi (PiType b effs resultTy) -> Just $ NaryPiType (Nest b Empty) effs resultTy
+fromNaryPiType 0 ty = case ty of
+  Pi (PiType b effs resultTy) -> Just $ NaryPiType Empty b effs resultTy
   _ -> Nothing
 fromNaryPiType n (Pi (PiType b Pure piTy)) = do
-  NaryPiType bs effs resultTy <- fromNaryPiType (n-1) piTy
-  Just $ NaryPiType (Nest b bs) effs resultTy
+  NaryPiType bs bEnd effs resultTy <- fromNaryPiType (n-1) piTy
+  Just $ NaryPiType (Nest b bs) bEnd effs resultTy
 fromNaryPiType _ _ = Nothing
 
 mkConsListTy :: [Type n] -> Type n
@@ -1901,22 +1903,25 @@ trySelectBranch e = case e of
 
 instance GenericE Expr where
   type RepE Expr =
-     EitherE4
-        (PairE Atom (ListE Atom))
+     EitherE5
+        (Atom `PairE` ListE Atom `PairE` Atom)
         (Atom `PairE` ListE Alt `PairE` Type `PairE` EffectRow)
+        (Atom)
         (ComposeE PrimOp Atom)
         (ComposeE PrimHof Atom)
   fromE = \case
-    App f xs       -> Case0 (PairE f (ListE xs))
+    App f xs x         -> Case0 (f `PairE` (ListE xs) `PairE` x)
     Case e alts ty eff -> Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff)
-    Op op          -> Case2 (ComposeE op)
-    Hof hof        -> Case3 (ComposeE hof)
+    Atom x         -> Case2 (x)
+    Op op          -> Case3 (ComposeE op)
+    Hof hof        -> Case4 (ComposeE hof)
 
   toE = \case
-    Case0 (PairE f (ListE xs))              -> App f xs
+    Case0 (f `PairE` ListE xs `PairE` x)     -> App f xs x
     Case1 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
-    Case2 (ComposeE op)                     -> Op op
-    Case3 (ComposeE hof)                    -> Hof hof
+    Case2 (x)                               -> Atom x
+    Case3 (ComposeE op)                     -> Op op
+    Case4 (ComposeE hof)                    -> Hof hof
     _ -> error "impossible"
 
 instance SinkableE Expr
@@ -2093,9 +2098,9 @@ deriving instance Show (PiType n)
 deriving via WrapE PiType n instance Generic (PiType n)
 
 instance GenericE NaryPiType where
-  type RepE NaryPiType = Abs (Nest PiBinder) (PairE EffectRow Type)
-  fromE (NaryPiType bs eff resultTy) = Abs bs (PairE eff resultTy)
-  toE   (Abs bs (PairE eff resultTy)) = NaryPiType bs eff resultTy
+  type RepE NaryPiType = Abs (PairB (Nest PiBinder) PiBinder) (PairE EffectRow Type)
+  fromE (NaryPiType bs b eff resultTy) = Abs (PairB bs b) (PairE eff resultTy)
+  toE   (Abs (PairB bs b) (PairE eff resultTy)) = NaryPiType bs b eff resultTy
 
 instance SinkableE NaryPiType
 instance HoistableE  NaryPiType

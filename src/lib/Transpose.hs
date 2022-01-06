@@ -132,10 +132,10 @@ transposeExpr expr ct = case expr of
   Atom atom     -> transposeAtom atom ct
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
-  App x is -> do
+  App x is i -> do
     -- TODO: we should check that it's a table type here, but it's awkward to do
     -- because we need something in the o-space to do that.
-    is' <- mapM substNonlin is
+    is' <- mapM substNonlin (is ++ [i])
     case x of
       Var v -> do
         lookupSubstM v >>= \case

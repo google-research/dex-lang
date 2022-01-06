@@ -26,6 +26,7 @@ import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -586,7 +587,7 @@ getImplicitArgs ty = case ty of
     getImplicitArg b >>= \case
       Nothing -> return []
       Just arg -> do
-        appTy <- getAppType ty [arg]
+        appTy <- getAppType ty [] arg
         (arg:) <$> getImplicitArgs appTy
   _ -> return []
 
@@ -629,7 +630,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
   UApp _ _ _ -> do
     let (f, args) = asNaryApp $ WithSrcE pos expr
     f' <- inferFunNoInstantiation f >>= zonk
-    inferNaryApp (srcPos f) f' args >>= matchRequirement
+    inferNaryApp (srcPos f) f' (NE.fromList args) >>= matchRequirement
   UPi (UPiExpr arr (UPatAnn (WithSrcB pos' pat) ann) effs ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     matchRequirement . Pi =<< checkAnnWithMissingDicts ann \missingDs getAnnType -> do
@@ -776,27 +777,36 @@ asNaryApp (WithSrcE appCtx (UApp arr f x)) =
 asNaryApp e = (e, [])
 
 asNaryPiType :: Type n -> NaryPiType n
-asNaryPiType ty = case ty of
-  Pi (PiType b effs resultTy) -> case effs of
-    Pure -> case asNaryPiType resultTy of
-      NaryPiType bs effs' resultTy' ->
-        NaryPiType (Nest b bs) effs' resultTy'
-    _ -> NaryPiType (Nest b Empty) effs resultTy
-  _ -> NaryPiType Empty Pure ty
+asNaryPiType t = case go t of
+  Just t' -> t'
+  Nothing -> error "not an nary pi type"
+  where
+    go :: Type n -> Maybe (NaryPiType n)
+    go ty = case ty of
+      Pi (PiType b effs resultTy) -> case effs of
+       Pure -> case go resultTy of
+         Just (NaryPiType bs bFinal effs' resultTy') ->
+            Just $ NaryPiType (Nest b bs) bFinal effs' resultTy'
+         Nothing -> Just $ NaryPiType Empty b Pure resultTy
+       _ -> Just $ NaryPiType Empty b effs resultTy
+      _ -> Nothing
 
-inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> [UExprArg i] -> m i o (Atom o)
-inferNaryApp _ f [] = return f
-inferNaryApp ctx f args@((_, _, arr, _):_) = addSrcContext ctx do
+inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UExprArg i) -> m i o (Atom o)
+inferNaryApp fCtx f args = addSrcContext fCtx do
+  let (_, _, arr, _) :| _ = args
   fTy <- getType f
-  -- to guarantee that we makes progress, ensure that `f` is at least a unary pi type.
-  naryPi@(NaryPiType bs effs _) <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
+  naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
-  when (length remaining >= length args) $
-    error "this shouldn't happen (and would cause an endless loop without this check)"
-  partiallyApplied <- naryApp f inferredArgs
-  when (nestLength bs == length inferredArgs) $
-    addEffects =<< applySubst (bs@@>map SubstVal inferredArgs) effs
-  inferNaryApp ctx partiallyApplied remaining
+  let (xs, x) = unsnoc inferredArgs
+  let appExpr = App f xs x
+  addEffects =<< exprEffects appExpr
+  partiallyApplied <- Var <$> emit appExpr
+  case nonEmpty remaining of
+    Nothing ->
+      -- we already instantiate before applying each explicit arg, but we still
+      -- need to try once more after they've all been applied.
+      instantiateSigma partiallyApplied
+    Just remaining' -> inferNaryApp fCtx partiallyApplied remaining'
 
 -- Returns the inferred args, along with any remaining args that couldn't be
 -- applied.
@@ -804,35 +814,38 @@ inferNaryApp ctx f args@((_, _, arr, _):_) = addSrcContext ctx do
 -- includes instantiated params and dicts.
 inferNaryAppArgs
   :: (EmitsBoth o, Inferer m)
-  => NaryPiType o -> [UExprArg i] -> m i o ([Atom o], [UExprArg i])
-inferNaryAppArgs (NaryPiType Empty _ _) uArgs = return ([], uArgs)
-inferNaryAppArgs (NaryPiType (Nest b rest) effs resultTy) uArgs = do
-  let restNaryPi = NaryPiType rest effs resultTy
+  => NaryPiType o -> NonEmpty (UExprArg i) -> m i o (NonEmpty (Atom o), [UExprArg i])
+inferNaryAppArgs (NaryPiType Empty b effs resultTy) uArgs = do
+  let isDependent = binderName b `isFreeIn` PairE effs resultTy
+  (x, remaining) <- inferAppArg isDependent b uArgs
+  return (x:|[], remaining)
+inferNaryAppArgs (NaryPiType (Nest b rest) bFinal effs resultTy) uArgs = do
+  let restNaryPi = NaryPiType rest bFinal effs resultTy
   let isDependent = binderName b `isFreeIn` restNaryPi
-  inferNaryAppArg isDependent b uArgs >>= \case
-    Nothing -> return ([], []) -- no args left to apply, implicit or explicit
-    Just (x, uArgs') -> do
-      x' <- zonk x
-      restNaryPi' <- applySubst (b @> SubstVal x') restNaryPi
-      (xs, remaining) <- inferNaryAppArgs restNaryPi' uArgs'
-      return (x':xs, remaining)
+  (x, uArgs') <- inferAppArg isDependent b uArgs
+  x' <- zonk x
+  restNaryPi' <- applySubst (b @> SubstVal x') restNaryPi
+  case nonEmpty uArgs' of
+    Nothing -> return (x':|[], [])
+    Just uArgs'' -> do
+      (xs, remaining) <- inferNaryAppArgs restNaryPi' uArgs''
+      return (NE.cons x' xs, remaining)
 
-inferNaryAppArg
+inferAppArg
   :: (EmitsBoth o, Inferer m)
-  => Bool -> PiBinder o o' -> [UExprArg i] -> m i o (Maybe (Atom o, [UExprArg i]))
-inferNaryAppArg isDependent b uArgs = getImplicitArg b >>= \case
-  Just x -> return $ Just (x, uArgs)
-  Nothing -> case uArgs of
-    [] -> return Nothing
-    (appCtx, argCtx, _, arg):restUArgs ->
-      liftM (Just . (,restUArgs)) $ addSrcContext appCtx $
-        if isDependent
-          then do
-            Abs decls result <- buildDeclsInf $ checkSigma arg (sink $ binderType b)
-            cheapReduceWithDecls decls result >>= \case
-              (Just x', Just ds) -> forM_ ds reportUnsolvedInterface >> return x'
-              _ -> addSrcContext argCtx $ throw TypeErr $ depFunErrMsg
-          else checkSigma arg (binderType b)
+  => Bool -> PiBinder o o' -> NonEmpty (UExprArg i) -> m i o (Atom o, [UExprArg i])
+inferAppArg isDependent b uArgs = getImplicitArg b >>= \case
+  Just x -> return $ (x, toList uArgs)
+  Nothing -> do
+    let (appCtx, argCtx, _, arg) :| restUArgs = uArgs
+    liftM (,restUArgs) $ addSrcContext appCtx $
+      if isDependent
+        then do
+          Abs decls result <- buildDeclsInf $ checkSigma arg (sink $ binderType b)
+          cheapReduceWithDecls decls result >>= \case
+            (Just x', Just ds) -> forM_ ds reportUnsolvedInterface >> return x'
+            _ -> addSrcContext argCtx $ throw TypeErr $ depFunErrMsg
+        else checkSigma arg (binderType b)
   where
     depFunErrMsg =
       "Dependent functions can only be applied to fully evaluated expressions. " ++
@@ -1383,7 +1396,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (nestLength ps) <> " patterns."
-    xs <- forM idxs \i -> emit $ App (Var v) [i]
+    xs <- forM idxs \i -> emit $ App (Var v) [] i
     bindLamPats ps xs cont
 
 checkAnn :: (EmitsInf o, Inferer m) => Maybe (UType i) -> m i o (Type o)

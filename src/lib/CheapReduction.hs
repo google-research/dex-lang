@@ -159,9 +159,10 @@ instance CheaplyReducibleE Block where
 instance CheaplyReducibleE Expr where
   cheapReduceE expr = cheapReduceFromSubst expr >>= \case
     Atom atom -> return atom
-    App f xs -> case fromNaryLam (length xs) f of
-      Just (NaryLamExpr bs Pure body) -> do
-        dropSubst $ extendSubst (bs@@>map SubstVal xs) $ cheapReduceE body
+    App f xs x -> case fromNaryLam (length xs) f of
+      Just (NaryLamExpr bs b Pure body) -> do
+        let subst = bs @@> map SubstVal xs <.> b @> SubstVal x
+        dropSubst $ extendSubst subst $ cheapReduceE body
       _ -> empty
     Op (SynthesizeDict _ ty) -> do
       runFallibleT1 (trySynthDictBlock ty) >>= \case

@@ -112,14 +112,16 @@ evalAtom atom = traverseSurfaceAtomNames atom \v -> do
 
 evalExpr :: Interp m => Expr i -> m i o (Atom o)
 evalExpr expr = case expr of
-  Atom atom -> evalAtom atom
-  App f xs -> do
+  App f xs x -> do
     f' <- evalAtom f
     case fromNaryLam (length xs) f' of
-      Just (NaryLamExpr bs _ body) -> do
+      Just (NaryLamExpr bs b _ body) -> do
         xs' <- mapM evalAtom xs
-        dropSubst $ extendSubst (bs @@> map SubstVal xs') $ evalBlock body
+        x' <- evalAtom x
+        let subst = bs @@> map SubstVal xs' <.> b @> SubstVal x'
+        dropSubst $ extendSubst subst $ evalBlock body
       _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
+  Atom atom -> evalAtom atom
   Op op     -> evalOp op
   Case e alts _ _ -> do
     e' <- evalAtom e
