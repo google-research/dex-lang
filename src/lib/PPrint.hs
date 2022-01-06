@@ -120,7 +120,7 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 instance Pretty (Expr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (Expr n) where
   prettyPrec (Atom x ) = prettyPrec x
-  prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced xs
+  prettyPrec (App f xs x) = atPrec AppPrec $ pApp f <+> spaced (xs ++ [x])
   prettyPrec (Op  op ) = prettyPrec op
   prettyPrec (Hof (For ann (Lam lamExpr))) =
     atPrec LowestPrec $ forStr ann <+> prettyLamHelper lamExpr (PrettyFor ann)
