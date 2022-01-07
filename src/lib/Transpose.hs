@@ -132,16 +132,16 @@ transposeExpr expr ct = case expr of
   Atom atom     -> transposeAtom atom ct
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
-  App x is i -> do
+  App x is -> do
     -- TODO: we should check that it's a table type here, but it's awkward to do
     -- because we need something in the o-space to do that.
-    is' <- mapM substNonlin (is ++ [i])
+    is' <- mapM substNonlin is
     case x of
       Var v -> do
         lookupSubstM v >>= \case
           RenameNonlin _ -> error "shouldn't happen"
           LinRef ref -> do
-            refProj <- naryIndexRef ref is'
+            refProj <- naryIndexRef ref (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
       ProjectElt idxs v -> do
@@ -149,7 +149,7 @@ transposeExpr expr ct = case expr of
           RenameNonlin _ -> error "an error, probably"
           LinRef ref -> do
             ref' <- getNaryProjRef (toList idxs) ref
-            refProj <- naryIndexRef ref' is'
+            refProj <- naryIndexRef ref' (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x

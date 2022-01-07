@@ -121,11 +121,10 @@ _simplifyStandalone block =
 
 simplifyExpr :: (Emits o, Simplifier m) => Expr i -> m i o (Atom o)
 simplifyExpr expr = case expr of
-  App f xs x -> do
+  App f xs -> do
     xs' <- mapM simplifyAtom xs
-    x' <- simplifyAtom x
     f' <- simplifyAtom f
-    simplifyApp f' xs' x'
+    simplifyApp f' xs'
   Atom x -> simplifyAtom x
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
@@ -204,23 +203,24 @@ defuncCase scrut alts resultTy = do
                             (Atom (PairVal resultData newResult))
           return $ PairE (Abs bs' block) (LamRecon reconAbs)
 
-simplifyApp :: (Emits o, Simplifier m) => Atom o -> [Atom o] -> Atom o -> m i o (Atom o)
-simplifyApp f xs xEnd = case f of
+simplifyApp :: (Emits o, Simplifier m) => Atom o -> NonEmpty (Atom o) -> m i o (Atom o)
+simplifyApp f xs = case f of
   Lam (LamExpr b body) -> do
-    case xs of
-      [] -> dropSubst $ extendSubst (b@>SubstVal xEnd) $ simplifyBlock body
-      x:rest -> do
+    let x:|rest = xs
+    case nonEmpty rest of
+      Nothing -> dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
+      Just rest' -> do
        ans <- dropSubst $ extendSubst (b@>SubstVal x) $ simplifyBlock body
-       simplifyApp ans rest xEnd
+       simplifyApp ans rest'
   ACase e alts ty -> do
-    resultTy <- getAppType ty xs xEnd
+    resultTy <- getAppType ty $ toList xs
     alts' <- forM alts \(Abs bs a) -> do
       buildAlt (EmptyAbs bs) \vs -> do
         a' <- applySubst (bs@@>vs) a
-        naryApp a' (map sink (xs ++ [xEnd]))
+        naryApp a' (map sink $ toList xs)
     eff <- getAllowedEffects -- TODO: more precise effects
     dropSubst $ simplifyExpr $ Case e alts' resultTy eff
-  _ -> naryApp f (xs ++ [xEnd])
+  _ -> naryApp f $ toList xs
 
 simplifyAtom :: Simplifier m => Atom i -> m i o (Atom o)
 simplifyAtom atom = case atom of

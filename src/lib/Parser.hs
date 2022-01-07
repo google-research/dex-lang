@@ -16,7 +16,6 @@ import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
 import Data.Functor
 import Data.Foldable
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (fromMaybe)
 import Data.Void
 import qualified Data.Set as S

@@ -30,10 +30,10 @@ module Name (
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   MaterializedSubst (..), lookupTerminalSubstFrag, lookupMaterializedSubst,
-  BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), NameColorRep (..),
-  Abs (..), Nest (..), PairB (..), UnitB (..),
+  BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>), NameColorRep (..),
+  Abs (..), Nest (..), PairB (..), UnitB (..), NonEmptyNest (..), nonEmptyToNest,
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
-  ListE (..), ComposeE (..),
+  ListE (..), NonEmptyListE (..), ComposeE (..),
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
@@ -97,12 +97,13 @@ import Control.Monad.State.Strict
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Data.Functor ((<&>))
-import Data.Foldable (fold)
+import Data.Foldable (fold, toList)
 import Data.Maybe (catMaybes)
 import Data.Kind (Type)
 import Data.String
 import Data.Function ((&))
 import Data.List (nubBy)
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Text as T
 import GHC.Stack
@@ -330,6 +331,12 @@ type NaryAbs (c::C) = Abs (Nest (NameBinder c)) :: E -> E
 data IsVoidS n where
   IsVoidS :: IsVoidS VoidS
 
+data NonEmptyNest (b::B) (n::S) (l::S) where
+  NonEmptyNest :: b n h -> Nest b h l -> NonEmptyNest b n l
+
+nonEmptyToNest :: NonEmptyNest b n l -> Nest b n l
+nonEmptyToNest (NonEmptyNest b bs) = Nest b bs
+
 -- === Sinkings and projections ===
 
 class ProvesExt (b :: B) where
@@ -544,6 +551,9 @@ data EitherE (e1::E) (e2::E) (n::S) = LeftE (e1 n) | RightE (e2 n)
 newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
         deriving (Show, Eq, Generic)
 
+newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEmpty (e n)}
+        deriving (Show, Eq, Generic)
+
 newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
         deriving (Show, Eq, Generic)
 
@@ -649,13 +659,20 @@ instance BindsOneName (BinderP c ann) c where
   binderName (b:>_) = binderName b
 
 infixr 7 @@>
+(@@>) :: (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
+(@@>) bs xs = bindNameList bs (toList xs)
+
 class BindsNameList (b::B) (c::C) | b -> c where
-  (@@>) :: b i i' -> [v c o] -> SubstFrag v i i' o
+  bindNameList :: b i i' -> [v c o] -> SubstFrag v i i' o
 
 instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
-  (@@>) Empty [] = emptyInFrag
-  (@@>) (Nest b rest) (x:xs) = b@>x <.> rest@@>xs
-  (@@>) _ _ = error "length mismatch"
+  bindNameList Empty [] = emptyInFrag
+  bindNameList (Nest b rest) (x:xs) = b@>x <.> bindNameList rest xs
+  bindNameList _ _ = error "length mismatch"
+
+instance BindsAtMostOneName b c => BindsNameList (NonEmptyNest b) c where
+  bindNameList (NonEmptyNest b bs) (x:xs) = b@>x <.> bindNameList bs xs
+  bindNameList _ _ = error "length mismatch"
 
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
            => Ext h o
