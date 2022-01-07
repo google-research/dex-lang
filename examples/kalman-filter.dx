@@ -524,5 +524,6 @@ start : Params =
 %time
 log_prob start
 
-%time
-grad log_prob start
+-- Compilation is too slow to be included by default.
+-- %time
+-- grad log_prob start
