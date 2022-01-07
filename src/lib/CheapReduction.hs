@@ -221,13 +221,12 @@ instance (CheaplyReducibleE Expr e', NiceE e') => CheaplyReducibleE Block e' whe
 instance CheaplyReducibleE Expr Atom where
   cheapReduceE = \case
     Atom atom -> cheapReduceE atom
-    App f' xs' x' -> do
+    App f' xs' -> do
       f <- cheapReduceE f'
       case fromNaryLam (length xs') f of
-        Just (NaryLamExpr bs b _ body) -> do
+        Just (NaryLamExpr bs _ body) -> do
           xs <- mapM cheapReduceE xs'
-          x <- cheapReduceE x'
-          let subst = bs @@> map SubstVal xs <.> b @> SubstVal x
+          let subst = bs @@> fmap SubstVal xs
           dropSubst $ extendSubst subst $ cheapReduceE body
         _ -> empty
     Op (SynthesizeDict _ ty') -> do

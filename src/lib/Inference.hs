@@ -26,7 +26,6 @@ import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..))
-import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -587,7 +586,7 @@ getImplicitArgs ty = case ty of
     getImplicitArg b >>= \case
       Nothing -> return []
       Just arg -> do
-        appTy <- getAppType ty [] arg
+        appTy <- getAppType ty [arg]
         (arg:) <$> getImplicitArgs appTy
   _ -> return []
 
@@ -794,10 +793,10 @@ asNaryPiType t = case go t of
     go ty = case ty of
       Pi (PiType b effs resultTy) -> case effs of
        Pure -> case go resultTy of
-         Just (NaryPiType bs bFinal effs' resultTy') ->
-            Just $ NaryPiType (Nest b bs) bFinal effs' resultTy'
-         Nothing -> Just $ NaryPiType Empty b Pure resultTy
-       _ -> Just $ NaryPiType Empty b effs resultTy
+         Just (NaryPiType (NonEmptyNest b' bs') effs' resultTy') ->
+            Just $ NaryPiType (NonEmptyNest b (Nest b' bs')) effs' resultTy'
+         Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
+       _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
       _ -> Nothing
 
 inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UExprArg i) -> m i o (Atom o)
@@ -806,8 +805,7 @@ inferNaryApp fCtx f args = addSrcContext fCtx do
   fTy <- getType f
   naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
-  let (xs, x) = unsnoc inferredArgs
-  let appExpr = App f xs x
+  let appExpr = App f inferredArgs
   addEffects =<< exprEffects appExpr
   partiallyApplied <- Var <$> emit appExpr
   case nonEmpty remaining of
@@ -824,16 +822,16 @@ inferNaryApp fCtx f args = addSrcContext fCtx do
 inferNaryAppArgs
   :: (EmitsBoth o, Inferer m)
   => NaryPiType o -> NonEmpty (UExprArg i) -> m i o (NonEmpty (Atom o), [UExprArg i])
-inferNaryAppArgs (NaryPiType Empty b effs resultTy) uArgs = do
+inferNaryAppArgs (NaryPiType (NonEmptyNest b Empty) effs resultTy) uArgs = do
   let isDependent = binderName b `isFreeIn` PairE effs resultTy
   (x, remaining) <- inferAppArg isDependent b uArgs
   return (x:|[], remaining)
-inferNaryAppArgs (NaryPiType (Nest b rest) bFinal effs resultTy) uArgs = do
-  let restNaryPi = NaryPiType rest bFinal effs resultTy
-  let isDependent = binderName b `isFreeIn` restNaryPi
-  (x, uArgs') <- inferAppArg isDependent b uArgs
+inferNaryAppArgs (NaryPiType (NonEmptyNest b1 (Nest b2 rest)) effs resultTy) uArgs = do
+  let restNaryPi = NaryPiType (NonEmptyNest b2 rest) effs resultTy
+  let isDependent = binderName b1 `isFreeIn` restNaryPi
+  (x, uArgs') <- inferAppArg isDependent b1 uArgs
   x' <- zonk x
-  restNaryPi' <- applySubst (b @> SubstVal x') restNaryPi
+  restNaryPi' <- applySubst (b1 @> SubstVal x') restNaryPi
   case nonEmpty uArgs' of
     Nothing -> return (x':|[], [])
     Just uArgs'' -> do
@@ -1406,7 +1404,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       throw TypeErr $ "Incorrect length of table pattern: table index set has "
                       <> pprint (length idxs) <> " elements but there are "
                       <> pprint (nestLength ps) <> " patterns."
-    xs <- forM idxs \i -> emit $ App (Var v) [] i
+    xs <- forM idxs \i -> emit $ App (Var v) (i:|[])
     bindLamPats ps xs cont
 
 checkAnn :: (EmitsInf o, Inferer m) => Maybe (UType i) -> m i o (Type o)

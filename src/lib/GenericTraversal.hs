@@ -31,7 +31,7 @@ class (ScopableBuilder2 m, SubstReader Name m)
 
 traverseExprDefault :: Emits o => GenericTraverser m => Expr i -> m i o (Expr o)
 traverseExprDefault expr = liftImmut $ case expr of
-  App g xs x -> App  <$> tge g <*> mapM tge xs <*> tge x
+  App g xs -> App <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
   Op  op  -> Op   <$> mapM tge op
   Hof hof -> Hof  <$> mapM tge hof

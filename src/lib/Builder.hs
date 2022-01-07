@@ -59,7 +59,6 @@ import Control.Monad.Writer.Strict hiding (Alt)
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Foldable (toList)
-import Data.List.NonEmpty (nonEmpty)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
@@ -75,7 +74,7 @@ import CheapReduction
 import MTL1
 
 import LabeledItems
-import Util (enumerate, scanM, restructure, transitiveClosureM, bindM2, unsnoc)
+import Util (enumerate, scanM, restructure, transitiveClosureM, bindM2)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -957,13 +956,12 @@ emitUnpacked tup = do
   forM xs \x -> emit $ Atom x
 
 app :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
-app x i = Var <$> emit (App x [] i)
+app x i = Var <$> emit (App x (i:|[]))
 
 naryApp :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
 naryApp f xs = case nonEmpty xs of
   Nothing -> return f
-  Just xs' -> Var <$> emit (App f args finalArg)
-    where (args, finalArg) = unsnoc xs'
+  Just xs' -> Var <$> emit (App f xs')
 
 indexRef :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 indexRef ref i = emitOp $ IndexRef ref i

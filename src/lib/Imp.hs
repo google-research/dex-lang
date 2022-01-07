@@ -171,15 +171,14 @@ translateDecl (Let b (DeclBinding _ _ expr)) cont = do
 translateExpr :: (Imper m, Emits o) => MaybeDest o -> Expr i -> m i o (Atom o)
 translateExpr maybeDest expr = case expr of
   Hof hof -> toImpHof maybeDest hof
-  App f' xs' x' -> do
+  App f' xs' -> do
     f <- substM f'
     xs <- mapM substM xs'
-    x  <- substM x'
     getType f >>= \case
       TabTy _ _ -> do
         case fromNaryLam (length xs) f of
-          Just (NaryLamExpr bs b _ body) -> do
-            let subst = bs @@> map SubstVal xs <.> b @> SubstVal x
+          Just (NaryLamExpr bs _ body) -> do
+            let subst = bs @@> fmap SubstVal xs
             body' <- applySubst subst body
             dropSubst $ translateBlock maybeDest body'
           _ -> error $ "Invalid Imp atom: " ++ pprint f
@@ -834,7 +833,7 @@ zipTabDestAtom f dest src = do
   emitLoop "i" Fwd n \i -> do
     idx <- intToIndexImp (sink idxTy) i
     destIndexed <- destGet (sink dest) idx
-    srcIndexed  <- runSubstReaderT idSubst $ translateExpr Nothing (App (sink src) [] idx)
+    srcIndexed  <- runSubstReaderT idSubst $ translateExpr Nothing (App (sink src) (idx:|[]))
     f destIndexed srcIndexed
 
 zipWithRefConM :: Monad m => (Dest n -> Atom n -> m ()) -> Con n -> Con n -> m ()

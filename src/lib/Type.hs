@@ -68,10 +68,12 @@ getType e = liftImmut do
   DB bindings <- getDB
   return $ runHardFail $ runTyperT bindings $ getTypeE e
 
-getAppType :: EnvReader m => Type n -> [Atom n] -> Atom n -> m n (Type n)
-getAppType f xs x = liftImmut do
-  DB bindings <- getDB
-  return $ runHardFail $ runTyperT bindings $ checkApp f xs x
+getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
+getAppType f xs = case nonEmpty xs of
+  Nothing -> getType f
+  Just xs' -> liftImmut do
+    DB bindings <- getDB
+    return $ runHardFail $ runTyperT bindings $ checkApp f xs'
 
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
@@ -130,11 +132,11 @@ getReferentTy (Abs (PairB hB refB) UnitE) = do
 exprEffects :: (MonadFail1 m, EnvReader m) => Expr n -> m n (EffectRow n)
 exprEffects expr = case expr of
   Atom _  -> return $ Pure
-  App f xs x -> do
+  App f xs -> do
     fTy <- getType f
     case fromNaryPiType (length xs) fTy of
-      Just (NaryPiType bs b effs _) -> do
-        let subst = bs @@> map SubstVal xs <.> b @> SubstVal x
+      Just (NaryPiType bs effs _) -> do
+        let subst = bs @@> fmap SubstVal xs
         applySubst subst effs
       Nothing -> error $
         "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint fTy
@@ -459,9 +461,9 @@ instance (NameColor c, ToBinding ann c, CheckableE ann)
 
 instance HasType Expr where
   getTypeE expr = case expr of
-    App f xs x -> do
+    App f xs -> do
       fTy <- getTypeE f
-      checkApp fTy xs x
+      checkApp fTy xs
     Atom x   -> getTypeE x
     Op   op  -> typeCheckPrimOp op
     Hof  hof -> typeCheckPrimHof hof
@@ -945,31 +947,30 @@ checkAlt resultTyReq reqBs (Abs bs body) = do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
-checkApp :: Typer m => Type o -> [Atom i] -> Atom i -> m i o (Type o)
-checkApp fTy xs x = case fromNaryPiType (length xs) fTy of
-  Just (NaryPiType bs b effs resultTy) -> do
+checkApp :: Typer m => Type o -> NonEmpty (Atom i) -> m i o (Type o)
+checkApp fTy xs = case fromNaryPiType (length xs) fTy of
+  Just (NaryPiType bs effs resultTy) -> do
     xs' <- mapM substM xs
-    x' <- substM x
-    checkArgTys bs b xs' x'
-    let subst = bs @@> map SubstVal xs' <.> b @> SubstVal x'
+    checkArgTys (nonEmptyToNest bs) (toList xs')
+    let subst = bs @@> fmap SubstVal xs'
     PairE effs' resultTy' <- applySubst subst $ PairE effs resultTy
     declareEffs effs'
     return resultTy'
   Nothing -> throw TypeErr $
-    "Not a " ++ show (length xs + 1) ++ "-argument pi type: " ++ pprint fTy
+    "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
 checkArgTys
   :: Typer m
-  => Nest PiBinder o o' -> PiBinder o' o''
-  -> [Atom o] -> Atom o
+  => Nest PiBinder o o'
+  -> [Atom o]
   -> m i o ()
-checkArgTys Empty b [] x = dropSubst $ x |: binderType b
-checkArgTys (Nest b bs) bEnd (x:xs) xEnd = do
+checkArgTys Empty [] = return ()
+checkArgTys (Nest b bs) (x:xs) = do
   dropSubst $ x |: binderType b
-  Abs (PairB bs' bEnd') UnitE <- applySubst (b@>SubstVal x) (EmptyAbs $ PairB bs bEnd)
-  checkArgTys bs' bEnd' xs xEnd
-checkArgTys _ _ _ _ = throw TypeErr $ "wrong number of args"
+  Abs bs' UnitE <- applySubst (b@>SubstVal x) (EmptyAbs bs)
+  checkArgTys bs' xs
+checkArgTys _ _ = throw TypeErr $ "wrong number of args"
 
 typeCheckRef :: Typer m => HasType e => e i -> m i o (Type o)
 typeCheckRef x = do
