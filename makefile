@@ -1,6 +1,6 @@
 # Set shell to bash to resolve symbolic links when looking up
 # executables, to support user-account installation of stack.
-SHELL=/bin/bash
+SHELL=/usr/bin/env bash
 
 STACK=$(shell command -v stack 2>/dev/null)
 ifeq (, $(STACK))
