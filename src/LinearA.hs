@@ -427,7 +427,7 @@ jvp :: JVPFuncMap -> Scope -> Subst -> TangentMap -> Expr -> Expr
 jvp funcEnv scope subst env e = case e of
   Ret vs_ [] -> ctx $ Ret ((subst !) <$> vs_) (zipWith (!) envs vs_)
     where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
-  Ret _  _  -> expectNonLinear
+  Ret _ _  -> expectNonLinear
   LetMixed vs_ [] e1 e2 ->
     ctx $ LetMixed vs vs' (rec ctxScope subst env1 e1) $
       rec ctxScope (envExt subst vs_ vs) (envExt env2 vs_ vs') e2
@@ -435,7 +435,7 @@ jvp funcEnv scope subst env e = case e of
       allFresh  = take (2 * length vs_) $ freshVars scope
       (vs, vs') = splitAt (length vs_) allFresh
       (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) (envExt env vs_ vs') [e1, e2]
-  LetMixed _  _  _  _  -> expectNonLinear
+  LetMixed _ _ _ _ -> expectNonLinear
   LetUnpack _ _ _ -> undefined
   -- TODO: Split envs
   --LetUnpack vs v e ->
@@ -450,7 +450,7 @@ jvp funcEnv scope subst env e = case e of
     --where (ctx, ctxScope, envs) = splitTangents scope env xs
   App f vs_ [] -> ctx $ App (funcEnv ! f) ((subst !) <$> vs_) (zipWith (!) envs vs_)
     where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
-  App _ _  _  -> expectNonLinear
+  App _ _ _  -> expectNonLinear
   Var v -> Ret [subst ! v] [env ! v]
   Lit v -> retExprs scope (Lit v) LZero
   UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
@@ -529,8 +529,8 @@ unzipFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys)
       linFormalsWithTys (MixedType [] linRetTys) linBody
   )
   where
-    (formals, formalTypes) = unzip formalsWithTys
-    (linFormals, linFormalTypes) = unzip linFormalsWithTys
+    (formals, _) = unzip formalsWithTys
+    (linFormals, _) = unzip linFormalsWithTys
     formalsScope = scopeExt (scopeExt mempty formals) linFormals
     formalsSubst = envExt (envExt mempty formals formals) linFormals linFormals
     ((ctx, ctxScope), ubody, ubody') = unzipExpr formalsScope formalsSubst body
@@ -545,7 +545,9 @@ unzipFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys)
       typecheck (Program undefined) (M.fromList formalsWithTys, mempty) nonlinBody
     residualTupleTy = last nonlinRetTys
 
-
+-- The Scope is the set of variables used by the generated body so far
+-- (with respect to which new variables must be fresh).
+-- The Subst is the remapping of old variable names to new ones.
 unzipExpr :: Scope -> Subst -> Expr -> ((Expr -> Expr, Scope), Expr, Expr)
 unzipExpr scope subst expr = case expr of
   Ret vs vs' -> ((id, scope), Ret ((subst !) <$> vs) [], Ret [] ((subst !) <$> vs'))
@@ -562,10 +564,18 @@ unzipExpr scope subst expr = case expr of
       ((ctx2, scopeCtx2), ue2, ue2') = unzipExpr e2Scope e2Subst e2
   Var  v -> ((id, scope), Var (subst ! v), Ret [] [])
   LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
-  UnOp Sin e -> ((ctx, ctxScope), UnOp Sin ue, ue')
+  UnOp op e -> ((ctx, ctxScope), UnOp op ue, ue')
     where ((ctx, ctxScope), ue, ue') = unzipExpr scope subst e
-  UnOp Cos e -> ((ctx, ctxScope), UnOp Cos ue, ue')
-    where ((ctx, ctxScope), ue, ue') = unzipExpr scope subst e
+  BinOp op e1 e2 -> ((ctx1 . ctx2, ctxScope2), BinOp op ue1 ue2, ue')
+    where
+      ((ctx1, ctxScope1), ue1, ue1') = unzipExpr scope subst e1
+      ((ctx2, ctxScope2), ue2, ue2') = unzipExpr ctxScope1 subst e2
+      ue' = LetMixed [] [] ue1' ue2'
+  LAdd e1 e2 -> ((ctx1 . ctx2, ctxScope2), ue, LAdd ue1' ue2')
+    where
+      ((ctx1, ctxScope1), ue1, ue1') = unzipExpr scope subst e1
+      ((ctx2, ctxScope2), ue2, ue2') = unzipExpr ctxScope1 subst e2
+      ue = LetMixed [] [] ue1 ue2
   LScale s e ->
     ( (sCtx . eCtx, eCtxScope)
     , LetMixed [] [] ue  $ Ret [] []
@@ -574,7 +584,7 @@ unzipExpr scope subst expr = case expr of
     where
       ((sCtx, sCtxScope), us, us') = unzipExpr scope     subst s
       ((eCtx, eCtxScope), ue, ue') = unzipExpr sCtxScope subst e
-  _ -> error $ "Not implemented: " ++ show (pretty expr)
+  _ -> error $ "Unzip not implemented: " ++ show (pretty expr)
 
 -------------------- Transposition --------------------
 
@@ -588,6 +598,7 @@ transposeProgram (Program funcMap) = Program $ funcMap <&> \def -> case def of
   FuncDef _ _ (MixedType [] _) _ -> transposeFunc def
   _ -> def
 
+transposeFunc :: FuncDef -> FuncDef
 transposeFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys) body) =
   case retTys of
     [] -> FuncDef formalsWithTys ctFormalsWithTys (MixedType [] linTys) tbody
@@ -605,6 +616,10 @@ transposeFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRet
 -- mapping the linear outputs of the expr to variables in a primal program.
 transposeExpr :: Scope -> Expr -> [Var] -> (Expr -> Expr, Scope, CotangentMap)
 transposeExpr scope expr cts = case expr of
+  Ret vs vs' -> case vs of
+    [] -> (id, scope, M.fromList $ zip vs' cts)
+    -- TODO: Relax?
+    _ -> error "Returning non-linear values in transposition!"
   LetMixed vs vs' e1 e2 -> case vs of
     [] ->
       ( e2Ctx . e1Ctx
@@ -615,7 +630,21 @@ transposeExpr scope expr cts = case expr of
         (e2Ctx, e2Scope, e2Map) = transposeExpr scope   e2 cts
         (e1Ctx, e1Scope, e1Map) = transposeExpr e2Scope e1 ((e2Map !) <$> vs')
     -- TODO: Relax
-    _  -> error "Binding non-linear values in transposition!"
+    _ -> error "Binding non-linear values in transposition!"
+  -- TODO(axch): Cover this with a test case and uncomment it
+  -- LetUnpackLin vs v body ->
+  --   ( bCtx . LetMixed [] [v'] (Tuple $ map Var vs') . vCtx
+  --   , vScope
+  --   , vMap <> (bMap `M.withoutKeys` (S.fromList vs))
+  --   )
+  --   where
+  --     (bCtx, bScope, bMap) = transposeExpr scope body cts
+  --     vs' = (bMap !) <$> vs
+  --     v':_ = freshVars bScope
+  --     (vCtx, vScope, vMap) = transposeExpr (scopeExt bScope [v']) (Var v) [v']
+  LetUnpack vs v body -> (LetUnpack vs v . bCtx, bScope, bMap)
+    where
+      (bCtx, bScope, bMap) = transposeExpr scope body cts
   LAdd x y ->
     ( LetMixed [] [ct1, ct2] (Dup (LVar ct)) . xtCtx . ytCtx
     , yScope
@@ -628,6 +657,7 @@ transposeExpr scope expr cts = case expr of
       (ytCtx, yScope, yMap) = transposeExpr xScope y [ct2]
   LVar v -> (id, scope, M.singleton v ct)
     where [ct] = cts
+  _ -> error $ "Transpose not implemented: " ++ show (pretty expr)
 
 
 -- It would be nice to make this the signature of transpose
