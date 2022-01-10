@@ -61,7 +61,7 @@ library
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
-                       llvm-hs-pure, llvm-hs, transformers,
+                       llvm-hs-pure, llvm-hs, transformers, hashable, unordered-containers,
                        -- Parsing
                        megaparsec, parser-combinators,
                        -- Text output

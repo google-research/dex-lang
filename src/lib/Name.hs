@@ -51,6 +51,7 @@ module Name (
   applyAbs, applySubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, alphaEqPure, alphaElem, nubAlphaEq,
   AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
+  AlphaHashableE (..), AlphaHashableB (..), EKey (..),
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
   withFreshM, withFreshLike, sink, sinkM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
@@ -99,6 +100,7 @@ import qualified Data.Set        as S
 import Data.Functor ((<&>))
 import Data.Foldable (fold, toList)
 import Data.Maybe (catMaybes)
+import Data.Hashable
 import Data.Kind (Type)
 import Data.String
 import Data.Function ((&))
@@ -1012,6 +1014,140 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
   alphaEqE (LeftE  _ ) (RightE _ ) = zipErr
   alphaEqE (RightE _ ) (LeftE  _ ) = zipErr
 
+-- === alpha-renaming-invariant hashing ===
+
+type HashVal = Int
+data NamePreHash (c::C) (n::S) =
+   HashFreeName RawName
+    -- XXX: convention is the opposite of de Bruijn order, `0` means the
+    -- *outermost* binder
+ | HashBoundName Int
+ deriving (Eq, Generic)
+
+instance Hashable RawName
+instance Hashable (NamePreHash c n)
+
+data HashEnv n =
+  -- the Int is the number of local binders in scope
+  HashEnv Int (Subst NamePreHash n VoidS)
+
+emptyHashEnv :: HashEnv n
+emptyHashEnv = HashEnv 0 (newSubst $ HashFreeName . getRawName)
+
+lookupHashEnv :: HashEnv n -> Name c n -> NamePreHash c VoidS
+lookupHashEnv (HashEnv _ env) name = env ! name
+
+alphaHashWithSalt :: AlphaHashableE e => HashVal -> e n -> HashVal
+alphaHashWithSalt salt e = hashWithSaltE emptyHashEnv salt e
+
+extendHashEnv :: HashEnv n -> NameBinder c n l -> HashEnv l
+extendHashEnv (HashEnv depth env) b =
+  HashEnv (depth + 1) (env <>> b @> HashBoundName depth)
+
+class AlphaHashableE (e::E) where
+  hashWithSaltE :: HashEnv n -> HashVal -> e n -> HashVal
+
+  default hashWithSaltE :: (GenericE e, AlphaHashableE (RepE e))
+                        => HashEnv n -> HashVal -> e n -> HashVal
+  hashWithSaltE env salt e = hashWithSaltE env salt (fromE e)
+
+class AlphaHashableB (b::B) where
+  hashWithSaltB :: HashEnv n -> HashVal -> b n l -> (HashVal, HashEnv l)
+  default hashWithSaltB :: (GenericB b, AlphaHashableB (RepB b))
+                        => HashEnv n -> HashVal -> b n l -> (HashVal, HashEnv l)
+  hashWithSaltB env salt b = hashWithSaltB env salt (fromB b)
+
+instance AlphaHashableE (Name c) where
+  hashWithSaltE env salt v = hashWithSalt salt $ lookupHashEnv env v
+
+instance AlphaHashableB (NameBinder c) where
+  hashWithSaltB env salt b = (salt, extendHashEnv env b)
+
+instance AlphaHashableE UnitE where
+  hashWithSaltE _ salt UnitE = salt
+
+instance (AlphaHashableE e1, AlphaHashableE e2) => AlphaHashableE (PairE e1 e2) where
+  hashWithSaltE env salt (PairE e1 e2) = do
+    let h = hashWithSaltE env salt e1
+    hashWithSaltE env h e2
+
+instance (AlphaHashableB b, AlphaHashableE e) => AlphaHashableE (Abs b e) where
+  hashWithSaltE env salt (Abs b e) = do
+    let (h, env') = hashWithSaltB env salt b
+    hashWithSaltE env' h e
+
+instance (AlphaHashableB b) => AlphaHashableB (Nest b) where
+  hashWithSaltB env salt Empty = (hashWithSalt salt (0::Int), env)
+  hashWithSaltB env salt (Nest b rest) = do
+    let h1 = hashWithSalt salt (1::Int)
+    let (h2, env') = hashWithSaltB env h1 b
+    hashWithSaltB env' h2 rest
+
+instance (AlphaHashableB b1, AlphaHashableB b2)
+         => AlphaHashableB (PairB b1 b2) where
+  hashWithSaltB env salt (PairB b1 b2) = do
+    let (h, env') = hashWithSaltB env salt b1
+    hashWithSaltB env' h b2
+
+instance AlphaHashableE ann => AlphaHashableB (BinderP c ann) where
+  hashWithSaltB env salt (b:>ann) = do
+    let h = hashWithSaltE env salt ann
+    hashWithSaltB env h b
+
+instance Hashable a => AlphaHashableE (LiftE a) where
+  hashWithSaltE _ salt (LiftE x) = hashWithSalt salt x
+
+instance AlphaHashableE e => AlphaHashableB (LiftB e) where
+  hashWithSaltB env salt (LiftB x) = (hashWithSaltE env salt x, env)
+
+instance AlphaHashableE e => AlphaHashableE (ListE e) where
+  hashWithSaltE _ salt (ListE []) = hashWithSalt salt (0::Int)
+  hashWithSaltE env salt (ListE (x:xs)) = do
+    let h1 = hashWithSalt salt (1::Int)
+    let h2 = hashWithSaltE env h1 x
+    hashWithSaltE env h2 $ ListE xs
+
+instance (AlphaHashableE e1, AlphaHashableE e2) => AlphaHashableE (EitherE e1 e2) where
+  hashWithSaltE env salt (LeftE e) = do
+    let h = hashWithSalt salt (0::Int)
+    hashWithSaltE env h e
+  hashWithSaltE env salt (RightE e) = do
+    let h = hashWithSalt salt (1::Int)
+    hashWithSaltE env h e
+
+instance AlphaHashableE VoidE where
+  hashWithSaltE _ _ _ = error "impossible"
+
+-- === wrapper for E-kinded things suitable for use as keys ===
+
+newtype EKey (e::E) (n::S) = EKey { fromEKey :: e n }
+
+instance GenericE (EKey e) where
+  type RepE (EKey e) = e
+  fromE (EKey e) = e
+  toE e = EKey e
+
+-- We can do alpha-invariant equality checking without a scope at hand. It's
+-- slower (because we have to query the free vars of both expressions) and its
+-- implementation is unsafe, but it's needed for things like HashMap.
+instance (HoistableE e, AlphaEqE e) => Eq (EKey e n) where
+  EKey x == EKey y = do
+    let xFreeVars = freeVarsE x
+    if M.keysSet (freeVarsE y) /= M.keysSet (xFreeVars)
+      then False
+      else do
+        let scope = (Scope $ UnsafeMakeScopeFrag $ fmap unsafeCoerceE xFreeVars) :: Scope UnsafeS
+        withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
+          runScopeReaderM scope do
+            alphaEq (unsafeCoerceE x) (unsafeCoerceE y)
+
+instance (AlphaEqE e, AlphaHashableE e) => Hashable (EKey e n) where
+  hashWithSalt salt (EKey e) = alphaHashWithSalt salt e
+
+instance SubstE v e => SubstE v (EKey e)
+instance HoistableE e => HoistableE (EKey e)
+instance SinkableE e => SinkableE (EKey e)
+
 -- === ScopeReaderT transformer ===
 
 newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
@@ -1723,6 +1859,15 @@ instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
 -- (e.g. via generic) for the many-armed cases like PrimOp.
 instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
   alphaEqE (ComposeE xs) (ComposeE ys) = alphaEqTraversable xs ys
+
+instance (Traversable f, Hashable (f ()), AlphaHashableE e)
+         => AlphaHashableE (ComposeE f e) where
+  hashWithSaltE env salt (ComposeE xs) = do
+    let h = hashWithSalt salt $ void xs
+    flip execState h $
+      forM_ xs \x -> do
+        curHash <- get
+        put $ hashWithSaltE env curHash x
 
 instance SinkableB UnitB where
   sinkingProofB fresh UnitB cont = cont fresh UnitB

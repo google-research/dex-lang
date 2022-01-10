@@ -95,6 +95,7 @@ module Syntax (
 import Data.Functor
 import Data.Foldable (toList, fold)
 import Data.Tuple (swap)
+import Data.Hashable
 import Control.Applicative
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Identity
@@ -1224,9 +1225,9 @@ type Size = IExpr
 
 type IFunVar = (SourceName, IFunType)
 data IFunType = IFunType CallingConvention [IType] [IType] -- args, results
-                deriving (Show, Eq)
+                deriving (Show, Eq, Generic)
 
-data IsCUDARequired = CUDARequired | CUDANotRequired  deriving (Eq, Show)
+data IsCUDARequired = CUDARequired | CUDANotRequired  deriving (Eq, Show, Generic)
 
 instance IsBool IsCUDARequired where
   toBool CUDARequired = True
@@ -1239,7 +1240,7 @@ data CallingConvention =
  | FFIMultiResultFun
  | CUDAKernelLaunch
  | MCThreadLaunch
-   deriving (Show, Eq)
+   deriving (Show, Eq, Generic)
 
 data ImpModule n   = ImpModule [ImpFunction n]
 data ImpFunction n =
@@ -1711,6 +1712,7 @@ instance HoistableE  DataDef
 instance SubstE Name DataDef
 instance SubstE AtomSubstVal DataDef
 instance AlphaEqE DataDef
+instance AlphaHashableE DataDef
 
 instance GenericE DataConDef where
   type RepE DataConDef = PairE (LiftE SourceName) (Abs (Nest Binder) UnitE)
@@ -1721,6 +1723,7 @@ instance HoistableE  DataConDef
 instance SubstE Name DataConDef
 instance SubstE AtomSubstVal DataConDef
 instance AlphaEqE DataConDef
+instance AlphaHashableE DataConDef
 
 instance GenericE ClassDef where
   type RepE ClassDef = PairE (LiftE (SourceName, [SourceName]))
@@ -1746,6 +1749,7 @@ instance BindsNames DataConRefBinding
 instance SubstB Name DataConRefBinding
 instance SubstB AtomSubstVal DataConRefBinding
 instance AlphaEqB DataConRefBinding
+instance AlphaHashableB DataConRefBinding
 deriving instance Show (DataConRefBinding n l)
 deriving instance Generic (DataConRefBinding n l)
 
@@ -1867,6 +1871,7 @@ instance GenericE Atom where
 instance SinkableE   Atom
 instance HoistableE  Atom
 instance AlphaEqE    Atom
+instance AlphaHashableE Atom
 instance SubstE Name Atom
 
 -- TODO: special handling of ACase too
@@ -1927,6 +1932,7 @@ instance GenericE Expr where
 instance SinkableE Expr
 instance HoistableE  Expr
 instance AlphaEqE Expr
+instance AlphaHashableE Expr
 instance SubstE Name Expr
 instance SubstE AtomSubstVal Expr
 
@@ -1942,6 +1948,7 @@ instance GenericE (ExtLabeledItemsE e1 e2) where
 instance (SinkableE e1, SinkableE e2) => SinkableE (ExtLabeledItemsE e1 e2)
 instance (HoistableE  e1, HoistableE  e2) => HoistableE  (ExtLabeledItemsE e1 e2)
 instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2)
+instance (AlphaHashableE    e1, AlphaHashableE    e2) => AlphaHashableE    (ExtLabeledItemsE e1 e2)
 instance (SubstE Name e1, SubstE Name e2) => SubstE Name (ExtLabeledItemsE e1 e2)
 
 instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
@@ -1970,6 +1977,7 @@ deriving instance Show (BlockAnn n l)
 instance SinkableE Block
 instance HoistableE  Block
 instance AlphaEqE Block
+instance AlphaHashableE Block
 instance SubstE Name Block
 instance SubstE AtomSubstVal Block
 deriving instance Show (Block n)
@@ -2016,6 +2024,7 @@ instance HoistableB  LamBinder
 instance SubstB Name LamBinder
 instance SubstB AtomSubstVal LamBinder
 instance AlphaEqB LamBinder
+instance AlphaHashableB LamBinder
 
 instance GenericE LamBinding where
   type RepE LamBinding = PairE (LiftE Arrow) Type
@@ -2027,6 +2036,7 @@ instance HoistableE  LamBinding
 instance SubstE Name LamBinding
 instance SubstE AtomSubstVal LamBinding
 instance AlphaEqE LamBinding
+instance AlphaHashableE LamBinding
 
 instance GenericE LamExpr where
   type RepE LamExpr = Abs LamBinder Block
@@ -2036,6 +2046,7 @@ instance GenericE LamExpr where
 instance SinkableE LamExpr
 instance HoistableE  LamExpr
 instance AlphaEqE LamExpr
+instance AlphaHashableE LamExpr
 instance SubstE Name LamExpr
 instance SubstE AtomSubstVal LamExpr
 deriving instance Show (LamExpr n)
@@ -2051,6 +2062,7 @@ instance HoistableE  PiBinding
 instance SubstE Name PiBinding
 instance SubstE AtomSubstVal PiBinding
 instance AlphaEqE PiBinding
+instance AlphaHashableE PiBinding
 
 instance GenericB PiBinder where
   type RepB PiBinder = BinderP AtomNameC (PairE Type (LiftE Arrow))
@@ -2083,6 +2095,7 @@ instance HoistableB  PiBinder
 instance SubstB Name PiBinder
 instance SubstB AtomSubstVal PiBinder
 instance AlphaEqB PiBinder
+instance AlphaHashableB PiBinder
 
 instance GenericE PiType where
   type RepE PiType = Abs PiBinder (PairE EffectRow Type)
@@ -2092,6 +2105,7 @@ instance GenericE PiType where
 instance SinkableE PiType
 instance HoistableE  PiType
 instance AlphaEqE PiType
+instance AlphaHashableE PiType
 instance SubstE Name PiType
 instance SubstE AtomSubstVal PiType
 deriving instance Show (PiType n)
@@ -2105,6 +2119,7 @@ instance GenericE NaryPiType where
 instance SinkableE NaryPiType
 instance HoistableE  NaryPiType
 instance AlphaEqE NaryPiType
+instance AlphaHashableE NaryPiType
 instance SubstE Name NaryPiType
 instance SubstE AtomSubstVal NaryPiType
 
@@ -2116,6 +2131,7 @@ instance GenericE DepPairType where
 instance SinkableE   DepPairType
 instance HoistableE  DepPairType
 instance AlphaEqE    DepPairType
+instance AlphaHashableE DepPairType
 instance SubstE Name DepPairType
 instance SubstE AtomSubstVal DepPairType
 deriving instance Show (DepPairType n)
@@ -2135,8 +2151,9 @@ instance GenericE (EffectP name) where
     RightE (LiftE (Right ())) -> IOEffect
 
 instance SinkableE   name => SinkableE   (EffectP name)
-instance HoistableE    name => HoistableE    (EffectP name)
-instance AlphaEqE      name => AlphaEqE      (EffectP name)
+instance HoistableE     name => HoistableE     (EffectP name)
+instance AlphaEqE       name => AlphaEqE       (EffectP name)
+instance AlphaHashableE name => AlphaHashableE (EffectP name)
 instance SubstE Name (EffectP AtomName)
 instance SubstE AtomSubstVal (EffectP AtomName) where
   substE (_, env) eff = case eff of
@@ -2165,6 +2182,7 @@ instance SinkableE (EffectRowP AtomName)
 instance HoistableE  (EffectRowP AtomName)
 instance SubstE Name (EffectRowP AtomName)
 instance AlphaEqE    (EffectRowP AtomName)
+instance AlphaHashableE    (EffectRowP AtomName)
 
 instance SubstE AtomSubstVal (EffectRowP AtomName) where
   substE env (EffectRow effs tailVar) = do
@@ -2223,6 +2241,7 @@ instance HoistableE  AtomBinding
 instance SubstE Name AtomBinding
 instance SubstE AtomSubstVal AtomBinding
 instance AlphaEqE AtomBinding
+instance AlphaHashableE AtomBinding
 
 instance GenericE SolverBinding where
   type RepE SolverBinding = EitherE2
@@ -2242,6 +2261,7 @@ instance HoistableE  SolverBinding
 instance SubstE Name SolverBinding
 instance SubstE AtomSubstVal SolverBinding
 instance AlphaEqE SolverBinding
+instance AlphaHashableE SolverBinding
 
 instance NameColor c => GenericE (Binding c) where
   type RepE (Binding c) =
@@ -2294,6 +2314,7 @@ instance HoistableE  DeclBinding
 instance SubstE Name DeclBinding
 instance SubstE AtomSubstVal DeclBinding
 instance AlphaEqE DeclBinding
+instance AlphaHashableE DeclBinding
 
 instance GenericB Decl where
   type RepB Decl = AtomBinderP DeclBinding
@@ -2305,6 +2326,7 @@ instance HoistableB  Decl
 instance SubstB AtomSubstVal Decl
 instance SubstB Name Decl
 instance AlphaEqB Decl
+instance AlphaHashableB Decl
 instance ProvesExt  Decl
 instance BindsNames Decl
 instance BindsEnv Decl
@@ -2395,6 +2417,32 @@ instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
 instance NameColor c => Store (Binding c n)
+
+instance Hashable ForAnn
+instance Hashable AddressSpace
+instance Hashable LetAnn
+instance Hashable RWS
+instance Hashable Direction
+instance Hashable UnOp
+instance Hashable BinOp
+instance Hashable CmpOp
+instance Hashable BaseType
+instance Hashable LitVal
+instance Hashable ScalarBaseType
+instance Hashable Device
+instance Hashable Arrow
+
+instance Hashable IsCUDARequired
+instance Hashable CallingConvention
+instance Hashable IFunType
+
+instance Hashable a => Hashable (PrimOp  a)
+instance Hashable a => Hashable (PrimCon a)
+instance Hashable a => Hashable (PrimTC  a)
+instance Hashable a => Hashable (PrimHof a)
+instance Hashable a => Hashable (Limit a)
+instance Hashable a => Hashable (PrimEffect a)
+instance Hashable a => Hashable (BaseMonoidP a)
 
 instance IsString (SourceNameOr a VoidS) where
   fromString = SourceName
@@ -2551,6 +2599,7 @@ instance GenericE ImpInstr where
 instance SinkableE ImpInstr
 instance HoistableE  ImpInstr
 instance AlphaEqE ImpInstr
+instance AlphaHashableE ImpInstr
 instance SubstE Name ImpInstr
 
 instance GenericE ImpBlock where
@@ -2561,6 +2610,7 @@ instance GenericE ImpBlock where
 instance SinkableE ImpBlock
 instance HoistableE  ImpBlock
 instance AlphaEqE ImpBlock
+instance AlphaHashableE ImpBlock
 instance SubstE Name ImpBlock
 
 instance GenericE IExpr where
@@ -2572,6 +2622,7 @@ instance GenericE IExpr where
 instance SinkableE IExpr
 instance HoistableE  IExpr
 instance AlphaEqE IExpr
+instance AlphaHashableE IExpr
 instance SubstE Name IExpr
 
 instance GenericB IBinder where
@@ -2600,6 +2651,7 @@ instance HoistableB  IBinder
 instance SubstB Name IBinder
 instance SubstB AtomSubstVal IBinder
 instance AlphaEqB IBinder
+instance AlphaHashableB IBinder
 
 instance GenericB ImpDecl where
   type RepB ImpDecl = PairB (LiftB ImpInstr) (Nest IBinder)
@@ -2610,6 +2662,7 @@ instance SinkableB ImpDecl
 instance HoistableB  ImpDecl
 instance SubstB Name ImpDecl
 instance AlphaEqB ImpDecl
+instance AlphaHashableB ImpDecl
 instance ProvesExt  ImpDecl
 instance BindsNames ImpDecl
 
@@ -2625,6 +2678,7 @@ instance GenericE ImpFunction where
 instance SinkableE ImpFunction
 instance HoistableE  ImpFunction
 instance AlphaEqE    ImpFunction
+instance AlphaHashableE    ImpFunction
 instance SubstE Name ImpFunction
 
 instance GenericE ImpModule where
@@ -2635,6 +2689,7 @@ instance GenericE ImpModule where
 instance SinkableE ImpModule
 instance HoistableE  ImpModule
 instance AlphaEqE    ImpModule
+instance AlphaHashableE    ImpModule
 instance SubstE Name ImpModule
 
 instance GenericB TopEnvFrag where
