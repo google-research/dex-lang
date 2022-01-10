@@ -26,6 +26,7 @@ import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..))
+import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -1936,7 +1937,7 @@ trySynthDictBlock ty = liftImmut do
 -- TODO: we'd rather have something like this:
 --   data Givens n = Givens (M.Map (Type n) (Given n))
 -- but we need an Ord or Hashable instance on types
-data Givens n = Givens [Type n] [Given n]
+data Givens n = Givens { fromGivens :: HM.HashMap (EKey Type n) (Given n) }
 
 type Given = Block
 
@@ -1985,7 +1986,7 @@ givensFromEnv = liftImmut do
   DB bindings <- getDB
   let (SynthCandidates givens projs _) = getSynthCandidates bindings
   let givensBlocks = map AtomicBlock givens
-  return $ getSuperclassClosure bindings projs (Givens [] []) givensBlocks
+  return $ getSuperclassClosure bindings projs (Givens HM.empty) givensBlocks
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
@@ -2022,15 +2023,15 @@ getSuperclassClosure bindings projs givens newGivens =
 
     alreadyVisited :: Given n -> State (Givens n) Bool
     alreadyVisited x = do
-      Givens tys _ <- get
+      Givens m <- get
       return $ runEnvReaderM bindings do
         ty <- getType x
-        ty `alphaElem` tys
+        return $ EKey ty `HM.member` m
 
     markAsVisited :: Given n -> State (Givens n) ()
     markAsVisited x = do
       let ty = runEnvReaderM bindings $ getType x
-      modify \(Givens tys xs) -> Givens (ty:tys) (x:xs)
+      modify \(Givens m) -> Givens $ HM.insert (EKey ty) x m
 
 tryApply :: Distinct n => Env n -> Atom n -> Given n -> Maybe (Given n)
 tryApply bindings proj dict = do
@@ -2078,7 +2079,7 @@ instantiateProjParamsM projTy dictTy = case projTy of
 
 getGiven :: (Synther m, Emits n) => m n (Atom n)
 getGiven = do
-  Givens _ givens <- getGivens
+  givens <- (HM.elems . fromGivens) <$> getGivens
   asum $ map emitBlock givens
 
 getInstance :: DataDefName n -> Synther m => m n (Atom n)
@@ -2139,11 +2140,12 @@ instantiateDictParamsRec monoTy polyTy = case polyTy of
     return ([], [])
 
 instance GenericE Givens where
-  type RepE Givens = PairE (ListE Type) (ListE Given)
-  fromE (Givens tys givens) = PairE (ListE tys) (ListE givens)
-  toE   (PairE (ListE tys) (ListE givens)) = Givens tys givens
+  type RepE Givens = ListE (PairE (EKey Type) Given)
+  fromE (Givens m) = ListE $ map (uncurry PairE) $ HM.toList m
+  toE   (ListE pairs) = Givens $ HM.fromList $ map fromPairE pairs
 
 instance SinkableE Givens where
+
 
 -- === Dictionary synthesis traversal ===
 

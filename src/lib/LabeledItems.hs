@@ -16,6 +16,7 @@ module LabeledItems
 
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import Data.Hashable
 import Data.Foldable (toList)
 import Data.Store (Store)
 import GHC.Generics
@@ -115,3 +116,10 @@ pattern Unlabeled as <- (_getUnlabeled -> Just as)
 
 instance Store a => Store (LabeledItems a)
 instance (Store a, Store b) => Store (ExtLabeledItems a b)
+
+instance Hashable a => Hashable (LabeledItems a) where
+  -- explicit implementation because `Map.Map` doesn't have a hashable instance
+  hashWithSalt salt (LabeledItems items) =
+    hashWithSalt salt $ M.toList items
+
+instance (Hashable a, Hashable b) => Hashable (ExtLabeledItems a b)
