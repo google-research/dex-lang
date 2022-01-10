@@ -9,7 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Simplify ( simplifyTopBlock, SimplifiedBlock (..)
-                , simplifyBlock, liftSimplifyM) where
+                , simplifyBlock, liftSimplifyM, buildBlockSimplified ) where
 
 import Control.Category ((>>>))
 import Control.Monad
@@ -56,6 +56,15 @@ liftSimplifyM
 liftSimplifyM cont = liftImmut do
   DB env <- getDB
   return $ runSimplifyM env $ cont
+
+buildBlockSimplified
+  :: (Builder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Block n)
+buildBlockSimplified m =
+  liftSimplifyM do
+    block <- liftBuilder $ buildBlock m
+    buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
 

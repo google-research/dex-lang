@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Interpreter (
   evalBlock, evalExpr, indices,
@@ -13,10 +14,13 @@ module Interpreter (
 
 import Control.Monad
 import Control.Monad.IO.Class
+import qualified Data.List.NonEmpty as NE
 import Data.Int
+import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
+import System.IO.Unsafe
 
 import CUDA
 import LLVMExec
@@ -121,7 +125,16 @@ evalExpr expr = case expr of
         xs' <- mapM evalAtom xs
         let subst = bs @@> fmap SubstVal xs'
         dropSubst $ extendSubst subst $ evalBlock body
-      _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
+      _ -> do
+        when (length xs == 1) $ error "Failed to reduce application!"
+        case NE.uncons xs of
+          (x, maybeRest) -> do
+            ans <- evalExpr $ App f $ x :| []
+            case maybeRest of
+              Nothing   -> return ans
+              Just rest -> do
+                NonEmptyListE rest' <- substM $ NonEmptyListE rest
+                dropSubst $ evalExpr $ App ans rest'
   Atom atom -> evalAtom atom
   Op op     -> evalOp op
   Case e alts _ _ -> do
@@ -176,10 +189,32 @@ evalOp expr = mapM evalAtom expr >>= \case
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
     _ -> evalBuilder $ indexToInt $ sink idxArg
+  CastOp destTy x -> do
+    sourceTy <- getType x
+    let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
+                             " -> " ++ pprint destTy
+    case (sourceTy, destTy) of
+      (IdxRepTy, TC (IntRange l h)) -> return $ Con $ IntRangeVal l h x
+      (TC (IntRange _ _), IdxRepTy) -> do
+        let Con (IntRangeVal _ _ ord) = x
+        return ord
+      (IdxRepTy, TC (IndexRange t l h)) -> return $ Con $ IndexRangeVal t l h x
+      (TC (IndexRange _ _ _), IdxRepTy) -> do
+        let Con (IndexRangeVal _ _ _ ord) = x
+        return ord
+      (BaseTy (Scalar sb), BaseTy (Scalar db)) -> case (sb, db) of
+        (Int64Type, Int32Type) -> do
+          let Con (Lit (Int64Lit v)) = x
+          return $ Con $ Lit $ Int32Lit $ fromIntegral v
+        _ -> failedCast
+      _ -> failedCast
   Select cond t f -> case cond of
     Con (Lit (Word8Lit 0)) -> return f
     Con (Lit (Word8Lit 1)) -> return t
     _ -> error $ "Invalid select condition: " ++ pprint cond
+  ToEnum ty@(TypeCon _ defName _) i -> do
+      DataDef _ _ cons <- lookupDataDef defName
+      return $ Con $ SumAsProd ty i (map (const []) cons)
   _ -> error $ "Not implemented: " ++ pprint expr
 
 evalBuilder :: (Interp m, SinkableE e, SubstE AtomSubstVal e)
@@ -224,6 +259,15 @@ matchUPats (Nest b bs) (x:xs) = do
   ss <- matchUPats bs xs
   return $ s <.> ss
 matchUPats _ _ = error "mismatched lengths"
+
+-- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
+-- We could have a partial version of the interpreter that fails when any IO is to happen.
+indices :: EnvReader m => Type n -> m n [Atom n]
+indices ty = fromListE <$> liftImmut do
+  DB env <- getDB
+  let IdxRepVal size = unsafePerformIO $ runInterpM env $ evalBuilder $ indexSetSize $ sink ty
+  return $ ListE $ [0..size - 1] <&> \o ->
+    unsafePerformIO $ runInterpM env $ evalBuilder $ intToIndex (sink ty) $ IdxRepVal o
 
 pattern Int64Val :: Int64 -> Atom n
 pattern Int64Val x = Con (Lit (Int64Lit x))

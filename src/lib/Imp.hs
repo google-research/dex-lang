@@ -311,12 +311,22 @@ toImpOp maybeDest op = case op of
     -- this point since we just threw an error.
     destToAtom dest
   CastOp destTy x -> do
-    xTy <- getType x
-    case (xTy, destTy) of
+    sourceTy <- getType x
+    case (sourceTy, destTy) of
       (BaseTy _, BaseTy bt) -> do
         x' <- fromScalarAtom x
         returnVal =<< toScalarAtom =<< cast x' bt
-      _ -> error $ "Invalid cast: " ++ pprint xTy ++ " -> " ++ pprint destTy
+      (TC (IntRange _ _), IdxRepTy) -> do
+        let Con (IntRangeVal _ _ xord) = x
+        returnVal xord
+      (IdxRepTy, TC (IntRange l h)) ->
+        returnVal $ Con $ IntRangeVal l h x
+      (TC (IndexRange _ _ _), IdxRepTy) -> do
+        let Con (IndexRangeVal _ _ _ xord) = x
+        returnVal xord
+      (IdxRepTy, TC (IndexRange t l h)) ->
+        returnVal $ Con $ IndexRangeVal t l h x
+      _ -> error $ "Invalid cast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
   Select p x y -> do
     xTy <- getType x
     case xTy of
@@ -1093,8 +1103,8 @@ computeElemCount (EmptyAbs Empty) =
   return $ IdxRepVal 1
 computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
-  listSize <- foldM imul (IdxRepVal 1) =<< traverse indexSetSize idxList
-  nestSize <- A.emitCPoly =<< liftImmut (elemCountCPoly idxNest)
+  listSize <- emitSimplified $ foldM imul (IdxRepVal 1) =<< traverse indexSetSize (fromListE $ sink $ ListE idxList)
+  nestSize <- emitSimplified $ A.emitCPoly =<< liftImmut (elemCountCPoly $ sink idxNest)
   imul listSize nestSize
 
 -- Split the index structure into a prefix of non-dependent index types
@@ -1107,14 +1117,28 @@ indexStructureSplit s@(Abs (Nest b rest) UnitE) =
     HoistSuccess rest' -> (binderType b:ans1, ans2)
       where (ans1, ans2) = indexStructureSplit rest'
 
+dceApproxBlock :: Block n -> Block n
+dceApproxBlock block@(Block _ decls expr) = case hoist decls expr of
+  HoistSuccess expr' -> Block NoBlockAnn Empty expr'
+  HoistFailure _     -> block
+
+emitSimplified
+  :: (Emits n, Builder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
+
 computeOffset :: forall m n. (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
 computeOffset idxNest' idxs = do
   let (idxList , idxNest ) = indexStructureSplit idxNest'
   let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
   nestOffset   <- rec idxNest nestIdxs
   nestSize     <- computeElemCount idxNest
-  listOrds     <- mapM (indexToInt . Var) listIdxs
-  idxListSizes <- mapM indexSetSize idxList
+  listOrds     <- forM listIdxs \i -> emitSimplified $ indexToInt $ sink $ Var i
+  -- We don't compute the first size (which we don't need!) to avoid emitting unnecessary decls.
+  idxListSizes <- case idxList of
+    [] -> return []
+    _  -> fmap (IdxRepVal (-1):) $ forM (tail idxList) \ty -> emitSimplified $ indexSetSize $ sink ty
   listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
   iadd listOffset nestOffset
   where
@@ -1126,7 +1150,7 @@ computeOffset idxNest' idxs = do
      rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
        rest' <- applySubst s $ EmptyAbs bs
        Abs b' <$> elemCountCPoly rest'
-     significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
+     significantOffset <- emitSimplified $ A.emitCPoly $ A.sumC (sink i) (sink rhsElemCounts)
      remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
      otherOffsets <- rec remainingIdxStructure is
      iadd significantOffset otherOffsets
@@ -1137,7 +1161,7 @@ elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
   Nest b rest -> do
-    sizeBlock <- liftBuilder $ buildBlock $ indexSetSize $ sink $ binderType b
+    sizeBlock <- liftBuilder $ buildBlock $ emitSimplified $ indexSetSize $ sink $ binderType b
     msize <- A.blockAsCPoly sizeBlock
     case msize of
       Just size -> do
@@ -1300,19 +1324,22 @@ liftBuilderImpSimplify
   => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
   -> m n (Atom n)
 liftBuilderImpSimplify cont = do
-  block <- liftSimplifyM do
+  block <- dceApproxBlock <$> liftSimplifyM do
     block <- liftBuilder $ buildBlock cont
     buildBlock $ simplifyBlock block
   runSubstReaderT idSubst $ translateBlock Nothing block
 
 intToIndexImp :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
-intToIndexImp ty i = liftBuilderImp $ intToIndex (sink ty) =<< toScalarAtom (sink i)
+intToIndexImp ty i =
+  liftBuilderImpSimplify $ intToIndex (sink ty) =<< toScalarAtom (sink i)
 
 indexToIntImp :: (ImpBuilder m, Emits n) => Atom n -> m n (IExpr n)
-indexToIntImp idx = fromScalarAtom =<< liftBuilderImp (indexToInt $ sink idx)
+indexToIntImp idx =
+  fromScalarAtom =<< liftBuilderImpSimplify (indexToInt $ sink idx)
 
 indexSetSizeImp :: (ImpBuilder m, Emits n) => Type n -> m n (IExpr n)
-indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImp (indexSetSize $ sink ty)
+indexSetSizeImp ty =
+  fromScalarAtom =<< liftBuilderImpSimplify (indexSetSize $ sink ty)
 
 -- === type checking imp programs ===
 

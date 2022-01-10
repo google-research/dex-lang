@@ -24,17 +24,13 @@ def interleave {m v} (blank:v) (labels: m=>v) : (m & (Fin 2))=>v =
   pairs = for i. [labels.i, blank]
   for (i, j). pairs.i.j
 
-instance {m} [Ix m] Ix {head:Unit | tail:m}
-  dummy_ix__ = 0
-
-def prepend {m v} (first: v) (seq: m=>v) : ({head:Unit | tail:m }=>v) =
+def prepend {m v} (first: v) (seq: m=>v) : ((Unit|m)=>v) =
   -- Concatenates a single element to the beginning of a sequence.
   for idx. case idx of
-    {| head = () |} -> first
-    {| tail = i  |} -> seq.i
+    Left () -> first
+    Right i -> seq.i
 
-def prepend_and_interleave {m v} (blank:v) (seq: m=>v) :
-  ({head:Unit | tail:(m & (Fin 2))}=>v) =
+def prepend_and_interleave {m v} (blank:v) (seq: m=>v) : ((Unit|(m & (Fin 2)))=>v) =
   -- Turns "text" into " t e x t".
   -- The output of this function has a slightly complicated output type, which
   -- has size 1 + 2 * (size m).

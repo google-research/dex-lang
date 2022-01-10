@@ -24,7 +24,7 @@ import Data.List (intersperse)
 import Data.Tuple (swap)
 import Data.Coerce
 
-import Builder hiding (sub, add, indexSetSize)
+import Builder hiding (sub, add)
 import Syntax
 import Type
 import Name
@@ -217,6 +217,10 @@ blockAsCPoly (Block _ decls' result') = fromMaybeE <$> liftImmut do
       Op (ScalarBinOp IAdd x y) -> add  <$> intAsCPoly x <*> intAsCPoly y
       Op (ScalarBinOp ISub x y) -> sub  <$> intAsCPoly x <*> intAsCPoly y
       Op (ScalarBinOp IMul x y) -> mulC <$> intAsCPoly x <*> intAsCPoly y
+      -- TODO: Remove once IntRange and IndexRange are defined in the surface language
+      Op (CastOp IdxRepTy v)    -> getType v >>= \case
+        IdxRepTy -> intAsCPoly v
+        _        -> indexAsCPoly v
       -- This looks for `select c 0 n` such that `c` is defined as `n < 0`.
       Op (Select (Var c) t f) -> do
         lookupAtomName c >>= \case

@@ -195,10 +195,23 @@ when using a record type as an index set:
 '`overLens` alone can be used with any lens-like isomorphism, for instance an
 ordinary record accessor lens.
 
+def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
+  fwd = \{a, b, c}. (c, b, a)
+  bwd = \(c, b, a). {a, b, c}
+  MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
-  dummy_ix__ = 0
-instance {m q} [Ix m, Ix q] Ix {b:m & c:q}
-  dummy_ix__ = 0
+  size = size n * size m * size q
+  ordinal = ordinal <<< appIso abcToTuple
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToTuple
+
+def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
+  fwd = \{b, c}. (c, b)
+  bwd = \(c, b). {b, c}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
+  size = size n * size m
+  ordinal = ordinal <<< appIso bcToPair
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso bcToPair
 
 :p
   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -253,12 +266,47 @@ zipper isomorphisms:
 '`sliceFields` uses this to specific named variants from a variant-indexed
 table:
 
+def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right (Left x)
+    {|c=x|} -> Right (Right x)
+  bwd = \v. case v of
+    Left  x -> {|a=x|}
+    Right x -> case x of
+      Left  y -> {|b=y|}
+      Right y -> {|c=y|}
+  MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
-  dummy_ix__ = 0
+  size = size n + size m + size q
+  ordinal = ordinal <<< appIso abcToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToEither
+
+def abToEither {a b} : Iso {a:a | b:b} (a|b) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|b=x|}
+  MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
-  dummy_ix__ = 0
-instance {n q} [Ix n, Ix q] Ix {a:n | c:q}
-  dummy_ix__ = 0
+  size = size n + size m
+  ordinal = ordinal <<< appIso abToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
+
+def acToEither {a c} : Iso {a:a | c:c} (a|c) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|c=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|c=x|}
+  MkIso {fwd, bwd}
+instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
+  size = size n + size m
+  ordinal = ordinal <<< appIso acToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso acToEither
 
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}

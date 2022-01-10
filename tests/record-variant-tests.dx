@@ -311,8 +311,15 @@ myStuff :(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_}) =
 
 'As index sets
 
+-- Use a non-standard iteration order by putting b before a!
+def abToPair {a b} : Iso {a:a & b:b} (b&a) =
+  fwd = \{a, b}. (b, a)
+  bwd = \(b, a). {a, b}
+  MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n & b:m}
-  dummy_ix__ = 0
+  size = size n * size m
+  ordinal = ordinal <<< appIso abToPair
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToPair
 
 :p size {a:Fin 10 & b:Fin 3}
 > 30
@@ -333,8 +340,18 @@ recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
 -- TODO: this still causes an error
 -- :p for i:(Fin 6). recordsAsIndices.((ordinal i) @ _)
 
+def abToEither {a b} : Iso {a:a | b:b} (a|b) =
+  fwd = \v.  case v of
+    {|a=x|} -> Left x
+    {|b=x|} -> Right x
+  bwd = \v. case v of
+    Left x  -> {|a=x|}
+    Right x -> {|b=x|}
+  MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
-  dummy_ix__ = 0
+  size = size n + size m
+  ordinal = ordinal <<< appIso abToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
 
 :p size {a:Fin 10 | b:Fin 3}
 > 13

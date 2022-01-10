@@ -204,12 +204,12 @@ instance PrettyPrec (Atom n) where
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
-    DataConRef _ params args -> atPrec AppPrec $
+    DataConRef _ params args -> atPrec LowestPrec $
       "DataConRef" <+> p params <+> p args
-    BoxedRef ptrsSizes (Abs b body) -> atPrec AppPrec $
+    BoxedRef ptrsSizes (Abs b body) -> atPrec LowestPrec $
       "Box" <+> p b <+> "<-" <+> p ptrsSizes <+> hardline <> "in" <+> p body
     ProjectElt idxs v ->
-      atPrec AppPrec $ "ProjectElt" <+> p idxs <+> p v
+      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
       "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
 

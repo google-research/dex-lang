@@ -1955,6 +1955,9 @@ instance (SinkableE k, SinkableE v, OrdE k) => SinkableE (MapE k v) where
 instance SinkableE e => SinkableE (ListE e) where
   sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
 
+instance SinkableE e => SinkableE (NonEmptyListE e) where
+  sinkingProofE fresh (NonEmptyListE xs) = NonEmptyListE $ fmap (sinkingProofE fresh) xs
+
 instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
     | length xs == length ys = mapM_ (uncurry alphaEqE) (zip xs ys)
@@ -1980,6 +1983,9 @@ instance Eq a => AlphaEqE (LiftE a) where
 
 instance SubstE v e => SubstE v (ListE e) where
   substE env (ListE xs) = ListE $ map (substE env) xs
+
+instance SubstE v e => SubstE v (NonEmptyListE e) where
+  substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"

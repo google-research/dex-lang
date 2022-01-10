@@ -10,17 +10,13 @@ it's doing bubble / insertion sort with quadratic time cost.
 However, if breaks the list in half recursively, it'll be doing parallel mergesort.
 Currently it'll do the quadratic time version.
 
--- TODO(Ix)
-instance {a b} [Ix a, Ix b] Ix {left:a | right:b}
-  dummy_ix__ = 0
-
-def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ({left:a | right:b }=>v) =
+def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
   -- Note: It'd be nicer to use (a | b)=>v but it's not currently supported.
   for idx. case idx of
-    {| left = i  |} -> leftin.i
-    {| right = i |} -> rightin.i
+    Left i  -> leftin.i
+    Right i -> rightin.i
 
-def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ({left:m | right:n }=>a) =
+def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
   --  2) Avoid initializing the return array.
