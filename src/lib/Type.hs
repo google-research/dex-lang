@@ -21,13 +21,15 @@ module Type (
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType, substEvaluatedModuleM,
   checkUnOp, checkBinOp,
-  oneEffect, lamExprTy, isData, isSingletonType, singletonTypeVal,
+  oneEffect, lamExprTy, isData, asFirstOrderFunction,
+  isSingletonType, singletonTypeVal, asNaryPiType,
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>), id)
 import Control.Monad
 import Control.Monad.Reader
+import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
 import Data.Int
@@ -960,6 +962,16 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
+asNaryPiType :: Type n -> Maybe (NaryPiType n)
+asNaryPiType ty = case ty of
+  Pi (PiType b effs resultTy) -> case effs of
+   Pure -> case asNaryPiType resultTy of
+     Just (NaryPiType (NonEmptyNest b' bs) effs' resultTy') ->
+        Just $ NaryPiType (NonEmptyNest b (Nest b' bs)) effs' resultTy'
+     Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
+   _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
+  _ -> Nothing
+
 checkArgTys
   :: Typer m
   => Nest PiBinder o o'
@@ -1480,27 +1492,46 @@ projectLength ty = case ty of
 -- === "Data" type class ===
 
 isData :: EnvReader m => Type n -> m n Bool
-isData ty = fromLiftE <$> liftImmut do
-  ty' <- sinkM ty
-  DB env <- getDB
-  let s = " is not serializable"
-  case runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $ checkDataLike s ty' of
-    Success () -> return $ LiftE True
-    Failure _  -> return $ LiftE False
+isData ty = liftM isJust $ runCheck do
+  checkDataLike (sink ty)
+  return UnitE
 
-checkDataLike :: ( EnvReader2 m, EnvExtender2 m
-                 , SubstReader Name m, Fallible2 m, Immut o)
-              => String -> Type i -> m i o ()
-checkDataLike msg ty = case ty of
+-- TODO: consider effects
+asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))
+asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
+
+runCheck
+  :: (EnvReader m, SinkableE e)
+  => (forall l. (DExt n l, Immut l) => TyperT Maybe l l (e l))
+  -> m n (Maybe (e n))
+runCheck cont = liftM fromMaybeE $ liftImmut do
+  DB env <- getDB
+  return $ toMaybeE $ runTyperT env $ cont
+
+asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
+asFirstOrderFunctionM ty = do
+  naryPi@(NaryPiType bs eff resultTy) <- liftMaybe $ asNaryPiType ty
+  Immut <- getImmut
+  substBinders bs \(NonEmptyNest b' bs') -> do
+      ts <- mapM sinkM $ bindersTypes $ Nest b' bs'
+      dropSubst $ mapM_ checkDataLike ts
+      Pure <- return eff
+      checkDataLike resultTy
+  substM naryPi
+
+checkDataLike :: Typer m => Type i -> m i o ()
+checkDataLike ty = case ty of
   Var _ -> error "Not implemented"
-  TabTy b eltTy ->
+  TabTy b eltTy -> do
+    Immut <- getImmut
     substBinders b \_ ->
-      checkDataLike msg eltTy
+      checkDataLike eltTy
   RecordTy (NoExt items)  -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
-    substBinders b \_ -> checkDataLike msg r
+    Immut <- getImmut
+    substBinders b \_ -> checkDataLike r
   TypeCon _ defName params -> do
     params' <- mapM substM params
     def <- lookupDataDef =<< substM defName
@@ -1514,16 +1545,13 @@ checkDataLike msg ty = case ty of
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
     IndexSlice _ _   -> return ()
-    _ -> throw TypeErr $ pprint ty ++ msg
-  _   -> throw TypeErr $ pprint ty ++ msg
+    _ -> throw TypeErr $ pprint ty
+  _   -> throw TypeErr $ pprint ty
+  where recur = checkDataLike
 
-  where
-    recur x = checkDataLike msg x
-
-checkDataLikeBinderNest :: ( EnvReader2 m, EnvExtender2 m
-                           , SubstReader Name m, Fallible2 m, Immut o)
-                        => EmptyAbs (Nest Binder) i -> m i o ()
+checkDataLikeBinderNest :: Typer m => EmptyAbs (Nest Binder) i -> m i o ()
 checkDataLikeBinderNest (Abs Empty UnitE) = return ()
 checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
-  checkDataLike "data con binder" $ binderType b
+  checkDataLike $ binderType b
+  Immut <- getImmut
   substBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE

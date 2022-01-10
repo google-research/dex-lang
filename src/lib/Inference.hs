@@ -785,26 +785,11 @@ asNaryApp (WithSrcE appCtx (UApp arr f x)) =
   where (f', xs) = asNaryApp f
 asNaryApp e = (e, [])
 
-asNaryPiType :: Type n -> NaryPiType n
-asNaryPiType t = case go t of
-  Just t' -> t'
-  Nothing -> error "not an nary pi type"
-  where
-    go :: Type n -> Maybe (NaryPiType n)
-    go ty = case ty of
-      Pi (PiType b effs resultTy) -> case effs of
-       Pure -> case go resultTy of
-         Just (NaryPiType (NonEmptyNest b' bs') effs' resultTy') ->
-            Just $ NaryPiType (NonEmptyNest b (Nest b' bs')) effs' resultTy'
-         Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
-       _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
-      _ -> Nothing
-
 inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UExprArg i) -> m i o (Atom o)
 inferNaryApp fCtx f args = addSrcContext fCtx do
   let (_, _, arr, _) :| _ = args
   fTy <- getType f
-  naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
+  Just naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
   let appExpr = App f inferredArgs
   addEffects =<< exprEffects appExpr

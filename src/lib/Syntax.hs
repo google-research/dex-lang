@@ -61,7 +61,8 @@ module Syntax (
     getDB, DistinctEnv (..),
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType, trySelectBranch,
-    fromNonDepTabTy, nonDepDataConTys, binderType, atomBindingType, getProjection,
+    fromNonDepTabTy, nonDepDataConTys, binderType, bindersTypes,
+    atomBindingType, getProjection,
     applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
     piArgType, lamArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates,
@@ -488,6 +489,12 @@ class BindsOneName b AtomNameC => BindsOneAtomName (b::B) where
 
 binderType :: BindsOneAtomName b => b n l -> Type n
 binderType b =  atomBindingType $ toBinding $ boundAtomBinding b
+
+bindersTypes :: (Distinct l, ProvesExt b, BindsNames b, BindsOneAtomName b)
+             => Nest b n l -> [Type l]
+bindersTypes Empty = []
+bindersTypes (Nest b bs) = ty : bindersTypes bs
+  where ty = withExtEvidence b $ withSubscopeDistinct bs $ sink (binderType b)
 
 instance (SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) where
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann')) Nothing
@@ -2486,6 +2493,9 @@ instance (BindsEnv b1, BindsEnv b2)
 instance BindsEnv b => (BindsEnv (Nest b)) where
   toEnvFrag Empty = emptyOutFrag
   toEnvFrag (Nest b rest) = toEnvFrag $ PairB b rest
+
+instance BindsEnv b => (BindsEnv (NonEmptyNest b)) where
+  toEnvFrag (NonEmptyNest b rest) = toEnvFrag $ Nest b rest
 
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (EitherB b1 b2)) where
