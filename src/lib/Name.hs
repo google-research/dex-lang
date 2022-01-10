@@ -1860,14 +1860,11 @@ instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
 instance (Traversable f, Eq (f ()), AlphaEq e) => AlphaEqE (ComposeE f e) where
   alphaEqE (ComposeE xs) (ComposeE ys) = alphaEqTraversable xs ys
 
-instance (Traversable f, Hashable (f ()), AlphaHashableE e)
+instance (Foldable f, Functor f, Hashable (f ()), AlphaHashableE e)
          => AlphaHashableE (ComposeE f e) where
   hashWithSaltE env salt (ComposeE xs) = do
     let h = hashWithSalt salt $ void xs
-    flip execState h $
-      forM_ xs \x -> do
-        curHash <- get
-        put $ hashWithSaltE env curHash x
+    foldl (hashWithSaltE env) h xs
 
 instance SinkableB UnitB where
   sinkingProofB fresh UnitB cont = cont fresh UnitB
