@@ -1114,7 +1114,12 @@ indexSetSize ty = case ty of
       InclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
       ExclusiveLim x -> indexToInt x
       Unlimited      -> indexSetSize n
-    clampPositive =<< high' `isub` low'
+    -- The clamp is only necessary when both sides are not unlimited.
+    let maybeClamp = case (low, high) of
+          (Unlimited, _) -> return
+          (_, Unlimited) -> return
+          _              -> clampPositive
+    maybeClamp =<< high' `isub` low'
   TC (ProdType types) -> do
     sizes <- traverse indexSetSize types
     foldM imul (IdxRepVal 1) sizes

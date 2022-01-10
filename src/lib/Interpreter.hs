@@ -7,7 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Interpreter (
-  evalBlock, evalExpr, indices, indexSetSize,
+  evalBlock, evalExpr, indices,
   runInterpM, liftInterpM, InterpM, Interp,
   traverseSurfaceAtomNames) where
 
