@@ -1130,18 +1130,23 @@ computeOffset idxNest idxs = do
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n)
+elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m)
                => IndexStructure n -> m n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
   Nest b rest -> do
-    size <- A.indexSetSizeCPoly $ binderType b
-    rhsElemCounts <- refreshBinders b \(b':>_) s -> do
-      rest' <- applySubst s $ Abs rest UnitE
-      Abs b' <$> elemCountCPoly rest'
-    withFreshBinder NoHint IdxRepTy \b' -> do
-      let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
-      return $ A.psubst (Abs b' sumPoly) size
+    sizeBlock <- liftBuilder $ buildBlock $ indexSetSize $ sink $ binderType b
+    msize <- A.blockAsCPoly sizeBlock
+    case msize of
+      Just size -> do
+        rhsElemCounts <- refreshBinders b \(b':>_) s -> do
+          rest' <- applySubst s $ Abs rest UnitE
+          Abs b' <$> elemCountCPoly rest'
+        withFreshBinder NoHint IdxRepTy \b' -> do
+          let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
+          return $ A.psubst (Abs b' sumPoly) size
+      _ -> throw NotImplementedErr $
+        "Algebraic simplification failed to model index computations: " ++ pprint sizeBlock
 
 -- === Imp IR builder ===
 
