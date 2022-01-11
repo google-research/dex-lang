@@ -165,8 +165,7 @@ findReplace old new s@(x:xs) =
 scan :: Traversable t => (a -> s -> (b, s)) -> t a -> s -> (t b, s)
 scan f xs s = runState (traverse (asState . f) xs) s
 
-scanM :: (Monad m, Traversable t)
-  => (a -> s -> m (b, s)) -> t a -> s -> m (t b, s)
+scanM :: (Monad m, Traversable t) => (a -> s -> m (b, s)) -> t a -> s -> m (t b, s)
 scanM f xs s = runStateT (traverse (asStateT . f) xs) s
 
 asStateT :: Monad m => (s -> m (a, s)) -> StateT s m a
