@@ -174,6 +174,10 @@ evalOp expr = mapM evalAtom expr >>= \case
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
     _ -> evalBuilder $ indexToInt $ sink idxArg
+  Select cond t f -> case cond of
+    Con (Lit (Word8Lit 0)) -> return f
+    Con (Lit (Word8Lit 1)) -> return t
+    _ -> error $ "Invalid select condition: " ++ pprint cond
   _ -> error $ "Not implemented: " ++ pprint expr
 
 evalBuilder :: (Interp m, SinkableE e, SubstE AtomSubstVal e)
