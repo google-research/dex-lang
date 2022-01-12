@@ -26,6 +26,28 @@ shouldNotTypeCheck prog = typecheckProgram prog `shouldSatisfy` \case
   Left  _ -> True
   Right _ -> False
 
+-- Compute a gradient in LinearA, with sanity checks along the way
+-- This version assumes the function produces a single real output, so
+-- doesn't take a covector.
+gradient :: Program -> FuncName -> [Float] -> IO [Value]
+gradient prog f args = do
+  shouldTypeCheck prog
+  let jProg = jvpProgram prog
+  shouldTypeCheck jProg
+  let ujProg = unzipProgram jProg
+  shouldTypeCheck ujProg
+  let tujProg = transposeProgram ujProg
+  shouldTypeCheck tujProg
+  let expPrimal = evalFunc prog f (map FloatVal args) []
+  let (Result primal_tape empty) = evalFunc tujProg (f ++ ".nonlin") (map FloatVal args) []
+  empty `shouldBe` []
+  -- The tape is a tuple at the end; split it into a singleton list
+  let (primal, tape) = splitAt (length primal_tape - 1) primal_tape
+  (Result primal []) `shouldBe` expPrimal
+  let (Result empty grad) = evalFunc tujProg (f ++ ".lin") tape [FloatVal 1.0]
+  empty `shouldBe` []
+  return grad
+
 spec :: Spec
 spec = do
   describe "evaluation" $ do
@@ -161,6 +183,7 @@ spec = do
                     LetMixed [] ["v'"] (App "f.lin" ["r"] ["x"]) $
                     Ret ["v"] ["v'"]
         ans `shouldBe` expAns
+
   describe "Unzipping" $ do
     it "sin x" $ do
       let p = Program $ M.fromList
@@ -171,11 +194,30 @@ spec = do
       ensureJvpUnzips p
 
   describe "Transposition" $ do
+    let lin_add_func = FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
+          LetMixed [] ["z"] (LAdd (LVar "x") (LVar "y")) $
+          LVar "z"
     it "x + y (linearly)" $ do
-      let p = Program $ M.fromList
-                [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
-                    LetMixed [] ["z"] (LAdd (LVar "x") (LVar "y")) $
-                    LVar "z"
-                  )
-                ]
+      let p = Program $ M.fromList [ ("add", lin_add_func) ]
       shouldTypeCheck $ transposeProgram p
+
+  let add_func = FuncDef [("x", FloatType), ("y", FloatType)] [] (MixedType [FloatType] []) $
+        LetMixed ["z"] [] (BinOp Add (Var "x") (Var "y")) $
+        Var "z"
+
+  describe "End-to-end reverse-mode" $ do
+
+    it "x + y" $ do
+      let p = Program $ M.fromList [ ("add", add_func) ]
+      grad <- gradient p "add" [2.0, 2.0]
+      grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
+
+    xit "function call" $ do
+      let p = Program $ M.fromList
+                [ ("add", add_func)
+                , ("f", FuncDef [("x", FloatType), ("y", FloatType)] [] (MixedType [FloatType] []) $
+                    LetMixed ["z"] [] (App "add" ["x", "y"] []) $
+                    Var "z")
+                ]
+      grad <- gradient p "add" [2.0, 2.0]
+      grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
