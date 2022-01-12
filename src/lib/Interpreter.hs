@@ -9,8 +9,9 @@
 module Interpreter (
   evalBlock, evalExpr, indices, indexSetSize,
   runInterpM, liftInterpM, InterpM, Interp,
-  traverseSurfaceAtomNames) where
+  traverseSurfaceAtomNames, evalAtom, matchUPat) where
 
+import Control.Monad
 import Control.Monad.IO.Class
 import Data.Int
 import Data.Foldable (toList)
@@ -20,6 +21,7 @@ import Foreign.Marshal.Alloc
 import CUDA
 import LLVMExec
 import Err
+import LabeledItems
 
 import Name
 import Syntax
@@ -182,6 +184,42 @@ evalBuilder :: (Interp m, SinkableE e, SubstE AtomSubstVal e)
 evalBuilder cont = dropSubst do
   Abs decls result <- liftBuilder $ fromDistinctAbs <$> buildScoped cont
   evalDecls decls $ substM result
+
+matchUPat :: Interp m => UPat i i' -> Atom o -> m o o (SubstFrag AtomSubstVal i i' o)
+matchUPat (WithSrcB _ pat) x = do
+  x' <- evalAtom x
+  case (pat, x') of
+    (UPatBinder b, _) -> return $ b @> SubstVal x'
+    (UPatCon _ ps, DataCon _ _ _ _ xs) -> matchUPats ps xs
+    (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
+      s1 <- matchUPat p1 x1
+      s2 <- matchUPat p2 x2
+      return $ s1 <.> s2
+    (UPatUnit UnitB, UnitVal) -> return emptyInFrag
+    (UPatRecord _ (PairB ps (RightB UnitB)), Record xs) -> matchUPats ps (toList xs)
+    (UPatRecord (Ext labels (Just ())) (PairB ps (LeftB p)), Record xs) -> do
+       let (left, right) = splitLabeledItems labels xs
+       ss <- matchUPats ps (toList left)
+       s <- matchUPat p (Record right)
+       return $ ss <.> s
+    (UPatVariant _ _ _  , _) -> error "can't have top-level may-fail pattern"
+    (UPatVariantLift _ _, _) -> error "can't have top-level may-fail pattern"
+    (UPatTable bs, tab) -> do
+      getType tab >>= \case
+        TabTy b _ -> do
+          idxs <- indices (binderType b)
+          xs <- forM idxs \i -> evalExpr $ App tab (i:|[])
+          matchUPats bs xs
+        _ -> error $ "not a table: " ++ pprint tab
+    _ -> error "bad pattern match"
+
+matchUPats :: Interp m => Nest UPat i i' -> [Atom o] -> m o o (SubstFrag AtomSubstVal i i' o)
+matchUPats Empty [] = return emptyInFrag
+matchUPats (Nest b bs) (x:xs) = do
+  s <- matchUPat b x
+  ss <- matchUPats bs xs
+  return $ s <.> ss
+matchUPats _ _ = error "mismatched lengths"
 
 pattern Int64Val :: Int64 -> Atom n
 pattern Int64Val x = Con (Lit (Int64Lit x))

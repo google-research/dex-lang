@@ -95,12 +95,6 @@ class GenericallyTraversableE (e::E) where
 instance GenericallyTraversableE Atom where
   traverseGenericE = traverseAtom
 
-instance GenericallyTraversableE Module where
-  traverseGenericE (Module ir decls result) = do
-    DistinctAbs decls' result' <- buildScoped $
-      traverseDeclNest decls $ substM result
-    return $ Module ir decls' result'
-
 instance GenericallyTraversableE Block where
   traverseGenericE (Block _ decls result) = do
     DistinctAbs decls' (PairE ty result') <-

@@ -130,11 +130,7 @@ initTopState = TopStateEx emptyOutMap
 evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
   (ans, env') <- runInterblockM opts env $ evalSourceBlock block
-  if mayUpdateTopState block
-    then return (ans, Just env')
-    -- This case in an opimization for the cache. It lets us indicate that the
-    -- state hasn't changed.
-    else return (ans, Nothing)
+  return (ans, Just env')
 
 evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
 evalSourceText source = do
@@ -143,10 +139,10 @@ evalSourceText source = do
   return $ zip sourceBlocks results
 
 liftPassesM :: MonadInterblock m
-            => Bool -> Bool -- TODO: one bool is bad enough. but two!
+            => Bool
             -> (forall n. Mut n => PassesM n ())
             -> m Result
-liftPassesM mayUpdateState bench m = do
+liftPassesM bench m = do
   opts <- getConfig
   TopStateEx env <- getTopStateEx
   (result, outs) <- liftIO $ runPassesM bench opts env do
@@ -154,8 +150,7 @@ liftPassesM mayUpdateState bench m = do
     localTopBuilder $ m >> return UnitE
   case result of
     Success (DistinctAbs bindingsFrag UnitE) -> do
-      when mayUpdateState $
-        setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
+      setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
       return $ Result outs (Success ())
     Failure errs -> do
       return $ Result outs (Failure errs)
@@ -175,18 +170,15 @@ evalSourceBlock (SourceBlock _ _ _ _ (ImportModule moduleName)) = do
       setImportStatus moduleName FullyImported
       return $ summarizeModuleResults results
 evalSourceBlock block = do
-  result <- withCompileTime $
-              liftPassesM (mayUpdateTopState block) (requiresBench block) $
-                evalSourceBlock' block
+  result <- withCompileTime $ liftPassesM (requiresBench block) $ evalSourceBlock' block
   return $ filterLogs block $ addResultCtx block $ result
 
 evalSourceBlock' :: (Mut n, MonadPasses m) => SourceBlock -> m n ()
 evalSourceBlock' block = case sbContents block of
-  RunModule m -> execUModule m
-  Command cmd (v, m) -> case cmd of
+  EvalUDecl decl -> execUDecl decl
+  Command cmd expr -> case cmd of
     EvalExpr fmt -> do
-      execUModule m
-      val <- lookupAtomSourceName v
+      val <- evalUExpr expr
       case fmt of
         Printed -> do
           s <- pprintVal val
@@ -203,8 +195,7 @@ evalSourceBlock' block = case sbContents block of
     --     _ -> return $ Con $ Lit val
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
-      execUModule m
-      val <- lookupAtomSourceName v
+      val <- evalUExpr expr
       ty <- getType val
       logTop $ TextOut $ pprint ty
   GetNameType v -> do
@@ -240,18 +231,6 @@ requiresBench :: SourceBlock -> Bool
 requiresBench block = case sbLogLevel block of
   PrintBench _ -> True
   _            -> False
-
-mayUpdateTopState :: SourceBlock -> Bool
-mayUpdateTopState block = case sbContents block of
-  RunModule _     -> True
-  ImportModule _  -> True
-  Command _ _     -> False
-  GetNameType _   -> False
-  ProseBlock _    -> False
-  QueryEnv _      -> False
-  CommentLine     -> False
-  EmptyLines      -> False
-  UnParseable _ _ -> False
 
 filterLogs :: SourceBlock -> Result -> Result
 filterLogs block (Result outs err) = let
@@ -307,52 +286,36 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
-
-lookupAtomSourceName :: (Fallible1 m, EnvReader m) => SourceName -> m n (Atom n)
-lookupAtomSourceName v =
-  lookupSourceMap AtomNameRep v >>= \case
-    Nothing -> throw UnboundVarErr $ pprint v
-    Just v' -> do
-      lookupAtomName v' >>= \case
-        LetBound (DeclBinding _ _ (Atom atom)) -> return atom
-        _ -> throw TypeErr $ "Not an atom name: " ++ pprint v
-
-execUModule :: (Mut n, MonadPasses m) => SourceUModule -> m n ()
-execUModule m = do
-  bs <- liftImmut $ evalUModule m
-  void $ emitEnv bs
-
--- TODO: extract only the relevant part of the env we can check for module-level
--- unbound vars and upstream errors here. This should catch all unbound variable
--- errors, but there could still be internal shadowing errors.
-evalUModule :: (Immut n, MonadPasses m) => SourceUModule -> m n (EvaluatedModule n)
-evalUModule sourceModule = do
-  DB bindings <- getDB
-  let (Env _ _ sourceMap _) = bindings
-  logPass Parse sourceModule
-  renamed <- renameSourceNames (toScope bindings) sourceMap sourceModule
+evalUExpr :: (Mut n, MonadPasses m) => UExpr VoidS -> m n (Atom n)
+evalUExpr expr = do
+  renamed <- renameSourceNamesUExpr expr
   logPass RenamePass renamed
-  typed <- liftExcept $ inferModule bindings renamed
+  typed <- inferTopUExpr renamed
   checkPass TypePass typed
-  synthed <- liftExcept $ synthModule bindings typed
+  evalBlock typed
+
+evalBlock :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
+evalBlock typed = do
+  synthed <- synthTopBlock typed
   checkPass SynthPass synthed
-  let defunctionalized = simplifyModule bindings synthed
-  checkPass SimpPass defunctionalized
-  case defunctionalized of
-    Module _ Empty result-> return result
-    _ -> do
-      let (block, recon) = splitSimpModule bindings defunctionalized
-      fromDistinctAbs <$> localTopBuilder do
-        -- TODO: the evaluation pass gets to emit top bindings because it
-        -- creates bindings for pointer literals. But should we just do it this
-        -- way for all the passes?
-        result <- evalBackend $ sink block
-        evaluated <- applyDataResults (sink recon) result
-        checkPass ResultPass $ Module Evaluated Empty evaluated
-        emitEnv evaluated
+  (simp, recon) <- simplifyTopBlock synthed
+  checkPass SimpPass simp
+  result <- evalBackend simp
+  applyRecon recon result
+
+execUDecl :: (Mut n, MonadPasses m) => UDecl VoidS VoidS -> m n ()
+execUDecl decl = do
+  Abs renamedDecl sourceMap <- renameSourceNamesUDecl decl
+  logPass RenamePass (Abs renamedDecl sourceMap)
+  inferenceResult <- inferTopUDecl  renamedDecl sourceMap
+  logPass TypePass inferenceResult
+  case inferenceResult of
+    UDeclResultWorkRemaining block declAbs -> do
+      result <- evalBlock block
+      emitSourceMap =<< applyUDeclAbs declAbs result
+    UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
--- TODO: Standalone functions --- use the env!
 _evalMLIR :: MonadPasses m => Block n -> m n (Atom n)
 #if DEX_LLVM_VERSION == HEAD
 _evalMLIR block' = do
@@ -377,23 +340,14 @@ evalLLVM block = do
   bench   <- requireBenchmark
   logger  <- getLogger
   (blockAbs, ptrVals) <- abstractPtrLiterals block
-  let funcName = "entryFun"
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
-  (mainFunc, impModuleUnoptimized, reconAtom) <-
-    toImpModule backend cc funcName Nothing blockAbs
-  -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
-  --       were not lifted from the kernels just yet. We should split the Imp IR
-  --       into different levels so that we can check the output here!
-  checkPass ImpPass impModuleUnoptimized
-  let impModule = case backend of
-                    -- LLVMCUDA -> liftCUDAAllocations impModuleUnoptimized
-                    _        -> impModuleUnoptimized
-  -- checkPass ImpPass impModule
-  llvmAST <- liftIO $ impToLLVM logger impModule
-  let IFunType _ _ resultTypes = impFunType $ mainFunc
+  (impFun, reconAtom) <- toImpFunction backend cc blockAbs
+  checkPass ImpPass impFun
+  llvmAST <- liftIO $ impToLLVM logger impFun
+  let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  resultVals <- liftIO $ llvmEvaluate logger llvmAST funcName ptrVals resultTypes
+  resultVals <- liftIO $ llvmEvaluate logger llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 

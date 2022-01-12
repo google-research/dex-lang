@@ -9,7 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpModule, PtrBinder, impFunType, getIType) where
+module Imp (toImpFunction, PtrBinder, impFunType, getIType) where
 
 import Data.Functor
 import Data.Foldable (toList)
@@ -34,18 +34,15 @@ type AtomRecon = Abs (Nest (NameBinder AtomNameC)) Atom
 
 type PtrBinder = IBinder
 
-toImpModule :: EnvReader m
-            => Backend -> CallingConvention
-            -> SourceName
-            -> Maybe (Dest n)
-            -> Abs (Nest PtrBinder) Block n
-            -> m n (ImpFunction n, ImpModule n, AtomRecon n)
-toImpModule _ cc mainFunName maybeDest absBlock = do
-  PairE recon' f' <- liftImmut do
-    DB bindings <- getDB
-    return $ runImpM bindings $ uncurry PairE <$>
-      translateTopLevel cc mainFunName (fmap sink maybeDest) (sink absBlock)
-  return (f', ImpModule [f'], recon')
+-- TODO: make it purely a function of the type and avoid the AtomRecon
+toImpFunction :: EnvReader m
+              => Backend -> CallingConvention
+              -> Abs (Nest PtrBinder) Block n
+              -> m n (ImpFunction n, AtomRecon n)
+toImpFunction _ cc absBlock = fromPairE <$> liftImmut do
+  DB env <- getDB
+  return $ runImpM env $ uncurry PairE <$>
+    translateTopLevel cc Nothing absBlock
 
 -- === ImpM monad ===
 
@@ -122,11 +119,10 @@ runImpM bindings cont =
 -- going to be available through the dest.
 translateTopLevel :: (Immut o, Imper m)
                   => CallingConvention
-                  -> SourceName
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
-                  -> m i o (AtomRecon o, ImpFunction o)
-translateTopLevel cc mainFunName maybeDest (Abs bs body) = do
+                  -> m i o (ImpFunction o, AtomRecon o)
+translateTopLevel cc maybeDest (Abs bs body) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
   DistinctAbs bs' (DistinctAbs decls resultAtom) <-
     buildImpNaryAbs argTys \vs ->
@@ -141,7 +137,7 @@ translateTopLevel cc mainFunName maybeDest (Abs bs body) = do
                         buildRecon localEnv resultAtom
   let funImpl = Abs bs' $ ImpBlock decls results
   let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
-  return (recon, ImpFunction mainFunName funTy funImpl)
+  return (ImpFunction funTy funImpl, recon)
 
 buildRecon :: (HoistableB b, EnvReader m)
            => b n l
@@ -1309,11 +1305,8 @@ indexSetSizeImp ty = fromScalarAtom =<< liftBuilderImp (indexSetSize $ sink ty)
 
 -- === type checking imp programs ===
 
-instance CheckableE ImpModule where
-  checkE m = substM m  -- TODO
-
 impFunType :: ImpFunction n -> IFunType
-impFunType (ImpFunction _ ty _) = ty
+impFunType (ImpFunction ty _) = ty
 impFunType _ = error "not implemeted"
 
 getIType :: IExpr n -> IType
@@ -1352,3 +1345,6 @@ impOpType pop = case pop of
     where hostPtrTy ty = PtrType (Heap CPU, ty)
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ show pop
+
+instance CheckableE ImpFunction where
+  checkE = substM -- TODO!

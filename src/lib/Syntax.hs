@@ -27,7 +27,7 @@ module Syntax (
     PiBinding (..), PiBinder (..),
     PiType (..), DepPairType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
-    ForAnn (..), Val, Op, Con, Hof, TC, Module (..), UModule (..),
+    ForAnn (..), Val, Op, Con, Hof, TC,
     ClassDef (..), SynthCandidates (..), Env (..),
     BindsEnv (..), BindsOneAtomName (..), WithEnv (..), AtomNameBinder,
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
@@ -44,12 +44,12 @@ module Syntax (
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
-    SourceBlock (..), SourceBlock' (..), EnvQuery (..),
-    SourceUModule (..), UMethodType(..), UType, ExtLabeledItemsE (..),
+    SourceBlock (..), SourceBlock' (..), EnvQuery (..), ModuleName,
+    UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), OutFormat (..),
     EnvReader (..), EnvExtender (..),  Binding (..),
-    TopEnvFrag (..), EvaluatedModule,
-    ToBinding (..), withFreshBinders, refreshBinders, substBinders, substBindersI, withFreshBinder,
+    TopEnvFrag (..), ToBinding (..), withFreshBinders,
+    refreshBinders, substBinders, substBindersI, withFreshBinder,
     withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName,
@@ -69,10 +69,10 @@ module Syntax (
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoSinkableProof,
     FallibleT1, runFallibleT1, abstractPtrLiterals,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
-    ImpModule (..), ImpFunction (..), ImpBlock (..), ImpDecl (..),
+    ImpFunction (..), ImpBlock (..), ImpDecl (..),
     ImpInstr (..), iBinderType,
     IFunVar, CallingConvention (..), CUDAKernel (..), Backend (..),
-    Output (..), PassName (..), Result (..), ModuleName, BenchStats,
+    Output (..), PassName (..), Result (..), BenchStats,
     IsCUDARequired (..),
     NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryPiType,
     NonEmpty (..), nonEmpty,
@@ -948,19 +948,9 @@ instance HasSrcPos (WithSrcB (b::B) (n::S) (n::S)) where
 pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
 
--- === top-level modules ===
+-- === top-level blocks ===
 
 type SourceName = String
-
--- body must only contain SourceName version of names and binders
-data SourceUModule = SourceUModule (UDecl VoidS VoidS) deriving (Show)
-
--- body must only contain Name version of names and binders
-data UModule (n::S) where
-  UModule
-    :: UDecl n l
-    -> SourceMap l
-    -> UModule n
 
 data SourceBlock = SourceBlock
   { sbLine     :: Int
@@ -973,8 +963,8 @@ type ReachedEOF = Bool
 type ModuleName = String
 
 data SourceBlock' =
-   RunModule SourceUModule
- | Command CmdName (SourceName, SourceUModule)
+   EvalUDecl (UDecl VoidS VoidS)
+ | Command CmdName (UExpr VoidS)
  | GetNameType SourceName
  -- TODO Add a color for module names?
  | ImportModule ModuleName
@@ -1002,17 +992,8 @@ data SourceMap (n::S) = SourceMap
   { fromSourceMap :: M.Map SourceName (WithColor Name n)}
   deriving Show
 
-data Module n where
-  Module
-    :: IRVariant
-    -> Nest Decl n l   -- Unevaluated decls representing runtime work to be done
-    -> EvaluatedModule l
-    -> Module n
-
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
-
-type EvaluatedModule = Abs TopEnvFrag UnitE
 
 data TopEnvFrag n l =
   TopEnvFrag (EnvFrag n l) (SynthCandidates l) (SourceMap l)
@@ -1249,9 +1230,8 @@ data CallingConvention =
  | MCThreadLaunch
    deriving (Show, Eq, Generic)
 
-data ImpModule n   = ImpModule [ImpFunction n]
 data ImpFunction n =
-   ImpFunction SourceName IFunType (Abs (Nest IBinder) ImpBlock n)
+   ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
  | FFIFunction IFunVar
 
 data ImpBlock n where
@@ -2370,15 +2350,6 @@ instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
-instance GenericE Module where
-  type RepE Module =       LiftE IRVariant
-                   `PairE` Abs (Nest Decl) (Abs TopEnvFrag UnitE)
-  fromE = undefined
-  toE = undefined
-
-instance SinkableE Module
-instance SubstE Name Module
-
 instance Store ForAnn
 instance Store AddressSpace
 instance Store LetAnn
@@ -2573,9 +2544,6 @@ instance BindsNames (UAnnBinder c) where
 instance BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x
 
-instance SinkableE UModule where
-  sinkingProofE = todoSinkableProof
-
 instance Eq SourceBlock where
   x == y = sbText x == sbText y
 
@@ -2691,17 +2659,6 @@ instance AlphaEqE    ImpFunction
 instance AlphaHashableE    ImpFunction
 instance SubstE Name ImpFunction
 
-instance GenericE ImpModule where
-  type RepE ImpModule = ListE ImpFunction
-  toE = undefined
-  fromE = undefined
-
-instance SinkableE ImpModule
-instance HoistableE  ImpModule
-instance AlphaEqE    ImpModule
-instance AlphaHashableE    ImpModule
-instance SubstE Name ImpModule
-
 instance GenericB TopEnvFrag where
   type RepB TopEnvFrag = PairB EnvFrag
                                     (LiftB (PairE SynthCandidates SourceMap))
@@ -2732,6 +2689,19 @@ instance ExtOutMap Env TopEnvFrag where
     withExtEvidence (toExtEvidence frag) $
       Env (bs `extendOutMap` frag) (sink scs <> scs')
                (sink sm <> sm') (sink effs)
+
+instance GenericE (WithSrcE e) where
+  type RepE (WithSrcE e) = PairE (LiftE SrcPosCtx) e
+  fromE (WithSrcE ctx x) = PairE (LiftE ctx) x
+  toE   (PairE (LiftE ctx) x) = WithSrcE ctx x
+
+instance SinkableE e => SinkableE (WithSrcE e)
+
+instance SinkableE UExpr' where
+  sinkingProofE _ = todoSinkableProof
+
+instance SinkableB UDecl where
+  sinkingProofB _ _ _ = todoSinkableProof
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)
