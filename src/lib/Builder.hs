@@ -36,7 +36,7 @@ module Builder (
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
-   emitSourceMap, emitSynthCandidates,
+   emitSourceMap, emitSynthCandidates, emitTopLet,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
@@ -62,6 +62,7 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
+import Data.Text.Prettyprint.Doc (Pretty (..))
 import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -145,6 +146,11 @@ emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm
 emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
 emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag sc mempty
 
+emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
+emitTopLet hint letAnn expr = do
+  ty <- getType expr
+  emitBinding hint $ AtomNameBinding $ LetBound  (DeclBinding letAnn ty expr)
+
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
@@ -155,8 +161,10 @@ instance Fallible m => EnvReader (TopBuilderT m) where
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
   emitBinding hint binding = TopBuilderT $
-    emitInplaceT hint binding \b binding' ->
-      TopEnvFrag (toEnvFrag (b:>binding')) mempty mempty
+    emitInplaceT hint binding \b binding' -> do
+      let envFrag = toEnvFrag (b:>binding')
+      let scs = bindingsFragToSynthCandidates envFrag
+      TopEnvFrag envFrag scs mempty
 
   emitEnv ab = TopBuilderT do
     extendInplaceT do
@@ -1385,3 +1393,7 @@ instance HoistableE  ReconstructAtom
 instance AlphaEqE    ReconstructAtom
 instance SubstE Name ReconstructAtom
 instance SubstE AtomSubstVal ReconstructAtom
+
+instance Pretty (ReconstructAtom n) where
+  pretty IdentityRecon = "Identity reconstruction"
+  pretty (LamRecon ab) = "Reconstruction abs: " <> pretty ab

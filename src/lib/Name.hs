@@ -675,9 +675,20 @@ instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
   bindNameList (Nest b rest) (x:xs) = b@>x <.> bindNameList rest xs
   bindNameList _ _ = error "length mismatch"
 
+instance GenericB (NonEmptyNest b) where
+  type RepB (NonEmptyNest b) = PairB b (Nest b)
+  fromB (NonEmptyNest b bs) = PairB b bs
+  toB   (PairB b bs) = NonEmptyNest b bs
+
 instance BindsAtMostOneName b c => BindsNameList (NonEmptyNest b) c where
   bindNameList (NonEmptyNest b bs) (x:xs) = b@>x <.> bindNameList bs xs
   bindNameList _ _ = error "length mismatch"
+
+instance BindsNames b => ProvesExt  (NonEmptyNest b)
+instance BindsNames b => BindsNames (NonEmptyNest b)
+instance HoistableB b => HoistableB (NonEmptyNest b)
+instance SinkableB  b => SinkableB  (NonEmptyNest b)
+instance (BindsNames b, SinkableV v, SubstB v b) => SubstB v (NonEmptyNest b)
 
 applySubst :: (ScopeReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
            => Ext h o
@@ -748,11 +759,13 @@ nestLength Empty = 0
 nestLength (Nest _ rest) = 1 + nestLength rest
 
 nestToList :: BindsNames b
-           => (forall n' l'. Ext l' l => b n' l' -> a)
+           => (forall n' l'. (Ext n' l', Ext l' l) => b n' l' -> a)
            -> Nest b n l -> [a]
 nestToList _ Empty = []
 nestToList f (Nest b rest) = b' : nestToList f rest
-  where b' = withExtEvidence (toExtEvidence rest) $ f b
+  where b' = withExtEvidence (toExtEvidence rest) $
+               withExtEvidence (toExtEvidence b) $
+                 f b
 
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs
@@ -1592,7 +1605,8 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
          , MonadReader r m)
          => MonadReader r (InplaceT bindings decls m n) where
   ask = lift1 $ ask
-  local = undefined
+  local f (UnsafeMakeInplaceT cont) =
+    UnsafeMakeInplaceT \bindings -> local f (cont bindings)
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
          , MonadIO m)
@@ -1975,6 +1989,9 @@ instance Pretty a => Pretty (LiftE a n) where
 
 instance Pretty (UnitE n) where
   pretty UnitE = ""
+
+instance (PrettyE e1, PrettyE e2) => Pretty (PairE e1 e2 n) where
+  pretty (PairE e1 e2) = pretty (e1, e2)
 
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )

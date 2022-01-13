@@ -16,7 +16,8 @@ module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             runFallibleM, runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftMaybe, liftMaybeErr,
-            assertEq, ignoreExcept, pprint, docAsStr, asCompilerErr,
+            assertEq, ignoreExcept, isSuccess, exceptToMaybe,
+            pprint, docAsStr, asCompilerErr,
             FallibleApplicativeWrapper, traverseMergingErrs, liftFallibleM,
             SearcherM (..), Searcher (..), runSearcherM) where
 
@@ -239,6 +240,14 @@ liftFallibleM m = liftExcept $ runFallibleM m
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Failure e) = error $ pprint e
 ignoreExcept (Success x) = x
+
+isSuccess :: Except a -> Bool
+isSuccess (Success _) = True
+isSuccess (Failure _) = False
+
+exceptToMaybe :: Except a -> Maybe a
+exceptToMaybe (Success a) = Just a
+exceptToMaybe (Failure _) = Nothing
 
 assertEq :: (HasCallStack, Fallible m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()

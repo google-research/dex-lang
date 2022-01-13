@@ -8,7 +8,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (impToLLVM) where
+module JIT (impToLLVM, mainFuncName) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import LLVM.Prelude (ShortByteString, Word32)
@@ -75,14 +75,17 @@ type Function = L.Global
 
 -- === Imp to LLVM ===
 
-impToLLVM :: Logger [Output] -> ImpModule n -> IO L.Module
-impToLLVM logger (ImpModule fs) = do
-  (defns, externSpecs, globalDtors) <- unzip3 <$> mapM (compileFunction logger) fs
-  let externDefns = map externDecl $ toList $ fold externSpecs
-  let dtorDef = defineGlobalDtors $ concat globalDtors
+mainFuncName :: SourceName
+mainFuncName = "entryFun"
+
+impToLLVM :: Logger [Output] -> ImpFunction n -> IO L.Module
+impToLLVM logger f = do
+  (defns, externSpecs, globalDtors) <- compileFunction logger mainFuncName f
+  let externDefns = map externDecl $ toList externSpecs
+  let dtorDef = defineGlobalDtors globalDtors
   return $ L.defaultModule
     { L.moduleName = "dexModule"
-    , L.moduleDefinitions = dtorDef : concat defns ++ externDefns }
+    , L.moduleDefinitions = dtorDef : defns ++ externDefns }
   where
     dtorType = L.FunctionType L.VoidType [] False
     dtorRegEntryTy = L.StructureType False [ i32, hostPtrTy dtorType, hostVoidp ]
@@ -98,10 +101,10 @@ impToLLVM logger (ImpModule fs) = do
         , L.initializer = Just $ C.Array dtorRegEntryTy (makeDtorRegEntry <$> globalDtors)
         }
 
-compileFunction :: Logger [Output] -> ImpFunction n
+compileFunction :: Logger [Output] -> SourceName -> ImpFunction n
                 -> IO ([L.Definition], S.Set ExternFunSpec, [L.Name])
-compileFunction _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f), [])
-compileFunction logger fun@(ImpFunction fName fTy@(IFunType cc argTys retTys)
+compileFunction _ _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f), [])
+compileFunction logger fName fun@(ImpFunction fTy@(IFunType cc argTys retTys)
                 (Abs bs body)) = case cc of
   FFIFun            -> error "shouldn't be trying to compile an FFI function"
   FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
@@ -505,7 +508,7 @@ cuMemFree ptr = do
 -- * PTX docs: https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/index.html
 
 impKernelToLLVMGPU :: ImpFunction n -> LLVMKernel
-impKernelToLLVMGPU (ImpFunction _ _ (Abs args body)) = do
+impKernelToLLVMGPU (ImpFunction _ (Abs args body)) = do
   let numThreadInfoArgs = 4  -- [threadIdParam, nThreadParam, argArrayParam]
   let argTypes = drop numThreadInfoArgs $ nestToList (scalarTy . iBinderType) args
   let kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple

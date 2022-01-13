@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module Parser (Parser, parseit, parseProg, parseData,
-               parseTopDeclRepl, uint, withSource, parseExpr, exprAsModule,
+               parseTopDeclRepl, uint, withSource, parseExpr,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
 import Control.Monad
@@ -121,14 +121,13 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM declToModule (topDecl <* eolf)
-  <|> liftM declToModule (instanceDef True  <* eolf)
-  <|> liftM declToModule (instanceDef False <* eolf)
-  <|> liftM declToModule (interfaceDef <* eolf)
-  <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
+  <|> liftM EvalUDecl (topDecl <* eolf)
+  <|> liftM EvalUDecl (instanceDef True  <* eolf)
+  <|> liftM EvalUDecl (instanceDef False <* eolf)
+  <|> liftM EvalUDecl (interfaceDef <* eolf)
+  <|> liftM (Command (EvalExpr Printed)) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
-  where declToModule = RunModule . SourceUModule
 
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSource consumeTillBreak)
@@ -162,13 +161,7 @@ explicitCommand = do
   e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
     (WithSrcE _ (UVar (SourceName v)), GetType) -> GetNameType v
-    _ -> Command cmd (exprAsModule e)
-
-exprAsModule :: UExpr VoidS -> (SourceName, SourceUModule)
-exprAsModule e = (v, SourceUModule d)
-  where
-    v = "_ans_"
-    d = ULet PlainLet (UPatAnn (WithSrcB (srcPos e) (fromString v)) Nothing) e
+    _ -> Command cmd e
 
 -- === uexpr ===
 

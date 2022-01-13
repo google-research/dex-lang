@@ -382,7 +382,7 @@ instance Pretty Output where
                    Nothing        -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
-  pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
+  pretty (PassInfo _ s) = p s
   pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
   pretty (MiscLog s) = "===" <+> p s <+> "==="
@@ -395,25 +395,6 @@ instance Pretty Result where
   pretty (Result outs r) = vcat (map pretty outs) <> maybeErr
     where maybeErr = case r of Failure err -> p err
                                Success () -> mempty
-
-instance Pretty (Module n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (Module n) where
-  prettyPrec (Module variant decls result) = atPrec ArgPrec $
-    "Module" <+> parens (p (show variant)) <> indented body
-    where
-      body = "unevaluated decls:"
-           <>   indented (prettyLines (fromNest decls))
-           <> "evaluated bindings:"
-           <>   indented (p result)
-
-instance Pretty (UModule n) where
-  pretty (UModule decl sm) =
-    "UModule" <> hardline <>
-    p decl    <> hardline <>
-    p sm      <> hardline
-
-instance Pretty SourceUModule where
-  pretty (SourceUModule decl) = p decl
 
 instance Pretty (UVar n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UVar n) where
@@ -613,8 +594,8 @@ instance Pretty IFunType where
     "Fun" <+> p cc <+> p argTys <+> "->" <+> p retTys
 
 instance Pretty (ImpFunction n) where
-  pretty (ImpFunction f (IFunType cc _ _) (Abs bs body)) =
-    "def" <+> p f <+> p cc <+> p bs
+  pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
+    "def" <+> p cc <+> p bs
     <> nest 2 (hardline <> p body) <> hardline
   pretty (FFIFunction f) = p f
 
@@ -646,9 +627,6 @@ instance Pretty (ImpInstr n)  where
   pretty ISyncWorkgroup   = "syncWorkgroup"
   pretty IThrowError      = "throwError"
   pretty (ICall f args)   = "call" <+> p f <+> p args
-
-instance Pretty (ImpModule n) where
-  pretty (ImpModule fs) = "Imp module" <> indented (prettyLines fs)
 
 instance Pretty BaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec BaseType where
@@ -751,6 +729,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     VariantSplit types val -> atPrec AppPrec $
       "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
                      <+> pArg val
+    SynthesizeDict _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
     _ -> prettyExprDefault $ OpExpr op
 
 prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann

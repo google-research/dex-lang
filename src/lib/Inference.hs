@@ -10,7 +10,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Inference (inferModule, synthModule, trySynthDict, trySynthDictBlock) where
+module Inference
+  ( inferTopUDecl, inferTopUExpr, applyUDeclAbs, trySynthDict, trySynthDictBlock
+  , synthTopBlock, UDeclInferenceResult (..)) where
 
 import Prelude hiding ((.), id)
 import Control.Category
@@ -40,74 +42,120 @@ import PPrint ()
 import CheapReduction
 import GenericTraversal
 import MTL1
+import Interpreter
 
 import LabeledItems
 import Err
 import Util
 
-inferModule :: Distinct n => Env n -> UModule n -> Except (Module n)
-inferModule bindings uModule@(UModule decl _) = do
-  if isTopDecl decl
-    then do
-      DistinctAbs bs UnitE <- runTopInfererM bindings do
-        Immut <- return $ toImmutEvidence bindings
-        localTopBuilder do
-          UModule decl' sourceMap <- return uModule
-          inferUDeclTop decl' $
-            substM sourceMap >>= emitSourceMap
-          return UnitE
-      return $ Module Typed Empty $ Abs bs UnitE
-    else do
-      ab <- runInfererM bindings do
-        UModule decl' sourceMap <- return uModule
-        Immut <- return $ toImmutEvidence bindings
-        solveLocal $
-          buildDeclsInfUnzonked $
-            inferUDeclLocal decl' do
-              applyDefaults
-              substM sourceMap
-      DistinctAbs decls sm <- return $ refreshAbs (toScope bindings) ab
-      let scs = bindingsFragToSynthCandidates $ toEnvFrag decls
-      return $ Module Typed decls $ Abs (TopEnvFrag emptyOutFrag scs sm) UnitE
 
-isTopDecl :: UDecl n l -> Bool
-isTopDecl decl = case decl of
-  ULet         _ _ _     -> False
-  UDataDefDecl _ _ _     -> True
-  UInterface   _ _ _ _ _ -> True
-  UInstance    _ _ _ _ _ -> False
+-- === Top-level interface ===
 
--- === Top-level inferer ===
+inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (Block n)
+inferTopUExpr e = liftImmut $ liftInfererMTop do
+  solveLocal $ buildBlockInf do
+    e' <- inferSigma e
+    applyDefaults
+    return e'
 
-class ( MonadFail2 m, Fallible2 m, CtxReader2 m, TopBuilder2 m
-      , SubstReader Name m) => TopInferer m where
+data UDeclInferenceResult e n =
+   UDeclResultDone (e n)  -- used for UDataDefDecl and UInterface
+ | UDeclResultWorkRemaining (Block n) (Abs UDecl e n) -- used for ULet and UInstance
 
-newtype TopInfererM i o a = TopInfererM
-  { runTopInfererM' :: SubstReaderT Name (TopBuilderT FallibleM) i o a }
-  deriving ( Functor, Applicative, Monad, MonadFail, ScopeReader
-           , Fallible, CtxReader, SubstReader Name, EnvReader, TopBuilder)
+inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
+              => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
+inferTopUDecl (UDataDefDecl def tc dcs) result = do
+  PairE def' clsAbs <- liftImmut $ liftInfererMTop $ solveLocal $ inferDataDef def
+  defName <- emitDataDef def'
+  tc' <- emitTyConName defName =<< tyConDefAsAtom defName (Just clsAbs)
+  dcs' <- forM [0..(nestLength dcs - 1)] \i ->
+    emitDataConName defName i =<< dataConDefAsAtom defName clsAbs i
+  let subst = tc @> tc' <.> dcs @@> dcs'
+  UDeclResultDone <$> applySubst subst result
+inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
+  let classPrettyName   = fromString (pprint className) :: SourceName
+  let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
+  dictDef <- liftImmut $ liftInfererMTop $
+               inferInterfaceDataDef classPrettyName paramBs superclasses methodTys
+  dictDefName <- emitDataDef dictDef
+  let classDef = ClassDef classPrettyName methodPrettyNames dictDefName
+  className' <- emitClassDef classDef =<< tyConDefAsAtom dictDefName Nothing
+  mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
+  methodNames' <-
+    forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
+      let UMethodType (Right explicits) _ = ty
+      emitMethodType (getNameHint prettyName) className' explicits i
+  let subst = className @> className' <.> methodNames @@> methodNames'
+  UDeclResultDone <$> applySubst subst result
+inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
+  block <- liftImmut $ liftInfererMTop $ solveLocal $ buildBlockInf do
+    val <- checkMaybeAnnExpr ann rhs
+    -- This is just for typ checking. We don't actually generate
+    -- pattern-matching code at the top level
+    _ <- buildBlockInf do
+      val' <- sinkM val
+      v <- emitDecl NoHint PlainLet $ Atom val'
+      bindLamPat p v $ return UnitVal
+    applyDefaults
+    return val
+  return $ UDeclResultWorkRemaining block $ Abs decl result
 
-instance TopInferer TopInfererM where
+inferTopUDecl decl@(UInstance ~(InternalName className) argBinders params methods _) result = do
+  block <- liftImmut $ liftInfererMTop $ solveLocal $ buildBlockInf do
+    instanceDict <- checkInstanceArgs argBinders do
+                      checkInstanceParams params \params' -> do
+                        className' <- sinkM className
+                        checkInstanceBody className' params' methods
+    applyDefaults
+    return instanceDict
+  return $ UDeclResultWorkRemaining block $ Abs decl result
 
-runTopInfererM
-  :: Distinct n
-  => Env n
-  -> TopInfererM n n a
-  -> Except a
-runTopInfererM bindings cont =
-  runFallibleM $ runTopBuilderT bindings $ runSubstReaderT idSubst $
-    runTopInfererM' $ cont
+-- We use this to finish the processing the decl after we've completely
+-- evaluated the right-hand side
+applyUDeclAbs :: (Mut n, TopBuilder m, SinkableE e, SubstE Name e, MonadIO1 m)
+              => Abs UDecl e n -> Atom n -> m n (e n)
+applyUDeclAbs (Abs decl result) x = case decl of
+  ULet letAnn (UPatAnn pat _) _ -> do
+    v <- emitTopLet (getNameHint pat) letAnn (Atom x)
+    case pat of
+      WithSrcB _ (UPatBinder b) -> applySubst (b@>v) result
+      _ -> do
+        atomSubst <- liftImmut do
+          DB env <- getDB
+          liftIO $ runInterpM env do
+            x' <- evalAtom (Var v)
+            matchUPat pat x'
+        nameSubst <- emitAtomSubstFrag atomSubst
+        applySubst nameSubst result
+  UInstance _ _ _ _ maybeName -> do
+    case maybeName of
+      RightB UnitB  -> do
+        void $ emitTopLet "instance" InstanceLet $ Atom x
+        return result
+      JustB instanceName -> do
+        instanceVal <- emitTopLet (getNameHint instanceName) PlainLet (Atom x)
+        applySubst (instanceName @> instanceVal) result
+      _ -> error "impossible"
+  _ -> error "other top-level decls don't require any computation so we shouldn't get here"
 
-applyDefaults :: (EmitsInf o, Inferer m) => m i o ()
-applyDefaults = do
-  Defaults defaults <- getDefaults
-  forM_ defaults \(ty, ty') ->
-    tryConstrainEq ty (sinkFromTop ty')
+
+emitAtomSubstFrag :: (Mut o, TopBuilder m)
+                  => SubstFrag AtomSubstVal i i' o -> m o (SubstFrag Name i i' o)
+emitAtomSubstFrag frag = go $ toSubstPairs frag
+  where
+    go :: (Mut o, TopBuilder m)
+       => Nest (SubstPair AtomSubstVal o) i i' -> m o (SubstFrag Name i i' o)
+    go Empty = return emptyInFrag
+    go (Nest (SubstPair b val) rest) = do
+      v <- case val of
+        SubstVal x -> emitTopLet (getNameHint b) PlainLet (Atom x)
+        Rename v -> return v
+      (b@>v <.>) <$> go rest
 
 -- === Inferer interface ===
 
 class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
-      , Builder m)
+      , Builder m, ScopableBuilder m)
       => InfBuilder (m::MonadKind1) where
 
   -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
@@ -142,6 +190,12 @@ class (SubstReader Name m, InfBuilder2 m, Solver2 m)
   liftSolverM :: EmitsInf o => SolverM o a -> m i o a
   gatherUnsolvedInterfaces :: m i o a -> m i o (a, [IfaceType o])
   reportUnsolvedInterface  :: Type o  -> m i o ()
+
+applyDefaults :: (EmitsInf o, Inferer m) => m i o ()
+applyDefaults = do
+  Defaults defaults <- getDefaults
+  forM_ defaults \(ty, ty') ->
+    tryConstrainEq ty (sinkFromTop ty')
 
 -- === Concrete Inferer monad ===
 
@@ -285,8 +339,13 @@ newtype InfererM (i::S) (o::S) (a:: *) = InfererM
   deriving (Functor, Applicative, Monad, MonadFail, MonadState (RequiredIfaces o),
             ScopeReader, Fallible, Catchable, CtxReader, SubstReader Name)
 
-runInfererM :: Distinct n => Env n -> InfererM n n a -> Except a
-runInfererM bindings cont = runSubstInfererM bindings idSubst cont
+_runInfererM :: Distinct n => Env n -> InfererM n n a -> Except a
+_runInfererM bindings cont = runSubstInfererM bindings idSubst cont
+
+liftInfererMTop :: (Immut n, Fallible (m n), EnvReader m) => InfererM n n a -> m n a
+liftInfererMTop cont = do
+  DB env <- getDB
+  liftExcept $ runSubstInfererM env idSubst cont
 
 liftInfererM :: (Fallible2 m, CtxReader2 m, SubstReader Name m, EnvReader2 m)
              => Immut o
@@ -785,26 +844,11 @@ asNaryApp (WithSrcE appCtx (UApp arr f x)) =
   where (f', xs) = asNaryApp f
 asNaryApp e = (e, [])
 
-asNaryPiType :: Type n -> NaryPiType n
-asNaryPiType t = case go t of
-  Just t' -> t'
-  Nothing -> error "not an nary pi type"
-  where
-    go :: Type n -> Maybe (NaryPiType n)
-    go ty = case ty of
-      Pi (PiType b effs resultTy) -> case effs of
-       Pure -> case go resultTy of
-         Just (NaryPiType (NonEmptyNest b' bs') effs' resultTy') ->
-            Just $ NaryPiType (NonEmptyNest b (Nest b' bs')) effs' resultTy'
-         Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
-       _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
-      _ -> Nothing
-
 inferNaryApp :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Atom o -> NonEmpty (UExprArg i) -> m i o (Atom o)
 inferNaryApp fCtx f args = addSrcContext fCtx do
   let (_, _, arr, _) :| _ = args
   fTy <- getType f
-  naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
+  Just naryPi <- asNaryPiType <$> Pi <$> fromPiType True arr fTy
   (inferredArgs, remaining) <- inferNaryAppArgs naryPi args
   let appExpr = App f inferredArgs
   addEffects =<< exprEffects appExpr
@@ -984,11 +1028,7 @@ buildForTypeFromTabType effs tabPiTy@(PiType (PiBinder bPi piArgTy arr) _ _) = d
 
 inferUDeclLocal ::  (EmitsBoth o, Inferer m) => UDecl i i' -> m i' o a -> m i o a
 inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
-  val <- case ann of
-    Nothing -> inferSigma rhs
-    Just ty -> do
-      ty' <- zonk =<< checkUType ty
-      checkSigma rhs ty'
+  val <- checkMaybeAnnExpr ann rhs
   var <- emitDecl (getNameHint p) letAnn $ Atom val
   bindLamPat p var cont
 inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods maybeName) cont = do
@@ -1007,29 +1047,13 @@ inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods m
     _ -> error "impossible"
 inferUDeclLocal _ _ = error "not a local decl"
 
-inferUDeclTop :: (Mut o, TopInferer m) => UDecl i i' -> m i' o a -> m i o a
-inferUDeclTop (UDataDefDecl def tc dcs) cont = do
-  PairE def' clsAbs <- liftImmut $ liftInfererM $ solveLocal $ inferDataDef def
-  defName <- emitDataDef def'
-  tc' <- emitTyConName defName =<< tyConDefAsAtom defName (Just clsAbs)
-  dcs' <- forM [0..(nestLength dcs - 1)] \i ->
-    emitDataConName defName i =<< dataConDefAsAtom defName clsAbs i
-  extendSubst (tc @> tc' <.> dcs @@> dcs') cont
-inferUDeclTop (UInterface paramBs superclasses methodTys className methodNames) cont = do
-  let classPrettyName   = fromString (pprint className) :: SourceName
-  let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
-  classDef@(ClassDef _ _ dictDataDef) <-
-    inferInterfaceDataDef classPrettyName methodPrettyNames paramBs superclasses methodTys
-  className' <- emitClassDef classDef =<< tyConDefAsAtom dictDataDef Nothing
-  mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
-  methodNames' <-
-    forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
-      let UMethodType (Right explicits) _ = ty
-      emitMethodType (getNameHint prettyName) className' explicits i
-  extendSubst (className @> className' <.> methodNames @@> methodNames') cont
-inferUDeclTop _ _ = error "not a top decl"
+checkMaybeAnnExpr :: (EmitsBoth o, Inferer m) => Maybe (UType i) -> UExpr i -> m i o (Atom o)
+checkMaybeAnnExpr Nothing expr = inferSigma expr
+checkMaybeAnnExpr (Just ty) expr = do
+  ty' <- zonk =<< checkUType ty
+  checkSigma expr ty'
 
-tyConDefAsAtom :: TopInferer m => DataDefName o -> Maybe (DataIfaceReq o) -> m i o (Atom o)
+tyConDefAsAtom :: EnvReader m => DataDefName n -> Maybe (DataIfaceReq n) -> m n (Atom n)
 tyConDefAsAtom defName maybeIfaceReq = liftBuilder do
   DataDef sourceName params _ <- lookupDataDef =<< sinkM defName
   buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow params) \params' -> do
@@ -1041,7 +1065,7 @@ tyConDefAsAtom defName maybeIfaceReq = liftBuilder do
       defName'' <- sinkM defName
       return $ TypeCon sourceName defName'' $ Var <$> params''
 
-dataConDefAsAtom :: TopInferer m => DataDefName o -> DataIfaceReq o -> Int -> m i o (Atom o)
+dataConDefAsAtom :: EnvReader m => DataDefName n -> DataIfaceReq n -> Int -> m n (Atom n)
 dataConDefAsAtom defName ifaceReq conIx = liftBuilder do
   DataDef _ tyParams conDefs <- lookupDataDef =<< sinkM defName
   let conDef = conDefs !! conIx
@@ -1087,22 +1111,19 @@ inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
   return $ DataConDef sourceName argBs'
 
-inferInterfaceDataDef :: (Mut o, TopInferer m)
-                      => SourceName -> [SourceName]
+inferInterfaceDataDef :: Inferer m
+                      => SourceName
                       -> Nest (UAnnBinder AtomNameC) i i'
                       -> [UType i'] -> [UMethodType i']
-                      -> m i o (ClassDef o)
-inferInterfaceDataDef className methodNames paramBs superclasses methods = do
-  dictDef <- liftImmut $ liftInfererM do
-    paramBs' <- solveLocal $ checkUBinders $ EmptyAbs paramBs
-    buildNewtype className paramBs' \params -> solveLocal do
-      params' <- mapM sinkM params
-      extendSubst (paramBs @@> params') do
-        superclasses' <- mapM checkUType superclasses
-        methodsTys'   <- mapM checkUType $ methods <&> \(UMethodType _ ty) -> ty
-        return $ PairTy (ProdTy superclasses') (ProdTy methodsTys')
-  defName <- emitDataDef dictDef
-  return $ ClassDef className methodNames defName
+                      -> m i o (DataDef o)
+inferInterfaceDataDef className paramBs superclasses methods = liftImmut do
+  paramBs' <- solveLocal $ checkUBinders $ EmptyAbs paramBs
+  buildNewtype className paramBs' \params -> solveLocal do
+    params' <- mapM sinkM params
+    extendSubst (paramBs @@> params') do
+      superclasses' <- mapM checkUType superclasses
+      methodsTys'   <- mapM checkUType $ methods <&> \(UMethodType _ ty) -> ty
+      return $ PairTy (ProdTy superclasses') (ProdTy methodsTys')
 
 withNestedUBinders
   :: (EmitsInf o, Inferer m, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding AtomNameC)
@@ -1911,6 +1932,11 @@ renameForPrinting' bindings e = do
 
 -- === dictionary synthesis ===
 
+synthTopBlock :: (EnvReader m, Fallible1 m) => Block n -> m n (Block n)
+synthTopBlock block = liftImmut do
+  DB env <- getDB
+  liftExcept $ runDictSynthTraverserM env $ traverseGenericE block
+
 -- main entrypoint to dictionary synthesizer
 trySynthDict :: (Emits n, Builder m, Fallible1 m, EnvExtender m, EnvReader m)
              => Type n -> m n (Atom n)
@@ -2149,13 +2175,6 @@ instance SinkableE Givens where
 
 -- === Dictionary synthesis traversal ===
 
-synthModule :: Distinct n => Env n -> Module n -> Except (Module n)
-synthModule bindings m = do
-  Immut <- return $ toImmutEvidence bindings
-  Module _ decls result <- runDictSynthTraverserM bindings $
-                             traverseGenericE m
-  return $ Module Core decls result
-
 runDictSynthTraverserM
   :: Distinct n => Env n
   -> DictSynthTraverserM n n a
@@ -2277,3 +2296,19 @@ withEmitsInfEvidence _ cont = fromWrapWithEmitsInf
                                                   ) :: WrapWithEmitsInf UnsafeS a)
 newtype WrapWithEmitsInf n r =
   WrapWithEmitsInf { fromWrapWithEmitsInf :: EmitsInf n => r }
+
+-- === instances ===
+
+instance PrettyE e => Pretty (UDeclInferenceResult e l) where
+  pretty (UDeclResultDone e) = pretty e
+  pretty (UDeclResultWorkRemaining block _) = pretty block
+
+instance SinkableE e => SinkableE (UDeclInferenceResult e) where
+  sinkingProofE = todoSinkableProof
+
+instance (SubstE Name e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
+  checkE (UDeclResultDone e) = UDeclResultDone <$> substM e
+  checkE (UDeclResultWorkRemaining block _) = do
+    block' <- checkE block
+    return $ UDeclResultWorkRemaining block'
+                (error "TODO: implement substitution for UDecl")

@@ -13,21 +13,23 @@
 
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
-  checkModule, checkTypes, checkTypesM,
+  checkTypes, checkTypesM,
   getType, getAppType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, instantiateDepPairTy,
   checkExtends, checkedApplyDataDefParams, indices,
   instantiateDataDef,
   caseAltsBinderTys, tryGetType, projectLength,
-  sourceNameType, substEvaluatedModuleM,
+  sourceNameType,
   checkUnOp, checkBinOp,
-  oneEffect, lamExprTy, isData, isSingletonType, singletonTypeVal,
+  oneEffect, lamExprTy, isData, asFirstOrderFunction,
+  isSingletonType, singletonTypeVal, asNaryPiType,
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>), id)
 import Control.Monad
 import Control.Monad.Reader
+import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
 import Data.Int
@@ -46,12 +48,6 @@ import Name
 import PPrint ()
 
 -- === top-level API ===
-
-checkModule :: (Distinct n, Fallible m) => Env n -> Module n -> m ()
-checkModule bindings m =
-  addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $
-    runEnvReaderT bindings $
-      checkTypesM m
 
 checkTypes :: (EnvReader m, CheckableE e) => e n -> m n (Except ())
 checkTypes e = fromLiftE <$> liftImmut do
@@ -243,8 +239,11 @@ class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
         checkAlphaEq reqTy' ty'
     return e'
 
-class (SinkableE e, SubstE Name e) => CheckableE (e::E) where
+class SinkableE e => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
+
+checkFromHasType :: HasType e => Typer m => e i -> m i o (e o)
+checkFromHasType e = fst <$> getTypeAndSubstE e
 
 class HasNamesB b => CheckableB (b::B) where
   checkB :: Typer m
@@ -264,31 +263,16 @@ infixr 7 |:
 (|:) :: (Typer m, HasType e) => e i -> Type o -> m i o ()
 (|:) x reqTy = void $ checkTypeE reqTy x
 
--- === Module interfaces ===
+-- === top-level env ===
 
-instance CheckableE Module where
-  checkE (Module ir decls evaluated) = do
-    -- TODO: need to add back the IR check. Should we just do it alongside type checking
-    -- instead of as a separate pass?
-    -- addContext "Checking IR variant" $ checkModuleVariant m
-    addContext "Checking module body" $
-      checkB decls \decls' -> do
-        addContext "Checking module result" do
-          evaluated' <- checkE evaluated
-          return $ Module ir decls' evaluated'
-
-instance CheckableE EvaluatedModule where
-  checkE (Abs (TopEnvFrag bindings scs sourceMap) UnitE) =
-    checkB bindings \bindings' -> do
-      sourceMap' <- checkE sourceMap
-      scs'       <- checkE scs
-      return $ Abs (TopEnvFrag bindings' scs' sourceMap') UnitE
+instance CheckableE Block where
+  checkE = checkFromHasType
 
 instance CheckableE SourceMap where
   checkE sourceMap = substM sourceMap
 
 instance CheckableE SynthCandidates where
-  checkE (SynthCandidates xs ys zs) = undefined
+  checkE (SynthCandidates xs ys zs) =
     SynthCandidates <$> mapM checkE xs
                     <*> mapM checkE ys
                     <*> (M.fromList <$> forM (M.toList zs) \(k, vs) ->
@@ -337,6 +321,12 @@ instance CheckableE SolverBinding where
 
 instance CheckableE DataDef where
   checkE = substM -- TODO
+
+instance (CheckableE e1, CheckableE e2) => CheckableE (PairE e1 e2) where
+  checkE (PairE e1 e2) = PairE <$> checkE e1 <*> checkE e2
+
+instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
+  checkE (Abs b e) = checkB b \b' -> Abs b' <$> checkE e
 
 -- === type checking core ===
 
@@ -960,6 +950,16 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
+asNaryPiType :: Type n -> Maybe (NaryPiType n)
+asNaryPiType ty = case ty of
+  Pi (PiType b effs resultTy) -> case effs of
+   Pure -> case asNaryPiType resultTy of
+     Just (NaryPiType (NonEmptyNest b' bs) effs' resultTy') ->
+        Just $ NaryPiType (NonEmptyNest b (Nest b' bs)) effs' resultTy'
+     Nothing -> Just $ NaryPiType (NonEmptyNest b Empty) Pure resultTy
+   _ -> Just $ NaryPiType (NonEmptyNest b Empty) effs resultTy
+  _ -> Nothing
+
 checkArgTys
   :: Typer m
   => Nest PiBinder o o'
@@ -1270,96 +1270,6 @@ litFromOrdinal ty i = case ty of
       let start = mkSum l $ litFromOrdinal ty0 i
       foldl go start zs
 
--- === substituting evaluated modules ===
-
--- A module's source map is a name-to-name mapping, so we can't replace the rhs
--- names with atoms. Instead, we create new bindings for the atoms we want to
--- substitute with, and then substitute with the names of those bindings in the
--- source map.
--- Unfortunately we can't make this the `SubstE AtomSubstVal` instance for
--- `EvaluatedModule` because we need the bindings (to query types), whereas
--- `substE` only gives us scopes.
-
-substEvaluatedModuleM
-  :: (SubstReader AtomSubstVal m, EnvReader2 m)
-  => EvaluatedModule i
-  -> m i o (EvaluatedModule o)
-substEvaluatedModuleM m = liftImmut do
-  Abs (TopEnvFrag (EnvFrag bs eff) sc sm) UnitE <- return m
-  env <- getSubst
-  DB bindings <- getDB
-  let body = toMaybeE eff `PairE` sc `PairE` sm
-  Abs bs' body' <- return $ atomSubstAbsEnvFrag bindings env $ Abs bs body
-  eff' `PairE` sc' `PairE` sm' <- return body'
-  return $ EmptyAbs (TopEnvFrag (EnvFrag bs' (fromMaybeE eff')) sc' sm')
-
-atomSubstAbsEnvFrag
-  :: (Distinct o, SinkableE e, SubstE Name e, HoistableE e)
-  => Env o
-  -> Subst AtomSubstVal i o
-  -> Abs (RecSubstFrag Binding) e i
-  -> Abs (RecSubstFrag Binding) e o
-atomSubstAbsEnvFrag bindings env (Abs b e) =
-  substB (toScope bindings, env) b \(scope', env') b' ->
-    case substAnything scope' env' e of
-      DistinctAbs bNew e' -> do
-        let bindings' = extendOutMap bindings b'
-        let bOut = catRecSubstFrags b' (atomNestToEnvFrag bindings' bNew)
-        Abs bOut e'
-
-atomNestToEnvFrag
-  :: Distinct o'
-  => Env o
-  -> Nest (BinderP AtomNameC Atom) o o'
-  -> RecSubstFrag Binding o o'
-atomNestToEnvFrag _ Empty = emptyOutFrag
-atomNestToEnvFrag bindings (Nest (b:>x) rest) =
-  withSubscopeDistinct rest $
-    withSubscopeDistinct b do
-      let (EnvFrag frag _) = toEnvFrag (b :> atomToBinding bindings x)
-      let frag' = atomNestToEnvFrag (bindings `extendOutMap` frag) rest
-      catRecSubstFrags frag frag'
-
-atomToBinding :: Distinct n => Env n -> Atom n -> Binding AtomNameC n
-atomToBinding bindings x = do
-  let ty = runEnvReaderM bindings $ getType x
-  AtomNameBinding $ LetBound $ DeclBinding PlainLet ty (Atom x)
-
-substAnything
-  :: ( Distinct o, SinkableE atom
-     , SinkableE e, SubstE Name e, HoistableE e)
-  => Scope o
-  -> Subst (SubstVal c atom) i o
-  -> e i
-  -> DistinctAbs (Nest (BinderP c atom)) e o
-substAnything scope subst e =
-  substAnythingRec scope subst emptyInMap $ collectFreeVars e
-
-substAnythingRec
-  :: (Distinct o, SinkableE atom, SinkableE e, SubstE Name e)
-  => Scope o
-  -> Subst (SubstVal c atom) i o
-  -> Subst Name h o
-  -> WithRenamer e h i
-  -> DistinctAbs (Nest (BinderP c atom)) e o
-substAnythingRec scope atomSubst nameSubst (WithRenamer renamer e) =
-  case unConsSubst renamer of
-    EmptySubst -> DistinctAbs Empty $ substE (scope, nameSubst) e
-    ConsSubst b v rest -> case atomSubst ! v of
-      Rename v' ->
-        substAnythingRec scope atomSubst nameSubst' $ WithRenamer rest e
-        where nameSubst' = nameSubst <>> b@>v'
-      SubstVal x ->
-        withFresh (getNameHint b) nameColorRep scope \b' -> do
-          let scope'     = scope `extendOutMap` toScopeFrag b'
-          let atomSubst' = sink atomSubst
-          let nameSubst' = sink nameSubst <>> b@> binderName b'
-          prependNestAbs (b':>x) $
-            substAnythingRec scope' atomSubst' nameSubst' $ WithRenamer rest e
-
-prependNestAbs :: b n l -> DistinctAbs (Nest b) e l -> DistinctAbs (Nest b) e n
-prependNestAbs b (DistinctAbs bs e) = DistinctAbs (Nest b bs) e
-
 -- === various helpers for querying types ===
 
 getBaseMonoidType :: Fallible1 m => ScopeReader m => Type n -> m n (Type n)
@@ -1480,27 +1390,46 @@ projectLength ty = case ty of
 -- === "Data" type class ===
 
 isData :: EnvReader m => Type n -> m n Bool
-isData ty = fromLiftE <$> liftImmut do
-  ty' <- sinkM ty
-  DB env <- getDB
-  let s = " is not serializable"
-  case runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $ checkDataLike s ty' of
-    Success () -> return $ LiftE True
-    Failure _  -> return $ LiftE False
+isData ty = liftM isJust $ runCheck do
+  checkDataLike (sink ty)
+  return UnitE
 
-checkDataLike :: ( EnvReader2 m, EnvExtender2 m
-                 , SubstReader Name m, Fallible2 m, Immut o)
-              => String -> Type i -> m i o ()
-checkDataLike msg ty = case ty of
+-- TODO: consider effects
+asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))
+asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
+
+runCheck
+  :: (EnvReader m, SinkableE e)
+  => (forall l. (DExt n l, Immut l) => TyperT Maybe l l (e l))
+  -> m n (Maybe (e n))
+runCheck cont = liftM fromMaybeE $ liftImmut do
+  DB env <- getDB
+  return $ toMaybeE $ runTyperT env $ cont
+
+asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
+asFirstOrderFunctionM ty = do
+  naryPi@(NaryPiType bs eff resultTy) <- liftMaybe $ asNaryPiType ty
+  Immut <- getImmut
+  substBinders bs \(NonEmptyNest b' bs') -> do
+      ts <- mapM sinkM $ bindersTypes $ Nest b' bs'
+      dropSubst $ mapM_ checkDataLike ts
+      Pure <- return eff
+      checkDataLike resultTy
+  substM naryPi
+
+checkDataLike :: Typer m => Type i -> m i o ()
+checkDataLike ty = case ty of
   Var _ -> error "Not implemented"
-  TabTy b eltTy ->
+  TabTy b eltTy -> do
+    Immut <- getImmut
     substBinders b \_ ->
-      checkDataLike msg eltTy
+      checkDataLike eltTy
   RecordTy (NoExt items)  -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
-    substBinders b \_ -> checkDataLike msg r
+    Immut <- getImmut
+    substBinders b \_ -> checkDataLike r
   TypeCon _ defName params -> do
     params' <- mapM substM params
     def <- lookupDataDef =<< substM defName
@@ -1514,16 +1443,13 @@ checkDataLike msg ty = case ty of
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
     IndexSlice _ _   -> return ()
-    _ -> throw TypeErr $ pprint ty ++ msg
-  _   -> throw TypeErr $ pprint ty ++ msg
+    _ -> throw TypeErr $ pprint ty
+  _   -> throw TypeErr $ pprint ty
+  where recur = checkDataLike
 
-  where
-    recur x = checkDataLike msg x
-
-checkDataLikeBinderNest :: ( EnvReader2 m, EnvExtender2 m
-                           , SubstReader Name m, Fallible2 m, Immut o)
-                        => EmptyAbs (Nest Binder) i -> m i o ()
+checkDataLikeBinderNest :: Typer m => EmptyAbs (Nest Binder) i -> m i o ()
 checkDataLikeBinderNest (Abs Empty UnitE) = return ()
 checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
-  checkDataLike "data con binder" $ binderType b
+  checkDataLike $ binderType b
+  Immut <- getImmut
   substBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE

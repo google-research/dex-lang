@@ -104,12 +104,16 @@ class ( forall n. Fallible (m n)
       , EnvReader m
       , TopBuilder m )
       => MonadPasses (m::MonadKind1) where
+  logPass :: Pretty a => PassName -> m n a -> m n a
   requireBenchmark :: m n Bool
 
+type RequiresBench = Bool
+type PassCtx = (RequiresBench, Maybe PassName, EvalConfig)
+
 newtype PassesM (n::S) a = PassesM
-  { runPassesM' :: TopBuilderT (ReaderT (Bool, EvalConfig) (LoggerT [Output] IO)) n a }
+  { runPassesM' :: TopBuilderT (ReaderT PassCtx (LoggerT [Output] IO)) n a }
     deriving ( Functor, Applicative, Monad, MonadIO, MonadFail
-             , Fallible, TopBuilder, EnvReader, ScopeReader)
+             , Fallible, EnvReader, ScopeReader)
 
 type ModulesImported = M.Map ModuleName ModuleImportStatus
 
@@ -120,7 +124,7 @@ runPassesM bench opts env m = do
   let maybeLogFile = logFile opts
   runLogger maybeLogFile \l ->
     catchIOExcept $ runLoggerT l $
-      runReaderT (runTopBuilderT env $ runPassesM' m) (bench, opts)
+      runReaderT (runTopBuilderT env $ runPassesM' m) (bench, Nothing, opts)
 
 -- ======
 
@@ -130,11 +134,7 @@ initTopState = TopStateEx emptyOutMap
 evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
   (ans, env') <- runInterblockM opts env $ evalSourceBlock block
-  if mayUpdateTopState block
-    then return (ans, Just env')
-    -- This case in an opimization for the cache. It lets us indicate that the
-    -- state hasn't changed.
-    else return (ans, Nothing)
+  return (ans, Just env')
 
 evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
 evalSourceText source = do
@@ -143,10 +143,10 @@ evalSourceText source = do
   return $ zip sourceBlocks results
 
 liftPassesM :: MonadInterblock m
-            => Bool -> Bool -- TODO: one bool is bad enough. but two!
+            => Bool
             -> (forall n. Mut n => PassesM n ())
             -> m Result
-liftPassesM mayUpdateState bench m = do
+liftPassesM bench m = do
   opts <- getConfig
   TopStateEx env <- getTopStateEx
   (result, outs) <- liftIO $ runPassesM bench opts env do
@@ -154,8 +154,7 @@ liftPassesM mayUpdateState bench m = do
     localTopBuilder $ m >> return UnitE
   case result of
     Success (DistinctAbs bindingsFrag UnitE) -> do
-      when mayUpdateState $
-        setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
+      setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
       return $ Result outs (Success ())
     Failure errs -> do
       return $ Result outs (Failure errs)
@@ -175,18 +174,16 @@ evalSourceBlock (SourceBlock _ _ _ _ (ImportModule moduleName)) = do
       setImportStatus moduleName FullyImported
       return $ summarizeModuleResults results
 evalSourceBlock block = do
-  result <- withCompileTime $
-              liftPassesM (mayUpdateTopState block) (requiresBench block) $
-                evalSourceBlock' block
+  result <- withCompileTime $ liftPassesM (requiresBench block) $ evalSourceBlock' block
   return $ filterLogs block $ addResultCtx block $ result
 
 evalSourceBlock' :: (Mut n, MonadPasses m) => SourceBlock -> m n ()
 evalSourceBlock' block = case sbContents block of
-  RunModule m -> execUModule m
-  Command cmd (v, m) -> case cmd of
+  EvalUDecl decl ->
+    execUDecl decl
+  Command cmd expr -> case cmd of
     EvalExpr fmt -> do
-      execUModule m
-      val <- lookupAtomSourceName v
+      val <- evalUExpr expr
       case fmt of
         Printed -> do
           s <- pprintVal val
@@ -203,8 +200,7 @@ evalSourceBlock' block = case sbContents block of
     --     _ -> return $ Con $ Lit val
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
-      execUModule m
-      val <- lookupAtomSourceName v
+      val <- evalUExpr expr
       ty <- getType val
       logTop $ TextOut $ pprint ty
   GetNameType v -> do
@@ -240,18 +236,6 @@ requiresBench :: SourceBlock -> Bool
 requiresBench block = case sbLogLevel block of
   PrintBench _ -> True
   _            -> False
-
-mayUpdateTopState :: SourceBlock -> Bool
-mayUpdateTopState block = case sbContents block of
-  RunModule _     -> True
-  ImportModule _  -> True
-  Command _ _     -> False
-  GetNameType _   -> False
-  ProseBlock _    -> False
-  QueryEnv _      -> False
-  CommentLine     -> False
-  EmptyLines      -> False
-  UnParseable _ _ -> False
 
 filterLogs :: SourceBlock -> Result -> Result
 filterLogs block (Result outs err) = let
@@ -307,52 +291,32 @@ isLogInfo out = case out of
   TotalTime _  -> True
   _ -> False
 
+evalUExpr :: (Mut n, MonadPasses m) => UExpr VoidS -> m n (Atom n)
+evalUExpr expr = do
+  logTop $ PassInfo Parse $ pprint expr
+  renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
+  typed <- checkPass TypePass $ inferTopUExpr renamed
+  evalBlock typed
 
-lookupAtomSourceName :: (Fallible1 m, EnvReader m) => SourceName -> m n (Atom n)
-lookupAtomSourceName v =
-  lookupSourceMap AtomNameRep v >>= \case
-    Nothing -> throw UnboundVarErr $ pprint v
-    Just v' -> do
-      lookupAtomName v' >>= \case
-        LetBound (DeclBinding _ _ (Atom atom)) -> return atom
-        _ -> throw TypeErr $ "Not an atom name: " ++ pprint v
+evalBlock :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
+evalBlock typed = do
+  synthed <- checkPass SynthPass $ synthTopBlock typed
+  SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
+  result <- evalBackend simp
+  applyRecon recon result
 
-execUModule :: (Mut n, MonadPasses m) => SourceUModule -> m n ()
-execUModule m = do
-  bs <- liftImmut $ evalUModule m
-  void $ emitEnv bs
-
--- TODO: extract only the relevant part of the env we can check for module-level
--- unbound vars and upstream errors here. This should catch all unbound variable
--- errors, but there could still be internal shadowing errors.
-evalUModule :: (Immut n, MonadPasses m) => SourceUModule -> m n (EvaluatedModule n)
-evalUModule sourceModule = do
-  DB bindings <- getDB
-  let (Env _ _ sourceMap _) = bindings
-  logPass Parse sourceModule
-  renamed <- renameSourceNames (toScope bindings) sourceMap sourceModule
-  logPass RenamePass renamed
-  typed <- liftExcept $ inferModule bindings renamed
-  checkPass TypePass typed
-  synthed <- liftExcept $ synthModule bindings typed
-  checkPass SynthPass synthed
-  let defunctionalized = simplifyModule bindings synthed
-  checkPass SimpPass defunctionalized
-  case defunctionalized of
-    Module _ Empty result-> return result
-    _ -> do
-      let (block, recon) = splitSimpModule bindings defunctionalized
-      fromDistinctAbs <$> localTopBuilder do
-        -- TODO: the evaluation pass gets to emit top bindings because it
-        -- creates bindings for pointer literals. But should we just do it this
-        -- way for all the passes?
-        result <- evalBackend $ sink block
-        evaluated <- applyDataResults (sink recon) result
-        checkPass ResultPass $ Module Evaluated Empty evaluated
-        emitEnv evaluated
+execUDecl :: (Mut n, MonadPasses m) => UDecl VoidS VoidS -> m n ()
+execUDecl decl = do
+  logTop $ PassInfo Parse $ pprint decl
+  Abs renamedDecl sourceMap <- logPass RenamePass $ renameSourceNamesUDecl decl
+  inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
+  case inferenceResult of
+    UDeclResultWorkRemaining block declAbs -> do
+      result <- evalBlock block
+      emitSourceMap =<< applyUDeclAbs declAbs result
+    UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
--- TODO: Standalone functions --- use the env!
 _evalMLIR :: MonadPasses m => Block n -> m n (Atom n)
 #if DEX_LLVM_VERSION == HEAD
 _evalMLIR block' = do
@@ -377,23 +341,14 @@ evalLLVM block = do
   bench   <- requireBenchmark
   logger  <- getLogger
   (blockAbs, ptrVals) <- abstractPtrLiterals block
-  let funcName = "entryFun"
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
-  (mainFunc, impModuleUnoptimized, reconAtom) <-
-    toImpModule backend cc funcName Nothing blockAbs
-  -- TODO: toImpModule might generate invalid Imp code, because GPU allocations
-  --       were not lifted from the kernels just yet. We should split the Imp IR
-  --       into different levels so that we can check the output here!
-  checkPass ImpPass impModuleUnoptimized
-  let impModule = case backend of
-                    -- LLVMCUDA -> liftCUDAAllocations impModuleUnoptimized
-                    _        -> impModuleUnoptimized
-  -- checkPass ImpPass impModule
-  llvmAST <- liftIO $ impToLLVM logger impModule
-  let IFunType _ _ resultTypes = impFunType $ mainFunc
+  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
+                                             toImpFunction backend cc blockAbs
+  llvmAST <- liftIO $ impToLLVM logger impFun
+  let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  resultVals <- liftIO $ llvmEvaluate logger llvmAST funcName ptrVals resultTypes
+  resultVals <- liftIO $ llvmEvaluate logger llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 
@@ -414,14 +369,15 @@ withCompileTime m = do
   return $ Result (outs ++ [TotalTime t]) err
 
 checkPass :: (MonadPasses m, Pretty (e n), CheckableE e)
-          => PassName -> e n -> m n ()
-checkPass name x = do
-  logPass name x
-  addContext ("Checking :\n" ++ pprint x) $ checkTypesM x
-  logTop $ MiscLog $ pprint name ++ " checks passed"
-
-logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
-logPass passName x = logTop $ PassInfo passName $ pprint x
+          => PassName -> m n (e n) -> m n (e n)
+checkPass name cont = do
+  result <- logPass name do
+    result <- cont
+    return result
+  logTop $ MiscLog $ "Running checks"
+  checkTypesM result
+  logTop $ MiscLog $ "Checks passed"
+  return result
 
 addResultCtx :: SourceBlock -> Result -> Result
 addResultCtx block (Result outs errs) =
@@ -441,10 +397,30 @@ findModulePath moduleName = do
 -- === instances ===
 
 instance ConfigReader (PassesM n) where
-  getConfig = PassesM $ asks \(_, cfg) -> cfg
+  getConfig = PassesM $ asks \(_, _, cfg) -> cfg
+
+instance TopBuilder PassesM where
+  -- Log bindings as they are emitted
+  emitBinding hint binding = do
+    passName <- PassesM $ asks \(_, pass, _) -> pass
+    case passName of
+      Nothing -> logTop $ MiscLog $ pprint binding
+      Just name -> logTop $ PassInfo name $ pprint binding
+    PassesM $ emitBinding hint binding
+
+  emitEnv env = PassesM $ emitEnv env
+  emitNamelessEnv env = PassesM $ emitNamelessEnv env
+  localTopBuilder cont = PassesM $ localTopBuilder $ runPassesM' cont
 
 instance MonadPasses PassesM where
-  requireBenchmark = PassesM $ asks \(bench, _) -> bench
+  requireBenchmark = PassesM $ asks \(bench, _, _) -> bench
+  logPass passName cont = do
+    logTop $ PassInfo passName $ "=== " <> pprint passName <> " ==="
+    logTop $ MiscLog $ "Starting "++ pprint passName
+    result <- PassesM $ local (\(bench, _, ctx) -> (bench, Just passName, ctx)) $
+                runPassesM' cont
+    logTop $ PassInfo passName $ "=== Result ===\n" <> pprint result
+    return result
 
 instance MonadLogger [Output] (PassesM n) where
   getLogger = PassesM $ lift1 $ lift $ getLogger

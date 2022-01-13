@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module SourceRename (renameSourceNames) where
+module SourceRename (renameSourceNamesUDecl, renameSourceNamesUExpr) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -22,12 +22,14 @@ import LabeledItems
 import Name
 import Syntax
 
-renameSourceNames :: (Distinct n, Fallible m)
-                  => Scope (n::S) -> SourceMap n -> SourceUModule -> m (UModule n)
-renameSourceNames scope sourceMap sourceModule =
-  liftExcept $ runFallibleM $ runScopeReaderT scope $
-    runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $
-      renameSourceNames' sourceModule
+renameSourceNamesUDecl :: (Fallible1 m, EnvReader m)
+                       => UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
+renameSourceNamesUDecl decl = liftRenamer do
+  (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $ sourceRenameB decl
+  return $ Abs decl' sourceMap
+
+renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
+renameSourceNamesUExpr expr = liftRenamer $ sourceRenameE expr
 
 data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
                                    , renamerMayShadow :: Bool }
@@ -36,6 +38,14 @@ newtype RenamerM (n::S) (a:: *) =
   RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , AlwaysImmut, ScopeReader, ScopeExtender)
+
+liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
+liftRenamer cont = liftImmut do
+  scope <- getScope
+  sourceMap <- getSourceMap <$> getEnv
+  Distinct <- getDistinct
+  liftExcept $ runFallibleM $ runScopeReaderT scope $
+    runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $ cont
 
 class ( Monad1 m, AlwaysImmut m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
@@ -53,11 +63,6 @@ instance Renamer RenamerM where
   extendSourceMap sourceMap (RenamerM cont) = RenamerM do
     RenamerSubst sm mayShadow <- askOutReader
     localOutReader (RenamerSubst (sm <> sourceMap) mayShadow) cont
-
-renameSourceNames' :: Renamer m => SourceUModule -> m o (UModule o)
-renameSourceNames' (SourceUModule decl) = do
-  (RenamerContent _ sourceMap decl') <- runRenamerNameGenT $ sourceRenameB decl
-  return $ UModule decl' sourceMap
 
 class SourceRenamableE e where
   sourceRenameE :: Renamer m => e i -> m o (e o)

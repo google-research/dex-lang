@@ -8,14 +8,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Simplify
-  ( simplifyModule, splitSimpModule, applyDataResults
-  , simplifyBlock, liftSimplifyM) where
+module Simplify ( simplifyTopBlock, SimplifiedBlock (..)
+                , simplifyBlock, liftSimplifyM) where
 
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable (toList)
+import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.Map.Strict as M
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
@@ -68,37 +68,34 @@ instance ScopableBuilder (SimplifyM i) where
   buildScoped cont = SimplifyM $ SubstReaderT $ ReaderT \env ->
     buildScoped $ runSubstReaderT (sink env) (runSimplifyM' cont)
 
--- === Top level ===
+-- === Top-level API ===
 
-simplifyModule :: Distinct n => Env n -> Module n -> Module n
-simplifyModule env (Module Core decls result) = runSimplifyM env do
-  Immut <- return $ toImmutEvidence env
-  DistinctAbs decls' result' <-
-    buildScoped $ simplifyDecls decls $
-      substEvaluatedModuleM result
-  return $ Module Simp decls' result'
-simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
+data SimplifiedBlock n = SimplifiedBlock (Block n) (ReconstructAtom n)
 
-type AbsEvaluatedModule n = Abs (Nest (NameBinder AtomNameC)) EvaluatedModule n
+-- TODO: extend this to work on functions instead of blocks (with blocks still
+-- accessible as nullary functions)
+simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
+simplifyTopBlock block = liftImmut do
+  DB env <- getDB
+  return $ runSimplifyM env do
+    (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
+    return $ SimplifiedBlock block' recon
 
-splitSimpModule :: forall n. Distinct n
-                 => Env n -> Module n
-                -> (Block n , AbsEvaluatedModule n)
-splitSimpModule env (Module _ decls result) = do
-  runEnvReaderM env $ runSubstReaderT idNameSubst do
-    Immut <- return $ toImmutEvidence env
-    substBinders decls \decls' -> do
-      result' <- substM result
-      telescopicCaptureBlock decls' $ result'
+instance GenericE SimplifiedBlock where
+  type RepE SimplifiedBlock = PairE Block ReconstructAtom
+  fromE (SimplifiedBlock block recon) = PairE block recon
+  toE   (PairE block recon) = SimplifiedBlock block recon
 
-applyDataResults :: EnvReader m
-                 => AbsEvaluatedModule n -> Atom n
-                 -> m n (EvaluatedModule n)
-applyDataResults (Abs bs evaluated) x = do
-  runSubstReaderT idSubst do
-    xs <- liftM ignoreExcept $ runFallibleT1 $ unpackTelescope x
-    extendSubst (bs @@> map SubstVal xs) $
-      substEvaluatedModuleM evaluated
+instance SinkableE SimplifiedBlock
+instance SubstE Name SimplifiedBlock
+instance CheckableE SimplifiedBlock where
+  checkE (SimplifiedBlock block recon) =
+    -- TODO: CheckableE instance for the recon too
+    SimplifiedBlock <$> checkE block <*> substM recon
+
+instance Pretty (SimplifiedBlock n) where
+  pretty (SimplifiedBlock block recon) =
+    pretty block <> hardline <> pretty recon
 
 -- === All the bits of IR  ===
 
@@ -290,8 +287,7 @@ simplifyVar v = do
     Rename v' -> do
       AtomNameBinding bindingInfo <- lookupEnv v'
       case bindingInfo of
-        LetBound (DeclBinding ann _ (Atom x))
-          | ann /= NoInlineLet -> dropSubst $ simplifyAtom x
+        LetBound (DeclBinding _ _ (Atom x)) -> dropSubst $ simplifyAtom x
         _ -> return $ Var v'
 
 simplifyLam :: (Simplifier m) => Atom i -> m i o (Atom o, ReconstructAtom o)
@@ -376,18 +372,14 @@ simplifyOp op = case op of
         let rightItems = restructure rightList rightTys
         return $ Record $ left <> rightItems
       _ -> error "not a record"
-  RecordSplit (LabeledItems litems) full ->
+  RecordSplit litems full ->
     getType full >>= \case
       RecordTy (NoExt fullTys) -> do
         -- Unpack, then repack into two pieces.
         fullList <- getUnpacked full
-        let LabeledItems fullItems = restructure fullList fullTys
-            splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
-            left = M.intersectionWith splitLeft fullItems litems
-            splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
-            right = M.differenceWith splitRight fullItems litems
-        return $ Record $ Unlabeled $
-          [Record (LabeledItems left), Record (LabeledItems right)]
+        let fullItems = restructure fullList fullTys
+        let (left, right) = splitLabeledItems litems fullItems
+        return $ Record $ Unlabeled [Record left, Record right]
       _ -> error "not a record"
   VariantLift leftTys@(LabeledItems litems) right -> getType right >>= \case
     VariantTy (NoExt rightTys) -> do

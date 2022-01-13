@@ -10,7 +10,7 @@
 module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
   , withLabels, lookupLabelHead, lookupLabel, ExtLabeledItems (..), prefixExtLabeledItems
-  , unzipExtLabeledItems
+  , unzipExtLabeledItems, splitLabeledItems
   , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
   , pattern Unlabeled ) where
 
@@ -111,6 +111,15 @@ pattern Unlabeled as <- (_getUnlabeled -> Just as)
   where Unlabeled as = case NE.nonEmpty as of
           Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
           Nothing -> NoLabeledItems
+
+splitLabeledItems :: LabeledItems a -> LabeledItems b -> (LabeledItems b, LabeledItems b)
+splitLabeledItems (LabeledItems litems) (LabeledItems fullItems) =
+  (LabeledItems left, LabeledItems right)
+  where
+    splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+    splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
+    left  = M.intersectionWith splitLeft fullItems litems
+    right = M.differenceWith splitRight fullItems litems
 
 -- === instances ===
 
