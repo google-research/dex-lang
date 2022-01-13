@@ -9,7 +9,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
 module MTL1 (
-    MonadTrans11 (..),
+    MonadTrans11 (..), HoistableState (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
     StateT1, pattern StateT1, runStateT1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
@@ -139,6 +139,15 @@ instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
 
 instance AlwaysImmut m => AlwaysImmut (StateT1 s m) where
   getImmut = lift11 getImmut
+
+class HoistableState (s::E) (m::MonadKind1) where
+  hoistState :: BindsNames b => s n -> b n l -> s l -> m n (s n)
+
+instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT1 s m) where
+  extendEnv frag m = StateT1 \s -> do
+    (ans, s') <- extendEnv frag $ runStateT1 m (sink s)
+    s'' <- hoistState s frag s'
+    return (ans, s'')
 
 -------------------- ScopedT1 --------------------
 
