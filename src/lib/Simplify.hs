@@ -8,12 +8,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Simplify (simplifyTopBlock, simplifyBlock, liftSimplifyM) where
+module Simplify ( simplifyTopBlock, SimplifiedBlock (..)
+                , simplifyBlock, liftSimplifyM) where
 
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable (toList)
+import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.Map.Strict as M
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
@@ -68,14 +70,32 @@ instance ScopableBuilder (SimplifyM i) where
 
 -- === Top-level API ===
 
+data SimplifiedBlock n = SimplifiedBlock (Block n) (ReconstructAtom n)
+
 -- TODO: extend this to work on functions instead of blocks (with blocks still
 -- accessible as nullary functions)
-simplifyTopBlock :: EnvReader m => Block n -> m n (Block n, ReconstructAtom n)
-simplifyTopBlock block = fromPairE <$> liftImmut do
+simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
+simplifyTopBlock block = liftImmut do
   DB env <- getDB
   return $ runSimplifyM env do
     (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
-    return $ PairE block' recon
+    return $ SimplifiedBlock block' recon
+
+instance GenericE SimplifiedBlock where
+  type RepE SimplifiedBlock = PairE Block ReconstructAtom
+  fromE (SimplifiedBlock block recon) = PairE block recon
+  toE   (PairE block recon) = SimplifiedBlock block recon
+
+instance SinkableE SimplifiedBlock
+instance SubstE Name SimplifiedBlock
+instance CheckableE SimplifiedBlock where
+  checkE (SimplifiedBlock block recon) =
+    -- TODO: CheckableE instance for the recon too
+    SimplifiedBlock <$> checkE block <*> substM recon
+
+instance Pretty (SimplifiedBlock n) where
+  pretty (SimplifiedBlock block recon) =
+    pretty block <> hardline <> pretty recon
 
 -- === All the bits of IR  ===
 

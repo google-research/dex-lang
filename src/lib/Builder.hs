@@ -62,6 +62,7 @@ import Data.Foldable (toList)
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
+import Data.Text.Prettyprint.Doc (Pretty (..))
 import GHC.Stack
 
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -1387,3 +1388,7 @@ instance HoistableE  ReconstructAtom
 instance AlphaEqE    ReconstructAtom
 instance SubstE Name ReconstructAtom
 instance SubstE AtomSubstVal ReconstructAtom
+
+instance Pretty (ReconstructAtom n) where
+  pretty IdentityRecon = "Identity reconstruction"
+  pretty (LamRecon ab) = "Reconstruction abs: " <> pretty ab

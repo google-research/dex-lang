@@ -1605,7 +1605,8 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
          , MonadReader r m)
          => MonadReader r (InplaceT bindings decls m n) where
   ask = lift1 $ ask
-  local = undefined
+  local f (UnsafeMakeInplaceT cont) =
+    UnsafeMakeInplaceT \bindings -> local f (cont bindings)
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
          , MonadIO m)
@@ -1988,6 +1989,9 @@ instance Pretty a => Pretty (LiftE a n) where
 
 instance Pretty (UnitE n) where
   pretty UnitE = ""
+
+instance (PrettyE e1, PrettyE e2) => Pretty (PairE e1 e2 n) where
+  pretty (PairE e1 e2) = pretty (e1, e2)
 
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )

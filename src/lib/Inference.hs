@@ -27,7 +27,7 @@ import Data.Functor ((<&>), ($>))
 import Data.List (sortOn, intercalate)
 import Data.Maybe (fromJust)
 import Data.String (fromString)
-import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), hardline)
+import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -2301,9 +2301,14 @@ newtype WrapWithEmitsInf n r =
 
 instance PrettyE e => Pretty (UDeclInferenceResult e l) where
   pretty (UDeclResultDone e) = pretty e
-  pretty (UDeclResultWorkRemaining block ab) =
-    "Work remaining" <+> hardline <> pretty block <> hardline <>
-    "Abs" <+> pretty ab
+  pretty (UDeclResultWorkRemaining block _) = pretty block
 
 instance SinkableE e => SinkableE (UDeclInferenceResult e) where
   sinkingProofE = todoSinkableProof
+
+instance (SubstE Name e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
+  checkE (UDeclResultDone e) = UDeclResultDone <$> substM e
+  checkE (UDeclResultWorkRemaining block _) = do
+    block' <- checkE block
+    return $ UDeclResultWorkRemaining block'
+                (error "TODO: implement substitution for UDecl")

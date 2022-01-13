@@ -239,7 +239,7 @@ class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
         checkAlphaEq reqTy' ty'
     return e'
 
-class (SinkableE e, SubstE Name e) => CheckableE (e::E) where
+class SinkableE e => CheckableE (e::E) where
   checkE :: Typer m => e i -> m i o (e o)
 
 checkFromHasType :: HasType e => Typer m => e i -> m i o (e o)
@@ -321,6 +321,12 @@ instance CheckableE SolverBinding where
 
 instance CheckableE DataDef where
   checkE = substM -- TODO
+
+instance (CheckableE e1, CheckableE e2) => CheckableE (PairE e1 e2) where
+  checkE (PairE e1 e2) = PairE <$> checkE e1 <*> checkE e2
+
+instance (CheckableB b, CheckableE e) => CheckableE (Abs b e) where
+  checkE (Abs b e) = checkB b \b' -> Abs b' <$> checkE e
 
 -- === type checking core ===
 

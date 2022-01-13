@@ -382,7 +382,7 @@ instance Pretty Output where
                    Nothing        -> "")
     where benchName = case name of "" -> ""
                                    _  -> "\n" <> p name
-  pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
+  pretty (PassInfo _ s) = p s
   pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
   pretty (MiscLog s) = "===" <+> p s <+> "==="
@@ -729,6 +729,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     VariantSplit types val -> atPrec AppPrec $
       "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
                      <+> pArg val
+    SynthesizeDict _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
     _ -> prettyExprDefault $ OpExpr op
 
 prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann

@@ -104,12 +104,16 @@ class ( forall n. Fallible (m n)
       , EnvReader m
       , TopBuilder m )
       => MonadPasses (m::MonadKind1) where
+  logPass :: Pretty a => PassName -> m n a -> m n a
   requireBenchmark :: m n Bool
 
+type RequiresBench = Bool
+type PassCtx = (RequiresBench, Maybe PassName, EvalConfig)
+
 newtype PassesM (n::S) a = PassesM
-  { runPassesM' :: TopBuilderT (ReaderT (Bool, EvalConfig) (LoggerT [Output] IO)) n a }
+  { runPassesM' :: TopBuilderT (ReaderT PassCtx (LoggerT [Output] IO)) n a }
     deriving ( Functor, Applicative, Monad, MonadIO, MonadFail
-             , Fallible, TopBuilder, EnvReader, ScopeReader)
+             , Fallible, EnvReader, ScopeReader)
 
 type ModulesImported = M.Map ModuleName ModuleImportStatus
 
@@ -120,7 +124,7 @@ runPassesM bench opts env m = do
   let maybeLogFile = logFile opts
   runLogger maybeLogFile \l ->
     catchIOExcept $ runLoggerT l $
-      runReaderT (runTopBuilderT env $ runPassesM' m) (bench, opts)
+      runReaderT (runTopBuilderT env $ runPassesM' m) (bench, Nothing, opts)
 
 -- ======
 
@@ -175,7 +179,8 @@ evalSourceBlock block = do
 
 evalSourceBlock' :: (Mut n, MonadPasses m) => SourceBlock -> m n ()
 evalSourceBlock' block = case sbContents block of
-  EvalUDecl decl -> execUDecl decl
+  EvalUDecl decl ->
+    execUDecl decl
   Command cmd expr -> case cmd of
     EvalExpr fmt -> do
       val <- evalUExpr expr
@@ -288,27 +293,23 @@ isLogInfo out = case out of
 
 evalUExpr :: (Mut n, MonadPasses m) => UExpr VoidS -> m n (Atom n)
 evalUExpr expr = do
-  renamed <- renameSourceNamesUExpr expr
-  logPass RenamePass renamed
-  typed <- inferTopUExpr renamed
-  checkPass TypePass typed
+  logTop $ PassInfo Parse $ pprint expr
+  renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
+  typed <- checkPass TypePass $ inferTopUExpr renamed
   evalBlock typed
 
 evalBlock :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
 evalBlock typed = do
-  synthed <- synthTopBlock typed
-  checkPass SynthPass synthed
-  (simp, recon) <- simplifyTopBlock synthed
-  checkPass SimpPass simp
+  synthed <- checkPass SynthPass $ synthTopBlock typed
+  SimplifiedBlock simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
   result <- evalBackend simp
   applyRecon recon result
 
 execUDecl :: (Mut n, MonadPasses m) => UDecl VoidS VoidS -> m n ()
 execUDecl decl = do
-  Abs renamedDecl sourceMap <- renameSourceNamesUDecl decl
-  logPass RenamePass (Abs renamedDecl sourceMap)
-  inferenceResult <- inferTopUDecl  renamedDecl sourceMap
-  logPass TypePass inferenceResult
+  logTop $ PassInfo Parse $ pprint decl
+  Abs renamedDecl sourceMap <- logPass RenamePass $ renameSourceNamesUDecl decl
+  inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
   case inferenceResult of
     UDeclResultWorkRemaining block declAbs -> do
       result <- evalBlock block
@@ -342,8 +343,8 @@ evalLLVM block = do
   (blockAbs, ptrVals) <- abstractPtrLiterals block
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
-  (impFun, reconAtom) <- toImpFunction backend cc blockAbs
-  checkPass ImpPass impFun
+  ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
+                                             toImpFunction backend cc blockAbs
   llvmAST <- liftIO $ impToLLVM logger impFun
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
@@ -368,14 +369,15 @@ withCompileTime m = do
   return $ Result (outs ++ [TotalTime t]) err
 
 checkPass :: (MonadPasses m, Pretty (e n), CheckableE e)
-          => PassName -> e n -> m n ()
-checkPass name x = do
-  logPass name x
-  addContext ("Checking :\n" ++ pprint x) $ checkTypesM x
-  logTop $ MiscLog $ pprint name ++ " checks passed"
-
-logPass :: (MonadPasses m, Pretty a) => PassName -> a -> m n ()
-logPass passName x = logTop $ PassInfo passName $ pprint x
+          => PassName -> m n (e n) -> m n (e n)
+checkPass name cont = do
+  result <- logPass name do
+    result <- cont
+    return result
+  logTop $ MiscLog $ "Running checks"
+  checkTypesM result
+  logTop $ MiscLog $ "Checks passed"
+  return result
 
 addResultCtx :: SourceBlock -> Result -> Result
 addResultCtx block (Result outs errs) =
@@ -395,10 +397,30 @@ findModulePath moduleName = do
 -- === instances ===
 
 instance ConfigReader (PassesM n) where
-  getConfig = PassesM $ asks \(_, cfg) -> cfg
+  getConfig = PassesM $ asks \(_, _, cfg) -> cfg
+
+instance TopBuilder PassesM where
+  -- Log bindings as they are emitted
+  emitBinding hint binding = do
+    passName <- PassesM $ asks \(_, pass, _) -> pass
+    case passName of
+      Nothing -> logTop $ MiscLog $ pprint binding
+      Just name -> logTop $ PassInfo name $ pprint binding
+    PassesM $ emitBinding hint binding
+
+  emitEnv env = PassesM $ emitEnv env
+  emitNamelessEnv env = PassesM $ emitNamelessEnv env
+  localTopBuilder cont = PassesM $ localTopBuilder $ runPassesM' cont
 
 instance MonadPasses PassesM where
-  requireBenchmark = PassesM $ asks \(bench, _) -> bench
+  requireBenchmark = PassesM $ asks \(bench, _, _) -> bench
+  logPass passName cont = do
+    logTop $ PassInfo passName $ "=== " <> pprint passName <> " ==="
+    logTop $ MiscLog $ "Starting "++ pprint passName
+    result <- PassesM $ local (\(bench, _, ctx) -> (bench, Just passName, ctx)) $
+                runPassesM' cont
+    logTop $ PassInfo passName $ "=== Result ===\n" <> pprint result
+    return result
 
 instance MonadLogger [Output] (PassesM n) where
   getLogger = PassesM $ lift1 $ lift $ getLogger

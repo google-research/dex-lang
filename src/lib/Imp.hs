@@ -9,10 +9,13 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpFunction, PtrBinder, impFunType, getIType) where
+module Imp
+  ( toImpFunction, ImpFunctionWithRecon (..)
+  , PtrBinder, impFunType, getIType) where
 
 import Data.Functor
 import Data.Foldable (toList)
+import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -38,11 +41,29 @@ type PtrBinder = IBinder
 toImpFunction :: EnvReader m
               => Backend -> CallingConvention
               -> Abs (Nest PtrBinder) Block n
-              -> m n (ImpFunction n, AtomRecon n)
-toImpFunction _ cc absBlock = fromPairE <$> liftImmut do
+              -> m n (ImpFunctionWithRecon n)
+toImpFunction _ cc absBlock = liftImmut do
   DB env <- getDB
-  return $ runImpM env $ uncurry PairE <$>
+  return $ runImpM env $
     translateTopLevel cc Nothing absBlock
+
+data ImpFunctionWithRecon n = ImpFunctionWithRecon (ImpFunction n) (AtomRecon n)
+
+instance GenericE ImpFunctionWithRecon where
+  type RepE ImpFunctionWithRecon = PairE ImpFunction AtomRecon
+  fromE (ImpFunctionWithRecon fun recon) = PairE fun recon
+  toE   (PairE fun recon) = ImpFunctionWithRecon fun recon
+
+instance SinkableE ImpFunctionWithRecon
+instance SubstE Name ImpFunctionWithRecon
+instance CheckableE ImpFunctionWithRecon where
+  checkE (ImpFunctionWithRecon f recon) =
+    -- TODO: CheckableE instance for the recon too
+    ImpFunctionWithRecon <$> checkE f <*> substM recon
+
+instance Pretty (ImpFunctionWithRecon n) where
+  pretty (ImpFunctionWithRecon f recon) =
+    pretty f <> hardline <> "Reconstruction:" <> hardline <> pretty recon
 
 -- === ImpM monad ===
 
@@ -121,7 +142,7 @@ translateTopLevel :: (Immut o, Imper m)
                   => CallingConvention
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
-                  -> m i o (ImpFunction o, AtomRecon o)
+                  -> m i o (ImpFunctionWithRecon o)
 translateTopLevel cc maybeDest (Abs bs body) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
   DistinctAbs bs' (DistinctAbs decls resultAtom) <-
@@ -137,7 +158,7 @@ translateTopLevel cc maybeDest (Abs bs body) = do
                         buildRecon localEnv resultAtom
   let funImpl = Abs bs' $ ImpBlock decls results
   let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
-  return (ImpFunction funTy funImpl, recon)
+  return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)
            => b n l
