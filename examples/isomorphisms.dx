@@ -45,26 +45,22 @@ that produce isos. We will start with the first two:
 %passes parse
 :t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = (), ...()}. (,) x r}
->   : Iso {a: Int & b: Float & c: Unit} _
+> (MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = (), ...()}. (,) x r}
+>  : Iso {a: Int & b: Float & c: Unit} _)
 
 %passes parse
 :t #?b : Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \v. case v
->                 ((Left x)) -> {| b = x |}
->                 ((Right r)) -> {|b| ...r |}
->                 
->     , fwd = \v. case v
->                 {| b = x |} -> (Left x)
->                 {|b| ...r |} -> (Right r)
->                 }
->   : Iso {a: Int | b: Float | c: Unit} _
+> (MkIso
+>    { bwd = \v. case v
+>                ((Left x)) -> {| b = x |}
+>                ((Right r)) -> {|b| ...r |}
+>                
+>    , fwd = \v. case v
+>                {| b = x |} -> (Left x)
+>                {|b| ...r |} -> (Right r)
+>                }
+>  : Iso {a: Int | b: Float | c: Unit} _)
 
 'There are also two "zipper" forms, described later on this page:
 - `#&x` produces a "record-zipper" isomorphism
@@ -141,12 +137,10 @@ another. For instance:
 > (Iso
 >    ({ &} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \({a = (), ...()}, {, ...()}). (,) {, ...l} {a = x, ...r}
->     , fwd = \({, ...()}, {a = (), ...()}). (,) {a = x, ...l} {, ...r}}
->   : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _
+> (MkIso
+>    { bwd = \({a = (), ...()}, {, ...()}). (,) {, ...l} {a = x, ...r}
+>    , fwd = \({, ...()}, {a = (), ...()}). (,) {a = x, ...l} {, ...r}}
+>  : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _)
 
 :t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
@@ -200,7 +194,7 @@ def abcToTuple {a b c} : Iso {a:a & b:b & c:c} (c&b&a) =
   bwd = \(c, b, a). {a, b, c}
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n & b:m & c:q}
-  size = size n * size m * size q
+  getSize = \(). size n * size m * size q
   ordinal = ordinal <<< appIso abcToTuple
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToTuple
 
@@ -209,7 +203,7 @@ def bcToPair {b c} : Iso {b:b & c:c} (c&b) =
   bwd = \(c, b). {b, c}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {b:n & c:m}
-  size = size n * size m
+  getSize = \(). size n * size m
   ordinal = ordinal <<< appIso bcToPair
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso bcToPair
 
@@ -234,24 +228,22 @@ zipper isomorphisms:
 > (Iso
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
-> === parse ===
->  _ans_ =
->   MkIso
->     { bwd = \v. case v
->                 ((Left w)) -> (case w
->                                  {| a = x |} -> (Right {| a = x |})
->                                  {|a| ...r |} -> (Left r)
+> (MkIso
+>    { bwd = \v. case v
+>                ((Left w)) -> (case w
+>                                 {| a = x |} -> (Right {| a = x |})
+>                                 {|a| ...r |} -> (Left r)
+>                                 )
+>                ((Right l)) -> (Right {|a| ...l |})
+>                
+>    , fwd = \v. case v
+>                ((Left l)) -> (Left {|a| ...l |})
+>                ((Right w)) -> (case w
+>                                  {| a = x |} -> (Left {| a = x |})
+>                                  {|a| ...r |} -> (Right r)
 >                                  )
->                 ((Right l)) -> (Right {|a| ...l |})
->                 
->     , fwd = \v. case v
->                 ((Left l)) -> (Left {|a| ...l |})
->                 ((Right w)) -> (case w
->                                   {| a = x |} -> (Left {| a = x |})
->                                   {|a| ...r |} -> (Right r)
->                                   )
->                 }
->   : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _
+>                }
+>  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:
 
@@ -278,7 +270,7 @@ def abcToEither {a b c} : Iso {a:a | b:b | c:c} (a|(b|c)) =
       Right y -> {|c=y|}
   MkIso {fwd, bwd}
 instance {n m q} [Ix n, Ix m, Ix q] Ix {a:n | b:m | c:q}
-  size = size n + size m + size q
+  getSize = \(). size n + size m + size q
   ordinal = ordinal <<< appIso abcToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abcToEither
 
@@ -291,7 +283,7 @@ def abToEither {a b} : Iso {a:a | b:b} (a|b) =
     Right x -> {|b=x|}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | b:m}
-  size = size n + size m
+  getSize = \(). size n + size m
   ordinal = ordinal <<< appIso abToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso abToEither
 
@@ -304,7 +296,7 @@ def acToEither {a c} : Iso {a:a | c:c} (a|c) =
     Right x -> {|c=x|}
   MkIso {fwd, bwd}
 instance {n m} [Ix n, Ix m] Ix {a:n | c:m}
-  size = size n + size m
+  getSize = \(). size n + size m
   ordinal = ordinal <<< appIso acToEither
   unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso acToEither
 

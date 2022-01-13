@@ -562,7 +562,7 @@ newtype MapE (k::E) (v::E) (n::S) = MapE { fromMapE :: M.Map (k n) (v n) }
 
 newtype HashMapE (k::E) (v::E) (n::S) =
   HashMapE { fromHashMapE :: HM.HashMap (k n) (v n) }
-  deriving (Semigroup, Monoid)
+  deriving (Semigroup, Monoid, Show)
 
 newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEmpty (e n)}
         deriving (Show, Eq, Generic)
@@ -1142,6 +1142,7 @@ instance AlphaHashableE VoidE where
 -- === wrapper for E-kinded things suitable for use as keys ===
 
 newtype EKey (e::E) (n::S) = EKey { fromEKey :: e n }
+                           deriving (Show)
 
 instance GenericE (EKey e) where
   type RepE (EKey e) = e

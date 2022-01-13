@@ -42,7 +42,9 @@ module Builder (
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   runBuilderM, liftBuilder, liftEmitBuilder, makeBlock,
-  indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
+  indexToInt, indexSetSize, intToIndex,
+  getIxImpl, IxImpl (..),
+  litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
@@ -1032,6 +1034,13 @@ clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
+data IxImpl n = IxImpl { ixSize :: Atom n, toOrdinal :: Atom n, unsafeFromOrdinal :: Atom n }
+
+getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
+getIxImpl ty = do
+  [ixSize, toOrdinal, unsafeFromOrdinal] <- getUnpacked =<< getProj 1 =<< getProj 0 =<< emitBlock =<< synthIx ty
+  return $ IxImpl{..}
+
 intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
 intToIndex ty i = do
   f <- unsafeFromOrdinal <$> getIxImpl ty
@@ -1043,14 +1052,9 @@ indexToInt idx = do
   app f idx
 
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
-indexSetSize ty = size <$> getIxImpl ty
-
-data IxImpl n = IxImpl { size :: Atom n, toOrdinal :: Atom n, unsafeFromOrdinal :: Atom n }
-
-getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
-getIxImpl ty = do
-  [size, toOrdinal, unsafeFromOrdinal] <- getUnpacked =<< getProj 1 =<< getProj 0 =<< emitBlock =<< synthIx ty
-  return $ IxImpl{..}
+indexSetSize ty = do
+  f <- ixSize <$> getIxImpl ty
+  app f UnitVal
 
 -- === pseudo-prelude ===
 

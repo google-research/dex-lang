@@ -9,7 +9,8 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Simplify ( simplifyTopBlock, SimplifiedBlock (..)
-                , simplifyBlock, liftSimplifyM, buildBlockSimplified ) where
+                , simplifyBlock, liftSimplifyM, buildBlockSimplified
+                , simplifyLam, simplifyDecls, simplifyExpr ) where
 
 import Control.Category ((>>>))
 import Control.Monad

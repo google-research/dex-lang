@@ -5,6 +5,8 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -19,11 +21,14 @@ import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Control.Monad.State.Class
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.HashMap.Strict as HM
 
 import Err
+import MTL1
 import Name
 import Builder
 import Syntax
@@ -69,9 +74,19 @@ instance Pretty (ImpFunctionWithRecon n) where
 
 type ImpBuilderEmissions = Nest ImpDecl
 
+type IxCache = HashMapE (EKey Type) SimpleIxInstance
+
+instance Monad1 m => HoistableState IxCache m where
+  -- TODO: I think we can do hoisting only based on the free vars in keys.
+  -- Instances should only be added at the top-level so it's not like they
+  -- can refer to any local vars that could prevent the values from being hoistable.
+  hoistState s b s' = case hoist b s' of
+    HoistSuccess s'' -> return s''
+    HoistFailure _   -> return s
+
 newtype ImpM (n::S) (a:: *) =
-  ImpM { runImpM' :: InplaceT Env ImpBuilderEmissions HardFailM n a }
-  deriving ( Functor, Applicative, Monad, ScopeReader, Fallible, MonadFail)
+  ImpM { runImpM' :: ScopedT1 IxCache (InplaceT Env ImpBuilderEmissions HardFailM) n a }
+  deriving ( Functor, Applicative, Monad, ScopeReader, Fallible, MonadFail, MonadState (IxCache n))
 
 type SubstImpM = SubstReaderT AtomSubstVal ImpM :: S -> S -> * -> *
 
@@ -84,18 +99,18 @@ class ( ImpBuilder2 m, SubstReader AtomSubstVal m
       => Imper (m::MonadKind2) where
 
 instance EnvReader ImpM where
-  getEnv = ImpM $ getOutMapInplaceT
+  getEnv = ImpM $ lift11 $ getOutMapInplaceT
 
 instance EnvExtender ImpM where
-  extendEnv frag cont = ImpM $
-    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-      withExtEvidence (toExtEvidence frag) $ runImpM' cont
+  extendEnv frag cont = ImpM $ ScopedT1 \s ->
+    fmap (,s) $ extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
+      withExtEvidence (toExtEvidence frag) $ flip runScopedT1 (sink s) $ runImpM' cont
 
 instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = do
     let tys = impInstrTypes instr
-    ListE vs <- ImpM $
-      extendInplaceT do
+    ListE vs <- ImpM $ ScopedT1 \s ->
+      (,s) <$> extendInplaceT do
         scope <- getScope
         let hints = map (const "v") tys
         withManyFresh hints AtomNameRep scope \bs -> do
@@ -110,8 +125,8 @@ instance ImpBuilder ImpM where
      makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
      makeImpBinders _ _ = error "zip error"
 
-  buildScopedImp cont = ImpM $
-    locallyMutableInplaceT $ runImpM' do
+  buildScopedImp cont = ImpM $ ScopedT1 \s ->
+    fmap (,s) $ locallyMutableInplaceT $ flip runScopedT1 (sink s) $ runImpM' do
       Emits <- fabricateEmitsEvidenceM
       Distinct <- getDistinct
       cont
@@ -130,7 +145,7 @@ runImpM
   -> e n
 runImpM bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
-    case runHardFail $ runInplaceT bindings $ runImpM' $ runSubstReaderT idSubst $ cont of
+    case runHardFail $ runInplaceT bindings $ flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
       (Empty, result) -> result
       _ -> error "shouldn't be possible because of `Emits` constraint"
 
@@ -493,37 +508,42 @@ instance OutFrag DestEmissions where
       return $ DestEmissions (p1 <> p2') (b1 >>> b2') (d1' >>> d2)
 
 newtype DestM (n::S) (a:: *) =
-  DestM { runDestM' :: InplaceT Env DestEmissions
-                         (ReaderT AllocInfo HardFailM) n a }
-  deriving ( Functor, Applicative, Monad
-           , ScopeReader, MonadFail, Fallible)
+  DestM { runDestM' :: StateT1 IxCache
+                         (InplaceT Env DestEmissions
+                           (ReaderT AllocInfo HardFailM)) n a }
+  deriving ( Functor, Applicative, Monad, MonadFail
+           , ScopeReader, Fallible, MonadState (IxCache n) )
 
 runDestM :: (Immut n, Distinct n)
-         => Env n -> AllocInfo
+         => Env n -> AllocInfo -> IxCache n
          -> DestM n a
-         -> a
-runDestM bindings allocInfo m = do
+         -> (a, IxCache n)
+runDestM bindings allocInfo cache m = do
   let result = runHardFail $ flip runReaderT allocInfo $
-                 runInplaceT bindings $ runDestM' m
+                 runInplaceT bindings $ flip runStateT1 cache $ runDestM' m
   case result of
     (DestEmissions _ Empty Empty, result') -> result'
     _ -> error "not implemented"
 
 getAllocInfo :: DestM n AllocInfo
-getAllocInfo = DestM $ lift1 ask
+getAllocInfo = DestM $ lift11 $ lift1 ask
 
 introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
 introduceNewPtr hint ptrTy numel =
-  DestM $ emitInplaceT hint (DestPtrInfo ptrTy numel) \b ptrInfo ->
-    DestEmissions [ptrInfo] (Nest b Empty) Empty
+  DestM $ StateT1 \s -> fmap (,s) $
+    emitInplaceT hint (DestPtrInfo ptrTy numel) \b ptrInfo ->
+      DestEmissions [ptrInfo] (Nest b Empty) Empty
 
 buildLocalDest
   :: (SinkableE e)
   => (forall l. (Mut l, DExt n l) => DestM l (e l))
   -> DestM n (AbsPtrs e n)
 buildLocalDest cont = liftImmut do
-  result <- DestM $ locallyMutableInplaceT $ runDestM' cont
-  DistinctAbs (DestEmissions ptrInfo ptrBs decls) e <- return result
+  DistinctAbs (DestEmissions ptrInfo ptrBs decls) e <-
+    DestM $ StateT1 \s -> do
+      DistinctAbs bs (PairE e s') <- locallyMutableInplaceT $ fmap toPairE $ flip runStateT1 (sink s) $ runDestM' cont
+      s'' <- hoistState s bs s'
+      return $ (DistinctAbs bs e, s'')
   case decls of
     Empty -> return $ AbsPtrs (Abs ptrBs e) ptrInfo
     _ -> error "shouldn't have decls without `Emits`"
@@ -534,13 +554,16 @@ buildDeclsDest
   => (forall l. (Emits l, DExt n l) => DestM l (e l))
   -> DestM n (Abs (Nest Decl) e n)
 buildDeclsDest cont =
-  DestM $ extendInplaceT do
-    resultWithEmissions <- locallyMutableInplaceT do
-      Emits <- fabricateEmitsEvidenceM
-      runDestM' cont
-    DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <- return resultWithEmissions
-    withSubscopeDistinct decls $
-      return $ DistinctAbs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
+  DestM $ StateT1 \s -> do
+    Abs decls (PairE e s') <- extendInplaceT do
+      DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
+        locallyMutableInplaceT do
+          Emits <- fabricateEmitsEvidenceM
+          toPairE <$> flip runStateT1 (sink s) (runDestM' cont)
+      withSubscopeDistinct decls $
+        return $ DistinctAbs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
+    s'' <- hoistState s decls s'
+    return $ (Abs decls e, s'')
 
 buildBlockDest
   :: Mut n
@@ -562,17 +585,20 @@ buildAbsDest
   -> (forall l. (Mut l, DExt n l) => Name c l -> DestM l (e l))
   -> DestM n (Abs (BinderP c binding) e n)
 buildAbsDest hint binding cont =
-  DestM $ extendInplaceT do
-    scope <- getScope
-    withFresh hint nameColorRep scope \b -> do
-      let b' = b :> sink binding
-      let bExt = toEnvFrag b'
-      extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
-        DistinctAbs emissions result <- locallyMutableInplaceT do
-          runDestM' $ cont $ sink $ binderName b
-        PairB emissions' b'' <- liftHoistExcept $ exchangeBs $ PairB b' emissions
-        withSubscopeDistinct b'' $
-          return $ DistinctAbs emissions' (Abs b'' result)
+  DestM $ StateT1 \s -> do
+    Abs b (PairE e s') <- extendInplaceT do
+      scope <- getScope
+      withFresh hint nameColorRep scope \b -> do
+        let b' = b :> sink binding
+        let bExt = toEnvFrag b'
+        extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
+          DistinctAbs emissions result <- locallyMutableInplaceT do
+            fmap toPairE $ flip runStateT1 (sink s) $ runDestM' $ cont $ sink $ binderName b
+          PairB emissions' b'' <- liftHoistExcept $ exchangeBs $ PairB b' emissions
+          withSubscopeDistinct b'' $
+            return $ DistinctAbs emissions' (Abs b'' result)
+    s'' <- hoistState s b s'
+    return (Abs b e, s'')
 
 -- decls emitted at the inner scope are hoisted to the outer scope
 -- (they must be hoistable, otherwise we'll get a hoisting error)
@@ -601,19 +627,22 @@ buildTabLamDest hint ty cont = do
   return $ Lam $ LamExpr (LamBinder b ty TabArrow Pure) body
 
 instance EnvExtender DestM where
-  extendEnv frag cont = DestM $
-    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
+  extendEnv frag cont = DestM $ StateT1 \s -> do
+    (ans, s') <- extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
       withExtEvidence (toExtEvidence frag) $
-        runDestM' cont
+        flip runStateT1 (sink s) $ runDestM' cont
+    s'' <- hoistState s frag s'
+    return (ans, s'')
 
 instance EnvReader DestM where
-  getEnv = DestM $ getOutMapInplaceT
+  getEnv = DestM $ lift11 $ getOutMapInplaceT
 
 instance Builder DestM where
   emitDecl hint ann expr = do
     ty <- getType expr
-    DestM $ emitInplaceT hint (DeclBinding ann ty expr) \b binding ->
-      DestEmissions [] Empty $ Nest (Let b binding) Empty
+    DestM $ StateT1 \s -> fmap (,s) $
+      emitInplaceT hint (DeclBinding ann ty expr) \b binding ->
+        DestEmissions [] Empty $ Nest (Let b binding) Empty
 
 instance ExtOutMap Env DestEmissions where
   extendOutMap bindings (DestEmissions ptrInfo ptrs decls) =
@@ -665,9 +694,11 @@ makeDest :: (Emits n, ImpBuilder m, EnvReader m)
 makeDest allocInfo ty =
  liftImmut do
    DB bindings <- getDB
-   return $ runDestM bindings allocInfo do
-     buildLocalDest $
-       makeSingleDest [] $ sink ty
+   cache <- get
+   let (result, cache') = runDestM bindings allocInfo cache $
+                            buildLocalDest $ makeSingleDest [] $ sink ty
+   put cache'
+   return result
 
 makeSingleDest :: Mut n => [AtomName n] -> Type n -> DestM n (Dest n)
 makeSingleDest depVars ty = do
@@ -783,12 +814,12 @@ makeDestRec idxs depVars ty = case ty of
 
 makeBaseTypePtr :: Emits n => DestIdxs n -> BaseType -> DestM n (Atom n)
 makeBaseTypePtr (idxsTy, idxs) ty = do
+  offset <- computeOffset idxsTy idxs
   numel <- buildBlockDest $ computeElemCount (sink idxsTy)
   allocInfo <- getAllocInfo
   let addrSpace = chooseAddrSpace allocInfo numel
   let ptrTy = (addrSpace, ty)
   ptr <- Var <$> introduceNewPtr "ptr" ptrTy numel
-  offset <- computeOffset idxsTy idxs
   ptrOffset ptr offset
 
 copyAtom :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n ()
@@ -1095,7 +1126,7 @@ _deviceFromCallingConvention cc = case cc of
 
 type IndexStructure = EmptyAbs IdxNest :: E
 
-computeElemCount :: (Emits n, Builder m) => IndexStructure n -> m n (Atom n)
+computeElemCount :: (Emits n, Builder m, forall l. MonadState (IxCache l) (m l)) => IndexStructure n -> m n (Atom n)
 computeElemCount (EmptyAbs Empty) =
   -- XXX: this optimization is important because we don't want to emit any decls
   -- in the case that we don't have any indices. The more general path will
@@ -1103,8 +1134,10 @@ computeElemCount (EmptyAbs Empty) =
   return $ IdxRepVal 1
 computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
-  listSize <- emitSimplified $ foldM imul (IdxRepVal 1) =<< traverse indexSetSize (fromListE $ sink $ ListE idxList)
-  nestSize <- emitSimplified $ A.emitCPoly =<< liftImmut (elemCountCPoly $ sink idxNest)
+  listSize <- foldM imul (IdxRepVal 1) =<< forM idxList \ty -> do
+    appSimplifiedIxMethod ty simpleIxSize UnitVal
+  nestSizePoly <- liftImmut $ elemCountCPoly idxNest
+  nestSize <- emitSimplified $ A.emitCPoly $ sink nestSizePoly
   imul listSize nestSize
 
 -- Split the index structure into a prefix of non-dependent index types
@@ -1128,17 +1161,21 @@ emitSimplified
   -> m n (Atom n)
 emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
 
-computeOffset :: forall m n. (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
+computeOffset :: forall n m. (Emits n, Builder m, forall l. MonadState (IxCache l) (m l))
+              => IndexStructure n -> [AtomName n] -> m n (Atom n)
 computeOffset idxNest' idxs = do
   let (idxList , idxNest ) = indexStructureSplit idxNest'
   let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
   nestOffset   <- rec idxNest nestIdxs
   nestSize     <- computeElemCount idxNest
-  listOrds     <- forM listIdxs \i -> emitSimplified $ indexToInt $ sink $ Var i
+  listOrds     <- forM listIdxs \i -> do
+    ty <- getType i
+    appSimplifiedIxMethod ty simpleToOrdinal $ Var i
   -- We don't compute the first size (which we don't need!) to avoid emitting unnecessary decls.
   idxListSizes <- case idxList of
     [] -> return []
-    _  -> fmap (IdxRepVal (-1):) $ forM (tail idxList) \ty -> emitSimplified $ indexSetSize $ sink ty
+    _  -> fmap (IdxRepVal (-1):) $ forM (tail idxList) \ty -> do
+      appSimplifiedIxMethod ty simpleIxSize UnitVal
   listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
   iadd listOffset nestOffset
   where
@@ -1156,7 +1193,7 @@ computeOffset idxNest' idxs = do
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m)
+elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m, forall l. MonadState (IxCache l) (m l))
                => IndexStructure n -> m n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
@@ -1176,7 +1213,7 @@ elemCountCPoly (Abs bs UnitE) = case bs of
 
 -- === Imp IR builder ===
 
-class (EnvReader m, EnvExtender m, Fallible1 m)
+class (EnvReader m, EnvExtender m, Fallible1 m, forall n. MonadState (IxCache n) (m n))
        => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
@@ -1329,17 +1366,91 @@ liftBuilderImpSimplify cont = do
     buildBlock $ simplifyBlock block
   runSubstReaderT idSubst $ translateBlock Nothing block
 
+data SimpleIxInstance (n::S) =
+  SimpleIxInstance
+    { simpleIxSize            :: (Abs (Nest Decl) LamExpr n)
+    , simpleToOrdinal         :: (Abs (Nest Decl) LamExpr n)
+    , simpleUnsafeFromOrdinal :: (Abs (Nest Decl) LamExpr n)
+    }
+
+instance GenericE SimpleIxInstance where
+  type RepE SimpleIxInstance = (PairE (Abs (Nest Decl) LamExpr)
+                                 (PairE (Abs (Nest Decl) LamExpr)
+                                        (Abs (Nest Decl) LamExpr)))
+  fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
+  toE (PairE a (PairE b c)) = SimpleIxInstance a b c
+
+instance SinkableE SimpleIxInstance
+instance HoistableE SimpleIxInstance
+
+simplifiedIxInstance
+  :: (EnvReader m, MonadState (IxCache n) (m n))
+  => Type n -> m n (SimpleIxInstance n)
+simplifiedIxInstance ty = do
+  let key = EKey ty
+  gets (HM.lookup key . fromHashMapE) >>= \case
+    Just a -> return a
+    Nothing -> do
+      a <- simplifyInstance
+      modify (<> (HashMapE $ HM.singleton key a))
+      return a
+  where
+    simplifyInstance = liftSimplifyM do
+      Block _ decls expr <- liftBuilder $ buildBlock $ do
+        impl <- getIxImpl $ sink ty
+        return $ ProdVal [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
+      simpBlock <- buildBlock $ simplifyDecls decls $
+        simplifyExpr expr >>= \case
+          ProdVal [size, toOrd, fromOrd] -> dropSubst do
+            (size'   , IdentityRecon) <- simplifyLam size
+            (toOrd'  , IdentityRecon) <- simplifyLam toOrd
+            (fromOrd', IdentityRecon) <- simplifyLam fromOrd
+            return $ ProdVal [size', toOrd', fromOrd']
+          _ -> error "Failed to simplify Ix methods"
+      case simpBlock of
+        Block _ simpDecls (Atom (ProdVal [Lam size, Lam toOrd, Lam fromOrd])) -> do
+          return $ SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
+        _ -> error "Failed to simplify Ix methods"
+
+appSimplifiedIxMethod
+  :: (Emits n, Builder m, MonadState (IxCache n) (m n))
+  => Type n -> (SimpleIxInstance n -> Abs (Nest Decl) LamExpr n)
+  -> Atom n -> m n (Atom n)
+appSimplifiedIxMethod ty method x = do
+  Abs decls f <- method <$> simplifiedIxInstance ty
+  f' <- emitDecls decls f
+  Distinct <- getDistinct
+  case f' of
+    LamExpr fx' fb' -> do
+      emitBlock =<< liftImmut do
+        scope <- getScope
+        return $ substE (scope, idSubst <>> fx' @> SubstVal x) fb'
+
+appSimplifiedIxMethodImp
+  :: (Emits n, ImpBuilder m)
+  => Type n -> (SimpleIxInstance n -> Abs (Nest Decl) LamExpr n)
+  -> Atom n -> m n (Atom n)
+appSimplifiedIxMethodImp ty method x = do
+  -- TODO: Is this safe? Shouldn't I use x' here? It errors then!
+  Abs decls f <- method <$> simplifiedIxInstance ty
+  let decls' = decls
+  case f of
+    LamExpr fx' fb' ->
+      runSubstReaderT idSubst $ translateDeclNest decls' $
+        extendSubst (fx'@>SubstVal x) $ translateBlock Nothing fb'
+
 intToIndexImp :: (ImpBuilder m, Emits n) => Type n -> IExpr n -> m n (Atom n)
 intToIndexImp ty i =
-  liftBuilderImpSimplify $ intToIndex (sink ty) =<< toScalarAtom (sink i)
+  appSimplifiedIxMethodImp ty simpleUnsafeFromOrdinal =<< toScalarAtom i
 
 indexToIntImp :: (ImpBuilder m, Emits n) => Atom n -> m n (IExpr n)
-indexToIntImp idx =
-  fromScalarAtom =<< liftBuilderImpSimplify (indexToInt $ sink idx)
+indexToIntImp idx = do
+  ty <- getType idx
+  fromScalarAtom =<< appSimplifiedIxMethodImp ty simpleToOrdinal  idx
 
 indexSetSizeImp :: (ImpBuilder m, Emits n) => Type n -> m n (IExpr n)
-indexSetSizeImp ty =
-  fromScalarAtom =<< liftBuilderImpSimplify (indexSetSize $ sink ty)
+indexSetSizeImp ty = do
+  fromScalarAtom =<< appSimplifiedIxMethodImp ty simpleIxSize UnitVal
 
 -- === type checking imp programs ===
 
