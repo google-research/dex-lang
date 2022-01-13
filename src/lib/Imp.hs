@@ -1091,50 +1091,35 @@ computeElemCount (EmptyAbs Empty) =
   -- in the case that we don't have any indices. The more general path will
   -- still compute `1`, but it might emit decls along the way.
   return $ IdxRepVal 1
-computeElemCount idxNest = do
-  idxNest' <- liftEmitBuilder $ indexStructureWithoutProjectElt idxNest
-  polySize <- liftImmut $ elemCountCPoly idxNest'
-  A.emitCPoly polySize
+computeElemCount idxNest' = do
+  let (idxList, idxNest) = indexStructureSplit idxNest'
+  listSize <- foldM imul (IdxRepVal 1) =<< traverse indexSetSize idxList
+  nestSize <- A.emitCPoly =<< liftImmut (elemCountCPoly idxNest)
+  imul listSize nestSize
 
--- we can't turn types into polynomials if they contain `ProjectElt` atoms, so
--- we traverse the index structure and emit any `ProjectElt` occurrences so we
--- just have variables instead.
--- TODO: can we just get rid of `ProjectElt`? Is causes many headaches like these.
-indexStructureWithoutProjectElt
-  :: (Emits n, ScopableBuilder m)
-  =>  IndexStructure n -> m n (IndexStructure n)
-indexStructureWithoutProjectElt (Abs Empty UnitE) = return $ EmptyAbs Empty
-indexStructureWithoutProjectElt (Abs (Nest (b:>ty) rest) UnitE) = do
-  ty' <- indexTyWithoutProjectElt ty
-  Abs decls idxNest <- liftImmut $ refreshBinders (b:>ty') \b' s -> do
-    rest' <- applySubst s $ Abs rest UnitE
-    DistinctAbs decls (Abs restNoProj UnitE) <- buildScoped $
-      indexStructureWithoutProjectElt (sink rest')
-    -- this should succeed because we shouldn't have a `ProjectElt` that depends on an index
-    PairB decls' b'' <- return $ ignoreHoistFailure $ exchangeBs $ PairB b' decls
-    return $ Abs decls' $ Abs (Nest b'' restNoProj) UnitE
-  emitDecls decls idxNest
-
-indexTyWithoutProjectElt
-  :: forall n m . (Emits n, Builder m)
-  =>  Type n -> m n (Type n)
-indexTyWithoutProjectElt ty = case ty of
-  Var v -> return $ Var v
-  ProjectElt idxs v -> liftM Var $ emit $ Atom $ ProjectElt idxs v
-  TC  con -> TC  <$> mapM rec con
-  Con con -> Con <$> mapM rec con
-  RecordTy ( NoExt types) -> RecordTy  <$> NoExt <$> mapM rec types
-  VariantTy (NoExt types) -> VariantTy <$> NoExt <$> mapM rec types
-  _ -> error $ "not implemented " ++ pprint ty
-  where
-    rec :: Type n -> m n (Type n)
-    rec = indexTyWithoutProjectElt
+-- Split the index structure into a prefix of non-dependent index types
+-- and a trailing nest of indices that can contain inter-dependencies.
+indexStructureSplit :: IndexStructure n -> ([Type n], IndexStructure n)
+indexStructureSplit (Abs Empty UnitE) = ([], EmptyAbs Empty)
+indexStructureSplit s@(Abs (Nest b rest) UnitE) =
+  case hoist b (EmptyAbs rest) of
+    HoistFailure _     -> ([], s)
+    HoistSuccess rest' -> (binderType b:ans1, ans2)
+      where (ans1, ans2) = indexStructureSplit rest'
 
 computeOffset :: forall m n. (Emits n, Builder m) => IndexStructure n -> [AtomName n] -> m n (Atom n)
-computeOffset idxNest idxs = do
-  idxNest' <- liftEmitBuilder $ indexStructureWithoutProjectElt idxNest
-  rec idxNest' idxs
+computeOffset idxNest' idxs = do
+  let (idxList , idxNest ) = indexStructureSplit idxNest'
+  let (listIdxs, nestIdxs) = splitAt (length idxList) idxs
+  nestOffset   <- rec idxNest nestIdxs
+  nestSize     <- computeElemCount idxNest
+  listOrds     <- mapM (indexToInt . Var) listIdxs
+  idxListSizes <- mapM indexSetSize idxList
+  listOffset   <- fst <$> foldM accumStrided (IdxRepVal 0, nestSize) (reverse $ zip idxListSizes listOrds)
+  iadd listOffset nestOffset
   where
+   accumStrided (total, stride) (size, i) = (,) <$> (iadd total =<< imul i stride) <*> imul stride size
+   -- Recursively process the dependent part of the nest
    rec :: IndexStructure n -> [AtomName n] -> m n (Atom n)
    rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
    rec (Abs (Nest b bs) UnitE) (i:is) = do
@@ -1147,18 +1132,23 @@ computeOffset idxNest idxs = do
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n)
+elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m)
                => IndexStructure n -> m n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
   Nest b rest -> do
-    size <- A.indexSetSizeCPoly $ binderType b
-    rhsElemCounts <- refreshBinders b \(b':>_) s -> do
-      rest' <- applySubst s $ Abs rest UnitE
-      Abs b' <$> elemCountCPoly rest'
-    withFreshBinder NoHint IdxRepTy \b' -> do
-      let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
-      return $ A.psubst (Abs b' sumPoly) size
+    sizeBlock <- liftBuilder $ buildBlock $ indexSetSize $ sink $ binderType b
+    msize <- A.blockAsCPoly sizeBlock
+    case msize of
+      Just size -> do
+        rhsElemCounts <- refreshBinders b \(b':>_) s -> do
+          rest' <- applySubst s $ Abs rest UnitE
+          Abs b' <$> elemCountCPoly rest'
+        withFreshBinder NoHint IdxRepTy \b' -> do
+          let sumPoly = A.sumC (binderName b') (sink rhsElemCounts)
+          return $ A.psubst (Abs b' sumPoly) size
+      _ -> throw NotImplementedErr $
+        "Algebraic simplification failed to model index computations: " ++ pprint sizeBlock
 
 -- === Imp IR builder ===
 
