@@ -37,6 +37,7 @@ module Name (
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
+  HashMapE (..), HashableE,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
@@ -95,6 +96,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Data.Functor ((<&>))
@@ -532,6 +534,8 @@ type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
 
+type HashableE (e::E) = forall n. Hashable (e n)
+
 data UnitE (n::S) = UnitE
      deriving (Show, Eq, Generic)
 
@@ -555,6 +559,10 @@ newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
 
 newtype MapE (k::E) (v::E) (n::S) = MapE { fromMapE :: M.Map (k n) (v n) }
                                     deriving (Semigroup, Monoid)
+
+newtype HashMapE (k::E) (v::E) (n::S) =
+  HashMapE { fromHashMapE :: HM.HashMap (k n) (v n) }
+  deriving (Semigroup, Monoid)
 
 newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEmpty (e n)}
         deriving (Show, Eq, Generic)
@@ -1968,6 +1976,14 @@ instance Monoid (ListE e n) where
 
 instance Semigroup (ListE e n) where
   ListE xs <> ListE ys = ListE $ xs <> ys
+
+instance (EqE k, HashableE k) => GenericE (HashMapE k v) where
+  type RepE (HashMapE k v) = ListE (PairE k v)
+  fromE (HashMapE m) = ListE $ map (uncurry PairE) $ HM.toList m
+  toE   (ListE pairs) = HashMapE $ HM.fromList $ map fromPairE pairs
+instance (EqE k, HashableE k, SinkableE k  , SinkableE   v) => SinkableE   (HashMapE k v)
+instance (EqE k, HashableE k, HoistableE k , HoistableE  v) => HoistableE  (HashMapE k v)
+instance (EqE k, HashableE k, SubstE Name k, SubstE Name v) => SubstE Name (HashMapE k v)
 
 instance SinkableE (LiftE a) where
   sinkingProofE _ (LiftE x) = LiftE x
