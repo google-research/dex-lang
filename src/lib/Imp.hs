@@ -1115,7 +1115,7 @@ _deviceFromCallingConvention cc = case cc of
 
 type IndexStructure = EmptyAbs IdxNest :: E
 
-computeElemCount :: (Emits n, Builder m, forall l. MonadState (IxCache l) (m l)) => IndexStructure n -> m n (Atom n)
+computeElemCount :: (Emits n, Builder m, MonadIxCache1 m) => IndexStructure n -> m n (Atom n)
 computeElemCount (EmptyAbs Empty) =
   -- XXX: this optimization is important because we don't want to emit any decls
   -- in the case that we don't have any indices. The more general path will
@@ -1125,8 +1125,7 @@ computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
   listSize <- foldM imul (IdxRepVal 1) =<< forM idxList \ty -> do
     appSimplifiedIxMethod ty simpleIxSize UnitVal
-  nestSizePoly <- liftImmut $ elemCountCPoly idxNest
-  nestSize <- emitSimplified $ A.emitCPoly $ sink nestSizePoly
+  nestSize <- A.emitCPoly =<< liftImmut (elemCountCPoly idxNest)
   imul listSize nestSize
 
 -- Split the index structure into a prefix of non-dependent index types
@@ -1144,13 +1143,7 @@ dceApproxBlock block@(Block _ decls expr) = case hoist decls expr of
   HoistSuccess expr' -> Block NoBlockAnn Empty expr'
   HoistFailure _     -> block
 
-emitSimplified
-  :: (Emits n, Builder m)
-  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
-  -> m n (Atom n)
-emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
-
-computeOffset :: forall n m. (Emits n, Builder m, forall l. MonadState (IxCache l) (m l))
+computeOffset :: forall n m. (Emits n, Builder m, MonadIxCache1 m)
               => IndexStructure n -> [AtomName n] -> m n (Atom n)
 computeOffset idxNest' idxs = do
   let (idxList , idxNest ) = indexStructureSplit idxNest'
@@ -1176,17 +1169,24 @@ computeOffset idxNest' idxs = do
      rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
        rest' <- applySubst s $ EmptyAbs bs
        Abs b' <$> elemCountCPoly rest'
-     significantOffset <- emitSimplified $ A.emitCPoly $ A.sumC (sink i) (sink rhsElemCounts)
+     significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
      remainingIdxStructure <- applySubst (b@>i) (EmptyAbs bs)
      otherOffsets <- rec remainingIdxStructure is
      iadd significantOffset otherOffsets
    rec _ _ = error "zip error"
 
-elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m, forall l. MonadState (IxCache l) (m l))
+emitSimplified
+  :: (Emits n, Builder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Atom n)
+emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
+
+elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m, MonadIxCache1 m)
                => IndexStructure n -> m n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
   Nest b rest -> do
+    -- TODO: Use the simplified version here!
     sizeBlock <- liftBuilder $ buildBlock $ emitSimplified $ indexSetSize $ sink $ binderType b
     msize <- A.blockAsCPoly sizeBlock
     case msize of
@@ -1202,7 +1202,7 @@ elemCountCPoly (Abs bs UnitE) = case bs of
 
 -- === Imp IR builder ===
 
-class (EnvReader m, EnvExtender m, Fallible1 m, forall n. MonadState (IxCache n) (m n))
+class (EnvReader m, EnvExtender m, Fallible1 m, MonadIxCache1 m)
        => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
