@@ -25,7 +25,6 @@ import Control.Monad.State.Class
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import qualified Data.HashMap.Strict as HM
 
 import Err
 import MTL1
@@ -73,16 +72,6 @@ instance Pretty (ImpFunctionWithRecon n) where
 -- === ImpM monad ===
 
 type ImpBuilderEmissions = Nest ImpDecl
-
-type IxCache = HashMapE (EKey Type) SimpleIxInstance
-
-instance Monad1 m => HoistableState IxCache m where
-  -- TODO: I think we can do hoisting only based on the free vars in keys.
-  -- Instances should only be added at the top-level so it's not like they
-  -- can refer to any local vars that could prevent the values from being hoistable.
-  hoistState s b s' = case hoist b s' of
-    HoistSuccess s'' -> return s''
-    HoistFailure _   -> return s
 
 newtype ImpM (n::S) (a:: *) =
   ImpM { runImpM' :: ScopedT1 IxCache (InplaceT Env ImpBuilderEmissions HardFailM) n a }
@@ -1365,66 +1354,6 @@ liftBuilderImpSimplify cont = do
     block <- liftBuilder $ buildBlock cont
     buildBlock $ simplifyBlock block
   runSubstReaderT idSubst $ translateBlock Nothing block
-
-data SimpleIxInstance (n::S) =
-  SimpleIxInstance
-    { simpleIxSize            :: (Abs (Nest Decl) LamExpr n)
-    , simpleToOrdinal         :: (Abs (Nest Decl) LamExpr n)
-    , simpleUnsafeFromOrdinal :: (Abs (Nest Decl) LamExpr n)
-    }
-
-instance GenericE SimpleIxInstance where
-  type RepE SimpleIxInstance = (PairE (Abs (Nest Decl) LamExpr)
-                                 (PairE (Abs (Nest Decl) LamExpr)
-                                        (Abs (Nest Decl) LamExpr)))
-  fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
-  toE (PairE a (PairE b c)) = SimpleIxInstance a b c
-
-instance SinkableE SimpleIxInstance
-instance HoistableE SimpleIxInstance
-
-simplifiedIxInstance
-  :: (EnvReader m, MonadState (IxCache n) (m n))
-  => Type n -> m n (SimpleIxInstance n)
-simplifiedIxInstance ty = do
-  let key = EKey ty
-  gets (HM.lookup key . fromHashMapE) >>= \case
-    Just a -> return a
-    Nothing -> do
-      a <- simplifyInstance
-      modify (<> (HashMapE $ HM.singleton key a))
-      return a
-  where
-    simplifyInstance = liftSimplifyM do
-      Block _ decls expr <- liftBuilder $ buildBlock $ do
-        impl <- getIxImpl $ sink ty
-        return $ ProdVal [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
-      simpBlock <- buildBlock $ simplifyDecls decls $
-        simplifyExpr expr >>= \case
-          ProdVal [size, toOrd, fromOrd] -> dropSubst do
-            (size'   , IdentityRecon) <- simplifyLam size
-            (toOrd'  , IdentityRecon) <- simplifyLam toOrd
-            (fromOrd', IdentityRecon) <- simplifyLam fromOrd
-            return $ ProdVal [size', toOrd', fromOrd']
-          _ -> error "Failed to simplify Ix methods"
-      case simpBlock of
-        Block _ simpDecls (Atom (ProdVal [Lam size, Lam toOrd, Lam fromOrd])) -> do
-          return $ SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
-        _ -> error "Failed to simplify Ix methods"
-
-appSimplifiedIxMethod
-  :: (Emits n, Builder m, MonadState (IxCache n) (m n))
-  => Type n -> (SimpleIxInstance n -> Abs (Nest Decl) LamExpr n)
-  -> Atom n -> m n (Atom n)
-appSimplifiedIxMethod ty method x = do
-  Abs decls f <- method <$> simplifiedIxInstance ty
-  f' <- emitDecls decls f
-  Distinct <- getDistinct
-  case f' of
-    LamExpr fx' fb' -> do
-      emitBlock =<< liftImmut do
-        scope <- getScope
-        return $ substE (scope, idSubst <>> fx' @> SubstVal x) fb'
 
 appSimplifiedIxMethodImp
   :: (Emits n, ImpBuilder m)

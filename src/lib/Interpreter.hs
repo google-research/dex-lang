@@ -16,7 +16,6 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List.NonEmpty as NE
 import Data.Int
-import Data.Functor ((<&>))
 import Data.Foldable (toList)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
@@ -28,10 +27,11 @@ import Err
 import LabeledItems
 
 import Name
+import MTL1
 import Syntax
+import Simplify
 import Type
 import PPrint ()
-import Builder
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
@@ -188,7 +188,7 @@ evalOp expr = mapM evalAtom expr >>= \case
   ToOrdinal idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i
-    _ -> evalBuilder $ indexToInt $ sink idxArg
+    _ -> error "Not implemented"
   CastOp destTy x -> do
     sourceTy <- getType x
     let failedCast = error $ "Cast not implemented: " ++ pprint sourceTy ++
@@ -216,13 +216,6 @@ evalOp expr = mapM evalAtom expr >>= \case
       DataDef _ _ cons <- lookupDataDef defName
       return $ Con $ SumAsProd ty i (map (const []) cons)
   _ -> error $ "Not implemented: " ++ pprint expr
-
-evalBuilder :: (Interp m, SinkableE e, SubstE AtomSubstVal e)
-            => (forall l. (Emits l, Ext n l, Distinct l) => BuilderM l (e l))
-            -> m i n (e n)
-evalBuilder cont = dropSubst do
-  Abs decls result <- liftBuilder $ fromDistinctAbs <$> buildScoped cont
-  evalDecls decls $ substM result
 
 matchUPat :: Interp m => UPat i i' -> Atom o -> m o o (SubstFrag AtomSubstVal i i' o)
 matchUPat (WithSrcB _ pat) x = do
@@ -263,11 +256,17 @@ matchUPats _ _ = error "mismatched lengths"
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
 -- We could have a partial version of the interpreter that fails when any IO is to happen.
 indices :: EnvReader m => Type n -> m n [Atom n]
-indices ty = fromListE <$> liftImmut do
-  DB env <- getDB
-  let IdxRepVal size = unsafePerformIO $ runInterpM env $ evalBuilder $ indexSetSize $ sink ty
-  return $ ListE $ [0..size - 1] <&> \o ->
-    unsafePerformIO $ runInterpM env $ evalBuilder $ intToIndex (sink ty) $ IdxRepVal o
+indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $
+  liftImmut $ do
+    DB env <- getDB
+    ix <- simplifiedIxInstance ty
+    let IdxRepVal size = unsafePerformIO $ runInterpM env $ evalMethod ix simpleIxSize UnitVal
+    return $ ListE $ unsafePerformIO $ runInterpM env $
+      forM [0..size - 1] $ evalMethod ix simpleUnsafeFromOrdinal . IdxRepVal
+    where
+      evalMethod ix method x = case method ix of
+        Abs decls lam -> do
+          evalDecls decls $ evalExpr $ App (Lam lam) $ sinkFromTop x NE.:| []
 
 pattern Int64Val :: Int64 -> Atom n
 pattern Int64Val x = Con (Lit (Int64Lit x))
