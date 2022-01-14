@@ -12,7 +12,7 @@
 
 module Inference
   ( inferTopUDecl, inferTopUExpr, applyUDeclAbs, trySynthDict, trySynthDictBlock
-  , synthTopBlock, UDeclInferenceResult (..)) where
+  , synthTopBlock, UDeclInferenceResult (..), synthIx ) where
 
 import Prelude hiding ((.), id)
 import Control.Category
@@ -1580,6 +1580,14 @@ checkIx ctx ty = do
     Just ixInterfaceName -> do
       ClassBinding (ClassDef _ _ dictDataDefName) _ <- lookupEnv ixInterfaceName
       void $ emitOp $ SynthesizeDict ctx $ TypeCon "Ix" dictDataDefName [ty]
+
+synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
+synthIx ty = do
+  lookupSourceMap ClassNameRep "Ix" >>= \case
+    Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
+    Just ixInterfaceName -> do
+      ClassBinding (ClassDef _ _ dictDataDefName) _ <- lookupEnv ixInterfaceName
+      trySynthDictBlock $ TypeCon "Ix" dictDataDefName [ty]
 
 -- === Solver ===
 

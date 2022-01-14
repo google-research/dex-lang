@@ -9,20 +9,25 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Simplify ( simplifyTopBlock, SimplifiedBlock (..)
-                , simplifyBlock, liftSimplifyM) where
+                , simplifyBlock, liftSimplifyM, buildBlockSimplified
+                , IxCache, MonadIxCache1, SimpleIxInstance (..)
+                , simplifiedIxInstance, appSimplifiedIxMethod ) where
 
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
+import Control.Monad.State.Class
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import qualified Data.Map.Strict as M
+import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as S
 
 import Err
 
 import Name
+import MTL1
 import Builder
 import Syntax
 import Type
@@ -56,6 +61,15 @@ liftSimplifyM
 liftSimplifyM cont = liftImmut do
   DB env <- getDB
   return $ runSimplifyM env $ cont
+
+buildBlockSimplified
+  :: (Builder m)
+  => (forall l. (Emits l, DExt n l) => BuilderM l (Atom l))
+  -> m n (Block n)
+buildBlockSimplified m =
+  liftSimplifyM do
+    block <- liftBuilder $ buildBlock m
+    buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
 
@@ -551,3 +565,77 @@ hasExceptions expr = do
   case t of
     Nothing -> return $ ExceptionEffect `S.member` effs
     Just _  -> error "Shouldn't have tail left"
+
+-- === Ix simplification ===
+
+data SimpleIxInstance (n::S) =
+  SimpleIxInstance
+    { simpleIxSize            :: (Abs (Nest Decl) LamExpr n)
+    , simpleToOrdinal         :: (Abs (Nest Decl) LamExpr n)
+    , simpleUnsafeFromOrdinal :: (Abs (Nest Decl) LamExpr n)
+    }
+
+instance GenericE SimpleIxInstance where
+  type RepE SimpleIxInstance = (PairE (Abs (Nest Decl) LamExpr)
+                                 (PairE (Abs (Nest Decl) LamExpr)
+                                        (Abs (Nest Decl) LamExpr)))
+  fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
+  toE (PairE a (PairE b c)) = SimpleIxInstance a b c
+
+instance SinkableE SimpleIxInstance
+instance HoistableE SimpleIxInstance
+
+type IxCache = HashMapE (EKey Type) SimpleIxInstance
+
+type MonadIxCache1 (m::MonadKind1) = forall n. MonadState (IxCache n) (m n)
+
+instance Monad1 m => HoistableState IxCache m where
+  -- TODO: I think we can do hoisting only based on the free vars in keys.
+  -- Instances should only be added at the top-level so it's not like they
+  -- can refer to any local vars that could prevent the values from being hoistable.
+  hoistState s b s' = case hoist b s' of
+    HoistSuccess s'' -> return s''
+    HoistFailure _   -> return s
+
+simplifiedIxInstance
+  :: (EnvReader m, MonadIxCache1 m)
+  => Type n -> m n (SimpleIxInstance n)
+simplifiedIxInstance ty = do
+  let key = EKey ty
+  gets (HM.lookup key . fromHashMapE) >>= \case
+    Just a -> return a
+    Nothing -> do
+      a <- simplifyInstance
+      modify (<> (HashMapE $ HM.singleton key a))
+      return a
+  where
+    simplifyInstance = liftSimplifyM do
+      Block _ decls expr <- liftBuilder $ buildBlock $ do
+        impl <- getIxImpl $ sink ty
+        return $ ProdVal [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
+      simpBlock <- buildBlock $ simplifyDecls decls $
+        simplifyExpr expr >>= \case
+          ProdVal [size, toOrd, fromOrd] -> dropSubst do
+            (size'   , IdentityRecon) <- simplifyLam size
+            (toOrd'  , IdentityRecon) <- simplifyLam toOrd
+            (fromOrd', IdentityRecon) <- simplifyLam fromOrd
+            return $ ProdVal [size', toOrd', fromOrd']
+          _ -> error "Failed to simplify Ix methods"
+      case simpBlock of
+        Block _ simpDecls (Atom (ProdVal [Lam size, Lam toOrd, Lam fromOrd])) -> do
+          return $ SimpleIxInstance (Abs simpDecls size) (Abs simpDecls toOrd) (Abs simpDecls fromOrd)
+        _ -> error "Failed to simplify Ix methods"
+
+appSimplifiedIxMethod
+  :: (Emits n, Builder m, MonadIxCache1 m)
+  => Type n -> (SimpleIxInstance n -> Abs (Nest Decl) LamExpr n)
+  -> Atom n -> m n (Atom n)
+appSimplifiedIxMethod ty method x = do
+  Abs decls f <- method <$> simplifiedIxInstance ty
+  f' <- emitDecls decls f
+  Distinct <- getDistinct
+  case f' of
+    LamExpr fx' fb' -> do
+      emitBlock =<< liftImmut do
+        scope <- getScope
+        return $ substE (scope, idSubst <>> fx' @> SubstVal x) fb'

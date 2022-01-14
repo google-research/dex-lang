@@ -561,9 +561,19 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
   x
 > (Right 1.2)
 
--- TODO(Ix) : Write a proper instance
-instance {n m} [Ix n, Ix m] Ix {weights:(n&m) | biases:n}
-  dummy_ix__ = 0
+def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
+  fwd = \v.  case v of
+    {|weights=x|} -> Left x
+    {|biases=x|}  -> Right x
+  bwd = \v. case v of
+    Left x  -> {|weights=x|}
+    Right x -> {|biases=x|}
+  MkIso {fwd, bwd}
+
+instance {n m} [Ix n, Ix m] Ix {weights:n | biases:m}
+  getSize = \(). size n + size m
+  ordinal = ordinal <<< appIso wbToEither
+  unsafeFromOrdinal = unsafeFromOrdinal _ >>> revIso wbToEither
 
 -- Sum types as flattened index sets!
 def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float

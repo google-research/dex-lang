@@ -24,7 +24,8 @@ import Data.List (intersperse)
 import Data.Tuple (swap)
 import Data.Coerce
 
-import Builder hiding (sub, add, indexSetSize)
+import Builder hiding (sub, add)
+import Simplify
 import Syntax
 import Type
 import Name
@@ -217,6 +218,10 @@ blockAsCPoly (Block _ decls' result') = fromMaybeE <$> liftImmut do
       Op (ScalarBinOp IAdd x y) -> add  <$> intAsCPoly x <*> intAsCPoly y
       Op (ScalarBinOp ISub x y) -> sub  <$> intAsCPoly x <*> intAsCPoly y
       Op (ScalarBinOp IMul x y) -> mulC <$> intAsCPoly x <*> intAsCPoly y
+      -- TODO: Remove once IntRange and IndexRange are defined in the surface language
+      Op (CastOp IdxRepTy v)    -> getType v >>= \case
+        IdxRepTy -> intAsCPoly v
+        _        -> indexAsCPoly v
       -- This looks for `select c 0 n` such that `c` is defined as `n < 0`.
       Op (Select (Var c) t f) -> do
         lookupAtomName c >>= \case
@@ -260,7 +265,8 @@ blockAsCPoly (Block _ decls' result') = fromMaybeE <$> liftImmut do
 
 -- === polynomials to Core expressions ===
 
-emitCPoly :: (Emits n, Builder m) => ClampPolynomial n -> m n (Atom n)
+emitCPoly :: (Emits n, Builder m, MonadIxCache1 m)
+          => ClampPolynomial n -> m n (Atom n)
 emitCPoly = emitPolynomialP emitClampMonomial
 
 -- We have to be extra careful here, because we're evaluating a polynomial
@@ -283,14 +289,14 @@ emitPolynomialP evalMono (Polynomial p) = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-emitClampMonomial :: (Emits n, Builder m) => ClampMonomial n -> m n (Atom n)
+emitClampMonomial :: (Emits n, Builder m, MonadIxCache1 m) => ClampMonomial n -> m n (Atom n)
 emitClampMonomial (ClampMonomial clamps m) = do
   valuesToClamp <- traverse (emitPolynomialP emitMonomial . coerce) clamps
   clampsProduct <- foldM imul (IdxRepVal 1) =<< traverse clampPositive valuesToClamp
   mval <- emitMonomial m
   imul clampsProduct mval
 
-emitMonomial :: (Emits n, Builder m) => Monomial n -> m n (Atom n)
+emitMonomial :: (Emits n, Builder m, MonadIxCache1 m) => Monomial n -> m n (Atom n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> do
     v' <- emitPolyName v
@@ -305,11 +311,11 @@ ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 -- the purposes of doing polynomial manipulation. But when we eventually emit
 -- them into a realy dex program we need to the conversion-to-ordinal
 -- explicitly.
-emitPolyName :: (Emits n, Builder m) => PolyName n -> m n (Atom n)
+emitPolyName :: (Emits n, Builder m, MonadIxCache1 m) => PolyName n -> m n (Atom n)
 emitPolyName v = do
   getType (Var v) >>= \case
     IdxRepTy -> return $ Var v
-    _ -> indexToInt $ Var v
+    ty -> appSimplifiedIxMethod ty simpleToOrdinal (Var v)
 
 -- === instances ===
 

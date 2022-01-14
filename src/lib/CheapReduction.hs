@@ -105,7 +105,7 @@ runCheapReducerM :: Distinct o
                  => Subst AtomSubstVal i o -> Env o -> CheapReducerM i o a
                  -> (Maybe a, FailedDictTypes o)
 runCheapReducerM env bindings (CheapReducerM m) =
-  runIdentity $ runEnvReaderT bindings $ fmap fst $ runScopedT1
+  runIdentity $ runEnvReaderT bindings $ runScopedT1
     (runWriterT1 $ runMaybeT1 $ runSubstReaderT env m) mempty
 
 cheapReduceFromSubst

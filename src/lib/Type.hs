@@ -16,7 +16,7 @@ module Type (
   checkTypes, checkTypesM,
   getType, getAppType, getTypeSubst, litType, getBaseMonoidType,
   instantiatePi, instantiateDepPairTy,
-  checkExtends, checkedApplyDataDefParams, indices,
+  checkExtends, checkedApplyDataDefParams,
   instantiateDataDef,
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType,
@@ -26,13 +26,12 @@ module Type (
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
-import Control.Category ((>>>), id)
+import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
-import Data.Int
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -40,9 +39,10 @@ import qualified Data.Set        as S
 import LabeledItems
 
 import Err
-import Util (forMZipped, forMZipped_, iota, scan, restructure)
+import Util (forMZipped, forMZipped_, iota)
 
 import CheapReduction
+import {-# SOURCE #-} Interpreter
 import Syntax
 import Name
 import PPrint ()
@@ -236,7 +236,9 @@ class (SinkableE e, SubstE Name e, PrettyE e) => HasType (e::E) where
       False -> do
         reqTy' <- cheapNormalize reqTy
         ty'    <- cheapNormalize ty
-        checkAlphaEq reqTy' ty'
+        alphaEq reqTy' ty' >>= \case
+          True  -> return ()
+          False -> throw TypeErr $ pprint reqTy' ++ " != " ++ pprint ty'
     return e'
 
 class SinkableE e => CheckableE (e::E) where
@@ -707,11 +709,11 @@ typeCheckPrimOp op = case op of
     ty|:TyKind >> substM ty
   CastOp t@(Var _) _ -> t |: TyKind >> substM t
   CastOp destTy e -> do
-    sourceTy <- typeCheckBaseType e
-    destTy  |: TyKind
-    (TC (BaseType destTy')) <- substM destTy
-    checkValidCast sourceTy destTy'
-    return $ TC $ BaseType $ destTy'
+    sourceTy' <- getTypeE e
+    destTy |: TyKind
+    destTy' <- substM destTy
+    checkValidCast sourceTy' destTy'
+    return $ destTy'
   RecordCons items record -> do
     types <- mapM getTypeE items
     rty <- getTypeE record
@@ -1011,11 +1013,20 @@ checkFloatBaseType allowVector t = case t of
     notFloat = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                                "floating-point type, but found: " ++ pprint t
 
-checkValidCast :: Fallible m => BaseType -> BaseType -> m ()
-checkValidCast (PtrType _) (PtrType _) = return ()
-checkValidCast (PtrType _) (Scalar Int64Type) = return ()
-checkValidCast (Scalar Int64Type) (PtrType _) = return ()
+checkValidCast :: Fallible1 m => Type n -> Type n -> m n ()
+checkValidCast (TC (IntRange _ _)) IdxRepTy = return ()
+checkValidCast IdxRepTy (TC (IntRange _ _)) = return ()
+checkValidCast (TC (IndexRange _ _ _)) IdxRepTy = return ()
+checkValidCast IdxRepTy (TC (IndexRange _ _ _)) = return ()
+checkValidCast (BaseTy l) (BaseTy r) = checkValidBaseCast l r
 checkValidCast sourceTy destTy =
+  throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
+
+checkValidBaseCast :: Fallible m => BaseType -> BaseType -> m ()
+checkValidBaseCast (PtrType _) (PtrType _) = return ()
+checkValidBaseCast (PtrType _) (Scalar Int64Type) = return ()
+checkValidBaseCast (Scalar Int64Type) (PtrType _) = return ()
+checkValidBaseCast sourceTy destTy =
   checkScalarType sourceTy >> checkScalarType destTy
   where
     checkScalarType ty = case ty of
@@ -1155,120 +1166,6 @@ singletonTypeVal' ty = case ty of
     _            -> notASingleton
   _ -> notASingleton
   where notASingleton = fail "not a singleton type"
-
--- === built-in index set type class ===
-
--- These only work for index set types without free variables. It's redundant
--- with the more general index set classs in Builder but this way we avoid the
--- dependency cycle. And we intend to make index sets a user-defined thing soon
--- anyway. One solution might be to define a monad class, a subset of Builder,
--- that can be instantiated with both an interpreter and a builder.
-
-indices :: forall n m. EnvReader m => Type n -> m n [Atom n]
-indices ty = do
-  Distinct <- getDistinct
-  withExtEvidence (absurdExtEvidence :: ExtEvidence VoidS n) do
-    case hoistToTop ty of
-      HoistSuccess ty' ->
-        return $ map (sink . litFromOrdinal ty') [0 .. litIdxSetSize ty' - 1]
-      HoistFailure _ -> error "can't get index literals from type with free vars"
-
-litIdxSetSize :: Type VoidS -> Int32
-litIdxSetSize ty = case ty of
-  TC (IntRange (IdxRepVal low) (IdxRepVal high)) ->
-    fromIntegral $ high - low
-  TC (IndexRange n low high) -> high' - low'
-    where
-      low' = case low of
-        InclusiveLim x -> litToOrdinal x
-        ExclusiveLim x -> litToOrdinal x + 1
-        Unlimited      -> 0
-      high' = case high of
-        InclusiveLim x -> litToOrdinal x + 1
-        ExclusiveLim x -> litToOrdinal x
-        Unlimited      -> litIdxSetSize n
-  TC (ProdType types)     -> product $ fmap litIdxSetSize types
-  RecordTy (NoExt types)  -> product $ fmap litIdxSetSize types
-  SumTy types             -> sum $ fmap litIdxSetSize types
-  VariantTy (NoExt types) -> sum $ fmap litIdxSetSize types
-  _ -> error $ "Not an (implemented) index set: " ++ pprint ty
-
-data IterOrder = MinorToMajor | MajorToMinor
-
-litToOrdinal :: Atom VoidS -> Int32
-litToOrdinal idx = case idx of
-  Con (IntRangeVal   _ _   (IdxRepVal i)) -> i
-  Con (IndexRangeVal _ _ _ (IdxRepVal i)) -> i
-  ProdTy           types  -> prodToInt MajorToMinor types
-  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
-  Con (SumCon _ _ _) -> error "not implemented"
-  Variant (NoExt tys) _ _ _ -> sumToInt tys
-  _ -> error $ "Not an (implemented) index: " ++ pprint idx
-  where
-    prodToInt :: Traversable t => IterOrder -> t (Type VoidS) -> Int32
-    prodToInt order types = do
-      let sizes = toList $ fmap litIdxSetSize types
-      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
-      let strides = rev $ fst $ scan (\sz prev -> (prev,) $ sz * prev) (rev sizes) 1
-      -- Unpack and sum the strided contributions
-      let subints = fmap litToOrdinal $ getUnpackedLitProd idx
-      let scaled = map (uncurry (*)) $ zip strides subints
-      sum scaled
-
-    sumToInt :: Traversable t => t (Type VoidS) -> Int32
-    sumToInt types = do
-      let sizes = map litIdxSetSize $ toList types
-      let offsets = fst $ scan (\sz prev -> (prev,) $ sz + prev) sizes 0
-      case trySelectBranch idx of
-        Nothing -> error "we're working with literals, so we should know the branch"
-        Just (i, [subix]) -> offsets !! i + litToOrdinal subix
-        Just _ -> error "expected a unary alt"
-
-    getUnpackedLitProd :: Atom VoidS -> [Atom VoidS]
-    getUnpackedLitProd prod = case prod of
-      Record xs -> toList xs
-      Con (ProdCon xs) -> xs
-      _ -> error "expected a record or product type"
-
-litFromOrdinal :: Type VoidS -> Int32 -> Atom VoidS
-litFromOrdinal ty i = case ty of
-  TC (IntRange low high) -> Con $ IntRangeVal low high $ IdxRepVal i
-  TC (IndexRange n low high) -> Con $ IndexRangeVal n low high (IdxRepVal i)
-  -- Strategically placed reverses make intToProd major-to-minor
-  TC (ProdType types)    -> ProdVal $ reverse $ intToProd $ reverse types
-  RecordTy (NoExt types) -> Record $ intToProd types
-  SumTy types             -> intToSum types [0..] $ SumVal ty
-  VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)
-  _ -> error $ "Not an (implemented) index set: " ++ pprint ty
-  where
-    -- XXX: Expects that the types are in a minor-to-major order
-    intToProd :: Traversable t => t (Type VoidS) -> t (Atom VoidS)
-    intToProd types = do
-      let sizes = fmap litIdxSetSize types
-      let strides = fst $ scan (\sz prev -> let v = sz * prev in ((prev, v), v)) sizes 1
-      let offsets = flip map (zip (toList types) (toList strides)) $
-            \(ety, (s1, s2)) -> do
-              let x = rem i s2
-              let y = div x s1
-              litFromOrdinal ety y
-      restructure offsets types
-
-    intToSum :: Traversable t => t (Type VoidS) -> t l -> (l -> Atom VoidS -> Atom VoidS) -> Atom VoidS
-    intToSum types labels mkSum = do
-      let sizes = fmap litIdxSetSize types
-      let offsets = fst $ scan (\sz prev -> (prev,) $ sz + prev) sizes 0
-      let
-        -- Find the right index by looping through the possible offsets
-        go prev (label, cty, offset) = do
-          let shifted = i - offset
-          -- TODO: This might run intToIndex on negative indices. Fix this!
-          let index = litFromOrdinal cty shifted
-          if i < offset
-            then prev
-            else mkSum label index
-        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
-      let start = mkSum l $ litFromOrdinal ty0 i
-      foldl go start zs
 
 -- === various helpers for querying types ===
 

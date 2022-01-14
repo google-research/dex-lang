@@ -37,6 +37,7 @@ module Name (
   EitherE (..), LiftE (..), EqE, EqB, OrdE, OrdB, VoidB,
   EitherB (..), BinderP (..),
   LiftB, pattern LiftB,
+  HashMapE (..), HashableE,
   MaybeE, fromMaybeE, toMaybeE, pattern JustE, pattern NothingE, MaybeB,
   pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
@@ -95,6 +96,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Data.Functor ((<&>))
@@ -532,6 +534,8 @@ type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
 
+type HashableE (e::E) = forall n. Hashable (e n)
+
 data UnitE (n::S) = UnitE
      deriving (Show, Eq, Generic)
 
@@ -555,6 +559,10 @@ newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
 
 newtype MapE (k::E) (v::E) (n::S) = MapE { fromMapE :: M.Map (k n) (v n) }
                                     deriving (Semigroup, Monoid)
+
+newtype HashMapE (k::E) (v::E) (n::S) =
+  HashMapE { fromHashMapE :: HM.HashMap (k n) (v n) }
+  deriving (Semigroup, Monoid, Show)
 
 newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEmpty (e n)}
         deriving (Show, Eq, Generic)
@@ -1134,6 +1142,7 @@ instance AlphaHashableE VoidE where
 -- === wrapper for E-kinded things suitable for use as keys ===
 
 newtype EKey (e::E) (n::S) = EKey { fromEKey :: e n }
+                           deriving (Show)
 
 instance GenericE (EKey e) where
   type RepE (EKey e) = e
@@ -1955,6 +1964,9 @@ instance (SinkableE k, SinkableE v, OrdE k) => SinkableE (MapE k v) where
 instance SinkableE e => SinkableE (ListE e) where
   sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
 
+instance SinkableE e => SinkableE (NonEmptyListE e) where
+  sinkingProofE fresh (NonEmptyListE xs) = NonEmptyListE $ fmap (sinkingProofE fresh) xs
+
 instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
     | length xs == length ys = mapM_ (uncurry alphaEqE) (zip xs ys)
@@ -1965,6 +1977,14 @@ instance Monoid (ListE e n) where
 
 instance Semigroup (ListE e n) where
   ListE xs <> ListE ys = ListE $ xs <> ys
+
+instance (EqE k, HashableE k) => GenericE (HashMapE k v) where
+  type RepE (HashMapE k v) = ListE (PairE k v)
+  fromE (HashMapE m) = ListE $ map (uncurry PairE) $ HM.toList m
+  toE   (ListE pairs) = HashMapE $ HM.fromList $ map fromPairE pairs
+instance (EqE k, HashableE k, SinkableE k  , SinkableE   v) => SinkableE   (HashMapE k v)
+instance (EqE k, HashableE k, HoistableE k , HoistableE  v) => HoistableE  (HashMapE k v)
+instance (EqE k, HashableE k, SubstE Name k, SubstE Name v) => SubstE Name (HashMapE k v)
 
 instance SinkableE (LiftE a) where
   sinkingProofE _ (LiftE x) = LiftE x
@@ -1980,6 +2000,9 @@ instance Eq a => AlphaEqE (LiftE a) where
 
 instance SubstE v e => SubstE v (ListE e) where
   substE env (ListE xs) = ListE $ map (substE env) xs
+
+instance SubstE v e => SubstE v (NonEmptyListE e) where
+  substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = "(Abs " <> pretty b <> " " <> pretty body <> ")"

@@ -11,6 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
@@ -41,7 +42,9 @@ module Builder (
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
   runBuilderM, liftBuilder, liftEmitBuilder, makeBlock,
-  indexToInt, indexSetSize, intToIndex, litValToPointerlessAtom, emitPtrLit,
+  indexToInt, indexSetSize, intToIndex,
+  getIxImpl, IxImpl (..),
+  litValToPointerlessAtom, emitPtrLit,
   liftMonoidEmpty, liftMonoidCombine,
   telescopicCapture, telescopicCaptureBlock, unpackTelescope,
   applyRecon, applyReconAbs, clampPositive,
@@ -72,10 +75,11 @@ import Syntax
 import Type
 import PPrint ()
 import CheapReduction
+import {-# SOURCE #-} Inference
 import MTL1
 
 import LabeledItems
-import Util (enumerate, scanM, restructure, transitiveClosureM, bindM2)
+import Util (enumerate, restructure, transitiveClosureM, bindM2)
 import Err
 
 -- === Ordinary (local) builder class ===
@@ -957,7 +961,6 @@ getUnpacked atom = do
   len <- projectLength ty
   return $ map (\i -> getProjection [i] atom') [0..(len-1)]
 
--- TODO: should we just make all of these return names instead of atoms?
 emitUnpacked :: (Builder m, Emits n) => Atom n -> m n [AtomName n]
 emitUnpacked tup = do
   xs <- getUnpacked tup
@@ -976,9 +979,6 @@ indexRef ref i = emitOp $ IndexRef ref i
 
 naryIndexRef :: (Builder m, Emits n) => Atom n -> [Atom n] -> m n (Atom n)
 naryIndexRef ref is = foldM indexRef ref is
-
-indexAsInt :: (Builder m, Emits n) => Atom n -> m n (Atom n)
-indexAsInt idx = emitOp $ ToOrdinal idx
 
 ptrOffset :: (Builder m, Emits n) => Atom n -> Atom n -> m n (Atom n)
 ptrOffset x (IdxRepVal 0) = return x
@@ -1034,113 +1034,27 @@ clampPositive x = do
   isNegative <- x `ilt` (IdxRepVal 0)
   select isNegative (IdxRepVal 0) x
 
+data IxImpl n = IxImpl { ixSize :: Atom n, toOrdinal :: Atom n, unsafeFromOrdinal :: Atom n }
+
+getIxImpl :: (Builder m, Emits n) => Type n -> m n (IxImpl n)
+getIxImpl ty = do
+  [ixSize, toOrdinal, unsafeFromOrdinal] <- getUnpacked =<< getProj 1 =<< getProj 0 =<< emitBlock =<< synthIx ty
+  return $ IxImpl{..}
+
 intToIndex :: forall m n. (Builder m, Emits n) => Type n -> Atom n -> m n (Atom n)
-intToIndex ty i = case ty of
-  TC (IntRange        low high) -> return $ Con $ IntRangeVal        low high i
-  TC (IndexRange from low high) -> return $ Con $ IndexRangeVal from low high i
-  -- Strategically placed reverses make intToProd major-to-minor
-  TC (ProdType types) -> (ProdVal . reverse) <$> intToProd (reverse types)
-  RecordTy  (NoExt types) -> Record <$> intToProd types
-  SumTy types             -> intToSum types [0..] $ SumVal ty
-  VariantTy (NoExt types) -> intToSum types (reflectLabels types) $ uncurry $ Variant (NoExt types)
-  _ -> error "not an (implemented) index set"
-  where
-    -- XXX: Expects that the types are in a minor-to-major order
-    intToProd :: Traversable t => t (Type n) -> m n (t (Atom n))
-    intToProd types = do
-      sizes <- traverse indexSetSize types
-      (strides, _) <- scanM
-        (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
-      offsets <- flip mapM (zip (toList types) (toList strides)) $
-        \(ety, (s1, s2)) -> do
-          x <- irem i s2
-          y <- idiv x s1
-          intToIndex ety y
-      return $ restructure offsets types
-
-    intToSum :: Traversable t => t (Type n) -> t l -> (l -> Atom n -> Atom n) -> m n (Atom n)
-    intToSum types labels mkSum = do
-      sizes <- traverse indexSetSize types
-      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-      let
-        -- Find the right index by looping through the possible offsets
-        go prev (label, cty, offset) = do
-          shifted <- isub i offset
-          -- TODO: This might run intToIndex on negative indices. Fix this!
-          index   <- intToIndex cty shifted
-          beforeThis <- ilt i offset
-          select beforeThis prev $ mkSum label index
-        (l, ty0, _):zs = zip3 (toList labels) (toList types) (toList offsets)
-      start <- mkSum l <$> intToIndex ty0 i
-      foldM go start zs
-
-data IterOrder = MinorToMajor | MajorToMinor
+intToIndex ty i = do
+  f <- unsafeFromOrdinal <$> getIxImpl ty
+  app f i
 
 indexToInt :: forall m n. (Builder m, Emits n) => Atom n -> m n (Atom n)
-indexToInt (Con (IntRangeVal _ _ i))     = return i
-indexToInt (Con (IndexRangeVal _ _ _ i)) = return i
-indexToInt idx = getType idx >>= \case
-  TC (IntRange _ _)     -> indexAsInt idx
-  TC (IndexRange _ _ _) -> indexAsInt idx
-  ProdTy           types  -> prodToInt MajorToMinor types
-  RecordTy  (NoExt types) -> prodToInt MinorToMajor types
-  SumTy            types  -> sumToInt types
-  VariantTy (NoExt types) -> sumToInt types
-  TC (ParIndexRange _ _ _) -> error "Int casts unsupported on ParIndexRange"
-  ty -> error $ "Unexpected type " ++ pprint ty
-  where
-    prodToInt :: Traversable t => IterOrder -> t (Type n) -> m n (Atom n)
-    prodToInt order types = do
-      sizes <- toList <$> traverse indexSetSize types
-      let rev = case order of MinorToMajor -> id; MajorToMinor -> reverse
-      strides <- rev . fst <$> scanM (\sz prev -> (prev,) <$> imul sz prev) (rev sizes) (IdxRepVal 1)
-      -- Unpack and sum the strided contributions
-      subindices <- getUnpacked idx
-      subints <- traverse indexToInt subindices
-      scaled <- mapM (uncurry imul) $ zip strides subints
-      foldM iadd (IdxRepVal 0) scaled
-
-    sumToInt :: Traversable t => t (Type n) -> m n (Atom n)
-    sumToInt types = do
-      sizes <- traverse indexSetSize types
-      (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
-      alts <- flip mapM (zip (toList offsets) (toList types)) $
-        \(offset, subty) -> liftEmitBuilder $ buildUnaryAlt subty \subix -> do
-          i <- indexToInt $ Var subix
-          iadd (sink offset) i
-      liftM Var $ emit $ Case idx alts IdxRepTy Pure
+indexToInt idx = do
+  f <- toOrdinal <$> (getIxImpl =<< getType idx)
+  app f idx
 
 indexSetSize :: (Builder m, Emits n) => Type n -> m n (Atom n)
-indexSetSize ty = case ty of
-  TC (IntRange low high) -> clampPositive =<< high `isub` low
-  TC (IndexRange n low high) -> do
-    low' <- case low of
-      InclusiveLim x -> indexToInt x
-      ExclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
-      Unlimited      -> return $ IdxRepVal 0
-    high' <- case high of
-      InclusiveLim x -> indexToInt x >>= iadd (IdxRepVal 1)
-      ExclusiveLim x -> indexToInt x
-      Unlimited      -> indexSetSize n
-    -- The clamp is only necessary when both sides are not unlimited.
-    let maybeClamp = case (low, high) of
-          (Unlimited, _) -> return
-          (_, Unlimited) -> return
-          _              -> clampPositive
-    maybeClamp =<< high' `isub` low'
-  TC (ProdType types) -> do
-    sizes <- traverse indexSetSize types
-    foldM imul (IdxRepVal 1) sizes
-  RecordTy (NoExt types) -> do
-    sizes <- traverse indexSetSize types
-    foldM imul (IdxRepVal 1) sizes
-  TC (SumType types) -> do
-    sizes <- traverse indexSetSize types
-    foldM iadd (IdxRepVal 0) sizes
-  VariantTy (NoExt types) -> do
-    sizes <- traverse indexSetSize types
-    foldM iadd (IdxRepVal 0) sizes
-  _ -> error $ "Not an (implemented) index set " ++ pprint ty
+indexSetSize ty = do
+  f <- ixSize <$> getIxImpl ty
+  app f UnitVal
 
 -- === pseudo-prelude ===
 

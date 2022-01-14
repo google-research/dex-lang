@@ -9,7 +9,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
 module MTL1 (
-    MonadTrans11 (..),
+    MonadTrans11 (..), HoistableState (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
     StateT1, pattern StateT1, runStateT1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
@@ -140,6 +140,15 @@ instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
 instance AlwaysImmut m => AlwaysImmut (StateT1 s m) where
   getImmut = lift11 getImmut
 
+class HoistableState (s::E) (m::MonadKind1) where
+  hoistState :: BindsNames b => s n -> b n l -> s l -> m n (s n)
+
+instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT1 s m) where
+  extendEnv frag m = StateT1 \s -> do
+    (ans, s') <- extendEnv frag $ runStateT1 m (sink s)
+    s'' <- hoistState s frag s'
+    return (ans, s'')
+
 -------------------- ScopedT1 --------------------
 
 newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
@@ -150,8 +159,8 @@ newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 pattern ScopedT1 :: ((s n) -> m n (a, s n)) -> ScopedT1 s m n a
 pattern ScopedT1 f = WrapScopedT1 (StateT1 f)
 
-runScopedT1 :: ScopedT1 s m n a -> s n -> m n (a, s n)
-runScopedT1 = runStateT1 . runScopedT1'
+runScopedT1 :: Monad1 m => ScopedT1 s m n a -> s n -> m n a
+runScopedT1 m s = fst <$> runStateT1 (runScopedT1' m) s
 
 deriving instance (Monad1 m, Fallible1 m) => Fallible (ScopedT1 s m n)
 deriving instance (Monad1 m, Catchable1 m) => Catchable (ScopedT1 s m n)
@@ -159,7 +168,7 @@ deriving instance (Monad1 m, CtxReader1 m) => CtxReader (ScopedT1 s m n)
 
 instance (SinkableE s, EnvExtender m) => EnvExtender (ScopedT1 s m) where
   extendEnv frag m = ScopedT1 \s -> do
-    (ans, _) <- extendEnv frag $ runScopedT1 m (sink s)
+    ans <- extendEnv frag $ runScopedT1 m (sink s)
     return (ans, s)
 
 -------------------- MaybeT1 --------------------

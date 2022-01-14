@@ -27,48 +27,6 @@ RawPtr : Type = %Word8Ptr
 Int = Int32
 Float = Float32
 
-'### Index set interface and instances
-
-interface Ix a
-  dummy_ix__ : Int32
-
--- TODO: Make those methods of Ix
-def ordinal {a} [Ix a] (i:a) : Int = %toOrdinal i
-def size (n:Type) [Ix n] : Int = %idxSetSize n
-def unsafeFromOrdinal (n : Type) [Ix n] (i : Int) : n = %unsafeFromOrdinal n i
-
-def Range (low:Int) (high:Int) : Type = %IntRange low high
-def Fin (n:Int) : Type = Range 0 n
-
-instance {l h} Ix (Range l h)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} [Ix q] Ix (i..)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} [Ix q] Ix (i<..)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} [Ix q] Ix (..i)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} [Ix q] Ix (..<i)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..i)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..<i)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..i)
-  dummy_ix__ = 0
-
-instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..<i)
-  dummy_ix__ = 0
-
-def iota (n:Type) [Ix n] : n=>Int = view i. ordinal i
-
 '### Casting
 
 def internalCast {a} (b:Type) (x:a) : b = %cast b x
@@ -192,21 +150,6 @@ instance Add Unit
   sub = \x y. ()
   zero = ()
 
-instance {a n} [Add a] Add (n=>a)
-  add = \xs ys. for i. xs.i + ys.i
-  sub = \xs ys. for i. xs.i - ys.i
-  zero = for _. zero
-
-instance {a n} [Add a] Add (i:n => (i..) => a)  -- Upper triangular tables
-  add = \xs ys. for i. xs.i + ys.i
-  sub = \xs ys. for i. xs.i - ys.i
-  zero = for _. zero
-
-instance {a n} [Add a] Add (i:n => (..i) => a)  -- Lower triangular tables
-  add = \xs ys. for i. xs.i + ys.i
-  sub = \xs ys. for i. xs.i - ys.i
-  zero = for _. zero
-
 '#### Mul
 Things that can be multiplied.
 This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
@@ -241,10 +184,6 @@ instance Mul Unit
   mul = \x y. ()
   one = ()
 
-instance {a n} [Mul a] Mul (n=>a)
-  mul = \xs ys. for i. xs.i * ys.i
-  one = for _. one
-
 '#### Integral
 Integer-like things.
 
@@ -277,6 +216,98 @@ instance Fractional Float64
 instance Fractional Float32
   divide = \x y. %fdiv x y
 
+'## Index set interface and instances
+
+interface Ix n
+  getSize n : Unit -> Int
+  ordinal : n -> Int
+  unsafeFromOrdinal n : Int -> n
+
+def size (n : Type) [Ix n] : Int = getSize n ()
+
+def Range (low:Int) (high:Int) : Type = %IntRange low high
+def Fin (n:Int) : Type = Range 0 n
+
+-- A max(a, 0) that is friendly to our algebraic simplifier
+def clampNonnegPrim (a: Int) : Int =
+  z : Int = 0
+  isNeg = %ilt a z
+  %select isNeg z a
+
+-- TODO: Define Range in surface syntax
+instance {l h} Ix (Range l h)
+  getSize = \(). clampNonnegPrim $ h - l
+  ordinal = \i. %cast Int i
+  unsafeFromOrdinal = \i. %cast (Range l h) i
+
+instance {q:Type} {i:q} [Ix q] Ix (i..)
+  getSize = \(). size q - ordinal i
+  ordinal = \j. %cast Int j
+  unsafeFromOrdinal = \j. %cast (i..) j
+
+instance {q:Type} {i:q} [Ix q] Ix (i<..)
+  getSize = \(). size q - ordinal i - 1
+  ordinal = \j. %cast Int j
+  unsafeFromOrdinal = \j. %cast (i<..) j
+
+instance {q:Type} {i:q} [Ix q] Ix (..i)
+  getSize = \(). ordinal i + 1
+  ordinal = \j. %cast Int j
+  unsafeFromOrdinal = \j. %cast (..i) j
+
+instance {q:Type} {i:q} [Ix q] Ix (..<i)
+  getSize = \(). ordinal i
+  ordinal = \j. %cast Int j
+  unsafeFromOrdinal = \j. %cast (..<i) j
+
+instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..i)
+  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j + 1
+  ordinal = \k. %cast Int k
+  unsafeFromOrdinal = \k. %cast (j..i) k
+
+instance {q:Type} {i:q} {j:q} [Ix q] Ix (j..<i)
+  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j
+  ordinal = \k. %cast Int k
+  unsafeFromOrdinal = \k. %cast (j..<i) k
+
+instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..i)
+  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j
+  ordinal = \k. %cast Int k
+  unsafeFromOrdinal = \k. %cast (j<..i) k
+
+instance {q:Type} {i:q} {j:q} [Ix q] Ix (j<..<i)
+  getSize = \(). clampNonnegPrim $ ordinal i - ordinal j - 1
+  ordinal = \k. %cast Int k
+  unsafeFromOrdinal = \k. %cast (j<..<i) k
+
+instance Ix Unit
+  getSize = \(). 1
+  ordinal = \_. 0
+  unsafeFromOrdinal = \_. ()
+
+def iota (n:Type) [Ix n] : n=>Int = view i. ordinal i
+
+'## Arithmetic instances for table types
+
+instance {a n} [Add a] Add (n=>a)
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance {a n} [Add a] Add (i:n => (i..) => a)  -- Upper triangular tables
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance {a n} [Add a] Add (i:n => (..i) => a)  -- Lower triangular tables
+  add = \xs ys. for i. xs.i + ys.i
+  sub = \xs ys. for i. xs.i - ys.i
+  zero = for _. zero
+
+instance {a n} [Mul a] Mul (n=>a)
+  mul = \xs ys. for i. xs.i * ys.i
+  one = for _. one
+
 '## Basic polymorphic functions and types
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
@@ -286,7 +317,11 @@ def snd {a b} ((_, y): (a & b)) : b = y
 def swap {a b} ((x, y):(a&b)) : (b&a) = (y, x)
 
 instance {a b} [Ix a, Ix b] Ix (a & b)
-  dummy_ix__ = 0
+  getSize = \(). size a * size b
+  ordinal = \(i, j). (ordinal i * size b) + ordinal j
+  unsafeFromOrdinal = \o.
+    bs = size b
+    (unsafeFromOrdinal a (idiv o bs), unsafeFromOrdinal b (rem o bs))
 
 def (<<<) {a b c} (f: b -> c) (g: a -> b) : a -> c = \x. f (g x)
 def (>>>) {a b c} (g: a -> b) (f: b -> c) : a -> c = \x. f (g x)
@@ -338,6 +373,26 @@ def not  (x:Bool) : Bool =
   x' = BToW8 x
   W8ToB $ %not x'
 
+'## More Boolean operations
+TODO: move these with the others?
+
+def select {a} (p:Bool) (x:a) (y:a) : a = case p of
+  True  -> x
+  False -> y
+
+def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
+def BToF (x:Bool) : Float = IToF (BToI x)
+
+'## Ordering
+TODO: move this down to with `Ord`?
+
+data Ordering =
+  LT
+  EQ
+  GT
+
+def OToW8 (x : Ordering) : Word8 = %dataConTag x
+
 '## Sum types
 A [sum type, or tagged union](https://en.wikipedia.org/wiki/Tagged_union) can hold values from a fixed set of types, distinguished by tags.
 For those familiar with the C language, they can be though of as a combination of an `enum` with a `union`.
@@ -362,25 +417,17 @@ data (|) a b =
   Left  a
   Right b
 
-'## More Boolean operations
-TODO: move these with the others?
-
-def select {a} (p:Bool) (x:a) (y:a) : a = case p of
-  True  -> x
-  False -> y
-
-def BToI (x:Bool) : Int  = W8ToI $ BToW8 x
-def BToF (x:Bool) : Float = IToF (BToI x)
-
-'## Ordering
-TODO: move this down to with `Ord`?
-
-data Ordering =
-  LT
-  EQ
-  GT
-
-def OToW8 (x : Ordering) : Word8 = %dataConTag x
+instance {a b} [Ix a, Ix b] Ix (a | b)
+  getSize = \(). size a + size b
+  ordinal = \i. case i of
+    Left ai  -> ordinal ai
+    Right bi -> ordinal bi + size a
+  unsafeFromOrdinal = \o.
+    as = size a
+    -- TODO: Reshuffle the prelude to be able to use (<) here
+    case W8ToB $ %ilt o as of
+      True  -> Left $ unsafeFromOrdinal a o
+      False -> Right $ unsafeFromOrdinal b (o - as)
 
 '### Monoid
 A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
