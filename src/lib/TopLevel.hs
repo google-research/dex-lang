@@ -345,7 +345,9 @@ evalLLVM block = do
                                         _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
                                              toImpFunction backend cc blockAbs
-  llvmAST <- liftIO $ impToLLVM logger impFun
+  LiftE llvmAST <- liftImmut do
+    DB env <- getDB
+    liftM LiftE $ liftIO $ impToLLVM env logger impFun
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
   resultVals <- liftIO $ llvmEvaluate logger llvmAST mainFuncName ptrVals resultTypes
