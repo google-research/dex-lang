@@ -295,11 +295,12 @@ zonkUnsolvedEnv ss un bindings | substIsEmpty ss = (un, bindings)
 zonkUnsolvedEnv ss unsolved bindings =
   flip runState bindings $ execWriterT do
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
-      rhs <- flip lookupEnvPure v <$> get
-      let rhs' = zonkWithOutMap (InfOutMap bindings ss mempty mempty) rhs
-      modify $ updateEnv v rhs'
-      when (hasInferenceVars bindings rhs') $
-        tell $ UnsolvedEnv $ S.singleton v
+      flip lookupEnvPure v <$> get >>= \case
+        AtomNameBinding rhs -> do
+          let rhs' = zonkWithOutMap (InfOutMap bindings ss mempty mempty) rhs
+          modify $ updateEnv v $ AtomNameBinding rhs'
+          when (hasInferenceVars bindings $rhs') $
+            tell $ UnsolvedEnv $ S.singleton v
 
 hasInferenceVars :: HoistableE e => Env n -> e n -> Bool
 hasInferenceVars bs e = any (isInferenceVar bs) $ freeVarsList AtomNameRep e

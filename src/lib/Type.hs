@@ -307,6 +307,7 @@ instance NameColor c => CheckableE (Binding c) where
     ClassBinding      classDef        e -> ClassBinding    <$> substM classDef                 <*> substM e
     SuperclassBinding className   idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
     MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
+    ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -316,6 +317,12 @@ instance CheckableE AtomBinding where
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
     PtrLitBound ty ptr  -> return $ PtrLitBound ty ptr
+    -- TODO: check the type actually matches the lambda term
+    SimpLamBound ty lam -> do
+      lam' <- substM lam
+      ty' <- substM ty
+      dropSubst $ checkNaryLamExpr lam' ty'
+      return $ SimpLamBound ty' lam'
 
 instance CheckableE SolverBinding where
   checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
@@ -951,6 +958,9 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
   Nothing -> throw TypeErr $
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
+
+checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
+checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
 
 asNaryPiType :: Type n -> Maybe (NaryPiType n)
 asNaryPiType ty = case ty of

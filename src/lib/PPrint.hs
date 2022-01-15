@@ -157,6 +157,17 @@ instance Pretty (Decl n l) where
     Let b (DeclBinding ann ty rhs) ->
       align $ p ann <+> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
+instance Pretty (NaryLamExpr n) where
+  pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
+    "\\" <> prettyBinderNest (Nest b bs) <+> "." <> nest 2 (p body)
+
+instance Pretty (NaryPiType n) where
+  pretty (NaryPiType (NonEmptyNest b bs) effs resultTy) =
+    prettyBinderNest (Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
+
+instance Pretty (PiBinder n l) where
+  pretty (PiBinder b ty _) = p (b:>ty)
+
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
   prettyPrec lamExpr = case lamExpr of
@@ -309,6 +320,7 @@ instance Pretty (AtomBinding n) where
     MiscBound   t -> p t
     SolverBound b -> p b
     PtrLitBound ty ptr -> p $ PtrLit ty ptr
+    SimpLamBound ty f -> p ty <> hardline <> p f
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
@@ -335,6 +347,7 @@ instance Pretty (Binding s n) where
       "Superclass" <+> pretty idx <+> "of" <+> pretty className
     MethodBinding     className idx _ ->
       "Method" <+> pretty idx <+> "of" <+> pretty className
+    ImpFunBinding f -> pretty f
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
