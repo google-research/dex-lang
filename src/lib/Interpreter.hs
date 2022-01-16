@@ -15,7 +15,6 @@ module Interpreter (
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List.NonEmpty as NE
-import Data.Int
 import Data.Foldable (toList)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
@@ -32,9 +31,6 @@ import Syntax
 import Simplify
 import Type
 import PPrint ()
-
--- TODO: can we make this as dynamic as the compiled version?
-foreign import ccall "randunif"      c_unif     :: Int64 -> Double
 
 newtype InterpM (i::S) (o::S) (a:: *) =
   InterpM { runInterpM' :: SubstReaderT AtomSubstVal (EnvReaderT IO) i o a }
@@ -172,9 +168,6 @@ evalOp expr = mapM evalAtom expr >>= \case
   ScalarUnOp op x -> return $ case op of
     FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
-  FFICall name _ args -> return $ case name of
-    "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
-    _ -> error $ "FFI function not recognized: " ++ name
   PtrOffset (Con (Lit (PtrLit (a, t) p))) (IdxRepVal i) ->
     return $ Con $ Lit $ PtrLit (a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
   PtrLoad (Con (Lit (PtrLit (Heap CPU, t) p))) ->
@@ -267,9 +260,3 @@ indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $
       evalMethod ix method x = case method ix of
         Abs decls lam -> do
           evalDecls decls $ evalExpr $ App (Lam lam) $ sinkFromTop x NE.:| []
-
-pattern Int64Val :: Int64 -> Atom n
-pattern Int64Val x = Con (Lit (Int64Lit x))
-
-pattern Float64Val :: Double -> Atom n
-pattern Float64Val x = Con (Lit (Float64Lit x))

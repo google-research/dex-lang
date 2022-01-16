@@ -11,7 +11,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Inference
-  ( inferTopUDecl, inferTopUExpr, applyUDeclAbs, trySynthDict, trySynthDictBlock
+  ( inferTopUDecl, checkTopUType, inferTopUExpr, applyUDeclAbs
+  , trySynthDict, trySynthDictBlock
   , synthTopBlock, UDeclInferenceResult (..), synthIx ) where
 
 import Prelude hiding ((.), id)
@@ -50,6 +51,13 @@ import Util
 
 
 -- === Top-level interface ===
+
+checkTopUType :: (Fallible1 m, EnvReader m) => UType n -> m n (Type n)
+checkTopUType ty = liftImmut $ liftInfererMTop do
+  solveLocal do
+    ty' <- checkUType ty
+    applyDefaults
+    return ty'
 
 inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (Block n)
 inferTopUExpr e = liftImmut $ liftInfererMTop do

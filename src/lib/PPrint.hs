@@ -321,6 +321,7 @@ instance Pretty (AtomBinding n) where
     SolverBound b -> p b
     PtrLitBound ty ptr -> p $ PtrLit ty ptr
     SimpLamBound ty f -> p ty <> hardline <> p f
+    FFIFunBound _ f -> p f
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
@@ -610,7 +611,7 @@ instance Pretty (ImpFunction n) where
   pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
     "def" <+> p cc <+> p bs
     <> nest 2 (hardline <> p body) <> hardline
-  pretty (FFIFunction f) = p f
+  pretty (FFIFunction _ f) = p f
 
 instance Pretty (ImpBlock n)  where
   pretty (ImpBlock Empty expr) = group $ line <> pLowest expr

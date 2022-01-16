@@ -203,6 +203,18 @@ evalSourceBlock' block = case sbContents block of
       val <- evalUExpr expr
       ty <- getType val
       logTop $ TextOut $ pprint ty
+  DeclareForeign fname (UAnnBinder b uty) -> do
+    ty <- evalUType uty
+    asFFIFunType ty >>= \case
+      Nothing -> throw TypeErr
+        "FFI functions must be n-ary first order functions with the IO effect"
+      Just (impFunTy, naryPiTy) -> do
+        -- TODO: query linking stuff and check the function is actually available
+        let hint = getNameHint b
+        vImp  <- emitBinding hint (ImpFunBinding $ FFIFunction impFunTy fname)
+        vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
+        UBindSource sourceName <- return b
+        emitSourceMap $ SourceMap $ M.singleton sourceName (WithColor AtomNameRep vCore)
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
@@ -290,6 +302,12 @@ isLogInfo out = case out of
   EvalTime _ _ -> True
   TotalTime _  -> True
   _ -> False
+
+evalUType :: (Mut n, MonadPasses m) => UType VoidS -> m n (Type n)
+evalUType ty = do
+  logTop $ PassInfo Parse $ pprint ty
+  renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
+  checkPass TypePass $ checkTopUType renamed
 
 evalUExpr :: (Mut n, MonadPasses m) => UExpr VoidS -> m n (Atom n)
 evalUExpr expr = do

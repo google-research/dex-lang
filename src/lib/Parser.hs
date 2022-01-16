@@ -67,6 +67,15 @@ importModule = ImportModule <$> do
   eol
   return s
 
+declareForeign :: Parser SourceBlock'
+declareForeign = do
+  keyWord ForeignKW
+  foreignName <- strLit
+  b <- lowerName
+  ty <- annot uType
+  eol
+  return $ DeclareForeign foreignName $ UAnnBinder (fromString b) ty
+
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
@@ -135,6 +144,7 @@ proseBlock = label "prose block" $ char '\'' >> fmap (ProseBlock . fst) (withSou
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
       importModule
+  <|> declareForeign
   <|> (QueryEnv <$> envQuery)
   <|> explicitCommand
   <?> "top-level command"
@@ -624,15 +634,9 @@ patAnn = label "pattern" $ UPatAnn <$> pat <*> optional (annot containedExpr)
 uPrim :: Parser (UExpr VoidS)
 uPrim = withSrc $ do
   s <- primName
-  case s of
-    "ffi" -> do
-      f <- lexeme $ some nameTailChar
-      retTy <- leafExpr
-      args <- some leafExpr
-      return $ UPrimExpr $ OpExpr $ FFICall f retTy args
-    _ -> case strToPrimName s of
-      Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
-      Nothing -> fail $ "Unrecognized primitive: " ++ s
+  case strToPrimName s of
+    Just prim -> UPrimExpr <$> traverse (const leafExpr) prim
+    Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 uVariantExpr :: Parser (UExpr VoidS)
 uVariantExpr = withSrc $ parseVariant expr UVariant UVariantLift
@@ -976,7 +980,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | DataKW | InterfaceKW
              | InstanceKW | WhereKW | IfKW | ThenKW | ElseKW | DoKW
-             | ExceptKW | IOKW | ViewKW | ImportKW | NamedInstanceKW
+             | ExceptKW | IOKW | ViewKW | ImportKW | ForeignKW | NamedInstanceKW
 
 upperName :: Lexer SourceName
 upperName = label "upper-case name" $ lexeme $
@@ -1025,11 +1029,13 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       DoKW   -> "do"
       ViewKW -> "view"
       ImportKW -> "import"
+      ForeignKW -> "foreign"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "for_", "rof", "rof_", "case", "of", "llam",
                "Read", "Write", "Accum", "Except", "IO", "data", "interface",
-               "instance", "named-instance", "where", "if", "then", "else", "do", "view", "import"]
+               "instance", "named-instance", "where", "if", "then", "else",
+               "do", "view", "import", "foreign"]
 
 fieldLabel :: Lexer Label
 fieldLabel = label "field label" $ lexeme $

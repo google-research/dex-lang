@@ -1312,24 +1312,32 @@ interface Show a
 instance Show String
   show = id
 
+foreign "showInt32" showInt32 : Int32 -> {IO} (Int32 & RawPtr)
+
 instance Show Int32
   show = \x. unsafeIO do
-    (n, ptr) = %ffi showInt32 (Int32 & RawPtr) x
+    (n, ptr) = showInt32 x
     stringFromCharPtr n $ MkPtr ptr
+
+foreign "showInt64" showInt64 : Int64 -> {IO} (Int32 & RawPtr)
 
 instance Show Int64
   show = \x. unsafeIO do
-    (n, ptr) = %ffi showInt64 (Int32 & RawPtr) x
+    (n, ptr) = showInt64 x
     stringFromCharPtr n $ MkPtr ptr
+
+foreign "showFloat32" showFloat32 : Float32 -> {IO} (Int32 & RawPtr)
 
 instance Show Float32
   show = \x. unsafeIO do
-    (n, ptr) = %ffi showFloat32 (Int32 & RawPtr) x
+    (n, ptr) = showFloat32 x
     stringFromCharPtr n $ MkPtr ptr
+
+foreign "showFloat64" showFloat64 : Float64 -> {IO} (Int32 & RawPtr)
 
 instance Show Float64
   show = \x. unsafeIO do
-    (n, ptr) = %ffi showFloat64 (Int32 & RawPtr) x
+    (n, ptr) = showFloat64 x
     stringFromCharPtr n $ MkPtr ptr
 
 instance {a b} [Show a, Show b] Show (a & b)
@@ -1397,25 +1405,31 @@ def withCString {a} (s:String) (action: CString -> {IO} a) : {IO} a =
 
 '### Stream IO
 
+foreign "fopen" fopenFFI : RawPtr -> RawPtr -> {IO} RawPtr
+foreign "fclose" fcloseFFI : RawPtr -> {IO} Int64
+foreign "fwrite" fwriteFFI : RawPtr -> Int64 -> Int64 -> RawPtr -> {IO} Int64
+foreign "fread"  freadFFI : RawPtr -> Int64 -> Int64 -> RawPtr -> {IO} Int64
+foreign "fflush" fflushFFI : RawPtr -> {IO} Int64
+
 def fopen (path:String) (mode:StreamMode) : {IO} (Stream mode) =
   modeStr = case mode of
     ReadMode  -> "r"
     WriteMode -> "w"
   withCString path \(MkCString pathPtr).
     withCString modeStr \(MkCString modePtr).
-      MkStream $ %ffi fopen RawPtr pathPtr modePtr
+      MkStream $ fopenFFI pathPtr modePtr
 
 def fclose {mode} (stream:Stream mode) : {IO} Unit =
   (MkStream stream') = stream
-  %ffi fclose Int64 stream'
+  fcloseFFI stream'
   ()
 
 def fwrite (stream:Stream WriteMode) (s:String) : {IO} Unit =
   (MkStream stream') = stream
   (AsList n s') = s
   withTabPtr s' \(MkPtr ptr).
-    %ffi fwrite Int64 ptr (IToI64 1) (IToI64 n) stream'
-  %ffi fflush Int64 stream'
+    fwriteFFI ptr (IToI64 1) (IToI64 n) stream'
+  fflushFFI stream'
   ()
 
 '### Iteration
@@ -1468,9 +1482,11 @@ def fromCString (s:CString) : {IO} (Maybe String) =
             pushDynBuffer buf c
             Continue
 
+foreign "getenv" getenvFFI : RawPtr -> {IO} RawPtr
+
 def getEnv (name:String) : {IO} Maybe String =
   withCString name \(MkCString ptr).
-    fromCString $ MkCString $ %ffi getenv RawPtr ptr
+    fromCString $ MkCString $ getenvFFI ptr
 
 def checkEnv (name:String) : {IO} Bool =
   isJust $ getEnv name
@@ -1485,7 +1501,7 @@ def fread (stream:Stream ReadMode) : {IO} String =
     withDynamicBuffer \buf.
       iter \_.
         (MkPtr rawPtr) = ptr
-        numRead = I64ToI $ %ffi fread Int64 rawPtr (IToI64 1) (IToI64 n) stream'
+        numRead = I64ToI $ freadFFI rawPtr (IToI64 1) (IToI64 n) stream'
         extendDynBuffer buf $ stringFromCharPtr numRead ptr
         if numRead == n
           then Continue
@@ -1502,11 +1518,16 @@ def print (s:String) : {IO} Unit =
 
 '### Shelling Out
 
+foreign "popen" popenFFI : RawPtr -> RawPtr -> {IO} RawPtr
+foreign "remove" removeFFI : RawPtr -> {IO} Int64
+foreign "mkstemp" mkstempFFI : RawPtr -> {IO} Int32
+foreign "close" closeFFI : Int32 -> {IO} Int32
+
 def shellOut (command:String) : {IO} String =
   modeStr = "r"
   withCString command \(MkCString commandPtr).
     withCString modeStr \(MkCString modePtr).
-      pipe = MkStream %ffi popen RawPtr commandPtr modePtr
+      pipe = MkStream $ popenFFI commandPtr modePtr
       fread pipe
 
 '## Partial functions
@@ -1526,7 +1547,7 @@ def todo {a} : a = error "TODO: implement it!"
 
 def deleteFile (f:FilePath) : {IO} Unit =
   withCString f \(MkCString ptr).
-    %ffi remove Int64 ptr
+    removeFFI ptr
   ()
 
 def withFile {a} (f:FilePath) (mode:StreamMode)
@@ -1559,8 +1580,8 @@ def hasFile (f:FilePath) : {IO} Bool =
 
 def newTempFile (_:Unit) : {IO} FilePath =
   withCString "/tmp/dex-XXXXXX" \(MkCString ptr).
-    fd = %ffi mkstemp Int32 ptr
-    %ffi close Int32 fd
+    fd = mkstempFFI ptr
+    closeFFI fd
     stringFromCharPtr 15 (MkPtr ptr)
 
 def withTempFile {a} (action: FilePath -> {IO} a) : {IO} a =
@@ -1660,7 +1681,9 @@ def splitKey {n} (k:Key) : Fin n => Key = for i. ixkey k i
 These functions generate samples taken from, different distributions.
 Such as `randMat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution.
 
-def rand (k:Key) : Float =  unsafeIO do F64ToF $ %ffi randunif Float64 k
+foreign "randunif" randunifFFI : Word64 -> {IO} Float64
+
+def rand (k:Key) : Float =  unsafeIO do F64ToF $ randunifFFI k
 def randVec {a} (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 

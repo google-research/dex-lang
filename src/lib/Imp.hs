@@ -97,7 +97,7 @@ instance EnvExtender ImpM where
 
 instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = do
-    let tys = impInstrTypes instr
+    tys <- impInstrTypes instr
     ListE vs <- ImpM $ ScopedT1 \s ->
       (,s) <$> extendInplaceT do
         scope <- getScope
@@ -202,8 +202,16 @@ translateExpr maybeDest expr = case expr of
             let subst = bs @@> fmap SubstVal xs
             body' <- applySubst subst body
             dropSubst $ translateBlock maybeDest body'
-          _ -> error $ "Invalid Imp atom: " ++ pprint f
-      _ -> error $ "unexpected expression: " ++ pprint expr
+          _ -> notASimpExpr
+      _ -> case f of
+        Var v -> lookupAtomName v >>= \case
+          FFIFunBound _ v' -> do
+            resultTy <- getType $ App f xs
+            scalarArgs <- liftM toList $ mapM fromScalarAtom xs
+            results <- emitMultiReturnInstr $ ICall v' scalarArgs
+            restructureScalarOrPairType resultTy results
+          _ -> notASimpExpr
+        _ -> notASimpExpr
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
   Case e alts ty _ -> do
@@ -223,6 +231,7 @@ translateExpr maybeDest expr = case expr of
           destToAtom dest
         _ -> error "not possible"
   where
+    notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
@@ -369,13 +378,6 @@ toImpOp maybeDest op = case op of
     SumTy cases ->
       return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
-  FFICall name returnTy xs -> do
-    let returnTys = fromScalarOrPairType returnTy
-    xTys <- forM xs \x -> fromScalarType <$> getType x
-    let f = asFFIFunction name xTys returnTys
-    xs' <- mapM fromScalarAtom xs
-    results <- emitMultiReturnInstr $ ICall f xs'
-    restructureScalarOrPairType returnTy results
   SumToVariant ~(Con c) -> do
     ~resultTy@(VariantTy labs) <- resultTyM
     returnVal $ case c of
@@ -391,15 +393,6 @@ toImpOp maybeDest op = case op of
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
-
-asFFIFunction :: SourceName -> [IType] -> [IType] -> IFunVar
-asFFIFunction fname argTys resultTys =
-  (fname, IFunType cc argTys resultTys)
-  where
-    cc = case length resultTys of
-           0 -> error "Not implemented"
-           1 -> FFIFun
-           _ -> FFIMultiResultFun
 
 toImpHof :: (Imper m, Emits o) => Maybe (Dest o) -> PrimHof (Atom i) -> m i o (Atom o)
 toImpHof maybeDest hof = do
@@ -1000,12 +993,6 @@ emitLoop hint d n cont = do
       return $ Abs b body
   emitStatement $ IFor d n loopBody
 
-fromScalarOrPairType :: Type n -> [IType]
-fromScalarOrPairType (PairTy a b) =
-  fromScalarOrPairType a <> fromScalarOrPairType b
-fromScalarOrPairType (BaseTy ty) = [ty]
-fromScalarOrPairType ty = error $ "Not a scalar or pair: " ++ pprint ty
-
 restructureScalarOrPairType :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n)
 restructureScalarOrPairType ty xs =
   restructureScalarOrPairTypeRec ty xs >>= \case
@@ -1322,13 +1309,6 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
-fromScalarType :: Type n -> IType
-fromScalarType (BaseTy b) =  b
-fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
-
-_toScalarType :: IType -> Type n
-_toScalarType b = BaseTy b
-
 -- === Type classes ===
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
@@ -1385,28 +1365,30 @@ indexSetSizeImp ty = do
 
 impFunType :: ImpFunction n -> IFunType
 impFunType (ImpFunction ty _) = ty
-impFunType _ = error "not implemeted"
+impFunType (FFIFunction ty _) = ty
 
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
 getIType (IVar _ ty) = ty
 
-impInstrTypes :: ImpInstr n -> [IType]
+impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of
-  IPrimOp op      -> [impOpType op]
-  ICastOp t _     -> [t]
-  Alloc a ty _    -> [PtrType (a, ty)]
-  Store _ _       -> []
-  Free _          -> []
-  IThrowError     -> []
-  MemCopy _ _ _   -> []
-  IFor _ _ _      -> []
-  IWhile _        -> []
-  ICond _ _ _     -> []
-  ILaunch _ _ _   -> []
-  ISyncWorkgroup  -> []
-  IQueryParallelism _ _ -> [IIdxRepTy, IIdxRepTy]
-  ICall (_, IFunType _ _ resultTys) _ -> resultTys
+  IPrimOp op      -> return [impOpType op]
+  ICastOp t _     -> return [t]
+  Alloc a ty _    -> return [PtrType (a, ty)]
+  Store _ _       -> return []
+  Free _          -> return []
+  IThrowError     -> return []
+  MemCopy _ _ _   -> return []
+  IFor _ _ _      -> return []
+  IWhile _        -> return []
+  ICond _ _ _     -> return []
+  ILaunch _ _ _   -> return []
+  ISyncWorkgroup  -> return []
+  IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
+  ICall f _ -> do
+    IFunType _ _ resultTys <- impFunType <$> lookupImpFun f
+    return resultTys
 
 -- TODO: reuse type rules in Type.hs
 impOpType :: IPrimOp n -> IType

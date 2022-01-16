@@ -95,11 +95,13 @@ Html : Type = String
 Png  : Type = String
 Gif  : Type = String
 
+foreign "encodePNG" encodePNG : RawPtr -> Int32 -> Int32 -> {IO} (Int32 & RawPtr)
+
 def makePNG {n m} (img:n=>m=>(Fin 3)=>Word8) : Png = unsafeIO \().
   (AsList _ imgFlat) = toList for (i,j,k). img.i.j.k
   withTabPtr imgFlat \ptr.
     (MkPtr rawPtr) = ptr
-    (n, ptr') = %ffi encodePNG (Int & RawPtr) rawPtr (size m) (size n)
+    (n, ptr') = encodePNG rawPtr (size m) (size n)
     toList $ tabFromPtr (Fin n) $ MkPtr ptr'
 
 def pngsToGif {t} (delay:Int) (pngs:t=>Png) : Gif = unsafeIO \().

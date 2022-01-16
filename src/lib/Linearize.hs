@@ -408,7 +408,6 @@ linearizeOp op = case op of
   VariantSplit ts v ->
     zipLin (traverseLin pureLin ts) (la v) `bindLin`
       \(PairE (ComposeE ts') v') -> emitOp $ VariantSplit ts' v'
-  FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
   ThrowException _       -> notImplemented
   SumToVariant _         -> notImplemented
   OutputStreamPtr        -> emitZeroT

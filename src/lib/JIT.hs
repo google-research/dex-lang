@@ -123,8 +123,9 @@ impToLLVM env logger f = do
 compileFunction :: Distinct n => Env n
                 -> Logger [Output] -> SourceName -> ImpFunction n
                 -> IO ([L.Definition], S.Set ExternFunSpec, [L.Name])
-compileFunction _ _ _ (FFIFunction f) = return ([], S.singleton (makeFunSpec f), [])
-compileFunction env logger fName fun@(ImpFunction fTy@(IFunType cc argTys retTys)
+compileFunction _ _ _ (FFIFunction ty f) =
+  return ([], S.singleton (makeFunSpec f ty), [])
+compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
                 (Abs bs body)) = case cc of
   FFIFun            -> error "shouldn't be trying to compile an FFI function"
   FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
@@ -132,7 +133,7 @@ compileFunction env logger fName fun@(ImpFunction fTy@(IFunType cc argTys retTys
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CEntryFun doesn't support returning values"
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction (topLevelFunName (fName, fTy)) argParams (Just $ i64Lit 0)
+    mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun], extraSpecs, [])
   EntryFun requiresCUDA -> return $ runCompile env CPU $ do
@@ -146,7 +147,7 @@ compileFunction env logger fName fun@(ImpFunction fTy@(IFunType cc argTys retTys
     results <- extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     forM_ (zip [0..] results) \(i, x) ->
       gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x
-    mainFun <- makeFunction (topLevelFunName (fName, fTy))
+    mainFun <- makeFunction (topLevelFunName fName)
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
@@ -187,7 +188,7 @@ compileFunction env logger fName fun@(ImpFunction fTy@(IFunType cc argTys retTys
           emitVoidExternCall kernelLoaderSpec
             [ L.ConstantOperand $ textPtr, kernelModuleCache, kernelFuncCache]
           kernelFunc <- load kernelFuncCache
-          makeFunction (topLevelFunName (fName, fTy)) [] (Just kernelFunc)
+          makeFunction (topLevelFunName fName) [] (Just kernelFunc)
     let dtorName = fromString $ pprint fName ++ "#dtor"
     let dtorDef = runCompile env CPU $ do
           emitVoidExternCall kernelUnloaderSpec
@@ -217,7 +218,7 @@ compileFunction env logger fName fun@(ImpFunction fTy@(IFunType cc argTys retTys
     let subst = bs @@> map opSubstVal ([tid, wid, nthr, nthr] ++ args)
     -- Emit the body
     void $ extendSubst subst $ compileBlock body
-    kernel <- makeFunction (topLevelFunName (fName, fTy))
+    kernel <- makeFunction (topLevelFunName fName)
                 [threadIdParam, nThreadParam, argArrayParam] Nothing
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition kernel], extraSpecs, [])
@@ -236,7 +237,7 @@ compileInstr instr = case instr of
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
   IQueryParallelism f s -> do
     let IFunType cc _ _ = snd f
-    let kernelFuncName = topLevelFunName f
+    let kernelFuncName = topLevelFunName $ fst f
     n <- (`asIntWidth` i64) =<< compileExpr s
     case cc of
       MCThreadLaunch -> do
@@ -260,11 +261,10 @@ compileInstr instr = case instr of
       CPU -> error "Not yet implemented"
       GPU -> [] <$ emitVoidExternCall barrierSpec []
         where barrierSpec = ExternFunSpec "llvm.nvvm.barrier0" L.VoidType [] [] []
-  ILaunch f size args -> [] <$ do
-    let IFunType cc _ _ = snd f
+  ILaunch (fname, IFunType cc _ _) size args -> [] <$ do
     size' <- (`asIntWidth` i64) =<< compileExpr size
     args' <- mapM compileExpr args
-    let kernelFuncName = topLevelFunName f
+    let kernelFuncName = topLevelFunName fname
     case cc of
       MCThreadLaunch -> do
         kernelParams <- packArgs args'
@@ -345,40 +345,43 @@ compileInstr instr = case instr of
          emitInstr ptrTy $ L.IntToPtr x ptrTy []
        (L.PointerType _ _, L.IntegerType 64) -> emitInstr i64 $ L.PtrToInt x i64 []
        _ -> error $ "Unsupported cast"
-  ICall f@(_, IFunType cc argTys resultTys) args -> do
-    -- TODO: consider having a separate calling convention specification rather
-    -- than switching on the number of results
-    args' <- mapM compileExpr args
-    let resultTys' = map scalarTy resultTys
-    case cc of
-      FFIFun -> do
-        ans <- emitExternCall (makeFunSpec f) args'
-        return [ans]
-      FFIMultiResultFun -> do
-        resultPtr <- makeMultiResultAlloc resultTys'
-        emitVoidExternCall (makeFunSpec f) (resultPtr : args')
-        loadMultiResultAlloc resultTys' resultPtr
-      CEntryFun -> do
-        exitCode <- emitInstr i64 (callInstr fun args') >>= (`asIntWidth` i1)
-        compileIf exitCode throwRuntimeError (return ())
-        return []
-          where
-            fTy = funTy i64 $ map scalarTy argTys
-            fun = callableOperand fTy $ topLevelFunName f
-      _ -> error $ "Unsupported calling convention: " ++ show cc
+  ICall f args -> do
+    f' <- lookupImpFun =<< substM f
+    let ty@(IFunType cc argTys resultTys) = impFunType f'
+    case f' of
+      ImpFunction _ _ -> error "not implemented"
+      FFIFunction _ fname -> do
+        args' <- mapM compileExpr args
+        let resultTys' = map scalarTy resultTys
+        case cc of
+          FFIFun -> do
+            ans <- emitExternCall (makeFunSpec fname ty) args'
+            return [ans]
+          FFIMultiResultFun -> do
+            resultPtr <- makeMultiResultAlloc resultTys'
+            emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
+            loadMultiResultAlloc resultTys' resultPtr
+          CEntryFun -> do
+            exitCode <- emitInstr i64 (callInstr fun args') >>= (`asIntWidth` i1)
+            compileIf exitCode throwRuntimeError (return ())
+            return []
+              where
+                fTy = funTy i64 $ map scalarTy argTys
+                fun = callableOperand fTy $ topLevelFunName fname
+          _ -> error $ "Unsupported calling convention: " ++ show cc
 
 -- TODO: use a careful naming discipline rather than strings
-topLevelFunName :: IFunVar -> L.Name
-topLevelFunName (name, _) = fromString name
+topLevelFunName :: SourceName -> L.Name
+topLevelFunName name = fromString name
 
-makeFunSpec :: IFunVar -> ExternFunSpec
-makeFunSpec (name, IFunType FFIFun argTys [resultTy]) =
+makeFunSpec :: SourceName -> IFunType -> ExternFunSpec
+makeFunSpec name (IFunType FFIFun argTys [resultTy]) =
    ExternFunSpec (L.Name (fromString name)) (scalarTy resultTy)
                     [] [] (map scalarTy argTys)
-makeFunSpec (name, IFunType FFIMultiResultFun argTys _) =
+makeFunSpec name (IFunType FFIMultiResultFun argTys _) =
    ExternFunSpec (L.Name (fromString name)) L.VoidType [] []
      (hostPtrTy hostVoidp : map scalarTy argTys)
-makeFunSpec (_, IFunType _ _ _) = error "not implemented"
+makeFunSpec _ (IFunType _ _ _) = error "not implemented"
 
 compileLoop :: Compiler m => Direction -> IBinder i i' -> Operand -> m i' o () -> m i o ()
 compileLoop d iBinder n compileBody = do

@@ -13,8 +13,10 @@ data Geom =
 
 HtmlColor : Type = Fin 3 => Word8
 
+foreign "showHex" showHexFFI : Word8 -> {IO} (Int32 & RawPtr)
+
 def showHex (x:Word8) : String = unsafeIO \().
-  (n, ptr) = %ffi showHex (Int32 & RawPtr) x
+  (n, ptr) = showHexFFI x
   stringFromCharPtr n (MkPtr ptr)
 
 black : HtmlColor = [IToW8   0, IToW8   0, IToW8   0]

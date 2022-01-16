@@ -291,6 +291,7 @@ data AtomBinding (n::S) =
  | SolverBound (SolverBinding n)
  | PtrLitBound PtrType (Ptr ())
  | SimpLamBound (NaryPiType n) (NaryLamExpr n)  -- first-order functions only
+ | FFIFunBound  (NaryPiType n) (ImpFunName n)
    deriving (Show, Generic)
 
 data SolverBinding (n::S) =
@@ -978,6 +979,7 @@ type ModuleName = String
 data SourceBlock' =
    EvalUDecl (UDecl VoidS VoidS)
  | Command CmdName (UExpr VoidS)
+ | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
  | GetNameType SourceName
  -- TODO Add a color for module names?
  | ImportModule ModuleName
@@ -1066,7 +1068,6 @@ data PrimOp e =
       | PrimEffect e (PrimEffect e)
       | IndexRef e e
       | ProjRef Int e
-      | FFICall String e [e]
       | Inject e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
@@ -1247,7 +1248,7 @@ data CallingConvention =
 
 data ImpFunction n =
    ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
- | FFIFunction IFunVar
+ | FFIFunction IFunType SourceName
    deriving (Show, Generic)
 
 data ImpBlock n where
@@ -1264,7 +1265,7 @@ data ImpInstr n =
  | IQueryParallelism IFunVar (IExpr n) -- returns the number of available concurrent threads
  | ISyncWorkgroup
  | ILaunch IFunVar (Size n) [IExpr n]
- | ICall IFunVar [IExpr n]
+ | ICall (ImpFunName n) [IExpr n]
  | Store (IExpr n) (IExpr n)           -- dest, val
  | Alloc AddressSpace IType (Size n)
  | MemCopy (IExpr n) (IExpr n) (IExpr n)   -- dest, source, numel
@@ -1401,6 +1402,7 @@ atomBindingType (AtomNameBinding b) = case b of
   SolverBound (SkolemBound ty)     -> ty
   PtrLitBound ty _ -> BaseTy (PtrType ty)
   SimpLamBound ty _ -> naryPiTypeAsType ty
+  FFIFunBound  ty _ -> naryPiTypeAsType ty
 
 infixr 1 -->
 infixr 1 --@
@@ -2275,9 +2277,10 @@ instance GenericE AtomBinding where
           PiBinding       -- PiBound
           Type            -- MiscBound
           SolverBinding)  -- SolverBound
-       (EitherE2
-          (LiftE (PtrType, Ptr ()))   -- PtrLitBound
-          (PairE NaryPiType NaryLamExpr))              -- SimpLamBound
+       (EitherE3
+          (LiftE (PtrType, Ptr ()))       -- PtrLitBound
+          (PairE NaryPiType NaryLamExpr)  -- SimpLamBound
+          (PairE NaryPiType ImpFunName))  -- FFIFunBound
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
@@ -2287,6 +2290,7 @@ instance GenericE AtomBinding where
     SolverBound x -> Case0 $ Case4 x
     PtrLitBound x y -> Case1 (Case0 (LiftE (x,y)))
     SimpLamBound x y  -> Case1 (Case1 (PairE x y))
+    FFIFunBound x y   -> Case1 (Case2 (PairE x y))
 
   toE = \case
     Case0 x' -> case x' of
@@ -2299,6 +2303,7 @@ instance GenericE AtomBinding where
     Case1 x' -> case x' of
       Case0 (LiftE (x,y)) -> PtrLitBound x y
       Case1 (PairE x y) -> SimpLamBound x y
+      Case2 (PairE x y) -> FFIFunBound x y
       _ -> error "impossible"
     _ -> error "impossible"
 
