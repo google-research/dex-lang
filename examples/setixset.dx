@@ -1,0 +1,190 @@
+import sort
+
+'#### Misc instances
+
+instance {n} [Ix n] Eq n
+  (==) = \x y. ordinal x == ordinal y
+
+def lexicalOrder {n} [Ord n]
+  (compareElements:n->n->Bool)
+  (compareLengths:Int->Int->Bool)
+  ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
+    -- Orders Lists (e.g. words) according to the order of their
+    -- elements (e.g. letters).
+    --
+    -- This function operates serially and short-circuits
+    -- at the first difference.  One could also write this
+    -- functon to operate in parallel, but it would be
+    -- wasteful in the case where there is an early difference.
+    iter \i.
+      case i == min nx ny of
+        True -> Done $ compareLengths nx ny
+        False ->
+          xi = xs.(unsafeFromOrdinal _ i)
+          yi = ys.(unsafeFromOrdinal _ i)
+          case compareElements xi yi of
+            True -> Done True
+            False -> case xi == yi of
+              True -> Continue
+              False -> Done False
+
+instance {n} [Ord n] Ord (List n)
+  (>) = lexicalOrder (>) (>)
+  (<) = lexicalOrder (<) (<)
+
+:p "aaa" < "bbb"
+> True
+
+:p "aa" < "bbb"
+> True
+
+:p "a" < "aa"
+> True
+
+:p "aaa" > "bbb"
+> False
+
+:p "aa" > "bbb"
+> False
+
+:p "a" > "aa"
+> False
+
+:p "a" < "aa"
+> True
+
+:p ("": List Word8) > ("": List Word8)
+> False
+
+:p ("": List Word8) < ("": List Word8)
+> False
+
+:p "a" > "a"
+> False
+
+:p "a" < "a"
+> False
+
+:p "Thomas" < "Thompson"
+> True
+
+:p "Thomas" > "Thompson"
+> False
+
+
+
+:p sort [1]
+
+:p sort [3, 2, 1]
+
+:p sort ["A"]
+
+:p sort ["A", "B", "C"]
+
+:p sort ["Alice", "Bob", "Charlie"]
+
+:p sort ["Charlie", "Alice", "Bob", "Aaron"]
+
+----------------------
+
+
+'#### Misc Ix Set instances
+
+
+instance Ix Bool
+  getSize = \(). 2
+  ordinal = \b. case b of
+    False -> 0
+    True -> 1
+  unsafeFromOrdinal = \k. k == 1
+
+:p for i:Bool.
+  i
+
+-----------------
+
+
+'### An index set for List
+
+data ListIx a l:(List a) =
+  MkListIx Int 
+
+instance {a list} Ix (ListIx a list)
+  getSize = \(). listLength list
+  ordinal = \(MkListIx i). i
+  unsafeFromOrdinal = \k. MkListIx k
+
+names = AsList _ ["Alice", "Bob", "Charlie"]
+enumerateNames : (ListIx _ names)=>Int =
+  for i. ordinal i  -- expensive round trip!?
+
+:p enumerateNames
+:p size (ListIx _ names)
+
+:p for i:(ListIx _ names). i
+
+
+
+
+
+
+
+'### An index set for Sets
+
+'#### Sets
+
+data Set a [Ord a] =
+  -- Guaranteed to be in sorted order,
+  -- as long as no one else uses this constructor.
+  -- Instead use the "toSet" function below.
+  UnsafeAsSet n:Int elements:(Fin n => a)
+
+def toSet {n a} [Ord a] (xs:n=>a) : Set a =
+  n' = size n
+  sorted_xs = sort xs
+  UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_xs
+
+def setLength {a} ((UnsafeAsSet n _):Set a) : Int = n
+
+instance {a} [Eq a] Eq (Set a)
+  (==) = \(UnsafeAsSet nx xs) (UnsafeAsSet ny ys).
+    if nx /= ny
+      then False
+      else all for i:(Fin nx).
+        xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
+
+
+'##### Tests
+
+-- check order invariance.
+:p (toSet ["Bob", "Alice", "Charlie"]) == (toSet ["Charlie", "Bob", "Alice"])
+
+
+'#### Index set for sets of strings
+
+--data SetIx a l:(Set a) [Ord a] =
+-- need a bugfix before we can be polymorphic in type
+
+data StringSetIx l:(Set String) =
+  MkSetIx Int
+
+instance {set} Ix (StringSetIx set)
+  getSize = \(). setLength set
+  ordinal = \(MkSetIx i). i
+  unsafeFromOrdinal = \k. MkSetIx k
+
+names2 = toSet ["Bob", "Alice", "Charlie"]
+enumerateNames2 : (StringSetIx names2)=>Int =
+  for i. ordinal i
+
+:p enumerateNames2
+:p size (StringSetIx names2)
+
+:p for i:(StringSetIx names2). i
+
+rowsAndColsTable : (StringSetIx names2)=>(StringSetIx names2)=>Int =
+  for i j. (ordinal i + ordinal j)
+
+:p rowsAndColsTable
+
+:p for i:(StringSetIx rowsAndColsTable). i
