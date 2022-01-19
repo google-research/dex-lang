@@ -518,22 +518,29 @@ shuffle scope es = go [] [] (freshVars scope) es
 -------------------- Unzip --------------------
 
 unzipProgram :: Program -> Program
-unzipProgram (Program funcMap) = Program $ flip M.foldMapWithKey funcMap $ \name def -> do
-  let (udef, udef') = unzipFunc def
-  M.fromList [(name ++ ".nonlin", udef), (name ++ ".lin", udef')]
+unzipProgram orig@(Program funcMap) = new where
+  new = Program $ flip M.foldMapWithKey funcMap $ \name def -> do
+    -- Tying the knot by passing `new` here does assume that laziness
+    -- will figure out a sensible order in which to actually perform
+    -- the unzipping so that the type of every unzipped callee is
+    -- available for its unzipped caller.
+    let (udef, udef') = unzipFunc orig new def
+    M.fromList [(name ++ ".nonlin", udef), (name ++ ".lin", udef')]
 
-unzipFunc :: FuncDef -> (FuncDef, FuncDef)
-unzipFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys) body) =
+-- The nonlinear returned function packages the tape in the _last_ returned value
+unzipFunc :: Program -> Program -> FuncDef -> (FuncDef, FuncDef)
+unzipFunc orig new def =
   ( FuncDef formalsWithTys [] nonlinFuncTy nonlinBody
   , FuncDef [(resVar, residualTupleTy)]
       linFormalsWithTys (MixedType [] linRetTys) linBody
   )
   where
+    (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys) body) = def
     (formals, _) = unzip formalsWithTys
     (linFormals, _) = unzip linFormalsWithTys
     formalsScope = scopeExt (scopeExt mempty formals) linFormals
     formalsSubst = envExt (envExt mempty formals formals) linFormals linFormals
-    ((ctx, ctxScope), ubody, ubody') = unzipExpr formalsScope formalsSubst body
+    ((ctx, ctxScope), ubody, ubody') = unzipExpr orig formalsScope formalsSubst body
     residualVars = toList $ getFree (freeVars ubody') `S.difference` (scopeExt mempty linFormals)
     resVar:retVars = take (1 + length retTys) $ freshVars ctxScope
     nonlinBody = ctx $
@@ -541,15 +548,27 @@ unzipFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRetTys)
       LetMixed [resVar] [] (Tuple $ Var <$> residualVars) $
       Ret (retVars ++ [resVar]) []
     linBody = LetUnpack residualVars resVar $ ubody'
-    Right nonlinFuncTy@(MixedType nonlinRetTys []) =
-      typecheck (Program undefined) (M.fromList formalsWithTys, mempty) nonlinBody
+    nonlinFuncTy@(MixedType nonlinRetTys []) = case
+      typecheck new (M.fromList formalsWithTys, mempty) nonlinBody of
+        Right res -> res
+        Left err -> error $ err ++ " in\n" ++ show (pretty nonlinBody)
+          ++ "\nwith env\n" ++ show (pretty formalsWithTys)
     residualTupleTy = last nonlinRetTys
+
+nonLinRetTys :: Program -> FuncName -> [Type]
+nonLinRetTys (Program funcMap) name = rets where
+  (Just (FuncDef _ _ (MixedType rets _) _)) = M.lookup name funcMap
 
 -- The Scope is the set of variables used by the generated body so far
 -- (with respect to which new variables must be fresh).
 -- The Subst is the remapping of old variable names to new ones.
-unzipExpr :: Scope -> Subst -> Expr -> ((Expr -> Expr, Scope), Expr, Expr)
-unzipExpr scope subst expr = case expr of
+-- The return is
+-- - The binding list, represented as an Expr -> Expr function
+-- - The Scope in that context
+-- - The non-linear result expression
+-- - The linear result expression
+unzipExpr :: Program -> Scope -> Subst -> Expr -> ((Expr -> Expr, Scope), Expr, Expr)
+unzipExpr orig scope subst expr = case expr of
   Ret vs vs' -> ((id, scope), Ret ((subst !) <$> vs) [], Ret [] ((subst !) <$> vs'))
   LetMixed vs vs' e1 e2 ->
       ( (ctx1 . LetMixed uvs [] ue1 . ctx2, scopeCtx2)
@@ -557,24 +576,35 @@ unzipExpr scope subst expr = case expr of
       , LetMixed [] uvs' ue1' ue2'
       )
     where
-      ((ctx1, scopeCtx1), ue1, ue1') = unzipExpr scope subst e1
+      ((ctx1, scopeCtx1), ue1, ue1') = rec scope subst e1
       (uvs, uvs') = splitAt (length vs) $ take (length vs + length vs') $ freshVars scopeCtx1
       e2Subst = envExt (envExt subst vs uvs) vs' uvs'
       e2Scope = scopeExt (scopeExt scope uvs) uvs'
-      ((ctx2, scopeCtx2), ue2, ue2') = unzipExpr e2Scope e2Subst e2
+      ((ctx2, scopeCtx2), ue2, ue2') = rec e2Scope e2Subst e2
+  App name vs vs' ->
+      ( (LetMixed (retVars ++ [tapeVar]) [] (App (name ++ ".nonlin") uvs []), scope2)
+      , Ret retVars []
+      , App (name ++ ".lin") [tapeVar] uvs'
+      )
+    where
+      uvs = (subst !) <$> vs
+      uvs' = (subst !) <$> vs'
+      retTys = nonLinRetTys orig name
+      tapeVar:retVars = take (1 + length retTys) $ freshVars scope
+      scope2 = scopeExt scope $ tapeVar:retVars
   Var  v -> ((id, scope), Var (subst ! v), Ret [] [])
   LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
   UnOp op e -> ((ctx, ctxScope), UnOp op ue, ue')
-    where ((ctx, ctxScope), ue, ue') = unzipExpr scope subst e
+    where ((ctx, ctxScope), ue, ue') = rec scope subst e
   BinOp op e1 e2 -> ((ctx1 . ctx2, ctxScope2), BinOp op ue1 ue2, ue')
     where
-      ((ctx1, ctxScope1), ue1, ue1') = unzipExpr scope subst e1
-      ((ctx2, ctxScope2), ue2, ue2') = unzipExpr ctxScope1 subst e2
+      ((ctx1, ctxScope1), ue1, ue1') = rec scope subst e1
+      ((ctx2, ctxScope2), ue2, ue2') = rec ctxScope1 subst e2
       ue' = LetMixed [] [] ue1' ue2'
   LAdd e1 e2 -> ((ctx1 . ctx2, ctxScope2), ue, LAdd ue1' ue2')
     where
-      ((ctx1, ctxScope1), ue1, ue1') = unzipExpr scope subst e1
-      ((ctx2, ctxScope2), ue2, ue2') = unzipExpr ctxScope1 subst e2
+      ((ctx1, ctxScope1), ue1, ue1') = rec scope subst e1
+      ((ctx2, ctxScope2), ue2, ue2') = rec ctxScope1 subst e2
       ue = LetMixed [] [] ue1 ue2
   LScale s e ->
     ( (sCtx . eCtx, eCtxScope)
@@ -582,9 +612,11 @@ unzipExpr scope subst expr = case expr of
     , LetMixed [] [] us' $ LScale us ue'
     )
     where
-      ((sCtx, sCtxScope), us, us') = unzipExpr scope     subst s
-      ((eCtx, eCtxScope), ue, ue') = unzipExpr sCtxScope subst e
+      ((sCtx, sCtxScope), us, us') = rec scope     subst s
+      ((eCtx, eCtxScope), ue, ue') = rec sCtxScope subst e
   _ -> error $ "Unzip not implemented: " ++ show (pretty expr)
+  where
+    rec = unzipExpr orig
 
 -------------------- Transposition --------------------
 
@@ -645,6 +677,14 @@ transposeExpr scope expr cts = case expr of
   LetUnpack vs v body -> (LetUnpack vs v . bCtx, bScope, bMap)
     where
       (bCtx, bScope, bMap) = transposeExpr scope body cts
+  App name vs vs' ->
+    ( LetMixed [] cts' (App name vs cts)
+    , scope'
+    , M.fromList $ zip vs' cts'
+    )
+    where
+      cts' = take (length vs') $ freshVars scope
+      scope' = scopeExt scope cts'
   LAdd x y ->
     ( LetMixed [] [ct1, ct2] (Dup (LVar ct)) . xtCtx . ytCtx
     , yScope
