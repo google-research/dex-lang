@@ -142,7 +142,7 @@ compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CInternalFun doesn't support returning values"
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
-    mainFun <- makeFunction (topLevelFunName fName) argParams Nothing
+    mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
   CEntryFun -> return $ runCompile env CPU $ do
@@ -389,7 +389,8 @@ compileInstr instr = case instr of
             fTy = funTy i64 $ map scalarTy argTys
             fun = callableOperand fTy $ topLevelFunName fname
       CInternalFun -> do
-        emitVoidExternCall (makeFunSpec fname ty) args'
+        exitCode <- emitExternCall (makeFunSpec fname ty) args' >>= (`asIntWidth` i1)
+        compileIf exitCode throwRuntimeError (return ())
         return []
       _ -> error $ "Unsupported calling convention: " ++ show cc
 
@@ -405,7 +406,7 @@ makeFunSpec name (IFunType FFIMultiResultFun argTys _) =
    ExternFunSpec (L.Name (fromString name)) L.VoidType [] []
      (hostPtrTy hostVoidp : map scalarTy argTys)
 makeFunSpec name (IFunType CInternalFun argTys _) =
-   ExternFunSpec (L.Name (fromString name)) L.VoidType [] [] (map scalarTy argTys)
+   ExternFunSpec (L.Name (fromString name)) i64 [] [] (map scalarTy argTys)
 makeFunSpec _ (IFunType _ _ _) = error "not implemented"
 
 compileLoop :: Compiler m => Direction -> IBinder i i' -> Operand -> m i' o () -> m i o ()

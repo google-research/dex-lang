@@ -140,13 +140,13 @@ def optionalHtmlColor(c: Maybe HtmlColor) : String =
     Nothing -> "none"
     Just c' -> htmlColor c'
 
--- `@noinline` fails because the function can throw a hard error, which we don't handle
--- @noinline
+@noinline
 def attrString (attr:GeomStyle) : String =
   (   ("stroke"       <=> (optionalHtmlColor $ getAt #strokeColor attr))
   <+> ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
   <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
 
+@noinline
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
   solidAttr = setAt #fillColor (getAt #strokeColor attr) attr
@@ -184,6 +184,7 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
 
 BoundingBox : Type = (Point & Point)
 
+@noinline
 def computeBounds (d:Diagram) : BoundingBox =
   computeSubBound = \sel op (_, p, geom).
     sel p + case geom of
@@ -205,6 +206,7 @@ def computeBounds (d:Diagram) : BoundingBox =
     )
   )
 
+@noinline
 def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   ((xmin, ymin), (xmax, ymax)) = bounds
   imgWidth = 400.0
