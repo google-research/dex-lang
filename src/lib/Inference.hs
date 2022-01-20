@@ -192,11 +192,12 @@ buildDeclsInf cont = buildDeclsInfUnzonked $ cont >>= zonk
 
 type InfBuilder2 (m::MonadKind2) = forall i. InfBuilder (m i)
 
-type IfaceType = Type
+type IfaceTypeSet = ESet Type
+
 class (SubstReader Name m, InfBuilder2 m, Solver2 m)
       => Inferer (m::MonadKind2) where
   liftSolverM :: EmitsInf o => SolverM o a -> m i o a
-  gatherUnsolvedInterfaces :: m i o a -> m i o (a, [IfaceType o])
+  gatherUnsolvedInterfaces :: m i o a -> m i o (a, IfaceTypeSet o)
   reportUnsolvedInterface  :: Type o  -> m i o ()
 
 applyDefaults :: (EmitsInf o, Inferer m) => m i o ()
@@ -330,15 +331,15 @@ extendDefaults ds' (InfOutMap bindings ss ds un) =
   InfOutMap bindings ss (ds <> ds') un
 
 -- TODO: Make GatherRequired hold a set
-data RequiredIfaces (n::S) = FailIfRequired | GatherRequired [IfaceType n]
+data RequiredIfaces (n::S) = FailIfRequired | GatherRequired (IfaceTypeSet n)
 instance GenericE RequiredIfaces where
-  type RepE RequiredIfaces = MaybeE (ListE IfaceType)
+  type RepE RequiredIfaces = MaybeE IfaceTypeSet
   fromE = \case
     FailIfRequired    -> NothingE
-    GatherRequired ds -> JustE (ListE ds)
+    GatherRequired ds -> JustE ds
   toE = \case
-    NothingE         -> FailIfRequired
-    JustE (ListE ds) -> GatherRequired ds
+    NothingE  -> FailIfRequired
+    JustE ds  -> GatherRequired ds
     _ -> error "unreachable"
 instance SinkableE RequiredIfaces
 instance HoistableE  RequiredIfaces
@@ -456,7 +457,7 @@ instance Inferer InfererM where
 
   gatherUnsolvedInterfaces m = do
     s' <- get
-    put $ GatherRequired []
+    put $ GatherRequired mempty
     ans <- m
     ds <- get
     put s'
@@ -472,7 +473,7 @@ instance Inferer InfererM where
       return UnitE
     get >>= \case
       FailIfRequired    -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint iface
-      GatherRequired ds -> put $ GatherRequired $ iface:ds
+      GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
 instance Builder (InfererM i) where
   emitDecl hint ann expr = do
@@ -578,7 +579,7 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
 hoistRequiredIfaces :: BindsNames b => b n l -> RequiredIfaces l -> RequiredIfaces n
 hoistRequiredIfaces bs = \case
   FailIfRequired    -> FailIfRequired
-  GatherRequired ds -> GatherRequired $ ds & mapMaybe \d -> case hoist bs d of
+  GatherRequired ds -> GatherRequired $ eSetFromList $ eSetToList ds & mapMaybe \d -> case hoist bs d of
     HoistSuccess d' -> Just d'
     HoistFailure _  -> Nothing
 
@@ -709,13 +710,13 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       -- inserted arguments instead of the desired dict. It's not a fundemental
       -- limitation of our automatic quantification, but it's simpler not to deal with
       -- that for now.
-      let checkNoMissing = addSrcContext pos' $ unless (null missingDs) $ throw TypeErr $
-            "Couldn't synthesize a class dictionary for: " ++ pprint (head missingDs)
+      let checkNoMissing = addSrcContext pos' $ unless (null $ eSetToList missingDs) $ throw TypeErr $
+            "Couldn't synthesize a class dictionary for: " ++ pprint (head $ eSetToList missingDs)
       autoDs <- case arr of
         TabArrow   -> checkNoMissing $> mempty
         ClassArrow -> checkNoMissing $> mempty
         _          -> return $ missingDs
-      introDictTys autoDs $ do
+      introDictTys (eSetToList autoDs) $ do
         ann' <- getAnnType
         addSrcContext pos' case pat of
           UPatBinder UIgnore ->
@@ -728,7 +729,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
                 ty'   <- checkUType   ty
                 return $ PairE effs' ty'
             cheapReduceWithDecls decls piResult >>= \case
-              (Just (PairE effs' ty'), Just []) -> return $ (effs', ty')
+              (Just (PairE effs' ty'), Just ds)
+                | null (eSetToList ds)  -> return $ (effs', ty')
               _ -> throw TypeErr $ "Can't reduce type expression: " ++
                      pprint (Block (BlockAnn TyKind) decls $ Atom $ snd $ fromPairE piResult)
     when (arr == TabArrow) $ checkIx pos' $ binderType b
@@ -762,7 +764,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       xBlock <- buildBlockInf $ inferRho x
       getType xBlock >>= \case
         TyKind -> cheapReduce xBlock >>= \case
-          (Just reduced, Just []) -> return reduced
+          (Just reduced, Just ds) | null (eSetToList ds) -> return reduced
           _ -> throw CompilerErr "Type args to primops must be reducible"
         _ -> emitBlock xBlock
     val <- case prim' of
@@ -905,7 +907,7 @@ inferAppArg isDependent b@(PiBinder _ _ arr) uArgs = getImplicitArg b >>= \case
         then do
           Abs decls result <- buildDeclsInf $ checkSigma arg (sink $ binderType b)
           cheapReduceWithDecls decls result >>= \case
-            (Just x', Just ds) -> forM_ ds reportUnsolvedInterface >> return x'
+            (Just x', Just ds) -> forM_ (eSetToList ds) reportUnsolvedInterface >> return x'
             _ -> addSrcContext argCtx $ throw TypeErr $ depFunErrMsg
         else checkSigma arg (binderType b)
   where
@@ -1199,7 +1201,7 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
     ClassArrow    -> return ()
     _ -> throw TypeErr $ "Not a valid arrow for an instance: " ++ pprint arrow
   checkAnnWithMissingDicts ann \ds getArgTy -> do
-    introDicts ds $ do
+    introDicts (eSetToList ds) $ do
       argTy <- getArgTy
       buildLamInf (getNameHint p) arrow argTy (const $ return Pure) \v -> do
         bindLamPat p v $
@@ -1215,7 +1217,7 @@ checkInstanceParams params cont = go params []
     go :: forall o'. (EmitsBoth o', Inferer m, Ext o o') => [UType i] -> [Type o'] -> m i o' (Atom o')
     go []    ptys = cont $ reverse ptys
     go (p:t) ptys = checkUTypeWithMissingDicts p \ds getParamType -> do
-      introDicts ds do
+      introDicts (eSetToList ds) do
         pty <- getParamType
         ListE ptys' <- sinkM $ ListE ptys
         go t (pty:ptys')
@@ -1445,18 +1447,18 @@ checkAnn ann = case ann of
 
 checkAnnWithMissingDicts :: (EmitsInf o, Inferer m)
                          => Maybe (UType i)
-                         -> ([IfaceType o] -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
+                         -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
                          -> m i o a
 checkAnnWithMissingDicts ann cont = case ann of
   Just ty -> checkUTypeWithMissingDicts ty cont
-  Nothing -> cont [] (freshType TyKind)  -- Unannotated binders are never auto-quantified
+  Nothing -> cont mempty (freshType TyKind)  -- Unannotated binders are never auto-quantified
 
 checkUTypeWithMissingDicts :: (EmitsInf o, Inferer m)
                            => UType i
-                           -> ([IfaceType o] -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
+                           -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
                            -> m i o a
 checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
-  ListE unsolvedSubset <- liftImmut $ do
+  unsolvedSubset <- liftImmut $ do
     -- We have to be careful not to emit inference vars out of the initial solve.
     -- The resulting type will never be used in downstream inference, so we can easily
     -- end up with fake ambiguous variables if they leak out.
@@ -1478,9 +1480,9 @@ checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
         Nothing       -> addSrcContext pos $ throw NotImplementedErr $
           "A type expression has interface constraints that depend on values " ++
           "local to the expression"
-        Just unsolved -> ListE <$> nubAlphaEq (unsolvedSubset ++ unsolved)
-    return $ case hoistRequiredIfaces frag (GatherRequired $ fromListE unsolvedSubset') of
-      GatherRequired unsolvedSubset -> ListE unsolvedSubset
+        Just unsolved -> return $ unsolvedSubset <> unsolved
+    return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
+      GatherRequired unsolvedSubset -> unsolvedSubset
       FailIfRequired                -> error "Unreachable"
   cont unsolvedSubset $ checkUType uty
 
@@ -1491,15 +1493,16 @@ checkUType uty@(WithSrcE pos _) = do
   case (ans, unsolved) of
     (_       , Nothing) -> addSrcContext pos $ throw NotImplementedErr $
       "A type expression has interface constraints that depend on values local to the expression"
-    (Just ty , Just ds) -> addSrcContext pos (forM_ ds reportUnsolvedInterface) $> ty
-    (Nothing , Just []) -> addSrcContext pos $ throw TypeErr $
-      "Can't reduce type expression: " ++ pprint uty
-    (Nothing , Just ds) -> do
-      uniqDs <- nubAlphaEq ds
-      throw TypeErr $
-        "Can't reduce type expression: " ++ pprint uty ++ "\n" ++
-        "This might be due to a failure to find a viable interface implementation " ++
-        "for: " ++ intercalate ", " (pprint <$> uniqDs)
+    (Just ty , Just ds) ->
+      addSrcContext pos (forM_ (eSetToList ds) reportUnsolvedInterface) $> ty
+    (Nothing , Just ds) ->
+      case eSetToList ds of
+        [] -> addSrcContext pos $ throw TypeErr $
+                "Can't reduce type expression: " ++ pprint uty
+        ds' -> throw TypeErr $
+          "Can't reduce type expression: " ++ pprint uty ++ "\n" ++
+          "This might be due to a failure to find a viable interface implementation " ++
+          "for: " ++ intercalate ", " (pprint <$> ds')
 
 checkExtLabeledRow :: (EmitsBoth o, Inferer m)
                    => ExtLabeledItems (UExpr i) (UExpr i)

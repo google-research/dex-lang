@@ -33,7 +33,7 @@ type NiceE e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
 
 cheapReduce :: forall e' e m n
              . (EnvReader m, CheaplyReducibleE e e', NiceE e, NiceE e')
-            => e n -> m n (Maybe (e' n), Maybe [Type n])
+            => e n -> m n (Maybe (e' n), Maybe (ESet Type n))
 cheapReduce e = publicResultFromE <$> liftImmut do
   DB bindings <- getDB
   e' <- sinkM e
@@ -44,7 +44,7 @@ cheapReduce e = publicResultFromE <$> liftImmut do
 cheapReduceWithDecls
   :: forall e' e m n l
    . ( CheaplyReducibleE e e', NiceE e', NiceE e, EnvReader m )
-  => Nest Decl n l -> e l -> m n (Maybe (e' n), Maybe [Type n])
+  => Nest Decl n l -> e l -> m n (Maybe (e' n), Maybe (ESet Type n))
 cheapReduceWithDecls decls result = publicResultFromE <$> liftImmut do
   Abs decls' result' <- sinkM $ Abs decls result
   DB bindings <- getDB
@@ -58,11 +58,11 @@ cheapNormalize a = fromJust . fst <$> cheapReduce a
 
 -- === internal ===
 
-resultToE :: (Maybe (e n), FailedDictTypes n) -> (PairE (MaybeE e) (MaybeE (ListE Type))) n
+resultToE :: (Maybe (e n), FailedDictTypes n) -> (PairE (MaybeE e) (MaybeE (ESet Type))) n
 resultToE (l, FailedDictTypes r) = PairE (toMaybeE l) r
 
-publicResultFromE :: (PairE (MaybeE e) (MaybeE (ListE Type))) n -> (Maybe (e n), Maybe [Type n])
-publicResultFromE (PairE l r) = (fromMaybeE l, fromListE <$> fromMaybeE r)
+publicResultFromE :: (PairE (MaybeE e) (MaybeE (ESet Type))) n -> (Maybe (e n), Maybe (ESet Type n))
+publicResultFromE (PairE l r) = (fromMaybeE l, fromMaybeE r)
 
 newtype CheapReducerM (i :: S) (o :: S) (a :: *) =
   CheapReducerM
@@ -75,7 +75,7 @@ newtype CheapReducerM (i :: S) (o :: S) (a :: *) =
            , EnvReader, ScopeReader, EnvExtender
            , SubstReader AtomSubstVal, AlwaysImmut )
 
-newtype FailedDictTypes (n::S) = FailedDictTypes ((MaybeE (ListE Type)) n)
+newtype FailedDictTypes (n::S) = FailedDictTypes (MaybeE (ESet Type) n)
                                  deriving (SinkableE, HoistableE)
 
 instance Semigroup (FailedDictTypes n) where
@@ -95,7 +95,7 @@ class ( Alternative2 m, SubstReader AtomSubstVal m, AlwaysImmut2 m
 
 instance CheapReducer CheapReducerM where
   reportSynthesisFail ty = CheapReducerM $ SubstReaderT $ lift $ lift11 $
-    WriterT1 $ tell $ FailedDictTypes $ JustE $ ListE [ty]
+    WriterT1 $ tell $ FailedDictTypes $ JustE $ eSetSingleton ty
   updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
     modify (MapE . M.insert v (toMaybeE u) . fromMapE)
   lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
