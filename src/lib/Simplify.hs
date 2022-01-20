@@ -8,7 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Simplify ( simplifyTopBlock, SimplifiedBlock (..)
+module Simplify ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..)
                 , simplifyBlock, liftSimplifyM, buildBlockSimplified
                 , IxCache, MonadIxCache1, SimpleIxInstance (..)
                 , simplifiedIxInstance, appSimplifiedIxMethod ) where
@@ -94,6 +94,13 @@ simplifyTopBlock block = liftImmut do
   return $ runSimplifyM env do
     (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
     return $ SimplifiedBlock block' recon
+
+simplifyTopFunction :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
+simplifyTopFunction ty f = liftImmut do
+  DB env <- getDB
+  return $ runSimplifyM env do
+    buildNaryLamExpr ty \xs -> do
+      dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom

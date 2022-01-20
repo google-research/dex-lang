@@ -77,6 +77,7 @@ module Syntax (
     NaryLamExpr (..), NaryPiType (..), fromNaryLam, fromNaryPiType,
     NonEmpty (..), nonEmpty,
     naryLamExprAsAtom, naryPiTypeAsType,
+    ObjectFile (..), ObjectFileName, CFunName, CFun (..),
     pattern IdxRepTy, pattern IdxRepVal,
     pattern IIdxRepTy, pattern IIdxRepVal,
     pattern TagRepTy,
@@ -104,6 +105,7 @@ import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict (Writer, execWriter, tell)
 import qualified Control.Monad.Trans.Except as MTE
+import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List.NonEmpty    as NE
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
@@ -225,6 +227,11 @@ data LamBinder (n::S) (l::S) =
 data LamExpr (n::S) where
   LamExpr :: LamBinder n l -> Block l -> LamExpr n
 
+-- TODO: sometimes I wish we'd written these this way instead:
+--   data NaryLamExpr (n::S) where
+--     UnaryLamExpr :: LamExpr n -> NaryLamExpr n
+--     NaryLamExpr :: Binder n l -> NaryLamExpr l -> NaryLamExpr n
+-- maybe we should at least make a pattern so we can use it either way.
 data NaryLamExpr (n::S) where
   NaryLamExpr :: NonEmptyNest Binder n l -> EffectRow l -> Block l
               -> NaryLamExpr n
@@ -281,6 +288,7 @@ data Binding (c::C) (n::S) where
   SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
   ImpFunBinding     :: ImpFunction n                      -> Binding ImpFunNameC     n
+  ObjectFileBinding :: ObjectFile n                       -> Binding ObjectFileNameC n
 deriving instance Show (Binding c n)
 
 data AtomBinding (n::S) =
@@ -307,12 +315,15 @@ data Env (n::S) = Env
   , getSynthCandidates :: SynthCandidates n
   , getSourceMap       :: SourceMap n
   , getEffects         :: EffectRow n
-  , getCache           :: Cache n }
+  , getCache           :: Cache n
+  -- For now, we just load all object files. TODO: only load those we need
+  , getObjFiles        :: ESet ObjectFileName n}
   deriving (Generic)
 
 data Cache (n::S) = Cache
   { simpCache :: EMap AtomName AtomName n
   , impCache  :: EMap AtomName ImpFunName n
+  , objCache  :: EMap ImpFunName CFun n
   }
 
 instance HasScope Env where
@@ -334,10 +345,10 @@ instance OutFrag EnvFrag where
   catOutFrags _ frag1 frag2 = catEnvFrags frag1 frag2
 
 instance OutMap Env where
-  emptyOutMap = Env emptyOutMap mempty (SourceMap mempty) Pure mempty
+  emptyOutMap = Env emptyOutMap mempty (SourceMap mempty) Pure mempty mempty
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
-  extendOutMap (Env bindings scs sm eff cache) frag =
+  extendOutMap (Env bindings scs sm eff cache obj) frag =
     withExtEvidence frag do
       Env
         (bindings `extendOutMap` frag)
@@ -345,16 +356,17 @@ instance ExtOutMap Env (RecSubstFrag Binding)  where
         (sink sm)
         (sink eff)
         (sink cache)
+        (sink obj)
 
 instance ExtOutMap Env EnvFrag where
   extendOutMap bindings frag = do
     let EnvFrag newEnv maybeNewEff = frag
     case extendOutMap bindings newEnv of
-      Env bs scs sm oldEff cache -> do
+      Env bs scs sm oldEff cache obj -> do
         let newEff = case maybeNewEff of
                        Nothing  -> sink oldEff
                        Just eff -> eff
-        Env bs scs sm newEff cache
+        Env bs scs sm newEff cache obj
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
 bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
@@ -1011,7 +1023,12 @@ data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
 
 data TopEnvFrag n l =
-  TopEnvFrag (EnvFrag n l) (SynthCandidates l) (SourceMap l)
+  TopEnvFrag
+    (EnvFrag n l)
+    (SynthCandidates l)
+    (SourceMap l)
+    (Cache l)
+    (ESet ObjectFileName l)
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 data SynthCandidates n = SynthCandidates
@@ -1239,6 +1256,7 @@ instance IsBool IsCUDARequired where
 
 data CallingConvention =
    CEntryFun
+ | CInternalFun
  | EntryFun IsCUDARequired
  | FFIFun
  | FFIMultiResultFun
@@ -1280,6 +1298,25 @@ iBinderType (IBinder _ ty) = ty
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | MLIR | Interpreter  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
+
+-- === object file representations ===
+
+-- TODO: think about the naming discipline for compiled function names. We can't
+-- use our standard naming systems because these need to interact with the
+-- outside world, LLVM etc.
+
+type CFunName = String
+data CFun n = CFun CFunName (ObjectFileName n)
+              deriving (Show, Generic)
+
+type ObjectFileName = Name ObjectFileNameC
+
+data ObjectFile n = ObjectFile
+  { objectFileContents :: BS.ByteString
+  , objectFileFunsDefined :: [CFunName]
+  -- XXX: direct dependencies only
+  , objectFileDeps :: [ObjectFileName n] }
+  deriving (Show, Generic)
 
 -- === base types ===
 
@@ -2007,22 +2044,24 @@ deriving via WrapE Block n instance Generic (Block n)
 instance GenericE Cache where
   type RepE Cache =         EMap AtomName AtomName
                     `PairE` EMap AtomName ImpFunName
-  fromE (Cache x y) = x `PairE` y
-  toE   (x `PairE` y) = Cache x y
+                    `PairE` EMap ImpFunName CFun
+  fromE (Cache x y z) = x `PairE` y `PairE` z
+  toE   (x `PairE` y `PairE` z) = Cache x y z
 
 instance SinkableE  Cache
 instance HoistableE Cache
 instance AlphaEqE   Cache
+instance SubstE Name Cache
 deriving via WrapE Cache n instance Generic (Cache n)
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty
+  mempty = Cache mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 <> Cache y1 y2 = Cache (x1<>y1) (x2<>y2)
+  Cache x1 x2 x3 <> Cache y1 y2 y3 = Cache (x1<>y1) (x2<>y2) (x3<>y3)
 
 instance BindsOneAtomName (BinderP AtomNameC Type) where
   boundAtomBinding (_ :> ty) = MiscBound ty
@@ -2343,10 +2382,11 @@ instance NameColor c => GenericE (Binding c) where
           (DataDefName `PairE` Atom)
           (DataDefName `PairE` LiftE Int `PairE` Atom)
           (ClassDef `PairE` Atom))
-      (EitherE3
+      (EitherE4
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
-          (ImpFunction))
+          (ImpFunction)
+          (ObjectFile))
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
@@ -2356,6 +2396,7 @@ instance NameColor c => GenericE (Binding c) where
     SuperclassBinding className idx e   -> Case1 $ Case0 $ className `PairE` LiftE idx `PairE` e
     MethodBinding     className idx e   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
     ImpFunBinding     fun               -> Case1 $ Case2 $ fun
+    ObjectFileBinding objfile           -> Case1 $ Case3 $ objfile
 
   toE rep = case rep of
     Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
@@ -2366,6 +2407,7 @@ instance NameColor c => GenericE (Binding c) where
     Case1 (Case0 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ SuperclassBinding className idx e
     Case1 (Case1 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ MethodBinding     className idx e
     Case1 (Case2 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
+    Case1 (Case3 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
     _ -> error "impossible"
 
 deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
@@ -2434,6 +2476,28 @@ instance HoistableE  SourceMap
 instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
+
+instance GenericE ObjectFile where
+  type RepE ObjectFile = LiftE (BS.ByteString, [CFunName]) `PairE` ListE ObjectFileName
+  fromE (ObjectFile contents fs deps) = LiftE (contents, fs) `PairE` ListE deps
+  toE   (LiftE (contents, fs) `PairE` ListE deps) = ObjectFile contents fs deps
+
+instance Store (ObjectFile n)
+instance SubstE Name ObjectFile
+instance SinkableE  ObjectFile
+instance HoistableE ObjectFile
+
+
+instance GenericE CFun where
+  type RepE CFun = LiftE CFunName `PairE` ObjectFileName
+  fromE (CFun name obj) = LiftE name `PairE` obj
+  toE   (LiftE name `PairE` obj) = CFun name obj
+
+instance Store (CFun n)
+instance SubstE Name CFun
+instance AlphaEqE CFun
+instance SinkableE  CFun
+instance HoistableE CFun
 
 instance Store ForAnn
 instance Store AddressSpace
@@ -2757,9 +2821,10 @@ instance SubstE Name ImpFunction
 
 instance GenericB TopEnvFrag where
   type RepB TopEnvFrag = PairB EnvFrag
-                                    (LiftB (PairE SynthCandidates SourceMap))
-  fromB (TopEnvFrag frag sc sm) = PairB frag (LiftB (PairE sc sm))
-  toB   (PairB frag (LiftB (PairE sc sm))) = TopEnvFrag frag sc sm
+                         (LiftB (        SynthCandidates `PairE` SourceMap
+                                 `PairE` Cache `PairE` ESet ObjectFileName))
+  fromB (TopEnvFrag frag sc sm c o) = PairB frag (LiftB (sc `PairE` sm `PairE` c `PairE` o))
+  toB   (PairB frag (LiftB (sc `PairE` sm `PairE` c `PairE` o))) = TopEnvFrag frag sc sm c o
 
 instance SubstB Name TopEnvFrag
 instance HoistableB  TopEnvFrag
@@ -2768,23 +2833,27 @@ instance ProvesExt   TopEnvFrag
 instance BindsNames  TopEnvFrag
 
 instance OutFrag TopEnvFrag where
-  emptyOutFrag = TopEnvFrag emptyOutFrag mempty mempty
-  catOutFrags scope (TopEnvFrag frag1 sc1 sm1) (TopEnvFrag frag2 sc2 sm2) =
+  emptyOutFrag = TopEnvFrag emptyOutFrag mempty mempty mempty mempty
+  catOutFrags scope (TopEnvFrag frag1 sc1 sm1 c1 o1)
+                    (TopEnvFrag frag2 sc2 sm2 c2 o2) =
     withExtEvidence frag2 $
       TopEnvFrag
         (catOutFrags scope frag1 frag2)
         (sink sc1 <> sc2)
         (sink sm1 <> sm2)
+        (sink c1  <> c2 )
+        (sink o1  <> o2 )
 
 -- XXX: unlike `ExtOutMap Env EnvFrag` instance, this once doesn't
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap (Env bs scs sm effs cache)
-               (TopEnvFrag (EnvFrag frag _) scs' sm') =
+  extendOutMap (Env bs scs sm effs cache obj)
+               (TopEnvFrag (EnvFrag frag _) scs' sm' cache' obj') =
     withExtEvidence (toExtEvidence frag) $
       Env (bs `extendOutMap` frag) (sink scs <> scs')
-               (sink sm <> sm') (sink effs) (sink cache)
+          (sink sm <> sm') (sink effs) (sink cache <> cache')
+          (sink obj <> obj')
 
 instance GenericE (WithSrcE e) where
   type RepE (WithSrcE e) = PairE (LiftE SrcPosCtx) e

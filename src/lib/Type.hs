@@ -22,7 +22,7 @@ module Type (
   sourceNameType,
   checkUnOp, checkBinOp,
   oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
-  isSingletonType, singletonTypeVal, asNaryPiType,
+  isSingletonType, singletonTypeVal, asNaryPiType, numNaryPiArgs, naryLamExprType,
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
@@ -951,6 +951,24 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
   Nothing -> throw TypeErr $
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
+
+numNaryPiArgs :: NaryPiType n -> Int
+numNaryPiArgs (NaryPiType (NonEmptyNest b bs) _ _) = 1 + nestLength bs
+
+naryLamExprType :: EnvReader m => NaryLamExpr n -> m n (NaryPiType n)
+naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut do
+  DB env <- getDB
+  return $ runHardFail $ runTyperT env do
+    substBinders b \b' -> do
+      substBinders bs \bs' -> do
+        let b''  = binderToPiBinder b'
+        let bs'' = fmapNest binderToPiBinder bs'
+        eff' <- substM eff
+        bodyTy <- getTypeE body
+        return $ NaryPiType (NonEmptyNest b'' bs'') eff' bodyTy
+  where
+    binderToPiBinder :: Binder n l -> PiBinder n l
+    binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
 
 checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
 checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty

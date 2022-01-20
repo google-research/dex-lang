@@ -10,7 +10,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Logging (Logger, LoggerT (..), MonadLogger (..), logIO, runLoggerT,
-                runLogger, execLogger, logThis, readLog) where
+                MonadLogger1, MonadLogger2,
+                runLogger, execLogger, logThis, readLog, ) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -21,6 +22,7 @@ import System.IO
 
 import PPrint
 import Err
+import Name
 
 data Logger l = Logger (MVar l) (Maybe Handle)
 
@@ -56,6 +58,9 @@ class (Pretty l, Monoid l, Monad m) => MonadLogger l m | m -> l where
 
 instance (MonadIO m, Pretty l, Monoid l) => MonadLogger l (LoggerT l m) where
   getLogger = LoggerT ask
+
+type MonadLogger1 l (m :: MonadKind1) = forall (n::S) . MonadLogger l (m n)
+type MonadLogger2 l (m :: MonadKind2) = forall (n1::S) (n2::S) . MonadLogger l (m n1 n2)
 
 logIO :: MonadIO m => MonadLogger l m => l -> m ()
 logIO val = do

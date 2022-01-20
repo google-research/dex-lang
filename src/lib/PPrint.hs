@@ -349,6 +349,7 @@ instance Pretty (Binding s n) where
     MethodBinding     className idx _ ->
       "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
+    ObjectFileBinding _ -> "<object file>"
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
@@ -399,7 +400,7 @@ instance Pretty Output where
   pretty (PassInfo _ s) = p s
   pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
-  pretty (MiscLog s) = "===" <+> p s <+> "==="
+  pretty (MiscLog s) = p s
 
 
 instance Pretty PassName where
@@ -573,13 +574,20 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings scs sourceMap) =
+  pretty (TopEnvFrag bindings scs sourceMap cache obj) =
        "bindings:"
     <>   indented (p bindings)
     <> "Synth candidats:"
     <>   indented (p scs)
     <> "Source map:"
     <>   indented (p sourceMap)
+    <> "Cache:"
+    <>   indented (p cache)
+    <> "Object files:"
+    <>   indented "<TODO: Pretty instance>"
+
+instance Pretty (Cache n) where
+  pretty (Cache _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
@@ -609,7 +617,7 @@ instance Pretty IFunType where
 
 instance Pretty (ImpFunction n) where
   pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
-    "def" <+> p cc <+> p bs
+    "impfun" <+> p cc <+> prettyBinderNest bs
     <> nest 2 (hardline <> p body) <> hardline
   pretty (FFIFunction _ f) = p f
 

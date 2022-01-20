@@ -30,14 +30,15 @@ module Builder (
   getClassDef, getDataCon,
   Emits, EmitsEvidence (..), buildPi, buildNonDepPi,
   buildLam, buildTabLam, buildLamGeneral,
-  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam,
+  buildAbs, buildNaryAbs, buildNaryLam, buildNullaryLam, buildNaryLamExpr,
   buildAlt, buildUnaryAlt, buildUnaryAtomAlt,
   buildNewtype, fromNewtype,
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
-   emitSourceMap, emitSynthCandidates, emitTopLet,
+  emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
+  extendImpCache, queryImpCache, extendObjCache, queryObjCache,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
@@ -145,15 +146,40 @@ class (EnvReader m, MonadFail1 m)
                   -> m n (DistinctAbs TopEnvFrag e n)
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
-emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm
+emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm mempty mempty
 
 emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
-emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag sc mempty
+emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag sc mempty mempty mempty
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do
   ty <- getType expr
   emitBinding hint $ AtomNameBinding $ LetBound  (DeclBinding letAnn ty expr)
+
+emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
+emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
+
+extendCache :: TopBuilder m => Cache n -> m n ()
+extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty cache mempty
+
+getCacheM :: EnvReader m => m n (Cache n)
+getCacheM = liftImmut $ getCache <$> getEnv
+
+extendImpCache :: TopBuilder m => AtomName n -> ImpFunName n -> m n ()
+extendImpCache fSimp fImp = extendCache $ Cache mempty (eMapSingleton fSimp fImp) mempty
+
+queryImpCache :: EnvReader m => AtomName n -> m n (Maybe (ImpFunName n))
+queryImpCache v = do
+  cache <- impCache <$> getCacheM
+  return $ lookupEMap cache v
+
+extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
+extendObjCache fImp cfun = extendCache $ Cache mempty mempty (eMapSingleton fImp cfun)
+
+queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
+queryObjCache v = do
+  cache <- objCache <$> getCacheM
+  return $ lookupEMap cache v
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
@@ -168,7 +194,7 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     emitInplaceT hint binding \b binding' -> do
       let envFrag = toEnvFrag (b:>binding')
       let scs = bindingsFragToSynthCandidates envFrag
-      TopEnvFrag envFrag scs mempty
+      TopEnvFrag envFrag scs mempty mempty mempty
 
   emitEnv ab = TopBuilderT do
     extendInplaceT do
@@ -515,6 +541,7 @@ buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
   return $ Abs (Nest b' bs') body'
 buildNaryAbs _ _ = error "impossible"
 
+-- TODO: probably deprectate this version in favor of `buildNaryLamExpr`
 buildNaryLam
   :: (ScopableBuilder m, Emits n)
   => EmptyAbs (Nest Binder) n
@@ -533,6 +560,26 @@ buildNaryLam binderNest body = do
       Nest (b:>ty) bs ->
         AtomicBlock $ Lam $ LamExpr (LamBinder b ty PlainArrow Pure) $
           naryAbsToNaryLam $ Abs bs block
+
+buildNaryLamExpr
+  :: ScopableBuilder m
+  => NaryPiType n
+  -> (forall l. (Emits l, Distinct l, DExt n l) => NonEmpty (AtomName l) -> m l (Atom l))
+  -> m n (NaryLamExpr n)
+buildNaryLamExpr (NaryPiType (NonEmptyNest b bs) eff resultTy) cont =
+  case bs of
+    Empty -> do
+      Abs b' (PairE eff' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
+        eff' <- applySubst (b@>v) eff
+        result <- withAllowedEffects eff' $ buildBlock $ cont $ (sink v) :| []
+        return $ PairE eff' result
+      return $ NaryLamExpr (NonEmptyNest b' Empty) eff' body'
+    Nest bnext rest -> do
+      Abs b' lamExpr <- buildAbs (getNameHint b) (binderType b) \v -> do
+        piTy' <- applySubst (b@>v) $ NaryPiType (NonEmptyNest bnext rest) eff resultTy
+        buildNaryLamExpr piTy' \(v':|vs) -> cont $ sink v :| (v':vs)
+      NaryLamExpr (NonEmptyNest bnext' rest') eff' body' <- return $ lamExpr
+      return $ NaryLamExpr (NonEmptyNest b' (Nest bnext' rest')) eff' body'
 
 buildAlt
   :: ScopableBuilder m

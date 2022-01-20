@@ -52,7 +52,8 @@ module Name (
   applyAbs, applySubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
   checkAlphaEq, alphaEq, alphaEqPure, alphaElem, nubAlphaEq,
   AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
-  AlphaHashableE (..), AlphaHashableB (..), EKey (..), EMap (..), lookupEMap,
+  AlphaHashableE (..), AlphaHashableB (..), EKey (..), EMap (..), ESet,
+  lookupEMap, eMapSingleton, eMapToList,
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
   withFreshM, withFreshLike, sink, sinkM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
@@ -1184,8 +1185,17 @@ instance Store (e n) => Store (EKey e n)
 data EMap (k::E) (v::E) (n::S) = EMap (HM.HashMap (EKey k n) (v n))
                                  deriving (Show, Generic)
 
-lookupEMap :: EMap k v n -> k n -> Maybe (v n)
-lookupEMap = undefined
+eMapSingleton :: (AlphaEqE k, AlphaHashableE k) => k n -> v n -> EMap k v n
+eMapSingleton k v = EMap $ HM.singleton (EKey k) v
+
+eMapToList :: EMap k v n -> [(k n, v n)]
+eMapToList (EMap m) = [(k, v) | (EKey k, v) <- HM.toList m]
+
+lookupEMap :: (AlphaEqE k, HoistableE k, AlphaHashableE k)
+           => EMap k v n -> k n -> Maybe (v n)
+lookupEMap (EMap m) k = HM.lookup (EKey k) m
+
+type ESet (k::E) = EMap k UnitE
 
 instance (AlphaEqE k, AlphaHashableE k, HoistableE k)
          => Monoid (EMap k v n) where
@@ -1202,6 +1212,7 @@ instance GenericE (EMap k v) where
   fromE = undefined
   toE = undefined
 
+instance (SubstE sv k, SubstE sv v) => SubstE sv (EMap k v)
 instance (SinkableE  k, SinkableE  v) => SinkableE  (EMap k v)
 instance (HoistableE k, HoistableE v) => HoistableE (EMap k v)
 instance (AlphaEqE   k, AlphaEqE   v) => AlphaEqE   (EMap k v)
@@ -1710,7 +1721,7 @@ data NameColorRep (c::C) where
   SuperclassNameRep :: NameColorRep SuperclassNameC
   MethodNameRep     :: NameColorRep MethodNameC
   ImpFunNameRep     :: NameColorRep ImpFunNameC
-  LLVMNameRep       :: NameColorRep LLVMNameC
+  ObjectFileNameRep :: NameColorRep ObjectFileNameC
 
 deriving instance Show (NameColorRep c)
 deriving instance Eq   (NameColorRep c)
@@ -1725,7 +1736,7 @@ data DynamicColor
    superclassNameVal
    methodNameVal
    impFunNameVal
-   llvmNameVal
+   objectFileNameVal
  =
    AtomNameVal       atomNameVal
  | DataDefNameVal    dataDefNameVal
@@ -1735,7 +1746,7 @@ data DynamicColor
  | SuperclassNameVal superclassNameVal
  | MethodNameVal     methodNameVal
  | ImpFunNameVal     impFunNameVal
- | LLVMNameVal       llvmNameVal
+ | ObjectFileNameVal objectFileNameVal
    deriving (Show, Generic)
 
 data ColorsEqual (c1::C) (c2::C) where
@@ -1751,7 +1762,7 @@ eqNameColorRep rep1 rep2 = case (rep1, rep2) of
   (SuperclassNameRep, SuperclassNameRep) -> Just ColorsEqual
   (MethodNameRep    , MethodNameRep    ) -> Just ColorsEqual
   (ImpFunNameRep    , ImpFunNameRep    ) -> Just ColorsEqual
-  (LLVMNameRep      , LLVMNameRep      ) -> Just ColorsEqual
+  (ObjectFileNameRep, ObjectFileNameRep) -> Just ColorsEqual
   _ -> Nothing
 
 -- gets the NameColorRep implicitly, like Typeable
@@ -1764,7 +1775,7 @@ instance NameColor ClassNameC      where nameColorRep = ClassNameRep
 instance NameColor SuperclassNameC where nameColorRep = SuperclassNameRep
 instance NameColor MethodNameC     where nameColorRep = MethodNameRep
 instance NameColor ImpFunNameC     where nameColorRep = ImpFunNameRep
-instance NameColor LLVMNameC       where nameColorRep = LLVMNameRep
+instance NameColor ObjectFileNameC where nameColorRep = ObjectFileNameRep
 
 tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
               (NameColor c1, NameColor c2) => v c1 n -> Maybe (v c2 n)
@@ -1783,7 +1794,7 @@ withNameColorRep rep cont = case rep of
   SuperclassNameRep -> cont
   MethodNameRep     -> cont
   ImpFunNameRep     -> cont
-  LLVMNameRep       -> cont
+  ObjectFileNameRep -> cont
 
 -- === instances ===
 
@@ -2305,7 +2316,7 @@ data C =
   | SuperclassNameC
   | MethodNameC
   | ImpFunNameC
-  | LLVMNameC
+  | ObjectFileNameC
 
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
@@ -2872,7 +2883,7 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (WithColor v n) whe
                                             (v SuperclassNameC n)
                                             (v MethodNameC     n)
                                             (v ImpFunNameC     n)
-                                            (v LLVMNameC       n))
+                                            (v ObjectFileNameC n))
   from (WithColor rep val) = case rep of
     AtomNameRep       -> from $ AtomNameVal       val
     DataDefNameRep    -> from $ DataDefNameVal    val
@@ -2882,7 +2893,7 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (WithColor v n) whe
     SuperclassNameRep -> from $ SuperclassNameVal val
     MethodNameRep     -> from $ MethodNameVal     val
     ImpFunNameRep     -> from $ ImpFunNameVal     val
-    LLVMNameRep       -> from $ LLVMNameVal       val
+    ObjectFileNameRep -> from $ ObjectFileNameVal val
 
   to genRep = case to genRep of
     (AtomNameVal       val) -> WithColor AtomNameRep       val
@@ -2893,7 +2904,7 @@ instance (forall c. NameColor c => Store (v c n)) => Generic (WithColor v n) whe
     (SuperclassNameVal val) -> WithColor SuperclassNameRep val
     (MethodNameVal     val) -> WithColor MethodNameRep     val
     (ImpFunNameVal     val) -> WithColor ImpFunNameRep     val
-    (LLVMNameVal       val) -> WithColor LLVMNameRep       val
+    (ObjectFileNameVal val) -> WithColor ObjectFileNameRep val
 
 instance (forall c. NameColor c => Store (v c n)) => Store (WithColor v n)
 instance SinkableV v => SinkableE (WithColor v) where

@@ -211,7 +211,7 @@ evalSourceBlock' block = case sbContents block of
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
-        vImp  <- emitBinding hint (ImpFunBinding $ FFIFunction impFunTy fname)
+        vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $ M.singleton sourceName (WithColor AtomNameRep vCore)
@@ -331,8 +331,42 @@ execUDecl decl = do
   case inferenceResult of
     UDeclResultWorkRemaining block declAbs -> do
       result <- evalBlock block
-      emitSourceMap =<< applyUDeclAbs declAbs result
+      result' <- case declAbs of
+        Abs (ULet NoInlineLet (UPatAnn p _) _) _ ->
+          compileTopLevelFun (getNameHint p) result
+        _ -> return result
+      emitSourceMap =<< applyUDeclAbs declAbs result'
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
+
+compileTopLevelFun :: (Mut n, MonadPasses m) => NameHint -> Atom n -> m n (Atom n)
+compileTopLevelFun hint f = do
+  ty <- getType f
+  naryPi <- asFirstOrderFunction ty >>= \case
+    Nothing -> throw TypeErr "@noinline functions must be first-order"
+    Just naryPi -> return naryPi
+  fSimp <- simplifyTopFunction naryPi f
+  fImp <- toImpStandaloneFunction fSimp
+  fSimpName <- emitBinding hint $ AtomNameBinding $ SimpLamBound naryPi fSimp
+  fImpName <- emitImpFunBinding hint fImp
+  extendImpCache fSimpName fImpName
+  -- TODO: this is a hack! We need a better story for C/LLVM names.
+  let cFunName = pprint fImpName
+  fObj <- toCFunction cFunName fImp
+  extendObjCache fImpName fObj
+  return $ Var fSimpName
+
+toCFunction :: (Mut n, MonadPasses m) => SourceName -> ImpFunction n -> m n (CFun n)
+toCFunction fname f = do
+  (deps, m) <- impToLLVM fname f
+  objFile <- liftIO $ exportObjectFileVal deps m fname
+  objFileName <- emitObjFile (getNameHint fname) objFile
+  return $ CFun fname objFileName
+
+emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
+emitObjFile hint objFile = do
+  v <- emitBinding hint $ ObjectFileBinding objFile
+  emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty (eMapSingleton v UnitE)
+  return v
 
 -- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
 _evalMLIR :: MonadPasses m => Block n -> m n (Atom n)
@@ -353,26 +387,35 @@ _evalMLIR block' = do
 _evalMLIR = error "Dex built without support for MLIR"
 #endif
 
+-- TODO: there's no guarantee this name isn't already taken. Need a better story
+-- for C/LLVM function names
+mainFuncName :: SourceName
+mainFuncName = "entryFun"
+
 evalLLVM :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
 evalLLVM block = do
   backend <- backendName <$> getConfig
   bench   <- requireBenchmark
-  logger  <- getLogger
   (blockAbs, ptrVals) <- abstractPtrLiterals block
   let (cc, needsSync) = case backend of LLVMCUDA -> (EntryFun CUDARequired   , True )
                                         _        -> (EntryFun CUDANotRequired, False)
   ImpFunctionWithRecon impFun reconAtom <- checkPass ImpPass $
                                              toImpFunction backend cc blockAbs
-  LiftE llvmAST <- liftImmut do
-    DB env <- getDB
-    liftM LiftE $ liftIO $ impToLLVM env logger impFun
+  (_, llvmAST) <- impToLLVM mainFuncName impFun
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
-  resultVals <- liftIO $ llvmEvaluate logger llvmAST mainFuncName ptrVals resultTypes
+  logger  <- getLogger
+  objFileNames <- liftImmut $ getObjFiles <$> getEnv
+  objFiles <- forM (eMapToList objFileNames) \(objFileName, UnitE) -> do
+    ObjectFileBinding objFile <- lookupEnv objFileName
+    return objFile
+  resultVals <- liftIO $ llvmEvaluate logger objFiles
+                  llvmAST mainFuncName ptrVals resultTypes
   resultValsNoPtrs <- mapM litValToPointerlessAtom resultVals
   applyNaryAbs reconAtom $ map SubstVal resultValsNoPtrs
 
 evalBackend :: (Mut n, MonadPasses m) => Block n -> m n (Atom n)
+evalBackend (AtomicBlock result) = return result
 evalBackend block = do
   backend <- backendName <$> getConfig
   let eval = case backend of
@@ -422,11 +465,10 @@ instance ConfigReader (PassesM n) where
 instance TopBuilder PassesM where
   -- Log bindings as they are emitted
   emitBinding hint binding = do
-    passName <- PassesM $ asks \(_, pass, _) -> pass
-    case passName of
-      Nothing -> logTop $ MiscLog $ pprint binding
-      Just name -> logTop $ PassInfo name $ pprint binding
-    PassesM $ emitBinding hint binding
+    name <- PassesM $ emitBinding hint binding
+    logTop $ MiscLog $ "=== Top name ===\n" ++ pprint name ++ " =\n"
+                      ++ pprint binding ++ "\n===\n"
+    return name
 
   emitEnv env = PassesM $ emitEnv env
   emitNamelessEnv env = PassesM $ emitNamelessEnv env

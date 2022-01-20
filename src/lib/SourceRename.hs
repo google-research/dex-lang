@@ -119,7 +119,7 @@ instance SourceRenamableE (SourceNameOr UVar) where
       Just (WithColor DataDefNameRep _   ) -> error "Shouldn't find these in source map"
       Just (WithColor SuperclassNameRep _) -> error "Shouldn't find these in source map"
       Just (WithColor ImpFunNameRep     _) -> error "Shouldn't find these in source map"
-      Just (WithColor LLVMNameRep       _) -> error "Shouldn't find these in source map"
+      Just (WithColor ObjectFileNameRep _) -> error "Shouldn't find these in source map"
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 lookupSourceName :: Renamer m => SourceName -> m n (WithColor Name n)

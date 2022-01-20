@@ -104,9 +104,9 @@ def removeFill                   : Diagram -> Diagram = updateGeom $ setAt #fill
 'Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).
 
 @noinline
-def strCatUncurried ((xs,ys):(String & String)) : String = xs <> ys
+def strCat (xs:String) (ys:String) : String = xs <> ys
 
-def (<.>) (xs:String) (ys:String) : String = strCatUncurried (xs, ys)
+def (<.>) (xs:String) (ys:String) : String = strCat xs ys
 
 def quote (s:String) : String = "\"" <.> s <.> "\""
 
@@ -140,7 +140,8 @@ def optionalHtmlColor(c: Maybe HtmlColor) : String =
     Nothing -> "none"
     Just c' -> htmlColor c'
 
-@noinline
+-- `@noinline` fails because the function can throw a hard error, which we don't handle
+-- @noinline
 def attrString (attr:GeomStyle) : String =
   (   ("stroke"       <=> (optionalHtmlColor $ getAt #strokeColor attr))
   <+> ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
