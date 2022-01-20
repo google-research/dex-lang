@@ -21,8 +21,8 @@ module Type (
   caseAltsBinderTys, tryGetType, projectLength,
   sourceNameType,
   checkUnOp, checkBinOp,
-  oneEffect, lamExprTy, isData, asFirstOrderFunction,
-  isSingletonType, singletonTypeVal, asNaryPiType,
+  oneEffect, lamExprTy, isData, asFirstOrderFunction, asFFIFunType,
+  isSingletonType, singletonTypeVal, asNaryPiType, numNaryPiArgs, naryLamExprType,
   extendEffect, exprEffects, getReferentTy) where
 
 import Prelude hiding (id)
@@ -150,7 +150,6 @@ exprEffects expr = case expr of
     IOFree   _    -> return $ oneEffect IOEffect
     PtrLoad  _    -> return $ oneEffect IOEffect
     PtrStore _ _  -> return $ oneEffect IOEffect
-    FFICall _ _ _ -> return $ oneEffect IOEffect
     _ -> return Pure
   Hof hof -> case hof of
     For _ f         -> functionEffs f
@@ -307,6 +306,7 @@ instance NameColor c => CheckableE (Binding c) where
     ClassBinding      classDef        e -> ClassBinding    <$> substM classDef                 <*> substM e
     SuperclassBinding className   idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
     MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
+    ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -316,6 +316,15 @@ instance CheckableE AtomBinding where
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
     PtrLitBound ty ptr  -> return $ PtrLitBound ty ptr
+    -- TODO: check the type actually matches the lambda term
+    SimpLamBound ty lam -> do
+      lam' <- substM lam
+      ty' <- substM ty
+      dropSubst $ checkNaryLamExpr lam' ty'
+      return $ SimpLamBound ty' lam'
+    FFIFunBound ty name -> do
+      _ <- checkFFIFunTypeM ty
+      FFIFunBound <$> substM ty <*> substM name
 
 instance CheckableE SolverBinding where
   checkE (InfVarBound  ty ctx) = InfVarBound  <$> checkTypeE TyKind ty <*> pure ctx
@@ -626,15 +635,6 @@ typeCheckPrimOp op = case op of
   UnsafeFromOrdinal ty i -> ty|:TyKind >> i|:IdxRepTy >> substM ty
   ToOrdinal i -> getTypeE i $> IdxRepTy
   IdxSetSize i -> getTypeE i $> IdxRepTy
-  FFICall _ ansTy args -> do
-    forM_ args \arg -> do
-      argTy <- getTypeE arg
-      case argTy of
-        BaseTy _ -> return ()
-        _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
-                                    "fixed-width base types, but got: " ++ pprint argTy
-    declareEff IOEffect
-    substM ansTy
   Inject i -> do
     TC tc <- getTypeE i
     case tc of
@@ -951,6 +951,27 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
   Nothing -> throw TypeErr $
     "Not a " ++ show (length xs) ++ "-argument pi type: " ++ pprint fTy
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
+
+numNaryPiArgs :: NaryPiType n -> Int
+numNaryPiArgs (NaryPiType (NonEmptyNest b bs) _ _) = 1 + nestLength bs
+
+naryLamExprType :: EnvReader m => NaryLamExpr n -> m n (NaryPiType n)
+naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut do
+  DB env <- getDB
+  return $ runHardFail $ runTyperT env do
+    substBinders b \b' -> do
+      substBinders bs \bs' -> do
+        let b''  = binderToPiBinder b'
+        let bs'' = fmapNest binderToPiBinder bs'
+        eff' <- substM eff
+        bodyTy <- getTypeE body
+        return $ NaryPiType (NonEmptyNest b'' bs'') eff' bodyTy
+  where
+    binderToPiBinder :: Binder n l -> PiBinder n l
+    binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
+
+checkNaryLamExpr :: Typer m => NaryLamExpr i -> NaryPiType o -> m i o ()
+checkNaryLamExpr lam ty = naryLamExprAsAtom lam |: naryPiTypeAsType ty
 
 asNaryPiType :: Type n -> Maybe (NaryPiType n)
 asNaryPiType ty = case ty of
@@ -1286,15 +1307,6 @@ projectLength ty = case ty of
 
 -- === "Data" type class ===
 
-isData :: EnvReader m => Type n -> m n Bool
-isData ty = liftM isJust $ runCheck do
-  checkDataLike (sink ty)
-  return UnitE
-
--- TODO: consider effects
-asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))
-asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
-
 runCheck
   :: (EnvReader m, SinkableE e)
   => (forall l. (DExt n l, Immut l) => TyperT Maybe l l (e l))
@@ -1302,6 +1314,45 @@ runCheck
 runCheck cont = liftM fromMaybeE $ liftImmut do
   DB env <- getDB
   return $ toMaybeE $ runTyperT env $ cont
+
+asFFIFunType :: EnvReader m => Type n -> m n (Maybe (IFunType, NaryPiType n))
+asFFIFunType ty = return do
+  naryPiTy <- asNaryPiType ty
+  impTy <- checkFFIFunTypeM naryPiTy
+  return (impTy, naryPiTy)
+
+checkFFIFunTypeM :: Fallible m => NaryPiType n -> m  IFunType
+checkFFIFunTypeM (NaryPiType (NonEmptyNest b bs) eff resultTy) = do
+  argTy <- checkScalar $ binderType b
+  case bs of
+    Empty -> do
+      assertEq eff (oneEffect IOEffect) ""
+      resultTys <- checkScalarOrPairType resultTy
+      let cc = case length resultTys of
+                 0 -> error "Not implemented"
+                 1 -> FFIFun
+                 _ -> FFIMultiResultFun
+      return $ IFunType cc [argTy] resultTys
+    Nest b' rest -> do
+      let naryPiRest = NaryPiType (NonEmptyNest b' rest) eff resultTy
+      IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
+      return $ IFunType cc (argTy:argTys) resultTys
+
+checkScalar :: Fallible m => Type n -> m BaseType
+checkScalar (BaseTy ty) = return ty
+checkScalar ty = throw TypeErr $ pprint ty
+
+checkScalarOrPairType :: Fallible m => Type n -> m [BaseType]
+checkScalarOrPairType (PairTy a b) = do
+  tys1 <- checkScalarOrPairType a
+  tys2 <- checkScalarOrPairType b
+  return $ tys1 ++ tys2
+checkScalarOrPairType (BaseTy ty) = return [ty]
+checkScalarOrPairType ty = throw TypeErr $ pprint ty
+
+-- TODO: consider effects
+asFirstOrderFunction :: EnvReader m => Type n -> m n (Maybe (NaryPiType n))
+asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
 
 asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
 asFirstOrderFunctionM ty = do
@@ -1313,6 +1364,11 @@ asFirstOrderFunctionM ty = do
       Pure <- return eff
       checkDataLike resultTy
   substM naryPi
+
+isData :: EnvReader m => Type n -> m n Bool
+isData ty = liftM isJust $ runCheck do
+  checkDataLike (sink ty)
+  return UnitE
 
 checkDataLike :: Typer m => Type i -> m i o ()
 checkDataLike ty = case ty of

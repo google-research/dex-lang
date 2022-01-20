@@ -13,8 +13,10 @@ data Geom =
 
 HtmlColor : Type = Fin 3 => Word8
 
+foreign "showHex" showHexFFI : Word8 -> {IO} (Int32 & RawPtr)
+
 def showHex (x:Word8) : String = unsafeIO \().
-  (n, ptr) = %ffi showHex (Int32 & RawPtr) x
+  (n, ptr) = showHexFFI x
   stringFromCharPtr n (MkPtr ptr)
 
 black : HtmlColor = [IToW8   0, IToW8   0, IToW8   0]
@@ -102,9 +104,9 @@ def removeFill                   : Diagram -> Diagram = updateGeom $ setAt #fill
 'Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).
 
 @noinline
-def strCatUncurried ((xs,ys):(String & String)) : String = xs <> ys
+def strCat (xs:String) (ys:String) : String = xs <> ys
 
-def (<.>) (xs:String) (ys:String) : String = strCatUncurried (xs, ys)
+def (<.>) (xs:String) (ys:String) : String = strCat xs ys
 
 def quote (s:String) : String = "\"" <.> s <.> "\""
 
@@ -144,6 +146,7 @@ def attrString (attr:GeomStyle) : String =
   <+> ("fill"         <=> (optionalHtmlColor $ getAt #fillColor   attr))
   <+> ("stroke-width" <=> (getAt #strokeWidth attr)))
 
+@noinline
 def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
   -- For things that are solid. SVG says they have fill=stroke.
   solidAttr = setAt #fillColor (getAt #strokeColor attr) attr
@@ -181,6 +184,7 @@ def renderGeom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
 
 BoundingBox : Type = (Point & Point)
 
+@noinline
 def computeBounds (d:Diagram) : BoundingBox =
   computeSubBound = \sel op (_, p, geom).
     sel p + case geom of
@@ -202,6 +206,7 @@ def computeBounds (d:Diagram) : BoundingBox =
     )
   )
 
+@noinline
 def renderSVG (d:Diagram) (bounds:BoundingBox) : String =
   ((xmin, ymin), (xmax, ymax)) = bounds
   imgWidth = 400.0

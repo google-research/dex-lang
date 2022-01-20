@@ -12,7 +12,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( toImpFunction, ImpFunctionWithRecon (..)
+  ( toImpFunction, ImpFunctionWithRecon (..), toImpStandaloneFunction
   , PtrBinder, impFunType, getIType) where
 
 import Data.Functor
@@ -50,6 +50,41 @@ toImpFunction _ cc absBlock = liftImmut do
   DB env <- getDB
   return $ runImpM env $
     translateTopLevel cc Nothing absBlock
+
+toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
+toImpStandaloneFunction lam = liftImmut do
+  DB env <- getDB
+  return $ runImpM env $
+    toImpStandaloneFunction' lam
+
+toImpStandaloneFunction' :: (Immut o, Imper m) => NaryLamExpr o -> m i o (ImpFunction o)
+toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
+  ty <- naryLamExprType lam
+  AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty
+  let ptrHintTys = [("ptr"::NameHint, PtrType baseTy) | DestPtrInfo baseTy _ <- ptrsInfo]
+  dropSubst $ buildImpFunction CInternalFun ptrHintTys \vs -> do
+    argResultDest' <- applySubst (ptrBinders@@>vs) argResultDest
+    (args, resultDest) <- loadArgDests argResultDest'
+    extendSubst (bs @@> map SubstVal args) do
+      void $ translateBlock (Just $ sink resultDest) body
+      return []
+toImpStandaloneFunction' (NaryLamExpr _ _ _) = error "effectful functions not implemented"
+
+loadArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> m n ([Atom n], Dest n)
+loadArgDests (Abs Empty resultDest) = return ([], resultDest)
+loadArgDests (Abs (Nest (b:>argDest) bs) resultDest) = do
+  arg <- destToAtom argDest
+  restDest <- applySubst (b@>SubstVal arg) (Abs bs resultDest)
+  (args, resultDest') <- loadArgDests restDest
+  return (arg:args, resultDest')
+
+storeArgDests :: (Emits n, ImpBuilder m) => NaryLamDest n -> [Atom n] -> m n (Dest n)
+storeArgDests (Abs Empty resultDest) [] = return resultDest
+storeArgDests (Abs (Nest (b:>argDest) bs) resultDest) (x:xs) = do
+  copyAtom argDest x
+  restDest <- applySubst (b@>SubstVal x) (Abs bs resultDest)
+  storeArgDests restDest xs
+storeArgDests _ _ = error "dest/args mismatch"
 
 data ImpFunctionWithRecon n = ImpFunctionWithRecon (ImpFunction n) (AtomRecon n)
 
@@ -97,7 +132,7 @@ instance EnvExtender ImpM where
 
 instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = do
-    let tys = impInstrTypes instr
+    tys <- impInstrTypes instr
     ListE vs <- ImpM $ ScopedT1 \s ->
       (,s) <$> extendInplaceT do
         scope <- getScope
@@ -202,8 +237,23 @@ translateExpr maybeDest expr = case expr of
             let subst = bs @@> fmap SubstVal xs
             body' <- applySubst subst body
             dropSubst $ translateBlock maybeDest body'
-          _ -> error $ "Invalid Imp atom: " ++ pprint f
-      _ -> error $ "unexpected expression: " ++ pprint expr
+          _ -> notASimpExpr
+      _ -> case f of
+        Var v -> lookupAtomName v >>= \case
+          FFIFunBound _ v' -> do
+            resultTy <- getType $ App f xs
+            scalarArgs <- liftM toList $ mapM fromScalarAtom xs
+            results <- emitMultiReturnInstr $ ICall v' scalarArgs
+            restructureScalarOrPairType resultTy results
+          SimpLamBound piTy _ -> do
+            if length (toList xs') /= numNaryPiArgs piTy
+              then notASimpExpr
+              else do
+                Just fImp <- queryImpCache v
+                result <- emitCall piTy fImp $ toList xs
+                returnVal result
+          _ -> notASimpExpr
+        _ -> notASimpExpr
   Atom x -> substM x >>= returnVal
   Op op -> mapM substM op >>= toImpOp maybeDest
   Case e alts ty _ -> do
@@ -223,6 +273,7 @@ translateExpr maybeDest expr = case expr of
           destToAtom dest
         _ -> error "not possible"
   where
+    notASimpExpr = error $ "not a simplified expression: " ++ pprint expr
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
@@ -369,13 +420,6 @@ toImpOp maybeDest op = case op of
     SumTy cases ->
       return $ Con $ SumAsProd ty i $ cases <&> const [UnitVal]
     _ -> error $ "Not an enum: " ++ pprint ty
-  FFICall name returnTy xs -> do
-    let returnTys = fromScalarOrPairType returnTy
-    xTys <- forM xs \x -> fromScalarType <$> getType x
-    let f = asFFIFunction name xTys returnTys
-    xs' <- mapM fromScalarAtom xs
-    results <- emitMultiReturnInstr $ ICall f xs'
-    restructureScalarOrPairType returnTy results
   SumToVariant ~(Con c) -> do
     ~resultTy@(VariantTy labs) <- resultTyM
     returnVal $ case c of
@@ -391,15 +435,6 @@ toImpOp maybeDest op = case op of
     returnVal atom = case maybeDest of
       Nothing   -> return atom
       Just dest -> copyAtom dest atom >> return atom
-
-asFFIFunction :: SourceName -> [IType] -> [IType] -> IFunVar
-asFFIFunction fname argTys resultTys =
-  (fname, IFunType cc argTys resultTys)
-  where
-    cc = case length resultTys of
-           0 -> error "Not implemented"
-           1 -> FFIFun
-           _ -> FFIMultiResultFun
 
 toImpHof :: (Imper m, Emits o) => Maybe (Dest o) -> PrimHof (Atom i) -> m i o (Atom o)
 toImpHof maybeDest hof = do
@@ -678,7 +713,7 @@ instance SubstE Name e => SubstE Name (AbsPtrs e)
 instance SubstE AtomSubstVal e => SubstE AtomSubstVal (AbsPtrs e)
 
 -- builds a dest and a list of pointer binders along with their required allocation sizes
-makeDest :: (Emits n, ImpBuilder m, EnvReader m)
+makeDest :: (ImpBuilder m, EnvReader m)
          => AllocInfo -> Type n -> m n (AbsPtrs Dest n)
 makeDest allocInfo ty =
  liftImmut do
@@ -712,10 +747,59 @@ extendIdxsTy (idxsTy, idxs) new = do
 type Idxs n = [AtomName n]
 type IdxNest = Nest Binder
 type DestIdxs n = (EmptyAbs IdxNest n, Idxs n)
+type DepVars n = [AtomName n]
 
 -- TODO: make `DestIdxs` a proper E-kinded thing
 sinkDestIdxs :: DExt n l => DestIdxs n -> DestIdxs l
 sinkDestIdxs (idxsTy, idxs) = (sink idxsTy, map sink idxs)
+
+-- dest for the args and the result
+-- TODO: de-dup some of the plumbing stuff here with the ordinary makeDest path
+type NaryLamDest = Abs (Nest (BinderP AtomNameC Dest)) Dest
+
+makeNaryLamDest :: (ImpBuilder m, EnvReader m)
+                => NaryPiType n -> m n (AbsPtrs NaryLamDest n)
+makeNaryLamDest piTy = liftImmut do
+  DB env <- getDB
+  cache <- get
+  let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
+  (result, cache') <- return $ runDestM env allocInfo cache $ buildLocalDest do
+    Abs decls dest <- buildDeclsDest $
+                        makeNaryLamDestRec (Abs Empty UnitE, []) [] (sink piTy)
+    case decls of
+      Empty -> return dest
+      _ -> error "shouldn't have decls if we have empty indices"
+  put cache'
+  return result
+
+makeNaryLamDestRec :: forall n. Emits n => DestIdxs n -> DepVars n
+                   -> NaryPiType n -> DestM n (NaryLamDest n)
+makeNaryLamDestRec idxs depVars (NaryPiType (NonEmptyNest b bs) Pure resultTy) = do
+  let argTy = binderType b
+  argDest <- makeDestRec idxs depVars argTy
+  Abs (b':>_) (Abs bs' resultDest) <-
+    buildDepDest idxs depVars (getNameHint b) argTy \idxs' depVars' v -> do
+      case bs of
+        Empty -> do
+          resultTy' <- applySubst (b@>v) resultTy
+          Abs Empty <$> makeDestRec idxs' depVars' resultTy'
+        Nest b1 bsRest -> do
+          restPiTy <- applySubst (b@>v) $ NaryPiType (NonEmptyNest b1 bsRest) Pure resultTy
+          makeNaryLamDestRec idxs' depVars' restPiTy
+  return $ Abs (Nest (b':>argDest) bs') resultDest
+makeNaryLamDestRec _ _ _ = error "effectful functions not implemented"
+
+-- TODO: should we put DestIdxs/DepVars in the monad? And maybe it should also
+-- be a substituting one.
+buildDepDest
+  :: (SinkableE e, HoistableE e, Emits n)
+  => DestIdxs n -> DepVars n -> NameHint -> Type n
+  -> (forall l. (Emits l, DExt n l) => DestIdxs l -> DepVars l -> AtomName l -> DestM l (e l))
+  -> DestM n (Abs Binder e n)
+buildDepDest idxs depVars hint ty cont =
+  buildAbsHoistingDeclsDest hint ty \v -> do
+    let depVars' = map sink depVars ++ [v]
+    cont (sinkDestIdxs idxs) depVars' v
 
 -- `makeDestRec` builds an array of dests. The curried index type, `EmptyAbs
 -- IdxNest n`, determines a set of valid indices, `Idxs n`. At each valid value
@@ -723,7 +807,7 @@ sinkDestIdxs (idxsTy, idxs) = (sink idxsTy, map sink idxs)
 -- variables whose values we won't know until we actually store something. The
 -- resulting `Dest n` may mention these variables, but the pointer allocation
 -- sizes can't.
-makeDestRec :: forall n. Emits n => DestIdxs n -> [AtomName n] -> Type n -> DestM n (Dest n)
+makeDestRec :: forall n. Emits n => DestIdxs n -> DepVars n -> Type n -> DestM n (Dest n)
 makeDestRec idxs depVars ty = case ty of
   TabTy (PiBinder b iTy _) bodyTy -> do
     if depVars `areFreeIn` iTy
@@ -771,11 +855,10 @@ makeDestRec idxs depVars ty = case ty of
         return $ Con $ ConRef $ SumAsProd ty tag contents
   DepPairTy depPairTy@(DepPairType (lBinder:>lTy) rTy) -> do
     lDest <- rec lTy
-    Abs lBinder' rDest <- buildAbsHoistingDeclsDest (getNameHint lBinder) lTy \v -> do
+    rDestAbs <- buildDepDest idxs depVars (getNameHint lBinder) lTy \idxs' depVars' v -> do
       rTy' <- applySubst (lBinder@>v) rTy
-      let depVars' = map sink depVars ++ [v]
-      makeDestRec (sinkDestIdxs idxs) depVars' rTy'
-    return $ DepPairRef lDest (Abs lBinder' rDest) depPairTy
+      makeDestRec idxs' depVars' rTy'
+    return $ DepPairRef lDest rDestAbs depPairTy
   RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
   VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
@@ -999,12 +1082,6 @@ emitLoop hint d n cont = do
                 return []
       return $ Abs b body
   emitStatement $ IFor d n loopBody
-
-fromScalarOrPairType :: Type n -> [IType]
-fromScalarOrPairType (PairTy a b) =
-  fromScalarOrPairType a <> fromScalarOrPairType b
-fromScalarOrPairType (BaseTy ty) = [ty]
-fromScalarOrPairType ty = error $ "Not a scalar or pair: " ++ pprint ty
 
 restructureScalarOrPairType :: EnvReader m => Type n -> [IExpr n] -> m n (Atom n)
 restructureScalarOrPairType ty xs =
@@ -1235,6 +1312,32 @@ _buildImpAbs hint ty body =
     ab <- buildScopedImp $ sinkM (binderName b) >>= body
     return $ DistinctAbs b ab
 
+emitCall :: (Emits n, ImpBuilder m)
+         => NaryPiType n -> ImpFunName n -> [Atom n] -> m n (Atom n)
+emitCall piTy f xs = do
+  AbsPtrs absDest ptrDefs <- makeNaryLamDest piTy
+  ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
+    size <- liftBuilderImp $ emitBlock $ sink sizeBlock
+    emitAlloc ptrTy =<< fromScalarAtom size
+  ptrAtoms <- mapM toScalarAtom ptrs
+  dest <- applyNaryAbs absDest $ map SubstVal ptrAtoms
+  resultDest <- storeArgDests dest xs
+  _ <- emitMultiReturnInstr $ ICall f ptrs
+  destToAtom resultDest
+
+buildImpFunction
+  :: ( Immut n, ImpBuilder m )
+  => CallingConvention
+  -> [(NameHint, IType)]
+  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l [IExpr l])
+  -> m n (ImpFunction n)
+buildImpFunction cc argHintsTys body = do
+  DistinctAbs bs (DistinctAbs decls (ListE results)) <-
+    buildImpNaryAbs argHintsTys \vs -> ListE <$> body vs
+  let resultTys = map getIType results
+  let impFun = IFunType cc (map snd argHintsTys) resultTys
+  return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
+
 buildImpNaryAbs
   :: ( Immut n, ImpBuilder m
      , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
@@ -1322,13 +1425,6 @@ toScalarAtom ie = case ie of
   ILit l   -> return $ Con $ Lit l
   IVar v _ -> return $ Var v
 
-fromScalarType :: Type n -> IType
-fromScalarType (BaseTy b) =  b
-fromScalarType ty = error $ "Not a scalar type: " ++ pprint ty
-
-_toScalarType :: IType -> Type n
-_toScalarType b = BaseTy b
-
 -- === Type classes ===
 
 -- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
@@ -1385,28 +1481,30 @@ indexSetSizeImp ty = do
 
 impFunType :: ImpFunction n -> IFunType
 impFunType (ImpFunction ty _) = ty
-impFunType _ = error "not implemeted"
+impFunType (FFIFunction ty _) = ty
 
 getIType :: IExpr n -> IType
 getIType (ILit l) = litType l
 getIType (IVar _ ty) = ty
 
-impInstrTypes :: ImpInstr n -> [IType]
+impInstrTypes :: EnvReader m => ImpInstr n -> m n [IType]
 impInstrTypes instr = case instr of
-  IPrimOp op      -> [impOpType op]
-  ICastOp t _     -> [t]
-  Alloc a ty _    -> [PtrType (a, ty)]
-  Store _ _       -> []
-  Free _          -> []
-  IThrowError     -> []
-  MemCopy _ _ _   -> []
-  IFor _ _ _      -> []
-  IWhile _        -> []
-  ICond _ _ _     -> []
-  ILaunch _ _ _   -> []
-  ISyncWorkgroup  -> []
-  IQueryParallelism _ _ -> [IIdxRepTy, IIdxRepTy]
-  ICall (_, IFunType _ _ resultTys) _ -> resultTys
+  IPrimOp op      -> return [impOpType op]
+  ICastOp t _     -> return [t]
+  Alloc a ty _    -> return [PtrType (a, ty)]
+  Store _ _       -> return []
+  Free _          -> return []
+  IThrowError     -> return []
+  MemCopy _ _ _   -> return []
+  IFor _ _ _      -> return []
+  IWhile _        -> return []
+  ICond _ _ _     -> return []
+  ILaunch _ _ _   -> return []
+  ISyncWorkgroup  -> return []
+  IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
+  ICall f _ -> do
+    IFunType _ _ resultTys <- impFunType <$> lookupImpFun f
+    return resultTys
 
 -- TODO: reuse type rules in Type.hs
 impOpType :: IPrimOp n -> IType

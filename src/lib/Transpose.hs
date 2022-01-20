@@ -226,7 +226,6 @@ transposeOp op ct = case op of
   ToOrdinal    _        -> notLinear
   IdxSetSize   _        -> notLinear
   ThrowError   _        -> notLinear
-  FFICall _ _ _         -> notLinear
   DataConTag _          -> notLinear
   ToEnum _ _            -> notLinear
   ThrowException _      -> notLinear

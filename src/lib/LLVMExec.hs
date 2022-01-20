@@ -10,6 +10,7 @@
 
 module LLVMExec (LLVMKernel (..), ptxDataLayout, ptxTargetTriple,
                  compileAndEval, compileAndBench, exportObjectFile,
+                 exportObjectFileVal,
                  standardCompilationPipeline,
                  compileCUDAKernel,
                  storeLitVals, loadLitVals, allocaCells, loadLitVal) where
@@ -72,26 +73,26 @@ foreign import ccall "dynamic"
 type DexExecutable = FunPtr (Int32 -> Ptr () -> Ptr () -> IO DexExitCode)
 type DexExitCode = Int
 
-compileAndEval :: Logger [Output] -> L.Module -> String
+compileAndEval :: Logger [Output] -> [ObjectFile n] -> L.Module -> String
                -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndEval logger ast fname args resultTypes = do
+compileAndEval logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        evalTime <- compileOneOff logger ast fname $
+        evalTime <- compileOneOff logger objFiles ast fname $
           checkedCallFunPtr fd argsPtr resultPtr
         logThis logger [EvalTime evalTime Nothing]
         loadLitVals resultPtr resultTypes
 
-compileAndBench :: Bool -> Logger [Output] -> L.Module -> String
+compileAndBench :: Bool -> Logger [Output] -> [ObjectFile n] -> L.Module -> String
                 -> [LitVal] -> [BaseType] -> IO [LitVal]
-compileAndBench shouldSyncCUDA logger ast fname args resultTypes = do
+compileAndBench shouldSyncCUDA logger objFiles ast fname args resultTypes = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        compileOneOff logger ast fname \fPtr -> do
+        compileOneOff logger objFiles ast fname \fPtr -> do
           ((avgTime, benchRuns, results), totalTime) <- measureSeconds $ do
             -- First warmup iteration, which we also use to get the results
             void $ checkedCallFunPtr fd argsPtr resultPtr fPtr
@@ -132,11 +133,13 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
 
-compileOneOff :: Logger [Output] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
-compileOneOff logger ast name f = do
+compileOneOff :: Logger [Output] -> [ObjectFile n] -> L.Module -> String -> (DexExecutable -> IO a) -> IO a
+compileOneOff logger objFiles ast name f = do
   withHostTargetMachine \tm ->
-    withJIT tm \jit ->
-      withNativeModule jit ast (standardCompilationPipeline logger [name] tm) \compiled ->
+    withJIT tm \jit -> do
+      let pipeline = standardCompilationPipeline logger [name] tm
+      let objFileContents = [s | ObjectFile s _ _ <- objFiles]
+      withNativeModule jit objFileContents ast pipeline \compiled ->
         f =<< getFunctionPtr compiled name
 
 standardCompilationPipeline :: Logger [Output] -> [String] -> T.TargetMachine -> Mod.Module -> IO ()
@@ -152,6 +155,13 @@ standardCompilationPipeline logger exports tm m = do
 
 
 -- === object file export ===
+
+exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
+exportObjectFileVal deps m fname = do
+  withSystemTempFile "objfile.o" \path h -> do
+    exportObjectFile path [(m, [fname])]
+    contents <- B.hGetContents h
+    return $ ObjectFile contents [fname] deps
 
 -- Each module comes with a list of exported functions
 exportObjectFile :: FilePath -> [(L.Module, [String])] -> IO ()

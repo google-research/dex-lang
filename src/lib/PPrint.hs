@@ -157,6 +157,17 @@ instance Pretty (Decl n l) where
     Let b (DeclBinding ann ty rhs) ->
       align $ p ann <+> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
+instance Pretty (NaryLamExpr n) where
+  pretty (NaryLamExpr (NonEmptyNest b bs) _ body) =
+    "\\" <> prettyBinderNest (Nest b bs) <+> "." <> nest 2 (p body)
+
+instance Pretty (NaryPiType n) where
+  pretty (NaryPiType (NonEmptyNest b bs) effs resultTy) =
+    prettyBinderNest (Nest b bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
+
+instance Pretty (PiBinder n l) where
+  pretty (PiBinder b ty _) = p (b:>ty)
+
 instance Pretty (LamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (LamExpr n) where
   prettyPrec lamExpr = case lamExpr of
@@ -309,6 +320,8 @@ instance Pretty (AtomBinding n) where
     MiscBound   t -> p t
     SolverBound b -> p b
     PtrLitBound ty ptr -> p $ PtrLit ty ptr
+    SimpLamBound ty f -> p ty <> hardline <> p f
+    FFIFunBound _ f -> p f
 
 instance Pretty (LamBinding n) where
   pretty (LamBinding arr ty) =
@@ -335,6 +348,8 @@ instance Pretty (Binding s n) where
       "Superclass" <+> pretty idx <+> "of" <+> pretty className
     MethodBinding     className idx _ ->
       "Method" <+> pretty idx <+> "of" <+> pretty className
+    ImpFunBinding f -> pretty f
+    ObjectFileBinding _ -> "<object file>"
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
@@ -385,7 +400,7 @@ instance Pretty Output where
   pretty (PassInfo _ s) = p s
   pretty (EvalTime  t _) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
-  pretty (MiscLog s) = "===" <+> p s <+> "==="
+  pretty (MiscLog s) = p s
 
 
 instance Pretty PassName where
@@ -559,13 +574,20 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings scs sourceMap) =
+  pretty (TopEnvFrag bindings scs sourceMap cache obj) =
        "bindings:"
     <>   indented (p bindings)
     <> "Synth candidats:"
     <>   indented (p scs)
     <> "Source map:"
     <>   indented (p sourceMap)
+    <> "Cache:"
+    <>   indented (p cache)
+    <> "Object files:"
+    <>   indented "<TODO: Pretty instance>"
+
+instance Pretty (Cache n) where
+  pretty (Cache _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =
@@ -595,9 +617,9 @@ instance Pretty IFunType where
 
 instance Pretty (ImpFunction n) where
   pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
-    "def" <+> p cc <+> p bs
+    "impfun" <+> p cc <+> prettyBinderNest bs
     <> nest 2 (hardline <> p body) <> hardline
-  pretty (FFIFunction f) = p f
+  pretty (FFIFunction _ f) = p f
 
 instance Pretty (ImpBlock n)  where
   pretty (ImpBlock Empty expr) = group $ line <> pLowest expr
