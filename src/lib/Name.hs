@@ -50,10 +50,11 @@ module Name (
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applySubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
-  checkAlphaEq, alphaEq, alphaEqPure, alphaElem, nubAlphaEq,
+  checkAlphaEq, alphaEq, alphaEqPure, alphaElem,
   AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   AlphaHashableE (..), AlphaHashableB (..), EKey (..), EMap (..), ESet,
-  lookupEMap, eMapSingleton, eMapToList,
+  lookupEMap, eMapSingleton, eSetSingleton, eMapToList, eSetToList,
+  eMapFromList, eSetFromList,
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
   withFreshM, withFreshLike, sink, sinkM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
@@ -107,7 +108,6 @@ import Data.Hashable
 import Data.Kind (Type)
 import Data.String
 import Data.Function ((&))
-import Data.List (nubBy)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Text as T
@@ -958,13 +958,6 @@ alphaEqPure scope e1 e2 = checkAlphaEqPure scope e1 e2 & \case
   Success _ -> True
   Failure _ -> False
 
--- TODO: Support sets of types and eliminate this!
-nubAlphaEq :: (AlphaEqE e, ScopeReader m) => [e n] -> m n [e n]
-nubAlphaEq l = fromListE <$> liftImmut do
-  scope <- getScope
-  Distinct <- getDistinct
-  return $ ListE $ nubBy (alphaEqPure scope) $ fromListE $ sink $ ListE l
-
 checkAlphaEqPure :: (AlphaEqE e, Distinct n)
                  => Scope n -> e n -> e n -> Except ()
 checkAlphaEqPure scope e1 e2 =
@@ -1191,6 +1184,18 @@ eMapSingleton k v = EMap $ HM.singleton (EKey k) v
 eMapToList :: EMap k v n -> [(k n, v n)]
 eMapToList (EMap m) = [(k, v) | (EKey k, v) <- HM.toList m]
 
+eMapFromList :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => [(k n, v n)] -> EMap k v n
+eMapFromList xs = EMap $ HM.fromList [(EKey k, v) | (k, v) <- xs]
+
+eSetSingleton :: (AlphaEqE k, AlphaHashableE k) => k n -> ESet k n
+eSetSingleton k = eMapSingleton k UnitE
+
+eSetToList :: ESet k n -> [k n]
+eSetToList xs = map fst $ eMapToList xs
+
+eSetFromList :: (AlphaEqE k, AlphaHashableE k, HoistableE k) => [k n] -> ESet k n
+eSetFromList xs = eMapFromList $ zip xs (repeat UnitE)
+
 lookupEMap :: (AlphaEqE k, HoistableE k, AlphaHashableE k)
            => EMap k v n -> k n -> Maybe (v n)
 lookupEMap (EMap m) k = HM.lookup (EKey k) m
@@ -1207,15 +1212,16 @@ instance (AlphaEqE k, AlphaHashableE k, HoistableE k)
   -- right-biased instead of left-biased
   EMap x <> EMap y = EMap (y <> x)
 
-instance GenericE (EMap k v) where
+instance (AlphaEqE k, AlphaHashableE k, HoistableE k)
+         => GenericE (EMap k v) where
   type RepE (EMap k v) = ListE (PairE k v)
-  fromE = undefined
-  toE = undefined
+  fromE m = ListE $ map (uncurry PairE) $ eMapToList m
+  toE (ListE pairs) = eMapFromList $ map fromPairE pairs
 
-instance (SubstE sv k, SubstE sv v) => SubstE sv (EMap k v)
-instance (SinkableE  k, SinkableE  v) => SinkableE  (EMap k v)
-instance (HoistableE k, HoistableE v) => HoistableE (EMap k v)
-instance (AlphaEqE   k, AlphaEqE   v) => AlphaEqE   (EMap k v)
+instance (AlphaEqE   k, AlphaHashableE k, HoistableE k, SubstE sv k, SubstE sv v) => SubstE sv (EMap k v)
+instance (AlphaEqE   k, AlphaHashableE k, HoistableE k, SinkableE  k, SinkableE  v) => SinkableE  (EMap k v)
+instance (AlphaEqE   k, AlphaHashableE k, HoistableE k, HoistableE v) => HoistableE (EMap k v)
+instance (AlphaEqE   k, AlphaHashableE k, HoistableE k, AlphaEqE   v) => AlphaEqE   (EMap k v)
 instance (HoistableE k, AlphaEqE k, AlphaHashableE k, Store (k n), Store (v n))
          => Store (EMap k v n)
 
