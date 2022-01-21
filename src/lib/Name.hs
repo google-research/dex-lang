@@ -59,7 +59,7 @@ module Name (
   withFreshM, withFreshLike, sink, sinkM, (!), (<>>), withManyFresh,
   envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
-  NameGen (..), fmapG, NameGenT (..), fmapNest, forEachNestItem, forEachNestItemM,
+  fmapNest, forEachNestItem, forEachNestItemM,
   substM, ScopedSubstReader, runScopedSubstReader,
   HasNameHint (..), HasNameColor (..), NameHint (..), NameColor (..),
   GenericE (..), GenericB (..),
@@ -1412,31 +1412,6 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m, AlwaysImmut m)
 
   withEmptyZipSubst (ZipSubstReaderT cont) =
     ZipSubstReaderT $ withReaderT (const (newSubst id, newSubst id)) cont
-
--- === monadish thing for computations that produce names ===
-
-class NameGen (m :: E -> S -> *) where
-  returnG :: e n -> m e n
-  bindG   :: m e n -> (forall l. (DExt n l) => e l -> m e' l) -> m e' n
-  getDistinctEvidenceG :: m DistinctEvidence n
-
-fmapG :: NameGen m => (forall l. e1 l -> e2 l) -> m e1 n -> m e2 n
-fmapG f e = e `bindG` (returnG . f)
-
-newtype NameGenT (m::MonadKind1) (e::E) (n::S) =
-  NameGenT { runNameGenT :: m n (DistinctAbs ScopeFrag e n) }
-
-instance (ScopeReader m, ScopeExtender m, Monad1 m) => NameGen (NameGenT m) where
-  returnG e = NameGenT $ do
-    Distinct <- getDistinct
-    return (DistinctAbs id e)
-  bindG (NameGenT m) f = NameGenT do
-    DistinctAbs s  e  <- m
-    DistinctAbs s' e' <- extendScope s $ runNameGenT $ f e
-    return $ DistinctAbs (s >>> s') e'
-  getDistinctEvidenceG = NameGenT do
-    Distinct <- getDistinct
-    return $ DistinctAbs id Distinct
 
 -- === in-place scope updating monad -- immutable fragment ===
 
