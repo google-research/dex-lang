@@ -307,6 +307,7 @@ instance NameColor c => CheckableE (Binding c) where
     SuperclassBinding className   idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
     MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
+    ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -953,7 +954,7 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
 numNaryPiArgs :: NaryPiType n -> Int
-numNaryPiArgs (NaryPiType (NonEmptyNest b bs) _ _) = 1 + nestLength bs
+numNaryPiArgs (NaryPiType (NonEmptyNest _ bs) _ _) = 1 + nestLength bs
 
 naryLamExprType :: EnvReader m => NaryLamExpr n -> m n (NaryPiType n)
 naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut do

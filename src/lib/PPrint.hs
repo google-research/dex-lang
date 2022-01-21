@@ -574,7 +574,7 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings scs sourceMap cache obj) =
+  pretty (TopEnvFrag bindings scs sourceMap cache _) =
        "bindings:"
     <>   indented (p bindings)
     <> "Synth candidats:"

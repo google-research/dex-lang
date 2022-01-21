@@ -1182,6 +1182,7 @@ isSmall numel = case numel of
 _deviceFromCallingConvention :: CallingConvention -> Device
 _deviceFromCallingConvention cc = case cc of
   CEntryFun         -> CPU
+  CInternalFun      -> CPU
   EntryFun _        -> CPU
   FFIFun            -> CPU
   FFIMultiResultFun -> CPU
