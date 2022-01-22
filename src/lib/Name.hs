@@ -29,7 +29,7 @@ module Name (
   liftBetweenInplaceTs, emitInplaceT,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
-  MaterializedSubst (..), lookupTerminalSubstFrag, lookupMaterializedSubst,
+  lookupTerminalSubstFrag,
   BindsOneName (..), BindsAtMostOneName (..), BindsNameList (..), (@@>),
   Abs (..), Nest (..), PairB (..), UnitB (..), NonEmptyNest (..), nonEmptyToNest,
   IsVoidS (..), UnitE (..), VoidE, PairE (..), toPairE, fromPairE,
@@ -232,25 +232,11 @@ instance SinkableV v => ExtOutMap (RecSubst v) (RecSubstFrag v) where
 
 deriving instance (forall c. Show (v c o')) => Show (RecSubstFrag v o o')
 
--- Like Subst, but stores the mapping as data rather than (partially) as a
--- function. Suitable for Show/Store instances.
-newtype MaterializedSubst (v::V) (i::S) (o::S) =
-  MaterializedSubst { fromMaterializedSubst :: SubstFrag v VoidS i o }
-  deriving (Generic)
-
-instance InMap (MaterializedSubst v) (SubstFrag v) where
-  emptyInMap = MaterializedSubst emptyInFrag
-  extendInMap (MaterializedSubst frag) frag' = MaterializedSubst $ frag <.> frag'
-
 lookupTerminalSubstFrag :: Color c => SubstFrag v VoidS i o -> Name c i -> v c o
 lookupTerminalSubstFrag frag name =
   case lookupSubstFragProjected frag name of
     Left name' -> absurdNameFunction name'
     Right val -> val
-
-lookupMaterializedSubst :: Color c => MaterializedSubst v i o -> Name c i -> v c o
-lookupMaterializedSubst (MaterializedSubst frag) name =
-  lookupTerminalSubstFrag frag name
 
 instance (SinkableB b, BindsNames b) => OutFrag (Nest b) where
   emptyOutFrag = id
@@ -2131,10 +2117,6 @@ instance ( forall c. Color c => Store (v c o')
 instance ( forall c. Color c => Store (v c o)
          , forall c. Color c => Generic (v c o))
          => Store (RecSubst v o)
-
-instance ( forall c. Color c => Store (v c o)
-         , forall c. Color c => Generic (v c o))
-         => Store (MaterializedSubst v i o)
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
 

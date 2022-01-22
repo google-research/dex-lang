@@ -364,7 +364,6 @@ instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
 
-deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedSubst v i o)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance Pretty (Env n) where
