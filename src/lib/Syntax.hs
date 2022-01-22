@@ -67,7 +67,7 @@ module Syntax (
     piArgType, lamArgType, piArrow, extendEffRow,
     bindingsFragToSynthCandidates,
     getSynthCandidatesM, getAllowedEffects, withAllowedEffects, todoSinkableProof,
-    FallibleT1, runFallibleT1, abstractPtrLiterals,
+    FallibleT1, runFallibleT1, abstractPtrLiterals, freeAtomVarsList,
     IExpr (..), IBinder (..), IPrimOp, IVal, IType, Size, IFunType (..),
     ImpFunction (..), ImpBlock (..), ImpDecl (..),
     ImpInstr (..), iBinderType,
@@ -279,6 +279,7 @@ type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
 -- === bindings - static information we carry about a lexical scope ===
 
+-- TODO: consider making this an open union via a typeable-like class
 data Binding (c::C) (n::S) where
   AtomNameBinding   :: AtomBinding n                      -> Binding AtomNameC       n
   DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
@@ -519,14 +520,14 @@ bindersTypes Empty = []
 bindersTypes (Nest b bs) = ty : bindersTypes bs
   where ty = withExtEvidence b $ withSubscopeDistinct bs $ sink (binderType b)
 
-instance (SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) where
+instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) where
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann')) Nothing
     where ann' = withExtEvidence b $ sink ann
 
 class (SubstE Name e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
   toBinding :: e n -> Binding c n
 
-instance NameColor c => ToBinding (Binding c) c where
+instance Color c => ToBinding (Binding c) c where
   toBinding = id
 
 instance ToBinding AtomBinding AtomNameC where
@@ -551,7 +552,7 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (LeftE  e) = toBinding e
   toBinding (RightE e) = toBinding e
 
-lookupEnv :: (NameColor c, EnvReader m) => Name c o -> m o (Binding c o)
+lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
 lookupEnv v = liftImmut do
   bindings <- getEnv
   return $ lookupEnvPure bindings v
@@ -565,22 +566,19 @@ lookupImpFun name = lookupEnv name >>= \case ImpFunBinding f -> return f
 lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
 lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
 
-lookupSourceMap :: EnvReader m
-                => NameColorRep c -> SourceName -> m n (Maybe (Name c n))
-lookupSourceMap nameColor sourceName = do
+lookupSourceMap :: EnvReader m => SourceName -> m n (Maybe (UVar n))
+lookupSourceMap sourceName = do
   sourceMap <- getSourceMapM
-  case M.lookup sourceName $ fromSourceMap sourceMap of
-    Just envVal -> return $ Just $ fromWithColor nameColor envVal
-    Nothing -> return Nothing
+  return $ M.lookup sourceName $ fromSourceMap sourceMap
 
 getSourceMapM :: EnvReader m => m n (SourceMap n)
 getSourceMapM = liftImmut $ getSourceMap <$> getEnv
 
-lookupEnvPure :: Env n -> Name c n -> Binding c n
+lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v =
   lookupTerminalSubstFrag (fromRecSubst $ getNameEnv env) v
 
-updateEnv :: Name c n -> Binding c n -> Env n -> Env n
+updateEnv :: Color c => Name c n -> Binding c n -> Env n -> Env n
 updateEnv v rhs bindings =
   bindings { getNameEnv = RecSubst $ updateSubstFrag v rhs bs }
   where (RecSubst bs) = getNameEnv bindings
@@ -646,7 +644,7 @@ substBindersI b cont = do
   substBinders b cont
 
 withFreshBinder
-  :: (NameColor c, EnvExtender m, ToBinding binding c)
+  :: (Color c, EnvExtender m, ToBinding binding c)
   => Immut n
   => NameHint -> binding n
   -> (forall l. (Immut l, DExt n l) => NameBinder c n l -> m l a)
@@ -654,12 +652,12 @@ withFreshBinder
 withFreshBinder hint binding cont = do
   scope    <- getScope
   Distinct <- getDistinct
-  withFresh hint nameColorRep scope \b -> do
+  withFresh hint scope \b -> do
     extendEnv (toEnvFrag (b:>binding)) $
       cont b
 
 withFreshBinders
-  :: (NameColor c, EnvExtender m, ToBinding binding c)
+  :: (Color c, EnvExtender m, ToBinding binding c)
   => Immut n
   => [(NameHint, binding n)]
   -> (forall l. (Immut l, Distinct l, Ext n l)
@@ -671,7 +669,7 @@ withFreshBinders [] cont = do
 withFreshBinders ((hint,binding):rest) cont = do
   scope    <- getScope
   Distinct <- getDistinct
-  withFresh hint nameColorRep scope \b -> do
+  withFresh hint scope \b -> do
     extendEnv (toEnvFrag (b:>binding)) do
       rest' <- forM rest \(h, bs) -> (h,) <$> sinkM bs
       withFreshBinders rest' \bs vs ->
@@ -716,7 +714,7 @@ piBinderToLamBinder :: PiBinder n l -> EffectRow l -> LamBinder n l
 piBinderToLamBinder (PiBinder b ty arr) eff = LamBinder b ty arr eff
 
 data SomeDecl (binding::V) (n::S) (l::S) where
-  SomeDecl :: NameColor c => NameBinder c n l -> binding c n -> SomeDecl binding n l
+  SomeDecl :: Color c => NameBinder c n l -> binding c n -> SomeDecl binding n l
 
 instance ProvesExt (SomeDecl binding) where
   toExtEvidence (SomeDecl b _) = toExtEvidence b
@@ -737,7 +735,7 @@ instance SinkableV binding => SinkableB (SomeDecl binding) where
 instance BindsNames (SomeDecl binding) where
   toScopeFrag (SomeDecl b _) = toScopeFrag b
 
-instance (forall c. NameColor c => ToBinding (binding c) c)
+instance (forall c. Color c => ToBinding (binding c) c)
          => BindsEnv (SomeDecl binding) where
   toEnvFrag (SomeDecl b binding) =
     withExtEvidence b $
@@ -746,7 +744,7 @@ instance (forall c. NameColor c => ToBinding (binding c) c)
 -- === reconstruction abstractions ===
 
 captureClosure
-  :: (HoistableB b, HoistableE e, NameColor c)
+  :: (HoistableB b, HoistableE e, Color c)
   => b n l -> e l -> ([Name c l], NaryAbs c e n)
 captureClosure decls result = do
   let vs = capturedVars decls result
@@ -757,16 +755,16 @@ captureClosure decls result = do
       error "shouldn't happen"  -- but it will if we have types that reference
                                 -- local vars. We really need a telescope.
 
-capturedVars :: (NameColor c, BindsNames b, HoistableE e)
+capturedVars :: (Color c, BindsNames b, HoistableE e)
              => b n l -> e l -> [Name c l]
-capturedVars b e = nameSetToList nameColorRep nameSet
+capturedVars b e = nameSetToList nameSet
   where nameSet = M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 abstractPtrLiterals
   :: (EnvReader m, HoistableE e)
   => e n -> m n (Abs (Nest IBinder) e n, [LitVal])
 abstractPtrLiterals block = do
-  let fvs = freeVarsList AtomNameRep block
+  let fvs = freeAtomVarsList block
   (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
     lookupAtomName v <&> \case
       PtrLitBound ty ptr -> Just ((v, LiftE (PtrType ty)), PtrLit ty ptr)
@@ -774,6 +772,9 @@ abstractPtrLiterals block = do
   Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
   let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
   return (Abs ptrBinders block', ptrVals)
+
+freeAtomVarsList :: HoistableE e => e n -> [AtomName n]
+freeAtomVarsList = freeVarsList
 
 -- === FallibleT transformer ===
 
@@ -1016,7 +1017,7 @@ data EnvQuery =
    deriving (Show, Generic)
 
 data SourceMap (n::S) = SourceMap
-  { fromSourceMap :: M.Map SourceName (WithColor Name n)}
+  { fromSourceMap :: M.Map SourceName (UVar n)}
   deriving Show
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
@@ -1457,7 +1458,7 @@ piArrow (PiType (PiBinder _ _ arr) _ _) = arr
 nonDepPiType :: ScopeReader m
              => Arrow -> Type n -> EffectRow n -> Type n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
-  toConstAbs AtomNameRep (PairE eff resultTy) >>= \case
+  toConstAbs (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
       return $ PiType (PiBinder b argTy arr) eff' resultTy'
 
@@ -2373,7 +2374,7 @@ instance SubstE AtomSubstVal SolverBinding
 instance AlphaEqE SolverBinding
 instance AlphaHashableE SolverBinding
 
-instance NameColor c => GenericE (Binding c) where
+instance Color c => GenericE (Binding c) where
   type RepE (Binding c) =
     EitherE2
       (EitherE5
@@ -2410,13 +2411,13 @@ instance NameColor c => GenericE (Binding c) where
     Case1 (Case3 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
     _ -> error "impossible"
 
-deriving via WrapE (Binding c) n instance NameColor c => Generic (Binding c n)
+deriving via WrapE (Binding c) n instance Color c => Generic (Binding c n)
 instance SinkableV         Binding
 instance HoistableV        Binding
 instance SubstV Name       Binding
-instance NameColor c => SinkableE   (Binding c)
-instance NameColor c => HoistableE  (Binding c)
-instance NameColor c => SubstE Name (Binding c)
+instance Color c => SinkableE   (Binding c)
+instance Color c => HoistableE  (Binding c)
+instance Color c => SubstE Name (Binding c)
 
 instance GenericE DeclBinding where
   type RepE DeclBinding = LiftE LetAnn `PairE` Type `PairE` Expr
@@ -2461,13 +2462,11 @@ instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty
 
 instance GenericE SourceMap where
-  type RepE SourceMap = ListE (PairE (LiftE SourceName) (WithColor Name))
+  type RepE SourceMap = ListE (PairE (LiftE SourceName) UVar)
   fromE (SourceMap m) = ListE [PairE (LiftE v) def | (v, def) <- M.toList m]
   toE   (ListE pairs) = SourceMap $ M.fromList [(v, def) | (PairE (LiftE v) def) <- pairs]
 
 deriving via WrapE SourceMap n instance Generic (SourceMap n)
--- instance Generic (SourceMap n) where
---   type Rep (SourceMap n) = Rep ()
 
 instance SinkableE SourceMap
 instance SubstE Name SourceMap
@@ -2538,12 +2537,13 @@ instance Store (PiType  n)
 instance Store (DepPairType  n)
 instance Store Arrow
 instance Store (ClassDef       n)
+instance Store (UVar n)
 instance Store (SourceMap n)
 instance Store (SynthCandidates n)
 instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
-instance NameColor c => Store (Binding c n)
+instance Color c => Store (Binding c n)
 
 instance Store IsCUDARequired
 instance Store CallingConvention
@@ -2653,23 +2653,43 @@ instance BindsEnv EnvFrag where
 instance BindsEnv UnitB where
   toEnvFrag UnitB = emptyOutFrag
 
+instance GenericE UVar where
+  type RepE UVar = EitherE5 (Name AtomNameC)    (Name TyConNameC)
+                            (Name DataConNameC) (Name ClassNameC)
+                            (Name MethodNameC)
+  fromE name = case name of
+    UAtomVar    v -> Case0 v
+    UTyConVar   v -> Case1 v
+    UDataConVar v -> Case2 v
+    UClassVar   v -> Case3 v
+    UMethodVar  v -> Case4 v
+
+  toE name = case name of
+    Case0 v -> UAtomVar    v
+    Case1 v -> UTyConVar   v
+    Case2 v -> UDataConVar v
+    Case3 v -> UClassVar   v
+    Case4 v -> UMethodVar  v
+    _ -> error "impossible"
+
+instance Pretty (UVar n) where
+  pretty name = case name of
+    UAtomVar    v -> "Atom name: " <> pretty v
+    UTyConVar   v -> "Type constructor name: " <> pretty v
+    UDataConVar v -> "Data constructor name: " <> pretty v
+    UClassVar   v -> "Class name: " <> pretty v
+    UMethodVar  v -> "Method name: " <> pretty v
+
 -- TODO: name subst instances for the rest of UExpr
-instance SubstE Name UVar where
-  substE env = \case
-    UAtomVar    v -> UAtomVar    $ substE env v
-    UTyConVar   v -> UTyConVar   $ substE env v
-    UDataConVar v -> UDataConVar $ substE env v
-    UClassVar   v -> UClassVar   $ substE env v
-    UMethodVar  v -> UMethodVar  $ substE env v
+instance SubstE Name UVar
+instance SinkableE UVar
+instance HoistableE UVar
 
 instance SinkableE e => SinkableE (WithEnv e) where
   sinkingProofE (fresh::SinkingCoercion n l) (WithEnv (bindings :: Env h) e) =
     withExtEvidence (sinkingProofE fresh ext) $
       WithEnv bindings e
     where ext = getExtEvidence :: ExtEvidence h n
-
-instance SinkableE UVar where
-  sinkingProofE = todoSinkableProof
 
 instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
   getNameHint (WithSrcB _ b) = getNameHint b
@@ -2678,29 +2698,29 @@ instance HasNameHint (UPat' n l) where
   getNameHint (UPatBinder b) = getNameHint b
   getNameHint _ = "pat"
 
-instance HasNameHint (UBinder c n l) where
+instance Color c => HasNameHint (UBinder c n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
     UIgnore       -> fromString "_ign"
     UBind v       -> getNameHint v
 
-instance BindsNames (UBinder c) where
+instance Color c => BindsNames (UBinder c) where
   toScopeFrag (UBindSource _) = emptyOutFrag
   toScopeFrag (UIgnore)       = emptyOutFrag
   toScopeFrag (UBind b)       = toScopeFrag b
 
-instance ProvesExt (UBinder c) where
-instance BindsAtMostOneName (UBinder c) c where
+instance Color c => ProvesExt (UBinder c) where
+instance Color c => BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
     UBindSource _ -> emptyInFrag
     UIgnore       -> emptyInFrag
     UBind b'      -> b' @> x
 
-instance ProvesExt (UAnnBinder c) where
-instance BindsNames (UAnnBinder c) where
+instance Color c => ProvesExt (UAnnBinder c) where
+instance Color c => BindsNames (UAnnBinder c) where
   toScopeFrag (UAnnBinder b _) = toScopeFrag b
 
-instance BindsAtMostOneName (UAnnBinder c) c where
+instance Color c => BindsAtMostOneName (UAnnBinder c) c where
   UAnnBinder b _ @> x = b @> x
 
 instance Eq SourceBlock where

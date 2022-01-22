@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 
 module SourceRename (renameSourceNamesUDecl, renameSourceNamesUExpr) where
 
@@ -85,41 +86,43 @@ class SourceRenamableB (b :: B) where
                 -> m o a
 
 instance SourceRenamableE (SourceNameOr UVar) where
-  sourceRenameE (SourceName sourceName) = do
-    SourceMap sourceMap <- askSourceMap
-    case M.lookup sourceName sourceMap of
-      Nothing -> throw UnboundVarErr $ pprint sourceName
-      Just (WithColor AtomNameRep    name) -> return $ InternalName $ UAtomVar name
-      Just (WithColor TyConNameRep   name) -> return $ InternalName $ UTyConVar name
-      Just (WithColor DataConNameRep name) -> return $ InternalName $ UDataConVar name
-      Just (WithColor ClassNameRep   name) -> return $ InternalName $ UClassVar name
-      Just (WithColor MethodNameRep  name) -> return $ InternalName $ UMethodVar name
-      Just (WithColor DataDefNameRep _   ) -> error "Shouldn't find these in source map"
-      Just (WithColor SuperclassNameRep _) -> error "Shouldn't find these in source map"
-      Just (WithColor ImpFunNameRep     _) -> error "Shouldn't find these in source map"
-      Just (WithColor ObjectFileNameRep _) -> error "Shouldn't find these in source map"
+  sourceRenameE (SourceName sourceName) =
+    InternalName <$> lookupSourceName sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-lookupSourceName :: Renamer m => SourceName -> m n (WithColor Name n)
+lookupSourceName :: Renamer m => SourceName -> m n (UVar n)
 lookupSourceName v = do
   SourceMap sourceMap <- askSourceMap
   case M.lookup v sourceMap of
-    Nothing     -> throw UnboundVarErr $ pprint v
-    Just envVal -> return envVal
+    Nothing -> throw UnboundVarErr $ pprint v
+    Just v' -> return v'
 
-instance NameColor c => SourceRenamableE (SourceNameOr (Name c)) where
+instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
   sourceRenameE (SourceName sourceName) = do
     lookupSourceName sourceName >>= \case
-      WithColor rep val -> case eqNameColorRep rep (nameColorRep :: NameColorRep c) of
-        Just ColorsEqual -> return $ InternalName val
-        Nothing -> throw TypeErr $ "Incorrect name color: " ++ pprint sourceName
+      UAtomVar v -> return $ InternalName v
+      _ -> throw TypeErr $ "Not an ordinary variable: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
+instance SourceRenamableE (SourceNameOr (Name DataConNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UDataConVar v -> return $ InternalName v
+      _ -> throw TypeErr $ "Not a data constructor: " ++ pprint sourceName
+  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
+
+instance SourceRenamableE (SourceNameOr (Name ClassNameC)) where
+  sourceRenameE (SourceName sourceName) = do
+    lookupSourceName sourceName >>= \case
+      UClassVar v -> return $ InternalName v
+      _ -> throw TypeErr $ "Not a class name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
 instance SourceRenamableB (UBinder AtomNameC) where
-  sourceRenameB b cont = sourceRenameUBinder b cont
+  sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
 
 instance SourceRenamableB UPatAnn where
   sourceRenameB (UPatAnn b ann) cont = do
@@ -207,8 +210,8 @@ instance SourceRenamableB UDecl where
         cont $ ULet ann pat' expr'
     UDataDefDecl dataDef tyConName dataConNames -> do
       dataDef' <- sourceRenameE dataDef
-      sourceRenameUBinder tyConName \tyConName' ->
-        sourceRenameUBinderNest dataConNames \dataConNames' ->
+      sourceRenameUBinder UTyConVar tyConName \tyConName' ->
+        sourceRenameUBinderNest UDataConVar dataConNames \dataConNames' ->
            cont $ UDataDefDecl dataDef' tyConName' dataConNames'
     UInterface paramBs superclasses methodTys className methodNames -> do
       Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
@@ -216,8 +219,8 @@ instance SourceRenamableB UDecl where
           superclasses' <- mapM sourceRenameE superclasses
           methodTys' <- zipWithM (renameMethodType paramBs) methodTys methodSourceNames
           return $ Abs paramBs' (PairE (ListE superclasses') (ListE methodTys'))
-      sourceRenameUBinder className \className' ->
-        sourceRenameUBinderNest methodNames \methodNames' ->
+      sourceRenameUBinder UClassVar className \className' ->
+        sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
           cont $ UInterface paramBs' superclasses' methodTys' className' methodNames'
       where methodSourceNames = nestToList (\(UBindSource n) -> n) methodNames
     UInstance className conditions params methodDefs instanceName -> do
@@ -260,29 +263,31 @@ instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b
         cont $ PairB b1' b2'
 
 sourceRenameUBinderNest
-  :: (Renamer m, NameColor c, Distinct o)
-  => Nest (UBinder c) i i'
+  :: (Renamer m, Color c, Distinct o)
+  => (forall l. Name c l -> UVar l)
+  -> Nest (UBinder c) i i'
   -> (forall o'. DExt o o' => Nest (UBinder c) o o' ->  m o' a)
   -> m o a
-sourceRenameUBinderNest Empty cont = cont Empty
-sourceRenameUBinderNest (Nest b bs) cont =
-  sourceRenameUBinder b \b' ->
-    sourceRenameUBinderNest bs \bs' ->
+sourceRenameUBinderNest _ Empty cont = cont Empty
+sourceRenameUBinderNest asUVar (Nest b bs) cont =
+  sourceRenameUBinder asUVar b \b' ->
+    sourceRenameUBinderNest asUVar bs \bs' ->
       cont $ Nest b' bs'
 
-sourceRenameUBinder :: (Distinct o, Renamer m, NameColor c)
-                    => UBinder c i i'
+sourceRenameUBinder :: (Distinct o, Renamer m, Color c)
+                    => (forall l. Name c l -> UVar l)
+                    -> UBinder c i i'
                     -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)
                     -> m o a
-sourceRenameUBinder ubinder cont = case ubinder of
+sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UBindSource b -> do
     SourceMap sourceMap <- askSourceMap
     mayShadow <- askMayShadow
     unless (mayShadow || not (M.member b sourceMap)) $
       throw RepeatedVarErr $ pprint b
-    withFreshM (getNameHint b) nameColorRep \freshName -> do
+    withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
-      let sourceMap' = SourceMap $ M.singleton b (WithColor nameColorRep $ nameBinderName freshName)
+      let sourceMap' = SourceMap $ M.singleton b (asUVar $ nameBinderName freshName)
       extendSourceMap sourceMap' do
         cont $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
@@ -310,7 +315,7 @@ instance SourceRenamableE e => SourceRenamableE (ListE e) where
 instance SourceRenamableE UMethodDef where
   sourceRenameE (UMethodDef ~(SourceName v) expr) = do
     lookupSourceName v >>= \case
-      WithColor MethodNameRep v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
+      UMethodVar v' -> UMethodDef (InternalName v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
@@ -348,14 +353,10 @@ instance SourceRenamablePat (UBinder AtomNameC) where
 instance SourceRenamablePat UPat' where
   sourceRenamePat sibs pat cont = case pat of
     UPatBinder b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' $ UPatBinder b'
-    UPatCon ~(SourceName con) bs -> do
+    UPatCon con bs -> do
       -- TODO Deduplicate this against the code for sourceRenameE of
       -- the SourceName case of SourceNameOr
-      SourceMap sourceMap <- askSourceMap
-      con' <- case M.lookup con sourceMap of
-        Nothing    -> throw UnboundVarErr $ pprint con
-        Just (WithColor DataConNameRep name) -> return $ InternalName name
-        Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint con
+      con' <- sourceRenameE con
       sourceRenamePat sibs bs \sibs' bs' ->
         cont sibs' $ UPatCon con' bs'
     UPatPair (PairB p1 p2) ->

@@ -157,7 +157,7 @@ isTrivialForAD expr = do
 isActive :: HoistableE e => e o -> PrimalM i o Bool
 isActive e = do
   vs <- (S.fromList . activeVars) <$> getActivePrimals
-  return $ any (`S.member` vs) (freeVarsList AtomNameRep e)
+  return $ any (`S.member` vs) (freeAtomVarsList e)
 
 -- === converision between monadic and reified version of functions ===
 

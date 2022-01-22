@@ -63,7 +63,7 @@ substNonlin e = do
 
 isLin :: HoistableE e => e i -> TransposeM i o Bool
 isLin e = do
-  substVals <- mapM lookupSubstM $ freeVarsList AtomNameRep e
+  substVals <- mapM lookupSubstM $ freeAtomVarsList e
   return $ flip any substVals \case
     LinTrivial     -> True
     LinRef _       -> True
@@ -123,7 +123,7 @@ substExprIfNonlin expr =
 isLinEff :: EffectRow o -> TransposeM i o Bool
 isLinEff effs@(EffectRow _ Nothing) = do
   regions <- getLinRegions
-  let effRegions = freeVarsList AtomNameRep effs
+  let effRegions = freeAtomVarsList effs
   return $ not $ null $ S.fromList effRegions `S.intersection` S.fromList regions
 isLinEff _ = error "Can't transpose polymorphic effects"
 

@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Builder (
@@ -137,7 +138,7 @@ class (EnvReader m, MonadFail1 m)
   -- `emitBinding` is expressible in terms of `emitEnv` but it can be
   -- implemented more efficiently by avoiding a double substitution
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
-  emitBinding :: Mut n => NameColor c => NameHint -> Binding c n -> m n (Name c n)
+  emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
   emitEnv :: (Mut n, SinkableE e, SubstE Name e)
                   => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
@@ -484,7 +485,7 @@ buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
 
 buildAbs
   :: ( EnvReader m, EnvExtender m
-     , SinkableE e, NameColor c, ToBinding binding c)
+     , SinkableE e, Color c, ToBinding binding c)
   => NameHint
   -> binding n
   -> (forall l. (Immut l, DExt n l) => Name c l -> m l (e l))
@@ -709,7 +710,7 @@ emitRunWriter hint accTy bm body = do
 mCombine :: (Emits n, Builder m) => Atom n -> Atom n -> Atom n -> m n (Atom n)
 mCombine monoidDict x y = do
   ty <- getType x
-  Just method <- lookupSourceMap MethodNameRep "mcombine"
+  Just (UMethodVar method) <- lookupSourceMap "mcombine"
   MethodBinding _ _ projection <- lookupEnv method
   naryApp projection [ty, monoidDict, x, y]
 
@@ -1295,14 +1296,14 @@ buildTelescopeVal elts telescopeTy = go elts telescopeTy
 
 -- sorts name-annotation pairs so that earlier names may be occur free in later
 -- annotations but not vice versa.
-toposortAnnVars :: forall e c n. (NameColor c, HoistableE e)
+toposortAnnVars :: forall e c n. (Color c, HoistableE e)
                 => [(Name c n, e n)] -> [(Name c n, e n)]
 toposortAnnVars annVars =
   let (graph, vertexToNode, _) = graphFromEdges $ map annVarToNode annVars
   in map (nodeToAnnVar . vertexToNode) $ reverse $ topSort graph
   where
     annVarToNode :: (Name c n, e n) -> (e n, Name c n, [Name c n])
-    annVarToNode (v, ann) = (ann, v, nameSetToList nameColorRep $ freeVarsE ann)
+    annVarToNode (v, ann) = (ann, v, nameSetToList $ freeVarsE ann)
 
     nodeToAnnVar :: (e n, Name c n, [Name c n]) -> (Name c n, e n)
     nodeToAnnVar (ann, v, _) = (v, ann)
@@ -1337,11 +1338,11 @@ localVarsAndTypeVars b e =
     varsViaType :: AtomName l -> m l [AtomName l]
     varsViaType v = do
       ty <- getType $ Var v
-      return $ nameSetToList nameColorRep $ freeVarsE ty
+      return $ nameSetToList $ freeVarsE ty
 
-localVars :: (NameColor c, BindsNames b, HoistableE e)
+localVars :: (Color c, BindsNames b, HoistableE e)
           => b n l -> e l -> [Name c l]
-localVars b e = nameSetToList nameColorRep $
+localVars b e = nameSetToList $
   M.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 instance GenericE ReconstructAtom where
