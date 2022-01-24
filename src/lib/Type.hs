@@ -100,22 +100,14 @@ instantiatePi (PiType b eff body) x = do
 sourceNameType :: (EnvReader m, Fallible1 m)
                => SourceName -> m n (Type n)
 sourceNameType v = do
-  sm <- getSourceMapM
-  case M.lookup v $ fromSourceMap sm of
+  lookupSourceMap v >>= \case
     Nothing -> throw UnboundVarErr $ pprint v
-    Just (WithColor c v') ->
-      withNameColorRep c $ lookupEnv v' >>= bindingType
-
-  where
-    bindingType :: (NameColor c, EnvReader m, Fallible1 m)
-                => Binding c n -> m n (Type n)
-    bindingType binding = liftImmut case binding of
-      AtomNameBinding b    -> return $ atomBindingType $ toBinding b
-      TyConBinding   _   e -> getType e
-      DataConBinding _ _ e -> getType e
-      MethodBinding  _ _ e -> getType e
-      ClassBinding   _   e -> getType e
-      _ -> throw TypeErr $ pprint v  ++ " doesn't have a type"
+    Just uvar -> case uvar of
+      UAtomVar    v' -> getType $ Var v'
+      UTyConVar   v' -> lookupEnv v' >>= \case TyConBinding _     e -> getType e
+      UDataConVar v' -> lookupEnv v' >>= \case DataConBinding _ _ e -> getType e
+      UClassVar   v' -> lookupEnv v' >>= \case ClassBinding  _    e -> getType e
+      UMethodVar  v' -> lookupEnv v' >>= \case MethodBinding _ _  e -> getType e
 
 getReferentTy :: MonadFail m => EmptyAbs (PairB LamBinder LamBinder) n -> m (Type n)
 getReferentTy (Abs (PairB hB refB) UnitE) = do
@@ -297,7 +289,7 @@ instance CheckableB EnvFrag where
       effs' <- mapM checkE effs
       cont $ EnvFrag frag' effs'
 
-instance NameColor c => CheckableE (Binding c) where
+instance Color c => CheckableE (Binding c) where
   checkE binding = case binding of
     AtomNameBinding   atomNameBinding   -> AtomNameBinding <$> checkE atomNameBinding
     DataDefBinding    dataDef           -> DataDefBinding  <$> checkE dataDef
@@ -307,6 +299,7 @@ instance NameColor c => CheckableE (Binding c) where
     SuperclassBinding className   idx e -> SuperclassBinding <$> substM className <*> pure idx <*> substM e
     MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
+    ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -451,7 +444,7 @@ instance HasType Atom where
         _ -> throw TypeErr $
               "Only single-member ADTs and record types can be projected. Got " <> pprint ty <> "   " <> pprint v
 
-instance (NameColor c, ToBinding ann c, CheckableE ann)
+instance (Color c, ToBinding ann c, CheckableE ann)
          => CheckableB (BinderP c ann) where
   checkB (b:>ann) cont = do
     ann' <- checkE ann
@@ -927,7 +920,7 @@ checkDataConRefEnv _ _ = throw CompilerErr $ "Mismatched args and binders"
 
 typeAsBinderNest :: ScopeReader m => Type n -> m n (Abs (Nest Binder) UnitE n)
 typeAsBinderNest ty = do
-  Abs ignored body <- toConstAbs AtomNameRep UnitE
+  Abs ignored body <- toConstAbs UnitE
   return $ Abs (Nest (ignored:>ty) Empty) body
 
 checkAlt :: HasType body => Typer m
@@ -953,7 +946,7 @@ checkApp fTy xs = case fromNaryPiType (length xs) fTy of
       ++ " (tried to apply it to: " ++ pprint xs ++ ")"
 
 numNaryPiArgs :: NaryPiType n -> Int
-numNaryPiArgs (NaryPiType (NonEmptyNest b bs) _ _) = 1 + nestLength bs
+numNaryPiArgs (NaryPiType (NonEmptyNest _ bs) _ _) = 1 + nestLength bs
 
 naryLamExprType :: EnvReader m => NaryLamExpr n -> m n (NaryPiType n)
 naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut do

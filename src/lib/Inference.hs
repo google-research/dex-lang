@@ -176,7 +176,7 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
     -> m n (Abs (Nest Decl) e n)
 
   buildAbsInf
-    :: (SinkableE e, HoistableE e, NameColor c, ToBinding binding c)
+    :: (SinkableE e, HoistableE e, Color c, ToBinding binding c)
     => EmitsInf n
     => NameHint -> binding n
     -> (forall l. (EmitsInf l, DExt n l) => Name c l -> m l (e l))
@@ -278,7 +278,7 @@ instance SinkableE UnsolvedEnv where
   sinkingProofE = todoSinkableProof
 
 getAtomNames :: Distinct l => EnvFrag n l -> S.Set (AtomName l)
-getAtomNames frag = S.fromList $ nameSetToList AtomNameRep $ toNameSet $ toScopeFrag frag
+getAtomNames frag = S.fromList $ nameSetToList $ toNameSet $ toScopeFrag frag
 
 -- query each binding rhs for inference names and add it to the set if needed
 
@@ -312,7 +312,7 @@ zonkUnsolvedEnv ss unsolved bindings =
             tell $ UnsolvedEnv $ S.singleton v
 
 hasInferenceVars :: HoistableE e => Env n -> e n -> Bool
-hasInferenceVars bs e = any (isInferenceVar bs) $ freeVarsList AtomNameRep e
+hasInferenceVars bs e = any (isInferenceVar bs) $ freeAtomVarsList e
 
 isInferenceVar :: Env n -> AtomName n -> Bool
 isInferenceVar bs v = case lookupEnvPure bs v of
@@ -438,7 +438,7 @@ instance InfBuilder (InfererM i) where
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
       Abs b (PairE result s') <- extendInplaceT do
         scope <- getScope
-        withFresh hint nameColorRep scope \b -> do
+        withFresh hint scope \b -> do
           let b' = b :> sink binding
           let bExt = toEnvFrag b'
           extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
@@ -800,11 +800,11 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emitOp (VariantLift prev value')
   UIntLit x  -> do
-    lookupSourceMap MethodNameRep "fromInteger" >>= \case
+    lookupSourceMap "fromInteger" >>= \case
       Nothing ->
         -- fallback for missing protolude
         matchRequirement $ Con $ Lit $ Int32Lit $ fromIntegral x
-      Just fromIntMethod -> do
+      Just (UMethodVar fromIntMethod) -> do
         ~(MethodBinding _ _ fromInt) <- lookupEnv fromIntMethod
         fromInt' <- instantiateSigma fromInt
         let i64Atom = Con $ Lit $ Int64Lit $ fromIntegral x
@@ -812,6 +812,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         resultTy <- getType result
         addDefault resultTy $ BaseTy (Scalar Int32Type)
         return result
+      Just _ -> error "not a method"
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
   where
@@ -1585,21 +1586,23 @@ openEffectRow :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o (EffectRow o)
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
+getIxClassDef :: (Fallible1 m, EnvReader m) => m n (ClassDef n)
+getIxClassDef = lookupSourceMap "Ix" >>= \case
+  Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
+  Just (UClassVar v) -> do
+    ClassBinding def _ <- lookupEnv v
+    return def
+  Just _ -> error "not a class var"
+
 checkIx :: (EmitsBoth o, Inferer m) => SrcPosCtx -> Type o -> m i o ()
 checkIx ctx ty = do
-  lookupSourceMap ClassNameRep "Ix" >>= \case
-    Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
-    Just ixInterfaceName -> do
-      ClassBinding (ClassDef _ _ dictDataDefName) _ <- lookupEnv ixInterfaceName
-      void $ emitOp $ SynthesizeDict ctx $ TypeCon "Ix" dictDataDefName [ty]
+  ClassDef _ _ dictDataDefName <- getIxClassDef
+  void $ emitOp $ SynthesizeDict ctx $ TypeCon "Ix" dictDataDefName [ty]
 
 synthIx :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
 synthIx ty = do
-  lookupSourceMap ClassNameRep "Ix" >>= \case
-    Nothing -> throw CompilerErr $ "Ix interface needed but not defined!"
-    Just ixInterfaceName -> do
-      ClassBinding (ClassDef _ _ dictDataDefName) _ <- lookupEnv ixInterfaceName
-      trySynthDictBlock $ TypeCon "Ix" dictDataDefName [ty]
+  ClassDef _ _ dictDataDefName <- getIxClassDef
+  trySynthDictBlock $ TypeCon "Ix" dictDataDefName [ty]
 
 -- === Solver ===
 
@@ -1725,11 +1728,11 @@ catSolverSubsts scope (SolverSubst s1) (SolverSubst s2) = SolverSubst $ s1' <> s
 
 -- TODO: put this pattern and friends in the Name library? Don't really want to
 -- have to think about `eqNameColorRep` just to implement a partial map.
-lookupSolverSubst :: forall c n. SolverSubst n -> Name c n -> AtomSubstVal c n
+lookupSolverSubst :: forall c n. Color c => SolverSubst n -> Name c n -> AtomSubstVal c n
 lookupSolverSubst (SolverSubst m) name =
-  case eqNameColorRep AtomNameRep (getNameColor name) of
+  case eqColorRep of
     Nothing -> Rename name
-    Just ColorsEqual -> case M.lookup name m of
+    Just (ColorsEqual :: ColorsEqual c AtomNameC)-> case M.lookup name m of
       Nothing -> Rename name
       Just ty -> SubstVal ty
 
@@ -1908,7 +1911,7 @@ extendSolution v t =
       -- skolem variable. We don't want to unify with terms containing these
       -- variables because that would mean inferring dependence, which is a can
       -- of worms.
-      forM_ (freeVarsList AtomNameRep t) \fv ->
+      forM_ (freeAtomVarsList t) \fv ->
         whenM (isSkolemName fv) $ throw TypeErr $ "Can't unify with skolem vars"
       extendSolverSubst v t
     False -> empty
@@ -1939,12 +1942,12 @@ renameForPrinting e = liftImmut do
 renameForPrinting' :: (Distinct n, HoistableE e, SinkableE e, SubstE Name e)
                    => Env n -> e n -> Abs (Nest (NameBinder AtomNameC)) e n
 renameForPrinting' bindings e = do
-  let infVars = filter (isInferenceVar bindings) $ freeVarsList AtomNameRep e
+  let infVars = filter (isInferenceVar bindings) $ freeAtomVarsList e
   let ab = abstractFreeVarsNoAnn infVars e
   let scope = toScope bindings
   let hints = take (length infVars) $ map fromString $
                 map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
-  withManyFresh hints AtomNameRep scope \bs' ->
+  withManyFresh hints scope \bs' ->
     runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
       ab' <- sinkM ab
       e' <- applyNaryAbs ab' $ nestToList (sink . nameBinderName) bs'

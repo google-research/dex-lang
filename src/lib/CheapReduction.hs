@@ -118,8 +118,8 @@ cheapReduceFromSubst e = do
   DB bindings <- getDB
   return $ fmapNames (toScope bindings) (cheapSubstName bindings) e'
   where
-    cheapSubstName :: Distinct n
-                    => Env n -> Name c n -> AtomSubstVal c n
+    cheapSubstName :: (Color c, Distinct n)
+                   => Env n -> Name c n -> AtomSubstVal c n
     cheapSubstName bindings v = case lookupEnvPure bindings v of
       AtomNameBinding (LetBound (DeclBinding _ _ (Atom x))) ->
         SubstVal $ runEnvReaderM bindings $
@@ -160,25 +160,24 @@ cheapReduceWithDeclsRec decls cont = case decls of
         extendSubst (b@>SubstVal x) $
           cheapReduceWithDeclsRec rest cont
 
-cheapReduceName :: CheapReducer m => Name c o -> m i o (AtomSubstVal c o)
+cheapReduceName :: (Color c, CheapReducer m) => Name c o -> m i o (AtomSubstVal c o)
 cheapReduceName v =
-  withNameColorRep (getNameColor v)
-    lookupEnv v >>= \case
-      AtomNameBinding (LetBound (DeclBinding _ _ e)) -> case e of
-        -- We avoid synthesizing the dictionaries during the traversal
-        -- and only do that when cheap reduction is performed on the expr directly.
-        Op (SynthesizeDict _ _) -> stuck
-        _ -> do
-          cachedVal <- lookupCache v >>= \case
-            Nothing -> do
-              result <- optional (dropSubst $ cheapReduceE e)
-              updateCache v result
-              return result
-            Just result -> return result
-          case cachedVal of
-            Nothing  -> stuck
-            Just ans -> return $ SubstVal ans
-      _ -> stuck
+  lookupEnv v >>= \case
+    AtomNameBinding (LetBound (DeclBinding _ _ e)) -> case e of
+      -- We avoid synthesizing the dictionaries during the traversal
+      -- and only do that when cheap reduction is performed on the expr directly.
+      Op (SynthesizeDict _ _) -> stuck
+      _ -> do
+        cachedVal <- lookupCache v >>= \case
+          Nothing -> do
+            result <- optional (dropSubst $ cheapReduceE e)
+            updateCache v result
+            return result
+          Just result -> return result
+        case cachedVal of
+          Nothing  -> stuck
+          Just ans -> return $ SubstVal ans
+    _ -> stuck
   where stuck = return $ Rename v
 
 class CheaplyReducibleE (e::E) (e'::E) where
@@ -204,11 +203,11 @@ instance CheaplyReducibleE Atom Atom where
     _ -> liftImmut do
       a' <- substM a
       substMap <- fmap M.fromList $ dropSubst $
-        forM (freeVarsList AtomNameRep a') \v -> (v,) <$> cheapReduceName v
+        forM (freeAtomVarsList a') \v -> (v,) <$> cheapReduceName v
       let subst :: Subst AtomSubstVal o o =
-            newSubst \v -> case getNameColor v of
-              AtomNameRep -> substMap M.! v
-              _ -> Rename v
+            newSubst \(v::Name c o) -> case eqColorRep of
+              Just (ColorsEqual :: ColorsEqual c AtomNameC) -> substMap M.! v
+              Nothing -> Rename v
       DB bindings <- getDB
       return $ substE (toScope bindings, subst) a'
 

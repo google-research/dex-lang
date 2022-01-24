@@ -214,7 +214,7 @@ evalSourceBlock' block = case sbContents block of
         vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
-        emitSourceMap $ SourceMap $ M.singleton sourceName (WithColor AtomNameRep vCore)
+        emitSourceMap $ SourceMap $ M.singleton sourceName (UAtomVar vCore)
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
@@ -233,16 +233,20 @@ runEnvQuery query = do
     InternalNameInfo name ->
       case lookupSubstFragRaw (fromRecSubst $ getNameEnv bindings) name of
         Nothing -> throw UnboundVarErr $ pprint name
-        Just (WithColor _ binding) ->
+        Just (WithColor binding) ->
           logTop $ TextOut $ pprint binding
     SourceNameInfo name -> do
-      let SourceMap sourceMap = getSourceMap bindings
-      case M.lookup name sourceMap of
+      lookupSourceMap name >>= \case
         Nothing -> throw UnboundVarErr $ pprint name
-        Just (WithColor c name') -> do
-          binding <- withNameColorRep c $ lookupEnv name'
-          logTop $ TextOut $ "Internal name: " ++ pprint name'
-          logTop $ TextOut $ "Binding:\n"      ++ pprint binding
+        Just uvar -> do
+          logTop $ TextOut $ pprint uvar
+          info <- case uvar of
+            UAtomVar    v' -> pprint <$> lookupEnv v'
+            UTyConVar   v' -> pprint <$> lookupEnv v'
+            UDataConVar v' -> pprint <$> lookupEnv v'
+            UClassVar   v' -> pprint <$> lookupEnv v'
+            UMethodVar  v' -> pprint <$> lookupEnv v'
+          logTop $ TextOut $ "Binding:\n" ++ info
 
 requiresBench :: SourceBlock -> Bool
 requiresBench block = case sbLogLevel block of

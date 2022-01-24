@@ -32,7 +32,8 @@ import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, uncons, unsnoc, unpack)
 import Data.String (fromString)
-import System.Console.ANSI
+import qualified System.Console.ANSI as ANSI
+import System.Console.ANSI hiding (Color)
 import System.IO.Unsafe
 import qualified System.Environment as E
 import Numeric
@@ -363,7 +364,6 @@ instance Pretty (ClassDef n) where
   pretty (ClassDef classSourceName methodNames _) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
 
-deriving instance (forall c n. Pretty (v c n)) => Pretty (MaterializedSubst v i o)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance Pretty (Env n) where
@@ -411,17 +411,8 @@ instance Pretty Result where
     where maybeErr = case r of Failure err -> p err
                                Success () -> mempty
 
-instance Pretty (UVar n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UVar n) where
-  prettyPrec uvar = atPrec ArgPrec case uvar of
-    UAtomVar    v -> p v
-    UTyConVar   v -> p v
-    UDataConVar v -> p v
-    UClassVar   v -> p v
-    UMethodVar  v -> p v
-
-instance NameColor c => Pretty (UBinder c n l) where pretty = prettyFromPrettyPrec
-instance NameColor c => PrettyPrec (UBinder c n l) where
+instance Color c => Pretty (UBinder c n l) where pretty = prettyFromPrettyPrec
+instance Color c => PrettyPrec (UBinder c n l) where
   prettyPrec b = atPrec ArgPrec case b of
     UBindSource v -> p v
     UIgnore       -> "_"
@@ -540,7 +531,7 @@ instance Pretty (UDataDefTrail n) where
 instance Pretty (UPatAnnArrow n l) where
   pretty (UPatAnnArrow b arr) = p b <> ":" <> p arr
 
-instance NameColor c => Pretty (UAnnBinder c n l) where
+instance Color c => Pretty (UAnnBinder c n l) where
   pretty (UAnnBinder b ty) = p b <> ":" <> p ty
 
 instance Pretty (UMethodDef n) where
@@ -574,7 +565,7 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings scs sourceMap cache obj) =
+  pretty (TopEnvFrag bindings scs sourceMap cache _) =
        "bindings:"
     <>   indented (p bindings)
     <> "Synth candidats:"
@@ -820,7 +811,7 @@ addPrefix prefix str = unlines $ map prefixLine $ lines str
         prefixLine s = case s of "" -> prefix
                                  _  -> prefix ++ " " ++ s
 
-addColor :: Bool -> Color -> String -> String
+addColor :: Bool -> ANSI.Color -> String -> String
 addColor False _ s = s
 addColor True c s =
   setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]

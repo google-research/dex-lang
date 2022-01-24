@@ -137,7 +137,7 @@ instance ImpBuilder ImpM where
       (,s) <$> extendInplaceT do
         scope <- getScope
         let hints = map (const "v") tys
-        withManyFresh hints AtomNameRep scope \bs -> do
+        withManyFresh hints scope \bs -> do
           let vs = nestToList (sink . nameBinderName) bs
           let impBs = makeImpBinders bs tys
           let decl = ImpLet impBs $ sink instr
@@ -603,7 +603,7 @@ buildBlockDest cont = do
 
 -- TODO: this is mostly copy-paste from Inference
 buildAbsDest
-  :: (SinkableE e, HoistableE e, NameColor c, ToBinding binding c)
+  :: (SinkableE e, HoistableE e, Color c, ToBinding binding c)
   => Mut n
   => NameHint -> binding n
   -> (forall l. (Mut l, DExt n l) => Name c l -> DestM l (e l))
@@ -612,7 +612,7 @@ buildAbsDest hint binding cont =
   DestM $ StateT1 \s -> do
     Abs b (PairE e s') <- extendInplaceT do
       scope <- getScope
-      withFresh hint nameColorRep scope \b -> do
+      withFresh hint scope \b -> do
         let b' = b :> sink binding
         let bExt = toEnvFrag b'
         extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
@@ -627,7 +627,7 @@ buildAbsDest hint binding cont =
 -- decls emitted at the inner scope are hoisted to the outer scope
 -- (they must be hoistable, otherwise we'll get a hoisting error)
 buildAbsHoistingDeclsDest
-  :: (SinkableE e, HoistableE e, NameColor c, ToBinding binding c)
+  :: (SinkableE e, HoistableE e, Color c, ToBinding binding c)
   => Emits n
   => NameHint -> binding n
   -> (forall l. (Emits l, DExt n l) => Name c l -> DestM l (e l))
@@ -1182,6 +1182,7 @@ isSmall numel = case numel of
 _deviceFromCallingConvention :: CallingConvention -> Device
 _deviceFromCallingConvention cc = case cc of
   CEntryFun         -> CPU
+  CInternalFun      -> CPU
   EntryFun _        -> CPU
   FFIFun            -> CPU
   FFIMultiResultFun -> CPU
@@ -1297,7 +1298,7 @@ withFreshIBinder
 withFreshIBinder hint ty cont = do
   scope    <- getScope
   Distinct <- getDistinct
-  withFresh hint nameColorRep scope \b -> do
+  withFresh hint scope \b -> do
     extendEnv (toEnvFrag (b :> (toBinding $ MiscBound $ BaseTy ty))) $
       cont $ IBinder b ty
 
