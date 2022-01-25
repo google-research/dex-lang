@@ -66,6 +66,15 @@ instance Show Result where
   show (Result vs linVs) = "(" ++ intercalate ", " (show <$> vs) ++ "; "
                                ++ intercalate ", " (show <$> linVs) ++ ")"
 
+addVals :: Value -> Value -> Value
+addVals (FloatVal v1) (FloatVal v2) = FloatVal $ v1 + v2
+addVals (TupleVal vs1) (TupleVal vs2) = TupleVal $ zipWith addVals vs1 vs2
+addVals _ _ = error "Can't add FloatVal to TupleVal"
+
+scaleVal :: Float -> Value -> Value
+scaleVal f (FloatVal v) = FloatVal $ f * v
+scaleVal f (TupleVal vs) = TupleVal $ map (scaleVal f) vs
+
 -------------------- Pretty printing --------------------
 
 instance Pretty Program where
@@ -159,13 +168,13 @@ eval prog env expr = case expr of
   LVar v -> linResult $ env ! v
   LTuple vs -> linResult $ TupleVal $ (env !) <$> vs
   LAdd le re -> do
-    let Result [] [FloatVal lv] = eval prog env le
-    let Result [] [FloatVal rv] = eval prog env re
-    linResult $ FloatVal $ lv + rv
+    let Result [] [lv] = eval prog env le
+    let Result [] [rv] = eval prog env re
+    linResult $ lv `addVals` rv
   LScale se le -> do
     let Result [FloatVal sv] [] = eval prog env se
-    let Result [] [FloatVal lv] = eval prog env le
-    linResult $ FloatVal $ sv * lv
+    let Result [] [lv] = eval prog env le
+    linResult $ sv `scaleVal` lv
   LZero -> linResult $ FloatVal 0
   Dup   e -> do
     let Result [] [v] = eval prog env e
@@ -311,14 +320,13 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     return $ MixedType [] [TupleType tys]
   LAdd le re -> do
     ~[lenv, renv] <- splitEnv [le, re]
-    typecheckEq lenv le $ MixedType [] [FloatType]
-    typecheckEq renv re $ MixedType [] [FloatType]
-    return $ MixedType [] [FloatType]
+    ty <- typecheck prog lenv le
+    typecheckEq renv re ty
+    return ty
   LScale se le -> do
     ~[senv, lenv] <- splitEnv [se, le]
     typecheckEq senv se $ MixedType [FloatType] []
-    typecheckEq lenv le $ MixedType [] [FloatType]
-    return $ MixedType [] [FloatType]
+    typecheck prog lenv le
   LZero -> do
     check "LZero: non-empty environment" $ null env && null linEnv
     return $ MixedType [] [FloatType]
