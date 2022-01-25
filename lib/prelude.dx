@@ -22,6 +22,8 @@ Word64 = %Word64
 Byte = Word8
 Char = Byte
 
+Label = %Label
+
 RawPtr : Type = %Word8Ptr
 
 Int = Int32

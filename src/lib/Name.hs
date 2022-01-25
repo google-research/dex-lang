@@ -604,9 +604,7 @@ type MaybeB b = EitherB b UnitB
 pattern JustB :: b n l -> MaybeB b n l
 pattern JustB b = LeftB b
 
--- TODO: this doesn't seem to force n==n, e.g. see where we have to explicitly
--- write `RightB UnitB` in inference rule for instances.
-pattern NothingB :: MaybeB b n n
+pattern NothingB :: () => (n ~ l) => MaybeB b n l
 pattern NothingB = RightB UnitB
 
 data LiftB (e::E) (n::S) (l::S) where

@@ -265,7 +265,9 @@ simplifyAtom atom = case atom of
     DataCon name <$> substM def <*> mapM simplifyAtom params
                  <*> pure con <*> mapM simplifyAtom args
   Record items -> Record <$> mapM simplifyAtom items
-  RecordTy items -> RecordTy <$> simplifyExtLabeledItems items
+  RecordTy _ _ -> substM atom >>= \case
+    RecordTy Nothing items -> RecordTy Nothing <$> dropSubst (simplifyExtLabeledItems items)
+    _ -> error "Failed to simplify a record with a dynamic label"
   Variant types label i value -> do
     types' <- fromExtLabeledItemsE <$> substM (ExtLabeledItemsE types)
     value' <- simplifyAtom value
@@ -387,20 +389,35 @@ simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
   RecordCons left right ->
     getType right >>= \case
-      RecordTy (NoExt rightTys) -> do
+      RecordTy Nothing (NoExt rightTys) -> do
         -- Unpack, then repack with new arguments (possibly in the middle).
         rightList <- getUnpacked right
         let rightItems = restructure rightList rightTys
         return $ Record $ left <> rightItems
       _ -> error "not a record"
+  RecordConsDynamic (Con (LabelCon l)) val rec ->
+    getType rec >>= \case
+      RecordTy Nothing (NoExt itemTys) -> do
+        itemList <- getUnpacked rec
+        let items = restructure itemList itemTys
+        return $ Record $ labeledSingleton l val <> items
+      _ -> error "not a record"
   RecordSplit litems full ->
     getType full >>= \case
-      RecordTy (NoExt fullTys) -> do
+      RecordTy Nothing (NoExt fullTys) -> do
         -- Unpack, then repack into two pieces.
         fullList <- getUnpacked full
         let fullItems = restructure fullList fullTys
         let (left, right) = splitLabeledItems litems fullItems
         return $ Record $ Unlabeled [Record left, Record right]
+      _ -> error "not a record"
+  RecordSplitDynamic (Con (LabelCon l)) rec ->
+    getType rec >>= \case
+      RecordTy Nothing (NoExt itemTys) -> do
+        itemList <- getUnpacked rec
+        let items = restructure itemList itemTys
+        let (val, rest) = splitLabeledItems (labeledSingleton l ()) items
+        return $ PairVal (head $ toList val) $ Record rest
       _ -> error "not a record"
   VariantLift leftTys@(LabeledItems litems) right -> getType right >>= \case
     VariantTy (NoExt rightTys) -> do

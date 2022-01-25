@@ -69,10 +69,14 @@ traverseAtomDefault atom = case atom of
     rest'  <- mapM substM rest
     return $ LabeledRow $ Ext items' rest'
   Record items -> Record <$> mapM tge items
-  RecordTy (Ext items rest) -> do
-    items' <- mapM tge items
-    rest'  <- mapM substM rest
-    return $ RecordTy $ Ext items' rest'
+  RecordTy _ _ -> substM atom >>= \case
+    RecordTy labExt (Ext items rest') -> dropSubst do
+      items'  <- mapM tge items
+      labExt' <- case labExt of
+        Nothing           -> return Nothing
+        Just (labVar, ty) -> Just . (labVar,) <$> tge ty
+      return $ RecordTy labExt' $ Ext items' rest'
+    _ -> error "unreachable"
   Variant (Ext types rest) label i value -> do
     types' <- mapM tge types
     rest'  <- mapM substM rest

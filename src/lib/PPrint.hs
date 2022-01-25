@@ -32,6 +32,7 @@ import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, uncons, unsnoc, unpack)
 import Data.String (fromString)
+import Data.Maybe (isNothing)
 import qualified System.Console.ANSI as ANSI
 import System.Console.ANSI hiding (Color)
 import System.IO.Unsafe
@@ -207,14 +208,17 @@ instance PrettyPrec (Atom n) where
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) params
-    LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
+    LabeledRow items -> prettyExtLabeledItems items Nothing (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
       ls = LabeledItems $ case i of
             0 -> M.empty
             _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
-    RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
-    VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+    RecordTy l items -> prettyExtLabeledItems items prefix (line <> "&") ":"
+      where prefix = case l of
+                       Nothing -> Nothing
+                       Just (labVar, labTy) -> Just $ "@" <> p labVar <> ":" <+> pLowest labTy
+    VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
     DataConRef _ params args -> atPrec LowestPrec $
       "DataConRef" <+> p params <+> p args
@@ -230,26 +234,25 @@ instance PrettyPrec (DataConRefBinding n l) where
   prettyPrec (DataConRefBinding b x) = atPrec AppPrec $ p b <+> "<-" <+> p x
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
-  => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
-prettyExtLabeledItems (Ext (LabeledItems row) rest) separator bindwith =
+  => ExtLabeledItems a b -> Maybe (Doc ann) -> Doc ann -> Doc ann -> DocPrec ann
+prettyExtLabeledItems (Ext (LabeledItems row) rest) prefix separator bindwith =
   atPrec ArgPrec $ align $ group $ innerDoc
   where
     elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
     fmtElem (label, v) = p label <> bindwith <+> pLowest v
     docs = map fmtElem elems
-    final = case rest of
+    suffix = case rest of
       Just v -> separator <> " ..." <> pArg v
-      Nothing -> case length docs of
-        0 -> separator
-        _ -> mempty
+      Nothing -> if length docs == 0 && isNothing prefix then separator else mempty
     innerDoc = "{" <> flatAlt " " ""
+      <> (case prefix of Nothing -> mempty; Just pref -> pref <> separator <> " ")
       <> concatWith (surround (separator <> " ")) docs
-      <> final <> "}"
+      <> suffix <> "}"
 
 prettyLabeledItems :: PrettyPrec a
   => LabeledItems a -> Doc ann -> Doc ann -> DocPrec ann
 prettyLabeledItems items =
-  prettyExtLabeledItems $ Ext items (Nothing :: Maybe ())
+  prettyExtLabeledItems (Ext items (Nothing :: Maybe ())) Nothing
 
 prettyVariant :: PrettyPrec a
   => LabeledItems () -> Label -> a -> DocPrec ann
@@ -483,13 +486,18 @@ instance PrettyPrec (UExpr' n) where
     UPrimExpr prim -> prettyPrec prim
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
-    URecord items -> prettyExtLabeledItems items (line' <> ",") " ="
-    URecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
+    ULabel name -> atPrec ArgPrec $ "&" <> p name
+    URecord   dynLab items -> prettyExtLabeledItems items (Just $ printDynLab "=" dynLab) (line' <> ",") " ="
+    URecordTy dynLab items -> prettyExtLabeledItems items (Just $ printDynLab "&" dynLab) (line <> "&") ":"
     UVariant labels label value -> prettyVariant labels label value
-    UVariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+    UVariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     UVariantLift labels value -> prettyVariantLift labels value
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
+    where
+      printDynLab bindwith = \case
+        Nothing -> mempty
+        Just (labVar, labExpr) -> "@" <> p labVar <> bindwith <> p labExpr
 
 prettyVariantLift :: PrettyPrec a
   => LabeledItems () -> a -> DocPrec ann
@@ -544,8 +552,9 @@ instance PrettyPrec (UPat' n l) where
     UPatPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit UnitB -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
-    UPatRecord labels _ ->
-      prettyExtLabeledItems labels (line' <> ",") " ="
+    UPatRecord dynLab labels _ ->
+      prettyExtLabeledItems labels prefix (line' <> ",") " ="
+      where prefix = case dynLab of Nothing -> Nothing; Just labVar -> Just $ "@" <> p labVar
     UPatVariant labels label value -> prettyVariant labels label value
     UPatVariantLift labels value -> prettyVariantLift labels value
     UPatTable pats -> atPrec ArgPrec $ p pats
@@ -697,6 +706,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     TypeKind -> atPrec ArgPrec "Type"
     EffectRowKind -> atPrec ArgPrec "EffKind"
     LabeledRowKindTC -> atPrec ArgPrec "Fields"
+    LabelType -> atPrec ArgPrec "Label"
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
@@ -723,6 +733,7 @@ prettyPrecPrimCon con = case con of
   TabRef tab -> atPrec ArgPrec $ "Ref" <+> pApp tab
   ConRef conRef -> atPrec AppPrec $ "Ref" <+> pApp conRef
   RecordRef _ -> atPrec ArgPrec "Record ref"  -- TODO
+  LabelCon name -> atPrec ArgPrec $ "##" <> p name
 
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
@@ -733,7 +744,9 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
     RecordCons items rest ->
-      prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
+      prettyExtLabeledItems (Ext items $ Just rest) Nothing (line' <> ",") " ="
+    RecordConsDynamic lab val rec -> atPrec LowestPrec $
+      "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
     RecordSplit types val -> atPrec AppPrec $
       "RecordSplit" <+> prettyLabeledItems types (line <> "&") ":" ArgPrec
                     <+> pArg val

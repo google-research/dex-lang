@@ -269,7 +269,7 @@ linearizeAtom atom = case atom of
       return $ Variant (fromExtLabeledItemsE $ sink t') l i e'
   TypeCon _ _ _   -> emitZeroT
   LabeledRow _    -> emitZeroT
-  RecordTy _      -> emitZeroT
+  RecordTy _ _    -> emitZeroT
   VariantTy _     -> emitZeroT
   Pi _            -> emitZeroT
   DepPairTy _     -> emitZeroT
@@ -496,6 +496,7 @@ linearizePrimCon con = case con of
   IntRangeVal _ _ _     -> emitZeroT
   IndexRangeVal _ _ _ _ -> emitZeroT
   IndexSliceVal _ _ _   -> emitZeroT
+  LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"
