@@ -22,6 +22,7 @@ import Err
 import LabeledItems
 import Name
 import Syntax
+import Util ((...))
 
 renameSourceNamesUDecl :: (Fallible1 m, EnvReader m)
                        => UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
@@ -164,15 +165,24 @@ instance SourceRenamableE UExpr' where
     UIndexRange low high ->
       UIndexRange <$> mapM sourceRenameE low <*> mapM sourceRenameE high
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
-    URecord (Ext tys ext) -> URecord <$>
+    ULabel name -> return $ ULabel name
+    URecord labExt (Ext tys ext) -> URecord <$> labExt' <*>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+      where
+        labExt' = case labExt of
+          Nothing -> return Nothing
+          Just (labVar, labExpr) -> Just ... (,) <$> sourceRenameE labVar <*> sourceRenameE labExpr
     UVariant types label val ->
       -- Do we not need to source-rename the types?  Their type is
       -- type :: LabeledItems ()
       UVariant types <$> return label <*> sourceRenameE val
     UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
-    URecordTy (Ext tys ext) -> URecordTy <$>
+    URecordTy labExt (Ext tys ext) -> URecordTy <$> labExt' <*>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+      where
+        labExt' = case labExt of
+          Nothing -> return Nothing
+          Just (labVar, labTy) -> Just ... (,) <$> sourceRenameE labVar <*> sourceRenameE labTy
     UVariantTy (Ext tys ext) -> UVariantTy <$>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
     UIntLit   x -> return $ UIntLit x
@@ -309,8 +319,15 @@ instance SourceRenamableE UDataDefTrail where
 instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (PairE e1 e2) where
   sourceRenameE (PairE x y) = PairE <$> sourceRenameE x <*> sourceRenameE y
 
+instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (EitherE e1 e2) where
+  sourceRenameE (LeftE  x) = LeftE  <$> sourceRenameE x
+  sourceRenameE (RightE x) = RightE <$> sourceRenameE x
+
 instance SourceRenamableE e => SourceRenamableE (ListE e) where
   sourceRenameE (ListE xs) = ListE <$> mapM sourceRenameE xs
+
+instance SourceRenamableE UnitE where
+  sourceRenameE UnitE = return UnitE
 
 instance SourceRenamableE UMethodDef where
   sourceRenameE (UMethodDef ~(SourceName v) expr) = do
@@ -364,9 +381,10 @@ instance SourceRenamablePat UPat' where
         sourceRenamePat sibs' p2 \sibs'' p2' ->
           cont sibs'' $ UPatPair $ PairB p1' p2'
     UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
-    UPatRecord labels ps ->
+    UPatRecord dynLab labels ps -> do
+      dynLab' <- fromMaybeE <$> sourceRenameE (toMaybeE dynLab)
       sourceRenamePat sibs ps \sibs' ps' ->
-        cont sibs' $ UPatRecord labels ps'
+        cont sibs' $ UPatRecord dynLab' labels ps'
     UPatVariant labels label p ->
       sourceRenamePat sibs p \sibs' p' ->
         cont sibs' $ UPatVariant labels label p'
@@ -435,7 +453,7 @@ instance HasSourceNames UPat where
     UPatCon _ bs -> sourceNames bs
     UPatPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatUnit UnitB -> mempty
-    UPatRecord _ ps -> sourceNames ps
+    UPatRecord _ _ ps -> sourceNames ps
     UPatVariant _ _ p -> sourceNames p
     UPatVariantLift _ p -> sourceNames p
     UPatTable ps -> sourceNames ps

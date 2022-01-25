@@ -773,14 +773,22 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       OpExpr  e -> Var <$> emit (Op e)
       HofExpr e -> Var <$> emit (Hof e)
     matchRequirement val
-  URecord (Ext items Nothing) -> do
+  ULabel name -> matchRequirement $ Con $ LabelCon name
+  URecord dynLab (Ext items mext) -> do
     items' <- mapM inferRho items
-    matchRequirement $ Record items'
-  URecord (Ext items (Just ext)) -> do
-    items' <- mapM inferRho items
-    restTy <- freshInferenceName LabeledRowKind
-    ext' <- zonk =<< (checkRho ext $ RecordTy $ Ext NoLabeledItems $ Just restTy)
-    matchRequirement =<< emitOp (RecordCons items' ext')
+    recNoDyn <- case mext of
+      Nothing -> return $ Record items'
+      Just ext -> do
+        -- Constrain the type of ext to be a record
+        restTy <- freshInferenceName LabeledRowKind
+        ext' <- checkRho ext $ RecordTy Nothing $ Ext NoLabeledItems $ Just restTy
+        emitOp $ RecordCons items' ext'
+    matchRequirement =<< case dynLab of
+      Nothing -> return recNoDyn
+      Just (labVar, labVal) -> do
+        lab' <- checkRho (WithSrcE Nothing $ UVar labVar) (TC LabelType)
+        val' <- inferRho labVal
+        emitOp $ RecordConsDynamic lab' val' recNoDyn
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -792,7 +800,14 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
               Just prev -> length prev
               Nothing -> 0
     matchRequirement $ Variant extItems label i value'
-  URecordTy row -> matchRequirement =<< RecordTy <$> checkExtLabeledRow row
+  URecordTy dynLab row -> do
+    dynLab' <- case dynLab of
+      Nothing -> return Nothing
+      Just (lv, lt) -> do
+        label   <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar lv) (TC LabelType)
+        labelTy <- checkRho lt TyKind
+        return $ Just (label, labelTy)
+    matchRequirement =<< RecordTy dynLab' <$> checkExtLabeledRow row
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
   UVariantLift labels value -> do
     row <- freshInferenceName LabeledRowKind
@@ -1405,26 +1420,34 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         xs' <- forM xs \x -> zonk (Var x) >>= emitAtomToName
         bindLamPats ps xs' cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
-  UPatRecord (Ext labels Nothing) (PairB pats (RightB UnitB)) -> do
-    expectedTypes <- mapM (const $ freshType TyKind) labels
-    constrainVarTy v (RecordTy (NoExt expectedTypes))
-    xs <- zonk (Var v) >>= emitUnpacked
-    xs' <- forM xs \x -> zonk (Var x) >>= emitAtomToName
-    bindLamPats pats xs' cont
-  UPatRecord (Ext labels (Just ())) (PairB pats (LeftB tailPat)) -> do
-    wantedTypes <- mapM (const $ freshType TyKind) labels
-    restType <- freshInferenceName LabeledRowKind
-    constrainVarTy v (RecordTy $ Ext wantedTypes $ Just restType)
-    -- Split the record.
-    wantedTypes' <- mapM zonk wantedTypes
-    v' <- zonk $ Var v
-    split <- emit $ Op $ RecordSplit wantedTypes' v'
-    [left, right] <- emitUnpacked $ Var split
-    leftVals <- emitUnpacked $ Var left
-    bindLamPats pats leftVals $
-      bindLamPat tailPat right $
-        cont
-  UPatRecord _ _ -> error "mismatched labels and patterns (should be ruled out by the parser)"
+  UPatRecord dynLab (Ext labels extLabel) (dynLabB `PairB` (labBs `PairB` tailB)) -> do
+    dynTypeVar <- case dynLab of
+      Nothing     -> return Nothing
+      Just labVar -> do
+        labVar' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar labVar) (TC LabelType)
+        Just . (labVar',) <$> freshType TyKind
+    labelTypeVars <- mapM (const $ freshType TyKind) labels
+    extTypeVar <- case tailB of
+      RightB UnitB -> return Nothing
+      LeftB  _     -> Just <$> freshInferenceName LabeledRowKind
+    constrainVarTy v $ RecordTy dynTypeVar $ Ext labelTypeVars extTypeVar
+    let afterDyn recV = case tailB of
+          NothingB -> do
+            unless (extLabel == Nothing) $ throw CompilerErr $
+              "mismatched labels and patterns (parser should not allow this!)"
+            emitUnpacked (Var recV) >>= \els -> bindLamPats labBs els cont
+          JustB tB -> do
+            [itemsRecord, restRecord] <- emitUnpacked =<< emitOp (RecordSplit labelTypeVars $ Var recV)
+            items <- emitUnpacked (Var itemsRecord)
+            bindLamPats labBs items $ bindLamPat tB restRecord cont
+          _ -> error "unreachable"
+    case dynLabB of
+      NothingB  -> afterDyn v
+      JustB dlB -> do
+        let Just (labVar, _) = dynTypeVar
+        [dynVal, rest] <- emitUnpacked =<< emitOp (RecordSplitDynamic (Var labVar) (Var v))
+        bindLamPat dlB dynVal $ afterDyn rest
+      _ -> error "unreachable"
   UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
@@ -1818,7 +1841,26 @@ instance Unifiable Atom where
      unifyZip :: (EmitsInf n, Unifier m) => Type n -> Type n -> m n ()
      unifyZip t1 t2 = case (t1, t2) of
        (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
-       (RecordTy  xs, RecordTy  xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
+       (RecordTy dynLab xs, RecordTy dynLab' xs') -> case (dynLab, dynLab') of
+         (Nothing, Nothing) -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
+         (Just (v, ty), Just (v', ty')) -> do
+           unless (v == v') empty
+           unify ty ty'
+           unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
+         (Just (v, ty), Nothing) -> do
+           -- We could cheap reduce the extension of xs' to increase the chances of
+           -- success, but I don't expect that it will make a meaningful difference
+           -- except for some very weird programs.
+           let (Ext xsItems' xsExt') = xs'
+           cheapNormalize (Var v) >>= \case
+             Con (LabelCon l) -> case lookupLabelHead xsItems' l of
+               Nothing -> empty
+               _ -> do
+                 let (h, xsItemsPop') = splitLabeledItems (labeledSingleton l ()) xsItems'
+                 unify ty (head $ toList h)
+                 unify (ExtLabeledItemsE xs) (ExtLabeledItemsE $ Ext xsItemsPop' xsExt')
+             _ -> empty  -- TODO: Ideally we would delay this unification?
+         (Nothing, Just _)  -> unifyZip t2 t1
        (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
        (TypeCon _ c xs, TypeCon _ c' xs') ->
          unless (c == c') empty >> unifyFoldable xs xs'

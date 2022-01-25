@@ -21,7 +21,7 @@ module Builder (
   Builder2, BuilderM, ScopableBuilder2,
   runBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
-  fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
+  fpow, flog, fLitLike, buildPureNaryLam,
   emitMethodType, emitSuperclass,
   makeSuperclassGetter, makeMethodGetter,
   select, getUnpacked, emitUnpacked,
@@ -63,9 +63,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
-import Data.Foldable (toList)
-import Data.List (elemIndex)
-import Data.Maybe (fromJust)
 import Data.Graph (graphFromEdges, topSort)
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import GHC.Stack
@@ -740,7 +737,7 @@ zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n )
 zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
   ProdTy tys -> ProdVal <$> mapM zeroAt tys
-  RecordTy (Ext tys Nothing) -> Record <$> mapM zeroAt tys
+  RecordTy Nothing (Ext tys Nothing) -> Record <$> mapM zeroAt tys
   TabTy b bodyTy ->
     liftEmitBuilder $ buildTabLam (getNameHint b) (binderType b) \i ->
       zeroAt =<< applySubst (b@>i) bodyTy
@@ -764,7 +761,7 @@ tangentType ty = case maybeTangentType ty of
 
 maybeTangentType :: Type n -> Maybe (Type n)
 maybeTangentType ty = case ty of
-  RecordTy (NoExt items) -> RecordTy <$> NoExt <$> mapM maybeTangentType items
+  RecordTy Nothing (NoExt items) -> RecordTy Nothing <$> NoExt <$> mapM maybeTangentType items
   TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
   Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) -> do
     bodyTanTy <- maybeTangentType bodyTy
@@ -791,7 +788,7 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, Builder m) => Atom n -> Atom n -> m n (Atom n)
 addTangent x y = do
   getType x >>= \case
-    RecordTy (NoExt tys) -> do
+    RecordTy Nothing (NoExt tys) -> do
       elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
       return $ Record $ restructure elems tys
     TabTy b _  -> liftEmitBuilder $ buildFor (getNameHint b) Fwd (binderType b) \i -> do
@@ -901,12 +898,6 @@ getClassDef classDefName = do
   return classDef
 
 -- === builder versions of common local ops ===
-
-recGetHead :: EnvReader m => Label -> Atom n -> m n (Atom n)
-recGetHead l x = do
-  ~(RecordTy (Ext r _)) <- getType x
-  let i = fromJust $ elemIndex l $ map fst $ toList $ reflectLabels r
-  return $ getProjection [i] x
 
 fLitLike :: (Builder m, Emits n) => Double -> Atom n -> m n (Atom n)
 fLitLike x t = do

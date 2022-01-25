@@ -141,7 +141,7 @@ data Atom (n::S) =
  | TypeCon SourceName (DataDefName n) [Atom n]
  | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
  | Record (LabeledItems (Atom n))
- | RecordTy  (ExtLabeledItems (Type n) (AtomName n))
+ | RecordTy  (Maybe (AtomName n, Type n)) (ExtLabeledItems (Type n) (AtomName n))
  | Variant   (ExtLabeledItems (Type n) (AtomName n)) Label Int (Atom n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
  | Con (Con n)
@@ -865,10 +865,13 @@ data UExpr' (n::S) =
  | UTabCon [UExpr n]
  | UIndexRange (Limit (UExpr n)) (Limit (UExpr n))
  | UPrimExpr (PrimExpr (UExpr n))
- | URecord (ExtLabeledItems (UExpr n) (UExpr n))     -- {a=x, b=y, ...rest}
+ | ULabel String
+ | URecord (Maybe (SourceNameOr UVar n, UExpr n))
+           (ExtLabeledItems (UExpr n) (UExpr n))     -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
  | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
- | URecordTy (ExtLabeledItems (UExpr n) (UExpr n))   -- {a:X & b:Y & ...rest}
+ | URecordTy (Maybe (SourceNameOr UVar n, UExpr n))
+             (ExtLabeledItems (UExpr n) (UExpr n))   -- {@v:X & a:Y & b:Z & ...rest}
  | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
  | UIntLit  Int
  | UFloatLit Double
@@ -950,8 +953,9 @@ data UPat' (n::S) (l::S) =
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
- -- The ExtLabeledItems and the PairB are parallel, constrained by the parser.
- | UPatRecord (ExtLabeledItems () ()) (PairB (Nest UPat) (MaybeB UPat) n l) -- {a=x, b=y, ...rest}
+ -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
+ | UPatRecord (Maybe (SourceNameOr UVar n)) (ExtLabeledItems () ())
+              (PairB (MaybeB UPat) (PairB (Nest UPat) (MaybeB UPat)) n l) -- {@v=x, a=y, b=z, ...rest}
  | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
  | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
  | UPatTable (Nest UPat n l)
@@ -1059,6 +1063,7 @@ data PrimTC e =
       | EffectRowKind
       | LabeledRowKindTC
       | ParIndexRange e e e  -- Full index set, global thread id, thread count
+      | LabelType
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -1076,6 +1081,7 @@ data PrimCon e =
       | ConRef (PrimCon e)
       | RecordRef (LabeledItems e)
       | ParIndexCon e e        -- Type, value
+      | LabelCon String
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -1112,6 +1118,11 @@ data PrimOp e =
       -- Split {a:A & b:B & ...rest} into (effectively) {a:A & b:B} & {&...rest}.
       -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
       | RecordSplit  (LabeledItems e) e
+      -- Add a dynamically named field to a record (on the left).
+      -- Args are as follows: label, value, record.
+      | RecordConsDynamic e e e
+      -- Splits a label from the record.
+      | RecordSplitDynamic e e
       -- Extend a variant with empty alternatives (on the left).
       -- Left arg contains the types of the empty alternatives to add.
       | VariantLift  (LabeledItems e) e
@@ -1819,13 +1830,14 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
 instance GenericE Atom where
   type RepE Atom =
       EitherE5
-              (EitherE2
-                   -- We isolate the Var and ProjectElt cases (and reorder them
+              (EitherE3
+                   -- We isolate those few cases (and reorder them
                    -- compared to the data definition) because they need special
                    -- handling when you substitute with atoms. The rest just act
                    -- like containers
   {- Var -}        AtomName
   {- ProjectElt -} ( LiftE (NE.NonEmpty Int) `PairE` AtomName )
+  {- RecordTy -}   ( MaybeE (AtomName `PairE` Type) `PairE` ExtLabeledItemsE Type AtomName)
             ) (EitherE6
   {- Lam -}        LamExpr
   {- Pi -}         PiType
@@ -1836,10 +1848,9 @@ instance GenericE Atom where
                      ListE Atom                `PairE`
                      ListE Atom )
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` ListE Atom )
-            ) (EitherE5
+            ) (EitherE4
   {- LabeledRow -} (ExtLabeledItemsE Type AtomName)
   {- Record -}     (ComposeE LabeledItems Atom)
-  {- RecordTy -}   (ExtLabeledItemsE Type AtomName)
   {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
                      LiftE (Label, Int) `PairE` Atom )
   {- VariantTy -}  (ExtLabeledItemsE Type AtomName)
@@ -1871,10 +1882,10 @@ instance GenericE Atom where
       LiftE sourceName `PairE` defName `PairE` ListE params
     LabeledRow extItems -> Case2 $ Case0 $ ExtLabeledItemsE extItems
     Record items        -> Case2 $ Case1 $ ComposeE items
-    RecordTy extItems   -> Case2 $ Case2 $ ExtLabeledItemsE extItems
-    Variant extItems l con payload -> Case2 $ Case3 $
+    RecordTy l extItems -> Case0 $ Case2 $ (toMaybeE $ fmap toPairE l) `PairE` ExtLabeledItemsE extItems
+    Variant extItems l con payload -> Case2 $ Case2 $
       ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
-    VariantTy extItems  -> Case2 $ Case4 $ ExtLabeledItemsE extItems
+    VariantTy extItems  -> Case2 $ Case3 $ ExtLabeledItemsE extItems
     Con con -> Case3 $ Case0 $ ComposeE con
     TC  con -> Case3 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case0 $ effs
@@ -1890,6 +1901,7 @@ instance GenericE Atom where
     Case0 val -> case val of
       Case0 v -> Var v
       Case1 (PairE (LiftE idxs) x) -> ProjectElt idxs x
+      Case2 (l `PairE` ExtLabeledItemsE extItems) -> RecordTy (fmap fromPairE $ fromMaybeE l) extItems
       _ -> error "impossible"
     Case1 val -> case val of
       Case0 lamExpr -> Lam lamExpr
@@ -1907,11 +1919,10 @@ instance GenericE Atom where
     Case2 val -> case val of
       Case0 (ExtLabeledItemsE extItems) -> LabeledRow extItems
       Case1 (ComposeE items) -> Record items
-      Case2 (ExtLabeledItemsE extItems) -> RecordTy extItems
-      Case3 ( (ExtLabeledItemsE extItems) `PairE`
+      Case2 ( (ExtLabeledItemsE extItems) `PairE`
               LiftE (l, con)              `PairE`
               payload) -> Variant extItems l con payload
-      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case3 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 (ComposeE con) -> Con con
@@ -1948,7 +1959,18 @@ instance SubstE AtomSubstVal Atom where
                    SubstVal x -> x
                    Rename v''  -> Var v''
         getProjection (NE.toList idxs) v'
-      Case1 _ -> error "impossible"
+      -- RecordTy
+      Case2 (l `PairE` extItems) -> case l of
+        NothingE -> RecordTy Nothing extItems'
+        JustE (label `PairE` ty) -> do
+          let ty' = substE (scope, env) ty
+          case env ! label of
+            SubstVal (Con (LabelCon name)) -> RecordTy Nothing $ prefixExtLabeledItems (labeledSingleton name ty') extItems'
+            SubstVal (Var label') -> RecordTy (Just (label', ty')) extItems'
+            SubstVal _ -> error "impossible"
+            Rename label' -> RecordTy (Just (label', ty')) extItems'
+        _ -> error "impossible"
+        where ExtLabeledItemsE extItems' = substE (scope, env) extItems
       _ -> error "impossible"
     RightE rest -> (toE . RightE) $ substE (scope, env) rest
 
@@ -2947,6 +2969,7 @@ builtinNames = M.fromList
   , ("Float32Ptr", TCExpr $ BaseType $ ptrTy $ Scalar Float32Type)
   , ("PtrPtr"    , TCExpr $ BaseType $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("IntRange"  , TCExpr $ IntRange () ())
+  , ("Label"     , TCExpr $ LabelType)
   , ("Ref"       , TCExpr $ RefType (Just ()) ())
   , ("PairType"  , TCExpr $ ProdType [(), ()])
   , ("UnitType"  , TCExpr $ ProdType [])

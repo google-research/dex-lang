@@ -382,3 +382,46 @@ variantsAsIndices : {a:Fin 10 | b:Fin 3}=>{a:Fin 10 | b:Fin 3} = for i. i
 > , {| b = 0@Fin 3 |}
 > , {| b = 1@Fin 3 |}
 > , {| b = 2@Fin 3 |} ]@{a: Fin 10 | b: Fin 3}
+
+-- === First-class labels ===
+
+abc : Label = ##abc
+:t abc
+> Label
+
+q = {@abc=1, y=2}
+q
+> {abc = 1, y = 2}
+:t q
+> {abc: Int32 & y: Int32}
+
+:p
+  {@abc=xv, y=yv} = q
+  (xv, yv)
+> (1, 2)
+
+def projectField {r t} (l: Label) (x: {@l:t & ...r}) : t =
+  {@l=v, ...} = x
+  v
+
+projectField ##a {a=1, b=2}
+> 1
+
+def addField {r1 r2} (l: Label) (x: {@l:Int & ...r1}) (y: {@l:Int & ...r2}) : Int =
+  {@l=v1, ...} = x
+  {@l=v2, ...} = y
+  v1 + v2
+
+addField ##b {a=1, b=2} {b=2, c=4}
+> 4
+
+def badProject (l: Label) (x: {@l:Int & l:Float}) : Float =
+  {l=lv, ...} = x
+  lv
+> Type error:
+> Expected: {l: a & ...b1}
+>   Actual: {@l: Int32 & l: Float32}
+> (Solving for: [a, b1])
+>
+>   {l=lv, ...} = x
+>   ^^^^^^^^^^^^

@@ -195,6 +195,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> uPrim
          <|> unitCon
          <|> (uLabeledExprs `fallBackTo` uVariantExpr)
+         <|> uLabel
          <|> uIsoSugar
          <|> uDoSugar
          <?> "expression"
@@ -207,6 +208,11 @@ containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
 
 uType :: Parser (UType VoidS)
 uType = expr
+
+uLabel :: Parser (UExpr VoidS)
+uLabel = withSrc $ do
+  try $ void $ char '#' >> char '#'
+  ULabel <$> fieldLabel
 
 uString :: Lexer (UExpr VoidS)
 uString = do
@@ -605,14 +611,14 @@ leafPat =
         def pos = WithSrcB (Just pos) $ UPatIgnore
         variantPat = parseVariant leafPat UPatVariant UPatVariantLift
         recordPat = unzipUPatRecord
-                    <$> parseLabeledItems "," "=" leafPat (Just pun) (Just def)
-        unzipUPatRecord :: ExtLabeledItems (UPat VoidS VoidS) (UPat VoidS VoidS)
-                        -> UPat' VoidS VoidS
-        unzipUPatRecord labeled = UPatRecord labels nest where
+                    <$> parseLabeledItems "," "=" (dynLab leafPat "=") leafPat (Just pun) (Just def)
+        unzipUPatRecord (dyn, labeled) = UPatRecord dynName labels nest where
           (labels, items, rest) = unzipExtLabeledItems labeled
           patTail = case rest of Nothing -> NothingB
                                  Just p  -> JustB p
-          nest = PairB (toNestParsed items) patTail
+          (dynName, nestPref) = case dyn of Nothing     -> (Nothing, PairB NothingB )
+                                            Just (n, p) -> (Just n , PairB (JustB p))
+          nest = nestPref $ PairB (toNestParsed items) patTail
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser (UPat VoidS VoidS)]]
@@ -656,10 +662,19 @@ parseVariant subparser buildLabeled buildExt =
 
 uLabeledExprs :: Parser (UExpr VoidS)
 uLabeledExprs = withSrc $
-    (URecord <$> build "," "=" (Just varPun) Nothing)
-    `fallBackTo` (URecordTy <$> build "&" ":" Nothing Nothing)
-    `fallBackTo` (UVariantTy <$> build "|" ":" Nothing Nothing)
-  where build sep bindwith = parseLabeledItems sep bindwith expr
+    (uncurry URecord <$> build "," "=" (dynLab expr "=") (Just varPun) Nothing)
+    `fallBackTo` (uncurry URecordTy <$> build "&" ":" (dynLab expr ":") Nothing Nothing)
+    `fallBackTo` (UVariantTy . snd <$> build "|" ":" empty Nothing Nothing)
+  where
+    build sep bindwith prefixParser = parseLabeledItems sep bindwith prefixParser expr
+
+dynLab :: Parser rhs -> String -> Parser (SourceNameOr UVar VoidS, rhs)
+dynLab rhsParser bindwith = do
+  void $ char '@'
+  v <- anyName
+  symbol bindwith
+  rhs <- rhsParser
+  return (SourceName v, rhs)
 
 varPun :: SrcPos -> Label -> (UExpr VoidS)
 varPun pos str = WithSrcE (Just pos) $ UVar (fromString str)
@@ -687,20 +702,20 @@ uIsoSugar = withSrc (char '#' *> options) where
   recordFieldIso :: Label -> UExpr' VoidS
   recordFieldIso field =
     UApp plain (ns "MkIso") $
-      ns $ URecord $ NoExt $
+      ns $ URecord Nothing $ NoExt $
         labeledSingleton "fwd" (lam
             (uPatRecordLit [(field, "x")] (Just "r"))
           $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r")
         )
         <> labeledSingleton "bwd" (lam
           (nsB $ UPatPair $ toPairB "x" "r")
-          $ ns $ URecord $ Ext (labeledSingleton field $ "x")
+          $ ns $ URecord Nothing $ Ext (labeledSingleton field $ "x")
                                $ Just $ "r"
         )
   variantFieldIso :: Label -> UExpr' VoidS
   variantFieldIso field =
     UApp plain "MkIso" $
-      ns $ URecord $ NoExt $
+      ns $ URecord Nothing $ NoExt $
         labeledSingleton "fwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatVariant NoLabeledItems field "x")
                 $ "Left" `mkApp` "x"
@@ -717,29 +732,29 @@ uIsoSugar = withSrc (char '#' *> options) where
         )
   recordZipIso field =
     UApp plain "MkIso" $
-      ns $ URecord $ NoExt $
+      ns $ URecord Nothing $ NoExt $
         labeledSingleton "fwd" (lam
           (nsB $ UPatPair $ PairB
             (uPatRecordLit [] (Just "l"))
             (uPatRecordLit [(field, "x")] (Just "r")))
           $ "(,)"
-            `mkApp` (ns $ URecord $ (Ext (labeledSingleton field $ "x")
+            `mkApp` (ns $ URecord Nothing $ (Ext (labeledSingleton field $ "x")
                                          $ Just $ "l"))
-            `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ "r")
+            `mkApp` (ns $ URecord Nothing $ Ext NoLabeledItems $ Just $ "r")
         )
         <> labeledSingleton "bwd" (lam
           (nsB $ UPatPair $ PairB
             (uPatRecordLit [(field, "x")] (Just "l"))
             (uPatRecordLit [] (Just "r")))
           $ "(,)"
-            `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ "l")
-            `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ "x")
+            `mkApp` (ns $ URecord Nothing $ Ext NoLabeledItems $ Just $ "l")
+            `mkApp` (ns $ URecord Nothing $ Ext (labeledSingleton field $ "x")
                                         $ Just $ "r")
         )
   variantZipIso :: Label -> UExpr' VoidS
   variantZipIso field =
     UApp plain "MkIso" $
-      ns $ URecord $ NoExt $
+      ns $ URecord Nothing $ NoExt $
         labeledSingleton "fwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatCon "Left" (toNest ["l"]))
                 $ "Left" `mkApp` (ns $
@@ -776,18 +791,22 @@ uPatRecordLit labelsPats ext = nsB do
   let labeledPart = foldMap (\s -> labeledSingleton s ()) labels
   case ext of
     Nothing ->
-      UPatRecord (NoExt labeledPart )
-                 (PairB (toNestParsed $ pats) NothingB)
+      UPatRecord Nothing (NoExt labeledPart)
+                 (PairB NothingB $ PairB (toNestParsed $ pats) NothingB)
     Just tailPat ->
-      UPatRecord (Ext labeledPart (Just ()))
-                 (PairB (toNestParsed $ pats) (JustB tailPat))
+      UPatRecord Nothing (Ext labeledPart (Just ()))
+                 (PairB NothingB $ PairB (toNestParsed $ pats) (JustB tailPat))
 
 parseLabeledItems
-  :: String -> String -> Parser a
+  :: String -> String -> Parser b -> Parser a
   -> Maybe (SrcPos -> Label -> a) -> Maybe (SrcPos -> a)
-  -> Parser (ExtLabeledItems a a)
-parseLabeledItems sep bindwith itemparser punner tailDefault =
-  bracketed lBrace rBrace $ atBeginning
+  -> Parser (Maybe b, ExtLabeledItems a a)
+parseLabeledItems sep bindwith prefixparser itemparser punner tailDefault =
+  -- TODO: This is not ideal, because we're very defensive about the prefixparser.
+  -- We should let it decide whether it failed before or after committing to the parse.
+  bracketed lBrace rBrace $
+        ((,) <$> (Just <$> try prefixparser) <*> beforeSep)
+    <|> ((Nothing,) <$> atBeginning)
   where
     atBeginning = someItems
                   <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
