@@ -19,7 +19,7 @@ module Builder (
   emit, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
-  runBuilderT, buildBlock, app, add, mul, sub, neg, div',
+  liftBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, recGetHead, buildPureNaryLam,
   emitMethodType, emitSuperclass,
@@ -43,7 +43,7 @@ module Builder (
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  runBuilderM, liftBuilder, liftEmitBuilder, makeBlock,
+  liftBuilder, liftEmitBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex,
   getIxImpl, IxImpl (..),
   litValToPointerlessAtom, emitPtrLit,
@@ -243,34 +243,26 @@ newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
 
 type BuilderM = BuilderT HardFailM
 
-runBuilderT
-  :: (Fallible m, Distinct n)
-  => Env n
-  -> BuilderT m n a
-  -> m a
-runBuilderT bindings cont = do
-  Immut <- return $ toImmutEvidence bindings
-  (Empty, result) <- runInplaceT bindings $ runBuilderT' cont
-  return result
+liftBuilderT :: (Fallible m, EnvReader m') => BuilderT m n a -> m' n (m a)
+liftBuilderT cont = do
+  env <- unsafeGetEnv
+  Immut <- return $ toImmutEvidence env
+  Distinct <- getDistinct
+  return do
+    (Empty, result) <- runInplaceT env $ runBuilderT' cont
+    return result
 
-runBuilderM :: Distinct n => Env n -> BuilderM n a -> a
-runBuilderM bindings m = runHardFail $ runBuilderT bindings m
-
-liftBuilder
-  :: (EnvReader m, SinkableE e)
-  => (forall l. (Immut l, DExt n l) => BuilderM l (e l))
-  -> m n (e n)
-liftBuilder cont = liftImmut do
-  DB bindings <- getDB
-  return $ runBuilderM bindings $ cont
+liftBuilder :: EnvReader m => BuilderM n a -> m n a
+liftBuilder cont = liftM runHardFail $ liftBuilderT cont
 
 -- XXX: this uses unsafe functions in its implementations. It should be safe to
 -- use, but be careful changing it.
 liftEmitBuilder :: (Builder m, SinkableE e, SubstE Name e)
                 => BuilderM n (e n) -> m n (e n)
-liftEmitBuilder cont = liftImmut do
-  DB bindings <- getDB
-  let (result, decls) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) bindings
+liftEmitBuilder cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  let (result, decls) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
   Emits <- fabricateEmitsEvidenceM
   emitDecls (unsafeCoerceB decls) result
 
@@ -324,6 +316,12 @@ instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (ReaderT1 e m) wher
 instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
   emitDecl hint ann expr =
     ReaderT1 $ lift $ emitDecl hint ann expr
+
+instance (SinkableE e, HoistableState e m, Builder m) => Builder (StateT1 e m) where
+  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+
+instance Builder m => Builder (MaybeT1 m) where
+  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
 
 -- === Emits predicate ===
 
@@ -476,7 +474,7 @@ buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
 buildNonDepPi :: EnvReader m
               => NameHint -> Arrow -> Type n -> EffectRow n -> Type n
               -> m n (PiType n)
-buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
+buildNonDepPi hint arr argTy effs resultTy = liftImmut $ liftBuilder do
   argTy' <- sinkM argTy
   buildPi hint arr argTy' \_ -> do
     resultTy' <- sinkM resultTy
@@ -859,7 +857,7 @@ zipPiBinders :: [Arrow] -> Nest Binder i i' -> Nest PiBinder i i'
 zipPiBinders = zipNest \arr (b :> ty) -> PiBinder b ty arr
 
 makeSuperclassGetter :: EnvReader m => Name ClassNameC n -> Int -> m n (Atom n)
-makeSuperclassGetter classDefName methodIdx = liftBuilder do
+makeSuperclassGetter classDefName methodIdx = liftImmut $ liftBuilder do
   classDefName' <- sinkM classDefName
   ClassDef _ _ defName <- getClassDef classDefName'
   DataDef sourceName paramBs _ <- lookupDataDef defName
@@ -876,7 +874,7 @@ emitMethodType hint classDef explicit idx = do
   emitBinding hint $ MethodBinding classDef idx getter
 
 makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (Atom n)
-makeMethodGetter classDefName explicit methodIdx = liftBuilder do
+makeMethodGetter classDefName explicit methodIdx = liftImmut $ liftBuilder do
   classDefName' <- sinkM classDefName
   ClassDef _ _ defName <- getClassDef classDefName'
   DataDef sourceName paramBs _ <- lookupDataDef defName
@@ -1161,12 +1159,11 @@ reduceE monoid xs = liftEmitBuilder do
       emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid n)
-andMonoid = do
-  combiner <- liftBuilder $
+andMonoid =  liftM (BaseMonoid TrueAtom) $ liftImmut do
+  liftBuilder $
     buildLam "_" PlainArrow BoolTy Pure \x ->
       buildLam "_" PlainArrow BoolTy Pure \y -> do
         emitOp $ ScalarBinOp BAnd (sink $ Var x) (Var y)
-  return $ BaseMonoid TrueAtom combiner
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
 mapE :: (Emits n, ScopableBuilder m)

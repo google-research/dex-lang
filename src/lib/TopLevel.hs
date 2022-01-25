@@ -227,11 +227,11 @@ evalSourceBlock' block = case sbContents block of
 
 runEnvQuery :: (Immut n, MonadPasses m) => EnvQuery -> m n ()
 runEnvQuery query = do
-  DB bindings <- getDB
+  env <- unsafeGetEnv
   case query of
-    DumpSubst -> logTop $ TextOut $ pprint $ bindings
+    DumpSubst -> logTop $ TextOut $ pprint $ env
     InternalNameInfo name ->
-      case lookupSubstFragRaw (fromRecSubst $ getNameEnv bindings) name of
+      case lookupSubstFragRaw (fromRecSubst $ getNameEnv env) name of
         Nothing -> throw UnboundVarErr $ pprint name
         Just (WithColor binding) ->
           logTop $ TextOut $ pprint binding

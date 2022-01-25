@@ -23,17 +23,16 @@ import Util (zipWithT, enumerate)
 import GHC.Stack
 
 transpose :: (MonadFail1 m, EnvReader m) => Atom n -> m n (Atom n)
-transpose lam@(Lam (LamExpr b body)) = liftImmut do
-  DB env <- getDB
-  Pi (PiType piBinder _ resultTy) <- getType lam
+transpose lam = liftImmut $ liftBuilder do
+  lam'@(Lam (LamExpr b body)) <- sinkM lam
+  Pi (PiType piBinder _ resultTy) <- getType lam'
   let argTy = binderType b
   let resultTy' = ignoreHoistFailure $ hoist piBinder resultTy
-  return $ runBuilderM env $ runReaderT1 (ListE []) $ runSubstReaderT idSubst $
+  runReaderT1 (ListE []) $ runSubstReaderT idSubst $
     buildLam "ct" LinArrow resultTy' Pure \ct ->
       withAccumulator (sink argTy) \ref ->
         extendSubst (b @> LinRef ref) $
           transposeBlock body (sink $ Var ct)
-transpose _ = error "not a linear function"
 
 -- === transposition monad ===
 

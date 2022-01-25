@@ -226,9 +226,9 @@ fromPureUnaryTanFunLam atom = liftImmut $ liftSubstEnvReaderM $ go atom
 
 -- main API entrypoint
 linearize :: EnvReader m => Atom n -> m n (Atom n)
-linearize x = liftImmut do
-  DB env <- getDB
-  return $ runBuilderM env $ runPrimalM idSubst emptyActivePrimals $ linearizeLambda' x
+linearize x = liftImmut $ liftBuilder $
+  runPrimalM idSubst emptyActivePrimals $
+    linearizeLambda' x
 
 -- reify the tangent builder as a lambda
 linearizeLambda' :: Atom i -> PrimalM i o (Atom o)

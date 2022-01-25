@@ -46,21 +46,11 @@ newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender
            , Builder, EnvReader, SubstReader AtomSubstVal, MonadFail)
 
-runSimplifyM :: Distinct n => Env n -> SimplifyM n n (e n) -> e n
-runSimplifyM bindings cont =
-  withImmutEvidence (toImmutEvidence bindings) $
-    runHardFail $
-      runBuilderT bindings $
-        runSubstReaderT idSubst $
-          runSimplifyM' cont
-
-liftSimplifyM
-  :: (EnvReader m, SinkableE e)
-  => (forall l. (Immut l, DExt n l) => SimplifyM l l (e l))
-  -> m n (e n)
-liftSimplifyM cont = liftImmut do
-  DB env <- getDB
-  return $ runSimplifyM env $ cont
+liftSimplifyM :: (SinkableE e, EnvReader m) => SimplifyM n n (e n) -> m n (e n)
+liftSimplifyM cont = do
+  liftImmut $ liftBuilder $
+    runSubstReaderT idSubst $
+      runSimplifyM' cont
 
 buildBlockSimplified
   :: (Builder m)
@@ -68,7 +58,7 @@ buildBlockSimplified
   -> m n (Block n)
 buildBlockSimplified m =
   liftSimplifyM do
-    block <- liftBuilder $ buildBlock m
+    block <- liftImmut $ liftBuilder $ buildBlock m
     buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
@@ -89,18 +79,14 @@ data SimplifiedBlock n = SimplifiedBlock (Block n) (ReconstructAtom n)
 -- TODO: extend this to work on functions instead of blocks (with blocks still
 -- accessible as nullary functions)
 simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
-simplifyTopBlock block = liftImmut do
-  DB env <- getDB
-  return $ runSimplifyM env do
-    (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
-    return $ SimplifiedBlock block' recon
+simplifyTopBlock block = liftSimplifyM do
+  (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
+  return $ SimplifiedBlock block' recon
 
 simplifyTopFunction :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
-simplifyTopFunction ty f = liftImmut do
-  DB env <- getDB
-  return $ runSimplifyM env do
-    buildNaryLamExpr ty \xs -> do
-      dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
+simplifyTopFunction ty f = liftSimplifyM do
+  buildNaryLamExpr ty \xs -> do
+    dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
@@ -191,8 +177,8 @@ defuncCase scrut alts resultTy = do
         return $ ignoreHoistFailure $ hoist bs' ty
 
     injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
-    injectAltResult sumTy con (Abs bs body) = liftBuilder do
-      buildAlt (sink $ EmptyAbs bs) \vs -> do
+    injectAltResult sumTy con (Abs bs body) = liftImmut $ liftBuilder do
+      buildAlt (EmptyAbs bs) \vs -> do
         originalResult <- emitBlock =<< applySubst (bs@@>vs) body
         (dataResult, nonDataResult) <- fromPair originalResult
         return $ PairVal dataResult $ Con $ SumCon (sink sumTy) con nonDataResult
@@ -617,7 +603,7 @@ simplifiedIxInstance ty = do
       return a
   where
     simplifyInstance = liftSimplifyM do
-      Block _ decls expr <- liftBuilder $ buildBlock $ do
+      Block _ decls expr <- liftImmut $ liftBuilder $ buildBlock $ do
         impl <- getIxImpl $ sink ty
         return $ ProdVal [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
       simpBlock <- buildBlock $ simplifyDecls decls $

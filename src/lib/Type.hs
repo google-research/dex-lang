@@ -50,41 +50,29 @@ import PPrint ()
 -- === top-level API ===
 
 checkTypes :: (EnvReader m, CheckableE e) => e n -> m n (Except ())
-checkTypes e = fromLiftE <$> liftImmut do
-  DB bindings <- getDB
-  return $ LiftE $ runTyperT bindings $ void $ checkE e
+checkTypes e = liftTyperT $ void $ checkE e
 
-checkTypesM :: (EnvReader m, Fallible1 m, CheckableE e)
-           => e n -> m n ()
+checkTypesM :: (EnvReader m, Fallible1 m, CheckableE e) => e n -> m n ()
 checkTypesM e = liftExcept =<< checkTypes e
 
-getType :: (EnvReader m, HasType e)
-           => e n -> m n (Type n)
-getType e = liftImmut do
-  DB bindings <- getDB
-  return $ runHardFail $ runTyperT bindings $ getTypeE e
+getType :: (EnvReader m, HasType e) => e n -> m n (Type n)
+getType e = liftHardFailTyperT $ getTypeE e
 
 getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getAppType f xs = case nonEmpty xs of
   Nothing -> getType f
-  Just xs' -> liftImmut do
-    DB bindings <- getDB
-    return $ runHardFail $ runTyperT bindings $ checkApp f xs'
+  Just xs' -> liftHardFailTyperT $ checkApp f xs'
 
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
-getTypeSubst e = liftImmut do
-  DB bindings <- getDB
+getTypeSubst e = do
   subst <- getSubst
-  return $ runHardFail $
-    runEnvReaderT bindings $
-      runSubstReaderT subst $
-        runTyperT' $ getTypeE e
+  liftM runHardFail $ liftEnvReaderT $
+    runSubstReaderT subst $
+      runTyperT' $ getTypeE e
 
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
-tryGetType e = liftImmut do
-  DB bindings <- getDB
-  liftExcept $ runTyperT bindings $ getTypeE e
+tryGetType e = liftExcept =<< liftTyperT (getTypeE e)
 
 depPairLeftTy :: DepPairType n -> Type n
 depPairLeftTy (DepPairType (_:>ty) _) = ty
@@ -196,12 +184,14 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , ScopeReader
            , EnvReader, EnvExtender)
 
-runTyperT :: (Fallible m, Distinct n)
-          => Env n -> TyperT m n n a -> m a
-runTyperT bindings m = do
-  runEnvReaderT bindings $
+liftTyperT :: (EnvReader m', Fallible m) => TyperT m n n a -> m' n (m a)
+liftTyperT cont =
+  liftEnvReaderT $
     runSubstReaderT idSubst $
-      runTyperT' m
+      runTyperT' cont
+
+liftHardFailTyperT :: EnvReader m' => TyperT HardFailM n n a -> m' n a
+liftHardFailTyperT cont = liftM runHardFail $ liftTyperT cont
 
 instance Fallible m => Typer (TyperT m)
 
@@ -949,16 +939,14 @@ numNaryPiArgs :: NaryPiType n -> Int
 numNaryPiArgs (NaryPiType (NonEmptyNest _ bs) _ _) = 1 + nestLength bs
 
 naryLamExprType :: EnvReader m => NaryLamExpr n -> m n (NaryPiType n)
-naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut do
-  DB env <- getDB
-  return $ runHardFail $ runTyperT env do
-    substBinders b \b' -> do
-      substBinders bs \bs' -> do
-        let b''  = binderToPiBinder b'
-        let bs'' = fmapNest binderToPiBinder bs'
-        eff' <- substM eff
-        bodyTy <- getTypeE body
-        return $ NaryPiType (NonEmptyNest b'' bs'') eff' bodyTy
+naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut $ liftHardFailTyperT do
+  substBinders b \b' -> do
+    substBinders bs \bs' -> do
+      let b''  = binderToPiBinder b'
+      let bs'' = fmapNest binderToPiBinder bs'
+      eff' <- substM eff
+      bodyTy <- getTypeE body
+      return $ NaryPiType (NonEmptyNest b'' bs'') eff' bodyTy
   where
     binderToPiBinder :: Binder n l -> PiBinder n l
     binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
@@ -1160,16 +1148,14 @@ isSingletonType topTy =
 
 
 singletonTypeVal :: EnvReader m => Type n -> m n (Maybe (Atom n))
-singletonTypeVal ty = fromMaybeE <$> liftImmut do
-  DB env <- getDB
-  return $ toMaybeE $ runEnvReaderT env $ runSubstReaderT idSubst $
-    singletonTypeVal' ty
+singletonTypeVal ty = liftTyperT do
+  singletonTypeVal' ty
 
 -- TODO: TypeCon with a single case?
 singletonTypeVal'
-  :: (Immut o, MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
+  :: (MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
   => Type i -> m i o (Atom o)
-singletonTypeVal' ty = case ty of
+singletonTypeVal' ty = liftImmut case ty of
   Pi (PiType b@(PiBinder _ _ TabArrow) Pure body) ->
     substBinders b \b' -> do
       body' <- singletonTypeVal' body
@@ -1302,11 +1288,11 @@ projectLength ty = case ty of
 
 runCheck
   :: (EnvReader m, SinkableE e)
-  => (forall l. (DExt n l, Immut l) => TyperT Maybe l l (e l))
+  => (forall l. DExt n l => TyperT Maybe l l (e l))
   -> m n (Maybe (e n))
-runCheck cont = liftM fromMaybeE $ liftImmut do
-  DB env <- getDB
-  return $ toMaybeE $ runTyperT env $ cont
+runCheck cont = do
+  Distinct <- getDistinct
+  liftTyperT $ cont
 
 asFFIFunType :: EnvReader m => Type n -> m n (Maybe (IFunType, NaryPiType n))
 asFFIFunType ty = return do

@@ -46,16 +46,11 @@ toImpFunction :: EnvReader m
               => Backend -> CallingConvention
               -> Abs (Nest PtrBinder) Block n
               -> m n (ImpFunctionWithRecon n)
-toImpFunction _ cc absBlock = liftImmut do
-  DB env <- getDB
-  return $ runImpM env $
-    translateTopLevel cc Nothing absBlock
+toImpFunction _ cc absBlock = liftImmut $ liftImpM $
+  translateTopLevel cc Nothing absBlock
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
-toImpStandaloneFunction lam = liftImmut do
-  DB env <- getDB
-  return $ runImpM env $
-    toImpStandaloneFunction' lam
+toImpStandaloneFunction lam = liftImmut $ liftImpM $ toImpStandaloneFunction' lam
 
 toImpStandaloneFunction' :: (Immut o, Imper m) => NaryLamExpr o -> m i o (ImpFunction o)
 toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
@@ -162,15 +157,14 @@ instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
 
 instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)
 
-runImpM
-  :: Distinct n
-  => Env n
-  -> (Immut n => SubstImpM n n (e n))
-  -> e n
-runImpM bindings cont =
-  withImmutEvidence (toImmutEvidence bindings) $
-    case runHardFail $ runInplaceT bindings $ flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
-      (Empty, result) -> result
+liftImpM :: EnvReader m => SubstImpM n n a -> m n a
+liftImpM cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  withImmutEvidence (toImmutEvidence env) $
+    case runHardFail $ runInplaceT env $
+           flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
+      (Empty, result) -> return result
       _ -> error "shouldn't be possible because of `Emits` constraint"
 
 -- === the actual pass ===
@@ -470,7 +464,9 @@ toImpHof maybeDest hof = do
       let PairTy _ accTy = resultTy
       (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
       e' <- substM e
-      emptyVal <- liftBuilderImp $ liftMonoidEmpty (sink accTy) (sink e')
+      emptyVal <- liftBuilderImp do
+        PairE accTy' e'' <- sinkM $ PairE accTy e'
+        liftMonoidEmpty accTy' e''
       copyAtom wDest emptyVal
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal wDest) $
         translateBlock (Just aDest) body
@@ -538,15 +534,18 @@ newtype DestM (n::S) (a:: *) =
   deriving ( Functor, Applicative, Monad, MonadFail
            , ScopeReader, Fallible, MonadState (IxCache n) )
 
-runDestM :: (Immut n, Distinct n)
-         => Env n -> AllocInfo -> IxCache n
-         -> DestM n a
-         -> (a, IxCache n)
-runDestM bindings allocInfo cache m = do
+liftDestM :: forall m n a. EnvReader m
+          => AllocInfo -> IxCache n
+          -> DestM n a
+          -> m n (a, IxCache n)
+liftDestM allocInfo cache m = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
   let result = runHardFail $ flip runReaderT allocInfo $
-                 runInplaceT bindings $ flip runStateT1 cache $ runDestM' m
+                 runInplaceT env $ flip runStateT1 cache $ runDestM' m
   case result of
-    (DestEmissions _ Empty Empty, result') -> result'
+    (DestEmissions _ Empty Empty, result') -> return result'
     _ -> error "not implemented"
 
 getAllocInfo :: DestM n AllocInfo
@@ -717,10 +716,9 @@ makeDest :: (ImpBuilder m, EnvReader m)
          => AllocInfo -> Type n -> m n (AbsPtrs Dest n)
 makeDest allocInfo ty =
  liftImmut do
-   DB bindings <- getDB
    cache <- get
-   let (result, cache') = runDestM bindings allocInfo cache $
-                            buildLocalDest $ makeSingleDest [] $ sink ty
+   (result, cache') <- liftDestM allocInfo cache $
+                         buildLocalDest $ makeSingleDest [] $ sink ty
    put cache'
    return result
 
@@ -739,7 +737,7 @@ extendIdxsTy
   => DestIdxs n -> Type n -> m n (EmptyAbs IdxNest n)
 extendIdxsTy (idxsTy, idxs) new = do
   let newAbs = abstractFreeVarsNoAnn idxs new
-  Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs (sink idxsTy) \idxs' -> do
+  Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs idxsTy \idxs' -> do
     ty' <- applyNaryAbs (sink newAbs) idxs'
     singletonBinderNest NoHint ty'
   return $ Abs (bs >>> b) UnitE
@@ -760,10 +758,9 @@ type NaryLamDest = Abs (Nest (BinderP AtomNameC Dest)) Dest
 makeNaryLamDest :: (ImpBuilder m, EnvReader m)
                 => NaryPiType n -> m n (AbsPtrs NaryLamDest n)
 makeNaryLamDest piTy = liftImmut do
-  DB env <- getDB
   cache <- get
   let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
-  (result, cache') <- return $ runDestM env allocInfo cache $ buildLocalDest do
+  (result, cache') <- liftDestM allocInfo cache $ buildLocalDest do
     Abs decls dest <- buildDeclsDest $
                         makeNaryLamDestRec (Abs Empty UnitE, []) [] (sink piTy)
     case decls of
@@ -903,7 +900,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         -- TODO: load old ptr and free (recursively)
         ptrs <- forM ptrsSizes \(ptrPtr, sizeBlock) -> do
           PtrTy (_, (PtrType ptrTy)) <- getType ptrPtr
-          size <- liftBuilderImp $ emitBlock (sink sizeBlock)
+          size <- liftBuilderImp $ emitBlock =<< sinkM sizeBlock
           ptr <- emitAlloc ptrTy =<< fromScalarAtom size
           ptrPtr' <- fromScalarAtom ptrPtr
           storeAnywhere ptrPtr' ptr
@@ -1109,10 +1106,12 @@ buildBlockImp cont = liftImmut do
   return $ ImpBlock decls results
 
 destToAtom :: (ImpBuilder m, Emits n) => Dest n -> m n (Atom n)
-destToAtom dest = liftBuilderImp $ loadDest $ sink dest
+destToAtom dest = liftBuilderImp $ loadDest =<< sinkM dest
 
 destGet :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
-destGet dest i = liftBuilderImp $ indexDest (sink dest) (sink i)
+destGet dest i = liftBuilderImp $ do
+  Distinct <- getDistinct
+  indexDest (sink dest) (sink i)
 
 destPairUnpack :: Dest n -> (Dest n, Dest n)
 destPairUnpack (Con (ConRef (ProdCon [l, r]))) = (l, r)
@@ -1140,6 +1139,7 @@ makeAllocDestWithPtrs allocTy ty = do
   let curDev  = curDev_TODO_DONT_HARDCODE
   AbsPtrs absDest ptrDefs <- makeDest (backend, curDev, allocTy) ty
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
+    Distinct <- getDistinct
     size <- liftBuilderImp $ emitBlock $ sink sizeBlock
     emitAlloc ptrTy =<< fromScalarAtom size
   ptrAtoms <- mapM toScalarAtom ptrs
@@ -1318,6 +1318,7 @@ emitCall :: (Emits n, ImpBuilder m)
 emitCall piTy f xs = do
   AbsPtrs absDest ptrDefs <- makeNaryLamDest piTy
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
+    Distinct <- getDistinct
     size <- liftBuilderImp $ emitBlock $ sink sizeBlock
     emitAlloc ptrTy =<< fromScalarAtom size
   ptrAtoms <- mapM toScalarAtom ptrs
@@ -1377,6 +1378,7 @@ buildBinOp :: (ImpBuilder m, Emits n)
            => (forall l. (Emits l, DExt n l) => Atom l -> Atom l -> BuilderM l (Atom l))
            -> IExpr n -> IExpr n -> m n (IExpr n)
 buildBinOp f x y = fromScalarAtom =<< liftBuilderImp do
+  Distinct <- getDistinct
   x' <- toScalarAtom $ sink x
   y' <- toScalarAtom $ sink y
   f x' y'
@@ -1434,10 +1436,7 @@ liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, DExt n l) => BuilderM l (e l))
                -> m n (e n)
 liftBuilderImp cont = do
-  Abs decls result <- liftImmut do
-    DB bindings <- getDB
-    DistinctAbs decls result <- return $ runBuilderM bindings $ buildScoped cont
-    return $ Abs decls result
+  Abs decls result <- liftBuilder $ liftImmut $ liftM fromDistinctAbs $ buildScoped cont
   runSubstReaderT idSubst $ translateDeclNest decls $ substM result
 
 -- TODO: should we merge this with `liftBuilderImp`? Not much harm in

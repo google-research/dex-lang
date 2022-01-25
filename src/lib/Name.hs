@@ -22,7 +22,7 @@ module Name (
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   DistinctAbs (..), WithScope (..),
-  extendRenamer, ScopeReader (..), ScopeExtender (..),
+  extendRenamer, ScopeReader (..), unsafeGetScope, ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
   SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
@@ -42,8 +42,9 @@ module Name (
   pattern JustB, pattern NothingB,
   toConstAbs, PrettyE, PrettyB, ShowE, ShowB,
   runScopeReaderT, runScopeReaderM, runSubstReaderT, idNameSubst, liftSubstReaderT,
+  liftScopeReaderT, liftScopeReaderM,
   ScopeReaderT (..), SubstReaderT (..),
-  lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM,
+  lookupSubstM, dropSubst, extendSubst, fmapNames, fmapNamesM, traverseNames,
   MonadKind, MonadKind1, MonadKind2,
   Monad1, Monad2, Fallible1, Fallible2, Catchable1, Catchable2, Monoid1,
   MonadIO1, MonadIO2,
@@ -86,7 +87,7 @@ module Name (
   locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
   checkEmpty, updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
-  fabricateDistinctEvidence,
+  fabricateDistinctEvidence, fabricateImmutEvidence,
   unConsSubst, ConsSubst (..), MonadTrans1 (..), fromDistinctAbs,
   ) where
 
@@ -267,6 +268,12 @@ class Monad1 m => ScopeReader (m::MonadKind1) where
   liftImmut :: SinkableE e => (Immut n => m n (e n)) -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
+-- TODO: consider making this the core method that ScopeReaders implement
+unsafeGetScope :: ScopeReader m => m n (Scope n)
+unsafeGetScope =
+  -- exploiting the `liftImmut` loophole here!
+  liftM fromLiftE $ liftImmut $ LiftE <$> getScope
+
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   extendScope :: Distinct l => ScopeFrag n l -> (Ext n l => m l r) -> m n r
 
@@ -389,6 +396,29 @@ instance SinkableE (ExtWitness n) where
 instance Category ExtWitness where
   id = ExtW
   ExtW . ExtW = ExtW
+
+-- XXX: this only (monadically) visits each name once, even if a name has
+-- multiple occurrences. So don't use it to count occurrences or anything like
+-- that! It's not deliberate. It's just an accident of the implementation, where
+-- we gather the (de-duplicated) free names and then traverse them. At some
+-- point we may add a monadic traversal to `Subst{E,B}`, which would actually
+-- visit each occurrence.
+traverseNames
+  :: forall v e m i o.
+     (SubstE v e, HoistableE e, SinkableE e, FromName v, ScopeReader m)
+  => (forall c. Color c => Name c i -> m o (v c o))
+  -> e i -> m o (e o)
+traverseNames f e = do
+  let vs = freeVarsE e
+  m <- M.fromList <$> forM (M.toList vs)
+         \(rawName, WithColor (UnitV :: UnitV c UnsafeS)) -> do
+            x <- f (UnsafeMakeName rawName :: Name c i)
+            return (rawName, WithColor x)
+  fmapNamesM (\((UnsafeMakeName v) :: Name c i) -> case M.lookup v m of
+    Just (WithColor val) -> case tryAsColor val of
+      Just val' -> val'
+      Nothing -> error "shouldn't happen"
+    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)) e
 
 fmapNames :: (SubstE v e, Distinct o)
           => Scope o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
@@ -1219,6 +1249,15 @@ runScopeReaderT scope m =
 
 runScopeReaderM :: Distinct n => Scope n -> ScopeReaderM n a -> a
 runScopeReaderM scope m = runIdentity $ runScopeReaderT scope m
+
+liftScopeReaderT :: ScopeReader m' => ScopeReaderT m n a -> m' n (m a)
+liftScopeReaderT m = do
+  scope <- unsafeGetScope
+  Distinct <- getDistinct
+  return $ flip runReaderT (Distinct, scope) $ runScopeReaderT' m
+
+liftScopeReaderM :: ScopeReader m' => ScopeReaderM n a -> m' n a
+liftScopeReaderM m = liftM runIdentity $ liftScopeReaderT m
 
 instance Monad m => ScopeReader (ScopeReaderT m) where
   getDistinct = ScopeReaderT $ asks fst

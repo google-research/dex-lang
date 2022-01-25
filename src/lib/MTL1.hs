@@ -11,7 +11,7 @@
 module MTL1 (
     MonadTrans11 (..), HoistableState (..),
     FallibleMonoid1 (..), WriterT1 (..), runWriterT1,
-    StateT1, pattern StateT1, runStateT1,
+    StateT1, pattern StateT1, runStateT1, MonadState1,
     MaybeT1 (..), runMaybeT1, ReaderT1 (..), runReaderT1,
     ScopedT1, pattern ScopedT1, runScopedT1
   ) where
@@ -109,6 +109,8 @@ newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 pattern StateT1 :: ((s n) -> m n (a, s n)) -> StateT1 s m n a
 pattern StateT1 f = WrapStateT1 (StateT f)
 
+type MonadState1 (e::E) (m::MonadKind1) = forall n. MonadState (e n) (m n)
+
 {-# COMPLETE StateT1 #-}
 
 runStateT1 :: StateT1 s m n a -> s n -> m n (a, s n)
@@ -185,6 +187,13 @@ instance AlwaysImmut m => AlwaysImmut (MaybeT1 m) where
 
 instance MonadTrans11 MaybeT1 where
   lift11 = MaybeT1 . lift
+
+instance Monad (m n) => MonadFail (MaybeT1 m n) where
+  fail s = MaybeT1 (fail s)
+
+instance Monad (m n) => Fallible (MaybeT1 m n) where
+  throwErrs _ = empty
+  addErrCtx _ cont = cont
 
 instance EnvReader m => EnvReader (MaybeT1 m) where
   getEnv = lift11 getEnv

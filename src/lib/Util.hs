@@ -16,7 +16,7 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              measureSeconds,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
-             iota, whenM, unsnoc) where
+             iota, whenM, unsnoc, anyM) where
 
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
@@ -237,6 +237,11 @@ whenM :: Monad m => m Bool -> m () -> m ()
 whenM test doit = test >>= \case
   True -> doit
   False -> return ()
+
+anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+anyM f xs = do
+  conds <- mapM f xs
+  return $ any id conds
 
 -- === zippable class ===
 

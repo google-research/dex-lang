@@ -54,11 +54,11 @@ module Syntax (
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName, lookupImpFun,
     lookupEnvPure, lookupSourceMap,
-    getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM, liftSubstEnvReaderM,
+    getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM, unsafeGetEnv,
+    liftEnvReaderT, liftSubstEnvReaderM,
     SubstEnvReaderM,
     EnvReaderM, runEnvReaderM,
-    EnvReaderT (..), EnvReader2, EnvExtender2,
-    getDB, DistinctEnv (..),
+    EnvReaderT (..), EnvReader2, EnvExtender2, DistinctEnv (..),
     naryNonDepPiType, nonDepPiType, fromNonDepPiType, fromNaryNonDepPiType,
     considerNonDepPiType, trySelectBranch,
     fromNonDepTabTy, nonDepDataConTys, binderType, bindersTypes,
@@ -404,12 +404,6 @@ data WithEnv (e::E) (n::S) where
 class ScopeReader m => EnvReader (m::MonadKind1) where
   getEnv :: Immut n => m n (Env n)
 
-getDB :: EnvReader m => Immut n => m n (DistinctEnv n)
-getDB = do
-  Distinct <- getDistinct
-  bindings <- getEnv
-  return $ DB bindings
-
 data DistinctEnv n where
   DB :: (Distinct n, Immut n) => Env n -> DistinctEnv n
 
@@ -448,10 +442,18 @@ runEnvReaderT bindings cont =
   withImmutEvidence (toImmutEvidence bindings) $
     runReaderT (runEnvReaderT' cont) (Distinct, bindings)
 
-liftEnvReaderM :: (EnvReader m, Immut n) => EnvReaderM n a -> m n a
-liftEnvReaderM cont = do
-  DB env <- getDB
-  return $ runEnvReaderM env cont
+liftEnvReaderM :: EnvReader m => EnvReaderM n a -> m n a
+liftEnvReaderM cont = liftM runIdentity $ liftEnvReaderT cont
+
+liftEnvReaderT :: EnvReader m' => EnvReaderT m n a -> m' n (m a)
+liftEnvReaderT cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return $ runReaderT (runEnvReaderT' cont) (Distinct, env)
+
+-- shamelessly exploiting the `LiftE` loophole
+unsafeGetEnv :: EnvReader m => m n (Env n)
+unsafeGetEnv = liftM fromLiftE $ liftImmut $ liftM LiftE $ getEnv
 
 type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
 

@@ -34,21 +34,17 @@ type NiceE e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, SubstE Name e)
 cheapReduce :: forall e' e m n
              . (EnvReader m, CheaplyReducibleE e e', NiceE e, NiceE e')
             => e n -> m n (Maybe (e' n), Maybe (ESet Type n))
-cheapReduce e = publicResultFromE <$> liftImmut do
-  DB bindings <- getDB
-  e' <- sinkM e
-  return $ resultToE $ runCheapReducerM idSubst bindings $ cheapReduceE e'
+cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
 
--- Second argument contains a list of dictionary types that failed to synthesize
+-- Second result contains the set of dictionary types that failed to synthesize
 -- during traversal of the supplied decls.
 cheapReduceWithDecls
   :: forall e' e m n l
    . ( CheaplyReducibleE e e', NiceE e', NiceE e, EnvReader m )
   => Nest Decl n l -> e l -> m n (Maybe (e' n), Maybe (ESet Type n))
-cheapReduceWithDecls decls result = publicResultFromE <$> liftImmut do
+cheapReduceWithDecls decls result = do
   Abs decls' result' <- sinkM $ Abs decls result
-  DB bindings <- getDB
-  return $ resultToE $ runCheapReducerM idSubst bindings $
+  liftCheapReducerM idSubst $
     cheapReduceWithDeclsB decls' $
       cheapReduceE result'
 
@@ -57,12 +53,6 @@ cheapNormalize :: EnvReader m => Atom n -> m n (Atom n)
 cheapNormalize a = fromJust . fst <$> cheapReduce a
 
 -- === internal ===
-
-resultToE :: (Maybe (e n), FailedDictTypes n) -> (PairE (MaybeE e) (MaybeE (ESet Type))) n
-resultToE (l, FailedDictTypes r) = PairE (toMaybeE l) r
-
-publicResultFromE :: (PairE (MaybeE e) (MaybeE (ESet Type))) n -> (Maybe (e n), Maybe (ESet Type n))
-publicResultFromE (PairE l r) = (fromMaybeE l, fromMaybeE r)
 
 newtype CheapReducerM (i :: S) (o :: S) (a :: *) =
   CheapReducerM
@@ -101,30 +91,27 @@ instance CheapReducer CheapReducerM where
   lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
     fmap fromMaybeE <$> gets (M.lookup v . fromMapE)
 
-runCheapReducerM :: Distinct o
-                 => Subst AtomSubstVal i o -> Env o -> CheapReducerM i o a
-                 -> (Maybe a, FailedDictTypes o)
-runCheapReducerM env bindings (CheapReducerM m) =
-  runIdentity $ runEnvReaderT bindings $ runScopedT1
-    (runWriterT1 $ runMaybeT1 $ runSubstReaderT env m) mempty
+liftCheapReducerM :: EnvReader m
+                  => Subst AtomSubstVal i o -> CheapReducerM i o a
+                  -> m o (Maybe a, Maybe (ESet Type o))
+liftCheapReducerM subst (CheapReducerM m) = do
+  (result, FailedDictTypes tys) <-
+    liftM runIdentity $ liftEnvReaderT $ runScopedT1
+      (runWriterT1 $ runMaybeT1 $ runSubstReaderT subst m) mempty
+  return $ (result, fromMaybeE tys)
 
 cheapReduceFromSubst
-  :: ( SubstReader AtomSubstVal m, EnvReader2 m, AlwaysImmut2 m
-     , SinkableE e, SubstE AtomSubstVal e )
+  :: forall e m i o .
+     ( SubstReader AtomSubstVal m, EnvReader2 m, AlwaysImmut2 m
+     , SinkableE e, SubstE AtomSubstVal e, HoistableE e)
   => e i -> m i o (e o)
-cheapReduceFromSubst e = do
-  e' <- substM e
-  Immut <- getImmut
-  DB bindings <- getDB
-  return $ fmapNames (toScope bindings) (cheapSubstName bindings) e'
+cheapReduceFromSubst e = traverseNames cheapSubstName =<< substM e
   where
-    cheapSubstName :: (Color c, Distinct n)
-                   => Env n -> Name c n -> AtomSubstVal c n
-    cheapSubstName bindings v = case lookupEnvPure bindings v of
+    cheapSubstName :: Color c => Name c o -> m i o (AtomSubstVal c o)
+    cheapSubstName v = lookupEnv v >>= \case
       AtomNameBinding (LetBound (DeclBinding _ _ (Atom x))) ->
-        SubstVal $ runEnvReaderM bindings $
-          runSubstReaderT idSubst $ cheapReduceFromSubst x
-      _ -> Rename v
+        liftM SubstVal $ dropSubst $ cheapReduceFromSubst x
+      _ -> return $ Rename v
 
 cheapReduceWithDeclsB
   :: ( CheapReducer m
@@ -200,16 +187,9 @@ instance CheaplyReducibleE Atom Atom where
       ExtLabeledItemsE ty' <- substM $ ExtLabeledItemsE ty
       Variant ty' <$> pure l <*> pure c <*> cheapReduceE p
     -- Do recursive reduction via substitution
-    _ -> liftImmut do
+    _ -> do
       a' <- substM a
-      substMap <- fmap M.fromList $ dropSubst $
-        forM (freeAtomVarsList a') \v -> (v,) <$> cheapReduceName v
-      let subst :: Subst AtomSubstVal o o =
-            newSubst \(v::Name c o) -> case eqColorRep of
-              Just (ColorsEqual :: ColorsEqual c AtomNameC) -> substMap M.! v
-              Nothing -> Rename v
-      DB bindings <- getDB
-      return $ substE (toScope bindings, subst) a'
+      dropSubst $ traverseNames cheapReduceName a'
 
 instance (CheaplyReducibleE e e', NiceE e') => CheaplyReducibleE (Abs (Nest Decl) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
