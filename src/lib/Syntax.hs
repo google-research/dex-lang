@@ -50,11 +50,11 @@ module Syntax (
     EnvReader (..), EnvExtender (..),  Binding (..),
     TopEnvFrag (..), ToBinding (..), withFreshBinders,
     refreshBinders, substBinders, substBindersI, withFreshBinder,
-    withFreshLamBinder, withFreshPureLamBinder, refreshAbsM, captureClosure,
+    withFreshLamBinder, withFreshPureLamBinder, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName, lookupImpFun,
     lookupEnvPure, lookupSourceMap,
-    getSourceMapM, updateEnv, runEnvReaderT, liftEnvReaderM, unsafeGetEnv,
+    getSourceMapM, withEnv, updateEnv, runEnvReaderT, liftEnvReaderM,
     liftEnvReaderT, liftSubstEnvReaderM,
     SubstEnvReaderM,
     EnvReaderM, runEnvReaderM,
@@ -402,7 +402,11 @@ data WithEnv (e::E) (n::S) where
   WithEnv :: (Distinct l, Ext l n) => Env l -> e l -> WithEnv e n
 
 class ScopeReader m => EnvReader (m::MonadKind1) where
-  getEnv :: Immut n => m n (Env n)
+  -- Unsafe because an in-place update to `n` would invalidate the env.
+  unsafeGetEnv :: m n (Env n)
+
+withEnv :: (SinkableE e, EnvReader m) => (Env n -> e n) -> m n (e n)
+withEnv f = f <$> unsafeGetEnv
 
 data DistinctEnv n where
   DB :: (Distinct n, Immut n) => Env n -> DistinctEnv n
@@ -418,7 +422,7 @@ type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
 
 instance (SinkableE e, EnvReader m)
          => EnvReader (OutReaderT e m) where
-  getEnv = OutReaderT $ lift $ getEnv
+  unsafeGetEnv = OutReaderT $ lift $ unsafeGetEnv
 
 instance (SinkableE e, ScopeReader m, EnvExtender m)
          => EnvExtender (OutReaderT e m) where
@@ -451,10 +455,6 @@ liftEnvReaderT cont = do
   Distinct <- getDistinct
   return $ runReaderT (runEnvReaderT' cont) (Distinct, env)
 
--- shamelessly exploiting the `LiftE` loophole
-unsafeGetEnv :: EnvReader m => m n (Env n)
-unsafeGetEnv = liftM fromLiftE $ liftImmut $ liftM LiftE $ getEnv
-
 type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
 
 liftSubstEnvReaderM
@@ -464,7 +464,7 @@ liftSubstEnvReaderM
 liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
 
 instance Monad m => EnvReader (EnvReaderT m) where
-  getEnv = EnvReaderT $ asks snd
+  unsafeGetEnv = EnvReaderT $ asks snd
 
 instance Monad m => EnvExtender (EnvReaderT m) where
   extendEnv frag m = EnvReaderT $ withReaderT
@@ -474,7 +474,7 @@ instance Monad m => EnvExtender (EnvReaderT m) where
 
 instance Monad m => ScopeReader (EnvReaderT m) where
   getDistinct = EnvReaderT $ asks fst
-  getScope = toScope <$> snd <$> EnvReaderT ask
+  unsafeGetScope = toScope <$> snd <$> EnvReaderT ask
   liftImmut cont = do
     Immut <- getImmut
     Distinct <- getDistinct
@@ -488,7 +488,7 @@ instance MonadIO m => MonadIO (EnvReaderT m n) where
   liftIO m = EnvReaderT $ lift $ liftIO m
 
 instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
-  getEnv = SubstReaderT $ lift getEnv
+  unsafeGetEnv = SubstReaderT $ lift unsafeGetEnv
 
 instance (SinkableV v, ScopeReader m, EnvExtender m)
          => EnvExtender (SubstReaderT v m i) where
@@ -555,9 +555,7 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (RightE e) = toBinding e
 
 lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
-lookupEnv v = liftImmut do
-  bindings <- getEnv
-  return $ lookupEnvPure bindings v
+lookupEnv v = withEnv $ flip lookupEnvPure v
 
 lookupAtomName :: EnvReader m => AtomName n -> m n (AtomBinding n)
 lookupAtomName name = lookupEnv name >>= \case AtomNameBinding x -> return x
@@ -573,9 +571,6 @@ lookupSourceMap sourceName = do
   sourceMap <- getSourceMapM
   return $ M.lookup sourceName $ fromSourceMap sourceMap
 
-getSourceMapM :: EnvReader m => m n (SourceMap n)
-getSourceMapM = liftImmut $ getSourceMap <$> getEnv
-
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v =
   lookupTerminalSubstFrag (fromRecSubst $ getNameEnv env) v
@@ -585,20 +580,6 @@ updateEnv v rhs bindings =
   bindings { getNameEnv = RecSubst $ updateSubstFrag v rhs bs }
   where (RecSubst bs) = getNameEnv bindings
 
-refreshAbsM
-  :: ( SubstB Name b, SubstE Name e, Immut n, BindsEnv b
-     , EnvReader m, EnvExtender m)
-  => Abs b e n
-  -> (forall l. (Immut l, DExt n l) => b n l -> e l -> m l a)
-  -> m n a
-refreshAbsM ab cont = do
-  scope <- getScope
-  Distinct <- getDistinct
-  DistinctAbs b e <- return $ refreshAbs scope ab
-  extendEnv (toEnvFrag b) do
-    withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b) $
-      cont b e
-
 refreshBinders
   :: (EnvExtender m, BindsEnv b, SubstB Name b)
   => Immut n
@@ -606,7 +587,7 @@ refreshBinders
   -> (forall l'. (Immut l', DExt n l') => b n l' -> SubstFrag Name n l l' -> m l' a)
   -> m n a
 refreshBinders b cont = do
-  scope <- getScope
+  scope <- unsafeGetScope
   Distinct <- getDistinct
   substBToFrag (scope, idSubst) b \b' frag ->
     extendEnv (toEnvFrag b') $
@@ -621,7 +602,7 @@ substBinders
   -> (forall o'. (Immut o', DExt o o') => b o o' -> m i' o' a)
   -> m i o a
 substBinders b cont = do
-  scope <- getScope
+  scope <- unsafeGetScope
   Distinct <- getDistinct
   env <- getSubst
   DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idSubstFrag b)
@@ -652,7 +633,7 @@ withFreshBinder
   -> (forall l. (Immut l, DExt n l) => NameBinder c n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
-  scope    <- getScope
+  scope    <- unsafeGetScope
   Distinct <- getDistinct
   withFresh hint scope \b -> do
     extendEnv (toEnvFrag (b:>binding)) $
@@ -669,7 +650,7 @@ withFreshBinders [] cont = do
   Distinct <- getDistinct
   cont Empty []
 withFreshBinders ((hint,binding):rest) cont = do
-  scope    <- getScope
+  scope    <- unsafeGetScope
   Distinct <- getDistinct
   withFresh hint scope \b -> do
     extendEnv (toEnvFrag (b:>binding)) do
@@ -799,7 +780,7 @@ instance Monad1 m => Fallible (FallibleT1 m n) where
   addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
 
 instance ScopeReader m => ScopeReader (FallibleT1 m) where
-  getScope = FallibleT1 $ lift $ lift getScope
+  unsafeGetScope = FallibleT1 $ lift $ lift unsafeGetScope
   getDistinct = FallibleT1 $ lift $ lift $ getDistinct
   liftImmut cont = FallibleT1 $ ReaderT \ctx -> do
     exceptResult <- lift $ liftImmut do
@@ -811,15 +792,18 @@ instance ScopeReader m => ScopeReader (FallibleT1 m) where
       LeftE (LiftE err) -> MTE.throwE err
 
 instance EnvReader m => EnvReader (FallibleT1 m) where
-  getEnv = FallibleT1 $ lift $ lift getEnv
+  unsafeGetEnv = FallibleT1 $ lift $ lift unsafeGetEnv
 
 -- === Querying static env ===
 
 getSynthCandidatesM :: EnvReader m => m n (SynthCandidates n)
-getSynthCandidatesM = liftImmut $ getSynthCandidates <$> getEnv
+getSynthCandidatesM = withEnv getSynthCandidates
 
 getAllowedEffects :: EnvReader m => m n (EffectRow n)
-getAllowedEffects = liftImmut $ getEffects <$> getEnv
+getAllowedEffects = withEnv getEffects
+
+getSourceMapM :: EnvReader m => m n (SourceMap n)
+getSourceMapM = withEnv getSourceMap
 
 withAllowedEffects :: EnvExtender m => EffectRow n -> m n a -> m n a
 withAllowedEffects effs cont = do

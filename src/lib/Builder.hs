@@ -163,15 +163,12 @@ emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 extendCache :: TopBuilder m => Cache n -> m n ()
 extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty cache mempty
 
-getCacheM :: EnvReader m => m n (Cache n)
-getCacheM = liftImmut $ getCache <$> getEnv
-
 extendImpCache :: TopBuilder m => AtomName n -> ImpFunName n -> m n ()
 extendImpCache fSimp fImp = extendCache $ Cache mempty (eMapSingleton fSimp fImp) mempty
 
 queryImpCache :: EnvReader m => AtomName n -> m n (Maybe (ImpFunName n))
 queryImpCache v = do
-  cache <- impCache <$> getCacheM
+  cache <- withEnv (impCache . getCache)
   return $ lookupEMap cache v
 
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
@@ -179,7 +176,7 @@ extendObjCache fImp cfun = extendCache $ Cache mempty mempty (eMapSingleton fImp
 
 queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
 queryObjCache v = do
-  cache <- objCache <$> getCacheM
+  cache <- withEnv (objCache . getCache)
   return $ lookupEMap cache v
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
@@ -188,7 +185,7 @@ newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
            , CtxReader, ScopeReader, MonadTrans1, MonadReader r, MonadIO)
 
 instance Fallible m => EnvReader (TopBuilderT m) where
-  getEnv = TopBuilderT $ getOutMapInplaceT
+  unsafeGetEnv = TopBuilderT $ getOutMapInplaceT
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
   emitBinding hint binding = TopBuilderT $
@@ -199,7 +196,7 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
 
   emitEnv ab = TopBuilderT do
     extendInplaceT do
-      scope <- getScope
+      scope <- unsafeGetScope
       ab' <- sinkM ab
       return $ refreshAbs scope ab'
 
@@ -281,7 +278,7 @@ instance Fallible m => Builder (BuilderT m) where
       Nest (Let b rhs) Empty
 
 instance Fallible m => EnvReader (BuilderT m) where
-  getEnv = BuilderT $ getOutMapInplaceT
+  unsafeGetEnv = BuilderT $ getOutMapInplaceT
 
 instance Fallible m => EnvExtender (BuilderT m) where
   extendEnv frag cont = BuilderT $

@@ -409,7 +409,7 @@ evalLLVM block = do
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
   logger  <- getLogger
-  objFileNames <- liftImmut $ getObjFiles <$> getEnv
+  objFileNames <- withEnv getObjFiles
   objFiles <- forM (eMapToList objFileNames) \(objFileName, UnitE) -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile

@@ -628,7 +628,4 @@ appSimplifiedIxMethod ty method x = do
   f' <- emitDecls decls f
   Distinct <- getDistinct
   case f' of
-    LamExpr fx' fb' -> do
-      emitBlock =<< liftImmut do
-        scope <- getScope
-        return $ substE (scope, idSubst <>> fx' @> SubstVal x) fb'
+    LamExpr fx' fb' -> emitBlock =<< applySubst (fx' @> SubstVal x) fb'

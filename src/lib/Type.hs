@@ -264,7 +264,7 @@ instance CheckableE SynthCandidates where
 instance CheckableB (RecSubstFrag Binding) where
   checkB frag cont = do
     Immut <- getImmut
-    scope <- getScope
+    scope <- unsafeGetScope
     env <- getSubst
     Distinct <- getDistinct
     DistinctAbs frag' env' <- return $ refreshRecSubstFrag scope env frag

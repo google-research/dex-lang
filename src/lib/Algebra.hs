@@ -193,7 +193,7 @@ type CPolySubstVal = SubstVal AtomNameC (MaybeE ClampPolynomial)
 blockAsCPoly :: (EnvExtender m, EnvReader m) => Block n -> m n (Maybe (ClampPolynomial n))
 blockAsCPoly (Block _ decls' result') = fromMaybeE <$> liftImmut do
   Distinct <- getDistinct
-  scope    <- getScope
+  scope    <- unsafeGetScope
   case refreshAbs scope $ Abs decls' result' of
     DistinctAbs decls'' result'' ->
       fmap toMaybeE $ runMaybeT1 $ runSubstReaderT idSubst $ go decls'' result''

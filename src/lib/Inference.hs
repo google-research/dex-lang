@@ -417,14 +417,14 @@ instance InfBuilder (InfererM i) where
           Emits    <- fabricateEmitsEvidenceM
           EmitsInf <- fabricateEmitsInfEvidenceM
           toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-        scope <- getScope
+        scope <- unsafeGetScope
         hoistThroughDecls scope frag resultWithState
       return (Abs decls result, hoistRequiredIfaces decls s')
 
   buildAbsInf hint binding cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
       Abs b (PairE result s') <- extendInplaceT do
-        scope <- getScope
+        scope <- unsafeGetScope
         withFresh hint scope \b -> do
           let b' = b :> sink binding
           let bExt = toEnvFrag b'
@@ -582,7 +582,7 @@ infNamesToEmissions emissions =
   fmapNest (\(b:>binding) -> b :> RightE binding) emissions
 
 instance EnvReader (InfererM i) where
-  getEnv = do
+  unsafeGetEnv = do
     InfOutMap bindings _ _ _ <- InfererM $ SubstReaderT $ lift $ lift11 $ getOutMapInplaceT
     return bindings
 
@@ -1656,7 +1656,7 @@ liftSolverM cont = do
       Just (_, result) -> return result
 
 instance EnvReader SolverM where
-  getEnv = SolverM do
+  unsafeGetEnv = SolverM do
     InfOutMap env _ _ _ <- getOutMapInplaceT
     return env
 

@@ -118,7 +118,7 @@ class ( ImpBuilder2 m, SubstReader AtomSubstVal m
       => Imper (m::MonadKind2) where
 
 instance EnvReader ImpM where
-  getEnv = ImpM $ lift11 $ getOutMapInplaceT
+  unsafeGetEnv = ImpM $ lift11 $ getOutMapInplaceT
 
 instance EnvExtender ImpM where
   extendEnv frag cont = ImpM $ ScopedT1 \s ->
@@ -130,7 +130,7 @@ instance ImpBuilder ImpM where
     tys <- impInstrTypes instr
     ListE vs <- ImpM $ ScopedT1 \s ->
       (,s) <$> extendInplaceT do
-        scope <- getScope
+        scope <- unsafeGetScope
         let hints = map (const "v") tys
         withManyFresh hints scope \bs -> do
           let vs = nestToList (sink . nameBinderName) bs
@@ -610,7 +610,7 @@ buildAbsDest
 buildAbsDest hint binding cont =
   DestM $ StateT1 \s -> do
     Abs b (PairE e s') <- extendInplaceT do
-      scope <- getScope
+      scope <- unsafeGetScope
       withFresh hint scope \b -> do
         let b' = b :> sink binding
         let bExt = toEnvFrag b'
@@ -658,7 +658,7 @@ instance EnvExtender DestM where
     return (ans, s'')
 
 instance EnvReader DestM where
-  getEnv = DestM $ lift11 $ getOutMapInplaceT
+  unsafeGetEnv = DestM $ lift11 $ getOutMapInplaceT
 
 instance Builder DestM where
   emitDecl hint ann expr = do
@@ -1296,7 +1296,7 @@ withFreshIBinder
   -> (forall l. (Immut l, Distinct l, Ext n l) => IBinder n l -> m l a)
   -> m n a
 withFreshIBinder hint ty cont = do
-  scope    <- getScope
+  scope    <- unsafeGetScope
   Distinct <- getDistinct
   withFresh hint scope \b -> do
     extendEnv (toEnvFrag (b :> (toBinding $ MiscBound $ BaseTy ty))) $

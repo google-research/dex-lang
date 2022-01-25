@@ -53,10 +53,9 @@ newtype RenamerM (n::S) (a:: *) =
 
 liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
 liftRenamer cont = liftImmut do
-  scope <- getScope
-  sourceMap <- getSourceMap <$> getEnv
+  sourceMap <- getSourceMapM
   Distinct <- getDistinct
-  liftExcept $ runFallibleM $ runScopeReaderT scope $
+  (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
     runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $ cont
 
 class ( Monad1 m, AlwaysImmut m, ScopeReader m

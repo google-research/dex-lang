@@ -22,7 +22,7 @@ module Name (
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   DistinctAbs (..), WithScope (..),
-  extendRenamer, ScopeReader (..), unsafeGetScope, ScopeExtender (..),
+  extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
   SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
@@ -263,16 +263,10 @@ class Monad1 m => AlwaysImmut (m::MonadKind1) where
   getImmut :: m n (ImmutEvidence n)
 
 class Monad1 m => ScopeReader (m::MonadKind1) where
-  getScope :: Immut n => m n (Scope n)
+  unsafeGetScope :: m n (Scope n)
   -- XXX: be careful using this. See note [LiftImmutAndFriends]
   liftImmut :: SinkableE e => (Immut n => m n (e n)) -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
-
--- TODO: consider making this the core method that ScopeReaders implement
-unsafeGetScope :: ScopeReader m => m n (Scope n)
-unsafeGetScope =
-  -- exploiting the `liftImmut` loophole here!
-  liftM fromLiftE $ liftImmut $ LiftE <$> getScope
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   extendScope :: Distinct l => ScopeFrag n l -> (Ext n l => m l r) -> m n r
@@ -428,7 +422,7 @@ fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
           => (forall c. Color c => Name c i -> v c o)
           -> e i -> m o (e o)
 fmapNamesM f e = liftImmut do
-  scope <- getScope
+  scope <- unsafeGetScope
   Distinct <- getDistinct
   return $ substE (scope, newSubst f) e
 
@@ -871,7 +865,7 @@ withFreshM :: (ScopeExtender m, AlwaysImmut m, Color c)
 withFreshM hint cont = do
   Distinct <- getDistinct
   Immut <- getImmut
-  m <- getScope
+  m <- unsafeGetScope
   withFresh hint m \b' -> do
     extendScope (toScopeFrag b') $
       cont b'
@@ -944,7 +938,7 @@ class ( SinkableV v
 
 addScope :: (ScopeReader m, SinkableE e) => e n -> m n (WithScope e n)
 addScope e = liftImmut do
-  scope <- getScope
+  scope <- unsafeGetScope
   Distinct <- getDistinct
   return $ WithScope scope (sink e)
 
@@ -1261,7 +1255,7 @@ liftScopeReaderM m = liftM runIdentity $ liftScopeReaderT m
 
 instance Monad m => ScopeReader (ScopeReaderT m) where
   getDistinct = ScopeReaderT $ asks fst
-  getScope = ScopeReaderT $ asks snd
+  unsafeGetScope = ScopeReaderT $ asks snd
   liftImmut cont = do
     Immut <- getImmut
     Distinct <- getDistinct
@@ -1302,7 +1296,7 @@ instance (SinkableV v, Monad1 m) => SubstReader v (SubstReaderT v m) where
   withSubst env (SubstReaderT cont) = SubstReaderT $ withReaderT (const env) cont
 
 instance (SinkableV v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
-  getScope = SubstReaderT $ lift getScope
+  unsafeGetScope = SubstReaderT $ lift unsafeGetScope
   getDistinct = SubstReaderT $ lift getDistinct
   liftImmut m = SubstReaderT $ ReaderT \env -> liftImmut do
     let SubstReaderT (ReaderT cont) = m
@@ -1341,7 +1335,7 @@ runOutReaderT env m = flip runReaderT env $ runOutReaderT' m
 
 instance (SinkableE e, ScopeReader m)
          => ScopeReader (OutReaderT e m) where
-  getScope = OutReaderT $ lift getScope
+  unsafeGetScope = OutReaderT $ lift unsafeGetScope
   getDistinct = OutReaderT $ lift getDistinct
   liftImmut m = OutReaderT $ ReaderT \env -> liftImmut do
     let OutReaderT (ReaderT cont) = m
@@ -1398,7 +1392,7 @@ newtype ZipSubstReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a:: *) =
 type ZipSubst i1 i2 o = (Subst Name i1 o, Subst Name i2 o)
 
 instance ScopeReader m => ScopeReader (ZipSubstReaderT m i1 i2) where
-  getScope = ZipSubstReaderT $ lift getScope
+  unsafeGetScope = ZipSubstReaderT $ lift unsafeGetScope
   getDistinct = ZipSubstReaderT $ lift getDistinct
   liftImmut m = ZipSubstReaderT $ ReaderT \(env1, env2) -> liftImmut do
     let ZipSubstReaderT (ReaderT cont) = m
@@ -1458,7 +1452,6 @@ extendTrivialInplaceT d =
 
 getOutMapInplaceT
   :: (ExtOutMap b d, Monad m)
-  => Immut n
   => InplaceT b d m n (b n)
 getOutMapInplaceT = UnsafeMakeInplaceT \bindings -> return (bindings, emptyOutFrag)
 
@@ -1535,7 +1528,7 @@ emitInplaceT
   -> InplaceT b d m o (Name c o)
 emitInplaceT hint e buildDecls =
   extendInplaceT do
-    scope <- getScope
+    scope <- unsafeGetScope
     return $ withFresh hint scope \b ->
       DistinctAbs (buildDecls b (sink e)) (binderName b)
 
@@ -1609,7 +1602,7 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => ScopeReader (InplaceT bindings decls m) where
   getDistinct = UnsafeMakeInplaceT \_ ->
     return (Distinct, emptyOutFrag)
-  getScope = toScope <$> getOutMapInplaceT
+  unsafeGetScope = toScope <$> getOutMapInplaceT
   liftImmut cont = locallyImmutableInplaceT do
     Distinct <- getDistinct
     cont

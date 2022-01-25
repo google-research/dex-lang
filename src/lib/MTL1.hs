@@ -52,10 +52,10 @@ instance Monoid1 w => MonadTrans11 (WriterT1 w) where
   lift11 = WriterT1 . lift
 
 instance (SinkableE w, Monoid1 w, EnvReader m) => EnvReader (WriterT1 w m) where
-  getEnv = lift11 getEnv
+  unsafeGetEnv = lift11 unsafeGetEnv
 
 instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) where
-  getScope = lift11 getScope
+  unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
   liftImmut m = WriterT1 $ WriterT $ fromPairE <$>
     (liftImmut $ (uncurry PairE) <$> (runWriterT $ runWriterT1' m))
@@ -84,10 +84,10 @@ instance MonadTrans11 (ReaderT1 r) where
   lift11 = ReaderT1 . lift
 
 instance (SinkableE r, EnvReader m) => EnvReader (ReaderT1 r m) where
-  getEnv = lift11 getEnv
+  unsafeGetEnv = lift11 unsafeGetEnv
 
 instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
-  getScope = lift11 getScope
+  unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
   liftImmut m = ReaderT1 $ ReaderT \r ->
     liftImmut $ runReaderT (runReaderT1' m) r
@@ -120,10 +120,10 @@ instance MonadTrans11 (StateT1 s) where
   lift11 = WrapStateT1 . lift
 
 instance (SinkableE s, EnvReader m) => EnvReader (StateT1 s m) where
-  getEnv = lift11 getEnv
+  unsafeGetEnv = lift11 unsafeGetEnv
 
 instance (SinkableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
-  getScope = lift11 getScope
+  unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
   liftImmut m = StateT1 \s -> fromPairE <$> liftImmut do
     s' <- sinkM s
@@ -196,10 +196,10 @@ instance Monad (m n) => Fallible (MaybeT1 m n) where
   addErrCtx _ cont = cont
 
 instance EnvReader m => EnvReader (MaybeT1 m) where
-  getEnv = lift11 getEnv
+  unsafeGetEnv = lift11 unsafeGetEnv
 
 instance ScopeReader m => ScopeReader (MaybeT1 m) where
-  getScope = lift11 getScope
+  unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
   liftImmut m = MaybeT1 $ MaybeT $ fromMaybeE <$>
     (liftImmut $ toMaybeE <$> (runMaybeT $ runMaybeT1' m))
