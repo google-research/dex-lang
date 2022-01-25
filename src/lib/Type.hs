@@ -263,15 +263,9 @@ instance CheckableE SynthCandidates where
 
 instance CheckableB (RecSubstFrag Binding) where
   checkB frag cont = do
-    Immut <- getImmut
-    scope <- unsafeGetScope
-    env <- getSubst
-    Distinct <- getDistinct
-    DistinctAbs frag' env' <- return $ refreshRecSubstFrag scope env frag
-    extendEnv (EnvFrag frag' Nothing) do
+    substBinders frag \frag' -> do
       void $ dropSubst $ traverseSubstFrag checkE $ fromRecSubstFrag frag'
-      withSubst env' do
-        cont frag'
+      cont frag'
 
 instance CheckableB EnvFrag where
   checkB (EnvFrag frag effs) cont = do
@@ -405,7 +399,7 @@ instance HasType Atom where
         numel |: IdxRepTy
         ty@(PtrTy _) <- getTypeE ptr
         return ty
-      withFreshBinders (zip (repeat NoHint) ptrTys) \bs' vs -> do
+      withFreshBinders ptrTys \bs' vs -> do
         extendSubst (bs @@> vs) do
           bodyTy <- getTypeE body
           liftHoistExcept $ hoist bs' bodyTy

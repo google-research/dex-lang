@@ -92,9 +92,10 @@ class (EnvReader m, EnvExtender m, Fallible1 m)
 
 class Builder m => ScopableBuilder (m::MonadKind1) where
   buildScoped
-    :: (SinkableE e, Immut n)
+    :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
-    -> m n (DistinctAbs (Nest Decl) e n)
+    -> (forall l.           DExt n l  => Nest Decl n l -> e l -> m l a)
+    -> m n a
 
 type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
 type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
@@ -144,7 +145,8 @@ class (EnvReader m, MonadFail1 m)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: (Immut n, SinkableE e)
                   => (forall l. (Mut l, DExt n l) => m l (e l))
-                  -> m n (DistinctAbs TopEnvFrag e n)
+                  -> (forall l.        (DExt n l) => TopEnvFrag n l -> e l -> m l a)
+                  -> m n a
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
 emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm mempty mempty
@@ -202,17 +204,21 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
 
   emitNamelessEnv bs = TopBuilderT $ extendTrivialInplaceT bs
 
-  localTopBuilder cont = TopBuilderT $
-    locallyMutableInplaceT $ runTopBuilderT' cont
+  localTopBuilder cont coda = TopBuilderT $
+    scopedInplace (runTopBuilderT' cont)
+                  (\decls result -> runTopBuilderT' $ coda decls result)
 
 instance (SinkableV v, TopBuilder m) => TopBuilder (SubstReaderT v m i) where
   emitBinding hint binding = SubstReaderT $ lift $ emitBinding hint binding
   emitEnv ab = SubstReaderT $ lift $ emitEnv ab
   emitNamelessEnv bs = SubstReaderT $ lift $ emitNamelessEnv bs
-  localTopBuilder cont = SubstReaderT $ ReaderT \env -> do
-    localTopBuilder do
-      Distinct <- getDistinct
-      runReaderT (runSubstReaderT' cont) (sink env)
+  localTopBuilder cont coda = SubstReaderT $ ReaderT \env -> do
+    localTopBuilder
+      (do Distinct <- getDistinct
+          runReaderT (runSubstReaderT' cont) (sink env))
+      (\decls result -> do
+         Distinct <- getDistinct
+         runReaderT (runSubstReaderT' $ coda decls result) (sink env))
 
 runTopBuilderT
   :: (Fallible m, Distinct n)
@@ -264,12 +270,13 @@ liftEmitBuilder cont = do
   emitDecls (unsafeCoerceB decls) result
 
 instance Fallible m => ScopableBuilder (BuilderT m) where
-  buildScoped cont = BuilderT $
-    locallyMutableInplaceT $
-      runBuilderT' do
-        Emits <- fabricateEmitsEvidenceM
-        Distinct <- getDistinct
-        cont
+  buildScoped cont coda = BuilderT $
+    scopedInplace
+      (runBuilderT' do
+         Emits <- fabricateEmitsEvidenceM
+         Distinct <- getDistinct
+         cont)
+      (\decls result -> runBuilderT' $ coda decls result)
 
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
@@ -287,28 +294,35 @@ instance Fallible m => EnvExtender (BuilderT m) where
         runBuilderT' cont
 
 instance (SinkableV v, ScopableBuilder m) => ScopableBuilder (SubstReaderT v m i) where
-  buildScoped cont = SubstReaderT $ ReaderT \env ->
-    buildScoped $
-      runReaderT (runSubstReaderT' cont) (sink env)
+  buildScoped cont coda = SubstReaderT $ ReaderT \env ->
+    buildScoped
+      (runReaderT (runSubstReaderT' cont) (sink env))
+      (\decls result -> runReaderT (runSubstReaderT' $ coda decls result) (sink env))
 
 instance (SinkableV v, Builder m) => Builder (SubstReaderT v m i) where
   emitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
 
 instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (OutReaderT e m) where
-  buildScoped cont = OutReaderT $ ReaderT \env ->
-    buildScoped do
-      env' <- sinkM env
-      runReaderT (runOutReaderT' cont) env'
+  buildScoped cont coda = OutReaderT $ ReaderT \env ->
+    buildScoped
+      (do env' <- sinkM env
+          runReaderT (runOutReaderT' cont) env')
+      (\decls result -> do
+          env' <- sinkM env
+          runReaderT (runOutReaderT' $ coda decls result) env')
 
 instance (SinkableE e, Builder m) => Builder (OutReaderT e m) where
   emitDecl hint ann expr =
     OutReaderT $ lift $ emitDecl hint ann expr
 
 instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (ReaderT1 e m) where
-  buildScoped cont = ReaderT1 $ ReaderT \env ->
-    buildScoped do
-      env' <- sinkM env
-      runReaderT (runReaderT1' cont) env'
+  buildScoped cont coda = ReaderT1 $ ReaderT \env ->
+    buildScoped
+      (do env' <- sinkM env
+          runReaderT (runReaderT1' cont ) env')
+      (\decls result -> do
+          env' <- sinkM env
+          runReaderT (runReaderT1' $ coda decls result) env')
 
 instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
   emitDecl hint ann expr =
@@ -351,15 +365,12 @@ buildBlock
   :: ScopableBuilder m
   => (forall l. (Emits l, DExt n l) => m l (Atom l))
   -> m n (Block n)
-buildBlock cont = liftImmut do
-  DistinctAbs decls results <- buildScoped do
-    result <- cont
+buildBlock cont =
+  buildScoped cont \decls result -> do
     ty <- cheapNormalize =<< getType result
-    return $ result `PairE` ty
-  let (result `PairE` ty) = results
-  ty' <- liftHoistExcept $ hoist decls ty
-  Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
-  return $ Block (BlockAnn ty') decls' result'
+    ty' <- liftHoistExcept $ hoist decls ty
+    Abs decls' result' <- return $ inlineLastDecl decls $ Atom result
+    return $ Block (BlockAnn ty') decls' result'
 
 makeBlock :: EnvReader m => Nest Decl n l -> Expr l -> m l (Block n)
 makeBlock decls expr = do

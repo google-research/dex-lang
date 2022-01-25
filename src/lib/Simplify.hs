@@ -69,8 +69,10 @@ instance Fallible (SimplifyM i o) where
 
 -- TODO: figure out why we can't derive this one (here and elsewhere)
 instance ScopableBuilder (SimplifyM i) where
-  buildScoped cont = SimplifyM $ SubstReaderT $ ReaderT \env ->
-    buildScoped $ runSubstReaderT (sink env) (runSimplifyM' cont)
+  buildScoped cont coda = SimplifyM $ SubstReaderT $ ReaderT \env ->
+    buildScoped
+      (runSubstReaderT (sink env) (runSimplifyM' cont))
+      (\decls result -> runSubstReaderT (sink env) (runSimplifyM' $ coda decls result))
 
 -- === Top-level API ===
 
@@ -191,9 +193,7 @@ defuncCase scrut alts resultTy = do
       => SplitDataNonData n -> Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
     simplifyAlt split (Abs bs body) = fromPairE <$> liftImmut do
       substBinders bs \bs' -> do
-        DistinctAbs decls result <- buildScoped $ simplifyBlock body
-        -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-        extendEnv (toEnvFrag decls) do
+        buildScoped (simplifyBlock body) \decls result -> do
           let locals = toScopeFrag bs' >>> toScopeFrag decls
           -- TODO: this might be too cautious. The type only needs to be hoistable
           -- above the decls. In principle it can still mention vars from the lambda
@@ -351,9 +351,7 @@ simplifyAbs
   => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
 simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
   substBinders bs \bs' -> do
-    DistinctAbs decls result <- buildScoped $ simplifyBlock body
-    -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-    extendEnv (toEnvFrag decls) do
+    buildScoped (simplifyBlock body) \decls result -> do
       resultTy <- getType result
       isData resultTy >>= \case
         True -> do

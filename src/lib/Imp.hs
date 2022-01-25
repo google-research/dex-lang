@@ -144,16 +144,18 @@ instance ImpBuilder ImpM where
      makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
      makeImpBinders _ _ = error "zip error"
 
-  buildScopedImp cont = ImpM $ ScopedT1 \s ->
-    fmap (,s) $ locallyMutableInplaceT $ flip runScopedT1 (sink s) $ runImpM' do
-      Emits <- fabricateEmitsEvidenceM
-      Distinct <- getDistinct
-      cont
+  buildScopedImp cont coda = undefined
+  -- buildScopedImp cont = ImpM $ ScopedT1 \s ->
+  --   fmap (,s) $ locallyMutableInplaceT $ flip runScopedT1 (sink s) $ runImpM' do
+  --     Emits <- fabricateEmitsEvidenceM
+  --     Distinct <- getDistinct
+  --     cont
 
 instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
   emitMultiReturnInstr instr = SubstReaderT $ lift $ emitMultiReturnInstr instr
-  buildScopedImp cont = SubstReaderT $ ReaderT \env ->
-    buildScopedImp $ runSubstReaderT (sink env) $ cont
+  buildScopedImp cont coda = undefined
+  -- buildScopedImp cont = SubstReaderT $ ReaderT \env ->
+  --   buildScopedImp $ runSubstReaderT (sink env) $ cont
 
 instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)
 
@@ -176,22 +178,23 @@ translateTopLevel :: (Immut o, Imper m)
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
                   -> m i o (ImpFunctionWithRecon o)
-translateTopLevel cc maybeDest (Abs bs body) = do
-  let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  DistinctAbs bs' (DistinctAbs decls resultAtom) <-
-    buildImpNaryAbs argTys \vs ->
-      extendSubst (bs @@> map Rename vs) do
-        outDest <- case maybeDest of
-          Nothing   -> makeAllocDest Unmanaged =<< getType =<< substM body
-          Just dest -> sinkM dest
-        void $ translateBlock (Just outDest) body
-        destToAtom outDest
-  let localEnv = toEnvFrag $ PairB bs' decls
-  (results, recon) <- extendEnv localEnv $
-                        buildRecon localEnv resultAtom
-  let funImpl = Abs bs' $ ImpBlock decls results
-  let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
-  return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
+translateTopLevel cc maybeDest (Abs bs body) = undefined
+-- translateTopLevel cc maybeDest (Abs bs body) = do
+--   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
+--   DistinctAbs bs' (DistinctAbs decls resultAtom) <-
+--     buildImpNaryAbs argTys \vs ->
+--       extendSubst (bs @@> map Rename vs) do
+--         outDest <- case maybeDest of
+--           Nothing   -> makeAllocDest Unmanaged =<< getType =<< substM body
+--           Just dest -> sinkM dest
+--         void $ translateBlock (Just outDest) body
+--         destToAtom outDest
+--   let localEnv = toEnvFrag $ PairB bs' decls
+--   (results, recon) <- extendEnv localEnv $
+--                         buildRecon localEnv resultAtom
+--   let funImpl = Abs bs' $ ImpBlock decls results
+--   let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
+--   return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)
            => b n l
@@ -561,32 +564,34 @@ buildLocalDest
   :: (SinkableE e)
   => (forall l. (Mut l, DExt n l) => DestM l (e l))
   -> DestM n (AbsPtrs e n)
-buildLocalDest cont = liftImmut do
-  DistinctAbs (DestEmissions ptrInfo ptrBs decls) e <-
-    DestM $ StateT1 \s -> do
-      DistinctAbs bs (PairE e s') <- locallyMutableInplaceT $ fmap toPairE $ flip runStateT1 (sink s) $ runDestM' cont
-      s'' <- hoistState s bs s'
-      return $ (DistinctAbs bs e, s'')
-  case decls of
-    Empty -> return $ AbsPtrs (Abs ptrBs e) ptrInfo
-    _ -> error "shouldn't have decls without `Emits`"
+buildLocalDest cont = undefined
+-- buildLocalDest cont = liftImmut do
+--   DistinctAbs (DestEmissions ptrInfo ptrBs decls) e <-
+--     DestM $ StateT1 \s -> do
+--       DistinctAbs bs (PairE e s') <- locallyMutableInplaceT $ fmap toPairE $ flip runStateT1 (sink s) $ runDestM' cont
+--       s'' <- hoistState s bs s'
+--       return $ (DistinctAbs bs e, s'')
+--   case decls of
+--     Empty -> return $ AbsPtrs (Abs ptrBs e) ptrInfo
+--     _ -> error "shouldn't have decls without `Emits`"
 
 -- TODO: this is mostly copy-paste from Inference
 buildDeclsDest
   :: (Mut n, SinkableE e)
   => (forall l. (Emits l, DExt n l) => DestM l (e l))
   -> DestM n (Abs (Nest Decl) e n)
-buildDeclsDest cont =
-  DestM $ StateT1 \s -> do
-    Abs decls (PairE e s') <- extendInplaceT do
-      DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
-        locallyMutableInplaceT do
-          Emits <- fabricateEmitsEvidenceM
-          toPairE <$> flip runStateT1 (sink s) (runDestM' cont)
-      withSubscopeDistinct decls $
-        return $ DistinctAbs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
-    s'' <- hoistState s decls s'
-    return $ (Abs decls e, s'')
+buildDeclsDest cont = undefined
+-- buildDeclsDest cont =
+--   DestM $ StateT1 \s -> do
+--     Abs decls (PairE e s') <- extendInplaceT do
+--       DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
+--         locallyMutableInplaceT do
+--           Emits <- fabricateEmitsEvidenceM
+--           toPairE <$> flip runStateT1 (sink s) (runDestM' cont)
+--       withSubscopeDistinct decls $
+--         return $ DistinctAbs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
+--     s'' <- hoistState s decls s'
+--     return $ (Abs decls e, s'')
 
 buildBlockDest
   :: Mut n
@@ -607,21 +612,22 @@ buildAbsDest
   => NameHint -> binding n
   -> (forall l. (Mut l, DExt n l) => Name c l -> DestM l (e l))
   -> DestM n (Abs (BinderP c binding) e n)
-buildAbsDest hint binding cont =
-  DestM $ StateT1 \s -> do
-    Abs b (PairE e s') <- extendInplaceT do
-      scope <- unsafeGetScope
-      withFresh hint scope \b -> do
-        let b' = b :> sink binding
-        let bExt = toEnvFrag b'
-        extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
-          DistinctAbs emissions result <- locallyMutableInplaceT do
-            fmap toPairE $ flip runStateT1 (sink s) $ runDestM' $ cont $ sink $ binderName b
-          PairB emissions' b'' <- liftHoistExcept $ exchangeBs $ PairB b' emissions
-          withSubscopeDistinct b'' $
-            return $ DistinctAbs emissions' (Abs b'' result)
-    s'' <- hoistState s b s'
-    return (Abs b e, s'')
+buildAbsDest hint binding cont = undefined
+-- buildAbsDest hint binding cont =
+--   DestM $ StateT1 \s -> do
+--     Abs b (PairE e s') <- extendInplaceT do
+--       scope <- unsafeGetScope
+--       withFresh hint scope \b -> do
+--         let b' = b :> sink binding
+--         let bExt = toEnvFrag b'
+--         extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
+--           DistinctAbs emissions result <- locallyMutableInplaceT do
+--             fmap toPairE $ flip runStateT1 (sink s) $ runDestM' $ cont $ sink $ binderName b
+--           PairB emissions' b'' <- liftHoistExcept $ exchangeBs $ PairB b' emissions
+--           withSubscopeDistinct b'' $
+--             return $ DistinctAbs emissions' (Abs b'' result)
+--     s'' <- hoistState s b s'
+--     return (Abs b e, s'')
 
 -- decls emitted at the inner scope are hoisted to the outer scope
 -- (they must be hoistable, otherwise we'll get a hoisting error)
@@ -1101,9 +1107,10 @@ buildBlockImp
   :: ImpBuilder m
   => (forall l. (Emits l, DExt n l) => m l [IExpr l])
   -> m n (ImpBlock n)
-buildBlockImp cont = liftImmut do
-  DistinctAbs decls (ListE results) <- buildScopedImp $ ListE <$> cont
-  return $ ImpBlock decls results
+buildBlockImp cont = undefined
+-- buildBlockImp cont = liftImmut do
+--   DistinctAbs decls (ListE results) <- buildScopedImp $ ListE <$> cont
+--   return $ ImpBlock decls results
 
 destToAtom :: (ImpBuilder m, Emits n) => Dest n -> m n (Atom n)
 destToAtom dest = liftBuilderImp $ loadDest =<< sinkM dest
@@ -1285,8 +1292,9 @@ class (EnvReader m, EnvExtender m, Fallible1 m, MonadIxCache1 m)
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
     :: (SinkableE e, Immut n)
-    => (forall l. (Emits l, Ext n l, Distinct l) => m l (e l))
-    -> m n (DistinctAbs (Nest ImpDecl) e n)
+    => (forall l. (Emits l, DExt n l) => m l (e l))
+    -> (forall l.           DExt n l  => Nest ImpDecl n l -> m l a)
+    -> m n a
 
 type ImpBuilder2 (m::MonadKind2) = forall i. ImpBuilder (m i)
 
@@ -1298,17 +1306,6 @@ withFreshIBinder
 withFreshIBinder hint ty cont = do
   withFreshBinder hint (MiscBound $ BaseTy ty) \b ->
     cont $ IBinder b ty
-
-_buildImpAbs
-  :: ( Immut n, ImpBuilder m
-     , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
-  => NameHint -> IType
-  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (e l))
-  -> m n (DistinctAbs IBinder (DistinctAbs (Nest ImpDecl) e) n)
-_buildImpAbs hint ty body =
-  withFreshIBinder hint ty \b -> do
-    ab <- buildScopedImp $ sinkM (binderName b) >>= body
-    return $ DistinctAbs b ab
 
 emitCall :: (Emits n, ImpBuilder m)
          => NaryPiType n -> ImpFunName n -> [Atom n] -> m n (Atom n)
@@ -1330,29 +1327,30 @@ buildImpFunction
   -> [(NameHint, IType)]
   -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l [IExpr l])
   -> m n (ImpFunction n)
-buildImpFunction cc argHintsTys body = do
-  DistinctAbs bs (DistinctAbs decls (ListE results)) <-
-    buildImpNaryAbs argHintsTys \vs -> ListE <$> body vs
-  let resultTys = map getIType results
-  let impFun = IFunType cc (map snd argHintsTys) resultTys
-  return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
+buildImpFunction cc argHintsTys body = undefined
+-- buildImpFunction cc argHintsTys body = do
+--   DistinctAbs bs (DistinctAbs decls (ListE results)) <-
+--     buildImpNaryAbs argHintsTys \vs -> ListE <$> body vs
+--   let resultTys = map getIType results
+--   let impFun = IFunType cc (map snd argHintsTys) resultTys
+--   return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
 
-buildImpNaryAbs
-  :: ( Immut n, ImpBuilder m
-     , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
-  => [(NameHint, IType)]
-  -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l (e l))
-  -> m n (DistinctAbs (Nest IBinder) (DistinctAbs (Nest ImpDecl) e) n)
-buildImpNaryAbs [] cont = do
-  Distinct <- getDistinct
-  DistinctAbs Empty <$> buildScopedImp (cont [])
-buildImpNaryAbs ((hint,ty) : rest) cont = do
-  withFreshIBinder hint ty \b -> do
-    ab <- buildImpNaryAbs rest \vs -> do
-      v <- sinkM $ binderName b
-      cont (v : vs)
-    DistinctAbs bs body <- return ab
-    return $ DistinctAbs (Nest b bs) body
+-- buildImpNaryAbs
+--   :: ( Immut n, ImpBuilder m
+--      , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
+--   => [(NameHint, IType)]
+--   -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l (e l))
+--   -> m n (DistinctAbs (Nest IBinder) (DistinctAbs (Nest ImpDecl) e) n)
+-- buildImpNaryAbs [] cont = do
+--   Distinct <- getDistinct
+--   DistinctAbs Empty <$> buildScopedImp (cont [])
+-- buildImpNaryAbs ((hint,ty) : rest) cont = do
+--   withFreshIBinder hint ty \b -> do
+--     ab <- buildImpNaryAbs rest \vs -> do
+--       v <- sinkM $ binderName b
+--       cont (v : vs)
+--     DistinctAbs bs body <- return ab
+--     return $ DistinctAbs (Nest b bs) body
 
 emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do
@@ -1427,13 +1425,12 @@ toScalarAtom ie = case ie of
 
 -- === Type classes ===
 
--- TODO: we shouldn't need the rank-2 type here because ImpBuilder and Builder
--- are part of the same conspiracy.
 liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, DExt n l) => BuilderM l (e l))
                -> m n (e n)
 liftBuilderImp cont = do
-  Abs decls result <- liftBuilder $ liftImmut $ liftM fromDistinctAbs $ buildScoped cont
+  Abs decls result <- liftBuilder $
+    buildScoped cont \decls result -> return $ Abs decls result
   runSubstReaderT idSubst $ translateDeclNest decls $ substM result
 
 -- TODO: should we merge this with `liftBuilderImp`? Not much harm in

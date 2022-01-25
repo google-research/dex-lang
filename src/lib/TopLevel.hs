@@ -151,10 +151,11 @@ liftPassesM bench m = do
   TopStateEx env <- getTopStateEx
   (result, outs) <- liftIO $ runPassesM bench opts env do
     Immut <- return $ toImmutEvidence env
-    localTopBuilder $ m >> return UnitE
+    localTopBuilder (m >> return UnitE) \frag UnitE ->
+      return $ TopStateEx $ extendOutMap env frag
   case result of
-    Success (DistinctAbs bindingsFrag UnitE) -> do
-      setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
+    Success newTopState -> do
+      setTopStateEx newTopState
       return $ Result outs (Success ())
     Failure errs -> do
       return $ Result outs (Failure errs)
@@ -227,14 +228,18 @@ evalSourceBlock' block = case sbContents block of
 
 runEnvQuery :: (Immut n, MonadPasses m) => EnvQuery -> m n ()
 runEnvQuery query = do
-  env <- unsafeGetEnv
   case query of
-    DumpSubst -> logTop $ TextOut $ pprint $ env
-    InternalNameInfo name ->
-      case lookupSubstFragRaw (fromRecSubst $ getNameEnv env) name of
+    DumpSubst -> do
+      LiftE envText <- withEnv \env -> LiftE $ pprint env
+      logTop $ TextOut envText
+    InternalNameInfo name -> do
+      LiftE resultText <- withEnv \env -> LiftE $
+        case lookupSubstFragRaw (fromRecSubst $ getNameEnv env) name of
+          Nothing -> Nothing
+          Just (WithColor binding) -> Just $ pprint binding
+      case resultText of
         Nothing -> throw UnboundVarErr $ pprint name
-        Just (WithColor binding) ->
-          logTop $ TextOut $ pprint binding
+        Just text -> logTop $ TextOut text
     SourceNameInfo name -> do
       lookupSourceMap name >>= \case
         Nothing -> throw UnboundVarErr $ pprint name
@@ -476,7 +481,9 @@ instance TopBuilder PassesM where
 
   emitEnv env = PassesM $ emitEnv env
   emitNamelessEnv env = PassesM $ emitNamelessEnv env
-  localTopBuilder cont = PassesM $ localTopBuilder $ runPassesM' cont
+  localTopBuilder cont coda = PassesM $ localTopBuilder
+    (runPassesM' cont)
+    (\decls result -> runPassesM' $ coda decls result)
 
 instance MonadPasses PassesM where
   requireBenchmark = PassesM $ asks \(bench, _, _) -> bench

@@ -162,8 +162,7 @@ emitAtomSubstFrag frag = go $ toSubstPairs frag
 class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
       , Builder m, ScopableBuilder m)
       => InfBuilder (m::MonadKind1) where
-
-  -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
+  -- XXX: we should almost always use the zonking `buildDeclsInf` and variant,
   -- except where it's not possible because the result isn't atom-substitutable,
   -- such as the source map at the top level.
   buildDeclsInfUnzonked
@@ -364,13 +363,19 @@ liftInfererM cont = runSubstReaderT idSubst $ liftInfererMSubst $ cont
 runLocalInfererM
   :: (Immut n, SinkableE e)
   => (forall l. (EmitsInf l, DExt n l) => InfererM i l (e l))
-  -> InfererM i n (DistinctAbs InfOutFrag e n)
-runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-  DistinctAbs fg (PairE ans s') <- locallyMutableInplaceT do
-    Distinct <- getDistinct
-    EmitsInf <- fabricateEmitsInfEvidenceM
-    toPairE <$> (runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s))
-  return (DistinctAbs fg ans, hoistRequiredIfaces fg s')
+  -> (forall l.              DExt n l  => InfOutFrag n l -> e l -> InfererM i l a)
+  -> InfererM i n a
+runLocalInfererM cont coda =
+  InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
+    scopedInplace (do
+      Distinct <- getDistinct
+      EmitsInf <- fabricateEmitsInfEvidenceM
+      liftM toPairE $ flip runStateT1 (sink s) $
+        runSubstReaderT (sink env) $ runInfererM' cont
+      ) \fg (PairE result s') -> do
+          (result', s'') <- flip runStateT1 (sink s') $ runSubstReaderT (sink env) $
+                              runInfererM' $ coda fg result
+          return (result', hoistRequiredIfaces fg s'')
 
 initInfOutMap :: Env n -> InfOutMap n
 initInfOutMap bindings =
@@ -402,12 +407,12 @@ instance Solver (InfererM i) where
     return defaults
 
   solveLocal cont = liftImmut do
-    DistinctAbs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
-    case unsolvedInfNames of
-      Empty -> return result
-      Nest (_:>RightE (InfVarBound _ ctx)) _ ->
-        addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
-      _ -> error "not possible?"
+    runLocalInfererM cont \(InfOutFrag unsolvedInfNames _ _) result ->
+      case unsolvedInfNames of
+        Empty -> return result
+        Nest (_:>RightE (InfVarBound _ ctx)) _ ->
+          addSrcContext ctx $ throw TypeErr $ "Ambiguous type variable"
+        _ -> error "not possible?"
 
 instance InfBuilder (InfererM i) where
   buildDeclsInfUnzonked cont = do
@@ -421,21 +426,22 @@ instance InfBuilder (InfererM i) where
         hoistThroughDecls scope frag resultWithState
       return (Abs decls result, hoistRequiredIfaces decls s')
 
-  buildAbsInf hint binding cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      Abs b (PairE result s') <- extendInplaceT do
-        scope <- unsafeGetScope
-        withFresh hint scope \b -> do
-          let b' = b :> sink binding
-          let bExt = toEnvFrag b'
-          extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
-            DistinctAbs infFrag resultWithState <- locallyMutableInplaceT do
-              EmitsInf <- fabricateEmitsInfEvidenceM
-              toPairE <$> runStateT1 (
-                runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
-            PairB infFrag' b'' <- liftHoistExcept $ exchangeBs $ PairB b' infFrag
-            return $ withSubscopeDistinct b'' $ DistinctAbs infFrag' $ Abs b'' resultWithState
-      return (Abs b result, hoistRequiredIfaces b s')
+  buildAbsInf hint binding cont = undefined
+  -- buildAbsInf hint binding cont = do
+  --   InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
+  --     Abs b (PairE result s') <- extendInplaceT do
+  --       scope <- unsafeGetScope
+  --       withFresh hint scope \b -> do
+  --         let b' = b :> sink binding
+  --         let bExt = toEnvFrag b'
+  --         extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
+  --           DistinctAbs infFrag resultWithState <- locallyMutableInplaceT do
+  --             EmitsInf <- fabricateEmitsInfEvidenceM
+  --             toPairE <$> runStateT1 (
+  --               runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
+  --           PairB infFrag' b'' <- liftHoistExcept $ exchangeBs $ PairB b' infFrag
+  --           return $ withSubscopeDistinct b'' $ DistinctAbs infFrag' $ Abs b'' resultWithState
+  --     return (Abs b result, hoistRequiredIfaces b s')
 
 instance Inferer InfererM where
   liftSolverMInf m = InfererM $ SubstReaderT $ lift $ lift11 $
@@ -474,14 +480,17 @@ instance Builder (InfererM i) where
     emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
 
 instance ScopableBuilder (InfererM i) where
-  buildScoped cont = do
+  buildScoped cont coda = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      resultWithEmissions <- locallyMutableInplaceT do
+      scopedInplace (do
         Emits <- fabricateEmitsEvidenceM
-        toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-      DistinctAbs frag@(InfOutFrag emissions _ _) (PairE result s') <- return resultWithEmissions
-      let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
-      return (DistinctAbs decls result, hoistRequiredIfaces frag s')
+        liftM toPairE $ flip runStateT1 (sink s) $ runSubstReaderT (sink env) $ runInfererM' cont
+        )
+        \frag@(InfOutFrag emissions _ _) (PairE result s') -> do
+           let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
+           (result', s'') <- flip runStateT1 s' $ runSubstReaderT (sink env) $
+                               runInfererM' $ coda decls result
+           return (result', hoistRequiredIfaces frag s'')
 
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
@@ -1451,7 +1460,7 @@ checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
     -- We have to be careful not to emit inference vars out of the initial solve.
     -- The resulting type will never be used in downstream inference, so we can easily
     -- end up with fake ambiguous variables if they leak out.
-    DistinctAbs frag unsolvedSubset' <- liftInfererMSubst $ runLocalInfererM do
+    liftInfererMSubst $ runLocalInfererM (do
       (Abs decls result, unsolvedSubset) <- gatherUnsolvedInterfaces $
         buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
       -- Note that even if the normalization succeeds here, we can't short-circuit
@@ -1469,10 +1478,11 @@ checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
         Nothing       -> addSrcContext pos $ throw NotImplementedErr $
           "A type expression has interface constraints that depend on values " ++
           "local to the expression"
-        Just unsolved -> return $ unsolvedSubset <> unsolved
-    return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
-      GatherRequired unsolvedSubset -> unsolvedSubset
-      FailIfRequired                -> error "Unreachable"
+        Just unsolved -> return $ unsolvedSubset <> unsolved )
+      \frag unsolvedSubset' -> do
+         return $ case hoistRequiredIfaces frag (GatherRequired unsolvedSubset') of
+           GatherRequired unsolvedSubset -> unsolvedSubset
+           FailIfRequired                -> error "Unreachable"
   cont unsolvedSubset $ checkUType uty
 
 checkUType :: (EmitsInf o, Inferer m) => UType i -> m i o (Type o)
@@ -1683,14 +1693,13 @@ instance Solver SolverM where
     return defaults
 
   solveLocal cont = SolverM $ liftImmut do
-    results <- locallyMutableInplaceT do
-      Distinct <- getDistinct
+    scopedInplace (do
       EmitsInf <- fabricateEmitsInfEvidenceM
       runSolverM' cont
-    DistinctAbs (SolverOutFrag unsolvedInfNames _ _) result <- return results
-    case hoist unsolvedInfNames result of
-      HoistSuccess result' -> return result'
-      HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+      ) \(SolverOutFrag unsolvedInfNames _ _) result ->
+          case hoist unsolvedInfNames result of
+            HoistSuccess result' -> return result'
+            HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
 
 instance Unifier SolverM
 
@@ -1931,12 +1940,13 @@ renameForPrinting e = do
   let hints = take (length infVars) $ map fromString $
                 map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
   Distinct <- getDistinct
-  scope <- toScope <$> unsafeGetEnv  -- TODO: figure out how to do it safely
-  return $ withManyFresh hints scope \bs' ->
-    runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
-      ab' <- sinkM ab
-      e' <- applyNaryAbs ab' $ nestToList (sink . nameBinderName) bs'
-      return $ Abs bs' e'
+  withEnv \env -> do
+    let scope = toScope env
+    withManyFresh hints scope \bs' ->
+      runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
+        ab' <- sinkM ab
+        e' <- applyNaryAbs ab' $ nestToList (sink . nameBinderName) bs'
+        return $ Abs bs' e'
 
 -- === dictionary synthesis ===
 
@@ -2000,7 +2010,8 @@ instance Synther SyntherM where
     localOutReader givens cont
 
 instance ScopableBuilder SyntherM where
-  buildScoped cont = SyntherM $ buildScoped $ runSyntherM' cont
+  buildScoped cont coda =
+    SyntherM $ buildScoped (runSyntherM' cont) (\d e -> runSyntherM' $ coda d e)
 
 liftSyntherM :: EnvReader m => SyntherM n a -> m n [(a, DerivationKind)]
 liftSyntherM cont =
@@ -2185,8 +2196,10 @@ instance GenericTraverser DictSynthTraverserM where
   traverseExpr expr = traverseExprDefault expr
 
 instance ScopableBuilder (DictSynthTraverserM i) where
-  buildScoped cont =
-    DictSynthTraverserM $ buildScoped $ runDictSynthTraverserM' cont
+  buildScoped cont coda =
+    DictSynthTraverserM $ buildScoped
+      (runDictSynthTraverserM' cont)
+      (\decls result -> runDictSynthTraverserM' $ coda decls result)
 
 -- === Inference-specific builder patterns ===
 

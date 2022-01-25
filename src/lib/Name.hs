@@ -25,7 +25,7 @@ module Name (
   extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
-  SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
+  SubstV, InplaceT (..), Inplace (..), extendInplaceT, extendInplaceTLocal,
   liftBetweenInplaceTs, emitInplaceT,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -72,7 +72,7 @@ module Name (
   OutReaderT (..), OutReader (..), runOutReaderT,
   ExtWitness (..),
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
-  toSubstPairs, fromSubstPairs, SubstPair (..), refreshRecSubstFrag,
+  toSubstPairs, fromSubstPairs, SubstPair (..),
   substAbsDistinct, refreshAbs,
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
   HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
@@ -84,7 +84,7 @@ module Name (
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags,
   freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
-  locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
+  locallyImmutableInplaceT, toExtWitness,
   checkEmpty, updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence, fabricateImmutEvidence,
@@ -1428,8 +1428,29 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m, AlwaysImmut m)
 
 -- === in-place scope updating monad -- immutable fragment ===
 
+class Inplace (decls::B) (m::MonadKind1) | m -> decls where
+  -- XXX: this isn't labeled "unsafe", but you have to be doing something unsafe
+  -- to be able to call it! Under normal circumstances, you shouldn't have `Mut
+  -- n` and `DistinctAbs d e n` at the same time, because anything you emit will
+  -- invalidate the distinctness. The intended use is that you package this
+  -- together with `unsafeGetScope` into something safe, like `emitDecl` in
+  -- Builder.
+  extendInplace :: (Mut n, SinkableE e) => DistinctAbs decls e n -> m n (e n)
+  scopedInplace
+    :: SinkableE e
+    => (forall l. (Mut l, DExt n l) => m l (e l))
+    -> (forall l.         DExt n l => decls n l -> e l -> m l a)
+    -> m n a
+
 data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
   { unsafeRunInplaceT :: Distinct n => bindings n -> m (a, decls UnsafeS UnsafeS) }
+
+instance (ExtOutMap env decls, Monad m)
+         => Inplace decls (InplaceT env decls m) where
+
+  extendInplace = undefined
+
+  scopedInplace cont coda = undefined
 
 runInplaceT
   :: (ExtOutMap b d, Monad m)
@@ -1483,18 +1504,6 @@ extendInplaceT cont = do
   Distinct <- getDistinct
   DistinctAbs decls result <- cont
   UnsafeMakeInplaceT $ const $ return (unsafeCoerceE result, unsafeCoerceB decls)
-
-locallyMutableInplaceT
-  :: forall m b d n e.
-     (ExtOutMap b d, Monad m, SinkableE e)
-  => Immut n
-  => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
-  -> InplaceT b d m n (DistinctAbs d e n)
-locallyMutableInplaceT cont = do
-  UnsafeMakeInplaceT \bindings -> do
-    (e, decls) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
-                    unsafeRunInplaceT cont bindings
-    return (DistinctAbs (unsafeCoerceB decls) e, emptyOutFrag)
 
 -- XXX: be careful with this. See note [LiftImmutAndFriends]
 locallyImmutableInplaceT
@@ -2084,16 +2093,6 @@ renameSubstPairBinders env (Nest (SubstPair b v) rest) cont =
     renameSubstPairBinders env' rest \env'' rest' ->
       cont env'' (Nest (SubstPair b' v) rest')
 
-refreshRecSubstFrag :: (Distinct o,  SinkableV v, SinkableV substVal, SubstV substVal v)
-                  => Scope o
-                  -> Subst substVal i o
-                  -> RecSubstFrag v i i'
-                  -> DistinctAbs (RecSubstFrag v) (Subst substVal i') o
-refreshRecSubstFrag scope env (RecSubstFrag frag) =
-  renameSubstPairBindersPure scope env (toSubstPairs frag) \scope' env' pairs ->
-    let frag' = fmapSubstFrag (\_ val -> fmapNames scope' (env'!) val) (fromSubstPairs pairs)
-    in DistinctAbs (RecSubstFrag frag') env'
-
 substAbsDistinct
   :: (Distinct o, SubstB v b, SubstE v e, FromName v)
   => Scope o -> Subst v i o -> Abs b e i -> DistinctAbs b e o
@@ -2101,25 +2100,9 @@ substAbsDistinct scope env (Abs b e) =
   substB (scope, env) b \env' b' ->
     DistinctAbs b' $ substE env' e
 
-refreshAbs :: forall n b e.
-              (Distinct n, SubstB Name b, SubstE Name e)
+refreshAbs :: forall n b e. (Distinct n, SubstB Name b, SubstE Name e)
            => Scope n -> Abs b e n -> DistinctAbs b e n
 refreshAbs scope ab = substAbsDistinct scope (idSubst :: Subst Name n n) ab
-
-renameSubstPairBindersPure
-  :: (Distinct o, SinkableV v, SinkableV substVal, FromName substVal)
-  => Scope o
-  -> Subst substVal i o
-  -> Nest (SubstPair v ignored) i i'
-  -> (forall o'. Distinct o' => Scope o' -> Subst substVal i' o' -> Nest (SubstPair v ignored) o o' -> a)
-  -> a
-renameSubstPairBindersPure scope env Empty cont = cont scope env Empty
-renameSubstPairBindersPure scope env (Nest (SubstPair b v) rest) cont = do
-  withFresh (getNameHint b) scope \b' -> do
-    let env' = sink env <>> b @> (fromName $ binderName b')
-    let scope' = extendOutMap scope $ toScopeFrag b'
-    renameSubstPairBindersPure scope' env' rest \scope'' env'' rest' ->
-      cont scope'' env'' $ Nest (SubstPair b' v) rest'
 
 instance SinkableV v => SinkableB (RecSubstFrag v) where
   sinkingProofB _ _ _ = todoSinkableProof

@@ -597,7 +597,6 @@ refreshBinders b cont = do
 substBinders
   :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
      , SubstReader v m, SubstB v b, BindsEnv b)
-  => Immut o
   => b i i'
   -> (forall o'. (Immut o', DExt o o') => b o o' -> m i' o' a)
   -> m i o a
@@ -642,21 +641,19 @@ withFreshBinder hint binding cont = do
 withFreshBinders
   :: (Color c, EnvExtender m, ToBinding binding c)
   => Immut n
-  => [(NameHint, binding n)]
+  => [binding n]
   -> (forall l. (Immut l, Distinct l, Ext n l)
               => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
   -> m n a
 withFreshBinders [] cont = do
   Distinct <- getDistinct
   cont Empty []
-withFreshBinders ((hint,binding):rest) cont = do
-  scope    <- unsafeGetScope
-  Distinct <- getDistinct
-  withFresh hint scope \b -> do
-    extendEnv (toEnvFrag (b:>binding)) do
-      rest' <- forM rest \(h, bs) -> (h,) <$> sinkM bs
-      withFreshBinders rest' \bs vs ->
-        cont (Nest (b:>binding) bs) (sink (binderName b) : vs)
+withFreshBinders (binding:rest) cont = do
+  withFreshBinder NoHint binding \b -> do
+    ListE rest' <- sinkM $ ListE rest
+    withFreshBinders rest' \bs vs ->
+      cont (Nest (b :> binding) bs)
+           (sink (binderName b) : vs)
 
 withFreshLamBinder
   :: (EnvExtender m)
@@ -2635,6 +2632,9 @@ instance SubstB Name EnvFrag
 
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
+
+instance BindsEnv (RecSubstFrag Binding) where
+  toEnvFrag frag = EnvFrag frag mempty
 
 instance BindsEnv UnitB where
   toEnvFrag UnitB = emptyOutFrag
