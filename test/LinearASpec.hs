@@ -44,8 +44,8 @@ gradient prog f args = do
   -- The tape is a tuple at the end; split it into a singleton list
   let (primal, tape) = splitAt (length primal_tape - 1) primal_tape
   (Result primal []) `shouldBe` expPrimal
-  let (Result empty grad) = evalFunc tujProg (f ++ ".lin") tape [FloatVal 1.0]
-  empty `shouldBe` []
+  let (Result empty2 grad) = evalFunc tujProg (f ++ ".lin") tape [FloatVal 1.0]
+  empty2 `shouldBe` []
   return grad
 
 spec :: Spec
@@ -212,7 +212,7 @@ spec = do
       grad <- gradient p "add" [2.0, 2.0]
       grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
 
-    xit "function call" $ do
+    it "function call" $ do
       let p = Program $ M.fromList
                 [ ("add", add_func)
                 , ("f", FuncDef [("x", FloatType), ("y", FloatType)] [] (MixedType [FloatType] []) $
