@@ -27,12 +27,12 @@ data Expr = Ret [Var] [Var]
           -- Additional non-linear expressions
           | Var Var
           | Lit Float
-          | Tuple [Expr]
+          | Tuple [Var]
           | UnOp  UnOp  Expr
           | BinOp BinOp Expr Expr
           -- Additional linear expressions
           | LVar Var
-          | LTuple [Expr]
+          | LTuple [Var]
           | LAdd   Expr Expr
           | LScale Expr Expr
           | LZero
@@ -138,7 +138,7 @@ eval prog env expr = case expr of
   -- Nonlinear expressions
   Var v     -> result $ env ! v
   Lit f     -> result $ FloatVal f
-  Tuple es  -> result $ TupleVal $ fromResult . eval prog env <$> es
+  Tuple vs  -> result $ TupleVal $ (env !) <$> vs
   UnOp op e -> do
     let Result [FloatVal x] [] = eval prog env e
     result $ FloatVal $ f x
@@ -157,7 +157,7 @@ eval prog env expr = case expr of
         Mul -> (*)
   -- Linear expressions
   LVar v -> linResult $ env ! v
-  LTuple es -> linResult $ TupleVal $ fromLinResult . eval prog env <$> es
+  LTuple vs -> linResult $ TupleVal $ (env !) <$> vs
   LAdd le re -> do
     let Result [] [FloatVal lv] = eval prog env le
     let Result [] [FloatVal rv] = eval prog env re
@@ -175,16 +175,8 @@ eval prog env expr = case expr of
     result :: Value -> Result
     result v = Result [v] []
 
-    fromResult :: Result -> Value
-    fromResult (Result [v] []) = v
-    fromResult _ = error "Unexpected result type"
-
     linResult :: Value -> Result
     linResult v = Result [] [v]
-
-    fromLinResult :: Result -> Value
-    fromLinResult (Result [] [v]) = v
-    fromLinResult _ = error "Unexpected result type"
 
 -------------------- Free variable querying --------------------
 
@@ -193,6 +185,12 @@ instance Semigroup FreeVars where
   (FV v lv) <> (FV v' lv') = FV (v <> v') (lv <> lv')
 instance Monoid FreeVars where
   mempty = FV mempty mempty
+
+freeVar :: Var -> FreeVars
+freeVar v = FV (S.singleton v) mempty
+
+freeLinVar :: Var -> FreeVars
+freeLinVar v = FV mempty (S.singleton v)
 
 freeVars :: Expr -> FreeVars
 freeVars expr = case expr of
@@ -204,17 +202,17 @@ freeVars expr = case expr of
       FV freeE1 freeLinE1 = freeVars e1
       FV freeE2 freeLinE2 = freeVars e2
   Lit _  -> mempty
-  Var v  -> FV (S.singleton v) mempty
-  LVar v -> FV mempty (S.singleton v)
+  Var v  -> freeVar v
+  LVar v -> freeLinVar v
   LetUnpack vs v e -> FV (S.singleton v <> (free `S.difference` S.fromList vs)) freeLin
     where FV free freeLin = freeVars e
   LetUnpackLin vs v e -> FV free (S.singleton v <> (freeLin `S.difference` S.fromList vs))
     where FV free freeLin = freeVars e
   App _ vs linVs -> FV (S.fromList vs) (S.fromList linVs)
-  Tuple es       -> foldMap freeVars es
+  Tuple vs       -> FV (S.fromList vs) mempty
   UnOp  _ e      -> freeVars e
   BinOp _ le re  -> freeVars le <> freeVars re
-  LTuple es      -> foldMap freeVars es
+  LTuple vs      -> FV mempty (S.fromList vs)
   LAdd    le re  -> freeVars le <> freeVars re
   LScale  se le  -> freeVars se <> freeVars le
   LZero          -> mempty
@@ -284,13 +282,13 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
   App f args linArgs -> do
     let FuncDef _ _ resTy _ = progMap ! f
     -- Use (L)Tuple checking rules to verify that references to args are valid
-    void $ typecheck prog (env, mempty)    $ Tuple  $ Var  <$> args
-    void $ typecheck prog (mempty, linEnv) $ LTuple $ LVar <$> linArgs
+    void $ typecheck prog (env, mempty)    $ Tuple  args
+    void $ typecheck prog (mempty, linEnv) $ LTuple linArgs
     return $ resTy
-  Tuple exprs -> do
-    envs <- splitEnv exprs
-    tys <- forM (zip envs exprs) $ \(env, expr) -> do
-      eTy <- typecheck prog env expr
+  Tuple vars -> do
+    envs <- splitFV $ freeVar <$> vars
+    tys <- forM (zip envs vars) $ \(env, var) -> do
+      eTy <- typecheck prog env $ Var var
       case eTy of
         MixedType [ty] [] -> return ty
         _ -> throwError "Tuple: unexpected element type"
@@ -303,10 +301,10 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     typecheckEq lenv le $ MixedType [FloatType] []
     typecheckEq renv re $ MixedType [FloatType] []
     return $ MixedType [FloatType] []
-  LTuple exprs -> do
-    envs <- splitEnv exprs
-    tys <- forM (zip envs exprs) $ \(env, expr) -> do
-      eTy <- typecheck prog env expr
+  LTuple vars -> do
+    envs <- splitFV $ freeLinVar <$> vars
+    tys <- forM (zip envs vars) $ \(env, var) -> do
+      eTy <- typecheck prog env $ LVar var
       case eTy of
         MixedType [] [ty] -> return ty
         _ -> throwError "Tuple: unexpected element type"
@@ -334,8 +332,11 @@ typecheck prog@(Program progMap) tenv@(env, linEnv) expr = case expr of
     return $ MixedType [] []
   where
     splitEnv :: [Expr] -> Either String [TypeEnv]
-    splitEnv exprs = do
-      let (free, freeLin) = unzip $ ((\(FV a b) -> (a, b)) . freeVars) <$> exprs
+    splitEnv exprs = splitFV $ freeVars <$> exprs
+
+    splitFV :: [FreeVars] -> Either String [TypeEnv]
+    splitFV fvs = do
+      let (free, freeLin) = unzip $ (\(FV a b) -> (a, b)) <$> fvs
       check "unbound or unconsumed non-linear variable found" $ fold free == M.keysSet env
       check "linear variable consumed twice" $ S.size (fold freeLin) == sum (S.size <$> freeLin)
       check "unbound or unconsumed linear variable found" $ fold freeLin == M.keysSet linEnv
@@ -416,7 +417,7 @@ splitTangents scope env es = go scope env (freeVars <$> es)
             (subcontext, subscope, submaps) =
               go (scopeExt scope allFresh)
                 (envExt (M.withoutKeys env fvs) commonFvs dvs') tfvs
-            context = LetMixed [] [vst', vst2'] (Dup (LTuple $ LVar . (env !) <$> commonFvs)) .
+            context = LetMixed [] [vst', vst2'] (Dup (LTuple $ (env !) <$> commonFvs)) .
                       LetUnpackLin dvs'  vst' .
                       LetUnpackLin dvs2' vst2'
       where
@@ -445,9 +446,6 @@ jvp funcEnv scope subst env e = case e of
       --rec (scope <> S.fromList allFresh) (envExt env vs vs') e
     --where allFresh@(t : t' : vs') = take (length vs + 2) $ freshVars scope
   Tuple _ -> undefined
-  -- TODO: Is the scoping correct here?
-  --Tuple xs -> ctx $ shuffle ctxScope $ zipWith (uncurry $ rec ctxScope subst) envs xs
-    --where (ctx, ctxScope, envs) = splitTangents scope env xs
   App f vs_ [] -> ctx $ App (funcEnv ! f) ((subst !) <$> vs_) (zipWith (!) envs vs_)
     where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
   App _ _ _  -> expectNonLinear
@@ -500,21 +498,6 @@ retExprs scope e1 e2 =
   Ret [v] [v']
   where v : v' : _ = freshVars scope
 
--- | Take a bunch of expressions that produce mixed pairs and
--- convert them into an expr that returns a mixed pair containing
--- a tuple of their non-linear components and another with linear
--- components.
-shuffle :: Scope -> [Expr] -> Expr
-shuffle scope es = go [] [] (freshVars scope) es
-  where
-    go :: [Expr] -> [Expr] -> [Var] -> [Expr] -> Expr
-    go n l (v:v':_)  []    =
-      LetMixed [v] []   (Tuple  n) $
-      LetMixed []  [v'] (LTuple l) $
-        Ret [v] [v']
-    go n l (v:v':vt) (e:t) = LetMixed [v] [v'] e $ go (Var v:n) (LVar v':l) vt t
-    go _ _ _ _ = error "Impossible"
-
 -------------------- Unzip --------------------
 
 unzipProgram :: Program -> Program
@@ -545,7 +528,7 @@ unzipFunc orig new def =
     resVar:retVars = take (1 + length retTys) $ freshVars ctxScope
     nonlinBody = ctx $
       LetMixed retVars [] ubody $
-      LetMixed [resVar] [] (Tuple $ Var <$> residualVars) $
+      LetMixed [resVar] [] (Tuple residualVars) $
       Ret (retVars ++ [resVar]) []
     linBody = LetUnpack residualVars resVar $ ubody'
     nonlinFuncTy@(MixedType nonlinRetTys []) = case
@@ -668,7 +651,7 @@ transposeExpr scope expr cts = case expr of
     _ -> error "Binding non-linear values in transposition!"
   -- TODO(axch): Cover this with a test case and uncomment it
   -- LetUnpackLin vs v body ->
-  --   ( bCtx . LetMixed [] [v'] (Tuple $ map Var vs') . vCtx
+  --   ( bCtx . LetMixed [] [v'] (Tuple vs') . vCtx
   --   , vScope
   --   , vMap <> (bMap `M.withoutKeys` (S.fromList vs))
   --   )

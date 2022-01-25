@@ -126,7 +126,7 @@ spec = do
     it "accepts llam x y. 0" $ do
       shouldTypeCheck $ Program $ M.fromList
         [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
-            LetMixed [] [] (Drop (LTuple [LVar "x", LVar "y"])) $
+            LetMixed [] [] (Drop (LTuple ["x", "y"])) $
             LetMixed [] ["z"] LZero $
             Ret [] ["z"])
         ]
@@ -219,5 +219,5 @@ spec = do
                     LetMixed ["z"] [] (App "add" ["x", "y"] []) $
                     Var "z")
                 ]
-      grad <- gradient p "add" [2.0, 2.0]
+      grad <- gradient p "f" [2.0, 2.0]
       grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
