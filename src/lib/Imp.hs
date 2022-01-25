@@ -1296,11 +1296,8 @@ withFreshIBinder
   -> (forall l. (Immut l, Distinct l, Ext n l) => IBinder n l -> m l a)
   -> m n a
 withFreshIBinder hint ty cont = do
-  scope    <- unsafeGetScope
-  Distinct <- getDistinct
-  withFresh hint scope \b -> do
-    extendEnv (toEnvFrag (b :> (toBinding $ MiscBound $ BaseTy ty))) $
-      cont $ IBinder b ty
+  withFreshBinder hint (MiscBound $ BaseTy ty) \b ->
+    cont $ IBinder b ty
 
 _buildImpAbs
   :: ( Immut n, ImpBuilder m

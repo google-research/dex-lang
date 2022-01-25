@@ -493,7 +493,7 @@ instance CheckableB LamBinder where
     withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
         effs' <- checkE effs
-        extendEnv (EnvFrag emptyOutFrag (Just effs')) $
+        withAllowedEffects effs' $
           cont $ LamBinder b' ty' arr effs'
 
 instance HasType LamExpr where
@@ -526,7 +526,7 @@ instance CheckableB PiBinder where
     Immut <- getImmut
     withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
-        extendEnv (EnvFrag emptyOutFrag (Just Pure)) $
+        withAllowedEffects Pure do
           cont $ PiBinder b' ty' arr
 
 instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
