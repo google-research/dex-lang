@@ -87,19 +87,19 @@ instance Pretty Expr where
   pretty = \case
     Ret vs vs' -> prettyMixedVars vs vs'
     LetMixed vs vs' e1 e2 -> "let" <+> prettyMixedVars vs vs' <+> "=" <> (nest 2 $ group $ line <> pretty e1) <> hardline <> pretty e2
-    LetUnpack vs v e -> "explode" <+> prettyMixedVars vs [] <+> "=" <+> pretty v <> hardline <> pretty e
-    LetUnpackLin vs' v e -> "explode" <+> prettyMixedVars [] vs' <+> "=" <+> pretty v <> hardline <> pretty e
+    LetUnpack vs v e -> "explodeN" <+> prettyMixedVars vs [] <+> "=" <+> pretty v <> hardline <> pretty e
+    LetUnpackLin vs' v e -> "explodeL" <+> prettyMixedVars [] vs' <+> "=" <+> pretty v <> hardline <> pretty e
     App funcName vs vs' -> pretty funcName <> prettyMixedVars vs vs'
     Var v -> pretty v
     Lit v -> pretty v
-    Tuple es -> tupled $ pretty <$> es
+    Tuple es -> "tupN" <+> (tupled $ pretty <$> es)
     UnOp Sin e -> "sin" <+> parens (pretty e)
     UnOp Cos e -> "cos" <+> parens (pretty e)
     UnOp Exp e -> "exp" <+> parens (pretty e)
     BinOp Add e1 e2 -> parens (pretty e1) <+> "+" <+> parens (pretty e2)
     BinOp Mul e1 e2 -> parens (pretty e1) <+> "*" <+> parens (pretty e2)
     LVar v -> pretty v
-    LTuple es -> tupled $ pretty <$> es
+    LTuple es -> "tupL" <+> (tupled $ pretty <$> es)
     LAdd e1 e2 -> pretty $ BinOp Add e1 e2
     LScale es el -> pretty $ BinOp Mul es el
     LZero -> "zero"
@@ -564,6 +564,16 @@ unzipExpr orig scope subst expr = case expr of
       e2Subst = envExt (envExt subst vs uvs) vs' uvs'
       e2Scope = scopeExt (scopeExt scope uvs) uvs'
       ((ctx2, scopeCtx2), ue2, ue2') = rec e2Scope e2Subst e2
+  LetUnpackLin vs v e ->
+      ( (ctx, ctxScope)
+      , ue
+      , LetUnpackLin uvs (subst ! v) ue'
+      )
+    where
+      uvs = take (length vs) $ freshVars scope
+      subst' = envExt subst vs uvs
+      scope' = (scopeExt scope uvs)
+      ((ctx, ctxScope), ue, ue') = rec scope' subst' e
   App name vs vs' ->
       ( (LetMixed (retVars ++ [tapeVar]) [] (App (name ++ ".nonlin") uvs []), scope2)
       , Ret retVars []
@@ -577,6 +587,7 @@ unzipExpr orig scope subst expr = case expr of
       scope2 = scopeExt scope $ tapeVar:retVars
   Var  v -> ((id, scope), Var (subst ! v), Ret [] [])
   LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
+  LTuple vs -> ((id, scope), Ret [] [], LTuple $ (subst !) <$> vs)
   UnOp op e -> ((ctx, ctxScope), UnOp op ue, ue')
     where ((ctx, ctxScope), ue, ue') = rec scope subst e
   BinOp op e1 e2 -> ((ctx1 . ctx2, ctxScope2), BinOp op ue1 ue2, ue')
@@ -630,6 +641,13 @@ transposeFunc (FuncDef formalsWithTys linFormalsWithTys (MixedType retTys linRet
         tbody = ctx $ Ret [] ((ctMap !) <$> linFormals)
     _ -> error "Transposing a function with non-linear results!"
 
+-- Accepts an expr :: Expr to transpose and a list of variable names
+-- that carry the cotangents for the reults of expr.  Returns
+-- - A binding list :: Expr -> Expr
+-- - A map from free variable of expr to cotangent variable holding
+--   the cotangent for it.  The input cotangent variables are free in
+--   the binding list, and the returned ones are in scope under the
+--   binding list.
 -- An alternative would be to return (Expr, [Var]) with the second argument
 -- mapping the linear outputs of the expr to variables in a primal program.
 transposeExpr :: Scope -> Expr -> [Var] -> (Expr -> Expr, Scope, CotangentMap)
@@ -649,20 +667,19 @@ transposeExpr scope expr cts = case expr of
         (e1Ctx, e1Scope, e1Map) = transposeExpr e2Scope e1 ((e2Map !) <$> vs')
     -- TODO: Relax
     _ -> error "Binding non-linear values in transposition!"
-  -- TODO(axch): Cover this with a test case and uncomment it
-  -- LetUnpackLin vs v body ->
-  --   ( bCtx . LetMixed [] [v'] (Tuple vs') . vCtx
-  --   , vScope
-  --   , vMap <> (bMap `M.withoutKeys` (S.fromList vs))
-  --   )
-  --   where
-  --     (bCtx, bScope, bMap) = transposeExpr scope body cts
-  --     vs' = (bMap !) <$> vs
-  --     v':_ = freshVars bScope
-  --     (vCtx, vScope, vMap) = transposeExpr (scopeExt bScope [v']) (Var v) [v']
   LetUnpack vs v body -> (LetUnpack vs v . bCtx, bScope, bMap)
     where
       (bCtx, bScope, bMap) = transposeExpr scope body cts
+  LetUnpackLin vs v body ->
+    ( bCtx . LetMixed [] [v'] (LTuple vs') . vCtx
+    , vScope
+    , vMap <> (bMap `M.withoutKeys` (S.fromList vs))
+    )
+    where
+      (bCtx, bScope, bMap) = transposeExpr scope body cts
+      vs' = (bMap !) <$> vs
+      v':_ = freshVars bScope
+      (vCtx, vScope, vMap) = transposeExpr (scopeExt bScope [v']) (LVar v) [v']
   App name vs vs' ->
     ( LetMixed [] cts' (App name vs cts)
     , scope'
@@ -671,6 +688,15 @@ transposeExpr scope expr cts = case expr of
     where
       cts' = take (length vs') $ freshVars scope
       scope' = scopeExt scope cts'
+  LVar v -> (id, scope, M.singleton v ct)
+    where [ct] = cts
+  LTuple vs ->
+    ( LetUnpackLin cts' ct
+    , (scopeExt scope cts')
+    , M.fromList $ zip vs cts')
+    where
+      [ct] = cts
+      cts' = take (length vs) $ freshVars scope
   LAdd x y ->
     ( LetMixed [] [ct1, ct2] (Dup (LVar ct)) . xtCtx . ytCtx
     , yScope
@@ -681,8 +707,15 @@ transposeExpr scope expr cts = case expr of
       [ct] = cts
       (xtCtx, xScope, xMap) = transposeExpr (scopeExt scope [ct1, ct2]) x [ct1]
       (ytCtx, yScope, yMap) = transposeExpr xScope y [ct2]
-  LVar v -> (id, scope, M.singleton v ct)
-    where [ct] = cts
+  Dup body ->
+    ( (LetMixed [] [ct] $ LAdd (LVar ct1) (LVar ct2)) . bCtx
+    , bScope
+    , bMap
+    )
+    where
+      [ct1, ct2] = cts
+      ct:_ = freshVars scope
+      (bCtx, bScope, bMap) = transposeExpr (scopeExt scope [ct]) body [ct]
   _ -> error $ "Transpose not implemented: " ++ show (pretty expr)
 
 
