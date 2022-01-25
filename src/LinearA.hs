@@ -614,6 +614,9 @@ unzipExpr orig scope subst expr = case expr of
     where
       ((sCtx, sCtxScope), us, us') = rec scope     subst s
       ((eCtx, eCtxScope), ue, ue') = rec sCtxScope subst e
+  Dup e -> ((ctx, ctxScope), ue, Dup ue')
+    where
+      ((ctx, ctxScope), ue, ue') = rec scope subst e
   _ -> error $ "Unzip not implemented: " ++ show (pretty expr)
   where
     rec = unzipExpr orig
