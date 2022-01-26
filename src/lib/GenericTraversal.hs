@@ -12,6 +12,8 @@ module GenericTraversal
   (GenericTraverser (..), GenericallyTraversableE (..),
    traverseExprDefault, traverseAtomDefault) where
 
+import Control.Monad
+
 import Name
 import Builder
 import Syntax
@@ -64,19 +66,9 @@ traverseAtomDefault atom = case atom of
       mapM tge params <*> pure con <*> mapM tge args
   TypeCon sn dataDefName params ->
     TypeCon sn <$> substM dataDefName <*> mapM tge params
-  LabeledRow (Ext items rest) -> do
-    items' <- mapM tge items
-    rest'  <- mapM substM rest
-    return $ LabeledRow $ Ext items' rest'
+  LabeledRow elems -> LabeledRow <$> traverseGenericE elems
   Record items -> Record <$> mapM tge items
-  RecordTy _ _ -> substM atom >>= \case
-    RecordTy labExt (Ext items rest') -> dropSubst do
-      items'  <- mapM tge items
-      labExt' <- case labExt of
-        Nothing           -> return Nothing
-        Just (labVar, ty) -> Just . (labVar,) <$> tge ty
-      return $ RecordTy labExt' $ Ext items' rest'
-    _ -> error "unreachable"
+  RecordTy elems -> RecordTy <$> traverseGenericE elems
   Variant (Ext types rest) label i value -> do
     types' <- mapM tge types
     rest'  <- mapM substM rest
@@ -108,6 +100,14 @@ instance GenericallyTraversableE Block where
         return $ PairE resultTy result'
     ty' <- liftHoistExcept $ hoist decls' ty
     return $ Block (BlockAnn ty') decls' result'
+
+instance GenericallyTraversableE FieldRowElems where
+  traverseGenericE elems = do
+    els' <- fromFieldRowElems <$> substM elems
+    dropSubst $ fieldRowElemsFromList <$> forM els' \case
+      StaticFields items  -> StaticFields <$> mapM tge items
+      DynField  labVar ty -> DynField labVar <$> tge ty
+      DynFields rowVar    -> return $ DynFields rowVar
 
 traverseDeclNest
   :: (GenericTraverser m, Emits o)

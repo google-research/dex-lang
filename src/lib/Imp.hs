@@ -859,7 +859,7 @@ makeDestRec idxs depVars ty = case ty of
       rTy' <- applySubst (lBinder@>v) rTy
       makeDestRec idxs' depVars' rTy'
     return $ DepPairRef lDest rDestAbs depPairTy
-  RecordTy Nothing (NoExt types) -> (Con . RecordRef) <$> forM types rec
+  StaticRecordTy types -> (Con . RecordRef) <$> forM types rec
   VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do

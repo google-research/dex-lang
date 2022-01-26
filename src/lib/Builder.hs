@@ -737,7 +737,7 @@ zeroAt :: HasCallStack => Builder m => Type n -> m n (Atom n )
 zeroAt ty = case ty of
   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
   ProdTy tys -> ProdVal <$> mapM zeroAt tys
-  RecordTy Nothing (Ext tys Nothing) -> Record <$> mapM zeroAt tys
+  StaticRecordTy tys -> Record <$> mapM zeroAt tys
   TabTy b bodyTy ->
     liftEmitBuilder $ buildTabLam (getNameHint b) (binderType b) \i ->
       zeroAt =<< applySubst (b@>i) bodyTy
@@ -761,7 +761,7 @@ tangentType ty = case maybeTangentType ty of
 
 maybeTangentType :: Type n -> Maybe (Type n)
 maybeTangentType ty = case ty of
-  RecordTy Nothing (NoExt items) -> RecordTy Nothing <$> NoExt <$> mapM maybeTangentType items
+  StaticRecordTy items -> StaticRecordTy <$> mapM maybeTangentType items
   TypeCon _ _ _ -> Nothing -- Need to synthesize or look up a tangent ADT
   Pi (PiType b@(PiBinder _ _ TabArrow) Pure bodyTy) -> do
     bodyTanTy <- maybeTangentType bodyTy
@@ -788,7 +788,7 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, Builder m) => Atom n -> Atom n -> m n (Atom n)
 addTangent x y = do
   getType x >>= \case
-    RecordTy Nothing (NoExt tys) -> do
+    StaticRecordTy tys -> do
       elems <- bindM2 (zipWithM addTangent) (getUnpacked x) (getUnpacked y)
       return $ Record $ restructure elems tys
     TabTy b _  -> liftEmitBuilder $ buildFor (getNameHint b) Fwd (binderType b) \i -> do

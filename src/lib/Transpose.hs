@@ -258,7 +258,7 @@ transposeAtom atom ct = case atom of
   Lam _           -> notTangent
   TypeCon _ _ _   -> notTangent
   LabeledRow _    -> notTangent
-  RecordTy _ _    -> notTangent
+  RecordTy _      -> notTangent
   VariantTy _     -> notTangent
   Pi _            -> notTangent
   DepPairTy _     -> notTangent

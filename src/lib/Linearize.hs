@@ -269,7 +269,7 @@ linearizeAtom atom = case atom of
       return $ Variant (fromExtLabeledItemsE $ sink t') l i e'
   TypeCon _ _ _   -> emitZeroT
   LabeledRow _    -> emitZeroT
-  RecordTy _ _    -> emitZeroT
+  RecordTy _      -> emitZeroT
   VariantTy _     -> emitZeroT
   Pi _            -> emitZeroT
   DepPairTy _     -> emitZeroT
