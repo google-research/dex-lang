@@ -10,6 +10,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Type (
   HasType (..), CheckableE (..), CheckableB (..),
@@ -374,17 +375,9 @@ instance HasType Atom where
       params' <- traverse checkE params
       void $ checkedApplyNaryAbs (Abs tyParamNest' (ListE absCons')) params'
       return TyKind
-    LabeledRow row -> checkLabeledRow row $> LabeledRowKind
-    Record items -> do
-      types <- mapM getTypeE items
-      return $ RecordTy Nothing (NoExt types)
-    RecordTy labExt row -> do
-      case labExt of
-        Nothing -> return ()
-        Just (labVar, ty) -> do
-          void $ checkTypeE (TC LabelType) (Var labVar)
-          void $ checkTypeE TyKind ty
-      checkLabeledRow row $> TyKind
+    LabeledRow elems -> checkFieldRowElems elems $> LabeledRowKind
+    Record items -> StaticRecordTy <$> mapM getTypeE items
+    RecordTy elems -> checkFieldRowElems elems $> TyKind
     Variant vtys@(Ext (LabeledItems types) _) label i arg -> do
       let ty = VariantTy vtys
       let argTy = do
@@ -440,8 +433,8 @@ instance HasType Atom where
           dropSubst $
             applyNaryAbs (Abs bsInit bTy) [ SubstVal (ProjectElt (j NE.:| is) v')
                                           | j <- iota $ nestLength bsInit]
-        RecordTy Nothing (NoExt types) -> return $ toList types !! i
-        RecordTy _ _ -> throw CompilerErr "Can't project partially-known records"
+        StaticRecordTy types -> return $ toList types !! i
+        RecordTy _ -> throw CompilerErr "Can't project partially-known records"
         ProdTy xs -> return $ xs !! i
         DepPairTy t | i == 0 -> return $ depPairLeftTy t
         DepPairTy t | i == 1 -> do v' <- substM v
@@ -609,7 +602,7 @@ typeCheckPrimCon con = case con of
       RawRefTy <$> substM ty
     _ -> error $ "Not a valid ref: " ++ pprint conRef
   ParIndexCon t v -> t|:TyKind >> v|:IdxRepTy >> substM t
-  RecordRef xs -> (RawRefTy . RecordTy Nothing . NoExt) <$> traverse typeCheckRef xs
+  RecordRef xs -> (RawRefTy . StaticRecordTy) <$> traverse typeCheckRef xs
   LabelCon _   -> return $ TC $ LabelType
 
 typeCheckPrimOp :: Typer m => PrimOp (Atom i) -> m i o (Type o)
@@ -718,54 +711,48 @@ typeCheckPrimOp op = case op of
   RecordCons items record -> do
     types <- mapM getTypeE items
     rty <- getTypeE record
-    rest <- case rty of
-      RecordTy Nothing rest -> return rest
-      RecordTy _ _ -> throw TypeErr $
-        "Can't add fields to a record " <> pprint record <> " with dynamic " <>
-        "label extension (it is of type " <> pprint rty <> ")"
+    case rty of
+      RecordTy rest -> return $ RecordTy $ prependFieldRowElem (StaticFields types) rest
       _ -> throw TypeErr $ "Can't add fields to a non-record object "
                         <> pprint record <> " (of type " <> pprint rty <> ")"
-    return $ RecordTy Nothing $ prefixExtLabeledItems types rest
   RecordConsDynamic lab val record -> do
     lab' <- checkTypeE (TC LabelType) lab
     vty <- getTypeE val
     rty <- getTypeE record
     case rty of
-      RecordTy Nothing rest -> case lab' of
-        Con (LabelCon l) -> return $ RecordTy Nothing $ prefixExtLabeledItems (labeledSingleton l vty) rest
-        Var labVar       -> return $ RecordTy (Just (labVar, vty)) rest
+      RecordTy rest -> case lab' of
+        Con (LabelCon l) -> return $ RecordTy $ prependFieldRowElem (StaticFields (labeledSingleton l vty)) rest
+        Var labVar       -> return $ RecordTy $ prependFieldRowElem (DynField labVar vty) rest
         _ -> error "Unexpected label atom"
-      RecordTy _ _ -> throw TypeErr $
-        "Can't add a dynamic field to a record that already has one"
       _ -> throw TypeErr $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
   RecordSplitDynamic lab record -> do
     lab' <- cheapNormalize =<< checkTypeE (TC LabelType) lab
     rty <- getTypeE record
     case (lab', rty) of
-      (Con (LabelCon l), RecordTy Nothing (Ext items rest)) -> do
+      (Con (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
         -- We could cheap normalize the rest to increase the chance of this
-        -- succeeding, but no need to for now./
+        -- succeeding, but no need to for now.
         unless (isJust $ lookupLabelHead items l) $ throw TypeErr "Label not immediately present in record"
         let (h, items') = splitLabeledItems (labeledSingleton l ()) items
-        return $ PairTy (head $ toList h) $ RecordTy Nothing $ Ext items' rest
-      (Var labVar', RecordTy (Just (labVar'', ty)) rest) | labVar' == labVar'' ->
-        return $ PairTy ty $ RecordTy Nothing rest
+        return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
+      (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
+        return $ PairTy ty $ RecordTyWithElems rest
       -- There are more cases we could implement, but do we need to?
       _ -> throw TypeErr $ "Can't split a label " <> pprint lab' <> " from atom of type " <> pprint rty
   RecordSplit types record -> do
     mapM_ (|: TyKind) types
     types' <- mapM substM types
     fullty <- getTypeE record
-    full <- case fullty of
-      RecordTy Nothing full -> return full
-      RecordTy _ _ -> throw TypeErr $
+    (fullItems, rest) <- case fullty of
+      RecordTyWithElems (StaticFields items:rest) -> return (items, rest)
+      RecordTy _ -> throw TypeErr $
         "Can't split a record " <> pprint record <> " with dynamic " <>
         "label extension (it is of type " <> pprint fullty <> ")"
       _ -> throw TypeErr $ "Can't split a non-record object " <> pprint record
                         <> " (of type " <> pprint fullty <> ")"
-    diff <- labeledRowDifference full (NoExt types')
-    return $ RecordTy Nothing $ NoExt $
-      Unlabeled [ RecordTy Nothing (NoExt types'), RecordTy Nothing diff ]
+    NoExt diff <- labeledRowDifference (NoExt fullItems) (NoExt types')
+    return $ StaticRecordTy $ Unlabeled
+      [ StaticRecordTy types', RecordTyWithElems (StaticFields diff:rest) ]
   VariantLift types variant -> do
     mapM_ (|: TyKind) types
     types' <- mapM substM types
@@ -1192,7 +1179,7 @@ isSingletonType topTy =
     checkIsSingleton :: Type n -> Maybe ()
     checkIsSingleton ty = case ty of
       Pi (PiType _ _ body) -> checkIsSingleton body
-      RecordTy Nothing (NoExt items) -> mapM_ checkIsSingleton items
+      StaticRecordTy items -> mapM_ checkIsSingleton items
       TC con -> case con of
         ProdType tys -> mapM_ checkIsSingleton tys
         _ -> Nothing
@@ -1214,7 +1201,7 @@ singletonTypeVal' ty = case ty of
     substBinders b \b' -> do
       body' <- singletonTypeVal' body
       return $ Pi $ PiType b' Pure body'
-  RecordTy Nothing (NoExt items) -> Record <$> traverse singletonTypeVal' items
+  StaticRecordTy items -> Record <$> traverse singletonTypeVal' items
   TC con -> case con of
     ProdType tys -> ProdVal <$> traverse singletonTypeVal' tys
     _            -> notASingleton
@@ -1294,6 +1281,17 @@ oneEffect eff = EffectRow (S.singleton eff) Nothing
 
 -- === labeled row types ===
 
+checkFieldRowElems :: Typer m => FieldRowElems i -> m i o ()
+checkFieldRowElems els = mapM_ checkElem elemList
+  where
+    elemList = fromFieldRowElems els
+    checkElem = \case
+      StaticFields items -> checkLabeledRow $ NoExt items
+      DynField labVar ty -> do
+        Var labVar |: TC LabelType
+        ty |: TyKind
+      DynFields row -> checkLabeledRow $ Ext mempty $ Just row
+
 checkLabeledRow :: Typer m => ExtLabeledItems (Type i) (AtomName i) -> m i o ()
 checkLabeledRow (Ext items rest) = do
   mapM_ (|: TyKind) items
@@ -1334,7 +1332,7 @@ projectLength ty = case ty of
     def <- lookupDataDef defName
     [DataConDef _ (Abs bs UnitE)] <- instantiateDataDef def params
     return $ nestLength bs
-  RecordTy Nothing (NoExt types) -> return $ length types
+  StaticRecordTy types -> return $ length types
   ProdTy tys -> return $ length tys
   _ -> error $ "Projecting a type that doesn't support projecting: " ++ pprint ty
 
@@ -1410,7 +1408,7 @@ checkDataLike ty = case ty of
     Immut <- getImmut
     substBinders b \_ ->
       checkDataLike eltTy
-  RecordTy Nothing (NoExt items) -> mapM_ recur items
+  StaticRecordTy items -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l

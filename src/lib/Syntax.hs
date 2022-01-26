@@ -11,6 +11,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -21,6 +22,9 @@ module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..), Except,
     EffectP (..), Effect, UEffect, RWS (..), EffectRowP (..), EffectRow, UEffectRow,
     Binder, Block (..), BlockAnn (..), Decl (..), DeclBinding (..),
+    FieldRowElem (..), FieldRowElems, fromFieldRowElems,
+    fieldRowElemsFromList, prependFieldRowElem, extRowAsFieldRowElems, fieldRowElemsAsExtRow,
+    pattern StaticRecordTy, pattern RecordTyWithElems,
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
@@ -139,9 +143,9 @@ data Atom (n::S) =
    -- SourceName is purely for printing
  | DataCon SourceName (DataDefName n) [Atom n] Int [Atom n]
  | TypeCon SourceName (DataDefName n) [Atom n]
- | LabeledRow (ExtLabeledItems (Type n) (AtomName n))
+ | LabeledRow (FieldRowElems n)
  | Record (LabeledItems (Atom n))
- | RecordTy  (Maybe (AtomName n, Type n)) (ExtLabeledItems (Type n) (AtomName n))
+ | RecordTy  (FieldRowElems n)
  | Variant   (ExtLabeledItems (Type n) (AtomName n)) Label Int (Atom n)
  | VariantTy (ExtLabeledItems (Type n) (AtomName n))
  | Con (Con n)
@@ -188,6 +192,18 @@ type AtomBinderP = BinderP AtomNameC
 type Binder = AtomBinderP Type
 type AltP (e::E) = Abs (Nest Binder) e :: E
 type Alt = AltP Block                  :: E
+
+-- The additional invariant enforced by this newtype is that the list should
+-- never contain empty StaticFields members, nor StaticFields in two consecutive
+-- positions.
+newtype FieldRowElems (n::S) = UnsafeFieldRowElems { fromFieldRowElems :: [FieldRowElem n] }
+                               deriving (Show, Generic)
+
+data FieldRowElem (n::S)
+  = StaticFields (LabeledItems (Type n))
+  | DynField     (AtomName n) (Type n)
+  | DynFields    (AtomName n)
+  deriving (Show, Generic)
 
 data DataDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
@@ -1762,6 +1778,48 @@ pattern FalseAtom = Con (Lit (Word8Lit 0))
 pattern TrueAtom :: Atom n
 pattern TrueAtom = Con (Lit (Word8Lit 1))
 
+fieldRowElemsFromList :: [FieldRowElem n] -> FieldRowElems n
+fieldRowElemsFromList = foldr prependFieldRowElem (UnsafeFieldRowElems [])
+
+prependFieldRowElem :: FieldRowElem n -> FieldRowElems n -> FieldRowElems n
+prependFieldRowElem e (UnsafeFieldRowElems els) = case e of
+  DynField  _ _ -> UnsafeFieldRowElems $ e : els
+  DynFields _   -> UnsafeFieldRowElems $ e : els
+  StaticFields items | null items -> UnsafeFieldRowElems els
+  StaticFields items -> case els of
+    (StaticFields items':rest) -> UnsafeFieldRowElems $ StaticFields (items <> items') : rest
+    _                          -> UnsafeFieldRowElems $ e : els
+
+extRowAsFieldRowElems :: ExtLabeledItems (Type n) (AtomName n) -> FieldRowElems n
+extRowAsFieldRowElems (Ext items ext) = UnsafeFieldRowElems $ itemsEl ++ extEl
+  where
+    itemsEl = if null items then [] else [StaticFields items]
+    extEl = case ext of Nothing -> []; Just r -> [DynFields r]
+
+fieldRowElemsAsExtRow :: Alternative f => FieldRowElems n -> f (ExtLabeledItems (Type n) (AtomName n))
+fieldRowElemsAsExtRow (UnsafeFieldRowElems els) = case els of
+  []                                -> pure $ Ext mempty Nothing
+  [DynFields r]                     -> pure $ Ext mempty (Just r)
+  [StaticFields items]              -> pure $ Ext items  Nothing
+  [StaticFields items, DynFields r] -> pure $ Ext items  (Just r)
+  _ -> empty
+
+_getAtMostSingleStatic :: Atom n -> Maybe (LabeledItems (Type n))
+_getAtMostSingleStatic = \case
+  RecordTy (UnsafeFieldRowElems els) -> case els of
+    [] -> Just mempty
+    [StaticFields items] -> Just items
+    _ -> Nothing
+  _ -> Nothing
+
+pattern StaticRecordTy :: LabeledItems (Type n) -> Atom n
+pattern StaticRecordTy items <- (_getAtMostSingleStatic -> Just items)
+  where StaticRecordTy items = RecordTy (fieldRowElemsFromList [StaticFields items])
+
+pattern RecordTyWithElems :: [FieldRowElem n] -> Atom n
+pattern RecordTyWithElems elems <- RecordTy (UnsafeFieldRowElems elems)
+  where RecordTyWithElems elems = RecordTy $ fieldRowElemsFromList elems
+
 -- -- === instances ===
 
 -- right-biased, unlike the underlying Map
@@ -1794,6 +1852,52 @@ instance SubstE Name DataConDef
 instance SubstE AtomSubstVal DataConDef
 instance AlphaEqE DataConDef
 instance AlphaHashableE DataConDef
+
+instance GenericE FieldRowElem where
+  type RepE FieldRowElem = EitherE3 (ExtLabeledItemsE Type UnitE) (AtomName `PairE` Type) AtomName
+  fromE = \case
+    StaticFields items         -> Case0 $ ExtLabeledItemsE $ NoExt items
+    DynField  labVarName labTy -> Case1 $ labVarName `PairE` labTy
+    DynFields fieldVarName     -> Case2 $ fieldVarName
+  toE = \case
+    Case0 (ExtLabeledItemsE (Ext items _)) -> StaticFields items
+    Case1 (n `PairE` t) -> DynField n t
+    Case2 n             -> DynFields n
+    _ -> error "unreachable"
+instance SinkableE      FieldRowElem
+instance HoistableE     FieldRowElem
+instance SubstE Name    FieldRowElem
+instance AlphaEqE       FieldRowElem
+instance AlphaHashableE FieldRowElem
+
+instance GenericE FieldRowElems where
+  type RepE FieldRowElems = ListE FieldRowElem
+  fromE = ListE . fromFieldRowElems
+  toE = fieldRowElemsFromList . fromListE
+instance SinkableE FieldRowElems
+instance HoistableE FieldRowElems
+instance SubstE Name FieldRowElems
+instance AlphaEqE FieldRowElems
+instance AlphaHashableE FieldRowElems
+instance SubstE AtomSubstVal FieldRowElems where
+  substE :: forall i o. Distinct o => (Scope o, Subst AtomSubstVal i o) -> FieldRowElems i -> FieldRowElems o
+  substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
+    where
+      substItem = \case
+        DynField v ty -> case snd env ! v of
+          SubstVal (Con (LabelCon l)) -> [StaticFields $ labeledSingleton l ty']
+          SubstVal (Var v') -> [DynField v' ty']
+          Rename v'         -> [DynField v' ty']
+          _ -> error "ill-typed substitution"
+          where ty' = substE env ty
+        DynFields v -> case snd env ! v of
+          SubstVal (LabeledRow items) -> fromFieldRowElems items
+          SubstVal (Var v') -> [DynFields v']
+          Rename v'         -> [DynFields v']
+          _ -> error "ill-typed substitution"
+        StaticFields items -> [StaticFields items']
+          where ExtLabeledItemsE (NoExt items') = substE env
+                  (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE Atom AtomName i)
 
 instance GenericE ClassDef where
   type RepE ClassDef = PairE (LiftE (SourceName, [SourceName]))
@@ -1830,14 +1934,13 @@ newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
 instance GenericE Atom where
   type RepE Atom =
       EitherE5
-              (EitherE3
+              (EitherE2
                    -- We isolate those few cases (and reorder them
                    -- compared to the data definition) because they need special
                    -- handling when you substitute with atoms. The rest just act
                    -- like containers
   {- Var -}        AtomName
   {- ProjectElt -} ( LiftE (NE.NonEmpty Int) `PairE` AtomName )
-  {- RecordTy -}   ( MaybeE (AtomName `PairE` Type) `PairE` ExtLabeledItemsE Type AtomName)
             ) (EitherE6
   {- Lam -}        LamExpr
   {- Pi -}         PiType
@@ -1848,12 +1951,13 @@ instance GenericE Atom where
                      ListE Atom                `PairE`
                      ListE Atom )
   {- TypeCon -}    ( LiftE SourceName `PairE` DataDefName `PairE` ListE Atom )
-            ) (EitherE4
-  {- LabeledRow -} (ExtLabeledItemsE Type AtomName)
-  {- Record -}     (ComposeE LabeledItems Atom)
+            ) (EitherE5
+  {- LabeledRow -} ( FieldRowElems )
+  {- Record -}     ( ComposeE LabeledItems Atom )
+  {- RecordTy -}   ( FieldRowElems )
   {- Variant -}    ( ExtLabeledItemsE Type AtomName `PairE`
                      LiftE (Label, Int) `PairE` Atom )
-  {- VariantTy -}  (ExtLabeledItemsE Type AtomName)
+  {- VariantTy -}  ( ExtLabeledItemsE Type AtomName )
             ) (EitherE2
   {- Con -}        (ComposeE PrimCon Atom)
   {- TC -}         (ComposeE PrimTC  Atom)
@@ -1880,12 +1984,12 @@ instance GenericE Atom where
       ListE args
     TypeCon sourceName defName params -> Case1 $ Case5 $
       LiftE sourceName `PairE` defName `PairE` ListE params
-    LabeledRow extItems -> Case2 $ Case0 $ ExtLabeledItemsE extItems
+    LabeledRow elems    -> Case2 $ Case0 $ elems
     Record items        -> Case2 $ Case1 $ ComposeE items
-    RecordTy l extItems -> Case0 $ Case2 $ (toMaybeE $ fmap toPairE l) `PairE` ExtLabeledItemsE extItems
-    Variant extItems l con payload -> Case2 $ Case2 $
+    RecordTy elems -> Case2 $ Case2 elems
+    Variant extItems l con payload -> Case2 $ Case3 $
       ExtLabeledItemsE extItems `PairE` LiftE (l, con) `PairE` payload
-    VariantTy extItems  -> Case2 $ Case3 $ ExtLabeledItemsE extItems
+    VariantTy extItems  -> Case2 $ Case4 $ ExtLabeledItemsE extItems
     Con con -> Case3 $ Case0 $ ComposeE con
     TC  con -> Case3 $ Case1 $ ComposeE con
     Eff effs -> Case4 $ Case0 $ effs
@@ -1901,7 +2005,6 @@ instance GenericE Atom where
     Case0 val -> case val of
       Case0 v -> Var v
       Case1 (PairE (LiftE idxs) x) -> ProjectElt idxs x
-      Case2 (l `PairE` ExtLabeledItemsE extItems) -> RecordTy (fmap fromPairE $ fromMaybeE l) extItems
       _ -> error "impossible"
     Case1 val -> case val of
       Case0 lamExpr -> Lam lamExpr
@@ -1917,12 +2020,13 @@ instance GenericE Atom where
         TypeCon sourceName defName params
       _ -> error "impossible"
     Case2 val -> case val of
-      Case0 (ExtLabeledItemsE extItems) -> LabeledRow extItems
+      Case0 elems -> LabeledRow elems
       Case1 (ComposeE items) -> Record items
-      Case2 ( (ExtLabeledItemsE extItems) `PairE`
+      Case2 elems -> RecordTy elems
+      Case3 ( (ExtLabeledItemsE extItems) `PairE`
               LiftE (l, con)              `PairE`
               payload) -> Variant extItems l con payload
-      Case3 (ExtLabeledItemsE extItems) -> VariantTy extItems
+      Case4 (ExtLabeledItemsE extItems) -> VariantTy extItems
       _ -> error "impossible"
     Case3 val -> case val of
       Case0 (ComposeE con) -> Con con
@@ -1959,18 +2063,6 @@ instance SubstE AtomSubstVal Atom where
                    SubstVal x -> x
                    Rename v''  -> Var v''
         getProjection (NE.toList idxs) v'
-      -- RecordTy
-      Case2 (l `PairE` extItems) -> case l of
-        NothingE -> RecordTy Nothing extItems'
-        JustE (label `PairE` ty) -> do
-          let ty' = substE (scope, env) ty
-          case env ! label of
-            SubstVal (Con (LabelCon name)) -> RecordTy Nothing $ prefixExtLabeledItems (labeledSingleton name ty') extItems'
-            SubstVal (Var label') -> RecordTy (Just (label', ty')) extItems'
-            SubstVal _ -> error "impossible"
-            Rename label' -> RecordTy (Just (label', ty')) extItems'
-        _ -> error "impossible"
-        where ExtLabeledItemsE extItems' = substE (scope, env) extItems
       _ -> error "impossible"
     RightE rest -> (toE . RightE) $ substE (scope, env) rest
 
@@ -2040,7 +2132,9 @@ instance SubstE AtomSubstVal (ExtLabeledItemsE Atom AtomName) where
                 Just v -> case env ! v of
                   Rename        v'  -> Ext NoLabeledItems $ Just v'
                   SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
-                  SubstVal (LabeledRow row) -> row
+                  SubstVal (LabeledRow row) -> case fieldRowElemsAsExtRow row of
+                    Just row' -> row'
+                    Nothing -> error "Not implemented: unrepresentable subst of ExtLabeledItems"
                   _ -> error "Not a valid labeled row substitution"
     ExtLabeledItemsE $ prefixExtLabeledItems items' ext
 
@@ -2547,6 +2641,8 @@ instance Store (SolverBinding n)
 instance Store (AtomBinding n)
 instance Store (LamBinding  n)
 instance Store (DeclBinding n)
+instance Store (FieldRowElem  n)
+instance Store (FieldRowElems n)
 instance Store (Decl n l)
 instance Store (DataDef n)
 instance Store (DataConDef n)

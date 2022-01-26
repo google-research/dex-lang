@@ -25,6 +25,7 @@ import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Exts (Constraint)
 import GHC.Float
 import Data.Foldable (toList)
+import Data.Functor ((<&>))
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -208,16 +209,13 @@ instance PrettyPrec (Atom n) where
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) params
-    LabeledRow items -> prettyExtLabeledItems items Nothing (line <> "?") ":"
+    LabeledRow elems -> prettyRecordTyRow elems "?"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
       ls = LabeledItems $ case i of
             0 -> M.empty
             _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
-    RecordTy l items -> prettyExtLabeledItems items prefix (line <> "&") ":"
-      where prefix = case l of
-                       Nothing -> Nothing
-                       Just (labVar, labTy) -> Just $ "@" <> p labVar <> ":" <+> pLowest labTy
+    RecordTy elems -> prettyRecordTyRow elems "&"
     VariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     ACase e alts _ -> prettyPrecCase "acase" e alts
     DataConRef _ params args -> atPrec LowestPrec $
@@ -228,6 +226,22 @@ instance PrettyPrec (Atom n) where
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     DepPairRef l (Abs b r) _ -> atPrec LowestPrec $
       "DepPairRef" <+> p l <+> "as" <+> p b <+> "in" <+> p r
+
+prettyRecordTyRow :: FieldRowElems n -> Doc ann -> DocPrec ann
+prettyRecordTyRow elems separator = do
+  atPrec ArgPrec $ align $ group $ braces $ (prefix <>) $
+    concatWith (surround $ line <> separator <> " ") $ p <$> fromFieldRowElems elems
+    where prefix = case fromFieldRowElems elems of
+                      [] -> separator
+                      [DynFields _] -> separator
+                      _ -> mempty
+
+instance Pretty (FieldRowElem n) where
+  pretty = \case
+    StaticFields items -> concatWith (surround $ line <> "& ") $
+      withLabels items <&> \(l, _, ty) -> p l <> ":" <+> pLowest ty
+    DynField  l ty -> "@" <> p l <> ":" <+> p ty
+    DynFields f    -> "..." <> p f
 
 instance Pretty (DataConRefBinding n l) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (DataConRefBinding n l) where
@@ -487,8 +501,8 @@ instance PrettyPrec (UExpr' n) where
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
-    URecord   dynLab items -> prettyExtLabeledItems items (Just $ printDynLab "=" dynLab) (line' <> ",") " ="
-    URecordTy dynLab items -> prettyExtLabeledItems items (Just $ printDynLab "&" dynLab) (line <> "&") ":"
+    URecord   dynLab items -> prettyExtLabeledItems items (printDynLab "=" dynLab) (line' <> ",") " ="
+    URecordTy dynLab items -> prettyExtLabeledItems items (printDynLab ":" dynLab) (line <> "&") ":"
     UVariant labels label value -> prettyVariant labels label value
     UVariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     UVariantLift labels value -> prettyVariantLift labels value
@@ -496,8 +510,8 @@ instance PrettyPrec (UExpr' n) where
     UFloatLit v -> atPrec ArgPrec $ p v
     where
       printDynLab bindwith = \case
-        Nothing -> mempty
-        Just (labVar, labExpr) -> "@" <> p labVar <> bindwith <> p labExpr
+        Nothing -> Nothing
+        Just (labVar, labExpr) -> Just $ "@" <> p labVar <> bindwith <> p labExpr
 
 prettyVariantLift :: PrettyPrec a
   => LabeledItems () -> a -> DocPrec ann

@@ -5,7 +5,7 @@ Syntax for records, variants, and their types.
 'Record types
 
 :p {&}
-> { &}
+> {&}
 
 :p {a:Int & b:Float}
 > {a: Int32 & b: Float32}
@@ -22,12 +22,12 @@ Syntax for records, variants, and their types.
 :p {}
 > {}
 :t {}
-> { &}
+> {&}
 
 :p {,}
 > {}
 :t {,}
-> { &}
+> {&}
 
 :p {a=3, b=4}
 > {a = 3, b = 4}

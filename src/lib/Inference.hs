@@ -781,7 +781,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       Just ext -> do
         -- Constrain the type of ext to be a record
         restTy <- freshInferenceName LabeledRowKind
-        ext' <- checkRho ext $ RecordTy Nothing $ Ext NoLabeledItems $ Just restTy
+        ext' <- checkRho ext $ RecordTyWithElems [DynFields restTy]
         emitOp $ RecordCons items' ext'
     matchRequirement =<< case dynLab of
       Nothing -> return recNoDyn
@@ -802,12 +802,13 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     matchRequirement $ Variant extItems label i value'
   URecordTy dynLab row -> do
     dynLab' <- case dynLab of
-      Nothing -> return Nothing
+      Nothing -> return []
       Just (lv, lt) -> do
         label   <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar lv) (TC LabelType)
         labelTy <- checkRho lt TyKind
-        return $ Just (label, labelTy)
-    matchRequirement =<< RecordTy dynLab' <$> checkExtLabeledRow row
+        return $ [DynField label labelTy]
+    row' <- checkExtLabeledRow row
+    matchRequirement $ RecordTyWithElems $ dynLab' ++ fromFieldRowElems (extRowAsFieldRowElems row')
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
   UVariantLift labels value -> do
     row <- freshInferenceName LabeledRowKind
@@ -1422,29 +1423,33 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
   UPatRecord dynLab (Ext labels extLabel) (dynLabB `PairB` (labBs `PairB` tailB)) -> do
     dynTypeVar <- case dynLab of
-      Nothing     -> return Nothing
+      Nothing     -> return []
       Just labVar -> do
         labVar' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar labVar) (TC LabelType)
-        Just . (labVar',) <$> freshType TyKind
+        ty' <- freshType TyKind
+        return $ [DynField labVar' ty']
     labelTypeVars <- mapM (const $ freshType TyKind) labels
     extTypeVar <- case tailB of
-      RightB UnitB -> return Nothing
-      LeftB  _     -> Just <$> freshInferenceName LabeledRowKind
-    constrainVarTy v $ RecordTy dynTypeVar $ Ext labelTypeVars extTypeVar
+      RightB UnitB -> return []
+      LeftB  _     -> (:[]) . DynFields <$> freshInferenceName LabeledRowKind
+    constrainVarTy v $ RecordTyWithElems $
+      dynTypeVar ++ [StaticFields labelTypeVars] ++ extTypeVar
     let afterDyn recV = case tailB of
           NothingB -> do
             unless (extLabel == Nothing) $ throw CompilerErr $
               "mismatched labels and patterns (parser should not allow this!)"
             emitUnpacked (Var recV) >>= \els -> bindLamPats labBs els cont
-          JustB tB -> do
-            [itemsRecord, restRecord] <- emitUnpacked =<< emitOp (RecordSplit labelTypeVars $ Var recV)
-            items <- emitUnpacked (Var itemsRecord)
-            bindLamPats labBs items $ bindLamPat tB restRecord cont
+          JustB tB -> case labBs of
+            Empty -> bindLamPat tB recV cont
+            _     -> do
+              [itemsRecord, restRecord] <- emitUnpacked =<< emitOp (RecordSplit labelTypeVars $ Var recV)
+              items <- emitUnpacked (Var itemsRecord)
+              bindLamPats labBs items $ bindLamPat tB restRecord cont
           _ -> error "unreachable"
     case dynLabB of
       NothingB  -> afterDyn v
       JustB dlB -> do
-        let Just (labVar, _) = dynTypeVar
+        let [DynField labVar _] = dynTypeVar
         [dynVal, rest] <- emitUnpacked =<< emitOp (RecordSplitDynamic (Var labVar) (Var v))
         bindLamPat dlB dynVal $ afterDyn rest
       _ -> error "unreachable"
@@ -1841,26 +1846,7 @@ instance Unifiable Atom where
      unifyZip :: (EmitsInf n, Unifier m) => Type n -> Type n -> m n ()
      unifyZip t1 t2 = case (t1, t2) of
        (Pi piTy, Pi piTy') -> unifyPiType piTy piTy'
-       (RecordTy dynLab xs, RecordTy dynLab' xs') -> case (dynLab, dynLab') of
-         (Nothing, Nothing) -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
-         (Just (v, ty), Just (v', ty')) -> do
-           unless (v == v') empty
-           unify ty ty'
-           unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
-         (Just (v, ty), Nothing) -> do
-           -- We could cheap reduce the extension of xs' to increase the chances of
-           -- success, but I don't expect that it will make a meaningful difference
-           -- except for some very weird programs.
-           let (Ext xsItems' xsExt') = xs'
-           cheapNormalize (Var v) >>= \case
-             Con (LabelCon l) -> case lookupLabelHead xsItems' l of
-               Nothing -> empty
-               _ -> do
-                 let (h, xsItemsPop') = splitLabeledItems (labeledSingleton l ()) xsItems'
-                 unify ty (head $ toList h)
-                 unify (ExtLabeledItemsE xs) (ExtLabeledItemsE $ Ext xsItemsPop' xsExt')
-             _ -> empty  -- TODO: Ideally we would delay this unification?
-         (Nothing, Just _)  -> unifyZip t2 t1
+       (RecordTy els, RecordTy els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
        (VariantTy xs, VariantTy xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
        (TypeCon _ c xs, TypeCon _ c' xs') ->
          unless (c == c') empty >> unifyFoldable xs xs'
@@ -1889,6 +1875,31 @@ instance Unifiable (EffectRowP AtomName) where
         unify (extendEffRow extras1 newRow) (EffectRow mempty t2)
       _ -> empty
 
+-- TODO: This unification procedure is incomplete! There are types that we might
+-- want to treat as equivalent, but for now they would be rejected conservatively!
+-- One example would is the unification of {a: ty} and {@infVar: ty}.
+instance Unifiable FieldRowElems where
+  unifyZonked e1 e2 = go (fromFieldRowElems e1) (fromFieldRowElems e2)
+    where
+      go []            []            = return ()
+      go l@(h:t)       r@(h':t')     = (unifyElem h h' >> go t t') <|> unifyAsExtLabledItems l r
+      go [DynFields f] r             = extendSolution f $ LabeledRow $ fieldRowElemsFromList r
+      go l             [DynFields f] = extendSolution f $ LabeledRow $ fieldRowElemsFromList l
+      go l             r             = unifyAsExtLabledItems l r
+
+      unifyElem :: forall n m. (EmitsInf n, Unifier m) => FieldRowElem n -> FieldRowElem n -> m n ()
+      unifyElem = curry $ \case
+        (DynField v ty     , DynField v' ty'    ) -> unify (Var v) (Var v') >> unify ty ty'
+        (DynFields r       , DynFields r'       ) -> unify (Var r) (Var r')
+        (StaticFields items, StaticFields items') -> do
+          guard $ reflectLabels items == reflectLabels items'
+          zipWithM_ unify (toList items) (toList items')
+        _ -> empty
+
+      unifyAsExtLabledItems l r = bindM2 unify (asExtLabeledItems l) (asExtLabeledItems r)
+
+      asExtLabeledItems x = ExtLabeledItemsE <$> fieldRowElemsAsExtRow (fieldRowElemsFromList x)
+
 instance Unifiable (ExtLabeledItemsE Type AtomName) where
   unifyZonked x1 x2 =
         unifyDirect x1 x2
@@ -1900,7 +1911,7 @@ instance Unifiable (ExtLabeledItemsE Type AtomName) where
                  => ExtLabeledItemsE Type AtomName n
                  -> ExtLabeledItemsE Type AtomName n -> m n ()
      unifyDirect (ExtLabeledItemsE r) (ExtLabeledItemsE (Ext NoLabeledItems (Just v))) =
-       extendSolution v (LabeledRow r)
+       extendSolution v $ LabeledRow $ extRowAsFieldRowElems r
      unifyDirect _ _ = empty
 
      unifyZip :: (EmitsInf n, Unifier m)

@@ -135,7 +135,7 @@ another. For instance:
 %passes parse
 :t #&a : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
 > (MkIso
 >    { bwd = \({a = (), ...()}, {, ...()}). (,) {, ...l} {a = x, ...r}
@@ -144,7 +144,7 @@ another. For instance:
 
 :t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32 & b: Float32} & {c: Unit}))
 
 '`#&a` and `#&b` are isomorphisms that move a given field from the record on the
@@ -159,7 +159,7 @@ when using a record type as an index set:
 >  ?-> (c:Type)
 >  ?-> (v:Type)
 >  ?-> (Ix b)
->  ?=> (Ix c) ?=> (Iso ({ &} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
+>  ?=> (Ix c) ?=> (Iso ({&} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
 
 -- :p
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -176,7 +176,7 @@ when using a record type as an index set:
 `overLens`:
 
 :t splitR
-> ((a:Type) ?-> Iso a ({ &} & a))
+> ((a:Type) ?-> Iso a ({&} & a))
 
 :t overLens
 > ((a:Type)

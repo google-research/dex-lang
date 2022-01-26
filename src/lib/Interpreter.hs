@@ -85,7 +85,7 @@ traverseSurfaceAtomNames atom doWithName = case atom of
     DataCon printName defName' <$> mapM rec params
                                <*> pure con <*> mapM rec args
   Record items -> Record <$> mapM rec items
-  RecordTy _ _ -> substM atom
+  RecordTy _ -> substM atom
   Variant ty l con payload ->
     Variant
        <$> (fromExtLabeledItemsE <$> substM (ExtLabeledItemsE ty))
