@@ -153,8 +153,11 @@ liftPassesM bench m = do
     Immut <- return $ toImmutEvidence env
     localTopBuilder $ m >> return UnitE
   case result of
-    Success (DistinctAbs bindingsFrag UnitE) -> do
-      setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
+    Success (Abs bindingsFrag UnitE) -> do
+      setTopStateEx $ runEnvReaderM env do
+        liftM fromLiftE $ liftImmut $ refreshAbs (Abs bindingsFrag UnitE)
+          \bindingsFrag' UnitE ->
+            return $ LiftE $ TopStateEx $ extendOutMap env bindingsFrag'
       return $ Result outs (Success ())
     Failure errs -> do
       return $ Result outs (Failure errs)

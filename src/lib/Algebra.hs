@@ -191,25 +191,22 @@ clamp p = cpoly [(1, cmono [Clamp p] (mono []))]
 type CPolySubstVal = SubstVal AtomNameC (MaybeE ClampPolynomial)
 
 blockAsCPoly :: (EnvExtender m, EnvReader m) => Block n -> m n (Maybe (ClampPolynomial n))
-blockAsCPoly (Block _ decls' result') = fromMaybeE <$> liftImmut do
-  Distinct <- getDistinct
-  scope    <- unsafeGetScope
-  case refreshAbs scope $ Abs decls' result' of
-    DistinctAbs decls'' result'' ->
-      fmap toMaybeE $ runMaybeT1 $ runSubstReaderT idSubst $ go decls'' result''
+blockAsCPoly (Block _ decls' result') =
+  runMaybeT1 $ runSubstReaderT idSubst $ go $ Abs decls' result'
   where
-    go :: (EnvExtender2 m, EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m, Distinct l)
-       => Nest Decl o l -> Expr l -> m o o (ClampPolynomial o)
-    go decls result = case decls of
-      Nest decl@(Let b (DeclBinding _ _ expr)) rest -> do
+    go :: (EnvExtender2 m, EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m)
+       => Abs (Nest Decl) Expr o -> m o o (ClampPolynomial o)
+    go (Abs decls result) = case decls of
+      Empty -> exprAsCPoly result
+      Nest decl@(Let _ (DeclBinding _ _ expr)) restDecls -> do
+        let rest = Abs restDecls result
         cp <- toMaybeE <$> optional (exprAsCPoly expr)
-        withSubscopeDistinct rest $ do
-          extendSubst (b@>SubstVal cp) $ do
-            cpresult <- extendEnv (toEnvFrag decl) $ go rest result
-            case hoist decl cpresult of
+        refreshAbs (Abs decl rest) \(Let b _) rest' -> do
+          extendSubst (b@>SubstVal (sink cp)) $ do
+            cpresult <- go rest'
+            case hoist b cpresult of
               HoistSuccess ans -> return ans
               HoistFailure _   -> empty
-      Empty -> exprAsCPoly result
 
     exprAsCPoly :: (EnvReader2 m, SubstReader CPolySubstVal m, Alternative2 m) => Expr o -> m o o (ClampPolynomial o)
     exprAsCPoly e = case e of

@@ -97,7 +97,7 @@ instance GenericallyTraversableE Atom where
 
 instance GenericallyTraversableE Block where
   traverseGenericE (Block _ decls result) = do
-    DistinctAbs decls' (PairE ty result') <-
+    Abs decls' (PairE ty result') <-
       buildScoped $ traverseDeclNest decls do
         result' <- traverseExpr result
         resultTy <- getType result'

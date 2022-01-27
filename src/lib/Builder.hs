@@ -94,7 +94,7 @@ class Builder m => ScopableBuilder (m::MonadKind1) where
   buildScoped
     :: (SinkableE e, Immut n)
     => (forall l. (Emits l, DExt n l) => m l (e l))
-    -> m n (DistinctAbs (Nest Decl) e n)
+    -> m n (Abs (Nest Decl) e n)
 
 type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
 type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
@@ -139,12 +139,11 @@ class (EnvReader m, MonadFail1 m)
   -- implemented more efficiently by avoiding a double substitution
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
   emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
-  emitEnv :: (Mut n, SinkableE e, SubstE Name e)
-                  => Abs TopEnvFrag e n -> m n (e n)
+  emitEnv :: (Mut n, SinkableE e, SubstE Name e) => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: (Immut n, SinkableE e)
                   => (forall l. (Mut l, DExt n l) => m l (e l))
-                  -> m n (DistinctAbs TopEnvFrag e n)
+                  -> m n (Abs TopEnvFrag e n)
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
 emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm mempty mempty
@@ -188,17 +187,17 @@ instance Fallible m => EnvReader (TopBuilderT m) where
   unsafeGetEnv = TopBuilderT $ getOutMapInplaceT
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
-  emitBinding hint binding = TopBuilderT $
-    emitInplaceT hint binding \b binding' -> do
-      let envFrag = toEnvFrag (b:>binding')
+  emitBinding hint binding = do
+    Abs b v <- newNameM hint
+    let ab = Abs (b:>binding) v
+    ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
+      let envFrag = toEnvFrag b'
       let scs = bindingsFragToSynthCandidates envFrag
-      TopEnvFrag envFrag scs mempty mempty mempty
+      let topFrag = TopEnvFrag envFrag scs mempty mempty mempty
+      return $ Abs topFrag v'
+    TopBuilderT $ extendInplaceT ab'
 
-  emitEnv ab = TopBuilderT do
-    extendInplaceT do
-      scope <- unsafeGetScope
-      ab' <- sinkM ab
-      return $ refreshAbs scope ab'
+  emitEnv ab = TopBuilderT $ extendInplaceT ab
 
   emitNamelessEnv bs = TopBuilderT $ extendTrivialInplaceT bs
 
@@ -274,17 +273,15 @@ instance Fallible m => ScopableBuilder (BuilderT m) where
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
-    BuilderT $ emitInplaceT hint (DeclBinding ann ty expr) \b rhs ->
-      Nest (Let b rhs) Empty
+    Abs b v <- newNameM hint
+    let decl = Let b $ DeclBinding ann ty expr
+    BuilderT $ extendInplaceT $ Abs (Nest decl Empty) v
 
 instance Fallible m => EnvReader (BuilderT m) where
   unsafeGetEnv = BuilderT $ getOutMapInplaceT
 
 instance Fallible m => EnvExtender (BuilderT m) where
-  extendEnv frag cont = BuilderT $
-    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-      withExtEvidence (toExtEvidence frag) $
-        runBuilderT' cont
+  refreshAbs ab cont = BuilderT $ refreshAbs ab \b e -> runBuilderT' $ cont b e
 
 instance (SinkableV v, ScopableBuilder m) => ScopableBuilder (SubstReaderT v m i) where
   buildScoped cont = SubstReaderT $ ReaderT \env ->
@@ -352,7 +349,7 @@ buildBlock
   => (forall l. (Emits l, DExt n l) => m l (Atom l))
   -> m n (Block n)
 buildBlock cont = liftImmut do
-  DistinctAbs decls results <- buildScoped do
+  Abs decls results <- buildScoped do
     result <- cont
     ty <- cheapNormalize =<< getType result
     return $ result `PairE` ty

@@ -990,13 +990,13 @@ lookupImpVar v = do
     Rename _ -> error "shouldn't happen?"
 
 finishBlock :: LLVMBuilder m => L.Terminator -> L.Name -> m ()
-finishBlock term newName = do
+finishBlock term name = do
   oldName <- gets blockName
   instrs  <- gets curInstrs
   let newBlock = L.BasicBlock oldName (reverse instrs) (L.Do term)
   modify $ setCurBlocks (newBlock:)
          . setCurInstrs (const [])
-         . setBlockName (const newName)
+         . setBlockName (const name)
 
 freshName :: LLVMBuilder m => NameHint -> m L.Name
 freshName hint = do

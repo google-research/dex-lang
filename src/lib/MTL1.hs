@@ -62,9 +62,11 @@ instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) w
 
 instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
-  extendEnv frag m = WriterT1 $ WriterT $ do
-    (ans, update) <- extendEnv frag (runWriterT $ runWriterT1' m)
-    case hoist frag update of
+  refreshAbs ab cont = WriterT1 $ WriterT $ do
+    (ans, Abs b update) <- refreshAbs ab \b e -> do
+      (ans, update) <- runWriterT $ runWriterT1' $ cont b e
+      return (ans, Abs b update)
+    case hoist b update of
       HoistSuccess topUpdate -> return (ans, topUpdate)
       HoistFailure _ -> return (ans, mfail)
 
@@ -93,8 +95,8 @@ instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
     liftImmut $ runReaderT (runReaderT1' m) r
 
 instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
-  extendEnv frag m = ReaderT1 $ ReaderT \r -> do
-    extendEnv frag (runReaderT1 (sink r) m)
+  refreshAbs ab cont = ReaderT1 $ ReaderT \r -> do
+    refreshAbs ab \b e -> runReaderT1 (sink r) $ cont b e
 
 instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
   throwErrs = lift11 . throwErrs
@@ -146,9 +148,11 @@ class HoistableState (s::E) (m::MonadKind1) where
   hoistState :: BindsNames b => s n -> b n l -> s l -> m n (s n)
 
 instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT1 s m) where
-  extendEnv frag m = StateT1 \s -> do
-    (ans, s') <- extendEnv frag $ runStateT1 m (sink s)
-    s'' <- hoistState s frag s'
+  refreshAbs ab cont = StateT1 \s -> do
+    (ans, Abs b s') <- refreshAbs ab \b e -> do
+      (ans, s') <- flip runStateT1 (sink s) $ cont b e
+      return (ans, Abs b s')
+    s'' <- hoistState s b s'
     return (ans, s'')
 
 -------------------- ScopedT1 --------------------
@@ -169,8 +173,8 @@ deriving instance (Monad1 m, Catchable1 m) => Catchable (ScopedT1 s m n)
 deriving instance (Monad1 m, CtxReader1 m) => CtxReader (ScopedT1 s m n)
 
 instance (SinkableE s, EnvExtender m) => EnvExtender (ScopedT1 s m) where
-  extendEnv frag m = ScopedT1 \s -> do
-    ans <- extendEnv frag $ runScopedT1 m (sink s)
+  refreshAbs ab cont = ScopedT1 \s -> do
+    ans <- refreshAbs ab \b e -> flip runScopedT1 (sink s) $ cont b e
     return (ans, s)
 
 -------------------- MaybeT1 --------------------
@@ -205,5 +209,5 @@ instance ScopeReader m => ScopeReader (MaybeT1 m) where
     (liftImmut $ toMaybeE <$> (runMaybeT $ runMaybeT1' m))
 
 instance EnvExtender m => EnvExtender (MaybeT1 m) where
-  extendEnv frag m = MaybeT1 $ MaybeT $
-    extendEnv frag $ runMaybeT $ runMaybeT1' m
+  refreshAbs ab cont = MaybeT1 $ MaybeT $
+    refreshAbs ab \b e -> runMaybeT $ runMaybeT1' $ cont b e

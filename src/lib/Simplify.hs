@@ -187,13 +187,12 @@ defuncCase scrut alts resultTy = do
     -- first component is data. The reconstruction returned only applies to the
     -- second component.
     simplifyAlt
-      :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+      :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
       => SplitDataNonData n -> Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
     simplifyAlt split (Abs bs body) = fromPairE <$> liftImmut do
       substBinders bs \bs' -> do
-        DistinctAbs decls result <- buildScoped $ simplifyBlock body
-        -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-        extendEnv (toEnvFrag decls) do
+        ab <- buildScoped $ simplifyBlock body
+        refreshAbs ab \decls result -> do
           let locals = toScopeFrag bs' >>> toScopeFrag decls
           -- TODO: this might be too cautious. The type only needs to be hoistable
           -- above the decls. In principle it can still mention vars from the lambda
@@ -347,15 +346,13 @@ splitDataComponents = \case
       , fromSplit = \_ x -> return x }
 
 simplifyAbs
-  :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+  :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
   => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
 simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
   substBinders bs \bs' -> do
-    DistinctAbs decls result <- buildScoped $ simplifyBlock body
-    -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-    extendEnv (toEnvFrag decls) do
-      resultTy <- getType result
-      isData resultTy >>= \case
+    ab <- buildScoped $ simplifyBlock body
+    refreshAbs ab \decls result -> do
+      getType result >>= isData >>= \case
         True -> do
           block <- makeBlock decls $ Atom result
           return $ PairE (Abs bs' block) IdentityRecon
@@ -575,6 +572,7 @@ instance GenericE SimpleIxInstance where
   fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
   toE (PairE a (PairE b c)) = SimpleIxInstance a b c
 
+instance SubstE Name SimpleIxInstance
 instance SinkableE SimpleIxInstance
 instance HoistableE SimpleIxInstance
 

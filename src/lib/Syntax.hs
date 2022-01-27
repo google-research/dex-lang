@@ -411,11 +411,12 @@ withEnv f = f <$> unsafeGetEnv
 data DistinctEnv n where
   DB :: (Distinct n, Immut n) => Env n -> DistinctEnv n
 
-class (EnvReader m, Monad1 m)
-      => EnvExtender (m::MonadKind1) where
-  -- Note that we don't require `Immut l` here. So it's still possible to extend
-  -- with nameless fragments, of type `EnvFrag n n`.
-  extendEnv :: Distinct l => EnvFrag n l -> (Ext n l => m l r) -> m n r
+class (EnvReader m, Monad1 m) => EnvExtender (m::MonadKind1) where
+  refreshAbs
+    :: (BindsEnv b, SubstB Name b, SubstE Name e)
+    => Abs b e n
+    -> (forall l. (Immut l, DExt n l) => b n l -> e l -> m l a)
+    -> m n a
 
 type EnvReader2   (m::MonadKind2) = forall (n::S). EnvReader   (m n)
 type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
@@ -426,11 +427,11 @@ instance (SinkableE e, EnvReader m)
 
 instance (SinkableE e, ScopeReader m, EnvExtender m)
          => EnvExtender (OutReaderT e m) where
-  extendEnv frag m = OutReaderT $ ReaderT \env ->
-    extendEnv frag do
-      let OutReaderT (ReaderT cont) = m
+  refreshAbs ab cont = OutReaderT $ ReaderT \env ->
+    refreshAbs ab \b e -> do
+      let OutReaderT (ReaderT cont') = cont b e
       env' <- sinkM env
-      cont env'
+      cont' env'
 
 newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
   EnvReaderT {runEnvReaderT' :: ReaderT (DistinctEvidence n, Env n) m a }
@@ -467,10 +468,11 @@ instance Monad m => EnvReader (EnvReaderT m) where
   unsafeGetEnv = EnvReaderT $ asks snd
 
 instance Monad m => EnvExtender (EnvReaderT m) where
-  extendEnv frag m = EnvReaderT $ withReaderT
-    (\(_, bindings) -> (Distinct, extendOutMap bindings frag)) $
-        withExtEvidence (toExtEvidence frag) $
-          runEnvReaderT' m
+  refreshAbs ab cont = EnvReaderT $ ReaderT
+    \(Distinct, env) -> refreshAbsPure (toScope env) ab
+       \_ b e -> do
+         let env' = extendOutMap env $ toEnvFrag b
+         runReaderT (runEnvReaderT' $ cont b e) (Distinct, env')
 
 instance Monad m => ScopeReader (EnvReaderT m) where
   getDistinct = EnvReaderT $ asks fst
@@ -492,11 +494,22 @@ instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
 
 instance (SinkableV v, ScopeReader m, EnvExtender m)
          => EnvExtender (SubstReaderT v m i) where
-  extendEnv frag m = SubstReaderT $ ReaderT \env ->
-    extendEnv frag do
-      let SubstReaderT (ReaderT cont) = m
-      env' <- sinkM env
-      cont env'
+  refreshAbs ab cont = SubstReaderT $ ReaderT \subst ->
+    refreshAbs ab \b e -> do
+      subst' <- sinkM subst
+      let SubstReaderT (ReaderT cont') = cont b e
+      cont' subst'
+
+instance (Monad m, ExtOutMap Env decls)
+         => EnvReader   (InplaceT Env decls m) where
+  unsafeGetEnv = getOutMapInplaceT
+
+instance (Monad m, ExtOutMap Env decls)
+         => EnvExtender (InplaceT Env decls m) where
+  refreshAbs ab cont = UnsafeMakeInplaceT \env ->
+    refreshAbsPure (toScope env) ab \_ b e -> do
+      let env' = extendOutMap env $ toEnvFrag b
+      unsafeRunInplaceT (cont b e) env'
 
 -- TODO: unify this with `HasNames` by parameterizing by the thing you bind,
 -- like we do with `SubstE Name`, `SubstE AtomSubstVal`, etc?
@@ -586,38 +599,26 @@ refreshBinders
   => b n l
   -> (forall l'. (Immut l', DExt n l') => b n l' -> SubstFrag Name n l l' -> m l' a)
   -> m n a
-refreshBinders b cont = do
-  scope <- unsafeGetScope
-  Distinct <- getDistinct
-  substBToFrag (scope, idSubst) b \b' frag ->
-    extendEnv (toEnvFrag b') $
-      withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b') $
-        cont b' frag
+refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
 
 substBinders
   :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, BindsEnv b)
-  => Immut o
+     , SubstReader v m, SubstB v b, SubstV Name v, SubstB Name b, BindsEnv b)
   => b i i'
   -> (forall o'. (Immut o', DExt o o') => b o o' -> m i' o' a)
   -> m i o a
 substBinders b cont = do
-  scope <- unsafeGetScope
-  Distinct <- getDistinct
-  env <- getSubst
-  DistinctAbs b' envFrag <- return $ substAbsDistinct scope env $ Abs b (idSubstFrag b)
-  extendEnv (toEnvFrag b') do
-    withImmutEvidence (toImmutEvidence $ scope `extendOutMap` toScopeFrag b') $
-      extendSubst envFrag do
-        cont b'
+  ab <- substM $ Abs b $ idSubstFrag b
+  refreshAbs ab \b' subst ->
+    extendSubst subst $ cont b'
 
 -- Version of `substBinder` that gets its `Immut n` evidence from the monad.
 -- TODO: make it easy to go the other way (from refreshI to refresh) by having a
 -- `CarriesImmutT` transformer to add explicit Immut evidence when
 -- needed. Then this can be the main version.
 substBindersI
-  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, BindsEnv b)
+  :: ( SinkableV v, SubstV v v, SubstV Name v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, SubstB Name b, BindsEnv b)
   => AlwaysImmut2 m
   => b i i'
   -> (forall o'. Ext o o' => b o o' -> m i' o' a)
@@ -628,35 +629,29 @@ substBindersI b cont = do
 
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
-  => Immut n
   => NameHint -> binding n
   -> (forall l. (Immut l, DExt n l) => NameBinder c n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
-  scope    <- unsafeGetScope
-  Distinct <- getDistinct
-  withFresh hint scope \b -> do
-    extendEnv (toEnvFrag (b:>binding)) $
-      cont b
+  Abs b v <- newNameM hint
+  refreshAbs (Abs (b:>binding) v) \(b':>_) _ -> cont b'
 
 withFreshBinders
   :: (Color c, EnvExtender m, ToBinding binding c)
   => Immut n
-  => [(NameHint, binding n)]
+  => [binding n]
   -> (forall l. (Immut l, Distinct l, Ext n l)
               => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
   -> m n a
 withFreshBinders [] cont = do
   Distinct <- getDistinct
   cont Empty []
-withFreshBinders ((hint,binding):rest) cont = do
-  scope    <- unsafeGetScope
-  Distinct <- getDistinct
-  withFresh hint scope \b -> do
-    extendEnv (toEnvFrag (b:>binding)) do
-      rest' <- forM rest \(h, bs) -> (h,) <$> sinkM bs
-      withFreshBinders rest' \bs vs ->
-        cont (Nest (b:>binding) bs) (sink (binderName b) : vs)
+withFreshBinders (binding:rest) cont = do
+  withFreshBinder NoHint binding \b -> do
+    ListE rest' <- sinkM $ ListE rest
+    withFreshBinders rest' \bs vs ->
+      cont (Nest (b :> binding) bs)
+           (sink (binderName b) : vs)
 
 withFreshLamBinder
   :: (EnvExtender m)
@@ -805,10 +800,29 @@ getAllowedEffects = withEnv getEffects
 getSourceMapM :: EnvReader m => m n (SourceMap n)
 getSourceMapM = withEnv getSourceMap
 
+-- === Extending effects ===
+
+data EffectBinder n l where
+  EffectBinder :: EffectRow n -> EffectBinder n n
+
 withAllowedEffects :: EnvExtender m => EffectRow n -> m n a -> m n a
-withAllowedEffects effs cont = do
-  Distinct <- getDistinct
-  extendEnv (EnvFrag emptyOutFrag $ Just effs) cont
+withAllowedEffects effs cont =
+  refreshAbs (Abs (EffectBinder effs) UnitE) \(EffectBinder _) UnitE ->
+    cont
+
+instance GenericB EffectBinder where
+  type RepB EffectBinder = LiftB EffectRow
+  fromB (EffectBinder effs) = LiftB effs
+  toB   (LiftB effs) = EffectBinder effs
+
+instance BindsEnv EffectBinder where
+  toEnvFrag (EffectBinder effs) = EnvFrag emptyOutFrag $ Just effs
+
+instance SinkableB EffectBinder
+instance HoistableB EffectBinder
+instance ProvesExt  EffectBinder
+instance BindsNames EffectBinder
+instance SubstB Name EffectBinder
 
 -- === front-end language AST ===
 
@@ -2636,6 +2650,9 @@ instance SubstB Name EnvFrag
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
 
+instance BindsEnv (RecSubstFrag Binding) where
+  toEnvFrag frag = EnvFrag frag mempty
+
 instance BindsEnv UnitB where
   toEnvFrag UnitB = emptyOutFrag
 
@@ -2718,14 +2735,14 @@ instance Ord SourceBlock where
 instance GenericE ImpInstr where
   type RepE ImpInstr = EitherE4
       (EitherE4
-  {- IFor -}    (Size `PairE` Abs IBinder ImpBlock)
+  {- IFor -}    (LiftE Direction `PairE` Size `PairE` Abs IBinder ImpBlock)
   {- IWhile -}  (ImpBlock)
   {- ICond -}   (IExpr `PairE` ImpBlock `PairE` ImpBlock)
   {- IQuery -}  (LiftE IFunVar `PairE` IExpr)
     ) (EitherE4
   {- ISyncW -}  (UnitE)
   {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
-  {- ICall -}   (LiftE IFunVar `PairE` ListE IExpr)
+  {- ICall -}   (ImpFunName `PairE` ListE IExpr)
   {- Store -}   (IExpr `PairE` IExpr)
     ) (EitherE4
   {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
@@ -2736,8 +2753,54 @@ instance GenericE ImpInstr where
   {- ICastOp -} (LiftE IType `PairE` IExpr)
   {- IPrimOp -} (ComposeE PrimOp IExpr)
       )
-  toE = undefined
-  fromE = undefined
+
+  fromE instr = case instr of
+    IFor d n ab           -> Case0 $ Case0 $ LiftE d `PairE` n `PairE` ab
+    IWhile body           -> Case0 $ Case1 body
+    ICond p cons alt      -> Case0 $ Case2 $ p `PairE` cons `PairE` alt
+    IQueryParallelism f s -> Case0 $ Case3 $ LiftE f `PairE` s
+
+    ISyncWorkgroup      -> Case1 $ Case0 UnitE
+    ILaunch f size args -> Case1 $ Case1 $ LiftE f `PairE` size `PairE` ListE args
+    ICall f args        -> Case1 $ Case2 $ f `PairE` ListE args
+    Store dest val      -> Case1 $ Case3 $ dest `PairE` val
+
+    Alloc a t s            -> Case2 $ Case0 $ LiftE (a, t) `PairE` s
+    MemCopy dest src numel -> Case2 $ Case1 $ dest `PairE` src `PairE` numel
+    Free ptr               -> Case2 $ Case2 ptr
+    IThrowError            -> Case2 $ Case3 UnitE
+
+    ICastOp idt ix -> Case3 $ Case0 $ LiftE idt `PairE` ix
+    IPrimOp op     -> Case3 $ Case1 $ ComposeE op
+
+  toE instr = case instr of
+    Case0 instr' -> case instr' of
+      Case0 (LiftE d `PairE` n `PairE` ab) -> IFor d n ab
+      Case1 body                           -> IWhile body
+      Case2 (p `PairE` cons `PairE` alt)   -> ICond p cons alt
+      Case3 (LiftE f `PairE` s)            -> IQueryParallelism f s
+      _ -> error "impossible"
+
+    Case1 instr' -> case instr' of
+      Case0 UnitE                                     -> ISyncWorkgroup
+      Case1 (LiftE f `PairE` size `PairE` ListE args) -> ILaunch f size args
+      Case2 (f `PairE` ListE args)                    -> ICall f args
+      Case3 (dest `PairE` val )                       -> Store dest val
+      _ -> error "impossible"
+
+    Case2 instr' -> case instr' of
+      Case0 (LiftE (a, t) `PairE` s )         -> Alloc a t s
+      Case1 (dest `PairE` src `PairE` numel)  -> MemCopy dest src numel
+      Case2 ptr                               -> Free ptr
+      Case3 UnitE                             -> IThrowError
+      _ -> error "impossible"
+
+    Case3 instr' -> case instr' of
+      Case0 (LiftE idt `PairE` ix ) -> ICastOp idt ix
+      Case1 (ComposeE op )          -> IPrimOp op
+      _ -> error "impossible"
+
+    _ -> error "impossible"
 
 instance SinkableE ImpInstr
 instance HoistableE  ImpInstr
@@ -2747,8 +2810,8 @@ instance SubstE Name ImpInstr
 
 instance GenericE ImpBlock where
   type RepE ImpBlock = Abs (Nest ImpDecl) (ListE IExpr)
-  toE = undefined
-  fromE = undefined
+  fromE (ImpBlock decls results) = Abs decls (ListE results)
+  toE   (Abs decls (ListE results)) = ImpBlock decls results
 
 instance SinkableE ImpBlock
 instance HoistableE  ImpBlock
@@ -2760,8 +2823,14 @@ deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 instance GenericE IExpr where
   type RepE IExpr = EitherE2 (LiftE LitVal)
                              (PairE AtomName (LiftE BaseType))
-  toE = undefined
-  fromE = undefined
+  fromE iexpr = case iexpr of
+    ILit x -> Case0 (LiftE x)
+    IVar v ty -> Case1 (v `PairE` LiftE ty)
+
+  toE rep = case rep of
+    Case0 (LiftE x) -> ILit x
+    Case1 (v `PairE` LiftE ty) -> IVar v ty
+    _ -> error "impossible"
 
 instance SinkableE IExpr
 instance HoistableE  IExpr
@@ -2771,8 +2840,8 @@ instance SubstE Name IExpr
 
 instance GenericB IBinder where
   type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder AtomNameC)
-  toB = undefined
-  fromB = undefined
+  fromB (IBinder b ty) = PairB (LiftB (LiftE ty)) b
+  toB   (PairB (LiftB (LiftE ty)) b) = IBinder b ty
 
 instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
@@ -2815,9 +2884,16 @@ instance BindsEnv ImpDecl where
     toEnvFrag bs
 
 instance GenericE ImpFunction where
-  type RepE ImpFunction = UnitE -- TODO
-  toE = undefined
-  fromE = undefined
+  type RepE ImpFunction = EitherE2 (LiftE IFunType `PairE` Abs (Nest IBinder) ImpBlock)
+                                   (LiftE (IFunType, SourceName))
+  fromE f = case f of
+    ImpFunction ty ab   -> Case0 $ LiftE ty `PairE` ab
+    FFIFunction ty name -> Case1 $ LiftE (ty, name)
+
+  toE f = case f of
+    Case0 (LiftE ty `PairE` ab) -> ImpFunction ty ab
+    Case1 (LiftE (ty, name))    -> FFIFunction ty name
+    _ -> error "impossible"
 
 instance SinkableE ImpFunction
 instance HoistableE  ImpFunction
@@ -2831,6 +2907,9 @@ instance GenericB TopEnvFrag where
                                  `PairE` Cache `PairE` ESet ObjectFileName))
   fromB (TopEnvFrag frag sc sm c o) = PairB frag (LiftB (sc `PairE` sm `PairE` c `PairE` o))
   toB   (PairB frag (LiftB (sc `PairE` sm `PairE` c `PairE` o))) = TopEnvFrag frag sc sm c o
+
+instance BindsEnv TopEnvFrag where
+  toEnvFrag = undefined
 
 instance SubstB Name TopEnvFrag
 instance HoistableB  TopEnvFrag

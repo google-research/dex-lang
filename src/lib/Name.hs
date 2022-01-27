@@ -21,12 +21,10 @@ module Name (
   SubstReader (..), FromName (..), Distinct, DExt,
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
-  DistinctAbs (..), WithScope (..),
-  extendRenamer, ScopeReader (..), ScopeExtender (..),
+  WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
   SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
-  liftBetweenInplaceTs, emitInplaceT,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
   lookupTerminalSubstFrag,
@@ -57,7 +55,7 @@ module Name (
   lookupEMap, eMapSingleton, eSetSingleton, eMapToList, eSetToList,
   eMapFromList, eSetFromList,
   SinkableE (..), SinkableB (..), SinkableV, SinkingCoercion,
-  withFreshM, sink, sinkM, (!), (<>>), withManyFresh,
+  withFreshM, sink, sinkM, (!), (<>>), withManyFresh, refreshAbsPure,
   envFragAsScope, lookupSubstFrag, lookupSubstFragRaw,
   EmptyAbs, pattern EmptyAbs, NaryAbs, SubstVal (..),
   fmapNest, forEachNestItem, forEachNestItemM,
@@ -72,8 +70,7 @@ module Name (
   OutReaderT (..), OutReader (..), runOutReaderT,
   ExtWitness (..),
   InFrag (..), InMap (..), OutFrag (..), OutMap (..), ExtOutMap (..),
-  toSubstPairs, fromSubstPairs, SubstPair (..), refreshRecSubstFrag,
-  substAbsDistinct, refreshAbs,
+  toSubstPairs, fromSubstPairs, SubstPair (..),
   hoist, hoistToTop, sinkFromTop, fromConstAbs, exchangeBs, HoistableE (..),
   HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
   abstractFreeVarsNoAnn,
@@ -81,14 +78,15 @@ module Name (
   HoistableB (..), HoistableV,
   WrapE (..), WrapB (..), WithColor (..), fromWithColor,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
+  newName, newNameM, newNames, newNamesM,
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags,
   freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
-  locallyMutableInplaceT, locallyImmutableInplaceT, toExtWitness,
+  locallyMutableInplaceT, locallyImmutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   checkEmpty, updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence, fabricateImmutEvidence,
-  unConsSubst, ConsSubst (..), MonadTrans1 (..), fromDistinctAbs,
+  unConsSubst, ConsSubst (..), MonadTrans1 (..),
   ) where
 
 import Prelude hiding (id, (.))
@@ -269,7 +267,13 @@ class Monad1 m => ScopeReader (m::MonadKind1) where
   getDistinct :: m n (DistinctEvidence n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
-  extendScope :: Distinct l => ScopeFrag n l -> (Ext n l => m l r) -> m n r
+  -- We normally use the EnvReader version, `refreshAbs`, but sometime we're
+  -- working with raw binders that don't have env information associated with
+  -- them, `BindsEnv b`, in which case this makes more sense.
+  refreshAbsScope :: (SubstB Name b, SubstE Name e, BindsNames b)
+                  => Abs b e n
+                  -> (forall l. (Immut l, DExt n l) => b n l -> e l -> m l a)
+                  -> m n a
 
 class (SinkableV v, Monad2 m) => SubstReader (v::V) (m::MonadKind2) | m -> v where
    getSubst :: m i o (Subst v i o)
@@ -515,21 +519,6 @@ substBToFrag
 substBToFrag env b cont =
   substB env b \env' b' ->
     cont b' $ substE env' $ idSubstFrag b
-
--- === expresions carrying distinctness constraints ===
-
-data DistinctAbs (b::B) (e::E) (n::S) where
-  DistinctAbs :: Distinct l => b n l -> e l -> DistinctAbs b e n
-
-instance (SubstB v b, SubstE v e) => SubstE v (DistinctAbs b e) where
-  substE env (DistinctAbs b e) =
-    substB env b \env' b' -> DistinctAbs b' $ substE env' e
-
-instance (HoistableB b, HoistableE e) => HoistableE (DistinctAbs b e) where
-  freeVarsE (DistinctAbs b e) = freeVarsE (Abs b e)
-
-fromDistinctAbs :: DistinctAbs b e n -> Abs b e n
-fromDistinctAbs (DistinctAbs b e) = Abs b e
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -809,6 +798,18 @@ withManyFresh (h:hs) scope cont =
     withManyFresh hs (scope `extendOutMap` toScopeFrag b) \bs ->
       cont $ Nest b bs
 
+refreshAbsPure
+  :: forall n b e a .
+     (Distinct n, ProvesExt b, SubstB Name b, SubstE Name e)
+  => Scope n -> Abs b e n
+  -> (forall l. (Immut l, DExt n l) => Scope l -> b n l -> e l -> a)
+  -> a
+refreshAbsPure scope (Abs b e) cont =
+  substB (scope, idSubst :: Subst Name n n) b \(scope', subst') b' -> do
+    let e' = substE (scope', subst') e
+    case scopeToImmut scope' of
+      Immut -> withExtEvidence b' $ cont scope' b' e'
+
 -- === versions of monad constraints with scope params ===
 
 type MonadKind  =           * -> *
@@ -862,13 +863,7 @@ withFreshM :: (ScopeExtender m, AlwaysImmut m, Color c)
            => NameHint
            -> (forall o'. (DExt o o') => NameBinder c o o' -> m o' a)
            -> m o a
-withFreshM hint cont = do
-  Distinct <- getDistinct
-  Immut <- getImmut
-  m <- unsafeGetScope
-  withFresh hint m \b' -> do
-    extendScope (toScopeFrag b') $
-      cont b'
+withFreshM hint cont = refreshAbsScope (newName hint) \b _ -> cont b
 
 class ColorsNotEqual a b where
   notEqProof :: ColorsEqual a b -> r
@@ -887,6 +882,13 @@ instance (SubstE (SubstVal cMatch atom) atom, Color c)
 
 instance (SubstE (SubstVal cMatch atom) atom, SinkableE atom)
          => SubstV (SubstVal cMatch atom) (SubstVal cMatch atom) where
+
+instance (Color c, SinkableE atom, SubstE Name atom)
+         => SubstE Name (SubstVal cMatch atom c) where
+  substE (_, env) (Rename name) = Rename $ env ! name
+  substE (scope, env) (SubstVal atom) = SubstVal $ substE (scope, env) atom
+
+instance (SinkableE atom, SubstE Name atom) => SubstV Name (SubstVal cMatch atom)
 
 -- TODO: we can fill out the full (N^2) set of instances if we need to
 instance ColorsNotEqual AtomNameC DataDefNameC where notEqProof = \case
@@ -1262,10 +1264,11 @@ instance Monad m => ScopeReader (ScopeReaderT m) where
     cont
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
-  extendScope frag m = ScopeReaderT $ withReaderT
-    (\(_, scope) -> (Distinct, extendOutMap scope frag)) $
-        withExtEvidence (toExtEvidence frag) $
-          runScopeReaderT' m
+  refreshAbsScope ab cont = ScopeReaderT $ ReaderT
+    \(Distinct, scope) -> refreshAbsPure scope ab
+       \_ b e -> do
+         let env' = extendOutMap scope $ toScopeFrag b
+         runReaderT (runScopeReaderT' $ cont b e) (Distinct, env')
 
 instance Monad m => AlwaysImmut (ScopeReaderT m) where
   getImmut = ScopeReaderT $ ReaderT \(_, scope) ->
@@ -1305,11 +1308,11 @@ instance (SinkableV v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
 
 instance (SinkableV v, ScopeReader m, ScopeExtender m)
          => ScopeExtender (SubstReaderT v m i) where
-  extendScope frag m = SubstReaderT $ ReaderT \env ->
-    extendScope frag do
-      let SubstReaderT (ReaderT cont) = m
+  refreshAbsScope ab cont = SubstReaderT $ ReaderT \env ->
+    refreshAbsScope ab \b e -> do
+      let SubstReaderT (ReaderT cont') = cont b e
       env' <- sinkM env
-      cont env'
+      cont' env'
 
 instance (SinkableV v, MonadIO1 m) => MonadIO (SubstReaderT v m i o) where
   liftIO m = SubstReaderT $ lift $ liftIO m
@@ -1344,11 +1347,11 @@ instance (SinkableE e, ScopeReader m)
 
 instance (SinkableE e, ScopeExtender m)
          => ScopeExtender (OutReaderT e m) where
-  extendScope frag m = OutReaderT $ ReaderT \env ->
-    extendScope frag do
-      let OutReaderT (ReaderT cont) = m
+  refreshAbsScope ab cont = OutReaderT $ ReaderT \env ->
+    refreshAbsScope ab \b e -> do
+      let OutReaderT (ReaderT cont') = cont b e
       env' <- sinkM env
-      cont env'
+      cont' env'
 
 instance Monad1 m => OutReader e (OutReaderT e m) where
   askOutReader = OutReaderT ask
@@ -1402,13 +1405,13 @@ instance ScopeReader m => ScopeReader (ZipSubstReaderT m i1 i2) where
 
 instance (ScopeReader m, ScopeExtender m)
          => ScopeExtender (ZipSubstReaderT m i1 i2) where
-  extendScope frag m =
+  refreshAbsScope ab cont =
     ZipSubstReaderT $ ReaderT \(env1, env2) -> do
-      extendScope frag do
-        let ZipSubstReaderT (ReaderT cont) = m
+      refreshAbsScope ab \b e -> do
+        let ZipSubstReaderT (ReaderT cont') = cont b e
         env1' <- sinkM env1
         env2' <- sinkM env2
-        cont (env1', env2')
+        cont' (env1', env2')
 
 instance (AlwaysImmut m, ScopeReader m, ScopeExtender m)
          => AlwaysImmut (ZipSubstReaderT m i1 i2) where
@@ -1474,27 +1477,24 @@ extendInplaceTLocal f cont =
 
 extendInplaceT
   :: forall m b d e n.
-     (ExtOutMap b d, Monad m, SinkableE e)
-  => Mut n
-  => (forall l. (Immut l, DExt n l) => InplaceT b d m l (DistinctAbs d e l))
-  -> InplaceT b d m n (e n)
-extendInplaceT cont = do
-  Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
-  Distinct <- getDistinct
-  DistinctAbs decls result <- cont
-  UnsafeMakeInplaceT $ const $ return (unsafeCoerceE result, unsafeCoerceB decls)
+     (ExtOutMap b d, Monad m, SubstB Name d, SubstE Name e)
+  => Mut n => Abs d e n -> InplaceT b d m n (e n)
+extendInplaceT ab = do
+  UnsafeMakeInplaceT \env ->
+    refreshAbsPure (toScope env) ab \_ decls result ->
+      return (unsafeCoerceE result, unsafeCoerceB decls)
 
 locallyMutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
   => Immut n
   => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
-  -> InplaceT b d m n (DistinctAbs d e n)
+  -> InplaceT b d m n (Abs d e n)
 locallyMutableInplaceT cont = do
   UnsafeMakeInplaceT \bindings -> do
     (e, decls) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
                     unsafeRunInplaceT cont bindings
-    return (DistinctAbs (unsafeCoerceB decls) e, emptyOutFrag)
+    return (Abs (unsafeCoerceB decls) e, emptyOutFrag)
 
 -- XXX: be careful with this. See note [LiftImmutAndFriends]
 locallyImmutableInplaceT
@@ -1519,18 +1519,6 @@ liftBetweenInplaceTs liftInner lowerBindings liftDecls (UnsafeMakeInplaceT f) =
     (result, declsInner) <- liftInner $ f $ lowerBindings bindingsOuter
     withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
       return (result, liftDecls declsInner)
-
-emitInplaceT
-  :: (Color c, SinkableE e, ExtOutMap b d, Monad m)
-  => Mut o
-  => NameHint -> e o
-  -> (forall n l. DExt n l => NameBinder c n l -> e n -> d n l)
-  -> InplaceT b d m o (Name c o)
-emitInplaceT hint e buildDecls =
-  extendInplaceT do
-    scope <- unsafeGetScope
-    return $ withFresh hint scope \b ->
-      DistinctAbs (buildDecls b (sink e)) (binderName b)
 
 -- === predicates for mutable and immutable scope parameters ===
 
@@ -2084,43 +2072,6 @@ renameSubstPairBinders env (Nest (SubstPair b v) rest) cont =
     renameSubstPairBinders env' rest \env'' rest' ->
       cont env'' (Nest (SubstPair b' v) rest')
 
-refreshRecSubstFrag :: (Distinct o,  SinkableV v, SinkableV substVal, SubstV substVal v)
-                  => Scope o
-                  -> Subst substVal i o
-                  -> RecSubstFrag v i i'
-                  -> DistinctAbs (RecSubstFrag v) (Subst substVal i') o
-refreshRecSubstFrag scope env (RecSubstFrag frag) =
-  renameSubstPairBindersPure scope env (toSubstPairs frag) \scope' env' pairs ->
-    let frag' = fmapSubstFrag (\_ val -> fmapNames scope' (env'!) val) (fromSubstPairs pairs)
-    in DistinctAbs (RecSubstFrag frag') env'
-
-substAbsDistinct
-  :: (Distinct o, SubstB v b, SubstE v e, FromName v)
-  => Scope o -> Subst v i o -> Abs b e i -> DistinctAbs b e o
-substAbsDistinct scope env (Abs b e) =
-  substB (scope, env) b \env' b' ->
-    DistinctAbs b' $ substE env' e
-
-refreshAbs :: forall n b e.
-              (Distinct n, SubstB Name b, SubstE Name e)
-           => Scope n -> Abs b e n -> DistinctAbs b e n
-refreshAbs scope ab = substAbsDistinct scope (idSubst :: Subst Name n n) ab
-
-renameSubstPairBindersPure
-  :: (Distinct o, SinkableV v, SinkableV substVal, FromName substVal)
-  => Scope o
-  -> Subst substVal i o
-  -> Nest (SubstPair v ignored) i i'
-  -> (forall o'. Distinct o' => Scope o' -> Subst substVal i' o' -> Nest (SubstPair v ignored) o o' -> a)
-  -> a
-renameSubstPairBindersPure scope env Empty cont = cont scope env Empty
-renameSubstPairBindersPure scope env (Nest (SubstPair b v) rest) cont = do
-  withFresh (getNameHint b) scope \b' -> do
-    let env' = sink env <>> b @> (fromName $ binderName b')
-    let scope' = extendOutMap scope $ toScopeFrag b'
-    renameSubstPairBindersPure scope' env' rest \scope'' env'' rest' ->
-      cont scope'' env'' $ Nest (SubstPair b' v) rest'
-
 instance SinkableV v => SinkableB (RecSubstFrag v) where
   sinkingProofB _ _ _ = todoSinkableProof
 
@@ -2305,6 +2256,29 @@ data NameHint = Hint NameText
 instance IsString NameHint where
   fromString s = Hint $ fromString s
 
+newBinder :: Color c => NameHint -> (forall l. NameBinder c VoidS l -> a) -> a
+newBinder hint cont =
+  cont $ UnsafeMakeBinder $ UnsafeMakeName $ RawName (interpretHint hint) 0
+
+-- Closed binder-name pair. The name isn't fresh and it doesn't pretend to be.
+-- It's intended for subsequent refreshing.
+newName :: Color c => NameHint -> Abs (NameBinder c) (Name c) n
+newName hint = sinkFromTop $ newBinder hint \b -> Abs b $ binderName b
+
+-- uses the monad just to diambiguate the scope parameter
+newNameM :: Monad1 m => Color c => NameHint -> m n (Abs (NameBinder c) (Name c) n)
+newNameM hint = return $ newName hint
+
+newNames :: Color c => [NameHint] -> Abs (Nest (NameBinder c)) (ListE (Name c)) n
+newNames hints = do
+  let vs = [UnsafeMakeName $ RawName (interpretHint hint) i | (i, hint) <- zip [0..] hints]
+  let bs = unsafeListToNest $ map UnsafeMakeBinder vs
+  unsafeCoerceE $ Abs bs $ ListE vs
+
+newNamesM :: Monad1 m => Color c => [NameHint]
+          -> m n (Abs (Nest (NameBinder c)) (ListE (Name c)) n)
+newNamesM hints = return $ newNames hints
+
 withFresh :: forall n c a. (Distinct n, Color c)
           => NameHint -> Scope n
           -> (forall l. (DExt n l, Immut l) => NameBinder c n l -> a) -> a
@@ -2326,8 +2300,12 @@ freshRawName hint usedNames = RawName tag nextNum
                   | otherwise   -> error "Ran out of numbers!"
                 _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
-    tag = case hint of Hint v -> v
-                       NoHint -> "v"
+    tag = interpretHint hint
+
+interpretHint :: NameHint -> NameText
+interpretHint hint = case hint of
+  Hint v -> v
+  NoHint -> "v"
 
 projectName :: ScopeFrag n l -> Name s l -> Either (Name s n) (Name s (n:=>:l))
 projectName (UnsafeMakeScopeFrag scope) (UnsafeMakeName rawName)
