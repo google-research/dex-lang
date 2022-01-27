@@ -795,7 +795,9 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
           v' <- checkRho v $ RecordTyWithElems [DynFields anyFields]
           case delayedRec of
             (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
-            _ -> error "Not implemented yet --- need a better RecordCons!"
+            _ -> do
+              rec' <- emitOp . RecordCons v' =<< resolveDelay delayedRec
+              return (Just rec', mempty)
 
       resolveDelay :: (EmitsInf o, Inferer m)
                    => (Maybe (Atom o), LabeledItems (Atom o)) -> m i o (Atom o)
@@ -803,7 +805,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
         (Nothing , delayedItems) -> return $ Record delayedItems
         (Just rec, delayedItems) -> case null delayedItems of
           True  -> return rec
-          False -> emitOp $ RecordCons delayedItems rec
+          False -> emitOp $ RecordCons (Record delayedItems) rec
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels

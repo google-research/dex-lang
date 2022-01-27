@@ -393,14 +393,17 @@ simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
-  RecordCons left right ->
-    getType right >>= \case
+  RecordCons left right -> getType left >>= \case
+    StaticRecordTy leftTys -> getType right >>= \case
       StaticRecordTy rightTys -> do
         -- Unpack, then repack with new arguments (possibly in the middle).
+        leftList <- getUnpacked left
+        let leftItems = restructure leftList leftTys
         rightList <- getUnpacked right
         let rightItems = restructure rightList rightTys
-        return $ Record $ left <> rightItems
+        return $ Record $ leftItems <> rightItems
       _ -> error "not a record"
+    _ -> error "not a record"
   RecordConsDynamic (Con (LabelCon l)) val rec ->
     getType rec >>= \case
       StaticRecordTy itemTys -> do

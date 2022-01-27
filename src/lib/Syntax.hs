@@ -1135,8 +1135,8 @@ data PrimOp e =
       | ThrowException e             -- Catchable exceptions (unlike `ThrowError`)
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
       -- Extensible record and variant operations:
-      -- Add fields to a record (on the left). Left arg contains values to add.
-      | RecordCons   (LabeledItems e) e
+      -- Concatenate two records.
+      | RecordCons   e e
       -- Split {a:A & b:B & ...rest} into (effectively) {a:A & b:B} & {&...rest}.
       -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
       | RecordSplit  (LabeledItems e) e
