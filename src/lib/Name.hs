@@ -784,15 +784,31 @@ withManyFresh (h:hs) scope cont =
 
 refreshAbsPure
   :: forall n b e a .
-     (Distinct n, ProvesExt b, SubstB Name b, SubstE Name e)
+     (Distinct n, BindsNames b, SubstB Name b, SubstE Name e)
   => Scope n -> Abs b e n
   -> (forall l. (Immut l, DExt n l) => Scope l -> b n l -> e l -> a)
   -> a
 refreshAbsPure scope (Abs b e) cont =
-  substB (scope, idSubst :: Subst Name n n) b \(scope', subst') b' -> do
-    let e' = substE (scope', subst') e
-    case scopeToImmut scope' of
-      Immut -> withExtEvidence b' $ cont scope' b' e'
+  case extendIfDistinct scope (toScopeFrag b) of
+    Just (Distinct, scope') ->
+      case scopeToImmut scope' of
+        Immut -> withExtEvidence b $ cont scope' b e
+    Nothing ->
+      substB (scope, idSubst :: Subst Name n n) b \(scope', subst') b' -> do
+        let e' = substE (scope', subst') e
+        case scopeToImmut scope' of
+          Immut -> withExtEvidence b' $ cont scope' b' e'
+
+extendIfDistinct :: Scope n -> ScopeFrag n l
+                 -> Maybe (DistinctEvidence l, Scope l)
+extendIfDistinct scope frag =
+  if M.disjoint scopeNames extNames
+    then Just ( fabricateDistinctEvidence
+              , Scope (UnsafeMakeScopeFrag (extNames  <> scopeNames)))
+    else Nothing
+  where
+    Scope (UnsafeMakeScopeFrag scopeNames) = scope
+    UnsafeMakeScopeFrag extNames = frag
 
 -- === versions of monad constraints with scope params ===
 
