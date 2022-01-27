@@ -178,10 +178,7 @@ update-gpu-tests: tests/gpu-tests.dx build
 	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-uexpr-tests:
-	misc/check-quine examples/uexpr-tests.dx $(dex) script
-
-repl-test:
+repl-test: build
 	misc/check-no-diff \
 	  tests/repl-multiline-test-expected-output \
 	  <($(dex) repl < tests/repl-multiline-test.dx)

@@ -501,17 +501,13 @@ instance PrettyPrec (UExpr' n) where
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
-    URecord   dynLab items -> prettyExtLabeledItems items (printDynLab "=" dynLab) (line' <> ",") " ="
-    URecordTy dynLab items -> prettyExtLabeledItems items (printDynLab ":" dynLab) (line <> "&") ":"
+    URecord   elems -> atPrec ArgPrec $ prettyUFieldRowElems (line' <> ",") "=" elems
+    URecordTy elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "&") ": " elems
     UVariant labels label value -> prettyVariant labels label value
     UVariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     UVariantLift labels value -> prettyVariantLift labels value
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
-    where
-      printDynLab bindwith = \case
-        Nothing -> Nothing
-        Just (labVar, labExpr) -> Just $ "@" <> p labVar <> bindwith <> p labExpr
 
 prettyVariantLift :: PrettyPrec a
   => LabeledItems () -> a -> DocPrec ann
@@ -519,6 +515,13 @@ prettyVariantLift labels value = atPrec ArgPrec $
       "{|" <> left <+> "..." <> pLowest value <+> "|}"
       where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
             plabel (l, _) = p l <> "|"
+
+prettyUFieldRowElems :: Doc ann -> Doc ann -> UFieldRowElems n -> Doc ann
+prettyUFieldRowElems separator bindwith elems =
+  braces $ concatWith (surround $ separator <> " ") $ elems <&> \case
+    UStaticField l e -> p l <> bindwith <> p e
+    UDynField    v e -> p v <> bindwith <> p e
+    UDynFields   v   -> "..." <> p v
 
 instance Pretty (UAlt n) where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body

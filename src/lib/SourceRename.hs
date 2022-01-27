@@ -22,7 +22,6 @@ import Err
 import LabeledItems
 import Name
 import Syntax
-import Util ((...))
 
 renameSourceNamesUDecl :: (Fallible1 m, EnvReader m)
                        => UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
@@ -166,27 +165,21 @@ instance SourceRenamableE UExpr' where
       UIndexRange <$> mapM sourceRenameE low <*> mapM sourceRenameE high
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
     ULabel name -> return $ ULabel name
-    URecord labExt (Ext tys ext) -> URecord <$> labExt' <*>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
-      where
-        labExt' = case labExt of
-          Nothing -> return Nothing
-          Just (labVar, labExpr) -> Just ... (,) <$> sourceRenameE labVar <*> sourceRenameE labExpr
+    URecord elems -> URecord <$> mapM sourceRenameE elems
     UVariant types label val ->
-      -- Do we not need to source-rename the types?  Their type is
-      -- type :: LabeledItems ()
       UVariant types <$> return label <*> sourceRenameE val
     UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
-    URecordTy labExt (Ext tys ext) -> URecordTy <$> labExt' <*>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
-      where
-        labExt' = case labExt of
-          Nothing -> return Nothing
-          Just (labVar, labTy) -> Just ... (,) <$> sourceRenameE labVar <*> sourceRenameE labTy
+    URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
     UVariantTy (Ext tys ext) -> UVariantTy <$>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
+
+instance SourceRenamableE UFieldRowElem where
+  sourceRenameE = \case
+    UStaticField l e -> UStaticField l <$> sourceRenameE e
+    UDynField    v e -> UDynField  <$> sourceRenameE v <*> sourceRenameE e
+    UDynFields   v   -> UDynFields <$> sourceRenameE v
 
 instance SourceRenamableE UAlt where
   sourceRenameE (UAlt pat body) =
