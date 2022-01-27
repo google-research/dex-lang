@@ -1747,11 +1747,6 @@ zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
 zonkWithOutMap (InfOutMap bindings solverSubst _ _) e =
   applySolverSubstE (toScope bindings) solverSubst e
 
-_applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
-                   => Scope n -> SolverSubst n -> b n l -> b n l
-_applySolverSubstB scope solverSubst e = substBDistinct (scope, env) e
-  where env = newSubst $ lookupSolverSubst solverSubst
-
 deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
 deleteFromSubst (SolverSubst m) v
   | M.member v m = Just $ SolverSubst $ M.delete v m

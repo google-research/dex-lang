@@ -702,7 +702,6 @@ instance (SinkableV v, SubstV v binding)
   substB env (SomeDecl b binding) cont = do
     let binding' = substE env binding
     substB env b \env' b' -> cont env' $ SomeDecl b' binding'
-  substBDistinct _ _ = undefined
 
 instance HoistableV binding => HoistableB (SomeDecl binding) where
   freeVarsB (SomeDecl _ binding) = freeVarsE binding

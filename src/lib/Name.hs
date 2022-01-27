@@ -466,20 +466,6 @@ class (FromName v, SinkableB b) => SubstB (v::V) (b::B) where
     substB env (fromB b) \env' b' ->
       cont env' $ toB b'
 
-  substBDistinct
-    :: Distinct l
-    => (Scope n, Subst v n n)
-    -> b n l
-    -> b n l
-
-  default substBDistinct
-    :: (GenericB b, SubstB v (RepB b))
-    => Distinct l
-    => (Scope n, Subst v n n)
-    -> b n l
-    -> b n l
-  substBDistinct env b = toB $ substBDistinct env $ fromB b
-
 class ( FromName substVal, SinkableV v
       , forall c. Color c => SubstE substVal (v c))
       => SubstV (substVal::V) (v::V)
@@ -497,8 +483,6 @@ instance (Color c, SinkableV v, FromName v) => SubstB v (NameBinder c) where
       let scope' = scope `extendOutMap` toScopeFrag b'
       let env' = sink env <>> b @> (fromName $ binderName b')
       cont (scope', env') b'
-
-  substBDistinct _ b = b
 
 substM :: (SubstReader v m, ScopeReader2 m, SinkableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
@@ -1773,15 +1757,6 @@ instance ( BindsNames b1, SubstB v b1
       substB env' b2 \env'' b2' ->
         cont env'' $ PairB b1' b2'
 
-  substBDistinct (scope, env) (PairB b1 b2) = do
-    withSubscopeDistinct b2 do
-      withExtEvidence b1 do
-        let b1' = substBDistinct (scope, env) b1
-        let scope' = scope `extendOutMap` toScopeFrag b1
-        let env' = sink env <>> idSubstFrag (toScopeFrag b1)
-        let b2' = substBDistinct (scope', env') b2
-        PairB b1' b2'
-
 instance SinkableE e => SinkableB (LiftB e) where
   sinkingProofB fresh (LiftB e) cont = cont fresh $ LiftB $ sinkingProofE fresh e
 
@@ -1794,7 +1769,6 @@ instance HoistableE e => HoistableB (LiftB e) where
 
 instance (SinkableE e, SubstE v e) => SubstB v (LiftB e) where
   substB env (LiftB e) cont = cont env $ LiftB $ substE env e
-  substBDistinct env (LiftB e) = LiftB $ substE env e
 
 instance (BindsNames b1, BindsNames b2) => ProvesExt  (EitherB b1 b2) where
 instance (BindsNames b1, BindsNames b2) => BindsNames (EitherB b1 b2) where
@@ -1821,9 +1795,6 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
     substB env b \env' b' ->
       cont env' $ RightB b'
 
-  substBDistinct env (LeftB  b) = LeftB  $ substBDistinct env b
-  substBDistinct env (RightB b) = RightB $ substBDistinct env b
-
 instance GenericB (BinderP c ann) where
   type RepB (BinderP c ann) = PairB (LiftB ann) (NameBinder c)
   fromB (b:>ann) = PairB (LiftB ann) b
@@ -1846,11 +1817,6 @@ instance (BindsNames b, SubstB v b, SinkableV v)
       substB env' bs \env'' bs' ->
         cont env'' $ Nest b' bs'
   substB env Empty cont = cont env Empty
-
-  substBDistinct _ Empty = Empty
-  substBDistinct env (Nest b bs) =
-    case substBDistinct env $ PairB b bs of
-      PairB b' bs' -> Nest b' bs'
 
 instance SinkableE UnitE where
   sinkingProofE _ UnitE = UnitE
@@ -1890,7 +1856,6 @@ instance BindsNames UnitB where
 
 instance FromName v => SubstB v UnitB where
   substB env UnitB cont = cont env UnitB
-  substBDistinct _ UnitB = UnitB
 
 instance SinkableB VoidB where
   sinkingProofB _ _ _ = error "impossible"
@@ -1907,7 +1872,6 @@ instance AlphaEqB VoidB where
 
 instance FromName v => SubstB v VoidB where
   substB _ _ _ = error "impossible"
-  substBDistinct _ _ = error "impossible"
 
 instance SinkableE const => SinkableV (ConstE const)
 instance SinkableE const => SinkableE (ConstE const ignored) where
@@ -2046,15 +2010,6 @@ instance (SinkableV substVal, SubstV substVal v) => SubstB substVal (RecSubstFra
       let pairs'' = forEachNestItem pairs' \(SubstPair b x) ->
                       SubstPair b $ substE env' x
       cont env' $ RecSubstFrag $ fromSubstPairs pairs''
-
-  substBDistinct (scope, env) (RecSubstFrag recSubst) = do
-    let scopeFrag = toScopeFrag (RecSubstFrag recSubst)
-    withExtEvidence scopeFrag do
-      let scope' = scope `extendOutMap` scopeFrag
-      let env' = sink env <>> idSubstFrag scopeFrag
-      let pairs' = forEachNestItem (toSubstPairs recSubst) \(SubstPair b x) ->
-                     SubstPair b $ substE (scope', env') x
-      RecSubstFrag $ fromSubstPairs pairs'
 
 renameSubstPairBinders
   :: (Distinct o, SinkableV v, SinkableV substVal, FromName substVal)
