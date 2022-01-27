@@ -817,22 +817,8 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
               Just prev -> length prev
               Nothing -> 0
     matchRequirement $ Variant extItems label i value'
-  URecordTy elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
-    where
-      inferFieldRowElem = \case
-        UStaticField l ty -> do
-          ty' <- checkUType ty
-          return [StaticFields $ labeledSingleton l ty']
-        UDynField    v ty -> do
-          ty' <- checkUType ty
-          checkRho (WithSrcE Nothing $ UVar v) (TC LabelType) >>= \case
-            Con (LabelCon l) -> return [StaticFields $ labeledSingleton l ty']
-            Var v'           -> return [DynField v' ty']
-            _                -> error "Unexpected Label atom"
-        UDynFields   v    -> checkRho v LabeledRowKind >>= \case
-          LabeledRow row -> return $ fromFieldRowElems row
-          Var v'         -> return [DynFields v']
-          _              -> error "Unexpected Fields atom"
+  URecordTy   elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
+  ULabeledRow elems -> matchRequirement =<< LabeledRow . fieldRowElemsFromList . concat <$> mapM inferFieldRowElem elems
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
   UVariantLift labels value -> do
     row <- freshInferenceName LabeledRowKind
@@ -868,6 +854,21 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
     annTypePos = \case
       UPatAnn _ (Just (WithSrcE annpos _)) -> annpos
       UPatAnn (WithSrcB bpos _) _ -> bpos
+
+    inferFieldRowElem = \case
+      UStaticField l ty -> do
+        ty' <- checkUType ty
+        return [StaticFields $ labeledSingleton l ty']
+      UDynField    v ty -> do
+        ty' <- checkUType ty
+        checkRho (WithSrcE Nothing $ UVar v) (TC LabelType) >>= \case
+          Con (LabelCon l) -> return [StaticFields $ labeledSingleton l ty']
+          Var v'           -> return [DynField v' ty']
+          _                -> error "Unexpected Label atom"
+      UDynFields   v    -> checkRho v LabeledRowKind >>= \case
+        LabeledRow row -> return $ fromFieldRowElems row
+        Var v'         -> return [DynFields v']
+        _              -> error "Unexpected Fields atom"
 
 -- === n-ary applications ===
 

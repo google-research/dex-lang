@@ -501,6 +501,7 @@ instance PrettyPrec (UExpr' n) where
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
+    ULabeledRow elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "?") ": " elems
     URecord   elems -> atPrec ArgPrec $ prettyUFieldRowElems (line' <> ",") "=" elems
     URecordTy elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "&") ": " elems
     UVariant labels label value -> prettyVariant labels label value

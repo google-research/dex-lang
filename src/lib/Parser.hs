@@ -666,6 +666,7 @@ uLabeledExprs = withSrc $
     -- We treat {} as an empty record, despite its ambiguity.
     `fallBackTo` (URecord [] <$ bracketed lBrace rBrace (return ()))
     `fallBackTo` (URecordTy <$> parseFieldRowElems "&" ":" expr Nothing)
+    `fallBackTo` (ULabeledRow <$> parseFieldRowElems "?" ":" expr Nothing)
     `fallBackTo` (UVariantTy . snd <$> build "|" ":" empty Nothing Nothing)
   where
     build sep bindwith prefixParser = parseLabeledItems sep bindwith prefixParser expr
@@ -1109,7 +1110,7 @@ doubleLit = lexeme $
 knownSymStrs :: [String]
 knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":=",
                 "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>",
-                "..", "<..", "..<", "..<", "<..<"]
+                "..", "<..", "..<", "..<", "<..<", "?"]
 
 -- string must be in `knownSymStrs`
 sym :: String -> Lexer ()

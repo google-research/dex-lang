@@ -169,6 +169,7 @@ instance SourceRenamableE UExpr' where
     UVariant types label val ->
       UVariant types <$> return label <*> sourceRenameE val
     UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
+    ULabeledRow elems -> ULabeledRow <$> mapM sourceRenameE elems
     URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
     UVariantTy (Ext tys ext) -> UVariantTy <$>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
