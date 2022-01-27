@@ -708,13 +708,13 @@ typeCheckPrimOp op = case op of
     destTy' <- substM destTy
     checkValidCast sourceTy' destTy'
     return $ destTy'
-  RecordCons items record -> do
-    types <- mapM getTypeE items
-    rty <- getTypeE record
-    case rty of
-      RecordTy rest -> return $ RecordTy $ prependFieldRowElem (StaticFields types) rest
-      _ -> throw TypeErr $ "Can't add fields to a non-record object "
-                        <> pprint record <> " (of type " <> pprint rty <> ")"
+  RecordCons l r -> do
+    lty <- getTypeE l
+    rty <- getTypeE r
+    case (lty, rty) of
+      (RecordTyWithElems lelems, RecordTyWithElems relems) ->
+        return $ RecordTyWithElems $ lelems ++ relems
+      _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
   RecordConsDynamic lab val record -> do
     lab' <- checkTypeE (TC LabelType) lab
     vty <- getTypeE val

@@ -760,8 +760,7 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     PrimEffect ref (MExtend _   x ) -> atPrec LowestPrec $ "extend" <+> pApp ref <+> pApp x
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
-    RecordCons items rest ->
-      prettyExtLabeledItems (Ext items $ Just rest) Nothing (line' <> ",") " ="
+    RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
     RecordConsDynamic lab val rec -> atPrec LowestPrec $
       "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
     RecordSplit types val -> atPrec AppPrec $
