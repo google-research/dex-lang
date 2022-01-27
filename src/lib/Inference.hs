@@ -774,21 +774,36 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
       HofExpr e -> Var <$> emit (Hof e)
     matchRequirement val
   ULabel name -> matchRequirement $ Con $ LabelCon name
-  URecord dynLab (Ext items mext) -> do
-    items' <- mapM inferRho items
-    recNoDyn <- case mext of
-      Nothing -> return $ Record items'
-      Just ext -> do
-        -- Constrain the type of ext to be a record
-        restTy <- freshInferenceName LabeledRowKind
-        ext' <- checkRho ext $ RecordTyWithElems [DynFields restTy]
-        emitOp $ RecordCons items' ext'
-    matchRequirement =<< case dynLab of
-      Nothing -> return recNoDyn
-      Just (labVar, labVal) -> do
-        lab' <- checkRho (WithSrcE Nothing $ UVar labVar) (TC LabelType)
-        val' <- inferRho labVal
-        emitOp $ RecordConsDynamic lab' val' recNoDyn
+  URecord elems ->
+    matchRequirement =<< resolveDelay =<< foldM go (Nothing, mempty) (reverse elems)
+    where
+      go :: (EmitsInf o, Inferer m)
+         => (Maybe (Atom o), LabeledItems (Atom o)) -> UFieldRowElem i
+         -> m i o (Maybe (Atom o), LabeledItems (Atom o))
+      go delayedRec = \case
+        UStaticField l e -> do
+          e' <- inferRho e
+          return (rec, labeledSingleton l e' <> delayItems)
+          where (rec, delayItems) = delayedRec
+        UDynField    v e -> do
+          v' <- checkRho (WithSrcE Nothing $ UVar v) (TC LabelType)
+          e' <- inferRho e
+          rec' <- emitOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
+          return (Just rec', mempty)
+        UDynFields   v -> do
+          anyFields <- freshInferenceName LabeledRowKind
+          v' <- checkRho v $ RecordTyWithElems [DynFields anyFields]
+          case delayedRec of
+            (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
+            _ -> error "Not implemented yet --- need a better RecordCons!"
+
+      resolveDelay :: (EmitsInf o, Inferer m)
+                   => (Maybe (Atom o), LabeledItems (Atom o)) -> m i o (Atom o)
+      resolveDelay = \case
+        (Nothing , delayedItems) -> return $ Record delayedItems
+        (Just rec, delayedItems) -> case null delayedItems of
+          True  -> return rec
+          False -> emitOp $ RecordCons delayedItems rec
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -800,15 +815,22 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
               Just prev -> length prev
               Nothing -> 0
     matchRequirement $ Variant extItems label i value'
-  URecordTy dynLab row -> do
-    dynLab' <- case dynLab of
-      Nothing -> return []
-      Just (lv, lt) -> do
-        label   <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar lv) (TC LabelType)
-        labelTy <- checkRho lt TyKind
-        return $ [DynField label labelTy]
-    row' <- checkExtLabeledRow row
-    matchRequirement $ RecordTyWithElems $ dynLab' ++ fromFieldRowElems (extRowAsFieldRowElems row')
+  URecordTy elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
+    where
+      inferFieldRowElem = \case
+        UStaticField l ty -> do
+          ty' <- checkUType ty
+          return [StaticFields $ labeledSingleton l ty']
+        UDynField    v ty -> do
+          ty' <- checkUType ty
+          checkRho (WithSrcE Nothing $ UVar v) (TC LabelType) >>= \case
+            Con (LabelCon l) -> return [StaticFields $ labeledSingleton l ty']
+            Var v'           -> return [DynField v' ty']
+            _                -> error "Unexpected Label atom"
+        UDynFields   v    -> checkRho v LabeledRowKind >>= \case
+          LabeledRow row -> return $ fromFieldRowElems row
+          Var v'         -> return [DynFields v']
+          _              -> error "Unexpected Fields atom"
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
   UVariantLift labels value -> do
     row <- freshInferenceName LabeledRowKind

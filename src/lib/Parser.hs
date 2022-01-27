@@ -662,8 +662,10 @@ parseVariant subparser buildLabeled buildExt =
 
 uLabeledExprs :: Parser (UExpr VoidS)
 uLabeledExprs = withSrc $
-    (uncurry URecord <$> build "," "=" (dynLab expr "=") (Just varPun) Nothing)
-    `fallBackTo` (uncurry URecordTy <$> build "&" ":" (dynLab expr ":") Nothing Nothing)
+    (URecord <$> parseFieldRowElems "," "=" expr (Just varPun))
+    -- We treat {} as an empty record, despite its ambiguity.
+    `fallBackTo` (URecord [] <$ bracketed lBrace rBrace (return ()))
+    `fallBackTo` (URecordTy <$> parseFieldRowElems "&" ":" expr Nothing)
     `fallBackTo` (UVariantTy . snd <$> build "|" ":" empty Nothing Nothing)
   where
     build sep bindwith prefixParser = parseLabeledItems sep bindwith prefixParser expr
@@ -702,60 +704,54 @@ uIsoSugar = withSrc (char '#' *> options) where
   recordFieldIso :: Label -> UExpr' VoidS
   recordFieldIso field =
     UApp plain (ns "MkIso") $
-      ns $ URecord Nothing $ NoExt $
-        labeledSingleton "fwd" (lam
+      ns $ URecord
+        [ UStaticField "fwd" (lam
             (uPatRecordLit [(field, "x")] (Just "r"))
-          $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r")
-        )
-        <> labeledSingleton "bwd" (lam
+          $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r"))
+        , UStaticField "bwd" (lam
           (nsB $ UPatPair $ toPairB "x" "r")
-          $ ns $ URecord Nothing $ Ext (labeledSingleton field $ "x")
-                               $ Just $ "r"
-        )
+          $ ns $ URecord [UStaticField field "x", UDynFields "r"])
+        ]
   variantFieldIso :: Label -> UExpr' VoidS
   variantFieldIso field =
     UApp plain "MkIso" $
-      ns $ URecord Nothing $ NoExt $
-        labeledSingleton "fwd" (lam "v" $ ns $ UCase "v"
+      ns $ URecord
+        [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatVariant NoLabeledItems field "x")
                 $ "Left" `mkApp` "x"
             , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
                 $ "Right" `mkApp` "r"
-            ]
-        )
-        <> labeledSingleton "bwd" (lam "v" $ ns $ UCase "v"
+            ])
+        , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatCon "Left" (toNest ["x"]))
                 $ ns $ UVariant NoLabeledItems field $ "x"
             , alt (nsB $ UPatCon "Right" (toNest ["r"]))
                 $ ns $ UVariantLift (labeledSingleton field ()) $ "r"
-            ]
-        )
+            ])
+        ]
   recordZipIso field =
     UApp plain "MkIso" $
-      ns $ URecord Nothing $ NoExt $
-        labeledSingleton "fwd" (lam
+      ns $ URecord
+        [ UStaticField "fwd" (lam
           (nsB $ UPatPair $ PairB
             (uPatRecordLit [] (Just "l"))
             (uPatRecordLit [(field, "x")] (Just "r")))
           $ "(,)"
-            `mkApp` (ns $ URecord Nothing $ (Ext (labeledSingleton field $ "x")
-                                         $ Just $ "l"))
-            `mkApp` (ns $ URecord Nothing $ Ext NoLabeledItems $ Just $ "r")
-        )
-        <> labeledSingleton "bwd" (lam
+            `mkApp` (ns $ URecord [UStaticField field "x", UDynFields "l"])
+            `mkApp` (ns $ URecord [UDynFields "r"]))
+        , UStaticField "bwd" (lam
           (nsB $ UPatPair $ PairB
             (uPatRecordLit [(field, "x")] (Just "l"))
             (uPatRecordLit [] (Just "r")))
           $ "(,)"
-            `mkApp` (ns $ URecord Nothing $ Ext NoLabeledItems $ Just $ "l")
-            `mkApp` (ns $ URecord Nothing $ Ext (labeledSingleton field $ "x")
-                                        $ Just $ "r")
-        )
+            `mkApp` (ns $ URecord [UDynFields "l"])
+            `mkApp` (ns $ URecord [UStaticField field "x", UDynFields"r"]))
+        ]
   variantZipIso :: Label -> UExpr' VoidS
   variantZipIso field =
     UApp plain "MkIso" $
-      ns $ URecord Nothing $ NoExt $
-        labeledSingleton "fwd" (lam "v" $ ns $ UCase "v"
+      ns $ URecord
+        [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatCon "Left" (toNest ["l"]))
                 $ "Left" `mkApp` (ns $
                     UVariantLift (labeledSingleton field ()) $ "l")
@@ -767,9 +763,8 @@ uIsoSugar = withSrc (char '#' *> options) where
                 , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
                     $ "Right" `mkApp` "r"
                 ]
-            ]
-        )
-        <> labeledSingleton "bwd" (lam "v" $ ns $ UCase "v"
+            ])
+        , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
             [ alt (nsB $ UPatCon "Left" (toNest ["w"]))
                 $ ns $ UCase "w"
                 [ alt (nsB $ UPatVariant NoLabeledItems field "x")
@@ -782,8 +777,8 @@ uIsoSugar = withSrc (char '#' *> options) where
             , alt (nsB $ UPatCon "Right" (toNest ["l"]))
                 $ "Right" `mkApp` (ns $
                     UVariantLift (labeledSingleton field ()) "l")
-            ]
-        )
+            ])
+        ]
 
 uPatRecordLit :: [(Label, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
 uPatRecordLit labelsPats ext = nsB do
@@ -796,6 +791,40 @@ uPatRecordLit labelsPats ext = nsB do
     Just tailPat ->
       UPatRecord Nothing (Ext labeledPart (Just ()))
                  (PairB NothingB $ PairB (toNestParsed $ pats) (JustB tailPat))
+
+parseFieldRowElems
+  :: String -> String
+  -> Parser (UExpr VoidS) -> Maybe (SrcPos -> Label -> (UExpr VoidS))
+  -> Parser (UFieldRowElems VoidS)
+parseFieldRowElems sep bindwith itemparser punner =
+  bracketed lBrace rBrace $
+    optional (symbol sep) >>= \case
+      Just () -> afterSep
+      Nothing -> someElems
+  where
+    afterSep = someElems <|> pure []
+    someElems = do
+      e    <- dynField <|> dynFields <|> staticFields
+      rest <- optional (symbol sep) >>= \case
+        Just () -> afterSep
+        Nothing -> pure []
+      return $ e : rest
+    dynField = do
+      try $ void $ char '@'
+      v <- anyName
+      symbol bindwith
+      rhs <- itemparser
+      return $ UDynField (SourceName v) rhs
+    dynFields = do
+      try $ symbol "..."
+      UDynFields <$> expr
+    staticFields = do
+      (l, pos) <- withPos $ fieldLabel
+      let explicitBound = symbol bindwith *> itemparser
+      rhs <- case punner of
+        Just p  -> explicitBound <|> pure (p pos l)
+        Nothing -> explicitBound
+      return $ UStaticField l rhs
 
 parseLabeledItems
   :: String -> String -> Parser b -> Parser a

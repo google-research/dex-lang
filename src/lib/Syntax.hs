@@ -44,6 +44,7 @@ module Syntax (
     IRVariant (..), SubstVal (..), AtomName, DataDefName, ClassName, AtomSubstVal,
     SourceName, SourceNameOr (..), UVar (..), UBinder (..),
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
+    UFieldRowElems, UFieldRowElem (..),
     ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
     UMethodDef (..), UAnnBinder (..),
@@ -882,16 +883,21 @@ data UExpr' (n::S) =
  | UIndexRange (Limit (UExpr n)) (Limit (UExpr n))
  | UPrimExpr (PrimExpr (UExpr n))
  | ULabel String
- | URecord (Maybe (SourceNameOr UVar n, UExpr n))
-           (ExtLabeledItems (UExpr n) (UExpr n))     -- {@v=x, a=y, b=z, ...rest}
+ | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
  | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
- | URecordTy (Maybe (SourceNameOr UVar n, UExpr n))
-             (ExtLabeledItems (UExpr n) (UExpr n))   -- {@v:X & a:Y & b:Z & ...rest}
+ | URecordTy (UFieldRowElems n)                      -- {@v:X & a:Y & b:Z & ...rest}
  | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
  | UIntLit  Int
  | UFloatLit Double
   deriving (Show, Generic)
+
+type UFieldRowElems (n::S) = [UFieldRowElem n]
+data UFieldRowElem (n::S)
+  = UStaticField String                (UExpr n)
+  | UDynField    (SourceNameOr UVar n) (UExpr n)
+  | UDynFields   (UExpr n)
+  deriving (Show)
 
 data ULamExpr (n::S) where
   ULamExpr :: Arrow -> UPatAnn n l -> UExpr l -> ULamExpr n
