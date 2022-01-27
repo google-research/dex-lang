@@ -886,6 +886,7 @@ data UExpr' (n::S) =
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
  | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
  | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
+ | ULabeledRow (UFieldRowElems n)                    -- {@v:X ? a:Y ? b:Z ? ...rest}
  | URecordTy (UFieldRowElems n)                      -- {@v:X & a:Y & b:Z & ...rest}
  | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
  | UIntLit  Int

@@ -102,7 +102,7 @@ Syntax for records, variants, and their types.
 > 98 | :p {a:Int,}
 >    |          ^
 > unexpected ','
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '?', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
 
 :p {|3}
 
@@ -443,3 +443,19 @@ def projectTwo {f a b} (l1: Label) (l2: Label) (x: {@l1:a & @l2:b & ...f}) : (a 
 >     |   ^^
 > unexpected "{@"
 > expecting end of line
+-- TODO: Add support for richer pattern syntax
+def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({&...f}) = todo
+
+-- This should at least typecheck for now
+subsetRecord {a: _ ? b: _} {a=1, b=2, c=4}
+> TODO: implement it!
+> Runtime error
+
+subsetRecord {? c: _ ?} {a=1, b=2}
+> Type error:
+> Expected: {c: a & ...b1}
+>   Actual: {a: d & b: c}
+> (Solving for: [a, b1, c, d])
+>
+> subsetRecord {? c: _ ?} {a=1, b=2}
+>                         ^^^^^^^^^^
