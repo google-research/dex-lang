@@ -126,7 +126,7 @@ spec = do
     it "accepts llam x y. 0" $ do
       shouldTypeCheck $ Program $ M.fromList
         [ ("f", FuncDef [] [("x", FloatType), ("y", FloatType)] (MixedType [] [FloatType]) $
-            LetMixed [] [] (Drop (LTuple [LVar "x", LVar "y"])) $
+            LetMixed [] [] (Drop (LTuple ["x", "y"])) $
             LetMixed [] ["z"] LZero $
             Ret [] ["z"])
         ]
@@ -205,6 +205,10 @@ spec = do
         LetMixed ["z"] [] (BinOp Add (Var "x") (Var "y")) $
         Var "z"
 
+  let double_func = FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+        LetMixed ["z"] [] (BinOp Add (Var "x") (Var "x")) $
+        Var "z"
+
   describe "End-to-end reverse-mode" $ do
 
     it "x + y" $ do
@@ -219,5 +223,10 @@ spec = do
                     LetMixed ["z"] [] (App "add" ["x", "y"] []) $
                     Var "z")
                 ]
-      grad <- gradient p "add" [2.0, 2.0]
+      grad <- gradient p "f" [2.0, 2.0]
       grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
+
+    it "x + x should add dup" $ do
+      let p = Program $ M.fromList [("double", double_func)]
+      grad <- gradient p "double" [4.0]
+      grad `shouldBe` [FloatVal 2.0]
