@@ -80,7 +80,7 @@ module Name (
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames, newNamesM,
   unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..), eqColorRep,
-  sinkR, fmapSubstFrag, catRecSubstFrags,
+  sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
   locallyMutableInplaceT, locallyImmutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   checkEmpty, updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
@@ -218,16 +218,11 @@ catRecSubstFrags (RecSubstFrag frag1) (RecSubstFrag frag2) = RecSubstFrag $
   withExtEvidence (toExtEvidence (RecSubstFrag frag2)) $
     sink frag1 `catInFrags` frag2
 
-instance HasScope (RecSubst v) where
-  toScope (RecSubst envFrag) = Scope $ envFragAsScope envFrag
-
-instance SinkableV v => OutMap (RecSubst v) where
-  emptyOutMap = RecSubst emptyInFrag
-
-instance SinkableV v => ExtOutMap (RecSubst v) (RecSubstFrag v) where
-  extendOutMap (RecSubst env) (RecSubstFrag frag) = RecSubst $
-    withExtEvidence (toExtEvidence (RecSubstFrag frag)) $
-      sink env <.> frag
+extendRecSubst :: SinkableV v => Distinct l => RecSubst v n -> RecSubstFrag v n l
+               -> RecSubst v l
+extendRecSubst (RecSubst env) (RecSubstFrag frag) = RecSubst $
+  withExtEvidence (toExtEvidence (RecSubstFrag frag)) $
+    sink env <.> frag
 
 deriving instance (forall c. Show (v c o')) => Show (RecSubstFrag v o o')
 
@@ -369,6 +364,7 @@ instance HoistableB ScopeFrag where
   freeVarsB _ = mempty
 
 class HasScope (bindings :: S -> *) where
+  -- XXX: this must be O(1)
   toScope :: bindings n -> Scope n
 
 withExtEvidence :: ProvesExt b => b n l -> (Ext n l => a) -> a
@@ -2071,7 +2067,8 @@ instance ( forall c. Color c => Store (v c o')
 instance ( forall c. Color c => Store (v c o)
          , forall c. Color c => Generic (v c o))
          => Store (RecSubst v o)
-
+instance Store (ScopeFrag n l)
+instance Store (Scope n)
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
 
 
@@ -2191,8 +2188,8 @@ type V = C -> E       -- value-y things that we might look up in an environment
 
 type NameSet (n::S) = M.Map RawName (WithColor UnitV UnsafeS)
 
-newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScopeFrag (NameSet UnsafeS)
-newtype Scope (n::S) = Scope { fromScope :: ScopeFrag VoidS n }
+newtype ScopeFrag (n::S) (l::S) = UnsafeMakeScopeFrag (NameSet UnsafeS) deriving Generic
+newtype Scope (n::S) = Scope { fromScope :: ScopeFrag VoidS n }  deriving Generic
 
 instance Category ScopeFrag where
   id = UnsafeMakeScopeFrag mempty

@@ -312,7 +312,8 @@ data EnvFrag (n::S) (l::S) =
   EnvFrag (RecSubstFrag Binding n l) (Maybe (EffectRow l))
 
 data Env (n::S) = Env
-  { getNameEnv         :: RecSubst Binding n
+  { getEnvScope        :: Scope n
+  , getNameEnv         :: RecSubst Binding n
   , getSynthCandidates :: SynthCandidates n
   , getSourceMap       :: SourceMap n
   , getEffects         :: EffectRow n
@@ -328,7 +329,7 @@ data Cache (n::S) = Cache
   }
 
 instance HasScope Env where
-  toScope = toScope . getNameEnv
+  toScope = getEnvScope
 
 catEnvFrags :: Distinct n3
                  => EnvFrag n1 n2 -> EnvFrag n2 n3 -> EnvFrag n1 n3
@@ -346,13 +347,15 @@ instance OutFrag EnvFrag where
   catOutFrags _ frag1 frag2 = catEnvFrags frag1 frag2
 
 instance OutMap Env where
-  emptyOutMap = Env emptyOutMap mempty (SourceMap mempty) Pure mempty mempty
+  emptyOutMap =
+    Env emptyOutMap (RecSubst emptyInFrag) mempty (SourceMap mempty) Pure mempty mempty
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
-  extendOutMap (Env bindings scs sm eff cache obj) frag =
+  extendOutMap (Env scope bindings scs sm eff cache obj) frag =
     withExtEvidence frag do
       Env
-        (bindings `extendOutMap` frag)
+        (scope    `extendOutMap` toScopeFrag frag)
+        (bindings `extendRecSubst` frag)
         (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag Nothing))
         (sink sm)
         (sink eff)
@@ -363,11 +366,11 @@ instance ExtOutMap Env EnvFrag where
   extendOutMap bindings frag = do
     let EnvFrag newEnv maybeNewEff = frag
     case extendOutMap bindings newEnv of
-      Env bs scs sm oldEff cache obj -> do
+      Env scope bs scs sm oldEff cache obj -> do
         let newEff = case maybeNewEff of
                        Nothing  -> sink oldEff
                        Just eff -> eff
-        Env bs scs sm newEff cache obj
+        Env scope bs scs sm newEff cache obj
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
 bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
@@ -2932,10 +2935,11 @@ instance OutFrag TopEnvFrag where
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap (Env bs scs sm effs cache obj)
+  extendOutMap (Env scope bs scs sm effs cache obj)
                (TopEnvFrag (EnvFrag frag _) scs' sm' cache' obj') =
     withExtEvidence (toExtEvidence frag) $
-      Env (bs `extendOutMap` frag) (sink scs <> scs')
+      Env (scope `extendOutMap` toScopeFrag frag)
+          (bs `extendRecSubst` frag) (sink scs <> scs')
           (sink sm <> sm') (sink effs) (sink cache <> cache')
           (sink obj <> obj')
 
