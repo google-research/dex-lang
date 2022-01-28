@@ -772,7 +772,7 @@ uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPa
   where
     extPat = case ext of
       Nothing                          -> UEmptyRowPat
-      Just (WithSrcB _ (UPatBinder b)) -> UDynFieldsPat b
+      Just (WithSrcB _ (UPatBinder b)) -> URemFieldsPat b
       _                                -> error "unexpected ext pattern"
     addLabel (l, p) rest = UStaticFieldPat l p rest
 
@@ -821,13 +821,19 @@ parseFieldRowPat sep bindwith punner =
       Nothing -> someElems
   where
     afterSep = someElems <|> pure UEmptyRowPat
-    someElems = atLeastOneField <|> dynFields
+    someElems = atLeastOneField <|> remFields
     atLeastOneField = do
-      e    <- dynField <|> staticField
+      e    <- dynFields <|> dynField <|> staticField
       rest <- optional (symbol sep) >>= \case
         Just () -> afterSep
         Nothing -> pure UEmptyRowPat
       return $ e rest
+    dynFields = do
+      void $ string "@..."
+      v <- anyName
+      symbol bindwith
+      rhs <- leafPat
+      return $ UDynFieldsPat (SourceName v) rhs
     dynField :: Parser (UFieldRowPat VoidS VoidS -> UFieldRowPat VoidS VoidS)
     dynField = do
       try $ void $ char '@'
@@ -835,10 +841,10 @@ parseFieldRowPat sep bindwith punner =
       symbol bindwith
       rhs <- leafPat
       return $ UDynFieldPat (SourceName v) rhs
-    dynFields :: Parser (UFieldRowPat VoidS VoidS)
-    dynFields = do
+    remFields :: Parser (UFieldRowPat VoidS VoidS)
+    remFields = do
       try $ symbol "..."
-      (UDynFieldsPat <$> uBinder) <|> (pure $ UDynFieldsPat UIgnore)
+      (URemFieldsPat <$> uBinder) <|> (pure $ URemFieldsPat UIgnore)
     staticField :: Parser (UFieldRowPat VoidS VoidS -> UFieldRowPat VoidS VoidS)
     staticField = do
       (l, pos) <- withPos $ fieldLabel

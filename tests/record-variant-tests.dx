@@ -444,13 +444,12 @@ def projectTwo {f a b} (l1: Label) (l2: Label) (x: {@l1:a & @l2:b & ...f}) : (a 
 projectTwo ##a ##b {c=1, b=2, a=4}
 > (4, 2)
 
--- TODO: Add support a for richer pattern syntax
-def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({&...f}) = todo
+def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({&...f}) =
+  {@...f=v, ...} = x
+  v
 
--- This should at least typecheck for now
-subsetRecord {a: _ ? b: _} {a=1, b=2, c=4}
-> TODO: implement it!
-> Runtime error
+subsetRecord {a: _ ? c: _} {a=1, b=2, c=4}
+> {a = 1, c = 4}
 
 subsetRecord {? c: _ ?} {a=1, b=2}
 > Type error:
