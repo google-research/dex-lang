@@ -619,7 +619,8 @@ unzipExpr orig scope subst expr = case expr of
       retTys = nonLinRetTys orig name
       tapeVar:retVars = take (1 + length retTys) $ freshVars scope
       scope2 = scopeExt scope $ tapeVar:retVars
-  Var  v -> ((id, scope), Var (subst ! v), Ret [] [])
+  Var v -> ((id, scope), Var (subst ! v), Ret [] [])
+  Lit f -> ((id, scope), Lit f, Ret [] [])
   Tuple vs -> ((id, scope), Tuple $ (subst !) <$> vs, Ret [] [])
   LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
   LTuple vs -> ((id, scope), Ret [] [], LTuple $ (subst !) <$> vs)
@@ -643,6 +644,7 @@ unzipExpr orig scope subst expr = case expr of
     where
       ((sCtx, sCtxScope), us, us') = rec scope     subst s
       ((eCtx, eCtxScope), ue, ue') = rec sCtxScope subst e
+  LZero -> ((id, scope), Ret [] [], LZero)
   Dup e -> ((ctx, ctxScope), ue, Dup ue')
     where
       ((ctx, ctxScope), ue, ue') = rec scope subst e
@@ -751,6 +753,8 @@ transposeExpr scope expr cts = case expr of
       ct':_ = freshVars scope
       [ct] = cts
       (ytCtx, yScope, yMap) = transposeExpr (scopeExt scope [ct']) y [ct']
+  LZero -> (LetMixed [] [] (Drop $ LVar ct), scope, M.empty)
+    where [ct] = cts
   Dup body ->
     ( (LetMixed [] [ct] $ LAdd (LVar ct1) (LVar ct2)) . bCtx
     , bScope
