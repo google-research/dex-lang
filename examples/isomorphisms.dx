@@ -45,7 +45,7 @@ that produce isos. We will start with the first two:
 %passes parse
 :t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
-> (MkIso {fwd=(\{b = (), ...()}. (,) x r), bwd=(\(x, r). {b=x, ...r})}
+> (MkIso {fwd=(\{b=x, ...r}. (,) x r), bwd=(\(x, r). {b=x, ...r})}
 >  : Iso {a: Int & b: Float & c: Unit} _)
 
 %passes parse
@@ -138,8 +138,8 @@ another. For instance:
 >    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
 > (MkIso
->    {fwd=(\({, ...()}, {a = (), ...()}). (,) {a=x, ...l} {...r})
->    , bwd=(\({a = (), ...()}, {, ...()}). (,) {...l} {a=x, ...r})}
+>    {fwd=(\({...l}, {a=x, ...r}). (,) {a=x, ...l} {...r})
+>    , bwd=(\({a=x, ...l}, {...r}). (,) {...l} {a=x, ...r})}
 >  : Iso ((&) {} {a: Int & b: Float & c: Unit}) _)
 
 :t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _

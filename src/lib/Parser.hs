@@ -593,6 +593,9 @@ onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
              <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
 
+uBinder :: Parser (UBinder AtomNameC VoidS VoidS)
+uBinder = (fromString <$> lowerName) <|> (underscore $> UIgnore)
+
 pat :: Parser (UPat VoidS VoidS)
 pat = mayNotPair $ makeExprParser leafPat patOps
 
@@ -601,24 +604,15 @@ leafPat =
       (withSrcB (symbol "()" $> (UPatUnit UnitB)))
   <|> parens (mayPair $ makeExprParser leafPat patOps)
   <|> (withSrcB $
-          (UPatBinder <$>  (   (fromString <$> lowerName)
-                           <|> (underscore $> UIgnore)))
+          (UPatBinder <$> uBinder)
       <|> (UPatCon    <$> (fromString <$> upperName) <*> manyNested pat)
       <|> (variantPat `fallBackTo` recordPat)
       <|> brackets (UPatTable <$> toNestParsed <$> leafPat `sepBy` sym ",")
   )
   where pun pos l = WithSrcB (Just pos) $ fromString l
-        def pos = WithSrcB (Just pos) $ UPatIgnore
         variantPat = parseVariant leafPat UPatVariant UPatVariantLift
-        recordPat = unzipUPatRecord
-                    <$> parseLabeledItems "," "=" (dynLab leafPat "=") leafPat (Just pun) (Just def)
-        unzipUPatRecord (dyn, labeled) = UPatRecord dynName labels nest where
-          (labels, items, rest) = unzipExtLabeledItems labeled
-          patTail = case rest of Nothing -> NothingB
-                                 Just p  -> JustB p
-          (dynName, nestPref) = case dyn of Nothing     -> (Nothing, PairB NothingB )
-                                            Just (n, p) -> (Just n , PairB (JustB p))
-          nest = nestPref $ PairB (toNestParsed items) patTail
+        recordPat = (UPatRecord UEmptyRowPat <$ braces (return ())) `fallBackTo`
+                    (UPatRecord <$> parseFieldRowPat "," "=" (Just pun))
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser (UPat VoidS VoidS)]]
@@ -670,14 +664,6 @@ uLabeledExprs = withSrc $
     `fallBackTo` (UVariantTy . snd <$> build "|" ":" empty Nothing Nothing)
   where
     build sep bindwith prefixParser = parseLabeledItems sep bindwith prefixParser expr
-
-dynLab :: Parser rhs -> String -> Parser (SourceNameOr UVar VoidS, rhs)
-dynLab rhsParser bindwith = do
-  void $ char '@'
-  v <- anyName
-  symbol bindwith
-  rhs <- rhsParser
-  return (SourceName v, rhs)
 
 varPun :: SrcPos -> Label -> (UExpr VoidS)
 varPun pos str = WithSrcE (Just pos) $ UVar (fromString str)
@@ -782,20 +768,17 @@ uIsoSugar = withSrc (char '#' *> options) where
         ]
 
 uPatRecordLit :: [(Label, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
-uPatRecordLit labelsPats ext = nsB do
-  let (labels, pats) = unzip labelsPats
-  let labeledPart = foldMap (\s -> labeledSingleton s ()) labels
-  case ext of
-    Nothing ->
-      UPatRecord Nothing (NoExt labeledPart)
-                 (PairB NothingB $ PairB (toNestParsed $ pats) NothingB)
-    Just tailPat ->
-      UPatRecord Nothing (Ext labeledPart (Just ()))
-                 (PairB NothingB $ PairB (toNestParsed $ pats) (JustB tailPat))
+uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPats
+  where
+    extPat = case ext of
+      Nothing                          -> UEmptyRowPat
+      Just (WithSrcB _ (UPatBinder b)) -> UDynFieldsPat b
+      _                                -> error "unexpected ext pattern"
+    addLabel (l, p) rest = UStaticFieldPat l p rest
 
 parseFieldRowElems
   :: String -> String
-  -> Parser (UExpr VoidS) -> Maybe (SrcPos -> Label -> (UExpr VoidS))
+  -> Parser (UExpr VoidS) -> Maybe (SrcPos -> Label -> UExpr VoidS)
   -> Parser (UFieldRowElems VoidS)
 parseFieldRowElems sep bindwith itemparser punner =
   bracketed lBrace rBrace $
@@ -826,6 +809,44 @@ parseFieldRowElems sep bindwith itemparser punner =
         Just p  -> explicitBound <|> pure (p pos l)
         Nothing -> explicitBound
       return $ UStaticField l rhs
+
+parseFieldRowPat
+  :: String -> String
+  -> Maybe (SrcPos -> Label -> UPat VoidS VoidS)
+  -> Parser (UFieldRowPat VoidS VoidS)
+parseFieldRowPat sep bindwith punner =
+  bracketed lBrace rBrace $
+    optional (symbol sep) >>= \case
+      Just () -> afterSep
+      Nothing -> someElems
+  where
+    afterSep = someElems <|> pure UEmptyRowPat
+    someElems = atLeastOneField <|> dynFields
+    atLeastOneField = do
+      e    <- dynField <|> staticField
+      rest <- optional (symbol sep) >>= \case
+        Just () -> afterSep
+        Nothing -> pure UEmptyRowPat
+      return $ e rest
+    dynField :: Parser (UFieldRowPat VoidS VoidS -> UFieldRowPat VoidS VoidS)
+    dynField = do
+      try $ void $ char '@'
+      v <- anyName
+      symbol bindwith
+      rhs <- leafPat
+      return $ UDynFieldPat (SourceName v) rhs
+    dynFields :: Parser (UFieldRowPat VoidS VoidS)
+    dynFields = do
+      try $ symbol "..."
+      (UDynFieldsPat <$> uBinder) <|> (pure $ UDynFieldsPat UIgnore)
+    staticField :: Parser (UFieldRowPat VoidS VoidS -> UFieldRowPat VoidS VoidS)
+    staticField = do
+      (l, pos) <- withPos $ fieldLabel
+      let explicitBound = symbol bindwith *> leafPat
+      rhs <- case punner of
+        Just p  -> explicitBound <|> pure (p pos l)
+        Nothing -> explicitBound
+      return $ UStaticFieldPat l rhs
 
 parseLabeledItems
   :: String -> String -> Parser b -> Parser a
