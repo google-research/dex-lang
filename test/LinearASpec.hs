@@ -256,3 +256,12 @@ spec = do
                 ]
       grad <- gradient p "add_1" [3.0]
       grad `shouldBe` [FloatVal 1.0]
+
+    it "should respect drops" $ do
+      let p = Program $ M.fromList
+                [ ("add_1", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+                    LetMixed [] [] (Drop $ BinOp Mul (Var "x") (Var "x")) $
+                    BinOp Add (Var "x") (Lit 1.0))
+                ]
+      grad <- gradient p "add_1" [3.0]
+      grad `shouldBe` [FloatVal 1.0]

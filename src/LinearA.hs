@@ -648,7 +648,9 @@ unzipExpr orig scope subst expr = case expr of
   Dup e -> ((ctx, ctxScope), ue, Dup ue')
     where
       ((ctx, ctxScope), ue, ue') = rec scope subst e
-  _ -> error $ "Unzip not implemented: " ++ show (pretty expr)
+  Drop e -> ((ctx, ctxScope), Drop ue, Drop ue')
+    where
+      ((ctx, ctxScope), ue, ue') = rec scope subst e
   where
     rec = unzipExpr orig
 
@@ -764,6 +766,23 @@ transposeExpr scope expr cts = case expr of
       [ct1, ct2] = cts
       ct:_ = freshVars scope
       (bCtx, bScope, bMap) = transposeExpr (scopeExt scope [ct]) body [ct]
+  -- A short-circuiting Drop per the paper.
+  -- This one takes care to drop all free non-linear variables too,
+  -- because it gets applied to non-linear drops as well.  Why?
+  -- Because a LetMixed of a Drop will pass the "no bound non-linear
+  -- variables" check even if the Drop is dropping non-trivial
+  -- non-linear stuff.
+  Drop body ->
+    ( dropAll (S.toList freeS) . LetMixed [] cts (ret scope' [] $ map (const LZero) freeLin)
+    , scope'
+    , M.fromList $ zip freeLin cts
+    )
+    where
+      FV freeS freeLinS = freeVars body
+      freeLin = S.toList freeLinS
+      cts = take (length freeLin) $ freshVars scope
+      scope' = scopeExt scope cts
+      dropAll vs = foldl (.) id $ map (\v -> LetMixed [] [] (Drop $ Var v)) vs
   _ -> error $ "Transpose not implemented: " ++ show (pretty expr)
 
 
