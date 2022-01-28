@@ -248,3 +248,11 @@ spec = do
                 ]
       grad <- gradient p "square" [3.0]
       grad `shouldBe` [FloatVal 6.0]
+
+    it "should differentiate literals" $ do
+      let p = Program $ M.fromList
+                [ ("add_1", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+                    BinOp Add (Var "x") (Lit 1.0))
+                ]
+      grad <- gradient p "add_1" [3.0]
+      grad `shouldBe` [FloatVal 1.0]
