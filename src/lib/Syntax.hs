@@ -972,8 +972,9 @@ data UAlt (n::S) where
 
 data UFieldRowPat (n::S) (l::S) where
   UEmptyRowPat    :: UFieldRowPat n n
-  UDynFieldsPat   :: UBinder AtomNameC n l -> UFieldRowPat n l
+  URemFieldsPat   :: UBinder AtomNameC n l -> UFieldRowPat n l
   UStaticFieldPat :: Label               -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
+  UDynFieldsPat   :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
   UDynFieldPat    :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
 
 instance Show (UFieldRowPat n l) where
@@ -1146,9 +1147,8 @@ data PrimOp e =
       -- Extensible record and variant operations:
       -- Concatenate two records.
       | RecordCons   e e
-      -- Split {a:A & b:B & ...rest} into (effectively) {a:A & b:B} & {&...rest}.
-      -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
-      | RecordSplit  (LabeledItems e) e
+      -- Split off a labeled row from the front of the record.
+      | RecordSplit  e e
       -- Add a dynamically named field to a record (on the left).
       -- Args are as follows: label, value, record.
       | RecordConsDynamic e e e

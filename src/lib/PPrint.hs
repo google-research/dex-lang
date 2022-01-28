@@ -582,9 +582,10 @@ prettyUFieldRowPat separator bindwith pat =
     go :: UFieldRowPat n' l' -> [Doc ann]
     go = \case
       UEmptyRowPat          -> []
-      UDynFieldsPat UIgnore -> ["..."]
-      UDynFieldsPat b       -> ["..." <> p b]
-      UDynFieldPat    v r rest -> (p v <> bindwith <> p r) : go rest
+      URemFieldsPat UIgnore -> ["..."]
+      URemFieldsPat b       -> ["..." <> p b]
+      UDynFieldsPat   v r rest -> ("@..." <> p v <> bindwith <> p r) : go rest
+      UDynFieldPat    v r rest -> ("@" <> p v <> bindwith <> p r) : go rest
       UStaticFieldPat l r rest -> (p l <> bindwith <> p r) : go rest
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
@@ -774,9 +775,8 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
     RecordConsDynamic lab val rec -> atPrec LowestPrec $
       "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
-    RecordSplit types val -> atPrec AppPrec $
-      "RecordSplit" <+> prettyLabeledItems types (line <> "&") ":" ArgPrec
-                    <+> pArg val
+    RecordSplit fields val -> atPrec AppPrec $
+      "RecordSplit" <+> pArg fields <+> pArg val
     VariantLift types val ->
       prettyVariantLift (fmap (const ()) types) val
     VariantSplit types val -> atPrec AppPrec $

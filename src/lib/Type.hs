@@ -739,20 +739,31 @@ typeCheckPrimOp op = case op of
         return $ PairTy ty $ RecordTyWithElems rest
       -- There are more cases we could implement, but do we need to?
       _ -> throw TypeErr $ "Can't split a label " <> pprint lab' <> " from atom of type " <> pprint rty
-  RecordSplit types record -> do
-    mapM_ (|: TyKind) types
-    types' <- mapM substM types
-    fullty <- getTypeE record
-    (fullItems, rest) <- case fullty of
-      RecordTyWithElems (StaticFields items:rest) -> return (items, rest)
-      RecordTy _ -> throw TypeErr $
-        "Can't split a record " <> pprint record <> " with dynamic " <>
-        "label extension (it is of type " <> pprint fullty <> ")"
-      _ -> throw TypeErr $ "Can't split a non-record object " <> pprint record
-                        <> " (of type " <> pprint fullty <> ")"
-    NoExt diff <- labeledRowDifference (NoExt fullItems) (NoExt types')
-    return $ StaticRecordTy $ Unlabeled
-      [ StaticRecordTy types', RecordTyWithElems (StaticFields diff:rest) ]
+  RecordSplit fields record -> do
+    fields' <- cheapNormalize =<< checkTypeE LabeledRowKind fields
+    fullty  <- cheapNormalize =<< getTypeE record
+    let splitFailed = throw TypeErr $ "Invalid record split: " <> pprint fields' <> " from " <> pprint fullty
+    case (fields', fullty) of
+      (LabeledRow els, RecordTyWithElems els') ->
+        stripPrefix (fromFieldRowElems els) els' >>= \case
+          Just rest -> return $ StaticRecordTy $ Unlabeled
+            [ RecordTy els, RecordTyWithElems rest ]
+          Nothing -> splitFailed
+      (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
+        return $ StaticRecordTy $ Unlabeled
+          [ RecordTyWithElems [DynFields v'], RecordTyWithElems rest ]
+      _ -> splitFailed
+    where
+      stripPrefix = curry \case
+        ([]  , ys  ) -> return $ Just ys
+        (x:xs, y:ys) -> alphaEq x y >>= \case
+          True  -> stripPrefix xs ys
+          False -> case (x, y) of
+            (StaticFields xf, StaticFields yf) -> do
+              NoExt rest <- labeledRowDifference (NoExt yf) (NoExt xf)
+              return $ Just $ StaticFields rest : ys
+            _ -> return Nothing
+        _ -> return Nothing
   VariantLift types variant -> do
     mapM_ (|: TyKind) types
     types' <- mapM substM types

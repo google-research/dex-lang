@@ -224,7 +224,14 @@ matchUPat (WithSrcB _ pat) x = do
         go :: Interp m => LabeledItems (Atom o) -> UFieldRowPat i i' -> m i o (SubstFrag AtomSubstVal i i' o)
         go xs = \case
           UEmptyRowPat    -> return emptyInFrag
-          UDynFieldsPat b -> return $ b @> SubstVal (Record xs)
+          URemFieldsPat b -> return $ b @> SubstVal (Record xs)
+          UDynFieldsPat ~(InternalName (UAtomVar v)) b rest ->
+            evalAtom (Var v) >>= \case
+              LabeledRow f | [StaticFields fields] <- fromFieldRowElems f -> do
+                let (items, remItems) = splitLabeledItems fields xs
+                frag <- matchUPat b (Record items)
+                frag `followedByFrag` go remItems rest
+              _ -> error "Unevaluated fields?"
           UDynFieldPat ~(InternalName (UAtomVar v)) b rest ->
             evalAtom (Var v) >>= \case
               Con (LabelCon l) -> go xs $ UStaticFieldPat l b rest

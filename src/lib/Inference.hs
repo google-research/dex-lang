@@ -1458,7 +1458,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             constrainVarTy r $ StaticRecordTy labelTypeVars
             itemsNestOrdered <- unpackInLabelOrder (Var r) ls
             bindLamPats ps itemsNestOrdered c
-        UDynFieldsPat b ->
+        URemFieldsPat b ->
           resolveDelay rv \rv' -> do
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields tailVar]
@@ -1467,6 +1467,13 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           -- Note that the type constraint will be added when the delay is resolved
           let (ls, ps, rvn) = rv
           bindPats c (ls ++ [l], joinNest ps (Nest p Empty), rvn) rest
+        UDynFieldsPat fv p rest -> do
+          resolveDelay rv \rv' -> do
+            fv' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar fv) LabeledRowKind
+            tailVar <- freshInferenceName LabeledRowKind
+            constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
+            [subr, rv''] <- emitUnpacked =<< emitOp (RecordSplit (Var fv') (Var rv'))
+            bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
           resolveDelay rv \rv' -> do
             lv' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar lv) (TC LabelType)
@@ -1494,7 +1501,10 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
           tailVar <- freshInferenceName LabeledRowKind
           constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
-          [itemsRecord, restRecord] <- getUnpacked =<< emitOp (RecordSplit labelTypeVars (Var r))
+          [itemsRecord, restRecord] <- getUnpacked =<<
+            emitOp (RecordSplit
+              (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
+              (Var r))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
           restRecordName <- emitAtomToName restRecord
           bindLamPats ps itemsNestOrdered $ f restRecordName

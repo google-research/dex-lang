@@ -399,9 +399,9 @@ linearizeOp op = case op of
   RecordCons l r ->
     zipLin (la l) (la r) `bindLin` \(PairE l' r') ->
       emitOp $ RecordCons l' r'
-  RecordSplit vs r ->
-    zipLin (traverseLin la vs) (la r) `bindLin` \(PairE (ComposeE vs') r') ->
-      emitOp $ RecordSplit vs' r'
+  RecordSplit f r ->
+    zipLin (la f) (la r) `bindLin` \(PairE f' r') ->
+      emitOp $ RecordSplit f' r'
   VariantLift ts v ->
     zipLin (traverseLin pureLin ts) (la v) `bindLin`
       \(PairE (ComposeE ts') v') -> emitOp $ VariantLift ts' v'

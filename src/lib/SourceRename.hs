@@ -387,7 +387,12 @@ instance SourceRenamablePat UPat' where
 instance SourceRenamablePat UFieldRowPat where
   sourceRenamePat sibs pat cont = case pat of
     UEmptyRowPat    -> cont sibs UEmptyRowPat
-    UDynFieldsPat b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' (UDynFieldsPat b')
+    URemFieldsPat b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' (URemFieldsPat b')
+    UDynFieldsPat v p rest -> do
+      v' <- sourceRenameE v
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UDynFieldsPat v' p' rest'
     UStaticFieldPat l p rest -> do
       sourceRenamePat sibs p \sibs' p' ->
         sourceRenamePat sibs' rest \sibs'' rest' ->
@@ -467,7 +472,8 @@ instance HasSourceNames UPat where
 instance HasSourceNames UFieldRowPat where
   sourceNames = \case
     UEmptyRowPat             -> mempty
-    UDynFieldsPat b          -> sourceNames b
+    URemFieldsPat b          -> sourceNames b
+    UDynFieldsPat   _ p rest -> sourceNames p <> sourceNames rest
     UStaticFieldPat _ p rest -> sourceNames p <> sourceNames rest
     UDynFieldPat    _ p rest -> sourceNames p <> sourceNames rest  -- Shouldn't we include v?
 

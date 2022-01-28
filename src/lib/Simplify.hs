@@ -411,15 +411,16 @@ simplifyOp op = case op of
         let items = restructure itemList itemTys
         return $ Record $ labeledSingleton l val <> items
       _ -> error "not a record"
-  RecordSplit litems full ->
-    getType full >>= \case
-      StaticRecordTy fullTys -> do
+  RecordSplit f full -> getType full >>= \case
+    StaticRecordTy fullTys -> case f of
+      LabeledRow f' | [StaticFields fields] <- fromFieldRowElems f' -> do
         -- Unpack, then repack into two pieces.
         fullList <- getUnpacked full
         let fullItems = restructure fullList fullTys
-        let (left, right) = splitLabeledItems litems fullItems
+        let (left, right) = splitLabeledItems fields fullItems
         return $ Record $ Unlabeled [Record left, Record right]
-      _ -> error "not a record"
+      _ -> error "failed to simplifiy a field row"
+    _ -> error "not a record"
   RecordSplitDynamic (Con (LabelCon l)) rec ->
     getType rec >>= \case
       StaticRecordTy itemTys -> do
