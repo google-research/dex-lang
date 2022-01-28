@@ -369,7 +369,9 @@ typecheckFunc prog@(Program funcMap) name = case typecheck prog env body of
 typecheckProgram :: Program -> Either String ()
 typecheckProgram prog@(Program progMap) = sequence_ $ typecheckFunc prog <$> M.keys progMap
 
--------------------- JVP --------------------
+-------------------- Fresh variables --------------------
+
+type Scope      = S.Set Var
 
 freshVar :: Scope -> Var
 freshVar s = case S.lookupMax s of
@@ -380,7 +382,27 @@ freshVars :: Scope -> [Var]
 freshVars s = x : freshVars (S.insert x s)
   where x = freshVar s
 
-type Scope      = S.Set Var
+-------------------- Smart constructors --------------------
+
+-- That do ANF on demand
+
+ret1 :: Scope -> Expr -> Expr -> Expr
+ret1 scope e1 e2 =
+  LetMixed [v] []   e1 $
+  LetMixed []  [v'] e2 $
+  Ret [v] [v']
+  where v : v' : _ = freshVars scope
+
+-- More general version for reference
+ret :: Scope -> [Expr] -> [Expr] -> Expr
+ret scope es1 es2 = nlctx $ lctx $ Ret vs1 vs2 where
+  allFresh = take (length es1 + length es2) $ freshVars scope
+  (vs1, vs2) = splitAt (length es1) allFresh
+  nlctx = foldl (.) id $ zipWith (\v e -> LetMixed [v] [] e) vs1 es1
+  lctx = foldl (.) id $ zipWith (\v e -> LetMixed [] [v] e) vs2 es2
+
+-------------------- JVP --------------------
+
 type Subst      = M.Map Var Var
 type TangentMap = M.Map Var Var
 type JVPFuncMap = M.Map FuncName FuncName
@@ -445,27 +467,31 @@ jvp funcEnv scope subst env e = case e of
       (vs, vs') = splitAt (length vs_) allFresh
       (ctx, ctxScope, [env1, env2]) = splitTangents (scopeExt scope allFresh) (envExt env vs_ vs') [e1, e2]
   LetMixed _ _ _ _ -> expectNonLinear
-  LetUnpack _ _ _ -> undefined
-  -- TODO: Split envs
-  --LetUnpack vs v e ->
-    --LetMixed [t] [t'] (rec scope env $ Var v) $
-    --LetUnpack vs t $
-    --LetUnpackLin vs' t' $
-      --rec (scope <> S.fromList allFresh) (envExt env vs vs') e
-    --where allFresh@(t : t' : vs') = take (length vs + 2) $ freshVars scope
-  Tuple _ -> undefined
+  LetUnpack vs_ v_ e ->
+    ctx $ LetUnpack vs (subst ! v_) $
+    LetUnpackLin vs' (envv ! v_) $
+      rec (scopeExt ctxScope allFresh) subst' env' e
+    where
+      (ctx, ctxScope, [envv, enve]) = splitTangents scope env [Var v_, e]
+      allFresh = take (2 * length vs_) $ freshVars ctxScope
+      (vs, vs') = splitAt (length vs_) allFresh
+      subst' = envExt subst vs_ vs
+      env' = envExt enve vs_ vs'
+  Tuple vs_ -> ctx $ ret1 scope' (Tuple $ (subst !) <$> vs_) (LTuple $ zipWith (!) envs vs_)
+    where
+      (ctx, scope', envs) = splitTangents scope env (Var <$> vs_)
   App f vs_ [] -> ctx $ App (funcEnv ! f) ((subst !) <$> vs_) (zipWith (!) envs vs_)
     where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
   App _ _ _  -> expectNonLinear
   Var v -> Ret [subst ! v] [env ! v]
-  Lit v -> retExprs scope (Lit v) LZero
+  Lit v -> ret1 scope (Lit v) LZero
   UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
   UnOp Cos e -> jvpUnOp e Cos $ \v -> BinOp Mul (UnOp Sin (Var v)) (Lit (-1))
   UnOp Exp e -> jvpUnOp e Exp $ UnOp Exp . Var
   BinOp Add e1 e2 -> ctx $
     LetMixed [v1] [v1'] (rec ctxScope subst env1 e1) $
     LetMixed [v2] [v2'] (rec (ctxScope <> S.fromList [v1, v1']) subst env2 e2) $
-    retExprs (ctxScope <> S.fromList [v1, v1', v2, v2'])
+    ret1 (ctxScope <> S.fromList [v1, v1', v2, v2'])
       (BinOp Add (Var v1) (Var v2)) (LAdd (LVar v1') (LVar v2'))
     where
       (ctx, ctxScope, [env1, env2]) = splitTangents scope env [e1, e2]
@@ -473,7 +499,7 @@ jvp funcEnv scope subst env e = case e of
   BinOp Mul e1 e2 -> ctx $
     LetMixed [v1] [v1'] (rec ctxScope subst env1 e1) $
     LetMixed [v2] [v2'] (rec (ctxScope <> S.fromList [v1, v1']) subst env2 e2) $
-    retExprs (ctxScope <> S.fromList [v1, v1', v2, v2'])
+    ret1 (ctxScope <> S.fromList [v1, v1', v2, v2'])
       (BinOp Mul (Var v1) (Var v2))
       (LAdd (LScale (Var v2) (LVar v1'))
             (LScale (Var v1) (LVar v2')))
@@ -495,16 +521,9 @@ jvp funcEnv scope subst env e = case e of
     jvpUnOp :: Expr -> UnOp -> (Var -> Expr) -> Expr
     jvpUnOp e primOp tanCoef =
       LetMixed [v] [v'] (rec scope subst env e) $
-      retExprs (scope <> S.fromList [v, v'])
+      ret1 (scope <> S.fromList [v, v'])
         (UnOp primOp (Var v)) (LScale (tanCoef v) (LVar v'))
       where v : v' : _ = freshVars scope
-
-retExprs :: Scope -> Expr -> Expr -> Expr
-retExprs scope e1 e2 =
-  LetMixed [v] []   e1 $
-  LetMixed []  [v'] e2 $
-  Ret [v] [v']
-  where v : v' : _ = freshVars scope
 
 -------------------- Unzip --------------------
 
@@ -572,6 +591,13 @@ unzipExpr orig scope subst expr = case expr of
       e2Subst = envExt (envExt subst vs uvs) vs' uvs'
       e2Scope = scopeExt (scopeExt scope uvs) uvs'
       ((ctx2, scopeCtx2), ue2, ue2') = rec e2Scope e2Subst e2
+  LetUnpack vs v e ->
+      ((LetUnpack uvs (subst ! v) . ctx, ctxScope), ue, ue')
+    where
+      uvs = take (length vs) $ freshVars scope
+      subst' = envExt subst vs uvs
+      scope' = (scopeExt scope uvs)
+      ((ctx, ctxScope), ue, ue') = rec scope' subst' e
   LetUnpackLin vs v e ->
       ( (ctx, ctxScope)
       , ue
@@ -594,6 +620,7 @@ unzipExpr orig scope subst expr = case expr of
       tapeVar:retVars = take (1 + length retTys) $ freshVars scope
       scope2 = scopeExt scope $ tapeVar:retVars
   Var  v -> ((id, scope), Var (subst ! v), Ret [] [])
+  Tuple vs -> ((id, scope), Tuple $ (subst !) <$> vs, Ret [] [])
   LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
   LTuple vs -> ((id, scope), Ret [] [], LTuple $ (subst !) <$> vs)
   UnOp op e -> ((ctx, ctxScope), UnOp op ue, ue')
@@ -715,6 +742,15 @@ transposeExpr scope expr cts = case expr of
       [ct] = cts
       (xtCtx, xScope, xMap) = transposeExpr (scopeExt scope [ct1, ct2]) x [ct1]
       (ytCtx, yScope, yMap) = transposeExpr xScope y [ct2]
+  LScale x y ->
+    ( LetMixed [] [ct'] (LScale x (LVar ct)) . ytCtx
+    , yScope
+    , yMap
+    )
+    where
+      ct':_ = freshVars scope
+      [ct] = cts
+      (ytCtx, yScope, yMap) = transposeExpr (scopeExt scope [ct']) y [ct']
   Dup body ->
     ( (LetMixed [] [ct] $ LAdd (LVar ct1) (LVar ct2)) . bCtx
     , bScope

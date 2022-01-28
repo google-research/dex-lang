@@ -4,6 +4,7 @@ module LinearASpec where
 import qualified Data.Map.Strict as M
 import Test.Hspec
 import LinearA
+import Prettyprinter
 
 -- Define some orhpan instances as sugar over non-linear expressions
 instance Num Expr where
@@ -19,7 +20,12 @@ instance Fractional Expr where
   (/) = undefined
 
 shouldTypeCheck :: Program -> Expectation
-shouldTypeCheck prog = typecheckProgram prog `shouldBe` (Right ())
+shouldTypeCheck prog = do
+  let tp = typecheckProgram prog
+  case tp of
+    (Right ()) -> return ()
+    (Left _) -> putStrLn $ show $ pretty prog
+  tp `shouldBe` (Right ())
 
 shouldNotTypeCheck :: Program -> Expectation
 shouldNotTypeCheck prog = typecheckProgram prog `shouldSatisfy` \case
@@ -230,3 +236,15 @@ spec = do
       let p = Program $ M.fromList [("double", double_func)]
       grad <- gradient p "double" [4.0]
       grad `shouldBe` [FloatVal 2.0]
+
+    it "should differentiate through tuples" $ do
+      let p = Program $ M.fromList
+                -- A contrived squaring function that first packs its
+                -- argument into a tuple and then unpacks it.
+                [ ("square", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
+                    LetMixed ["y"] [] (Tuple ["x", "x"]) $
+                    LetUnpack ["x1", "x2"] "y" $
+                    BinOp Mul (Var "x1") (Var "x2"))
+                ]
+      grad <- gradient p "square" [3.0]
+      grad `shouldBe` [FloatVal 6.0]
