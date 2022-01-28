@@ -50,6 +50,11 @@ Syntax for records, variants, and their types.
   y
 > {a = 3, a = 4, a = 5., b = 2}
 
+:p
+  {b=b1, a=a1, c=c1, a=a2} = {a=1, a=2, b=3, c=4}
+  (a1, a2, b1, c1)
+> (1, (2, (3, 4)))
+
 'Variant (enum) types
 
 :p {|}
@@ -88,27 +93,27 @@ Syntax for records, variants, and their types.
 
 :p {a:Int & b:Float | c:Int }
 
-> Parse error:89:21:
+> Parse error:94:21:
 >    |
-> 89 | :p {a:Int & b:Float | c:Int }
+> 94 | :p {a:Int & b:Float | c:Int }
 >    |                     ^
 > unexpected '|'
 > expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', ':', '}', arrow, backquoted name, expression, or infix operator
 
 :p {a:Int,}
 
-> Parse error:98:10:
->    |
-> 98 | :p {a:Int,}
->    |          ^
+> Parse error:103:10:
+>     |
+> 103 | :p {a:Int,}
+>     |          ^
 > unexpected ','
 > expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '?', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
 
 :p {|3}
 
-> Parse error:107:6:
+> Parse error:112:6:
 >     |
-> 107 | :p {|3}
+> 112 | :p {|3}
 >     |      ^
 > unexpected '3'
 > expecting "...", '}', or field label
@@ -432,18 +437,14 @@ def concatRecords {f f'} (x: {&...f}) (y: {&...f'}) : ({...f & ...f'}) =
 concatRecords {a=1} {b=2}
 > {a = 1, b = 2}
 
--- TODO: Add support for richer pattern syntax
-def projectTwo {f a b} (l1: Label) (l2: Label) (x: {@l1:a & @l2:b & ...f}) : (a & b) = todo
+def projectTwo {f a b} (l1: Label) (l2: Label) (x: {@l1:a & @l2:b & ...f}) : (a & b) =
   {@l1=v1, @l2=v2, ...} = x
-  (v1 & v2)
+  (v1, v2)
 
-> Parse error:437:3:
->     |
-> 437 |   {@l1=v1, @l2=v2, ...} = x
->     |   ^^
-> unexpected "{@"
-> expecting end of line
--- TODO: Add support for richer pattern syntax
+projectTwo ##a ##b {c=1, b=2, a=4}
+> (4, 2)
+
+-- TODO: Add support a for richer pattern syntax
 def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({&...f}) = todo
 
 -- This should at least typecheck for now

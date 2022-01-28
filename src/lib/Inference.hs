@@ -1446,38 +1446,58 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         xs' <- forM xs \x -> zonk (Var x) >>= emitAtomToName
         bindLamPats ps xs' cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
-  UPatRecord dynLab (Ext labels extLabel) (dynLabB `PairB` (labBs `PairB` tailB)) -> do
-    dynTypeVar <- case dynLab of
-      Nothing     -> return []
-      Just labVar -> do
-        labVar' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar labVar) (TC LabelType)
-        ty' <- freshType TyKind
-        return $ [DynField labVar' ty']
-    labelTypeVars <- mapM (const $ freshType TyKind) labels
-    extTypeVar <- case tailB of
-      RightB UnitB -> return []
-      LeftB  _     -> (:[]) . DynFields <$> freshInferenceName LabeledRowKind
-    constrainVarTy v $ RecordTyWithElems $
-      dynTypeVar ++ [StaticFields labelTypeVars] ++ extTypeVar
-    let afterDyn recV = case tailB of
-          NothingB -> do
-            unless (extLabel == Nothing) $ throw CompilerErr $
-              "mismatched labels and patterns (parser should not allow this!)"
-            emitUnpacked (Var recV) >>= \els -> bindLamPats labBs els cont
-          JustB tB -> case labBs of
-            Empty -> bindLamPat tB recV cont
-            _     -> do
-              [itemsRecord, restRecord] <- emitUnpacked =<< emitOp (RecordSplit labelTypeVars $ Var recV)
-              items <- emitUnpacked (Var itemsRecord)
-              bindLamPats labBs items $ bindLamPat tB restRecord cont
-          _ -> error "unreachable"
-    case dynLabB of
-      NothingB  -> afterDyn v
-      JustB dlB -> do
-        let [DynField labVar _] = dynTypeVar
-        [dynVal, rest] <- emitUnpacked =<< emitOp (RecordSplitDynamic (Var labVar) (Var v))
-        bindLamPat dlB dynVal $ afterDyn rest
-      _ -> error "unreachable"
+  UPatRecord rowPat -> do
+    bindPats cont ([], Empty, v) rowPat
+    where
+      bindPats :: (EmitsBoth o, Inferer m) => m i' o a -> ([Label], Nest UPat i l, AtomName o) -> UFieldRowPat l i' -> m i o a
+      bindPats c rv = \case
+        UEmptyRowPat -> case rv of
+          (_ , Empty, _) -> c
+          (ls, ps   , r) -> do
+            labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
+            constrainVarTy r $ StaticRecordTy labelTypeVars
+            itemsNestOrdered <- unpackInLabelOrder (Var r) ls
+            bindLamPats ps itemsNestOrdered c
+        UDynFieldsPat b ->
+          resolveDelay rv \rv' -> do
+            tailVar <- freshInferenceName LabeledRowKind
+            constrainVarTy rv' $ RecordTyWithElems [DynFields tailVar]
+            bindLamPat (WithSrcB Nothing $ UPatBinder b) rv' c
+        UStaticFieldPat l p rest -> do
+          -- Note that the type constraint will be added when the delay is resolved
+          let (ls, ps, rvn) = rv
+          bindPats c (ls ++ [l], joinNest ps (Nest p Empty), rvn) rest
+        UDynFieldPat lv p rest ->
+          resolveDelay rv \rv' -> do
+            lv' <- emitAtomToName =<< checkRho (WithSrcE Nothing $ UVar lv) (TC LabelType)
+            fieldTy <- freshType TyKind
+            tailVar <- freshInferenceName LabeledRowKind
+            constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
+            [val, rv''] <- emitUnpacked =<< emitOp (RecordSplitDynamic (Var lv') (Var rv'))
+            bindLamPat p val $ bindPats c (mempty, Empty, rv'') rest
+
+      -- Unpacks the record and returns the components in order, as if they
+      -- were looked up by consecutive labels. Note that the number of labels
+      -- should match the total number of record fields, and the record should
+      -- have no dynamic extensions!
+      unpackInLabelOrder :: (EmitsBoth o, Inferer m) => Atom o -> [Label] -> m i o [AtomName o]
+      unpackInLabelOrder r ls = do
+        itemsNatural <- emitUnpacked =<< zonk r
+        let labelOrder = toList $ foldMap (\(i, l) -> labeledSingleton l i) $ enumerate ls
+        let itemsMap = M.fromList $ zip labelOrder itemsNatural
+        return $ (itemsMap M.!) <$> [0..M.size itemsMap - 1]
+
+      resolveDelay :: (EmitsBoth o, Inferer m) => ([Label], Nest UPat i l, AtomName o) -> (AtomName o -> m l o a) -> m i o a
+      resolveDelay (ls, ps, r) f = case ps of
+        Empty -> f r
+        _     -> do
+          labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
+          tailVar <- freshInferenceName LabeledRowKind
+          constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
+          [itemsRecord, restRecord] <- getUnpacked =<< emitOp (RecordSplit labelTypeVars (Var r))
+          itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
+          restRecordName <- emitAtomToName restRecord
+          bindLamPats ps itemsNestOrdered $ f restRecordName
   UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
@@ -1906,14 +1926,15 @@ instance Unifiable (EffectRowP AtomName) where
 instance Unifiable FieldRowElems where
   unifyZonked e1 e2 = go (fromFieldRowElems e1) (fromFieldRowElems e2)
     where
-      go []            []            = return ()
-      go l@(h:t)       r@(h':t')     = (unifyElem h h' >> go t t') <|> unifyAsExtLabledItems l r
-      go [DynFields f] r             = extendSolution f $ LabeledRow $ fieldRowElemsFromList r
-      go l             [DynFields f] = extendSolution f $ LabeledRow $ fieldRowElemsFromList l
-      go l             r             = unifyAsExtLabledItems l r
+      go = curry \case
+        ([]           , []           ) -> return ()
+        ([DynFields f], r            ) -> extendSolution f $ LabeledRow $ fieldRowElemsFromList r
+        (l            , [DynFields f]) -> extendSolution f $ LabeledRow $ fieldRowElemsFromList l
+        (l@(h:t)      , r@(h':t')    ) -> (unifyElem h h' >> go t t') <|> unifyAsExtLabledItems l r
+        (l            , r            ) -> unifyAsExtLabledItems l r
 
       unifyElem :: forall n m. (EmitsInf n, Unifier m) => FieldRowElem n -> FieldRowElem n -> m n ()
-      unifyElem = curry $ \case
+      unifyElem = curry \case
         (DynField v ty     , DynField v' ty'    ) -> unify (Var v) (Var v') >> unify ty ty'
         (DynFields r       , DynFields r'       ) -> unify (Var r) (Var r')
         (StaticFields items, StaticFields items') -> do

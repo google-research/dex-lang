@@ -219,24 +219,21 @@ matchUPat (WithSrcB _ pat) x = do
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
       matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
     (UPatUnit UnitB, UnitVal) -> return emptyInFrag
-    (UPatRecord dynLab (Ext labels _) (dynLabB `PairB` (itemsB `PairB` restB)), Record xs) -> do
-      dynLabels <- case dynLab of
-        Nothing -> return mempty
-        Just ~(InternalName (UAtomVar v)) -> evalAtom (Var v) >>= \v' -> case v' of
-          Con (LabelCon l) -> return $ labeledSingleton l ()
-          _                -> error $ "Unevaluated label? " ++ pprint v'
-      let (dynItems, tmpItems) = splitLabeledItems dynLabels xs
-      let (items   , rest    ) = splitLabeledItems labels tmpItems
-      dynFrag   <- case dynLabB of
-        RightB UnitB -> return emptyInFrag
-        LeftB  dynB  -> matchUPat dynB $ head $ toList dynItems
-      dynFrag `followedByFrag` do
-        itemsFrag <- matchUPats itemsB $ toList items
-        itemsFrag `followedByFrag` do
-          restFrag <- case restB of
-            RightB UnitB -> return emptyInFrag
-            LeftB  rB    -> matchUPat rB $ Record rest
-          return restFrag
+    (UPatRecord pats, Record initXs) -> go initXs pats
+      where
+        go :: Interp m => LabeledItems (Atom o) -> UFieldRowPat i i' -> m i o (SubstFrag AtomSubstVal i i' o)
+        go xs = \case
+          UEmptyRowPat    -> return emptyInFrag
+          UDynFieldsPat b -> return $ b @> SubstVal (Record xs)
+          UDynFieldPat ~(InternalName (UAtomVar v)) b rest ->
+            evalAtom (Var v) >>= \case
+              Con (LabelCon l) -> go xs $ UStaticFieldPat l b rest
+              _ -> error "Unevaluated label?"
+          UStaticFieldPat l b rest -> case popLabeledItems l xs of
+            Just (val, xsTail) -> do
+              headFrag <- matchUPat b val
+              headFrag `followedByFrag` go xsTail rest
+            Nothing -> error "Field missing in record"
     (UPatVariant _ _ _  , _) -> error "can't have top-level may-fail pattern"
     (UPatVariantLift _ _, _) -> error "can't have top-level may-fail pattern"
     (UPatTable bs, tab) -> do

@@ -46,7 +46,7 @@ module Syntax (
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
     ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
-    UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..),
+    UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..), EnvQuery (..), ModuleName,
@@ -970,6 +970,15 @@ data UAnnBinder (c::C) (n::S) (l::S) = UAnnBinder (UBinder c n l) (UType n)
 data UAlt (n::S) where
   UAlt :: UPat n l -> UExpr l -> UAlt n
 
+data UFieldRowPat (n::S) (l::S) where
+  UEmptyRowPat    :: UFieldRowPat n n
+  UDynFieldsPat   :: UBinder AtomNameC n l -> UFieldRowPat n l
+  UStaticFieldPat :: Label               -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
+  UDynFieldPat    :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
+
+instance Show (UFieldRowPat n l) where
+  show _ = "UFieldRowPat <TODO>"
+
 type UPat = WithSrcB UPat'
 data UPat' (n::S) (l::S) =
    UPatBinder (UBinder AtomNameC n l)
@@ -977,8 +986,7 @@ data UPat' (n::S) (l::S) =
  | UPatPair (PairB UPat UPat n l)
  | UPatUnit (UnitB n l)
  -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
- | UPatRecord (Maybe (SourceNameOr UVar n)) (ExtLabeledItems () ())
-              (PairB (MaybeB UPat) (PairB (Nest UPat) (MaybeB UPat)) n l) -- {@v=x, a=y, b=z, ...rest}
+ | UPatRecord (UFieldRowPat n l)
  | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
  | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
  | UPatTable (Nest UPat n l)

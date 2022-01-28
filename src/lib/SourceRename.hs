@@ -375,10 +375,7 @@ instance SourceRenamablePat UPat' where
         sourceRenamePat sibs' p2 \sibs'' p2' ->
           cont sibs'' $ UPatPair $ PairB p1' p2'
     UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
-    UPatRecord dynLab labels ps -> do
-      dynLab' <- fromMaybeE <$> sourceRenameE (toMaybeE dynLab)
-      sourceRenamePat sibs ps \sibs' ps' ->
-        cont sibs' $ UPatRecord dynLab' labels ps'
+    UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
     UPatVariant labels label p ->
       sourceRenamePat sibs p \sibs' p' ->
         cont sibs' $ UPatVariant labels label p'
@@ -386,6 +383,20 @@ instance SourceRenamablePat UPat' where
       sourceRenamePat sibs p \sibs' p' ->
         cont sibs' $ UPatVariantLift labels p'
     UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
+
+instance SourceRenamablePat UFieldRowPat where
+  sourceRenamePat sibs pat cont = case pat of
+    UEmptyRowPat    -> cont sibs UEmptyRowPat
+    UDynFieldsPat b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' (UDynFieldsPat b')
+    UStaticFieldPat l p rest -> do
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UStaticFieldPat l p' rest'
+    UDynFieldPat    v p rest -> do
+      v' <- sourceRenameE v
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UDynFieldPat v' p' rest'
 
 instance SourceRenamablePat UnitB where
   sourceRenamePat sibs UnitB cont = cont sibs UnitB
@@ -429,6 +440,7 @@ instance SourceRenamableB UPat' where
 -- access the additional source names, only the full set. But it's not a huge
 -- amount of code and there's nothing tricky about it.
 
+-- Note that this is only expected to return the _bound source names_!
 class HasSourceNames (b::B) where
   sourceNames :: b n l -> S.Set SourceName
 
@@ -447,10 +459,17 @@ instance HasSourceNames UPat where
     UPatCon _ bs -> sourceNames bs
     UPatPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatUnit UnitB -> mempty
-    UPatRecord _ _ ps -> sourceNames ps
+    UPatRecord p -> sourceNames p
     UPatVariant _ _ p -> sourceNames p
     UPatVariantLift _ p -> sourceNames p
     UPatTable ps -> sourceNames ps
+
+instance HasSourceNames UFieldRowPat where
+  sourceNames = \case
+    UEmptyRowPat             -> mempty
+    UDynFieldsPat b          -> sourceNames b
+    UStaticFieldPat _ p rest -> sourceNames p <> sourceNames rest
+    UDynFieldPat    _ p rest -> sourceNames p <> sourceNames rest  -- Shouldn't we include v?
 
 instance (HasSourceNames b1, HasSourceNames b2)
          => HasSourceNames (PairB b1 b2) where

@@ -570,12 +570,22 @@ instance PrettyPrec (UPat' n l) where
     UPatPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit UnitB -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
-    UPatRecord dynLab labels _ ->
-      prettyExtLabeledItems labels prefix (line' <> ",") " ="
-      where prefix = case dynLab of Nothing -> Nothing; Just labVar -> Just $ "@" <> p labVar
+    UPatRecord pats -> atPrec ArgPrec $ prettyUFieldRowPat "," "=" pats
     UPatVariant labels label value -> prettyVariant labels label value
     UPatVariantLift labels value -> prettyVariantLift labels value
     UPatTable pats -> atPrec ArgPrec $ p pats
+
+prettyUFieldRowPat :: forall n l ann. Doc ann -> Doc ann -> UFieldRowPat n l -> Doc ann
+prettyUFieldRowPat separator bindwith pat =
+  braces $ concatWith (surround $ separator <> " ") $ go pat
+  where
+    go :: UFieldRowPat n' l' -> [Doc ann]
+    go = \case
+      UEmptyRowPat          -> []
+      UDynFieldsPat UIgnore -> ["..."]
+      UDynFieldsPat b       -> ["..." <> p b]
+      UDynFieldPat    v r rest -> (p v <> bindwith <> p r) : go rest
+      UStaticFieldPat l r rest -> (p l <> bindwith <> p r) : go rest
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
 spaced xs = hsep $ map p $ toList xs
