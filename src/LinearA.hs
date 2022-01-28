@@ -477,14 +477,15 @@ jvp funcEnv scope subst env e = case e of
       (vs, vs') = splitAt (length vs_) allFresh
       subst' = envExt subst vs_ vs
       env' = envExt enve vs_ vs'
-  Tuple vs_ -> ctx $ ret1 scope' (Tuple $ (subst !) <$> vs_) (LTuple $ zipWith (!) envs vs_)
-    where
-      (ctx, scope', envs) = splitTangents scope env (Var <$> vs_)
+  LetUnpackLin _ _ _ -> expectNonLinear
   App f vs_ [] -> ctx $ App (funcEnv ! f) ((subst !) <$> vs_) (zipWith (!) envs vs_)
     where (ctx, _, envs) = splitTangents scope env (Var <$> vs_)
   App _ _ _  -> expectNonLinear
   Var v -> Ret [subst ! v] [env ! v]
   Lit v -> ret1 scope (Lit v) LZero
+  Tuple vs_ -> ctx $ ret1 scope' (Tuple $ (subst !) <$> vs_) (LTuple $ zipWith (!) envs vs_)
+    where
+      (ctx, scope', envs) = splitTangents scope env (Var <$> vs_)
   UnOp Sin e -> jvpUnOp e Sin $ UnOp Cos . Var
   UnOp Cos e -> jvpUnOp e Cos $ \v -> BinOp Mul (UnOp Sin (Var v)) (Lit (-1))
   UnOp Exp e -> jvpUnOp e Exp $ UnOp Exp . Var
@@ -506,14 +507,13 @@ jvp funcEnv scope subst env e = case e of
     where
       (ctx, ctxScope, [env1, env2]) = splitTangents scope env [e1, e2]
       v1:v1':v2:v2':_ = freshVars ctxScope
+  LVar _     -> expectNonLinear
+  LTuple _   -> expectNonLinear
+  LAdd _ _   -> expectNonLinear
+  LScale _ _ -> expectNonLinear
+  LZero      -> expectNonLinear
+  Dup _      -> expectNonLinear
   Drop e -> Drop $ rec scope subst env e
-  Dup _              -> expectNonLinear
-  LTuple _           -> expectNonLinear
-  LetUnpackLin _ _ _ -> expectNonLinear
-  LVar _             -> expectNonLinear
-  LAdd _ _           -> expectNonLinear
-  LScale _ _         -> expectNonLinear
-  LZero              -> expectNonLinear
   where
     rec = jvp funcEnv
     expectNonLinear = error "JVP only applies to completely non-linear computations"
@@ -622,8 +622,6 @@ unzipExpr orig scope subst expr = case expr of
   Var v -> ((id, scope), Var (subst ! v), Ret [] [])
   Lit f -> ((id, scope), Lit f, Ret [] [])
   Tuple vs -> ((id, scope), Tuple $ (subst !) <$> vs, Ret [] [])
-  LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
-  LTuple vs -> ((id, scope), Ret [] [], LTuple $ (subst !) <$> vs)
   UnOp op e -> ((ctx, ctxScope), UnOp op ue, ue')
     where ((ctx, ctxScope), ue, ue') = rec scope subst e
   BinOp op e1 e2 -> ((ctx1 . ctx2, ctxScope2), BinOp op ue1 ue2, ue')
@@ -631,6 +629,8 @@ unzipExpr orig scope subst expr = case expr of
       ((ctx1, ctxScope1), ue1, ue1') = rec scope subst e1
       ((ctx2, ctxScope2), ue2, ue2') = rec ctxScope1 subst e2
       ue' = LetMixed [] [] ue1' ue2'
+  LVar v -> ((id, scope), Ret [] [], LVar (subst ! v))
+  LTuple vs -> ((id, scope), Ret [] [], LTuple $ (subst !) <$> vs)
   LAdd e1 e2 -> ((ctx1 . ctx2, ctxScope2), ue, LAdd ue1' ue2')
     where
       ((ctx1, ctxScope1), ue1, ue1') = rec scope subst e1
@@ -693,7 +693,6 @@ transposeExpr :: Scope -> Expr -> [Var] -> (Expr -> Expr, Scope, CotangentMap)
 transposeExpr scope expr cts = case expr of
   Ret vs vs' -> case vs of
     [] -> (id, scope, M.fromList $ zip vs' cts)
-    -- TODO: Relax?
     _ -> error "Returning non-linear values in transposition!"
   LetMixed vs vs' e1 e2 -> case vs of
     [] ->
@@ -704,7 +703,6 @@ transposeExpr scope expr cts = case expr of
       where
         (e2Ctx, e2Scope, e2Map) = transposeExpr scope   e2 cts
         (e1Ctx, e1Scope, e1Map) = transposeExpr e2Scope e1 ((e2Map !) <$> vs')
-    -- TODO: Relax
     _ -> error "Binding non-linear values in transposition!"
   LetUnpack vs v body -> (LetUnpack vs v . bCtx, bScope, bMap)
     where
@@ -727,6 +725,11 @@ transposeExpr scope expr cts = case expr of
     where
       cts' = take (length vs') $ freshVars scope
       scope' = scopeExt scope cts'
+  Var _ -> expectLinear
+  Lit _ -> expectLinear
+  Tuple _ -> expectLinear
+  UnOp _ _ -> expectLinear
+  BinOp _ _ _ -> expectLinear
   LVar v -> (id, scope, M.singleton v ct)
     where [ct] = cts
   LTuple vs ->
@@ -783,7 +786,8 @@ transposeExpr scope expr cts = case expr of
       cts = take (length freeLin) $ freshVars scope
       scope' = scopeExt scope cts
       dropAll vs = foldl (.) id $ map (\v -> LetMixed [] [] (Drop $ Var v)) vs
-  _ -> error $ "Transpose not implemented: " ++ show (pretty expr)
+  where
+    expectLinear = error "Transposing a non-linear expression!"
 
 
 -- It would be nice to make this the signature of transpose
