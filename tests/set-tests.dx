@@ -1,0 +1,7 @@
+-- check order invariance.
+:p (toSet ["Bob", "Alice", "Charlie"]) == (toSet ["Charlie", "Bob", "Alice"])
+> True
+
+-- check uniqueness.
+:p (toSet ["Bob", "Alice", "Alice", "Charlie"]) == (toSet ["Charlie", "Charlie", "Bob", "Alice"])
+> True

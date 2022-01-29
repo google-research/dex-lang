@@ -1,5 +1,54 @@
 import sort
 
+
+'### Monoidal enforcement of uniqueness in sorted lists
+
+def last {n a} (xs:n=>a) : Maybe a =
+  s = size n
+  case s == 0 of
+    True -> Nothing
+    False -> Just xs.(unsafeFromOrdinal n (s - 1))
+
+def first {n a} (xs:n=>a) : Maybe a =
+  s = size n
+  case s == 0 of
+    True -> Nothing
+    False -> Just xs.(unsafeFromOrdinal n 0)
+
+def allExceptLast {n a} (xs:n=>a) : List a =
+  shortSize = Fin (max 0 ((size n) - 1))
+  allButLast = view i:shortSize. xs.(unsafeFromOrdinal _ (ordinal i))
+  (AsList _ allButLast)
+
+def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
+    -- This function is associative, for use in a monoidal reduction.
+    -- Assumes all xs are <= all ys.
+    -- The element at the end of xs might equal the
+    -- element at the beginning of ys.  If so, this
+    -- function removes the duplicate when concatenating the lists.
+    (AsList nx xs) = xlist
+    (AsList _  ys) = ylist
+    case last xs of
+      Nothing -> ylist
+      Just last_x -> case first ys of
+        Nothing -> xlist
+        Just first_y -> case last_x == first_y of
+          False -> concat [xlist,            ylist]
+          True ->  concat [allExceptLast xs, ylist]
+
+def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
+  xlists = for i:n. (AsList 1 [xs.i])
+  reduce (AsList 0 []) mergeUniqueSortedLists xlists
+
+:p removeDuplicatesFromSorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
+
+-- Compiler can't handle the associated type yet.
+-- interface AssocIx n  -- index sets where indices have data associated with them
+--   IxValueType : Type
+--   ixValue  : n -> IxValueType n
+--   lookupIx : IxValueType n -> n
+
+
 '#### Misc instances
 
 instance {n} [Ix n] Eq n
@@ -9,8 +58,9 @@ def lexicalOrder {n} [Ord n]
   (compareElements:n->n->Bool)
   (compareLengths:Int->Int->Bool)
   ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
-    -- Orders Lists (e.g. words) according to the order of their
-    -- elements (e.g. letters).
+    -- Orders Lists according to the order of their elements,
+    -- in the same way a dictionary does.
+    -- For example, this lets us sort Strings.
     --
     -- This function operates serially and short-circuits
     -- at the first difference.  One could also write this
@@ -32,119 +82,22 @@ instance {n} [Ord n] Ord (List n)
   (>) = lexicalOrder (>) (>)
   (<) = lexicalOrder (<) (<)
 
-:p "aaa" < "bbb"
-> True
-
-:p "aa" < "bbb"
-> True
-
-:p "a" < "aa"
-> True
-
-:p "aaa" > "bbb"
-> False
-
-:p "aa" > "bbb"
-> False
-
-:p "a" > "aa"
-> False
-
-:p "a" < "aa"
-> True
-
-:p ("": List Word8) > ("": List Word8)
-> False
-
-:p ("": List Word8) < ("": List Word8)
-> False
-
-:p "a" > "a"
-> False
-
-:p "a" < "a"
-> False
-
-:p "Thomas" < "Thompson"
-> True
-
-:p "Thomas" > "Thompson"
-> False
 
 
-
-:p sort [1]
-
-:p sort [3, 2, 1]
-
-:p sort ["A"]
-
-:p sort ["A", "B", "C"]
-
-:p sort ["Alice", "Bob", "Charlie"]
-
-:p sort ["Charlie", "Alice", "Bob", "Aaron"]
-
-----------------------
-
-
-'#### Misc Ix Set instances
-
-
-instance Ix Bool
-  getSize = \(). 2
-  ordinal = \b. case b of
-    False -> 0
-    True -> 1
-  unsafeFromOrdinal = \k. k == 1
-
-:p for i:Bool.
-  i
-
------------------
-
-
-'### An index set for List
-
-data ListIx a l:(List a) =
-  MkListIx Int 
-
-instance {a list} Ix (ListIx a list)
-  getSize = \(). listLength list
-  ordinal = \(MkListIx i). i
-  unsafeFromOrdinal = \k. MkListIx k
-
-names = AsList _ ["Alice", "Bob", "Charlie"]
-enumerateNames : (ListIx _ names)=>Int =
-  for i. ordinal i  -- expensive round trip!?
-
-:p enumerateNames
-:p size (ListIx _ names)
-
-:p for i:(ListIx _ names). i
-
-
-
-
-
-
-
-'### An index set for Sets
-
-'#### Sets
+'### Sets
 
 data Set a [Ord a] =
-  -- Guaranteed to be in sorted order,
+  -- Guaranteed to be in sorted order with unique elements,
   -- as long as no one else uses this constructor.
   -- Instead use the "toSet" function below.
   UnsafeAsSet n:Int elements:(Fin n => a)
 
 def toSet {n a} [Ord a] (xs:n=>a) : Set a =
-  n' = size n
   sorted_xs = sort xs
-  UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_xs
+  (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted sorted_xs
+  UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_unique_xs
 
-def setLength {a} ((UnsafeAsSet n _):Set a) : Int = n
+def setSize {a} ((UnsafeAsSet n _):Set a) : Int = n
 
 instance {a} [Eq a] Eq (Set a)
   (==) = \(UnsafeAsSet nx xs) (UnsafeAsSet ny ys).
@@ -154,13 +107,8 @@ instance {a} [Eq a] Eq (Set a)
         xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
 
 
-'##### Tests
 
--- check order invariance.
-:p (toSet ["Bob", "Alice", "Charlie"]) == (toSet ["Charlie", "Bob", "Alice"])
-
-
-'#### Index set for sets of strings
+'### Index set for sets of strings
 
 --data SetIx a l:(Set a) [Ord a] =
 -- need a bugfix before we can be polymorphic in type
@@ -169,16 +117,106 @@ data StringSetIx l:(Set String) =
   MkSetIx Int
 
 instance {set} Ix (StringSetIx set)
-  getSize = \(). setLength set
+  getSize = \(). setSize set
   ordinal = \(MkSetIx i). i
   unsafeFromOrdinal = \k. MkSetIx k
 
-names2 = toSet ["Bob", "Alice", "Charlie"]
+def lookUpSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
+  (UnsafeAsSet n elements) = set
+  maybeIx = searchSorted elements s
+  case maybeIx of
+    Nothing -> Nothing
+    Just i -> Just $ MkSetIx (ordinal i)
+
+
+'# Table types
+These match the definitions from
+section 3.1 of [Types for Tables: A Language Design Benchmark](https://arxiv.org/pdf/2111.10412.pdf)
+
+ColumnName = String
+Header = StringSetIx
+Sort = Type
+
+-- Also just a record, or product type with names?
+data Schema a:(Set ColumnName) =
+  MkSchema ((StringSetIx a)=>Type)
+
+--data Table a:(Set ColumnName) b : Type =
+--  MkTable (b=>(StringSetIx a)=>)
+
+Cell = Maybe
+
+
+
+'### Example Tables
+
+-- Original from https://github.com/brownplt/B2T2/blob/v1.0/ExampleTables.md
+
+--| name    | age | favorite color |
+--| ------- | --- | -------------- |
+--| "Bob"   | 12  | "blue"         |
+--| "Alice" | 17  | "green"        |
+--| "Eve"   | 13  | "red"          |
+
+-- Records version
+students1 = [{name = "Bob",   age = 12, color = "blue"},
+             {name = "Alice", age = 17, color = "green"},
+             {name = "Eve",   age = 13, color = "red"}]
+:t students1
+
+-- Schema version
+studentColNames = toSet ["name", "age", "favorite color"]
+studentColTypes = [String, Int, String]
+--studentSchema = 
+--  MkSchema ((StringSetIx a)=>Type)
+students2 = [("Bob",   12, "blue"),
+             ("Alice", 17, "green"),
+             ("Eve",   13, "red")]
+:t students2
+
+'# Table API
+From https://github.com/brownplt/B2T2/blob/v1.0/TableAPI.md
+
+--emptyTable : Table = []
+-- Test: schema(t) is equal to []
+-- Test: nrows(t) is equal to 0
+
+--def addRows (t1:Table) (rs:Seq<Row>) : Table =
+  -- Enforce: for all r in rs, schema(r) is equal to schema(t1)
+  -- Test: schema(output) is equal to schema(t1)
+  -- Test: nrows(output) is equal to nrows(t1) + length(rs)
+--  todo
+
+--addColumn :: t1:Table * c:ColName * vs:Seq<Value> -> t2:Table
+--Constraints
+--Requires:
+--c is not in header(t1)
+--length(vs) is equal to nrows(t1)
+--Ensures:
+--header(t2) is equal to concat(header(t1), [c])
+--for all c' in header(t1), schema(t2)[c'] is equal to schema(t1)[c']
+--schema(t2)[c] is the sort of elements of vs
+--nrows(t2) is equal to nrows(t1)
+
+-- Dougal: Histogram, average age within each dept,
+-- grouped histogram
+-- table of depts
+-- table of employees (age, salary, dept)
+
+'#### More experiments with Set index sets.
+
+names2 = toSet ["Bob", "Alice", "Charlie", "Alice"]
 enumerateNames2 : (StringSetIx names2)=>Int =
   for i. ordinal i
 
 :p enumerateNames2
 :p size (StringSetIx names2)
+
+setix : StringSetIx names2 = fromJust $ lookUpSetIx "Bob"
+:p setix
+
+setix2 : StringSetIx names2 = fromJust $ lookUpSetIx "Charlie"
+:p setix2
 
 :p for i:(StringSetIx names2). i
 

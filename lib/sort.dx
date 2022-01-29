@@ -18,7 +18,7 @@ def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
 def mergeSortedTables {a m n} [Ord a] (xs:m=>a) (ys:n=>a) : ((m|n)=>a) =
   -- Possible improvements:
   --  1) Using a SortedTable type.
-  --  2) Avoid pontlessly initializing the return array.
+  --  2) Avoid needlessly initializing the return array.
   init = concatTable xs ys  -- Initialize array of correct size.
   yieldState init \buf.
     withState (0, 0) \countrefs.
