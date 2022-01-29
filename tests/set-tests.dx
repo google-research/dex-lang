@@ -5,3 +5,19 @@
 -- check uniqueness.
 :p (toSet ["Bob", "Alice", "Alice", "Charlie"]) == (toSet ["Charlie", "Charlie", "Bob", "Alice"])
 > True
+
+
+set1 = toSet ["Xeno", "Alice", "Bob"]
+set2 = toSet ["Bob", "Xeno", "Charlie"]
+
+:p setUnion set1 set2
+> (UnsafeAsSet 4 [ (AsList 5 "Alice")
+>                , (AsList 3 "Bob")
+>                , (AsList 7 "Charlie")
+>                , (AsList 4 "Xeno") ])
+
+:p setIntersect set1 set2
+> (UnsafeAsSet 2 [(AsList 3 "Bob"), (AsList 4 "Xeno")])
+
+:p removeDuplicatesFromSorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
+> (AsList 3 [(AsList 5 "Alice"), (AsList 3 "Bob"), (AsList 7 "Charlie")])

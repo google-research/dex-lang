@@ -40,14 +40,6 @@ def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
   xlists = for i:n. (AsList 1 [xs.i])
   reduce (AsList 0 []) mergeUniqueSortedLists xlists
 
-:p removeDuplicatesFromSorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
-
--- Compiler can't handle the associated type yet.
--- interface AssocIx n  -- index sets where indices have data associated with them
---   IxValueType : Type
---   ixValue  : n -> IxValueType n
---   lookupIx : IxValueType n -> n
-
 
 '#### Misc instances
 
@@ -106,12 +98,30 @@ instance {a} [Eq a] Eq (Set a)
       else all for i:(Fin nx).
         xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
 
+def setUnion {a}
+  ((UnsafeAsSet nx xs):Set a)
+  ((UnsafeAsSet ny ys):Set a) : Set a =
+    combined = mergeSortedTables xs ys
+    newsize = nx + ny
+    concatted = unsafeCastTable (Fin newsize) combined
+    (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted concatted
+    UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_unique_xs
+
+def setIntersect {a}
+  ((UnsafeAsSet nx xs):Set a)
+  ((UnsafeAsSet ny ys):Set a) : Set a =
+    -- Todo: this could be done in linear time instead of nlogn.
+    isInYs = \x. case searchSorted ys x of
+      Just x -> True
+      Nothing -> False
+    (AsList n' r) = filter isInYs xs
+    UnsafeAsSet _ $ unsafeCastTable (Fin n') r
 
 
 '### Index set for sets of strings
 
---data SetIx a l:(Set a) [Ord a] =
--- need a bugfix before we can be polymorphic in type
+-- Todo: Make polymorphic in type.  Waiting on a bugfix.
+-- data SetIx a l:(Set a) [Ord a] =
 
 data StringSetIx l:(Set String) =
   MkSetIx Int
@@ -127,6 +137,12 @@ def lookUpSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
   case maybeIx of
     Nothing -> Nothing
     Just i -> Just $ MkSetIx (ordinal i)
+
+-- Compiler can't handle the associated type yet.
+-- interface AssocIx n  -- index sets where indices have data associated with them
+--   IxValueType : Type
+--   ixValue  : n -> IxValueType n
+--   lookupIx : IxValueType n -> n
 
 
 '# Table types
@@ -220,9 +236,8 @@ setix2 : StringSetIx names2 = fromJust $ lookUpSetIx "Charlie"
 
 :p for i:(StringSetIx names2). i
 
+
 rowsAndColsTable : (StringSetIx names2)=>(StringSetIx names2)=>Int =
   for i j. (ordinal i + ordinal j)
 
 :p rowsAndColsTable
-
-:p for i:(StringSetIx rowsAndColsTable). i
