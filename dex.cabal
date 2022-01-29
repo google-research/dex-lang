@@ -56,12 +56,14 @@ library
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
                        Err, LabeledItems, SourceRename, Name, Parser, MTL1,
                        Type, Builder, Inference, CheapReduction, GenericTraversal,
-                       Simplify, Imp, Algebra, Linearize, Transpose
+                       Simplify, Imp, Algebra, Linearize, Transpose,
+                       LLVM.HEAD.JIT
   if flag(live)
     exposed-modules:   Actor, RenderHtml, LiveOutput
   other-modules:       Paths_dex
   build-depends:       base, containers, mtl, bytestring,
                        llvm-hs-pure, llvm-hs, transformers, hashable, unordered-containers,
+                       exceptions,
                        -- Parsing
                        megaparsec, parser-combinators,
                        -- Text output
@@ -104,21 +106,13 @@ library
     ghc-options:       -O3
   else
     ghc-options:       -O0
-  if flag(llvm-head)
-    cpp-options:       -DDEX_LLVM_VERSION=HEAD
-    build-depends:     mlir-hs
-    exposed-modules:   LLVM.HEAD.JIT,
-                       MLIR.Lower, MLIR.Eval
-  else
-    cpp-options:       -DDEX_LLVM_VERSION=9
-    exposed-modules:   LLVM.V9.JIT, LLVM.V9.Shims
 
 executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
   build-depends:       dex, base, containers, haskeline, prettyprinter, mtl,
                        optparse-applicative, ansi-wl-pprint,
-                       unix, store, bytestring, directory
+                       unix, store, bytestring, directory, exceptions
   if os(darwin)
     build-depends:     dex-resources
   default-language:    Haskell2010

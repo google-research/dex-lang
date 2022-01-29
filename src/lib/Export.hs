@@ -43,8 +43,7 @@ exportFunctions = undefined
 --   modules <- forM funcs $ \(name, funcAtom) -> do
 --     let (impModule, _) = prepareFunctionForExport env name funcAtom
 --     (,[name]) <$> execLogger Nothing (flip impToLLVM impModule)
---   exportObjectFile objPath modules
-
+--   exportObjectFile modules \tm m -> Mod.writeObjectToFile tm (Mod.File objPath) m
 
 type CArgList = [IBinder] -- ^ List of arguments to the C call
 data CArgSubst = CArgEnv { -- | Maps scalar atom binders to their CArgs. All atoms are Vars.

@@ -158,14 +158,12 @@ standardCompilationPipeline logger exports tm m = do
 
 exportObjectFileVal :: [ObjectFileName n] -> L.Module -> String -> IO (ObjectFile n)
 exportObjectFileVal deps m fname = do
-  withSystemTempFile "objfile.o" \path h -> do
-    exportObjectFile path [(m, [fname])]
-    contents <- B.hGetContents h
-    return $ ObjectFile contents [fname] deps
+  contents <- exportObjectFile [(m, [fname])] Mod.moduleObject
+  return $ ObjectFile contents [fname] deps
 
 -- Each module comes with a list of exported functions
-exportObjectFile :: FilePath -> [(L.Module, [String])] -> IO ()
-exportObjectFile objFile modules = do
+exportObjectFile :: [(L.Module, [String])] -> (T.TargetMachine -> Mod.Module -> IO a) -> IO a
+exportObjectFile modules exportFn = do
   withContext \c -> do
     withHostTargetMachine \tm ->
       withBrackets (fmap (toLLVM c) modules) \mods -> do
@@ -173,7 +171,7 @@ exportObjectFile objFile modules = do
           void $ foldM linkModules exportMod mods
           execLogger Nothing \logger ->
             standardCompilationPipeline logger allExports tm exportMod
-          Mod.writeObjectToFile tm (Mod.File objFile) exportMod
+          exportFn tm exportMod
   where
     allExports = foldMap snd modules
 
