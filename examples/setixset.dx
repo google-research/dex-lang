@@ -92,30 +92,27 @@ def toSet {n a} [Ord a] (xs:n=>a) : Set a =
 def setSize {a} ((UnsafeAsSet n _):Set a) : Int = n
 
 instance {a} [Eq a] Eq (Set a)
-  (==) = \(UnsafeAsSet nx xs) (UnsafeAsSet ny ys).
-    if nx /= ny
-      then False
-      else all for i:(Fin nx).
-        xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
+  (==) = \(UnsafeAsSet _ xs) (UnsafeAsSet _ ys).
+    (AsList _ xs) == (AsList _ ys)
 
 def setUnion {a}
   ((UnsafeAsSet nx xs):Set a)
   ((UnsafeAsSet ny ys):Set a) : Set a =
     combined = mergeSortedTables xs ys
-    newsize = nx + ny
-    concatted = unsafeCastTable (Fin newsize) combined
+    combinedsize = nx + ny
+    concatted = unsafeCastTable (Fin combinedsize) combined
     (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted concatted
     UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_unique_xs
 
 def setIntersect {a}
   ((UnsafeAsSet nx xs):Set a)
   ((UnsafeAsSet ny ys):Set a) : Set a =
-    -- Todo: this could be done in linear time instead of nlogn.
+    -- This could be done in O(nx + ny) instead of O(nx log ny).
     isInYs = \x. case searchSorted ys x of
       Just x -> True
       Nothing -> False
-    (AsList n' r) = filter isInYs xs
-    UnsafeAsSet _ $ unsafeCastTable (Fin n') r
+    (AsList n' intersection) = filter isInYs xs
+    UnsafeAsSet _ $ unsafeCastTable (Fin n') intersection
 
 
 '### Index set for sets of strings
@@ -131,113 +128,16 @@ instance {set} Ix (StringSetIx set)
   ordinal = \(MkSetIx i). i
   unsafeFromOrdinal = \k. MkSetIx k
 
-def lookUpSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
-  (UnsafeAsSet n elements) = set
-  maybeIx = searchSorted elements s
-  case maybeIx of
-    Nothing -> Nothing
-    Just i -> Just $ MkSetIx (ordinal i)
-
+-- Todo: Add an interface for converting to and from integer indices.
 -- Compiler can't handle the associated type yet.
 -- interface AssocIx n  -- index sets where indices have data associated with them
 --   IxValueType : Type
 --   ixValue  : n -> IxValueType n
 --   lookupIx : IxValueType n -> n
 
-
-'# Table types
-These match the definitions from
-section 3.1 of [Types for Tables: A Language Design Benchmark](https://arxiv.org/pdf/2111.10412.pdf)
-
-ColumnName = String
-Header = StringSetIx
-Sort = Type
-
--- Also just a record, or product type with names?
-data Schema a:(Set ColumnName) =
-  MkSchema ((StringSetIx a)=>Type)
-
---data Table a:(Set ColumnName) b : Type =
---  MkTable (b=>(StringSetIx a)=>)
-
-Cell = Maybe
-
-
-
-'### Example Tables
-
--- Original from https://github.com/brownplt/B2T2/blob/v1.0/ExampleTables.md
-
---| name    | age | favorite color |
---| ------- | --- | -------------- |
---| "Bob"   | 12  | "blue"         |
---| "Alice" | 17  | "green"        |
---| "Eve"   | 13  | "red"          |
-
--- Records version
-students1 = [{name = "Bob",   age = 12, color = "blue"},
-             {name = "Alice", age = 17, color = "green"},
-             {name = "Eve",   age = 13, color = "red"}]
-:t students1
-
--- Schema version
-studentColNames = toSet ["name", "age", "favorite color"]
-studentColTypes = [String, Int, String]
---studentSchema = 
---  MkSchema ((StringSetIx a)=>Type)
-students2 = [("Bob",   12, "blue"),
-             ("Alice", 17, "green"),
-             ("Eve",   13, "red")]
-:t students2
-
-'# Table API
-From https://github.com/brownplt/B2T2/blob/v1.0/TableAPI.md
-
---emptyTable : Table = []
--- Test: schema(t) is equal to []
--- Test: nrows(t) is equal to 0
-
---def addRows (t1:Table) (rs:Seq<Row>) : Table =
-  -- Enforce: for all r in rs, schema(r) is equal to schema(t1)
-  -- Test: schema(output) is equal to schema(t1)
-  -- Test: nrows(output) is equal to nrows(t1) + length(rs)
---  todo
-
---addColumn :: t1:Table * c:ColName * vs:Seq<Value> -> t2:Table
---Constraints
---Requires:
---c is not in header(t1)
---length(vs) is equal to nrows(t1)
---Ensures:
---header(t2) is equal to concat(header(t1), [c])
---for all c' in header(t1), schema(t2)[c'] is equal to schema(t1)[c']
---schema(t2)[c] is the sort of elements of vs
---nrows(t2) is equal to nrows(t1)
-
--- Dougal: Histogram, average age within each dept,
--- grouped histogram
--- table of depts
--- table of employees (age, salary, dept)
-
-'#### More experiments with Set index sets.
-
-names2 = toSet ["Bob", "Alice", "Charlie", "Alice"]
-enumerateNames2 : (StringSetIx names2)=>Int =
-  for i. ordinal i
-
-:p enumerateNames2
-:p size (StringSetIx names2)
-
-setix : StringSetIx names2 = fromJust $ lookUpSetIx "Bob"
-:p setix
-
-setix2 : StringSetIx names2 = fromJust $ lookUpSetIx "Charlie"
-:p setix2
-
-:p for i:(StringSetIx names2). i
-
-
-rowsAndColsTable : (StringSetIx names2)=>(StringSetIx names2)=>Int =
-  for i j. (ordinal i + ordinal j)
-
-:p rowsAndColsTable
+def lookUpSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
+  (UnsafeAsSet n elements) = set
+  maybeIx = searchSorted elements s
+  case maybeIx of
+    Nothing -> Nothing
+    Just i -> Just $ MkSetIx (ordinal i)

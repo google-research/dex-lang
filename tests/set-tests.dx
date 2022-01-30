@@ -21,3 +21,28 @@ set2 = toSet ["Bob", "Xeno", "Charlie"]
 
 :p removeDuplicatesFromSorted ["Alice", "Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "Charlie"]
 > (AsList 3 [(AsList 5 "Alice"), (AsList 3 "Bob"), (AsList 7 "Charlie")])
+
+
+
+'### Set Index Set tests
+
+names2 = toSet ["Bob", "Alice", "Charlie", "Alice"]
+
+:p size (StringSetIx names2)
+> 3
+
+-- Check that ordinal and unsafeFromOrdinal are inverses.
+roundTrip = for i:(StringSetIx names2).
+  i == (unsafeFromOrdinal _ (ordinal i))
+:p all roundTrip
+> True
+
+setix : StringSetIx names2 = fromJust $ lookUpSetIx "Bob"
+:p setix
+> (MkSetIx 1)
+
+setix2 : StringSetIx names2 = fromJust $ lookUpSetIx "Charlie"
+:p setix2
+> (MkSetIx 2)
+
+
