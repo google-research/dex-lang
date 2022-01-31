@@ -22,6 +22,7 @@ module TopLevel (
 
 import Data.Functor
 import Control.Monad.State.Strict
+import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.Text.Prettyprint.Doc
 import Data.Store (Store)
@@ -29,7 +30,6 @@ import Data.List (partition)
 import qualified Data.Map.Strict as M
 import GHC.Generics (Generic (..))
 import System.FilePath
-import System.Console.Haskeline -- for MonadException
 
 import Paths_dex  (getDataFileName)
 
@@ -39,12 +39,6 @@ import LLVMExec
 import PPrint()
 import Util (measureSeconds, onFst, onSnd)
 import Serialize (HasPtrs (..), pprintVal, getDexString)
-
-#if DEX_LLVM_VERSION == HEAD
-import Data.Foldable
-import MLIR.Lower
-import MLIR.Eval
-#endif
 
 import Name
 import Parser
@@ -82,7 +76,7 @@ class (ConfigReader m, MonadIO m) => MonadInterblock m where
 
 newtype InterblockM a = InterblockM
   { runInterblockM' :: ReaderT EvalConfig (StateT (ModulesImported, TopStateEx) IO) a }
-    deriving (Functor, Applicative, Monad, MonadIO, MonadException)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch)
 
 runInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO (a, TopStateEx)
 runInterblockM opts env m = do
@@ -371,25 +365,6 @@ emitObjFile hint objFile = do
   v <- emitBinding hint $ ObjectFileBinding objFile
   emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty (eMapSingleton v UnitE)
   return v
-
--- TODO: Use the common part of LLVMExec for this too (setting up pipes, benchmarking, ...)
-_evalMLIR :: MonadPasses m => Block n -> m n (Atom n)
-#if DEX_LLVM_VERSION == HEAD
-_evalMLIR block' = do
-  -- This is a little silly, but simplification likes to leave inlinable
-  -- let-bindings (they just construct atoms) in the block.
-  let block = inlineTraverse block'
-  let (moduleOp, recon@(Abs bs _)) = coreToMLIR block
-  liftIO $ do
-    let resultTypes = toList bs <&> binderAnn <&> \case BaseTy bt -> bt; _ -> error "Expected a base type"
-    resultVals <- evalModule moduleOp [] resultTypes
-    return $ applyNaryAbs recon $ Con . Lit <$> resultVals
-  where
-    inlineTraverse :: Block -> Block
-    inlineTraverse block = fst $ flip runSubstBuilder mempty $ traverseBlock substTraversalDef block
-#else
-_evalMLIR = error "Dex built without support for MLIR"
-#endif
 
 -- TODO: there's no guarantee this name isn't already taken. Need a better story
 -- for C/LLVM function names

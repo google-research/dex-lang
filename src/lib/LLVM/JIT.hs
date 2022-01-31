@@ -14,10 +14,4 @@ module LLVM.JIT (
   getFunctionPtr
   ) where
 
-#if DEX_LLVM_VERSION == 9
-import LLVM.V9.JIT
-#elif DEX_LLVM_VERSION == HEAD
 import LLVM.HEAD.JIT
-#else
-#error "Unknown LLVM version"
-#endif

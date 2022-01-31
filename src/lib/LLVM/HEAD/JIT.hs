@@ -17,8 +17,11 @@ import Foreign.Ptr
 import Data.IORef
 import Data.String
 import Data.List (sortBy)
+import System.IO
+import System.IO.Temp
 import qualified Data.ByteString.Char8 as C8BS
 import qualified Data.ByteString.Short as SBS
+import qualified Data.ByteString       as BS
 
 import qualified LLVM.OrcJIT as OrcJIT
 import qualified LLVM.Target as T
@@ -59,17 +62,18 @@ data NativeModule =
                }
 
 type CompilationPipeline = LLVM.Module -> IO ()
+type ObjectFileContents = BS.ByteString
 
 -- TODO: This leaks resources if we fail halfway
-compileModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> IO NativeModule
-compileModule moduleJIT@JIT{..} ast compilationPipeline = do
+compileModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module
+              -> CompilationPipeline -> IO NativeModule
+compileModule moduleJIT@JIT{..} objFiles ast compilationPipeline = do
   tsModule <- LLVM.withContext \c ->
     LLVM.withModuleFromAST c ast \m -> do
       compilationPipeline m
       OrcJIT.cloneAsThreadSafeModule m
-
-  dylibId <- readIORef nextDylibId <* modifyIORef' nextDylibId (+1)
-  moduleDylib <- OrcJIT.createJITDylib session $ fromString $ "module" ++ show dylibId
+  moduleDylib <- newDylib moduleJIT
+  mapM_ (loadObjectFile moduleJIT moduleDylib) objFiles
   OrcJIT.addDynamicLibrarySearchGeneratorForCurrentProcess compileLayer moduleDylib
   OrcJIT.addModule tsModule moduleDylib compileLayer
 
@@ -86,8 +90,7 @@ compileModule moduleJIT@JIT{..} ast compilationPipeline = do
             LLVM.AST.GlobalDefinition
               LLVM.AST.GlobalVariable{
                 name="llvm.global_dtors",
-                initializer=Just (C.Array _ elems),
-                ..} -> elems
+                initializer=Just (C.Array _ elems)} -> elems
             _ -> []
       -- Sort in the order of decreasing priority!
       fmap snd $ sortBy (flip compare) $ flip fmap dtorStructs $
@@ -103,8 +106,8 @@ unloadNativeModule NativeModule{..} = do
   -- TODO: Clear the dylib
   forM_ moduleDtors callDtor
 
-withNativeModule :: JIT -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
-withNativeModule jit m p = bracket (compileModule jit m p) unloadNativeModule
+withNativeModule :: JIT -> [ObjectFileContents] -> LLVM.AST.Module -> CompilationPipeline -> (NativeModule -> IO a) -> IO a
+withNativeModule jit objs m p = bracket (compileModule jit objs m p) unloadNativeModule
 
 getFunctionPtr :: NativeModule -> String -> IO (FunPtr a)
 getFunctionPtr NativeModule{..} funcName = do
@@ -112,3 +115,17 @@ getFunctionPtr NativeModule{..} funcName = do
   Right (OrcJIT.JITSymbol funcAddr _) <-
     OrcJIT.lookupSymbol session compileLayer moduleDylib (fromString funcName)
   return $ castPtrToFunPtr $ wordPtrToPtr funcAddr
+
+newDylib :: JIT -> IO OrcJIT.JITDylib
+newDylib jit = do
+  let ref = nextDylibId jit
+  dylibId <- readIORef ref <* modifyIORef' ref (+1)
+  let name = fromString $ "module" ++ show dylibId
+  OrcJIT.createJITDylib (session jit) name
+
+loadObjectFile :: JIT -> OrcJIT.JITDylib -> ObjectFileContents -> IO ()
+loadObjectFile jit dylib objFileContents = do
+  withSystemTempFile "objfile.o" \path h -> do
+    BS.hPut h objFileContents
+    hFlush h
+    OrcJIT.addObjectFile (objectLayer jit) dylib path

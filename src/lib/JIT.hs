@@ -25,6 +25,7 @@ import qualified LLVM.AST.FloatingPointPredicate as FPP
 import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
+import qualified LLVM.IRBuilder.Module as MB
 
 import System.IO.Unsafe
 import qualified System.Environment as E
@@ -162,7 +163,7 @@ compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
     when (toBool requiresCUDA) ensureHasCUDAContext
     results <- extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     forM_ (zip [0..] results) \(i, x) ->
-      gep resultPtrOperand (i64Lit i) >>= castLPtr (L.typeOf x) >>= flip store x
+      gep resultPtrOperand (i64Lit i) >>= castLPtr (typeOf x) >>= flip store x
     mainFun <- makeFunction (topLevelFunName fName)
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
@@ -173,7 +174,7 @@ compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
     (CUDAKernel kernelText) <- compileCUDAKernel logger (impKernelToLLVMGPU env fun) arch
     let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) (B.unpack kernelText) ++ [0]
     let textArr = C.Array i8 chars
-    let textArrTy = L.typeOf textArr
+    let textArrTy = typeOf textArr
     let textGlobalName = fromString $ pprint fName ++ "#text"
     let textArrDef = L.globalVariableDefaults
                           { L.name = textGlobalName
@@ -343,7 +344,7 @@ compileInstr instr = case instr of
   IPrimOp op -> (:[]) <$> (traverse compileExpr op >>= compilePrimOp)
   ICastOp idt ix -> (:[]) <$> do
     x <- compileExpr ix
-    let (xt, dt) = (L.typeOf x, scalarTy idt)
+    let (xt, dt) = (typeOf x, scalarTy idt)
     case (xt, idt) of
       -- if upcasting to unsigned int, use zext instruction
       (L.IntegerType _,    Scalar Word64Type)             -> x `zeroExtendTo` dt
@@ -461,14 +462,14 @@ compilePrimOp pop = case pop of
   ScalarUnOp  op x   -> compileUnOp  op x
   Select      p  x y -> do
     pb <- p `asIntWidth` i1
-    emitInstr (L.typeOf x) $ L.Select pb x y []
+    emitInstr (typeOf x) $ L.Select pb x y []
   VectorPack elems   -> foldM fillElem undef $ zip elems [0..]
     where
-      resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf $ head elems
+      resTy = L.VectorType (fromIntegral vectorWidth) $ typeOf $ head elems
       fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (i32Lit i) []
       undef = L.ConstantOperand $ C.Undef resTy
   VectorIndex v i    -> emitInstr resTy $ L.ExtractElement v i []
-    where (L.VectorType _ resTy) = L.typeOf v
+    where (L.VectorType _ resTy) = typeOf v
   PtrOffset ptr off -> gep ptr off
   OutputStreamPtr -> return outputStreamPtr
 
@@ -477,27 +478,27 @@ compilePrimOp pop = case pop of
 compileUnOp :: LLVMBuilder m => UnOp -> Operand -> m Operand
 compileUnOp op x = case op of
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg            -> emitInstr (L.typeOf x) $ L.FSub mathFlags (0.0 `withWidthOfFP` x) x []
+  FNeg            -> emitInstr (typeOf x) $ L.FSub mathFlags (0.0 `withWidthOfFP` x) x []
   BNot            -> emitInstr boolTy $ L.Xor x (i8Lit 1) []
   _               -> unaryIntrinsic op x
 
 compileBinOp :: LLVMBuilder m => BinOp -> Operand -> Operand -> m Operand
 compileBinOp op x y = case op of
-  IAdd   -> emitInstr (L.typeOf x) $ L.Add False False x y []
-  ISub   -> emitInstr (L.typeOf x) $ L.Sub False False x y []
-  IMul   -> emitInstr (L.typeOf x) $ L.Mul False False x y []
-  IDiv   -> emitInstr (L.typeOf x) $ L.SDiv False x y []
-  IRem   -> emitInstr (L.typeOf x) $ L.SRem x y []
+  IAdd   -> emitInstr (typeOf x) $ L.Add False False x y []
+  ISub   -> emitInstr (typeOf x) $ L.Sub False False x y []
+  IMul   -> emitInstr (typeOf x) $ L.Mul False False x y []
+  IDiv   -> emitInstr (typeOf x) $ L.SDiv False x y []
+  IRem   -> emitInstr (typeOf x) $ L.SRem x y []
   FPow   -> binaryIntrinsic FPow x y
-  FAdd   -> emitInstr (L.typeOf x) $ L.FAdd mathFlags x y []
-  FSub   -> emitInstr (L.typeOf x) $ L.FSub mathFlags x y []
-  FMul   -> emitInstr (L.typeOf x) $ L.FMul mathFlags x y []
-  FDiv   -> emitInstr (L.typeOf x) $ L.FDiv mathFlags x y []
-  BAnd   -> emitInstr (L.typeOf x) $ L.And x y []
-  BOr    -> emitInstr (L.typeOf x) $ L.Or  x y []
-  BXor   -> emitInstr (L.typeOf x) $ L.Xor x y []
-  BShL   -> emitInstr (L.typeOf x) $ L.Shl  False False x y []
-  BShR   -> emitInstr (L.typeOf x) $ L.LShr False       x y []
+  FAdd   -> emitInstr (typeOf x) $ L.FAdd mathFlags x y []
+  FSub   -> emitInstr (typeOf x) $ L.FSub mathFlags x y []
+  FMul   -> emitInstr (typeOf x) $ L.FMul mathFlags x y []
+  FDiv   -> emitInstr (typeOf x) $ L.FDiv mathFlags x y []
+  BAnd   -> emitInstr (typeOf x) $ L.And x y []
+  BOr    -> emitInstr (typeOf x) $ L.Or  x y []
+  BXor   -> emitInstr (typeOf x) $ L.Xor x y []
+  BShL   -> emitInstr (typeOf x) $ L.Shl  False False x y []
+  BShR   -> emitInstr (typeOf x) $ L.LShr False       x y []
   ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
   FCmp c -> emitInstr i1 (L.FCmp (floatCmpOp c) x y []) >>= (`zeroExtendTo` boolTy)
   where
@@ -605,10 +606,10 @@ ptxSpecialReg :: L.Name -> ExternFunSpec
 ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
 
 gpuUnaryIntrinsic :: LLVMBuilder m => UnOp -> Operand -> m Operand
-gpuUnaryIntrinsic op x = case L.typeOf x of
+gpuUnaryIntrinsic op x = case typeOf x of
   L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ""
   L.FloatingPointType L.FloatFP  -> dispatchOp fp32 "f"
-  _ -> error $ "Unsupported GPU floating point type: " ++ show (L.typeOf x)
+  _ -> error $ "Unsupported GPU floating point type: " ++ show (typeOf x)
   where
     dispatchOp ty suffix = case op of
       Exp    -> callFloatIntrinsic ty $ "__nv_exp"    ++ suffix
@@ -630,10 +631,10 @@ gpuUnaryIntrinsic op x = case L.typeOf x of
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x]
 
 gpuBinaryIntrinsic :: LLVMBuilder m => BinOp -> Operand -> Operand -> m Operand
-gpuBinaryIntrinsic op x y = case L.typeOf x of
+gpuBinaryIntrinsic op x y = case typeOf x of
   L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ""
   L.FloatingPointType L.FloatFP  -> dispatchOp fp32 "f"
-  _ -> error $ "Unsupported GPU floating point type: " ++ show (L.typeOf x)
+  _ -> error $ "Unsupported GPU floating point type: " ++ show (typeOf x)
   where
     dispatchOp ty suffix = case op of
       FPow -> callFloatIntrinsic ty $ "__nv_pow" ++ suffix
@@ -646,7 +647,7 @@ _gpuDebugPrint i32Val = do
   let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) "%d\n" ++ [0]
   let formatStrArr = L.ConstantOperand $ C.Array i8 chars
   formatStrPtr <- alloca (length chars) i8
-  castLPtr (L.typeOf formatStrArr) formatStrPtr >>= (`store` formatStrArr)
+  castLPtr (typeOf formatStrArr) formatStrPtr >>= (`store` formatStrArr)
   valPtr <- alloca 1 i32
   store valPtr i32Val
   valPtri8 <- castLPtr i8 valPtr
@@ -661,7 +662,7 @@ _debugPrintf fmtStr x = do
   let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) fmtStr ++ [0]
   let formatStrArr = L.ConstantOperand $ C.Array i8 chars
   formatStrPtr <- alloca (length chars) i8
-  castLPtr (L.typeOf formatStrArr) formatStrPtr >>= (`store` formatStrArr)
+  castLPtr (typeOf formatStrArr) formatStrPtr >>= (`store` formatStrArr)
   void $ emitExternCall printfSpec [formatStrPtr, x]
   where printfSpec = ExternFunSpec "printf" i32 [] [] [hostVoidp, i64]
 
@@ -695,7 +696,7 @@ packArgs :: LLVMBuilder m => [Operand] -> m Operand
 packArgs elems = do
   arr <- alloca (length elems) hostVoidp
   forM_ (zip [0..] elems) \(i, e) -> do
-    eptr <- alloca 1 $ L.typeOf e
+    eptr <- alloca 1 $ typeOf e
     store eptr e
     earr <- gep arr $ i32Lit i
     store earr =<< castVoidPtr eptr
@@ -742,7 +743,7 @@ litVal lit = case lit of
   VecLit l     -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
     where
       consts = fmap (operandToConst . litVal) l
-      undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
+      undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ typeOf $ head consts
       fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
       operandToConst ~(L.ConstantOperand c) = c
   PtrLit _ _ -> error "Shouldn't be compiling pointer literals"
@@ -763,22 +764,22 @@ i8Lit :: Int -> Operand
 i8Lit x = x `withWidth` 8
 
 withWidthOf :: Int -> Operand -> Operand
-withWidthOf x template = case L.typeOf template of
+withWidthOf x template = case typeOf template of
   L.IntegerType bits -> x `withWidth` (fromIntegral bits)
   _ -> error $ "Expected an integer: " ++ show template
 
 withWidthOfFP :: Double -> Operand -> Operand
-withWidthOfFP x template = case L.typeOf template of
+withWidthOfFP x template = case typeOf template of
   L.FloatingPointType L.DoubleFP -> litVal $ Float64Lit x
   L.FloatingPointType L.FloatFP  -> litVal $ Float32Lit $ realToFrac x
-  _ -> error $ "Unsupported floating point type: " ++ show (L.typeOf template)
+  _ -> error $ "Unsupported floating point type: " ++ show (typeOf template)
 
 store :: LLVMBuilder m => Operand -> Operand -> m ()
 store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
 load :: LLVMBuilder m => Operand -> m Operand
 load ptr = emitInstr ty $ L.Load False ptr Nothing 0 []
-  where (L.PointerType ty _) = L.typeOf ptr
+  where (L.PointerType ty _) = typeOf ptr
 
 ilt :: LLVMBuilder m => Operand -> Operand -> m Operand
 ilt x y = emitInstr i1 $ L.ICmp IP.SLT x y []
@@ -787,19 +788,19 @@ ige :: LLVMBuilder m => Operand -> Operand -> m Operand
 ige x y = emitInstr i1 $ L.ICmp IP.SGE x y []
 
 add :: LLVMBuilder m => Operand -> Operand -> m Operand
-add x y = emitInstr (L.typeOf x) $ L.Add False False x y []
+add x y = emitInstr (typeOf x) $ L.Add False False x y []
 
 sub :: LLVMBuilder m => Operand -> Operand -> m Operand
-sub x y = emitInstr (L.typeOf x) $ L.Sub False False x y []
+sub x y = emitInstr (typeOf x) $ L.Sub False False x y []
 
 mul :: LLVMBuilder m => Operand -> Operand -> m Operand
-mul x y = emitInstr (L.typeOf x) $ L.Mul False False x y []
+mul x y = emitInstr (typeOf x) $ L.Mul False False x y []
 
 gep :: LLVMBuilder m => Operand -> Operand -> m Operand
-gep ptr i = emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [i] []
+gep ptr i = emitInstr (typeOf ptr) $ L.GetElementPtr False ptr [i] []
 
 sizeof :: L.Type -> Operand
-sizeof t = (L.ConstantOperand $ C.ZExt (C.sizeof t) i64)
+sizeof t = L.ConstantOperand $ C.sizeof 64 t
 
 alloca :: LLVMBuilder m => Int -> L.Type -> m Operand
 alloca elems ty = do
@@ -824,7 +825,7 @@ free ptr = do
 castLPtr :: LLVMBuilder m => L.Type -> Operand -> m Operand
 castLPtr ty ptr = emitInstr newPtrTy $ L.BitCast ptr newPtrTy []
   where
-    L.PointerType _ addr = L.typeOf ptr
+    L.PointerType _ addr = typeOf ptr
     newPtrTy = L.PointerType ty addr
 
 castVoidPtr :: LLVMBuilder m => Operand -> m Operand
@@ -884,7 +885,7 @@ asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
   LT -> emitInstr expTy $ L.Trunc op expTy []
   EQ -> return op
   GT -> emitInstr expTy $ L.SExt  op expTy []
-  where ~(L.IntegerType opWidth) = L.typeOf op
+  where ~(L.IntegerType opWidth) = typeOf op
 
 freshParamOpPair :: LLVMBuilder m => [L.ParameterAttribute] -> L.Type -> m (Parameter, Operand)
 freshParamOpPair ptrAttrs ty = do
@@ -907,10 +908,10 @@ externDecl (ExternFunSpec fname retTy retAttrs funAttrs argTys) =
   where argName i = L.Name $ "arg" <> fromString (show i)
 
 cpuUnaryIntrinsic :: LLVMBuilder m => UnOp -> Operand -> m Operand
-cpuUnaryIntrinsic op x = case L.typeOf x of
+cpuUnaryIntrinsic op x = case typeOf x of
   L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ".f64" ""
   L.FloatingPointType L.FloatFP  -> dispatchOp fp32 ".f32" "f"
-  _ -> error $ "Unsupported CPU floating point type: " ++ show (L.typeOf x)
+  _ -> error $ "Unsupported CPU floating point type: " ++ show (typeOf x)
   where
     dispatchOp ty llvmSuffix libmSuffix = case op of
       Exp             -> callFloatIntrinsic ty $ "llvm.exp"   ++ llvmSuffix
@@ -932,10 +933,10 @@ cpuUnaryIntrinsic op x = case L.typeOf x of
     callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x]
 
 cpuBinaryIntrinsic :: LLVMBuilder m => BinOp -> Operand -> Operand -> m Operand
-cpuBinaryIntrinsic op x y = case L.typeOf x of
+cpuBinaryIntrinsic op x y = case typeOf x of
   L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ".f64"
   L.FloatingPointType L.FloatFP  -> dispatchOp fp32 ".f32"
-  _ -> error $ "Unsupported CPU floating point type: " ++ show (L.typeOf x)
+  _ -> error $ "Unsupported CPU floating point type: " ++ show (typeOf x)
   where
     dispatchOp ty llvmSuffix = case op of
       FPow -> callFloatIntrinsic ty $ "llvm.pow" ++ llvmSuffix
@@ -1103,6 +1104,17 @@ funTy retTy argTys = hostPtrTy $ L.FunctionType retTy argTys False
 
 -- === Module building ===
 
+-- XXX: this tries to simulate the older, pure, version of `typeOf` by passing
+-- an empty builder state to the new monadic version. Hopefully the true builder
+-- state isn't necessary for the types we need to query.
+typeOf :: L.Typed a => a -> L.Type
+typeOf x = case fst $ MB.runModuleBuilder emptyState $ L.typeOf x of
+  Right ty -> ty
+  Left e -> error e
+  where emptyState = MB.ModuleBuilderState mempty mempty
+
+-- === Module building ===
+
 makeFunction :: LLVMBuilder m => L.Name -> [Parameter] -> Maybe L.Operand -> m Function
 makeFunction name params returnVal = do
   finishBlock (L.Ret returnVal []) "<ignored>"
@@ -1110,7 +1122,7 @@ makeFunction name params returnVal = do
   ~((L.BasicBlock bbname instrs term):blocksTail) <- gets (reverse . curBlocks)
   let blocks = (L.BasicBlock bbname (decls ++ instrs) term):blocksTail
   let returnTy = case returnVal of Nothing -> L.VoidType
-                                   Just x  -> L.typeOf x
+                                   Just x  -> typeOf x
   return $ L.functionDefaults
     { L.name        = name
     , L.parameters  = (params, False)
