@@ -265,3 +265,26 @@ spec = do
                 ]
       grad <- gradient p "add_1" [3.0]
       grad `shouldBe` [FloatVal 1.0]
+
+    let two_vec = TupleType [FloatType, FloatType]
+    let two_mat = TupleType [two_vec, two_vec]
+    xit "should run the matvec2x2 example" $ do
+      let p = Program $ M.fromList
+                [ ("matvec2x2", FuncDef [("m", two_mat), ("v", two_vec)] [] (MixedType [two_vec] []) $
+                    LetUnpack ["row_1", "row_2"] "m" $
+                    LetUnpack ["m11", "m12"] "row_1" $
+                    LetUnpack ["v1", "v2"] "v" $
+                    LetMixed ["w1"] [] (BinOp Add (BinOp Mul (Var "m11") (Var "v1"))
+                                                  (BinOp Mul (Var "m12") (Var "v2"))) $
+                    LetUnpack ["m21", "m22"] "row_2" $
+                    LetMixed ["w2"] [] (BinOp Add (BinOp Mul (Var "m21") (Var "v1"))
+                                                  (BinOp Mul (Var "m22") (Var "v2"))) $
+                    Tuple ["w1", "w2"])
+                , ("specific", FuncDef [("v", two_vec)] [] (MixedType [two_vec] []) $
+                    LetMixed ["m"] [] (tuple [ (tuple [Lit 2.0, Lit 7.0])
+                                             , (tuple [Lit 1.0, Lit 8.0])
+                                             ]) $
+                    App "matvec2x2" ["m", "v"] [])
+                ]
+      grad <- gradient p "specific" [2.0, 3.0]
+      grad `shouldBe` [FloatVal 2.0, FloatVal 3.0]

@@ -401,6 +401,12 @@ ret scope es1 es2 = nlctx $ lctx $ Ret vs1 vs2 where
   nlctx = foldl (.) id $ zipWith (\v e -> LetMixed [v] [] e) vs1 es1
   lctx = foldl (.) id $ zipWith (\v e -> LetMixed [] [v] e) vs2 es2
 
+tuple :: [Expr] -> Expr
+tuple es = ctx $ Tuple vs where
+  (FV nonLin lin) = mconcat $ map freeVars es
+  vs = take (length es) $ freshVars $ nonLin `S.union` lin
+  ctx = foldl (.) id $ zipWith (\v e -> LetMixed [v] [] e) vs es
+
 -------------------- JVP --------------------
 
 type Subst      = M.Map Var Var
