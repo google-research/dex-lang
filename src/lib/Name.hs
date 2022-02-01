@@ -23,7 +23,7 @@ module Name (
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
   AlwaysImmut (..), AlwaysImmut2,
-  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..), substBToFrag,
+  Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
   E, B, V, HasNamesE, HasNamesB, BindsNames (..), HasScope (..), RecSubstFrag (..), RecSubst (..),
@@ -49,7 +49,7 @@ module Name (
   CtxReader1, CtxReader2, MonadFail1, MonadFail2, Alternative1, Alternative2,
   Searcher1, Searcher2, ScopeReader2, ScopeExtender2,
   applyAbs, applySubst, applyNaryAbs, ZipSubstReader (..), alphaEqTraversable,
-  checkAlphaEq, alphaEq, alphaEqPure, alphaElem,
+  checkAlphaEq, alphaEq, alphaEqPure,
   AlphaEq, AlphaEqE (..), AlphaEqB (..), AlphaEqV, ConstE (..),
   AlphaHashableE (..), AlphaHashableB (..), EKey (..), EMap (..), ESet,
   lookupEMap, eMapSingleton, eSetSingleton, eMapToList, eSetToList,
@@ -79,14 +79,14 @@ module Name (
   WrapE (..), WrapB (..), WithColor (..), fromWithColor,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames, newNamesM,
-  unsafeCoerceE, unsafeCoerceB, getRawName, ColorsEqual (..), eqColorRep,
+  unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
   locallyMutableInplaceT, locallyImmutableInplaceT, liftBetweenInplaceTs, toExtWitness,
-  checkEmpty, updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
+  updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
   fabricateDistinctEvidence, fabricateImmutEvidence,
-  unConsSubst, ConsSubst (..), MonadTrans1 (..),
+  MonadTrans1 (..),
   ) where
 
 import Prelude hiding (id, (.))
@@ -346,13 +346,6 @@ class ProvesExt b => BindsNames (b :: B) where
   default toScopeFrag :: (GenericB b, BindsNames (RepB b)) => b n l -> ScopeFrag n l
   toScopeFrag b = toScopeFrag $ fromB b
 
-checkEmpty :: BindsNames b => b n l -> Maybe (UnitB n l)
-checkEmpty b =
-  let UnsafeMakeScopeFrag frag = toScopeFrag b
-  in if null frag
-    then Just $ unsafeCoerceB UnitB
-    else Nothing
-
 instance ProvesExt ExtEvidence where
   toExtEvidence = id
 
@@ -489,16 +482,6 @@ substM e = do
 
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
 fromConstAbs (Abs b e) = hoist b e
-
-substBToFrag
-  :: (SubstB Name b, BindsNames b, Distinct o)
-  => (Scope o, Subst Name i o)
-  -> b i i'
-  -> (forall o'. Distinct o' => b o o' -> SubstFrag Name i i' o' -> a)
-  -> a
-substBToFrag env b cont =
-  substB env b \env' b' ->
-    cont b' $ substE env' $ idSubstFrag b
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -644,7 +627,7 @@ instance Color c => BindsAtMostOneName (NameBinder c) c where
   b @> x = singletonSubst b x
 
 instance Color c => BindsOneName (NameBinder c) c where
-  binderName = nameBinderName
+  binderName (UnsafeMakeBinder v) = UnsafeMakeName v
 
 instance Color c => BindsAtMostOneName (BinderP c ann) c where
   (b:>_) @> x = b @> x
@@ -969,13 +952,6 @@ checkAlphaEqPure scope e1 e2 =
   runScopeReaderT scope $
     flip runReaderT (emptyInMap, emptyInMap) $ runZipSubstReaderT $
       withEmptyZipSubst $ alphaEqE e1 e2
-
-alphaElem :: AlphaEqE e => ScopeReader m => e n -> [e n] -> m n Bool
-alphaElem _ [] = return False
-alphaElem e1 (e2:rest) =
-  alphaEq e1 e2 >>= \case
-    True -> return True
-    False -> alphaElem e1 rest
 
 instance AlphaEqV Name
 instance Color c => AlphaEqE (Name c) where
@@ -1656,12 +1632,6 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
 class HasNameHint a where
   getNameHint :: a -> NameHint
 
-instance Color c => HasNameHint (Name c n) where
-  getNameHint name = getNameHint $ getRawName name
-
-instance Color c => HasNameHint (NameBinder c n l) where
-  getNameHint b = getNameHint $ getRawName $ binderName b
-
 instance HasNameHint RawName where
   getNameHint (RawName s _) = Hint s
 
@@ -2199,7 +2169,7 @@ instance Category ScopeFrag where
   UnsafeMakeScopeFrag s2 . UnsafeMakeScopeFrag s1 = UnsafeMakeScopeFrag $ s1 <> s2
 
 instance Color c => BindsNames (NameBinder c) where
-  toScopeFrag (UnsafeMakeBinder (UnsafeMakeName v)) =
+  toScopeFrag (UnsafeMakeBinder v) =
     UnsafeMakeScopeFrag (M.singleton v $ WithColor (UnitV :: UnitV c UnsafeS))
 
 absurdNameFunction :: Name v VoidS -> a
@@ -2215,11 +2185,13 @@ data RawName = RawName !NameText !Int deriving (Show, Eq, Ord, Generic)
 newtype Name (c::C)  -- Name color
              (n::S)  -- Scope parameter
   = UnsafeMakeName RawName
+    deriving (Show, Eq, Ord, Pretty, HasNameHint, Generic, Store)
 
-data NameBinder (c::C)  -- name color
-                (n::S)  -- scope above the binder
-                (l::S)  -- scope under the binder (`l` for "local")
-  = UnsafeMakeBinder { nameBinderName :: Name c l }
+newtype NameBinder (c::C)  -- name color
+                   (n::S)  -- scope above the binder
+                   (l::S)  -- scope under the binder (`l` for "local")
+  = UnsafeMakeBinder RawName
+    deriving (Show, Pretty, HasNameHint, Generic, Store)
 
 data NameHint = Hint NameText
               | NoHint
@@ -2229,7 +2201,7 @@ instance IsString NameHint where
 
 newBinder :: Color c => NameHint -> (forall l. NameBinder c VoidS l -> a) -> a
 newBinder hint cont =
-  cont $ UnsafeMakeBinder $ UnsafeMakeName $ RawName (interpretHint hint) 0
+  cont $ UnsafeMakeBinder $ RawName (interpretHint hint) 0
 
 -- Closed binder-name pair. The name isn't fresh and it doesn't pretend to be.
 -- It's intended for subsequent refreshing.
@@ -2242,8 +2214,9 @@ newNameM hint = return $ newName hint
 
 newNames :: Color c => [NameHint] -> Abs (Nest (NameBinder c)) (ListE (Name c)) n
 newNames hints = do
-  let vs = [UnsafeMakeName $ RawName (interpretHint hint) i | (i, hint) <- zip [0..] hints]
-  let bs = unsafeListToNest $ map UnsafeMakeBinder vs
+  let rawNames =  [RawName (interpretHint hint) i | (i, hint) <- zip [0..] hints]
+  let vs = map UnsafeMakeName rawNames
+  let bs = unsafeListToNest $ map UnsafeMakeBinder rawNames
   unsafeCoerceE $ Abs bs $ ListE vs
 
 newNamesM :: Monad1 m => Color c => [NameHint]
@@ -2256,10 +2229,7 @@ withFresh :: forall n c a. (Distinct n, Color c)
 withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
   withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
-      cont $ UnsafeMakeBinder freshName
-  where
-    freshName :: Name c UnsafeS
-    freshName = UnsafeMakeName $ freshRawName hint scope
+      cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder c n UnsafeS)
 
 freshRawName :: NameHint -> M.Map RawName a -> RawName
 freshRawName hint usedNames = RawName tag nextNum
@@ -2513,8 +2483,8 @@ abstractFreeVars :: [(Name c n, ann n)]
                  -> e n -> Abs (Nest (BinderP c ann)) e n
 abstractFreeVars vs e = Abs bs e
   where bs = unsafeCoerceB $ unsafeListToNest bsFlat
-        bsFlat = vs <&> \(v, ann) ->
-          UnsafeMakeBinder (unsafeCoerceE v) :> unsafeCoerceE ann
+        bsFlat = vs <&> \(UnsafeMakeName v, ann) ->
+          UnsafeMakeBinder v :> unsafeCoerceE ann
 
 abstractFreeVarsNoAnn :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
 abstractFreeVarsNoAnn vs e =
@@ -2579,7 +2549,7 @@ instance InFrag (SubstFrag v) where
     UnsafeMakeSubst (m2 <> m1) -- flipped because Data.Map uses a left-biased `<>`
 
 singletonSubst :: Color c => NameBinder c i i' -> v c o -> SubstFrag v i i' o
-singletonSubst (UnsafeMakeBinder (UnsafeMakeName name)) x =
+singletonSubst (UnsafeMakeBinder name) x =
   UnsafeMakeSubst (M.singleton name $ WithColor x)
 
 fmapSubstFrag :: SinkableV v
@@ -2604,7 +2574,7 @@ toSubstPairs (UnsafeMakeSubst m) =
   where
     mkPair :: RawName -> WithColor v o -> SubstPair v o UnsafeS UnsafeS
     mkPair rawName (WithColor v) =
-      SubstPair (UnsafeMakeBinder $ UnsafeMakeName rawName) v
+      SubstPair (UnsafeMakeBinder rawName) v
 
     go :: [SubstPair v o UnsafeS UnsafeS] -> Nest (SubstPair v o) i i'
     go [] = unsafeCoerceB Empty
@@ -2612,21 +2582,6 @@ toSubstPairs (UnsafeMakeSubst m) =
 
 data WithRenamer e i o where
   WithRenamer :: SubstFrag Name i i' o -> e i' -> WithRenamer e i o
-
--- Lets you process entries one by one, just as you'd traverse a list by pattern-matching
--- on `:` and `[]`.
-unConsSubst :: SubstFrag v i i' o -> ConsSubst v i i' o
-unConsSubst (UnsafeMakeSubst m) =
-  case M.minViewWithKey m of
-    Nothing -> unsafeCoerceB EmptySubst
-    Just ((v, WithColor x), rest)  ->
-      ConsSubst (UnsafeMakeBinder (UnsafeMakeName v)) x (UnsafeMakeSubst rest)
-
-data ConsSubst v i i' o where
-  ConsSubst :: Color c
-          => NameBinder c i1 i2 -> v c o -> SubstFrag v i2 i3 o
-          -> ConsSubst v i1 i3 o
-  EmptySubst :: ConsSubst v i i o
 
 instance Category (Nest b) where
   id = Empty
@@ -2642,26 +2597,8 @@ instance BindsNames (SubstPair v o) where
 
 -- === instances ===
 
-instance Show (NameBinder s n l) where
-  show (UnsafeMakeBinder v) = show v
-
-instance Pretty (Name s n) where
-  pretty (UnsafeMakeName name) = pretty name
-
-instance Pretty (NameBinder s n l) where
-  pretty (UnsafeMakeBinder name) = pretty name
-
 instance (forall c. Pretty (v c n)) => Pretty (WithColor v n) where
   pretty (WithColor val) = pretty val
-
-instance Eq (Name s n) where
-  UnsafeMakeName rawName == UnsafeMakeName rawName' = rawName == rawName'
-
-instance Ord (Name s n) where
-  compare (UnsafeMakeName name) (UnsafeMakeName name') = compare name name'
-
-instance Show (Name s n) where
-  show (UnsafeMakeName rawName) = show rawName
 
 instance SinkableV v => SinkableE (SubstFrag v i i') where
   sinkingProofE fresh m = fmapSubstFrag (\(UnsafeMakeName _) v -> sinkingProofE fresh v) m
@@ -2728,16 +2665,6 @@ unsafeListToNest l = case l of
 instance (forall n' l'. Show (b n' l')) => Show (NonEmptyNest b n l) where
   show (NonEmptyNest b rest) = "(NonEmptyNest " <> show b <> " in " <> show rest <> ")"
 
-instance Color c => Generic (Name c n) where
-  type Rep (Name c n) = Rep RawName
-  from (UnsafeMakeName rawName) = from rawName
-  to name = UnsafeMakeName $ to name
-
-instance Color c => Generic (NameBinder c n l) where
-  type Rep (NameBinder c n l) = Rep (Name c l)
-  from (UnsafeMakeBinder v) = from v
-  to v = UnsafeMakeBinder $ to v
-
 instance (forall c. Color c => Store (v c n)) => Store (WithColor v n) where
   size = VarSize \(WithColor (v :: v c n)) ->
     getSize (getColorRep (ColorProxy :: ColorProxy c)) + getSize (v :: v c n)
@@ -2760,8 +2687,6 @@ instance ( forall c. Color c => Store (v c o)
          , forall c. Color c => Generic (v c o))
          => Store (SubstFrag v i i' o) where
 
-instance Color c => Store (Name c n)
-instance Color c => Store (NameBinder c n l)
 instance ( Store   (b UnsafeS UnsafeS)
          , Generic (b UnsafeS UnsafeS) ) => Store (Nest b n l)
 

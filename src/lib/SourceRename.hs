@@ -290,7 +290,7 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
-      let sourceMap' = SourceMap $ M.singleton b (asUVar $ nameBinderName freshName)
+      let sourceMap' = SourceMap $ M.singleton b (asUVar $ binderName freshName)
       extendSourceMap sourceMap' do
         cont $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"

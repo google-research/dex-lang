@@ -2049,7 +2049,7 @@ renameForPrinting e = do
   return $ withManyFresh hints scope \bs' ->
     runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
       ab' <- sinkM ab
-      e' <- applyNaryAbs ab' $ nestToList (sink . nameBinderName) bs'
+      e' <- applyNaryAbs ab' $ nestToList (sink . binderName) bs'
       return $ Abs bs' e'
 
 -- === dictionary synthesis ===
