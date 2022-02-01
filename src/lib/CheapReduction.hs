@@ -62,7 +62,7 @@ newtype CheapReducerM (i :: S) (o :: S) (a :: *) =
             (EnvReaderT Identity)))) i o a)
   deriving ( Functor, Applicative, Monad, Alternative
            , EnvReader, ScopeReader, EnvExtender
-           , SubstReader AtomSubstVal, AlwaysImmut )
+           , SubstReader AtomSubstVal)
 
 newtype FailedDictTypes (n::S) = FailedDictTypes (MaybeE (ESet Type) n)
                                  deriving (SinkableE, HoistableE)
@@ -76,7 +76,7 @@ instance Monoid (FailedDictTypes n) where
 instance FallibleMonoid1 FailedDictTypes where
   mfail = FailedDictTypes $ NothingE
 
-class ( Alternative2 m, SubstReader AtomSubstVal m, AlwaysImmut2 m
+class ( Alternative2 m, SubstReader AtomSubstVal m
       , EnvReader2 m, EnvExtender2 m) => CheapReducer m where
   reportSynthesisFail :: Type o -> m i o ()
   updateCache :: AtomName o -> Maybe (Atom o) -> m i o ()
@@ -101,7 +101,7 @@ liftCheapReducerM subst (CheapReducerM m) = do
 
 cheapReduceFromSubst
   :: forall e m i o .
-     ( SubstReader AtomSubstVal m, EnvReader2 m, AlwaysImmut2 m
+     ( SubstReader AtomSubstVal m, EnvReader2 m
      , SinkableE e, SubstE AtomSubstVal e, HoistableE e)
   => e i -> m i o (e o)
 cheapReduceFromSubst e = traverseNames cheapSubstName =<< substM e
@@ -136,7 +136,6 @@ cheapReduceWithDeclsRec decls cont = case decls of
     optional (cheapReduceE expr) >>= \case
       Nothing -> do
         binding' <- substM binding
-        Immut <- getImmut
         withFreshBinder (getNameHint b) binding' \b' -> do
           updateCache (binderName b') Nothing
           extendSubst (b@>Rename (binderName b')) do

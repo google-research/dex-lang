@@ -72,7 +72,7 @@ data UDeclInferenceResult e n =
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  PairE def' clsAbs <- liftImmut $ liftInfererM $ solveLocal $ inferDataDef def
+  PairE def' clsAbs <- liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
   tc' <- emitTyConName defName =<< tyConDefAsAtom defName (Just clsAbs)
   dcs' <- forM [0..(nestLength dcs - 1)] \i ->
@@ -82,7 +82,7 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
   let classPrettyName   = fromString (pprint className) :: SourceName
   let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
-  dictDef <- liftImmut $ liftInfererM $
+  dictDef <- liftInfererM $
                inferInterfaceDataDef classPrettyName paramBs superclasses methodTys
   dictDefName <- emitDataDef dictDef
   let classDef = ClassDef classPrettyName methodPrettyNames dictDefName
@@ -95,7 +95,7 @@ inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) 
   let subst = className @> className' <.> methodNames @@> methodNames'
   UDeclResultDone <$> applySubst subst result
 inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
-  block <- liftImmut $ liftInfererM $ solveLocal $ buildBlockInf do
+  block <- liftInfererM $ solveLocal $ buildBlockInf do
     val <- checkMaybeAnnExpr ann rhs
     -- This is just for typ checking. We don't actually generate
     -- pattern-matching code at the top level
@@ -108,7 +108,7 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
   return $ UDeclResultWorkRemaining block $ Abs decl result
 
 inferTopUDecl decl@(UInstance ~(InternalName className) argBinders params methods _) result = do
-  block <- liftImmut $ liftInfererM $ solveLocal $ buildBlockInf do
+  block <- liftInfererM $ solveLocal $ buildBlockInf do
     instanceDict <- checkInstanceArgs argBinders do
                       checkInstanceParams params \params' -> do
                         className' <- sinkM className
@@ -352,7 +352,6 @@ liftInfererMSubst cont = do
   env <- unsafeGetEnv
   subst <- getSubst
   Distinct <- getDistinct
-  Immut <- return $ toImmutEvidence env
   (InfOutFrag Empty _ _, (result, _)) <- do
     liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
       runStateT1 (runSubstReaderT subst $ runInfererM' $ cont) FailIfRequired
@@ -363,7 +362,7 @@ liftInfererM :: (EnvReader m, Fallible1 m)
 liftInfererM cont = runSubstReaderT idSubst $ liftInfererMSubst $ cont
 
 runLocalInfererM
-  :: (Immut n, SinkableE e)
+  :: SinkableE e
   => (forall l. (EmitsInf l, DExt n l) => InfererM i l (e l))
   -> InfererM i n (Abs InfOutFrag e n)
 runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
@@ -388,7 +387,7 @@ instance Solver (InfererM i) where
     void $ extendTrivialInplaceT $
       InfOutFrag Empty mempty (singletonSolverSubst v ty)
 
-  zonk e = InfererM $ SubstReaderT $ lift $ lift11 $ liftImmut do
+  zonk e = InfererM $ SubstReaderT $ lift $ lift11 do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap e
@@ -399,11 +398,11 @@ instance Solver (InfererM i) where
     extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults [(t1, t2)]
 
-  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 $ liftImmut do
+  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
     InfOutMap _ _ defaults _ <- getOutMapInplaceT
     return defaults
 
-  solveLocal cont = liftImmut do
+  solveLocal cont = do
     Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
       Empty -> return result
@@ -414,7 +413,7 @@ instance Solver (InfererM i) where
 instance InfBuilder (InfererM i) where
   buildDeclsInfUnzonked cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      Abs frag resultWithState <- liftImmut $ locallyMutableInplaceT do
+      Abs frag resultWithState <- locallyMutableInplaceT do
         Emits    <- fabricateEmitsEvidenceM
         EmitsInf <- fabricateEmitsInfEvidenceM
         toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
@@ -1166,7 +1165,7 @@ inferInterfaceDataDef :: Inferer m
                       -> Nest (UAnnBinder AtomNameC) i i'
                       -> [UType i'] -> [UMethodType i']
                       -> m i o (DataDef o)
-inferInterfaceDataDef className paramBs superclasses methods = liftImmut do
+inferInterfaceDataDef className paramBs superclasses methods = do
   paramBs' <- solveLocal $ checkUBinders $ EmptyAbs paramBs
   buildNewtype className paramBs' \params -> solveLocal do
     params' <- mapM sinkM params
@@ -1539,7 +1538,7 @@ checkUTypeWithMissingDicts :: (EmitsInf o, Inferer m)
                            -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
                            -> m i o a
 checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
-  unsolvedSubset <- liftImmut $ do
+  unsolvedSubset <- do
     -- We have to be careful not to emit inference vars out of the initial solve.
     -- The resulting type will never be used in downstream inference, so we can easily
     -- end up with fake ambiguous variables if they leak out.
@@ -1738,7 +1737,6 @@ newtype SolverM (n::S) (a:: *) =
 liftSolverM :: EnvReader m => SolverM n a -> m n (Except a)
 liftSolverM cont = do
   env <- unsafeGetEnv
-  Immut <- return $ toImmutEvidence env
   Distinct <- getDistinct
   return do
     maybeResult <- runSearcherM $ runInplaceT (initInfOutMap env) $
@@ -1757,7 +1755,7 @@ instance Solver SolverM where
     void $ extendTrivialInplaceT $
       SolverOutFrag Empty mempty (singletonSolverSubst v ty)
 
-  zonk e = SolverM $ liftImmut do
+  zonk e = SolverM do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap $ sink e
@@ -1771,11 +1769,11 @@ instance Solver SolverM where
     extendTrivialInplaceT $ SolverOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults [(t1, t2)]
 
-  getDefaults = SolverM $ liftImmut do
+  getDefaults = SolverM do
     (InfOutMap _ _ defaults _) <- getOutMapInplaceT
     return defaults
 
-  solveLocal cont = SolverM $ liftImmut do
+  solveLocal cont = SolverM do
     results <- locallyMutableInplaceT do
       Distinct <- getDistinct
       EmitsInf <- fabricateEmitsInfEvidenceM
@@ -2055,7 +2053,7 @@ renameForPrinting e = do
 -- === dictionary synthesis ===
 
 synthTopBlock :: (EnvReader m, Fallible1 m) => Block n -> m n (Block n)
-synthTopBlock block = liftImmut do
+synthTopBlock block = do
   (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
 
 -- main entrypoint to dictionary synthesizer
@@ -2138,7 +2136,7 @@ extendGivens newGivens cont = do
 getSuperclassClosureM
   :: EnvReader m
   => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
-getSuperclassClosureM projs givens newGivens =  liftImmut do
+getSuperclassClosureM projs givens newGivens = do
   givens' <- sinkM givens
   ListE projs'     <- sinkM $ ListE projs
   ListE newGivens' <- sinkM $ ListE newGivens
@@ -2241,7 +2239,7 @@ synthDict ty = error $ "Not a valid dictionary type: " ++ pprint ty
 
 instantiateDictParams :: (Fallible1 m, EnvReader m)
                       => Type n -> Type n -> m n (PairE (ListE Atom) (ListE Type) n)
-instantiateDictParams monoTy polyTy = liftImmut do
+instantiateDictParams monoTy polyTy = do
   (liftExcept =<<) $ liftSolverM $ solveLocal do
     monoTy' <- sinkM monoTy
     polyTy' <- sinkM polyTy

@@ -144,12 +144,11 @@ liftPassesM bench m = do
   opts <- getConfig
   TopStateEx env <- getTopStateEx
   (result, outs) <- liftIO $ runPassesM bench opts env do
-    Immut <- return $ toImmutEvidence env
     localTopBuilder $ m >> return UnitE
   case result of
     Success (Abs bindingsFrag UnitE) -> do
       setTopStateEx $ runEnvReaderM env do
-        liftM fromLiftE $ liftImmut $ refreshAbs (Abs bindingsFrag UnitE)
+        liftM fromLiftE $ refreshAbs (Abs bindingsFrag UnitE)
           \bindingsFrag' UnitE ->
             return $ LiftE $ TopStateEx $ extendOutMap env bindingsFrag'
       return $ Result outs (Success ())
@@ -216,13 +215,13 @@ evalSourceBlock' block = case sbContents block of
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
   ImportModule _ -> error "should be handled at the inter-block level"
-  QueryEnv query -> void $ liftImmut $ runEnvQuery query $> UnitE
+  QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()
   CommentLine  -> return ()
   EmptyLines   -> return ()
   UnParseable _ s -> throw ParseErr s
 
-runEnvQuery :: (Immut n, MonadPasses m) => EnvQuery -> m n ()
+runEnvQuery :: MonadPasses m => EnvQuery -> m n ()
 runEnvQuery query = do
   env <- unsafeGetEnv
   case query of

@@ -54,7 +54,7 @@ module Syntax (
     CmdName (..), LogLevel (..), OutFormat (..),
     EnvReader (..), EnvExtender (..),  Binding (..),
     TopEnvFrag (..), ToBinding (..), withFreshBinders,
-    refreshBinders, substBinders, substBindersI, withFreshBinder,
+    refreshBinders, substBinders, withFreshBinder,
     withFreshLamBinder, withFreshPureLamBinder, captureClosure,
     withFreshPiBinder, piBinderToLamBinder, catEnvFrags,
     EnvFrag (..), lookupEnv, lookupDataDef, lookupAtomName, lookupImpFun,
@@ -429,13 +429,13 @@ withEnv :: (SinkableE e, EnvReader m) => (Env n -> e n) -> m n (e n)
 withEnv f = f <$> unsafeGetEnv
 
 data DistinctEnv n where
-  DB :: (Distinct n, Immut n) => Env n -> DistinctEnv n
+  DB :: Distinct n => Env n -> DistinctEnv n
 
 class (EnvReader m, Monad1 m) => EnvExtender (m::MonadKind1) where
   refreshAbs
     :: (BindsEnv b, SubstB Name b, SubstE Name e)
     => Abs b e n
-    -> (forall l. (Immut l, DExt n l) => b n l -> e l -> m l a)
+    -> (forall l. DExt n l => b n l -> e l -> m l a)
     -> m n a
 
 type EnvReader2   (m::MonadKind2) = forall (n::S). EnvReader   (m n)
@@ -461,11 +461,9 @@ type EnvReaderM = EnvReaderT Identity
 runEnvReaderM :: Distinct n => Env n -> EnvReaderM n a -> a
 runEnvReaderM bindings m = runIdentity $ runEnvReaderT bindings m
 
-runEnvReaderT :: Distinct n => Env n
-                   -> (Immut n => EnvReaderT m n a) -> m a
+runEnvReaderT :: Distinct n => Env n -> EnvReaderT m n a -> m a
 runEnvReaderT bindings cont =
-  withImmutEvidence (toImmutEvidence bindings) $
-    runReaderT (runEnvReaderT' cont) (Distinct, bindings)
+  runReaderT (runEnvReaderT' cont) (Distinct, bindings)
 
 liftEnvReaderM :: EnvReader m => EnvReaderM n a -> m n a
 liftEnvReaderM cont = liftM runIdentity $ liftEnvReaderT cont
@@ -479,7 +477,7 @@ liftEnvReaderT cont = do
 type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
 
 liftSubstEnvReaderM
-  :: (EnvReader m, Immut n, FromName v)
+  :: (EnvReader m, FromName v)
   => SubstEnvReaderM v n n a
   -> m n a
 liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
@@ -497,14 +495,6 @@ instance Monad m => EnvExtender (EnvReaderT m) where
 instance Monad m => ScopeReader (EnvReaderT m) where
   getDistinct = EnvReaderT $ asks fst
   unsafeGetScope = toScope <$> snd <$> EnvReaderT ask
-  liftImmut cont = do
-    Immut <- getImmut
-    Distinct <- getDistinct
-    cont
-
-instance Monad m => AlwaysImmut (EnvReaderT m) where
-  getImmut = EnvReaderT $ ReaderT \(_, bindings) ->
-    return $ toImmutEvidence bindings
 
 instance MonadIO m => MonadIO (EnvReaderT m n) where
   liftIO m = EnvReaderT $ lift $ liftIO m
@@ -615,9 +605,8 @@ updateEnv v rhs bindings =
 
 refreshBinders
   :: (EnvExtender m, BindsEnv b, SubstB Name b)
-  => Immut n
   => b n l
-  -> (forall l'. (Immut l', DExt n l') => b n l' -> SubstFrag Name n l l' -> m l' a)
+  -> (forall l'. DExt n l' => b n l' -> SubstFrag Name n l l' -> m l' a)
   -> m n a
 refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
 
@@ -625,32 +614,17 @@ substBinders
   :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
      , SubstReader v m, SubstB v b, SubstV Name v, SubstB Name b, BindsEnv b)
   => b i i'
-  -> (forall o'. (Immut o', DExt o o') => b o o' -> m i' o' a)
+  -> (forall o'. DExt o o' => b o o' -> m i' o' a)
   -> m i o a
 substBinders b cont = do
   ab <- substM $ Abs b $ idSubstFrag b
   refreshAbs ab \b' subst ->
     extendSubst subst $ cont b'
 
--- Version of `substBinder` that gets its `Immut n` evidence from the monad.
--- TODO: make it easy to go the other way (from refreshI to refresh) by having a
--- `CarriesImmutT` transformer to add explicit Immut evidence when
--- needed. Then this can be the main version.
-substBindersI
-  :: ( SinkableV v, SubstV v v, SubstV Name v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, SubstB Name b, BindsEnv b)
-  => AlwaysImmut2 m
-  => b i i'
-  -> (forall o'. Ext o o' => b o o' -> m i' o' a)
-  -> m i o a
-substBindersI b cont = do
-  Immut <- getImmut
-  substBinders b cont
-
 withFreshBinder
   :: (Color c, EnvExtender m, ToBinding binding c)
   => NameHint -> binding n
-  -> (forall l. (Immut l, DExt n l) => NameBinder c n l -> m l a)
+  -> (forall l. DExt n l => NameBinder c n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
   Abs b v <- newNameM hint
@@ -658,10 +632,8 @@ withFreshBinder hint binding cont = do
 
 withFreshBinders
   :: (Color c, EnvExtender m, ToBinding binding c)
-  => Immut n
   => [binding n]
-  -> (forall l. (Immut l, Distinct l, Ext n l)
-              => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
+  -> (forall l. DExt n l => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
   -> m n a
 withFreshBinders [] cont = do
   Distinct <- getDistinct
@@ -675,10 +647,9 @@ withFreshBinders (binding:rest) cont = do
 
 withFreshLamBinder
   :: (EnvExtender m)
-  => Immut n
   => NameHint -> LamBinding n
   -> Abs Binder EffectRow n
-  -> (forall l. (Immut l, Distinct l, Ext n l) => LamBinder n l -> m l a)
+  -> (forall l. DExt n l => LamBinder n l -> m l a)
   -> m n a
 withFreshLamBinder hint binding@(LamBinding arr ty) effAbs cont = do
   withFreshBinder hint binding \b -> do
@@ -688,9 +659,8 @@ withFreshLamBinder hint binding@(LamBinding arr ty) effAbs cont = do
 
 withFreshPureLamBinder
   :: (EnvExtender m)
-  => Immut n
   => NameHint -> LamBinding n
-  -> (forall l. (Immut l, Distinct l, Ext n l) => LamBinder n l -> m l a)
+  -> (forall l. DExt n l => LamBinder n l -> m l a)
   -> m n a
 withFreshPureLamBinder hint binding@(LamBinding arr ty) cont = do
   withFreshBinder hint binding \b -> do
@@ -699,9 +669,8 @@ withFreshPureLamBinder hint binding@(LamBinding arr ty) cont = do
 
 withFreshPiBinder
   :: EnvExtender m
-  => Immut n
   => NameHint -> PiBinding n
-  -> (forall l. (Immut l, Distinct l, Ext n l) => PiBinder n l -> m l a)
+  -> (forall l. DExt n l => PiBinder n l -> m l a)
   -> m n a
 withFreshPiBinder hint binding@(PiBinding arr ty) cont = do
   withFreshBinder hint binding \b ->
@@ -796,14 +765,6 @@ instance Monad1 m => Fallible (FallibleT1 m n) where
 instance ScopeReader m => ScopeReader (FallibleT1 m) where
   unsafeGetScope = FallibleT1 $ lift $ lift unsafeGetScope
   getDistinct = FallibleT1 $ lift $ lift $ getDistinct
-  liftImmut cont = FallibleT1 $ ReaderT \ctx -> do
-    exceptResult <- lift $ liftImmut do
-      MTE.runExceptT (runReaderT (fromFallibleT cont) ctx) >>= \case
-        Right x  -> return $ RightE x
-        Left err -> return $ LeftE (LiftE err)
-    case exceptResult of
-      RightE x -> return x
-      LeftE (LiftE err) -> MTE.throwE err
 
 instance EnvReader m => EnvReader (FallibleT1 m) where
   unsafeGetEnv = FallibleT1 $ lift $ lift unsafeGetEnv

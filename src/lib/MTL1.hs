@@ -45,9 +45,6 @@ newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 runWriterT1 :: WriterT1 w m n a -> m n (a, w n)
 runWriterT1 = runWriterT . runWriterT1'
 
-instance (AlwaysImmut m, Monoid1 w) => AlwaysImmut (WriterT1 w m) where
-  getImmut = lift11 $ getImmut
-
 instance Monoid1 w => MonadTrans11 (WriterT1 w) where
   lift11 = WriterT1 . lift
 
@@ -57,8 +54,6 @@ instance (SinkableE w, Monoid1 w, EnvReader m) => EnvReader (WriterT1 w m) where
 instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) where
   unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
-  liftImmut m = WriterT1 $ WriterT $ fromPairE <$>
-    (liftImmut $ (uncurry PairE) <$> (runWriterT $ runWriterT1' m))
 
 instance (SinkableE w, HoistableE w, FallibleMonoid1 w, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
@@ -79,9 +74,6 @@ newtype ReaderT1 (r :: E) (m :: MonadKind1) (n :: S) (a :: *) =
 runReaderT1 :: r n -> ReaderT1 r m n a -> m n a
 runReaderT1 r m = runReaderT (runReaderT1' m) r
 
-instance AlwaysImmut m => AlwaysImmut (ReaderT1 r m) where
-  getImmut = lift11 $ getImmut
-
 instance MonadTrans11 (ReaderT1 r) where
   lift11 = ReaderT1 . lift
 
@@ -91,8 +83,6 @@ instance (SinkableE r, EnvReader m) => EnvReader (ReaderT1 r m) where
 instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
   unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
-  liftImmut m = ReaderT1 $ ReaderT \r ->
-    liftImmut $ runReaderT (runReaderT1' m) r
 
 instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
   refreshAbs ab cont = ReaderT1 $ ReaderT \r -> do
@@ -127,9 +117,6 @@ instance (SinkableE s, EnvReader m) => EnvReader (StateT1 s m) where
 instance (SinkableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
   unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
-  liftImmut m = StateT1 \s -> fromPairE <$> liftImmut do
-    s' <- sinkM s
-    uncurry PairE <$> runStateT1 m s'
 
 instance (Monad1 m, Fallible (m n)) => Fallible (StateT1 s m n) where
   throwErrs = lift11 . throwErrs
@@ -140,9 +127,6 @@ instance (Monad1 m, Catchable (m n)) => Catchable (StateT1 s m n) where
 
 instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
   getErrCtx = lift11 getErrCtx
-
-instance AlwaysImmut m => AlwaysImmut (StateT1 s m) where
-  getImmut = lift11 getImmut
 
 class HoistableState (s::E) (m::MonadKind1) where
   hoistState :: BindsNames b => s n -> b n l -> s l -> m n (s n)
@@ -160,7 +144,7 @@ instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT
 newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WrapScopedT1 { runScopedT1' :: StateT1 s m n a }
   deriving ( Functor, Applicative, Monad, MonadState (s n), MonadFail
-           , MonadTrans11, EnvReader, ScopeReader, AlwaysImmut )
+           , MonadTrans11, EnvReader, ScopeReader )
 
 pattern ScopedT1 :: ((s n) -> m n (a, s n)) -> ScopedT1 s m n a
 pattern ScopedT1 f = WrapScopedT1 (StateT1 f)
@@ -186,9 +170,6 @@ newtype MaybeT1 (m :: MonadKind1) (n :: S) (a :: *) =
 runMaybeT1 :: MaybeT1 m n a -> m n (Maybe a)
 runMaybeT1 = runMaybeT . runMaybeT1'
 
-instance AlwaysImmut m => AlwaysImmut (MaybeT1 m) where
-  getImmut = lift11 $ getImmut
-
 instance MonadTrans11 MaybeT1 where
   lift11 = MaybeT1 . lift
 
@@ -205,8 +186,6 @@ instance EnvReader m => EnvReader (MaybeT1 m) where
 instance ScopeReader m => ScopeReader (MaybeT1 m) where
   unsafeGetScope = lift11 unsafeGetScope
   getDistinct = lift11 getDistinct
-  liftImmut m = MaybeT1 $ MaybeT $ fromMaybeE <$>
-    (liftImmut $ toMaybeE <$> (runMaybeT $ runMaybeT1' m))
 
 instance EnvExtender m => EnvExtender (MaybeT1 m) where
   refreshAbs ab cont = MaybeT1 $ MaybeT $

@@ -23,7 +23,7 @@ import Util (zipWithT, enumerate)
 import GHC.Stack
 
 transpose :: (MonadFail1 m, EnvReader m) => Atom n -> m n (Atom n)
-transpose lam = liftImmut $ liftBuilder do
+transpose lam = liftBuilder do
   lam'@(Lam (LamExpr b body)) <- sinkM lam
   Pi (PiType piBinder _ resultTy) <- getType lam'
   let argTy = binderType b

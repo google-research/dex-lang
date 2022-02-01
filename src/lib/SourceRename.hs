@@ -49,16 +49,16 @@ data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
 newtype RenamerM (n::S) (a:: *) =
   RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , AlwaysImmut, ScopeReader, ScopeExtender)
+           , ScopeReader, ScopeExtender)
 
 liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
-liftRenamer cont = liftImmut do
+liftRenamer cont = do
   sourceMap <- getSourceMapM
   Distinct <- getDistinct
   (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
     runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $ cont
 
-class ( Monad1 m, AlwaysImmut m, ScopeReader m
+class ( Monad1 m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a

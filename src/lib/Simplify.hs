@@ -49,9 +49,7 @@ newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
 
 liftSimplifyM :: (SinkableE e, EnvReader m) => SimplifyM n n (e n) -> m n (e n)
 liftSimplifyM cont = do
-  liftImmut $ liftBuilder $
-    runSubstReaderT idSubst $
-      runSimplifyM' cont
+  liftBuilder $ runSubstReaderT idSubst $ runSimplifyM' cont
 
 buildBlockSimplified
   :: (Builder m)
@@ -59,7 +57,7 @@ buildBlockSimplified
   -> m n (Block n)
 buildBlockSimplified m =
   liftSimplifyM do
-    block <- liftImmut $ liftBuilder $ buildBlock m
+    block <- liftBuilder $ buildBlock m
     buildBlock $ simplifyBlock block
 
 instance Simplifier SimplifyM
@@ -171,14 +169,14 @@ defuncCase scrut alts resultTy = do
   fromSplit split dataVal nonDataVal
   where
     getAltNonDataTy :: EnvReader m => Alt n -> m n (Type n)
-    getAltNonDataTy (Abs bs body) = liftImmut $ liftSubstEnvReaderM do
+    getAltNonDataTy (Abs bs body) = liftSubstEnvReaderM do
       substBinders bs \bs' -> do
         ~(PairTy _ ty) <- getTypeSubst body
         -- Result types of simplified abs should be hoistable past binder
         return $ ignoreHoistFailure $ hoist bs' ty
 
     injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
-    injectAltResult sumTy con (Abs bs body) = liftImmut $ liftBuilder do
+    injectAltResult sumTy con (Abs bs body) = liftBuilder do
       buildAlt (EmptyAbs bs) \vs -> do
         originalResult <- emitBlock =<< applySubst (bs@@>vs) body
         (dataResult, nonDataResult) <- fromPair originalResult
@@ -190,7 +188,7 @@ defuncCase scrut alts resultTy = do
     simplifyAlt
       :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
       => SplitDataNonData n -> Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
-    simplifyAlt split (Abs bs body) = fromPairE <$> liftImmut do
+    simplifyAlt split (Abs bs body) = fromPairE <$> do
       substBinders bs \bs' -> do
         ab <- buildScoped $ simplifyBlock body
         refreshAbs ab \decls result -> do
@@ -356,7 +354,7 @@ splitDataComponents = \case
 simplifyAbs
   :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
   => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
-simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
+simplifyAbs (Abs bs body) = fromPairE <$> do
   substBinders bs \bs' -> do
     ab <- buildScoped $ simplifyBlock body
     refreshAbs ab \decls result -> do
@@ -628,7 +626,7 @@ simplifiedIxInstance ty = do
       return a
   where
     simplifyInstance = liftSimplifyM do
-      Block _ decls expr <- liftImmut $ liftBuilder $ buildBlock $ do
+      Block _ decls expr <- liftBuilder $ buildBlock $ do
         impl <- getIxImpl $ sink ty
         return $ ProdVal [ixSize impl, toOrdinal impl, unsafeFromOrdinal impl]
       simpBlock <- buildBlock $ simplifyDecls decls $

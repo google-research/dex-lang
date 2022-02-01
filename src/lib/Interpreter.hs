@@ -262,8 +262,7 @@ matchUPats _ _ = error "mismatched lengths"
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
 -- We could have a partial version of the interpreter that fails when any IO is to happen.
 indices :: EnvReader m => Type n -> m n [Atom n]
-indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $
-  liftImmut $ do
+indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $ do
     env <- unsafeGetEnv
     Distinct <- getDistinct
     ix <- simplifiedIxInstance ty

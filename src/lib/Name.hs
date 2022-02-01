@@ -22,7 +22,6 @@ module Name (
   Ext, ExtEvidence, ProvesExt (..), withExtEvidence, getExtEvidence,
   Subst (..), idSubst, idSubstFrag, newSubst, envFromFrag, traverseSubstFrag,
   WithScope (..), extendRenamer, ScopeReader (..), ScopeExtender (..),
-  AlwaysImmut (..), AlwaysImmut2,
   Scope (..), ScopeFrag (..), SubstE (..), SubstB (..),
   SubstV, InplaceT (..), extendInplaceT, extendInplaceTLocal,
   extendTrivialInplaceT, getOutMapInplaceT, runInplaceT,
@@ -82,10 +81,9 @@ module Name (
   unsafeCoerceE, unsafeCoerceB, ColorsEqual (..), eqColorRep,
   sinkR, fmapSubstFrag, catRecSubstFrags, extendRecSubst,
   freeVarsList, isFreeIn, areFreeIn, todoSinkableProof,
-  locallyMutableInplaceT, locallyImmutableInplaceT, liftBetweenInplaceTs, toExtWitness,
+  locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
-  Mut, Immut, ImmutEvidence (..), scopeToImmut, withImmutEvidence, toImmutEvidence,
-  fabricateDistinctEvidence, fabricateImmutEvidence,
+  Mut, fabricateDistinctEvidence,
   MonadTrans1 (..),
   ) where
 
@@ -252,13 +250,8 @@ instance SinkableE e => SinkableE (WithScope e) where
       WithScope scope e
     where ext = getExtEvidence :: ExtEvidence h n
 
-class Monad1 m => AlwaysImmut (m::MonadKind1) where
-  getImmut :: m n (ImmutEvidence n)
-
 class Monad1 m => ScopeReader (m::MonadKind1) where
   unsafeGetScope :: m n (Scope n)
-  -- XXX: be careful using this. See note [LiftImmutAndFriends]
-  liftImmut :: SinkableE e => (Immut n => m n (e n)) -> m n (e n)
   getDistinct :: m n (DistinctEvidence n)
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
@@ -267,7 +260,7 @@ class ScopeReader m => ScopeExtender (m::MonadKind1) where
   -- them, `BindsEnv b`, in which case this makes more sense.
   refreshAbsScope :: (SubstB Name b, SubstE Name e, BindsNames b)
                   => Abs b e n
-                  -> (forall l. (Immut l, DExt n l) => b n l -> e l -> m l a)
+                  -> (forall l. DExt n l => b n l -> e l -> m l a)
                   -> m n a
 
 class (SinkableV v, Monad2 m) => SubstReader (v::V) (m::MonadKind2) | m -> v where
@@ -414,7 +407,7 @@ fmapNames scope f e = substE (scope, newSubst f) e
 fmapNamesM :: (SubstE v e, SinkableE e, ScopeReader m)
           => (forall c. Color c => Name c i -> v c o)
           -> e i -> m o (e o)
-fmapNamesM f e = liftImmut do
+fmapNamesM f e = do
   scope <- unsafeGetScope
   Distinct <- getDistinct
   return $ substE (scope, newSubst f) e
@@ -768,18 +761,16 @@ refreshAbsPure
   :: forall n b e a .
      (Distinct n, BindsNames b, SubstB Name b, SubstE Name e)
   => Scope n -> Abs b e n
-  -> (forall l. (Immut l, DExt n l) => Scope l -> b n l -> e l -> a)
+  -> (forall l. DExt n l => Scope l -> b n l -> e l -> a)
   -> a
 refreshAbsPure scope (Abs b e) cont =
   case extendIfDistinct scope (toScopeFrag b) of
     Just (Distinct, scope') ->
-      case scopeToImmut scope' of
-        Immut -> withExtEvidence b $ cont scope' b e
+      withExtEvidence b $ cont scope' b e
     Nothing ->
       substB (scope, idSubst :: Subst Name n n) b \(scope', subst') b' -> do
         let e' = substE (scope', subst') e
-        case scopeToImmut scope' of
-          Immut -> withExtEvidence b' $ cont scope' b' e'
+        withExtEvidence b' $ cont scope' b' e'
 
 extendIfDistinct :: Scope n -> ScopeFrag n l
                  -> Maybe (DistinctEvidence l, Scope l)
@@ -825,8 +816,6 @@ type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
 type ScopeReader2      (m::MonadKind2) = forall (n::S). ScopeReader      (m n)
 type ScopeExtender2    (m::MonadKind2) = forall (n::S). ScopeExtender    (m n)
 
-type AlwaysImmut2     (m::MonadKind2) = forall (n::S). AlwaysImmut     (m n)
-
 type Alternative1 (m::MonadKind1) = forall (n::S)        . Alternative (m n)
 type Alternative2 (m::MonadKind2) = forall (n::S) (l::S ). Alternative (m n l)
 
@@ -844,7 +833,7 @@ data SubstVal (cMatch::C) (atom::E) (c::C) (n::S) where
   SubstVal :: atom n   -> SubstVal c      atom c n
   Rename   :: Name c n -> SubstVal cMatch atom c n
 
-withFreshM :: (ScopeExtender m, AlwaysImmut m, Color c)
+withFreshM :: (ScopeExtender m, Color c)
            => NameHint
            -> (forall o'. (DExt o o') => NameBinder c o o' -> m o' a)
            -> m o a
@@ -890,8 +879,7 @@ type AlphaEq e = AlphaEqE e  :: Constraint
 class ( forall i1 i2 o. Monad (m i1 i2 o)
       , forall i1 i2 o. Fallible (m i1 i2 o)
       , forall i1 i2 o. MonadFail (m i1 i2 o)
-      , forall i1 i2.   ScopeExtender (m i1 i2)
-      , forall i1 i2.   AlwaysImmut (m i1 i2))
+      , forall i1 i2.   ScopeExtender (m i1 i2))
       => ZipSubstReader (m :: S -> S -> S -> * -> *) where
   lookupZipSubstFst :: Color c => Name c i1 -> m i1 i2 o (Name c o)
   lookupZipSubstSnd :: Color c => Name c i2 -> m i1 i2 o (Name c o)
@@ -924,7 +912,7 @@ class ( SinkableV v
       => AlphaEqV (v::V) where
 
 addScope :: (ScopeReader m, SinkableE e) => e n -> m n (WithScope e n)
-addScope e = liftImmut do
+addScope e = do
   scope <- unsafeGetScope
   Distinct <- getDistinct
   return $ WithScope scope (sink e)
@@ -965,7 +953,6 @@ instance Color c => AlphaEqE (Name c) where
 
 instance Color c => AlphaEqB (NameBinder c) where
   withAlphaEqB b1 b2 cont = do
-    Immut <- getImmut
     withFreshM (getNameHint b1) \b -> do
       let v = binderName b
       extendZipSubstFst (b1@>v) $ extendZipSubstSnd (b2@>v) $ cont
@@ -1236,10 +1223,6 @@ liftScopeReaderM m = liftM runIdentity $ liftScopeReaderT m
 instance Monad m => ScopeReader (ScopeReaderT m) where
   getDistinct = ScopeReaderT $ asks fst
   unsafeGetScope = ScopeReaderT $ asks snd
-  liftImmut cont = do
-    Immut <- getImmut
-    Distinct <- getDistinct
-    cont
 
 instance Monad m => ScopeExtender (ScopeReaderT m) where
   refreshAbsScope ab cont = ScopeReaderT $ ReaderT
@@ -1247,10 +1230,6 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
        \_ b e -> do
          let env' = extendOutMap scope $ toScopeFrag b
          runReaderT (runScopeReaderT' $ cont b e) (Distinct, env')
-
-instance Monad m => AlwaysImmut (ScopeReaderT m) where
-  getImmut = ScopeReaderT $ ReaderT \(_, scope) ->
-    return $ withImmutEvidence (scopeToImmut scope) $ Immut
 
 -- === SubstReaderT transformer ===
 
@@ -1279,10 +1258,6 @@ instance (SinkableV v, Monad1 m) => SubstReader v (SubstReaderT v m) where
 instance (SinkableV v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
   unsafeGetScope = SubstReaderT $ lift unsafeGetScope
   getDistinct = SubstReaderT $ lift getDistinct
-  liftImmut m = SubstReaderT $ ReaderT \env -> liftImmut do
-    let SubstReaderT (ReaderT cont) = m
-    env' <- sinkM env
-    cont env'
 
 instance (SinkableV v, ScopeReader m, ScopeExtender m)
          => ScopeExtender (SubstReaderT v m i) where
@@ -1294,9 +1269,6 @@ instance (SinkableV v, ScopeReader m, ScopeExtender m)
 
 instance (SinkableV v, MonadIO1 m) => MonadIO (SubstReaderT v m i o) where
   liftIO m = SubstReaderT $ lift $ liftIO m
-
-instance AlwaysImmut m => AlwaysImmut (SubstReaderT v m i) where
-  getImmut = SubstReaderT $ lift getImmut
 
 instance (Monad1 m, MonadState (s o) (m o)) => MonadState (s o) (SubstReaderT v m i o) where
   state = SubstReaderT . lift . state
@@ -1318,10 +1290,6 @@ instance (SinkableE e, ScopeReader m)
          => ScopeReader (OutReaderT e m) where
   unsafeGetScope = OutReaderT $ lift unsafeGetScope
   getDistinct = OutReaderT $ lift getDistinct
-  liftImmut m = OutReaderT $ ReaderT \env -> liftImmut do
-    let OutReaderT (ReaderT cont) = m
-    env' <- sinkM env
-    cont env'
 
 instance (SinkableE e, ScopeExtender m)
          => ScopeExtender (OutReaderT e m) where
@@ -1334,9 +1302,6 @@ instance (SinkableE e, ScopeExtender m)
 instance Monad1 m => OutReader e (OutReaderT e m) where
   askOutReader = OutReaderT ask
   localOutReader r (OutReaderT m) = OutReaderT $ local (const r) m
-
-instance AlwaysImmut m => AlwaysImmut (OutReaderT e m) where
-  getImmut = OutReaderT $ lift getImmut
 
 instance OutReader e m => OutReader e (SubstReaderT v m i) where
   askOutReader = SubstReaderT $ ReaderT $ const askOutReader
@@ -1375,11 +1340,6 @@ type ZipSubst i1 i2 o = (Subst Name i1 o, Subst Name i2 o)
 instance ScopeReader m => ScopeReader (ZipSubstReaderT m i1 i2) where
   unsafeGetScope = ZipSubstReaderT $ lift unsafeGetScope
   getDistinct = ZipSubstReaderT $ lift getDistinct
-  liftImmut m = ZipSubstReaderT $ ReaderT \(env1, env2) -> liftImmut do
-    let ZipSubstReaderT (ReaderT cont) = m
-    env1' <- sinkM env1
-    env2' <- sinkM env2
-    cont (env1', env2')
 
 instance (ScopeReader m, ScopeExtender m)
          => ScopeExtender (ZipSubstReaderT m i1 i2) where
@@ -1391,11 +1351,7 @@ instance (ScopeReader m, ScopeExtender m)
         env2' <- sinkM env2
         cont' (env1', env2')
 
-instance (AlwaysImmut m, ScopeReader m, ScopeExtender m)
-         => AlwaysImmut (ZipSubstReaderT m i1 i2) where
-  getImmut = ZipSubstReaderT $ lift $ getImmut
-
-instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m, AlwaysImmut m)
+instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
          => ZipSubstReader (ZipSubstReaderT m) where
 
   lookupZipSubstFst v = ZipSubstReaderT $ (!v) <$> fst <$> ask
@@ -1414,7 +1370,7 @@ data InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMa
 
 runInplaceT
   :: (ExtOutMap b d, Monad m)
-  => (Distinct n, Immut n)
+  => Distinct n
   => b n
   -> InplaceT b d m n a
   -> m (d n n, a)
@@ -1439,10 +1395,7 @@ getOutMapInplaceT = UnsafeMakeInplaceT \bindings -> return (bindings, emptyOutFr
 -- === in-place scope updating monad -- mutable stuff ===
 
 -- This is intended to make it possible to implement `extendBindings` from
--- `BindingsReader`. We don't require an `Immut l` constraint so that it's
--- possible to extend with nameless fragments. But if `n` and `l` aren't equal
--- the `Immut l` must exist, as proved by the supplied function that produces a
--- `b l`.
+-- `BindingsReader`.
 extendInplaceTLocal
   :: (ExtOutMap b d, Monad m)
   => Distinct l
@@ -1465,7 +1418,6 @@ extendInplaceT ab = do
 locallyMutableInplaceT
   :: forall m b d n e.
      (ExtOutMap b d, Monad m, SinkableE e)
-  => Immut n
   => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
   -> InplaceT b d m n (Abs d e n)
 locallyMutableInplaceT cont = do
@@ -1473,17 +1425,6 @@ locallyMutableInplaceT cont = do
     (e, decls) <- withMutEvidence (fabricateMutEvidence :: MutEvidence n) do
                     unsafeRunInplaceT cont bindings
     return (Abs (unsafeCoerceB decls) e, emptyOutFrag)
-
--- XXX: be careful with this. See note [LiftImmutAndFriends]
-locallyImmutableInplaceT
-  :: forall m b d n e.
-     (ExtOutMap b d, Monad m, SinkableE e)
-  => (Immut n => InplaceT b d m n (e n))
-  -> InplaceT b d m n (e n)
-locallyImmutableInplaceT doWithImmut = do
-  Immut <- return (fabricateImmutEvidence :: ImmutEvidence n)
-  Distinct <- getDistinct
-  doWithImmut
 
 liftBetweenInplaceTs
   :: Monad m
@@ -1516,31 +1457,6 @@ withMutEvidence _ cont = fromWrapWithMut
 newtype WrapWithMut n r =
   WrapWithMut { fromWrapWithMut :: Mut n => r }
 
--- proves that the names in n are distinct
-class Immut (n::S)
-data ImmutEvidence (n::S) where
-  Immut :: Immut n => ImmutEvidence n
-instance Immut UnsafeS
-
-fabricateImmutEvidence :: forall n. ImmutEvidence n
-fabricateImmutEvidence =
-  withImmutEvidence (error "pure fabrication" :: ImmutEvidence n) Immut
-
-withImmutEvidence :: forall n a. ImmutEvidence n -> (Immut n => a) -> a
-withImmutEvidence _ cont = fromWrapWithImmut
- ( TrulyUnsafe.unsafeCoerce ( WrapWithImmut cont :: WrapWithImmut n       a
-                                               ) :: WrapWithImmut UnsafeS a)
-
--- We should never have a `Scope n` if we're updating `n` in-place
-scopeToImmut :: Scope n -> ImmutEvidence n
-scopeToImmut _ = fabricateImmutEvidence
-
-toImmutEvidence :: HasScope e => e n -> ImmutEvidence n
-toImmutEvidence e = withImmutEvidence (scopeToImmut $ toScope e) Immut
-
-newtype WrapWithImmut n r =
-  WrapWithImmut { fromWrapWithImmut :: Immut n => r }
-
 -- === InplaceT instances ===
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
@@ -1569,9 +1485,6 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
   getDistinct = UnsafeMakeInplaceT \_ ->
     return (Distinct, emptyOutFrag)
   unsafeGetScope = toScope <$> getOutMapInplaceT
-  liftImmut cont = locallyImmutableInplaceT do
-    Distinct <- getDistinct
-    cont
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, MonadFail m)
          => MonadFail (InplaceT bindings decls m n) where
@@ -2233,7 +2146,7 @@ newNamesM hints = return $ newNames hints
 
 withFresh :: forall n c a. (Distinct n, Color c)
           => NameHint -> Scope n
-          -> (forall l. (DExt n l, Immut l) => NameBinder c n l -> a) -> a
+          -> (forall l. DExt n l => NameBinder c n l -> a) -> a
 withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
   withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
     withExtEvidence' (FabricateExtEvidence :: ExtEvidence n UnsafeS) $
@@ -2756,34 +2669,5 @@ must produce an sinking `e n -> e l` given an sinking
 The typeclass should obey `sinkingProofE (SinkingCoercion id) = id`
 Otherwise you could just give an `sinkableE` instance for `Name n -> Bool`
 as `sinkingProofE _ _ = const True`.
-
-Note [LiftImmutAndFriends]
-
-We use the `Immut n` constraint to indicate that we're not updating the meaning
-of the name space `n` "in-place". We use `liftImmut` to run a computation that
-doesn't update the name parameter wihthin a computation that does. `liftImmut`
-(and similarly, `locallyImmutableInplaceT`) used to have a rank-2 guard for
-extra protection, like this:
-
-  liftImmut :: SinkableE e
-            => (forall l. (Immut l, Ext n l, Distinct l) => m l (e l))
-            -> m n (e n)
-
-The idea was that we'd make a new name space, `l`, that you could reach from the
-old one by sinking. But it generated a lot of busy work. And some things, like a
-binder `b n h` from a newly-unpacked abstraction, couldn't be sunk at all.
-
-So we switched to the less safe signature:
-
-  liftImmut :: SinkableE e => (Immut n, => m n (e n)) -> m n (e n)
-
-We require the result to be sinkable, so you can't just return something illegal
-like a `Scope n`. But you can trick it by using `LiftE` to wrap a `Scope n`:
-
-naughtyFunction :: ScopeReader m => m n (Scope n)
-naughtyFunction = fromLiftE <$> liftImmut (LiftE <$> getScope)
-
-But let's just not do that. The rule to follow is this: don't instantiate `e`
-with a type that mentions `n`.
 
 -}
