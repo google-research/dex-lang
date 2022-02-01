@@ -9,6 +9,7 @@
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
+import Control.Monad.Catch
 import Control.Monad.State.Strict
 import Options.Applicative hiding (Success, Failure)
 import Text.PrettyPrint.ANSI.Leijen (text, hardline)
@@ -119,8 +120,8 @@ liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Failure err) = liftIO $ putStrLn (pprint err) >> exitFailure
 liftErrIO (Success ans) = return ans
 
-readMultiline :: (MonadException m, MonadIO m) =>
-                   String -> (String -> Maybe a) -> InputT m a
+readMultiline :: (MonadMask m, MonadIO m)
+              => String -> (String -> Maybe a) -> InputT m a
 readMultiline prompt parse = loop prompt ""
   where
     dots = replicate 3 '.' ++ " "

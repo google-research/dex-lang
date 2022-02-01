@@ -40,7 +40,7 @@ class Monoid1 w => FallibleMonoid1 w where
 
 newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WriterT1 { runWriterT1' :: (WriterT (w n) (m n) a) }
-  deriving (Functor, Applicative, Monad, MonadWriter (w n))
+  deriving (Functor, Applicative, Monad, MonadWriter (w n), MonadFail, Fallible)
 
 runWriterT1 :: WriterT1 w m n a -> m n (a, w n)
 runWriterT1 = runWriterT . runWriterT1'

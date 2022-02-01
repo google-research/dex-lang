@@ -45,21 +45,21 @@ that produce isos. We will start with the first two:
 %passes parse
 :t #b : Iso {a:Int & b:Float & c:Unit} _
 > (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
-> (MkIso {bwd = \(x, r). {b = x, ...r}, fwd = \{b = (), ...()}. (,) x r}
+> (MkIso {fwd=(\{b=x, ...r}. (,) x r), bwd=(\(x, r). {b=x, ...r})}
 >  : Iso {a: Int & b: Float & c: Unit} _)
 
 %passes parse
 :t #?b : Iso {a:Int | b:Float | c:Unit} _
 > (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
 > (MkIso
->    { bwd = \v. case v
->                ((Left x)) -> {| b = x |}
->                ((Right r)) -> {|b| ...r |}
->                
->    , fwd = \v. case v
->                {| b = x |} -> (Left x)
->                {|b| ...r |} -> (Right r)
->                }
+>    {fwd=(\v. case v
+>              {| b = x |} -> (Left x)
+>              {|b| ...r |} -> (Right r)
+>              )
+>    , bwd=(\v. case v
+>               ((Left x)) -> {| b = x |}
+>               ((Right r)) -> {|b| ...r |}
+>               )}
 >  : Iso {a: Int | b: Float | c: Unit} _)
 
 'There are also two "zipper" forms, described later on this page:
@@ -135,16 +135,16 @@ another. For instance:
 %passes parse
 :t #&a : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32} & {b: Float32 & c: Unit}))
 > (MkIso
->    { bwd = \({a = (), ...()}, {, ...()}). (,) {, ...l} {a = x, ...r}
->    , fwd = \({, ...()}, {a = (), ...()}). (,) {a = x, ...l} {, ...r}}
->  : Iso ((&) { &} {a: Int & b: Float & c: Unit}) _)
+>    {fwd=(\({...l}, {a=x, ...r}). (,) {a=x, ...l} {...r})
+>    , bwd=(\({a=x, ...l}, {...r}). (,) {...l} {a=x, ...r})}
+>  : Iso ((&) {} {a: Int & b: Float & c: Unit}) _)
 
 :t (#&a &>> #&b) : Iso ({&} & {a:Int & b:Float & c:Unit}) _
 > (Iso
->    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({&} & {a: Int32 & b: Float32 & c: Unit})
 >    ({a: Int32 & b: Float32} & {c: Unit}))
 
 '`#&a` and `#&b` are isomorphisms that move a given field from the record on the
@@ -159,7 +159,7 @@ when using a record type as an index set:
 >  ?-> (c:Type)
 >  ?-> (v:Type)
 >  ?-> (Ix b)
->  ?=> (Ix c) ?=> (Iso ({ &} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
+>  ?=> (Ix c) ?=> (Iso ({&} & a) (b & c)) -> (Ix a) ?=> (a => v) -> b => c => v)
 
 -- :p
 --   x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
@@ -176,7 +176,7 @@ when using a record type as an index set:
 `overLens`:
 
 :t splitR
-> ((a:Type) ?-> Iso a ({ &} & a))
+> ((a:Type) ?-> Iso a ({&} & a))
 
 :t overLens
 > ((a:Type)
@@ -229,20 +229,20 @@ zipper isomorphisms:
 >    ({ |} | {a: Int32 | b: Float32 | c: Unit})
 >    ({a: Int32} | {b: Float32 | c: Unit}))
 > (MkIso
->    { bwd = \v. case v
->                ((Left w)) -> (case w
->                                 {| a = x |} -> (Right {| a = x |})
->                                 {|a| ...r |} -> (Left r)
->                                 )
->                ((Right l)) -> (Right {|a| ...l |})
->                
->    , fwd = \v. case v
->                ((Left l)) -> (Left {|a| ...l |})
->                ((Right w)) -> (case w
->                                  {| a = x |} -> (Left {| a = x |})
->                                  {|a| ...r |} -> (Right r)
->                                  )
->                }
+>    {fwd=(\v. case v
+>              ((Left l)) -> (Left {|a| ...l |})
+>              ((Right w)) -> (case w
+>                                {| a = x |} -> (Left {| a = x |})
+>                                {|a| ...r |} -> (Right r)
+>                                )
+>              )
+>    , bwd=(\v. case v
+>               ((Left w)) -> (case w
+>                                {| a = x |} -> (Right {| a = x |})
+>                                {|a| ...r |} -> (Left r)
+>                                )
+>               ((Right l)) -> (Right {|a| ...l |})
+>               )}
 >  : Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
 
 '`splitV` makes a prism zipper into an ordinary prism isomorphism:

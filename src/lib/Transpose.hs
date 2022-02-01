@@ -209,6 +209,8 @@ transposeOp op ct = case op of
   VectorIndex  _ _      -> notImplemented
   CastOp       _ _      -> notImplemented
   RecordCons   _ _      -> notImplemented
+  RecordConsDynamic _ _ _ -> notImplemented
+  RecordSplitDynamic _ _  -> notImplemented
   RecordSplit  _ _      -> notImplemented
   VariantLift  _ _      -> notImplemented
   VariantSplit _ _      -> notImplemented
@@ -323,6 +325,7 @@ transposeCon con ct = case con of
   IndexRangeVal _ _ _ _ -> notTangent
   IndexSliceVal _ _ _   -> notTangent
   ParIndexCon _ _       -> notTangent
+  LabelCon _     -> notTangent
   BaseTypeRef _  -> notTangent
   TabRef _       -> notTangent
   ConRef _       -> notTangent

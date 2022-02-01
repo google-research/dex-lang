@@ -206,40 +206,57 @@ evalOp expr = mapM evalAtom expr >>= \case
       return $ Con $ SumAsProd ty i (map (const []) cons)
   _ -> error $ "Not implemented: " ++ pprint expr
 
-matchUPat :: Interp m => UPat i i' -> Atom o -> m o o (SubstFrag AtomSubstVal i i' o)
+matchUPat :: Interp m => UPat i i' -> Atom o -> m i o (SubstFrag AtomSubstVal i i' o)
 matchUPat (WithSrcB _ pat) x = do
-  x' <- evalAtom x
+  x' <- dropSubst $ evalAtom x
   case (pat, x') of
     (UPatBinder b, _) -> return $ b @> SubstVal x'
     (UPatCon _ ps, DataCon _ _ _ _ xs) -> matchUPats ps xs
     (UPatPair (PairB p1 p2), PairVal x1 x2) -> do
-      s1 <- matchUPat p1 x1
-      s2 <- matchUPat p2 x2
-      return $ s1 <.> s2
+      matchUPat p1 x1 >>= (`followedByFrag` matchUPat p2 x2)
     (UPatUnit UnitB, UnitVal) -> return emptyInFrag
-    (UPatRecord _ (PairB ps (RightB UnitB)), Record xs) -> matchUPats ps (toList xs)
-    (UPatRecord (Ext labels (Just ())) (PairB ps (LeftB p)), Record xs) -> do
-       let (left, right) = splitLabeledItems labels xs
-       ss <- matchUPats ps (toList left)
-       s <- matchUPat p (Record right)
-       return $ ss <.> s
+    (UPatRecord pats, Record initXs) -> go initXs pats
+      where
+        go :: Interp m => LabeledItems (Atom o) -> UFieldRowPat i i' -> m i o (SubstFrag AtomSubstVal i i' o)
+        go xs = \case
+          UEmptyRowPat    -> return emptyInFrag
+          URemFieldsPat b -> return $ b @> SubstVal (Record xs)
+          UDynFieldsPat ~(InternalName (UAtomVar v)) b rest ->
+            evalAtom (Var v) >>= \case
+              LabeledRow f | [StaticFields fields] <- fromFieldRowElems f -> do
+                let (items, remItems) = splitLabeledItems fields xs
+                frag <- matchUPat b (Record items)
+                frag `followedByFrag` go remItems rest
+              _ -> error "Unevaluated fields?"
+          UDynFieldPat ~(InternalName (UAtomVar v)) b rest ->
+            evalAtom (Var v) >>= \case
+              Con (LabelCon l) -> go xs $ UStaticFieldPat l b rest
+              _ -> error "Unevaluated label?"
+          UStaticFieldPat l b rest -> case popLabeledItems l xs of
+            Just (val, xsTail) -> do
+              headFrag <- matchUPat b val
+              headFrag `followedByFrag` go xsTail rest
+            Nothing -> error "Field missing in record"
     (UPatVariant _ _ _  , _) -> error "can't have top-level may-fail pattern"
     (UPatVariantLift _ _, _) -> error "can't have top-level may-fail pattern"
     (UPatTable bs, tab) -> do
       getType tab >>= \case
         TabTy b _ -> do
-          idxs <- indices (binderType b)
-          xs <- forM idxs \i -> evalExpr $ App tab (i:|[])
+          xs <- dropSubst do
+            idxs <- indices (binderType b)
+            forM idxs \i -> evalExpr $ App tab (i:|[])
           matchUPats bs xs
         _ -> error $ "not a table: " ++ pprint tab
     _ -> error "bad pattern match"
+  where followedByFrag f m = extendSubst f $ fmap (f <.>) m
 
-matchUPats :: Interp m => Nest UPat i i' -> [Atom o] -> m o o (SubstFrag AtomSubstVal i i' o)
+matchUPats :: Interp m => Nest UPat i i' -> [Atom o] -> m i o (SubstFrag AtomSubstVal i i' o)
 matchUPats Empty [] = return emptyInFrag
 matchUPats (Nest b bs) (x:xs) = do
   s <- matchUPat b x
-  ss <- matchUPats bs xs
-  return $ s <.> ss
+  extendSubst s do
+    ss <- matchUPats bs xs
+    return $ s <.> ss
 matchUPats _ _ = error "mismatched lengths"
 
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.

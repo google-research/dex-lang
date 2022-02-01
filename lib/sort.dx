@@ -11,7 +11,6 @@ However, if breaks the list in half recursively, it'll be doing parallel mergeso
 Currently it'll do the quadratic time version.
 
 def concatTable {a b v} (leftin: a=>v) (rightin: b=>v) : ((a|b)=>v) =
-  -- Note: It'd be nicer to use (a | b)=>v but it's not currently supported.
   for idx. case idx of
     Left i  -> leftin.i
     Right i -> rightin.i

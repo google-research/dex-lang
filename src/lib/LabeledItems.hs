@@ -10,7 +10,7 @@
 module LabeledItems
   ( Label, LabeledItems (..), labeledSingleton, reflectLabels, getLabels
   , withLabels, lookupLabelHead, lookupLabel, ExtLabeledItems (..), prefixExtLabeledItems
-  , unzipExtLabeledItems, splitLabeledItems
+  , unzipExtLabeledItems, splitLabeledItems, popLabeledItems
   , pattern NoLabeledItems, pattern NoExt, pattern InternalSingletonLabel
   , pattern Unlabeled ) where
 
@@ -120,6 +120,11 @@ splitLabeledItems (LabeledItems litems) (LabeledItems fullItems) =
     splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
     left  = M.intersectionWith splitLeft fullItems litems
     right = M.differenceWith splitRight fullItems litems
+
+popLabeledItems :: Label -> LabeledItems b -> Maybe (b, LabeledItems b)
+popLabeledItems l items = case lookupLabelHead items l of
+  Just val -> Just (val, snd $ splitLabeledItems (labeledSingleton l ()) items)
+  Nothing  -> Nothing
 
 -- === instances ===
 

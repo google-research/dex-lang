@@ -32,6 +32,7 @@ import Builder
 import Syntax
 import Type
 import Util (enumerate)
+import CheapReduction
 import Linearize
 import Transpose
 import LabeledItems
@@ -250,13 +251,20 @@ simplifyAtom atom = case atom of
     DataCon name <$> substM def <*> mapM simplifyAtom params
                  <*> pure con <*> mapM simplifyAtom args
   Record items -> Record <$> mapM simplifyAtom items
-  RecordTy items -> RecordTy <$> simplifyExtLabeledItems items
+  RecordTy _ -> substM atom >>= cheapNormalize >>= \atom' -> case atom' of
+    StaticRecordTy items -> StaticRecordTy <$> dropSubst (mapM simplifyAtom items)
+    _ -> error $ "Failed to simplify a record with a dynamic label: " ++ pprint atom'
   Variant types label i value -> do
     types' <- fromExtLabeledItemsE <$> substM (ExtLabeledItemsE types)
     value' <- simplifyAtom value
     return $ Variant types' label i value'
   VariantTy items -> VariantTy <$> simplifyExtLabeledItems items
-  LabeledRow items -> LabeledRow <$> simplifyExtLabeledItems items
+  LabeledRow elems -> substM elems >>= \elems' -> case fromFieldRowElems elems' of
+    [StaticFields items] -> do
+      items' <- dropSubst $ mapM simplifyAtom items
+      return $ LabeledRow $ fieldRowElemsFromList [StaticFields items']
+    []                   -> return $ LabeledRow $ fieldRowElemsFromList []
+    _ -> error "Failed to simplify a labeled row"
   ACase e alts rTy   -> do
     e' <- simplifyAtom e
     case trySelectBranch e' of
@@ -368,22 +376,41 @@ simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: (Emits o, Simplifier m) => Op o -> m i o (Atom o)
 simplifyOp op = case op of
-  RecordCons left right ->
-    getType right >>= \case
-      RecordTy (NoExt rightTys) -> do
+  RecordCons left right -> getType left >>= \case
+    StaticRecordTy leftTys -> getType right >>= \case
+      StaticRecordTy rightTys -> do
         -- Unpack, then repack with new arguments (possibly in the middle).
+        leftList <- getUnpacked left
+        let leftItems = restructure leftList leftTys
         rightList <- getUnpacked right
         let rightItems = restructure rightList rightTys
-        return $ Record $ left <> rightItems
+        return $ Record $ leftItems <> rightItems
       _ -> error "not a record"
-  RecordSplit litems full ->
-    getType full >>= \case
-      RecordTy (NoExt fullTys) -> do
+    _ -> error "not a record"
+  RecordConsDynamic (Con (LabelCon l)) val rec ->
+    getType rec >>= \case
+      StaticRecordTy itemTys -> do
+        itemList <- getUnpacked rec
+        let items = restructure itemList itemTys
+        return $ Record $ labeledSingleton l val <> items
+      _ -> error "not a record"
+  RecordSplit f full -> getType full >>= \case
+    StaticRecordTy fullTys -> case f of
+      LabeledRow f' | [StaticFields fields] <- fromFieldRowElems f' -> do
         -- Unpack, then repack into two pieces.
         fullList <- getUnpacked full
         let fullItems = restructure fullList fullTys
-        let (left, right) = splitLabeledItems litems fullItems
+        let (left, right) = splitLabeledItems fields fullItems
         return $ Record $ Unlabeled [Record left, Record right]
+      _ -> error "failed to simplifiy a field row"
+    _ -> error "not a record"
+  RecordSplitDynamic (Con (LabelCon l)) rec ->
+    getType rec >>= \case
+      StaticRecordTy itemTys -> do
+        itemList <- getUnpacked rec
+        let items = restructure itemList itemTys
+        let (val, rest) = splitLabeledItems (labeledSingleton l ()) items
+        return $ PairVal (head $ toList val) $ Record rest
       _ -> error "not a record"
   VariantLift leftTys@(LabeledItems litems) right -> getType right >>= \case
     VariantTy (NoExt rightTys) -> do

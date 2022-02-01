@@ -22,6 +22,7 @@ import Control.Category ((>>>))
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Class
+import Control.Monad.Writer.Strict
 import GHC.Stack
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
@@ -104,7 +105,9 @@ instance Pretty (ImpFunctionWithRecon n) where
 type ImpBuilderEmissions = Nest ImpDecl
 
 newtype ImpM (n::S) (a:: *) =
-  ImpM { runImpM' :: ScopedT1 IxCache (InplaceT Env ImpBuilderEmissions HardFailM) n a }
+  ImpM { runImpM' :: ScopedT1 IxCache
+                       (WriterT1 (ListE IExpr)
+                         (InplaceT Env ImpBuilderEmissions HardFailM)) n a }
   deriving ( Functor, Applicative, Monad, ScopeReader, Fallible, MonadFail, MonadState (IxCache n))
 
 type SubstImpM = SubstReaderT AtomSubstVal ImpM :: S -> S -> * -> *
@@ -118,17 +121,20 @@ class ( ImpBuilder2 m, SubstReader AtomSubstVal m
       => Imper (m::MonadKind2) where
 
 instance EnvReader ImpM where
-  unsafeGetEnv = ImpM $ lift11 $ getOutMapInplaceT
+  unsafeGetEnv = ImpM $ lift11 $ lift11 $ getOutMapInplaceT
 
 instance EnvExtender ImpM where
-  refreshAbs ab cont = ImpM $ ScopedT1 \s ->
-    liftM (,s) $ refreshAbs ab \b e ->
-      flip runScopedT1 (sink s) $ runImpM' $ cont b e
+  refreshAbs ab cont = ImpM $ ScopedT1 \s -> lift11 $
+    liftM (,s) $ refreshAbs ab \b e -> do
+      (result, ptrs) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' $ cont b e
+      case ptrs of
+        ListE [] -> return result
+        _ -> error "shouldn't be able to emit pointers without `Mut`"
 
 instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = do
     tys <- impInstrTypes instr
-    ListE vs <- ImpM $ ScopedT1 \s -> do
+    ListE vs <- ImpM $ ScopedT1 \s -> lift11 do
       Abs bs vs <- return $ newNames $ map (const "v") tys
       let impBs = makeImpBinders bs tys
       let decl = ImpLet impBs instr
@@ -140,16 +146,23 @@ instance ImpBuilder ImpM where
      makeImpBinders (Nest b bs) (ty:tys) = Nest (IBinder b ty) $ makeImpBinders bs tys
      makeImpBinders _ _ = error "zip error"
 
-  buildScopedImp cont = ImpM $ ScopedT1 \s ->
-    fmap (,s) $ locallyMutableInplaceT $ flip runScopedT1 (sink s) $ runImpM' do
+  buildScopedImp cont = ImpM $ ScopedT1 \s -> WriterT1 $ WriterT $
+    liftM (, ListE []) $ liftM (,s) $ locallyMutableInplaceT do
       Emits <- fabricateEmitsEvidenceM
-      Distinct <- getDistinct
-      cont
+      (result, (ListE ptrs)) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
+         Distinct <- getDistinct
+         cont
+      _ <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' do
+        forM ptrs \ptr -> emitStatement $ Free ptr
+      return result
+
+  extendAllocsToFree ptr = ImpM $ lift11 $ tell $ ListE [ptr]
 
 instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
   emitMultiReturnInstr instr = SubstReaderT $ lift $ emitMultiReturnInstr instr
   buildScopedImp cont = SubstReaderT $ ReaderT \env ->
     buildScopedImp $ runSubstReaderT (sink env) $ cont
+  extendAllocsToFree ptr = SubstReaderT $ lift $ extendAllocsToFree ptr
 
 instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)
 
@@ -158,9 +171,9 @@ liftImpM cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
   withImmutEvidence (toImmutEvidence env) $
-    case runHardFail $ runInplaceT env $
+    case runHardFail $ runInplaceT env $ runWriterT1 $
            flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
-      (Empty, result) -> return result
+      (Empty, (result, ListE [])) -> return result
       _ -> error "shouldn't be possible because of `Emits` constraint"
 
 -- === the actual pass ===
@@ -849,7 +862,7 @@ makeDestRec idxs depVars ty = case ty of
       rTy' <- applySubst (lBinder@>v) rTy
       makeDestRec idxs' depVars' rTy'
     return $ DepPairRef lDest rDestAbs depPairTy
-  RecordTy (NoExt types) -> (Con . RecordRef) <$> forM types rec
+  StaticRecordTy types -> (Con . RecordRef) <$> forM types rec
   VariantTy (NoExt types) -> recSumType $ toList types
   TC con -> case con of
     BaseType b -> do
@@ -1134,7 +1147,11 @@ makeAllocDestWithPtrs allocTy ty = do
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
     Distinct <- getDistinct
     size <- liftBuilderImp $ emitBlock $ sink sizeBlock
-    emitAlloc ptrTy =<< fromScalarAtom size
+    ptr <- emitAlloc ptrTy =<< fromScalarAtom size
+    case ptrTy of
+      (Heap _, _) | allocTy == Managed -> extendAllocsToFree ptr
+      _ -> return ()
+    return ptr
   ptrAtoms <- mapM toScalarAtom ptrs
   dest' <- applyNaryAbs absDest $ map SubstVal ptrAtoms
   return (dest', ptrs)
@@ -1280,6 +1297,7 @@ class (EnvReader m, EnvExtender m, Fallible1 m, MonadIxCache1 m)
     :: (SinkableE e, Immut n)
     => (forall l. (Emits l, Ext n l, Distinct l) => m l (e l))
     -> m n (Abs (Nest ImpDecl) e n)
+  extendAllocsToFree :: Mut n => IExpr n -> m n ()
 
 type ImpBuilder2 (m::MonadKind2) = forall i. ImpBuilder (m i)
 

@@ -48,8 +48,7 @@ cheapReduceWithDecls decls result = do
     cheapReduceWithDeclsB decls' $
       cheapReduceE result'
 
--- Reduction of atoms always succeeds (though it might get stuck immediately).
-cheapNormalize :: EnvReader m => Atom n -> m n (Atom n)
+cheapNormalize :: (EnvReader m, CheaplyReducibleE e e, NiceE e) => e n -> m n (e n)
 cheapNormalize a = fromJust . fst <$> cheapReduce a
 
 -- === internal ===
@@ -232,3 +231,6 @@ instance (CheaplyReducibleE e1 e1', CheaplyReducibleE e2 e2')
 
 instance CheaplyReducibleE EffectRow EffectRow where
   cheapReduceE row = cheapReduceFromSubst row
+
+instance CheaplyReducibleE FieldRowElems FieldRowElems where
+  cheapReduceE elems = cheapReduceFromSubst elems

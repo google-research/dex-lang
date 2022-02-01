@@ -396,12 +396,12 @@ linearizeOp op = case op of
           _                -> error "Expected at least one side of the CastOp to have a trivial tangent type"
         y <- emitOp $ CastOp t' x
         return $ WithTangent y do xt >> return (sink yt)
-  RecordCons vs r ->
-    zipLin (traverseLin la vs) (la r) `bindLin` \(PairE (ComposeE vs') r') ->
-      emitOp $ RecordCons vs' r'
-  RecordSplit vs r ->
-    zipLin (traverseLin la vs) (la r) `bindLin` \(PairE (ComposeE vs') r') ->
-      emitOp $ RecordSplit vs' r'
+  RecordCons l r ->
+    zipLin (la l) (la r) `bindLin` \(PairE l' r') ->
+      emitOp $ RecordCons l' r'
+  RecordSplit f r ->
+    zipLin (la f) (la r) `bindLin` \(PairE f' r') ->
+      emitOp $ RecordSplit f' r'
   VariantLift ts v ->
     zipLin (traverseLin pureLin ts) (la v) `bindLin`
       \(PairE (ComposeE ts') v') -> emitOp $ VariantLift ts' v'
@@ -496,6 +496,7 @@ linearizePrimCon con = case con of
   IntRangeVal _ _ _     -> emitZeroT
   IndexRangeVal _ _ _ _ -> emitZeroT
   IndexSliceVal _ _ _   -> emitZeroT
+  LabelCon _     -> error "Unexpected label"
   BaseTypeRef _  -> error "Unexpected ref"
   TabRef _       -> error "Unexpected ref"
   ConRef _       -> error "Unexpected ref"

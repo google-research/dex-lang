@@ -163,19 +163,23 @@ instance SourceRenamableE UExpr' where
     UIndexRange low high ->
       UIndexRange <$> mapM sourceRenameE low <*> mapM sourceRenameE high
     UPrimExpr e -> UPrimExpr <$> mapM sourceRenameE e
-    URecord (Ext tys ext) -> URecord <$>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+    ULabel name -> return $ ULabel name
+    URecord elems -> URecord <$> mapM sourceRenameE elems
     UVariant types label val ->
-      -- Do we not need to source-rename the types?  Their type is
-      -- type :: LabeledItems ()
       UVariant types <$> return label <*> sourceRenameE val
     UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
-    URecordTy (Ext tys ext) -> URecordTy <$>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
+    ULabeledRow elems -> ULabeledRow <$> mapM sourceRenameE elems
+    URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
     UVariantTy (Ext tys ext) -> UVariantTy <$>
       (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
+
+instance SourceRenamableE UFieldRowElem where
+  sourceRenameE = \case
+    UStaticField l e -> UStaticField l <$> sourceRenameE e
+    UDynField    v e -> UDynField  <$> sourceRenameE v <*> sourceRenameE e
+    UDynFields   v   -> UDynFields <$> sourceRenameE v
 
 instance SourceRenamableE UAlt where
   sourceRenameE (UAlt pat body) =
@@ -308,8 +312,15 @@ instance SourceRenamableE UDataDefTrail where
 instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (PairE e1 e2) where
   sourceRenameE (PairE x y) = PairE <$> sourceRenameE x <*> sourceRenameE y
 
+instance (SourceRenamableE e1, SourceRenamableE e2) => SourceRenamableE (EitherE e1 e2) where
+  sourceRenameE (LeftE  x) = LeftE  <$> sourceRenameE x
+  sourceRenameE (RightE x) = RightE <$> sourceRenameE x
+
 instance SourceRenamableE e => SourceRenamableE (ListE e) where
   sourceRenameE (ListE xs) = ListE <$> mapM sourceRenameE xs
+
+instance SourceRenamableE UnitE where
+  sourceRenameE UnitE = return UnitE
 
 instance SourceRenamableE UMethodDef where
   sourceRenameE (UMethodDef ~(SourceName v) expr) = do
@@ -363,9 +374,7 @@ instance SourceRenamablePat UPat' where
         sourceRenamePat sibs' p2 \sibs'' p2' ->
           cont sibs'' $ UPatPair $ PairB p1' p2'
     UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
-    UPatRecord labels ps ->
-      sourceRenamePat sibs ps \sibs' ps' ->
-        cont sibs' $ UPatRecord labels ps'
+    UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
     UPatVariant labels label p ->
       sourceRenamePat sibs p \sibs' p' ->
         cont sibs' $ UPatVariant labels label p'
@@ -373,6 +382,25 @@ instance SourceRenamablePat UPat' where
       sourceRenamePat sibs p \sibs' p' ->
         cont sibs' $ UPatVariantLift labels p'
     UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
+
+instance SourceRenamablePat UFieldRowPat where
+  sourceRenamePat sibs pat cont = case pat of
+    UEmptyRowPat    -> cont sibs UEmptyRowPat
+    URemFieldsPat b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' (URemFieldsPat b')
+    UDynFieldsPat v p rest -> do
+      v' <- sourceRenameE v
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UDynFieldsPat v' p' rest'
+    UStaticFieldPat l p rest -> do
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UStaticFieldPat l p' rest'
+    UDynFieldPat    v p rest -> do
+      v' <- sourceRenameE v
+      sourceRenamePat sibs p \sibs' p' ->
+        sourceRenamePat sibs' rest \sibs'' rest' ->
+          cont sibs'' $ UDynFieldPat v' p' rest'
 
 instance SourceRenamablePat UnitB where
   sourceRenamePat sibs UnitB cont = cont sibs UnitB
@@ -416,6 +444,7 @@ instance SourceRenamableB UPat' where
 -- access the additional source names, only the full set. But it's not a huge
 -- amount of code and there's nothing tricky about it.
 
+-- Note that this is only expected to return the _bound source names_!
 class HasSourceNames (b::B) where
   sourceNames :: b n l -> S.Set SourceName
 
@@ -434,10 +463,18 @@ instance HasSourceNames UPat where
     UPatCon _ bs -> sourceNames bs
     UPatPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatUnit UnitB -> mempty
-    UPatRecord _ ps -> sourceNames ps
+    UPatRecord p -> sourceNames p
     UPatVariant _ _ p -> sourceNames p
     UPatVariantLift _ p -> sourceNames p
     UPatTable ps -> sourceNames ps
+
+instance HasSourceNames UFieldRowPat where
+  sourceNames = \case
+    UEmptyRowPat             -> mempty
+    URemFieldsPat b          -> sourceNames b
+    UDynFieldsPat   _ p rest -> sourceNames p <> sourceNames rest
+    UStaticFieldPat _ p rest -> sourceNames p <> sourceNames rest
+    UDynFieldPat    _ p rest -> sourceNames p <> sourceNames rest  -- Shouldn't we include v?
 
 instance (HasSourceNames b1, HasSourceNames b2)
          => HasSourceNames (PairB b1 b2) where

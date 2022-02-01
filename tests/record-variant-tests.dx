@@ -5,7 +5,7 @@ Syntax for records, variants, and their types.
 'Record types
 
 :p {&}
-> { &}
+> {&}
 
 :p {a:Int & b:Float}
 > {a: Int32 & b: Float32}
@@ -22,12 +22,12 @@ Syntax for records, variants, and their types.
 :p {}
 > {}
 :t {}
-> { &}
+> {&}
 
 :p {,}
 > {}
 :t {,}
-> { &}
+> {&}
 
 :p {a=3, b=4}
 > {a = 3, b = 4}
@@ -49,6 +49,11 @@ Syntax for records, variants, and their types.
   y : {a:Int & b:Int & ..._} = {a=3, a=4, ...x}
   y
 > {a = 3, a = 4, a = 5., b = 2}
+
+:p
+  {b=b1, a=a1, c=c1, a=a2} = {a=1, a=2, b=3, c=4}
+  (a1, a2, b1, c1)
+> (1, (2, (3, 4)))
 
 'Variant (enum) types
 
@@ -88,27 +93,27 @@ Syntax for records, variants, and their types.
 
 :p {a:Int & b:Float | c:Int }
 
-> Parse error:89:21:
+> Parse error:94:21:
 >    |
-> 89 | :p {a:Int & b:Float | c:Int }
+> 94 | :p {a:Int & b:Float | c:Int }
 >    |                     ^
 > unexpected '|'
 > expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', ':', '}', arrow, backquoted name, expression, or infix operator
 
 :p {a:Int,}
 
-> Parse error:98:10:
->    |
-> 98 | :p {a:Int,}
->    |          ^
+> Parse error:103:10:
+>     |
+> 103 | :p {a:Int,}
+>     |          ^
 > unexpected ','
-> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', ':', '?', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
 
 :p {|3}
 
-> Parse error:107:6:
+> Parse error:112:6:
 >     |
-> 107 | :p {|3}
+> 112 | :p {|3}
 >     |      ^
 > unexpected '3'
 > expecting "...", '}', or field label
@@ -155,7 +160,7 @@ def getTwoFoosAndABar {a b c} {rest : Fields}
   (a1, a2, b)
 > Type error:
 > Expected: {a: c & a: d & b: e}
->   Actual: {a: a & b: b1}
+>   Actual: {a: b1 & b: a}
 > (Solving for: [a, b1, c, d, e])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
@@ -382,3 +387,75 @@ variantsAsIndices : {a:Fin 10 | b:Fin 3}=>{a:Fin 10 | b:Fin 3} = for i. i
 > , {| b = 0@Fin 3 |}
 > , {| b = 1@Fin 3 |}
 > , {| b = 2@Fin 3 |} ]@{a: Fin 10 | b: Fin 3}
+
+-- === First-class labels ===
+
+abc : Label = ##abc
+:t abc
+> Label
+
+q = {@abc=1, y=2}
+q
+> {abc = 1, y = 2}
+:t q
+> {abc: Int32 & y: Int32}
+
+:p
+  {@abc=xv, y=yv} = q
+  (xv, yv)
+> (1, 2)
+
+def projectField {r t} (l: Label) (x: {@l:t & ...r}) : t =
+  {@l=v, ...} = x
+  v
+
+projectField ##a {a=1, b=2}
+> 1
+
+def addField {r1 r2} (l: Label) (x: {@l:Int & ...r1}) (y: {@l:Int & ...r2}) : Int =
+  {@l=v1, ...} = x
+  {@l=v2, ...} = y
+  v1 + v2
+
+addField ##b {a=1, b=2} {b=2, c=4}
+> 4
+
+def badProject (l: Label) (x: {@l:Int & l:Float}) : Float =
+  {l=lv, ...} = x
+  lv
+> Type error:
+> Expected: {l: a & ...b1}
+>   Actual: {@l: Int32 & l: Float32}
+> (Solving for: [a, b1])
+>
+>   {l=lv, ...} = x
+>   ^^^^^^^^^^^^
+
+def concatRecords {f f'} (x: {&...f}) (y: {&...f'}) : ({...f & ...f'}) =
+  {...x, ...y}
+
+concatRecords {a=1} {b=2}
+> {a = 1, b = 2}
+
+def projectTwo {f a b} (l1: Label) (l2: Label) (x: {@l1:a & @l2:b & ...f}) : (a & b) =
+  {@l1=v1, @l2=v2, ...} = x
+  (v1, v2)
+
+projectTwo ##a ##b {c=1, b=2, a=4}
+> (4, 2)
+
+def subsetRecord (f: Fields) {f'} (x: {...f & ...f'}) : ({&...f}) =
+  {@...f=v, ...} = x
+  v
+
+subsetRecord {a: _ ? c: _} {a=1, b=2, c=4}
+> {a = 1, c = 4}
+
+subsetRecord {? c: _ ?} {a=1, b=2}
+> Type error:
+> Expected: {c: a & ...b1}
+>   Actual: {a: d & b: c}
+> (Solving for: [a, b1, c, d])
+>
+> subsetRecord {? c: _ ?} {a=1, b=2}
+>                         ^^^^^^^^^^

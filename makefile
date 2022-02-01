@@ -47,7 +47,7 @@ ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
 
-possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++
 
 CLANG := clang++
 
@@ -62,11 +62,11 @@ CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
 if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
 then echo "$$clangversion" ; break ; fi ; done)
 ifeq (,$(CLANG))
-$(error "Please install clang++-9")
+$(error "Please install clang++-12")
 endif
-clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)).*$$/, "")) }')
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)|(12\.)).*$$/, "")) }')
 ifneq (1,$(clang-version-compatible))
-$(error "Please install clang++-9")
+$(error "Please install clang++-12")
 endif
 endif
 
@@ -178,10 +178,7 @@ update-gpu-tests: tests/gpu-tests.dx build
 	$(dex) --backend llvm-cuda script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-uexpr-tests:
-	misc/check-quine examples/uexpr-tests.dx $(dex) script
-
-repl-test:
+repl-test: build
 	misc/check-no-diff \
 	  tests/repl-multiline-test-expected-output \
 	  <($(dex) repl < tests/repl-multiline-test.dx)
