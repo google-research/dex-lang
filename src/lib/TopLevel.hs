@@ -18,7 +18,7 @@ module TopLevel (
   EvalConfig (..),
   evalSourceBlock, evalFile, MonadInterblock (..), InterblockM,
   evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx (..),
-  evalInterblockM, evalSourceBlockIO) where
+  evalInterblockM, evalSourceBlockIO, evalUExpr, runPassesM) where
 
 import Data.Functor
 import Control.Monad.State.Strict

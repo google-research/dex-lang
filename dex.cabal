@@ -36,7 +36,7 @@ flag llvm-head
 
 flag foreign
   description:         Build the C interface to Dex
-  default:             False
+  default:             True
 
 flag debug
   description:         Enable extra checks and stack trace printing (useful for developers)
@@ -51,7 +51,7 @@ library dex-resources
   default-extensions:  CPP
 
 library
-  exposed-modules:     Syntax, Cat, Util, PPrint, Serialize
+  exposed-modules:     Syntax, Export, Cat, Util, PPrint, Serialize
                        TopLevel, Interpreter, Logging, CUDA,
                        LLVM.JIT, LLVM.Shims, JIT, LLVMExec,
                        Err, LabeledItems, SourceRename, Name, Parser, MTL1,

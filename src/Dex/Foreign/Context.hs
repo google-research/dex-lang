@@ -4,18 +4,22 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE GADTs #-}
+
 module Dex.Foreign.Context (
   Context (..),
   setError,
   dexCreateContext, dexDestroyContext,
   dexInsert, dexLookup,
   dexEval, dexEvalExpr,
+  ExAtom (..)
   ) where
 
 import Foreign.Ptr
 import Foreign.StablePtr
 import Foreign.C.String
 
+import Control.Monad
 import Data.String
 import Data.Int
 import Data.Functor
@@ -26,18 +30,18 @@ import Resources
 import Syntax  hiding (sizeOf)
 import Type
 import TopLevel
-import Env hiding (Tag)
+import Name
 import PPrint
 import Err
+import Parser
+import Builder
 
 import Dex.Foreign.Util
 
-import SaferNames.Bridge
-import qualified SaferNames.Syntax as S
-import qualified SaferNames.Parser as S
-
 
 data Context = Context EvalConfig TopStateEx
+
+data ExAtom where ExAtom :: (Atom n) -> ExAtom
 
 foreign import ccall "_internal_dexSetError" internalSetErrorPtr :: CString -> Int64 -> IO ()
 setError :: String -> IO ()
@@ -76,40 +80,43 @@ dexEval ctxPtr sourcePtr = do
     Nothing  -> toStablePtr $ Context evalConfig finalEnv
     Just err -> setError (pprint err) $> nullPtr
 
-dexInsert :: Ptr Context -> CString -> Ptr Atom -> IO (Ptr Context)
+dexInsert :: Ptr Context -> CString -> Ptr ExAtom -> IO (Ptr Context)
 dexInsert ctxPtr namePtr atomPtr = do
-  Context evalConfig (TopStateEx env) <- fromStablePtr ctxPtr
-  name <- fromString <$> peekCString namePtr
-  atom <- fromStablePtr atomPtr
-  let freshName = genFresh (Name GenName (fromString name) 0) (topBindings $ topStateD env)
-  let newBinding = AtomBinderInfo (getType atom) (LetBound PlainLet (Atom atom))
-  let evaluated = EvaluatedModule (freshName @> newBinding) mempty
-                                  (SourceMap (M.singleton name (SrcAtomName freshName)))
-  let envNew = extendTopStateD env evaluated
-  toStablePtr $ Context evalConfig $ envNew
+  undefined
+  -- Context evalConfig (TopStateEx env) <- fromStablePtr ctxPtr
+  -- name <- fromString <$> peekCString namePtr
+  -- atom <- fromStablePtr atomPtr
+  -- let freshName = genFresh (Name GenName (fromString name) 0) (topBindings $ topStateD env)
+  -- let newBinding = AtomBinderInfo (getType atom) (LetBound PlainLet (Atom atom))
+  -- let evaluated = EvaluatedModule (freshName @> newBinding) mempty
+  --                                 (SourceMap (M.singleton name (SrcAtomName freshName)))
+  -- let envNew = extendTopStateD env evaluated
+  -- toStablePtr $ Context evalConfig $ envNew
 
-dexEvalExpr :: Ptr Context -> CString -> IO (Ptr Atom)
+dexEvalExpr :: Ptr Context -> CString -> IO (Ptr ExAtom)
 dexEvalExpr ctxPtr sourcePtr = do
-  Context evalConfig env <- fromStablePtr ctxPtr
+  Context evalConfig (TopStateEx env)  <- fromStablePtr ctxPtr
   source <- peekCString sourcePtr
-  case S.parseExpr source of
+  case parseExpr source of
     Success expr -> do
-      let (v, m) = S.exprAsModule expr
-      let block = S.SourceBlock 0 0 LogNothing source (S.RunModule m) Nothing
-      (Result [] maybeErr, newState) <- runInterblockM evalConfig env $ evalSourceBlock block
+      (maybeErr, _) <- runPassesM False evalConfig env $ liftImmut $
+        liftM fromDistinctAbs $ localTopBuilder $ evalUExpr expr
       case maybeErr of
-        Success () -> do
-          let Success (AtomBinderInfo _ (LetBound _ (Atom atom))) =
-                lookupSourceName newState v
-          toStablePtr atom
+        Success (Abs _ atom) -> do
+          toStablePtr $ ExAtom atom
+        -- Success () -> do
+        --   let Success (AtomBinderInfo _ (LetBound _ (Atom atom))) =
+        --         lookupSourceName newState v
+        --   toStablePtr atom
         Failure err -> setError (pprint err) $> nullPtr
     Failure err -> setError (pprint err) $> nullPtr
 
-dexLookup :: Ptr Context -> CString -> IO (Ptr Atom)
+dexLookup :: Ptr Context -> CString -> IO (Ptr ExAtom)
 dexLookup ctxPtr namePtr = do
   Context _ env <- fromStablePtr ctxPtr
   name <- peekCString namePtr
-  case lookupSourceName env (fromString name) of
-    Success (AtomBinderInfo _ (LetBound _ (Atom atom))) -> toStablePtr atom
-    Failure _ -> setError "Unbound name" $> nullPtr
-    Success _ -> setError "Looking up an expression" $> nullPtr
+  undefined
+  -- case lookupSourceName env (fromString name) of
+  --   -- Success (AtomBinderInfo _ (LetBound _ (Atom atom))) -> toStablePtr atom
+  --   Failure _ -> setError "Unbound name" $> nullPtr
+  --   Success _ -> setError "Looking up an expression" $> nullPtr

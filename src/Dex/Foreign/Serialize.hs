@@ -17,14 +17,17 @@ import Foreign.Ptr
 import Foreign.Storable
 
 import Syntax
-import Serialize (pprintVal)
+-- import Serialize (pprintVal)
 
-import Dex.Foreign.Context (setError)
+import Dex.Foreign.Context (setError, ExAtom (..))
 import Dex.Foreign.Util
 
 -- TODO: Free!
-dexPrint :: Ptr Atom -> IO CString
-dexPrint atomPtr = newCString =<< pprintVal =<< fromStablePtr atomPtr
+dexPrint :: Ptr ExAtom -> IO CString
+dexPrint _ = do
+  undefined -- TODO needs env reader, or needs deletion
+  -- (ExAtom atom) <- fromStablePtr exAtomPtr
+  -- pprintVal atom >>= newCString
 
 data CAtom = CLit LitVal | CRectArray (Ptr ()) [Int] [Int]
 
@@ -68,9 +71,9 @@ instance Storable CAtom where
       val :: forall a. Storable a => Int -> a -> IO ()
       val i v = pokeByteOff (castPtr addr) (i * 8) v
 
-dexToCAtom :: Ptr Atom -> Ptr CAtom -> IO CInt
-dexToCAtom atomPtr resultPtr = do
-  atom <- fromStablePtr atomPtr
+dexToCAtom :: Ptr ExAtom -> Ptr CAtom -> IO CInt
+dexToCAtom exAtomPtr resultPtr = do
+  (ExAtom atom) <- fromStablePtr exAtomPtr
   case atom of
     Con con -> case con of
       Lit (VecLit _) -> notSerializable
@@ -80,11 +83,11 @@ dexToCAtom atomPtr resultPtr = do
   where
     notSerializable = setError "Unserializable atom" $> 0
 
-dexFromCAtom :: Ptr CAtom -> IO (Ptr Atom)
+dexFromCAtom :: Ptr CAtom -> IO (Ptr ExAtom)
 dexFromCAtom catomPtr = do
   catom <- peek catomPtr
   case catom of
-    CLit lit         -> toStablePtr $ Con $ Lit lit
+    CLit lit         -> toStablePtr $ ExAtom $ Con $ Lit lit
     CRectArray _ _ _ -> unsupported
   where
     unsupported = setError "Unsupported CAtom" $> nullPtr
