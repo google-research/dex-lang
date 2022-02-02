@@ -41,41 +41,6 @@ def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
   reduce (AsList 0 []) mergeUniqueSortedLists xlists
 
 
-'#### Misc instances
-
-instance {n} [Ix n] Eq n
-  (==) = \x y. ordinal x == ordinal y
-
-def lexicalOrder {n} [Ord n]
-  (compareElements:n->n->Bool)
-  (compareLengths:Int->Int->Bool)
-  ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
-    -- Orders Lists according to the order of their elements,
-    -- in the same way a dictionary does.
-    -- For example, this lets us sort Strings.
-    --
-    -- This function operates serially and short-circuits
-    -- at the first difference.  One could also write this
-    -- functon to operate in parallel, but it would be
-    -- wasteful in the case where there is an early difference.
-    iter \i.
-      case i == min nx ny of
-        True -> Done $ compareLengths nx ny
-        False ->
-          xi = xs.(unsafeFromOrdinal _ i)
-          yi = ys.(unsafeFromOrdinal _ i)
-          case compareElements xi yi of
-            True -> Done True
-            False -> case xi == yi of
-              True -> Continue
-              False -> Done False
-
-instance {n} [Ord n] Ord (List n)
-  (>) = lexicalOrder (>) (>)
-  (<) = lexicalOrder (<) (<)
-
-
-
 '### Sets
 
 data Set a [Ord a] =
@@ -87,7 +52,7 @@ data Set a [Ord a] =
 def toSet {n a} [Ord a] (xs:n=>a) : Set a =
   sorted_xs = sort xs
   (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted sorted_xs
-  UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_unique_xs
+  UnsafeAsSet n' sorted_unique_xs
 
 def setSize {a} ((UnsafeAsSet n _):Set a) : Int = n
 
@@ -128,6 +93,9 @@ instance {set} Ix (StringSetIx set)
   ordinal = \(MkSetIx i). i
   unsafeFromOrdinal = \k. MkSetIx k
 
+instance {set} Eq (StringSetIx set)
+  (==) = \ix1 ix2. ordinal ix1 == ordinal ix2
+
 -- Todo: Add an interface for converting to and from integer indices.
 -- Compiler can't handle the associated type yet.
 -- interface AssocIx n  -- index sets where indices have data associated with them
@@ -135,9 +103,14 @@ instance {set} Ix (StringSetIx set)
 --   ixValue  : n -> IxValueType n
 --   lookupIx : IxValueType n -> n
 
-def lookUpSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
+def stringToSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
   (UnsafeAsSet n elements) = set
   maybeIx = searchSorted elements s
   case maybeIx of
     Nothing -> Nothing
     Just i -> Just $ MkSetIx (ordinal i)
+
+def setIxToString {set:Set String} (ix:StringSetIx set) : String =
+  (UnsafeAsSet n elements) = set
+  elements.(unsafeFromOrdinal _ (ordinal ix))
+

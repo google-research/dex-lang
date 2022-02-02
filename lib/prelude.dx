@@ -579,9 +579,6 @@ interface Eq a
 
 def (/=) {a} [Eq a] (x:a) (y:a) : Bool = not $ x == y
 
-instance {n} [Ix n] Eq n
-  (==) = \x y. ordinal x == ordinal y
-
 '#### Ord
 Orderable / Comparable.
 Things that can be place in a total order.
@@ -1140,38 +1137,6 @@ def argFilter {a n} (condition:a->Bool) (xs:n=>a) : List n =
     for i.
       if condition xs.i
         then append list i
-
-def lexicalOrder {n} [Ord n]
-  (compareElements:n->n->Bool)
-  (compareLengths:Int->Int->Bool)
-  ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
-    -- Orders Lists according to the order of their elements,
-    -- in the same way a dictionary does.
-    -- For example, this lets us sort Strings.
-    --
-    -- More precisely, it returns True iff compareElements xs.i ys.i is true
-    -- at the first location they differ.
-    --
-    -- This function operates serially and short-circuits
-    -- at the first difference.  One could also write this
-    -- function as a parallel reduction, but it would be
-    -- wasteful in the case where there is an early difference,
-    -- because we can't short circuit.
-    iter \i.
-      case i == min nx ny of
-        True -> Done $ compareLengths nx ny
-        False ->
-          xi = xs.(unsafeFromOrdinal _ i)
-          yi = ys.(unsafeFromOrdinal _ i)
-          case compareElements xi yi of
-            True -> Done True
-            False -> case xi == yi of
-              True -> Continue
-              False -> Done False
-
-instance {n} [Ord n] Ord (List n)
-  (>) = lexicalOrder (>) (>)
-  (<) = lexicalOrder (<) (<)
 
 '## Isomorphisms
 
@@ -1817,6 +1782,38 @@ def argscan {n o} (comp:o->o->Bool) (xs:n=>o) : n =
 
 def argmin {n o} [Ord o] (xs:n=>o) : n = argscan (<) xs
 def argmax {n o} [Ord o] (xs:n=>o) : n = argscan (>) xs
+
+def lexicalOrder {n} [Ord n]
+  (compareElements:n->n->Bool)
+  (compareLengths:Int->Int->Bool)
+  ((AsList nx xs):List n) ((AsList ny ys):List n) : Bool =
+    -- Orders Lists according to the order of their elements,
+    -- in the same way a dictionary does.
+    -- For example, this lets us sort Strings.
+    --
+    -- More precisely, it returns True iff compareElements xs.i ys.i is true
+    -- at the first location they differ.
+    --
+    -- This function operates serially and short-circuits
+    -- at the first difference.  One could also write this
+    -- function as a parallel reduction, but it would be
+    -- wasteful in the case where there is an early difference,
+    -- because we can't short circuit.
+    iter \i.
+      case i == min nx ny of
+        True -> Done $ compareLengths nx ny
+        False ->
+          xi = xs.(unsafeFromOrdinal _ i)
+          yi = ys.(unsafeFromOrdinal _ i)
+          case compareElements xi yi of
+            True -> Done True
+            False -> case xi == yi of
+              True -> Continue
+              False -> Done False
+
+instance {n} [Ord n] Ord (List n)
+  (>) = lexicalOrder (>) (>)
+  (<) = lexicalOrder (<) (<)
 
 '### clip
 
