@@ -121,7 +121,7 @@ mean y
 '## Typed indexing
 
 ' The use of typed indices lets you do really neat things, but
-  lets consider how it works. Critically, one cannot
+  let's consider how it works. Critically, one cannot
   simply index an table with an integer.
 
 r = x.(2 : Int)
@@ -375,10 +375,12 @@ imscolor2 = for b. for i. for j. for c:Channels.
   pixel in a tile grid pattern. See if you can figure out the other
   types.
 
-def split {m n o v} (x: m=>v) : n=>o=>v =
+def split {m n o v} [Ix n, Ix o] (x: m=>v) : n=>o=>v =
     for i j. x.(ordinal (i,j)@_)
 
-def imtile {a b n o p q v} (x: a=>b=>v) : n=>o=>p=>q=>v =
+def imtile {a b n o p q v}
+           [Ix n, Ix o, Ix p, Ix q]
+           (x: a=>b=>v) : n=>o=>p=>q=>v =
     for kh kw h w. (split (split x).h.kh).w.kw
 
 im1 : Fin 2 => Fin 2 => Fin 14 => Fin 14 => Float32 = imtile ims.(0@_)
@@ -498,7 +500,7 @@ withState 10 $ \ state.
   integer tables (of type `n => Float32`).
 
 :t tableMean
-> ((n:Type) ?-> (n => Float32) -> Float32)
+> ((n:Type) ?-> (Ix n) ?=> (n => Float32) -> Float32)
 
 ' If we try to apply `tableMean` to other types for get errors. For example,
   `tableMean` does not work when applied to a table of *pairs* of floats.
@@ -593,7 +595,7 @@ instance {v w} [VSpace v, VSpace w] VSpace (v & w)
 
 Pixels = Fin 256
 
-def bincount {a b} (inp : a => b) : b => Int =
+def bincount {a b} [Ix b] (inp : a => b) : b => Int =
     withState zero \acc .
         for i.
             v = acc!(inp.i)

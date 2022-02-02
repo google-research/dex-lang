@@ -28,3 +28,5 @@ examples/export/array
 hie.yaml
 Manifest.toml
 julia/deps/build.log
+examples/t10k-images-idx3-ubyte
+examples/t10k-labels-idx1-ubyte
