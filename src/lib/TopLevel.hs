@@ -144,11 +144,13 @@ liftPassesM bench m = do
   opts <- getConfig
   TopStateEx env <- getTopStateEx
   (result, outs) <- liftIO $ runPassesM bench opts env do
-    Immut <- return $ toImmutEvidence env
     localTopBuilder $ m >> return UnitE
   case result of
-    Success (DistinctAbs bindingsFrag UnitE) -> do
-      setTopStateEx $ TopStateEx $ extendOutMap env bindingsFrag
+    Success (Abs bindingsFrag UnitE) -> do
+      setTopStateEx $ runEnvReaderM env do
+        liftM fromLiftE $ refreshAbs (Abs bindingsFrag UnitE)
+          \bindingsFrag' UnitE ->
+            return $ LiftE $ TopStateEx $ extendOutMap env bindingsFrag'
       return $ Result outs (Success ())
     Failure errs -> do
       return $ Result outs (Failure errs)
@@ -213,19 +215,19 @@ evalSourceBlock' block = case sbContents block of
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
   ImportModule _ -> error "should be handled at the inter-block level"
-  QueryEnv query -> void $ liftImmut $ runEnvQuery query $> UnitE
+  QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()
   CommentLine  -> return ()
   EmptyLines   -> return ()
   UnParseable _ s -> throw ParseErr s
 
-runEnvQuery :: (Immut n, MonadPasses m) => EnvQuery -> m n ()
+runEnvQuery :: MonadPasses m => EnvQuery -> m n ()
 runEnvQuery query = do
-  DB bindings <- getDB
+  env <- unsafeGetEnv
   case query of
-    DumpSubst -> logTop $ TextOut $ pprint $ bindings
+    DumpSubst -> logTop $ TextOut $ pprint $ env
     InternalNameInfo name ->
-      case lookupSubstFragRaw (fromRecSubst $ getNameEnv bindings) name of
+      case lookupSubstFragRaw (fromRecSubst $ getNameEnv env) name of
         Nothing -> throw UnboundVarErr $ pprint name
         Just (WithColor binding) ->
           logTop $ TextOut $ pprint binding
@@ -384,7 +386,7 @@ evalLLVM block = do
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
   logger  <- getLogger
-  objFileNames <- liftImmut $ getObjFiles <$> getEnv
+  objFileNames <- withEnv getObjFiles
   objFiles <- forM (eMapToList objFileNames) \(objFileName, UnitE) -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile

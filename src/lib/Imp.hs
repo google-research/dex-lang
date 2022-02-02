@@ -47,18 +47,13 @@ toImpFunction :: EnvReader m
               => Backend -> CallingConvention
               -> Abs (Nest PtrBinder) Block n
               -> m n (ImpFunctionWithRecon n)
-toImpFunction _ cc absBlock = liftImmut do
-  DB env <- getDB
-  return $ runImpM env $
-    translateTopLevel cc Nothing absBlock
+toImpFunction _ cc absBlock = liftImpM $
+  translateTopLevel cc Nothing absBlock
 
 toImpStandaloneFunction :: EnvReader m => NaryLamExpr n -> m n (ImpFunction n)
-toImpStandaloneFunction lam = liftImmut do
-  DB env <- getDB
-  return $ runImpM env $
-    toImpStandaloneFunction' lam
+toImpStandaloneFunction lam = liftImpM $ toImpStandaloneFunction' lam
 
-toImpStandaloneFunction' :: (Immut o, Imper m) => NaryLamExpr o -> m i o (ImpFunction o)
+toImpStandaloneFunction' :: Imper m => NaryLamExpr o -> m i o (ImpFunction o)
 toImpStandaloneFunction' lam@(NaryLamExpr bs Pure body) = do
   ty <- naryLamExprType lam
   AbsPtrs (Abs ptrBinders argResultDest) ptrsInfo <- makeNaryLamDest ty
@@ -126,30 +121,24 @@ class ( ImpBuilder2 m, SubstReader AtomSubstVal m
       => Imper (m::MonadKind2) where
 
 instance EnvReader ImpM where
-  getEnv = ImpM $ lift11 $ lift11 $ getOutMapInplaceT
+  unsafeGetEnv = ImpM $ lift11 $ lift11 $ getOutMapInplaceT
 
 instance EnvExtender ImpM where
-  extendEnv frag cont = ImpM $ ScopedT1 \s -> WriterT1 $ WriterT $
-    liftM (,ListE []) $ fmap (,s) $
-      extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-        withExtEvidence (toExtEvidence frag) do
-          (result, ptrs) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' cont
-          case ptrs of
-            ListE [] -> return result
-            _ -> error "shouldn't be able to emit pointers without `Mut`"
+  refreshAbs ab cont = ImpM $ ScopedT1 \s -> lift11 $
+    liftM (,s) $ refreshAbs ab \b e -> do
+      (result, ptrs) <- runWriterT1 $ flip runScopedT1 (sink s) $ runImpM' $ cont b e
+      case ptrs of
+        ListE [] -> return result
+        _ -> error "shouldn't be able to emit pointers without `Mut`"
 
 instance ImpBuilder ImpM where
   emitMultiReturnInstr instr = do
     tys <- impInstrTypes instr
-    ListE vs <- ImpM $ ScopedT1 \s -> lift11 $
-      (,s) <$> extendInplaceT do
-        scope <- getScope
-        let hints = map (const "v") tys
-        withManyFresh hints scope \bs -> do
-          let vs = nestToList (sink . nameBinderName) bs
-          let impBs = makeImpBinders bs tys
-          let decl = ImpLet impBs $ sink instr
-          return $ DistinctAbs (Nest decl Empty) (ListE vs)
+    ListE vs <- ImpM $ ScopedT1 \s -> lift11 do
+      Abs bs vs <- return $ newNames $ map (const "v") tys
+      let impBs = makeImpBinders bs tys
+      let decl = ImpLet impBs instr
+      liftM (,s) $ extendInplaceT $ Abs (Nest decl Empty) vs
     return $ zipWith IVar vs tys
     where
      makeImpBinders :: Nest (NameBinder AtomNameC) n l -> [IType] -> Nest IBinder n l
@@ -177,43 +166,38 @@ instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
 
 instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)
 
-runImpM
-  :: Distinct n
-  => Env n
-  -> (Immut n => SubstImpM n n (e n))
-  -> e n
-runImpM bindings cont =
-  withImmutEvidence (toImmutEvidence bindings) $
-    case runHardFail $ runInplaceT bindings $ runWriterT1 $
-      flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
-        (Empty, (result, ListE [])) -> result
-        _ -> error "shouldn't be possible because of `Emits` constraint"
+liftImpM :: EnvReader m => SubstImpM n n a -> m n a
+liftImpM cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  case runHardFail $ runInplaceT env $ runWriterT1 $
+         flip runScopedT1 mempty $ runImpM' $ runSubstReaderT idSubst $ cont of
+    (Empty, (result, ListE [])) -> return result
+    _ -> error "shouldn't be possible because of `Emits` constraint"
 
 -- === the actual pass ===
 
 -- We don't emit any results when a destination is provided, since they are already
 -- going to be available through the dest.
-translateTopLevel :: (Immut o, Imper m)
+translateTopLevel :: Imper m
                   => CallingConvention
                   -> MaybeDest o
                   -> Abs (Nest PtrBinder) Block i
                   -> m i o (ImpFunctionWithRecon o)
 translateTopLevel cc maybeDest (Abs bs body) = do
   let argTys = nestToList (\b -> (getNameHint b, iBinderType b)) bs
-  DistinctAbs bs' (DistinctAbs decls resultAtom) <-
-    buildImpNaryAbs argTys \vs ->
-      extendSubst (bs @@> map Rename vs) do
-        outDest <- case maybeDest of
-          Nothing   -> makeAllocDest Unmanaged =<< getType =<< substM body
-          Just dest -> sinkM dest
-        void $ translateBlock (Just outDest) body
-        destToAtom outDest
-  let localEnv = toEnvFrag $ PairB bs' decls
-  (results, recon) <- extendEnv localEnv $
-                        buildRecon localEnv resultAtom
-  let funImpl = Abs bs' $ ImpBlock decls results
-  let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
-  return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
+  ab  <- buildImpNaryAbs argTys \vs ->
+    extendSubst (bs @@> map Rename vs) do
+      outDest <- case maybeDest of
+        Nothing   -> makeAllocDest Unmanaged =<< getType =<< substM body
+        Just dest -> sinkM dest
+      void $ translateBlock (Just outDest) body
+      destToAtom outDest
+  refreshAbs ab \bs' ab' -> refreshAbs ab' \decls resultAtom -> do
+    (results, recon) <- buildRecon (PairB bs' decls) resultAtom
+    let funImpl = Abs bs' $ ImpBlock decls results
+    let funTy   = IFunType cc (nestToList iBinderType bs') (map getIType results)
+    return $ ImpFunctionWithRecon (ImpFunction funTy funImpl) recon
 
 buildRecon :: (HoistableB b, EnvReader m)
            => b n l
@@ -486,7 +470,9 @@ toImpHof maybeDest hof = do
       let PairTy _ accTy = resultTy
       (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
       e' <- substM e
-      emptyVal <- liftBuilderImp $ liftMonoidEmpty (sink accTy) (sink e')
+      emptyVal <- liftBuilderImp do
+        PairE accTy' e'' <- sinkM $ PairE accTy e'
+        liftMonoidEmpty accTy' e''
       copyAtom wDest emptyVal
       void $ extendSubst (h @> SubstVal UnitTy <.> ref @> SubstVal wDest) $
         translateBlock (Just aDest) body
@@ -534,9 +520,13 @@ instance GenericB DestEmissions where
   fromB (DestEmissions ps bs ds) = LiftB (ListE ps) `PairB` bs `PairB` ds
   toB   (LiftB (ListE ps) `PairB` bs `PairB` ds) = DestEmissions ps bs ds
 
+instance BindsEnv DestEmissions where
+  toEnvFrag = undefined -- TODO: might need to add pointer types to pointer binders?
+
 instance ProvesExt   DestEmissions
 instance BindsNames  DestEmissions
 instance SinkableB DestEmissions
+instance SubstB Name DestEmissions
 instance HoistableB  DestEmissions
 
 instance OutFrag DestEmissions where
@@ -554,56 +544,57 @@ newtype DestM (n::S) (a:: *) =
   deriving ( Functor, Applicative, Monad, MonadFail
            , ScopeReader, Fallible, MonadState (IxCache n) )
 
-runDestM :: (Immut n, Distinct n)
-         => Env n -> AllocInfo -> IxCache n
-         -> DestM n a
-         -> (a, IxCache n)
-runDestM bindings allocInfo cache m = do
+liftDestM :: forall m n a. EnvReader m
+          => AllocInfo -> IxCache n
+          -> DestM n a
+          -> m n (a, IxCache n)
+liftDestM allocInfo cache m = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
   let result = runHardFail $ flip runReaderT allocInfo $
-                 runInplaceT bindings $ flip runStateT1 cache $ runDestM' m
+                 runInplaceT env $ flip runStateT1 cache $ runDestM' m
   case result of
-    (DestEmissions _ Empty Empty, result') -> result'
+    (DestEmissions _ Empty Empty, result') -> return result'
     _ -> error "not implemented"
 
 getAllocInfo :: DestM n AllocInfo
 getAllocInfo = DestM $ lift11 $ lift1 ask
 
 introduceNewPtr :: Mut n => NameHint -> PtrType -> Block n -> DestM n (AtomName n)
-introduceNewPtr hint ptrTy numel =
-  DestM $ StateT1 \s -> fmap (,s) $
-    emitInplaceT hint (DestPtrInfo ptrTy numel) \b ptrInfo ->
-      DestEmissions [ptrInfo] (Nest b Empty) Empty
+introduceNewPtr hint ptrTy numel = do
+  Abs b v <- newNameM hint
+  let ptrInfo = DestPtrInfo ptrTy numel
+  let emission = DestEmissions [ptrInfo] (Nest b Empty) Empty
+  DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emission v
 
 buildLocalDest
   :: (SinkableE e)
   => (forall l. (Mut l, DExt n l) => DestM l (e l))
   -> DestM n (AbsPtrs e n)
-buildLocalDest cont = liftImmut do
-  DistinctAbs (DestEmissions ptrInfo ptrBs decls) e <-
+buildLocalDest cont = do
+  Abs (DestEmissions ptrInfo ptrBs decls) e <-
     DestM $ StateT1 \s -> do
-      DistinctAbs bs (PairE e s') <- locallyMutableInplaceT $ fmap toPairE $ flip runStateT1 (sink s) $ runDestM' cont
+      Abs bs (PairE e s') <- locallyMutableInplaceT $ fmap toPairE $ flip runStateT1 (sink s) $ runDestM' cont
       s'' <- hoistState s bs s'
-      return $ (DistinctAbs bs e, s'')
+      return $ (Abs bs e, s'')
   case decls of
     Empty -> return $ AbsPtrs (Abs ptrBs e) ptrInfo
     _ -> error "shouldn't have decls without `Emits`"
 
 -- TODO: this is mostly copy-paste from Inference
 buildDeclsDest
-  :: (Mut n, SinkableE e)
+  :: (Mut n, SubstE Name e, SinkableE e)
   => (forall l. (Emits l, DExt n l) => DestM l (e l))
   -> DestM n (Abs (Nest Decl) e n)
-buildDeclsDest cont =
+buildDeclsDest cont = do
   DestM $ StateT1 \s -> do
-    Abs decls (PairE e s') <- extendInplaceT do
-      DistinctAbs (DestEmissions ptrInfo ptrBs decls) result <-
-        locallyMutableInplaceT do
-          Emits <- fabricateEmitsEvidenceM
-          toPairE <$> flip runStateT1 (sink s) (runDestM' cont)
-      withSubscopeDistinct decls $
-        return $ DistinctAbs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
-    s'' <- hoistState s decls s'
-    return $ (Abs decls e, s'')
+    Abs (DestEmissions ptrInfo ptrBs decls) result <- locallyMutableInplaceT do
+      Emits <- fabricateEmitsEvidenceM
+      toPairE <$> flip runStateT1 (sink s) (runDestM' cont)
+    Abs decls' (PairE e s') <- extendInplaceT $
+                                 Abs (DestEmissions ptrInfo ptrBs Empty) $ Abs decls result
+    s'' <- hoistState s decls' s'
+    return (Abs decls' e, s'')
 
 buildBlockDest
   :: Mut n
@@ -619,31 +610,26 @@ buildBlockDest cont = do
 
 -- TODO: this is mostly copy-paste from Inference
 buildAbsDest
-  :: (SinkableE e, HoistableE e, Color c, ToBinding binding c)
+  :: (SinkableE e, SubstE Name e, HoistableE e, Color c, ToBinding binding c)
   => Mut n
   => NameHint -> binding n
   -> (forall l. (Mut l, DExt n l) => Name c l -> DestM l (e l))
   -> DestM n (Abs (BinderP c binding) e n)
-buildAbsDest hint binding cont =
-  DestM $ StateT1 \s -> do
-    Abs b (PairE e s') <- extendInplaceT do
-      scope <- getScope
-      withFresh hint scope \b -> do
-        let b' = b :> sink binding
-        let bExt = toEnvFrag b'
-        extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
-          DistinctAbs emissions result <- locallyMutableInplaceT do
-            fmap toPairE $ flip runStateT1 (sink s) $ runDestM' $ cont $ sink $ binderName b
-          PairB emissions' b'' <- liftHoistExcept $ exchangeBs $ PairB b' emissions
-          withSubscopeDistinct b'' $
-            return $ DistinctAbs emissions' (Abs b'' result)
-    s'' <- hoistState s b s'
-    return (Abs b e, s'')
+buildAbsDest hint binding cont = DestM $ StateT1 \s -> do
+  resultWithEmissions <- withFreshBinder hint binding \b -> do
+    ab <- locallyMutableInplaceT do
+      fmap toPairE $ flip runStateT1 (sink s) $ runDestM' $ cont $ sink $ binderName b
+    refreshAbs ab \emissions result -> do
+      PairB emissions' b' <- liftHoistExcept $ exchangeBs $ PairB b emissions
+      return $ Abs emissions' $ Abs b' result
+  Abs b (PairE e s') <- extendInplaceT resultWithEmissions
+  s'' <- hoistState s b s'
+  return (Abs (b:>binding) e, s'')
 
 -- decls emitted at the inner scope are hoisted to the outer scope
 -- (they must be hoistable, otherwise we'll get a hoisting error)
 buildAbsHoistingDeclsDest
-  :: (SinkableE e, HoistableE e, Color c, ToBinding binding c)
+  :: (SinkableE e, SubstE Name e, HoistableE e, Color c, ToBinding binding c)
   => Emits n
   => NameHint -> binding n
   -> (forall l. (Emits l, DExt n l) => Name c l -> DestM l (e l))
@@ -667,22 +653,23 @@ buildTabLamDest hint ty cont = do
   return $ Lam $ LamExpr (LamBinder b ty TabArrow Pure) body
 
 instance EnvExtender DestM where
-  extendEnv frag cont = DestM $ StateT1 \s -> do
-    (ans, s') <- extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-      withExtEvidence (toExtEvidence frag) $
-        flip runStateT1 (sink s) $ runDestM' cont
-    s'' <- hoistState s frag s'
+  refreshAbs ab cont = DestM $ StateT1 \s -> do
+    (ans, (Abs b s')) <- refreshAbs ab \b e -> do
+      (ans, s') <- flip runStateT1 (sink s) $ runDestM' $ cont b e
+      return (ans, Abs b s')
+    s'' <- hoistState s b s'
     return (ans, s'')
 
 instance EnvReader DestM where
-  getEnv = DestM $ lift11 $ getOutMapInplaceT
+  unsafeGetEnv = DestM $ lift11 $ getOutMapInplaceT
 
 instance Builder DestM where
   emitDecl hint ann expr = do
     ty <- getType expr
-    DestM $ StateT1 \s -> fmap (,s) $
-      emitInplaceT hint (DeclBinding ann ty expr) \b binding ->
-        DestEmissions [] Empty $ Nest (Let b binding) Empty
+    Abs b v <- newNameM hint
+    let decl = Let b $ DeclBinding ann ty expr
+    let emissions = DestEmissions [] Empty $ Nest decl Empty
+    DestM $ StateT1 \s -> fmap (,s) $ extendInplaceT $ Abs emissions v
 
 instance ExtOutMap Env DestEmissions where
   extendOutMap bindings (DestEmissions ptrInfo ptrs decls) =
@@ -731,12 +718,10 @@ instance SubstE AtomSubstVal e => SubstE AtomSubstVal (AbsPtrs e)
 -- builds a dest and a list of pointer binders along with their required allocation sizes
 makeDest :: (ImpBuilder m, EnvReader m)
          => AllocInfo -> Type n -> m n (AbsPtrs Dest n)
-makeDest allocInfo ty =
- liftImmut do
-   DB bindings <- getDB
+makeDest allocInfo ty = do
    cache <- get
-   let (result, cache') = runDestM bindings allocInfo cache $
-                            buildLocalDest $ makeSingleDest [] $ sink ty
+   (result, cache') <- liftDestM allocInfo cache $
+                         buildLocalDest $ makeSingleDest [] $ sink ty
    put cache'
    return result
 
@@ -755,7 +740,7 @@ extendIdxsTy
   => DestIdxs n -> Type n -> m n (EmptyAbs IdxNest n)
 extendIdxsTy (idxsTy, idxs) new = do
   let newAbs = abstractFreeVarsNoAnn idxs new
-  Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs (sink idxsTy) \idxs' -> do
+  Abs bs (Abs b UnitE) <- liftBuilder $ buildNaryAbs idxsTy \idxs' -> do
     ty' <- applyNaryAbs (sink newAbs) idxs'
     singletonBinderNest NoHint ty'
   return $ Abs (bs >>> b) UnitE
@@ -775,11 +760,10 @@ type NaryLamDest = Abs (Nest (BinderP AtomNameC Dest)) Dest
 
 makeNaryLamDest :: (ImpBuilder m, EnvReader m)
                 => NaryPiType n -> m n (AbsPtrs NaryLamDest n)
-makeNaryLamDest piTy = liftImmut do
-  DB env <- getDB
+makeNaryLamDest piTy = do
   cache <- get
   let allocInfo = (LLVM, CPU, Unmanaged) -- TODO! This is just a placeholder
-  (result, cache') <- return $ runDestM env allocInfo cache $ buildLocalDest do
+  (result, cache') <- liftDestM allocInfo cache $ buildLocalDest do
     Abs decls dest <- buildDeclsDest $
                         makeNaryLamDestRec (Abs Empty UnitE, []) [] (sink piTy)
     case decls of
@@ -808,7 +792,7 @@ makeNaryLamDestRec _ _ _ = error "effectful functions not implemented"
 -- TODO: should we put DestIdxs/DepVars in the monad? And maybe it should also
 -- be a substituting one.
 buildDepDest
-  :: (SinkableE e, HoistableE e, Emits n)
+  :: (SinkableE e, SubstE Name e, HoistableE e, Emits n)
   => DestIdxs n -> DepVars n -> NameHint -> Type n
   -> (forall l. (Emits l, DExt n l) => DestIdxs l -> DepVars l -> AtomName l -> DestM l (e l))
   -> DestM n (Abs Binder e n)
@@ -919,7 +903,7 @@ copyAtom topDest topSrc = copyRec topDest topSrc
         -- TODO: load old ptr and free (recursively)
         ptrs <- forM ptrsSizes \(ptrPtr, sizeBlock) -> do
           PtrTy (_, (PtrType ptrTy)) <- getType ptrPtr
-          size <- liftBuilderImp $ emitBlock (sink sizeBlock)
+          size <- liftBuilderImp $ emitBlock =<< sinkM sizeBlock
           ptr <- emitAlloc ptrTy =<< fromScalarAtom size
           ptrPtr' <- fromScalarAtom ptrPtr
           storeAnywhere ptrPtr' ptr
@@ -1090,7 +1074,7 @@ emitLoop :: (ImpBuilder m, Emits n)
          -> (forall l. (DExt n l, Emits l) => IExpr l -> m l ())
          -> m n ()
 emitLoop hint d n cont = do
-  loopBody <- liftImmut do
+  loopBody <- do
     withFreshIBinder hint (getIType n) \b@(IBinder _ ty)  -> do
       let i = IVar (binderName b) ty
       body <- buildBlockImp do
@@ -1120,15 +1104,17 @@ buildBlockImp
   :: ImpBuilder m
   => (forall l. (Emits l, DExt n l) => m l [IExpr l])
   -> m n (ImpBlock n)
-buildBlockImp cont = liftImmut do
-  DistinctAbs decls (ListE results) <- buildScopedImp $ ListE <$> cont
+buildBlockImp cont = do
+  Abs decls (ListE results) <- buildScopedImp $ ListE <$> cont
   return $ ImpBlock decls results
 
 destToAtom :: (ImpBuilder m, Emits n) => Dest n -> m n (Atom n)
-destToAtom dest = liftBuilderImp $ loadDest $ sink dest
+destToAtom dest = liftBuilderImp $ loadDest =<< sinkM dest
 
 destGet :: (ImpBuilder m, Emits n) => Dest n -> Atom n -> m n (Dest n)
-destGet dest i = liftBuilderImp $ indexDest (sink dest) (sink i)
+destGet dest i = liftBuilderImp $ do
+  Distinct <- getDistinct
+  indexDest (sink dest) (sink i)
 
 destPairUnpack :: Dest n -> (Dest n, Dest n)
 destPairUnpack (Con (ConRef (ProdCon [l, r]))) = (l, r)
@@ -1156,6 +1142,7 @@ makeAllocDestWithPtrs allocTy ty = do
   let curDev  = curDev_TODO_DONT_HARDCODE
   AbsPtrs absDest ptrDefs <- makeDest (backend, curDev, allocTy) ty
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
+    Distinct <- getDistinct
     size <- liftBuilderImp $ emitBlock $ sink sizeBlock
     ptr <- emitAlloc ptrTy =<< fromScalarAtom size
     case ptrTy of
@@ -1223,7 +1210,7 @@ computeElemCount idxNest' = do
   let (idxList, idxNest) = indexStructureSplit idxNest'
   listSize <- foldM imul (IdxRepVal 1) =<< forM idxList \ty -> do
     appSimplifiedIxMethod ty simpleIxSize UnitVal
-  nestSize <- A.emitCPoly =<< liftImmut (elemCountCPoly idxNest)
+  nestSize <- A.emitCPoly =<< elemCountCPoly idxNest
   imul listSize nestSize
 
 -- Split the index structure into a prefix of non-dependent index types
@@ -1264,7 +1251,7 @@ computeOffset idxNest' idxs = do
    rec :: IndexStructure n -> [AtomName n] -> m n (Atom n)
    rec (Abs Empty UnitE) [] = return $ IdxRepVal 0
    rec (Abs (Nest b bs) UnitE) (i:is) = do
-     rhsElemCounts <- liftImmut $ refreshBinders b \(b':>_) s -> do
+     rhsElemCounts <- refreshBinders b \(b':>_) s -> do
        rest' <- applySubst s $ EmptyAbs bs
        Abs b' <$> elemCountCPoly rest'
      significantOffset <- A.emitCPoly $ A.sumC i rhsElemCounts
@@ -1279,7 +1266,7 @@ emitSimplified
   -> m n (Atom n)
 emitSimplified m = emitBlock . dceApproxBlock =<< buildBlockSimplified m
 
-elemCountCPoly :: (EnvExtender m, EnvReader m, Immut n, Fallible1 m, MonadIxCache1 m)
+elemCountCPoly :: (EnvExtender m, EnvReader m, Fallible1 m, MonadIxCache1 m)
                => IndexStructure n -> m n (A.ClampPolynomial n)
 elemCountCPoly (Abs bs UnitE) = case bs of
   Empty -> return $ A.liftPoly $ A.emptyMonomial
@@ -1304,41 +1291,28 @@ class (EnvReader m, EnvExtender m, Fallible1 m, MonadIxCache1 m)
        => ImpBuilder (m::MonadKind1) where
   emitMultiReturnInstr :: Emits n => ImpInstr n -> m n [IExpr n]
   buildScopedImp
-    :: (SinkableE e, Immut n)
-    => (forall l. (Emits l, Ext n l, Distinct l) => m l (e l))
-    -> m n (DistinctAbs (Nest ImpDecl) e n)
+    :: SinkableE e
+    => (forall l. (Emits l, DExt n l) => m l (e l))
+    -> m n (Abs (Nest ImpDecl) e n)
   extendAllocsToFree :: Mut n => IExpr n -> m n ()
 
 type ImpBuilder2 (m::MonadKind2) = forall i. ImpBuilder (m i)
 
 withFreshIBinder
-  :: (Immut n, ImpBuilder m)
+  :: ImpBuilder m
   => NameHint -> IType
-  -> (forall l. (Immut l, Distinct l, Ext n l) => IBinder n l -> m l a)
+  -> (forall l. DExt n l => IBinder n l -> m l a)
   -> m n a
 withFreshIBinder hint ty cont = do
-  scope    <- getScope
-  Distinct <- getDistinct
-  withFresh hint scope \b -> do
-    extendEnv (toEnvFrag (b :> (toBinding $ MiscBound $ BaseTy ty))) $
-      cont $ IBinder b ty
-
-_buildImpAbs
-  :: ( Immut n, ImpBuilder m
-     , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
-  => NameHint -> IType
-  -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (e l))
-  -> m n (DistinctAbs IBinder (DistinctAbs (Nest ImpDecl) e) n)
-_buildImpAbs hint ty body =
-  withFreshIBinder hint ty \b -> do
-    ab <- buildScopedImp $ sinkM (binderName b) >>= body
-    return $ DistinctAbs b ab
+  withFreshBinder hint (MiscBound $ BaseTy ty) \b ->
+    cont $ IBinder b ty
 
 emitCall :: (Emits n, ImpBuilder m)
          => NaryPiType n -> ImpFunName n -> [Atom n] -> m n (Atom n)
 emitCall piTy f xs = do
   AbsPtrs absDest ptrDefs <- makeNaryLamDest piTy
   ptrs <- forM ptrDefs \(DestPtrInfo ptrTy sizeBlock) -> do
+    Distinct <- getDistinct
     size <- liftBuilderImp $ emitBlock $ sink sizeBlock
     emitAlloc ptrTy =<< fromScalarAtom size
   ptrAtoms <- mapM toScalarAtom ptrs
@@ -1348,34 +1322,33 @@ emitCall piTy f xs = do
   destToAtom resultDest
 
 buildImpFunction
-  :: ( Immut n, ImpBuilder m )
+  :: ImpBuilder m
   => CallingConvention
   -> [(NameHint, IType)]
   -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l [IExpr l])
   -> m n (ImpFunction n)
 buildImpFunction cc argHintsTys body = do
-  DistinctAbs bs (DistinctAbs decls (ListE results)) <-
+  Abs bs (Abs decls (ListE results)) <-
     buildImpNaryAbs argHintsTys \vs -> ListE <$> body vs
   let resultTys = map getIType results
   let impFun = IFunType cc (map snd argHintsTys) resultTys
   return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
 
 buildImpNaryAbs
-  :: ( Immut n, ImpBuilder m
-     , SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
+  :: (ImpBuilder m, SinkableE e, HasNamesE e, SubstE Name e, HoistableE e)
   => [(NameHint, IType)]
   -> (forall l. (Emits l, DExt n l) => [AtomName l] -> m l (e l))
-  -> m n (DistinctAbs (Nest IBinder) (DistinctAbs (Nest ImpDecl) e) n)
+  -> m n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)
 buildImpNaryAbs [] cont = do
   Distinct <- getDistinct
-  DistinctAbs Empty <$> buildScopedImp (cont [])
+  Abs Empty <$> buildScopedImp (cont [])
 buildImpNaryAbs ((hint,ty) : rest) cont = do
   withFreshIBinder hint ty \b -> do
     ab <- buildImpNaryAbs rest \vs -> do
       v <- sinkM $ binderName b
       cont (v : vs)
-    DistinctAbs bs body <- return ab
-    return $ DistinctAbs (Nest b bs) body
+    Abs bs body <- return ab
+    return $ Abs (Nest b bs) body
 
 emitInstr :: (ImpBuilder m, Emits n) => ImpInstr n -> m n (IExpr n)
 emitInstr instr = do
@@ -1398,6 +1371,7 @@ buildBinOp :: (ImpBuilder m, Emits n)
            => (forall l. (Emits l, DExt n l) => Atom l -> Atom l -> BuilderM l (Atom l))
            -> IExpr n -> IExpr n -> m n (IExpr n)
 buildBinOp f x y = fromScalarAtom =<< liftBuilderImp do
+  Distinct <- getDistinct
   x' <- toScalarAtom $ sink x
   y' <- toScalarAtom $ sink y
   f x' y'
@@ -1455,10 +1429,7 @@ liftBuilderImp :: (Emits n, ImpBuilder m, SubstE AtomSubstVal e, SinkableE e)
                => (forall l. (Emits l, DExt n l) => BuilderM l (e l))
                -> m n (e n)
 liftBuilderImp cont = do
-  Abs decls result <- liftImmut do
-    DB bindings <- getDB
-    DistinctAbs decls result <- return $ runBuilderM bindings $ buildScoped cont
-    return $ Abs decls result
+  Abs decls result <- liftBuilder $ buildScoped cont
   runSubstReaderT idSubst $ translateDeclNest decls $ substM result
 
 -- TODO: should we merge this with `liftBuilderImp`? Not much harm in

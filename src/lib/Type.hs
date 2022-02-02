@@ -51,41 +51,29 @@ import PPrint ()
 -- === top-level API ===
 
 checkTypes :: (EnvReader m, CheckableE e) => e n -> m n (Except ())
-checkTypes e = fromLiftE <$> liftImmut do
-  DB bindings <- getDB
-  return $ LiftE $ runTyperT bindings $ void $ checkE e
+checkTypes e = liftTyperT $ void $ checkE e
 
-checkTypesM :: (EnvReader m, Fallible1 m, CheckableE e)
-           => e n -> m n ()
+checkTypesM :: (EnvReader m, Fallible1 m, CheckableE e) => e n -> m n ()
 checkTypesM e = liftExcept =<< checkTypes e
 
-getType :: (EnvReader m, HasType e)
-           => e n -> m n (Type n)
-getType e = liftImmut do
-  DB bindings <- getDB
-  return $ runHardFail $ runTyperT bindings $ getTypeE e
+getType :: (EnvReader m, HasType e) => e n -> m n (Type n)
+getType e = liftHardFailTyperT $ getTypeE e
 
 getAppType :: EnvReader m => Type n -> [Atom n] -> m n (Type n)
 getAppType f xs = case nonEmpty xs of
   Nothing -> getType f
-  Just xs' -> liftImmut do
-    DB bindings <- getDB
-    return $ runHardFail $ runTyperT bindings $ checkApp f xs'
+  Just xs' -> liftHardFailTyperT $ checkApp f xs'
 
 getTypeSubst :: (SubstReader Name m, EnvReader2 m, HasType e)
              => e i -> m i o (Type o)
-getTypeSubst e = liftImmut do
-  DB bindings <- getDB
+getTypeSubst e = do
   subst <- getSubst
-  return $ runHardFail $
-    runEnvReaderT bindings $
-      runSubstReaderT subst $
-        runTyperT' $ getTypeE e
+  liftM runHardFail $ liftEnvReaderT $
+    runSubstReaderT subst $
+      runTyperT' $ getTypeE e
 
 tryGetType :: (EnvReader m, Fallible1 m, HasType e) => e n -> m n (Type n)
-tryGetType e = liftImmut do
-  DB bindings <- getDB
-  liftExcept $ runTyperT bindings $ getTypeE e
+tryGetType e = liftExcept =<< liftTyperT (getTypeE e)
 
 depPairLeftTy :: DepPairType n -> Type n
 depPairLeftTy (DepPairType (_:>ty) _) = ty
@@ -184,7 +172,7 @@ deleteEff eff (EffectRow effs t) = EffectRow (S.delete eff effs) t
 -- already be a superclass, transitively, through both Fallible2 and
 -- MonadAtomSubst.
 class ( Monad2 m, Fallible2 m, SubstReader Name m
-      , EnvReader2 m, EnvExtender2 m, AlwaysImmut2 m)
+      , EnvReader2 m, EnvExtender2 m)
      => Typer (m::MonadKind2)
 
 newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
@@ -193,16 +181,17 @@ newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
            , SubstReader Name
            , MonadFail
            , Fallible
-           , AlwaysImmut
            , ScopeReader
            , EnvReader, EnvExtender)
 
-runTyperT :: (Fallible m, Distinct n)
-          => Env n -> TyperT m n n a -> m a
-runTyperT bindings m = do
-  runEnvReaderT bindings $
+liftTyperT :: (EnvReader m', Fallible m) => TyperT m n n a -> m' n (m a)
+liftTyperT cont =
+  liftEnvReaderT $
     runSubstReaderT idSubst $
-      runTyperT' m
+      runTyperT' cont
+
+liftHardFailTyperT :: EnvReader m' => TyperT HardFailM n n a -> m' n a
+liftHardFailTyperT cont = liftM runHardFail $ liftTyperT cont
 
 instance Fallible m => Typer (TyperT m)
 
@@ -274,15 +263,9 @@ instance CheckableE SynthCandidates where
 
 instance CheckableB (RecSubstFrag Binding) where
   checkB frag cont = do
-    Immut <- getImmut
-    scope <- getScope
-    env <- getSubst
-    Distinct <- getDistinct
-    DistinctAbs frag' env' <- return $ refreshRecSubstFrag scope env frag
-    extendEnv (EnvFrag frag' Nothing) do
+    substBinders frag \frag' -> do
       void $ dropSubst $ traverseSubstFrag checkE $ fromRecSubstFrag frag'
-      withSubst env' do
-        cont frag'
+      cont frag'
 
 instance CheckableB EnvFrag where
   checkB (EnvFrag frag effs) cont = do
@@ -347,7 +330,7 @@ instance HasType AtomName where
     atomBindingType <$> lookupEnv name'
 
 instance HasType Atom where
-  getTypeE atom = liftImmut $ case atom of
+  getTypeE atom = case atom of
     Var name -> getTypeE name
     Lam lamExpr -> getTypeE lamExpr
     Pi piType -> getTypeE piType
@@ -414,7 +397,7 @@ instance HasType Atom where
         numel |: IdxRepTy
         ty@(PtrTy _) <- getTypeE ptr
         return ty
-      withFreshBinders (zip (repeat NoHint) ptrTys) \bs' vs -> do
+      withFreshBinders ptrTys \bs' vs -> do
         extendSubst (bs @@> vs) do
           bodyTy <- getTypeE body
           liftHoistExcept $ hoist bs' bodyTy
@@ -447,7 +430,6 @@ instance (Color c, ToBinding ann c, CheckableE ann)
          => CheckableB (BinderP c ann) where
   checkB (b:>ann) cont = do
     ann' <- checkE ann
-    Immut <- getImmut
     withFreshBinder (getNameHint b) (toBinding ann') \b' ->
       extendRenamer (b@>binderName b') $
         cont $ b' :> ann'
@@ -498,11 +480,10 @@ instance CheckableB LamBinder where
   checkB (LamBinder b ty arr effs) cont = do
     ty' <- checkTypeE TyKind ty
     let binding = toBinding $ LamBinding arr ty'
-    Immut <- getImmut
     withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
         effs' <- checkE effs
-        extendEnv (EnvFrag emptyOutFrag (Just effs')) $
+        withAllowedEffects effs' $
           cont $ LamBinder b' ty' arr effs'
 
 instance HasType LamExpr where
@@ -532,10 +513,9 @@ instance CheckableB PiBinder where
   checkB (PiBinder b ty arr) cont = do
     ty' <- checkTypeE TyKind ty
     let binding = toBinding $ PiBinding arr ty'
-    Immut <- getImmut
     withFreshBinder (getNameHint b) binding \b' -> do
       extendRenamer (b@>binderName b') do
-        extendEnv (EnvFrag emptyOutFrag (Just Pure)) $
+        withAllowedEffects Pure do
           cont $ PiBinder b' ty' arr
 
 instance (BindsNames b, CheckableB b) => CheckableB (Nest b) where
@@ -889,12 +869,11 @@ checkRWSAction rws f = do
   BinaryFunTy regionBinder refBinder eff resultTy <- getTypeE f
   allowed <- getAllowedEffects
   dropSubst $
-    substBindersI regionBinder \regionBinder' -> do
-      substBindersI refBinder \_ -> do
+    substBinders regionBinder \regionBinder' -> do
+      substBinders refBinder \_ -> do
         allowed'   <- sinkM allowed
         eff'       <- substM eff
         regionName <- sinkM $ binderName regionBinder'
-        Immut <- getImmut
         withAllowedEffects allowed' $
           extendAllowedEffect (RWSEffect rws $ Just regionName) $
             declareEffs eff'
@@ -966,7 +945,7 @@ checkAlt :: HasType body => Typer m
 checkAlt resultTyReq reqBs (Abs bs body) = do
   bs' <- substM (EmptyAbs bs)
   checkAlphaEq reqBs bs'
-  substBindersI bs \_ -> do
+  substBinders bs \_ -> do
     resultTyReq' <- sinkM resultTyReq
     body |: resultTyReq'
 
@@ -987,16 +966,14 @@ numNaryPiArgs :: NaryPiType n -> Int
 numNaryPiArgs (NaryPiType (NonEmptyNest _ bs) _ _) = 1 + nestLength bs
 
 naryLamExprType :: EnvReader m => NaryLamExpr n -> m n (NaryPiType n)
-naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftImmut do
-  DB env <- getDB
-  return $ runHardFail $ runTyperT env do
-    substBinders b \b' -> do
-      substBinders bs \bs' -> do
-        let b''  = binderToPiBinder b'
-        let bs'' = fmapNest binderToPiBinder bs'
-        eff' <- substM eff
-        bodyTy <- getTypeE body
-        return $ NaryPiType (NonEmptyNest b'' bs'') eff' bodyTy
+naryLamExprType (NaryLamExpr (NonEmptyNest b bs) eff body) = liftHardFailTyperT do
+  substBinders b \b' -> do
+    substBinders bs \bs' -> do
+      let b''  = binderToPiBinder b'
+      let bs'' = fmapNest binderToPiBinder bs'
+      eff' <- substM eff
+      bodyTy <- getTypeE body
+      return $ NaryPiType (NonEmptyNest b'' bs'') eff' bodyTy
   where
     binderToPiBinder :: Binder n l -> PiBinder n l
     binderToPiBinder (nameBinder:>ty) = PiBinder nameBinder ty PlainArrow
@@ -1198,14 +1175,12 @@ isSingletonType topTy =
 
 
 singletonTypeVal :: EnvReader m => Type n -> m n (Maybe (Atom n))
-singletonTypeVal ty = fromMaybeE <$> liftImmut do
-  DB env <- getDB
-  return $ toMaybeE $ runEnvReaderT env $ runSubstReaderT idSubst $
-    singletonTypeVal' ty
+singletonTypeVal ty = liftTyperT do
+  singletonTypeVal' ty
 
 -- TODO: TypeCon with a single case?
 singletonTypeVal'
-  :: (Immut o, MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
+  :: (MonadFail2 m, SubstReader Name m, EnvReader2 m, EnvExtender2 m)
   => Type i -> m i o (Atom o)
 singletonTypeVal' ty = case ty of
   Pi (PiType b@(PiBinder _ _ TabArrow) Pure body) ->
@@ -1271,7 +1246,6 @@ declareEffs effs = do
 extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
 extendAllowedEffect newEff cont = do
   effs <- getAllowedEffects
-  Immut <- getImmut
   withAllowedEffects (extendEffect newEff effs) cont
 
 checkExtends :: Fallible m => EffectRow n -> EffectRow n -> m ()
@@ -1351,11 +1325,11 @@ projectLength ty = case ty of
 
 runCheck
   :: (EnvReader m, SinkableE e)
-  => (forall l. (DExt n l, Immut l) => TyperT Maybe l l (e l))
+  => (forall l. DExt n l => TyperT Maybe l l (e l))
   -> m n (Maybe (e n))
-runCheck cont = liftM fromMaybeE $ liftImmut do
-  DB env <- getDB
-  return $ toMaybeE $ runTyperT env $ cont
+runCheck cont = do
+  Distinct <- getDistinct
+  liftTyperT $ cont
 
 asFFIFunType :: EnvReader m => Type n -> m n (Maybe (IFunType, NaryPiType n))
 asFFIFunType ty = return do
@@ -1399,7 +1373,6 @@ asFirstOrderFunction ty = runCheck $ asFirstOrderFunctionM (sink ty)
 asFirstOrderFunctionM :: Typer m => Type i -> m i o (NaryPiType o)
 asFirstOrderFunctionM ty = do
   naryPi@(NaryPiType bs eff resultTy) <- liftMaybe $ asNaryPiType ty
-  Immut <- getImmut
   substBinders bs \(NonEmptyNest b' bs') -> do
       ts <- mapM sinkM $ bindersTypes $ Nest b' bs'
       dropSubst $ mapM_ checkDataLike ts
@@ -1416,14 +1389,12 @@ checkDataLike :: Typer m => Type i -> m i o ()
 checkDataLike ty = case ty of
   Var _ -> error "Not implemented"
   TabTy b eltTy -> do
-    Immut <- getImmut
     substBinders b \_ ->
       checkDataLike eltTy
   StaticRecordTy items -> mapM_ recur items
   VariantTy (NoExt items) -> mapM_ recur items
   DepPairTy (DepPairType b@(_:>l) r) -> do
     recur l
-    Immut <- getImmut
     substBinders b \_ -> checkDataLike r
   TypeCon _ defName params -> do
     params' <- mapM substM params
@@ -1446,5 +1417,4 @@ checkDataLikeBinderNest :: Typer m => EmptyAbs (Nest Binder) i -> m i o ()
 checkDataLikeBinderNest (Abs Empty UnitE) = return ()
 checkDataLikeBinderNest (Abs (Nest b rest) UnitE) = do
   checkDataLike $ binderType b
-  Immut <- getImmut
   substBinders b \_ -> checkDataLikeBinderNest $ Abs rest UnitE

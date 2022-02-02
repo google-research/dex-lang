@@ -9,7 +9,7 @@
 
 module Interpreter (
   evalBlock, evalExpr, indices,
-  runInterpM, liftInterpM, InterpM, Interp,
+  liftInterpM, InterpM, Interp,
   traverseSurfaceAtomNames, evalAtom, matchUPat) where
 
 import Control.Monad
@@ -44,14 +44,10 @@ class ( SubstReader AtomSubstVal m, EnvReader2 m
 
 instance Interp InterpM
 
-runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
-runInterpM bindings cont =
-  runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont
-
-liftInterpM :: (EnvReader m, MonadIO1 m, Immut n) => InterpM n n a -> m n a
-liftInterpM m = do
-  DB bindings <- getDB
-  liftIO $ runInterpM bindings m
+liftInterpM :: (EnvReader m, MonadIO1 m) => InterpM n n a -> m n a
+liftInterpM cont = do
+  resultIO <- liftEnvReaderT $ runSubstReaderT idSubst $ runInterpM' cont
+  liftIO resultIO
 
 evalBlock :: Interp m => Block i -> m i o (Atom o)
 evalBlock (Block _ decls result) = evalDecls decls $ evalExpr result
@@ -266,9 +262,9 @@ matchUPats _ _ = error "mismatched lengths"
 -- XXX: It is a bit shady to unsafePerformIO here since this runs during typechecking.
 -- We could have a partial version of the interpreter that fails when any IO is to happen.
 indices :: EnvReader m => Type n -> m n [Atom n]
-indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $
-  liftImmut $ do
-    DB env <- getDB
+indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $ do
+    env <- unsafeGetEnv
+    Distinct <- getDistinct
     ix <- simplifiedIxInstance ty
     let IdxRepVal size = unsafePerformIO $ runInterpM env $ evalMethod ix simpleIxSize UnitVal
     return $ ListE $ unsafePerformIO $ runInterpM env $
@@ -277,3 +273,7 @@ indices ty = fmap fromListE $ flip runScopedT1 (mempty :: IxCache n) $
       evalMethod ix method x = case method ix of
         Abs decls lam -> do
           evalDecls decls $ evalExpr $ App (Lam lam) $ sinkFromTop x NE.:| []
+
+      runInterpM :: Distinct n => Env n -> InterpM n n a -> IO a
+      runInterpM bindings cont =
+        runEnvReaderT bindings $ runSubstReaderT idSubst $ runInterpM' cont

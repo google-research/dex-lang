@@ -208,9 +208,9 @@ rematPrimal subst wrt m = do
   lin
 
 fromPureUnaryTanFunLam :: EnvReader m => Atom n -> m n (Atom n)
-fromPureUnaryTanFunLam atom = liftImmut $ liftSubstEnvReaderM $ go atom
+fromPureUnaryTanFunLam atom = liftSubstEnvReaderM $ go atom
   where
-    go :: Immut o => Atom i -> SubstEnvReaderM AtomSubstVal i o (Atom o)
+    go :: Atom i -> SubstEnvReaderM AtomSubstVal i o (Atom o)
     go = \case
       Lam (LamExpr b@(LamBinder _ _ _ Pure) (AtomicBlock nullaryLam)) ->
         substBinders b \(LamBinder b' ty _ _) -> do
@@ -226,9 +226,9 @@ fromPureUnaryTanFunLam atom = liftImmut $ liftSubstEnvReaderM $ go atom
 
 -- main API entrypoint
 linearize :: EnvReader m => Atom n -> m n (Atom n)
-linearize x = liftImmut do
-  DB env <- getDB
-  return $ runBuilderM env $ runPrimalM idSubst emptyActivePrimals $ linearizeLambda' x
+linearize x = liftBuilder $
+  runPrimalM idSubst emptyActivePrimals $
+    linearizeLambda' x
 
 -- reify the tangent builder as a lambda
 linearizeLambda' :: Atom i -> PrimalM i o (Atom o)

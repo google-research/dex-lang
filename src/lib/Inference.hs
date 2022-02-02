@@ -49,18 +49,17 @@ import LabeledItems
 import Err
 import Util
 
-
 -- === Top-level interface ===
 
 checkTopUType :: (Fallible1 m, EnvReader m) => UType n -> m n (Type n)
-checkTopUType ty = liftImmut $ liftInfererMTop do
+checkTopUType ty = liftInfererM do
   solveLocal do
     ty' <- checkUType ty
     applyDefaults
     return ty'
 
 inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (Block n)
-inferTopUExpr e = liftImmut $ liftInfererMTop do
+inferTopUExpr e = liftInfererM do
   solveLocal $ buildBlockInf do
     e' <- inferSigma e
     applyDefaults
@@ -73,7 +72,7 @@ data UDeclInferenceResult e n =
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, SubstE Name e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  PairE def' clsAbs <- liftImmut $ liftInfererMTop $ solveLocal $ inferDataDef def
+  PairE def' clsAbs <- liftInfererM $ solveLocal $ inferDataDef def
   defName <- emitDataDef def'
   tc' <- emitTyConName defName =<< tyConDefAsAtom defName (Just clsAbs)
   dcs' <- forM [0..(nestLength dcs - 1)] \i ->
@@ -83,7 +82,7 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
   let classPrettyName   = fromString (pprint className) :: SourceName
   let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
-  dictDef <- liftImmut $ liftInfererMTop $
+  dictDef <- liftInfererM $
                inferInterfaceDataDef classPrettyName paramBs superclasses methodTys
   dictDefName <- emitDataDef dictDef
   let classDef = ClassDef classPrettyName methodPrettyNames dictDefName
@@ -96,7 +95,7 @@ inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) 
   let subst = className @> className' <.> methodNames @@> methodNames'
   UDeclResultDone <$> applySubst subst result
 inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
-  block <- liftImmut $ liftInfererMTop $ solveLocal $ buildBlockInf do
+  block <- liftInfererM $ solveLocal $ buildBlockInf do
     val <- checkMaybeAnnExpr ann rhs
     -- This is just for typ checking. We don't actually generate
     -- pattern-matching code at the top level
@@ -109,7 +108,7 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
   return $ UDeclResultWorkRemaining block $ Abs decl result
 
 inferTopUDecl decl@(UInstance ~(InternalName className) argBinders params methods _) result = do
-  block <- liftImmut $ liftInfererMTop $ solveLocal $ buildBlockInf do
+  block <- liftInfererM $ solveLocal $ buildBlockInf do
     instanceDict <- checkInstanceArgs argBinders do
                       checkInstanceParams params \params' -> do
                         className' <- sinkM className
@@ -128,11 +127,9 @@ applyUDeclAbs (Abs decl result) x = case decl of
     case pat of
       WithSrcB _ (UPatBinder b) -> applySubst (b@>v) result
       _ -> do
-        atomSubst <- liftImmut do
-          DB env <- getDB
-          liftIO $ runInterpM env do
-            x' <- evalAtom (Var v)
-            matchUPat pat x'
+        atomSubst <- liftInterpM do
+          x' <- evalAtom (Var v)
+          matchUPat pat x'
         nameSubst <- emitAtomSubstFrag atomSubst
         applySubst nameSubst result
   UInstance _ _ _ _ maybeName -> do
@@ -170,20 +167,20 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m
   -- except where it's not possible because the result isn't atom-substitutable,
   -- such as the source map at the top level.
   buildDeclsInfUnzonked
-    :: (SinkableE e, HoistableE e)
+    :: (SinkableE e, HoistableE e, SubstE Name e)
     => EmitsInf n
     => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
     -> m n (Abs (Nest Decl) e n)
 
   buildAbsInf
-    :: (SinkableE e, HoistableE e, Color c, ToBinding binding c)
+    :: (SinkableE e, HoistableE e, SubstE Name e, Color c, ToBinding binding c)
     => EmitsInf n
     => NameHint -> binding n
     -> (forall l. (EmitsInf l, DExt n l) => Name c l -> m l (e l))
     -> m n (Abs (BinderP c binding) e n)
 
 buildDeclsInf
-  :: (SubstE AtomSubstVal e, Solver m, InfBuilder m)
+  :: (SubstE AtomSubstVal e, SubstE Name e, Solver m, InfBuilder m)
   => (SinkableE e, HoistableE e)
   => EmitsInf n
   => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
@@ -196,7 +193,7 @@ type IfaceTypeSet = ESet Type
 
 class (SubstReader Name m, InfBuilder2 m, Solver2 m)
       => Inferer (m::MonadKind2) where
-  liftSolverM :: EmitsInf o => SolverM o a -> m i o a
+  liftSolverMInf :: EmitsInf o => SolverM o a -> m i o a
   gatherUnsolvedInterfaces :: m i o a -> m i o (a, IfaceTypeSet o)
   reportUnsolvedInterface  :: Type o  -> m i o ()
 
@@ -281,7 +278,6 @@ getAtomNames :: Distinct l => EnvFrag n l -> S.Set (AtomName l)
 getAtomNames frag = S.fromList $ nameSetToList $ toNameSet $ toScopeFrag frag
 
 -- query each binding rhs for inference names and add it to the set if needed
-
 extendInfOutMapSolver :: Distinct n => InfOutMap n -> SolverSubst n -> InfOutMap n
 extendInfOutMapSolver (InfOutMap bindings ss dd un) ss' = do
   let (un', bindings') = zonkUnsolvedEnv ss' un bindings
@@ -299,25 +295,25 @@ substIsEmpty (SolverSubst subst) = null subst
 -- implementation of `emitDecl`, so maybe we could instead do something like
 -- emit a fresh inference variable in the case thea `getType` fails.
 zonkUnsolvedEnv :: Distinct n => SolverSubst n -> UnsolvedEnv n -> Env n
-                     -> (UnsolvedEnv n, Env n)
-zonkUnsolvedEnv ss un bindings | substIsEmpty ss = (un, bindings)
-zonkUnsolvedEnv ss unsolved bindings =
-  flip runState bindings $ execWriterT do
+                -> (UnsolvedEnv n, Env n)
+zonkUnsolvedEnv ss un env | substIsEmpty ss = (un, env)
+zonkUnsolvedEnv ss unsolved env =
+  flip runState env $ execWriterT do
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
       flip lookupEnvPure v <$> get >>= \case
         AtomNameBinding rhs -> do
-          let rhs' = zonkWithOutMap (InfOutMap bindings ss mempty mempty) rhs
+          let rhs' = zonkWithOutMap (InfOutMap env ss mempty mempty) rhs
           modify $ updateEnv v $ AtomNameBinding rhs'
-          when (hasInferenceVars bindings $rhs') $
-            tell $ UnsolvedEnv $ S.singleton v
+          let rhsHasInfVars = runEnvReaderM env $ hasInferenceVars rhs'
+          when rhsHasInfVars $ tell $ UnsolvedEnv $ S.singleton v
 
-hasInferenceVars :: HoistableE e => Env n -> e n -> Bool
-hasInferenceVars bs e = any (isInferenceVar bs) $ freeAtomVarsList e
+hasInferenceVars :: (EnvReader m, HoistableE e) => e n -> m n Bool
+hasInferenceVars e = anyM isInferenceVar $ freeAtomVarsList e
 
-isInferenceVar :: Env n -> AtomName n -> Bool
-isInferenceVar bs v = case lookupEnvPure bs v of
-  AtomNameBinding (SolverBound _) -> True
-  _                               -> False
+isInferenceVar :: EnvReader m => AtomName n -> m n Bool
+isInferenceVar v = lookupEnv v >>= \case
+  AtomNameBinding (SolverBound _) -> return True
+  _                               -> return False
 
 instance ExtOutMap InfOutMap InfOutFrag where
   extendOutMap infOutMap (InfOutFrag em ds solverSubst) = do
@@ -342,6 +338,7 @@ instance GenericE RequiredIfaces where
     JustE ds  -> GatherRequired ds
     _ -> error "unreachable"
 instance SinkableE RequiredIfaces
+instance SubstE Name RequiredIfaces
 instance HoistableE  RequiredIfaces
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
@@ -349,57 +346,48 @@ newtype InfererM (i::S) (o::S) (a:: *) = InfererM
   deriving (Functor, Applicative, Monad, MonadFail, MonadState (RequiredIfaces o),
             ScopeReader, Fallible, Catchable, CtxReader, SubstReader Name)
 
-_runInfererM :: Distinct n => Env n -> InfererM n n a -> Except a
-_runInfererM bindings cont = runSubstInfererM bindings idSubst cont
+liftInfererMSubst :: (Fallible2 m, SubstReader Name m, EnvReader2 m)
+                  => InfererM i o a -> m i o a
+liftInfererMSubst cont = do
+  env <- unsafeGetEnv
+  subst <- getSubst
+  Distinct <- getDistinct
+  (InfOutFrag Empty _ _, (result, _)) <- do
+    liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
+      runStateT1 (runSubstReaderT subst $ runInfererM' $ cont) FailIfRequired
+  return result
 
-liftInfererMTop :: (Immut n, Fallible (m n), EnvReader m) => InfererM n n a -> m n a
-liftInfererMTop cont = do
-  DB env <- getDB
-  liftExcept $ runSubstInfererM env idSubst cont
-
-liftInfererM :: (Fallible2 m, CtxReader2 m, SubstReader Name m, EnvReader2 m)
-             => Immut o
-             => InfererM i o a -> m i o a
-liftInfererM cont = do
-  DB bindings <- getDB
-  env <- getSubst
-  liftExcept $ runSubstInfererM bindings env cont
+liftInfererM :: (EnvReader m, Fallible1 m)
+             => InfererM n n a -> m n a
+liftInfererM cont = runSubstReaderT idSubst $ liftInfererMSubst $ cont
 
 runLocalInfererM
-  :: (Immut n, SinkableE e)
+  :: SinkableE e
   => (forall l. (EmitsInf l, DExt n l) => InfererM i l (e l))
-  -> InfererM i n (DistinctAbs InfOutFrag e n)
+  -> InfererM i n (Abs InfOutFrag e n)
 runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-  DistinctAbs fg (PairE ans s') <- locallyMutableInplaceT do
+  Abs fg (PairE ans s') <- locallyMutableInplaceT do
     Distinct <- getDistinct
     EmitsInf <- fabricateEmitsInfEvidenceM
     toPairE <$> (runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s))
-  return (DistinctAbs fg ans, hoistRequiredIfaces fg s')
-
-runSubstInfererM :: Distinct o => Env o -> Subst Name i o -> InfererM i o a -> Except a
-runSubstInfererM bindings env cont = do
-  (InfOutFrag Empty _ _, (result, _)) <-
-    runFallibleM do
-      Immut <- return $ toImmutEvidence bindings
-      runInplaceT (initInfOutMap bindings) $
-        runStateT1 (runSubstReaderT env $ runInfererM' $ cont) FailIfRequired
-  return result
+  return (Abs fg ans, hoistRequiredIfaces fg s')
 
 initInfOutMap :: Env n -> InfOutMap n
 initInfOutMap bindings =
   InfOutMap bindings emptySolverSubst mempty (UnsolvedEnv mempty)
 
 emitInfererM :: Mut o => NameHint -> InfEmission o -> InfererM i o (AtomName o)
-emitInfererM hint emission = InfererM $ SubstReaderT $ lift $ lift11 $
-  emitInplaceT hint emission \b emission' ->
-    InfOutFrag (Nest (b :> emission') Empty) mempty emptySolverSubst
+emitInfererM hint emission = do
+  Abs b v <- newNameM hint
+  let frag = InfOutFrag (Nest (b :> emission) Empty) mempty emptySolverSubst
+  InfererM $ SubstReaderT $ lift $ lift11 $ extendInplaceT $ Abs frag v
 
 instance Solver (InfererM i) where
   extendSolverSubst v ty = InfererM $ SubstReaderT $ lift $ lift11 $
     void $ extendTrivialInplaceT $
       InfOutFrag Empty mempty (singletonSolverSubst v ty)
 
-  zonk e = InfererM $ SubstReaderT $ lift $ lift11 $ liftImmut do
+  zonk e = InfererM $ SubstReaderT $ lift $ lift11 do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap e
@@ -410,12 +398,12 @@ instance Solver (InfererM i) where
     extendTrivialInplaceT $ InfOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults [(t1, t2)]
 
-  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 $ liftImmut do
+  getDefaults = InfererM $ SubstReaderT $ lift $ lift11 do
     InfOutMap _ _ defaults _ <- getOutMapInplaceT
     return defaults
 
   solveLocal cont = do
-    DistinctAbs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
+    Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
     case unsolvedInfNames of
       Empty -> return result
       Nest (_:>RightE (InfVarBound _ ctx)) _ ->
@@ -425,33 +413,29 @@ instance Solver (InfererM i) where
 instance InfBuilder (InfererM i) where
   buildDeclsInfUnzonked cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      Abs decls (PairE result s') <- extendInplaceT do
-        DistinctAbs frag resultWithState <- locallyMutableInplaceT do
-          Emits    <- fabricateEmitsEvidenceM
-          EmitsInf <- fabricateEmitsInfEvidenceM
-          toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-        scope <- getScope
-        hoistThroughDecls scope frag resultWithState
+      Abs frag resultWithState <- locallyMutableInplaceT do
+        Emits    <- fabricateEmitsEvidenceM
+        EmitsInf <- fabricateEmitsInfEvidenceM
+        toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
+      ab <- hoistThroughDecls frag resultWithState
+      Abs decls (PairE result s') <- extendInplaceT ab
       return (Abs decls result, hoistRequiredIfaces decls s')
 
   buildAbsInf hint binding cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-      Abs b (PairE result s') <- extendInplaceT do
-        scope <- getScope
-        withFresh hint scope \b -> do
-          let b' = b :> sink binding
-          let bExt = toEnvFrag b'
-          extendInplaceTLocal (\bindings -> extendOutMap bindings bExt) do
-            DistinctAbs infFrag resultWithState <- locallyMutableInplaceT do
-              EmitsInf <- fabricateEmitsInfEvidenceM
-              toPairE <$> runStateT1 (
-                runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
-            PairB infFrag' b'' <- liftHoistExcept $ exchangeBs $ PairB b' infFrag
-            return $ withSubscopeDistinct b'' $ DistinctAbs infFrag' $ Abs b'' resultWithState
-      return (Abs b result, hoistRequiredIfaces b s')
+      ab <- withFreshBinder hint binding \b -> do
+        ab <- locallyMutableInplaceT do
+          EmitsInf <- fabricateEmitsInfEvidenceM
+          toPairE <$> runStateT1 (
+            runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
+        refreshAbs ab \infFrag resultWithState -> do
+          PairB infFrag' b' <- liftHoistExcept $ exchangeBs $ PairB b infFrag
+          return $ withSubscopeDistinct b' $ Abs infFrag' $ Abs b' resultWithState
+      Abs b (PairE result s') <- extendInplaceT ab
+      return (Abs (b:>binding) result, hoistRequiredIfaces b s')
 
 instance Inferer InfererM where
-  liftSolverM m = InfererM $ SubstReaderT $ lift $ lift11 $
+  liftSolverMInf m = InfererM $ SubstReaderT $ lift $ lift11 $
     liftBetweenInplaceTs (liftExcept . liftM fromJust . runSearcherM) id liftSolverOutFrag $
       runSolverM' m
 
@@ -466,9 +450,10 @@ instance Inferer InfererM where
       GatherRequired ds' -> return (ans, ds')
 
   reportUnsolvedInterface iface = do
-    UnitE <- liftImmut do
-      DB bindings <- getDB
-      when (hasInferenceVars bindings (sink iface)) $ throw NotImplementedErr $
+    UnitE <- do
+      iface' <- sinkM iface
+      ifaceHasInfVars <- hasInferenceVars iface'
+      when ifaceHasInfVars $ throw NotImplementedErr $
         "Type inference of this program requires delayed interface resolution"
       return UnitE
     get >>= \case
@@ -491,9 +476,9 @@ instance ScopableBuilder (InfererM i) where
       resultWithEmissions <- locallyMutableInplaceT do
         Emits <- fabricateEmitsEvidenceM
         toPairE <$> runStateT1 (runSubstReaderT (sink env) $ runInfererM' cont) (sink s)
-      DistinctAbs frag@(InfOutFrag emissions _ _) (PairE result s') <- return resultWithEmissions
+      Abs frag@(InfOutFrag emissions _ _) (PairE result s') <- return resultWithEmissions
       let decls = fmapNest (\(b:>LeftE rhs) -> Let b rhs) emissions
-      return (DistinctAbs decls result, hoistRequiredIfaces frag s')
+      return (Abs decls result, hoistRequiredIfaces frag s')
 
 type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 
@@ -503,40 +488,52 @@ type InferenceNameBinders = Nest (BinderP AtomNameC SolverBinding)
 -- error. To avoid false positives, we clean up as much dead (i.e. solved)
 -- solver state as possible.
 hoistThroughDecls
+  :: ( SubstE Name e, HoistableE e
+     , Fallible1 m, ScopeReader m, EnvExtender m, HoistableE e)
+  => InfOutFrag n l
+  ->   e l
+  -> m n (Abs InfOutFrag (Abs (Nest Decl) e) n)
+hoistThroughDecls outFrag result = do
+  scope <- unsafeGetScope
+  refreshAbs (Abs outFrag result) \outFrag' result' -> do
+    hoistThroughDecls' scope outFrag' result'
+
+hoistThroughDecls'
   :: (Fallible m, HoistableE e, Distinct l)
   => Scope n
   -> InfOutFrag n l
   ->   e l
-  -> m (DistinctAbs InfOutFrag (Abs (Nest Decl) e) n)
-hoistThroughDecls scope (InfOutFrag emissions defaults subst) result = do
+  -> m (Abs InfOutFrag (Abs (Nest Decl) e) n)
+hoistThroughDecls' scope (InfOutFrag emissions defaults subst) result = do
   withSubscopeDistinct emissions do
-    HoistedSolverState infVars defaults' subst' (DistinctAbs decls result') <-
+    HoistedSolverState infVars defaults' subst' decls result' <-
       hoistInfStateRec scope emissions defaults subst result
     let hoistedInfFrag = InfOutFrag (infNamesToEmissions infVars) defaults' subst'
-    return $ DistinctAbs hoistedInfFrag $ Abs decls result'
+    return $ Abs hoistedInfFrag $ Abs decls result'
 
 data HoistedSolverState e n where
   HoistedSolverState
-    :: (Distinct l1, Distinct n)
+    :: (Distinct l1, Distinct l2, Distinct n)
     => InferenceNameBinders n l1
     ->   Defaults l1
     ->   SolverSubst l1
-    ->   DistinctAbs (Nest Decl) e l1
+    ->   Nest Decl l1 l2
+    ->     e l2
     -> HoistedSolverState e n
 
 instance HoistableE e => HoistableE (HoistedSolverState e) where
-  freeVarsE (HoistedSolverState infVars defaults subst ab) =
-    freeVarsE (Abs infVars (PairE (PairE defaults subst) ab))
+  freeVarsE (HoistedSolverState infVars defaults subst decls result) =
+    freeVarsE (Abs infVars (PairE (PairE defaults subst) (Abs decls result)))
 
 dceIfSolved :: HoistableE e
             => NameBinder AtomNameC n l -> HoistedSolverState e l
             -> Maybe (HoistedSolverState e n)
-dceIfSolved b (HoistedSolverState infVars defaults subst result) = do
+dceIfSolved b (HoistedSolverState infVars defaults subst decls result) = do
   let v = withExtEvidence infVars $ sink $ binderName b
   case deleteFromSubst subst v of
     Just subst' ->
       -- do we need to zonk here? (if not, say why not)
-      case hoist b (HoistedSolverState infVars defaults subst' result) of
+      case hoist b (HoistedSolverState infVars defaults subst' decls result) of
         HoistSuccess hoisted -> Just hoisted
         HoistFailure err -> error $ "this shouldn't happen. Leaked var: " ++ pprint err
     Nothing -> Nothing
@@ -547,17 +544,17 @@ hoistInfStateRec :: (Fallible m, Distinct n, Distinct l, HoistableE e)
                  -> m (HoistedSolverState e n)
 hoistInfStateRec scope Empty defaults subst e = do
   let defaults' = applySolverSubstE scope subst defaults
-  return $ HoistedSolverState Empty defaults' subst (DistinctAbs Empty e)
+  return $ HoistedSolverState Empty defaults' subst Empty e
 hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
   withSubscopeDistinct rest do
-    solverState@(HoistedSolverState infVars defaults' subst' result) <-
+    solverState@(HoistedSolverState infVars defaults' subst' decls result) <-
        hoistInfStateRec (extendOutMap scope (toScopeFrag b)) rest defaults subst e
     case infEmission of
       RightE binding@(InfVarBound _ _) ->
         case dceIfSolved b solverState of
           Just solverState' -> return solverState'
           Nothing -> return $ HoistedSolverState (Nest (b:>binding) infVars)
-                                                 defaults' subst' result
+                                                 defaults' subst' decls result
       RightE (SkolemBound _) ->
         case hoist b solverState of
           HoistSuccess hoisted -> return hoisted
@@ -572,9 +569,8 @@ hoistInfStateRec scope (Nest (b :> infEmission) rest) defaults subst e = do
         withSubscopeDistinct b' $ do
             let scope' = scope `extendOutMap` toScopeFrag infVars'
             let emission'' = applySolverSubstE scope' subst'' emission'
-            DistinctAbs rest' e' <- return result
-            return $ HoistedSolverState infVars' defaults'' subst'' $
-                        DistinctAbs (Nest (Let b' emission'') rest') e'
+            return $ HoistedSolverState infVars' defaults'' subst''
+                        (Nest (Let b' emission'') decls) result
 
 hoistRequiredIfaces :: BindsNames b => b n l -> RequiredIfaces l -> RequiredIfaces n
 hoistRequiredIfaces bs = \case
@@ -594,16 +590,16 @@ infNamesToEmissions emissions =
   fmapNest (\(b:>binding) -> b :> RightE binding) emissions
 
 instance EnvReader (InfererM i) where
-  getEnv = do
+  unsafeGetEnv = do
     InfOutMap bindings _ _ _ <- InfererM $ SubstReaderT $ lift $ lift11 $ getOutMapInplaceT
     return bindings
 
 instance EnvExtender (InfererM i) where
-  extendEnv frag cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
-    (ans, s') <- extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-      withExtEvidence (toExtEvidence frag) $
-        runStateT1 (runSubstReaderT (sink env) (runInfererM' cont)) (sink s)
-    return (ans, hoistRequiredIfaces frag s')
+  refreshAbs ab cont = InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
+    refreshAbs ab \b e -> do
+      (ans, s') <- flip runStateT1 (sink s) $ runSubstReaderT (sink env) $
+                     runInfererM' $ cont b e
+      return (ans, hoistRequiredIfaces b s')
 
 -- === actual inference pass ===
 
@@ -1169,7 +1165,7 @@ inferInterfaceDataDef :: Inferer m
                       -> Nest (UAnnBinder AtomNameC) i i'
                       -> [UType i'] -> [UMethodType i']
                       -> m i o (DataDef o)
-inferInterfaceDataDef className paramBs superclasses methods = liftImmut do
+inferInterfaceDataDef className paramBs superclasses methods = do
   paramBs' <- solveLocal $ checkUBinders $ EmptyAbs paramBs
   buildNewtype className paramBs' \params -> solveLocal do
     params' <- mapM sinkM params
@@ -1542,11 +1538,11 @@ checkUTypeWithMissingDicts :: (EmitsInf o, Inferer m)
                            -> (IfaceTypeSet o -> (forall o'. (EmitsInf o', Ext o o') => m i o' (Type o')) -> m i o a)
                            -> m i o a
 checkUTypeWithMissingDicts uty@(WithSrcE pos _) cont = do
-  unsolvedSubset <- liftImmut $ do
+  unsolvedSubset <- do
     -- We have to be careful not to emit inference vars out of the initial solve.
     -- The resulting type will never be used in downstream inference, so we can easily
     -- end up with fake ambiguous variables if they leak out.
-    DistinctAbs frag unsolvedSubset' <- liftInfererM $ runLocalInfererM do
+    Abs frag unsolvedSubset' <- liftInfererMSubst $ runLocalInfererM do
       (Abs decls result, unsolvedSubset) <- gatherUnsolvedInterfaces $
         buildDeclsInf $ withAllowedEffects Pure $ checkRho uty TyKind
       -- Note that even if the normalization succeeds here, we can't short-circuit
@@ -1700,7 +1696,7 @@ class (CtxReader1 m, EnvReader m) => Solver (m::MonadKind1) where
   emitSolver :: EmitsInf n => SolverBinding n -> m n (AtomName n)
   addDefault :: Type n -> Type VoidS -> m n ()
   getDefaults :: m n (Defaults n)
-  solveLocal :: (Immut n, SinkableE e, HoistableE e)
+  solveLocal :: (SinkableE e, HoistableE e)
              => (forall l. (EmitsInf l, Ext n l, Distinct l) => m l (e l))
              -> m n (e n)
 
@@ -1738,39 +1734,42 @@ newtype SolverM (n::S) (a:: *) =
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
             ScopeReader, Fallible, CtxReader)
 
-runSolverM :: Distinct n => Env n -> SolverM n a -> Except a
-runSolverM bindings cont = do
-  Immut <- return $ toImmutEvidence bindings
-  maybeResult <- runSearcherM $ runInplaceT (initInfOutMap bindings) $
+liftSolverM :: EnvReader m => SolverM n a -> m n (Except a)
+liftSolverM cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return do
+    maybeResult <- runSearcherM $ runInplaceT (initInfOutMap env) $
                    runSolverM' $ cont
-  case maybeResult of
-    Nothing -> throw TypeErr "No solution"
-    Just (_, result) -> return result
+    case maybeResult of
+      Nothing -> throw TypeErr "No solution"
+      Just (_, result) -> return result
 
 instance EnvReader SolverM where
-  getEnv = SolverM do
-    InfOutMap bindings _ _ _ <- getOutMapInplaceT
-    return bindings
+  unsafeGetEnv = SolverM do
+    InfOutMap env _ _ _ <- getOutMapInplaceT
+    return env
 
 instance Solver SolverM where
   extendSolverSubst v ty = SolverM $
     void $ extendTrivialInplaceT $
       SolverOutFrag Empty mempty (singletonSolverSubst v ty)
 
-  zonk e = SolverM $ liftImmut do
+  zonk e = SolverM do
     Distinct <- getDistinct
     solverOutMap <- getOutMapInplaceT
     return $ zonkWithOutMap solverOutMap $ sink e
 
-  emitSolver binding = SolverM $
-    emitInplaceT "?" binding \b binding' ->
-      SolverOutFrag (Nest (b:>binding') Empty) mempty emptySolverSubst
+  emitSolver binding = do
+    Abs b v <- newNameM "?"
+    let frag = SolverOutFrag (Nest (b:>binding) Empty) mempty emptySolverSubst
+    SolverM $ extendInplaceT $ Abs frag v
 
   addDefault t1 t2 = SolverM $
     extendTrivialInplaceT $ SolverOutFrag Empty defaults emptySolverSubst
     where defaults = Defaults [(t1, t2)]
 
-  getDefaults = SolverM $ liftImmut do
+  getDefaults = SolverM do
     (InfOutMap _ _ defaults _) <- getOutMapInplaceT
     return defaults
 
@@ -1779,7 +1778,7 @@ instance Solver SolverM where
       Distinct <- getDistinct
       EmitsInf <- fabricateEmitsInfEvidenceM
       runSolverM' cont
-    DistinctAbs (SolverOutFrag unsolvedInfNames _ _) result <- return results
+    Abs (SolverOutFrag unsolvedInfNames _ _) result <- return results
     case hoist unsolvedInfNames result of
       HoistSuccess result' -> return result'
       HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
@@ -1829,11 +1828,6 @@ zonkWithOutMap :: (SubstE AtomSubstVal e, Distinct n)
 zonkWithOutMap (InfOutMap bindings solverSubst _ _) e =
   applySolverSubstE (toScope bindings) solverSubst e
 
-_applySolverSubstB :: (SubstB (SubstVal AtomNameC Atom) b, Distinct l)
-                   => Scope n -> SolverSubst n -> b n l -> b n l
-_applySolverSubstB scope solverSubst e = substBDistinct (scope, env) e
-  where env = newSubst $ lookupSolverSubst solverSubst
-
 deleteFromSubst :: SolverSubst n -> AtomName n -> Maybe (SolverSubst n)
 deleteFromSubst (SolverSubst m) v
   | M.member v m = Just $ SolverSubst $ M.delete v m
@@ -1867,7 +1861,7 @@ constrainEq t1 t2 = do
          ++ (case infVars of
                Empty -> ""
                _ -> "\n(Solving for: " ++ pprint (nestToList pprint infVars) ++ ")")
-  void $ addContext msg $ liftSolverM $ unify t1' t2'
+  void $ addContext msg $ liftSolverMInf $ unify t1' t2'
 
 class (Alternative1 m, Searcher1 m, Fallible1 m, Solver m) => Unifier m
 
@@ -2042,32 +2036,25 @@ freshEff :: (EmitsInf n, Solver m) => m n (EffectRow n)
 freshEff = EffectRow mempty . Just <$> freshInferenceName EffKind
 
 renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, SubstE Name e)
-                  => e n -> m n (Abs (Nest (NameBinder AtomNameC)) e n)
-renameForPrinting e = liftImmut do
-  e' <- sinkM e
-  DB bindings <- getDB
-  return $ renameForPrinting' bindings e'
-
-renameForPrinting' :: (Distinct n, HoistableE e, SinkableE e, SubstE Name e)
-                   => Env n -> e n -> Abs (Nest (NameBinder AtomNameC)) e n
-renameForPrinting' bindings e = do
-  let infVars = filter (isInferenceVar bindings) $ freeAtomVarsList e
+                   => e n -> m n (Abs (Nest (NameBinder AtomNameC)) e n)
+renameForPrinting e = do
+  infVars <- filterM isInferenceVar $ freeAtomVarsList e
   let ab = abstractFreeVarsNoAnn infVars e
-  let scope = toScope bindings
   let hints = take (length infVars) $ map fromString $
                 map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
-  withManyFresh hints scope \bs' ->
+  Distinct <- getDistinct
+  scope <- toScope <$> unsafeGetEnv  -- TODO: figure out how to do it safely
+  return $ withManyFresh hints scope \bs' ->
     runScopeReaderM (scope `extendOutMap` toScopeFrag bs') do
       ab' <- sinkM ab
-      e' <- applyNaryAbs ab' $ nestToList (sink . nameBinderName) bs'
+      e' <- applyNaryAbs ab' $ nestToList (sink . binderName) bs'
       return $ Abs bs' e'
 
 -- === dictionary synthesis ===
 
 synthTopBlock :: (EnvReader m, Fallible1 m) => Block n -> m n (Block n)
-synthTopBlock block = liftImmut do
-  DB env <- getDB
-  liftExcept $ runDictSynthTraverserM env $ traverseGenericE block
+synthTopBlock block = do
+  (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
 
 -- main entrypoint to dictionary synthesizer
 trySynthDict :: (Emits n, Builder m, Fallible1 m, EnvExtender m, EnvReader m)
@@ -2075,16 +2062,13 @@ trySynthDict :: (Emits n, Builder m, Fallible1 m, EnvExtender m, EnvReader m)
 trySynthDict ty = trySynthDictBlock ty >>= emitBlock
 
 trySynthDictBlock :: (Fallible1 m, EnvReader m) => Type n -> m n (Block n)
-trySynthDictBlock ty = liftImmut do
-  DB bindings <- getDB
-  ty' <- sinkM ty
-  if hasInferenceVars bindings ty'
-    then
-      throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
-    else do
-      let solutions = runSyntherM bindings $ buildBlock do
-                        ty'' <- sinkM ty'
-                        synthDict ty''
+trySynthDictBlock ty = do
+  hasInferenceVars ty >>= \case
+    True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
+    False -> do
+      solutions <- liftSyntherM $ buildBlock do
+                     ty' <- sinkM ty
+                     synthDict ty'
       let solutionsInstance = filter ((== UsedInstance) . snd) solutions
       unless (length solutionsInstance <= 1) $
         throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
@@ -2130,21 +2114,17 @@ instance Synther SyntherM where
 instance ScopableBuilder SyntherM where
   buildScoped cont = SyntherM $ buildScoped $ runSyntherM' cont
 
-runSyntherM :: Distinct n
-            => Env n
-            -> SyntherM n a
-            -> [(a, DerivationKind)]
-runSyntherM bindings cont = do
-  runWriterT $ runBuilderT bindings do
+liftSyntherM :: EnvReader m => SyntherM n a -> m n [(a, DerivationKind)]
+liftSyntherM cont =
+  liftM runWriterT $ liftBuilderT do
     initGivens <- givensFromEnv
     runOutReaderT initGivens $ runSyntherM' cont
 
 givensFromEnv :: EnvReader m => m n (Givens n)
-givensFromEnv = liftImmut do
-  DB bindings <- getDB
-  let (SynthCandidates givens projs _) = getSynthCandidates bindings
+givensFromEnv = do
+  SynthCandidates givens projs _ <- getSynthCandidatesM
   let givensBlocks = map AtomicBlock givens
-  return $ getSuperclassClosure bindings projs (Givens HM.empty) givensBlocks
+  getSuperclassClosure projs (Givens HM.empty) givensBlocks
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
@@ -2156,49 +2136,40 @@ extendGivens newGivens cont = do
 getSuperclassClosureM
   :: EnvReader m
   => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
-getSuperclassClosureM projs givens newGivens =  liftImmut do
-  DB bindings <- getDB
+getSuperclassClosureM projs givens newGivens = do
   givens' <- sinkM givens
   ListE projs'     <- sinkM $ ListE projs
   ListE newGivens' <- sinkM $ ListE newGivens
-  return $ getSuperclassClosure bindings projs' givens' newGivens'
+  getSuperclassClosure projs' givens' newGivens'
 
 getSuperclassClosure
-  :: forall n. Distinct n
-  => Env n -> [Atom n] -> Givens n -> [Given n] -> Givens n
-getSuperclassClosure bindings projs givens newGivens =
-  execState (mapM_ visitGiven newGivens) givens
+  :: forall m n.
+     EnvReader m => [Atom n] -> Givens n -> [Given n] -> m n (Givens n)
+getSuperclassClosure projs givens newGivens = do
+  liftM snd $ runStateT1 (mapM_ visitGiven newGivens) givens
   where
-    visitGiven :: Given n -> State (Givens n) ()
+    visitGiven :: EnvReader m => Given n -> StateT1 Givens m n ()
     visitGiven x = alreadyVisited x >>= \case
       True -> return ()
       False -> do
         markAsVisited x
         forM_ projs \proj ->
-          case tryApply bindings proj x of
+          liftBuilderT (tryApplyM proj x) >>= \case
             Just parent -> visitGiven parent
             Nothing -> return ()
 
-    alreadyVisited :: Given n -> State (Givens n) Bool
+    alreadyVisited :: EnvReader m => Given n -> StateT1 Givens m n Bool
     alreadyVisited x = do
       Givens m <- get
-      return $ runEnvReaderM bindings do
-        ty <- getType x
-        return $ EKey ty `HM.member` m
+      ty <- getType x
+      return $ EKey ty `HM.member` m
 
-    markAsVisited :: Given n -> State (Givens n) ()
+    markAsVisited :: EnvReader m => Given n -> StateT1 Givens m n ()
     markAsVisited x = do
-      let ty = runEnvReaderM bindings $ getType x
+      ty <- getType x
       modify \(Givens m) -> Givens $ HM.insert (EKey ty) x m
 
-tryApply :: Distinct n => Env n -> Atom n -> Given n -> Maybe (Given n)
-tryApply bindings proj dict = do
-  runBuilderT bindings do
-    Distinct <- getDistinct
-    tryApplyM (sink proj) (sink dict)
-
-tryApplyM :: (MonadFail1 m, Builder m)
-          => Atom n -> Given n -> m n (Given n)
+tryApplyM :: (MonadFail1 m, Builder m) => Atom n -> Given n -> m n (Given n)
 tryApplyM proj dict = do
   dictTy <- getType dict
   projTy <- getType proj
@@ -2213,12 +2184,11 @@ tryApplyM proj dict = do
 
 instantiateProjParams :: EnvReader m => Type n -> Type n
                       -> m n (MaybeE (ListE Atom) n)
-instantiateProjParams projTy dictTy = liftImmut do
-  DB bindings <- getDB
+instantiateProjParams projTy dictTy = do
   PairE projTy' dictTy' <- sinkM $ PairE projTy dictTy
-  let result = runSolverM bindings $ solveLocal do
-                 params <- instantiateProjParamsM (sink projTy') (sink dictTy')
-                 zonk $ ListE params
+  result <- liftSolverM $ solveLocal do
+    params <- instantiateProjParamsM (sink projTy') (sink dictTy')
+    zonk $ ListE params
   case result of
     Success params -> return $ JustE $ params
     Failure _ -> return NothingE
@@ -2269,9 +2239,8 @@ synthDict ty = error $ "Not a valid dictionary type: " ++ pprint ty
 
 instantiateDictParams :: (Fallible1 m, EnvReader m)
                       => Type n -> Type n -> m n (PairE (ListE Atom) (ListE Type) n)
-instantiateDictParams monoTy polyTy = liftImmut do
-  DB bindings <- getDB
-  liftExcept $ runSolverM bindings $ solveLocal do
+instantiateDictParams monoTy polyTy = do
+  (liftExcept =<<) $ liftSolverM $ solveLocal do
     monoTy' <- sinkM monoTy
     polyTy' <- sinkM polyTy
     (params, tys) <- instantiateDictParamsRec monoTy' polyTy'
@@ -2307,13 +2276,13 @@ instance SinkableE Givens where
 
 -- === Dictionary synthesis traversal ===
 
-runDictSynthTraverserM
-  :: Distinct n => Env n
-  -> DictSynthTraverserM n n a
-  -> Except a
-runDictSynthTraverserM bindings m =
-   runFallibleM $ runBuilderT bindings do
-     runSubstReaderT idSubst $ runDictSynthTraverserM' m
+liftDictSynthTraverserM
+  :: EnvReader m
+  => DictSynthTraverserM n n a
+  -> m n (Except a)
+liftDictSynthTraverserM m =
+  liftM runFallibleM $ liftBuilderT do
+    runSubstReaderT idSubst $ runDictSynthTraverserM' m
 
 newtype DictSynthTraverserM (i::S) (o::S) (a:: *) =
   DictSynthTraverserM
@@ -2386,7 +2355,7 @@ buildUnaryAltInf
   -> (forall l. (EmitsBoth l, Ext n l) => AtomName l -> m l (Atom l))
   -> m n (Alt n)
 buildUnaryAltInf ty body = do
-  bs <- liftBuilder $ singletonBinderNest NoHint $ sink ty
+  bs <- liftBuilder $ singletonBinderNest NoHint ty
   buildAltInf bs \[v] -> body v
 
 buildAltInf
@@ -2444,3 +2413,19 @@ instance (SubstE Name e, CheckableE e) => CheckableE (UDeclInferenceResult e) wh
     block' <- checkE block
     return $ UDeclResultWorkRemaining block'
                 (error "TODO: implement substitution for UDecl")
+
+instance (Monad m, ExtOutMap InfOutMap decls)
+        => EnvReader (InplaceT InfOutMap decls m) where
+  unsafeGetEnv = do
+    InfOutMap env _ _ _ <- getOutMapInplaceT
+    return env
+
+instance (Monad m, ExtOutMap InfOutMap decls)
+         => EnvExtender (InplaceT InfOutMap decls m) where
+  refreshAbs ab cont = UnsafeMakeInplaceT \env ->
+    refreshAbsPure (toScope env) ab \_ b e -> do
+      let env' = extendOutMap env $ toEnvFrag b
+      unsafeRunInplaceT (cont b e) env'
+
+instance BindsEnv InfOutFrag where
+  toEnvFrag (InfOutFrag frag _ _) = toEnvFrag frag

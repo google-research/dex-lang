@@ -101,15 +101,14 @@ instance Compiler CompileM
 
 impToLLVM :: (Mut n, TopBuilder m, MonadIO1 m, MonadLogger1 [Output] m)
           => SourceName -> ImpFunction n -> m n ([ObjectFileName n], L.Module)
-impToLLVM name f = liftM ([],) $ liftM fromLiftE $ liftImmut do
-  DB env <- getDB
+impToLLVM name f =  do
   logger <- getLogger
-  liftM LiftE $ liftIO $ impToLLVM' env logger name f
+  ([],) <$> impToLLVM' logger name f
 
-impToLLVM' :: Distinct n => Env n -> Logger [Output]
-          -> SourceName -> ImpFunction n -> IO L.Module
-impToLLVM' env logger fName f = do
-  (defns, externSpecs, globalDtors) <- compileFunction env logger fName f
+impToLLVM' :: (EnvReader m, MonadIO1 m) => Logger [Output]
+           -> SourceName -> ImpFunction n -> m n L.Module
+impToLLVM' logger fName f = do
+  (defns, externSpecs, globalDtors) <- compileFunction logger fName f
   let externDefns = map externDecl $ toList externSpecs
   let dtorDef = defineGlobalDtors globalDtors
   return $ L.defaultModule
@@ -130,30 +129,30 @@ impToLLVM' env logger fName f = do
         , L.initializer = Just $ C.Array dtorRegEntryTy (makeDtorRegEntry <$> globalDtors)
         }
 
-compileFunction :: Distinct n => Env n
-                -> Logger [Output] -> SourceName -> ImpFunction n
-                -> IO ([L.Definition], S.Set ExternFunSpec, [L.Name])
-compileFunction _ _ _ (FFIFunction ty f) =
+compileFunction :: (EnvReader m, MonadIO1 m)
+                => Logger [Output] -> SourceName -> ImpFunction n
+                -> m n ([L.Definition], S.Set ExternFunSpec, [L.Name])
+compileFunction _ _ (FFIFunction ty f) =
   return ([], S.singleton (makeFunSpec f ty), [])
-compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
+compileFunction logger fName fun@(ImpFunction (IFunType cc argTys retTys)
                 (Abs bs body)) = case cc of
   FFIFun            -> error "shouldn't be trying to compile an FFI function"
   FFIMultiResultFun -> error "shouldn't be trying to compile an FFI function"
-  CInternalFun -> return $ runCompile env CPU $ do
+  CInternalFun -> liftCompile CPU $ do
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CInternalFun doesn't support returning values"
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
-  CEntryFun -> return $ runCompile env CPU $ do
+  CEntryFun -> liftCompile CPU $ do
     (argParams, argOperands) <- unzip <$> traverse (freshParamOpPair [] . scalarTy) argTys
     unless (null retTys) $ error "CEntryFun doesn't support returning values"
     void $ extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     mainFun <- makeFunction (topLevelFunName fName) argParams (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
     return ([L.GlobalDefinition mainFun], extraSpecs, [])
-  EntryFun requiresCUDA -> return $ runCompile env CPU $ do
+  EntryFun requiresCUDA -> liftCompile CPU $ do
     (streamFDParam , streamFDOperand ) <- freshParamOpPair attrs $ i32
     (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ hostPtrTy i64
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
@@ -170,8 +169,10 @@ compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
     return ([L.GlobalDefinition mainFun, outputStreamPtrDef], extraSpecs, [])
     where attrs = [L.NoAlias, L.NoCapture, L.NonNull]
   CUDAKernelLaunch -> do
-    arch <- getCudaArchitecture 0
-    (CUDAKernel kernelText) <- compileCUDAKernel logger (impKernelToLLVMGPU env fun) arch
+    arch <- liftIO $ getCudaArchitecture 0
+    (CUDAKernel kernelText) <- do
+      fun' <- impKernelToLLVMGPU fun
+      liftIO $ compileCUDAKernel logger fun' arch
     let chars = map (C.Int 8) $ map (fromIntegral . fromEnum) (B.unpack kernelText) ++ [0]
     let textArr = C.Array i8 chars
     let textArrTy = typeOf textArr
@@ -201,13 +202,13 @@ compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
     let textPtr = C.GetElementPtr True
                                   (C.GlobalReference (hostPtrTy textArrTy) textGlobalName)
                                   [C.Int 32 0, C.Int 32 0]
-    let loaderDef = runCompile env CPU $ do
+    loaderDef <- liftCompile CPU $ do
           emitVoidExternCall kernelLoaderSpec
             [ L.ConstantOperand $ textPtr, kernelModuleCache, kernelFuncCache]
           kernelFunc <- load kernelFuncCache
           makeFunction (topLevelFunName fName) [] (Just kernelFunc)
     let dtorName = fromString $ pprint fName ++ "#dtor"
-    let dtorDef = runCompile env CPU $ do
+    dtorDef <- liftCompile CPU $ do
           emitVoidExternCall kernelUnloaderSpec
             [ kernelModuleCache, kernelFuncCache ]
           makeFunction dtorName [] Nothing
@@ -220,7 +221,7 @@ compileFunction env logger fName fun@(ImpFunction (IFunType cc argTys retTys)
                                          [hostPtrTy i8, hostPtrTy hostVoidp, hostPtrTy hostVoidp]
       kernelUnloaderSpec = ExternFunSpec "dex_unloadKernelCUDA" L.VoidType [] []
                                          [hostPtrTy hostVoidp, hostPtrTy hostVoidp]
-  MCThreadLaunch -> return $ runCompile env CPU $ do
+  MCThreadLaunch -> liftCompile CPU $ do
     let numThreadInfoArgs = 4  -- [threadIdParam, nThreadParam, argArrayParam]
     let argTypes = drop numThreadInfoArgs $ nestToList (scalarTy . iBinderType) bs
     -- Set up arguments
@@ -557,8 +558,8 @@ cuMemFree ptr = do
 -- * NVVM IR specification: https://docs.nvidia.com/cuda/nvvm-ir-spec/index.html
 -- * PTX docs: https://docs.nvidia.com/cuda/ptx-writers-guide-to-interoperability/index.html
 
-impKernelToLLVMGPU :: Distinct n => Env n -> ImpFunction n -> LLVMKernel
-impKernelToLLVMGPU env (ImpFunction _ (Abs args body)) = do
+impKernelToLLVMGPU :: EnvReader m => ImpFunction n -> m n (LLVMKernel)
+impKernelToLLVMGPU (ImpFunction _ (Abs args body)) = do
   let numThreadInfoArgs = 4  -- [threadIdParam, nThreadParam, argArrayParam]
   let argTypes = drop numThreadInfoArgs $ nestToList (scalarTy . iBinderType) args
   let kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
@@ -567,7 +568,7 @@ impKernelToLLVMGPU env (ImpFunction _ (Abs args body)) = do
                      , Just $ L.MDString "kernel"
                      , Just $ L.MDValue $ L.ConstantOperand $ C.Int 32 1
                      ]
-  runCompile env GPU $ do
+  liftCompile GPU $ do
     (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair ptrParamAttrs) argTypes
     tidx <- threadIdxX >>= (`asIntWidth` idxRepTy)
     bidx <- blockIdxX  >>= (`asIntWidth` idxRepTy)
@@ -584,7 +585,7 @@ impKernelToLLVMGPU env (ImpFunction _ (Abs args body)) = do
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     kernelMetaId = L.MetadataNodeID 0
     nvvmAnnotations = L.NamedMetadataDefinition "nvvm.annotations" [kernelMetaId]
-impKernelToLLVMGPU _ _ = error "not implemented"
+impKernelToLLVMGPU _ = error "not implemented"
 
 threadIdxX :: LLVMBuilder m => m Operand
 threadIdxX = emitExternCall spec []
@@ -969,10 +970,10 @@ initializeOutputStream streamFD = do
 
 -- === Compile monad utilities ===
 
-runCompile :: Distinct n => Env n -> Device -> CompileM n n  a -> a
-runCompile env dev m =
-  flip evalState initState $
-    runEnvReaderT env $
+liftCompile :: EnvReader m => Device -> CompileM n n a -> m n a
+liftCompile dev m =
+  liftM (flip evalState initState) $
+    liftEnvReaderT $
      runSubstReaderT idSubst $
        runCompileM' m
   where
@@ -990,13 +991,13 @@ lookupImpVar v = do
     Rename _ -> error "shouldn't happen?"
 
 finishBlock :: LLVMBuilder m => L.Terminator -> L.Name -> m ()
-finishBlock term newName = do
+finishBlock term name = do
   oldName <- gets blockName
   instrs  <- gets curInstrs
   let newBlock = L.BasicBlock oldName (reverse instrs) (L.Do term)
   modify $ setCurBlocks (newBlock:)
          . setCurInstrs (const [])
-         . setBlockName (const newName)
+         . setBlockName (const name)
 
 freshName :: LLVMBuilder m => NameHint -> m L.Name
 freshName hint = do

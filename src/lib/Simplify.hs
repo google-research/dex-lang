@@ -47,21 +47,9 @@ newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender
            , Builder, EnvReader, SubstReader AtomSubstVal, MonadFail)
 
-runSimplifyM :: Distinct n => Env n -> SimplifyM n n (e n) -> e n
-runSimplifyM bindings cont =
-  withImmutEvidence (toImmutEvidence bindings) $
-    runHardFail $
-      runBuilderT bindings $
-        runSubstReaderT idSubst $
-          runSimplifyM' cont
-
-liftSimplifyM
-  :: (EnvReader m, SinkableE e)
-  => (forall l. (Immut l, DExt n l) => SimplifyM l l (e l))
-  -> m n (e n)
-liftSimplifyM cont = liftImmut do
-  DB env <- getDB
-  return $ runSimplifyM env $ cont
+liftSimplifyM :: (SinkableE e, EnvReader m) => SimplifyM n n (e n) -> m n (e n)
+liftSimplifyM cont = do
+  liftBuilder $ runSubstReaderT idSubst $ runSimplifyM' cont
 
 buildBlockSimplified
   :: (Builder m)
@@ -90,18 +78,14 @@ data SimplifiedBlock n = SimplifiedBlock (Block n) (ReconstructAtom n)
 -- TODO: extend this to work on functions instead of blocks (with blocks still
 -- accessible as nullary functions)
 simplifyTopBlock :: EnvReader m => Block n -> m n (SimplifiedBlock n)
-simplifyTopBlock block = liftImmut do
-  DB env <- getDB
-  return $ runSimplifyM env do
-    (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
-    return $ SimplifiedBlock block' recon
+simplifyTopBlock block = liftSimplifyM do
+  (Abs UnitB block', recon) <- simplifyAbs $ Abs UnitB block
+  return $ SimplifiedBlock block' recon
 
 simplifyTopFunction :: EnvReader m => NaryPiType n -> Atom n -> m n (NaryLamExpr n)
-simplifyTopFunction ty f = liftImmut do
-  DB env <- getDB
-  return $ runSimplifyM env do
-    buildNaryLamExpr ty \xs -> do
-      dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
+simplifyTopFunction ty f = liftSimplifyM do
+  buildNaryLamExpr ty \xs -> do
+    dropSubst $ simplifyExpr $ App (sink f) $ fmap Var xs
 
 instance GenericE SimplifiedBlock where
   type RepE SimplifiedBlock = PairE Block ReconstructAtom
@@ -185,7 +169,7 @@ defuncCase scrut alts resultTy = do
   fromSplit split dataVal nonDataVal
   where
     getAltNonDataTy :: EnvReader m => Alt n -> m n (Type n)
-    getAltNonDataTy (Abs bs body) = liftImmut $ liftSubstEnvReaderM do
+    getAltNonDataTy (Abs bs body) = liftSubstEnvReaderM do
       substBinders bs \bs' -> do
         ~(PairTy _ ty) <- getTypeSubst body
         -- Result types of simplified abs should be hoistable past binder
@@ -193,7 +177,7 @@ defuncCase scrut alts resultTy = do
 
     injectAltResult :: EnvReader m => Type n -> Int -> Alt n -> m n (Alt n)
     injectAltResult sumTy con (Abs bs body) = liftBuilder do
-      buildAlt (sink $ EmptyAbs bs) \vs -> do
+      buildAlt (EmptyAbs bs) \vs -> do
         originalResult <- emitBlock =<< applySubst (bs@@>vs) body
         (dataResult, nonDataResult) <- fromPair originalResult
         return $ PairVal dataResult $ Con $ SumCon (sink sumTy) con nonDataResult
@@ -202,13 +186,12 @@ defuncCase scrut alts resultTy = do
     -- first component is data. The reconstruction returned only applies to the
     -- second component.
     simplifyAlt
-      :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+      :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
       => SplitDataNonData n -> Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
-    simplifyAlt split (Abs bs body) = fromPairE <$> liftImmut do
+    simplifyAlt split (Abs bs body) = fromPairE <$> do
       substBinders bs \bs' -> do
-        DistinctAbs decls result <- buildScoped $ simplifyBlock body
-        -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-        extendEnv (toEnvFrag decls) do
+        ab <- buildScoped $ simplifyBlock body
+        refreshAbs ab \decls result -> do
           let locals = toScopeFrag bs' >>> toScopeFrag decls
           -- TODO: this might be too cautious. The type only needs to be hoistable
           -- above the decls. In principle it can still mention vars from the lambda
@@ -369,15 +352,13 @@ splitDataComponents = \case
       , fromSplit = \_ x -> return x }
 
 simplifyAbs
-  :: (Simplifier m, BindsEnv b, SubstB AtomSubstVal b)
+  :: (Simplifier m, BindsEnv b, SubstB Name b, SubstB AtomSubstVal b)
   => Abs b Block i -> m i o (Abs b Block o, ReconstructAtom o)
-simplifyAbs (Abs bs body) = fromPairE <$> liftImmut do
+simplifyAbs (Abs bs body) = fromPairE <$> do
   substBinders bs \bs' -> do
-    DistinctAbs decls result <- buildScoped $ simplifyBlock body
-    -- TODO: this would be more efficient if we had the two-computation version of buildScoped
-    extendEnv (toEnvFrag decls) do
-      resultTy <- getType result
-      isData resultTy >>= \case
+    ab <- buildScoped $ simplifyBlock body
+    refreshAbs ab \decls result -> do
+      getType result >>= isData >>= \case
         True -> do
           block <- makeBlock decls $ Atom result
           return $ PairE (Abs bs' block) IdentityRecon
@@ -616,6 +597,7 @@ instance GenericE SimpleIxInstance where
   fromE (SimpleIxInstance a b c) = PairE a (PairE b c)
   toE (PairE a (PairE b c)) = SimpleIxInstance a b c
 
+instance SubstE Name SimpleIxInstance
 instance SinkableE SimpleIxInstance
 instance HoistableE SimpleIxInstance
 
@@ -669,7 +651,4 @@ appSimplifiedIxMethod ty method x = do
   f' <- emitDecls decls f
   Distinct <- getDistinct
   case f' of
-    LamExpr fx' fb' -> do
-      emitBlock =<< liftImmut do
-        scope <- getScope
-        return $ substE (scope, idSubst <>> fx' @> SubstVal x) fb'
+    LamExpr fx' fb' -> emitBlock =<< applySubst (fx' @> SubstVal x) fb'

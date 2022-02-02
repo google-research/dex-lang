@@ -19,7 +19,7 @@ module Builder (
   emit, emitOp, emitUnOp,
   buildPureLam, BuilderT (..), Builder (..), ScopableBuilder (..),
   Builder2, BuilderM, ScopableBuilder2,
-  runBuilderT, buildBlock, app, add, mul, sub, neg, div',
+  liftBuilderT, buildBlock, app, add, mul, sub, neg, div',
   iadd, imul, isub, idiv, ilt, ieq, irem,
   fpow, flog, fLitLike, buildPureNaryLam,
   emitMethodType, emitSuperclass,
@@ -43,7 +43,7 @@ module Builder (
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
   singletonBinderNest, varsAsBinderNest, typesAsBinderNest,
-  runBuilderM, liftBuilder, liftEmitBuilder, makeBlock,
+  liftBuilder, liftEmitBuilder, makeBlock,
   indexToInt, indexSetSize, intToIndex,
   getIxImpl, IxImpl (..),
   litValToPointerlessAtom, emitPtrLit,
@@ -89,9 +89,9 @@ class (EnvReader m, EnvExtender m, Fallible1 m)
 
 class Builder m => ScopableBuilder (m::MonadKind1) where
   buildScoped
-    :: (SinkableE e, Immut n)
+    :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
-    -> m n (DistinctAbs (Nest Decl) e n)
+    -> m n (Abs (Nest Decl) e n)
 
 type Builder2 (m :: MonadKind2) = forall i. Builder (m i)
 type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
@@ -136,12 +136,11 @@ class (EnvReader m, MonadFail1 m)
   -- implemented more efficiently by avoiding a double substitution
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
   emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
-  emitEnv :: (Mut n, SinkableE e, SubstE Name e)
-                  => Abs TopEnvFrag e n -> m n (e n)
+  emitEnv :: (Mut n, SinkableE e, SubstE Name e) => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
-  localTopBuilder :: (Immut n, SinkableE e)
+  localTopBuilder :: SinkableE e
                   => (forall l. (Mut l, DExt n l) => m l (e l))
-                  -> m n (DistinctAbs TopEnvFrag e n)
+                  -> m n (Abs TopEnvFrag e n)
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
 emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm mempty mempty
@@ -160,15 +159,12 @@ emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 extendCache :: TopBuilder m => Cache n -> m n ()
 extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty cache mempty
 
-getCacheM :: EnvReader m => m n (Cache n)
-getCacheM = liftImmut $ getCache <$> getEnv
-
 extendImpCache :: TopBuilder m => AtomName n -> ImpFunName n -> m n ()
 extendImpCache fSimp fImp = extendCache $ Cache mempty (eMapSingleton fSimp fImp) mempty
 
 queryImpCache :: EnvReader m => AtomName n -> m n (Maybe (ImpFunName n))
 queryImpCache v = do
-  cache <- impCache <$> getCacheM
+  cache <- withEnv (impCache . getCache)
   return $ lookupEMap cache v
 
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
@@ -176,7 +172,7 @@ extendObjCache fImp cfun = extendCache $ Cache mempty mempty (eMapSingleton fImp
 
 queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
 queryObjCache v = do
-  cache <- objCache <$> getCacheM
+  cache <- withEnv (objCache . getCache)
   return $ lookupEMap cache v
 
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
@@ -185,20 +181,20 @@ newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
            , CtxReader, ScopeReader, MonadTrans1, MonadReader r, MonadIO)
 
 instance Fallible m => EnvReader (TopBuilderT m) where
-  getEnv = TopBuilderT $ getOutMapInplaceT
+  unsafeGetEnv = TopBuilderT $ getOutMapInplaceT
 
 instance Fallible m => TopBuilder (TopBuilderT m) where
-  emitBinding hint binding = TopBuilderT $
-    emitInplaceT hint binding \b binding' -> do
-      let envFrag = toEnvFrag (b:>binding')
+  emitBinding hint binding = do
+    Abs b v <- newNameM hint
+    let ab = Abs (b:>binding) v
+    ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
+      let envFrag = toEnvFrag b'
       let scs = bindingsFragToSynthCandidates envFrag
-      TopEnvFrag envFrag scs mempty mempty mempty
+      let topFrag = TopEnvFrag envFrag scs mempty mempty mempty
+      return $ Abs topFrag v'
+    TopBuilderT $ extendInplaceT ab'
 
-  emitEnv ab = TopBuilderT do
-    extendInplaceT do
-      scope <- getScope
-      ab' <- sinkM ab
-      return $ refreshAbs scope ab'
+  emitEnv ab = TopBuilderT $ extendInplaceT ab
 
   emitNamelessEnv bs = TopBuilderT $ extendTrivialInplaceT bs
 
@@ -220,7 +216,6 @@ runTopBuilderT
   -> TopBuilderT m n a
   -> m a
 runTopBuilderT bindings cont = do
-  Immut <- return $ toImmutEvidence bindings
   liftM snd $ runInplaceT bindings $ runTopBuilderT' $ cont
 
 type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
@@ -240,34 +235,25 @@ newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
 
 type BuilderM = BuilderT HardFailM
 
-runBuilderT
-  :: (Fallible m, Distinct n)
-  => Env n
-  -> BuilderT m n a
-  -> m a
-runBuilderT bindings cont = do
-  Immut <- return $ toImmutEvidence bindings
-  (Empty, result) <- runInplaceT bindings $ runBuilderT' cont
-  return result
+liftBuilderT :: (Fallible m, EnvReader m') => BuilderT m n a -> m' n (m a)
+liftBuilderT cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  return do
+    (Empty, result) <- runInplaceT env $ runBuilderT' cont
+    return result
 
-runBuilderM :: Distinct n => Env n -> BuilderM n a -> a
-runBuilderM bindings m = runHardFail $ runBuilderT bindings m
-
-liftBuilder
-  :: (EnvReader m, SinkableE e)
-  => (forall l. (Immut l, DExt n l) => BuilderM l (e l))
-  -> m n (e n)
-liftBuilder cont = liftImmut do
-  DB bindings <- getDB
-  return $ runBuilderM bindings $ cont
+liftBuilder :: EnvReader m => BuilderM n a -> m n a
+liftBuilder cont = liftM runHardFail $ liftBuilderT cont
 
 -- XXX: this uses unsafe functions in its implementations. It should be safe to
 -- use, but be careful changing it.
 liftEmitBuilder :: (Builder m, SinkableE e, SubstE Name e)
                 => BuilderM n (e n) -> m n (e n)
-liftEmitBuilder cont = liftImmut do
-  DB bindings <- getDB
-  let (result, decls) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) bindings
+liftEmitBuilder cont = do
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  let (result, decls) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env
   Emits <- fabricateEmitsEvidenceM
   emitDecls (unsafeCoerceB decls) result
 
@@ -282,17 +268,15 @@ instance Fallible m => ScopableBuilder (BuilderT m) where
 instance Fallible m => Builder (BuilderT m) where
   emitDecl hint ann expr = do
     ty <- getType expr
-    BuilderT $ emitInplaceT hint (DeclBinding ann ty expr) \b rhs ->
-      Nest (Let b rhs) Empty
+    Abs b v <- newNameM hint
+    let decl = Let b $ DeclBinding ann ty expr
+    BuilderT $ extendInplaceT $ Abs (Nest decl Empty) v
 
 instance Fallible m => EnvReader (BuilderT m) where
-  getEnv = BuilderT $ getOutMapInplaceT
+  unsafeGetEnv = BuilderT $ getOutMapInplaceT
 
 instance Fallible m => EnvExtender (BuilderT m) where
-  extendEnv frag cont = BuilderT $
-    extendInplaceTLocal (\bindings -> extendOutMap bindings frag) $
-      withExtEvidence (toExtEvidence frag) $
-        runBuilderT' cont
+  refreshAbs ab cont = BuilderT $ refreshAbs ab \b e -> runBuilderT' $ cont b e
 
 instance (SinkableV v, ScopableBuilder m) => ScopableBuilder (SubstReaderT v m i) where
   buildScoped cont = SubstReaderT $ ReaderT \env ->
@@ -321,6 +305,12 @@ instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (ReaderT1 e m) wher
 instance (SinkableE e, Builder m) => Builder (ReaderT1 e m) where
   emitDecl hint ann expr =
     ReaderT1 $ lift $ emitDecl hint ann expr
+
+instance (SinkableE e, HoistableState e m, Builder m) => Builder (StateT1 e m) where
+  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
+
+instance Builder m => Builder (MaybeT1 m) where
+  emitDecl hint ann expr = lift11 $ emitDecl hint ann expr
 
 -- === Emits predicate ===
 
@@ -353,8 +343,8 @@ buildBlock
   :: ScopableBuilder m
   => (forall l. (Emits l, DExt n l) => m l (Atom l))
   -> m n (Block n)
-buildBlock cont = liftImmut do
-  DistinctAbs decls results <- buildScoped do
+buildBlock cont = do
+  Abs decls results <- buildScoped do
     result <- cont
     ty <- cheapNormalize =<< getType result
     return $ result `PairE` ty
@@ -419,10 +409,10 @@ buildNullaryPi effs cont =
 buildLamGeneral
   :: ScopableBuilder m
   => NameHint -> Arrow -> Type n
-  -> (forall l. (Immut l, DExt n l) => AtomName l -> m l (EffectRow l))
+  -> (forall l.           DExt n l  => AtomName l -> m l (EffectRow l))
   -> (forall l. (Emits l, DExt n l) => AtomName l -> m l (Atom l))
   -> m n (Atom n)
-buildLamGeneral hint arr ty fEff fBody = liftImmut do
+buildLamGeneral hint arr ty fEff fBody = do
   withFreshBinder hint (LamBinding arr ty) \b -> do
     let v = binderName b
     effs <- fEff v
@@ -451,7 +441,7 @@ buildPi :: (Fallible1 m, Builder m)
         => NameHint -> Arrow -> Type n
         -> (forall l. DExt n l => AtomName l -> m l (EffectRow l, Type l))
         -> m n (PiType n)
-buildPi hint arr ty body = liftImmut do
+buildPi hint arr ty body = do
   withFreshPiBinder hint (PiBinding arr ty) \b -> do
     (effs, resultTy) <- body $ binderName b
     return $ PiType b effs resultTy
@@ -485,9 +475,9 @@ buildAbs
      , SinkableE e, Color c, ToBinding binding c)
   => NameHint
   -> binding n
-  -> (forall l. (Immut l, DExt n l) => Name c l -> m l (e l))
+  -> (forall l. DExt n l => Name c l -> m l (e l))
   -> m n (Abs (BinderP c binding) e n)
-buildAbs hint binding cont = liftImmut do
+buildAbs hint binding cont = do
   withFreshBinder hint binding \b -> do
     body <- cont $ binderName b
     return $ Abs (b:>binding) body
@@ -504,9 +494,9 @@ varsAsBinderNest (v:vs) = do
   return $ EmptyAbs (Nest (b:>ty) bs)
 
 typesAsBinderNest :: EnvReader m => [Type n] -> m n (EmptyAbs (Nest Binder) n)
-typesAsBinderNest types = liftImmut $ liftEnvReaderM $ go types
+typesAsBinderNest types = liftEnvReaderM $ go types
   where
-    go :: forall n. Immut n => [Type n] -> EnvReaderM n (EmptyAbs (Nest Binder) n)
+    go :: forall n. [Type n] -> EnvReaderM n (EmptyAbs (Nest Binder) n)
     go tys = case tys of
       [] -> return $ Abs Empty UnitE
       ty:rest -> withFreshBinder NoHint ty \b -> do
@@ -522,12 +512,11 @@ singletonBinderNest hint ty = do
 buildNaryAbs
   :: (ScopableBuilder m, SinkableE e, SubstE Name e, SubstE AtomSubstVal e, HoistableE e)
   => EmptyAbs (Nest Binder) n
-  -> (forall l. (Immut l, Distinct l, DExt n l) => [AtomName l] -> m l (e l))
+  -> (forall l. DExt n l => [AtomName l] -> m l (e l))
   -> m n (Abs (Nest Binder) e n)
-buildNaryAbs (EmptyAbs Empty) body =
-  liftImmut do
-    Distinct <- getDistinct
-    Abs Empty <$> body []
+buildNaryAbs (EmptyAbs Empty) body = do
+  Distinct <- getDistinct
+  Abs Empty <$> body []
 buildNaryAbs (EmptyAbs (Nest (b:>ty) bs)) body = do
   Abs b' (Abs bs' body') <-
     buildAbs (getNameHint b) ty \v -> do
@@ -614,7 +603,7 @@ buildUnaryAtomAlt ty body = do
 buildNewtype :: ScopableBuilder m
              => SourceName
              -> EmptyAbs (Nest Binder) n
-             -> (forall l. (Immut l, DExt n l) => [AtomName l] -> m l (Type l))
+             -> (forall l. DExt n l => [AtomName l] -> m l (Type l))
              -> m n (DataDef n)
 buildNewtype name paramBs body = do
   Abs paramBs' argBs <- buildNaryAbs paramBs \params -> do
@@ -1152,12 +1141,11 @@ reduceE monoid xs = liftEmitBuilder do
       emitOp $ PrimEffect (sink $ Var ref) $ MExtend (fmap sink monoid) x
 
 andMonoid :: EnvReader m => m n (BaseMonoid n)
-andMonoid = do
-  combiner <- liftBuilder $
+andMonoid =  liftM (BaseMonoid TrueAtom) do
+  liftBuilder $
     buildLam "_" PlainArrow BoolTy Pure \x ->
       buildLam "_" PlainArrow BoolTy Pure \y -> do
         emitOp $ ScalarBinOp BAnd (sink $ Var x) (Var y)
-  return $ BaseMonoid TrueAtom combiner
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
 mapE :: (Emits n, ScopableBuilder m)
@@ -1251,14 +1239,14 @@ telescopicCapture bs e = do
   vs <- localVarsAndTypeVars bs e
   vTys <- mapM (getType . Var) vs
   let (vsSorted, tys) = unzip $ toposortAnnVars $ zip vs vTys
-  ty <- liftImmut $ liftEnvReaderM $ buildTelescopeTy vs tys
+  ty <- liftEnvReaderM $ buildTelescopeTy vs tys
   result <- buildTelescopeVal (map Var vsSorted) ty
   let ty' = ignoreHoistFailure $ hoist bs ty
   let ab  = ignoreHoistFailure $ hoist bs $ abstractFreeVarsNoAnn vsSorted e
   return (result, ty', ab)
 
 -- XXX: assumes arguments are toposorted
-buildTelescopeTy :: (EnvReader m, EnvExtender m, Immut n)
+buildTelescopeTy :: (EnvReader m, EnvExtender m)
                  => [AtomName n] -> [Type n] -> m n (Type n)
 buildTelescopeTy [] [] = return UnitTy
 buildTelescopeTy (v:vs) (ty:tys) = do

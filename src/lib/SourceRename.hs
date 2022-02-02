@@ -49,17 +49,16 @@ data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
 newtype RenamerM (n::S) (a:: *) =
   RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , AlwaysImmut, ScopeReader, ScopeExtender)
+           , ScopeReader, ScopeExtender)
 
 liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
-liftRenamer cont = liftImmut do
-  scope <- getScope
-  sourceMap <- getSourceMap <$> getEnv
+liftRenamer cont = do
+  sourceMap <- getSourceMapM
   Distinct <- getDistinct
-  liftExcept $ runFallibleM $ runScopeReaderT scope $
+  (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
     runOutReaderT (RenamerSubst sourceMap False) $ runRenamerM $ cont
 
-class ( Monad1 m, AlwaysImmut m, ScopeReader m
+class ( Monad1 m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
@@ -291,7 +290,7 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
-      let sourceMap' = SourceMap $ M.singleton b (asUVar $ nameBinderName freshName)
+      let sourceMap' = SourceMap $ M.singleton b (asUVar $ binderName freshName)
       extendSourceMap sourceMap' do
         cont $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
