@@ -11,12 +11,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # os: [ubuntu-20.04, macos-latest]
-        os: [ubuntu-20.04]
+        os: [ubuntu-20.04, macos-latest]
         include:
-          # - os: macos-latest
-          #   install_deps: brew install llvm@12 pkg-config wget gzip
-          #   path_extension: $(brew --prefix llvm@12)/bin
+          - os: macos-latest
+            install_deps: brew install llvm@12 pkg-config wget gzip
+            path_extension: $(brew --prefix llvm@12)/bin
           - os: ubuntu-20.04
             install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip
             path_extension: /usr/lib/llvm-12/bin
@@ -56,11 +55,11 @@ jobs:
         key: ${{ runner.os }}-v3-${{ hashFiles('**/*.cabal', 'stack*.yaml') }}
         restore-keys: ${{ runner.os }}-v2-
 
-    # # This step is a workaround.
-    # # See issue for context: https://github.com/actions/cache/issues/445
-    # - name: Remove cached Setup executables
-    #   run: rm -rf ~/.stack/setup-exe-cache
-    #   if: runner.os == 'macOS'
+    # This step is a workaround.
+    # See issue for context: https://github.com/actions/cache/issues/445
+    - name: Remove cached Setup executables
+      run: rm -rf ~/.stack/setup-exe-cache
+      if: runner.os == 'macOS'
 
     - name: Build, treating warnings as errors
       run: make build-ci
