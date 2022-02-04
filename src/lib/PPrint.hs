@@ -377,6 +377,10 @@ instance Pretty (Module n) where
     <> "synth candidates:"
     <>   indented (pretty sourceMap)
 
+instance Pretty ModuleSourceName where
+  pretty ThePrelude = "prelude"
+  pretty (OrdinaryModule s) = p s
+
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
     "data" <+> p name <+> p bs <> hardline <> prettyLines cons

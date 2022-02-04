@@ -65,7 +65,6 @@ import Control.Monad.Writer.Strict hiding (Alt)
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
-import Data.String (fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import GHC.Stack
 
@@ -158,18 +157,24 @@ emitTopLet hint letAnn expr = do
 emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
 emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
-loadModule :: (Mut n, TopBuilder m) => SourceName -> Module n -> m n ()
+loadModule :: (Mut n, TopBuilder m) => ModuleSourceName -> Module n -> m n ()
 loadModule sourceName m = do
-  name <- emitBinding (fromString sourceName) $ ModuleBinding m
+  name <- emitBinding (getNameHint sourceName) $ ModuleBinding m
   let loaded = LoadedModules $ M.singleton sourceName name
   emitNamelessEnv $ TopEnvFrag emptyOutFrag loaded mempty mempty mempty mempty
 
-importModule :: (Mut n, TopBuilder m) => ModuleName n -> m n ()
-importModule name = do
+importModuleByInternalName :: (Mut n, TopBuilder m) => ModuleName n -> m n ()
+importModuleByInternalName name = do
   ModuleBinding (Module sourceMap synthCandidates) <- lookupEnv name
   emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty synthCandidates sourceMap mempty mempty
 
-lookupLoadedModule:: EnvReader m => SourceName -> m n (Maybe (ModuleName n))
+importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
+importModule name = do
+  lookupLoadedModule name >>= \case
+    Nothing -> throw ModuleImportErr $ "Couldn't import " ++ pprint name
+    Just name' -> importModuleByInternalName name'
+
+lookupLoadedModule:: EnvReader m => ModuleSourceName -> m n (Maybe (ModuleName n))
 lookupLoadedModule name = do
   loadedModules <- withEnv getLoadedModules
   return $ M.lookup name $ fromLoadedModules loadedModules

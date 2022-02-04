@@ -27,6 +27,7 @@ import Resources
 import TopLevel
 import Err
 import Syntax
+import Name
 import Parser (parseTopDeclRepl, keyWordStrs)
 #ifdef DEX_LIVE
 import RenderHtml
@@ -48,24 +49,18 @@ data EvalMode = ReplMode String
               | WatchMode  FilePath
 #endif
 
-data CmdOpts = CmdOpts EvalMode (Maybe FilePath) EvalConfig
+data CmdOpts = CmdOpts EvalMode EvalConfig
 
-runMode :: EvalMode -> Maybe FilePath -> EvalConfig -> IO ()
-runMode evalMode preludeFile opts = do
-  key <- case preludeFile of
-           Nothing   -> return $ show curResourceVersion -- memoizeFileEval already checks compiler version
-           Just path -> show <$> getModificationTime path
-  env <- cachedWithSnapshot "prelude" key do
-    hPutStrLn stderr "Compiling the prelude. This may take some time."
-    execInterblockM opts initTopState $ evalPrelude preludeFile
-  env <- cachedWithSnapshot "prelude" key do
-    hPutStrLn stderr "Compiling the prelude. This may take some time."
-    execInterblockM opts initTopState $ evalPrelude preludeFile
+runMode :: EvalMode -> EvalConfig -> IO ()
+runMode evalMode opts = do
+  env <- execInterblockM opts initTopState $ loadPrelude
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
       let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-      evalInterblockM opts env $ runInputT hasklineSettings $ forever $ replLoop prompt
+      evalInterblockM opts env do
+        importPrelude
+        runInputT hasklineSettings $ forever $ replLoop prompt
     ScriptMode fname fmt _ -> do
       results <- evalInterblockM opts env $ evalFile fname
       printLitProg fmt results
@@ -83,17 +78,13 @@ runMode evalMode preludeFile opts = do
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> runWeb      fname opts env
-    WatchMode  fname -> runTerminal fname opts env
+    WebMode    fname -> do
+      env' <- execInterblockM opts env $ importPrelude
+      runWeb fname opts env
+    WatchMode  fname -> do
+      env' <- execInterblockM opts env $ importPrelude
+      runTerminal fname opts env
 #endif
-
-evalPrelude :: Maybe FilePath -> InterblockM ()
-evalPrelude fname = do
-  source <- case fname of
-              Nothing   -> return preludeSource
-              Just path -> liftIO $ readFile path
-  result <- evalSourceText source
-  void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
 replLoop :: String -> InputT InterblockM ()
 replLoop prompt = do
@@ -155,10 +146,7 @@ nonEmptyNewline [] = []
 nonEmptyNewline l  = l ++ ['\n']
 
 parseOpts :: ParserInfo CmdOpts
-parseOpts = simpleInfo $ CmdOpts
-  <$> parseMode
-  <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
-  <*> parseEvalOpts
+parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
 
 helpOption :: String -> String -> Mod f a
 helpOption optionName options =
@@ -203,6 +191,7 @@ parseEvalOpts = EvalConfig
          (long "backend" <> value LLVM <>
           helpOption "Backend" (intercalate " | " $ fst <$> backends))
   <*> optional (strOption $ long "lib-path" <> metavar "PATH" <> help "Library path")
+  <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
   <*> optional (strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
@@ -219,5 +208,5 @@ parseEvalOpts = EvalConfig
 
 main :: IO ()
 main = do
-  CmdOpts evalMode preludeFile opts <- execParser parseOpts
-  runMode evalMode preludeFile opts
+  CmdOpts evalMode opts <- execParser parseOpts
+  runMode evalMode opts

@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Parser (Parser, parseit, parseProg, parseData,
+module Parser (Parser, parseit, parseUModule, parseData,
                parseTopDeclRepl, uint, withSource, parseExpr,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
@@ -35,13 +35,13 @@ data ParseCtx = ParseCtx { curIndent :: Int
                          , canBreak  :: Bool }
 type Parser = ReaderT ParseCtx (Parsec Void String)
 
-parseProg :: String -> UModule
-parseProg s = do
+parseUModule :: Maybe ModuleSourceName -> String -> UModule
+parseUModule name s = do
   let blocks = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
   let imports = flip foldMap blocks \b -> case sbContents b of
-                  ImportModule moduleName -> [moduleName]
+                  ImportModule moduleName -> [OrdinaryModule moduleName]
                   _ -> []
-  UModule imports blocks
+  UModule name imports blocks
 
 parseData :: String -> Except (UExpr VoidS)
 parseData s = parseit s $ expr <* (optional eol >> eof)

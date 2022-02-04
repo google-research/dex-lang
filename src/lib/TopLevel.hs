@@ -16,8 +16,8 @@
 
 module TopLevel (
   EvalConfig (..),
-  evalSourceBlock, evalSourceBlockRepl, evalFile, MonadInterblock (..), InterblockM,
-  ensureModuleLoaded,
+  evalSourceBlock, evalSourceBlockRepl, loadPrelude, importPrelude,
+  evalFile, MonadInterblock (..), InterblockM, ensureModuleLoaded,
   evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx (..),
   evalInterblockM, evalSourceBlockIO) where
 
@@ -33,6 +33,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import GHC.Generics (Generic (..))
 import System.FilePath
+import System.IO (stderr, hPutStrLn)
 
 import Paths_dex  (getDataFileName)
 
@@ -49,6 +50,7 @@ import Syntax
 import Builder
 import Type
 import SourceRename
+import Resources
 import Inference
 import Simplify
 import Imp
@@ -59,6 +61,7 @@ import JIT
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , libPath     :: Maybe FilePath
+  , preludeFile :: Maybe FilePath
   , logFile     :: Maybe FilePath }
 
 class Monad m => ConfigReader m where
@@ -126,9 +129,11 @@ evalSourceBlockIO opts env block = do
   (ans, env') <- runInterblockM opts env $ evalSourceBlockRepl block
   return (ans, Just env')
 
+-- Used for the top-level source file (rather than imported modules)
 evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
 evalSourceText source = do
-  let UModule deps sourceBlocks = parseProg source
+  let (UModule _ deps sourceBlocks) = parseUModule Nothing source
+  importPrelude
   mapM_ ensureModuleLoaded deps
   results <- mapM evalSourceBlock sourceBlocks
   return $ zip sourceBlocks results
@@ -157,22 +162,30 @@ liftPassesM bench m = do
 evalSourceBlockRepl :: MonadInterblock m => SourceBlock -> m Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlock _ _ _ _ (ImportModule name) -> ensureModuleLoaded name
+    SourceBlock _ _ _ _ (ImportModule name) -> ensureModuleLoaded $ OrdinaryModule name
     _ -> return ()
   evalSourceBlock block
+
+loadPrelude :: MonadInterblock m => m ()
+loadPrelude = ensureModuleLoaded ThePrelude
+
+importPrelude :: MonadInterblock m => m ()
+importPrelude = void $ liftPassesM False $ importModule ThePrelude
 
 -- XXX: This ensures that a module and its transitive dependencies are loaded,
 -- but it doesn't bring the names and instances into scope. The modules
 -- are "loaded" but not yet "imported".
-ensureModuleLoaded :: MonadInterblock m => SourceName -> m ()
+ensureModuleLoaded :: MonadInterblock m => ModuleSourceName -> m ()
 ensureModuleLoaded moduleSourceName = do
   alreadyLoaded <- do
     TopStateEx env <- getTopStateEx
     return $ M.keysSet $ fromLoadedModules $ getLoadedModules env
   -- TODO: think about where import errors should be handled
-  specifiedPath <- libPath <$> getConfig
-  depsRequired <- findDepsTransitively specifiedPath alreadyLoaded moduleSourceName
+  config <- getConfig
+  depsRequired <- findDepsTransitively config alreadyLoaded moduleSourceName
   forM_ depsRequired \(name, contents) -> liftPassesM False do
+    -- TODO: figure out where these sorts of messages belong
+    liftIO $ hPutStrLn stderr $ "Compiling " ++ pprint name
     evaluated <- evalUModule contents
     loadModule name evaluated
 
@@ -222,10 +235,7 @@ evalSourceBlock' block = case sbContents block of
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
-  ImportModule moduleName -> do
-    lookupLoadedModule moduleName >>= \case
-      Nothing -> throw ModuleImportErr $ "Couldn't import " ++ moduleName
-      Just moduleName' -> importModule moduleName'
+  ImportModule moduleName -> importModule $ OrdinaryModule moduleName
   QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()
   CommentLine  -> return ()
@@ -270,28 +280,28 @@ filterLogs block (Result outs err) = let
 -- the module itself) excluding those provided in the set of already known
 -- modules.
 findDepsTransitively
-  :: MonadIO m => Maybe FilePath -> S.Set SourceName -> SourceName
-  -> m [(SourceName, UModule)]
-findDepsTransitively searchPath alreadyKnown initialModuleName =
+  :: MonadIO m => EvalConfig -> S.Set ModuleSourceName -> ModuleSourceName
+  -> m [(ModuleSourceName, UModule)]
+findDepsTransitively config alreadyKnown initialModuleName =
   liftIO $ flip evalStateT alreadyKnown $ execWriterT $ go initialModuleName
   where
     go :: ( MonadIO m
-          , MonadWriter [(SourceName, UModule)] m
-          , MonadState (S.Set SourceName) m)
-       => SourceName -> m ()
+          , MonadWriter [(ModuleSourceName, UModule)] m
+          , MonadState (S.Set ModuleSourceName) m)
+       => ModuleSourceName -> m ()
     go name = do
       alreadyVisited <- S.member name <$> get
       unless alreadyVisited do
         modify $ S.insert name
-        modulePath <- findModulePath searchPath name
-        source <- liftIO $ readFile modulePath
-        let umodule@(UModule deps _) = parseProg source
+        source <- loadModuleSource config name
+        let umodule@(UModule deps _ _) = parseUModule (Just name) source
         mapM_ go deps
         tell [(name, umodule)]
 
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Mut n, MonadPasses m) => UModule -> m n (Module n)
-evalUModule (UModule _ blocks) = do
+evalUModule (UModule name _ blocks) = do
+  unless (name == Just ThePrelude) $ importModule ThePrelude
   Abs topFrag UnitE <- localTopBuilder $ mapM_ evalSourceBlock' blocks >> return UnitE
   TopEnvFrag envFrag _ synthCandidates sourceMap cache objFiles <- return topFrag
   let fragToEmit = TopEnvFrag envFrag mempty mempty mempty cache objFiles
@@ -473,12 +483,18 @@ addResultCtx block (Result outs errs) =
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
 
-findModulePath :: MonadIO m => Maybe FilePath -> SourceName -> m FilePath
-findModulePath specifiedPath moduleName = do
-  let fname = moduleName ++ ".dx"
-  case specifiedPath of
-    Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
-    Just path -> return $ path </> fname
+loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m String
+loadModuleSource config moduleName = case moduleName of
+  OrdinaryModule moduleName' -> do
+    let fname = moduleName' ++ ".dx"
+    fullPath <- case libPath config of
+      Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
+      Just path -> return $ path </> fname
+    liftIO $ readFile fullPath
+  ThePrelude -> do
+    case preludeFile config of
+      Nothing   -> return preludeSource
+      Just path -> liftIO $ readFile path
 
 -- === instances ===
 

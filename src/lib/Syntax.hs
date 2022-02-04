@@ -32,7 +32,8 @@ module Syntax (
     PiType (..), DepPairType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC,
-    ClassDef (..), SynthCandidates (..), Env (..), LoadedModules (..), Cache (..),
+    ClassDef (..), SynthCandidates (..), Env (..),
+    ModuleSourceName (..), LoadedModules (..), Cache (..),
     BindsEnv (..), BindsOneAtomName (..), WithEnv (..), AtomNameBinder,
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -298,12 +299,20 @@ type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
 -- === modules ===
 
+data ModuleSourceName = ThePrelude | OrdinaryModule SourceName
+     deriving (Show, Eq, Ord, Generic)
+
+data LoadedModules (n::S) = LoadedModules
+  { fromLoadedModules   :: M.Map ModuleSourceName (ModuleName n)
+  } deriving (Show, Generic)
+
 data Module (n::S) =
   Module (SourceMap n) (SynthCandidates n)
   deriving (Show, Generic)
 
 data UModule =
-  UModule { uModuleDirectImports :: [SourceName]
+  UModule { uModuleName          :: Maybe ModuleSourceName
+          , uModuleDirectImports :: [ModuleSourceName]
           , uModuleSourceBlocks  :: [SourceBlock] }
   deriving (Show, Generic)
 
@@ -358,10 +367,6 @@ data Env (n::S) = Env
 
 emptyLoadedModules :: LoadedModules n
 emptyLoadedModules = LoadedModules mempty
-
-data LoadedModules (n::S) = LoadedModules
-  { fromLoadedModules   :: M.Map SourceName (ModuleName n)
-  } deriving (Show, Generic)
 
 data Cache (n::S) = Cache
   { simpCache :: EMap AtomName AtomName n
@@ -2638,6 +2643,7 @@ instance Store ScalarBaseType
 instance Store Device
 instance Store LogLevel
 instance Store PassName
+instance Store ModuleSourceName
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
@@ -2701,6 +2707,7 @@ instance Hashable LitVal
 instance Hashable ScalarBaseType
 instance Hashable Device
 instance Hashable Arrow
+instance Hashable ModuleSourceName
 
 instance Hashable IsCUDARequired
 instance Hashable CallingConvention
@@ -3105,7 +3112,7 @@ instance AlphaHashableE Module
 instance SubstE Name    Module
 
 instance GenericE LoadedModules where
-  type RepE LoadedModules = ListE (PairE (LiftE SourceName) ModuleName)
+  type RepE LoadedModules = ListE (PairE (LiftE ModuleSourceName) ModuleName)
   fromE (LoadedModules m) =
     ListE $ M.toList m <&> \(v,md) -> PairE (LiftE v) md
   toE (ListE pairs) =
@@ -3122,6 +3129,10 @@ instance Semigroup (LoadedModules n) where
 
 instance Monoid (LoadedModules n) where
   mempty = LoadedModules mempty
+
+instance HasNameHint ModuleSourceName where
+  getNameHint (OrdinaryModule name) = getNameHint name
+  getNameHint ThePrelude = "prelude"
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)
