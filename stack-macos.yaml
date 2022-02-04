@@ -4,14 +4,14 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-resolver: lts-16.26
+resolver: lts-18.23
 
 packages:
 - .
 
 extra-deps:
-  - github: apaszke/llvm-hs
-    commit: a9a74be1a7c15f3d21b2fffd35a425002ae7736f
+  - github: llvm-hs/llvm-hs
+    commit: eda85a2bbe362a0b89df5adce0cb65e4e755eac5
     subdirs:
       - llvm-hs
       - llvm-hs-pure
