@@ -1,0 +1,21 @@
+import test_module_A
+import test_module_B
+
+
+:p test_module_A_val + 4
+> 7
+
+:p test_module_amb
+> Error: ambiguous variable: test_module_amb
+>
+> :p test_module_amb
+>    ^^^^^^^^^^^^^^^
+
+:p test_module_B_val_from_C
+> 23
+
+:p test_module_A_fun 2
+> 4
+
+:p test_module_A_fun_noinline 3
+> 6

@@ -35,8 +35,13 @@ data ParseCtx = ParseCtx { curIndent :: Int
                          , canBreak  :: Bool }
 type Parser = ReaderT ParseCtx (Parsec Void String)
 
-parseProg :: String -> [SourceBlock]
-parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
+parseProg :: String -> UModule
+parseProg s = do
+  let blocks = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
+  let imports = flip foldMap blocks \b -> case sbContents b of
+                  ImportModule moduleName -> [moduleName]
+                  _ -> []
+  UModule imports blocks
 
 parseData :: String -> Except (UExpr VoidS)
 parseData s = parseit s $ expr <* (optional eol >> eof)
@@ -63,7 +68,7 @@ mustParseit s p  = case parseit s p of
 importModule :: Parser SourceBlock'
 importModule = ImportModule <$> do
   keyWord ImportKW
-  s <- (:) <$> letterChar <*> many alphaNumChar
+  s <- lowerName <|> upperName
   eol
   return s
 

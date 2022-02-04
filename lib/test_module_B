@@ -1,0 +1,5 @@
+
+import test_module_C
+
+test_module_B_val = 10 + 2
+

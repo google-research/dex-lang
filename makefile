@@ -121,7 +121,7 @@ example-names = mandelbrot pi sierpinski rejection-sampler \
 # TODO: re-enable
 # fft vega-plotting
 
-test-names = uexpr-tests adt-tests type-tests eval-tests show-tests \
+test-names = uexpr-tests adt-tests type-tests module-tests eval-tests show-tests \
              shadow-tests monad-tests io-tests exception-tests sort-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \
              record-variant-tests typeclass-tests complex-tests trig-tests \

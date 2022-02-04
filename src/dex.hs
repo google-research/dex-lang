@@ -99,7 +99,7 @@ replLoop :: String -> InputT InterblockM ()
 replLoop prompt = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift getTopStateEx
-  result <- lift $ evalSourceBlock sourceBlock
+  result <- lift $ evalSourceBlockRepl sourceBlock
   case result of Result _ (Failure _) -> lift $ setTopStateEx env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result

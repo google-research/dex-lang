@@ -368,6 +368,14 @@ instance Pretty (Binding s n) where
       "Method" <+> pretty idx <+> "of" <+> pretty className
     ImpFunBinding f -> pretty f
     ObjectFileBinding _ -> "<object file>"
+    ModuleBinding  _ -> "<module>"
+
+instance Pretty (Module n) where
+  pretty (Module deps sourceMap) = do
+       "source map: "
+    <>   indented (pretty deps)
+    <> "synth candidates:"
+    <>   indented (pretty sourceMap)
 
 instance Pretty (DataDef n) where
   pretty (DataDef name bs cons) =
@@ -387,9 +395,9 @@ instance Pretty (Env n) where
   pretty s =
        "bindings: "
     <>   indented (pretty (getNameEnv s))
-    <> "synth candidates:"
+    <> "local synth candidates:"
     <>   indented (pretty (getSynthCandidates s))
-    <> "source map: "
+    <> "local source map: "
     <>   indented (pretty (getSourceMap s))
 
 instance Pretty SourceBlock where
@@ -603,9 +611,11 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings scs sourceMap cache _) =
+  pretty (TopEnvFrag bindings lms scs sourceMap cache _) =
        "bindings:"
     <>   indented (p bindings)
+    <> "Loaded modules:"
+    <>   indented (p lms)
     <> "Synth candidats:"
     <>   indented (p scs)
     <> "Source map:"
@@ -623,6 +633,9 @@ instance Pretty (SynthCandidates n) where
        "lambda dicts:"   <+> p (lambdaDicts       scs) <> hardline
     <> "superclasses:"   <+> p (superclassGetters scs) <> hardline
     <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
+
+instance Pretty (LoadedModules n) where
+  pretty _ = undefined
 
 indented :: Doc ann -> Doc ann
 indented doc = nest 2 (hardline <> doc) <> hardline

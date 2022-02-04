@@ -63,7 +63,9 @@ class ( Monad1 m, ScopeReader m
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
   askSourceMap :: m n (SourceMap n)
-  extendSourceMap :: SourceMap n -> m n a -> m n a
+  -- XXX: if the name is already in the map this shadows it rather than
+  -- extending the list of candidates
+  extendSourceMap :: SourceName -> UVar n -> m n a -> m n a
 
 instance Renamer RenamerM where
   askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
@@ -71,9 +73,10 @@ instance Renamer RenamerM where
   setMayShadow mayShadow (RenamerM cont) = RenamerM do
     RenamerSubst sm _ <- askOutReader
     localOutReader (RenamerSubst sm mayShadow) cont
-  extendSourceMap sourceMap (RenamerM cont) = RenamerM do
-    RenamerSubst sm mayShadow <- askOutReader
-    localOutReader (RenamerSubst (sm <> sourceMap) mayShadow) cont
+  extendSourceMap name var (RenamerM cont) = RenamerM do
+    RenamerSubst (SourceMap sm) mayShadow <- askOutReader
+    let sm' = M.insert name [var] sm
+    localOutReader (RenamerSubst (SourceMap sm') mayShadow) cont
 
 class SourceRenamableE e where
   sourceRenameE :: (Distinct o, Renamer m) => e i -> m o (e o)
@@ -94,7 +97,9 @@ lookupSourceName v = do
   SourceMap sourceMap <- askSourceMap
   case M.lookup v sourceMap of
     Nothing -> throw UnboundVarErr $ pprint v
-    Just v' -> return v'
+    Just [v'] -> return v'
+    -- TODO: give information about where the candidates come from
+    Just _ -> throw AmbiguousVarErr $ pprint v
 
 instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
   sourceRenameE (SourceName sourceName) = do
@@ -290,8 +295,7 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
       throw RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
-      let sourceMap' = SourceMap $ M.singleton b (asUVar $ binderName freshName)
-      extendSourceMap sourceMap' do
+      extendSourceMap b (asUVar $ binderName freshName) $
         cont $ UBind freshName
   UBind _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> cont UIgnore

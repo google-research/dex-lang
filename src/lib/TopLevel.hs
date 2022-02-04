@@ -16,11 +16,13 @@
 
 module TopLevel (
   EvalConfig (..),
-  evalSourceBlock, evalFile, MonadInterblock (..), InterblockM,
+  evalSourceBlock, evalSourceBlockRepl, evalFile, MonadInterblock (..), InterblockM,
+  ensureModuleLoaded,
   evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx (..),
   evalInterblockM, evalSourceBlockIO) where
 
 import Data.Functor
+import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -28,6 +30,7 @@ import Data.Text.Prettyprint.Doc
 import Data.Store (Store)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
+import qualified Data.Set        as S
 import GHC.Generics (Generic (..))
 import System.FilePath
 
@@ -37,7 +40,7 @@ import Err
 import Logging
 import LLVMExec
 import PPrint()
-import Util (measureSeconds, onFst, onSnd)
+import Util (measureSeconds)
 import Serialize (HasPtrs (..), pprintVal, getDexString)
 
 import Name
@@ -71,16 +74,13 @@ class (ConfigReader m, MonadIO m) => MonadInterblock m where
   getTopStateEx :: m TopStateEx
   setTopStateEx :: TopStateEx -> m ()
 
-  getImportStatus :: ModuleName -> m (Maybe ModuleImportStatus)
-  setImportStatus :: ModuleName -> ModuleImportStatus -> m ()
-
 newtype InterblockM a = InterblockM
-  { runInterblockM' :: ReaderT EvalConfig (StateT (ModulesImported, TopStateEx) IO) a }
+  { runInterblockM' :: ReaderT EvalConfig (StateT TopStateEx IO) a }
     deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch)
 
 runInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO (a, TopStateEx)
 runInterblockM opts env m = do
-  (ans, (_, finalState)) <- runStateT (runReaderT (runInterblockM' m) opts) (mempty, env)
+  (ans, finalState) <- runStateT (runReaderT (runInterblockM' m) opts) env
   return (ans, finalState)
 
 evalInterblockM :: EvalConfig -> TopStateEx -> InterblockM a -> IO a
@@ -109,10 +109,6 @@ newtype PassesM (n::S) a = PassesM
     deriving ( Functor, Applicative, Monad, MonadIO, MonadFail
              , Fallible, EnvReader, ScopeReader)
 
-type ModulesImported = M.Map ModuleName ModuleImportStatus
-
-data ModuleImportStatus = CurrentlyImporting | FullyImported  deriving Generic
-
 runPassesM :: Distinct n => Bool -> EvalConfig -> Env n -> PassesM n a -> IO (Except a, [Output])
 runPassesM bench opts env m = do
   let maybeLogFile = logFile opts
@@ -127,12 +123,13 @@ initTopState = TopStateEx emptyOutMap
 
 evalSourceBlockIO :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, Maybe TopStateEx)
 evalSourceBlockIO opts env block = do
-  (ans, env') <- runInterblockM opts env $ evalSourceBlock block
+  (ans, env') <- runInterblockM opts env $ evalSourceBlockRepl block
   return (ans, Just env')
 
 evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
 evalSourceText source = do
-  let sourceBlocks = parseProg source
+  let UModule deps sourceBlocks = parseProg source
+  mapM_ ensureModuleLoaded deps
   results <- mapM evalSourceBlock sourceBlocks
   return $ zip sourceBlocks results
 
@@ -155,20 +152,31 @@ liftPassesM bench m = do
     Failure errs -> do
       return $ Result outs (Failure errs)
 
+-- Module imports have to be handled differently in the repl because we don't
+-- know ahead of time which modules will be needed.
+evalSourceBlockRepl :: MonadInterblock m => SourceBlock -> m Result
+evalSourceBlockRepl block = do
+  case block of
+    SourceBlock _ _ _ _ (ImportModule name) -> ensureModuleLoaded name
+    _ -> return ()
+  evalSourceBlock block
+
+-- XXX: This ensures that a module and its transitive dependencies are loaded,
+-- but it doesn't bring the names and instances into scope. The modules
+-- are "loaded" but not yet "imported".
+ensureModuleLoaded :: MonadInterblock m => SourceName -> m ()
+ensureModuleLoaded moduleSourceName = do
+  alreadyLoaded <- do
+    TopStateEx env <- getTopStateEx
+    return $ M.keysSet $ fromLoadedModules $ getLoadedModules env
+  -- TODO: think about where import errors should be handled
+  specifiedPath <- libPath <$> getConfig
+  depsRequired <- findDepsTransitively specifiedPath alreadyLoaded moduleSourceName
+  forM_ depsRequired \(name, contents) -> liftPassesM False do
+    evaluated <- evalUModule contents
+    loadModule name evaluated
+
 evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
-evalSourceBlock (SourceBlock _ _ _ _ (ImportModule moduleName)) = do
-  moduleStatus <- getImportStatus moduleName
-  case moduleStatus of
-    Just CurrentlyImporting -> return $ Result [] $
-      throw MiscErr $ "Circular import detected: " ++ pprint moduleName
-    Just FullyImported -> return emptyResult
-    Nothing -> do
-      fullPath <- findModulePath moduleName
-      source <- liftIO $ readFile fullPath
-      setImportStatus moduleName CurrentlyImporting
-      results <- mapM evalSourceBlock $ parseProg source
-      setImportStatus moduleName FullyImported
-      return $ summarizeModuleResults results
 evalSourceBlock block = do
   result <- withCompileTime $ liftPassesM (requiresBench block) $ evalSourceBlock' block
   return $ filterLogs block $ addResultCtx block $ result
@@ -210,11 +218,14 @@ evalSourceBlock' block = case sbContents block of
         vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
-        emitSourceMap $ SourceMap $ M.singleton sourceName (UAtomVar vCore)
+        emitSourceMap $ SourceMap $ M.singleton sourceName [UAtomVar vCore]
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
-  ImportModule _ -> error "should be handled at the inter-block level"
+  ImportModule moduleName -> do
+    lookupLoadedModule moduleName >>= \case
+      Nothing -> throw ModuleImportErr $ "Couldn't import " ++ moduleName
+      Just moduleName' -> importModule moduleName'
   QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()
   CommentLine  -> return ()
@@ -255,15 +266,47 @@ filterLogs block (Result outs err) = let
   outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
   in Result outs' err
 
-summarizeModuleResults :: [Result] -> Result
-summarizeModuleResults results =
+-- returns a toposorted list of the module's transitive dependencies (including
+-- the module itself) excluding those provided in the set of already known
+-- modules.
+findDepsTransitively
+  :: MonadIO m => Maybe FilePath -> S.Set SourceName -> SourceName
+  -> m [(SourceName, UModule)]
+findDepsTransitively searchPath alreadyKnown initialModuleName =
+  liftIO $ flip evalStateT alreadyKnown $ execWriterT $ go initialModuleName
+  where
+    go :: ( MonadIO m
+          , MonadWriter [(SourceName, UModule)] m
+          , MonadState (S.Set SourceName) m)
+       => SourceName -> m ()
+    go name = do
+      alreadyVisited <- S.member name <$> get
+      unless alreadyVisited do
+        modify $ S.insert name
+        modulePath <- findModulePath searchPath name
+        source <- liftIO $ readFile modulePath
+        let umodule@(UModule deps _) = parseProg source
+        mapM_ go deps
+        tell [(name, umodule)]
+
+-- Assumes all module dependencies have been loaded already
+evalUModule :: (Mut n, MonadPasses m) => UModule -> m n (Module n)
+evalUModule (UModule _ blocks) = do
+  Abs topFrag UnitE <- localTopBuilder $ mapM_ evalSourceBlock' blocks >> return UnitE
+  TopEnvFrag envFrag _ synthCandidates sourceMap cache objFiles <- return topFrag
+  let fragToEmit = TopEnvFrag envFrag mempty mempty mempty cache objFiles
+  let evaluatedModule = Module sourceMap synthCandidates
+  emitEnv (Abs fragToEmit evaluatedModule)
+
+_summarizeModuleResults :: [Result] -> Result
+_summarizeModuleResults results =
   case [err | Result _ (Failure err) <- results] of
     [] -> Result allOuts $ Success ()
     errs -> Result allOuts $ throw ModuleImportErr $ foldMap pprint errs
   where allOuts = foldMap resultOutputs results
 
-emptyResult :: Result
-emptyResult = Result [] (Success ())
+_emptyResult :: Result
+_emptyResult = Result [] (Success ())
 
 evalFile :: MonadInterblock m => FilePath -> m [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
@@ -365,7 +408,7 @@ toCFunction fname f = do
 emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
 emitObjFile hint objFile = do
   v <- emitBinding hint $ ObjectFileBinding objFile
-  emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty (eMapSingleton v UnitE)
+  emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty mempty (eMapSingleton v UnitE)
   return v
 
 -- TODO: there's no guarantee this name isn't already taken. Need a better story
@@ -430,10 +473,9 @@ addResultCtx block (Result outs errs) =
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
 
-findModulePath :: MonadInterblock m => ModuleName -> m FilePath
-findModulePath moduleName = do
+findModulePath :: MonadIO m => Maybe FilePath -> SourceName -> m FilePath
+findModulePath specifiedPath moduleName = do
   let fname = moduleName ++ ".dx"
-  specifiedPath <- libPath <$> getConfig
   case specifiedPath of
     Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
     Just path -> return $ path </> fname
@@ -472,13 +514,8 @@ instance ConfigReader InterblockM where
   getConfig = InterblockM ask
 
 instance MonadInterblock InterblockM where
-  getTopStateEx = InterblockM $ gets snd
-  setTopStateEx s = InterblockM $ modify $ onSnd $ const s
-
-  getImportStatus name = InterblockM $ gets $ M.lookup name . fst
-  setImportStatus name status = InterblockM $ modify $ onFst $ M.insert name status
-
-instance Store ModuleImportStatus
+  getTopStateEx = InterblockM $ get
+  setTopStateEx s = InterblockM $ modify $ const s
 
 instance Store TopStateEx
 

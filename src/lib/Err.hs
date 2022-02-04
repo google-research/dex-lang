@@ -47,6 +47,7 @@ data ErrType = NoErr
              | KindErr
              | LinErr
              | UnboundVarErr
+             | AmbiguousVarErr
              | RepeatedVarErr
              | RepeatedPatVarErr
              | InvalidPatternErr
@@ -398,6 +399,7 @@ instance Pretty ErrType where
     LinErr            -> "Linearity error: "
     IRVariantErr      -> "Internal IR validation error: "
     UnboundVarErr     -> "Error: variable not in scope: "
+    AmbiguousVarErr   -> "Error: ambiguous variable: "
     RepeatedVarErr    -> "Error: variable already defined: "
     RepeatedPatVarErr -> "Error: variable already defined within pattern: "
     InvalidPatternErr -> "Error: not a valid pattern: "
@@ -412,7 +414,7 @@ instance Pretty ErrType where
     RuntimeErr        -> "Runtime error"
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Leaked local variables:"
-    ModuleImportErr   -> "Module import error"
+    ModuleImportErr   -> "Module import error: "
     MonadFailErr      -> "MonadFail error (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where

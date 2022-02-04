@@ -1587,6 +1587,7 @@ instance Color SuperclassNameC where getColorRep _ = SuperclassNameC
 instance Color MethodNameC     where getColorRep _ = MethodNameC
 instance Color ImpFunNameC     where getColorRep _ = ImpFunNameC
 instance Color ObjectFileNameC where getColorRep _ = ObjectFileNameC
+instance Color ModuleNameC     where getColorRep _ = ModuleNameC
 
 interpretColor :: C -> WithColor UnitV VoidS
 interpretColor c = case c of
@@ -1599,6 +1600,7 @@ interpretColor c = case c of
   MethodNameC     -> WithColor (UnitV :: UnitV MethodNameC     VoidS)
   ImpFunNameC     -> WithColor (UnitV :: UnitV ImpFunNameC     VoidS)
   ObjectFileNameC -> WithColor (UnitV :: UnitV ObjectFileNameC VoidS)
+  ModuleNameC     -> WithColor (UnitV :: UnitV ModuleNameC     VoidS)
 
 deriving instance (forall c. Show (v c n)) => Show (WithColor v n)
 
@@ -2063,7 +2065,8 @@ data C =
   | MethodNameC
   | ImpFunNameC
   | ObjectFileNameC
-  deriving (Eq, Ord, Generic)
+  | ModuleNameC
+    deriving (Eq, Ord, Generic)
 
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and

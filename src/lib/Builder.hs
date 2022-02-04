@@ -39,6 +39,7 @@ module Builder (
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
+  lookupLoadedModule, loadModule, importModule,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -64,6 +65,7 @@ import Control.Monad.Writer.Strict hiding (Alt)
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
+import Data.String (fromString)
 import Data.Text.Prettyprint.Doc (Pretty (..))
 import GHC.Stack
 
@@ -143,10 +145,10 @@ class (EnvReader m, MonadFail1 m)
                   -> m n (Abs TopEnvFrag e n)
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
-emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sm mempty mempty
+emitSourceMap sm = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty sm mempty mempty
 
 emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
-emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag sc mempty mempty mempty
+emitSynthCandidates sc = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty sc mempty mempty mempty
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr n -> m n (AtomName n)
 emitTopLet hint letAnn expr = do
@@ -156,8 +158,24 @@ emitTopLet hint letAnn expr = do
 emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
 emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
+loadModule :: (Mut n, TopBuilder m) => SourceName -> Module n -> m n ()
+loadModule sourceName m = do
+  name <- emitBinding (fromString sourceName) $ ModuleBinding m
+  let loaded = LoadedModules $ M.singleton sourceName name
+  emitNamelessEnv $ TopEnvFrag emptyOutFrag loaded mempty mempty mempty mempty
+
+importModule :: (Mut n, TopBuilder m) => ModuleName n -> m n ()
+importModule name = do
+  ModuleBinding (Module sourceMap synthCandidates) <- lookupEnv name
+  emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty synthCandidates sourceMap mempty mempty
+
+lookupLoadedModule:: EnvReader m => SourceName -> m n (Maybe (ModuleName n))
+lookupLoadedModule name = do
+  loadedModules <- withEnv getLoadedModules
+  return $ M.lookup name $ fromLoadedModules loadedModules
+
 extendCache :: TopBuilder m => Cache n -> m n ()
-extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty cache mempty
+extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty cache mempty
 
 extendImpCache :: TopBuilder m => AtomName n -> ImpFunName n -> m n ()
 extendImpCache fSimp fImp = extendCache $ Cache mempty (eMapSingleton fSimp fImp) mempty
@@ -190,7 +208,7 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
       let envFrag = toEnvFrag b'
       let scs = bindingsFragToSynthCandidates envFrag
-      let topFrag = TopEnvFrag envFrag scs mempty mempty mempty
+      let topFrag = TopEnvFrag envFrag mempty scs mempty mempty mempty
       return $ Abs topFrag v'
     TopBuilderT $ extendInplaceT ab'
 

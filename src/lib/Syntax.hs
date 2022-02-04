@@ -32,7 +32,7 @@ module Syntax (
     PiType (..), DepPairType (..), LetAnn (..), SomeDecl (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceMap (..), LitProg,
     ForAnn (..), Val, Op, Con, Hof, TC,
-    ClassDef (..), SynthCandidates (..), Env (..), Cache (..),
+    ClassDef (..), SynthCandidates (..), Env (..), LoadedModules (..), Cache (..),
     BindsEnv (..), BindsOneAtomName (..), WithEnv (..), AtomNameBinder,
     DataConRefBinding (..), AltP, Alt, AtomBinding (..), SolverBinding (..),
     SubstE (..), SubstB (..), Ptr, PtrType,
@@ -49,7 +49,8 @@ module Syntax (
     UPat, UPat' (..), UPatAnn (..), UPatAnnArrow (..), UFieldRowPat (..),
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
-    SourceBlock (..), SourceBlock' (..), EnvQuery (..), ModuleName,
+    SourceBlock (..), SourceBlock' (..), EnvQuery (..),
+    ModuleName, Module (..), UModule (..),
     UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), OutFormat (..),
     EnvReader (..), EnvExtender (..),  Binding (..),
@@ -184,6 +185,7 @@ data Decl n l = Let (NameBinder AtomNameC n l) (DeclBinding n)
 type AtomName    = Name AtomNameC
 type DataDefName = Name DataDefNameC
 type ClassName   = Name ClassNameC
+type ModuleName  = Name ModuleNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
@@ -294,6 +296,17 @@ type Hof n = PrimHof (Atom n)
 
 type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
+-- === modules ===
+
+data Module (n::S) =
+  Module (SourceMap n) (SynthCandidates n)
+  deriving (Show, Generic)
+
+data UModule =
+  UModule { uModuleDirectImports :: [SourceName]
+          , uModuleSourceBlocks  :: [SourceBlock] }
+  deriving (Show, Generic)
+
 -- === bindings - static information we carry about a lexical scope ===
 
 -- TODO: consider making this an open union via a typeable-like class
@@ -307,6 +320,7 @@ data Binding (c::C) (n::S) where
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
   ImpFunBinding     :: ImpFunction n                      -> Binding ImpFunNameC     n
   ObjectFileBinding :: ObjectFile n                       -> Binding ObjectFileNameC n
+  ModuleBinding     :: Module n                           -> Binding ModuleNameC     n
 deriving instance Show (Binding c n)
 
 data AtomBinding (n::S) =
@@ -329,21 +343,31 @@ data EnvFrag (n::S) (l::S) =
   EnvFrag (RecSubstFrag Binding n l) (Maybe (EffectRow l))
 
 data Env (n::S) = Env
-  { getEnvScope        :: Scope n
-  , getNameEnv         :: RecSubst Binding n
+  { getEnvScope :: Scope n
+  , getNameEnv  :: RecSubst Binding n
+    -- note: a module may be "loaded" (i.e. evaluated) without being imported
+    -- (i.e. having its source names and instances available.)
+  , getLoadedModules   :: LoadedModules n
   , getSynthCandidates :: SynthCandidates n
   , getSourceMap       :: SourceMap n
-  , getEffects         :: EffectRow n
-  , getCache           :: Cache n
+  , getEffects :: EffectRow n
+  , getCache   :: Cache n
   -- For now, we just load all object files. TODO: only load those we need
   , getObjFiles        :: ESet ObjectFileName n}
   deriving (Generic)
+
+emptyLoadedModules :: LoadedModules n
+emptyLoadedModules = LoadedModules mempty
+
+data LoadedModules (n::S) = LoadedModules
+  { fromLoadedModules   :: M.Map SourceName (ModuleName n)
+  } deriving (Show, Generic)
 
 data Cache (n::S) = Cache
   { simpCache :: EMap AtomName AtomName n
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName CFun n
-  }
+  } deriving (Show, Generic)
 
 instance HasScope Env where
   toScope = getEnvScope
@@ -365,14 +389,16 @@ instance OutFrag EnvFrag where
 
 instance OutMap Env where
   emptyOutMap =
-    Env emptyOutMap (RecSubst emptyInFrag) mempty (SourceMap mempty) Pure mempty mempty
+    Env emptyOutMap (RecSubst emptyInFrag) emptyLoadedModules
+        mempty (SourceMap mempty) Pure mempty mempty
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
-  extendOutMap (Env scope bindings scs sm eff cache obj) frag =
+  extendOutMap (Env scope bindings imports scs sm eff cache obj) frag =
     withExtEvidence frag do
       Env
         (scope    `extendOutMap` toScopeFrag frag)
         (bindings `extendRecSubst` frag)
+        (sink imports)
         (sink scs <> bindingsFragToSynthCandidates (EnvFrag frag Nothing))
         (sink sm)
         (sink eff)
@@ -383,11 +409,11 @@ instance ExtOutMap Env EnvFrag where
   extendOutMap bindings frag = do
     let EnvFrag newEnv maybeNewEff = frag
     case extendOutMap bindings newEnv of
-      Env scope bs scs sm oldEff cache obj -> do
+      Env scope bs imports scs sm oldEff cache obj -> do
         let newEff = case maybeNewEff of
                        Nothing  -> sink oldEff
                        Just eff -> eff
-        Env scope bs scs sm newEff cache obj
+        Env scope bs imports scs sm newEff cache obj
 
 bindingsFragToSynthCandidates :: Distinct l => EnvFrag n l -> SynthCandidates l
 bindingsFragToSynthCandidates (EnvFrag (RecSubstFrag frag) _) =
@@ -592,7 +618,9 @@ lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
 lookupSourceMap :: EnvReader m => SourceName -> m n (Maybe (UVar n))
 lookupSourceMap sourceName = do
   sourceMap <- getSourceMapM
-  return $ M.lookup sourceName $ fromSourceMap sourceMap
+  case M.lookup sourceName $ fromSourceMap sourceMap of
+    Just [x] -> return $ Just x
+    _ -> return Nothing
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
 lookupEnvPure env v =
@@ -983,18 +1011,17 @@ data SourceBlock = SourceBlock
   , sbOffset   :: Int
   , sbLogLevel :: LogLevel
   , sbText     :: String
-  , sbContents :: SourceBlock' }  deriving (Show)
+  , sbContents :: SourceBlock' }
+  deriving (Show, Generic)
 
 type ReachedEOF = Bool
-type ModuleName = String
 
 data SourceBlock' =
    EvalUDecl (UDecl VoidS VoidS)
  | Command CmdName (UExpr VoidS)
  | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
  | GetNameType SourceName
- -- TODO Add a color for module names?
- | ImportModule ModuleName
+ | ImportModule SourceName
  | QueryEnv EnvQuery
  | ProseBlock String
  | CommentLine
@@ -1016,7 +1043,7 @@ data EnvQuery =
    deriving (Show, Generic)
 
 data SourceMap (n::S) = SourceMap
-  { fromSourceMap :: M.Map SourceName (UVar n)}
+  { fromSourceMap :: M.Map SourceName [UVar n]}
   deriving Show
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
@@ -1025,6 +1052,7 @@ data IRVariant = Surface | Typed | Core | Simp | Evaluated
 data TopEnvFrag n l =
   TopEnvFrag
     (EnvFrag n l)
+    (LoadedModules l)
     (SynthCandidates l)
     (SourceMap l)
     (Cache l)
@@ -1373,7 +1401,7 @@ vectorWidth = 4
 data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval
               | ResultPass | JaxprAndHLO | OptimPass
-                deriving (Ord, Eq, Bounded, Enum)
+                deriving (Ord, Eq, Bounded, Enum, Generic)
 
 instance Show PassName where
   show p = case p of
@@ -1800,9 +1828,8 @@ pattern RecordTyWithElems elems <- RecordTy (UnsafeFieldRowElems elems)
 
 -- -- === instances ===
 
--- right-biased, unlike the underlying Map
 instance Semigroup (SourceMap n) where
-  m1 <> m2 = SourceMap $ fromSourceMap m2 <> fromSourceMap m1
+  m1 <> m2 = SourceMap $ M.unionWith (++) (fromSourceMap m2) (fromSourceMap m1)
 
 instance Monoid (SourceMap n) where
   mempty = SourceMap mempty
@@ -2147,7 +2174,6 @@ instance SinkableE  Cache
 instance HoistableE Cache
 instance AlphaEqE   Cache
 instance SubstE Name Cache
-deriving via WrapE Cache n instance Generic (Cache n)
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
@@ -2397,10 +2423,11 @@ instance GenericE SynthCandidates where
   toE (ListE xs `PairE` ListE ys `PairE` ListE zs) = SynthCandidates xs ys zs'
     where zs' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) zs
 
-instance SinkableE SynthCandidates
-instance HoistableE  SynthCandidates
-instance SubstE Name SynthCandidates
-instance SubstE AtomSubstVal SynthCandidates
+instance SinkableE      SynthCandidates
+instance HoistableE     SynthCandidates
+instance AlphaEqE       SynthCandidates
+instance AlphaHashableE SynthCandidates
+instance SubstE Name    SynthCandidates
 
 instance GenericE AtomBinding where
   type RepE AtomBinding =
@@ -2477,11 +2504,12 @@ instance Color c => GenericE (Binding c) where
           (DataDefName `PairE` Atom)
           (DataDefName `PairE` LiftE Int `PairE` Atom)
           (ClassDef `PairE` Atom))
-      (EitherE4
+      (EitherE5
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (ImpFunction)
-          (ObjectFile))
+          (ObjectFile)
+          (Module))
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
@@ -2492,6 +2520,7 @@ instance Color c => GenericE (Binding c) where
     MethodBinding     className idx e   -> Case1 $ Case1 $ className `PairE` LiftE idx `PairE` e
     ImpFunBinding     fun               -> Case1 $ Case2 $ fun
     ObjectFileBinding objfile           -> Case1 $ Case3 $ objfile
+    ModuleBinding m                     -> Case1 $ Case4 $ m
 
   toE rep = case rep of
     Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
@@ -2503,6 +2532,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case1 (className `PairE` LiftE idx `PairE` e))   -> fromJust $ tryAsColor $ MethodBinding     className idx e
     Case1 (Case2 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
     Case1 (Case3 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
+    Case1 (Case4 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
     _ -> error "impossible"
 
 deriving via WrapE (Binding c) n instance Color c => Generic (Binding c n)
@@ -2556,15 +2586,17 @@ instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty
 
 instance GenericE SourceMap where
-  type RepE SourceMap = ListE (PairE (LiftE SourceName) UVar)
-  fromE (SourceMap m) = ListE [PairE (LiftE v) def | (v, def) <- M.toList m]
-  toE   (ListE pairs) = SourceMap $ M.fromList [(v, def) | (PairE (LiftE v) def) <- pairs]
+  type RepE SourceMap = ListE (PairE (LiftE SourceName) (ListE UVar))
+  fromE (SourceMap m) = ListE [PairE (LiftE v) (ListE defs) | (v, defs) <- M.toList m]
+  toE   (ListE pairs) = SourceMap $ M.fromList [(v, defs) | (PairE (LiftE v) (ListE defs)) <- pairs]
 
 deriving via WrapE SourceMap n instance Generic (SourceMap n)
 
-instance SinkableE SourceMap
-instance SubstE Name SourceMap
-instance HoistableE  SourceMap
+instance SinkableE      SourceMap
+instance HoistableE     SourceMap
+instance AlphaEqE       SourceMap
+instance AlphaHashableE SourceMap
+instance SubstE Name    SourceMap
 
 instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
@@ -2604,6 +2636,8 @@ instance Store BaseType
 instance Store LitVal
 instance Store ScalarBaseType
 instance Store Device
+instance Store LogLevel
+instance Store PassName
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
@@ -2639,6 +2673,8 @@ instance Store (SynthCandidates n)
 instance Store (EffectRow n)
 instance Store (Effect n)
 instance Store (DataConRefBinding n l)
+instance Store (Module n)
+instance Store (LoadedModules n)
 instance Color c => Store (Binding c n)
 
 instance Store IsCUDARequired
@@ -2780,9 +2816,11 @@ instance Pretty (UVar n) where
     UMethodVar  v -> "Method name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
-instance SubstE Name UVar
-instance SinkableE UVar
-instance HoistableE UVar
+instance SinkableE      UVar
+instance HoistableE     UVar
+instance AlphaEqE       UVar
+instance AlphaHashableE UVar
+instance SubstE Name    UVar
 
 instance SinkableE e => SinkableE (WithEnv e) where
   sinkingProofE (fresh::SinkingCoercion n l) (WithEnv (bindings :: Env h) e) =
@@ -2999,10 +3037,10 @@ instance SubstE Name ImpFunction
 
 instance GenericB TopEnvFrag where
   type RepB TopEnvFrag = PairB EnvFrag
-                         (LiftB (        SynthCandidates `PairE` SourceMap
+                         (LiftB ( LoadedModules `PairE` SynthCandidates `PairE` SourceMap
                                  `PairE` Cache `PairE` ESet ObjectFileName))
-  fromB (TopEnvFrag frag sc sm c o) = PairB frag (LiftB (sc `PairE` sm `PairE` c `PairE` o))
-  toB   (PairB frag (LiftB (sc `PairE` sm `PairE` c `PairE` o))) = TopEnvFrag frag sc sm c o
+  fromB (TopEnvFrag frag ms sc sm c o) = PairB frag (LiftB (ms `PairE` sc `PairE` sm `PairE` c `PairE` o))
+  toB   (PairB frag (LiftB (ms `PairE` sc `PairE` sm `PairE` c `PairE` o))) = TopEnvFrag frag ms sc sm c o
 
 instance BindsEnv TopEnvFrag where
   toEnvFrag = undefined
@@ -3014,12 +3052,13 @@ instance ProvesExt   TopEnvFrag
 instance BindsNames  TopEnvFrag
 
 instance OutFrag TopEnvFrag where
-  emptyOutFrag = TopEnvFrag emptyOutFrag mempty mempty mempty mempty
-  catOutFrags scope (TopEnvFrag frag1 sc1 sm1 c1 o1)
-                    (TopEnvFrag frag2 sc2 sm2 c2 o2) =
+  emptyOutFrag = TopEnvFrag emptyOutFrag mempty mempty mempty mempty mempty
+  catOutFrags scope (TopEnvFrag frag1 lm1 sc1 sm1 c1 o1)
+                    (TopEnvFrag frag2 lm2 sc2 sm2 c2 o2) =
     withExtEvidence frag2 $
       TopEnvFrag
         (catOutFrags scope frag1 frag2)
+        (sink lm1 <> lm2)
         (sink sc1 <> sc2)
         (sink sm1 <> sm2)
         (sink c1  <> c2 )
@@ -3029,12 +3068,16 @@ instance OutFrag TopEnvFrag where
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap (Env scope bs scs sm effs cache obj)
-               (TopEnvFrag (EnvFrag frag _) scs' sm' cache' obj') =
+  extendOutMap (Env scope bs imports scs sm effs cache obj)
+               (TopEnvFrag (EnvFrag frag _) imports' scs' sm' cache' obj') =
     withExtEvidence (toExtEvidence frag) $
       Env (scope `extendOutMap` toScopeFrag frag)
-          (bs `extendRecSubst` frag) (sink scs <> scs')
-          (sink sm <> sm') (sink effs) (sink cache <> cache')
+          (bs `extendRecSubst` frag)
+          (sink imports <> imports')
+          (sink scs <> scs')
+          (sink sm <> sm')
+          (sink effs)
+          (sink cache <> cache')
           (sink obj <> obj')
 
 instance GenericE (WithSrcE e) where
@@ -3049,6 +3092,36 @@ instance SinkableE UExpr' where
 
 instance SinkableB UDecl where
   sinkingProofB _ _ _ = todoSinkableProof
+
+instance GenericE Module where
+  type RepE Module = PairE SourceMap SynthCandidates
+  fromE (Module sm sc) = PairE sm sc
+  toE   (PairE sm sc) = Module sm sc
+
+instance SinkableE      Module
+instance HoistableE     Module
+instance AlphaEqE       Module
+instance AlphaHashableE Module
+instance SubstE Name    Module
+
+instance GenericE LoadedModules where
+  type RepE LoadedModules = ListE (PairE (LiftE SourceName) ModuleName)
+  fromE (LoadedModules m) =
+    ListE $ M.toList m <&> \(v,md) -> PairE (LiftE v) md
+  toE (ListE pairs) =
+    LoadedModules $ M.fromList $ pairs <&> \(PairE (LiftE v) md) -> (v, md)
+
+instance SinkableE      LoadedModules
+instance HoistableE     LoadedModules
+instance AlphaEqE       LoadedModules
+instance AlphaHashableE LoadedModules
+instance SubstE Name    LoadedModules
+
+instance Semigroup (LoadedModules n) where
+  LoadedModules m1 <> LoadedModules m2 = LoadedModules (m2 <> m1)
+
+instance Monoid (LoadedModules n) where
+  mempty = LoadedModules mempty
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)

@@ -284,6 +284,7 @@ instance Color c => CheckableE (Binding c) where
     MethodBinding     className   idx e -> MethodBinding     <$> substM className <*> pure idx <*> substM e
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
+    ModuleBinding     md                -> ModuleBinding     <$> substM md
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
