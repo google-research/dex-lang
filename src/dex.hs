@@ -44,6 +44,7 @@ data DocFmt = ResultOnly
 data EvalMode = ReplMode String
               | ScriptMode FilePath DocFmt ErrorHandling
               | ExportMode FilePath FilePath -- Dex path, .o path
+              | ClearCache
 #ifdef DEX_LIVE
               | WebMode    FilePath
               | WatchMode  FilePath
@@ -77,6 +78,7 @@ runMode evalMode opts = do
     --   TopStateEx env' <- return env
     --   -- exportFunctions objPath exportedFuns $ getNameBindings env'
     --   error "not implemented"
+    ClearCache -> clearCache
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
@@ -163,6 +165,7 @@ parseMode = subparser $
   <> command "web"    (simpleInfo (WebMode    <$> sourceFileInfo))
   <> command "watch"  (simpleInfo (WatchMode  <$> sourceFileInfo))
 #endif
+  <> command "clean"  (simpleInfo (pure ClearCache))
   <> command "export" (simpleInfo (ExportMode <$> sourceFileInfo <*> objectFileInfo))
   <> command "script" (simpleInfo (ScriptMode <$> sourceFileInfo
   <*> option

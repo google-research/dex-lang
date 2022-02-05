@@ -20,7 +20,7 @@ module TopLevel (
   evalFile, MonadInterblock (..), InterblockM, ensureModuleLoaded,
   evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx (..),
   evalInterblockM, evalSourceBlockIO,
-  loadCache, storeCache) where
+  loadCache, storeCache, clearCache) where
 
 import Data.Functor
 import Control.Exception (throwIO)
@@ -615,6 +615,11 @@ getCachePath :: MonadIO m => m FilePath
 getCachePath = liftIO do
   cacheDir <- getXdgDirectory XdgCache "dex"
   return $ cacheDir </> "dex.cache"
+
+clearCache :: MonadIO m => m ()
+clearCache = liftIO do
+  cachePath <- getCachePath
+  removeFile cachePath
 
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
