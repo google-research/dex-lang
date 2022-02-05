@@ -19,20 +19,25 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, loadPrelude, importPrelude,
   evalFile, MonadInterblock (..), InterblockM, ensureModuleLoaded,
   evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx (..),
-  evalInterblockM, evalSourceBlockIO) where
+  evalInterblockM, evalSourceBlockIO,
+  loadCache, storeCache) where
 
 import Data.Functor
+import Control.Exception (throwIO)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
 import Control.Monad.Catch
 import Control.Monad.Reader
+import qualified Data.ByteString as BS
 import Data.Text.Prettyprint.Doc
-import Data.Store (Store)
+import Data.Maybe (fromJust)
+import Data.Store (Store, encode, decode)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import GHC.Generics (Generic (..))
 import System.FilePath
+import System.Directory
 import System.IO (stderr, hPutStrLn)
 
 import Paths_dex  (getDataFileName)
@@ -41,7 +46,7 @@ import Err
 import Logging
 import LLVMExec
 import PPrint()
-import Util (measureSeconds)
+import Util (measureSeconds, File (..), readFileWithHash)
 import Serialize (HasPtrs (..), pprintVal, getDexString)
 
 import Name
@@ -157,12 +162,35 @@ liftPassesM bench m = do
     Failure errs -> do
       return $ Result outs (Failure errs)
 
+liftTopBuilderM :: MonadInterblock m
+                => (forall n. Mut n => TopBuilderT FallibleM n a)
+                -> m a
+liftTopBuilderM cont = do
+  env <- getTopStateEx
+  case runFallibleM $ runTopBuilderYieldingEnv env cont of
+    Failure err -> liftIO $ throwIO err
+    Success (result, env') -> do
+      setTopStateEx env'
+      return result
+
+runTopBuilderYieldingEnv
+  :: (Monad m, Fallible m) => TopStateEx
+  -> (forall n. Mut n => TopBuilderT m n a) -> m (a, TopStateEx)
+runTopBuilderYieldingEnv (TopStateEx env) cont = runTopBuilderT env do
+  Abs _ (LiftE result) <- localTopBuilder do
+    ans <- cont
+    env' <- unsafeGetEnv
+    return $ LiftE (ans, TopStateEx env')
+  return result
+
 -- Module imports have to be handled differently in the repl because we don't
 -- know ahead of time which modules will be needed.
 evalSourceBlockRepl :: MonadInterblock m => SourceBlock -> m Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlock _ _ _ _ (ImportModule name) -> ensureModuleLoaded $ OrdinaryModule name
+    SourceBlock _ _ _ _ (ImportModule name) -> do
+      -- TODO: clear source map and synth candidates before calling this
+      ensureModuleLoaded $ OrdinaryModule name
     _ -> return ()
   evalSourceBlock block
 
@@ -170,7 +198,7 @@ loadPrelude :: MonadInterblock m => m ()
 loadPrelude = ensureModuleLoaded ThePrelude
 
 importPrelude :: MonadInterblock m => m ()
-importPrelude = void $ liftPassesM False $ importModule ThePrelude
+importPrelude = liftTopBuilderM $ importModule ThePrelude
 
 -- XXX: This ensures that a module and its transitive dependencies are loaded,
 -- but it doesn't bring the names and instances into scope. The modules
@@ -183,11 +211,11 @@ ensureModuleLoaded moduleSourceName = do
   -- TODO: think about where import errors should be handled
   config <- getConfig
   depsRequired <- findDepsTransitively config alreadyLoaded moduleSourceName
-  forM_ depsRequired \(name, contents) -> liftPassesM False do
-    -- TODO: figure out where these sorts of messages belong
-    liftIO $ hPutStrLn stderr $ "Compiling " ++ pprint name
-    evaluated <- evalUModule contents
-    loadModule name evaluated
+  forM_ depsRequired \md -> liftPassesM False do
+    evaluated <- evalPartiallyParsedUModuleCached md
+    case umppName md of
+      Just sourceName -> loadModule sourceName evaluated
+      Nothing -> return ()
 
 evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
 evalSourceBlock block = do
@@ -235,7 +263,8 @@ evalSourceBlock' block = case sbContents block of
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
-  ImportModule moduleName -> importModule $ OrdinaryModule moduleName
+  ImportModule moduleName -> do
+    importModule $ OrdinaryModule moduleName
   QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()
   CommentLine  -> return ()
@@ -280,23 +309,87 @@ filterLogs block (Result outs err) = let
 -- the module itself) excluding those provided in the set of already known
 -- modules.
 findDepsTransitively
-  :: MonadIO m => EvalConfig -> S.Set ModuleSourceName -> ModuleSourceName
-  -> m [(ModuleSourceName, UModule)]
+  :: MonadInterblock m => EvalConfig -> S.Set ModuleSourceName -> ModuleSourceName
+  -> m [UModulePartialParse]
 findDepsTransitively config alreadyKnown initialModuleName =
-  liftIO $ flip evalStateT alreadyKnown $ execWriterT $ go initialModuleName
+  liftTransDepsM alreadyKnown $ go initialModuleName
   where
-    go :: ( MonadIO m
-          , MonadWriter [(ModuleSourceName, UModule)] m
-          , MonadState (S.Set ModuleSourceName) m)
-       => ModuleSourceName -> m ()
+    go :: ( TopBuilder m, Mut n
+          , MonadIO1 m
+          , MonadWriter [UModulePartialParse]    (m n)
+          , MonadState  (S.Set ModuleSourceName) (m n))
+       => ModuleSourceName -> m n ()
     go name = do
       alreadyVisited <- S.member name <$> get
       unless alreadyVisited do
         modify $ S.insert name
         source <- loadModuleSource config name
-        let umodule@(UModule deps _ _) = parseUModule (Just name) source
+        deps <- parseUModuleDepsCached (Just name) source
         mapM_ go deps
-        tell [(name, umodule)]
+        tell $ [UModulePartialParse (Just name) deps source]
+
+type TransDepsM n a = TopBuilderT (StateT (S.Set ModuleSourceName)
+                        (WriterT [UModulePartialParse] IO)) n a
+liftTransDepsM :: MonadInterblock m
+               => (S.Set ModuleSourceName)
+               -> (forall n. Mut n => TransDepsM n ())
+               -> m [UModulePartialParse]
+liftTransDepsM names cont = do
+  env <- getTopStateEx
+  (((), env'), result) <- liftIO $ runWriterT $ flip evalStateT names $ runTopBuilderYieldingEnv env $ cont
+  setTopStateEx env'
+  return result
+
+-- What would it look like to abstract away pattern used here and in
+-- `evalPartiallyParsedUModuleCached`? We still want case-by-case control over
+-- keys, eviction policy, etc. Maybe some a type class for caches that implement
+-- query/extend, with `extend` being where the eviction happens?
+parseUModuleDepsCached :: (Mut n, TopBuilder m)
+                       => Maybe ModuleSourceName -> File -> m n [ModuleSourceName]
+parseUModuleDepsCached Nothing file =
+  -- No caching for anonymous modules
+  return $ parseUModuleDeps file
+parseUModuleDepsCached (Just name) file = do
+  LiftE cache <- withEnv (LiftE . parsedDeps . getCache)
+  let req = fHash file
+  case M.lookup name cache of
+    Just (cachedReq, result) | cachedReq == req -> return result
+    _ -> do
+      let result = parseUModuleDeps file
+      extendCache $ mempty { parsedDeps = M.singleton name (req, result) }
+      return result
+
+evalPartiallyParsedUModuleCached
+  :: (Mut n, MonadPasses m)
+  => UModulePartialParse -> m n (ModuleName n)
+evalPartiallyParsedUModuleCached md@(UModulePartialParse maybeName deps source) =
+  case maybeName of
+    Nothing -> evalPartiallyParsedUModule md
+    Just name -> do
+      LiftE cache <- withEnv (LiftE . moduleEvaluations . getCache)
+      -- TODO: we know that these are sufficient to determine the result of
+      -- module evaluation, but maybe we should actually restrict the
+      -- environment we pass to `evalUModule` so that it can't possibly depend
+      -- on anything else.
+      directDeps <- forM deps \dep -> fromJust <$> lookupLoadedModule dep
+      let req = (fHash source, directDeps)
+      case M.lookup name cache of
+        Just (cachedReq, result) | cachedReq == req -> return result
+        _ -> do
+          liftIO $ hPutStrLn stderr $ "Compiling " ++ pprint name
+          result <- evalPartiallyParsedUModule md
+          extendCache $ mempty { moduleEvaluations = M.singleton name (req, result) }
+          return result
+
+-- Assumes all module dependencies have been loaded already
+evalPartiallyParsedUModule
+  :: (Mut n, MonadPasses m)
+  => UModulePartialParse -> m n (ModuleName n)
+evalPartiallyParsedUModule partiallyParsed = do
+  let name = umppName partiallyParsed
+  let uModule = finishUModuleParse partiallyParsed
+  evaluated <- evalUModule uModule
+  emitBinding (getNameHint name) $ ModuleBinding evaluated
 
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Mut n, MonadPasses m) => UModule -> m n (Module n)
@@ -483,18 +576,51 @@ addResultCtx block (Result outs errs) =
 logTop :: MonadPasses m => Output -> m n ()
 logTop x = logIO [x]
 
-loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m String
+loadModuleSource :: MonadIO m => EvalConfig -> ModuleSourceName -> m File
 loadModuleSource config moduleName = case moduleName of
   OrdinaryModule moduleName' -> do
     let fname = moduleName' ++ ".dx"
     fullPath <- case libPath config of
       Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
       Just path -> return $ path </> fname
-    liftIO $ readFile fullPath
+    readFileWithHash fullPath
   ThePrelude -> do
     case preludeFile config of
       Nothing   -> return preludeSource
-      Just path -> liftIO $ readFile path
+      Just path -> readFileWithHash path
+
+-- === saving cache to disk ===
+
+-- None of this is safe in the presence of multiple processes trying to interact
+-- with the cache. But we plan to fix that by using an actual database.
+
+loadCache :: MonadIO m => m TopStateEx
+loadCache = liftIO do
+  cachePath <- getCachePath
+  cacheExists <- doesFileExist cachePath
+  if cacheExists
+    then do
+      decoded <- decode <$> BS.readFile cachePath
+      case decoded of
+        Right result -> return result
+        _            -> removeFile cachePath >> return initTopState
+    else return initTopState
+
+storeCache :: MonadIO m => TopStateEx -> m ()
+storeCache env = liftIO do
+  cachePath <- getCachePath
+  BS.writeFile cachePath $ encode $ stripEnvForSerialization env
+
+getCachePath :: MonadIO m => m FilePath
+getCachePath = liftIO do
+  cacheDir <- getXdgDirectory XdgCache "dex"
+  return $ cacheDir </> "dex.cache"
+
+-- TODO: real garbage collection (maybe leave it till after we have a
+-- database-backed cache and we can do it incrementally)
+stripEnvForSerialization :: TopStateEx -> TopStateEx
+stripEnvForSerialization (TopStateEx (Env scope bindings _ _ _ _ cache objs)) =
+  TopStateEx $ Env scope bindings mempty mempty mempty mempty cache objs
 
 -- === instances ===
 

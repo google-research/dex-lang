@@ -630,7 +630,7 @@ instance Pretty (TopEnvFrag n l) where
     <>   indented "<TODO: Pretty instance>"
 
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs =

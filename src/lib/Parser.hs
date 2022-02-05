@@ -4,7 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Parser (Parser, parseit, parseUModule, parseData,
+module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
+               finishUModuleParse, parseData,
                parseTopDeclRepl, uint, withSource, parseExpr,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
@@ -14,6 +15,7 @@ import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 import qualified Text.Megaparsec.Char as MC
+import Data.ByteString.UTF8 (toString)
 import Data.Functor
 import Data.Foldable
 import Data.Maybe (fromMaybe)
@@ -27,6 +29,7 @@ import Err
 import LabeledItems
 import Name
 import Syntax
+import Util (File (..))
 
 -- canPair is used for the ops (,) (|) (&) which should only appear inside
 -- parentheses (to avoid conflicts with records and other syntax)
@@ -34,6 +37,16 @@ data ParseCtx = ParseCtx { curIndent :: Int
                          , canPair   :: Bool
                          , canBreak  :: Bool }
 type Parser = ReaderT ParseCtx (Parsec Void String)
+
+-- TODO: implement this more efficiently rather than just parsing the whole
+-- thing and then extracting the deps.
+parseUModuleDeps :: File -> [ModuleSourceName]
+parseUModuleDeps file = deps
+  where UModule _ deps _ = parseUModule Nothing $ toString $ fContents file
+
+finishUModuleParse :: UModulePartialParse -> UModule
+finishUModuleParse (UModulePartialParse name _ file) =
+  parseUModule name (toString $ fContents file)
 
 parseUModule :: Maybe ModuleSourceName -> String -> UModule
 parseUModule name s = do

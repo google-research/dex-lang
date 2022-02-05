@@ -524,7 +524,7 @@ newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEm
         deriving (Show, Eq, Generic)
 
 newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-        deriving (Show, Eq, Generic)
+        deriving (Show, Eq, Generic, Monoid, Semigroup)
 
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
@@ -1527,6 +1527,11 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
   listen = undefined
   pass = undefined
 
+instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
+         , MonadState s m)
+         => MonadState s (InplaceT bindings decls m n) where
+  state f = lift1 $ state f
+
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls)
          => MonadTrans1 (InplaceT bindings decls) where
   lift1 m = UnsafeMakeInplaceT \_ -> (,emptyOutFrag) <$> m
@@ -1553,6 +1558,10 @@ instance HasNameHint RawName where
 
 instance HasNameHint String where
   getNameHint = fromString
+
+instance HasNameHint a => HasNameHint (Maybe a) where
+  getNameHint (Just x) = getNameHint x
+  getNameHint (Nothing) = NoHint
 
 instance Color c => HasNameHint (BinderP c ann n l) where
   getNameHint (b:>_) = getNameHint b

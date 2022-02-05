@@ -53,7 +53,8 @@ data CmdOpts = CmdOpts EvalMode EvalConfig
 
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
-  env <- execInterblockM opts initTopState $ loadPrelude
+  cachedEnv <- loadCache
+  env <- execInterblockM opts cachedEnv $ loadPrelude
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
@@ -62,10 +63,11 @@ runMode evalMode opts = do
         importPrelude
         runInputT hasklineSettings $ forever $ replLoop prompt
     ScriptMode fname fmt _ -> do
-      results <- evalInterblockM opts env $ evalFile fname
+      (results, finalEnv) <- runInterblockM opts env $ evalFile fname
       printLitProg fmt results
+      storeCache finalEnv
     -- ExportMode dexPath objPath -> do
-    --   results <- evalInterblockM opts env $ map snd <$> evalFile dexPath
+    --   results <- evalInterblockM opts env $ map snd <$> evalfile dexPath
     --   let outputs = foldMap (\(Result outs _) -> outs) results
     --   let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
     --   putStr $ foldMap (nonEmptyNewline . pprint) errors

@@ -16,11 +16,14 @@ module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              measureSeconds,
              bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for,
              Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
-             iota, whenM, unsnoc, anyM) where
+             iota, whenM, unsnoc, anyM,
+             File (..), FileHash, FileContents, addHash, readFileWithHash) where
 
+import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.ByteString    as BS
 import Data.Foldable
 import Data.List.NonEmpty (NonEmpty (..))
 import Prelude
@@ -267,3 +270,21 @@ forMZipped xs ys f = zipWithZ f xs ys
 
 forMZipped_ :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m ()
 forMZipped_ xs ys f = void $ forMZipped xs ys f
+
+-- === bytestrings paired with their hash digest ===
+
+type FileHash     = String
+type FileContents = BS.ByteString
+
+-- TODO: consider adding mtime as well for a fast path that doesn't
+-- require reading the file
+data File = File
+  { fContents :: FileContents
+  , fHash     :: FileHash }
+  deriving (Show, Eq, Ord)
+
+addHash :: FileContents -> File
+addHash s = File s $ show (hash s :: Digest SHA256)
+
+readFileWithHash :: MonadIO m => FilePath -> m File
+readFileWithHash path = liftIO $ addHash <$> BS.readFile path

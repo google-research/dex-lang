@@ -39,7 +39,7 @@ module Builder (
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
   TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
-  lookupLoadedModule, loadModule, importModule,
+  lookupLoadedModule, loadModule, importModule, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache,
   TopEnvFrag (..),
   inlineLastDecl, fabricateEmitsEvidence, fabricateEmitsEvidenceM,
@@ -62,6 +62,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
+import Control.Monad.State.Strict (MonadState)
 import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
@@ -157,10 +158,9 @@ emitTopLet hint letAnn expr = do
 emitImpFunBinding :: (Mut n, TopBuilder m) => NameHint -> ImpFunction n -> m n (ImpFunName n)
 emitImpFunBinding hint f = emitBinding hint $ ImpFunBinding f
 
-loadModule :: (Mut n, TopBuilder m) => ModuleSourceName -> Module n -> m n ()
-loadModule sourceName m = do
-  name <- emitBinding (getNameHint sourceName) $ ModuleBinding m
-  let loaded = LoadedModules $ M.singleton sourceName name
+loadModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
+loadModule sourceName internalName = do
+  let loaded = LoadedModules $ M.singleton sourceName internalName
   emitNamelessEnv $ TopEnvFrag emptyOutFrag loaded mempty mempty mempty mempty
 
 importModuleByInternalName :: (Mut n, TopBuilder m) => ModuleName n -> m n ()
@@ -180,10 +180,12 @@ lookupLoadedModule name = do
   return $ M.lookup name $ fromLoadedModules loadedModules
 
 extendCache :: TopBuilder m => Cache n -> m n ()
-extendCache cache = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty cache mempty
+extendCache cache =
+  emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty cache mempty
 
 extendImpCache :: TopBuilder m => AtomName n -> ImpFunName n -> m n ()
-extendImpCache fSimp fImp = extendCache $ Cache mempty (eMapSingleton fSimp fImp) mempty
+extendImpCache fSimp fImp =
+  extendCache $ mempty { impCache = eMapSingleton fSimp fImp }
 
 queryImpCache :: EnvReader m => AtomName n -> m n (Maybe (ImpFunName n))
 queryImpCache v = do
@@ -191,7 +193,8 @@ queryImpCache v = do
   return $ lookupEMap cache v
 
 extendObjCache :: (Mut n, TopBuilder m) => ImpFunName n -> CFun n -> m n ()
-extendObjCache fImp cfun = extendCache $ Cache mempty mempty (eMapSingleton fImp cfun)
+extendObjCache fImp cfun =
+  extendCache $ mempty { objCache = eMapSingleton fImp cfun }
 
 queryObjCache :: EnvReader m => ImpFunName n -> m n (Maybe (CFun n))
 queryObjCache v = do
@@ -201,7 +204,8 @@ queryObjCache v = do
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader, MonadTrans1, MonadReader r, MonadIO)
+           , CtxReader, ScopeReader, MonadTrans1, MonadReader r
+           , MonadWriter w, MonadState s, MonadIO)
 
 instance Fallible m => EnvReader (TopBuilderT m) where
   unsafeGetEnv = TopBuilderT $ getOutMapInplaceT

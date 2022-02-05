@@ -51,7 +51,7 @@ module Syntax (
     UMethodDef (..), UAnnBinder (..),
     WithSrcE (..), WithSrcB (..), srcPos,
     SourceBlock (..), SourceBlock' (..), EnvQuery (..),
-    ModuleName, Module (..), UModule (..),
+    ModuleName, Module (..), UModule (..), UModulePartialParse (..),
     UMethodType(..), UType, ExtLabeledItemsE (..),
     CmdName (..), LogLevel (..), OutFormat (..),
     EnvReader (..), EnvExtender (..),  Binding (..),
@@ -133,7 +133,7 @@ import Data.Store (Store)
 import Name
 import Err
 import LabeledItems
-import Util ((...), enumerate, IsBool (..))
+import Util ((...), enumerate, IsBool (..), File (..), FileHash)
 
 -- === core IR ===
 
@@ -310,10 +310,17 @@ data Module (n::S) =
   Module (SourceMap n) (SynthCandidates n)
   deriving (Show, Generic)
 
-data UModule =
-  UModule { uModuleName          :: Maybe ModuleSourceName
-          , uModuleDirectImports :: [ModuleSourceName]
-          , uModuleSourceBlocks  :: [SourceBlock] }
+-- Parsed just enough to know the dependencies.
+data UModulePartialParse = UModulePartialParse
+  { umppName          :: Maybe ModuleSourceName
+  , umppDirectImports :: [ModuleSourceName]
+  , umppSource        :: File }
+  deriving (Show, Generic)
+
+data UModule = UModule
+  { uModuleName          :: Maybe ModuleSourceName
+  , uModuleDirectImports :: [ModuleSourceName]
+  , uModuleSourceBlocks  :: [SourceBlock] }
   deriving (Show, Generic)
 
 -- === bindings - static information we carry about a lexical scope ===
@@ -368,11 +375,20 @@ data Env (n::S) = Env
 emptyLoadedModules :: LoadedModules n
 emptyLoadedModules = LoadedModules mempty
 
+-- TODO: figure out the additional top-level context we need -- backend, other
+-- compiler flags etc. We can have a map from those to this.
 data Cache (n::S) = Cache
   { simpCache :: EMap AtomName AtomName n
   , impCache  :: EMap AtomName ImpFunName n
   , objCache  :: EMap ImpFunName CFun n
+    -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
+    -- only want to store one entry per module name as a simple cache eviction
+    -- policy, so we store it keyed on the module name, with the text hash for
+    -- the validity check.
+  , parsedDeps :: M.Map ModuleSourceName (FileHash, [ModuleSourceName])
+  , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
+
 
 instance HasScope Env where
   toScope = getEnvScope
@@ -2172,8 +2188,8 @@ instance GenericE Cache where
   type RepE Cache =         EMap AtomName AtomName
                     `PairE` EMap AtomName ImpFunName
                     `PairE` EMap ImpFunName CFun
-  fromE (Cache x y z) = x `PairE` y `PairE` z
-  toE   (x `PairE` y `PairE` z) = Cache x y z
+  -- fromE (Cache x y z) = x `PairE` y `PairE` z
+  -- toE   (x `PairE` y `PairE` z) = Cache x y z
 
 instance SinkableE  Cache
 instance HoistableE Cache
@@ -2182,12 +2198,13 @@ instance SubstE Name Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty mempty
+  mempty = Cache mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 x3 <> Cache y1 y2 y3 = Cache (x1<>y1) (x2<>y2) (x3<>y3)
+  Cache x1 x2 x3 x4 x5 <> Cache y1 y2 y3 y4 y5 =
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (y5<>x5)
 
 instance BindsOneAtomName (BinderP AtomNameC Type) where
   boundAtomBinding (_ :> ty) = MiscBound ty
