@@ -190,6 +190,7 @@ eval prog env expr = case expr of
 -------------------- Free variable querying --------------------
 
 data FreeVars = FV { getFree :: (S.Set Var), getFreeLin :: (S.Set Var) }
+  deriving (Eq, Show)
 instance Semigroup FreeVars where
   (FV v lv) <> (FV v' lv') = FV (v <> v') (lv <> lv')
 instance Monoid FreeVars where
@@ -446,18 +447,20 @@ splitTangents scope env es = go scope env (freeVars <$> es)
       True  -> case commonFvs of
         [] -> (subcontext, subscope, (M.restrictKeys env fvs):submaps)
           where (subcontext, subscope, submaps) = go scope (M.withoutKeys env fvs) tfvs
-        _  -> (context . subcontext, subscope, (M.fromList $ zip commonFvs dvs2'):submaps)
+        _  -> (context . subcontext, subscope, this_map:submaps)
           where
             allFresh@(vst':vst2':allDvs') = take (2 + 2 * length commonFvs) $ freshVars scope
             (dvs', dvs2') = splitAt (length commonFvs) allDvs'
             (subcontext, subscope, submaps) =
               go (scopeExt scope allFresh)
                 (envExt (M.withoutKeys env fvs) commonFvs dvs') tfvs
+            this_map = envExt (M.withoutKeys env subfvs) commonFvs dvs2'
             context = LetMixed [] [vst', vst2'] (Dup (LTuple $ (env !) <$> commonFvs)) .
                       LetUnpackLin dvs'  vst' .
                       LetUnpackLin dvs2' vst2'
       where
-        commonFvsS = fvs `S.intersection` getFree (fold tfvs)
+        subfvs = getFree (fold tfvs)
+        commonFvsS = fvs `S.intersection` subfvs
         commonFvs  = toList commonFvsS
 
 jvp :: JVPFuncMap -> Scope -> Subst -> TangentMap -> Expr -> Expr
