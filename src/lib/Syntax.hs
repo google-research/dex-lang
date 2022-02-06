@@ -1042,7 +1042,7 @@ data SourceBlock' =
  | Command CmdName (UExpr VoidS)
  | DeclareForeign SourceName (UAnnBinder AtomNameC VoidS VoidS)
  | GetNameType SourceName
- | ImportModule SourceName
+ | ImportModule ModuleSourceName
  | QueryEnv EnvQuery
  | ProseBlock String
  | CommentLine

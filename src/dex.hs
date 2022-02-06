@@ -28,7 +28,7 @@ import TopLevel
 import Err
 import Syntax
 import Name
-import Parser (parseTopDeclRepl, keyWordStrs)
+import Parser (parseTopDeclRepl, keyWordStrs, preludeImportBlock)
 #ifdef DEX_LIVE
 import RenderHtml
 import LiveOutput
@@ -54,15 +54,15 @@ data CmdOpts = CmdOpts EvalMode EvalConfig
 
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
-  cachedEnv <- loadCache
-  env <- execInterblockM opts cachedEnv $ loadPrelude
+  env <- loadCache
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
       let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
       evalInterblockM opts env do
-        importPrelude
-        runInputT hasklineSettings $ forever $ replLoop prompt
+        evalBlockRepl preludeImportBlock
+        runInputT hasklineSettings $ forever $
+          readMultiline prompt parseTopDeclRepl >>= lift . evalBlockRepl
     ScriptMode fname fmt _ -> do
       (results, finalEnv) <- runInterblockM opts env $ evalFile fname
       printLitProg fmt results
@@ -82,20 +82,15 @@ runMode evalMode opts = do
 #ifdef DEX_LIVE
     -- These are broken if the prelude produces any arrays because the blockId
     -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> do
-      env' <- execInterblockM opts env $ importPrelude
-      runWeb fname opts env
-    WatchMode  fname -> do
-      env' <- execInterblockM opts env $ importPrelude
-      runTerminal fname opts env
+    WebMode    fname -> runWeb fname opts env
+    WatchMode  fname -> runTerminal fname opts env
 #endif
 
-replLoop :: String -> InputT InterblockM ()
-replLoop prompt = do
-  sourceBlock <- readMultiline prompt parseTopDeclRepl
-  env <- lift getTopStateEx
-  result <- lift $ evalSourceBlockRepl sourceBlock
-  case result of Result _ (Failure _) -> lift $ setTopStateEx env
+evalBlockRepl :: MonadInterblock m => SourceBlock -> m ()
+evalBlockRepl block = do
+  env <- getTopStateEx
+  result <- evalSourceBlockRepl block
+  case result of Result _ (Failure _) -> setTopStateEx env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
 

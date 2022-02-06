@@ -16,7 +16,7 @@
 
 module TopLevel (
   EvalConfig (..),
-  evalSourceBlock, evalSourceBlockRepl, loadPrelude, importPrelude,
+  evalSourceBlock, evalSourceBlockRepl,
   evalFile, MonadInterblock (..), InterblockM, ensureModuleLoaded,
   evalSourceText, runInterblockM, execInterblockM, initTopState, TopStateEx (..),
   evalInterblockM, evalSourceBlockIO,
@@ -30,7 +30,6 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import qualified Data.ByteString as BS
 import Data.Text.Prettyprint.Doc
-import Data.Maybe (fromJust)
 import Data.Store (Store, encode, decode)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
@@ -138,7 +137,6 @@ evalSourceBlockIO opts env block = do
 evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
 evalSourceText source = do
   let (UModule _ deps sourceBlocks) = parseUModule Nothing source
-  importPrelude
   mapM_ ensureModuleLoaded deps
   results <- mapM evalSourceBlock sourceBlocks
   return $ zip sourceBlocks results
@@ -162,10 +160,10 @@ liftPassesM bench m = do
     Failure errs -> do
       return $ Result outs (Failure errs)
 
-liftTopBuilderM :: MonadInterblock m
+_liftTopBuilderM :: MonadInterblock m
                 => (forall n. Mut n => TopBuilderT FallibleM n a)
                 -> m a
-liftTopBuilderM cont = do
+_liftTopBuilderM cont = do
   env <- getTopStateEx
   case runFallibleM $ runTopBuilderYieldingEnv env cont of
     Failure err -> liftIO $ throwIO err
@@ -190,19 +188,14 @@ evalSourceBlockRepl block = do
   case block of
     SourceBlock _ _ _ _ (ImportModule name) -> do
       -- TODO: clear source map and synth candidates before calling this
-      ensureModuleLoaded $ OrdinaryModule name
+      ensureModuleLoaded name
     _ -> return ()
   evalSourceBlock block
 
-loadPrelude :: MonadInterblock m => m ()
-loadPrelude = ensureModuleLoaded ThePrelude
-
-importPrelude :: MonadInterblock m => m ()
-importPrelude = liftTopBuilderM $ importModule ThePrelude
-
 -- XXX: This ensures that a module and its transitive dependencies are loaded,
--- but it doesn't bring the names and instances into scope. The modules
--- are "loaded" but not yet "imported".
+-- (which will require evaluating them if they're not in the cache) but it
+-- doesn't bring the names and instances into scope. The modules are "loaded"
+-- but not yet "imported".
 ensureModuleLoaded :: MonadInterblock m => ModuleSourceName -> m ()
 ensureModuleLoaded moduleSourceName = do
   alreadyLoaded <- do
@@ -214,7 +207,8 @@ ensureModuleLoaded moduleSourceName = do
   forM_ depsRequired \md -> liftPassesM False do
     evaluated <- evalPartiallyParsedUModuleCached md
     case umppName md of
-      Just sourceName -> loadModule sourceName evaluated
+      Just sourceName -> do
+        loadModule sourceName evaluated
       Nothing -> return ()
 
 evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
@@ -263,8 +257,7 @@ evalSourceBlock' block = case sbContents block of
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
-  ImportModule moduleName -> do
-    importModule $ OrdinaryModule moduleName
+  ImportModule moduleName -> importModule moduleName
   QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()
   CommentLine  -> return ()
@@ -348,21 +341,21 @@ parseUModuleDepsCached :: (Mut n, TopBuilder m)
                        => Maybe ModuleSourceName -> File -> m n [ModuleSourceName]
 parseUModuleDepsCached Nothing file =
   -- No caching for anonymous modules
-  return $ parseUModuleDeps file
+  return $ parseUModuleDeps Nothing file
 parseUModuleDepsCached (Just name) file = do
   LiftE cache <- withEnv (LiftE . parsedDeps . getCache)
   let req = fHash file
   case M.lookup name cache of
     Just (cachedReq, result) | cachedReq == req -> return result
     _ -> do
-      let result = parseUModuleDeps file
+      let result = parseUModuleDeps (Just name) file
       extendCache $ mempty { parsedDeps = M.singleton name (req, result) }
       return result
 
 evalPartiallyParsedUModuleCached
   :: (Mut n, MonadPasses m)
   => UModulePartialParse -> m n (ModuleName n)
-evalPartiallyParsedUModuleCached md@(UModulePartialParse maybeName deps source) =
+evalPartiallyParsedUModuleCached md@(UModulePartialParse maybeName deps source) = do
   case maybeName of
     Nothing -> evalPartiallyParsedUModule md
     Just name -> do
@@ -371,7 +364,10 @@ evalPartiallyParsedUModuleCached md@(UModulePartialParse maybeName deps source) 
       -- module evaluation, but maybe we should actually restrict the
       -- environment we pass to `evalUModule` so that it can't possibly depend
       -- on anything else.
-      directDeps <- forM deps \dep -> fromJust <$> lookupLoadedModule dep
+      directDeps <- forM deps \dep -> do
+        lookupLoadedModule dep >>= \case
+          Just depVal -> return depVal
+          Nothing -> throw CompilerErr $ pprint dep ++ " isn't loaded"
       let req = (fHash source, directDeps)
       case M.lookup name cache of
         Just (cachedReq, result) | cachedReq == req -> return result
@@ -393,8 +389,7 @@ evalPartiallyParsedUModule partiallyParsed = do
 
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Mut n, MonadPasses m) => UModule -> m n (Module n)
-evalUModule (UModule name _ blocks) = do
-  unless (name == Just ThePrelude) $ importModule ThePrelude
+evalUModule (UModule _ _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ evalSourceBlock' blocks >> return UnitE
   TopEnvFrag envFrag _ synthCandidates sourceMap cache objFiles <- return topFrag
   let fragToEmit = TopEnvFrag envFrag mempty mempty mempty cache objFiles

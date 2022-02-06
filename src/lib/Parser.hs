@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module Parser (Parser, parseit, parseUModule, parseUModuleDeps,
-               finishUModuleParse, parseData,
+               finishUModuleParse, parseData, preludeImportBlock,
                parseTopDeclRepl, uint, withSource, parseExpr,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
@@ -40,9 +40,9 @@ type Parser = ReaderT ParseCtx (Parsec Void String)
 
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
-parseUModuleDeps :: File -> [ModuleSourceName]
-parseUModuleDeps file = deps
-  where UModule _ deps _ = parseUModule Nothing $ toString $ fContents file
+parseUModuleDeps :: Maybe ModuleSourceName -> File -> [ModuleSourceName]
+parseUModuleDeps name file = deps
+  where UModule _ deps _ = parseUModule name $ toString $ fContents file
 
 finishUModuleParse :: UModulePartialParse -> UModule
 finishUModuleParse (UModulePartialParse name _ file) =
@@ -51,10 +51,16 @@ finishUModuleParse (UModulePartialParse name _ file) =
 parseUModule :: Maybe ModuleSourceName -> String -> UModule
 parseUModule name s = do
   let blocks = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
-  let imports = flip foldMap blocks \b -> case sbContents b of
-                  ImportModule moduleName -> [OrdinaryModule moduleName]
+  let blocks' = if name == Just ThePrelude
+        then blocks
+        else preludeImportBlock : blocks
+  let imports = flip foldMap blocks' \b -> case sbContents b of
+                  ImportModule moduleName -> [moduleName]
                   _ -> []
-  UModule name imports blocks
+  UModule name imports blocks'
+
+preludeImportBlock :: SourceBlock
+preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule ThePrelude
 
 parseData :: String -> Except (UExpr VoidS)
 parseData s = parseit s $ expr <* (optional eol >> eof)
@@ -79,7 +85,7 @@ mustParseit s p  = case parseit s p of
   Failure e -> error $ "This shouldn't happen:\n" ++ pprint e
 
 importModule :: Parser SourceBlock'
-importModule = ImportModule <$> do
+importModule = ImportModule . OrdinaryModule <$> do
   keyWord ImportKW
   s <- lowerName <|> upperName
   eol
