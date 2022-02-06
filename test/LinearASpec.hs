@@ -35,7 +35,7 @@ shouldNotTypeCheck prog = typecheckProgram prog `shouldSatisfy` \case
 -- Compute a gradient in LinearA, with sanity checks along the way
 -- This version assumes the function produces a single real output, so
 -- doesn't take a covector.
-gradient :: Program -> FuncName -> [Float] -> IO [Value]
+gradient :: Program -> FuncName -> [Value] -> IO [Value]
 gradient prog f args = do
   shouldTypeCheck prog
   let jProg = jvpProgram prog
@@ -44,8 +44,8 @@ gradient prog f args = do
   shouldTypeCheck ujProg
   let tujProg = transposeProgram ujProg
   shouldTypeCheck tujProg
-  let expPrimal = evalFunc prog f (map FloatVal args) []
-  let (Result primal_tape empty) = evalFunc tujProg (f ++ ".nonlin") (map FloatVal args) []
+  let expPrimal = evalFunc prog f args []
+  let (Result primal_tape empty) = evalFunc tujProg (f ++ ".nonlin") args []
   empty `shouldBe` []
   -- The tape is a tuple at the end; split it into a singleton list
   let (primal, tape) = splitAt (length primal_tape - 1) primal_tape
@@ -219,7 +219,7 @@ spec = do
 
     it "x + y" $ do
       let p = Program $ M.fromList [ ("add", add_func) ]
-      grad <- gradient p "add" [2.0, 2.0]
+      grad <- gradient p "add" [FloatVal 2.0, FloatVal 2.0]
       grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
 
     it "function call" $ do
@@ -229,12 +229,12 @@ spec = do
                     LetMixed ["z"] [] (App "add" ["x", "y"] []) $
                     Var "z")
                 ]
-      grad <- gradient p "f" [2.0, 2.0]
+      grad <- gradient p "f" [FloatVal 2.0, FloatVal 2.0]
       grad `shouldBe` [FloatVal 1.0, FloatVal 1.0]
 
     it "x + x should add dup" $ do
       let p = Program $ M.fromList [("double", double_func)]
-      grad <- gradient p "double" [4.0]
+      grad <- gradient p "double" [FloatVal 4.0]
       grad `shouldBe` [FloatVal 2.0]
 
     it "should differentiate through tuples" $ do
@@ -246,7 +246,7 @@ spec = do
                     LetUnpack ["x1", "x2"] "y" $
                     BinOp Mul (Var "x1") (Var "x2"))
                 ]
-      grad <- gradient p "square" [3.0]
+      grad <- gradient p "square" [FloatVal 3.0]
       grad `shouldBe` [FloatVal 6.0]
 
     it "should differentiate literals" $ do
@@ -254,7 +254,7 @@ spec = do
                 [ ("add_1", FuncDef [("x", FloatType)] [] (MixedType [FloatType] []) $
                     BinOp Add (Var "x") (Lit 1.0))
                 ]
-      grad <- gradient p "add_1" [3.0]
+      grad <- gradient p "add_1" [FloatVal 3.0]
       grad `shouldBe` [FloatVal 1.0]
 
     it "should respect drops" $ do
@@ -263,12 +263,12 @@ spec = do
                     LetMixed [] [] (Drop $ BinOp Mul (Var "x") (Var "x")) $
                     BinOp Add (Var "x") (Lit 1.0))
                 ]
-      grad <- gradient p "add_1" [3.0]
+      grad <- gradient p "add_1" [FloatVal 3.0]
       grad `shouldBe` [FloatVal 1.0]
 
     let two_vec = TupleType [FloatType, FloatType]
     let two_mat = TupleType [two_vec, two_vec]
-    xit "should run the matvec2x2 example" $ do
+    it "should run the matvec2x2 example" $ do
       let p = Program $ M.fromList
                 [ ("matvec2x2", FuncDef [("m", two_mat), ("v", two_vec)] [] (MixedType [two_vec] []) $
                     LetUnpack ["row_1", "row_2"] "m" $
@@ -280,11 +280,14 @@ spec = do
                     LetMixed ["w2"] [] (BinOp Add (BinOp Mul (Var "m21") (Var "v1"))
                                                   (BinOp Mul (Var "m22") (Var "v2"))) $
                     Tuple ["w1", "w2"])
-                , ("specific", FuncDef [("v", two_vec)] [] (MixedType [two_vec] []) $
+                , ("specific", FuncDef [("v", two_vec)] [] (MixedType [FloatType] []) $
                     LetMixed ["m"] [] (tuple [ (tuple [Lit 2.0, Lit 7.0])
                                              , (tuple [Lit 1.0, Lit 8.0])
                                              ]) $
-                    App "matvec2x2" ["m", "v"] [])
+                    LetMixed ["anf"] [] (App "matvec2x2" ["m", "v"] []) $
+                    LetUnpack ["a1", "a2"] "anf" $
+                    BinOp Mul (Var "a1") (Var "a2")
+                  )
                 ]
-      grad <- gradient p "specific" [2.0, 3.0]
-      grad `shouldBe` [FloatVal 2.0, FloatVal 3.0]
+      grad <- gradient p "specific" [TupleVal [FloatVal 2.0, FloatVal 3.0]]
+      grad `shouldBe` [TupleVal [FloatVal 77.0, FloatVal 382.0]]
