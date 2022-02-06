@@ -87,7 +87,7 @@ runDriver cfg env =
 
 evalSource :: SourceContents -> DriverM ()
 evalSource source = withLocalTopState do
-    let UModule _ _ blocks = parseUModule Nothing source
+    let UModule _ _ blocks = parseUModule Main source
     (evaluated, remaining) <- tryEvalBlocksCached blocks
     remaining' <- mapM makeNewBlockId remaining
     updateResultList $ map getNodeId $ evaluated ++ remaining'

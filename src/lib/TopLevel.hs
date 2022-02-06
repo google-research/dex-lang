@@ -136,7 +136,7 @@ evalSourceBlockIO opts env block = do
 -- Used for the top-level source file (rather than imported modules)
 evalSourceText :: MonadInterblock m => String -> m [(SourceBlock, Result)]
 evalSourceText source = do
-  let (UModule _ deps sourceBlocks) = parseUModule Nothing source
+  let (UModule _ deps sourceBlocks) = parseUModule Main source
   mapM_ ensureModuleLoaded deps
   results <- mapM evalSourceBlock sourceBlocks
   return $ zip sourceBlocks results
@@ -206,10 +206,7 @@ ensureModuleLoaded moduleSourceName = do
   depsRequired <- findDepsTransitively config alreadyLoaded moduleSourceName
   forM_ depsRequired \md -> liftPassesM False do
     evaluated <- evalPartiallyParsedUModuleCached md
-    case umppName md of
-      Just sourceName -> do
-        loadModule sourceName evaluated
-      Nothing -> return ()
+    loadModule (umppName md) evaluated
 
 evalSourceBlock :: MonadInterblock m => SourceBlock -> m Result
 evalSourceBlock block = do
@@ -317,9 +314,9 @@ findDepsTransitively config alreadyKnown initialModuleName =
       unless alreadyVisited do
         modify $ S.insert name
         source <- loadModuleSource config name
-        deps <- parseUModuleDepsCached (Just name) source
+        deps <- parseUModuleDepsCached name source
         mapM_ go deps
-        tell $ [UModulePartialParse (Just name) deps source]
+        tell $ [UModulePartialParse name deps source]
 
 type TransDepsM n a = TopBuilderT (StateT (S.Set ModuleSourceName)
                         (WriterT [UModulePartialParse] IO)) n a
@@ -338,27 +335,25 @@ liftTransDepsM names cont = do
 -- keys, eviction policy, etc. Maybe some a type class for caches that implement
 -- query/extend, with `extend` being where the eviction happens?
 parseUModuleDepsCached :: (Mut n, TopBuilder m)
-                       => Maybe ModuleSourceName -> File -> m n [ModuleSourceName]
-parseUModuleDepsCached Nothing file =
-  -- No caching for anonymous modules
-  return $ parseUModuleDeps Nothing file
-parseUModuleDepsCached (Just name) file = do
+                       => ModuleSourceName -> File -> m n [ModuleSourceName]
+parseUModuleDepsCached Main file = return $ parseUModuleDeps Main file
+parseUModuleDepsCached name file = do
   LiftE cache <- withEnv (LiftE . parsedDeps . getCache)
   let req = fHash file
   case M.lookup name cache of
     Just (cachedReq, result) | cachedReq == req -> return result
     _ -> do
-      let result = parseUModuleDeps (Just name) file
+      let result = parseUModuleDeps name file
       extendCache $ mempty { parsedDeps = M.singleton name (req, result) }
       return result
 
 evalPartiallyParsedUModuleCached
   :: (Mut n, MonadPasses m)
   => UModulePartialParse -> m n (ModuleName n)
-evalPartiallyParsedUModuleCached md@(UModulePartialParse maybeName deps source) = do
-  case maybeName of
-    Nothing -> evalPartiallyParsedUModule md
-    Just name -> do
+evalPartiallyParsedUModuleCached md@(UModulePartialParse name deps source) = do
+  case name of
+    Main -> evalPartiallyParsedUModule md  -- Don't cache main
+    _ -> do
       LiftE cache <- withEnv (LiftE . moduleEvaluations . getCache)
       -- TODO: we know that these are sufficient to determine the result of
       -- module evaluation, but maybe we should actually restrict the
@@ -579,10 +574,11 @@ loadModuleSource config moduleName = case moduleName of
       Nothing -> liftIO $ getDataFileName $ "lib/" ++ fname
       Just path -> return $ path </> fname
     readFileWithHash fullPath
-  ThePrelude -> do
+  Prelude -> do
     case preludeFile config of
       Nothing   -> return preludeSource
       Just path -> readFileWithHash path
+  Main -> error "shouldn't be trying to load the source for main"
 
 -- === saving cache to disk ===
 

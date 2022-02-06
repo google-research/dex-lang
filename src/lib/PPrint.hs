@@ -378,7 +378,8 @@ instance Pretty (Module n) where
     <>   indented (pretty sourceMap)
 
 instance Pretty ModuleSourceName where
-  pretty ThePrelude = "prelude"
+  pretty Main = "main"
+  pretty Prelude = "prelude"
   pretty (OrdinaryModule s) = p s
 
 instance Pretty (DataDef n) where

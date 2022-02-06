@@ -299,7 +299,7 @@ type AtomSubstVal = SubstVal AtomNameC Atom :: V
 
 -- === modules ===
 
-data ModuleSourceName = ThePrelude | OrdinaryModule SourceName
+data ModuleSourceName = Prelude | Main | OrdinaryModule SourceName
      deriving (Show, Eq, Ord, Generic)
 
 data LoadedModules (n::S) = LoadedModules
@@ -312,13 +312,13 @@ data Module (n::S) =
 
 -- Parsed just enough to know the dependencies.
 data UModulePartialParse = UModulePartialParse
-  { umppName          :: Maybe ModuleSourceName
+  { umppName          :: ModuleSourceName
   , umppDirectImports :: [ModuleSourceName]
   , umppSource        :: File }
   deriving (Show, Generic)
 
 data UModule = UModule
-  { uModuleName          :: Maybe ModuleSourceName
+  { uModuleName          :: ModuleSourceName
   , uModuleDirectImports :: [ModuleSourceName]
   , uModuleSourceBlocks  :: [SourceBlock] }
   deriving (Show, Generic)
@@ -3149,7 +3149,8 @@ instance Monoid (LoadedModules n) where
 
 instance HasNameHint ModuleSourceName where
   getNameHint (OrdinaryModule name) = getNameHint name
-  getNameHint ThePrelude = "prelude"
+  getNameHint Prelude = "prelude"
+  getNameHint Main = "main"
 
 -- TODO: Can we derive these generically? Or use Show/Read?
 --       (These prelude-only names don't have to be pretty.)

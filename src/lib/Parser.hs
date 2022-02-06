@@ -40,7 +40,7 @@ type Parser = ReaderT ParseCtx (Parsec Void String)
 
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
-parseUModuleDeps :: Maybe ModuleSourceName -> File -> [ModuleSourceName]
+parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
 parseUModuleDeps name file = deps
   where UModule _ deps _ = parseUModule name $ toString $ fContents file
 
@@ -48,10 +48,10 @@ finishUModuleParse :: UModulePartialParse -> UModule
 finishUModuleParse (UModulePartialParse name _ file) =
   parseUModule name (toString $ fContents file)
 
-parseUModule :: Maybe ModuleSourceName -> String -> UModule
+parseUModule :: ModuleSourceName -> String -> UModule
 parseUModule name s = do
   let blocks = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
-  let blocks' = if name == Just ThePrelude
+  let blocks' = if name == Prelude
         then blocks
         else preludeImportBlock : blocks
   let imports = flip foldMap blocks' \b -> case sbContents b of
@@ -60,7 +60,7 @@ parseUModule name s = do
   UModule name imports blocks'
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule ThePrelude
+preludeImportBlock = SourceBlock 0 0 LogNothing "" $ ImportModule Prelude
 
 parseData :: String -> Except (UExpr VoidS)
 parseData s = parseit s $ expr <* (optional eol >> eof)
