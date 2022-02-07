@@ -58,9 +58,6 @@ runMode evalMode preludeFile opts = do
   env <- cachedWithSnapshot "prelude" key do
     hPutStrLn stderr "Compiling the prelude. This may take some time."
     execInterblockM opts initTopState $ evalPrelude preludeFile
-  env <- cachedWithSnapshot "prelude" key do
-    hPutStrLn stderr "Compiling the prelude. This may take some time."
-    execInterblockM opts initTopState $ evalPrelude preludeFile
   case evalMode of
     ReplMode prompt -> do
       let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
