@@ -49,15 +49,17 @@ readLog (Logger log _) = liftIO $ readMVar log
 
 -- === monadic interface ===
 
-newtype LoggerT l m a = LoggerT (ReaderT (Logger l) m a)
+newtype LoggerT l m a = LoggerT { runLoggerT' :: ReaderT (Logger l) m a }
                         deriving (Functor, Applicative, Monad, MonadTrans,
-                                  MonadIO, MonadFail, Fallible)
+                                  MonadIO, MonadFail, Fallible, Catchable)
 
 class (Pretty l, Monoid l, Monad m) => MonadLogger l m | m -> l where
   getLogger :: m (Logger l)
+  withLogger :: Logger l -> m a -> m a
 
 instance (MonadIO m, Pretty l, Monoid l) => MonadLogger l (LoggerT l m) where
   getLogger = LoggerT ask
+  withLogger l m = LoggerT $ local (const l) $ runLoggerT' m
 
 type MonadLogger1 l (m :: MonadKind1) = forall (n::S) . MonadLogger l (m n)
 type MonadLogger2 l (m :: MonadKind2) = forall (n1::S) (n2::S) . MonadLogger l (m n1 n2)
@@ -69,3 +71,9 @@ logIO val = do
 
 runLoggerT :: Monoid l => Logger l -> LoggerT l m a -> m a
 runLoggerT l (LoggerT m) = runReaderT m l
+
+-- === more instances ===
+
+instance MonadLogger l m => MonadLogger l (ReaderT r m) where
+  getLogger = lift getLogger
+  withLogger l cont = ReaderT \r -> withLogger l $ runReaderT cont r

@@ -37,7 +37,7 @@ module Builder (
   emitDataDef, emitClassDef, emitDataConName, emitTyConName,
   buildCase, emitMaybeCase, buildSplitCase,
   emitBlock, emitDecls, BuilderEmissions, emitAtomToName,
-  TopBuilder (..), TopBuilderT (..), runTopBuilderT, TopBuilder2,
+  TopBuilder (..), TopBuilderT (..), liftTopBuilderTWith, runTopBuilderT, TopBuilder2,
   emitSourceMap, emitSynthCandidates, emitTopLet, emitImpFunBinding,
   lookupLoadedModule, loadModule, importModule, extendCache,
   extendImpCache, queryImpCache, extendObjCache, queryObjCache,
@@ -205,7 +205,15 @@ newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , CtxReader, ScopeReader, MonadTrans1, MonadReader r
-           , MonadWriter w, MonadState s, MonadIO)
+           , MonadWriter w, MonadState s, MonadIO, Catchable)
+
+-- We use this to implement things that look like `local` from `MonadReader`.
+-- Does it make sense to but it in a transformer-like class, like we do with
+-- `lift11`?
+liftTopBuilderTWith :: Monad m => (forall a'. m a' -> m a')
+                    -> TopBuilderT m n a -> TopBuilderT m n a
+liftTopBuilderTWith modifyInner cont = TopBuilderT $
+  liftBetweenInplaceTs modifyInner id id (runTopBuilderT' cont)
 
 instance Fallible m => EnvReader (TopBuilderT m) where
   unsafeGetEnv = TopBuilderT $ getOutMapInplaceT
@@ -246,6 +254,12 @@ runTopBuilderT bindings cont = do
   liftM snd $ runInplaceT bindings $ runTopBuilderT' $ cont
 
 type TopBuilder2 (m :: MonadKind2) = forall i. TopBuilder (m i)
+
+instance (SinkableE e, HoistableState e m, TopBuilder m) => TopBuilder (StateT1 e m) where
+  emitBinding hint binding = lift11 $ emitBinding hint binding
+  emitEnv ab = lift11 $ emitEnv ab
+  emitNamelessEnv frag = lift11 $ emitNamelessEnv frag
+  localTopBuilder _ = error "not implemented"
 
 -- === BuilderT ===
 

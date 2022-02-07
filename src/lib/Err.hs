@@ -11,7 +11,7 @@
 
 module Err (Err (..), Errs (..), ErrType (..), Except (..), ErrCtx (..),
             SrcPosCtx, SrcTextCtx, SrcPos,
-            Fallible (..), Catchable (..),
+            Fallible (..), Catchable (..), catchErrExcept,
             FallibleM (..), HardFailM (..), CtxReader (..),
             runFallibleM, runHardFail, throw, throwErr, throwIf,
             addContext, addSrcContext, addSrcTextContext,
@@ -81,6 +81,9 @@ class MonadFail m => Fallible m where
 class Fallible m => Catchable m where
   catchErr :: m a -> (Errs -> m a) -> m a
 
+catchErrExcept :: Catchable m => m a -> m (Except a)
+catchErrExcept m = catchErr (Success <$> m) (\e -> return $ Failure e)
+
 -- We have this in its own class because IO and `Except` can't implement it
 -- (but FallibleM can)
 class Fallible m => CtxReader m where
@@ -118,6 +121,12 @@ instance Fallible IO where
   addErrCtx ctx m = do
     result <- catchIOExcept m
     liftExcept $ addErrCtx ctx result
+
+instance Catchable IO where
+  catchErr cont handler =
+    catchIOExcept cont >>= \case
+      Success result -> return result
+      Failure errs -> handler errs
 
 instance FallibleApplicative IO where
   mergeErrs m1 m2 = do

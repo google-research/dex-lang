@@ -6,6 +6,7 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 module MTL1 (
@@ -140,6 +141,9 @@ instance (SinkableE s, EnvExtender m, HoistableState s m) => EnvExtender (StateT
       return (ans, Abs b s')
     s'' <- hoistState s b s'
     return (ans, s'')
+
+instance Monad1 m => HoistableState (LiftE a) m where
+  hoistState _ _ (LiftE x) = return $ LiftE x
 
 -------------------- ScopedT1 --------------------
 

@@ -53,51 +53,63 @@ data EvalMode = ReplMode String
 data CmdOpts = CmdOpts EvalMode EvalConfig
 
 runMode :: EvalMode -> EvalConfig -> IO ()
-runMode evalMode opts = do
-  env <- loadCache
-  case evalMode of
-    ReplMode prompt -> do
-      let filenameAndDexCompletions = completeQuotedWord (Just '\\') "\"'" listFiles dexCompletions
-      let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-      evalInterblockM opts env do
-        evalBlockRepl preludeImportBlock
-        runInputT hasklineSettings $ forever $
-          readMultiline prompt parseTopDeclRepl >>= lift . evalBlockRepl
-    ScriptMode fname fmt _ -> do
-      (results, finalEnv) <- runInterblockM opts env $ evalFile fname
-      printLitProg fmt results
-      storeCache finalEnv
-    -- ExportMode dexPath objPath -> do
-    --   results <- evalInterblockM opts env $ map snd <$> evalfile dexPath
-    --   let outputs = foldMap (\(Result outs _) -> outs) results
-    --   let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
-    --   putStr $ foldMap (nonEmptyNewline . pprint) errors
-    --   let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
-    --   unless (backendName opts == LLVM) $
-    --     throw CompilerErr "Export only supported with the LLVM CPU backend"
-    --   TopStateEx env' <- return env
-    --   -- exportFunctions objPath exportedFuns $ getNameBindings env'
-    --   error "not implemented"
-    ClearCache -> clearCache
+runMode evalMode opts = case evalMode of
+  ScriptMode fname fmt _ -> do
+    env <- loadCache
+    ((), finalEnv) <- runTopperM opts env do
+      results <- evalFile fname
+      liftIO $ printLitProg fmt results
+    storeCache finalEnv
+  ReplMode prompt -> do
+    env <- loadCache
+    void $ runTopperM opts env do
+      evalBlockRepl preludeImportBlock
+      forever do
+         block <- readSourceBlock prompt
+         evalBlockRepl block
+  -- ExportMode dexPath objPath -> do
+  --   results <- evalInterblockM opts env $ map snd <$> evalfile dexPath
+  --   let outputs = foldMap (\(Result outs _) -> outs) results
+  --   let errors = foldMap (\case (Result _ (Failure err)) -> [err]; _ -> []) results
+  --   putStr $ foldMap (nonEmptyNewline . pprint) errors
+  --   let exportedFuns = foldMap (\case (ExportedFun name f) -> [(name, f)]; _ -> []) outputs
+  --   unless (backendName opts == LLVM) $
+  --     throw CompilerErr "Export only supported with the LLVM CPU backend"
+  --   TopStateEx env' <- return env
+  --   -- exportFunctions objPath exportedFuns $ getNameBindings env'
+  --   error "not implemented"
+  ClearCache -> clearCache
 #ifdef DEX_LIVE
-    -- These are broken if the prelude produces any arrays because the blockId
-    -- counter restarts at zero. TODO: make prelude an implicit import block
-    WebMode    fname -> runWeb fname opts env
-    WatchMode  fname -> runTerminal fname opts env
+  -- These are broken if the prelude produces any arrays because the blockId
+  -- counter restarts at zero. TODO: make prelude an implicit import block
+  WebMode    fname -> do
+    env <- loadCache
+    runWeb fname opts env
+  WatchMode  fname -> do
+    env <- loadCache
+    runTerminal fname opts env
 #endif
 
-evalBlockRepl :: MonadInterblock m => SourceBlock -> m ()
+evalBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
 evalBlockRepl block = do
-  env <- getTopStateEx
   result <- evalSourceBlockRepl block
-  case result of Result _ (Failure _) -> setTopStateEx env
-                 _ -> return ()
   liftIO $ putStrLn $ pprint result
 
-dexCompletions :: CompletionFunc InterblockM
-dexCompletions (line, _) = do
-  TopStateEx env <- getTopStateEx
-  let varNames = map pprint $ M.keys $ fromSourceMap $ getSourceMap env
+liftErrIO :: MonadIO m => Except a -> m a
+liftErrIO (Failure err) = liftIO $ putStrLn (pprint err) >> exitFailure
+liftErrIO (Success ans) = return ans
+
+readSourceBlock :: (MonadIO (m n), EnvReader m) => String -> m n SourceBlock
+readSourceBlock prompt = do
+  sourceMap <- withEnv getSourceMap
+  let filenameAndDexCompletions =
+        completeQuotedWord (Just '\\') "\"'" listFiles (dexCompletions sourceMap)
+  let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
+  liftIO $ runInputT hasklineSettings $ readMultiline prompt parseTopDeclRepl
+
+dexCompletions :: Monad m => SourceMap n -> CompletionFunc m
+dexCompletions sourceMap (line, _) = do
+  let varNames = map pprint $ M.keys $ fromSourceMap sourceMap
   -- note: line and thus word and rest have character order reversed
   let (word, rest) = break (== ' ') line
   let startoflineKeywords = ["%bench \"", ":p", ":t", ":html", ":export"]
@@ -106,12 +118,7 @@ dexCompletions (line, _) = do
   let completions = map simpleCompletion $ filter (reverse word `isPrefixOf`) candidates
   return (rest, completions)
 
-liftErrIO :: MonadIO m => Except a -> m a
-liftErrIO (Failure err) = liftIO $ putStrLn (pprint err) >> exitFailure
-liftErrIO (Success ans) = return ans
-
-readMultiline :: (MonadMask m, MonadIO m)
-              => String -> (String -> Maybe a) -> InputT m a
+readMultiline :: String -> (String -> Maybe a) -> InputT IO a
 readMultiline prompt parse = loop prompt ""
   where
     dots = replicate 3 '.' ++ " "
