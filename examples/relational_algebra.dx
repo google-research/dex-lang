@@ -9,11 +9,12 @@ roughly following [Wikipedia](https://en.wikipedia.org/wiki/Relational_algebra).
 
 'Right now there are two major differences from the standard relational algebra:
 1. We're not using sets of records, but rather tables.  I'm not sure which is better.
-2. Pretty much all the output types of these functions need to be flattened in order to match their standard defintions, but I don't know how to type this.
+2. Pretty much all the output types of these functions need to be flattened in order
+to match their standard defintions, but I don't know how to type this.
 
 '### Cartesian Product
 
-def cartesian_product (r:n=>a) (s:m=>b) : (n & m)=>(a & b) =
+def cartesian_product {n m a b} (r:n=>a) (s:m=>b) : (n & m)=>(a & b) =
   -- Follows the set theory defintion, not the relational
   -- algebra definition, which would flatten a & b.
   for (i, j). (r.i, s.j)
@@ -33,7 +34,7 @@ cartesian_product table1 table2
 
 '### Projection
 
-def project (field: Iso ({&} & a) (b & c)) (table:n=>a) : n=>b =
+def project {a b c n} (field: Iso ({&} & a) (b & c)) (table:n=>a) : n=>b =
   for i. fst $ appIso (splitR &>> field) table.i
 
 '#### Projection Example
@@ -44,8 +45,8 @@ project (#&name &>> #&size) table1
 '### Rename
 Todo: Consider doing this in-place.
 
-def rename (oldFieldIso: Iso ({&} & a) (b & c))
-           (renameIso: Iso b d) (table:n=>a) : n=>(d & c) =
+def rename {a b c d n} (oldFieldIso: Iso ({&} & a) (b & c))
+                       (renameIso: Iso b d) (table:n=>a) : n=>(d & c) =
   for i.
     (old_name_field, rest_fields) = appIso (splitR &>> oldFieldIso) table.i
     renamed_field = appIso renameIso old_name_field
@@ -55,7 +56,7 @@ def rename (oldFieldIso: Iso ({&} & a) (b & c))
 Awkwardly, we need to construct our own isomorphism to wrap
  the renaming function.
 
-myRenameIso : Iso {name:a} {newname:a} =
+def myRenameIso {a} : Iso {name:a} {newname:a} =
   MkIso {fwd = \x. {newname = (getAt #name x)},
          bwd = \x. {name = (getAt #newname x)}}
 
@@ -75,7 +76,7 @@ automatically, but I don't know what it is.
 3. As in the other examples, the resulting records should be flattened.
 
 
-def inner_join_one [Eq b]
+def inner_join_one {b a1 a2 c1 c2} [Eq b]
   -- Would rather have an Eq instance for just the inner
   -- type of b, not its named type.
   (left_iso : Iso ({&} & a1) (b & c1))
@@ -89,7 +90,7 @@ def inner_join_one [Eq b]
     then Just (left_b, left_c, right_c)
     else Nothing
 
-def inner_join [Eq b]
+def inner_join {b a1 a2 c1 c2 n m} [Eq b]
   (left_iso : Iso ({&} & a1) (b & c1))
   (right_iso: Iso ({&} & a2) (b & c2))
   (left_tab:n=>a1) (right_tab:m=>a2) : List (b & c1 & c2) =
@@ -106,15 +107,8 @@ by automatically generating equality instances for records,
 or by somehow allowing an unpack operation to directly access
 the data held by any field.
 
--- This should probably go in the prelude.
-instance [Eq a] Eq (List a)
-  (==) = \(AsList n1 xs) (AsList n2 ys).
-    if n1 == n2
-      then all for i. xs.i == ys.(unsafeFromOrdinal _ (ordinal i))
-      else False
-
 -- This bespoke equality instance should be automatically generated.
-instance [Eq a] Eq {name: a}
+instance {a} [Eq a] Eq {name: a}
   (==) = \r1 r2. (getAt #name r1) == (getAt #name r2)
 
 inner_join #&name #&name table1 table2
