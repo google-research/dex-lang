@@ -64,10 +64,8 @@ def setUnion {a}
   ((UnsafeAsSet nx xs):Set a)
   ((UnsafeAsSet ny ys):Set a) : Set a =
     combined = mergeSortedTables xs ys
-    combinedsize = nx + ny
-    concatted = unsafeCastTable (Fin combinedsize) combined
-    (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted concatted
-    UnsafeAsSet _ $ unsafeCastTable (Fin n') sorted_unique_xs
+    (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted combined
+    UnsafeAsSet _ sorted_unique_xs
 
 def setIntersect {a}
   ((UnsafeAsSet nx xs):Set a)
@@ -77,7 +75,7 @@ def setIntersect {a}
       Just x -> True
       Nothing -> False
     (AsList n' intersection) = filter isInYs xs
-    UnsafeAsSet _ $ unsafeCastTable (Fin n') intersection
+    UnsafeAsSet _ intersection
 
 
 '### Index set for sets of strings
@@ -86,7 +84,7 @@ def setIntersect {a}
 -- data SetIx a l:(Set a) [Ord a] =
 
 data StringSetIx l:(Set String) =
-  MkSetIx Int
+  MkSetIx Int   -- TODO: Use (Fin (setSize l)) instead.
 
 instance {set} Ix (StringSetIx set)
   getSize = \(). setSize set
