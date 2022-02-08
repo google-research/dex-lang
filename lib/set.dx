@@ -1,0 +1,114 @@
+import sort
+
+
+'### Monoidal enforcement of uniqueness in sorted lists
+
+def last {n a} (xs:n=>a) : Maybe a =
+  s = size n
+  case s == 0 of
+    True -> Nothing
+    False -> Just xs.(unsafeFromOrdinal n (s - 1))
+
+def first {n a} (xs:n=>a) : Maybe a =
+  s = size n
+  case s == 0 of
+    True -> Nothing
+    False -> Just xs.(unsafeFromOrdinal n 0)
+
+def allExceptLast {n a} (xs:n=>a) : List a =
+  shortSize = Fin (max 0 ((size n) - 1))
+  allButLast = view i:shortSize. xs.(unsafeFromOrdinal _ (ordinal i))
+  (AsList _ allButLast)
+
+def mergeUniqueSortedLists {a} [Eq a] (xlist:List a) (ylist:List a) : List a =
+    -- This function is associative, for use in a monoidal reduction.
+    -- Assumes all xs are <= all ys.
+    -- The element at the end of xs might equal the
+    -- element at the beginning of ys.  If so, this
+    -- function removes the duplicate when concatenating the lists.
+    (AsList nx xs) = xlist
+    (AsList _  ys) = ylist
+    case last xs of
+      Nothing -> ylist
+      Just last_x -> case first ys of
+        Nothing -> xlist
+        Just first_y -> case last_x == first_y of
+          False -> concat [xlist,            ylist]
+          True ->  concat [allExceptLast xs, ylist]
+
+def removeDuplicatesFromSorted {n a} [Eq a] (xs:n=>a) : List a =
+  xlists = for i:n. (AsList 1 [xs.i])
+  reduce (AsList 0 []) mergeUniqueSortedLists xlists
+
+
+'### Sets
+
+data Set a [Ord a] =
+  -- Guaranteed to be in sorted order with unique elements,
+  -- as long as no one else uses this constructor.
+  -- Instead use the "toSet" function below.
+  UnsafeAsSet n:Int elements:(Fin n => a)
+
+def toSet {n a} [Ord a] (xs:n=>a) : Set a =
+  sorted_xs = sort xs
+  (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted sorted_xs
+  UnsafeAsSet n' sorted_unique_xs
+
+def setSize {a} ((UnsafeAsSet n _):Set a) : Int = n
+
+instance {a} [Eq a] Eq (Set a)
+  (==) = \(UnsafeAsSet _ xs) (UnsafeAsSet _ ys).
+    (AsList _ xs) == (AsList _ ys)
+
+def setUnion {a}
+  ((UnsafeAsSet nx xs):Set a)
+  ((UnsafeAsSet ny ys):Set a) : Set a =
+    combined = mergeSortedTables xs ys
+    (AsList n' sorted_unique_xs) = removeDuplicatesFromSorted combined
+    UnsafeAsSet _ sorted_unique_xs
+
+def setIntersect {a}
+  ((UnsafeAsSet nx xs):Set a)
+  ((UnsafeAsSet ny ys):Set a) : Set a =
+    -- This could be done in O(nx + ny) instead of O(nx log ny).
+    isInYs = \x. case searchSorted ys x of
+      Just x -> True
+      Nothing -> False
+    (AsList n' intersection) = filter isInYs xs
+    UnsafeAsSet _ intersection
+
+
+'### Index set for sets of strings
+
+-- Todo: Make polymorphic in type.  Waiting on a bugfix.
+-- data SetIx a l:(Set a) [Ord a] =
+
+data StringSetIx l:(Set String) =
+  MkSetIx Int   -- TODO: Use (Fin (setSize l)) instead.
+
+instance {set} Ix (StringSetIx set)
+  getSize = \(). setSize set
+  ordinal = \(MkSetIx i). i
+  unsafeFromOrdinal = \k. MkSetIx k
+
+instance {set} Eq (StringSetIx set)
+  (==) = \ix1 ix2. ordinal ix1 == ordinal ix2
+
+-- Todo: Add an interface for converting to and from integer indices.
+-- Compiler can't handle the associated type yet.
+-- interface AssocIx n  -- index sets where indices have data associated with them
+--   IxValueType : Type
+--   ixValue  : n -> IxValueType n
+--   lookupIx : IxValueType n -> n
+
+def stringToSetIx {set:Set String} (s:String) : Maybe (StringSetIx set) =
+  (UnsafeAsSet n elements) = set
+  maybeIx = searchSorted elements s
+  case maybeIx of
+    Nothing -> Nothing
+    Just i -> Just $ MkSetIx (ordinal i)
+
+def setIxToString {set:Set String} (ix:StringSetIx set) : String =
+  (UnsafeAsSet n elements) = set
+  elements.(unsafeFromOrdinal _ (ordinal ix))
+
