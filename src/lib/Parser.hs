@@ -290,7 +290,8 @@ interfaceDef = do
   let methodNames' :: Nest (UBinder MethodNameC) VoidS VoidS
       methodNames' = toNest methodNames
   let tyConParams' = tyConParams
-  return $ UInterface tyConParams' superclasses methodTys (fromString tyConName) methodNames'
+  return $ UInterface tyConParams' superclasses methodTys
+                      tyConName (fromString tyConName) methodNames'
 
 toNest :: (IsString (a VoidS VoidS)) => [String] -> Nest a VoidS VoidS
 toNest = toNestParsed . map fromString

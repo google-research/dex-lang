@@ -571,7 +571,7 @@ instance Pretty (UDecl n l) where
     "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
        <+> "where" <> nest 2
        (hardline <> prettyLines (zip (toList $ fromNest bDataCons) dataCons))
-  pretty (UInterface params superclasses methodTys interfaceName methodNames) =
+  pretty (UInterface params superclasses methodTys interfaceName _ methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods
      where

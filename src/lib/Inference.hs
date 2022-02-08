@@ -79,13 +79,12 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
     emitDataConName defName i =<< dataConDefAsAtom defName clsAbs i
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applySubst subst result
-inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
-  let classPrettyName   = fromString (pprint className) :: SourceName
+inferTopUDecl (UInterface paramBs superclasses methodTys sourceName className methodNames) result = do
   let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
   dictDef <- liftInfererM $
-               inferInterfaceDataDef classPrettyName paramBs superclasses methodTys
+               inferInterfaceDataDef sourceName paramBs superclasses methodTys
   dictDefName <- emitDataDef dictDef
-  let classDef = ClassDef classPrettyName methodPrettyNames dictDefName
+  let classDef = ClassDef sourceName methodPrettyNames dictDefName
   className' <- emitClassDef classDef =<< tyConDefAsAtom dictDefName Nothing
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <-

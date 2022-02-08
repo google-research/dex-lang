@@ -1008,6 +1008,7 @@ data UDecl (n::S) (l::S) where
     :: Nest (UAnnBinder AtomNameC) n p     -- parameter binders
     ->  [UType p]                          -- superclasses
     ->  [UMethodType p]                    -- method types
+    -> SourceName                          -- class source name
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UDecl n l

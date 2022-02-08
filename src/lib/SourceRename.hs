@@ -227,7 +227,7 @@ instance SourceRenamableB UDecl where
       sourceRenameUBinder UTyConVar tyConName \tyConName' ->
         sourceRenameUBinderNest UDataConVar dataConNames \dataConNames' ->
            cont $ UDataDefDecl dataDef' tyConName' dataConNames'
-    UInterface paramBs superclasses methodTys className methodNames -> do
+    UInterface paramBs superclasses methodTys sourceName className methodNames -> do
       Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
         sourceRenameB paramBs \paramBs' -> do
           superclasses' <- mapM sourceRenameE superclasses
@@ -235,7 +235,8 @@ instance SourceRenamableB UDecl where
           return $ Abs paramBs' (PairE (ListE superclasses') (ListE methodTys'))
       sourceRenameUBinder UClassVar className \className' ->
         sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
-          cont $ UInterface paramBs' superclasses' methodTys' className' methodNames'
+          cont $ UInterface paramBs' superclasses' methodTys'
+                            sourceName className' methodNames'
       where methodSourceNames = nestToList (\(UBindSource n) -> n) methodNames
     UInstance className conditions params methodDefs instanceName -> do
       className' <- sourceRenameE className
@@ -465,7 +466,7 @@ instance HasSourceNames UDecl where
     ULet _ (UPatAnn pat _) _ -> sourceNames pat
     UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
-    UInterface _ _ _ ~(UBindSource className) methodNames -> do
+    UInterface _ _ _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName -> sourceNames instanceName
 
