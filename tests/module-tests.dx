@@ -1,6 +1,8 @@
 import test_module_A
 import test_module_B
 
+:p 1 + 1
+> 2
 
 :p test_module_A_val + 4
 > 7
@@ -19,3 +21,7 @@ import test_module_B
 
 :p test_module_A_fun_noinline 3
 > 6
+
+:p fooMethod 1
+
+:p fooMethod 1.0

@@ -1241,8 +1241,8 @@ declareEff eff = declareEffs $ oneEffect eff
 
 declareEffs :: Typer m => EffectRow o -> m i o ()
 declareEffs effs = do
-  allowedEffects <- getAllowedEffects
-  checkExtends allowedEffects effs
+  allowed <- getAllowedEffects
+  checkExtends allowed effs
 
 extendAllowedEffect :: Typer m => Effect o -> m i o () -> m i o ()
 extendAllowedEffect newEff cont = do

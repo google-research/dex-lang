@@ -9,3 +9,6 @@ def test_module_A_fun (x:Int) : Int = x + x
 
 @noinline
 def test_module_A_fun_noinline (x:Int) : Int = x + x
+
+instance FooClass Float
+  fooMethod = \x. 10.0 * x

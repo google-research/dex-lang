@@ -39,7 +39,7 @@ import System.IO.Unsafe
 -- === core API ===
 
 data Err = Err ErrType ErrCtx String  deriving (Show, Eq)
-newtype Errs = Errs [Err]  deriving (Show, Eq, Semigroup, Monoid)
+newtype Errs = Errs [Err]  deriving (Eq, Semigroup, Monoid)
 
 data ErrType = NoErr
              | ParseErr
@@ -370,6 +370,9 @@ instance MonadFail Except where
   fail s = Failure $ Errs [Err CompilerErr mempty s]
 
 instance Exception Errs
+
+instance Show Errs where
+  show errs = pprint errs
 
 instance Pretty Err where
   pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx

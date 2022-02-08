@@ -6,6 +6,8 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
@@ -273,6 +275,7 @@ forMZipped_ xs ys f = void $ forMZipped xs ys f
 
 -- === bytestrings paired with their hash digest ===
 
+-- TODO: use something other than a string to store the digest
 type FileHash     = String
 type FileContents = BS.ByteString
 

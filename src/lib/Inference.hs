@@ -1648,9 +1648,9 @@ addEffects :: (EmitsBoth o, Inferer m) => EffectRow o -> m i o ()
 addEffects eff = do
   allowed <- checkAllowedUnconditionally eff
   unless allowed $ do
-    allowedEffects <- getAllowedEffects
+    effsAllowed <- getAllowedEffects
     eff' <- openEffectRow eff
-    constrainEq (Eff allowedEffects) (Eff eff')
+    constrainEq (Eff effsAllowed) (Eff eff')
 
 checkAllowedUnconditionally :: Inferer m => EffectRow o -> m i o Bool
 checkAllowedUnconditionally Pure = return True
@@ -2076,9 +2076,6 @@ trySynthDictBlock ty = do
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
         (d, _):_ -> return d
 
--- TODO: we'd rather have something like this:
---   data Givens n = Givens (M.Map (Type n) (Given n))
--- but we need an Ord or Hashable instance on types
 data Givens n = Givens { fromGivens :: HM.HashMap (EKey Type n) (Given n) }
 
 type Given = Block
@@ -2122,14 +2119,15 @@ liftSyntherM cont =
 
 givensFromEnv :: EnvReader m => m n (Givens n)
 givensFromEnv = do
-  SynthCandidates givens projs _ <- getSynthCandidatesM
+  givens <- getLambdaDicts
+  projs <- getSuperclassProjs
   let givensBlocks = map AtomicBlock givens
   getSuperclassClosure projs (Givens HM.empty) givensBlocks
 
 extendGivens :: Synther m => [Given n] -> m n a -> m n a
 extendGivens newGivens cont = do
   prevGivens <- getGivens
-  projs <- superclassGetters <$> getSynthCandidatesM
+  projs <- getSuperclassProjs
   finalGivens <- getSuperclassClosureM projs prevGivens newGivens
   withGivens finalGivens cont
 
@@ -2212,12 +2210,9 @@ getGiven = do
 
 getInstance :: DataDefName n -> Synther m => m n (Atom n)
 getInstance target = do
-  instances <- instanceDicts <$> getSynthCandidatesM
-  case M.lookup target instances of
-    Just relevantInstances -> do
-      declareUsedInstance
-      asum $ map pure relevantInstances
-    Nothing -> empty
+  instances <- getInstanceDicts target
+  declareUsedInstance
+  asum $ map pure instances
 
 synthDict :: (Emits n, Synther m) => Type n -> m n (Atom n)
 synthDict (Pi piTy@(PiType (PiBinder b argTy arr) Pure _)) =

@@ -32,6 +32,7 @@ import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (Text, uncons, unsnoc, unpack)
+import qualified Data.Set        as S
 import Data.String (fromString)
 import Data.Maybe (isNothing)
 import qualified System.Console.ANSI as ANSI
@@ -371,11 +372,19 @@ instance Pretty (Binding s n) where
     ModuleBinding  _ -> "<module>"
 
 instance Pretty (Module n) where
-  pretty (Module deps sourceMap) = do
-       "source map: "
-    <>   indented (pretty deps)
-    <> "synth candidates:"
-    <>   indented (pretty sourceMap)
+  pretty = undefined
+  -- pretty (Module deps sm scs objs) = do
+  --      "source map: "
+  --   <>   indented (pretty deps)
+  --   <> "source map: "
+  --   <>   indented (pretty sm)
+  --   <> "synth candidates:"
+  --   <>   indented (pretty scs)
+  --   <> "object files: "
+  --   <>   indented (pretty objs)
+
+instance Pretty (ObjectFiles n) where
+  pretty (ObjectFiles _) = error "todo"
 
 instance Pretty ModuleSourceName where
   pretty Main = "main"
@@ -396,14 +405,29 @@ instance Pretty (ClassDef n) where
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
+instance Pretty (TopEnv n) where
+  pretty (TopEnv _ defs cache ms) =
+    prettyRecord [ ("Defs"          , p defs)
+                 , ("Cache"         , p cache)
+                 , ("Loaded modules", p ms)]
+
+instance Pretty (ImportStatus n) where
+  pretty imports = pretty $ S.toList $ directImports imports
+
+instance Pretty (ModuleEnv n) where
+  pretty (ModuleEnv imports sm sc _ effs) =
+    prettyRecord [ ("Imports"         , p imports)
+                 , ("Source map"      , p sm)
+                 , ("Synth candidates", p sc)
+                 , ("Effects"         , p effs)]
+
 instance Pretty (Env n) where
-  pretty s =
-       "bindings: "
-    <>   indented (pretty (getNameEnv s))
-    <> "local synth candidates:"
-    <>   indented (pretty (getSynthCandidates s))
-    <> "local source map: "
-    <>   indented (pretty (getSourceMap s))
+  pretty (Env env1 env2) =
+    prettyRecord [ ("Top env"   , p env1)
+                 , ("Module env", p env2)]
+
+prettyRecord :: [(String, Doc ann)] -> Doc ann
+prettyRecord xs = foldMap (\(name, val) -> pretty name <> indented val) xs
 
 instance Pretty SourceBlock where
   pretty block = pretty (sbText block)
@@ -616,19 +640,20 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty (TopEnvFrag bindings lms scs sourceMap cache _) =
-       "bindings:"
-    <>   indented (p bindings)
-    <> "Loaded modules:"
-    <>   indented (p lms)
-    <> "Synth candidats:"
-    <>   indented (p scs)
-    <> "Source map:"
-    <>   indented (p sourceMap)
-    <> "Cache:"
-    <>   indented (p cache)
-    <> "Object files:"
-    <>   indented "<TODO: Pretty instance>"
+  pretty = undefined
+  -- pretty (TopEnvFrag bindings lms scs sourceMap cache _) =
+  --      "bindings:"
+  --   <>   indented (p bindings)
+  --   <> "Loaded modules:"
+  --   <>   indented (p lms)
+  --   <> "Synth candidats:"
+  --   <>   indented (p scs)
+  --   <> "Source map:"
+  --   <>   indented (p sourceMap)
+  --   <> "Cache:"
+  --   <>   indented (p cache)
+  --   <> "Object files:"
+  --   <>   indented "<TODO: Pretty instance>"
 
 instance Pretty (Cache n) where
   pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
@@ -640,7 +665,7 @@ instance Pretty (SynthCandidates n) where
     <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
 
 instance Pretty (LoadedModules n) where
-  pretty _ = undefined
+  pretty _ = "<loaded modules>"
 
 indented :: Doc ann -> Doc ann
 indented doc = nest 2 (hardline <> doc) <> hardline

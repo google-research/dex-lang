@@ -43,7 +43,7 @@ import MTL1
 import Logging
 import LLVMExec
 import PPrint()
-import Util (measureSeconds, File (..), readFileWithHash)
+import Util (measureSeconds, File (..), readFileWithHash, foldMapM)
 import Serialize (HasPtrs (..), pprintVal, getDexString)
 
 import Name
@@ -207,7 +207,8 @@ evalSourceBlock' block = case sbContents block of
         vImp  <- emitImpFunBinding hint $ FFIFunction impFunTy fname
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
-        emitSourceMap $ SourceMap $ M.singleton sourceName [UAtomVar vCore]
+        emitSourceMap $ SourceMap $
+          M.singleton sourceName [SourceNameDef (UAtomVar vCore) Nothing]
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprint ty
@@ -224,7 +225,7 @@ runEnvQuery query = do
   case query of
     DumpSubst -> logTop $ TextOut $ pprint $ env
     InternalNameInfo name ->
-      case lookupSubstFragRaw (fromRecSubst $ getNameEnv env) name of
+      case lookupSubstFragRaw (fromRecSubst $ envDefs $ topEnv env) name of
         Nothing -> throw UnboundVarErr $ pprint name
         Just (WithColor binding) ->
           logTop $ TextOut $ pprint binding
@@ -259,7 +260,7 @@ findDepsTransitively
   :: (Topper m, Mut n)
   => ModuleSourceName -> m n [UModulePartialParse]
 findDepsTransitively initialModuleName = do
-  alreadyLoaded <- M.keysSet . fromLoadedModules <$> withEnv getLoadedModules
+  alreadyLoaded <- M.keysSet . fromLoadedModules <$> withEnv (envLoadedModules . topEnv)
   liftM fst $ runStateT1 (go initialModuleName) (LiftE alreadyLoaded)
   where
     go :: ( TopBuilder m, MonadIO1 m, ConfigReader (m n), Mut n
@@ -286,7 +287,7 @@ parseUModuleDepsCached :: (Mut n, TopBuilder m)
                        => ModuleSourceName -> File -> m n [ModuleSourceName]
 parseUModuleDepsCached Main file = return $ parseUModuleDeps Main file
 parseUModuleDepsCached name file = do
-  LiftE cache <- withEnv (LiftE . parsedDeps . getCache)
+  cache <- parsedDeps <$> getCache
   let req = fHash file
   case M.lookup name cache of
     Just (cachedReq, result) | cachedReq == req -> return result
@@ -302,7 +303,7 @@ evalPartiallyParsedUModuleCached md@(UModulePartialParse name deps source) = do
   case name of
     Main -> evalPartiallyParsedUModule md  -- Don't cache main
     _ -> do
-      LiftE cache <- withEnv (LiftE . moduleEvaluations . getCache)
+      LiftE cache <- withEnv $ LiftE . moduleEvaluations . envCache . topEnv
       -- TODO: we know that these are sufficient to determine the result of
       -- module evaluation, but maybe we should actually restrict the
       -- environment we pass to `evalUModule` so that it can't possibly depend
@@ -332,12 +333,37 @@ evalPartiallyParsedUModule partiallyParsed = do
 
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
-evalUModule (UModule _ _ blocks) = do
+evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ evalSourceBlock' blocks >> return UnitE
-  TopEnvFrag envFrag _ synthCandidates sourceMap cache objFiles <- return topFrag
-  let fragToEmit = TopEnvFrag envFrag mempty mempty mempty cache objFiles
-  let evaluatedModule = Module sourceMap synthCandidates
+  TopEnvFrag envFrag frag <- return topFrag
+  let fragToEmit = TopEnvFrag envFrag $ mempty {fragCache = fragCache frag}
+  let directDeps = directImports $ fragImports frag
+  let transDeps  = transImports  $ fragImports frag
+  let evaluatedModule = Module name directDeps transDeps
+                               (fragSourceMap       frag)
+                               (fragSynthCandidates frag)
+                               (fragObjectFiles     frag)
   emitEnv (Abs fragToEmit evaluatedModule)
+
+importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
+importModule name = do
+  lookupLoadedModule name >>= \case
+    Nothing -> throw ModuleImportErr $ "Couldn't import " ++ pprint name
+    Just name' -> importModuleByInternalName name'
+
+importModuleByInternalName :: (Mut n, TopBuilder m) => ModuleName n -> m n ()
+importModuleByInternalName name = do
+  ImportStatus _ transDeps _ _ _ <- withEnv $ localImportStatus . moduleEnv
+  Module _ _ transDeps' _ _ _ <- lookupModule name
+  let transDepsDelta = S.difference (S.singleton name <> transDeps') transDeps
+  let tdd = S.toList transDepsDelta
+  smDelta   <- foldMapM (liftM moduleExports         . lookupModule) tdd
+  scsDelta  <- foldMapM (liftM moduleSynthCandidates . lookupModule) tdd
+  objsDelta <- foldMapM (liftM moduleObjectFiles     . lookupModule) tdd
+  let importStatusDelta = ImportStatus (S.singleton name) transDepsDelta
+                                       smDelta scsDelta objsDelta
+  emitPartialTopEnvFrag $ mempty {fragImports = importStatusDelta}
+
 
 evalFile :: (Topper m, Mut n) => FilePath -> m n [(SourceBlock, Result)]
 evalFile fname = evalSourceText =<< (liftIO $ readFile fname)
@@ -436,12 +462,6 @@ toCFunction fname f = do
   objFileName <- emitObjFile (getNameHint fname) objFile
   return $ CFun fname objFileName
 
-emitObjFile :: (Mut n, TopBuilder m) => NameHint -> ObjectFile n -> m n (ObjectFileName n)
-emitObjFile hint objFile = do
-  v <- emitBinding hint $ ObjectFileBinding objFile
-  emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty mempty mempty mempty (eMapSingleton v UnitE)
-  return v
-
 -- TODO: there's no guarantee this name isn't already taken. Need a better story
 -- for C/LLVM function names
 mainFuncName :: SourceName
@@ -460,8 +480,8 @@ evalLLVM block = do
   let IFunType _ _ resultTypes = impFunType impFun
   let llvmEvaluate = if bench then compileAndBench needsSync else compileAndEval
   logger  <- getLogger
-  objFileNames <- withEnv getObjFiles
-  objFiles <- forM (eMapToList objFileNames) \(objFileName, UnitE) -> do
+  objFileNames <- getAllRequiredObjectFiles
+  objFiles <- forM objFileNames  \objFileName -> do
     ObjectFileBinding objFile <- lookupEnv objFileName
     return objFile
   resultVals <- liftIO $ llvmEvaluate logger objFiles
@@ -561,8 +581,8 @@ clearCache = liftIO do
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
 stripEnvForSerialization :: TopStateEx -> TopStateEx
-stripEnvForSerialization (TopStateEx (Env scope bindings _ _ _ _ cache objs)) =
-  TopStateEx $ Env scope bindings mempty mempty mempty mempty cache objs
+stripEnvForSerialization (TopStateEx (Env (TopEnv scope defs cache _) _)) =
+  TopStateEx $ Env (TopEnv scope defs cache mempty) emptyModuleEnv
 
 -- -- === instances ===
 

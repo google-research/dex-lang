@@ -101,7 +101,7 @@ liftErrIO (Success ans) = return ans
 
 readSourceBlock :: (MonadIO (m n), EnvReader m) => String -> m n SourceBlock
 readSourceBlock prompt = do
-  sourceMap <- withEnv getSourceMap
+  sourceMap <- withEnv $ localSourceMap . moduleEnv
   let filenameAndDexCompletions =
         completeQuotedWord (Just '\\') "\"'" listFiles (dexCompletions sourceMap)
   let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
