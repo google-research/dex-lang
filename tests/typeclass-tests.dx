@@ -176,11 +176,11 @@ def q2 {a} (x : MyPairOfXs a) : a = fst x
 def q3 {a} (x : MyPairOfXs a) : Int = x_ a
 
 -- We don't quantify implicitly over constraints of the return type
-def q4 {a} (x : a) : MyPairOfXs a = (x, x)
-> Type error:Couldn't synthesize a class dictionary for: (X a)
+def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
+> Type error:Couldn't synthesize a class dictionary for: (X a5)
 >
-> def q4 {a} (x : a) : MyPairOfXs a = (x, x)
->                      ^^^^^^^^^^^^^
+> def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
+>                        ^^^^^^^^^^^^^^
 
 -- Check automatic quantification for interfaces
 interface AutoQuant a
@@ -198,10 +198,10 @@ def q5 {a} (x : MyPairOfXs (MyPairOfXs a)) : Int = 0
 
 -------------------- Data interface constraints --------------------
 
-data MyData a       = MkMyData (MyPairOfXs a)
-> Type error:Couldn't synthesize a class dictionary for: (X a)
+data MyData a5       = MkMyData (MyPairOfXs a5)
+> Type error:Couldn't synthesize a class dictionary for: (X a5)
 >
-> data MyData a       = MkMyData (MyPairOfXs a)
->                                 ^^^^^^^^^^^^
+> data MyData a5       = MkMyData (MyPairOfXs a5)
+>                                  ^^^^^^^^^^^^^
 
 data MyDataBetter a [X a] = MkMyDataBetter (MyPairOfXs a)
