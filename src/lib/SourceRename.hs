@@ -104,16 +104,20 @@ instance SourceRenamableE (SourceNameOr UVar) where
 
 lookupSourceName :: Renamer m => SourceName -> m n (UVar n)
 lookupSourceName v = do
-  local    <- askLocalSourceMap
-  imported <- askImportedSourceMap
-  case lookupSourceMapPure local v ++ lookupSourceMapPure imported v of
-    [] -> throw UnboundVarErr $ pprint v
+  local <- askLocalSourceMap
+  case lookupSourceMapPure local v of
+    [] -> do
+      imported <- askImportedSourceMap
+      case lookupSourceMapPure imported v of
+        [] -> throw UnboundVarErr $ pprint v
+        [SourceNameDef maybeV _] -> case maybeV of
+          Just v' -> return v'
+          Nothing -> throw VarDefErr v
+        _ -> throw AmbiguousVarErr $ pprint v
     [SourceNameDef maybeV _] -> case maybeV of
       Just v' -> return v'
       Nothing -> throw VarDefErr v
-    -- TODO: give information about where the candidates come from
     _ -> throw AmbiguousVarErr $ pprint v
-
 
 instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
   sourceRenameE (SourceName sourceName) = do
