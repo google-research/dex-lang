@@ -23,5 +23,7 @@ import test_module_B
 > 6
 
 :p fooMethod 1
+> 2
 
 :p fooMethod 1.0
+> 10.

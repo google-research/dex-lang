@@ -42,7 +42,7 @@ import Err
 import MTL1
 import Logging
 import LLVMExec
-import PPrint()
+import PPrint (pprintCanonicalized)
 import Util (measureSeconds, File (..), readFileWithHash, foldMapM)
 import Serialize (HasPtrs (..), pprintVal, getDexString)
 
@@ -195,7 +195,7 @@ evalSourceBlock' block = case sbContents block of
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
       ty <- getType val
-      logTop $ TextOut $ pprint ty
+      logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname (UAnnBinder b uty) -> do
     ty <- evalUType uty
     asFFIFunType ty >>= \case
@@ -211,7 +211,7 @@ evalSourceBlock' block = case sbContents block of
           M.singleton sourceName [SourceNameDef (UAtomVar vCore) Nothing]
   GetNameType v -> do
     ty <- sourceNameType v
-    logTop $ TextOut $ pprint ty
+    logTop $ TextOut $ pprintCanonicalized ty
   ImportModule moduleName -> importModule moduleName
   QueryEnv query -> void $ runEnvQuery query $> UnitE
   ProseBlock _ -> return ()

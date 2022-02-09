@@ -39,7 +39,7 @@ import Name
 import Builder
 import Syntax hiding (State)
 import Type
-import PPrint ()
+import PPrint (pprintCanonicalized)
 import CheapReduction
 import GenericTraversal
 import MTL1
@@ -456,7 +456,8 @@ instance Inferer InfererM where
         "Type inference of this program requires delayed interface resolution"
       return UnitE
     get >>= \case
-      FailIfRequired    -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint iface
+      FailIfRequired    -> throw TypeErr $ "Couldn't synthesize a class dictionary for: "
+                             ++ pprintCanonicalized iface
       GatherRequired ds -> put $ GatherRequired $ eSetSingleton iface <> ds
 
 instance Builder (InfererM i) where
@@ -1854,8 +1855,10 @@ constrainEq :: (EmitsInf o, Inferer m) => Type o -> Type o -> m i o ()
 constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  Abs infVars (PairE t1Pretty t2Pretty) <- renameForPrinting $ PairE t1' t2'
-  let msg =   "Expected: " ++ pprint t1Pretty
+  msg <- do
+    ab <- renameForPrinting $ PairE t1' t2'
+    return $ canonicalizeForPrinting ab \(Abs infVars (PairE t1Pretty t2Pretty)) ->
+              "Expected: " ++ pprint t1Pretty
          ++ "\n  Actual: " ++ pprint t2Pretty
          ++ (case infVars of
                Empty -> ""

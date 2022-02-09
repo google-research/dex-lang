@@ -74,7 +74,8 @@ module Name (
   HoistExcept (..), liftHoistExcept, abstractFreeVars, abstractFreeVar,
   abstractFreeVarsNoAnn,
   WithRenamer (..), ignoreHoistFailure,
-  HoistableB (..), HoistableV,
+  HoistableB (..), HoistableV, withScopeFromFreeVars, canonicalizeForPrinting,
+  ClosedWithScope (..),
   WrapE (..), WrapB (..), WithColor (..), fromWithColor,
   DistinctEvidence (..), withSubscopeDistinct, tryAsColor, withFresh,
   newName, newNameM, newNames, newNamesM,
@@ -1128,15 +1129,10 @@ instance GenericE (EKey e) where
 -- slower (because we have to query the free vars of both expressions) and its
 -- implementation is unsafe, but it's needed for things like HashMap.
 instance (HoistableE e, AlphaEqE e) => Eq (EKey e n) where
-  EKey x == EKey y = do
-    let xFreeVars = freeVarsE x
-    if M.keysSet (freeVarsE y) /= M.keysSet (xFreeVars)
-      then False
-      else do
-        let scope = (Scope $ UnsafeMakeScopeFrag $ M.map (:[]) xFreeVars) :: Scope UnsafeS
-        withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) do
-          runScopeReaderM scope do
-            alphaEq (unsafeCoerceE x) (unsafeCoerceE y)
+  EKey x == EKey y =
+    case withScopeFromFreeVars $ PairE x y of
+      ClosedWithScope scope (PairE x' y') ->
+        runScopeReaderM scope $ alphaEq x' y'
 
 instance (AlphaEqE e, AlphaHashableE e) => Hashable (EKey e n) where
   hashWithSalt salt (EKey e) = alphaHashWithSalt salt e
@@ -2344,6 +2340,25 @@ class BindsNames b => HoistableB (b::B) where
   freeVarsB b = freeVarsB $ fromB b
 
 data HoistExcept a = HoistSuccess a | HoistFailure [RawName]
+
+data ClosedWithScope (e::E) where
+  ClosedWithScope :: Distinct n => Scope n -> e n -> ClosedWithScope e
+
+withScopeFromFreeVars :: HoistableE e => e n -> ClosedWithScope e
+withScopeFromFreeVars e =
+  withDistinctEvidence (fabricateDistinctEvidence :: DistinctEvidence UnsafeS) $
+    ClosedWithScope scope $ unsafeCoerceE e
+  where scope = (Scope $ UnsafeMakeScopeFrag $ M.map (:[]) $ freeVarsE e) :: Scope UnsafeS
+
+-- This renames internal binders in a way that doesn't depend on any extra
+-- context. The resuling binder names are arbitrary (we make no promises!) but
+-- at least they're deterministic.
+canonicalizeForPrinting
+  :: (HoistableE e, SubstE Name e) => e n -> (forall l. e l -> a) -> a
+canonicalizeForPrinting e cont =
+  case withScopeFromFreeVars e of
+    ClosedWithScope scope e' ->
+      cont $ fmapNames scope id e'
 
 liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x

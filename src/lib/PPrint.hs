@@ -18,7 +18,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (
-  pprint, pprintList, asStr , atPrec, toJSONStr,
+  pprint, pprintCanonicalized, pprintList, asStr , atPrec, toJSONStr,
   PrettyPrec(..), PrecedenceLevel (..), printLitBlock) where
 
 import Data.Aeson hiding (Result, Null, Value, Success)
@@ -80,6 +80,10 @@ fromInfix t = do
 
 type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
 type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
+
+pprintCanonicalized :: (HoistableE e, SubstE Name e, PrettyE e)
+                    => e n -> String
+pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
 pprintList :: Pretty a => [a] -> String
 pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
