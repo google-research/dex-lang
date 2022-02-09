@@ -291,7 +291,7 @@ interfaceDef = do
       methodNames' = toNest methodNames
   let tyConParams' = tyConParams
   return $ UInterface tyConParams' superclasses methodTys
-                      tyConName (fromString tyConName) methodNames'
+                      (fromString tyConName) methodNames'
 
 toNest :: (IsString (a VoidS VoidS)) => [String] -> Nest a VoidS VoidS
 toNest = toNestParsed . map fromString
@@ -552,7 +552,7 @@ uPiType = withSrc $ upi <$> piBinderPat <*> arrow effects <*> uType
       return case b of
         UBindSource n -> (UPatAnn (WithSrcB pos (fromString n))       (Just ty))
         UIgnore       -> (UPatAnn (WithSrcB pos (UPatBinder UIgnore)) (Just ty))
-        UBind _       -> error "Shouldn't have UBind at parsing stage"
+        UBind _ _     -> error "Shouldn't have UBind at parsing stage"
 
 annBinder :: Parser (UAnnBinder (c::C) VoidS VoidS)
 annBinder = try $ namedBinder <|> anonBinder

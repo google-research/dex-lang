@@ -79,16 +79,17 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
     emitDataConName defName i =<< dataConDefAsAtom defName clsAbs i
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applySubst subst result
-inferTopUDecl (UInterface paramBs superclasses methodTys sourceName className methodNames) result = do
-  let methodPrettyNames = map fromString (nestToList pprint methodNames) :: [SourceName]
+inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
+  let classSourceName = uBinderSourceName className
+  let methodSourceNames = nestToList uBinderSourceName methodNames
   dictDef <- liftInfererM $
-               inferInterfaceDataDef sourceName paramBs superclasses methodTys
+               inferInterfaceDataDef classSourceName paramBs superclasses methodTys
   dictDefName <- emitDataDef dictDef
-  let classDef = ClassDef sourceName methodPrettyNames dictDefName
+  let classDef = ClassDef classSourceName methodSourceNames dictDefName
   className' <- emitClassDef classDef =<< tyConDefAsAtom dictDefName Nothing
   mapM_ (emitSuperclass className') [0..(length superclasses - 1)]
   methodNames' <-
-    forM (enumerate $ zip methodPrettyNames methodTys) \(i, (prettyName, ty)) -> do
+    forM (enumerate $ zip methodSourceNames methodTys) \(i, (prettyName, ty)) -> do
       let UMethodType (Right explicits) _ = ty
       emitMethodType (getNameHint prettyName) className' explicits i
   let subst = className @> className' <.> methodNames @@> methodNames'
@@ -106,7 +107,7 @@ inferTopUDecl decl@(ULet _ (UPatAnn p ann) rhs) result = do
     return val
   return $ UDeclResultWorkRemaining block $ Abs decl result
 
-inferTopUDecl decl@(UInstance ~(InternalName className) argBinders params methods _) result = do
+inferTopUDecl decl@(UInstance ~(InternalName _ className) argBinders params methods _) result = do
   block <- liftInfererM $ solveLocal $ buildBlockInf do
     instanceDict <- checkInstanceArgs argBinders do
                       checkInstanceParams params \params' -> do
@@ -669,7 +670,7 @@ checkOrInferRho :: forall m i o.
                 => UExpr i -> RequiredTy RhoType o -> m i o (Atom o)
 checkOrInferRho (WithSrcE pos expr) reqTy = do
  addSrcContext pos $ case expr of
-  UVar ~(InternalName v) -> do
+  UVar ~(InternalName _ v) -> do
     substM v >>= inferUVar >>= instantiateSigma >>= matchRequirement
   ULam (ULamExpr ImplicitArrow (UPatAnn p ann) body) -> do
     argTy <- checkAnn ann
@@ -881,7 +882,7 @@ checkOrInferRho (WithSrcE pos expr) reqTy = do
 inferFunNoInstantiation :: (EmitsBoth o, Inferer m) => UExpr i -> m i o (Atom o)
 inferFunNoInstantiation expr@(WithSrcE pos expr') = do
  addSrcContext pos $ case expr' of
-  UVar ~(InternalName v) -> do
+  UVar ~(InternalName _ v) -> do
     -- XXX: deliberately no instantiation!
     substM v >>= inferUVar
   _ -> inferRho expr
@@ -1080,7 +1081,7 @@ inferUDeclLocal (ULet letAnn (UPatAnn p ann) rhs) cont = do
   val <- checkMaybeAnnExpr ann rhs
   var <- emitDecl (getNameHint p) letAnn $ Atom val
   bindLamPat p var cont
-inferUDeclLocal (UInstance ~(InternalName className) argBinders params methods maybeName) cont = do
+inferUDeclLocal (UInstance ~(InternalName _ className) argBinders params methods maybeName) cont = do
   className' <- substM className
   instanceDict <- checkInstanceArgs argBinders do
                     checkInstanceParams params \params' -> do
@@ -1301,10 +1302,12 @@ introDictTys (h:t) m = buildPiInf "_autoq" ClassArrow h \_ -> do
 
 checkMethodDef :: (EmitsBoth o, Inferer m)
                => ClassName o -> [Type o] -> UMethodDef i -> m i o (Int, Atom o)
-checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
+checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs) = do
   MethodBinding className' i _ <- substM v >>= lookupEnv
-  when (className /= className') $
-    throw TypeErr $ pprint v ++ " is not a method of " ++ pprint className
+  when (className /= className') do
+    ClassBinding (ClassDef classSourceName _ _) _ <- lookupEnv className
+    throw TypeErr $ pprint sourceName ++ " is not a method of "
+                 ++ pprint classSourceName
   let methodTy = methodTys !! i
   rhs' <- checkSigma rhs methodTy
   return (i, rhs')
@@ -1312,7 +1315,7 @@ checkMethodDef className methodTys (UMethodDef ~(InternalName v) rhs) = do
 checkUEffRow :: (EmitsInf o, Inferer m) => UEffectRow i -> m i o (EffectRow o)
 checkUEffRow (EffectRow effs t) = do
    effs' <- liftM S.fromList $ mapM checkUEff $ toList effs
-   t' <- forM t \(InternalName v) -> do
+   t' <- forM t \(InternalName _ v) -> do
             v' <- substM v
             constrainVarTy v' EffKind
             return v'
@@ -1320,7 +1323,7 @@ checkUEffRow (EffectRow effs t) = do
 
 checkUEff :: (EmitsInf o, Inferer m) => UEffect i -> m i o (Effect o)
 checkUEff eff = case eff of
-  RWSEffect rws (Just ~(InternalName region)) -> do
+  RWSEffect rws (Just ~(InternalName _ region)) -> do
     region' <- substM region
     constrainVarTy region' TyKind
     return $ RWSEffect rws $ Just region'
@@ -1349,7 +1352,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
 
 getCaseAltIndex :: Inferer m => UPat i i' -> m i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
-  UPatCon ~(InternalName conName) _ -> do
+  UPatCon ~(InternalName _ conName) _ -> do
     (_, con) <- substM conName >>= getDataCon
     return $ ConAlt con
   UPatVariant (LabeledItems lmap) label _ -> do
@@ -1367,7 +1370,7 @@ checkCasePat :: (EmitsBoth o, Inferer m)
              -> (forall o'. (EmitsBoth o', Ext o o') => m i' o' (Atom o'))
              -> m i o (Alt o)
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
-  UPatCon ~(InternalName conName) ps -> do
+  UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, con) <- substM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     DataConDef _ (EmptyAbs argBs) <- return $ cons !! con
@@ -1428,7 +1431,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       x2  <- getSnd x' >>= zonk >>= emitAtomToName
       bindLamPat p2 x2 do
         cont
-  UPatCon ~(InternalName conName) ps -> do
+  UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, _) <- getDataCon =<< substM conName
     (DataDef sourceName paramBs cons) <- lookupDataDef dataDefName
     case cons of

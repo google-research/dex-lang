@@ -44,7 +44,7 @@ module Syntax (
     mkBundle, mkBundleTy, BundleDesc,
     BaseMonoidP (..), BaseMonoid, getIntLit, getFloatLit, sizeOf, ptrSize, vectorWidth,
     IRVariant (..), SubstVal (..), AtomName, DataDefName, ClassName, AtomSubstVal,
-    SourceName, SourceNameOr (..), UVar (..), UBinder (..),
+    SourceName, SourceNameOr (..), UVar (..), UBinder (..), uBinderSourceName,
     UExpr, UExpr' (..), UConDef, UDataDef (..), UDataDefTrail (..), UDecl (..),
     UFieldRowElems, UFieldRowElem (..),
     ULamExpr (..), UPiExpr (..), UDeclExpr (..), UForExpr (..), UAlt (..),
@@ -404,7 +404,7 @@ data Binding (c::C) (n::S) where
   DataDefBinding    :: DataDef n                          -> Binding DataDefNameC    n
   TyConBinding      :: DataDefName n        -> Atom n -> Binding TyConNameC      n
   DataConBinding    :: DataDefName n -> Int -> Atom n -> Binding DataConNameC    n
-  ClassBinding      :: ClassDef n -> Atom n                        -> Binding ClassNameC      n
+  ClassBinding      :: ClassDef n -> Atom n               -> Binding ClassNameC      n
   SuperclassBinding :: Name ClassNameC n -> Int -> Atom n -> Binding SuperclassNameC n
   MethodBinding     :: Name ClassNameC n -> Int -> Atom n -> Binding MethodNameC     n
   ImpFunBinding     :: ImpFunction n                      -> Binding ImpFunNameC     n
@@ -921,7 +921,8 @@ data SourceNameOr (a::E) (n::S) where
   -- Only appears before renaming pass
   SourceName :: SourceName -> SourceNameOr a VoidS
   -- Only appears after renaming pass
-  InternalName :: a n -> SourceNameOr a n
+  -- We maintain the source name for user-facing error messages.
+  InternalName :: SourceName -> a n -> SourceNameOr a n
 deriving instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S))
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
@@ -940,7 +941,8 @@ data UBinder (c::C) (n::S) (l::S) where
   -- May appear before or after renaming pass
   UIgnore :: UBinder c n n
   -- The following binders only appear after the renaming pass.
-  UBind :: (NameBinder c n l) -> UBinder c n l
+  -- We maintain the source name for user-facing error messages.
+  UBind :: SourceName -> NameBinder c n l -> UBinder c n l
 
 type UExpr = WithSrcE UExpr'
 data UExpr' (n::S) =
@@ -1008,7 +1010,6 @@ data UDecl (n::S) (l::S) where
     :: Nest (UAnnBinder AtomNameC) n p     -- parameter binders
     ->  [UType p]                          -- superclasses
     ->  [UMethodType p]                    -- method types
-    -> SourceName                          -- class source name
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UDecl n l
@@ -2971,19 +2972,25 @@ instance Color c => HasNameHint (UBinder c n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
     UIgnore       -> fromString "_ign"
-    UBind v       -> getNameHint v
+    UBind v _     -> getNameHint v
 
 instance Color c => BindsNames (UBinder c) where
   toScopeFrag (UBindSource _) = emptyOutFrag
   toScopeFrag (UIgnore)       = emptyOutFrag
-  toScopeFrag (UBind b)       = toScopeFrag b
+  toScopeFrag (UBind _ b)     = toScopeFrag b
 
 instance Color c => ProvesExt (UBinder c) where
 instance Color c => BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
     UBindSource _ -> emptyInFrag
     UIgnore       -> emptyInFrag
-    UBind b'      -> b' @> x
+    UBind _ b'    -> b' @> x
+
+uBinderSourceName :: UBinder c n l -> SourceName
+uBinderSourceName b = case b of
+  UBindSource v -> v
+  UIgnore       -> "_"
+  UBind v _     -> v
 
 instance Color c => ProvesExt (UAnnBinder c) where
 instance Color c => BindsNames (UAnnBinder c) where

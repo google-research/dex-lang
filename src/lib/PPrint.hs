@@ -474,7 +474,7 @@ instance Color c => PrettyPrec (UBinder c n l) where
   prettyPrec b = atPrec ArgPrec case b of
     UBindSource v -> p v
     UIgnore       -> "_"
-    UBind v       -> p v
+    UBind v _     -> p v
 
 instance PrettyE e => Pretty (WithSrcE e n) where
   pretty (WithSrcE _ x) = p x
@@ -490,7 +490,7 @@ instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where
 
 instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName   v) = p v
-  pretty (InternalName x) = p x
+  pretty (InternalName v _) = p v
 
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
@@ -575,7 +575,7 @@ instance Pretty (UDecl n l) where
     "data" <+> p bTyCon <+> p bParams <+> (brackets $ p bIfaces)
        <+> "where" <> nest 2
        (hardline <> prettyLines (zip (toList $ fromNest bDataCons) dataCons))
-  pretty (UInterface params superclasses methodTys interfaceName _ methodNames) =
+  pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods
      where
