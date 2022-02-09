@@ -8,14 +8,14 @@ which calls the power-of-2 FFT as a subroutine.
 
 '### Helper functions
 
-def odd_sized_palindrome (mid:a) (seq:n=>a) :
-  ({backward:n | mid:Unit | zforward:n}=>a) =  -- Alphabetical order matters here.
+def odd_sized_palindrome {a n} (mid:a) (seq:n=>a) : ((n|Unit|n)=>a) =
   -- Turns sequence 12345 into 543212345.
   for i.
     case i of
-      {|backward=i|} -> seq.(reflect i)
-      {|mid=i|} -> mid
-      {|zforward=i|} -> seq.i
+      Left i -> case i of
+        Left i -> seq.(reflect i)
+        Right () -> mid
+      Right i -> seq.i
 
 
 '## Inner FFT functions
@@ -24,7 +24,8 @@ data FTDirection =
   ForwardFT
   InverseFT
 
-def butterfly_ixs (j':halfn) (pow2:Int) : (n & n & n & n) =
+def butterfly_ixs {halfn n} [Ix halfn, Ix n] (j':halfn) (pow2:Int)
+  : (n & n & n & n) =
   -- Re-index at a finer frequency.
   -- halfn must have half the size of n.
   -- For explanation, see https://en.wikipedia.org/wiki/Butterfly_diagram
@@ -38,7 +39,7 @@ def butterfly_ixs (j':halfn) (pow2:Int) : (n & n & n & n) =
   right_read_ix = unsafeFromOrdinal n (j + size halfn)
   (left_read_ix, right_read_ix, left_write_ix, right_write_ix)
 
-def power_of_2_fft (direction: FTDirection) (x: n=>Complex) : n=>Complex =
+def power_of_2_fft {n} (direction: FTDirection) (x: n=>Complex) : n=>Complex =
   -- Input size must be a power of 2.
   -- Can enforce this with tables-as-index-sets like:
   -- (x: (log2n=>(Fin 2))=>Complex)) once that's supported.
@@ -69,8 +70,8 @@ def power_of_2_fft (direction: FTDirection) (x: n=>Complex) : n=>Complex =
     ForwardFT -> ans
     InverseFT -> ans / (IToF (size n))
 
-def convolve_complex (u:n=>Complex) (v:m=>Complex) :
-  ({orig_vals:n | padding:m }=>Complex) =  -- Alphabetical order matters here.
+def convolve_complex {n m} (u:n=>Complex) (v:m=>Complex) :
+  ((n|m)=>Complex) =  -- Alphabetical order matters here.
   -- Convolve by pointwise multiplication in the Fourier domain.
   convolved_size = (size n) + (size m) - 1
   working_size = nextpow2 convolved_size
@@ -80,9 +81,9 @@ def convolve_complex (u:n=>Complex) (v:m=>Complex) :
   spectral_v = power_of_2_fft ForwardFT v_padded
   spectral_conv = for i. spectral_u.i * spectral_v.i
   padded_conv = power_of_2_fft InverseFT spectral_conv
-  slice padded_conv 0 {orig_vals:n | padding:m }
+  slice padded_conv 0 (n | m )
 
-def convolve (u:n=>Float) (v:m=>Float) : ({orig_vals:n | padding:m }=>Float) =
+def convolve {n m} (u:n=>Float) (v:m=>Float) : ((n|m)=>Float) =
   u' = for i. MkComplex u.i 0.0
   v' = for i. MkComplex v.i 0.0
   ans = convolve_complex u' v'
@@ -93,7 +94,7 @@ def convolve (u:n=>Float) (v:m=>Float) : ({orig_vals:n | padding:m }=>Float) =
 
 '## FFT Interface
 
-def fft (x: n=>Complex): n=>Complex =
+def fft {n} (x: n=>Complex): n=>Complex =
   if isPowerOf2 (size n)
     then power_of_2_fft ForwardFT x
     else
@@ -113,26 +114,26 @@ def fft (x: n=>Complex): n=>Complex =
       convslice = slice convolution (size n - 1) n
       for i. wks.i * convslice.i
 
-def ifft (xs: n=>Complex): n=>Complex =
+def ifft {n} (xs: n=>Complex): n=>Complex =
   if isPowerOf2 (size n)
     then power_of_2_fft InverseFT xs
     else
       unscaled_fft = fft (for i. complex_conj xs.i)
       for i. (complex_conj unscaled_fft.i) / (IToF (size n))
 
-def  fft_real (x: n=>Float): n=>Complex =  fft for i. MkComplex x.i 0.0
-def ifft_real (x: n=>Float): n=>Complex = ifft for i. MkComplex x.i 0.0
+def  fft_real {n} (x: n=>Float): n=>Complex =  fft for i. MkComplex x.i 0.0
+def ifft_real {n} (x: n=>Float): n=>Complex = ifft for i. MkComplex x.i 0.0
 
-def fft2 (x: n=>m=>Complex): n=>m=>Complex =
+def fft2 {n m} (x: n=>m=>Complex): n=>m=>Complex =
   x'      = for i. fft x.i
   transpose for i. fft (transpose x').i
 
-def ifft2 (x: n=>m=>Complex): n=>m=>Complex =
+def ifft2 {n m} (x: n=>m=>Complex): n=>m=>Complex =
   x'      = for i. ifft x.i
   transpose for i. ifft (transpose x').i
 
-def  fft2_real (x: n=>m=>Float): n=>m=>Complex =  fft2 for i j. MkComplex x.i.j 0.0
-def ifft2_real (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex x.i.j 0.0
+def  fft2_real {n m} (x: n=>m=>Float): n=>m=>Complex =  fft2 for i j. MkComplex x.i.j 0.0
+def ifft2_real {n m} (x: n=>m=>Float): n=>m=>Complex = ifft2 for i j. MkComplex x.i.j 0.0
 
 -------- Tests --------
 
