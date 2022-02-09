@@ -21,7 +21,6 @@ module TopLevel (
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
 import Data.Functor
-import Data.Foldable (fold)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -257,27 +256,23 @@ filterLogs block (Result outs err) = let
 -- the module itself) excluding those provided in the set of already known
 -- modules.
 findDepsTransitively
-  :: (Topper m, Mut n)
+  :: forall m n. (Topper m, Mut n)
   => ModuleSourceName -> m n [UModulePartialParse]
 findDepsTransitively initialModuleName = do
   alreadyLoaded <- M.keysSet . fromLoadedModules <$> withEnv (envLoadedModules . topEnv)
-  liftM fst $ runStateT1 (go initialModuleName) (LiftE alreadyLoaded)
+  flip evalStateT alreadyLoaded $ execWriterT $ go initialModuleName
   where
-    go :: ( TopBuilder m, MonadIO1 m, ConfigReader (m n), Mut n
-          , MonadState  (LiftE (S.Set ModuleSourceName) n) (m n))
-       => ModuleSourceName -> m n [UModulePartialParse]
+    go :: ModuleSourceName -> WriterT [UModulePartialParse]
+                                (StateT (S.Set ModuleSourceName) (m n)) ()
     go name = do
-      alreadyVisited <- S.member name . fromLiftE <$> get
-      if alreadyVisited
-        then return []
-        else do
-          modify $ LiftE . S.insert name . fromLiftE
-          config <- getConfig
-          source <- loadModuleSource config name
-          deps <- parseUModuleDepsCached name source
-          fromDeps <- fold <$> mapM go deps
-          let cur = UModulePartialParse name deps source
-          return $ fromDeps ++ [cur]
+      alreadyVisited <- S.member name <$> get
+      unless alreadyVisited do
+        modify $ S.insert name
+        config <- lift $ lift $ getConfig
+        source <- loadModuleSource config name
+        deps <- lift $ lift $ parseUModuleDepsCached name source
+        mapM_ go deps
+        tell [UModulePartialParse name deps source]
 
 -- What would it look like to abstract away pattern used here and in
 -- `evalPartiallyParsedUModuleCached`? We still want case-by-case control over
