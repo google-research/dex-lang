@@ -85,6 +85,28 @@ manually. This will be ignored by git.
 
 This should work out of the box with Emacs' `lsp-haskell` package.
 
+### Building with Nix
+
+[Nix](https://nixos.org/) is a functional package manager and build system.
+
+To build with vanilla Nix:
+```bash
+$ nix-build
+```
+
+To build with flakes-enabled Nix:
+```bash
+$ nix build .#dex
+```
+The resulting `dex` binary should be in `result/bin/dex`.
+
+For development purposes, you can use a Nix environment with
+```bash
+$ nix-shell
+$ nix develop  # With flakes
+```
+and use `make` to use Stack to build Dex.
+
 ## Running
 
   * Traditional REPL: `dex repl`

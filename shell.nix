@@ -1,15 +1,16 @@
-{ nixpkgs ? import <nixpkgs> {} }:
-with nixpkgs;
-stdenv.mkDerivation {
+{ pkgs ? import <nixpkgs> {} }:
+pkgs.stdenv.mkDerivation {
   name = "dex";
-  buildInputs = [
+  buildInputs = with pkgs; [
     cabal-install
-    haskell.compiler.ghc884
-    llvm_9
-    clang_9
-    pkg-config
-    libpng
-    git
     cacert
+    clang_12
+    git
+    haskell.compiler.ghc884
+    libpng
+    llvm_12
+    pkg-config
+    stack
+    zlib
   ];
 }
