@@ -9,7 +9,7 @@
 {-# LANGUAGE CPP #-}
 
 module Serialize (pprintVal, cached, getDexString, cachedWithSnapshot,
-                 HasPtrs (..)) where
+                 HasPtrs (..), takePtrSnapshot, restorePtrSnapshot) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad
@@ -126,10 +126,6 @@ prettyVal val = case val of
 
 data WithSnapshot a = WithSnapshot a [PtrSnapshot]  deriving Generic
 type RawPtr = Ptr ()
--- TODO: we could consider using some mmap-able instead of ByteString
-data PtrSnapshot = ByteArray BS.ByteString
-                 | PtrArray [PtrSnapshot]
-                 | NullPtr  deriving Generic
 
 class HasPtrs a where
   traversePtrs :: Applicative f => (PtrType -> RawPtr -> f RawPtr) -> a -> f a
@@ -232,4 +228,3 @@ cached cacheName key create = do
 -- === instances ===
 
 instance Store a => Store (WithSnapshot a)
-instance Store PtrSnapshot

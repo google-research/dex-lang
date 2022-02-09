@@ -27,3 +27,9 @@ import test_module_B
 
 :p fooMethod 1.0
 > 10.
+
+:p arrayVal
+> [1, 2, 3]
+
+:p arrayVal2
+> [2, 4, 6]

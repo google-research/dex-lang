@@ -857,13 +857,15 @@ updateAddAt x = liftEmitBuilder do
 
 litValToPointerlessAtom :: (Mut n, TopBuilder m) => LitVal -> m n (Atom n)
 litValToPointerlessAtom litval = case litval of
-  PtrLit ptrTy ptr -> Var <$> emitPtrLit "ptr" ptrTy ptr
+  PtrLit val -> Var <$> emitPtrLit "ptr" val
   VecLit _ -> error "not implemented"
   _ -> return $ Con $ Lit litval
 
-emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrType -> Ptr () -> m n (AtomName n)
-emitPtrLit hint ptrTy ptr =
-  emitBinding hint $ AtomNameBinding $ PtrLitBound ptrTy ptr
+emitPtrLit :: (Mut n, TopBuilder m) => NameHint -> PtrLitVal -> m n (AtomName n)
+emitPtrLit hint p@(PtrLitVal ty _) = do
+  ptrName <- emitBinding hint $ PtrBinding p
+  emitBinding hint $ AtomNameBinding $ PtrLitBound ty ptrName
+emitPtrLit _ (PtrSnapshot _ _) = error "only used for serialization"
 
 emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
 emitDataDef dataDef@(DataDef sourceName _ _) =

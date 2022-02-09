@@ -342,7 +342,7 @@ instance Pretty (AtomBinding n) where
     PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    PtrLitBound ty ptr -> p $ PtrLit ty ptr
+    PtrLitBound _ ptr -> p ptr
     SimpLamBound ty f -> p ty <> hardline <> p f
     FFIFunBound _ f -> p f
 
@@ -374,6 +374,7 @@ instance Pretty (Binding s n) where
     ImpFunBinding f -> pretty f
     ObjectFileBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
+    PtrBinding     _ -> "<ptr>"
 
 instance Pretty (Module n) where
   pretty = undefined
@@ -861,7 +862,8 @@ instance PrettyPrec LitVal where
   prettyPrec (Word8Lit   x) = atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
   prettyPrec (Word32Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-  prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
+  prettyPrec (PtrLit (PtrLitVal ty x)) =
+    atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty CallingConvention where

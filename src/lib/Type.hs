@@ -285,6 +285,7 @@ instance Color c => CheckableE (Binding c) where
     ImpFunBinding     f                 -> ImpFunBinding     <$> substM f
     ObjectFileBinding objfile           -> ObjectFileBinding <$> substM objfile
     ModuleBinding     md                -> ModuleBinding     <$> substM md
+    PtrBinding        ptr               -> PtrBinding        <$> return ptr
 
 instance CheckableE AtomBinding where
   checkE binding = case binding of
@@ -293,7 +294,7 @@ instance CheckableE AtomBinding where
     PiBound  piBinding  -> PiBound     <$> checkE piBinding
     MiscBound ty        -> MiscBound   <$> checkTypeE TyKind ty
     SolverBound b       -> SolverBound <$> checkE b
-    PtrLitBound ty ptr  -> return $ PtrLitBound ty ptr
+    PtrLitBound ty ptr  -> PtrLitBound ty <$> substM ptr
     -- TODO: check the type actually matches the lambda term
     SimpLamBound ty lam -> do
       lam' <- substM lam
@@ -1084,7 +1085,7 @@ litType v = case v of
   Word64Lit  _ -> Scalar Word64Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
-  PtrLit t _   -> PtrType t
+  PtrLit (PtrLitVal t _) -> PtrType t
   VecLit  l -> Vector sb
     where Scalar sb = litType $ head l
 

@@ -747,9 +747,7 @@ litVal lit = case lit of
       undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ typeOf $ head consts
       fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
       operandToConst ~(L.ConstantOperand c) = c
-  PtrLit _ _ -> error "Shouldn't be compiling pointer literals"
-    -- L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
-    -- where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
+  PtrLit _ -> error "Shouldn't be compiling pointer literals"
 
 -- TODO: Assert that the integer can be represented in that number of bits!
 withWidth :: Int -> Word32 -> Operand

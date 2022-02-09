@@ -26,7 +26,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import qualified Data.ByteString as BS
 import Data.Text.Prettyprint.Doc
-import Data.Store (Store, encode, decode)
+import Data.Store (Store (..), encode, decode)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -43,7 +43,7 @@ import Logging
 import LLVMExec
 import PPrint (pprintCanonicalized)
 import Util (measureSeconds, File (..), readFileWithHash, foldMapM)
-import Serialize (HasPtrs (..), pprintVal, getDexString)
+import Serialize (HasPtrs (..), pprintVal, getDexString, takePtrSnapshot, restorePtrSnapshot)
 
 import Name
 import Parser
@@ -558,14 +558,15 @@ loadCache = liftIO do
     then do
       decoded <- decode <$> BS.readFile cachePath
       case decoded of
-        Right result -> return result
+        Right result -> restorePtrSnapshots result
         _            -> removeFile cachePath >> return initTopState
     else return initTopState
 
 storeCache :: MonadIO m => TopStateEx -> m ()
 storeCache env = liftIO do
   cachePath <- getCachePath
-  BS.writeFile cachePath $ encode $ stripEnvForSerialization env
+  envToStore <- snapshotPtrs $ stripEnvForSerialization env
+  BS.writeFile cachePath $ encode envToStore
 
 getCachePath :: MonadIO m => m FilePath
 getCachePath = liftIO do
@@ -582,6 +583,26 @@ clearCache = liftIO do
 stripEnvForSerialization :: TopStateEx -> TopStateEx
 stripEnvForSerialization (TopStateEx (Env (TopEnv scope defs cache _) _)) =
   TopStateEx $ Env (TopEnv scope defs cache mempty) emptyModuleEnv
+
+snapshotPtrs :: MonadIO m => TopStateEx -> m TopStateEx
+snapshotPtrs s = traverseBindingsTopStateEx s \case
+  PtrBinding (PtrLitVal ty p) ->
+    liftIO $ PtrBinding . PtrSnapshot ty <$> takePtrSnapshot ty p
+  PtrBinding (PtrSnapshot _ _) -> error "shouldn't have snapshots"
+  b -> return b
+
+restorePtrSnapshots :: MonadIO m => TopStateEx -> m TopStateEx
+restorePtrSnapshots s = traverseBindingsTopStateEx s \case
+  PtrBinding (PtrSnapshot ty snapshot) ->
+    liftIO $ PtrBinding . PtrLitVal ty <$> restorePtrSnapshot snapshot
+  PtrBinding (PtrLitVal _ _) -> error "shouldn't have lit vals"
+  b -> return b
+
+traverseBindingsTopStateEx
+  :: Monad m => TopStateEx -> (forall c n. Binding c n -> m (Binding c n)) -> m TopStateEx
+traverseBindingsTopStateEx (TopStateEx (Env tenv menv)) f = do
+  defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
+  return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv)
 
 -- -- === instances ===
 

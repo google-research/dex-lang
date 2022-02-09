@@ -26,7 +26,8 @@ module Syntax (
     fieldRowElemsFromList, prependFieldRowElem, extRowAsFieldRowElems, fieldRowElemsAsExtRow,
     pattern StaticRecordTy, pattern RecordTyWithElems,
     Expr (..), Atom (..), Arrow (..), PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..), PrimHof (..),
+    PrimExpr (..), PrimCon (..), LitVal (..), PtrLitVal (..), PtrSnapshot (..),
+    PrimEffect (..), PrimOp (..), PrimHof (..),
     LamBinding (..), LamBinder (..), LamExpr (..),
     PiBinding (..), PiBinder (..),
     PiType (..), DepPairType (..), LetAnn (..), SomeDecl (..),
@@ -130,7 +131,8 @@ import Data.Maybe (fromJust)
 
 import GHC.Stack
 import GHC.Generics (Generic (..))
-import Data.Store (Store)
+import Data.Store (Store (..))
+import qualified Data.Store.Internal as SI
 
 import Name
 import Err
@@ -189,6 +191,7 @@ type AtomName    = Name AtomNameC
 type DataDefName = Name DataDefNameC
 type ClassName   = Name ClassNameC
 type ModuleName  = Name ModuleNameC
+type PtrName     = Name PtrNameC
 
 type AtomNameBinder = NameBinder AtomNameC
 
@@ -410,6 +413,7 @@ data Binding (c::C) (n::S) where
   ImpFunBinding     :: ImpFunction n                      -> Binding ImpFunNameC     n
   ObjectFileBinding :: ObjectFile n                       -> Binding ObjectFileNameC n
   ModuleBinding     :: Module n                           -> Binding ModuleNameC     n
+  PtrBinding        :: PtrLitVal                          -> Binding PtrNameC        n
 deriving instance Show (Binding c n)
 
 data AtomBinding (n::S) =
@@ -418,7 +422,7 @@ data AtomBinding (n::S) =
  | PiBound     (PiBinding     n)
  | MiscBound   (Type          n)
  | SolverBound (SolverBinding n)
- | PtrLitBound PtrType (Ptr ())
+ | PtrLitBound PtrType (PtrName n)
  | SimpLamBound (NaryPiType n) (NaryLamExpr n)  -- first-order functions only
  | FFIFunBound  (NaryPiType n) (ImpFunName n)
    deriving (Show, Generic)
@@ -830,9 +834,12 @@ abstractPtrLiterals
 abstractPtrLiterals block = do
   let fvs = freeAtomVarsList block
   (ptrNames, ptrVals) <- unzip <$> catMaybes <$> forM fvs \v ->
-    lookupAtomName v <&> \case
-      PtrLitBound ty ptr -> Just ((v, LiftE (PtrType ty)), PtrLit ty ptr)
-      _ -> Nothing
+    lookupAtomName v >>= \case
+      PtrLitBound _ name -> lookupEnv name >>= \case
+        PtrBinding (PtrLitVal ty ptr) ->
+          return $ Just ((v, LiftE (PtrType ty)), PtrLit $ PtrLitVal ty ptr)
+        PtrBinding (PtrSnapshot _ _) -> error "this case is only for serialization"
+      _ -> return Nothing
   Abs nameBinders block' <- return $ abstractFreeVars ptrNames block
   let ptrBinders = fmapNest (\(b:>LiftE ty) -> IBinder b ty) nameBinders
   return (Abs ptrBinders block', ptrVals)
@@ -1451,6 +1458,27 @@ newtype ObjectFiles n = ObjectFiles (S.Set (ObjectFileName n))
 
 -- === base types ===
 
+-- TODO: we could consider using some mmap-able instead of ByteString
+data PtrSnapshot = ByteArray BS.ByteString
+                 | PtrArray [PtrSnapshot]
+                 | NullPtr
+                   deriving (Show, Eq, Ord, Generic)
+
+data PtrLitVal = PtrLitVal   PtrType (Ptr ())
+               | PtrSnapshot PtrType PtrSnapshot
+                 deriving (Show, Eq, Ord, Generic)
+
+instance Store PtrSnapshot where
+instance Store PtrLitVal where
+  size = SI.VarSize \case
+    PtrSnapshot t p -> SI.getSize (t, p)
+    PtrLitVal _ _ -> error "can't serialize pointer literals"
+  peek = do
+    (t, p) <- peek
+    return $ PtrSnapshot t p
+  poke (PtrSnapshot t p) = poke (t, p)
+  poke (PtrLitVal _ _) = error "can't serialize pointer literals"
+
 data LitVal = Int64Lit   Int64
             | Int32Lit   Int32
             | Word8Lit   Word8
@@ -1458,7 +1486,11 @@ data LitVal = Int64Lit   Int64
             | Word64Lit  Word64
             | Float64Lit Double
             | Float32Lit Float
-            | PtrLit PtrType (Ptr ())
+              -- XXX: we have to be careful with this, because it can't be
+              -- serialized we only use it in a few places, like the interpreter
+              -- and for passing values to LLVM's JIT. Otherwise, pointers
+              -- should be referred to by name.
+            | PtrLit PtrLitVal
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Ord, Generic)
 
@@ -2551,7 +2583,7 @@ instance GenericE AtomBinding where
           Type            -- MiscBound
           SolverBinding)  -- SolverBound
        (EitherE3
-          (LiftE (PtrType, Ptr ()))       -- PtrLitBound
+          (PairE (LiftE PtrType) PtrName) -- PtrLitBound
           (PairE NaryPiType NaryLamExpr)  -- SimpLamBound
           (PairE NaryPiType ImpFunName))  -- FFIFunBound
 
@@ -2561,7 +2593,7 @@ instance GenericE AtomBinding where
     PiBound     x -> Case0 $ Case2 x
     MiscBound   x -> Case0 $ Case3 x
     SolverBound x -> Case0 $ Case4 x
-    PtrLitBound x y -> Case1 (Case0 (LiftE (x,y)))
+    PtrLitBound x y -> Case1 (Case0 (LiftE x `PairE` y))
     SimpLamBound x y  -> Case1 (Case1 (PairE x y))
     FFIFunBound x y   -> Case1 (Case2 (PairE x y))
 
@@ -2574,7 +2606,7 @@ instance GenericE AtomBinding where
       Case4 x -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
-      Case0 (LiftE (x,y)) -> PtrLitBound x y
+      Case0 (LiftE x `PairE` y) -> PtrLitBound x y
       Case1 (PairE x y) -> SimpLamBound x y
       Case2 (PairE x y) -> FFIFunBound x y
       _ -> error "impossible"
@@ -2616,12 +2648,13 @@ instance Color c => GenericE (Binding c) where
           (DataDefName `PairE` Atom)
           (DataDefName `PairE` LiftE Int `PairE` Atom)
           (ClassDef `PairE` Atom))
-      (EitherE5
+      (EitherE6
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (Name ClassNameC `PairE` LiftE Int `PairE` Atom)
           (ImpFunction)
           (ObjectFile)
-          (Module))
+          (Module)
+          (LiftE PtrLitVal))
   fromE binding = case binding of
     AtomNameBinding   tyinfo            -> Case0 $ Case0 $ tyinfo
     DataDefBinding    dataDef           -> Case0 $ Case1 $ dataDef
@@ -2633,6 +2666,7 @@ instance Color c => GenericE (Binding c) where
     ImpFunBinding     fun               -> Case1 $ Case2 $ fun
     ObjectFileBinding objfile           -> Case1 $ Case3 $ objfile
     ModuleBinding m                     -> Case1 $ Case4 $ m
+    PtrBinding p                        -> Case1 $ Case5 $ LiftE p
 
   toE rep = case rep of
     Case0 (Case0 tyinfo)                                    -> fromJust $ tryAsColor $ AtomNameBinding   tyinfo
@@ -2645,6 +2679,7 @@ instance Color c => GenericE (Binding c) where
     Case1 (Case2 fun)                                       -> fromJust $ tryAsColor $ ImpFunBinding     fun
     Case1 (Case3 objfile)                                   -> fromJust $ tryAsColor $ ObjectFileBinding objfile
     Case1 (Case4 m)                                         -> fromJust $ tryAsColor $ ModuleBinding     m
+    Case1 (Case5 (LiftE ptr))                               -> fromJust $ tryAsColor $ PtrBinding        ptr
     _ -> error "impossible"
 
 deriving via WrapE (Binding c) n instance Color c => Generic (Binding c n)
@@ -2829,6 +2864,8 @@ instance Hashable UnOp
 instance Hashable BinOp
 instance Hashable CmpOp
 instance Hashable BaseType
+instance Hashable PtrLitVal
+instance Hashable PtrSnapshot
 instance Hashable LitVal
 instance Hashable ScalarBaseType
 instance Hashable Device
@@ -3034,7 +3071,7 @@ instance GenericE ImpInstr where
     IQueryParallelism f s -> Case0 $ Case3 $ LiftE f `PairE` s
 
     ISyncWorkgroup      -> Case1 $ Case0 UnitE
-    ILaunch f size args -> Case1 $ Case1 $ LiftE f `PairE` size `PairE` ListE args
+    ILaunch f n args    -> Case1 $ Case1 $ LiftE f `PairE` n `PairE` ListE args
     ICall f args        -> Case1 $ Case2 $ f `PairE` ListE args
     Store dest val      -> Case1 $ Case3 $ dest `PairE` val
 
@@ -3056,7 +3093,7 @@ instance GenericE ImpInstr where
 
     Case1 instr' -> case instr' of
       Case0 UnitE                                     -> ISyncWorkgroup
-      Case1 (LiftE f `PairE` size `PairE` ListE args) -> ILaunch f size args
+      Case1 (LiftE f `PairE` n `PairE` ListE args)    -> ILaunch f n args
       Case2 (f `PairE` ListE args)                    -> ICall f args
       Case3 (dest `PairE` val )                       -> Store dest val
       _ -> error "impossible"
