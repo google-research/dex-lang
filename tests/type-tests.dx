@@ -219,24 +219,24 @@ g1 : a:Type ?-> (a -> Int) -> (a -> Int) = \x. x
 :t g1
 > ((a:Type) ?-> (a -> Int32) -> a -> Int32)
 
-g2 : a:Type ?-> a -> a = \x. idiv x x
-> Type error:Couldn't synthesize a class dictionary for: (Integral a)
+g2 : aaa:Type ?-> aaa -> aaa = \x. idiv x x
+> Type error:Couldn't synthesize a class dictionary for: (Integral aaa)
 >
-> g2 : a:Type ?-> a -> a = \x. idiv x x
->                              ^^^^^
+> g2 : aaa:Type ?-> aaa -> aaa = \x. idiv x x
+>                                    ^^^^^
 
 h : a:Type ?-> b:Type ?-> (a -> b) -> (a -> b) = \x. x
 
 :t h
 > ((a:Type) ?-> (b:Type) ?-> (a -> b) -> a -> b)
 
-fun : a:Type ?-> a -> a = \x. sin x
-> Type error:Couldn't synthesize a class dictionary for: (Floating a)
+fun : aaa:Type ?-> aaa -> aaa = \x. sin x
+> Type error:Couldn't synthesize a class dictionary for: (Floating aaa)
 >
-> fun : a:Type ?-> a -> a = \x. sin x
->                               ^^^^
+> fun : aaa:Type ?-> aaa -> aaa = \x. sin x
+>                                     ^^^^
 
-data NewPair a:Type b:Type = MkNewPair a b
+data NewPair aa:Type bb:Type = MkNewPair aa bb
 
 def fromNewPair {a b}: NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
 
@@ -255,7 +255,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > 1
 
 :p NewPair
-> \a:Type b:Type. NewPair a b
+> \aa:Type bb:Type. NewPair aa bb
 
 -- TODO: these are broken since switching from newtype mechanism to ADTs
 
@@ -416,11 +416,11 @@ def uncurryTable {a} (x : ((Fin 2) & (Fin 2))=>a) : (Fin 2)=>(Fin 2)=>a =
 -- Make sure that the local type alias is unifiable with Int
 def GetInt (n : Int) : Type = Int
 def the (t : Type) (x : t) : t = x
-def f (n : Int) : Int =
+def ff (n : Int) : Int =
   i = GetInt n
   the i 2
 
-f 0
+ff 0
 > 2
 
 -- The two local aliases for Fin n should be unifiable with each other and Fin n

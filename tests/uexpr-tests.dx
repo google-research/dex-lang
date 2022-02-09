@@ -194,12 +194,12 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   myId = fst (\x. x, 2)
-  f : a:Type -> a -> a = \a. \x. myId x
+  f : aa:Type -> aa -> aa = \bb. \x. myId x
   f Int 1
-> Leaked local variables:[a]
+> Leaked local variables:[bb]
 >
->   f : a:Type -> a -> a = \a. \x. myId x
->                           ^^^^^^^^^^^^^
+>   f : aa:Type -> aa -> aa = \bb. \x. myId x
+>                              ^^^^^^^^^^^^^^
 
 def myFst {a b} (p:(a&b)) : a =
   (x, _) = p
