@@ -167,12 +167,16 @@ evalSourceBlock block = do
        withPassCtx (PassCtx $ blockRequiresBench block) $
          evalSourceBlock' block
      return $ Result logs maybeErr
+  case resultErrs result of
+    Failure _ -> case sbContents block of
+      EvalUDecl decl -> emitSourceMap $ uDeclErrSourceMap decl
+      _ -> return ()
+    _ -> return ()
   return $ filterLogs block $ addResultCtx block result
 
 evalSourceBlock' :: (Topper m, Mut n) => SourceBlock -> m n ()
 evalSourceBlock' block = case sbContents block of
-  EvalUDecl decl ->
-    execUDecl decl
+  EvalUDecl decl -> execUDecl decl
   Command cmd expr -> case cmd of
     EvalExpr fmt -> do
       val <- evalUExpr expr
@@ -207,7 +211,7 @@ evalSourceBlock' block = case sbContents block of
         vCore <- emitBinding hint (AtomNameBinding $ FFIFunBound naryPiTy vImp)
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
-          M.singleton sourceName [SourceNameDef (UAtomVar vCore) Nothing]
+          M.singleton sourceName [SourceNameDef (Just $ UAtomVar vCore) Nothing]
   GetNameType v -> do
     ty <- sourceNameType v
     logTop $ TextOut $ pprintCanonicalized ty

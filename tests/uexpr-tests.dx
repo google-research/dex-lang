@@ -311,3 +311,21 @@ def bug (n : Type) : Unit =
 >
 >   for w':n.
 >   ^^^^
+
+badDefinition = oops_there_is_a_problem
+> Error: variable not in scope: oops_there_is_a_problem
+>
+> badDefinition = oops_there_is_a_problem
+>                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+badDefinition = 4
+> Error: variable already defined: badDefinition
+>
+> badDefinition = 4
+> ^^^^^^^^^^^^^^
+
+:p badDefinition
+> Error: ambiguous variable: badDefinition
+>
+> :p badDefinition
+>    ^^^^^^^^^^^^^

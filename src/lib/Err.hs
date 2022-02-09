@@ -46,6 +46,7 @@ data ErrType = NoErr
              | TypeErr
              | KindErr
              | LinErr
+             | VarDefErr
              | UnboundVarErr
              | AmbiguousVarErr
              | RepeatedVarErr
@@ -410,6 +411,7 @@ instance Pretty ErrType where
     KindErr           -> "Kind error:"
     LinErr            -> "Linearity error: "
     IRVariantErr      -> "Internal IR validation error: "
+    VarDefErr         -> "Error in (earlier) definition of variable: "
     UnboundVarErr     -> "Error: variable not in scope: "
     AmbiguousVarErr   -> "Error: ambiguous variable: "
     RepeatedVarErr    -> "Error: variable already defined: "

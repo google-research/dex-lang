@@ -690,7 +690,7 @@ lookupSourceMap sourceName = do
   let smImported = sourceMapImports $ localImportStatus env
   case (   lookupSourceMapPure smLocal    sourceName
         ++ lookupSourceMapPure smImported sourceName) of
-    [SourceNameDef x _] -> return $ Just x
+    [SourceNameDef (Just x) _] -> return $ Just x
     _   -> return Nothing
 
 lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
@@ -1126,8 +1126,12 @@ data EnvQuery =
  | SourceNameInfo   SourceName
    deriving (Show, Generic)
 
-data SourceNameDef n = SourceNameDef (UVar n) (Maybe ModuleSourceName)
-                        deriving (Show, Generic)
+data SourceNameDef n =
+  -- The Nothing case of the UVar means the definition had an error in it.
+  -- The Nothing case of the ModuleSourceName means that the variable was
+  -- defined in the current module.
+  SourceNameDef (Maybe (UVar n)) (Maybe ModuleSourceName)
+  deriving (Show, Generic)
 
 data SourceMap (n::S) = SourceMap
   {fromSourceMap :: M.Map SourceName [SourceNameDef n]}
@@ -2693,9 +2697,9 @@ instance Monoid (SynthCandidates n) where
   mempty = SynthCandidates mempty mempty mempty
 
 instance GenericE SourceNameDef where
-  type RepE SourceNameDef = PairE UVar (LiftE (Maybe ModuleSourceName))
-  fromE (SourceNameDef v sn) = PairE v (LiftE sn)
-  toE   (PairE v (LiftE sn)) = SourceNameDef v sn
+  type RepE SourceNameDef = PairE (MaybeE UVar) (LiftE (Maybe ModuleSourceName))
+  fromE (SourceNameDef v sn) = PairE (toMaybeE v) (LiftE sn)
+  toE   (PairE v (LiftE sn)) = SourceNameDef (fromMaybeE v) sn
 
 instance SinkableE      SourceNameDef
 instance HoistableE     SourceNameDef

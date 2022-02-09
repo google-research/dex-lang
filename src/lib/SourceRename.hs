@@ -9,7 +9,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 
-module SourceRename (renameSourceNamesUDecl, renameSourceNamesUExpr) where
+module SourceRename ( renameSourceNamesUDecl, uDeclErrSourceMap
+                    , renameSourceNamesUExpr) where
 
 import Prelude hiding (id, (.))
 import Control.Category
@@ -28,6 +29,10 @@ renameSourceNamesUDecl :: (Fallible1 m, EnvReader m)
 renameSourceNamesUDecl decl = do
   Distinct <- getDistinct
   liftRenamer $ sourceRenameTopUDecl decl
+
+uDeclErrSourceMap:: UDecl VoidS VoidS -> SourceMap n
+uDeclErrSourceMap decl =
+  SourceMap $ M.fromSet (const [SourceNameDef Nothing Nothing]) (sourceNames decl)
 
 renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
 renameSourceNamesUExpr expr = do
@@ -80,7 +85,7 @@ instance Renamer RenamerM where
     localOutReader (RenamerSubst sm sm' mayShadow) cont
   extendSourceMap name var (RenamerM cont) = RenamerM do
     RenamerSubst (SourceMap local) imported mayShadow <- askOutReader
-    let local' = M.insert name [SourceNameDef var Nothing] local
+    let local' = M.insert name [SourceNameDef (Just var) Nothing] local
     localOutReader (RenamerSubst (SourceMap local') imported mayShadow) cont
 
 class SourceRenamableE e where
@@ -103,9 +108,12 @@ lookupSourceName v = do
   imported <- askImportedSourceMap
   case lookupSourceMapPure local v ++ lookupSourceMapPure imported v of
     [] -> throw UnboundVarErr $ pprint v
-    [SourceNameDef v' _] -> return v'
+    [SourceNameDef maybeV _] -> case maybeV of
+      Just v' -> return v'
+      Nothing -> throw VarDefErr v
     -- TODO: give information about where the candidates come from
     _ -> throw AmbiguousVarErr $ pprint v
+
 
 instance SourceRenamableE (SourceNameOr (Name AtomNameC)) where
   sourceRenameE (SourceName sourceName) = do
