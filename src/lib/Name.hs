@@ -85,7 +85,7 @@ module Name (
   locallyMutableInplaceT, liftBetweenInplaceTs, toExtWitness,
   updateSubstFrag, nameSetToList, toNameSet, absurdExtEvidence,
   Mut, fabricateDistinctEvidence,
-  MonadTrans1 (..),
+  MonadTrans1 (..), collectGarbage,
   ) where
 
 import Prelude hiding (id, (.))
@@ -116,7 +116,7 @@ import Data.Store.Internal
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
-import Util (zipErr, onFst, onSnd)
+import Util (zipErr, onFst, onSnd, transitiveClosure)
 import Err
 
 -- === category-like classes for envs, scopes etc ===
@@ -2518,6 +2518,24 @@ envFragAsScope :: forall v i i' o. SubstFrag v i i' o -> ScopeFrag i i'
 envFragAsScope (UnsafeMakeSubst m) =
   UnsafeMakeScopeFrag $ flip fmap m \xs ->
     flip map xs \(WithColor (_ :: v c o)) -> WithColor (UnitV :: UnitV c UnsafeS)
+
+-- === garbage collection ===
+
+collectGarbage :: (HoistableV v, HoistableE e)
+               => Distinct l => RecSubstFrag v n l -> e l
+               -> (forall l'. Distinct l' => RecSubstFrag v n l' -> e l' -> a)
+               -> a
+collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
+  let seedNames = M.keys $ freeVarsE e
+  let accessibleNames = S.fromList $ transitiveClosure getParents seedNames
+  let env' = RecSubstFrag $ UnsafeMakeSubst $ M.restrictKeys env accessibleNames
+  cont env' $ unsafeCoerceE e
+  where
+    getParents :: RawName -> [RawName]
+    getParents name = case M.lookup name env of
+      Nothing -> []
+      Just [WithColor v] -> M.keys $ freeVarsE v
+      _ -> error "shouldn't be possible, due to Distinct constraint"
 
 -- === iterating through env pairs ===
 
