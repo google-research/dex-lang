@@ -377,16 +377,13 @@ instance Pretty (Binding s n) where
     PtrBinding     _ -> "<ptr>"
 
 instance Pretty (Module n) where
-  pretty = undefined
-  -- pretty (Module deps sm scs objs) = do
-  --      "source map: "
-  --   <>   indented (pretty deps)
-  --   <> "source map: "
-  --   <>   indented (pretty sm)
-  --   <> "synth candidates:"
-  --   <>   indented (pretty scs)
-  --   <> "object files: "
-  --   <>   indented (pretty objs)
+  pretty m = prettyRecord
+    [ ("moduleSourceName"     , p $ moduleSourceName m)
+    , ("moduleDirectDeps"     , p $ S.toList $ moduleDirectDeps m)
+    , ("moduleTransDeps"      , p $ S.toList $ moduleTransDeps m)
+    , ("moduleExports"        , p $ moduleExports m)
+    , ("moduleSynthCandidates", p $ moduleSynthCandidates m)
+    , ("moduleObjectFiles"    , p $ moduleObjectFiles m) ]
 
 instance Pretty (ObjectFiles n) where
   pretty (ObjectFiles _) = error "todo"
@@ -645,20 +642,14 @@ instance Pretty (EnvFrag n l) where
     <> "Effects allowed:" <+> p effects
 
 instance Pretty (TopEnvFrag n l) where
-  pretty = undefined
-  -- pretty (TopEnvFrag bindings lms scs sourceMap cache _) =
-  --      "bindings:"
-  --   <>   indented (p bindings)
-  --   <> "Loaded modules:"
-  --   <>   indented (p lms)
-  --   <> "Synth candidats:"
-  --   <>   indented (p scs)
-  --   <> "Source map:"
-  --   <>   indented (p sourceMap)
-  --   <> "Cache:"
-  --   <>   indented (p cache)
-  --   <> "Object files:"
-  --   <>   indented "<TODO: Pretty instance>"
+  pretty (TopEnvFrag bindings rest) =
+    prettyRecord [ ("bindings"        , p bindings)
+                 , ("cache"           , p $ fragCache rest)
+                 , ("loaded"          , p $ fragLoadedModules rest)
+                 , ("imports"         , p $ fragImports rest)
+                 , ("source map"      , p $ fragSourceMap rest)
+                 , ("synth candidates", p $ fragSynthCandidates rest)
+                 , ("object files"    , p $ fragObjectFiles rest) ]
 
 instance Pretty (Cache n) where
   pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
@@ -864,6 +855,7 @@ instance PrettyPrec LitVal where
   prettyPrec (Word64Lit  x) = atPrec ArgPrec $ p $ "0x" ++ showHex x ""
   prettyPrec (PtrLit (PtrLitVal ty x)) =
     atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
+  prettyPrec (PtrLit (PtrSnapshot _ _)) = atPrec ArgPrec "<ptr snapshot>"
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty CallingConvention where

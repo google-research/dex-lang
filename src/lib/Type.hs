@@ -1085,7 +1085,8 @@ litType v = case v of
   Word64Lit  _ -> Scalar Word64Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
-  PtrLit (PtrLitVal t _) -> PtrType t
+  PtrLit (PtrSnapshot t _) -> PtrType t
+  PtrLit (PtrLitVal   t _) -> PtrType t
   VecLit  l -> Vector sb
     where Scalar sb = litType $ head l
 
