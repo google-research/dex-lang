@@ -80,8 +80,14 @@ all: build
 tc: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
+# Build without clearing the cache. Use at your own risk.
+just-build: dexrt-llvm
+	$(STACK) build $(STACK_FLAGS)
+
 build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
+	$(dex) clean             # clear cache
+	$(dex) script /dev/null  # precompile the prelude
 
 watch: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --file-watch
