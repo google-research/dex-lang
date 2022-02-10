@@ -21,6 +21,7 @@ module TopLevel (
   evalSourceBlockIO, loadCache, storeCache, clearCache) where
 
 import Data.Functor
+import Control.Exception (throwIO, catch)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -34,6 +35,7 @@ import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
 import System.IO (stderr, hPutStrLn)
+import System.IO.Error (isDoesNotExistError)
 
 import Paths_dex  (getDataFileName)
 
@@ -576,7 +578,7 @@ getCachePath = liftIO do
 clearCache :: MonadIO m => m ()
 clearCache = liftIO do
   cachePath <- getCachePath
-  removeFile cachePath
+  removeFile cachePath `catch` \e -> unless (isDoesNotExistError e) (throwIO e)
 
 -- TODO: real garbage collection (maybe leave it till after we have a
 -- database-backed cache and we can do it incrementally)
