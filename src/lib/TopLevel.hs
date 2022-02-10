@@ -554,9 +554,12 @@ loadModuleSource config moduleName = case moduleName of
 
 loadCache :: MonadIO m => m TopStateEx
 loadCache = liftIO do
+  liftIO $ putStrLn ">>>>>>>>>> about to loadddd cache <<<<<<<<<<<<<"
+  liftIO $ putStrLn ">>>>>>>>>> yes, the prelude is different <<<<<<<<<<<<<"
   cachePath <- getCachePath
-  cacheExists <- doesFileExist cachePath
-  if cacheExists
+  -- cacheExists <- doesFileExist cachePath
+  if False
+  -- if cacheExists
     then do
       decoded <- decode <$> BS.readFile cachePath
       case decoded of
@@ -566,6 +569,7 @@ loadCache = liftIO do
 
 storeCache :: MonadIO m => TopStateEx -> m ()
 storeCache env = liftIO do
+  liftIO $ putStrLn ">>>>>>>>>> about to store cache <<<<<<<<<<<<<"
   cachePath <- getCachePath
   envToStore <- snapshotPtrs $ stripEnvForSerialization env
   BS.writeFile cachePath $ encode envToStore
