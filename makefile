@@ -109,7 +109,7 @@ build-ci: dexrt-llvm
 	git log -1  # helps debugging CI errors
 	$(STACK) build $(STACK_FLAGS) --force-dirty --ghc-options "-Werror -fforce-recomp"
 	$(dex) clean             # clear cache
-	$(dex) script /dev/null  # precompile the prelude
+	$(dex) script lib/prelude.dx --prelude /dev/null  # precompile the prelude
 
 build-nolive: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --flag dex:-live
